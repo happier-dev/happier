@@ -3,7 +3,7 @@ import { matchesUsageFilters } from './usageQueryFilters';
 import type { UsageAnalyticsSnapshot } from '../usageQueryService';
 import { LegacyUsageReportDataSchema, legacyUsageReportAgentId, readLegacyUsageReportKey } from '../legacyUsageReportSchema';
 import { normalizeLegacyUsageCost, normalizeLegacyUsageTokens } from '../usageMetrics';
-import { prepareScopedUsageReplayContext, resolveScopedUsageContributionsSteps, usageAccountingSubjectKey,
+import { prepareScopedUsageReplayBasis, resolveScopedUsageContributionsSteps, selectScopedUsageReplayContext, usageAccountingSubjectKey,
     type ScopedUsageContribution, type ScopedUsageEventRow } from './resolveScopedUsageContributions';
 import { isPublicEligibleUsageRow, readScopedUsageAccountingEvidence, toScopedUsageEvidenceRow, toScopedUsageEventRow, toScopedUsageEventRowWithEvidence,
     type ScopedUsageEvidenceRow } from './scopedUsageEventRow';
@@ -80,21 +80,22 @@ export function normalizeUsageAnalyticsEvidenceRows<Row extends Pick<ScopedUsage
         .map(row => ({ ...row, accountingEvidence: readScopedUsageAccountingEvidence(row) }))];
 }
 
-/** Read results stay opaque until commit; hydrate only complete demanded subjects here. */
-export function prepareUsageAnalyticsSnapshot(snapshot: UsageAnalyticsSnapshot, request: UsageAnalyticsQueryRequest): UsageAnalyticsSnapshot {
-    const steps = prepareUsageAnalyticsSnapshotSteps(snapshot, request, () => false);
-    let next = steps.next();
-    while (!next.done) next = steps.next();
-    return next.value;
+function historicalUsageRows(snapshot: UsageAnalyticsSnapshot) {
+    return snapshot.rawEvidenceRows ?? snapshot.evidenceRows ?? snapshot.rows;
 }
 
-export function* prepareUsageAnalyticsSnapshotSteps(snapshot: UsageAnalyticsSnapshot, request: UsageAnalyticsQueryRequest,
-    shouldYield: () => boolean): Generator<void, UsageAnalyticsSnapshot, void> {
-    const preparedQueryKey = getUsageAnalyticsQueryRequestKey(request);
-    if (snapshot.replayContext && snapshot.preparedQueryKey === preparedQueryKey) return snapshot;
+interface PreparedUsageAnalyticsHistory {
+    legacyReports: UsageAnalyticsSnapshot['legacyReports'];
+    evidenceRows: ScopedUsageEvidenceRow[];
+    normalizedEvidenceById: ReadonlyMap<string, ScopedUsageEvidenceRow>;
+    basis: ReturnType<typeof prepareScopedUsageReplayBasis>;
+}
+
+function* prepareUsageAnalyticsHistorySteps(snapshot: UsageAnalyticsSnapshot, request: UsageAnalyticsQueryRequest,
+    shouldYield: () => boolean): Generator<void, PreparedUsageAnalyticsHistory, void> {
     const end = request.dateRange?.endMs;
     const sessions = request.filters?.sessionIds;
-    const historicalRows = snapshot.rawEvidenceRows ?? snapshot.evidenceRows ?? snapshot.rows;
+    const historicalRows = historicalUsageRows(snapshot);
     const rows = end === undefined ? historicalRows : historicalRows.filter(row => row.observedAt.getTime() < end);
     const legacyReports = snapshot.legacyReports.filter(report => (end === undefined || report.updatedAt.getTime() < end)
         && (!sessions?.length || (report.sessionId !== null && sessions.includes(report.sessionId))));
@@ -108,9 +109,57 @@ export function* prepareUsageAnalyticsSnapshotSteps(snapshot: UsageAnalyticsSnap
         if (shouldYield()) yield;
     }
     const evidenceRows = normalizeUsageAnalyticsEvidenceRows(normalized, legacyReports);
-    const replayContext = prepareScopedUsageReplayContext(evidenceRows, request.dateRange, request.filters);
+    return { legacyReports, evidenceRows, normalizedEvidenceById, basis: prepareScopedUsageReplayBasis(evidenceRows) };
+}
+
+export type UsageAnalyticsReplayPreparation = typeof prepareUsageAnalyticsHistorySteps;
+
+/** Ordered evidence is shared only among compatible historical scopes of one capture. */
+export function createUsageAnalyticsReplayPreparation(): UsageAnalyticsReplayPreparation {
+    type CapturedHistory = {
+        legacyReports: UsageAnalyticsSnapshot['legacyReports'];
+        normalizedEvidenceById?: UsageAnalyticsSnapshot['normalizedEvidenceById'];
+        prepared: PreparedUsageAnalyticsHistory;
+    };
+    const histories = new WeakMap<ReturnType<typeof historicalUsageRows>, Map<string, CapturedHistory[]>>();
+    return function* (snapshot, request, shouldYield) {
+        const rows = historicalUsageRows(snapshot);
+        // Start and ordinary filters select subjects after ordering. Session
+        // filters also choose which retained legacy reports enter replay.
+        const scope = JSON.stringify([request.dateRange?.endMs,
+            snapshot.legacyReports.length && request.filters?.sessionIds?.length ? request.filters.sessionIds : undefined]);
+        const scopes = histories.get(rows) ?? new Map<string, CapturedHistory[]>();
+        const entries = scopes.get(scope) ?? [];
+        const existing = entries.find(entry => entry.legacyReports === snapshot.legacyReports
+            && entry.normalizedEvidenceById === snapshot.normalizedEvidenceById);
+        if (existing) return existing.prepared;
+        const prepared = yield* prepareUsageAnalyticsHistorySteps(snapshot, request, shouldYield);
+        entries.push({ legacyReports: snapshot.legacyReports, normalizedEvidenceById: snapshot.normalizedEvidenceById, prepared });
+        scopes.set(scope, entries);
+        histories.set(rows, scopes);
+        return prepared;
+    };
+}
+
+/** Read results stay opaque until commit; hydrate only complete demanded subjects here. */
+export function prepareUsageAnalyticsSnapshot(snapshot: UsageAnalyticsSnapshot, request: UsageAnalyticsQueryRequest,
+    prepareHistory?: UsageAnalyticsReplayPreparation): UsageAnalyticsSnapshot {
+    const steps = prepareUsageAnalyticsSnapshotSteps(snapshot, request, () => false, prepareHistory);
+    let next = steps.next();
+    while (!next.done) next = steps.next();
+    return next.value;
+}
+
+export function* prepareUsageAnalyticsSnapshotSteps(snapshot: UsageAnalyticsSnapshot, request: UsageAnalyticsQueryRequest,
+    shouldYield: () => boolean, prepareHistory: UsageAnalyticsReplayPreparation = prepareUsageAnalyticsHistorySteps):
+    Generator<void, UsageAnalyticsSnapshot, void> {
+    const preparedQueryKey = getUsageAnalyticsQueryRequestKey(request);
+    if (snapshot.replayContext && snapshot.preparedQueryKey === preparedQueryKey) return snapshot;
+    const history = yield* prepareHistory(snapshot, request, shouldYield);
+    const replayContext = selectScopedUsageReplayContext(history.basis, request.dateRange?.startMs, request.filters);
     return { ...snapshot, rows: snapshot.rows.filter(row => replayContext.selectedEventIds.has(row.id)),
-        legacyReports, evidenceRows, rawEvidenceRows: undefined, normalizedEvidenceById, replayContext, preparedQueryKey };
+        legacyReports: history.legacyReports, evidenceRows: history.evidenceRows, rawEvidenceRows: undefined,
+        normalizedEvidenceById: history.normalizedEvidenceById, replayContext, preparedQueryKey };
 }
 
 /** Normalize, reconcile and select the committed population, independently of output demand. */
@@ -123,8 +172,9 @@ export function projectUsageAnalyticsPopulation(snapshot: UsageAnalyticsSnapshot
 
 /** Preserve the synchronous projection while allowing batch readers to service I/O between subjects. */
 export function* projectUsageAnalyticsPopulationSteps(snapshot: UsageAnalyticsSnapshot, request: UsageAnalyticsQueryRequest,
-    shouldYield: () => boolean = () => true): Generator<void, UsageAnalyticsPopulation, void> {
-    const prepared = yield* prepareUsageAnalyticsSnapshotSteps(snapshot, request, shouldYield);
+    shouldYield: () => boolean = () => true, prepareHistory?: UsageAnalyticsReplayPreparation):
+    Generator<void, UsageAnalyticsPopulation, void> {
+    const prepared = yield* prepareUsageAnalyticsSnapshotSteps(snapshot, request, shouldYield, prepareHistory);
     const scopedRows = yield* normalizeUsageAnalyticsRowsSteps(prepared, shouldYield);
     const resolved = yield* resolveScopedUsageContributionsSteps(scopedRows, request.dateRange, prepared.replayContext, shouldYield);
     // Baselines remain until reconciliation; earlier filtering manufactures residuals.

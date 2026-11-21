@@ -201,6 +201,30 @@ export function isScopedUsageReplayFactEligible(fact: ScopedUsageReplayFact,
     return isScopedUsageReplayRowEligible(fact, session?.nonLegacyCount ?? 0);
 }
 
+/** Admission and chronological ranks depend on the captured historical scope. */
+export function prepareScopedUsageReplayBasis(rows: readonly (ScopedUsageEvidenceRow | ScopedUsageReplayFact)[]) {
+    const eligible = selectScopedUsageEligibleRows(rows);
+    return {
+        eligible,
+        subjects: new Map(eligible.map(row => [row.id, 'subjectKey' in row ? row.subjectKey : usageAccountingSubjectKey(row)])),
+        ranks: new Map(orderRuntimeObservations(eligible).map((row, index) => [row.id, index])),
+    };
+}
+
+export function selectScopedUsageReplayContext(basis: ReturnType<typeof prepareScopedUsageReplayBasis>,
+    startMs?: number, filters?: UsageAnalyticsQueryRequest['filters']): ScopedUsageReplayContext {
+    const { eligible, ranks, subjects } = basis;
+    const selectedSubjects = new Set(eligible
+        .filter(row => (startMs === undefined || observedAtMs(row) >= startMs)
+            && ('subjectKey' in row || canMatchUsageFilters(row, filters)))
+        .map(row => subjects.get(row.id)!));
+    return {
+        selectedEventIds: new Set(eligible.filter(row => selectedSubjects.has(subjects.get(row.id)!)).map(row => row.id)),
+        ranks,
+        subjects,
+    };
+}
+
 /** A contribution retains its originating event's time; only its subject's history can change its fold. */
 export function prepareScopedUsageReplayContext(rows: readonly ScopedUsageReplayFact[],
     range?: Readonly<{ startMs?: number; endMs?: number }>): ScopedUsageReplayContext;
@@ -208,18 +232,9 @@ export function prepareScopedUsageReplayContext(rows: readonly ScopedUsageEviden
     range?: Readonly<{ startMs?: number; endMs?: number }>, filters?: UsageAnalyticsQueryRequest['filters']): ScopedUsageReplayContext;
 export function prepareScopedUsageReplayContext(rows: readonly (ScopedUsageEvidenceRow | ScopedUsageReplayFact)[],
     range?: Readonly<{ startMs?: number; endMs?: number }>, filters?: UsageAnalyticsQueryRequest['filters']): ScopedUsageReplayContext {
-    const beforeEnd = rows.filter(row => range?.endMs === undefined || observedAtMs(row) < range.endMs);
-    const eligible = selectScopedUsageEligibleRows(beforeEnd);
-    const subjects = new Map(eligible.map(row => [row.id, 'subjectKey' in row ? row.subjectKey : usageAccountingSubjectKey(row)]));
-    const selectedSubjects = new Set(eligible
-        .filter(row => (range?.startMs === undefined || observedAtMs(row) >= range.startMs)
-            && ('subjectKey' in row || canMatchUsageFilters(row, filters)))
-        .map(row => subjects.get(row.id)!));
-    return {
-        selectedEventIds: new Set(eligible.filter(row => selectedSubjects.has(subjects.get(row.id)!)).map(row => row.id)),
-        ranks: new Map(orderRuntimeObservations(eligible).map((row, index) => [row.id, index])),
-        subjects,
-    };
+    const endMs = range?.endMs;
+    const beforeEnd = endMs === undefined ? rows : rows.filter(row => observedAtMs(row) < endMs);
+    return selectScopedUsageReplayContext(prepareScopedUsageReplayBasis(beforeEnd), range?.startMs, filters);
 }
 
 export function resolveScopedUsageContributions(

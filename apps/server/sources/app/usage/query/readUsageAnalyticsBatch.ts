@@ -3,7 +3,8 @@ import { inReadSnapshot, type Tx } from '@/storage/inTx';
 import { prepareUsageAnalyticsProjectionSteps, type UsageAnalyticsProjectionContext, type UsageAnalyticsSnapshot } from '../usageQueryService';
 import { captureUsageModelPriceCatalog, captureUsageModelPriceCatalogInTx, resolveCapturedUsageModelPriceCatalog } from '../usageModelPriceCatalog';
 import { hasUsageMessageCountDemand, loadUsageMessageCountsBySessionInTx } from './loadUsageMessageStatsForQuery';
-import { prepareUsageAnalyticsSnapshot, projectUsageAnalyticsPopulationSteps, type UsageAnalyticsPopulation } from './projectUsageAnalyticsPopulation';
+import { createUsageAnalyticsReplayPreparation, prepareUsageAnalyticsSnapshot, projectUsageAnalyticsPopulationSteps,
+    type UsageAnalyticsPopulation, type UsageAnalyticsReplayPreparation } from './projectUsageAnalyticsPopulation';
 import { assertUsageReaderOpen, completeUsageAnalyticsProjection, projectUsageAnalyticsDemands } from './projectUsageAnalyticsDemands';
 import { projectUsageAnalyticsSummarySteps } from '@happier-dev/protocol/usage/usageSummary';
 import { createUsagePricingReuse, repriceUsageAnalyticsResponseSteps } from '@happier-dev/protocol/usage/usageCost';
@@ -41,12 +42,12 @@ export function getUsageAnalyticsProjectionKey(query: UsageAnalyticsQueryRequest
 
 /** Keep folded contribution facts and grouped coverage, releasing normalized history before pricing. */
 function* prepareUsageBatchPopulation(snapshot: UsageAnalyticsSnapshot, query: UsageAnalyticsQueryRequest,
-    timing?: UsageQueryTiming): Generator<void, UsageAnalyticsPopulation, void> {
+    prepareHistory: UsageAnalyticsReplayPreparation, timing?: UsageQueryTiming): Generator<void, UsageAnalyticsPopulation, void> {
     // Use the measured pricing slice (20ms) for committed normalization/folds
     // too. Reset at each advance so other requests' work is never our budget.
     let sliceStartedAt = 0;
     const shouldYield = () => performance.now() - sliceStartedAt >= usageQuerySliceMs;
-    const steps = projectUsageAnalyticsPopulationSteps(snapshot, query, shouldYield);
+    const steps = projectUsageAnalyticsPopulationSteps(snapshot, query, shouldYield, prepareHistory);
     const advance = () => {
         sliceStartedAt = performance.now();
         return timing ? timing.measure('fold', () => steps.next()) : steps.next();
@@ -238,9 +239,10 @@ export async function captureUsageAnalyticsBatchInTx(tx: Tx, accountId: string, 
         const populations = new Map(queries.map(query => [getUsageAnalyticsPopulationKey(query), query]));
         // The existing replay owner discovers in-window subjects and selects their
         // complete histories, including native competitors without a Session id.
+        const prepareHistory = createUsageAnalyticsReplayPreparation();
         for (const query of populations.values()) {
             const prepared = prepareUsageAnalyticsSnapshot({ rows: [], evidenceRows, legacyReports,
-                priceCatalog, messageCountsBySession: undefined }, query);
+                priceCatalog, messageCountsBySession: undefined }, query, prepareHistory);
             preparedPopulations.set(getUsageAnalyticsPopulationKey(query), prepared);
             for (const id of prepared.replayContext!.selectedEventIds) selectedEventIds.add(id);
         }
@@ -357,6 +359,7 @@ export async function projectUsageAnalyticsBatch(snapshot: Awaited<ReturnType<ty
     // Output flags do not change the admitted accounting population. Share its
     // normalization/reconciliation/prices only within this committed batch.
     const populations = new Map<string, UsageAnalyticsPopulation>();
+    const prepareHistory = createUsageAnalyticsReplayPreparation();
     const demands = new Map<string, UsageAnalyticsQueryRequest[]>();
     const projectionContexts = new Map<string, UsageAnalyticsProjectionContext>();
     const captureKeysByPopulation = new Map<string, string[]>();
@@ -392,7 +395,7 @@ export async function projectUsageAnalyticsBatch(snapshot: Awaited<ReturnType<ty
             const key = getUsageAnalyticsPopulationKey(query);
             let population = populations.get(key);
             if (!population) {
-                population = await completeUsageAnalyticsProjection(prepareUsageBatchPopulation(snapshot.snapshots.get(requestKey)!, query, timing), isReaderClosed);
+                population = await completeUsageAnalyticsProjection(prepareUsageBatchPopulation(snapshot.snapshots.get(requestKey)!, query, prepareHistory, timing), isReaderClosed);
                 populations.set(key, population);
                 // Later output demands borrow the folded population and message
                 // counts; raw bodies and historical metadata are no longer inputs.

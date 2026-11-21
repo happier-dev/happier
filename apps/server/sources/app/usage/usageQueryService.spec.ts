@@ -12,6 +12,7 @@ import { projectUsageCoverageEvidence } from './query/projectUsageCoverageEviden
 import { resolveCapturedUsageModelPriceCatalog } from './usageModelPriceCatalog';
 import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import { UsageQueryTiming } from './query/usageQueryTiming';
+import { createHash } from 'node:crypto';
 import { Session } from 'node:inspector';
 import { setImmediate as nextTurn } from 'node:timers/promises';
 
@@ -782,6 +783,94 @@ describe('captured usage query projection', () => {
         expect(sharedCapture.snapshots.size, 'completed batch demands release their raw captured inputs').toBe(0);
         expect(capturedControl.snapshots.size).toBe(0);
     });
+
+    it('orders shared Accounting evidence once per captured historical scope in a batch', async () => {
+        const rows = Array.from({ length: 2733 }, (_, index) => ({
+            ...row(`batch-order-${index}`, 10, { usageAccounting: { path: 'runtime', status: 'available', historyComplete: true } },
+                { sessionId: `subject-${index % 43}` }),
+            observedAt: new Date(100 + index), createdAt: new Date(100 + index),
+        })).reverse();
+        const snapshot: UsageAnalyticsSnapshot = { rows, rawEvidenceRows: rows, legacyReports: [],
+            priceCatalog: { fetchEnabled: false, stored: null }, messageCountsBySession: undefined };
+        const range = { startMs: 0, endMs: 4000 };
+        const base = { dateRange: range, includeSeries: false, includeMessageStats: false };
+        const queries = [base, { ...base, includeLeaders: true },
+            { ...base, dateRange: { ...range, startMs: 1000 } },
+            { ...base, costMode: 'estimated' },
+            { ...base, dateRange: { ...range, endMs: 1466 } }].map(query => UsageAnalyticsQueryRequestSchema.parse(query));
+        const timing = new UsageQueryTiming();
+        const sort = vi.spyOn(Array.prototype, 'sort');
+        let orderPasses = 0;
+        let orderedEvidence = 0;
+        let batch: Awaited<ReturnType<typeof projectUsageAnalyticsBatch>>;
+        const startedAt = performance.now();
+        let batchMs: number;
+        try {
+            batch = await projectUsageAnalyticsBatch({ priceCatalog: snapshot.priceCatalog,
+                snapshots: new Map(queries.map(query => [getUsageAnalyticsQueryRequestKey(query), { ...snapshot }])) },
+            queries, false, false, timing);
+            batchMs = performance.now() - startedAt;
+            for (const values of sort.mock.contexts) {
+                const first: unknown = Array.isArray(values) ? values[0] : undefined;
+                if (first && typeof first === 'object' && 'id' in first &&
+                    String(first.id).startsWith('batch-order-') && 'observedAt' in first && !('tokens' in first)) {
+                    orderPasses++;
+                    orderedEvidence += values.length;
+                }
+            }
+        } finally { sort.mockRestore(); }
+
+        const bytes = (value: { totals: unknown; coverage?: unknown }) => JSON.stringify([value.totals, value.coverage]);
+        const actual = batch.results.map(result => {
+            if (!('value' in result)) throw new Error('Expected an admitted Accounting result');
+            return bytes(result.value);
+        });
+        expect(actual).toEqual(queries.map(query => bytes(projectUsageAnalytics(snapshot, query))));
+        console.info('[usage-batch-replay-cost]', JSON.stringify({ demands: queries.length, populations: 4,
+            orderPasses, orderedEvidence, foldMs: Number(timing.durations.fold.toFixed(3)), batchMs: Number(batchMs.toFixed(3)),
+            totalsAndCoverageSha256: createHash('sha256').update(JSON.stringify(actual)).digest('hex') }));
+        expect({ orderPasses, orderedEvidence }, 'four distinct populations use two historical prefixes in one batch')
+            .toEqual({ orderPasses: 2, orderedEvidence: rows.length + 1366 });
+    });
+
+    it.each([['rich', 'c8255d309b631757cccefa88a133c714a0ac346cadeac9a642ec21857b239e81'], ['compact', '99553913c157d3277f486361ecaf46e06327b2baa56997456c1633528c201c3b']] as const)(
+        'preserves complete %s Accounting batch wire bytes across overlapping populations and demands', async (delivery, baseline) => {
+            const day = 86_400_000;
+            const since = Date.UTC(2026, 0, 1);
+            const rows = [0, 1, 2, 3, 4, 5].map(index => {
+                const instant = new Date(since + Math.floor(index / 2) * day + 100 + index);
+                return {
+                    ...row(`wire-${index}`, 10 + index, { usageAccounting: { path: 'runtime', status: 'available', historyComplete: true } },
+                        { sessionId: `subject-${index % 2}` }),
+                    modelId: index % 2 ? 'claude-haiku-4-5' : 'gpt-5',
+                    machineId: `machine-${index % 2}`, observedAt: instant, createdAt: instant,
+                    estimatedCostUsd: (index + 1) / 100,
+                    ...(index % 2 === 0 ? { scope: 'session_cumulative' as const, isCumulative: true, turnId: null } : {}),
+                };
+            }).reverse();
+            const snapshot: UsageAnalyticsSnapshot = { rows, rawEvidenceRows: rows, legacyReports: [],
+                priceCatalog: { fetchEnabled: false, stored: null }, messageCountsBySession: undefined };
+            const base = { dateRange: { startMs: since, endMs: since + 3 * day }, granularity: 'day',
+                includeSeries: true, includeLeaders: true, includeMessageStats: false, breakdowns: ['session', 'machine'] };
+            const input = UsageAnalyticsQueryBatchRequestSchema.parse({ queries: [base,
+                { ...base, dateRange: { ...base.dateRange, startMs: since + day } },
+                { ...base, filters: { modelIds: ['gpt-5'] }, includeLeaders: false, includeSeries: false },
+                { ...base, dateRange: { ...base.dateRange, endMs: since + 2 * day }, costMode: 'estimated' }],
+                contributionQueries: delivery === 'compact' ? [base] : undefined });
+            const batch = await projectUsageAnalyticsBatch({ priceCatalog: snapshot.priceCatalog,
+                snapshots: new Map(input.queries.map(query => [getUsageAnalyticsQueryRequestKey(query), { ...snapshot }])) },
+                input.queries, delivery === 'compact', delivery === 'compact', undefined, input);
+            const body = collectUsageAnalyticsBatchDelivery(projectUsageAnalyticsBatchDelivery(batch, input, false));
+            const first = body.results[0];
+            if (!first || !('value' in first)) throw new Error('Expected Accounting result');
+            expect(first.value.series?.length).toBeGreaterThan(1);
+            expect(first.value.leaders?.models?.length).toBeGreaterThan(0);
+            expect(body.results.every(result => 'value' in result)).toBe(true);
+            if (delivery === 'compact') expect(body.contributionPages?.[0]?.rows.length).toBeGreaterThan(0);
+            // Hash of the entire serialized delivery from the pre-optimization replay.
+            // This covers field order as well as every query, total, series, leader and coverage row.
+            expect(createHash('sha256').update(JSON.stringify(body)).digest('hex')).toBe(baseline);
+        });
 
     it('projects admitted rows once for the union of eight output demands before selecting each result', async () => {
         let observedReads = 0;
