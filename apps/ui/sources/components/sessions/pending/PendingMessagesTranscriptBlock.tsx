@@ -4,6 +4,7 @@ import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
 import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 import { resolveTranscriptPaint } from '@/components/sessions/transcript/transcriptPaint';
 import { readableMessageText } from '@/components/sessions/transcript/messageDisplayText';
+import { readApprovalResultReceiptText } from '@/components/sessions/transcript/references/approvalResultInput';
 import { isPendingMessageForRecipient } from '@/sync/domains/pending/pendingMessageRecipient';
 import { Platform, Pressable, ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -108,7 +109,9 @@ const MESSAGE_ACTION_HIT_REACH = Object.freeze({
 
 function getPendingText(message: PendingMessage | DiscardedPendingMessage): string {
     const raw = (message.displayText ?? message.text) ?? '';
-    return readableMessageText(String(raw), message.rawRecord?.meta);
+    const meta = message.rawRecord?.meta;
+    return readApprovalResultReceiptText({ localId: message.localId, text: String(raw), meta })
+        ?? readableMessageText(String(raw), meta);
 }
 
 /** The opening words of a pending message, enough to name it (one line, cut at a word). */

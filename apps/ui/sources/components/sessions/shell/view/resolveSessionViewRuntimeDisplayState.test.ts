@@ -49,11 +49,13 @@ describe('resolveSessionViewRuntimeDisplayState not-resumable notice', () => {
             id: 'withdrawn-runtime-display', active: false,
             metadata: { path: '/repo', host: 'host', lifecycleState: 'stopped', lifecycleStateReason: 'machine_access_withdrawn' },
         });
+        // One message per state: the title names it, the body says which Machine, by name.
         expect(resolveNotice({ session })).toEqual({
-            title: t('common.inactive'), body: t('session.accessWithdrawn'),
+            title: t('session.accessWithdrawn'), body: t('session.accessWithdrawnBody', { machine: 'NLDW4' }),
         });
+        expect(t('session.accessWithdrawnBody', { machine: 'NLDW4' })).toContain('NLDW4');
         expect(resolveNotice({ session: { ...session, metadata: { ...session.metadata!, lifecycleStateReason: undefined } } }))
-            .not.toEqual(expect.objectContaining({ body: t('session.accessWithdrawn') }));
+            .not.toEqual(expect.objectContaining({ title: t('session.accessWithdrawn') }));
     });
 
     it('yields to the external control row whenever that row speaks the way forward', () => {

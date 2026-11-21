@@ -9138,7 +9138,9 @@ localTailscale: {
       loadSessionFalse:
         "エージェントはセッションの読み込みをサポートしていません。",
     },
-    accessWithdrawn: "このマシンへのアクセスが取り消されました。所有者が再び許可できます。",
+    accessWithdrawn: "アクセスが取り消されました",
+    accessWithdrawnBody: ({ machine }: { machine: string }) => `${machine} へのアクセスが取り消されました。`,
+    accessWithdrawnGuestBody: ({ machine }: { machine: string }) => `${machine} へのあなたのアクセスが取り消されました。所有者が再び許可できます。`,
     inactiveResumable: "非アクティブ（再開可能）",
     inactiveArchived: "アーカイブ済み",
     inactiveMachineOffline: "非アクティブ（マシンがオフライン）",
@@ -16736,6 +16738,7 @@ settingsSession: {
         moreSources: ({ count }: { count: number }) => `ほか ${count} 件`,
     },
     provenanceFrom: ({ source }: { source: string }) => `${source} から`,
+    approvalResult: ({ action }: { action: string }) => `承認済み · ${action}`,
     provenanceSession: 'セッション',
     provenanceAutomation: '自動化',
     provenanceWorkflow: 'ワークフロー',

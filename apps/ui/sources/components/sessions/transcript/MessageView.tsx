@@ -856,8 +856,8 @@ function TranscriptTextNoticeRow(props: Readonly<{
   const find = useTranscriptFindRow(props.message.id);
   const findSourceRanges = find?.blocks.find((block) => block.id === 'text')?.sourceRanges;
   const repeatCount = useTranscriptRuntimeIssueRepeatCount(props.message.id);
-  const messageText = props.displayText ?? (props.tone === 'failure'
-    ? resolveTranscriptMessageDisplayText(props.message).text ?? '' : props.message.text);
+  // The row reads what Find and copy read: the display owner's text (a decided approval reads as its receipt).
+  const messageText = props.displayText ?? resolveTranscriptMessageDisplayText(props.message).text ?? '';
   // One row stands for a run of identical failures; the suffix keeps Find's ranges over the text intact.
   const displayText = repeatCount === null ? messageText
     : `${messageText} · ${t('session.transcriptFailureRepeated', { count: repeatCount })}`;

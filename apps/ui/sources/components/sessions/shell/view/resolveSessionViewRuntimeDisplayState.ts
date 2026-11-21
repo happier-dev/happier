@@ -87,7 +87,7 @@ export function resolveSessionViewRuntimeDisplayState(input: Input): SessionView
     });
 
     const bottomNotice = inactiveUi.inactiveStatusTextKey === 'session.accessWithdrawn'
-        ? { title: t('common.inactive'), body: t('session.accessWithdrawn') }
+        ? { title: t('session.accessWithdrawn'), body: t('session.accessWithdrawnBody', { machine: input.machineName }) }
         : inactiveUi.noticeKind === 'not-resumable'
         ? {
             title: t('session.inactiveNotResumableNoticeTitle'),

@@ -137,6 +137,11 @@ const stylesheet = StyleSheet.create((theme) => ({
 /** What the person chose to share, when the leaf decides it at the press (a row, or the display consent). */
 export type ComputerTargetShareChoice = Readonly<{ key: string; access: ComputerAccessV1 }>;
 
+/** A window's app line repeats nothing: an app whose window carries its own name ("xmessage" / "Xmessage") shows it once. */
+function sameName(appName: string | null | undefined, title: string): boolean {
+    return typeof appName === 'string' && appName.trim().toLowerCase() === title.trim().toLowerCase();
+}
+
 function TargetRows(props: Readonly<{
     title: string;
     entries: readonly Readonly<{ entry: ComputerTargetEntry; label: string }>[];
@@ -178,7 +183,7 @@ function TargetRows(props: Readonly<{
                         key={key}
                         testID={`${props.testID}:${entry.target.kind}`}
                         title={label}
-                        subtitle={[entry.appName, display && entry.width && entry.height ? `${entry.width} × ${entry.height}` : null,
+                        subtitle={[sameName(entry.appName, label) ? null : entry.appName, display && entry.width && entry.height ? `${entry.width} × ${entry.height}` : null,
                             display ? t('computerUse.picker.displayShared') : null,
                             props.currentKey === key ? t('computerUse.picker.usingIt') : null,
                             props.suggestedKey === key ? props.suggestedLabel : null].filter(Boolean).join(' · ') || undefined}
@@ -240,7 +245,7 @@ function TargetTiles(props: Readonly<{
                     return {
                         id: key,
                         title: label,
-                        subtitle: [display ? (entry.width && entry.height ? `${entry.width} × ${entry.height}` : null) : entry.appName,
+                        subtitle: [display ? (entry.width && entry.height ? `${entry.width} × ${entry.height}` : null) : sameName(entry.appName, label) ? null : entry.appName,
                             props.currentKey === key ? t('computerUse.picker.usingIt') : null,
                             props.suggestedKey === key ? props.suggestedLabel : null].filter(Boolean).join(' · ') || undefined,
                         icon: props.iconName,
@@ -304,7 +309,7 @@ function WholeDisplayConsent(props: Readonly<{
             </ItemGroup>
             <View style={[stylesheet.footer, props.compact ? stylesheet.footerCompact : null]}>
                 {props.compact ? null : <View style={stylesheet.grow} />}
-                <RoundButton size={props.compact ? 'normal' : 'small'} display="secondary" title={t('common.cancel')} onPress={props.onCancel} testID={`${props.testID}-cancel`} />
+                <RoundButton size={props.compact ? 'normal' : 'small'} display="inverted" title={t('common.cancel')} onPress={props.onCancel} testID={`${props.testID}-cancel`} />
                 <RoundButton
                     size={props.compact ? 'normal' : 'small'}
                     title={t('computerUse.picker.shareDisplay')}
@@ -651,7 +656,7 @@ export function ComputerTargetPicker(props: Readonly<{
                 ) : null}
                 {props.compact ? null : <View style={stylesheet.grow} />}
                 {props.compact ? null : (
-                    <RoundButton size="small" display="secondary" title={t('common.cancel')} onPress={props.onCancel} testID={`${testID}-cancel`} />
+                    <RoundButton size="small" display="inverted" title={t('common.cancel')} onPress={props.onCancel} testID={`${testID}-cancel`} />
                 )}
                 <RoundButton
                     size={props.compact ? 'normal' : 'small'}

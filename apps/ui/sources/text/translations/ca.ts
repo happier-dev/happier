@@ -15370,6 +15370,7 @@ settingsSession: {
             moreSources: ({ count }: { count: number }) => `i ${count} més`,
         },
         provenanceFrom: ({ source }: { source: string }) => `De ${source}`,
+        approvalResult: ({ action }: { action: string }) => `Aprovat · ${action}`,
         provenanceSession: 'Sessió',
         provenanceAutomation: 'Automatització',
         provenanceWorkflow: 'Flux de treball',

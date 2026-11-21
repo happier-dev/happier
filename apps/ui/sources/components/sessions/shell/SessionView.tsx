@@ -2449,8 +2449,8 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
                       <WarningActionBanner
                           testID="session-requester-access-removed"
                           tone="warning"
-                          title={inactiveUi.inactiveStatusTextKey === 'session.accessWithdrawn' ? t('common.inactive') : t('machineRequester.accessRemoved', { machine: machineName })}
-                          body={inactiveUi.inactiveStatusTextKey === 'session.accessWithdrawn' ? t('session.accessWithdrawn') : t('machineRequester.resumeElsewhere', { machine: machineName })}
+                          title={inactiveUi.inactiveStatusTextKey === 'session.accessWithdrawn' ? t('session.accessWithdrawn') : t('machineRequester.accessRemoved', { machine: machineName })}
+                          body={inactiveUi.inactiveStatusTextKey === 'session.accessWithdrawn' ? t('session.accessWithdrawnGuestBody', { machine: machineName }) : t('machineRequester.resumeElsewhere', { machine: machineName })}
                           actionTestID="session-requester-continue-elsewhere"
                           actionLabel={t('common.continue')}
                           actionAccessibilityLabel={t('common.continue')}

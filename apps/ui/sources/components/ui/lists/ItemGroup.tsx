@@ -781,7 +781,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                                 {/* The mark stays beside the first line of its name; only the accessory wraps below. */}
                                 <View style={styles.pageTitleName}>
                                     {titleLeading}
-                                    <Text accessibilityRole="header" style={[styles.pageTitle, styles.pageTitleText, titleStyle]}>{title}</Text>
+                                    <Text accessibilityRole="header" aria-level={2} style={[styles.pageTitle, styles.pageTitleText, titleStyle]}>{title}</Text>
                                 </View>
                                 {titleAccessory}
                             </View>
@@ -791,7 +791,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                         actionLayout={actionLayout}
                         insetPx={contained ? 0 : (Platform.select(ITEM_GROUP_CONTENT_MARGIN_HORIZONTAL_PX) ?? 12) + (sidePaneFlat ? 0 : PAGE_LIST_METRICS.headingOpticalInsetPx)}
                         renderText={(input) => input.role === 'sectionTitle'
-                            ? <Text accessibilityRole="header" style={[titleRole === 'label' ? styles.pageTitleLabel : styles.pageTitle, titleStyle]}>{input.text}</Text>
+                            ? <Text accessibilityRole="header" aria-level={2} style={[titleRole === 'label' ? styles.pageTitleLabel : styles.pageTitle, titleStyle]}>{input.text}</Text>
                             : renderPageDescription(input.text)}
                         // App callers pass React Native layout styles; the shared header keeps its own anatomy under them.
                         style={[inspector ? styles.pageHeaderInspector : null, headerStyle] as HappierPageSectionHeaderProps['style']}

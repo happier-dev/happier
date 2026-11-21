@@ -15,6 +15,7 @@ import { useOptionalSessionTranscriptSource } from '@/components/sessions/transc
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { selectHomeQualifiedSession } from '@/sync/domains/session/selectHomeQualifiedSession';
 import { getStorage } from '@/sync/domains/state/storageStore';
+import { approvalResultLocalId } from './approvalResultInput';
 import type { StorageState } from '@/sync/store/types';
 
 export type TranscriptThemeAction = {
@@ -205,7 +206,7 @@ export function useThemeActionCardPresentation(
                 const result = readThemeToolOutcome(candidate);
                 if (!result || 'output' in result) return result;
                 // actionExecutor publishes to this Session with the approval Artifact's stable local id.
-                const receiptId = transcript.reducerState.localIds.get(`approval-result:${result.artifactId}`);
+                const receiptId = transcript.reducerState.localIds.get(approvalResultLocalId(result.artifactId));
                 const output = decodeSettledThemeTry(receiptId === undefined ? undefined : transcript.messagesById[receiptId], result.artifactId);
                 return output ? { actionId: result.actionId, input: result.input, output } : null;
             };

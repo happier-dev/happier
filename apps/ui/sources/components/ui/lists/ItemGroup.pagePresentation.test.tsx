@@ -63,6 +63,13 @@ function measuredSectionHeader(screen: Awaited<ReturnType<typeof renderScreen>>,
 }
 
 describe('ItemGroup page presentation', () => {
+    it('announces a section title one level below the page title', async () => {
+        const screen = await renderGroup('page', {});
+        const title = screen.findAllByType('Text' as never).find((node) => node.props.children === 'Session list');
+        expect(title?.props.accessibilityRole).toBe('header');
+        expect(title?.props['aria-level']).toBe(2);
+    });
+
     it('reads the section explanation before its rows on a configuration page', async () => {
         const screen = await renderGroup('page', { description: 'How sessions appear in the sidebar.' });
         expect(textsInOrder(screen)).toEqual(['Session list', 'How sessions appear in the sidebar.', 'ROW']);

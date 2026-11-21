@@ -16621,6 +16621,7 @@ settingsSession: {
             moreSources: ({ count }: { count: number }) => `und ${count} weitere`,
         },
         provenanceFrom: ({ source }: { source: string }) => `Von ${source}`,
+        approvalResult: ({ action }: { action: string }) => `Genehmigt · ${action}`,
         provenanceSession: 'Sitzung',
         provenanceAutomation: 'Automatisierung',
         provenanceWorkflow: 'Workflow',

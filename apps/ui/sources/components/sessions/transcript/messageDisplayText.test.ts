@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildTrustedHostSessionInputAdmissionV1, SESSION_MESSAGE_PROVENANCE_META_KEY } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import type { AgentTextMessage, UserTextMessage } from '@happier-dev/session-core/messages';
 import { resolveTranscriptMessageDisplayText } from './messageDisplayText';
+import { resolveActionTitle } from '@/text/actionTitles';
 import { normalizeRawMessage } from '@happier-dev/session-core/raw';
 import { presentSessionTeamCredentialDenial } from '../presentation/sessionTeamCredentialDenialPresentation';
 import { readRuntimeIssueMessageMeta } from './events/runtimeIssueMessage';
@@ -61,6 +62,22 @@ describe('resolveTranscriptMessageDisplayText', () => {
             expect(resolveTranscriptMessageDisplayText(user({ text, meta: onboarding.meta }), { preserveInlineReferences }).text).toBe(text);
         }
     });
+    it('shows a decided approval result as a readable receipt, never its payload', () => {
+        // actionExecutor delivers the result the Agent reads as host input with the approval's local id.
+        const payload = JSON.stringify({ artifactId: 'approval-1', actionId: 'browser.view.open', ok: true, status: 'executed',
+            execution: { ok: true, result: { browserSessionId: 'browser-1', profileId: 'profile-1' } } });
+        const meta = { [SESSION_MESSAGE_PROVENANCE_META_KEY]: buildTrustedHostSessionInputAdmissionV1('mcp').provenance };
+        const receipt = user({ text: payload, localId: 'approval-result:approval-1', meta });
+        for (const preserveInlineReferences of [false, true]) {
+            const text = resolveTranscriptMessageDisplayText(receipt, { preserveInlineReferences }).text ?? '';
+            expect(text).toContain(resolveActionTitle('browser.view.open', null));
+            expect(text).not.toContain('artifactId');
+            expect(text).not.toContain('{');
+        }
+        // A person's own message with the same words keeps them.
+        expect(resolveTranscriptMessageDisplayText(user({ text: payload, meta })).text).toBe(payload);
+    });
+
     it('marks direct-session Voice input from its canonical admission provenance while keeping ordinary text unmarked', () => {
         const text = 'HULLO PLEASE keep API and iOS';
         for (const surface of ['voice', 'ui'] as const) {

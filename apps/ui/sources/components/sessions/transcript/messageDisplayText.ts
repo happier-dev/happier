@@ -24,6 +24,7 @@ import { presentSessionTeamCredentialDenial } from '../presentation/sessionTeamC
 import { presentSessionAgentAuthRequired } from '../presentation/sessionAgentAuthRequiredPresentation';
 import { formatSessionFailureLine, presentSessionRuntimeIssue } from '../presentation/sessionRuntimeIssuePresentation';
 import { resolveSessionStartFailureNotice } from '../startFailure/sessionStartFailureNotice';
+import { readApprovalResultReceiptText } from './references/approvalResultInput';
 
 export type TranscriptMessageDisplayOptions = Readonly<{
     debugInformationEnabled?: boolean;
@@ -77,6 +78,9 @@ export function prepareTranscriptMessageBody(
         || (message.kind === 'user-text' && readSessionMessageProvenance(message.meta, 'stored')?.kind === 'voice');
     const hostOnboarding = message.kind === 'user-text' ? readHostOnboardingDisplayText(message.meta) : null;
     if (hostOnboarding !== null) return { text: hostOnboarding, isVoiceAgentTurn };
+    // A decided approval's result is the Agent's input; the person reads a receipt, never its payload.
+    const approvalReceipt = message.kind === 'user-text' ? readApprovalResultReceiptText(message) : null;
+    if (approvalReceipt !== null) return { text: approvalReceipt, isVoiceAgentTurn };
     const runtimeIssue = message.kind === 'agent-text' && !message.isThinking
         ? readRuntimeIssueMessageMeta(message.meta) : null;
     const teamDenial = message.kind === 'agent-text' && !message.isThinking
