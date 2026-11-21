@@ -79,6 +79,16 @@ async function createManagedExecFixture(initialPower: 'running' | 'stopped' = 'r
         },
     });
     onTestFinished(() => home.close());
+    // An installed controller publishes its installation key inside its encrypted Machine content.
+    if (!home.machineEncryptionKey) throw new Error('Expected controller Machine encryption material');
+    const machineContent = createMachineContentCodec({ encryptionMode: 'e2ee', encryptionKey: home.machineEncryptionKey,
+        encryptionVariant: 'dataKey' });
+    const storedController = await db.machine.findUniqueOrThrow({ where: { id: home.machineId }, select: { metadata: true } });
+    const publishedMetadata = machineContent.decodeStored(storedController.metadata);
+    if (!isRecord(publishedMetadata)) throw new Error('Expected controller Machine metadata');
+    await db.machine.update({ where: { id: home.machineId }, data: { metadata: machineContent.encodeStored({
+        ...publishedMetadata, installationPublicKey: encodeBase64(home.keys.publicKey, 'base64url'),
+    }) } });
     vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockImplementation(
         () => installationBoundary.getStore() ?? readS0Installation(home));
     const homeLogs: unknown[] = [];
@@ -426,7 +436,10 @@ it.runIf(process.platform === 'linux')('keeps managed command input and output p
         }));
     };
     const get = (cli: typeof owner, operationId: string) => cli.execute(ACTION_OPERATION_GET_ACTION_ID_V1,
-        { ...scope, operationId, waitForTerminal: true }, context());
+        { ...scope, operationId, waitForTerminal: true }, {
+            surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+            serverId: scope.serverId, serverIdentityId: scope.serverId, actionRequestId: randomUUID(),
+        });
     const runUi = (actor: typeof requester, requestId: string) => dispatchOriginalAccountAction({
         actionId: MANAGED_EXEC_ACTION_ID_V1, input, target, requestId, credentials: actor.credentials,
         serverIdentityId: home.serverId, serverHttpBaseUrl: home.baseUrl,
@@ -521,9 +534,8 @@ it.runIf(process.platform === 'linux')('keeps managed command input and output p
     const result = read?.ok ? ActionOperationGetV1ResponseSchema.parse(read.result) : null;
     expect(result).toMatchObject({ kind: 'found', operation: { actionId: MANAGED_EXEC_ACTION_ID_V1, state: 'succeeded',
         scope: { accountId: requester.accountId, machineId: home.machineId }, result: output } });
-    for (const concealed of [custodianRead, otherRead]) {
-        expect(concealed).toMatchObject({ ok: true, result: { kind: 'not_found' } });
-    }
+    expect(custodianRead, JSON.stringify(custodianRead)).toMatchObject({ ok: true, result: { kind: 'not_found' } });
+    expect(otherRead, JSON.stringify(otherRead)).toMatchObject({ ok: true, result: { kind: 'not_found' } });
 }, 120_000);
 
 // Replace the provider's guest process boundary. The transport still feeds

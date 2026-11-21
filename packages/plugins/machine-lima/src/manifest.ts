@@ -34,14 +34,14 @@ function errorCode(error: unknown) {
     ? error.code : 'lima_unavailable';
 }
 
-async function provider(context: PluginInvocationContext) {
+async function provider(context: PluginInvocationContext, tieGuestToCarrier = false) {
   // Checking never installs or mutates a managed dependency. Executable identity
   // is resolved by the public dependency owner, never a host-specific path.
   const status = await readManagedDependencyExecutable(context.services.managedServices.dependencies, LIMA_DEPENDENCY_ID, context.signal);
   if (status.state !== 'ready') {
     throw Object.assign(new Error('declared native Lima executable is unavailable'), { code: 'lima_unavailable', notInstalled: status.state === 'missing' });
   }
-  const executor = createLimaSdkExecutor({ exec: context.services.exec, executable: status.executable, signal: context.signal });
+  const executor = createLimaSdkExecutor({ exec: context.services.exec, executable: status.executable, signal: context.signal, tieGuestToCarrier });
   const current = createLimaProvider(executor, context.invokedAtMs,
     async (dependencyId) => {
       const tool = await readManagedDependencyExecutable(context.services.managedServices.dependencies, dependencyId, context.signal);
@@ -262,7 +262,9 @@ export const LIMA_PLUGIN = definePlugin({
       confirmation: { title: 'Run Happier setup in this Lima guest?', body: 'This runs the admitted setup command inside the exact managed guest.' },
       inputSchema: LIMA_ROLE_SCHEMAS.execInput, resultSchema: MachineProvisionerNativeExecResultV1Schema,
       async run(input, context) {
-        const result = await (await provider(context)).exec(input.resource, input.argv,
+        // An unbounded exec on an already-running target owns a finite guest
+        // command. Bootstrap exec can intentionally leave an installed service.
+        const result = await (await provider(context, input.allowWake === false && input.timeoutMs === null)).exec(input.resource, input.argv,
           input.inputBase64 === undefined ? undefined : Buffer.from(input.inputBase64, 'base64'));
         return { termination: result.process.termination, stdoutBase64: Buffer.from(result.process.stdout).toString('base64'),
           stderrBase64: Buffer.from(result.process.stderr).toString('base64'),

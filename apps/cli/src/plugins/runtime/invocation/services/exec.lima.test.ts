@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { writeFile, unlink } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { createServer } from 'node:net';
+import { readFile, writeFile, unlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
@@ -149,6 +151,121 @@ describe('Lima declared native process environment', () => {
                 await owners.dispose();
                 await managedServices.dispose();
                 vi.unstubAllEnvs();
+            }
+        });
+    });
+
+    it.skipIf(process.platform !== 'linux')('stops a running guest process group when the non-PTY Lima carrier aborts', async ({ onTestFinished }) => {
+        await withTempDir('hpl-stop-', async root => {
+            const controller = new AbortController();
+            const started = join(root, 'started');
+            const completed = join(root, 'completed');
+            const instance = 'happier-stop';
+            const requests = normalizePluginManifestV2(LIMA_PLUGIN.manifest).hostAccess.required.map(request => ({ request, required: true }));
+            // Like non-PTY SSH, this transport forwards the pipes while the guest
+            // lives in a separate session outside the host supervisor's process tree.
+            const socketPath = join(root, 'transport.sock');
+            const server = createServer(socket => {
+                socket.once('data', header => {
+                    const end = header.indexOf(10);
+                    const [command, ...args] = JSON.parse(header.subarray(0, end).toString()) as string[];
+                    const guest = spawn(command!, args, { detached: true, stdio: ['pipe', 'ignore', 'ignore'] });
+                    guest.stdin.on('error', () => {});
+                    guest.stdin.write(header.subarray(end + 1));
+                    socket.pipe(guest.stdin);
+                    socket.once('close', () => guest.stdin.end());
+                    guest.once('exit', () => socket.end());
+                });
+            });
+            await new Promise<void>((resolve, reject) => server.once('error', reject).listen(socketPath, resolve));
+            onTestFinished(() => new Promise<void>(resolve => server.close(() => resolve())));
+            const carrier = String.raw`
+                const args = process.argv.slice(1);
+                if (args[0] === 'list') {
+                    process.stdout.write(JSON.stringify({ name: args.at(-1), status: 'Running', dir: require('node:path').join(process.env.LIMA_HOME, args.at(-1)) }));
+                } else if (args.at(-1) === 'exit-status-probe') {
+                    const [command, ...argv] = args.slice(args.indexOf('--') + 1);
+                    const guest = require('node:child_process').spawn(command, argv, { stdio: 'inherit' });
+                    guest.on('exit', status => { process.exitCode = status ?? 1; });
+                } else {
+                    const remote = require('node:net').connect(${JSON.stringify(socketPath)}, () => {
+                        remote.write(JSON.stringify(args.slice(args.indexOf('--') + 1)) + '\n');
+                        process.stdin.pipe(remote);
+                    });
+                    remote.resume();
+                }
+            `;
+            const owners = createProductionPluginInvocationServiceOwners({
+                loggerSink: { write() {} },
+                exec: {
+                    resolveExecutable: async () => ({ command: process.execPath, args: ['-e', carrier, '--'] }),
+                    resolvePath: async () => root,
+                },
+            });
+            const pluginId = LIMA_PLUGIN.manifest.id;
+            const seed = {
+                plugin: { id: pluginId, version: '0.0.0' },
+                contribution: { id: 'exec', qualifiedId: `${pluginId}/actions/exec` },
+                occurrenceId: 'lima-stop-test', correlationId: 'lima-stop-test', surface: 'cli' as const,
+                signal: controller.signal, isOccurrenceCurrent: () => true,
+            };
+            const binding = owners.resolveInvocationHostPolicy({
+                pluginId, occurrenceId: seed.occurrenceId, qualifiedId: seed.contribution.qualifiedId,
+            }, { hostAccessRequests: requests, surface: seed.surface, signal: seed.signal }).serviceBinding;
+            const handlers = new Map<string, ActionHandler>();
+            await LIMA_PLUGIN.activate({ actions: { register(id: string, handler: ActionHandler) {
+                handlers.set(id, handler);
+                return { dispose() {} };
+            } } } as unknown as PluginApi);
+            const context = {
+                invokedAtMs: 123,
+                signal: controller.signal,
+                services: { ...owners.createServices(seed, binding), managedServices: { dependencies: { status: async (id: string) => ({
+                    state: 'ready', id, version: '2.2.1', sourceId: 'system',
+                    executable: { kind: 'managedDependency', id: { pluginId, localId: id } },
+                }) } } },
+            } as unknown as PluginInvocationContext;
+            const exec = handlers.get('exec');
+            if (!exec) throw new Error('Lima exec Action was not activated');
+            const resource = { instance, store: root, arch: 'x86_64', vmType: 'qemu', cpus: 1,
+                memoryBytes: 1024 ** 3, diskBytes: 1024 ** 3, image: 'https://example.test/lima.img', mounts: [] };
+            const invoke = (argv: readonly string[], command: string) => Promise.resolve(exec({
+                resource, argv, inputBase64: Buffer.from(command + '\n').toString('base64'), allowWake: false, timeoutMs: null,
+            }, context));
+            // Read a real exit and output before aborting the same carrier type.
+            // Bash job notifications must never be included in guest stderr.
+            await expect(invoke(['/bin/sh', '-s', '--', 'exit-status-probe'],
+                "printf 'one\\000two'; printf 'guest-stderr' >&2; exit 19")).resolves.toMatchObject({
+                termination: { observed: { kind: 'exit', exitCode: 19 }, requestedBy: { kind: 'none' } },
+                stdoutBase64: Buffer.from('one\0two').toString('base64'),
+                stderrBase64: Buffer.from('guest-stderr').toString('base64'),
+            });
+            const command = `sleep 30 & child=$!; printf '%s %s\n' "$$" "$child" > "${started}"; wait "$child"; touch "${completed}"`;
+            const invocation = invoke(['/bin/sh', '-s'], command);
+            // The carrier can throw on abort. The deciding observable is guest liveness.
+            const settled = invocation.catch(() => undefined);
+            let pids: number[] = [];
+            try {
+                await vi.waitFor(async () => {
+                    pids = (await readFile(started, 'utf8')).trim().split(' ').map(Number);
+                    expect(pids).toHaveLength(2);
+                });
+                controller.abort();
+                await vi.waitFor(async () => {
+                    const running = await Promise.all(pids.map(async pid => {
+                        const state = await readFile(`/proc/${pid}/stat`, 'utf8').catch(() => '');
+                        return Boolean(state) && !state.slice(state.lastIndexOf(')') + 2).startsWith('Z ');
+                    }));
+                    expect(running).toEqual([false, false]);
+                }, { timeout: 2000 });
+                expect(existsSync(completed)).toBe(false);
+            } finally {
+                controller.abort();
+                for (const pid of pids) {
+                    try { process.kill(pid, 'SIGKILL'); } catch { /* already exited */ }
+                }
+                await settled;
+                await owners.dispose();
             }
         });
     });
