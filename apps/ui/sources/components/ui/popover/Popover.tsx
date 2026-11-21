@@ -54,6 +54,7 @@ import { useDeviceType, usePresentationWindowDimensions } from '@/utils/platform
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { BaseModal } from '@/modal/components/BaseModal';
 import { ModalCardFrame } from '@/modal/components/card/ModalCardFrame';
+import { SHEET_GRABBER_ZONE_PX } from '@/modal/components/card/sheetDragDismiss';
 import { ModalBackButton } from '@/modal/components/card/ModalBackButton';
 import { AnchoredPhonePushHost, createPhoneSheetPushStack, PhoneSheetPushBody, PhoneSheetPushContext, usePhoneSheetPush, type PhoneSheetPushStack } from './phoneSheetPush';
 import { FloatingOverlayPhonePanelContext, FloatingOverlaySheetContext } from '@/components/ui/overlays/FloatingOverlay';
@@ -536,7 +537,9 @@ function PhonePopoverSheet(props: PopoverShellProps) {
     // A sheet about the screen keeps the upper half of that screen in view (the first-open Home look sheet).
     const aboutScreen = props.sheetBackdrop === 'none';
     const frameHeight = aboutScreen ? Math.round(windowHeight / 2) : Math.max(0, windowHeight - insets.top);
-    const maxHeight = Math.min(props.maxHeightCap ?? windowHeight, frameHeight, Math.max(0, windowHeight - insets.top - insets.bottom));
+    // The room under the sheet's grabber (it draws one: the sheet closes on its scrim), so a body sized to it fits.
+    const maxHeight = Math.max(0, Math.min(props.maxHeightCap ?? windowHeight, frameHeight, Math.max(0, windowHeight - insets.top - insets.bottom))
+        - SHEET_GRABBER_ZONE_PX);
     // Stable, so the retained body is not republished (and re-rendered) on every render of the sheet.
     const closeSheet = useEventCallback(() => props.onRequestClose?.());
     // Views pushed inside this sheet (a row's picker): the band then names the top one and leads with Back.

@@ -626,6 +626,7 @@ function useToolsStyles(insetPx: number | undefined) {
 const stripStyle: ViewStyle = { paddingLeft: M.contentInset, paddingRight: M.rowInset, marginBottom: M.headerGap };
 // Directly under the title row the band (its strip row and the conditions line under it) is one slot on the rail grid.
 const bandSlotStyle: ViewStyle = { paddingLeft: M.contentInset, paddingRight: M.rowInset, ...resolveHappierColumnBandSlotStyle() };
+const bandConditionsStyle: ViewStyle = { paddingLeft: M.contentInset, paddingRight: M.rowInset };
 const stripWithAccessoryStyle: ViewStyle = { flexDirection: 'row', alignItems: 'center', gap: TITLE_ACCESSORY_GAP };
 // The band packs from the title's leading text edge: a yielded control follows the strip, never pushed to the far edge.
 const stripLeadStyle: ViewStyle = { flexShrink: 1, minWidth: 0 };
@@ -778,8 +779,13 @@ function HappierCollectionListImpl(props: HappierCollectionListProps): ReactElem
               <View onLayout={onAccessoryLayout}>{props.titleAccessory}</View>
             </View>
           ) : props.strip}
-          {props.conditions}
+          {bandOnGrid && props.strip != null ? null : props.conditions}
         </View>
+      ) : null}
+      {/* On the rail grid the strip row holds its one slot whatever follows it, so switching to a view that carries
+          conditions never moves the strip: they take the lines under the slot. */}
+      {band && bandOnGrid && props.strip != null && props.conditions != null ? (
+        <View style={bandConditionsStyle}>{props.conditions}</View>
       ) : null}
       {props.search && searchOpen ? (
         <SearchField

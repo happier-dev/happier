@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { SHEET_GRABBER_ZONE_PX } from '@/modal/components/card/sheetDragDismiss';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -157,7 +158,8 @@ describe('Popover phone presentation', () => {
                 }}
             </Popover>,
         );
-        expect(renderedBounds?.maxHeight).toBe(viewport.height / 2);
+        // The frame stops at half the screen; the body's room is what the grabber above it leaves.
+        expect(renderedBounds?.maxHeight).toBe(viewport.height / 2 - SHEET_GRABBER_ZONE_PX);
         expect(screen.findAll(node => typeof node.type === 'string' && flattenStyle(node.props.style).maxHeight === viewport.height / 2).length)
             .toBeGreaterThan(0);
         expect(screen.findByTestId('modal-card-body-scroll')?.props.scrollEnabled).toBe(true);

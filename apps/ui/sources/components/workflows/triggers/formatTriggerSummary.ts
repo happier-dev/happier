@@ -283,14 +283,14 @@ export function formatTriggerSetSentence(triggers: readonly TriggerSummarySource
     if (triggers.length === 0) return t('workflows.triggers.card.manualSentence');
     // Triggers that read the same are said once: the sentence names each way the workflow starts, not each row.
     const clauses = [...new Set(triggers.map(trigger => formatTriggerSummary(trigger, context)))];
-    return joinList(clauses.map((clause, index) => index === 0 ? clause : lowerSentenceStart(clause)));
+    return joinList(clauses.map((clause, index) => index === 0 ? clause : lowerTriggerSentenceStart(clause)));
 }
 
 /**
  * A summary joined after the first continues the sentence ("…and every day at 09:00"). Only a plain
  * capitalised first word is lowered; a name with inner capitals or an acronym ("GitHub", "CI") keeps them.
  */
-function lowerSentenceStart(summary: string): string {
+export function lowerTriggerSentenceStart(summary: string): string {
     const first = summary.split(/\s/u, 1)[0] ?? '';
     if (!/^\p{Lu}\p{Ll}+$/u.test(first)) return summary;
     return first.toLocaleLowerCase(getPreferredLanguage()) + summary.slice(first.length);

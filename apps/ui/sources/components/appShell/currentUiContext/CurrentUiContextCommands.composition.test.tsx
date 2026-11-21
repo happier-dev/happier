@@ -159,12 +159,12 @@ describe('mounted current-context descendant commands', () => {
         const authority = captureActiveServerAccountScopeLifetime();
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
         const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
-        const { useWorkflowEventAutomate } = await import('@/components/workflows/events/WorkflowEventDetail');
+        const { useWorkflowEventIntents } = await import('@/components/workflows/events/WorkflowEventDetail');
         const event = { key: 'session:started', kind: 'session', sessionId: 'session-a', event: 'started',
             occurredAt: 1, coverage: 'live', sourceRevision: 1 } as const;
-        let automation: ReturnType<typeof useWorkflowEventAutomate> | undefined;
+        let automation: ReturnType<typeof useWorkflowEventIntents> | undefined;
         function EventControl() {
-            automation = useWorkflowEventAutomate({ fact: event, title: 'Session started', subtitle: null, glyph: 'pulse',
+            automation = useWorkflowEventIntents({ fact: event, title: 'Session started', subtitle: null, glyph: 'pulse',
                 needsYou: false, lines: [], open: null, runsStarted: [] }, true);
             // The command owner constructs the builder intent; its separate renderer is covered by the P04 journey.
             return null;

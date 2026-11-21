@@ -31,7 +31,7 @@ const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration
 const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
 const { useWorkflowActionCatalog } = await import('./useWorkflowActionCatalog');
 const { useWorkflowTriggerEventOptions } = await import('../triggers/useWorkflowTriggerEventOptions');
-const { useWorkflowEventAutomate } = await import('../events/WorkflowEventDetail');
+const { useWorkflowEventIntents } = await import('../events/WorkflowEventDetail');
 const { WorkflowTriggerSection } = await import('../triggers/WorkflowTriggerSection');
 const { WorkflowTriggerBlock } = await import('../triggers/WorkflowTriggerBlock');
 const { TriggerPluginEventRows } = await import('../triggers/TriggerPluginEventRows');
@@ -161,7 +161,7 @@ describe('useWorkflowActionCatalog', () => {
     it('opens a cold offline Machine fact as native intent without demanding its catalog', async () => {
         const fact = { key: 'presence', kind: 'machine', machineId: 'offline-machine', event: 'offline',
             sourceRevision: 999_999, occurredAt: 10, coverage: 'live' } as const;
-        const hook = await renderHook(() => useWorkflowEventAutomate({ fact, title: 'Machine went offline',
+        const hook = await renderHook(() => useWorkflowEventIntents({ fact, title: 'Machine went offline',
             subtitle: null, glyph: 'desktop', needsYou: false, lines: [], open: null, runsStarted: [] }, true));
         try {
             expect(hook.getCurrent().open).not.toBeNull();

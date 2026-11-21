@@ -23,6 +23,7 @@ const {
   readWorkflowEventAddsLine,
   readWorkflowEventLinkWhen,
   prepareWorkflowEventEditorEntry,
+  readWorkflowEventStartsLine,
 } = await import('./workflowEventFacts');
 const { readWorkflowDefinitionDraftSeed } = await import('@/sync/domains/workflows/workflowDefinitionDraftSeed');
 const { readWorkflowTriggerStartId } =
@@ -94,7 +95,7 @@ describe('workflowEventFacts', () => {
 
   it('makes a workflow from a fact as a new editor draft that already starts on it', () => {
     const scope = { serverId: 'home', accountId: 'account' };
-    const lifetime = { scope, isCurrent: () => true } as const;
+    const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
     const route = prepareWorkflowEventEditorEntry(turn, 'A turn started', lifetime);
     expect(route).toMatchObject({ pathname: '/workflows/[id]', params: { id: 'new', serverId: 'home' } });
     expect(readWorkflowDefinitionDraftSeed(route!.params.definitionDraftSeedId, scope))
@@ -106,16 +107,41 @@ describe('workflowEventFacts', () => {
     expect(readWorkflowDefinitionDraftSeed(placed!.params.definitionDraftSeedId, scope))
       .toMatchObject({ nativeEvent: machine, project: { machineId: 'm1', directory: '~' } });
     // Another Account took over: nothing is opened for the old one.
-    expect(prepareWorkflowEventEditorEntry(turn, 'A turn started', { scope, isCurrent: () => false })).toBeNull();
+    expect(prepareWorkflowEventEditorEntry(turn, 'A turn started', { scope, isCurrent: () => false, onRetire: () => ({ dispose() {} }) })).toBeNull();
   });
 
   it('says which start an added event brings, and links a saved workflow only from a Session start', () => {
-    expect(readWorkflowEventAddsLine(turn)).toBe('workflows.events.addsWhen(when=workflows.triggers.kind.turnStarts)');
-    expect(readWorkflowEventAddsLine(machine)).toBeNull();
+    expect(readWorkflowEventAddsLine(turn, null, null)).toBe('workflows.events.addsAnySession(when=workflows.triggers.kind.turnStarts)');
+    expect(readWorkflowEventAddsLine(machine, null, null)).toBeNull();
     expect(readWorkflowEventLinkWhen(started)).toEqual(readWorkflowEventWhen(started));
     // A Run's exact source and a Machine's native setup are authored in the editor, never linked blind.
     expect(readWorkflowEventLinkWhen(run)).toBeNull();
     expect(readWorkflowEventLinkWhen(machine)).toBeNull();
+  });
+
+  it('narrows a Session start to the picked Session, everywhere the event seeds a trigger', () => {
+    const match = { session: { serverId: 'home' } } as const;
+    const subject = { kind: 'session', serverId: 'home', sessionId: 's1' };
+    expect(readWorkflowEventWhen(turn, match)).toMatchObject({ kind: 'turnStarts', subject });
+    expect(readWorkflowEventTrigger(turn, match)).toMatchObject({ kind: 'sessionLifecycle', subject });
+    expect(readWorkflowEventDraftIntent(turn, undefined, match)).toEqual({ trigger: readWorkflowEventTrigger(turn, match) });
+    expect(readWorkflowEventLinkWhen(turn, match)).toMatchObject({ subject });
+    const scope = { serverId: 'home', accountId: 'account' };
+    const route = prepareWorkflowEventEditorEntry(turn, 'A turn started', { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) }, undefined, match);
+    expect(readWorkflowDefinitionDraftSeed(route!.params.definitionDraftSeedId, scope)).toMatchObject({ trigger: { subject } });
+    // A Run already starts from its exact source and a Machine needs its setup: nothing to narrow.
+    expect(readWorkflowEventTrigger(run, match)).toEqual(readWorkflowEventTrigger(run));
+  });
+
+  it('says in one sentence when a new workflow would start, and what Add brings', () => {
+    expect(readWorkflowEventStartsLine(turn, null, 'Fix flaky test'))
+      .toBe('workflows.events.wouldStartAnySession(when=workflows.triggers.kind.turnStarts)');
+    expect(readWorkflowEventStartsLine(turn, { session: { serverId: 'home' } }, 'Fix flaky test'))
+      .toBe('workflows.events.wouldStartInSession(when=workflows.triggers.kind.turnStarts,session=Fix flaky test)');
+    expect(readWorkflowEventStartsLine(run, null, null)).toBe('workflows.events.wouldStart(when=workflows.triggers.kind.runEnds)');
+    expect(readWorkflowEventStartsLine(machine, null, null)).toBeNull();
+    expect(readWorkflowEventAddsLine(turn, { session: { serverId: 'home' } }, 'Fix flaky test'))
+      .toBe('workflows.events.addsInSession(when=workflows.triggers.kind.turnStarts,session=Fix flaky test)');
   });
 
   it('offers no configured trigger when a Machine fact lacks its declaration-owned setup seed', () => {

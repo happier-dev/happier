@@ -1753,12 +1753,13 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             {validationPublisher}
             {compactLayout && shownCompanion === 'events' ? (
                 // A phone opens Live events from More as the shared sheet, over the page it adds to.
+                // The pane draws its own head, as beside the editor, so its list and its bar of actions fit the sheet's height.
                 <Popover open anchorRef={liveEventsAnchorRef} boundaryRef={null} placement="auto-vertical" phonePresentation="sheet"
-                    sheetMaterial="solid" accessibilityLabel={t('workflows.events.liveEvents')} onRequestClose={closeSettings}
+                    sheetHeader="none" sheetMaterial="solid" accessibilityLabel={t('workflows.events.liveEvents')} onRequestClose={closeSettings}
                     portal={{ web: { target: 'body' }, native: true, matchAnchorWidth: false }}>
                     {({ maxHeight }) => <View style={{ height: maxHeight }}>
-                        <WorkflowLiveEventsPane testID={`${testIDPrefix}-live-events`} active
-                            onAddTrigger={props.onAddTriggerWhen ?? null} hasTriggerRow={props.hasTriggerRow ?? null} onClose={null} />
+                        <WorkflowLiveEventsPane testID={`${testIDPrefix}-live-events`} active presentation="sheet"
+                            onAddTrigger={props.onAddTriggerWhen ?? null} hasTriggerRow={props.hasTriggerRow ?? null} onClose={closeSettings} />
                     </View>}
                 </Popover>
             ) : null}

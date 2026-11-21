@@ -128,6 +128,23 @@ describe('SurfaceStateCard', () => {
     });
     // DESIGN: amber needs you, rose failed. A failed line drew a warning-coloured triangle in plugin surfaces (DBW-UI-4 N8);
     // both hosts take the line glyph's tint from the shared `resolveHappierStateLineGlyphTone`.
+    it('keeps the empty glyph column for a glyphless line among rows that reserve one, so both lines start on the titles', async () => {
+        const { HappierStateLine } = await import('@happier-dev/plugin-ui/presentation');
+        const { SectionLeadingColumnProvider, useSectionLeadingColumn } = await import('@/components/ui/lists/sectionLeadingColumn');
+        function GlyphRow() { useSectionLeadingColumn(true); return null; }
+        const lines = (withGlyphRow: boolean) => (
+            <SectionLeadingColumnProvider>
+                {withGlyphRow ? <GlyphRow /> : null}
+                <SurfaceStateCard size="line" kind="unavailable" title="Workflow starts need their Machine online." />
+                <SurfaceStateCard size="line" kind="empty" title="No workflows run here yet." />
+            </SectionLeadingColumnProvider>
+        );
+        const reserved = await renderScreen(lines(true));
+        expect(reserved.tree.root.findAllByType(HappierStateLine).map(line => line.props.icon != null)).toEqual([true, true]);
+        // With no glyph rows around it the empty line stands on the rows' edge, as before.
+        const bare = await renderScreen(lines(false));
+        expect(bare.tree.root.findAllByType(HappierStateLine).map(line => line.props.icon != null)).toEqual([true, false]);
+    });
     it('tints a failed line rose and a warning line amber', async () => {
         const glyphColor = async (kind: 'error' | 'warning') => {
             const screen = await renderScreen(<SurfaceStateCard size="line" kind={kind} title="Couldn't update this comment" />);

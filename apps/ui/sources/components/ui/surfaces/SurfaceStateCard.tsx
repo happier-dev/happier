@@ -15,6 +15,7 @@ import { Typography } from '@/constants/Typography';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { DisclosedCodeText, useCoreDisclosureToggleBinding } from '@/components/ui/lists/DisclosureCaret';
 import { BareSectionLineEdge } from '@/components/ui/lists/listPresentation';
+import { useSectionLeadingColumn } from '@/components/ui/lists/sectionLeadingColumn';
 import { t } from '@/text';
 
 import { useSurfaceStateCardSize, useSurfaceStateQuietActions } from './surfaceStateSize';
@@ -138,6 +139,9 @@ const stylesheet = StyleSheet.create((theme) => ({
  * it stays behind a quiet, collapsed "Details" disclosure for support and expert users (DESIGN.md "Error
  * and recovery copy"); every card keeps it on a testID marker for QA.
  */
+/** The empty leading column a glyphless line keeps among rows that reserve one. */
+const EMPTY_LINE_GLYPH = <></>;
+
 export function SurfaceStateCard(props: Readonly<{
     testID?: string;
     kind: SurfaceStateKind;
@@ -218,6 +222,9 @@ export function SurfaceStateCard(props: Readonly<{
     const failureGlyph = resolveHappierStateFailureGlyph(props.kind);
     const kindIconName = failureGlyph ? resolvePluginUiIconName(failureGlyph) : undefined;
     const animationEnabled = props.animationEnabled !== false;
+    // Among rows that reserve a glyph column, a line without a glyph keeps that column empty, so its sentence starts on
+    // the rows' titles like a glyph-led line beside it ("No workflows run here yet." under "Workflow starts need…").
+    const reservesLeadingColumn = useSectionLeadingColumn(false);
 
     const accessibilityAnnouncement = [props.title, props.reason, props.detail]
         .map((value) => value?.trim())
@@ -269,7 +276,7 @@ export function SurfaceStateCard(props: Readonly<{
             />
         ) : props.icon ?? (lineIconName
             ? <Icon name={lineIconName} size={HAPPIER_STATE_LINE_METRICS.glyphPx} color={lineTint} />
-            : undefined);
+            : reservesLeadingColumn ? EMPTY_LINE_GLYPH : undefined);
         const line = (
             <HappierSurfaceState
                 {...shared}

@@ -64,6 +64,12 @@ export function useSheetDrag(onDismiss: (() => void) | null) {
     return { offset, panHandlers: handlers.panHandlers, onLayout };
 }
 
+const GRABBER_PAD_TOP_PX = 8;
+const GRABBER_HEIGHT_PX = 5;
+const GRABBER_PAD_BOTTOM_PX = 4;
+/** The height the grabber's zone takes above a dismissible sheet's content, so a body sized to the sheet fits under it. */
+export const SHEET_GRABBER_ZONE_PX = GRABBER_PAD_TOP_PX + GRABBER_HEIGHT_PX + GRABBER_PAD_BOTTOM_PX;
+
 /** The grabber at the top of a dismissible sheet: where the drag starts; the sheet header owns its Close control. */
 export function SheetGrabber(props: Readonly<{
     panHandlers: ReturnType<typeof PanResponder.create>['panHandlers'];
@@ -79,6 +85,6 @@ export function SheetGrabber(props: Readonly<{
 }
 
 const styles = StyleSheet.create((theme) => ({
-    zone: { alignSelf: 'stretch', alignItems: 'center', paddingTop: theme.space.s8, paddingBottom: theme.space.s4 },
-    grabber: { width: 36, height: 5, borderRadius: 2.5, backgroundColor: theme.colors.border.strong },
+    zone: { alignSelf: 'stretch', alignItems: 'center', paddingTop: GRABBER_PAD_TOP_PX, paddingBottom: GRABBER_PAD_BOTTOM_PX },
+    grabber: { width: 36, height: GRABBER_HEIGHT_PX, borderRadius: 2.5, backgroundColor: theme.colors.border.strong },
 }));

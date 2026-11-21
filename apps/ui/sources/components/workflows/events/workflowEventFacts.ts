@@ -14,7 +14,7 @@ import {
   type SessionLifecycleWhen,
   type TriggerWhenValue,
 } from '@/components/workflows/triggers/sessionTriggerForm';
-import { formatTriggerSummary } from '@/components/workflows/triggers/formatTriggerSummary';
+import { formatTriggerSummary, lowerTriggerSentenceStart } from '@/components/workflows/triggers/formatTriggerSummary';
 import { prepareWorkflowSentenceEditorEntry } from '@/components/workflows/authoring/workflowSentenceAuthoring';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
@@ -53,24 +53,29 @@ export function matchesWorkflowEventFilter(
  */
 export function readWorkflowEventWhen(
   fact: WorkflowActivityFact,
+  match?: WorkflowEventMatch | null,
 ): TriggerWhenValue | null {
   if (fact.kind === 'run') return { kind: 'runLifecycle',
     source: fact.coverage === 'retained_cause' ? fact.evidence.source : { kind: 'workflow_run', runId: fact.runId }, condition: fact.event };
   if (fact.kind !== 'session') return null;
-  switch (fact.event) {
-    case 'started':
-      return createDefaultWhen('sessionStarts');
-    case 'turn_started':
-      return createDefaultWhen('turnStarts');
-    case 'archived':
-      return createDefaultWhen('sessionArchived');
-  }
+  const when = createDefaultWhen(fact.event === 'started' ? 'sessionStarts' : fact.event === 'turn_started' ? 'turnStarts' : 'sessionArchived');
+  // The picked Session is the trigger owner's own Session subject (the editor's "Session" row), never a filter of ours.
+  return match?.session && isSessionLifecycleWhen(when)
+    ? { ...when, subject: { kind: 'session', serverId: match.session.serverId, sessionId: fact.sessionId } }
+    : when;
 }
+
+/**
+ * What a person picked from an event's carried values for the workflow to match. Only what the trigger owner can
+ * express is offered: a Session start narrows to that Session (its subject). Other carried values stay facts.
+ */
+export type WorkflowEventMatch = Readonly<{ session?: Readonly<{ serverId: string }> }>;
 
 export function readWorkflowEventTrigger(
   fact: WorkflowActivityFact,
+  match?: WorkflowEventMatch | null,
 ): AutomationTriggerDefinitionInput | null {
-  const when = readWorkflowEventWhen(fact);
+  const when = readWorkflowEventWhen(fact, match);
   return when === null
     ? null
     : buildTriggerDefinition({ when, enabled: true, sessionId: null });
@@ -90,13 +95,14 @@ export function formatWorkflowMachineEventTitle(fact: Readonly<{ event: 'online'
 export function readWorkflowEventDraftIntent(
   fact: Parameters<typeof readWorkflowEventTrigger>[0],
   placement?: Omit<Parameters<typeof resolveWorkflowProjectTargetOnMachine>[0], 'machineId'>,
+  match?: WorkflowEventMatch | null,
 ): Pick<WorkflowDefinitionDraftSeed, 'trigger' | 'nativeEvent' | 'project'> | null {
   if (fact.kind === 'machine') {
     const project = placement === undefined ? null
       : resolveWorkflowProjectTargetOnMachine({ ...placement, machineId: fact.machineId });
     return project === null ? { nativeEvent: fact } : { nativeEvent: fact, project };
   }
-  const trigger = readWorkflowEventTrigger(fact);
+  const trigger = readWorkflowEventTrigger(fact, match);
   return trigger === null ? null : { trigger };
 }
 
@@ -109,8 +115,9 @@ export function prepareWorkflowEventEditorEntry(
   name: string,
   lifetime: ServerAccountScopeLifetime,
   placement?: Parameters<typeof readWorkflowEventDraftIntent>[1],
+  match?: WorkflowEventMatch | null,
 ): ReturnType<typeof prepareWorkflowSentenceEditorEntry> {
-  const seed = readWorkflowEventDraftIntent(fact, placement);
+  const seed = readWorkflowEventDraftIntent(fact, placement, match);
   return seed === null ? null : prepareWorkflowSentenceEditorEntry({ name, ...seed }, lifetime);
 }
 
@@ -118,16 +125,44 @@ export function prepareWorkflowEventEditorEntry(
  * The start "Add to a workflow…" links to a saved workflow: a Session start, which the trigger editor offers as is.
  * A Run's exact source and a Machine's native setup are authored in the editor (Make a workflow), never linked blind.
  */
-export function readWorkflowEventLinkWhen(fact: WorkflowActivityFact): SessionLifecycleWhen | null {
-  const when = readWorkflowEventWhen(fact);
+export function readWorkflowEventLinkWhen(fact: WorkflowActivityFact, match?: WorkflowEventMatch | null): SessionLifecycleWhen | null {
+  const when = readWorkflowEventWhen(fact, match);
   return when !== null && isSessionLifecycleWhen(when) ? when : null;
 }
 
-/** The companion's line above its Add: which start the event brings ("Adds When a turn starts"). */
-export function readWorkflowEventAddsLine(fact: WorkflowActivityFact): string | null {
+/**
+ * The start an event brings, said once: "A new workflow would start when a turn starts in any session" under the
+ * event's facts, "Adds when a turn starts in Fix flaky test" above the companion's Add. A Machine fact has no start
+ * of its own until the editor sets it up, so it says nothing.
+ */
+function readWorkflowEventStartClause(
+  fact: WorkflowActivityFact,
+): Readonly<{ when: string; sessionScoped: boolean }> | null {
   const trigger = readWorkflowEventTrigger(fact);
   if (trigger === null || (trigger.kind !== 'sessionLifecycle' && trigger.kind !== 'runLifecycle')) return null;
-  return t('workflows.events.addsWhen', { when: formatTriggerSummary(trigger) });
+  return { when: lowerTriggerSentenceStart(formatTriggerSummary(trigger)), sessionScoped: trigger.kind === 'sessionLifecycle' };
+}
+
+export function readWorkflowEventStartsLine(fact: WorkflowActivityFact, match: WorkflowEventMatch | null | undefined,
+  sessionName: string | null): string | null {
+  const start = readWorkflowEventStartClause(fact);
+  if (start === null) return null;
+  const { when } = start;
+  if (!start.sessionScoped) return t('workflows.events.wouldStart', { when });
+  return match?.session && sessionName !== null
+    ? t('workflows.events.wouldStartInSession', { when, session: sessionName })
+    : t('workflows.events.wouldStartAnySession', { when });
+}
+
+export function readWorkflowEventAddsLine(fact: WorkflowActivityFact, match: WorkflowEventMatch | null | undefined,
+  sessionName: string | null): string | null {
+  const start = readWorkflowEventStartClause(fact);
+  if (start === null) return null;
+  const { when } = start;
+  if (!start.sessionScoped) return t('workflows.events.adds', { when });
+  return match?.session && sessionName !== null
+    ? t('workflows.events.addsInSession', { when, session: sessionName })
+    : t('workflows.events.addsAnySession', { when });
 }
 
 /** Authoring intent only: the ordinary Event setup Action acquires source identity and cursor. */

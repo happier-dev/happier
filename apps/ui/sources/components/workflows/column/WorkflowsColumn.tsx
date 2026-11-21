@@ -270,8 +270,9 @@ const WorkflowsColumnList = React.memo(function WorkflowsColumnList(props: Reado
         title={t('workflows.title')}
         {...(shownHeader ? { titleControl: shownHeader.titleControl } : {})}
         search={search}
-        strip={<>
-            <View testID="workflows-column:view-band" style={styles.viewBand}>{viewSwitch}</View>
+        strip={<View testID="workflows-column:view-band" style={styles.viewBand}>{viewSwitch}</View>}
+        // Under the switch, never in its slot: the switch stands in the same place on every view (DA-3 F5).
+        conditions={<>
             {/* The spaces take their own line under the switch (scene 8 column), so neither squeezes the other. */}
             {shownHeader ? <View style={styles.viewBandStrip}>{shownHeader.strip}</View> : null}
             {/* The listening line takes its own line under the switch: beside it, its time would be cut (r3 live). */}
