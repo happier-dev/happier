@@ -81,16 +81,18 @@ export async function selectWorkspaceClosureInputs({ repo, revisions, scopes, pa
 }
 
 /**
- * The entry graphs a packet can reach: a graph runs when the workspace that owns a changed path is
+ * Each nonempty packet must load the CLI it would publish. Other graphs run when a changed workspace is
  * in the workspace dependency closure of the package that owns the graph's entry (the same closure
  * source runtimes resolve). A root-level script, config, manifest, lockfile or patch reaches every
- * graph; other root files (docs, images) reach none.
+ * graph; other root files (docs, images) do not select additional graphs.
  */
 export async function selectCommitTreeEntryGraphs({ repo, base, tree, prior, priorBase }) {
   const git = gitAt(repo);
-  const hasRegistry = revision => git(['ls-tree', '--name-only', revision, '--', ENTRY_GRAPHS_PATH]).length > 0;
+  const hasPath = (revision, path) => git(['ls-tree', '--name-only', revision, '--', path]).length > 0;
+  const hasRegistry = revision => hasPath(revision, ENTRY_GRAPHS_PATH);
   if (!hasRegistry(tree)) {
     if (hasRegistry(base)) throw new Error(`candidate removed the entry graph registry at ${ENTRY_GRAPHS_PATH}`);
+    if (hasPath(tree, 'apps/cli/package.json')) throw new Error('candidate is missing the required CLI entry graph');
     return { graphs: [], selected: [], changed: [] };
   }
   const source = git(['show', `${tree}:${ENTRY_GRAPHS_PATH}`]);
@@ -98,6 +100,9 @@ export async function selectCommitTreeEntryGraphs({ repo, base, tree, prior, pri
   if (!Array.isArray(graphs) || !graphs.length || graphs.some(graph => !graph?.id || !graph?.entry)
     || new Set(graphs.map(graph => graph.id)).size !== graphs.length) {
     throw new Error(`invalid entry graph registry at ${ENTRY_GRAPHS_PATH}`);
+  }
+  if (!graphs.some(graph => graph.id === CLI_GRAPH) && hasPath(tree, 'apps/cli/package.json')) {
+    throw new Error('candidate is missing the required CLI entry graph');
   }
   const pathsBetween = (from, to) => git(['diff', '--no-renames', '--name-only', '-z', from, to]).toString().split('\0').filter(Boolean);
   const changed = pathsBetween(base, tree);
@@ -124,9 +129,11 @@ export async function selectCommitTreeEntryGraphs({ repo, base, tree, prior, pri
   try { git(['cat-file', '-e', `${tree}:${SERVER_ROUTES_ENTRY}`]); routes = true; } catch { /* no server in this tree */ }
   const entries = routes ? [...graphs, { id: SERVER_ROUTES_GRAPH, entry: SERVER_ROUTES_ENTRY }] : graphs;
   const packetReaches = reaches(changed);
-  let selected = entries.filter(({ id, entry }) => id === SERVER_ROUTES_GRAPH
-    ? changed.some(path => SERVER_ROUTES_INPUT.test(path))
-    : packetReaches(entry));
+  let selected = entries.filter(({ id, entry }) => {
+    if (id === CLI_GRAPH) return changed.length > 0;
+    if (id === SERVER_ROUTES_GRAPH) return changed.some(path => SERVER_ROUTES_INPUT.test(path));
+    return packetReaches(entry);
+  });
   if (prior && selected.length) {
     // The shell wrapper passes a candidate commit, while the private-index helpers supply its parent explicitly.
     let acceptedBase = priorBase;

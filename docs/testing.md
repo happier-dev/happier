@@ -741,8 +741,11 @@ identity in the ordinary queue. A packet that has passed retains its original
 arrival for post-loss requests in all three classes. The broker uses that arrival
 in its existing queue order. Syntax, eager cycles, manifests and ordinary
 CAS need no admission slot. Each HEAD writer waits for every selected entry
-graph to return a verdict before moving the ref. An unloadable CLI entry
-refuses the packet even when the parent has the same failure. An incomplete
+graph to return a verdict before moving the ref. Every nonempty candidate with
+a CLI must prove that its CLI entry loads, regardless of the changed paths.
+An unloadable CLI refuses the packet even when the parent has the same
+failure. A replay can reuse a passing verdict while the CLI's inputs on both
+sides are unchanged. An incomplete
 entry-load result leaves the ref unchanged. Standalone reports use the same
 admission owner.
 After two lost attempts, the final replay reserves its entry and declaration

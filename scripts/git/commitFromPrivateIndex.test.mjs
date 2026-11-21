@@ -382,7 +382,7 @@ test('replays onto a competing commit and lands without rejoining the commit loc
   assert.deepEqual(acquisitions, [base]);
 });
 
-function treeGraphReplayFixture(t, { uiGraph = false } = {}) {
+function treeGraphReplayFixture(t, { uiGraph = false, winnerInput = 'apps/cli/src/index.mjs' } = {}) {
   const f = fixture(t);
   for (const app of ['cli', 'ui']) {
     fs.mkdirSync(path.join(f.cwd, 'apps', app, 'src'), { recursive: true });
@@ -446,9 +446,9 @@ export async function loadEntryGraph(graph) {
   f.git('add', '--', 'apps', 'packages/cli-common');
   f.git('commit', '-qm', 'test: graph inputs');
   const base = f.git('rev-parse', 'HEAD').trim();
-  f.write('apps/cli/src/index.mjs', 'export const value = 1;\n');
-  f.git('add', '--', 'apps/cli/src/index.mjs');
-  const winner = f.git('commit-tree', f.git('write-tree').trim(), '-p', base, '-m', 'test: competing CLI writer').trim();
+  f.write(winnerInput, 'export const value = 1;\n');
+  f.git('add', '--', winnerInput);
+  const winner = f.git('commit-tree', f.git('write-tree').trim(), '-p', base, '-m', 'test: competing writer').trim();
   f.git('read-tree', base);
   const packet = 'apps/ui/src/index.mjs';
   f.write(packet, 'export const value = 2;\n');
@@ -491,6 +491,21 @@ test('refuses an unloadable CLI entry even when its parent is broken and the leg
   assert.equal(f.git('rev-parse', 'HEAD').trim(), head);
 });
 
+test('refuses an unrelated packet when its candidate CLI cannot load', { skip: !hasFlock }, t => {
+  const { f, packet } = treeGraphReplayFixture(t);
+  const entry = 'apps/cli/src/index.mjs';
+  f.write(entry, 'throw new Error("Cannot load the CLI on this tree");\n');
+  f.git('add', '--', entry);
+  f.git('commit', '-qm', 'test: broken CLI parent');
+  const head = f.git('rev-parse', 'HEAD').trim();
+
+  const { result } = runWithCommitLockContender(f, head, packet);
+
+  assert.notEqual(result.status, 0, result.stdout);
+  assert.match(result.stderr, /cli: .*Cannot load the CLI on this tree/);
+  assert.equal(f.git('rev-parse', 'HEAD').trim(), head);
+});
+
 test('leaves HEAD unchanged if the selected CLI entry does not return a result', { skip: !hasFlock }, t => {
   const { f, base } = treeGraphReplayFixture(t);
   const harness = 'apps/stack/scripts/perf/entry-load.mjs';
@@ -503,14 +518,14 @@ test('leaves HEAD unchanged if the selected CLI entry does not return a result',
   assert.equal(f.git('rev-parse', 'HEAD').trim(), base);
 });
 
-test('lands a selected-zero UI packet on moving HEAD without an unlocked entry recheck', { skip: !hasFlock }, t => {
-  const { f, base, winner, packet } = treeGraphReplayFixture(t);
+test('reuses a successful CLI load after a competing packet leaves its inputs unchanged', { skip: !hasFlock }, t => {
+  const { f, base, winner, packet } = treeGraphReplayFixture(t, { winnerInput: 'notes.md' });
   const { result, acquisitions, treeGateLocks } = runWithCommitLockContender(f, winner, packet);
 
   assert.equal(result.status, 0, result.stderr);
   assert.doesNotMatch(result.stderr, /Released the commit lock for the full gate/);
   assert.deepEqual(acquisitions, [base]);
-  assert.deepEqual(treeGateLocks, []);
+  assert.deepEqual(treeGateLocks, ['cli:0']);
   assert.equal(f.git('rev-parse', 'HEAD^').trim(), winner);
   assert.equal(f.git('show', `HEAD:${packet}`), 'export const value = 2;\n');
 });
