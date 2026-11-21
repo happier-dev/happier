@@ -426,12 +426,15 @@ describe('createDaemonExternalActionTargetResolver', () => {
     mocks.fetchSessionById.mockResolvedValue(session('machine-local'));
     const resolver = createDaemonExternalActionTargetResolver({ credentials: TOKEN_ONLY_CREDENTIALS });
 
+    const admittedMachines: string[] = [];
     await expect(resolver({
       actionId: 'session.open',
       target: { kind: 'session', sessionId: 'c111111111111111111111111' },
       currentMachineId: 'machine-local',
+      onAdmittedSessionMachine: machineId => admittedMachines.push(machineId),
       signal,
     })).resolves.toEqual({ kind: 'session', sessionId: 'c111111111111111111111111' });
+    expect(admittedMachines).toEqual(['machine-local']);
 
     expect(mocks.fetchSessionById).toHaveBeenCalledWith({
       token: 'daemon-token',
@@ -496,10 +499,13 @@ describe('createDaemonExternalActionTargetResolver', () => {
     mocks.fetchAccountMachineReplacements.mockResolvedValue([]);
     const resolver = createDaemonExternalActionTargetResolver({ credentials: TOKEN_ONLY_CREDENTIALS });
 
+    const admittedMachines: string[] = [];
     await expect(resolver({
       actionId: 'session.open',
       target: { kind: 'session', sessionId: 'c111111111111111111111111' },
       currentMachineId: 'machine-local',
+      onAdmittedSessionMachine: machineId => admittedMachines.push(machineId),
     })).resolves.toBeNull();
+    expect(admittedMachines).toEqual([]);
   });
 });

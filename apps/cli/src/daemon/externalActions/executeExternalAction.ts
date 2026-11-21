@@ -99,6 +99,7 @@ export type ResolveExternalActionTarget = (input: Readonly<{
   target: ExternalActionTargetV1 | undefined;
   currentMachineId: string;
   context?: Pick<ActionExecutorContext, 'actionCaller' | 'surface'>;
+  onAdmittedSessionMachine?: (machineId: string) => void;
   signal?: AbortSignal;
 }>) => Promise<ExternalActionTargetV1 | null>;
 
@@ -682,6 +683,7 @@ async function executeExternalActionRequest(input: Readonly<{
   // so an explicit or input-derived Session is proved current immediately
   // before the canonical Action executor runs.
   let target: ExternalActionTargetV1 | null;
+  let expectedSessionMachineId: string | undefined;
   trace('target_resolution.begin');
   try {
     target = await timeApprovalPhase('approval.external.target_resolution', () => (requesterContext?.resolveTarget ?? input.resolveTarget)({
@@ -690,6 +692,7 @@ async function executeExternalActionRequest(input: Readonly<{
       target: reconciliation.target,
       currentMachineId: input.currentMachineId,
       context: placementContext,
+      onAdmittedSessionMachine: machineId => { expectedSessionMachineId = machineId; },
       ...(input.signal ? { signal: input.signal } : {}),
     }));
   } catch (error) {
@@ -1063,6 +1066,7 @@ async function executeExternalActionRequest(input: Readonly<{
     ...(reconciliation.target !== undefined || executionAuthorization?.success
       || reconciliation.executionPlacement !== 'account'
       ? { externalActionTarget: target } : {}),
+    ...(target.kind === 'session' && expectedSessionMachineId ? { expectedSessionMachineId } : {}),
     // Both requester Account admission and durable approval origins consume
     // this exact receiving daemon fact, including fresh Machine-targeted starts.
     defaultSessionMachineId: input.currentMachineId,

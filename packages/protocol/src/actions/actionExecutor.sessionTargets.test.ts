@@ -21,6 +21,10 @@ import { ApiTokenGrantV1Schema } from '../auth/apiTokenGrant.js';
 import { computeActionInputApprovalDigestV1 } from './decisionAuthority.js';
 import { createEmptyWorkflowActionHost } from './executor/emptyWorkflowActionHost.testkit.js';
 import { DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 } from '../account/settings/sessionAgentSpawnPolicyV1.js';
+import { createActionAutomationHttpPortV1 } from './executor/actionAutomationAdmission.js';
+import { createAccountWorkflowTriggerActions } from './executor/workflowTriggerAccountHost.js';
+import { automationSubjectKeyV1 } from '../automations/automationSubjectV1.js';
+import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '../automations/automationTriggerDefinitionStoredContent.js';
 
 const context: ActionExecutorContext = {
   serverId: 'home', defaultSessionId: 'parent', defaultSessionMachineId: 'machine', surface: 'cli', authority: 'present_user',
@@ -90,6 +94,68 @@ function harness() {
 }
 
 describe('SessionTarget at the Actions front door', () => {
+  it('asks the actor for a shared Machine check before mutating an admitted Session Role', async () => {
+    const h = harness();
+    const actionId = 'session.roles.add';
+    const subject = { kind: 'machine', serverId: 'home', machineId: 'session-machine' } as const;
+    const definition = { kind: 'action', phase: 'before', actionIds: [actionId], subject, mode: 'wait',
+      onFailure: 'refuse', filter: { v: 1, all: [{ field: '/requestId', op: 'eq', value: 'target-test' }] } };
+    const source = { automationId: 'author-check', triggerId: 'shared-trigger', triggerRevision: 1,
+      workflowId: 'shared-workflow', workflowRevision: 1, ownerAccountId: 'author',
+      actionIds: [actionId], phase: 'before', mode: 'wait', onFailure: 'refuse',
+      reachesOthers: true, subjectKind: subject.kind,
+      subjectKey: automationSubjectKeyV1(subject, 'shared-workflow') } as const;
+    const binding = { v: 1, automationId: source.automationId, triggerId: source.triggerId,
+      triggerRevision: source.triggerRevision, triggerKind: 'action' } as const;
+    const sharedDefinitionEnvelope = sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain', binding, definition });
+    const unexpected = async (): Promise<never> => { throw new Error('Unexpected author Account read'); };
+    let contentReads = 0;
+    let indexReads = 0;
+    let roleWrites = 0;
+    const actions = createAccountWorkflowTriggerActions({
+      resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+      randomBytes: length => new Uint8Array(length), newId: () => 'unused',
+      resolveWorkflow: unexpected,
+      resolveWorkflowContent: async () => {
+        contentReads++;
+        return { revision: { headerVersion: 1, bodyVersion: 1 }, openAssociatedContent: async content => {
+          if (content.t !== 'plain') throw new Error('Expected plain Workflow content');
+          return content.v;
+        }, sealAssociatedContent: unexpected };
+      },
+      automations: { get: unexpected, list: unexpected, listDetails: unexpected,
+        create: unexpected, reconcile: unexpected, delete: unexpected },
+    });
+    const port = createActionAutomationHttpPortV1({ accountId: 'actor', request: async (_path, request) => {
+      expect(request.method).toBe('GET');
+      indexReads++;
+      return { v: 1, rows: [{ ...source, sharedDefinitionEnvelope }] };
+    } });
+    const executor = createActionExecutor({ ...h.deps, actionAutomations: { ...port,
+      select: args => port.select({ ...args, prepareMatching: actions.prepareActionMatching('actor') }) },
+      roleActionExecute: async () => { roleWrites++; return { updated: true }; },
+    } as unknown as ActionExecutorDeps);
+    const input = { sessionId: 'exact-id', roleId: 'scout', role: {
+      name: 'Scout', instructions: 'Read and report.', runsAs: { kind: 'session' },
+      workspaceWrites: 'deny', secondOpinion: 'off', enabled: true,
+    } };
+    const actor = { ...context, runtimeAccountId: 'actor', serverIdentityId: subject.serverId,
+      defaultSessionId: input.sessionId, defaultSessionMachineId: subject.machineId,
+      externalActionTarget: { kind: 'session' as const, sessionId: input.sessionId } };
+
+    // The executor's ambient Machine is not evidence that it hosts this Session.
+    expect(await executor.execute(actionId, input, actor)).toEqual({ ok: true, result: { updated: true } });
+    expect(contentReads).toBe(0);
+
+    const result = await executor.execute(actionId, input, { ...actor, expectedSessionMachineId: subject.machineId });
+    expect(result).toEqual({ ok: true, result: { kind: 'approval_request_created', artifactId: 'targets-approval', actionId } });
+    expect(h.approval()?.automaticChecks).toMatchObject({ phase: 'consent', runs: [],
+      selected: [{ triggerId: source.triggerId, subject }], consents: [{ triggerId: source.triggerId, decision: 'pending' }] });
+    expect(indexReads).toBe(1);
+    expect(contentReads).toBe(1);
+    expect(roleWrites).toBe(1);
+  });
+
   it('previews explicit addresses and refuses foreign access through the exact reference owner', async () => {
     const h = harness();
     const executor = createActionExecutor({ ...h.deps,

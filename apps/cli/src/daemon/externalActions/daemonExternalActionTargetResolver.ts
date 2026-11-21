@@ -545,7 +545,7 @@ export function createDaemonExternalActionTargetResolver(input: Readonly<{
   currentMachineHost?: string | null;
   currentMachineHomeDir?: string | null;
 }>): ResolveExternalActionTarget {
-  return async ({ actionId, actionInput, target, currentMachineId, context, signal }) => {
+  return async ({ actionId, actionInput, target, currentMachineId, context, onAdmittedSessionMachine, signal }) => {
     if (!target) {
       return { kind: 'machine', machineId: currentMachineId };
     }
@@ -592,6 +592,8 @@ export function createDaemonExternalActionTargetResolver(input: Readonly<{
         : {}),
       credentials: { token: input.credentials.token },
     });
-    return locality ? target : null;
+    if (!locality) return null;
+    onAdmittedSessionMachine?.(localityRecord.machineId);
+    return target;
   };
 }

@@ -159,6 +159,12 @@ export function projectActionAutomationSubjectsV1(args: ActionAutomationSelectAr
   if (serverId && externalTarget?.kind === 'machine') subjects.push({ role: 'operand', subject: {
     kind: 'machine', serverId, machineId: externalTarget.machineId,
   } });
+  const sessionMachineId = args.context.expectedSessionMachineId;
+  const sessionTargets = args.context.sessionTargetsV1?.targets;
+  if (serverId && sessionMachineId && externalTarget?.kind === 'session'
+    && (!sessionTargets || (sessionTargets.length === 1 && sessionTargets[0]?.sessionId === externalTarget.sessionId))) subjects.push({ role: 'context', subject: {
+    kind: 'machine', serverId, machineId: sessionMachineId,
+  } });
   if (serverId && args.approvalScope) {
     const scope = args.approvalScope;
     subjects.push({ role: 'operand', subject: scope.kind === 'machine'
