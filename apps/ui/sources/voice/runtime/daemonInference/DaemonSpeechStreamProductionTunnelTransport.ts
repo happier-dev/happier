@@ -40,6 +40,7 @@ import { readPeerEndpointForServerScope } from '@/sync/domains/machines/peer/med
 import { resolvePeerMediationDirectPreferencesForScope } from '@/sync/domains/settings/peerMediationPreferences';
 import { parseToken } from '@/utils/auth/parseToken';
 import { createServerScopedRelaySocket } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRelaySocket';
+import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 
 import { createDaemonSpeechStreamCarrierAdapter } from './DaemonSpeechStreamCarrier';
 import { createDaemonSpeechStreamTunnelTransport, type DaemonSpeechStreamControlTransport } from './DaemonSpeechStreamTunnelTransport';
@@ -98,6 +99,7 @@ export type OpenedProductionVoiceMediaTunnel = Readonly<{
   tunnelId: string;
   machineId: string;
   close(): Promise<void>;
+  waitForRelayReconnect?: (signal: AbortSignal) => Promise<boolean>;
 }>;
 
 function resolveEndpointPath(endpointUrl: string, path: string): string {
@@ -353,6 +355,7 @@ function createSelection(input: Readonly<{
   compatibilityTransport: DaemonSpeechStreamTransport & DaemonSpeechStreamControlTransport;
   cleanup?: () => Promise<void> | void;
   callSignal?: AbortSignal;
+  waitForRelayReconnect?: (signal: AbortSignal) => Promise<boolean>;
 }>): DaemonVoiceInferenceStreamingSttTransportSelection {
   const receipt = daemonSpeechStreamDiagnostics.beginBinaryTunnelReceipt({
     routeKind: input.routeKind,
@@ -391,6 +394,7 @@ function createSelection(input: Readonly<{
       controlTransport,
       onRelayAuthenticatedEvidence: receipt.recordRelayEvidence,
       onRelayEncryptionFailure: receipt.recordRelayEncryptionFailure,
+      waitForRelayReconnect: input.waitForRelayReconnect,
     });
     return {
       maxPcm16ChunkBytes: tunnelTransport.maxPcm16ChunkBytes,
@@ -465,7 +469,7 @@ function createSelection(input: Readonly<{
     transport: createStreamTransport(input.compatibilityTransport),
     createStreamTransport,
     close: recordLocalTransportClose,
-    get closed() { return localTransportClosePromise !== null; },
+    get closed() { return localTransportClosePromise !== null || input.stream.relaySocketLost === true; },
   };
 }
 
@@ -557,6 +561,9 @@ async function tryOpenServerRelayTunnel(
   });
   if (!voiceRelayDecision.ok) return null;
 
+  // Voice media opens on the applied Home. A fresh attempt can borrow that
+  // Account's new socket, while Account retirement ends recovery.
+  const accountScope = captureActiveServerAccountScopeCurrentness();
   const relaySocket = await createServerScopedRelaySocket<PeerTcpTunnelRelayEnvelope>({
     machineId: params.input.machineTarget.machineId,
     serverId: params.server.serverId,
@@ -569,6 +576,7 @@ async function tryOpenServerRelayTunnel(
       on: (listener) => apiSocket.onMessage(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, listener),
     },
     getActiveSocketId: () => apiSocket.getSocketId(),
+    onActiveSocketIdChange: listener => apiSocket.onStatusChange(listener),
     createScopedTransport: (socket) => ({
       send: (payload) => {
         socket.emit(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, payload);
@@ -645,6 +653,10 @@ async function tryOpenServerRelayTunnel(
     serverRelayScopeUserId: relaySocket.scopeUserId,
     serverRelaySocket: {
       socketId: relaySocketId,
+      socketLifecycle: {
+        getSocketId: () => relaySocket.socketId ?? '',
+        onSocketIdChange: relaySocket.onSocketIdChange,
+      },
       send: (_event, envelope) => {
         relaySocket.sendEnvelope(envelope);
       },
@@ -667,6 +679,29 @@ async function tryOpenServerRelayTunnel(
     maxFrameBytes: Math.min(result.response.maxFrameBytes, relayAuthority.maxFrameBytes),
     tunnelId: params.tunnelId,
     machineId: params.input.machineTarget.machineId,
+    async waitForRelayReconnect(signal) {
+      if (signal.aborted || !accountScope.isCurrent()) return false;
+      let unsubscribe = () => {};
+      let release = () => {};
+      let onAbort = () => {};
+      try {
+        return await new Promise<boolean>(resolve => {
+          onAbort = () => resolve(false);
+          signal.addEventListener('abort', onAbort, { once: true });
+          const retirement = accountScope.onRetire(onAbort);
+          release = () => retirement.dispose();
+          unsubscribe = apiSocket.onStatusChange(status => {
+            if (status === 'connected' && apiSocket.getSocketId()) {
+              resolve(accountScope.isCurrent());
+            }
+          });
+        });
+      } finally {
+        unsubscribe();
+        release();
+        signal.removeEventListener('abort', onAbort);
+      }
+    },
     async close() {
       await Promise.resolve(result.stream.close()).finally(() => {
         relaySocket.disconnect();
@@ -798,6 +833,7 @@ export async function createProductionDaemonSpeechStreamingSttTransport(
     machineId: opened.machineId,
     compatibilityTransport: input.compatibilityTransport,
     cleanup: opened.close,
+    waitForRelayReconnect: opened.waitForRelayReconnect,
     ...(input.callSignal ? { callSignal: input.callSignal } : {}),
   });
 }

@@ -14,6 +14,7 @@ import {
     type DaemonSpeechPcmCaptureOptions,
 } from './DaemonSpeechPcmCapture';
 import type { DaemonSpeechStreamSender } from './DaemonSpeechStreamSender';
+import { DaemonSpeechRelayDisconnectedError } from './DaemonSpeechRelayDisconnectedError';
 import type { DaemonVoiceInferenceClient } from './DaemonVoiceInferenceClient';
 import { daemonSpeechStreamDiagnostics, type DaemonSpeechStreamStartStep } from './daemonSpeechStreamDiagnostics';
 
@@ -45,6 +46,7 @@ type ActiveDaemonStreamingStt = {
     finalText: string;
     aborted: boolean;
     cancelAttempt: Promise<void> | null;
+    recovery?: AbortController;
     hasAudio: boolean;
     unlinkAbort: () => void;
 };
@@ -326,6 +328,10 @@ export function createDaemonStreamingSttController(
                         }
                     }).catch((error: unknown) => {
                         if (active !== admittedHandle || admittedHandle.aborted) return;
+                        if (error instanceof DaemonSpeechRelayDisconnectedError && callSignal && !stopping && error.waitForReconnect) {
+                            void recoverCapture(admittedHandle, error.waitForReconnect);
+                            return;
+                        }
                         void cancelActive(admittedHandle).then(() => {
                             if (active === admittedHandle) active = null;
                             const failure = createVoiceMachineError({
@@ -430,6 +436,7 @@ export function createDaemonStreamingSttController(
             await owner.retire();
             const handle = await startAttempt(params, prefixText);
             owner.retire = async () => {
+                handle?.recovery?.abort();
                 // End can abandon a held cancellation reply. Its sender is
                 // already locally closed; physical capture still must retire
                 // before this admitted call can listen again.
@@ -444,6 +451,34 @@ export function createDaemonStreamingSttController(
         owner.pending = attempt.catch(() => {});
         return attempt;
     };
+    const recoverCapture = async (
+        handle: ActiveDaemonStreamingStt,
+        waitForReconnect: (signal: AbortSignal) => Promise<boolean>,
+    ): Promise<void> => {
+        const { signal, callSignal, sink } = handle.params;
+        const recovery = new AbortController();
+        handle.recovery = recovery;
+        const abort = () => recovery.abort();
+        signal?.addEventListener('abort', abort, { once: true });
+        callSignal?.addEventListener('abort', abort, { once: true });
+        try {
+            const [connected] = await Promise.all([
+                waitForReconnect(recovery.signal),
+                cancelActive(handle),
+            ]);
+            if (!connected || recovery.signal.aborted || active !== handle) return;
+            handle.recovery = undefined;
+            active = null;
+            await start(handle.params, handle.finalText);
+        } catch (cause) {
+            if (!recovery.signal.aborted) sink.onError(createVoiceMachineError({
+                kind: 'provider_error', reason: 'daemon_streaming_stt_pcm_chunk_failed', cause,
+            }));
+        } finally {
+            signal?.removeEventListener('abort', abort);
+            callSignal?.removeEventListener('abort', abort);
+        }
+    };
     const finalize = async (): Promise<SttStopResult> => {
         if (stopping) {
             return stopping;
@@ -452,6 +487,7 @@ export function createDaemonStreamingSttController(
         if (!handle) {
             return { finalText: '' };
         }
+        handle.recovery?.abort();
         const pending = (async () => {
             try {
                 if (handle.sessionId) {
@@ -514,6 +550,7 @@ export function createDaemonStreamingSttController(
     return {
         start,
         discardInput: async () => {
+            active?.recovery?.abort();
             await Promise.all([...unretiredCaptures].map(retireCapture));
         },
         hasUnretiredInput: () => unretiredCaptures.size > 0,

@@ -18,6 +18,7 @@ import { decodeBase64 } from '@/encryption/base64';
 import { openAes256GcmBytes, sealAes256GcmBytes } from '@/encryption/aes256GcmBytes';
 import type { PeerTcpTunnelClientStream } from '@/sync/domains/machines/peer/mediation/tunnel';
 import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
+import { DaemonSpeechRelayDisconnectedError } from './DaemonSpeechRelayDisconnectedError';
 import type { DaemonSpeechStreamRelayEncryptionFailure } from './daemonSpeechStreamDiagnostics';
 
 import type {
@@ -38,11 +39,12 @@ export type DaemonSpeechStreamTunnelTransportOptions = Readonly<{
   tunnelId: string;
   maxFrameBytes?: number;
   stream: Pick<PeerTcpTunnelClientStream, 'sendFrame' | 'sendSubstreamDataFrame' | 'sendSubstreamFrame' | 'onSubstreamFrame'>
-    & Partial<Pick<PeerTcpTunnelClientStream, 'onFrame'>>;
+    & Partial<Pick<PeerTcpTunnelClientStream, 'onFrame' | 'relaySocketLost'>>;
   /** The Machine RPC owner: its E2EE content carries the stream key and the transcript-bearing finish. */
   controlTransport: DaemonSpeechStreamControlTransport;
   direction?: Extract<PeerTcpTunnelFrame, { kind: 'data' }>['direction'];
   responseTimeoutMs?: number;
+  waitForRelayReconnect?: (signal: AbortSignal) => Promise<boolean>;
   resolveSubstreamId?: (input: Readonly<{
     streamId: string;
     generation: number;
@@ -101,10 +103,11 @@ function decodeSubstreamResponseBytes(
 }
 
 async function waitForSubstreamResponseBytes(input: Readonly<{
-  stream: Pick<PeerTcpTunnelClientStream, 'onSubstreamFrame'> & Partial<Pick<PeerTcpTunnelClientStream, 'onFrame'>>;
+  stream: Pick<PeerTcpTunnelClientStream, 'onSubstreamFrame'> & Partial<Pick<PeerTcpTunnelClientStream, 'onFrame' | 'relaySocketLost'>>;
   substreamId: string;
   seq: number;
   timeoutMs: number;
+  waitForRelayReconnect?: (signal: AbortSignal) => Promise<boolean>;
   send: () => Promise<void>;
 }>): Promise<Uint8Array | null> {
   if (!input.stream.onSubstreamFrame) {
@@ -114,10 +117,16 @@ async function waitForSubstreamResponseBytes(input: Readonly<{
   let detach = () => {};
   let detachTunnel = () => {};
   let timeout: ReturnType<typeof setTimeout> | null = null;
+  let disconnect: DaemonSpeechRelayDisconnectedError | undefined;
   try {
     const responsePromise = new Promise<Uint8Array>((resolve, reject) => {
       const rejectTerminal = (frame: PeerTcpTunnelFrame): boolean => {
         if (frame.kind === 'abort') {
+          if (input.stream.relaySocketLost) {
+            disconnect = new DaemonSpeechRelayDisconnectedError(input.waitForRelayReconnect);
+            reject(disconnect);
+            return true;
+          }
           reject(new Error(`daemon_voice_inference_substream_aborted:${frame.reasonCode}`));
           return true;
         }
@@ -154,10 +163,13 @@ async function waitForSubstreamResponseBytes(input: Readonly<{
       bytes => ({ ok: true as const, bytes }),
       (error: unknown) => ({ ok: false as const, error }),
     );
-    await input.send();
+    if (!disconnect) await input.send();
     const response = await outcome;
     if (!response.ok) throw response.error;
     return response.bytes;
+  } catch (error) {
+    // The socket can leave while an already queued send is preparing its bytes.
+    throw disconnect ?? error;
   } finally {
     if (timeout) {
       clearTimeout(timeout);
@@ -231,6 +243,7 @@ export function createDaemonSpeechStreamTunnelTransport(
       // This is the binary carrier for the same Machine operation as the RPC
       // compatibility path, including queued send and native inference work.
       timeoutMs: options.responseTimeoutMs ?? DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS,
+      waitForRelayReconnect: options.waitForRelayReconnect,
       send: async () => {
         const previous = sendTail;
         let release!: () => void;
@@ -340,6 +353,7 @@ export function createDaemonSpeechStreamTunnelTransport(
         if (response.ok) options.onRelayAuthenticatedEvidence?.({ phase: 'data', ackSeq: response.ackSeq });
         return response;
       } catch (error) {
+        if (error instanceof DaemonSpeechRelayDisconnectedError) throw error;
         return relayFailure(step, error);
       }
     },

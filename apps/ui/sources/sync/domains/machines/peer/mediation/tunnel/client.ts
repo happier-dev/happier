@@ -12,7 +12,7 @@ import {
 
 import type { PeerLoopbackRouteAvailabilityResult } from '../loopback/routeAvailability';
 import { openPeerTcpTunnelLoopbackStream, type PeerTcpTunnelWebSocketCtor } from './loopbackStream';
-import { openPeerTcpTunnelRelayStream } from './relayStream';
+import { openPeerTcpTunnelRelayStream, type PeerTcpTunnelRelaySocketLifecycle } from './relayStream';
 import { openPeerTcpTunnelIrohStream, type PeerTcpTunnelIrohRoute } from './irohStream';
 import { readHomeApplicationCarrierEligibility } from '@/sync/runtime/homeCarrierPolicy';
 export type { PeerTcpTunnelIrohRoute } from './irohStream';
@@ -41,6 +41,8 @@ export type OpenPeerTcpTunnelClientResult =
       }>;
 
 export type PeerTcpTunnelClientStream = Readonly<{
+    /** Local transport fact. Peer terminal frames cannot set it. */
+    relaySocketLost?: boolean;
     sendFrame: (frame: PeerTcpTunnelFrame) => Promise<void> | void;
     onFrame: (handler: (frame: PeerTcpTunnelFrame) => void) => () => void;
     sendSubstreamOpen?: (substreamId: string) => Promise<void> | void;
@@ -70,6 +72,7 @@ export type PeerTcpTunnelClientStream = Readonly<{
 
 export type PeerTcpTunnelRelaySocketClient = Readonly<{
     socketId: string;
+    socketLifecycle?: PeerTcpTunnelRelaySocketLifecycle;
     send: (
         event: typeof PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT,
         envelope: PeerTcpTunnelRelayEnvelope,
@@ -168,6 +171,7 @@ export async function openPeerTcpTunnel(input: Readonly<{
                         open: request.open,
                         send: relaySocket.send,
                         onEnvelope: relaySocket.onEnvelope,
+                        socketLifecycle: relaySocket.socketLifecycle,
                         signal: request.signal,
                     })
                     : null

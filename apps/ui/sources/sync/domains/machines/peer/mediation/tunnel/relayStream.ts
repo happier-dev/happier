@@ -18,6 +18,11 @@ type SendPeerTcpTunnelRelayEnvelope = (
     envelope: PeerTcpTunnelRelayEnvelope,
 ) => void;
 
+export type PeerTcpTunnelRelaySocketLifecycle = Readonly<{
+    getSocketId: () => string;
+    onSocketIdChange: (listener: () => void) => () => void;
+}>;
+
 function userToMachineEnvelope(input: Readonly<{
     scopeUserId: string;
     relaySocketId: string;
@@ -39,6 +44,7 @@ export async function openPeerTcpTunnelRelayStream(input: Readonly<{
     open: PeerTcpTunnelOpenV1;
     send: SendPeerTcpTunnelRelayEnvelope;
     onEnvelope: (handler: (envelope: PeerTcpTunnelRelayEnvelope) => void) => () => void;
+    socketLifecycle?: PeerTcpTunnelRelaySocketLifecycle;
     signal?: AbortSignal | null;
 }>): Promise<PeerTcpTunnelClientStream> {
     if (input.signal?.aborted) {
@@ -51,8 +57,10 @@ export async function openPeerTcpTunnelRelayStream(input: Readonly<{
         frame: PeerTcpTunnelFrame;
     }>) => void>();
     let closed = false;
+    let relaySocketLost = false;
     let terminalFrame: Extract<PeerTcpTunnelFrame, { kind: 'abort' | 'close' }> | null = null;
     let detach = () => {};
+    let detachSocket = () => {};
     const abort = (): void => {
         try {
             close();
@@ -84,11 +92,12 @@ export async function openPeerTcpTunnelRelayStream(input: Readonly<{
         });
     }
 
-    function retireFromPeer(frame: NonNullable<typeof terminalFrame>): void {
+    function retire(frame: NonNullable<typeof terminalFrame>): void {
         terminalFrame = frame;
         closed = true;
         input.signal?.removeEventListener('abort', abort);
         detach();
+        detachSocket();
         for (const handler of handlers) handler(frame);
         handlers.clear();
         substreamHandlers.clear();
@@ -113,9 +122,9 @@ export async function openPeerTcpTunnelRelayStream(input: Readonly<{
         if (envelope.v === 1) {
             if (envelope.frame.kind !== 'abort' && envelope.frame.kind !== 'close') return;
             if (envelope.frame.tunnelId !== input.open.tunnelId) return;
-            if (envelope.frame.kind === 'abort') retireFromPeer(envelope.frame);
+            if (envelope.frame.kind === 'abort') retire(envelope.frame);
             if (envelope.frame.kind === 'close' && !envelope.frame.halfClose) {
-                retireFromPeer({ ...envelope.frame, halfClose: false });
+                retire({ ...envelope.frame, halfClose: false });
             }
             return;
         }
@@ -144,7 +153,7 @@ export async function openPeerTcpTunnelRelayStream(input: Readonly<{
             });
         if (!decoded?.ok || !decoded.frame || decoded.frame.tunnelId !== input.open.tunnelId) return;
         if (decoded.frame.kind === 'abort' || (decoded.frame.kind === 'close' && !decoded.frame.halfClose)) {
-            retireFromPeer(decoded.frame);
+            retire(decoded.frame);
             return;
         }
         if (!fromMachine) return;
@@ -152,8 +161,25 @@ export async function openPeerTcpTunnelRelayStream(input: Readonly<{
     });
     if (closed) detach();
 
+    const socketLifecycle = input.socketLifecycle;
+    if (!closed && socketLifecycle) {
+        const retireLostSocket = () => {
+            if (closed || socketLifecycle.getSocketId() === input.relaySocketId) return;
+            // The relay closes the admitted tunnel when its opening socket leaves.
+            // Publish the same terminal shape locally even if the peer's reply was lost.
+            relaySocketLost = true;
+            retire({ v: 1, kind: 'abort', tunnelId: input.open.tunnelId, reasonCode: 'relay_socket_disconnected' });
+        };
+        const unsubscribe = socketLifecycle.onSocketIdChange(retireLostSocket);
+        if (closed) unsubscribe();
+        else {
+            detachSocket = unsubscribe;
+            retireLostSocket();
+        }
+    }
+
     try {
-        input.send(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, userToMachineEnvelope({
+        if (!closed) input.send(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, userToMachineEnvelope({
             scopeUserId: input.scopeUserId,
             relaySocketId: input.relaySocketId,
             open: input.open,
@@ -166,6 +192,7 @@ export async function openPeerTcpTunnelRelayStream(input: Readonly<{
         closed = true;
         handlers.clear();
         substreamHandlers.clear();
+        detachSocket();
         try {
             detach();
         } catch {
@@ -180,6 +207,7 @@ export async function openPeerTcpTunnelRelayStream(input: Readonly<{
         if (closed) return;
         closed = true;
         input.signal?.removeEventListener('abort', abort);
+        detachSocket();
         let sendFailed = false;
         let sendError: unknown;
         try {
@@ -217,6 +245,7 @@ export async function openPeerTcpTunnelRelayStream(input: Readonly<{
     }
 
     return {
+        get relaySocketLost() { return relaySocketLost; },
         sendFrame: (frame) => {
             assertPeerTcpTunnelStreamWritable(closed);
             sendRelayFrame(frame);

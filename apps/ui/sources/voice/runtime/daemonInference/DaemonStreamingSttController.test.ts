@@ -628,6 +628,83 @@ describe('createDaemonStreamingSttController with actual capture and daemon clie
     expect(context.processor.onaudioprocess).toBeNull();
   });
 
+  it.each(['reconnect', 'end'] as const)('retires disconnected capture and handles %s on the same call', async (next) => {
+    const { createDaemonSpeechStreamSender } = await import('./DaemonSpeechStreamSender');
+    const { DaemonSpeechRelayDisconnectedError } = await import('./DaemonSpeechRelayDisconnectedError');
+    const disconnected = createDeferred<void>();
+    const waiting = createDeferred<void>();
+    const connected = createDeferred<void>();
+    const replacement = createDeferred<void>();
+    const call = new AbortController();
+    let starts = 0;
+    const runtime = createDaemonStreamingSttController({
+      getSettings: () => storage.getState().settings,
+      createPcmCapture: createWebDaemonSpeechPcmCapture,
+      createClient: () => ({
+        createStreamingSttSender: async () => createDaemonSpeechStreamSender({
+          requestId: 'capture-request-' + (starts + 1),
+          transport: {
+            start: async (request) => {
+              const streamId = 'stream-' + ++starts;
+              if (starts === 2) replacement.resolve();
+              return { ok: true, requestId: request.requestId, streamId, generation: 1,
+                ackSeq: -1, format: DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT };
+            },
+            chunk: async ({ streamId, generation, seq }) => {
+              if (streamId === 'stream-1' && seq === 1) {
+                await disconnected.promise;
+                throw new DaemonSpeechRelayDisconnectedError(signal => {
+                  waiting.resolve();
+                  return new Promise<boolean>(resolve => {
+                    signal.addEventListener('abort', () => resolve(false), { once: true });
+                    void connected.promise.then(() => resolve(!signal.aborted));
+                  });
+                });
+              }
+              return { ok: true, streamId, generation, ackSeq: seq,
+                events: [{ type: 'partial', seq, text: streamId, confidence: null, isEndpoint: false }] };
+            },
+            finish: async ({ streamId, generation, finalSeq }) =>
+              DaemonVoiceInferenceSttStreamFinishResponseSchema.parse({
+                ok: true, streamId, generation, ackSeq: finalSeq, finalText: '', events: [],
+              }),
+            cancel: async ({ streamId, generation }) => ({ ok: true, streamId, generation }),
+          },
+        }),
+      }),
+    });
+    activeController = runtime;
+    const params = startParams({ callSignal: call.signal, capturePurpose: 'conversation' });
+    try {
+      await runtime.start(params);
+      emitPcm();
+      await params.events.partial;
+      expect(params.sink.onPartial).toHaveBeenCalledWith('stream-1');
+      emitPcm();
+      disconnected.resolve();
+      const outcome = await Promise.race([waiting.promise.then(() => 'waiting'), params.events.error.then(() => 'failed')]);
+      expect(outcome).toBe('waiting');
+      await vi.waitFor(() => expect(runtime.hasUnretiredInput()).toBe(false));
+      expect(starts).toBe(1);
+      if (next === 'end') {
+        await runtime.stop();
+        connected.resolve();
+        await new Promise<void>(resolve => setImmediate(resolve));
+        expect(starts).toBe(1);
+        return;
+      }
+      connected.resolve();
+      await replacement.promise;
+      await vi.waitFor(() => expect(context.processor.onaudioprocess).toBeTypeOf('function'));
+      emitPcm();
+      await vi.waitFor(() => expect(params.sink.onPartial).toHaveBeenCalledWith('stream-2'));
+      expect(params.sink.onError).not.toHaveBeenCalled();
+    } finally {
+      call.abort();
+      connected.resolve();
+    }
+  });
+
   it('does not start a late daemon sender or PCM capture after cancellation, and permits retry', async () => {
     const gate = createDeferred<void>();
     const entered = createDeferred<void>();

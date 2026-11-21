@@ -36,6 +36,7 @@ describe('sender → Account-mode relay framing → daemon STT intake', () => {
     { contentMode: 'e2ee', holdNativeAdmission: false, nativeFailure: true, slowPhase: null },
     { contentMode: 'e2ee', holdNativeAdmission: false, nativeFailure: false, slowPhase: 'append' },
     { contentMode: 'e2ee', holdNativeAdmission: false, nativeFailure: false, slowPhase: 'finish' },
+    { contentMode: 'e2ee', holdNativeAdmission: false, nativeFailure: false, slowPhase: 'disconnect' },
   ] as const)('preserves capture and native outcomes in the Account content mode %j', async ({ contentMode, holdNativeAdmission, nativeFailure, slowPhase }) => {
     const streamRoot = await mkdtemp(join(tmpdir(), 'happier-df66-intake-'));
     const events = new EventTarget();
@@ -110,12 +111,22 @@ describe('sender → Account-mode relay framing → daemon STT intake', () => {
         }));
       },
     });
-    const stream = await openPeerTcpTunnelRelayStream({ scopeUserId: binding.accountId, relaySocketId: 'tab',
+    let socketId = 'tab';
+    const socketEvents = new EventTarget();
+    const socketLifecycle = {
+      getSocketId: () => socketId,
+      onSocketIdChange: (listener: () => void) => {
+        socketEvents.addEventListener('change', listener);
+        return () => socketEvents.removeEventListener('change', listener);
+      },
+    };
+    const relayInput = { scopeUserId: binding.accountId, relaySocketId: 'tab',
+      socketLifecycle,
       open: { v: 1, kind: 'open', tunnelId: binding.tunnelId, targetMachineId: binding.machineId,
         routeKind: 'server_relay', destination, relayAuthorization,
-        selectedEncoding: PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2 },
-      onEnvelope: handler => { receive = handler; return () => { receive = undefined; }; },
-      send: (_event, envelope) => {
+        selectedEncoding: PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2 } as const,
+      onEnvelope: (handler: (envelope: PeerTcpTunnelRelayEnvelope) => void) => { receive = handler; return () => { receive = undefined; }; },
+      send: (_event: string, envelope: PeerTcpTunnelRelayEnvelope) => {
         const strict = PeerTcpTunnelRelayEnvelopeSchema.parse(envelope);
         if (strict.v !== 2) return;
         const decoded = decodePeerTcpTunnelBinaryFrameV2({ frame: strict.frame, maxHeaderBytes: maxFrameBytes, maxPayloadBytes: maxFrameBytes });
@@ -137,9 +148,10 @@ describe('sender → Account-mode relay framing → daemon STT intake', () => {
           return response;
         }));
       },
-    });
+    };
+    const stream = await openPeerTcpTunnelRelayStream(relayInput);
     const transport = createDaemonSpeechStreamTunnelTransport({ tunnelId: binding.tunnelId, stream, maxFrameBytes,
-      ...(slowPhase ? {} : { responseTimeoutMs: 500 }),
+      ...(!slowPhase || slowPhase === 'disconnect' ? { responseTimeoutMs: 500 } : {}),
       controlTransport: {
         // The RPC owner's content mode decides key issuance (registration reads it).
         startWithContentMode: async input => ({ contentMode,
@@ -155,6 +167,23 @@ describe('sender → Account-mode relay framing → daemon STT intake', () => {
     });
     try {
       await sender.start();
+      if (slowPhase === 'disconnect') {
+        await expect(sender.pushChunk(new Uint8Array(640))).resolves.toMatchObject([{ type: 'partial', seq: 0 }]);
+        holdReplies = true;
+        const inFlight = sender.pushChunk(new Uint8Array(640)).catch((error: unknown) => error);
+        await waitForTestEvent(subscribe, () => expect(replies.length).toBe(1));
+        expect(received).toHaveLength(2);
+        socketId = '';
+        socketEvents.dispatchEvent(new Event('change'));
+        expect(receive, 'the lost socket retires its tunnel immediately').toBeUndefined();
+        await expect(inFlight).resolves.toMatchObject({ code: 'daemon_speech_relay_disconnected' });
+        socketId = 'replacement-tab';
+        socketEvents.dispatchEvent(new Event('change'));
+        replies.pop()?.();
+        await Promise.all(operations);
+        expect(received).toHaveLength(2);
+        return;
+      }
       if (nativeFailure) {
         const failure = await sender.pushChunk(new Uint8Array(640)).then(() => null, (error: unknown) => error);
         expect(failure).toMatchObject({ code: 'cancelled', cause: { ok: false, errorCode: 'cancelled', diagnostic: { code: 'cancelled' } } });
