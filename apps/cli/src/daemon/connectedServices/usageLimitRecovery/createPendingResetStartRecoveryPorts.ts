@@ -63,7 +63,7 @@ export function createPendingResetStartRecoveryPorts(input: Readonly<{
             readWitness: reset => readProviderAccountUsageHistoryWitnessV4({ recordId: reset.recordId, witness: reset.witness },
               readOptions),
             readCurrent: async reset => (await readProviderAccountUsageQuotaV4({ source: reset.source },
-              readOptions)).current,
+              { ...readOptions, includePendingWork: false })).current,
             release: async demand => {
               signal?.throwIfAborted();
               // Installed Machine owner rechecks exact retained target and Pending CAS.

@@ -30,8 +30,15 @@ describe('Pending reset quota tick cancellation', () => {
       let cancelRead = false;
       let observedSignal: AbortSignal | undefined;
       let postAbortReads = 0;
+      const reads = { authority: 0, session: 0, pending: 0, source: 0, witness: 0, current: 0 };
       vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
         const path = new URL(String(url)).pathname;
+        if (path.endsWith('/encryption/currentness')) reads.authority++;
+        if (path.endsWith('/sessions/session')) reads.session++;
+        if (path.endsWith('/pending')) reads.pending++;
+        if (path.endsWith('/sources/resolve')) reads.source++;
+        if (path.endsWith('/history')) reads.witness++;
+        if (path.endsWith('/record')) reads.current++;
         if (controller.signal.aborted) postAbortReads += 1;
         const matched = phase === 'authority' ? path.endsWith('/encryption/currentness')
           : phase === 'pending' ? path.endsWith('/pending')
@@ -48,7 +55,9 @@ describe('Pending reset quota tick cancellation', () => {
         if (path.endsWith('/sources/resolve')) return { status: 200, data: { source, recordId: current.recordId, providerAccountId: 'subject', fetchedAt: current.fetchedAtMs, staleAfterMs: 1_000 } };
         return { status: 200, data: record(current) };
       });
-      vi.spyOn(axios, 'post').mockImplementation(async () => {
+      let sourceAuthorityReads = 0;
+      vi.spyOn(axios, 'post').mockImplementation(async url => {
+        if (new URL(String(url)).pathname.endsWith('/pending/reset-starts/read')) sourceAuthorityReads++;
         if (controller.signal.aborted) postAbortReads += 1;
         return { status: 200, data: { entries: rows.map(row => ({ sessionId: 'session', ...row, authorityCurrent: true })) } };
       });
@@ -59,6 +68,10 @@ describe('Pending reset quota tick cancellation', () => {
           isCurrent, onError: error => { throw error; }, release: async demand => { released.push(demand.localId); rows = []; } }) });
       try {
         await scheduler.reconcilePendingResetStarts('session');
+        // One Session and one reset demand for one connected account in this pass.
+        expect({ ...reads, sourceAuthority: sourceAuthorityReads }).toEqual({
+          authority: 1, session: 1, pending: 1, source: 1, witness: 1, current: 1, sourceAuthority: 1,
+        });
         expect(isCurrent).toHaveBeenCalledOnce();
         isCurrent.mockClear();
         vi.setSystemTime(1_000);
