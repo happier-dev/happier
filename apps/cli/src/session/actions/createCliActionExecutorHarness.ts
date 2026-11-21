@@ -4,7 +4,7 @@ import { buildActionExecuteResultFromRecordedApprovalExecution, createActionExec
 import { settleApprovalRequestReplayInputs } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { normalizeActionsSettingsV1, type ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { isDiscussionInviteActionIdV1 } from '@happier-dev/protocol/discussions/actionIds';
-import { isActionEnabledWithSessionMemory } from '@happier-dev/protocol/actions/actionSurfaceAvailability';
+import { isActionEnabledWithSessionMemory, resolveActionSurfaceAvailability } from '@happier-dev/protocol/actions/actionSurfaceAvailability';
 import { resolveActionApprovalRouting } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
@@ -442,7 +442,12 @@ export function createCliActionExecutorHarness(
         : { actionId: dispatch.actionId, result: DeploymentActionInputSchemasV1[dispatch.actionId].safeParse(input) };
       if (!parsed.result.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
       if (dispatch.caller === 'host') {
-        if (!isActionEnabled(dispatch.actionId, context)) return { ok: false, errorCode: 'action_disabled', error: 'action_disabled' };
+        // This path bypasses the executor, so it asks the executor's availability owner directly:
+        // a saved Off refuses before the Ask check or any controller read.
+        if (!resolveActionSurfaceAvailability({ actionId: dispatch.actionId, surface: 'cli',
+          settings: readHostActionsSettings(context), placement: context.placement ?? null,
+          sessionMemoryEnabled: params.sessionMemoryEnabled }).available)
+          return { ok: false, errorCode: 'action_disabled', error: 'action_disabled' };
         if (isUnpreservableOriginalCliApproval(dispatch.actionId, parsed.result.data, context,
           readHostActionsSettings(context), originationSettingsProvider))
           return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
