@@ -1822,10 +1822,21 @@ describe('loadRetainedAgentRuntimeLeaf', () => {
         loadMode: 'source-ts',
       });
 
+      const preparations: unknown[] = [];
       await expect(loadRetainedAgentRuntimeLeaf({
         paths: fixture.paths,
         binding: fixture.binding,
+        onPreparationComplete: (preparation: unknown) => preparations.push(preparation),
       })).resolves.toEqual({ factory: expect.any(Function), catalogEntry: expect.any(Object), dispose: expect.any(Function) });
+      expect(preparations).toEqual([{
+        startedAtMs: expect.any(Number),
+        bindingProofMs: expect.any(Number),
+        manifestProjectionMs: expect.any(Number),
+        moduleResolutionMs: expect.any(Number),
+        moduleLoadMs: expect.any(Number),
+        catalogProjectionMs: expect.any(Number),
+        loadMode: 'source-ts',
+      }]);
     } finally {
       await rm(happyHomeDir, { recursive: true, force: true });
       await rm(sourceRootPath, { recursive: true, force: true });

@@ -2,6 +2,7 @@ import type { PluginDaemonConnectionStateSource } from '../pluginConnectionState
 import type { HostProviderCliAttachRequest } from '@/session/attach/providerCliAttach';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import type { RetainedAgentRuntimePreparation } from '@/plugins/runtime/runner/loadRetainedAgentRuntimeLeaf';
 import type { AgentRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
 import type {
     AgentSessionOpenRequest,
@@ -138,7 +139,7 @@ export type RunnerAgentSessionRuntimeSource = Readonly<{
     }>>;
     createRuntime(params: Readonly<{
         signal: AbortSignal;
-        onFactoryInvoked?: () => void;
+        onFactoryInvoked?: (preparation?: RetainedAgentRuntimePreparation) => void;
     }>): Promise<AgentRuntime>;
     createInvocationServices: CreateAgentInvocationServices;
     authorizeNewTurn: (

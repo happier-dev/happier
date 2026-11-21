@@ -62,7 +62,10 @@ import {
     recordRunnerTeamCredentialRefusalRead,
     resolveCurrentAgentRuntimeDaemonTurnContributions,
 } from './agentRuntimeDaemonServiceAuthorityClient';
-import { loadRetainedAgentRuntimeLeaf } from '@/plugins/runtime/runner/loadRetainedAgentRuntimeLeaf';
+import {
+    loadRetainedAgentRuntimeLeaf,
+    type RetainedAgentRuntimePreparation,
+} from '@/plugins/runtime/runner/loadRetainedAgentRuntimeLeaf';
 import { findPluginModuleLoadError } from '@/plugins/runtime/moduleFailure';
 import { runnerPinnedBundledCustodyCanSupersedeBootstrap } from '@/plugins/runtime/retainedPluginSourceAttestation';
 import {
@@ -937,6 +940,7 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
         | null = null;
     let runtimeLeafPromise:
         ReturnType<typeof loadRetainedAgentRuntimeLeaf> | null = null;
+    let runtimeLeafPreparation: RetainedAgentRuntimePreparation | undefined;
     const prepareRuntimeLeaf = async () => {
         runtimeLeafPromise ??=
             loadRetainedAgentRuntimeLeaf({
@@ -945,6 +949,7 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                 ...(binding.sourceCustody.kind === 'development'
                     ? { developmentOccurrenceId: runnerOccurrenceId }
                     : {}),
+                onPreparationComplete: preparation => { runtimeLeafPreparation = preparation; },
             }).catch((error: unknown) => {
                 if (binding.sourceCustody.kind !== 'development') throw error;
                 // A present source that fails to evaluate is a plugin defect, not a
@@ -1508,7 +1513,7 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                 await prepareRuntimeLeaf();
                 const leaf = await runtimeLeafPromise!;
                 signal.throwIfAborted();
-                onFactoryInvoked?.();
+                onFactoryInvoked?.(runtimeLeafPreparation);
                 return await leaf.factory({
                     plugin: Object.freeze({
                         id: binding.pluginId,

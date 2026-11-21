@@ -3,6 +3,7 @@ import type { AgentSessionRuntime, AgentSessionOpenRequest } from '@happier-dev/
 import { AgentProviderRequirementsV1Schema } from '@happier-dev/protocol/providers/compatibility/v1';
 import { buildPluginSessionBindingInput } from '@/plugins/runtime/runtimeCore/plugin/sessionLaunch';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
+import type { RetainedAgentRuntimePreparation } from '@/plugins/runtime/runner/loadRetainedAgentRuntimeLeaf';
 import { logger } from '@/ui/logger';
 import {
     createExternalContributionFixtures,
@@ -18,11 +19,19 @@ it('separates retained source loading from the actual factory call in the native
     const diagnostic = vi.spyOn(logger, 'infoFile');
     const clock = vi.spyOn(performance, 'now').mockReturnValue(0);
     const wallClock = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    const factoryPreparation = {
+        startedAtMs: 1_000, bindingProofMs: 40, manifestProjectionMs: 2,
+        moduleResolutionMs: 8, moduleLoadMs: 175, catalogProjectionMs: 25,
+        loadMode: 'source-ts',
+    } as const;
     const plan = await createNativeAgentRuntimeSessionPlanFixture({
-        createRuntime: async (factoryInput: Readonly<{ signal: AbortSignal; onFactoryInvoked?: () => void }>) => {
+        createRuntime: async (factoryInput: Readonly<{
+            signal: AbortSignal;
+            onFactoryInvoked?: (preparation?: RetainedAgentRuntimePreparation) => void;
+        }>) => {
             clock.mockReturnValue(250);
             wallClock.mockReturnValue(1_250);
-            factoryInput.onFactoryInvoked?.();
+            factoryInput.onFactoryInvoked?.(factoryPreparation);
             clock.mockReturnValue(275);
             return { sessions: { open: async () => ({
                 send: async () => ({ status: 'admitted' }),
@@ -55,6 +64,7 @@ it('separates retained source loading from the actual factory call in the native
         expect(factoryRecords).toEqual([expect.objectContaining({
             sessionId: 'session-runtime-factory', durationMs: 275,
             factoryInvokedAtMs: 1_250, factoryInvocationMs: 25,
+            factoryPreparation,
         })]);
     } finally {
         await created?.operations.resetOrDisposeRuntime('session_closed');

@@ -1,16 +1,21 @@
 import { logger } from '@/ui/logger';
+import type { RetainedAgentRuntimePreparation } from '@/plugins/runtime/runner/loadRetainedAgentRuntimeLeaf';
 
 type HostServicePhase = 'external_sessions' | 'managed_provider_binding' | 'team_provider_binding';
 type OpenPhaseDetail = Readonly<
     | { parentPhase: 'host_services'; status: 'started' | 'completed' | 'failed' }
-    | { factoryInvokedAtMs: number; factoryInvocationMs: number }
+    | { factoryInvokedAtMs: number; factoryInvocationMs: number; factoryPreparation?: RetainedAgentRuntimePreparation }
 >;
 
 /** One Open phase owner: additive milestones and nested awaits share the same clock and log. */
 export function createNativeAgentSessionOpenPhaseRecorder(sessionId: string, intent: string) {
     const startedAt = performance.now();
     let phaseStartedAt = startedAt;
-    let factoryInvokedAt: Readonly<{ monotonicMs: number; wallMs: number }> | undefined;
+    let factoryInvocation: Readonly<{
+        monotonicMs: number;
+        wallMs: number;
+        preparation?: RetainedAgentRuntimePreparation;
+    }> | undefined;
     const emit = (phase: string, now: number, durationMs: number, detail?: OpenPhaseDetail) => {
         logger.infoFile('[NativeAgentSession] Open phase', {
             phase, sessionId, intent,
@@ -21,17 +26,18 @@ export function createNativeAgentSessionOpenPhaseRecorder(sessionId: string, int
     return {
         record(phase: string): void {
             const now = performance.now();
-            const detail = phase === 'runtime_factory' && factoryInvokedAt
+            const detail = phase === 'runtime_factory' && factoryInvocation
                 ? {
-                    factoryInvokedAtMs: factoryInvokedAt.wallMs,
-                    factoryInvocationMs: Math.round(now - factoryInvokedAt.monotonicMs),
+                    factoryInvokedAtMs: factoryInvocation.wallMs,
+                    factoryInvocationMs: Math.round(now - factoryInvocation.monotonicMs),
+                    ...(factoryInvocation.preparation ? { factoryPreparation: factoryInvocation.preparation } : {}),
                 }
                 : undefined;
             emit(phase, now, now - phaseStartedAt, detail);
             phaseStartedAt = now;
         },
-        markRuntimeFactoryInvoked(): void {
-            factoryInvokedAt = { monotonicMs: performance.now(), wallMs: Date.now() };
+        markRuntimeFactoryInvoked(preparation?: RetainedAgentRuntimePreparation): void {
+            factoryInvocation = { monotonicMs: performance.now(), wallMs: Date.now(), preparation };
         },
         async measureHostService<T>(phase: HostServicePhase, work: () => Promise<T>): Promise<T> {
             const phaseStart = performance.now();

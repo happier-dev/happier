@@ -65,6 +65,20 @@ export type RetainedAgentRuntimeLeaf = Readonly<{
     dispose(): Promise<void>;
 }>;
 
+export type RetainedAgentRuntimePreparation = Readonly<{
+    startedAtMs: number;
+    bindingProofMs: number;
+    manifestProjectionMs: number;
+} & (
+    | { loadMode: 'host_declarative_acp_v1' }
+    | {
+        loadMode: Parameters<typeof loadVerifiedPluginModule>[0]['loadMode'];
+        moduleResolutionMs: number;
+        moduleLoadMs: number;
+        catalogProjectionMs: number;
+    }
+)>;
+
 /** Source proof shared by daemon services after exact runner admission. */
 export type RetainedRunnerAgentServiceBinding = Pick<
     Awaited<ReturnType<typeof verifyRunnerAgentBindingAgainstGeneration>>,
@@ -77,10 +91,20 @@ export async function loadRetainedAgentRuntimeLeaf(params: Readonly<{
     developmentOccurrenceId?: string;
     developmentRunnerSnapshotIdentity?: string;
     resolveBundledPluginRoot?: typeof resolveRetainedBundledPluginRoot;
+    onPreparationComplete?: (preparation: RetainedAgentRuntimePreparation) => void;
 }>): Promise<RetainedAgentRuntimeLeaf> {
+    const startedAtMs = Date.now();
+    let lastCheckpoint = performance.now();
+    const checkpoint = () => {
+        const now = performance.now();
+        const durationMs = Math.round(now - lastCheckpoint);
+        lastCheckpoint = now;
+        return durationMs;
+    };
     const attested = await verifyRunnerAgentBindingAgainstGeneration(
         params,
     );
+    const bindingProofMs = checkpoint();
     const declaredEntry = projectManifestAgentContribution({
         definition: attested.declaredAgent,
         provenance: attested.manifestAuthority === 'bundled_first_party' ? 'first_party' : 'external',
@@ -90,22 +114,28 @@ export async function loadRetainedAgentRuntimeLeaf(params: Readonly<{
         systemTools: attested.manifest.contributes.systemTools,
         hostAccess: attested.manifest.hostAccess,
     }).catalogEntry ?? null;
+    const manifestProjectionMs = checkpoint();
     if (attested.bindingKind === 'host_declarative_acp_v1') {
+        const factory = createHostDeclarativeAcpAgentRuntimeFactory(
+            normalizePluginDeclarativeAcpRuntime(attested.runtime),
+            {
+                executionRunContextV1: readAgentSessionCapabilities(
+                    attested.declaredAgent,
+                )?.executionRunContext?.versions[0] === 1,
+            },
+        );
+        params.onPreparationComplete?.({
+            startedAtMs, bindingProofMs, manifestProjectionMs, loadMode: attested.bindingKind,
+        });
         return Object.freeze({
             catalogEntry: declaredEntry,
             dispose: async () => {},
-            factory: createHostDeclarativeAcpAgentRuntimeFactory(
-                normalizePluginDeclarativeAcpRuntime(attested.runtime),
-                {
-                    executionRunContextV1: readAgentSessionCapabilities(
-                        attested.declaredAgent,
-                    )?.executionRunContext?.versions[0] === 1,
-                },
-            ),
+            factory,
         });
     }
     const { binding, fact } = attested;
     const modulePath = await realpath(join(attested.rootPath, ...fact.normalizedModulePath.split('/')));
+    const moduleResolutionMs = checkpoint();
     const moduleNamespace = await loadVerifiedPluginModule({
         entryPath: modulePath,
         loadMode: fact.loadMode,
@@ -113,6 +143,7 @@ export async function loadRetainedAgentRuntimeLeaf(params: Readonly<{
         cacheKey: `${attested.cacheIdentity}:${fact.normalizedModulePath}`,
         nativeFileUrlMode: 'canonical',
     });
+    const moduleLoadMs = checkpoint();
     const factory = Object.prototype.hasOwnProperty.call(
         moduleNamespace,
         fact.locator.export,
@@ -122,30 +153,28 @@ export async function loadRetainedAgentRuntimeLeaf(params: Readonly<{
     if (typeof factory !== 'function') {
         throw new Error('Runner Agent factory export is missing or not callable');
     }
-    if (fact.locator.externalSessionsExport === undefined) {
-        const catalog = await projectRetainedAgentCatalogEntry({
-            attested, declaredEntry,
-        });
-        return Object.freeze({
-            factory: factory as AgentRuntimeFactory,
-            ...catalog,
-        });
-    }
-    const externalSessions = Object.prototype.hasOwnProperty.call(
-        moduleNamespace,
-        fact.locator.externalSessionsExport,
-    )
-        ? moduleNamespace[fact.locator.externalSessionsExport]
-        : undefined;
-    if (externalSessions === undefined) {
-        throw new Error('External Sessions companion export is missing');
+    let externalSessions: AgentExternalSessionsContribution | undefined;
+    if (fact.locator.externalSessionsExport !== undefined) {
+        const companion = Object.prototype.hasOwnProperty.call(
+            moduleNamespace,
+            fact.locator.externalSessionsExport,
+        ) ? moduleNamespace[fact.locator.externalSessionsExport] : undefined;
+        if (companion === undefined) {
+            throw new Error('External Sessions companion export is missing');
+        }
+        externalSessions = companion as AgentExternalSessionsContribution;
     }
     const catalog = await projectRetainedAgentCatalogEntry({
         attested, declaredEntry,
     });
+    const catalogProjectionMs = checkpoint();
+    params.onPreparationComplete?.({
+        startedAtMs, bindingProofMs, manifestProjectionMs, moduleResolutionMs, moduleLoadMs,
+        catalogProjectionMs, loadMode: fact.loadMode,
+    });
     return Object.freeze({
         factory: factory as AgentRuntimeFactory,
-        externalSessions: externalSessions as AgentExternalSessionsContribution,
+        ...(externalSessions === undefined ? {} : { externalSessions }),
         ...catalog,
     });
 }
