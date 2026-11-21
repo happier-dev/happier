@@ -1,3 +1,4 @@
+import { logger } from '@/ui/logger';
 import { notifyDaemonSessionActivityChanged } from '@/daemon/controlClient';
 import type { DaemonControlRequestOptions } from '@/daemon/controlHttp';
 import type { SessionProviderInputConsumer } from './_types';
@@ -21,7 +22,12 @@ export function publishSessionLiveWorkToDaemon(params: Readonly<{
   return params.consumer.subscribeLiveWork(() => {
     const sessionId = params.readSessionId();
     void params.consumer.readLiveWork()
-      .then(activity => ({ runnerPid, revision: ++revision, activity }), () => undefined)
+      .then(activity => {
+        const report = { runnerPid, revision: ++revision, activity };
+        logger.infoFile('[LIVE WORK] Runner report prepared', { sessionId, runnerPid, revision: report.revision,
+          session: activity.session, input: activity.input, agents: activity.agents ?? 'absent' });
+        return report;
+      }, () => undefined)
       .then(liveWork => notifyDaemonSessionActivityChanged(sessionId, undefined, undefined, undefined, liveWork, params.daemon))
       .catch(params.onUnavailable);
   });

@@ -1,3 +1,4 @@
+import { logger } from '@/ui/logger';
 import type { SessionInputLiveWork } from '@/agent/runtime/session/input/_types';
 import type { TrackedSession } from '../types';
 import type { LiveWorkItemV1, LiveWorkListenerV1, LiveWorkProducerV1 } from './managedActivity';
@@ -135,6 +136,8 @@ export function createSessionLiveWorkProducer(params: Readonly<{
       if (previous?.runnerPid === pushed.runnerPid && previous.revision >= pushed.revision) return;
       pushedRevisions.set(tracked, { runnerPid: pushed.runnerPid, revision: pushed.revision });
       retained.set(tracked, { sessionId, activity: pushed.activity, pushed: true });
+      logger.infoFile('[LIVE WORK] Daemon report accepted', { sessionId, runnerPid: pushed.runnerPid, revision: pushed.revision,
+        session: pushed.activity.session, input: pushed.activity.input, agents: pushed.activity.agents ?? 'absent' });
       notifyListeners(sessionId);
     },
   };
