@@ -16,7 +16,7 @@ import { STEP_ROW_BUTTON_PX, StepBackContext, StepRowBackButton, UNAUTH_BACK_TES
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 
 import { RelayRetentionDisclosure } from './RelayRetentionDisclosure';
-import { ShellCornerContext, ShellCornerNoteContext, ShellHeaderClearanceContext, type ShellCornerDoor, type ShellCornerNote } from './shellCorner';
+import { ShellCornerContext, ShellCornerNoteContext, ShellHeaderClearanceContext, ShellWelcomeOverflowContext, type ShellCornerDoor, type ShellCornerNote } from './shellCorner';
 import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeActionCard';
 
 /** The wordmark's corner (lab direction A): 24 px tall, 24 px in from a phone's side and 20 px down. */
@@ -181,6 +181,15 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
         ? MOBILE_WORDMARK_TOP_PX + WORDMARK_HEIGHT_PX + MOBILE_ROW_WORDMARK_CLEARANCE_PX + safeAreaInsets.top
         : DESKTOP_WORDMARK_TOP_PX + DESKTOP_WORDMARK_HEIGHT_PX;
     const [headerClearance, setHeaderClearance] = React.useState(0);
+    const [welcomeScrollHeight, setWelcomeScrollHeight] = React.useState(0);
+    const [welcomeOverflow, setWelcomeOverflow] = React.useState(0);
+    const onWelcomeScrollLayout = React.useCallback((event: LayoutChangeEvent) => {
+        setWelcomeScrollHeight(event.nativeEvent.layout.height);
+    }, []);
+    // Tail notices extend the scrollable page by their exact height, preserving the lead/trail balance.
+    const welcomeScrollMinimum = props.isWelcomeStep && welcomeOverflow > 0 && welcomeScrollHeight > 0
+        ? { minHeight: welcomeScrollHeight + welcomeOverflow }
+        : undefined;
     const { onColumnLayout } = props;
     const onWelcomeColumnLayout = React.useCallback((event: LayoutChangeEvent) => {
         setHeaderClearance(Math.max(0, Math.floor(event.nativeEvent.layout.y - headerBottom)));
@@ -257,12 +266,14 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
             <ShellCornerContext.Provider value={cornerSlot}>
             <ShellCornerNoteContext.Provider value={cornerNoteSlot}>
             <ShellHeaderClearanceContext.Provider value={props.isWelcomeStep ? headerClearance : 0}>
+            <ShellWelcomeOverflowContext.Provider value={props.isWelcomeStep ? setWelcomeOverflow : null}>
             <StepBackContext.Provider value={backSlot}>
             <WideStepColumnContext.Provider value={isMobile ? null : claimWideColumn}>
             <ScrollView
                 testID="unauth-shell-workflow-scroll"
                 style={styles.scrollFill}
-                contentContainerStyle={[styles.scrollContent, contentPaddingStyle]}
+                contentContainerStyle={[styles.scrollContent, contentPaddingStyle, welcomeScrollMinimum]}
+                onLayout={props.isWelcomeStep ? onWelcomeScrollLayout : undefined}
                 showsVerticalScrollIndicator={false}
                 bounces={false}
                 keyboardShouldPersistTaps="handled"
@@ -389,6 +400,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
             </ScrollView>
             </WideStepColumnContext.Provider>
             </StepBackContext.Provider>
+            </ShellWelcomeOverflowContext.Provider>
             </ShellHeaderClearanceContext.Provider>
             </ShellCornerNoteContext.Provider>
             </ShellCornerContext.Provider>

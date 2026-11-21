@@ -18,6 +18,9 @@ export const ShellCornerContext = React.createContext<ShellCornerSlot | null>(
 /** Space the shell actually has above Welcome and below its header. */
 export const ShellHeaderClearanceContext = React.createContext(0);
 
+/** Height added after the Welcome controls that the scroll column can extend by. */
+export const ShellWelcomeOverflowContext = React.createContext<((height: number) => void) | null>(null);
+
 const useIsomorphicLayoutEffect =
   typeof window === 'undefined' ? React.useEffect : React.useLayoutEffect;
 

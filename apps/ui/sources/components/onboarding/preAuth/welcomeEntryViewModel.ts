@@ -212,9 +212,7 @@ export function projectWelcomeEntryViewModel(
                 ? notice.hasUsableHomeMethods ? t('welcome.signInServiceUnavailableHomeBody')
                     : t('welcome.signInServiceUnavailableBody', { service: notice.serviceName ?? service })
                 : t(methodless ? 'welcome.signInServiceMethodlessBody' : 'welcome.signInServiceUnsupportedBody'),
-            // Unreachable can come back, so it retries; a service that cannot sign in here never will, so its way on is
-            // choosing another one.
-            action: unavailable
+            action: unavailable || methodless
                 ? input.canRetryService ? retry('welcome-account-service-retry') : undefined
                 : input.canChooseService
                     ? { testID: CHOOSE_ANOTHER_SERVICE_TEST_ID, label: t('welcome.chooseAnotherSignInService'), glyph: 'forward' as const }

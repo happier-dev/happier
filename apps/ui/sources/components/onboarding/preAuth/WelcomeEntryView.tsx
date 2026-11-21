@@ -11,7 +11,7 @@ import { Typography } from '@/constants/Typography';
 
 import { STEP_DOOR_WIDTH_PX, StepOrDivider } from '@/components/onboarding/unauthShell/StepFormParts';
 import { RelayRetentionDisclosure } from '@/components/onboarding/unauthShell/RelayRetentionDisclosure';
-import { ShellHeaderClearanceContext, useShellCornerDoor, useShellCornerNote } from '@/components/onboarding/unauthShell/shellCorner';
+import { ShellHeaderClearanceContext, ShellWelcomeOverflowContext, useShellCornerDoor, useShellCornerNote } from '@/components/onboarding/unauthShell/shellCorner';
 import { OrganizationPolicyInvalidHelp, OrganizationPolicyManagedLine } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import { HomeContextLine } from '@/components/onboarding/ui/ActiveRelaySummary';
 import { t } from '@/text';
@@ -78,12 +78,18 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
     const quietLoading = loadingInRetentionSlot ? model.notices.filter((notice) => notice.kind === 'loading') : [];
     const slotNotices = loadingInRetentionSlot ? model.notices.filter((notice) => notice.kind !== 'loading') : model.notices;
     const noticeAction = interaction?.onNoticeAction;
-    // The column grows up into the space below the shell header. Any remaining notice height takes its place
-    // above the doors in normal layout. The restore ways under Approve have no heading to lift.
+    // Place a notice above the doors when the heading can make room. In a short viewport it belongs
+    // after the controls, extending the scrollable column without changing the doors' position.
     const anchoredNotices = model.heading != null || model.policy != null;
     const [noticeHeight, setNoticeHeight] = React.useState(0);
     const headerClearance = React.useContext(ShellHeaderClearanceContext);
-    const lift = anchoredNotices ? Math.min(noticeHeight, headerClearance) : 0;
+    const setOverflow = React.useContext(ShellWelcomeOverflowContext);
+    const above = anchoredNotices && noticeHeight <= headerClearance;
+    const lift = above ? noticeHeight : 0;
+    React.useLayoutEffect(() => {
+        setOverflow?.(anchoredNotices && !above ? noticeHeight : 0);
+    }, [above, anchoredNotices, noticeHeight, setOverflow]);
+    React.useLayoutEffect(() => () => setOverflow?.(0), [setOverflow]);
     return (
         <View testID="welcome-decision-panel" style={[styles.root, compact ? styles.rootCompact : null]}
             pointerEvents={interaction ? 'auto' : 'none'} accessibilityElementsHidden={!interaction}
@@ -117,10 +123,6 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
                         <WelcomeNotices layer="welcome-notices" notices={slotNotices} onAction={noticeAction} />
                     ) : null}
                     <View style={styles.ways}>
-                        {anchoredNotices ? (
-                            <WelcomeNotices layer="welcome-notices" notices={slotNotices} onAction={noticeAction}
-                                lift={lift} onHeight={setNoticeHeight} />
-                        ) : null}
                         <View testID="welcome-doors" style={styles.doors}>
                             {model.primaryDoorPending ? <PendingPrimaryDoor /> : null}
                             {model.doors.map(renderAction)}
@@ -155,6 +157,10 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
                                 onPress={interaction?.onSelfHosting ?? noAction} />
                         </View>
                     ) : null}
+                    {anchoredNotices ? (
+                        <WelcomeNotices layer="welcome-notices" notices={slotNotices} onAction={noticeAction}
+                            above={above} onHeight={setNoticeHeight} />
+                    ) : null}
                     {model.closingNotice ? (
                         <WelcomeNotices layer="welcome-closing-notice" notices={[model.closingNotice]} onAction={noticeAction} />
                     ) : null}
@@ -176,11 +182,11 @@ function PendingPrimaryDoor() {
     );
 }
 
-function WelcomeNotices({ layer, notices, onAction, lift = 0, onHeight }: Readonly<{
+function WelcomeNotices({ layer, notices, onAction, above, onHeight }: Readonly<{
     layer: string;
     notices: WelcomeEntryViewModel['notices'];
     onAction?: (testID: string) => void;
-    lift?: number;
+    above?: boolean;
     /** Reports the notice's natural height, including the gap above the doors. */
     onHeight?: (height: number) => void;
 }>) {
@@ -195,7 +201,7 @@ function WelcomeNotices({ layer, notices, onAction, lift = 0, onHeight }: Readon
     const visible = animate ? shown.notices : notices;
     const box = React.useRef<View>(null);
     const empty = visible.length === 0;
-    const report = React.useCallback((height: number) => onHeight?.(empty ? 0 : Math.ceil(height)), [empty, onHeight]);
+    const report = React.useCallback((height: number) => onHeight?.(empty ? 0 : height), [empty, onHeight]);
     React.useLayoutEffect(() => {
         // Web measures before paint, so the lines above never overlap a newly arrived notice for a frame.
         const node = box.current as unknown as { getBoundingClientRect?: () => { height: number } } | null;
@@ -211,7 +217,9 @@ function WelcomeNotices({ layer, notices, onAction, lift = 0, onHeight }: Readon
     if (!onHeight) return layerElement;
     return (
         <View ref={box} testID="welcome-notice-slot" onLayout={onLayout}
-            style={[empty ? null : stylesheet.noticeSlotFilled, lift === 0 ? null : { marginTop: -lift }]}>
+            style={[
+                empty ? stylesheet.emptyNoticeSlot : above ? stylesheet.noticeAboveDoors : stylesheet.noticeAfterControls,
+            ]}>
             {layerElement}
         </View>
     );
@@ -304,8 +312,19 @@ const stylesheet = StyleSheet.create((theme) => ({
     aboveDoorsCompact: {
         gap: theme.space.s16,
     },
-    noticeSlotFilled: {
+    emptyNoticeSlot: {
+        position: 'absolute',
+    },
+    noticeAboveDoors: {
+        position: 'absolute',
+        bottom: '100%',
+        left: 0,
+        right: 0,
         paddingBottom: theme.space.s12,
+    },
+    noticeAfterControls: {
+        marginTop: -theme.space.s12,
+        paddingTop: theme.space.s12,
     },
     noticeLines: {
         gap: theme.space.s12,

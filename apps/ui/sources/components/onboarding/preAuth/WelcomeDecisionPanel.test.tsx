@@ -297,6 +297,21 @@ describe('WelcomeDecisionPanel', () => {
         expect(screen.findByTestId('welcome-account-service-choose')).toBeTruthy();
     });
 
+    it('retries the chosen methodless service without retrying the Home', async () => {
+        const retryService = vi.fn();
+        const retryServerCheck = vi.fn();
+        const { screenPromise, callbacks } = renderPanel(
+            { requestedHomeTarget: undefined, retryServerCheck },
+            { ...chosenAccountServiceEntry(readyAccountServiceEntry([])), retry: retryService },
+        );
+        const screen = await screenPromise;
+        expect(screen.findByTestId('welcome-account-service-choose-another')).toBeNull();
+        await screen.pressByTestIdAsync('welcome-account-service-retry');
+        expect(retryService).toHaveBeenCalledOnce();
+        expect(retryServerCheck).not.toHaveBeenCalled();
+        expect(callbacks.onChooseAccountService).not.toHaveBeenCalled();
+    });
+
     it.each([
         { state: 'live', expiresInMs: 60_000, title: 'welcome.terminalContinuationTitle', subtitle: 'welcome.terminalContinuationSubtitle' },
         { state: 'expired', expiresInMs: -1, title: 'welcome.brandTaglineLine1', subtitle: 'welcome.brandTaglineLine2' },
