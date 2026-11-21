@@ -374,7 +374,7 @@ export const ACTION_SPEC_FAMILY_IDS: readonly (readonly string[])[] = [
   ["widgets.snapshot.post"],
   ["home.reachNudge.dismiss", "home.hub.layout.get", "home.hub.layout.update"],
   ["projects.starters.create"],
-  ["projects.deploymentDefaults.set", "projects.sources.moveToTeam", "projects.sources.list", "projects.sources.read", "projects.sources.create", "projects.sources.update", "projects.sources.delete"],
+  ["projects.deploymentDefaults.set", "projects.sources.moveToTeam", "projects.sources.list", "projects.sources.read", "projects.sources.setupRequirements", "projects.sources.create", "projects.sources.update", "projects.sources.delete"],
   ["artifact.access.grants.list", "artifact.access.grants.set", "artifact.access.grants.remove"],
   ["artifact.create", "artifact.get", "artifact.export", "artifact.list", "artifact.update", "artifact.delete", "artifact.publish_from_file", "artifact.revisions.list", "artifact.revisions.restore", "artifact.storage.usage", "artifact.public_link.create", "artifact.public_link.list", "artifact.public_link.revoke", "artifact.public_link.audit", "artifact.public_link.join"],
   ["template.draft", "template.release", "template.open", "template.preview", "template.export_file", "template.instantiate", "template.updates.diff", "template.updates.apply", "template.updates.skip", "template.follow.stop"],

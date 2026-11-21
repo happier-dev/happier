@@ -4,11 +4,12 @@ import { ProjectEffectiveDefinitionV1Schema, resolveProjectDefinitionV1, createP
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import type { ProjectManifestV1, ProjectCommandSourceV1 } from '../workspaces/projectSetup/projectManifestV1.js';
 import { ProjectSetupReviewV1Schema, ProjectSetupReadinessV1Schema } from '../actions/projectSetupConsentFailure.js';
-import { ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
-import { ProjectSetupSelectionV1Schema, ProjectSharedSetupV1Schema, PROJECT_SETUP_ARTIFACT_KIND_V1,
+import { ActionFailureCauseV1Schema, createActionExecuteFailureError } from '../actions/actionExecutionResult.js';
+import { ProjectSetupContentRevisionV1Schema, ProjectSetupSelectionV1Schema, ProjectSharedSetupV1Schema, PROJECT_SETUP_ARTIFACT_KIND_V1,
   projectSetupSelectionV1, projectSharedSetupDigestV1, type ProjectAcceptedSharedSetupV1, type ProjectSetupArtifactV1, type ProjectSetupReadV1 } from './projectSetupV1.js';
-import type { ProjectSourceV1 } from './sources/projectSourceV1.js';
+import type { ProjectSourceV1, ProjectSourcesReadInputV1, ProjectSourcesReadOutputV1 } from './sources/projectSourceV1.js';
 import { ProjectSourceAudienceTeamV1Schema } from './sources/projectSourceIdentityV1.js';
+import { EnvVarRequirementSchema } from '../profiles/environmentVariables.js';
 
 /** A demanded publication-change review; launch continues to use accepted content. */
 export const ProjectSharedSetupChangeV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
@@ -24,24 +25,66 @@ export const ProjectSharedSetupChangeV1Schema = lazyZodSchema(() => z.discrimina
 ]));
 export type ProjectSharedSetupChangeV1 = z.infer<typeof ProjectSharedSetupChangeV1Schema>;
 
-/** Publication admission is shared by acceptance and update review, including the selected revision. */
-export async function readPublishedProjectSetupV1(input: Readonly<{
+type PublishedSetupReadV1 = Readonly<{
   source: ProjectSourceV1; readArtifact(artifactId: string, projectSourceId: string): Promise<ProjectSetupArtifactV1 | null>;
-}>): Promise<ProjectAcceptedSharedSetupV1> {
-  const refuse = (): never => { throw Object.assign(new Error('project_setup_review_unavailable'), { code: 'project_setup_review_unavailable' }); };
+}>;
+const refusePublication = (): never => {
+  const code = 'project_setup_review_unavailable';
+  throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code });
+};
+
+/** Publication admission is shared by requirements, acceptance and update review. */
+async function readPublishedSetupManifestV1(input: PublishedSetupReadV1) {
   const attachment = input.source.attachments?.find(value => value.purpose === 'setup');
-  if (!attachment || attachment.ref.kind !== 'doc') return refuse();
+  if (!attachment) return null;
+  if (attachment.ref.kind !== 'doc') return refusePublication();
   const artifact = await input.readArtifact(attachment.ref.artifactId, input.source.id);
   if (!artifact || artifact.artifactId !== attachment.ref.artifactId || artifact.header.kind !== PROJECT_SETUP_ARTIFACT_KIND_V1
     || typeof artifact.body !== 'string' || artifact.revision.headerVersion !== attachment.contentRevision.headerVersion
-    || artifact.revision.bodyVersion !== attachment.contentRevision.bodyVersion) return refuse();
+    || artifact.revision.bodyVersion !== attachment.contentRevision.bodyVersion) return refusePublication();
   let document: unknown;
-  try { document = JSON.parse(artifact.body) as unknown; } catch { return refuse(); }
+  try { document = JSON.parse(artifact.body) as unknown; } catch { return refusePublication(); }
   const publication = ProjectSharedSetupV1Schema.safeParse(document);
-  if (!publication.success) return refuse();
-  return { sourceId: input.source.id, contentRevision: artifact.revision,
-    digest: projectSharedSetupDigestV1(publication.data.manifest), manifest: publication.data.manifest,
+  if (!publication.success) return refusePublication();
+  return { sourceId: input.source.id, contentRevision: artifact.revision, manifest: publication.data.manifest };
+}
+
+export async function readPublishedProjectSetupV1(input: PublishedSetupReadV1): Promise<ProjectAcceptedSharedSetupV1> {
+  const publication = await readPublishedSetupManifestV1(input);
+  if (!publication) return refusePublication();
+  return { ...publication, digest: projectSharedSetupDigestV1(publication.manifest),
     ...(input.source.audienceTeams ? { sourceAudienceTeams: input.source.audienceTeams } : {}) };
+}
+
+export const SourceSetupRequirementsV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('unpublished') }),
+  z.strictObject({
+    kind: z.literal('published'),
+    names: z.array(EnvVarRequirementSchema.shape.name),
+    provenance: z.strictObject({
+      layer: z.literal('shared'), sourceId: z.string().check(z.minLength(1)),
+      contentRevision: ProjectSetupContentRevisionV1Schema,
+    }),
+  }),
+]));
+export type SourceSetupRequirementsV1 = z.infer<typeof SourceSetupRequirementsV1Schema>;
+
+export async function readSourceSetupRequirementsV1(
+  input: ProjectSourcesReadInputV1,
+  deps: Readonly<{
+    readSource(input: ProjectSourcesReadInputV1): Promise<ProjectSourcesReadOutputV1>;
+    readArtifact: PublishedSetupReadV1['readArtifact'];
+  }>,
+): Promise<SourceSetupRequirementsV1> {
+  const source = await deps.readSource(input);
+  if (!source.ok) throw createActionExecuteFailureError({ ok: false, errorCode: source.error, error: source.error });
+  const publication = await readPublishedSetupManifestV1({ source: source.source, readArtifact: deps.readArtifact });
+  if (!publication) return { kind: 'unpublished' };
+  return {
+    kind: 'published',
+    names: (publication.manifest.environmentVariables ?? []).map(requirement => requirement.name),
+    provenance: { layer: 'shared', sourceId: publication.sourceId, contentRevision: publication.contentRevision },
+  };
 }
 
 export type ProjectSharedSetupComparisonV1 = Pick<

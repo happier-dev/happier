@@ -2735,6 +2735,10 @@ A selected read refuses unavailable content when the current Artifact head diffe
 revision. Detach or Source deletion ends new parent-scoped reads while preserving
 independent Artifact access and already accepted private setup copies.
 
+In 0.3 development, `projects.sources.setupRequirements` uses the same Source
+and protected Artifact reads without a checkout. Its published result contains
+declared environment variable names and the Source publication revision.
+
 The development `onboarding_task` attachment identifies a suggested first task by
 qualified prompt-document reference only. Team Setup reads it through `prompt_doc.get`,
 which applies the Account's Action policy before the ordinary independent Artifact

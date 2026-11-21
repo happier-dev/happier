@@ -922,6 +922,8 @@ export type ActionExecutorContext = Readonly<{
   originalActionEnvelope?: import('../externalActionApi.js').ExternalActionRequestEnvelope;
   /** Host-only decoded setup root, retained only for this invocation's finite child purposes. */
   projectSetupSetRootInput?: import('../../projects/projectSetupSetV1.js').ProjectSetupSetInputV1;
+  /** A host child projecting protected content reads without publishing or preparing recipient keys. */
+  artifactReadOnly?: true;
   /** Host-captured authenticated Workflow operand; never accepted from public Action context. */
   workflowPreparation?: import('../externalActionApi.js').ExternalActionWorkflowPreparationV1;
   /** Process-local Machine signer; capture signs only the canonical stored approval input. */

@@ -334,6 +334,7 @@ export const autoApprovedNames: readonly string[] = Object.freeze([
   "projects_setup_set",
   "projects_sources_list",
   "projects_sources_read",
+  "projects_sources_setup_requirements",
   "projects_trust_list",
   "projects_visibility_set",
   "projects_worker_copy_inspect",

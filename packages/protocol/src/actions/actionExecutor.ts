@@ -5102,6 +5102,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
         const result = await deps.artifactAction({ actionId: artifactActionId,
           input: artifactInput, context: ctx,
+          ...(artifactActionId === 'artifact.get' && hostInternal && ctx.artifactReadOnly ? { readOnly: true as const } : {}),
           ...(ctx.signal ? { signal: ctx.signal } : {}) });
         const refusal = readActionFailureEnvelope(result);
         if (refusal) return refusal;

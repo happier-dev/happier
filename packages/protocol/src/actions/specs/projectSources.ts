@@ -11,6 +11,9 @@ import {
   ProjectSourcesMoveToTeamInputV1Schema, ProjectSourcesMoveToTeamOutputV1Schema,
 } from '../../projects/sources/projectSourceV1.js';
 import { ProjectDeploymentDefaultsSetInputV1Schema, ProjectDeploymentDefaultsOutputV1Schema } from '../../projects/projectDeploymentDefaultsV1.js';
+import { SourceSetupRequirementsV1Schema } from '../../projects/projectSetupChangeV1.js';
+import { PROJECT_SOURCE_SETUP_REQUIREMENTS_ACTION_ID_V1 } from './projectSourcesActionIdsV1.js';
+
 
 const common = {
   executionPlacement: 'account', placements: [],
@@ -20,6 +23,7 @@ const common = {
 type ProjectSourceActionSchemas = {
   'projects.sources.list': { inputSchema: typeof ProjectSourcesListInputV1Schema; outputSchema: typeof ProjectSourcesListOutputV1Schema };
   'projects.sources.read': { inputSchema: typeof ProjectSourcesReadInputV1Schema; outputSchema: typeof ProjectSourcesReadOutputV1Schema };
+  [PROJECT_SOURCE_SETUP_REQUIREMENTS_ACTION_ID_V1]: { inputSchema: typeof ProjectSourcesReadInputV1Schema; outputSchema: typeof SourceSetupRequirementsV1Schema };
   'projects.sources.create': { inputSchema: typeof ProjectSourcesCreateInputV1Schema; outputSchema: typeof ProjectSourcesCreateOutputV1Schema };
   'projects.sources.update': { inputSchema: typeof ProjectSourcesUpdateInputV1Schema; outputSchema: typeof ProjectSourcesUpdateOutputV1Schema };
   'projects.sources.delete': { inputSchema: typeof ProjectSourcesDeleteInputV1Schema; outputSchema: typeof ProjectSourcesDeleteOutputV1Schema };
@@ -99,6 +103,19 @@ export const PROJECT_SOURCE_ACTION_SPECS_V1: readonly ProjectSourceActionSpec[] 
     safety: 'safe', sideEffectClass: 'read',
     bindings: { mcpToolName: 'projects_sources_read', voiceClientToolName: 'readProjectSource' },
     inputSchema: ProjectSourcesReadInputV1Schema, outputSchema: ProjectSourcesReadOutputV1Schema,
+    invocationServerIdForInput: actionInputServerId(ProjectSourcesReadInputV1Schema, input => input.serverId),
+    inputHints: { fields: [{ path: 'serverId', title: 'Home id', widget: 'text', required: true },
+      { path: 'sourceId', title: 'Source id', widget: 'text', required: true }] },
+  },
+  {
+    ...common, id: PROJECT_SOURCE_SETUP_REQUIREMENTS_ACTION_ID_V1, approval: { result: 'required' },
+    title: 'Read Source setup requirements',
+    description: 'Read the environment variable names declared by the Source’s published setup and their publication revision.',
+    safety: 'safe', sideEffectClass: 'read',
+    surfaces: { ...common.surfaces, voice: false },
+    bindings: { mcpToolName: 'projects_sources_setup_requirements' },
+    cli: { acceptsServerId: true, commands: [{ path: ['projects', 'sources', 'setup-requirements'], visibility: 'canonical' }] },
+    inputSchema: ProjectSourcesReadInputV1Schema, outputSchema: SourceSetupRequirementsV1Schema,
     invocationServerIdForInput: actionInputServerId(ProjectSourcesReadInputV1Schema, input => input.serverId),
     inputHints: { fields: [{ path: 'serverId', title: 'Home id', widget: 'text', required: true },
       { path: 'sourceId', title: 'Source id', widget: 'text', required: true }] },

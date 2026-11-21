@@ -1,5 +1,9 @@
 import { createProjectFromStarter } from './starters.js';
 import { PROJECT_STARTER_CREATE_ACTION_ID_V1 } from '../../specs/projectStartersActionIdsV1.js';
+import { PROJECT_SOURCE_SETUP_REQUIREMENTS_ACTION_ID_V1 } from '../../specs/projectSourcesActionIdsV1.js';
+import { readSourceSetupRequirementsV1 } from '../../../projects/projectSetupChangeV1.js';
+import { ArtifactActionOutputSchemasV1 } from '../../../artifacts/artifactActionsV1.js';
+import { createActionExecuteFailureError } from '../../actionExecutionResult.js';
 import { isWorkspaceActionId } from '../../workspaceActionFamily.js';
 import { completeActionResult } from '../resultProjection.js';
 import { isProjectActionIdV1, PROJECT_SETUP_SET_ACTION_ID_V1, PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1 } from '../../projectActionIdsV1.js';
@@ -31,6 +35,24 @@ export async function dispatchProjectsDispatch1(inv: Pick<CoreInvocation, 'actio
   executeHostChild: (childId: ActionId, childInput: unknown, childContext: ActionExecutorContext) => Promise<ActionExecuteResult>;
 }>): Promise<ActionExecuteResult | null> {
   const { actionId, deps, parsed, ctx, executeHostChild } = inv;
+  if (actionId === PROJECT_SOURCE_SETUP_REQUIREMENTS_ACTION_ID_V1) {
+    const readSource = deps.projectSourcesRead;
+    if (!readSource) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+    const input = parsed.data as AdmittedActionInputById[typeof PROJECT_SOURCE_SETUP_REQUIREMENTS_ACTION_ID_V1];
+    const result = await readSourceSetupRequirementsV1(input, {
+      readSource: async ref => {
+        const source = await readSource(ref, ctx);
+        if ('errorCode' in source) throw createActionExecuteFailureError(source);
+        return source;
+      },
+      readArtifact: async (artifactId, projectSourceId) => {
+        const opened = await executeHostChild('artifact.get', { artifactId, projectSourceId }, { ...ctx, artifactReadOnly: true });
+        if (!opened.ok) throw createActionExecuteFailureError(opened);
+        return ArtifactActionOutputSchemasV1['artifact.get'].parse(opened.result).artifact;
+      },
+    });
+    return { ok: true, result };
+  }
   if (actionId === PROJECT_SETUP_SET_ACTION_ID_V1) {
     if (!deps.projectsSetupSet) return clientActionUnavailable(actionId);
     const input = parsed.data as AdmittedActionInputById[typeof PROJECT_SETUP_SET_ACTION_ID_V1];

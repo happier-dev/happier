@@ -94,6 +94,10 @@ export type ProjectSourcesActionInputById = {
         serverId: string;
         sourceId: string;
     };
+    readonly "projects.sources.setupRequirements": {
+        serverId: string;
+        sourceId: string;
+    };
     readonly "projects.sources.create": {
         name: string;
         serverId: string;
@@ -1597,6 +1601,20 @@ export type ProjectSourcesActionResultById = {
                 };
             };
         };
+    };
+    readonly "projects.sources.setupRequirements": {
+        kind: 'published';
+        names: string[];
+        provenance: {
+            layer: 'shared';
+            sourceId: string;
+            contentRevision: {
+                headerVersion: number;
+                bodyVersion: number;
+            };
+        };
+    } | {
+        kind: 'unpublished';
     };
     readonly "projects.sources.create": {
         ok: false;

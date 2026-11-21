@@ -14,6 +14,32 @@ const publication = (manifest: ProjectManifestV1, bodyVersion = 1) => ({
 });
 
 describe('shared setup change presentation', () => {
+  it('reads one Source and its selected publication once, projecting only declared names and provenance', async () => {
+    const names = ['API_TOKEN', 'REGION'];
+    const revision = { headerVersion: 1, bodyVersion: 2 };
+    const artifact = { artifactId: 'setup', header: { kind: 'project_setup.v1' }, revision,
+      body: JSON.stringify({ kind: 'project_setup.v1', manifest: { version: 1,
+        scripts: Object.fromEntries(Array.from({ length: 32 }, (_, i) => [`script-${i}`, { source: command('PRIVATE_COMMAND') }])),
+        environmentVariables: names.map(name => ({ name, kind: 'secret', required: true })),
+      } }) };
+    const source = { id: 'source', revision: 3, name: 'Source', createdByAccountId: 'creator', audience: [],
+      attachments: [{ purpose: 'setup' as const, ref: { kind: 'doc' as const, artifactId: artifact.artifactId }, contentRevision: revision }] };
+    const reads: string[] = [];
+    const deps = {
+      readSource: async (input: { sourceId: string }) => {
+        reads.push(input.sourceId);
+        return { ok: true as const, source, canManage: false };
+      },
+      readArtifact: async (artifactId: string, sourceId: string) => {
+        reads.push(`${sourceId}/${artifactId}`);
+        return artifact;
+      },
+    };
+    expect(await changeOwner.readSourceSetupRequirementsV1({ serverId: 'home', sourceId: 'source' }, deps))
+      .toEqual({ kind: 'published', names, provenance: { layer: 'shared', sourceId: 'source', contentRevision: revision } });
+    expect(reads).toEqual(['source', 'source/setup']);
+  });
+
   it('retains the existing effective before/after review control', () => {
     const repositoryManifest = { version: 1 as const, workspace: { teardown: [command('repo cleanup')] } };
     const result = changeOwner.reviewProjectSharedSetupChangeV1({ repositoryManifest,

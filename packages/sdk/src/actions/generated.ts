@@ -2597,6 +2597,7 @@ export type GeneratedActions = Readonly<{
       readonly list: (input: PublicActionInputById["projects.sources.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"projects.sources.list">>;
       readonly moveToTeam: (input: PublicActionInputById["projects.sources.moveToTeam"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"projects.sources.moveToTeam">>;
       readonly read: (input: PublicActionInputById["projects.sources.read"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"projects.sources.read">>;
+      readonly setupRequirements: (input: PublicActionInputById["projects.sources.setupRequirements"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"projects.sources.setupRequirements">>;
       readonly update: (input: PublicActionInputById["projects.sources.update"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"projects.sources.update">>;
     }> ;
     readonly starters: Readonly<{
@@ -5612,6 +5613,7 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         list: (input: PublicActionInputById["projects.sources.list"], options?: ActionExecutionOptions) => execute("projects.sources.list", input, options),
         moveToTeam: (input: PublicActionInputById["projects.sources.moveToTeam"], options?: ActionExecutionOptions) => execute("projects.sources.moveToTeam", input, options),
         read: (input: PublicActionInputById["projects.sources.read"], options?: ActionExecutionOptions) => execute("projects.sources.read", input, options),
+        setupRequirements: (input: PublicActionInputById["projects.sources.setupRequirements"], options?: ActionExecutionOptions) => execute("projects.sources.setupRequirements", input, options),
         update: (input: PublicActionInputById["projects.sources.update"], options?: ActionExecutionOptions) => execute("projects.sources.update", input, options),
       },
       starters: {
