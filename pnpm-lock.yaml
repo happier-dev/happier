@@ -683,6 +683,9 @@ importers:
       '@happier-dev/protocol':
         specifier: 0.0.0
         version: link:../../packages/protocol
+      '@happier-dev/railway-api':
+        specifier: 0.0.0
+        version: link:../../packages/railway-api
       '@happier-dev/release-runtime':
         specifier: 0.0.0
         version: link:../../packages/release-runtime
