@@ -5,7 +5,7 @@ import { projectManagedMachineReadForActorInTx, requireManagedCreationAccessInTx
 import { isManagedMetadataControlActionIdV1, isManagedResizeActionIdV1, MANAGED_POWER_SET_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { ManagedControllerResizeReportV1Schema, type ManagedControllerResizeReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedControllerCurrentnessV1Schema, ManagedControllerReportV1Schema, ManagedControllerSubmitInputV1Schema, type ManagedControllerSubmitInputV1, ManagedEnrollmentCorrelationV1Schema, ManagedBootstrapCredentialCreateV1Schema, type ManagedControllerCurrentnessV1, type ManagedControllerReportV1, type ManagedEnrollmentCorrelationV1, type ManagedBootstrapCredentialCreateV1, ManagedControlAdmissionInputV1Schema, ManagedControllerIntentReportV1Schema, type ManagedControlAdmissionInputV1, type ManagedControllerIntentReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedMachineV1Schema, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { ManagedOpaquePresetObservationV1Schema, ProviderObservationV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
@@ -453,7 +453,8 @@ export async function reportManagedStoppedObservationInTx(tx: Tx, row: StoredMan
     if (!hasBoundManagedLifecycle(row) || row.creationState !== 'active' || row.archivedAt !== null || row.desired === 'delete') {
         throw new ManagedMachineError('resource_mismatch');
     }
-    const previous = projectManagedMachine(row).observation;
+    // Observation was validated when written; publication consumes that field without re-projecting the row.
+    const previous = row.observation as ManagedMachineV1['observation'] | null;
     if (previous?.power === 'stopped' || (previous && previous.observedAt >= report.observedAt)) return;
     const current = await tx.managedMachine.update({ where: { id: row.id }, data: {
         observation: { ...previous, observedAt: report.observedAt, availability: 'present', power: 'stopped' },

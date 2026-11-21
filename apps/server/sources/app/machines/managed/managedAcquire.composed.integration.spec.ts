@@ -44,6 +44,7 @@ import { createFakeSocket, createSocketRoomDiscoveryHarness, triggerSocketHandle
 import { evaluateAccountStoredContentSocketCompatibility } from '@/app/clientCompatibility/accountStoredContentCompatibility';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import * as managedMachineProjection from './managedMachineProjection';
 
 describe("managed acquisition durable authority", () => {
     let harness: LightSqliteHarness;
@@ -97,6 +98,15 @@ describe("managed acquisition durable authority", () => {
         expect(reply.statusCode, reply.body).toBe(200);
         expect(await read()).toMatchObject({ desired: 'start', intentRevision: 3, admittedInput: {},
             observation: { observedAt: 20, availability: 'present', power: 'stopped', storage: 'retained' } });
+        // Call-through cost probe: keep the real row projection and all signed-route checks.
+        // A repeated observation needs the route's projection once, with no second full-row parse in publication.
+        const projections = vi.spyOn(managedMachineProjection, 'projectManagedMachine');
+        try {
+            expect((await submit(21)).statusCode).toBe(200);
+            expect(await read()).toMatchObject({ desired: 'start', intentRevision: 3,
+                observation: { observedAt: 20, power: 'stopped', storage: 'retained' } });
+            expect(projections).toHaveBeenCalledTimes(1);
+        } finally { projections.mockRestore(); }
     });
 
     it.each(['bound', 'may-exist'] as const)('lets only the current controller settle an opaque preset canceled after allocation (%s)', async allocation => {
