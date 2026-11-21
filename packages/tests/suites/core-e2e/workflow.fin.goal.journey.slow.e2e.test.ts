@@ -6,8 +6,7 @@ import { FeaturesResponseSchema, SessionWorkStateGetResponseV1Schema } from '@ha
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { decryptLegacy } from '../../../../apps/cli/src/api/encryption';
 import { createCliActionExecutorFromCredentials } from '../../../../apps/cli/src/session/actions/createCliActionExecutorFromCredentials';
-import { readFakeCodexAppServerRequestLog, startCodexAppServerRemoteHarness,
-  type StartedCodexAppServerRemoteHarness } from '../../src/testkit/codexAppServerRemoteHarness';
+import { startCodexAppServerRemoteHarness, type StartedCodexAppServerRemoteHarness } from '../../src/testkit/codexAppServerRemoteHarness';
 import { fetchJson } from '../../src/testkit/http';
 import { decodeBase64, encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { enqueuePendingQueueV2 } from '../../src/testkit/pendingQueueV2';
@@ -24,7 +23,6 @@ describe('FIN J9: native Goal handoff preserves an ordinary ready Session', () =
   let harness: StartedCodexAppServerRemoteHarness | undefined;
   let socket: SocketCollector | undefined;
   let refuseCleanup = false;
-  let cleanupRefusals = 0;
   afterAll(async () => {
     try {
       socket?.close();
@@ -50,14 +48,14 @@ describe('FIN J9: native Goal handoff preserves an ordinary ready Session', () =
       serverRequestProxy: { rewriteResponseBody: {
         when: request => refuseCleanup && request.method === 'POST' && request.path === '/v3/automations/query',
         statusCode: 409,
-        rewrite: () => { cleanupRefusals++; return JSON.stringify({ code: 'target_unavailable' }); },
+        rewrite: () => JSON.stringify({ code: 'target_unavailable' }),
       } },
     });
   });
 
   it('refuses only the Goal transition when Keep-going cleanup is refused, then accepts another prompt and explicit retry', async () => {
     if (!harness) throw new Error('J9 native Goal harness did not start');
-    const { auth, secret, serverBaseUrl, sessionId, requestLogPath } = harness;
+    const { auth, secret, serverBaseUrl, sessionId } = harness;
     const features = FeaturesResponseSchema.parse((await fetchJson<unknown>(`${serverBaseUrl}/v1/features`)).data);
     const serverId = features.capabilities.serverIdentity.serverIdentityId;
     expect(serverId).toBeTruthy();
@@ -93,24 +91,28 @@ describe('FIN J9: native Goal handoff preserves an ordinary ready Session', () =
     socket = createUserScopedSocketCollector(serverBaseUrl, auth.token);
     socket.connect();
     await waitFor(() => socket!.isConnected(), { context: 'J9 observer connects to the ready Session' });
+    const readGoal = () => callLegacyEncryptedSessionRpc({ ui: socket!, sessionId,
+      method: SESSION_RPC_METHODS.SESSION_GOAL_GET, req: {}, secret, schema: SessionWorkStateGetResponseV1Schema });
     const beforeGoal = 'J9 existing native Goal';
     expect(await setGoal(beforeGoal)).toMatchObject({ ok: true });
 
     refuseCleanup = true;
-    const refused = await setGoal('J9 replacement must not apply');
+    const rejectedGoal = 'J9 replacement must not apply';
+    const refused = await setGoal(rejectedGoal);
     expect(refused).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
-    expect(cleanupRefusals).toBeGreaterThan(0);
-    const state = await callLegacyEncryptedSessionRpc({ ui: socket, sessionId,
-      method: SESSION_RPC_METHODS.SESSION_GOAL_GET, req: {}, secret, schema: SessionWorkStateGetResponseV1Schema });
-    expect(state.workState?.items).toEqual(expect.arrayContaining([expect.objectContaining({ title: beforeGoal })]));
-    expect((await readFakeCodexAppServerRequestLog(requestLogPath)).filter(request =>
-      request.method === 'thread/goal/set').map(request => request.params?.objective)).toEqual([beforeGoal]);
+    const refusedState = (await readGoal()).workState?.items;
+    expect(refusedState).toEqual(expect.arrayContaining([expect.objectContaining({ title: beforeGoal })]));
+    expect(refusedState).not.toEqual(expect.arrayContaining([expect.objectContaining({ title: rejectedGoal })]));
 
     // Leave the HTTP refusal armed: ordinary readiness must not depend on a
     // successful Goal-owner handoff or a Session restart (5be37fb713b).
     await ordinaryPrompt(`J9 ordinary work after refused Goal ${randomUUID()}`);
     refuseCleanup = false;
-    expect(await setGoal('J9 explicit retry succeeds')).toMatchObject({ ok: true });
+    const retriedGoal = 'J9 explicit retry succeeds';
+    expect(await setGoal(retriedGoal)).toMatchObject({ ok: true });
+    const retriedState = (await readGoal()).workState?.items;
+    expect(retriedState).toEqual(expect.arrayContaining([expect.objectContaining({ title: retriedGoal })]));
+    expect(retriedState).not.toEqual(expect.arrayContaining([expect.objectContaining({ title: beforeGoal })]));
     await harness.stopRuntime();
     expect((await fetchSessionV2(serverBaseUrl, auth.token, sessionId)).id).toBe(sessionId);
   }, 240_000);
