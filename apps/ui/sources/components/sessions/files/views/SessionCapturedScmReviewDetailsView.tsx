@@ -10,6 +10,7 @@ import { listFilesComparisonScopeOptions, resolveFilesComparisonLabel } from '@/
 import { useScmReviewActiveFileSelection, useSessionScmReviewTabState } from '@/components/sessions/files/comparison/useSessionScmReviewTabState';
 import { SessionWalkthroughView } from '@/components/sessions/files/walkthrough/SessionWalkthroughView';
 import { useScmWalkthroughState } from '@/components/sessions/files/walkthrough/useSessionScmWalkthrough';
+import { useCapturedComparisonEvidence } from '@/components/sessions/files/comparison/useCapturedComparisonEvidence';
 import { useWalkthroughReading } from '@/components/sessions/files/walkthrough/useWalkthroughReading';
 import { useScmReviewedMarks } from '@/components/sessions/files/comparison/useScmReviewedMarks';
 import { createComparisonReviewExecutionRunDraftDetailsTab } from '@/components/sessions/runs/launcher/executionRunLauncherModel';
@@ -66,8 +67,10 @@ export function SessionCapturedScmReviewDetailsView(props: SessionScmReviewDetai
     const marks = useScmReviewedMarks({ comparison: view === 'files' ? captured.comparison : null, serverId: props.serverId ?? null,
         host: { sessionId: props.sessionId }, writeUnavailableReason: reviewDisabledReason });
     const marksAvailable = captured.comparison !== null && marks.record !== null && marks.unavailableReason === null;
-    const reading = useWalkthroughReading(walkthrough?.comparison && walkthrough.comparison.id === comparison.comparisonId && walkthrough.outputs?.walkthrough?.value
-        ? { comparison: walkthrough.comparison, walkthrough: walkthrough.outputs.walkthrough,
+    const evidence = useCapturedComparisonEvidence(walkthrough?.comparison?.id === comparison.comparisonId
+        ? walkthrough?.comparison ?? null : null, { host: { sessionId: props.sessionId }, serverId: props.serverId });
+    const reading = useWalkthroughReading(evidence.comparison && walkthrough?.outputs?.walkthrough?.value
+        ? { comparison: evidence.comparison, walkthrough: walkthrough.outputs.walkthrough,
             analysis: walkthrough.analysis, reviewed: marks.record,
             provenance: walkthrough.savedResult?.walkthroughProvenance } : null);
     const { maxFiles, maxChangedLines } = useScmReviewLimits();
@@ -103,7 +106,7 @@ export function SessionCapturedScmReviewDetailsView(props: SessionScmReviewDetai
         onSelectComparison={selectComparison} onSelectView={selectView}
         fileCount={fileCount} rootPath={captured.comparison?.repository.rootPath}
         changeCount={captured.comparison?.inventory.files.reduce((sum, file) => sum + file.occurrences.length, 0)}
-        reading={reading} modelLabel={producerEngine?.label} marksAvailable={marksAvailable} marksPending={marks.pending}
+        reading={reading} explainEvidence={props.active !== false ? evidence : undefined} modelLabel={producerEngine?.label} marksAvailable={marksAvailable} marksPending={marks.pending}
         explain={explain} onExplainChange={setExplain}
         onStartReview={openReview} reviewDisabled={!captured.comparison || !machineReachable} reviewDisabledReason={reviewDisabledReason}
         renderWalkthrough={({ layout, renderBar, onShowFiles }) => <SessionWalkthroughView sessionId={props.sessionId} scopeId={props.scopeId}

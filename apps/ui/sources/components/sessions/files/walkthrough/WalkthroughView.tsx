@@ -1,5 +1,6 @@
 import * as React from 'react';
 import {
+  Platform,
   ScrollView,
   View,
   type LayoutChangeEvent,
@@ -10,6 +11,8 @@ import Animated, { FadeIn } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
+import { createNearViewportTracker } from '@/components/widgets/nearViewport';
+import { PAGE_ROW_TOUCH_MIN_HEIGHT_PX } from '@/components/ui/lists/pageRowMetrics';
 import { PagePinnedBar } from '@/components/ui/layout/PagePinnedBar';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
@@ -39,7 +42,7 @@ import {
   WalkthroughInventory,
   WalkthroughOtherChanges,
 } from './WalkthroughLifecycle';
-import { WalkthroughStopSection, type WalkthroughFindProps } from './WalkthroughStopSection';
+import { WalkthroughEvidencePresentation, WalkthroughStopSection, type WalkthroughFindProps } from './WalkthroughStopSection';
 import { isWalkthroughOtherFindKey, useWalkthroughFind } from './walkthroughFind';
 import { ChangedFilesReviewFindSurface } from '@/components/workspaces/scm/review/ChangedFilesReviewFind';
 import type { ReviewFindTarget } from '@/components/workspaces/scm/review/useChangedFilesReviewFind';
@@ -82,6 +85,7 @@ export type WalkthroughReviewSlots = Readonly<{
 
 export type WalkthroughViewProps = Readonly<{
   reading: WalkthroughReading;
+  presentFileEvidence?: (path: string) => void;
   restoreState?: ScmDiffSummaryRestoreState;
   onRetryRestore?: () => void;
   /** Unknown Start observation, separate from the still-admissible pending output. UI recovery must reread before an explicit new attempt. */
@@ -176,6 +180,20 @@ export const WalkthroughView = React.memo(function WalkthroughView(
   const reducedMotion = useReducedMotionPreference();
   const rootRef = React.useRef<View>(null);
   const scrollRef = React.useRef<ScrollView>(null);
+  const hasEvidenceReader = Boolean(props.presentFileEvidence);
+  const nativeViewport = React.useMemo(() => {
+    if (!hasEvidenceReader || Platform.OS === 'web') return null;
+    const tracker = createNearViewportTracker({ initialViewportHeight: 0, overscan: false, quantum: PAGE_ROW_TOUCH_MIN_HEIGHT_PX,
+      readContentNode: () => scrollRef.current?.getInnerViewRef?.() });
+    return { ...tracker, getWindow: tracker.getVisibleWindow, subscribe: (listener: () => void) => {
+      const stopLayout = tracker.subscribe(listener);
+      const stopScroll = tracker.subscribeVisibleWindow(listener);
+      return () => { stopLayout(); stopScroll(); };
+    } };
+  }, [hasEvidenceReader]);
+  const evidencePresentation = React.useMemo(() => props.active !== false && props.presentFileEvidence
+    ? { present: props.presentFileEvidence, nativeViewport } : null,
+  [nativeViewport, props.active, props.presentFileEvidence]);
   const stopOffsets = React.useRef(new Map<string, number>());
   const othersOffset = React.useRef<number | null>(null);
   const findingsOffset = React.useRef<number | null>(null);
@@ -311,6 +329,7 @@ export const WalkthroughView = React.memo(function WalkthroughView(
 
   const onScroll = React.useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      nativeViewport?.onScroll(event);
       scrollTop.current = event.nativeEvent.contentOffset.y;
       if (scrollTop.current > 0) landingStopId.current = null;
       const line =
@@ -327,7 +346,7 @@ export const WalkthroughView = React.memo(function WalkthroughView(
           current === reached ? current : reached,
         );
     },
-    [reading.stops],
+    [nativeViewport, reading.stops],
   );
 
   const onToggleReviewed = props.onToggleReviewed;
@@ -829,12 +848,14 @@ export const WalkthroughView = React.memo(function WalkthroughView(
           contentContainerStyle={styles.phoneContent}
           stickyHeaderIndices={[1]}
           onScroll={onScroll}
+          onLayout={nativeViewport?.onLayout}
+          onContentSizeChange={nativeViewport?.onContentSizeChange}
           scrollEventThrottle={32}
         >
           {header}
           {sectionControl}
           <View onLayout={measureStream}>
-            {body}
+            <WalkthroughEvidencePresentation.Provider value={evidencePresentation}>{body}</WalkthroughEvidencePresentation.Provider>
           </View>
         </ScrollView>
         {currentStop && reading.phase !== 'inventory' ? (
@@ -916,12 +937,14 @@ export const WalkthroughView = React.memo(function WalkthroughView(
             style={styles.root}
             contentContainerStyle={styles.stream}
             onScroll={onScroll}
+            onLayout={nativeViewport?.onLayout}
+            onContentSizeChange={nativeViewport?.onContentSizeChange}
             scrollEventThrottle={32}
           >
             <View style={styles.column}>
               {header}
               <View onLayout={measureStream}>
-                {body}
+                <WalkthroughEvidencePresentation.Provider value={evidencePresentation}>{body}</WalkthroughEvidencePresentation.Provider>
               </View>
             </View>
           </ScrollView>

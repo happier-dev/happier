@@ -93,6 +93,7 @@ export type ChangedFilesReviewDiffBlockProps = Readonly<{
     hunkNotes?: Readonly<{
         placement: 'column' | 'inline';
         columnWidth: number;
+        matches?: (path: string, unifiedDiff: string) => boolean;
         render: (path: string, hunkIndex: number, placement: 'column' | 'inline') => React.ReactNode;
         /**
          * Explain's line captions for a file (lab ideas-1118-reviews scene 3): null when the file has none, and the
@@ -252,8 +253,13 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
 
     const diffLoaded = state.status === 'loaded';
     const findContextBaseText = props.findActive && state.context?.status === 'loaded' ? state.context.baseText : undefined;
-    const hunkTable = useDiffHunkTable({ mode: 'unified', filePath, unifiedDiff: state.diff }, Boolean(props.hunkNotes || props.scrollToLineId));
-    const columnNotes = props.hunkNotes?.placement === 'column' ? props.hunkNotes : null;
+    const providedHunkNotes = props.hunkNotes;
+    const matchesHunkEvidence = providedHunkNotes?.matches;
+    const matchingHunkEvidence = React.useMemo(() => matchesHunkEvidence?.(filePath, state.diff) !== false,
+        [filePath, matchesHunkEvidence, state.diff]);
+    const hunkNotes = matchingHunkEvidence ? providedHunkNotes : null;
+    const hunkTable = useDiffHunkTable({ mode: 'unified', filePath, unifiedDiff: state.diff }, Boolean(hunkNotes || props.scrollToLineId));
+    const columnNotes = hunkNotes?.placement === 'column' ? hunkNotes : null;
     const frameRef = React.useRef<View>(null);
     const [noteTops, setNoteTops] = React.useState<ReadonlyMap<number, number>>(() => new Map());
     const [measureGeneration, setMeasureGeneration] = React.useState(0);
@@ -264,20 +270,20 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
     const renderNote = React.useCallback((hunk: DiffHunkInfo) => {
         const hunkIndex = hunk.hunkIndex;
         // Explain notes describe the captured git hunk, even when it contains several review units.
-        if (!props.hunkNotes || hunkTable.hunks[hunk.index - 1]?.hunkIndex === hunkIndex) return null;
-        if (props.hunkNotes.placement === 'column') {
+        if (!hunkNotes || hunkTable.hunks[hunk.index - 1]?.hunkIndex === hunkIndex) return null;
+        if (hunkNotes.placement === 'column') {
             return <HunkNoteAnchor hunkIndex={hunkIndex} frameRef={frameRef} generation={measureGeneration} onMeasure={onAnchorMeasure} />;
         }
-        return props.hunkNotes.render(filePath, hunkIndex, props.hunkNotes.placement);
-    }, [filePath, measureGeneration, hunkTable.hunks, onAnchorMeasure, props.hunkNotes]);
+        return hunkNotes.render(filePath, hunkIndex, hunkNotes.placement);
+    }, [filePath, measureGeneration, hunkTable.hunks, onAnchorMeasure, hunkNotes]);
     const hunks = React.useMemo<DiffViewerHunks | undefined>(() => {
-        if (!props.hunkNotes && !props.scrollToLineId) return undefined;
+        if (!hunkNotes && !props.scrollToLineId) return undefined;
         const currentIndex = hunkTable.hunks.findIndex((hunk) => hunk.revealLineId === props.scrollToLineId);
-        return { currentIndex: currentIndex < 0 ? null : currentIndex, renderNote: props.hunkNotes ? renderNote : undefined };
-    }, [hunkTable.hunks, props.hunkNotes, props.scrollToLineId, renderNote]);
+        return { currentIndex: currentIndex < 0 ? null : currentIndex, renderNote: hunkNotes ? renderNote : undefined };
+    }, [hunkTable.hunks, hunkNotes, props.scrollToLineId, renderNote]);
     const reviewHunks = React.useMemo(() => hunkReview
-        ? props.hunkNotes ? { ...hunkReview, renderNote } : hunkReview
-        : hunks, [hunkReview, props.hunkNotes, renderNote, hunks]);
+        ? hunkNotes ? { ...hunkReview, renderNote } : hunkReview
+        : hunks, [hunkReview, hunkNotes, renderNote, hunks]);
     const notesColumn = useHunkNotesColumn({ filePath, hunkNotes: columnNotes ?? EMPTY_COLUMN_NOTES, tops: columnNotes ? noteTops : EMPTY_NOTE_TOPS,
         borderColor: theme.colors.border.default });
     const noteColumnStyle = columnNotes ? { paddingRight: columnNotes.columnWidth, minHeight: notesColumn.minHeight } : null;
@@ -455,7 +461,7 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
     const reviewHighlightLineId = props.findActive ? undefined : props.scrollToLineId;
     // A file with captions draws its diff through their lane; every other file draws it alone, with no per-line work.
     const withLineCaptions = (renderDiff: (lane: DiffLineCaptionLane | null) => React.ReactNode) =>
-        props.hunkNotes?.lineCaptions?.(filePath, state.diff, renderDiff) ?? renderDiff(null);
+        hunkNotes?.lineCaptions?.(filePath, state.diff, renderDiff) ?? renderDiff(null);
 
     if (props.reviewCommentsEnabled || props.reviewComments?.length) {
         return (

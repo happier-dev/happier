@@ -17,11 +17,8 @@ import { t } from '@/text';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import type { ScmReviewedMarks } from './useScmReviewedMarks';
 import { useReviewListHunkReview } from '@/components/workspaces/scm/review/hunkReview/useReviewListHunkReview';
-import { readCapturedScmFileForSession, getScmDiffSummaryState, subscribeScmDiffSummaryHostState,
-    retainCapturedScmFile } from '@/sync/ops/scmDiffSummary/generate';
-import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import type { ScmDiffSummaryHost } from '@/sync/ops/scmDiffSummary/results';
-import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { useCapturedComparisonEvidence } from './useCapturedComparisonEvidence';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
 
@@ -63,21 +60,13 @@ export function CapturedComparisonFilesView(props: Readonly<{
     onReviewCommentError?: ReviewProps['onReviewCommentError'];
 }>) {
     const { theme } = useUnistyles();
-    const { binding, resolution } = useServerCredentialAccountScopeBinding(props.serverId ?? props.workspaceScope?.serverId);
-    const scope = resolution.kind === 'bound' ? resolution.scope : null;
-    const sessionId = props.host ? props.host.sessionId : props.sessionId;
-    const machineId = props.host?.machineId ?? props.workspaceScope?.machineId;
-    const cwd = props.comparison.repository.rootPath;
-    const evidenceKey = JSON.stringify([scope?.serverId, scope?.accountId, sessionId ?? props.comparisonSessionId, machineId, cwd, props.comparison.id]);
-    const getSnapshot = React.useCallback(() => getScmDiffSummaryState().capturedFilesByKey?.[evidenceKey]?.files ?? null, [evidenceKey]);
-    const subscribe = React.useCallback((listener: () => void) => scope && (sessionId || machineId)
-        ? subscribeScmDiffSummaryHostState(sessionId ? { sessionId } : { machineId: machineId!, cwd },
-            serverAccountScopeKeySuffix(scope), listener) : () => {},
-    [scope?.serverId, scope?.accountId, sessionId, machineId, cwd]);
-    const hydrated = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-    const comparison = React.useMemo(() => hydrated ? { ...props.comparison,
-        inventory: { ...props.comparison.inventory, files: props.comparison.inventory.files.map(file => hydrated.get(file.path) ?? file) } }
-        : props.comparison, [props.comparison, hydrated]);
+    const host = props.host ?? (props.sessionId ? { sessionId: props.sessionId }
+        : props.workspaceScope ? { machineId: props.workspaceScope.machineId } : null);
+    const evidence = useCapturedComparisonEvidence(props.comparison, {
+        host, serverId: props.serverId ?? props.workspaceScope?.serverId, comparisonSessionId: props.comparisonSessionId,
+    });
+    const comparison = evidence.comparison ?? props.comparison;
+    const evidenceKey = evidence.key;
     const previousProjection = React.useRef<ReturnType<typeof buildCapturedComparisonFiles> | undefined>(undefined);
     const projected = React.useMemo(() => {
         const next = buildCapturedComparisonFiles(comparison);
@@ -88,7 +77,7 @@ export function CapturedComparisonFilesView(props: Readonly<{
     }, [comparison]);
     const initiallyCollapsed = React.useMemo(() => props.initialCollapsedPaths ?? props.comparison.inventory.files
         .filter((file) => file.generated || file.lockfile).map((file) => file.path), [props.initialCollapsedPaths, props.comparison]);
-    const resolvingEvidence = resolution.kind === 'resolving'
+    const resolvingEvidence = evidence.resolution.kind === 'resolving'
         && comparison.inventory.files.some(file => file.evidence.state === 'deferred');
     const providedNotes = props.comparisonChrome?.renderFileNotes;
     const renderFileNotes = React.useCallback((path: string, placement: 'column' | 'inline') => {
@@ -111,25 +100,12 @@ export function CapturedComparisonFilesView(props: Readonly<{
             indexPlacement: 'stream', ...props.comparisonChrome, rootPath: props.comparison.repository.rootPath, renderFileNotes,
             renderHeader };
     }, [props.comparison, props.comparisonChrome, renderFileNotes, theme.colors.text.secondary]);
-    const fetchCapturedDiff = React.useCallback<NonNullable<ReviewProps['fetchUnifiedDiffForPath']>>(async ({ path, signal }) => {
-        const file = getSnapshot()?.get(path) ?? props.comparison.inventory.files.find(file => file.path === path);
-        if (typeof file?.evidence.unifiedDiff === 'string') return { success: true, diff: file.evidence.unifiedDiff };
-        if (file?.evidence.state !== 'deferred' || !binding?.isCurrent()) return {
-            success: false, errorCode: 'result_unavailable', error: file?.evidence.state === 'unavailable' ? file.evidence.reason : t('scmComparison.unsupportedReason') };
-        const host = props.host ?? (props.sessionId ? { sessionId: props.sessionId }
-            : props.workspaceScope ? { machineId: props.workspaceScope.machineId } : null);
-        if (!host) return { success: false, errorCode: 'result_unavailable', error: t('scmComparison.unsupportedReason') };
-        const response = await readCapturedScmFileForSession({ ...host, scope: binding.scope,
-            comparisonSessionId: props.comparisonSessionId,
-            serverId: binding.scope.serverId, shouldContinue: binding.isCurrent, signal,
-            input: { cwd: props.comparison.repository.rootPath, comparisonId: props.comparison.id,
-                source: props.comparison.source, path } });
-        if (response.success && response.capturedFile && binding.isCurrent()) {
-            retainCapturedScmFile(binding, { ...host, cwd }, evidenceKey, response.capturedFile);
-        }
+    const readEvidence = evidence.read;
+    const fetchCapturedDiff = React.useCallback<NonNullable<ReviewProps['fetchUnifiedDiffForPath']>>(async ({ path }) => {
+        const response = await readEvidence(path);
         return response.success && typeof response.diff === 'string' ? { success: true, diff: response.diff }
             : { success: false, errorCode: response.errorCode ?? 'invalid_action_output', error: response.error ?? t('scmComparison.unsupportedReason') };
-    }, [props.comparison, getSnapshot, props.host, props.sessionId, props.comparisonSessionId, props.workspaceScope, binding, evidenceKey, cwd]);
+    }, [readEvidence]);
     const unavailableEmpty = comparison.inventory.state !== 'complete' && comparison.inventory.files.length === 0;
     const emptyState = unavailableEmpty ? <SurfaceStateCard testID="captured-comparison-unavailable" kind="error"
         title={comparison.inventory.reasons.join(' · ') || t('hunkReview.noticeUnavailable')}

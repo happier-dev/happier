@@ -52,6 +52,7 @@ export type WorkspaceScmReviewBodyProps = Readonly<{
     fileCount?: number | null;
     changeCount?: number | null;
     reading?: WalkthroughReading | null;
+    explainEvidence?: Readonly<{ present: (path: string) => void; matches: (path: string, unifiedDiff: string) => boolean }>;
     modelLabel?: string | null;
     /** The writing Agent's mark beside "Opus 5.5 read all 14", when its run names one. */
     analysisMark?: React.ReactNode;
@@ -256,6 +257,8 @@ export const WorkspaceScmReviewBody = React.memo(function WorkspaceScmReviewBody
                 </View> : null}</>,
             indexPlacement: stacked ? 'phone' : rail ? 'rail' : 'stream',
             rootPath: props.rootPath,
+            presentFileEvidence: props.explain && reading ? props.explainEvidence?.present : undefined,
+            matchesHunkEvidence: props.explain && reading ? props.explainEvidence?.matches : undefined,
             renderHunkNotes: props.explain && reading ? (path, hunkIndex, placement) => <WalkthroughExplainNotes
                 reading={reading} path={path} hunkIndex={hunkIndex} placement={placement} onReadInWalkthrough={readInWalkthrough}
                 captionFocus={captioned ? captionFocus : null} /> : null,
@@ -273,7 +276,7 @@ export const WorkspaceScmReviewBody = React.memo(function WorkspaceScmReviewBody
         props.onSelectComparison, props.fileCount, props.onStartReview, props.proposeCommits, props.onProposeCommits,
         props.reviewDisabled, props.reviewDisabledReason, props.barMenuSection, props.barActions, props.barPanel, props.headerAccessory,
         props.scopeDetail, props.changeCount, props.modelLabel, props.analysisMark, props.marksAvailable,
-        props.marksPending, props.explain, props.onExplainChange, props.onExplainDraft, props.rootPath, captioned, captionFocus]);
+        props.marksPending, props.explain, props.explainEvidence, props.onExplainChange, props.onExplainDraft, props.rootPath, captioned, captionFocus]);
     const context: ScmReviewViewContext = { layout: stacked ? 'phone' : rail ? 'wide' : 'narrow', renderBar, onShowFiles: showFiles, hosted };
     return <View style={{ flex: 1, minHeight: 0 }} onLayout={onLayout}>
         {stacked && props.hostSwitch ? <View style={HOST_SWITCH_STACKED_STYLE}>{props.hostSwitch}</View> : null}

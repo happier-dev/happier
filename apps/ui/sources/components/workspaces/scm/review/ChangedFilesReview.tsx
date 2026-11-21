@@ -210,6 +210,8 @@ type ChangedFilesReviewProps = {
         renderHunkNotes?: ((path: string, hunkIndex: number, placement: 'column' | 'inline') => React.ReactNode) | null;
         /** Explain's line captions, drawn in the code beside the hunk notes (`ChangedFilesReviewDiffBlock` `hunkNotes.lineCaptions`). */
         renderLineCaptions?: NonNullable<NonNullable<ChangedFilesReviewDiffBlockProps['hunkNotes']>['lineCaptions']> | null;
+        presentFileEvidence?: (path: string) => void;
+        matchesHunkEvidence?: (path: string, unifiedDiff: string) => boolean;
         hunkNotesColumnWidth?: number;
         /** Beside a file's name in the file list (Explain: the stops that explain it). */
         renderIndexAccessory?: ((path: string) => React.ReactNode) | null;
@@ -1050,6 +1052,13 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         const file = reviewListFiles[index];
         return file ? [file.fullPath] : [];
     }), [prefetch.viewableRowIndices, reviewListFiles]);
+    const presentFileEvidence = props.comparisonChrome?.presentFileEvidence;
+    React.useEffect(() => {
+        if (!presentFileEvidence || props.activeReviewFile?.presented === false) return;
+        for (const path of visibleReviewPaths) {
+            if (expandedKeys.has(path)) presentFileEvidence(path);
+        }
+    }, [expandedKeys, presentFileEvidence, props.activeReviewFile?.presented, visibleReviewPaths]);
     const preferredReviewPath = findTarget?.filePath ?? lineTarget?.filePath ?? highlightedPath ?? props.focusPath ?? null;
     const activeReviewPath = preferredReviewPath && pathToRowIndex.has(preferredReviewPath) && (visibleReviewPaths.length === 0 || visibleReviewPaths.includes(preferredReviewPath))
         ? preferredReviewPath
@@ -1128,8 +1137,9 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         placement: props.comparisonChrome.indexPlacement === 'rail' ? 'column' as const : 'inline' as const,
         columnWidth: props.comparisonChrome.hunkNotesColumnWidth ?? 0,
         render: props.comparisonChrome.renderHunkNotes,
+        matches: props.comparisonChrome.matchesHunkEvidence,
         lineCaptions: props.comparisonChrome.renderLineCaptions ?? undefined,
-    } : null, [props.comparisonChrome?.renderHunkNotes, props.comparisonChrome?.renderLineCaptions, props.comparisonChrome?.indexPlacement,
+    } : null, [props.comparisonChrome?.matchesHunkEvidence, props.comparisonChrome?.renderHunkNotes, props.comparisonChrome?.renderLineCaptions, props.comparisonChrome?.indexPlacement,
         props.comparisonChrome?.hunkNotesColumnWidth]);
     const reviewDiffs = React.useSyncExternalStore(
         React.useCallback(listener => reviewEnabled ? diffStateSource.subscribeAll(listener) : () => {}, [reviewEnabled, diffStateSource]),

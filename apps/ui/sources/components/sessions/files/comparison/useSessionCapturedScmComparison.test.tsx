@@ -16,7 +16,7 @@ const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 
 const boundary = vi.hoisted(() => ({ calls: [] as Array<{ method: string; payload: unknown; accountId?: string | null }>,
-    response: null as unknown, savedResponse: null as unknown, savedResponses: null as Record<string, unknown> | null, savedInventory: null as unknown,
+    response: null as unknown, pinnedFileResponse: null as unknown, savedResponse: null as unknown, savedResponses: null as Record<string, unknown> | null, savedInventory: null as unknown,
     list: null as import('@/dev/testkit/mocks/legendList').CapturingLegendListMockState | null }));
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
@@ -37,6 +37,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
             if (boundary.response instanceof Error) throw boundary.response;
             return typeof boundary.response === 'function' ? boundary.response(request.payload) : boundary.response;
         }
+        if (request.method === RPC_METHODS.SCM_DIFF_FILE) return boundary.pinnedFileResponse;
         if (request.method === RPC_METHODS.SCM_CHANGE_DISCARD) return boundary.response;
         if (request.method === RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_LIST) return boundary.savedInventory ?? { success: true,
             results: [], count: 0, bytes: 0, sevenDayCost: { status: 'unavailable', pricedRunCount: 0, unpricedRunCount: 0, sinceMs: 0, untilMs: 0 } };
@@ -91,7 +92,7 @@ function PaneProbe({ scopeId }: { scopeId: string }) {
 beforeEach(() => installHomeGovernanceBoundaries(homes));
 afterEach(async () => { standardCleanup(); for (const scope of scopes.splice(0)) retireScmDiffSummaryScope(scope);
     await homes.reset();
-    getStorage().setState(initialStorage, true); boundary.calls = []; boundary.response = null; boundary.savedResponse = null; boundary.savedResponses = null; boundary.savedInventory = null; });
+    getStorage().setState(initialStorage, true); boundary.calls = []; boundary.response = null; boundary.pinnedFileResponse = null; boundary.savedResponse = null; boundary.savedResponses = null; boundary.savedInventory = null; });
 
 async function mount(comparison: SessionScmReviewComparison, active = true, pagingSupported = true) {
     const sessionId = `capture-${comparison.kind}`;
@@ -792,6 +793,88 @@ describe('Files reads the canonical captured comparison through authenticated RP
         expect(boundary.calls.filter((call) => call.method === RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_READ).length).toBe(1);
         expect(boundary.calls.find((call) => call.method === RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_READ)?.payload)
             .toEqual({ cwd: '/repo/exact', resultId: 'saved-result' });
+    });
+    it.each(['available', 'unavailable'] as const)('opens deferred saved captions with %s pinned evidence shared with Files Explain', async (availability) => {
+        const source = { kind: 'commit' as const, commit: 'captioned-head' };
+        const mounted = await mount(source, false);
+        await mounted.unmount();
+        const sessionId = 'capture-commit';
+        const serverId = getStorage().getState().sessions[sessionId]!.serverId!;
+        const id = 'f'.repeat(64);
+        const occurrences = [1, 8].map((startLine, position) => ({ id: `captioned:${position}`, alias: `c${position + 1}`,
+            path: changedFile.path, position, before: { startLine, lineCount: 1 }, after: { startLine, lineCount: 1 } }));
+        const capturedFile = { ...changedFile, occurrences, evidence: { ...changedFile.evidence,
+            unifiedDiff: changedFile.evidence.unifiedDiff + '@@ -8 +8 @@\n-previous\n+replacement\n' } };
+        const deferred = { state: 'deferred', reason: 'Captured evidence loads on demand.' };
+        const comparison = ScmComparisonSchema.parse({ id, source, repository: { rootPath: '/repo/exact' },
+            endpoints: { before: 'before', after: 'after' }, inventory: { state: 'complete', reasons: [],
+                files: [{ ...capturedFile, evidence: deferred },
+                    { ...changedFile, path: 'unpresented.lock', generated: true, evidence: deferred }] } });
+        const resultId = 'deferred-captions';
+        const result = ScmDiffSummaryResultSchema.parse({ resultId, revision: 1, canUndo: false,
+            output: { success: true, resultId, revision: 1, sourceKey: id, metadata: { sourceKey: id, source }, comparison,
+                requestedOutputs: ['walkthrough'], outputs: { walkthrough: { state: 'complete', value: {
+                    title: 'Saved captions', intro: 'Pinned code', otherChangeRefs: [],
+                    stops: occurrences.map(({ id, alias, after }) => ({ id: alias, title: alias, explanationMarkdown: 'Explain the captured line.',
+                        changeRefs: [id], captions: [{ changeRef: id, side: 'after', startLine: after.startLine,
+                            endLine: after.startLine, text: 'Pinned caption' }] })),
+                } } }, analysis: { suppliedChangeRefs: occurrences.map(item => item.id), analysedChangeRefs: occurrences.map(item => item.id), remainingChangeRefs: [] } } });
+        boundary.savedResponse = { success: true, result };
+        boundary.savedInventory = { success: true, results: [{ cwd: '/repo/exact', sessionId, resultId, revision: 1, comparisonId: id,
+            source, bytes: 1, updatedAtMs: 1 }], count: 1, bytes: 1 };
+        boundary.pinnedFileResponse = availability === 'available'
+            ? { success: true, capturedFile, diff: capturedFile.evidence.unifiedDiff }
+            : { success: false, errorCode: 'FEATURE_UNSUPPORTED', error: 'The pinned patch is unavailable.' };
+
+        const reads = () => boundary.calls.filter(call => call.method === RPC_METHODS.SCM_DIFF_FILE);
+        const scopeId = `session:${sessionId}:deferred-captions`;
+        const pane = (view: 'walkthrough' | 'files', active: boolean) => <AppPaneProvider>
+            <SessionScmReviewDetailsView sessionId={sessionId} serverId={serverId} scopeId={scopeId}
+                target={{ comparison: { ...source, comparisonId: id }, view, explain: true }} active={active} />
+        </AppPaneProvider>;
+        const screen = await renderScreen(pane('walkthrough', false));
+        expect(reads()).toEqual([]);
+        await screen.update(pane('walkthrough', true));
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('Saved captions'));
+        await vi.waitFor(() => expect(reads()).toHaveLength(1));
+        expect(reads()[0]).toMatchObject({ accountId: 'captured-account',
+            payload: { cwd: '/repo/exact', captured: { comparisonId: id, source, sessionId, path: changedFile.path } } });
+        if (availability === 'unavailable') {
+            await vi.waitFor(() => expect(screen.findByTestId(`walkthrough-evidence-${changedFile.path}`)).toBeTruthy());
+            await screen.update(pane('walkthrough', false));
+            expect(reads()).toHaveLength(1);
+            await screen.unmount();
+            return;
+        }
+        const { DiffViewer } = await import('@/components/ui/code/diff/DiffViewer');
+        await vi.waitFor(() => expect(screen.findAllByType(DiffViewer).map(node => node.props.unifiedDiff))
+            .toEqual(expect.arrayContaining([expect.stringContaining('\n+new'), expect.stringContaining('\n+replacement')])));
+        await screen.update(pane('files', true));
+        await vi.waitFor(() => expect(screen.findByTestId('captured-comparison-files')).toBeTruthy());
+        // The recycler boundary in the renderer needs the visible row reported explicitly.
+        const { DiffFilesListView } = await import('@/components/ui/code/diff/DiffFilesListView');
+        const list = screen.findByType(DiffFilesListView);
+        const index = list.props.files.findIndex((file: { key: string }) => file.key === changedFile.path);
+        expect(index).toBeGreaterThanOrEqual(0);
+        await act(async () => list.props.onViewableItemsChanged({
+            viewableItems: [{ index, isViewable: true, key: changedFile.path }], changed: [],
+        }));
+        const { ChangedFilesReviewDiffBlock } = await import('@/components/workspaces/scm/review/ChangedFilesReviewDiffBlock');
+        const collapseId = 'scm-change-collapse-src_changed.ts';
+        const disclosure = screen.findByTestId(collapseId);
+        if (disclosure?.props.expanded === false) await screen.pressByTestIdAsync(collapseId);
+        await vi.waitFor(() => {
+            expect(screen.findByTestId('walkthrough-caption-marker-A')).toBeTruthy();
+            expect(screen.findByTestId('walkthrough-caption-marker-B')).toBeTruthy();
+        });
+        const block = screen.findAllByType(ChangedFilesReviewDiffBlock).find(node => node.props.filePath === changedFile.path)!;
+        const diff = capturedFile.evidence.unifiedDiff;
+        expect(block.props.hunkNotes.matches(changedFile.path, diff)).toBe(true);
+        expect(block.props.hunkNotes.matches(changedFile.path, diff.replace('+new', '+changed since capture'))).toBe(false);
+        expect(reads()).toHaveLength(1);
+        expect(boundary.calls.filter(call => call.method === RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_READ)).toHaveLength(1);
+        await screen.unmount();
+        expect(reads()).toHaveLength(1);
     });
     it('keeps captured Files readable and disables review with a reason when its Machine goes offline', async () => {
         const source = { kind: 'commit' as const, commit: 'old-ref' };

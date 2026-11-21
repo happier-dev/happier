@@ -24,6 +24,7 @@ import { SessionWalkthroughView } from '@/components/sessions/files/walkthrough/
 import { SessionCommitsView } from '@/components/sessions/files/commits/SessionCommitsView';
 import { scmReviewViewUnavailableReason } from '@/sync/domains/scm/diffSummary/selection';
 import { useScmReviewedMarks } from '@/components/sessions/files/comparison/useScmReviewedMarks';
+import { useCapturedComparisonEvidence } from '@/components/sessions/files/comparison/useCapturedComparisonEvidence';
 import { useWalkthroughReading } from '@/components/sessions/files/walkthrough/useWalkthroughReading';
 import { useScmWalkthroughStates } from '@/components/sessions/files/walkthrough/useSessionScmWalkthrough';
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
@@ -729,11 +730,16 @@ const SessionWorkingScmReviewDetailsView = React.memo(
       walkthroughAnalysis?.comparison != null &&
       marks.record !== null &&
       marks.unavailableReason === null;
+    const filesEvidence = useCapturedComparisonEvidence(walkthroughAnalysis?.comparison ?? null, {
+      host: { sessionId: props.sessionId },
+      serverId: props.serverId,
+      presented: props.active !== false && reviewView === 'files' && explain,
+    });
     const filesReading = useWalkthroughReading(
-        walkthroughAnalysis?.comparison &&
-        walkthroughAnalysis.outputs?.walkthrough?.value
+        filesEvidence.comparison &&
+        walkthroughAnalysis?.outputs?.walkthrough?.value
           ? {
-              comparison: walkthroughAnalysis.comparison,
+              comparison: filesEvidence.comparison,
               walkthrough: walkthroughAnalysis.outputs.walkthrough,
               analysis: walkthroughAnalysis.analysis,
               reviewed: marks.record,
@@ -918,6 +924,7 @@ const SessionWorkingScmReviewDetailsView = React.memo(
         onSelectView={selectView}
         rootPath={effectiveSnapshot?.repo.rootPath}
         reading={filesReading}
+        explainEvidence={props.active !== false ? filesEvidence : undefined}
         modelLabel={producerEngine?.label}
         analysisMark={analysisMarkAgentId ? <AgentIcon agentId={analysisMarkAgentId} size={ICON_SIZE.xs} /> : null}
         marksAvailable={marksAvailable}

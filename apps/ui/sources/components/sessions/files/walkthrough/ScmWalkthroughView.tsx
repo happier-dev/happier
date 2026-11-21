@@ -31,6 +31,7 @@ import { WalkthroughView, type WalkthroughViewLayout } from './WalkthroughView';
 import { WalkthroughStopExchangesProvider, type WalkthroughStopExchangesSource } from './WalkthroughStopExchanges';
 import { EMPTY_WALKTHROUGH_READING, type WalkthroughPhase, type WalkthroughStop } from './walkthroughReading';
 import { useWalkthroughReading } from './useWalkthroughReading';
+import { useCapturedComparisonEvidence } from '../comparison/useCapturedComparisonEvidence';
 import { useScmReviewedMarks } from '../comparison/useScmReviewedMarks';
 import { useWalkthroughSavedActions } from './WalkthroughSavedActions';
 import type { ScmComparisonMenuSection } from '@/components/sessions/files/comparison/ScmComparisonMoreMenu';
@@ -40,6 +41,7 @@ import { ReviewWalkthroughSteps } from '@/components/sessions/reviews/walkthroug
 import { requestExplainReviewFindings } from '@/sync/ops/reviews/reviewWalkthrough';
 import { ChangedFilesReviewFindButton } from '@/components/workspaces/scm/review/ChangedFilesReviewFind';
 import { useFindSurfaceRuntime } from '@/keyboard/KeyboardShortcutProvider';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 export type ScmWalkthroughViewProps = Readonly<{
     sessionId?: string;
@@ -96,9 +98,12 @@ export const ScmWalkthroughView = React.memo(function ScmWalkthroughView(props: 
     const marks = useScmReviewedMarks({ comparison: capturedComparison, serverId: props.serverId ?? null, host: bound.host,
         observation: 'keyed',
         writeUnavailableReason: bound.machineReachable ? null : t('walkthrough.notice.offlineA11y') });
-    const reading = useWalkthroughReading(capturedComparison
+    const layoutPresented = useLayoutPresentationActive();
+    const presented = layoutPresented && props.active !== false;
+    const evidence = useCapturedComparisonEvidence(capturedComparison, { host: bound.host, serverId: props.serverId, presented });
+    const reading = useWalkthroughReading(evidence.comparison
         ? {
-            comparison: capturedComparison,
+            comparison: evidence.comparison,
             walkthrough: viewModel?.outputs?.walkthrough ?? null,
             analysis: viewModel?.analysis ?? null,
             reviewed: marks.record,
@@ -300,6 +305,7 @@ export const ScmWalkthroughView = React.memo(function ScmWalkthroughView(props: 
             <WalkthroughStopExchangesProvider source={exchangeSource} modelLabel={producerLabel} onOpenConversation={openConversation}>
             <WalkthroughView
                 reading={reading ?? EMPTY_WALKTHROUGH_READING}
+                presentFileEvidence={evidence.present}
                 restoreState={bound.restoreState}
                 onRetryRestore={bound.retryRestore}
                 admission={bound.admission}
@@ -311,7 +317,7 @@ export const ScmWalkthroughView = React.memo(function ScmWalkthroughView(props: 
                 generatedLabel={reviewView?.generatedLabel ?? null}
                 review={reviewView?.slots ?? null}
                 layout={props.layout}
-                active={props.active}
+                active={presented}
                 offline={offline}
                 onToggleReviewed={onToggleReviewed}
                 marksDisabledReason={marks.unavailableReason}

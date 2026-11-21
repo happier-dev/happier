@@ -36,6 +36,7 @@ import { ScmWalkthroughView } from '@/components/sessions/files/walkthrough/ScmW
 import { useCapturedScmComparison } from '@/components/sessions/files/comparison/useCapturedScmComparison';
 import { CapturedComparisonFilesView } from '@/components/sessions/files/comparison/CapturedComparisonFilesView';
 import { listFilesComparisonScopeOptions, resolveFilesComparisonLabel } from '@/components/sessions/files/comparison/filesComparison';
+import { useCapturedComparisonEvidence } from '@/components/sessions/files/comparison/useCapturedComparisonEvidence';
 import { useWalkthroughReading } from '@/components/sessions/files/walkthrough/useWalkthroughReading';
 import { useScmReviewedMarks } from '@/components/sessions/files/comparison/useScmReviewedMarks';
 import { createSessionScmReviewDetailsTab, SESSION_DETAILS_SCM_REVIEW_TAB_KEY, type SessionScmReviewComparison, type SessionScmReviewView } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
@@ -277,7 +278,8 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
     });
     const onExplainDraft = React.useCallback(() => { void explainFiles(); }, [explainFiles]);
     const marks = useScmReviewedMarks({ comparison: bound.capturedComparison, serverId: props.serverId, host: props.host });
-    const reading = useWalkthroughReading(bound.capturedComparison ? { comparison: bound.capturedComparison,
+    const evidence = useCapturedComparisonEvidence(bound.capturedComparison, { host: props.host, serverId: props.serverId, presented: presented && liveFiles && explain });
+    const reading = useWalkthroughReading(evidence.comparison ? { comparison: evidence.comparison,
         walkthrough: bound.viewModel?.outputs?.walkthrough ?? null, analysis: bound.viewModel?.analysis ?? null,
         reviewed: marks.record, provenance: bound.viewModel?.savedResult?.walkthroughProvenance } : null);
     const chosenEvidence = props.evidenceSessions?.find(choice => choice.sessionId === props.evidenceSessionId);
@@ -430,7 +432,7 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
                 onSelectComparison={onSelectComparison}
                 onSelectView={onSelectView} rootPath={props.rootPath}
                 fileCount={capture.page?.totalFiles ?? capture.comparison?.inventory.files.length ?? (snapshot ? selectScmChangedFileCount(snapshot) : null)}
-                reading={reading} marksAvailable={marks.unavailableReason === null && marks.record !== null} marksPending={marks.pending}
+                reading={reading} explainEvidence={presented ? evidence : undefined} marksAvailable={marks.unavailableReason === null && marks.record !== null} marksPending={marks.pending}
                 modelLabel={bound.viewModel?.producer?.modelId} explain={explain} onExplainChange={onExplainChange}
                 onExplainDraft={!props.workspace && bound.scope && bound.machine && comparison.kind !== 'session' && comparison.kind !== 'turnCheckpoint'
                     ? onExplainDraft : undefined}

@@ -52,6 +52,8 @@ export type ScmDiffSummaryGenerateRpc = (
     opts?: Readonly<{ serverId?: string | null; scope?: ServerAccountScope; signal?: AbortSignal }>,
 ) => Promise<ScmDiffSummaryGenerateOutput | { success: false; error: string; errorCode?: string }>;
 
+export type CapturedScmFileResponse = ScmDiffFileResponse | Readonly<{ success: false; error?: string; errorCode: string }>;
+
 export type ScmComparisonCaptureResult = ScmComparisonCaptureOutput | Readonly<{ success: false; error: string; errorCode?: string }>;
 export type ScmComparisonCaptureRpc = (
     sessionId: string,
@@ -222,6 +224,12 @@ function buildGenerateRequest(params: GenerateScmDiffSummaryParams): ScmDiffSumm
     };
 }
 
+export function capturedScmFileReadKey(scope: ServerAccountScope | null, host: ScmDiffSummaryHost | null,
+    cwd: string, comparisonId: string | undefined, comparisonSessionId?: string): string {
+    return JSON.stringify([scope?.serverId, scope?.accountId, host?.sessionId ?? comparisonSessionId,
+        host?.sessionId ? undefined : host?.machineId, cwd, comparisonId]);
+}
+
 export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDeps = {}) {
     const actionContext = (params: CaptureScmComparisonParams | GenerateScmDiffSummaryParams | RefreshScmDiffSummaryRunParams) => ({
         ...(params.sessionId ? { defaultSessionId: params.sessionId, externalActionTarget: { kind: 'session' as const, sessionId: params.sessionId } }
@@ -234,6 +242,7 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
     const getExecutionRun = deps.getExecutionRun ?? sessionExecutionRunGet;
     const nowMs = deps.nowMs ?? Date.now;
     let state = createInitialScmDiffSummaryState();
+    const openingCapturedFiles = new Map<string, { isCurrent: () => boolean; request: Promise<CapturedScmFileResponse> }>();
     const prefetchByRequestKey = new Map<string, Promise<ScmDiffSummaryOperationResult>>();
     const listeners = new Set<() => void>();
     const hostListeners = new Map<string, Set<() => void>>();
@@ -300,7 +309,7 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
 
     const readCapturedFile = async (params: CaptureScmComparisonParams<Readonly<{
         cwd: string; comparisonId: string; source: ScmComparisonSource; path: string;
-    }>>): Promise<ScmDiffFileResponse | Readonly<{ success: false; error: string; errorCode: string }>> => {
+    }>>): Promise<CapturedScmFileResponse> => {
         const current = () => !params.signal?.aborted && params.shouldContinue?.() !== false;
         const sessionId = params.sessionId ?? params.comparisonSessionId;
         const result = await invokeUiScmAction({ actionId: 'scm.diff.file',
@@ -314,6 +323,35 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
         const failure = readOperationError(result);
         return { success: false, error: failure?.error ?? 'Captured file evidence is unavailable',
             errorCode: failure?.errorCode ?? 'invalid_action_output' };
+    };
+
+    // Cards share the outstanding read even if one unmounts before its reply.
+    const openCapturedFile = (lifetime: ServerAccountScopeLifetime, params: CaptureScmComparisonParams<Readonly<{
+        cwd: string; comparisonId: string; source: ScmComparisonSource; path: string;
+    }>>): Promise<CapturedScmFileResponse> => {
+        const owner = readServerAccountScopeOwnerLifetime(lifetime);
+        const { cwd, comparisonId, path } = params.input;
+        const key = capturedScmFileReadKey(owner.scope, params, cwd, comparisonId, params.comparisonSessionId);
+        const unavailable = { success: false as const, errorCode: 'result_unavailable' };
+        if (!owner.isCurrent()) return Promise.resolve(unavailable);
+        const existing = state.capturedFilesByKey?.[key]?.files.get(path);
+        if (existing) return Promise.resolve({ success: true, diff: existing.evidence.unifiedDiff ?? undefined, capturedFile: existing });
+        const operationKey = JSON.stringify([key, path]);
+        const pending = openingCapturedFiles.get(operationKey);
+        if (pending?.isCurrent()) return pending.request;
+        const request = readCapturedFile({ ...params, scope: owner.scope, signal: undefined, shouldContinue: owner.isCurrent })
+            .then((result) => {
+                if (!owner.isCurrent()) return unavailable;
+                if (result.success && result.capturedFile?.path === path) {
+                    retainCapturedFile(lifetime, { ...params, cwd }, key, result.capturedFile);
+                }
+                return result;
+            })
+            .finally(() => {
+                if (openingCapturedFiles.get(operationKey)?.request === request) openingCapturedFiles.delete(operationKey);
+            });
+        openingCapturedFiles.set(operationKey, { isCurrent: owner.isCurrent, request });
+        return request;
     };
 
     const generateFromUserAction = async (params: GenerateScmDiffSummaryParams): Promise<ScmDiffSummaryOperationResult> => {
@@ -536,6 +574,17 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
         }, removedKeys, captured.map(entry => entry.hostKey));
     };
 
+    const retainCapturedFile = (lifetime: ServerAccountScopeLifetime, host: ScmDiffSummaryHost & Readonly<{ cwd: string }>, key: string, file: ScmComparisonFile) => {
+        const owner = readServerAccountScopeOwnerLifetime(lifetime);
+        if (!owner.isCurrent()) return;
+        const previous = state.capturedFilesByKey?.[key];
+        if (!previous) owner.onRetire(() => retireScope(owner.scope));
+        const scopeKey = serverAccountScopeKeySuffix(owner.scope);
+        const hostKey = hostSubscriptionKey(scopeKey, { ...host, sessionId: host.sessionId ?? null });
+        setState({ ...state, capturedFilesByKey: { ...state.capturedFilesByKey,
+            [key]: { scopeKey, hostKey, files: new Map(previous?.files).set(file.path, file) } } }, [], [hostKey]);
+    };
+
     return {
         getState,
         subscribe,
@@ -571,16 +620,8 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
             setState({ ...state, capturedReadsByKey: { ...state.capturedReadsByKey,
                 [key]: { scopeKey, hostKey, value } } }, [], [hostKey]);
         },
-        retainCapturedFile: (lifetime: ServerAccountScopeLifetime, host: ScmDiffSummaryHost & Readonly<{ cwd: string }>, key: string, file: ScmComparisonFile) => {
-            const owner = readServerAccountScopeOwnerLifetime(lifetime);
-            if (!owner.isCurrent()) return;
-            const previous = state.capturedFilesByKey?.[key];
-            if (!previous) owner.onRetire(() => retireScope(owner.scope));
-            const scopeKey = serverAccountScopeKeySuffix(owner.scope);
-            const hostKey = hostSubscriptionKey(scopeKey, { ...host, sessionId: host.sessionId ?? null });
-            setState({ ...state, capturedFilesByKey: { ...state.capturedFilesByKey,
-                [key]: { scopeKey, hostKey, files: new Map(previous?.files).set(file.path, file) } } }, [], [hostKey]);
-        },
+        retainCapturedFile,
+        openCapturedFile,
         loadSavedResult: (params: ScmDiffSummaryHost & Readonly<{ scope: ServerAccountScope; result: ScmDiffSummaryResult;
             /** Inventory recency, so independent output readers cannot reorder saved results by load time. */
             savedAtMs?: number }>): string | null => {
@@ -624,6 +665,7 @@ const defaultOperations = createScmDiffSummaryOperations();
 export const generateScmDiffSummaryFromUserAction = defaultOperations.generateFromUserAction;
 export const captureScmComparisonForSession = defaultOperations.captureComparison;
 export const readCapturedScmFileForSession = defaultOperations.readCapturedFile;
+export const openCapturedScmFile = defaultOperations.openCapturedFile;
 export const refreshScmDiffSummaryRun = defaultOperations.refreshRun;
 export const applySavedScmDiffSummaryResult = defaultOperations.applySavedResult;
 export const loadSavedScmDiffSummaryResult = defaultOperations.loadSavedResult;

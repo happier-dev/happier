@@ -38,6 +38,7 @@ export type WalkthroughStopFile = Readonly<{
     added: number;
     removed: number;
     unavailableReason: string | null;
+    deferred?: boolean;
 }>;
 
 export type WalkthroughLineCaption = Readonly<
@@ -84,6 +85,7 @@ export type WalkthroughOtherChange = Readonly<{
     generated: boolean;
     binary: boolean | null;
     unavailableReason: string | null;
+    deferred?: boolean;
     /** The file's hunks this walkthrough leaves outside its stops, as a unified diff; empty when unavailable. */
     unifiedDiff: string;
 }>;
@@ -255,17 +257,18 @@ export function buildWalkthroughReading(input: WalkthroughReadingInput): Walkthr
     let added = 0;
     let removed = 0;
     let unavailableCount = 0;
-    const evidenceByPath = new Map<string, Readonly<{ declaredAvailable: boolean; unavailableReason: string | null }>>();
+    const evidenceByPath = new Map<string, Readonly<{ declaredAvailable: boolean; deferred: boolean; unavailableReason: string | null }>>();
     const changeCount = located.size;
     for (const file of comparison.inventory.files) {
         const hunks = hunksByPath.get(file.path) ?? [];
         const evidence = file.evidence;
-        const unavailableReason = evidence.state === 'unavailable' ? evidence.reason : null;
+        const state = evidence.state;
+        const unavailableReason = state === 'unavailable' ? evidence.reason : null;
         const declaredAvailable = unavailableReason === null;
         const textualCount = file.occurrences.filter((occurrence) => !isMetadataOccurrence(occurrence)).length;
         const fullReason = declaredAvailable && (textualCount > hunks.length
             || (hunks.length > 0 && completeFilePatch(file, hunks) === null)) ? 'invalid_diff' : unavailableReason;
-        evidenceByPath.set(file.path, { declaredAvailable, unavailableReason: fullReason });
+        evidenceByPath.set(file.path, { declaredAvailable, deferred: state === 'deferred', unavailableReason: fullReason });
         for (const hunk of hunks) {
             const lines = parseUnifiedDiffHunks(hunk).flatMap((entry) => entry.lines);
             added += lines.filter((line) => line.kind === 'add').length;
@@ -334,6 +337,7 @@ export function buildWalkthroughReading(input: WalkthroughReadingInput): Walkthr
                 added: lines.added,
                 removed: lines.removed,
                 unavailableReason,
+                ...(evidenceByPath.get(file.path)!.deferred ? { deferred: true } : {}),
             };
         });
         const captions = (stop.captions ?? []).flatMap(caption => {
@@ -400,6 +404,7 @@ export function buildWalkthroughReading(input: WalkthroughReadingInput): Walkthr
             generated: file.generated,
             binary: file.binary,
             unavailableReason: evidenceByPath.get(file.path)!.unavailableReason,
+            ...(evidenceByPath.get(path)!.deferred ? { deferred: true } : {}),
             unifiedDiff: selectedPatch(file, otherEntriesByPath.get(path)!, selectedHunks(path, otherEntriesByPath.get(path)!)).unifiedDiff,
         };
     });

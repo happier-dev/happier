@@ -5,6 +5,7 @@ import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 import { MarkdownView, type MarkdownInlineReferences } from '@/components/markdown/MarkdownView';
 import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';
+import { useMeasuredNearViewport, type NearViewportTracker } from '@/components/widgets/nearViewport';
 import { LazyMountOnScreen } from '@/components/ui/performance/LazyMountOnScreen';
 import { CODE_LINE_BASE_HEIGHT } from '@/components/ui/code/view/CodeLineRow';
 import { buildCodeLinesFromUnifiedDiff } from '@/components/ui/code/model/buildCodeLinesFromUnifiedDiff';
@@ -51,6 +52,28 @@ class HunkEvidenceBoundary extends React.Component<Readonly<{ children: React.Re
     render() { return this.state.failed ? this.props.fallback : this.props.children; }
 }
 
+/** The stream's physical viewport admits reads for its deferred cards. */
+export const WalkthroughEvidencePresentation = React.createContext<Readonly<{
+    present: (path: string) => void;
+    nativeViewport: NearViewportTracker | null;
+}> | null>(null);
+
+function PresentEvidence(props: Readonly<{ path: string; present: (path: string) => void }>) {
+    React.useEffect(() => { props.present(props.path); }, [props.present, props.path]);
+    return null;
+}
+
+function NativeEvidenceFrame(props: React.PropsWithChildren<Readonly<{
+    path: string; present: (path: string) => void; viewport: NearViewportTracker;
+}>>) {
+    const ref = React.useRef<View>(null);
+    const { near, measure } = useMeasuredNearViewport(props.viewport, ref, true, props.path);
+    return <View ref={ref} collapsable={false} onLayout={measure}>
+        {props.children}
+        {near ? <PresentEvidence path={props.path} present={props.present} /> : null}
+    </View>;
+}
+
 /** The reading hint beside a stop's title: where to read, never a verdict (lab WT1-A). */
 export function resolveWalkthroughImportanceLabel(stop: Pick<WalkthroughStop, 'number' | 'importance'>): string | null {
     if (stop.number === 1 && stop.importance !== 'low') return t('walkthrough.importance.start');
@@ -75,7 +98,7 @@ function reservedDiffRows(unifiedDiff: string): number {
 
 /** One file's exact hunks for a stop, as a quiet card: path, range, counts and the shared diff renderer. */
 export const WalkthroughHunkCard = React.memo(function WalkthroughHunkCard(props: Readonly<{
-    file: Pick<WalkthroughStopFile, 'path' | 'changeKind' | 'unifiedDiff' | 'rangeLabel' | 'added' | 'removed' | 'unavailableReason'> & Partial<Pick<WalkthroughStopFile, 'previousPath'>>;
+    file: Pick<WalkthroughStopFile, 'path' | 'changeKind' | 'unifiedDiff' | 'rangeLabel' | 'added' | 'removed' | 'unavailableReason'> & Partial<Pick<WalkthroughStopFile, 'previousPath' | 'deferred'>>;
     phone?: boolean;
     onOpenFile?: (path: string) => void;
     /** This card's Find key and the reading's Find state; absent draws the code without Find. */
@@ -85,6 +108,7 @@ export const WalkthroughHunkCard = React.memo(function WalkthroughHunkCard(props
 }>) {
     const { theme } = useUnistyles();
     const file = props.file;
+    const presentation = React.useContext(WalkthroughEvidencePresentation);
     const find = props.find && props.findKey ? props.find : null;
     const findKey = props.findKey ?? '';
     const findModel = find?.model;
@@ -159,9 +183,16 @@ export const WalkthroughHunkCard = React.memo(function WalkthroughHunkCard(props
                     </HunkEvidenceBoundary>
                     </LazyMountOnScreen>
                 </View>
-            ) : (
-                evidence(file.unavailableReason)
-            )}
+            ) : file.deferred && presentation ? (
+                presentation.nativeViewport
+                    ? <NativeEvidenceFrame path={file.path} present={presentation.present} viewport={presentation.nativeViewport}>
+                        {evidence(file.unavailableReason)}
+                    </NativeEvidenceFrame>
+                    : <LazyMountOnScreen rootMargin="0px" placeholder={evidence(file.unavailableReason)}>
+                        {evidence(file.unavailableReason)}
+                        <PresentEvidence path={file.path} present={presentation.present} />
+                    </LazyMountOnScreen>
+            ) : evidence(file.unavailableReason)}
         </View>
     );
 });
