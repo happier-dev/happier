@@ -91,10 +91,10 @@ export function paintStepInk(
         draw.fillStyle = draw.strokeStyle = 'white';
         draw.lineWidth = 2;
         for (const element of elements) {
-            const style = getComputedStyle(element);
-            if (style.visibility === 'hidden' || style.opacity === '0' || style.display === 'none') continue;
             // SVG children belong to their icon or QR, not to the outer column.
             if (element instanceof SVGElement && element.tagName !== 'svg') continue;
+            const style = getComputedStyle(element);
+            if (style.visibility === 'hidden' || style.opacity === '0' || style.display === 'none') continue;
             const rect = measure(element);
             if (rect.width <= 0 || rect.height <= 0) continue;
             if (element instanceof SVGSVGElement) {
