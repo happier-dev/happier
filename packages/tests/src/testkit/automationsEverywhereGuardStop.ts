@@ -20,7 +20,7 @@ type Account = Awaited<ReturnType<TeamSetupFFixture['createAccount']>>;
 type Machine = Awaited<ReturnType<TeamSetupFFixture['enrollDaemon']>>;
 
 export async function attachMachineEventTrigger(fixture: TeamSetupFFixture, actor: Account, machine: Machine,
-  eventId: string, filter: AutomationEventFilterV1 | null = null) {
+  eventId: string, filter: AutomationEventFilterV1 | null = null, options: { capturePayload?: boolean } = {}) {
   const catalogResult = await actor.execute('workflow.events.list', machine.target);
   if (!catalogResult.ok) throw new Error(`${eventId} catalog refused (${catalogResult.errorCode})`);
   const selected = WorkflowEventsListOutputV1Schema.parse(catalogResult.result).events.find(row =>
@@ -36,6 +36,7 @@ export async function attachMachineEventTrigger(fixture: TeamSetupFFixture, acto
   const source = PluginEventAutomationSetupResultV1Schema.parse(setup.result);
   const linked = await actor.executeReviewed('workflow.trigger.add', {
     target: { kind: 'inline', definition: { version: 1,
+      ...(options.capturePayload ? { inputs: [{ name: 'payload', valueType: 'json' as const, required: true }] } : {}),
       defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
       blocks: [{ kind: 'step', id: 'review', document: { text: `Review this settled ${eventId} fact.`,
         references: [], attachments: [] }, input: [], result: { kind: 'text' } }],
