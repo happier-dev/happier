@@ -243,7 +243,7 @@ export function createNativeFirewallBackend(run: NativeRun, recover: NativeRun, 
         confinedTable(result.stdout);
         return result.stdout;
     };
-    const inspect = async (step: Firewall, invoke = run): Promise<Snapshot> => {
+    const inspect = async (step: Firewall, invoke = run, observeRecipeDrift = false): Promise<Snapshot> => {
         candidateRules(step.rules);
         await assertProtectedNativeTarget(nft, 0, true);
         await assertProtectedNativeTarget(rulesPath, 0o600);
@@ -257,8 +257,14 @@ export function createNativeFirewallBackend(run: NativeRun, recover: NativeRun, 
         if (definition.kind === 'file' ? definition.bytes!.toString('utf8') !== nativeFirewallUnit : service.present) {
             throw new MachineSetupEffectError('foreign_effect_conflict');
         }
-        if (nativeTable && (rules.kind !== 'file' || !equivalentTable(nativeTable, rules.bytes!.toString('utf8')))) {
-            throw new MachineSetupEffectError('foreign_effect_conflict');
+        // Setup can show divergence when both protected recipe files identify the table.
+        // Transition planning and effects still require a restorable native baseline.
+        if (nativeTable) {
+            if (rules.kind !== 'file') throw new MachineSetupEffectError('foreign_effect_conflict');
+            if (!equivalentTable(nativeTable, rules.bytes!.toString('utf8'))
+                && (!observeRecipeDrift || definition.kind !== 'file')) {
+                throw new MachineSetupEffectError('foreign_effect_conflict');
+            }
         }
         if (step.operation === 'remove' && (rules.kind === 'file'
             ? rules.bytes!.toString('utf8') !== step.rules
@@ -415,7 +421,8 @@ export function createNativeFirewallBackend(run: NativeRun, recover: NativeRun, 
                     ...(caddy.details ? { remedy: caddy.details.remedy } : {}), caddy } } };
             const observedStep = caddy?.status === 'ready' ? { ...step,
                 exposures: [...(step.exposures ?? []), ...readCaddyContainerFirewallExposures(caddy.bindings)] } : step;
-            const state = await inspect(observedStep);
+            const state = await inspect(observedStep, run,
+                step.operation !== 'remove' && step.id !== nativeFirewallTransitionObservationStepId);
             if (step.operation === 'remove') return { stepId: step.id, status: satisfied(step, state) ? 'satisfied' : 'drifted', facts: {} };
             const transition = await transitionFacts(observedStep, state);
             return { stepId: step.id, status: transition.privateScopeAvailable ? satisfied(step, state) ? 'satisfied' : 'drifted' : 'unavailable',

@@ -54,6 +54,25 @@ it('distinguishes a fresh Firewall footprint from an installed Firewall for Setu
     expect(readMachineSetupInitialPresenceV1(await check())).toBe('present');
 });
 
+it('reports native edits to the installed Firewall table as drift in the reviewed plan', async () => {
+    let edited = false;
+    const f = await fixture(undefined, table => edited
+        ? table.replace('    iifname "lo" accept', '    iifname "lo" accept\n    tcp dport 8081 accept')
+        : table);
+    const check = () => checkMachineSetupEffectPlan({ basis, steps: [f.step], backend: f.backend });
+    await f.backend.apply(f.step);
+    expect((await check()).nativeFacts[0]?.status).toBe('satisfied');
+
+    edited = true;
+    const plan = await check();
+    expect(plan.nativeFacts[0]?.status).toBe('drifted');
+    await expect(applyMachineSetupEffectPlans({ plans: [{ plan }], backend: f.backend }))
+        .resolves.toMatchObject({ status: 'failed', reason: 'foreign_effect_conflict' });
+
+    await f.fs.unlink(f.disk(rulesPath));
+    expect((await check()).nativeFacts[0]).toMatchObject({ status: 'unavailable', reason: 'foreign_effect_conflict' });
+});
+
 it('removes the reviewed Firewall table, rules and boot unit through the native Setup effect', async () => {
     const f = await fixture();
     await f.backend.apply(f.step);
