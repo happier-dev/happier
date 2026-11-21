@@ -8621,14 +8621,15 @@ const en = Shared_inboxWorkTranslations.en;
 
 const it: typeof en = {
     pageDescription: "Cosa ti aspetta, cosa è cambiato e chi ti ha menzionato.",
-    needsYouSummary: ({ approvals, decisions, blocked }: { approvals: number; decisions: number; blocked: number }) => {
+    needsYouSummary: ({ approvals, decisions, blocked, failedActions, actions }: { approvals: number; decisions: number; blocked: number; failedActions: number; actions: number }) => {
         const parts = [
             approvals > 0 ? `${approvals} ${approvals === 1 ? 'approvazione' : 'approvazioni'}` : null,
             decisions > 0 ? `${decisions} ${decisions === 1 ? 'decisione' : 'decisioni'}` : null,
             blocked > 0 ? `${blocked} ${blocked === 1 ? 'sessione bloccata' : 'sessioni bloccate'}` : null,
+            failedActions > 0 ? `${failedActions} ${failedActions === 1 ? 'azione non riuscita' : 'azioni non riuscite'}` : null,
+            actions > 0 ? `${actions} ${actions === 1 ? 'azione da controllare' : 'azioni da controllare'}` : null,
         ].filter((part): part is string => part !== null);
-        const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} e ${parts[parts.length - 1]}` : parts[0] ?? '';
-        return `${list} ${approvals + decisions + blocked === 1 ? 'ha bisogno di te' : 'hanno bisogno di te'}.`;
+        return parts.join(' · ');
     },
     quickDecision: { allowOnce: 'Consenti una volta' },
     keyHints: { move: 'sposta', fullPage: 'pagina intera', close: 'chiudi', answering: 'Rispondere apre la successiva' },

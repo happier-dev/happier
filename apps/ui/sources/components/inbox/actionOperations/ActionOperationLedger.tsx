@@ -7,6 +7,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
 import { InboxWorkRow } from '../InboxWorkRow';
 import { InboxDismissRowMenu } from '../InboxRowMenu';
+import { InboxRelativeTime } from '../InboxRelativeTime';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import {
     ItemGroupRowPositionProvider,
@@ -72,6 +73,8 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
     onCancelOperation?: (operation: ActionOperationProjection, context?: ActionOperationStopContext) => Promise<ActionOperationStopResponse | void> | void;
     onDismissOperation?: (operation: ActionOperationProjection) => void;
     showDivider?: boolean;
+    /** Inbox: this work item's failed attempts, newest first (`selectInbox`); the row stands for all of them. */
+    attempts?: readonly ActionOperationProjection[];
     /** The Inbox's narrow row (phone, rail popover): no state column; InboxWorkRow owns what that means. */
     narrow?: boolean;
     /**
@@ -136,7 +139,9 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
             sourceContext.contextLine,
         ]));
     const accessibleDetail = failureReason ? joinHappierFacts(failureReason, detailText) : detailText;
-    const accessibilityLabel = `${snapshot.title}, ${props.operation.followUpAttention ?? statusLabel}, ${accessibleDetail}${sourceContext.accessibilityContext ? `, ${sourceContext.accessibilityContext}` : ''}`;
+    const attemptCount = props.attempts?.length ?? 1;
+    const stateWord = attemptCount > 1 ? t('inbox.actionOperations.status.failedTimes', { count: attemptCount }) : statusLabel;
+    const accessibilityLabel = `${snapshot.title}, ${props.operation.followUpAttention ?? stateWord}, ${accessibleDetail}${sourceContext.accessibilityContext ? `, ${sourceContext.accessibilityContext}` : ''}`;
     const active = classifyActionOperationSection(snapshot, observation, props.operation.followUpAttention) === 'inProgress';
     const canDismiss = Boolean(props.onDismissOperation) && canDismissActionOperation(
         snapshot, props.operation.isUnavailableProjection, Boolean(props.operation.followUpAttention),
@@ -177,7 +182,9 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
         testID={`inbox.action-operation.${snapshot.operationId}`} title={snapshot.title} narrow={props.narrow}
         facts={[failureReason, sourceTitle, determinateProgress, sourceContext.contextLine]}
         phase={workStatus.bucket === 'working' ? 'live' : workStatus.bucket === 'needs_you' ? 'attention' : 'finished'}
-        status={workStatus}
+        // Repeated failures of one work item read as one row: "Failed 3×" at the latest failure's time.
+        status={attemptCount > 1 ? { ...workStatus, word: stateWord } : workStatus}
+        time={<InboxRelativeTime timestamp={snapshot.settledAt ?? snapshot.createdAt} />}
         accessibilityLiveRegion="polite"
         accessibilityLabel={accessibilityLabel}
         mark={<Icon name={status.tone === 'success' ? 'check-circle' : status.tone === 'danger' ? 'warning-circle' : 'clock'} size={ICON_SIZE.md} color={iconColor} />}
@@ -253,6 +260,8 @@ export const ActionOperationRows = React.memo(function ActionOperationRows(props
     /** Supplied by ItemGroup when this row collection sits among sibling rows. */
     showDivider?: boolean;
     narrow?: boolean;
+    /** Inbox: each row's folded failed attempts, newest first (`InboxActionOperationEntry.attempts`). */
+    attempts?: ReadonlyMap<ActionOperationProjection, readonly ActionOperationProjection[]>;
     /** Rows heading a run card that says the run's state (see ActionOperationRow `runCard`). */
     runCard?: (operation: ActionOperationProjection) => Readonly<{ line: string | null; title?: string | null }>;
 }>) {
@@ -290,6 +299,7 @@ export const ActionOperationRows = React.memo(function ActionOperationRows(props
                     onDismissOperation={props.onDismissOperation}
                     showDivider={isLast ? props.showDivider : true}
                     narrow={props.narrow}
+                    attempts={props.attempts?.get(operation)}
                     {...(props.runCard ? { runCard: props.runCard(operation) } : {})}
                 />
             </ItemGroupRowPositionProvider>

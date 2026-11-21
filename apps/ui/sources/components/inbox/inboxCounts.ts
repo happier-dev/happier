@@ -52,7 +52,8 @@ export type InboxCountSource = Readonly<{
     items?: readonly InboxItem[];
     openApprovals: ArrayLike<unknown>;
     openUsageNotices: ArrayLike<unknown>;
-    actionOperationEntries: ArrayLike<unknown>;
+    /** One entry per work item (repeated failures fold into one, `selectInbox`). */
+    actionOperationEntries: ArrayLike<Readonly<{ reason?: string }>>;
     machineDeletionEntries?: ArrayLike<unknown>;
     machineReachabilityEntries?: ArrayLike<unknown>;
     friendRequests: ArrayLike<unknown>;
@@ -61,18 +62,35 @@ export type InboxCountSource = Readonly<{
     automationAttention: Readonly<{ runIds: ArrayLike<unknown> }>;
 }>;
 
+export type InboxNeedsYouKinds = Readonly<{
+    approvals: number; decisions: number; blocked: number; failedActions: number; actions: number;
+}>;
+
+/**
+ * What the open "Needs you" view counts, by kind: the page's summary names these, and their sum is the tab's
+ * count. An approval Artifact counts once through `openApprovals`; every other row by its item type; an
+ * operation entry (one per work item) as a failed action or one to check.
+ */
+export function countInboxNeedsYouByKind(model: InboxCountSource & Readonly<{ items: readonly InboxItem[] }>): InboxNeedsYouKinds {
+    let approvals = model.openApprovals.length;
+    let decisions = 0;
+    let blocked = 0;
+    for (const item of model.items) {
+        if (item.source.kind === 'approval' || !isInboxNeedsYouItem(item)) continue;
+        if (item.type === 'approval') approvals += 1;
+        else if (item.type === 'decision') decisions += 1;
+        else blocked += 1;
+    }
+    let failedActions = 0;
+    for (const entry of Array.from(model.actionOperationEntries)) if (entry?.reason === 'failed') failedActions += 1;
+    return { approvals, decisions, blocked, failedActions, actions: model.actionOperationEntries.length - failedActions };
+}
+
 /** The "Needs you" view's share of the count. */
 export function countInboxNeedsYou(model: InboxCountSource): number {
     if (model.items) {
-        return countInboxItems({
-        sessions: model.items.filter(item => item.producer === 'live' && item.source.kind !== 'approval'
-            && item.source.kind !== 'workflow_run' && item.source.kind !== 'automation_run'
-            && isInboxNeedsYouItem(item)).length,
-        workflowRuns: model.items.filter(item => item.source.kind === 'workflow_run' && isInboxNeedsYouItem(item)).length,
-        automationRuns: model.items.filter(item => item.source.kind === 'automation_run' && isInboxNeedsYouItem(item)).length,
-        approvalsAndNotices: model.openApprovals.length + model.items.filter(item => item.producer === 'notice' && isInboxNeedsYouItem(item)).length,
-        operations: model.actionOperationEntries.length, friendRequests: 0,
-        });
+        const kinds = countInboxNeedsYouByKind({ ...model, items: model.items });
+        return kinds.approvals + kinds.decisions + kinds.blocked + kinds.failedActions + kinds.actions;
     }
     return countInboxItems({
         sessions: model.sessionPresentation.sessionsNeedingAttention.length,

@@ -8508,13 +8508,15 @@ const en = Shared_inboxWorkTranslations.en;
 
 const zhHans: typeof en = {
     pageDescription: "需要你处理的、发生变化的，以及提及你的人。",
-    needsYouSummary: ({ approvals, decisions, blocked }: { approvals: number; decisions: number; blocked: number }) => {
+    needsYouSummary: ({ approvals, decisions, blocked, failedActions, actions }: { approvals: number; decisions: number; blocked: number; failedActions: number; actions: number }) => {
         const parts = [
             approvals > 0 ? `${approvals} 个审批` : null,
             decisions > 0 ? `${decisions} 个决定` : null,
             blocked > 0 ? `${blocked} 个受阻会话` : null,
+            failedActions > 0 ? `${failedActions} 个失败的操作` : null,
+            actions > 0 ? `${actions} 个待检查的操作` : null,
         ].filter((part): part is string => part !== null);
-        return `有 ${parts.join('、')}需要你处理。`;
+        return parts.join(' · ');
     },
     quickDecision: { allowOnce: '允许一次' },
     keyHints: { move: '移动', fullPage: '完整页面', close: '关闭', answering: '回答后会打开下一个' },

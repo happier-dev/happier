@@ -807,12 +807,12 @@ describe('InboxContent rows, attention sources and popover (ORC R-10, lab inbox-
         const model = createModel();
         const { tree } = await renderScreen(<InboxContent model={model} view="updates" />);
 
-        // A failed session: the Session owner's word, in the resolver's danger tone.
+        // A failed session: the Session owner's word in quiet ink; red is its mark's alone (UI refinements 2026-11-21).
         const failedStatus = resolveWorkStatusTone({ kind: 'session', facts: readSessionWorkStatusFacts(failed, NOW) });
         expect(failedStatus.tone).toBe('danger');
         const failedWord = tree.findHostByTestId('inbox.session.failed.summary:state:label')!;
         expect(failedWord.props.children).toBe(failedStatus.word);
-        expect(NativeStyleSheet.flatten(failedWord.props.style).color).toBe(workStatusWordStyle('danger').color);
+        expect(NativeStyleSheet.flatten(failedWord.props.style).color).toBe(workStatusWordStyle('neutral').color);
         expect(tree.findHostByTestId('inbox.session.failed.summary:facts')!.findAll((node) => node.props.children === failedStatus.word)).toHaveLength(0);
         // Its mark is the calm rose dot from the shared row-mark owner (owner ruling 2026-11-01), never a warning icon.
         const failedRow = tree.findHostByTestId('inbox.session.failed')!;

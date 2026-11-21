@@ -39,8 +39,9 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListIdentityDisplay } from '@/components/sessions/shell/SessionListIdentity';
 
 import { ActionOperationRows } from './actionOperations/ActionOperationLedger';
-import { openActionOperation } from './actionOperations/actionOperationPresentationRuntime';
+import { actionOperationPresentationCoordinator, openActionOperation } from './actionOperations/actionOperationPresentationRuntime';
 import { InboxSection } from './InboxSection';
+import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
 import { countInboxUpdates, hasInboxNeedsYouRows } from './inboxCounts';
 import { InboxWorkItemRow, presentInboxSessionStatus } from './workGroups/InboxWorkItemRow';
 import { buildInboxSessionContextLine } from './workGroups/inboxSessionContextLine';
@@ -142,6 +143,9 @@ const InboxItemRow = React.memo(function InboxItemRow(props: Readonly<{
         // Who wrote it leads a written item (lab P4-Mp: the author's face); otherwise the item's type glyph.
         mark={item.author?.avatar ? (
             <Avatar id={item.author.avatar.id} imageUrl={item.author.avatar.imageUrl} size={SESSION_LIST_ROW_IDENTITY_METRICS.compact.slotSize} />
+        ) : item.workStatus?.tone === 'danger' ? (
+            // A failing item says so by its rose mark alone (InboxWorkRow keeps the word in quiet ink).
+            <WorkStatusRowMark status={item.workStatus} testIDSuffix={`inbox.item.${item.key}`} />
         ) : <Icon name={item.focus.kind === 'execution_run' ? item.type === 'approval' ? 'hand' : 'play-circle' : ITEM_MARKS[item.type]} size={18}
             color={item.view === 'needs_you' ? theme.colors.state.attention.foreground : theme.colors.text.secondary} />}
         trailingAccessory={item.producer === 'notice' ? (
@@ -214,16 +218,23 @@ function useInboxContentParts(props: InboxContentProps, segmentSize: number) {
         props.onBeforeNavigate?.();
         router.push(route as never);
     }, [props.onBeforeNavigate, router]);
-    const openOperation = React.useCallback((operation: Parameters<typeof openActionOperation>[0]) => {
-        props.onBeforeNavigate?.();
-        openActionOperation(operation);
-    }, [props.onBeforeNavigate]);
     const operationsByProjection = React.useMemo(() => {
         type OperationEntry = InboxModel['actionOperationEntries'][number];
         const entryByProjection = new Map<OperationEntry['operation'], OperationEntry>();
         for (const entry of model.actionOperationEntries) entryByProjection.set(entry.operation, entry);
         return entryByProjection;
     }, [model.actionOperationEntries]);
+    const operationAttempts = React.useMemo(() => new Map(model.actionOperationEntries.flatMap(entry =>
+        entry.attempts && entry.attempts.length > 1 ? [[entry.operation, entry.attempts] as const] : [])),
+    [model.actionOperationEntries]);
+    // A folded row opens its latest attempt, whose detail lists every attempt; the person has seen them all.
+    const openOperation = React.useCallback((operation: Parameters<typeof openActionOperation>[0]) => {
+        props.onBeforeNavigate?.();
+        openActionOperation(operation);
+        for (const attempt of operationAttempts.get(operation) ?? []) {
+            if (attempt !== operation) actionOperationPresentationCoordinator.acknowledgePresented(attempt);
+        }
+    }, [operationAttempts, props.onBeforeNavigate]);
     const operations = React.useMemo(
         () => model.actionOperationEntries.map((entry) => entry.operation),
         [model.actionOperationEntries],
@@ -566,6 +577,7 @@ function useInboxContentParts(props: InboxContentProps, segmentSize: number) {
                             surface={sectionSurface} spacingBefore={needsYouSections.length > 0 ? 'separated' : undefined}>
                             <ActionOperationRows
                                 operations={operations}
+                                attempts={operationAttempts}
                                 presentation="inbox"
                                 narrow={!wide}
                                 onOpenOperation={openOperation}

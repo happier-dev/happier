@@ -19,7 +19,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { ProjectSetupConsentReviewCard } from '@/components/projects/projectSetup/ProjectSetupSessionReview';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import { useActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
+import { useActionOperation, useFailedActionOperationAttempts } from '@/sync/domains/actionOperations/useActionOperations';
 import { actionOperationAddress } from '@/sync/domains/actionOperations/qualifiedActionOperation';
 import {
   useServerScopedMachine,
@@ -48,6 +48,7 @@ import {
   resolveActionOperationStatus,
 } from './actionOperationPresentation';
 import {
+  presentFailure,
   projectActionOperationDetail,
   readActionOperationOutputAttachment,
   type ActionOperationDetailField,
@@ -168,6 +169,10 @@ export const ActionOperationDetailModal = React.memo(
     useServerProfilesGeneration();
     const operation = useActionOperation(
       actionOperationAddress(props.serverId, props.operationId),
+    );
+    // The Inbox folds a work item's repeated failures into one row; its detail lists each attempt.
+    const attempts = useFailedActionOperationAttempts(
+      props.serverId ? actionOperationAddress(props.serverId, props.operationId) : null,
     );
     const isRecordingVisible = useSessionRecordingVisibility();
     const isolationCheck = useAgentIsolationRecovery(operation);
@@ -491,6 +496,20 @@ export const ActionOperationDetailModal = React.memo(
             />
           ))}
         </ItemGroup>
+
+        {attempts.length > 1 ? (
+          <ItemGroup title={t('inbox.actionOperations.attempts')}>
+            {attempts.map((attempt) => (
+              <Item
+                key={attempt.snapshot.operationId}
+                testID={`action-operation-attempt.${attempt.snapshot.operationId}`}
+                mode="info"
+                title={formatActionOperationAge(attempt.snapshot)}
+                subtitle={presentFailure(attempt.snapshot)?.reason ?? describeActionOperationStatusLabel({ kind: 'host', value: 'failed' })}
+              />
+            ))}
+          </ItemGroup>
+        ) : null}
 
         {snapshot.setupReview && setupReviewScope ? (
           <ProjectSetupConsentReviewCard

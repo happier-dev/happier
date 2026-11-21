@@ -215,6 +215,24 @@ describe('ActionOperationLedgerView', () => {
         expect(onDismissOperation).toHaveBeenCalledWith(operation);
         expect(onOpenOperation).not.toHaveBeenCalled();
     });
+    it('folds a work item\'s repeated failures into one Inbox row that counts them, red only on its mark', async () => {
+        const attempt = (operationId: string, settledAt: number) => ({
+            serverId: 'server-1',
+            snapshot: { version: 1 as const, operationId, revision: 2, actionId: 'session.spawn_new',
+                state: 'failed' as const, scope: { accountId: 'account-1', machineId: 'machine-1' }, title: 'Create session',
+                createdAt: settledAt - 10, settledAt, cancellation: 'unsupported' as const, error: { errorCode: 'failed', error: 'Failed' } },
+            observation: 'available' as const,
+            isUnavailableProjection: false,
+        });
+        const latest = attempt('attempt-3', 300);
+        const screen = await renderScreen(<ActionOperationRows operations={[latest]} presentation="inbox"
+            attempts={new Map([[latest, [latest, attempt('attempt-2', 200), attempt('attempt-1', 100)]]])}
+            onOpenOperation={() => {}} onDismissOperation={() => {}} />);
+        const summary = screen.findAll((node) => node.props.testID === 'inbox.action-operation.attempt-3.summary'
+            && 'trailingState' in node.props)[0];
+        expect(summary!.props.trailingState).toEqual({ word: 'Failed 3×', tone: 'neutral' });
+        expect(screen.findHostByTestId('inbox.action-operation.attempt-2')).toBeNull();
+    });
     it('drops the state column on a narrow Inbox row, as every other Inbox row does (phone row rule)', async () => {
         // QA-SHELL-1114 F11: at 320 "Failed" sat beside the title and cut it to "Instantiate deplo…". On a phone the
         // row's mark says it failed and its title keeps the line; the Inbox owner's narrow mode decides that once.

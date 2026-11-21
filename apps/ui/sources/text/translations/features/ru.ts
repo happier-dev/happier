@@ -8640,7 +8640,7 @@ const en = Shared_inboxWorkTranslations.en;
 
 const ru: typeof en = {
     pageDescription: "Что ждёт вас, что изменилось и кто вас упомянул.",
-    needsYouSummary: ({ approvals, decisions, blocked }: { approvals: number; decisions: number; blocked: number }) => {
+    needsYouSummary: ({ approvals, decisions, blocked, failedActions, actions }: { approvals: number; decisions: number; blocked: number; failedActions: number; actions: number }) => {
         const plural = (count: number, one: string, few: string, many: string) => {
             const ten = count % 10;
             const hundred = count % 100;
@@ -8650,9 +8650,10 @@ const ru: typeof en = {
             approvals > 0 ? plural(approvals, 'одобрение', 'одобрения', 'одобрений') : null,
             decisions > 0 ? plural(decisions, 'решение', 'решения', 'решений') : null,
             blocked > 0 ? plural(blocked, 'заблокированная сессия', 'заблокированные сессии', 'заблокированных сессий') : null,
+            failedActions > 0 ? plural(failedActions, 'неудачное действие', 'неудачных действия', 'неудачных действий') : null,
+            actions > 0 ? plural(actions, 'действие для проверки', 'действия для проверки', 'действий для проверки') : null,
         ].filter((part): part is string => part !== null);
-        const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} и ${parts[parts.length - 1]}` : parts[0] ?? '';
-        return `Ждут вас: ${list}.`;
+        return parts.join(' · ');
     },
     quickDecision: { allowOnce: 'Разрешить один раз' },
     keyHints: { move: 'перейти', fullPage: 'вся страница', close: 'закрыть', answering: 'Ответ открывает следующий' },

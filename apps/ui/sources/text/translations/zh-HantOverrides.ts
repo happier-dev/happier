@@ -2196,7 +2196,9 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             ...actionOperationInboxTranslations.actionOperations,
             openBackups: '開啟備份',
             status: { ...actionOperationInboxTranslations.actionOperations.status,
-                outcomeUncertain: '結果尚未確認。請檢查機器。' },
+                outcomeUncertain: '結果尚未確認。請檢查機器。',
+                failedTimes: ({ count }: { count: number }) => `失敗 ${count}×` },
+            attempts: '嘗試紀錄',
             failureGeneric: '操作未完成。',
             isolationReview: {
                 title: '套用前請檢查',

@@ -2014,7 +2014,9 @@ export const it: TranslationStructure = {
             ...actionOperationInboxTranslations.actionOperations,
             openBackups: 'Apri i backup',
             status: { ...actionOperationInboxTranslations.actionOperations.status,
-                outcomeUncertain: 'Esito non confermato. Controlla la macchina.' },
+                outcomeUncertain: 'Esito non confermato. Controlla la macchina.',
+                failedTimes: ({ count }: { count: number }) => `Non riuscita ${count}×` },
+            attempts: 'Tentativi',
             failureGeneric: 'L’azione non è stata completata.',
             isolationReview: {
                 title: 'Verifica prima di applicare',

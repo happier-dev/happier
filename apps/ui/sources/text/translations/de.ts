@@ -1809,7 +1809,9 @@ export const de: TranslationStructure = {
             ...actionOperationInboxTranslations.actionOperations,
             openBackups: 'Backups öffnen',
             status: { ...actionOperationInboxTranslations.actionOperations.status,
-                outcomeUncertain: 'Ergebnis nicht bestätigt. Prüfe den Rechner.' },
+                outcomeUncertain: 'Ergebnis nicht bestätigt. Prüfe den Rechner.',
+                failedTimes: ({ count }: { count: number }) => `Fehlgeschlagen ${count}×` },
+            attempts: 'Versuche',
             failureGeneric: 'Die Aktion wurde nicht abgeschlossen.',
             isolationReview: {
                 title: 'Vor dem Anwenden prüfen',

@@ -9,7 +9,7 @@ import { InboxContentList, type InboxView as InboxContentView } from '@/componen
 import { createInboxItemRoute, readInboxView, resolveInboxItemPageRoute, resolveInboxNoticeOwnPageRoute, type InboxItemDetailContext, type InboxItemFocus } from '@/components/inbox/inboxItemFocus';
 import { findInboxItemForFocus, readInboxItemSelectionKey } from '@/components/inbox/inboxItemNavigation';
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
-import { countInboxMentions, countInboxNeedsYou, countInboxUpdates } from '@/components/inbox/inboxCounts';
+import { countInboxMentions, countInboxNeedsYou, countInboxNeedsYouByKind, countInboxUpdates } from '@/components/inbox/inboxCounts';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Header } from '@/components/navigation/Header';
 import { NavigationTitleChromeProvider, PageHeader } from '@/components/ui/layout/PageHeader';
@@ -89,16 +89,8 @@ const InboxViewContent = React.memo(function InboxViewContent(props: Readonly<{ 
     const needsYouCount = countInboxNeedsYou(model);
     const updatesCount = countInboxUpdates(model);
     const mentionsCount = countInboxMentions(model);
-    // Lab P4: Needs you says what waits, by kind ("2 approvals and 1 decision need you").
-    const needsYouSummary = React.useMemo(() => {
-        const counts = { approvals: 0, decisions: 0, blocked: 0 };
-        for (const item of selectInboxItemsForView(model.items, 'needs_you')) {
-            if (item.type === 'approval') counts.approvals += 1;
-            else if (item.type === 'decision') counts.decisions += 1;
-            else if (item.type === 'blocked') counts.blocked += 1;
-        }
-        return counts.approvals + counts.decisions + counts.blocked > 0 ? t('inbox.work.needsYouSummary', counts) : null;
-    }, [model.items]);
+    // Needs you names each kind that waits ("1 decision · 3 failed actions"), from the count the tab shows.
+    const needsYouSummary = needsYouCount > 0 ? t('inbox.work.needsYouSummary', countInboxNeedsYouByKind(model)) : null;
     // Lab P4: what needs you, what changed and who mentioned you, as three views of one Inbox.
     // `beneathTitle`: a phone, or the narrow list beside an open item, where the control has the
     // column to itself and fits it: counts drop before a name is cut, then More takes the rest.

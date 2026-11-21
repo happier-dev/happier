@@ -79,7 +79,19 @@ export function classifyActionOperationSection(
 export type InboxActionOperationEntry = Readonly<{
     operation: ActionOperationProjection;
     reason: InboxActionOperationReason;
+    /** A failure's unseen attempts of the same work item, newest first; `operation` is the first. */
+    attempts?: readonly ActionOperationProjection[];
 }>;
+
+/**
+ * One work item: the same Action on the same Machine, Session and Workflow cause. Its repeated failures are one
+ * Needs you row ("Failed 3×", UI refinements ruling 2026-11-21), counted once by the Inbox and its badge.
+ */
+export function readActionOperationWorkItemKey(operation: Pick<ActionOperationProjection, 'serverId' | 'snapshot'>): string {
+    const { snapshot } = operation;
+    return JSON.stringify([operation.serverId, snapshot.scope.accountId, snapshot.scope.machineId,
+        snapshot.scope.sessionId ?? null, snapshot.actionId, snapshot.originRunId ?? null]);
+}
 
 export type ActionOperationActivitySummary = Readonly<{
     activeCount: number;
@@ -115,6 +127,8 @@ export type ActionOperationSelectors = Readonly<{
     selectInbox(state: ActionOperationStoreSnapshot): readonly InboxActionOperationEntry[];
     selectActivitySummary(state: ActionOperationStoreSnapshot): ActionOperationActivitySummary;
     selectInboxSummary(state: ActionOperationStoreSnapshot): InboxActionOperationSummary;
+    /** Every failed attempt of the addressed operation's work item, newest first (the Inbox row's detail). */
+    selectFailedAttempts(state: ActionOperationStoreSnapshot, address: ActionOperationAddress): readonly ActionOperationProjection[];
     selectHasUnseenTerminal(state: ActionOperationStoreSnapshot): boolean;
     selectHasAttention(state: ActionOperationStoreSnapshot): boolean;
 }>;
@@ -243,6 +257,7 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
     let previousInboxSummary: InboxActionOperationSummary = Object.freeze({ count: 0, hasAttention: false });
     const projectionCache = new WeakMap<QualifiedActionOperation, ActionOperationProjection>();
     const sessionCache = new Map<string, readonly ActionOperationProjection[]>();
+    const attemptsCache = new Map<string, readonly ActionOperationProjection[]>();
     const serviceCache = new Map<string, readonly ActionOperationProjection[]>();
 
     const readProjection = (state: ActionOperationStoreSnapshot, key: string, operation: QualifiedActionOperation): ActionOperationProjection => {
@@ -528,9 +543,19 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
     };
 
     const selectInbox = (state: ActionOperationStoreSnapshot): readonly InboxActionOperationEntry[] => {
+        // selectAll orders settled operations newest first, so a work item's first failure is its latest attempt.
+        const failuresByWorkItem = new Map<string, ActionOperationProjection[]>();
         const next = selectAll(state).flatMap((operation): readonly InboxActionOperationEntry[] => {
             if (operation.snapshot.state === 'failed' && isUnseen(state, operation)) {
-                return [{ operation, reason: 'failed' }];
+                const key = readActionOperationWorkItemKey(operation);
+                const attempts = failuresByWorkItem.get(key);
+                if (attempts) {
+                    attempts.push(operation);
+                    return [];
+                }
+                const first = [operation];
+                failuresByWorkItem.set(key, first);
+                return [{ operation, reason: 'failed', attempts: first }];
             }
             if (
                 operation.snapshot.state === 'succeeded'
@@ -558,10 +583,23 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
             previousInbox.length === next.length
             && previousInbox.every((entry, index) => (
                 entry.operation === next[index]?.operation && entry.reason === next[index]?.reason
+                && hasSameItems(entry.attempts ?? EMPTY_OPERATIONS, next[index]?.attempts ?? EMPTY_OPERATIONS)
             ))
         ) return previousInbox;
         previousInbox = Object.freeze(next.map((entry) => Object.freeze(entry)));
         return previousInbox;
+    };
+
+    const selectFailedAttempts = (state: ActionOperationStoreSnapshot, address: ActionOperationAddress): readonly ActionOperationProjection[] => {
+        const addressed = selectById(state, address);
+        if (!addressed || addressed.snapshot.state !== 'failed') return EMPTY_OPERATIONS;
+        const workItem = readActionOperationWorkItemKey(addressed);
+        const attempts = selectAll(state).filter(operation => operation.snapshot.state === 'failed'
+            && readActionOperationWorkItemKey(operation) === workItem);
+        const cached = attemptsCache.get(workItem) ?? EMPTY_OPERATIONS;
+        const stable = hasSameItems(cached, attempts) ? cached : Object.freeze(attempts);
+        attemptsCache.set(workItem, stable);
+        return stable;
     };
 
     const selectHasUnseenTerminal = (state: ActionOperationStoreSnapshot) => selectAll(state).some((operation) => isUnseen(state, operation));
@@ -590,12 +628,14 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
     const selectInboxSummary = (state: ActionOperationStoreSnapshot): InboxActionOperationSummary => {
         if (state === previousInboxSummaryState) return previousInboxSummary;
         let count = 0;
+        const failedWorkItems = new Set<string>();
         for (const [key, operation] of state.operationsByKey) {
             if (!shouldIncludeOperation(state, key, operation)) continue;
             const snapshot = operation.snapshot;
-            if (
-                (snapshot.state === 'failed' && isUnseen(state, operation))
-                || (snapshot.state === 'succeeded' && readFollowUpAttention(state, operation) !== null)
+            if (snapshot.state === 'failed' && isUnseen(state, operation)) {
+                failedWorkItems.add(readActionOperationWorkItemKey(operation));
+            } else if (
+                (snapshot.state === 'succeeded' && readFollowUpAttention(state, operation) !== null)
                 || (!isActionOperationTerminal(snapshot.state) && isActionOperationReviewHeld(snapshot))
                 || readActionOperationTaskQuestion(snapshot) !== null
                 || (!isActionOperationTerminal(snapshot.state) && state.unavailableOperationKeys.has(key))
@@ -603,6 +643,7 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
                 count += 1;
             }
         }
+        count += failedWorkItems.size;
         previousInboxSummaryState = state;
         if (previousInboxSummary.count !== count) {
             previousInboxSummary = Object.freeze({ count, hasAttention: count > 0 });
@@ -629,6 +670,7 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
         selectInbox,
         selectActivitySummary,
         selectInboxSummary,
+        selectFailedAttempts,
         selectHasUnseenTerminal,
         selectHasAttention: state => selectActivitySummary(state).hasAttention,
     };

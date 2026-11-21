@@ -2028,7 +2028,9 @@ export const pl: TranslationStructure = {
             ...actionOperationInboxTranslations.actionOperations,
             openBackups: 'Otwórz kopie zapasowe',
             status: { ...actionOperationInboxTranslations.actionOperations.status,
-                outcomeUncertain: 'Wynik nie został potwierdzony. Sprawdź maszynę.' },
+                outcomeUncertain: 'Wynik nie został potwierdzony. Sprawdź maszynę.',
+                failedTimes: ({ count }: { count: number }) => `Niepowodzenie ${count}×` },
+            attempts: 'Próby',
             failureGeneric: 'Akcja nie została ukończona.',
             isolationReview: {
                 title: 'Sprawdź przed zastosowaniem',

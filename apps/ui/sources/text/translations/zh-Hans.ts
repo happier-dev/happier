@@ -2013,7 +2013,9 @@ export const zhHans: TranslationStructure = {
             ...actionOperationInboxTranslations.actionOperations,
             openBackups: '打开备份',
             status: { ...actionOperationInboxTranslations.actionOperations.status,
-                outcomeUncertain: '结果尚未确认。请检查机器。' },
+                outcomeUncertain: '结果尚未确认。请检查机器。',
+                failedTimes: ({ count }: { count: number }) => `失败 ${count}×` },
+            attempts: '尝试记录',
             failureGeneric: '操作未完成。',
             isolationReview: {
                 title: '应用前请检查',

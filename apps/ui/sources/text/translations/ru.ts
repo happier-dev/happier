@@ -2029,7 +2029,9 @@ export const ru: TranslationStructure = {
             ...actionOperationInboxTranslations.actionOperations,
             openBackups: 'Открыть резервные копии',
             status: { ...actionOperationInboxTranslations.actionOperations.status,
-                outcomeUncertain: 'Результат не подтверждён. Проверьте машину.' },
+                outcomeUncertain: 'Результат не подтверждён. Проверьте машину.',
+                failedTimes: ({ count }: { count: number }) => `Ошибка ${count}×` },
+            attempts: 'Попытки',
             failureGeneric: 'Действие не завершено.',
             isolationReview: {
                 title: 'Проверьте перед применением',

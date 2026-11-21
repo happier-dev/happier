@@ -2,14 +2,15 @@
 
 export const en = {
     pageDescription: 'What needs you, what changed and who mentioned you.',
-    needsYouSummary: ({ approvals, decisions, blocked }: { approvals: number; decisions: number; blocked: number }) => {
+    needsYouSummary: ({ approvals, decisions, blocked, failedActions, actions }: { approvals: number; decisions: number; blocked: number; failedActions: number; actions: number }) => {
         const parts = [
             approvals > 0 ? `${approvals} ${approvals === 1 ? 'approval' : 'approvals'}` : null,
             decisions > 0 ? `${decisions} ${decisions === 1 ? 'decision' : 'decisions'}` : null,
             blocked > 0 ? `${blocked} ${blocked === 1 ? 'blocked session' : 'blocked sessions'}` : null,
+            failedActions > 0 ? `${failedActions} ${failedActions === 1 ? 'failed action' : 'failed actions'}` : null,
+            actions > 0 ? `${actions} ${actions === 1 ? 'action to check' : 'actions to check'}` : null,
         ].filter((part): part is string => part !== null);
-        const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0] ?? '';
-        return `${list} ${approvals + decisions + blocked === 1 ? 'needs you' : 'need you'}.`;
+        return parts.join(' · ');
     },
     quickDecision: { allowOnce: 'Allow once' },
     keyHints: { move: 'move', fullPage: 'full page', close: 'close', answering: 'Answering opens the next one' },

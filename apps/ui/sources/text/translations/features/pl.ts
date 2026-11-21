@@ -8639,7 +8639,7 @@ const en = Shared_inboxWorkTranslations.en;
 
 const pl: typeof en = {
     pageDescription: "Co na ciebie czeka, co się zmieniło i kto o tobie wspomniał.",
-    needsYouSummary: ({ approvals, decisions, blocked }: { approvals: number; decisions: number; blocked: number }) => {
+    needsYouSummary: ({ approvals, decisions, blocked, failedActions, actions }: { approvals: number; decisions: number; blocked: number; failedActions: number; actions: number }) => {
         const plural = (count: number, one: string, few: string, many: string) => {
             const ten = count % 10;
             const hundred = count % 100;
@@ -8649,9 +8649,10 @@ const pl: typeof en = {
             approvals > 0 ? plural(approvals, 'zatwierdzenie', 'zatwierdzenia', 'zatwierdzeń') : null,
             decisions > 0 ? plural(decisions, 'decyzja', 'decyzje', 'decyzji') : null,
             blocked > 0 ? plural(blocked, 'zablokowana sesja', 'zablokowane sesje', 'zablokowanych sesji') : null,
+            failedActions > 0 ? plural(failedActions, 'nieudana akcja', 'nieudane akcje', 'nieudanych akcji') : null,
+            actions > 0 ? plural(actions, 'akcja do sprawdzenia', 'akcje do sprawdzenia', 'akcji do sprawdzenia') : null,
         ].filter((part): part is string => part !== null);
-        const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} i ${parts[parts.length - 1]}` : parts[0] ?? '';
-        return `Czeka na ciebie: ${list}.`;
+        return parts.join(' · ');
     },
     quickDecision: { allowOnce: 'Zezwól raz' },
     keyHints: { move: 'przejdź', fullPage: 'cała strona', close: 'zamknij', answering: 'Odpowiedź otwiera następną' },

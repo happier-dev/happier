@@ -250,12 +250,11 @@ function useCreateInboxModel(projection: NonNullable<ReturnType<typeof useInboxW
             && (attention.phase === 'failed' || attention.refreshFailed));
     const { pendingReadKeys, readUnavailableReasonBySessionAddress, markAllReadUnavailableReason, markAllPending, markRead } =
         useInboxSessionReadMarking(markAllReadTargets, source);
+    // A folded row is one work item: dismissing it dismisses every attempt it stands for.
     const resolveActionOperation = React.useCallback((entry: InboxActionOperationEntry) => {
-        const address = actionOperationAddress(
-            entry.operation.serverId,
-            entry.operation.snapshot.operationId,
-        );
-        actionOperationStore.dismissOperation(address);
+        for (const operation of entry.attempts ?? [entry.operation]) {
+            actionOperationStore.dismissOperation(actionOperationAddress(operation.serverId, operation.snapshot.operationId));
+        }
     }, []);
 
     const noticeWrites = React.useRef(new Map<string, Promise<void>>());

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { countInbox, countInboxItems, countInboxNeedsYou, countInboxUpdates, type InboxCountSource } from './inboxCounts';
+import { countInbox, countInboxItems, countInboxNeedsYou, countInboxNeedsYouByKind, countInboxUpdates, type InboxCountSource } from './inboxCounts';
+import type { InboxItem } from './inboxItems';
 
 function source(overrides: Partial<InboxCountSource> = {}): InboxCountSource {
     return {
@@ -45,5 +46,17 @@ describe('Inbox counts', () => {
         expect(countInbox(model)).toBe(9);
         // The always-mounted summary feeds the same formula from its own narrow projections.
         expect(countInboxItems({ sessions: 4, workflowRuns: 2, automationRuns: 0, approvalsAndNotices: 2, operations: 0, friendRequests: 1 })).toBe(9);
+    });
+    it('names each kind that needs you from the same count the tab shows', () => {
+        const item = (key: string, type: InboxItem['type'], kind = 'session') => ({ key, type, view: 'needs_you', producer: 'live',
+            source: { kind, id: key, serverId: 'home-a' } }) as unknown as InboxItem;
+        const model = source({
+            items: [item('decision', 'decision'), item('run', 'approval', 'workflow_run'), item('approval-row', 'approval', 'approval')],
+            openApprovals: [{}],
+            actionOperationEntries: [{ reason: 'failed' }, { reason: 'failed' }, { reason: 'review_required' }],
+        });
+        const kinds = countInboxNeedsYouByKind(model);
+        expect(kinds).toEqual({ approvals: 2, decisions: 1, blocked: 0, failedActions: 2, actions: 1 });
+        expect(Object.values(kinds).reduce((sum, count) => sum + count, 0)).toBe(countInboxNeedsYou(model));
     });
 });

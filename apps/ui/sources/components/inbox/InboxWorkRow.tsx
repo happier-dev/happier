@@ -38,13 +38,16 @@ export const InboxWorkRow = React.memo(function InboxWorkRow(props: Readonly<{
         ...(props.facts ?? []).filter((fact): fact is string => typeof fact === 'string'));
     // A narrow row's age is the line's tail: a long fact truncates before the age does.
     const facts = props.facts ?? [];
+    // A failure is said once, by the row's rose mark: its state word keeps the quiet ink (UI refinements
+    // ruling 2026-11-21, contrast Decision C).
+    const status = props.status?.tone === 'danger' ? { word: props.status.word, tone: 'neutral' as const } : props.status;
     return <HappierWorkRowShell testID={props.testID} accessibilityLabel={label} selected={props.selected}
         onPress={props.onPress} trailingAccessory={props.trailingAccessory} trailingMeta={density === 'page' && !props.narrow ? props.time : undefined}
         belowAccessory={props.belowAccessory} accessibilityActions={props.accessibilityActions}
         onAccessibilityAction={props.onAccessibilityAction} density={density} showDivider={props.showDivider}
         multiline={isHappierWorkSummaryMultiline({ facts, factsTail: props.narrow ? props.time : undefined, byline: props.byline })} theme={theme} host={WORK_HOST}>
         <HappierWorkSummary testID={`${props.testID}.summary`} title={props.title} phase={props.phase ?? 'attention'}
-            mark={props.mark} facts={facts} factsTail={props.narrow ? props.time : undefined} byline={props.byline} trailingState={props.narrow ? null : props.status} trailingTime={density === 'pane' && !props.narrow ? props.time : undefined}
+            mark={props.mark} facts={facts} factsTail={props.narrow ? props.time : undefined} byline={props.byline} trailingState={props.narrow ? null : status} trailingTime={density === 'pane' && !props.narrow ? props.time : undefined}
             accessibilityLabel={label} accessibilityLiveRegion={props.accessibilityLiveRegion} density={density} attentionMark={false}
             titleLines={props.narrow && density === 'page' ? 2 : 1} theme={theme} host={WORK_HOST} />
     </HappierWorkRowShell>;

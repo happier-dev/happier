@@ -40,6 +40,14 @@ export function useInboxActionOperations() {
     return useActionOperationSelector(readInboxActionOperations);
 }
 
+const NO_ATTEMPTS: ReturnType<typeof actionOperationSelectors.selectFailedAttempts> = Object.freeze([]);
+
+/** Every failed attempt of a failed operation's work item, newest first (`selectFailedAttempts`). */
+export function useFailedActionOperationAttempts(address: ActionOperationAddress | null) {
+    return useActionOperationSelector(() => address
+        ? actionOperationSelectors.selectFailedAttempts(actionOperationStore.getSnapshot(), address) : NO_ATTEMPTS);
+}
+
 export type AcceptedActionOperationRead = Readonly<{
     machineId: string;
     actionId: string;

@@ -2035,7 +2035,9 @@ export const ca: TranslationStructure = {
             ...actionOperationInboxTranslations.actionOperations,
             openBackups: 'Obre les còpies de seguretat',
             status: { ...actionOperationInboxTranslations.actionOperations.status,
-                outcomeUncertain: 'Resultat sense confirmar. Comprova la màquina.' },
+                outcomeUncertain: 'Resultat sense confirmar. Comprova la màquina.',
+                failedTimes: ({ count }: { count: number }) => `Ha fallat ${count}×` },
+            attempts: 'Intents',
             failureGeneric: 'L’acció no s’ha completat.',
             isolationReview: {
                 title: 'Revisa abans d’aplicar',

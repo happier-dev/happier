@@ -1036,3 +1036,25 @@ describe('action operation store', () => {
     });
 
 });
+
+describe('Inbox work items', () => {
+    const failure = (operationId: string, settledAt: number, overrides: Partial<ActionOperationSnapshotV1> = {}) => operation({
+        operationId, state: 'failed', startedAt: settledAt - 5, settledAt,
+        error: { errorCode: 'failed', error: 'Failed' }, ...overrides,
+    });
+
+    it('folds repeated failures of one work item into one Needs you entry with every attempt, newest first', () => {
+        const store = createActionOperationStore();
+        const selectors = createActionOperationSelectors();
+        merge(store, [failure('first', 200), failure('third', 400), failure('second', 300),
+            failure('other-machine', 350, { scope: { accountId: 'account-a', machineId: 'machine-b', sessionId: 'session-a' } })]);
+
+        const inbox = selectors.selectInbox(store.getSnapshot());
+        expect(inbox.map(entry => [entry.operation.snapshot.operationId, entry.attempts?.map(attempt => attempt.snapshot.operationId)]))
+            .toEqual([['third', ['third', 'second', 'first']], ['other-machine', ['other-machine']]]);
+        expect(selectors.selectInboxSummary(store.getSnapshot()).count).toBe(inbox.length);
+        expect(selectors.selectInbox(store.getSnapshot())).toBe(inbox);
+        expect(selectors.selectFailedAttempts(store.getSnapshot(), operationAddress('first')).map(attempt => attempt.snapshot.operationId))
+            .toEqual(['third', 'second', 'first']);
+    });
+});

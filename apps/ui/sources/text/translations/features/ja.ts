@@ -8568,13 +8568,15 @@ const en = Shared_inboxWorkTranslations.en;
 
 const ja: typeof en = {
     pageDescription: "あなたを待っていること、変わったこと、あなたをメンションした人。",
-    needsYouSummary: ({ approvals, decisions, blocked }: { approvals: number; decisions: number; blocked: number }) => {
+    needsYouSummary: ({ approvals, decisions, blocked, failedActions, actions }: { approvals: number; decisions: number; blocked: number; failedActions: number; actions: number }) => {
         const parts = [
             approvals > 0 ? `承認 ${approvals} 件` : null,
             decisions > 0 ? `判断 ${decisions} 件` : null,
             blocked > 0 ? `ブロック中のセッション ${blocked} 件` : null,
+            failedActions > 0 ? `失敗したアクション ${failedActions} 件` : null,
+            actions > 0 ? `確認が必要なアクション ${actions} 件` : null,
         ].filter((part): part is string => part !== null);
-        return `${parts.join('、')}があなたを待っています。`;
+        return parts.join(' · ');
     },
     quickDecision: { allowOnce: '今回のみ許可' },
     keyHints: { move: '移動', fullPage: 'ページ全体', close: '閉じる', answering: '回答すると次が開きます' },

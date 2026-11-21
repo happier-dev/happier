@@ -2236,7 +2236,9 @@ export const pt: TranslationStructure = {
             ...actionOperationInboxTranslations.actionOperations,
             openBackups: 'Abrir backups',
             status: { ...actionOperationInboxTranslations.actionOperations.status,
-                outcomeUncertain: 'Resultado não confirmado. Verifique a máquina.' },
+                outcomeUncertain: 'Resultado não confirmado. Verifique a máquina.',
+                failedTimes: ({ count }: { count: number }) => `Falhou ${count}×` },
+            attempts: 'Tentativas',
             failureGeneric: 'A ação não foi concluída.',
             isolationReview: {
                 title: 'Revisar antes de aplicar',

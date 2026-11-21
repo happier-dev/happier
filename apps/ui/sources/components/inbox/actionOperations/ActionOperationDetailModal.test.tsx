@@ -110,6 +110,21 @@ describe('ActionOperationDetailModal', () => {
         } finally { await screen.unmount(); }
     });
 
+    it('lists every failed attempt of the work item that the Inbox folded into one row', async () => {
+        const attempt = (operationId: string, settledAt: number) => ActionOperationSnapshotV1Schema.parse({
+            version: 1, operationId, revision: 1, actionId: 'session.spawn_new', state: 'failed',
+            scope: { accountId: 'account-1', machineId: 'machine-1' }, title: 'Create session',
+            createdAt: settledAt - 10, startedAt: settledAt - 5, settledAt, cancellation: 'unsupported',
+            error: { errorCode: 'failed', error: 'Failed' },
+        });
+        actionOperationStore.mergeSnapshots({ serverId: 'attempts-home', snapshots: [attempt('try-1', 100), attempt('try-3', 300), attempt('try-2', 200)] });
+        const screen = await renderScreen(<ActionOperationDetailModal serverId="attempts-home" operationId="try-3" onClose={() => {}} />);
+        try {
+            expect(['try-3', 'try-2', 'try-1'].map(id => screen.findByTestId(`action-operation-attempt.${id}`) !== null))
+                .toEqual([true, true, true]);
+        } finally { await screen.unmount(); }
+    });
+
     it('keeps the Account investigation owner when Inbox opens a failed operation in the shell modal', async () => {
         const [{ AppPaneModalProvider }, { renderScreen: renderRoot }, { openActionOperationDetail }, { AccountNoticeInvestigationBoundary }] = await Promise.all([
             import('@/components/appShell/providers/AppPaneModalProvider'), import('@/dev/testkit'),

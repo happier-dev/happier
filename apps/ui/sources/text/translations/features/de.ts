@@ -8625,14 +8625,15 @@ const en = Shared_inboxWorkTranslations.en;
 
 const de: typeof en = {
     pageDescription: "Was dich braucht, was sich geändert hat und wer dich erwähnt hat.",
-    needsYouSummary: ({ approvals, decisions, blocked }: { approvals: number; decisions: number; blocked: number }) => {
+    needsYouSummary: ({ approvals, decisions, blocked, failedActions, actions }: { approvals: number; decisions: number; blocked: number; failedActions: number; actions: number }) => {
         const parts = [
             approvals > 0 ? `${approvals} ${approvals === 1 ? 'Freigabe' : 'Freigaben'}` : null,
             decisions > 0 ? `${decisions} ${decisions === 1 ? 'Entscheidung' : 'Entscheidungen'}` : null,
             blocked > 0 ? `${blocked} ${blocked === 1 ? 'blockierte Sitzung' : 'blockierte Sitzungen'}` : null,
+            failedActions > 0 ? `${failedActions} ${failedActions === 1 ? 'fehlgeschlagene Aktion' : 'fehlgeschlagene Aktionen'}` : null,
+            actions > 0 ? `${actions} ${actions === 1 ? 'Aktion zu prüfen' : 'Aktionen zu prüfen'}` : null,
         ].filter((part): part is string => part !== null);
-        const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} und ${parts[parts.length - 1]}` : parts[0] ?? '';
-        return `${list} ${approvals + decisions + blocked === 1 ? 'braucht dich' : 'brauchen dich'}.`;
+        return parts.join(' · ');
     },
     quickDecision: { allowOnce: 'Einmal erlauben' },
     keyHints: { move: 'wechseln', fullPage: 'ganze Seite', close: 'schließen', answering: 'Nach einer Antwort öffnet sich die nächste' },
