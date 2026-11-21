@@ -26,6 +26,7 @@ import { databaseActionSettlement } from '../../actionSettlement.js';
 import { WORKBENCH_DISPLAY_PAGE_ROWS } from '../mount.js';
 import { formatElapsed } from './format.js';
 import { InsightsSetup } from './InsightsSetup.js';
+import { displayDatabaseStatementShape } from '@happier-dev/databases/statements';
 
 type ActivityObservation = Extract<
   DatabaseStatsObservationV1,
@@ -318,7 +319,8 @@ export function ActivityView(props: Readonly<{ targetKey: string }>) {
       title: (view) => stateWord(view.session, translate),
       byline: (view) =>
         [
-          view.session.shape ?? view.session.omittedTextReason ?? null,
+          (view.session.shape === undefined ? undefined : displayDatabaseStatementShape(view.session.shape))
+            ?? view.session.omittedTextReason ?? null,
           view.blocking > 0
             ? translate(
                 'plugins.database.activity.blocking',

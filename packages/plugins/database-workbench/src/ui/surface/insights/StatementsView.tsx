@@ -19,6 +19,7 @@ import {
 import { formatCount, formatDuration, formatPercent } from './format.js';
 import { StatementDetail } from './StatementDetail.js';
 import { summarizeChanges, type StatementView } from './statements.js';
+import { displayDatabaseStatementShape } from '@happier-dev/databases/statements';
 
 const EMPTY_SET: ReadonlySet<string> = new Set();
 
@@ -66,7 +67,7 @@ export function statementTitle(
   translate: PluginTranslate,
 ): string {
   return (
-    view.row.shape ??
+    (view.row.shape === undefined ? undefined : displayDatabaseStatementShape(view.row.shape)) ??
     translate(
       'plugins.database.insights.shapeHiddenTitle',
       'Statement text hidden',

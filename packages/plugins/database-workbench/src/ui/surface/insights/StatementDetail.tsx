@@ -18,6 +18,7 @@ import type { StatementView } from './statements.js';
 import { projectDatabaseStatementMetrics } from '../../../insights/presentation.js';
 import { workbenchTargetKey } from '../../../targetIdentity.js';
 import { FindingBrief } from './FindingBrief.js';
+import { displayDatabaseStatementShape } from '@happier-dev/databases/statements';
 
 /**
  * One statement: its shape, what it costs, what changed since your last look, and where to go next. The same body
@@ -36,7 +37,8 @@ export function StatementDetail(
   const hit = projectDatabaseStatementMetrics(row).bufferHitRatio;
   const mean = formatDuration(props.view.meanMs);
   const changedMean = change ? formatDuration(change.meanTimeMs) : null;
-  const shape = row.shape;
+  // The shape is the fingerprint key; the person reads it as SQL.
+  const shape = row.shape === undefined ? undefined : displayDatabaseStatementShape(row.shape);
   return (
     <Stack gap="large">
       {shape ? (

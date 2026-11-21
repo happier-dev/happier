@@ -48,3 +48,26 @@ export function postgresqlStatementRanges(sql: string): readonly DatabaseStateme
     psqlInputScanner('statements', { statement: range => ranges.push(range) }).write(sql, true);
     return ranges;
 }
+
+const TIGHT_BEFORE = new Set(['.', ',', ')', ']', ';', ':']);
+const TIGHT_AFTER = new Set(['.', '(', '[', ':']);
+/** Words a parenthesis keeps its space after ("in (?, ?)"); any other name before one is a call ("count(*)"). */
+const SPACED_BEFORE_PAREN = new Set(['and', 'as', 'by', 'exists', 'from', 'in', 'into', 'join', 'not', 'on', 'or', 'over',
+    'select', 'set', 'then', 'using', 'values', 'when', 'where', 'with', 'else', 'union', 'all', 'any', 'some', 'returning']);
+
+/**
+ * The person-facing text of a statement shape. The shape joins every lexical token with one space and stays the
+ * fingerprint key; this reads it as SQL: no space around `.`, `::` and inside brackets, none before `,`, and a call's
+ * parenthesis against its name. Quoted names keep their own spaces.
+ */
+export function displayDatabaseStatementShape(shape: string): string {
+    const tokens = shape.match(/"(?:[^"]|"")*"|`(?:[^`]|``)*`|\S+/g) ?? [];
+    let text = '';
+    tokens.forEach((token, index) => {
+        const previous = tokens[index - 1];
+        const tight = previous === undefined || TIGHT_BEFORE.has(token) || TIGHT_AFTER.has(previous)
+            || (token === '(' && /^[A-Za-z_][\w$]*$/.test(previous) && !SPACED_BEFORE_PAREN.has(previous.toLowerCase()));
+        text += (tight ? '' : ' ') + token;
+    });
+    return text;
+}
