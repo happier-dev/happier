@@ -427,7 +427,9 @@ async function dispatchActivityNotification(params: Readonly<{
   }
   const runtime = await readRuntimeCatalog();
   const settings = accountSettingsParse(runtime.settings ?? {});
-  const { channels } = runtime;
+  // Plugin-native events use only the host push bridge, including during signing preflight.
+  const channels = params.event.topic === 'plugin_notification'
+    ? runtime.channels.filter(channel => channel.kind === 'expo_push') : runtime.channels;
   let preparationSignal = params.signal;
   const assertCurrent = () => runtime.assertCurrent(preparationSignal);
   await assertCurrent();
@@ -584,9 +586,6 @@ async function dispatchActivityNotification(params: Readonly<{
 
   for (const channel of channels) {
     if (channel.kind !== 'webhook') continue;
-    // Plugin-native events use only the host push bridge. Contributed custom
-    // transports retain their own notification service contract.
-    if (params.event.topic === 'plugin_notification') continue;
     if (!selects(channel.id)) continue;
     if (!isTopicEnabled(channel, params.event)) continue;
     const decision = channelDecision('webhook');

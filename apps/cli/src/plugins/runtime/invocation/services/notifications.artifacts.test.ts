@@ -15,7 +15,8 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createStablePluginNotificationsService, type StablePluginNotificationsHost } from './notifications';
 import { createPluginNativeNotificationDelivery } from '@/notifications/activity/pluginNativeNotificationDelivery';
 import { notificationSettingsFixture, notificationCatalogFixture } from '@/notifications/activity/activityNotification.testkit';
-import { getActiveAccountSettingsSnapshot, setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { commitActiveNotificationChannelCatalog, getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken,
+  setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { createSessionNotificationContextFixture } from '@/testkit/backends/sessionFixtures';
@@ -300,7 +301,22 @@ describe('plugin notification Account Artifact custody', () => {
         const pushOnly = { clientRequestId: 'push-only', categoryId: 'updates', title: 'PR needs attention', type: 'blocked' as const,
           buttonInputs: { 'Ship 🚀': { repository: 'selected' } },
           data: { sessionId: 'session-bound', serverId: 'forged-home', serverUrl: 'https://forged.example.test', requestId: 'never-answer' } };
-        await native.send(pushOnly);
+        const catalogScope = { scopeKey: resolveAccountSettingsScopeKey(credentials), lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken() };
+        commitActiveNotificationChannelCatalog({ ...catalogScope,
+          catalog: { status: 'ready', revision: 2, channels: [], diagnostics: [] } });
+        await expect(native.send({ ...pushOnly, clientRequestId: 'empty-catalog' })).resolves.toMatchObject({ deliveries: [] });
+        expect(nativePush.messages).toEqual([]);
+
+        commitActiveNotificationChannelCatalog({ ...catalogScope,
+          catalog: { status: 'unavailable', reason: 'test-catalog-unavailable' } });
+        await expect(native.send({ ...pushOnly, clientRequestId: 'unavailable-catalog' })).resolves.toMatchObject({
+          deliveries: [{ channelId: 'expo_push', status: 'failed', code: 'notification_channel_catalog_unavailable', retryable: true }],
+        });
+        expect(nativePush.messages).toEqual([]);
+
+        commitActiveNotificationChannelCatalog({ ...catalogScope,
+          catalog: { ...catalog.notificationChannelCatalog, revision: 3 } });
+        await expect(native.send(pushOnly)).resolves.toMatchObject({ deliveries: [{ status: 'accepted' }] });
         expect(rows.size).toBe(0);
         expect(nativePush.messages).toEqual([expect.objectContaining({ categoryId: 'happier.pluginNotification.v1/acme.tasks/updates',
           data: expect.objectContaining({ v: 1, topic: 'plugin_session', sessionId: 'session-bound', serverId: 'srv_bound_home', serverUrl: 'https://home.example.test', accountId: 'owner',

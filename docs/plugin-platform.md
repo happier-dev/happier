@@ -12407,9 +12407,14 @@ field, and readers recognizing it reject unknown nested routing fields.
 
 In 0.3 development source, a default plugin notification send also joins the
 host Activity dispatcher's configured native push channel. The same attention
-policy selects needs-you push, quiet updates/mentions and quiet hours; explicit
-`channelIds` continue to select only those contributed transports. A stored
-notice pushes its admitted Artifact/page reference. Its default tap opens the
+policy selects needs-you push, quiet updates/mentions and quiet hours. When
+native push is eligible and the Account channel catalog is unavailable, the
+send result reports a failed `expo_push` delivery with code
+`notification_channel_catalog_unavailable` and `retryable: true`. A subsequent
+notification can try again. A ready catalog with no eligible push channels
+produces no native delivery entry. Explicit `channelIds` continue to select
+only those contributed transports. A stored notice pushes its admitted
+Artifact/page reference. Its default tap opens the
 same page as the Inbox, after saved Home and Account admission, and never
 submits a decision. Plugin notification categories may declare their own
 `buttons`, each with an arbitrary nonempty `id`, a localized `label`, and a

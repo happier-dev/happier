@@ -68,6 +68,7 @@ export type StablePluginNotificationsHost = Readonly<{
     readAttentionPolicy?(): unknown;
     sendNative?(seed: PluginInvocationServicesSeed, request: PluginNativeNotificationRequest, signal: AbortSignal): Promise<Readonly<{
         attemptedChannels: number; deliveredChannels: number;
+        unavailableCode?: 'notification_channel_catalog_unavailable';
     }>>;
     resolveNoticeArtifacts?(seed: PluginInvocationServicesSeed): Promise<Readonly<{
         accountId: string; store: Readonly<{
@@ -751,12 +752,13 @@ export function createStablePluginNotificationsOwner(host: StablePluginNotificat
                                 ...(request.data === undefined ? {} : { data: request.data }),
                                 ...(notice ? { notice } : {}),
                             }, operationSignal);
-                            if (native.attemptedChannels > 0 || native.deliveredChannels > 0) deliveries.push(Object.freeze({ deliveryId, channelId: 'expo_push',
+                            const failureCode = native.unavailableCode ?? (native.attemptedChannels > 0 && native.deliveredChannels === 0
+                                ? 'plugin_notification_native_unavailable' : undefined);
+                            if (failureCode || native.deliveredChannels > 0) deliveries.push(Object.freeze({ deliveryId, channelId: 'expo_push',
                                 ...(operationSignal.aborted || !seed.isOccurrenceCurrent()
                                     ? { status: 'outcomeUnknown' as const, code: 'plugin_notification_outcome_unknown' }
-                                    : native.deliveredChannels > 0 ? { status: 'accepted' as const, evidence: 'provider' as const }
-                                        : native.attemptedChannels > 0 ? { status: 'failed' as const, code: 'plugin_notification_native_unavailable', retryable: true }
-                                            : { status: 'suppressed' as const, code: 'plugin_notification_native_suppressed' }) }));
+                                    : failureCode ? { status: 'failed' as const, code: failureCode, retryable: true }
+                                        : { status: 'accepted' as const, evidence: 'provider' as const }) }));
                         } catch {
                             deliveries.push(Object.freeze({ deliveryId, channelId: 'expo_push', status: 'outcomeUnknown',
                                 code: 'plugin_notification_outcome_unknown' }));

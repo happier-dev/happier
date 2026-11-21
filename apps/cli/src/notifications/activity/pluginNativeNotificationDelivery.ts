@@ -8,6 +8,7 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import { hydrateNotificationChannelCatalogForActiveAccount } from '@/settings/notifications/hydrateNotificationChannelCatalog';
 import type { StablePluginNotificationsHost } from '@/plugins/runtime/invocation/services/notifications';
 import { dispatchActivityNotificationAsync } from './dispatchActivityNotification';
+import { NotificationChannelCatalogUnavailableError } from './runtimeNotificationCatalog';
 import type { ExpoPushActivityNotificationSender } from './sendExpoPushActivityNotification';
 import { readPluginSessionDestination } from '@/session/services/pluginSessionDestination';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
@@ -67,13 +68,19 @@ export function createPluginNativeNotificationDelivery(params: Readonly<{
     if (!await isCurrent()) return none;
     const current = getActiveAccountSettingsSnapshot();
     if (!current) return none;
-    const pushChannels = current.notificationChannelCatalog?.status === 'ready'
-      ? current.notificationChannelCatalog.channels.filter(channel => channel.kind === 'expo_push').map(channel => channel.id) : [];
-    return dispatchActivityNotificationAsync({ settings: current.settings, isCurrent,
-      event: { topic: 'plugin_notification', title: request.title, eventId: request.eventId, data,
-        ...(request.body === undefined ? {} : { body: request.body }), ...(request.type ? { type: request.type } : {}) },
-      channels: pushChannels, pluginNotifications: null,
-      expoPushSender: pushSender ??= new PushNotificationClient(params.credentials.token, params.serverHttpBaseUrl, params.serverId, params.serverUrl),
-    });
+    try {
+      return await dispatchActivityNotificationAsync({ settings: current.settings, isCurrent,
+        notificationChannelCatalog: current.notificationChannelCatalog ?? { status: 'loading' },
+        event: { topic: 'plugin_notification', title: request.title, eventId: request.eventId, data,
+          ...(request.body === undefined ? {} : { body: request.body }), ...(request.type ? { type: request.type } : {}) },
+        pluginNotifications: null,
+        expoPushSender: pushSender ??= new PushNotificationClient(params.credentials.token, params.serverHttpBaseUrl, params.serverId, params.serverUrl),
+      });
+    } catch (error) {
+      if (error instanceof NotificationChannelCatalogUnavailableError && error.reason !== 'scope-retired') {
+        return { ...none, unavailableCode: error.code };
+      }
+      throw error;
+    }
   });
 }
