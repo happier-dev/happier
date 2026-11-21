@@ -28,6 +28,8 @@ import { createInstalledProjectAgentDaemonFixture } from '@/daemon/testkit/insta
 import { writeDaemonSettingsFixture } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { reloadConfiguration } from '@/configuration';
 import { logger } from '@/ui/logger';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { unwrapActionResultForRpc } from '@/rpc/handlers/registerActionSpecRpcHandlers';
 
 const boundary = vi.hoisted(() => ({
   control: null as Parameters<typeof startDaemonControlServer>[0] | null,
@@ -49,12 +51,14 @@ const controllerMachineId = 'remote-controller';
 
 type Scenario = Readonly<{
   actionId?: 'deployments.domains.add' | 'deployments.rollback' | 'deployments.health.current'
-    | 'machines.capabilities.detect' | 'machines.terminal.list';
+    | 'machines.capabilities.detect' | 'machines.terminal.list' | 'session.spawn_new';
   relayedResult?: unknown;
   relayExecution?: ActionExecuteResult;
   input?: Readonly<Record<string, unknown>>;
   approvalRequired?: boolean;
   mintRefusal?: Readonly<{ status: number; data: unknown }>;
+  rpcReply?: unknown;
+  rpcReadError?: Error;
 }>;
 
 /** Home's mint binds these envelope projections (apps/server/sources/app/auth/auth.ts). */
@@ -159,7 +163,7 @@ async function runSessionDomainAdd(scenario: Scenario = {}) {
   environment.environment.serverId = home;
   environment.environment.owner = { kind: 'account', accountId: 'requester' };
   environment.environment.controllerMachineId = controllerMachineId;
-  const input = scenario.input ? { serverId: home, ...scenario.input } : {
+  const input = scenario.input ? actionId === 'session.spawn_new' ? scenario.input : { serverId: home, ...scenario.input } : {
     serverId: home,
     environmentId: 'environment',
     targetLinkId: 'runtime',
@@ -188,6 +192,14 @@ async function runSessionDomainAdd(scenario: Scenario = {}) {
     | ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse>
     | undefined;
   vi.mocked(axios.get).mockImplementation(async (...args) => {
+    if (new URL(String(args[0])).pathname === `/v1/machines/${controllerMachineId}`) {
+      if (scenario.rpcReadError) throw scenario.rpcReadError;
+      return { status: 200, data: { machine: { id: controllerMachineId, kind: 'persistent',
+        storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, installationId: 'controller-installation',
+        installationPublicKey: Buffer.from(h.f.installation.publicKey, 'base64url').toString('base64'),
+        access: { custodian: { accountId: 'requester', displayName: 'Requester' }, role: 'manage',
+          resourceMode: 'plain', accessState: 'ready' } } } };
+    }
     // The requester's own Environment read is the placement fact; Home still admits.
     if (
       new URL(String(args[0])).pathname ===
@@ -273,7 +285,7 @@ async function runSessionDomainAdd(scenario: Scenario = {}) {
         acknowledge: (result: unknown) => void,
       ) => {
         published.push(packet);
-        acknowledge({
+        acknowledge(scenario.rpcReply ?? {
           ok: false,
           errorCode: 'rpc_method_not_found',
           error: 'rpc_method_not_found',
@@ -331,6 +343,52 @@ async function runSessionDomainAdd(scenario: Scenario = {}) {
     credentials,
   };
 }
+
+const spawnRpcInput = {
+  creationKey: 'targeted-refusal',
+  executionTarget: { serverId: `srv_${'b'.repeat(32)}`, machineId: controllerMachineId },
+  directory: { kind: 'managed' },
+  agentTarget: { kind: 'agent', identity: { pluginId: 'acme.project-launch', localId: 'agent' } },
+};
+
+it.each(['custodian_only', 'machine_unavailable'] as const)('retains the targeted Session RPC refusal %s without foreign prose', async reason => {
+  const failureCause = { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: reason, httpStatus: 403 };
+  const run = await runSessionDomainAdd({ actionId: 'session.spawn_new', input: spawnRpcInput,
+    rpcReply: { ok: false, errorCode: 'RPC_FORBIDDEN', error: 'private inaccessible Machine description', failureCause } });
+  expect(run.published, run.diagnostic).toHaveLength(1);
+  expect(run.published[0]!.method).toBe(`${controllerMachineId}:session.spawnNew`);
+  expect(run.outcome, run.diagnostic).toMatchObject({ ok: false, errorCode: 'RPC_FORBIDDEN', failureCause });
+  expect(JSON.stringify(run.outcome)).not.toContain('private inaccessible Machine description');
+}, 120_000);
+
+it('retains returned targeted Session Action refusal through a successful transport ACK', async () => {
+  const failureCause = { phase: 'rpc.admission.machine', errorClass: 'Error' as const,
+    errorCode: 'custodian_only', httpStatus: 403 };
+  const run = await runSessionDomainAdd({ actionId: 'session.spawn_new', input: spawnRpcInput,
+    rpcReply: { ok: true, result: unwrapActionResultForRpc('session.spawn_new', {
+      ok: false, errorCode: 'RPC_FORBIDDEN', error: 'private inaccessible Machine description',
+      failureCause, effectAttempted: false,
+    }) } });
+  expect(run.published, run.diagnostic).toHaveLength(1);
+  expect(run.outcome, run.diagnostic).toMatchObject({ ok: false, errorCode: 'RPC_FORBIDDEN',
+    failureCause, effectAttempted: false });
+  expect(JSON.stringify(run.outcome)).not.toContain('private inaccessible Machine description');
+}, 120_000);
+
+it('retains targeted Session RPC success', async () => {
+  const run = await runSessionDomainAdd({ actionId: 'session.spawn_new', input: spawnRpcInput,
+    rpcReply: { ok: true, result: { sessionId: 'spawned-session' } } });
+  expect(run.published, run.diagnostic).toHaveLength(1);
+  expect(run.outcome, run.diagnostic).toMatchObject({ ok: true });
+}, 120_000);
+
+it('keeps an untyped targeted Session transport error generic', async () => {
+  const run = await runSessionDomainAdd({ actionId: 'session.spawn_new', input: spawnRpcInput,
+    rpcReadError: new Error('private untyped transport prose') });
+  expect(run.published).toEqual([]);
+  expect(run.outcome, run.diagnostic).toMatchObject({ ok: false, errorCode: 'internal_error' });
+  expect(JSON.stringify(run.outcome)).not.toContain('private untyped transport prose');
+}, 120_000);
 
 it('delivers a Session-origin domain root to the Environment controller through the admitted-root relay', async () => {
   const run = await runSessionDomainAdd();

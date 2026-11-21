@@ -36,6 +36,9 @@ import { isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/man
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { resolveRuntimeActionExecutionFamily } from "@happier-dev/protocol/actions/executor/dispatch";
 import { callExactMachineRpc } from "@/session/transport/rpc/machineRpc";
+import { isRpcError } from '@happier-dev/protocol/rpcErrors';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createClientActionReverseDispatcher } from "@/session/actions/clientActionReverseDispatch";
 import { createHostExternalSessionActionAdapter } from '@/session/actions/externalSessions/hostExternalSessionActionTransport';
 import type { ApiMachineClient } from "@/api/apiMachine";
@@ -353,13 +356,22 @@ resolveServerFeaturesSnapshot?: () =>
                 envelope: context.originalActionEnvelope, credentials, serverHttpBaseUrl: serverUrl,
                 isCurrent: isSessionActionCallerCurrent, ...(context.signal ? { signal: context.signal } : {}) });
             }
-            const result = await callExactMachineRpc({ credentials, machineId: binding.machineId,
-              serverUrl, authorityCeiling: 'account_automation', method: rpcMethod,
-              request: { v: 1, kind: 'targeted_action_rpc', target, input }, requestId: binding.requestId,
-              timeoutMs: null, requireCurrentMachine: true,
-              externalAction: { context, effectActionId: actionId,
-                installationId: installation.installationId, privateKey: installation.privateKey },
-              ...(context.signal ? { signal: context.signal } : {}) });
+            let result: unknown;
+            try {
+              result = await callExactMachineRpc({ credentials, machineId: binding.machineId,
+                serverUrl, authorityCeiling: 'account_automation', method: rpcMethod,
+                request: { v: 1, kind: 'targeted_action_rpc', target, input }, requestId: binding.requestId,
+                timeoutMs: null, requireCurrentMachine: true,
+                externalAction: { context, effectActionId: actionId,
+                  installationId: installation.installationId, privateKey: installation.privateKey },
+                ...(context.signal ? { signal: context.signal } : {}) });
+            } catch (error) {
+              if (!isRpcError(error)) throw error;
+              const failure = normalizeActionExecutorThrownError(error);
+              return { ok: false, ...failure, error: failure.errorCode };
+            }
+            const failure = parseActionExecuteFailure(result);
+            if (failure) return { ...failure, error: failure.errorCode };
             if (result && typeof result === 'object' && 'errorCode' in result && typeof result.errorCode === 'string') {
               return { ok: false, errorCode: result.errorCode, error: result.errorCode };
             }
