@@ -294,6 +294,26 @@ describe('activated Vercel vendor Connected Account', () => {
     } finally { await h.kit.dispose(); }
   });
 
+  it('exposes the stored OAuth expiry to the request-auth cache', async () => {
+    const expiresAt = Date.now() + 60_000;
+    const h = await host({ values: { teamId } });
+    try {
+      h.retained.set('expiresAtMs', String(expiresAt));
+      const request = {
+        kind: 'httpHeaders' as const,
+        origin: 'https://ai-gateway.vercel.sh',
+        headerNames: ['authorization', 'x-vercel-ai-gateway-team'],
+      };
+      await expect(h.runtime.materialize(request, h.read)).resolves.toEqual({
+        kind: 'httpHeaders',
+        headers: { authorization: 'Bearer ' + secret, 'x-vercel-ai-gateway-team': teamId },
+        expiresAt,
+      });
+      h.retained.set('expiresAtMs', String(Date.now() - 1));
+      await expect(h.runtime.materialize(request, h.read)).rejects.toMatchObject({ code: 'credential_unavailable' });
+    } finally { await h.kit.dispose(); }
+  });
+
   it('revokes only the current token and does not replay an ambiguous revocation', async () => {
     const h = await host({ response: { tokenId: 'token_example' } });
     try {

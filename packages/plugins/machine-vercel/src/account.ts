@@ -69,11 +69,14 @@ async function materialize(
   try {
     const token = await context.credentials.get('token', { signal });
     // Only a sign-in grant expires; personal tokens carry no expiry here.
-    const expiry = await context.credentials.get('expiresAtMs', { signal });
+    const storedExpiry = await context.credentials.get('expiresAtMs', { signal });
+    const expiresAt = storedExpiry === null ? undefined : Number(storedExpiry);
     signal.throwIfAborted();
-    if (!validToken(token) || (expiry !== null && !(Number(expiry) > Date.now()))) throw new PluginError({ code: 'credential_unavailable' });
+    if (!validToken(token) || (expiresAt !== undefined && (!Number.isSafeInteger(expiresAt) || expiresAt <= Date.now()))) {
+      throw new PluginError({ code: 'credential_unavailable' });
+    }
     if (headerNames.includes('authorization')) headers.authorization = `Bearer ${token}`;
-    return { kind: 'httpHeaders', headers };
+    return { kind: 'httpHeaders', headers, ...(expiresAt === undefined ? {} : { expiresAt }) };
   } catch {
     signal.throwIfAborted();
     throw new PluginError({ code: 'credential_unavailable' });
