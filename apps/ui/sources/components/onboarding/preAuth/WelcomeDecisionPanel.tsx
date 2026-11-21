@@ -170,6 +170,7 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
             ? { observedHomeAtServiceEndpoint: { home: homeTarget, label: options.homeLabel ?? t('settingsAccount.thisHomeTitle') } } : {}),
         ...(options.observedHomeServerIdentityId ? { observedHomeServerIdentityId: options.observedHomeServerIdentityId } : {}),
         context: { kind: props.restoreWays ? 'restore' : 'home' },
+        terminalWaiting,
         allowedNavigation: {
             // A Home or sign-in service fixed by the organization policy is shown as the managed
             // value; the ways to pick another are left out rather than offered dead.

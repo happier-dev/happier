@@ -90,6 +90,7 @@ export type ComposeWelcomeEntryModelInput = Readonly<{
     context:
         | Readonly<{ kind: 'home' | 'restore' }>
         | Readonly<{ kind: 'team' | 'invitation'; label: string; dominantActionId: string | null }>;
+    terminalWaiting?: boolean;
     allowedNavigation: Readonly<{
         changeHome: boolean;
         selectService: boolean;
@@ -336,6 +337,12 @@ export function composeWelcomeEntryModel(input: ComposeWelcomeEntryModelInput): 
         const dominantIndex = unique.findIndex((action) => actionIdentity(action) === dominantActionId);
         if (dominantIndex > 0) unique.unshift(unique.splice(dominantIndex, 1)[0]!);
     }
+    const loginIndex = unique.findIndex((action) =>
+        (action.kind === 'authenticate' || action.kind === 'scan_or_paste_home') && action.labelRole === 'login');
+    const hasLoginDoor = loginIndex >= 0;
+    const terminalLeadsWithLogin = input.terminalWaiting && input.context.kind === 'home' && hasLoginDoor;
+    if (terminalLeadsWithLogin && loginIndex > 0) unique.unshift(unique.splice(loginIndex, 1)[0]!);
+    const preservePrimaryDoor = catalogPending && !terminalLeadsWithLogin;
 
     // `choose_sign_in_service` is already an ordinary action row whenever the
     // navigation allows it. The notice also distinguishes an optional service
@@ -359,8 +366,6 @@ export function composeWelcomeEntryModel(input: ComposeWelcomeEntryModelInput): 
         };
 
     const hasAuthentication = unique.some((action) => action.kind === 'authenticate');
-    const hasLoginDoor = unique.some((action) =>
-        (action.kind === 'authenticate' || action.kind === 'scan_or_paste_home') && action.labelRole === 'login');
     const leadWithLink = placement?.platform === 'phone';
     const qrAvailable = leadWithLink && (placement.canScanQr || placement.canShowQr);
     return {
@@ -385,13 +390,13 @@ export function composeWelcomeEntryModel(input: ComposeWelcomeEntryModelInput): 
             icon: 'qr-code',
         },
         showHomeStatus: !isRestore && showHomeStatus,
-        ...(catalogPending ? { primaryDoorPending: true } : {}),
+        ...(preservePrimaryDoor ? { primaryDoorPending: true } : {}),
         ...(input.target.kind === 'none'
             ? input.serviceCatalogState.kind === 'ready' ? { targetContext: { label: input.serviceCatalogState.name } } : {}
             : { targetContext: { label: input.target.label } }),
         actions: unique.map((action, index) => ({
             id: actionIdentity(action),
-            emphasis: isRestore ? 'tertiary' : index === 0 && !catalogPending ? 'primary' : emphasisOf(action, hasAuthentication),
+            emphasis: isRestore ? 'tertiary' : index === 0 && !preservePrimaryDoor ? 'primary' : emphasisOf(action, hasAuthentication),
             action,
         })),
         ...(!isRestore && notice ? { notice } : {}),

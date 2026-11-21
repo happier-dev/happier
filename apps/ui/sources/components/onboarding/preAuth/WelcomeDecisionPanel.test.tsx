@@ -315,7 +315,7 @@ describe('WelcomeDecisionPanel', () => {
     it.each([
         { state: 'live', expiresInMs: 60_000, title: 'welcome.terminalContinuationTitle', subtitle: 'welcome.terminalContinuationSubtitle' },
         { state: 'expired', expiresInMs: -1, title: 'welcome.brandTaglineLine1', subtitle: 'welcome.brandTaglineLine2' },
-    ] as const)('greets a person sent here by a $state terminal link', async ({ expiresInMs, title, subtitle }) => {
+    ] as const)('greets a person sent here by a $state terminal link', async ({ state, expiresInMs, title, subtitle }) => {
         const { setPendingTerminalConnect, clearPendingTerminalConnect } = await import('@/sync/domains/pending/pendingTerminalConnect');
         const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
         setPendingTerminalConnect({
@@ -332,6 +332,9 @@ describe('WelcomeDecisionPanel', () => {
                 .map(node => node.props.children);
             // The greeting leads; the quiet "Already use Happier?" group heading follows it.
             expect(headers.slice(0, 2)).toEqual([t(title), t(subtitle)]);
+            const doors = screen.findAll(node => typeof node.type === 'string'
+                && (node.props.testID === 'welcome-primary-start-title' || node.props.testID === 'welcome-scan-existing-home-title'));
+            expect(doors[0]?.props.testID).toBe(state === 'live' ? 'welcome-scan-existing-home-title' : 'welcome-primary-start-title');
             await screen.unmount();
         } finally {
             clearPendingTerminalConnect();
