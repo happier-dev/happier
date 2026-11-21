@@ -1,5 +1,6 @@
 import os from 'node:os';
 import { describe, expect, it, vi } from 'vitest';
+import tweetnacl from 'tweetnacl';
 
 import { initialMachineMetadata, refreshMachineMetadataForCurrentDaemon } from './metadata';
 import { MachinePublishedMetadataV1Schema, StoredMachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
@@ -46,6 +47,18 @@ describe('initialMachineMetadata', () => {
     const removed = refreshMachineMetadataForCurrentDaemon(published, { ...fields,
       agentInventory: { checkedAt: 3, installedAgentIds: [] } });
     expect(removed).toMatchObject({ agentInventory: { checkedAt: 3, installedAgentIds: [] } });
+  });
+  it('publishes the installation key in the E2EE content and republishes after a reinstall', () => {
+    const current = { ...initialMachineMetadata, displayName: 'Build box' };
+    const fields = { host: current.host, platform: current.platform, happyCliVersion: current.happyCliVersion,
+      homeDir: current.homeDir, happyHomeDir: current.happyHomeDir, happyLibDir: current.happyLibDir,
+      installationPublicKey: Buffer.from(tweetnacl.sign.keyPair().publicKey).toString('base64url') };
+    const published = refreshMachineMetadataForCurrentDaemon(current, fields);
+    expect(MachinePublishedMetadataV1Schema.parse(published)).toMatchObject({ displayName: 'Build box',
+      installationPublicKey: fields.installationPublicKey });
+    expect(refreshMachineMetadataForCurrentDaemon(published, fields)).toBe(published);
+    const reinstalled = { ...fields, installationPublicKey: Buffer.from(tweetnacl.sign.keyPair().publicKey).toString('base64url') };
+    expect(refreshMachineMetadataForCurrentDaemon(published, reinstalled)).toMatchObject({ installationPublicKey: reinstalled.installationPublicKey });
   });
   it('reads the fallback host name when metadata is consumed, not at module load', () => {
     const hostname = vi.spyOn(os, 'hostname').mockReturnValue('renamed-host.local');

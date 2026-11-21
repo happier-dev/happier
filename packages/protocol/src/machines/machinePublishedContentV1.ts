@@ -4,6 +4,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { CliUpdateFactsSchema } from './cliUpdateFacts.js';
+import { MachineInstallationPublicKeySchema } from './identity/installationKeySchemas.js';
 import { MachineDaemonPublicReleaseChannelLabelSchema, MachineDaemonStartupSourceSchema } from './ownership/daemonOwnership.js';
 import { IrohEndpointDescriptorV1Schema } from '../connectivity/iroh/endpointDescriptorV1.js';
 import { LocalServiceMachineSummaryV1Schema } from '../local/services/inventory/v1.js';
@@ -65,6 +66,8 @@ export const MachinePublishedMetadataV1Schema = lazyZodSchema(() => z.strictObje
   windowsRemoteSessionConsole: z.optional(z.enum(['hidden', 'visible'])),
   daemonTerminalSessionAttachSupported: z.optional(z.boolean()),
   daemonSessionGoalControlsSupported: z.optional(z.boolean()),
+  /** The daemon's own installation key in its E2EE content, so a reader need not take Home's word for it. */
+  installationPublicKey: z.optional(MachineInstallationPublicKeySchema),
   daemonLastKnownStatus: z.optional(z.enum(['running', 'shutting-down'])),
   daemonLastKnownPid: z.optional(z.number()),
   shutdownRequestedAt: z.optional(z.number()),

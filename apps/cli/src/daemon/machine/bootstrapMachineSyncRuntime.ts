@@ -2256,6 +2256,8 @@ export async function bootstrapMachineSyncRuntime(
             credentials: params.credentials, homeId: origin.serverIdentityId, machineId: origin.machineId,
             serverHttpBaseUrl: resolveServerHttpBaseUrl() });
         }
+        // Requesters verify the Home-delivered installation key against this E2EE copy before sealing.
+        const installationPublicKey = readInstallationIdentityIfExistsSync()?.publicKey;
         const outcome = await connectedApiMachine.updateMachineMetadata((metadata) => {
           const base = (metadata ?? params.machine.metadata ?? {}) as Partial<MachineMetadata>;
           return refreshMachineMetadataForCurrentDaemon(base, {
@@ -2266,6 +2268,7 @@ export async function bootstrapMachineSyncRuntime(
             homeDir: os.homedir(),
             happyHomeDir: params.happyHomeDir,
             happyLibDir: params.happyLibDir,
+            ...(installationPublicKey ? { installationPublicKey } : {}),
             ...(cliUpdate ? { cliUpdate } : {}),
             ...(devcontainerChild !== undefined ? { devcontainerChild } : {}),
           });

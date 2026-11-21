@@ -35,7 +35,7 @@ export async function readCurrentManagedChildMachineMetadata(input: Readonly<{
 type CurrentDaemonMachineMetadataFields = Pick<
   MachineMetadata,
   'host' | 'platform' | 'happyCliVersion' | 'homeDir' | 'happyHomeDir' | 'happyLibDir'
-> & Partial<Pick<MachineMetadata, 'arch' | 'cliUpdate' | 'agentInventory'>> & Readonly<{
+> & Partial<Pick<MachineMetadata, 'arch' | 'cliUpdate' | 'agentInventory' | 'installationPublicKey'>> & Readonly<{
   /** Undefined preserves the last admitted fact; null removes a retired fact. */
   devcontainerChild?: MachineMetadata['devcontainerChild'] | null;
 }>;
@@ -70,6 +70,7 @@ export function refreshMachineMetadataForCurrentDaemon(
     && current.happyLibDir === next.happyLibDir
     && current.daemonTerminalSessionAttachSupported === next.daemonTerminalSessionAttachSupported
     && current.daemonSessionGoalControlsSupported === next.daemonSessionGoalControlsSupported
+    && current.installationPublicKey === next.installationPublicKey
     && JSON.stringify(current.cliUpdate ?? null) === JSON.stringify(next.cliUpdate ?? null)
     && JSON.stringify(current.agentInventory ?? null) === JSON.stringify(next.agentInventory ?? null)
     && managedDevcontainerChildProjectionsEqualV1(current.devcontainerChild, next.devcontainerChild)
