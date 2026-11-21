@@ -84,7 +84,7 @@ import { loadMoreTriageListWindow, readTriageListWindowReadOwner, readTriageList
 import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralSharedScope.test-support.js';
 import { renderSurface as renderShellSurface } from './surface.js';
 import { TRIAGE_TASKS_PAGE_LOCAL_ID_V1 } from '../composer/openEntryDetails.js';
-import { TriageListShell } from './shell/root.js';
+import { TRIAGE_SHELL_LIST_REGION_TEST_ID_V1, TriageListShell } from './shell/root.js';
 import type { PluginUiDataClient, PluginUiCollectionQuerySnapshot } from '@happier-dev/plugin-ui/data';
 import { CORPUS_SOURCE_INSTANCES_COLLECTION, CORPUS_SESSION_LINKS_COLLECTION, CORPUS_USER_MARKS_COLLECTION } from '../corpus/collections/definitions.js';
 import { closeFilters, filterFacetOption, pressToolbarMenuItem } from './shell/toolbarMenus.test-support.js';
@@ -1678,6 +1678,50 @@ describe('the mounted PRs & Issues surface', () => {
         expect(document.body.textContent).toContain('Replace the duplicated normalizer');
     });
 
+    it('keeps the retained rows’ age and geometry while the host band says the source Machine cannot answer', async () => {
+        // QB-25(a): retained rows stay, visibly stale, with their real observation time. The host band names the
+        // outage; the toolbar keeps the read's age in its usual place, so nothing above the rows comes or goes.
+        const harness = createHarness();
+        const context = sourceContextFixture(harness);
+        const shell = await mountSurface(renderShellSurface, harness, 'triage-list-warm-outage-age', context);
+        await settleWindow('view', shell);
+        await expect(shell.getByText('Updated just now')).resolves.toBeDefined();
+        const rows = () => [...document.querySelectorAll<HTMLElement>('[role="row"]')];
+        const rowsBefore = rows();
+        expect(rowsBefore.length).toBeGreaterThan(0);
+        await act(async () => { await shell.updateSurface({ ...context, machineConnectionPending: false, machineExecutionReady: false }); });
+        await expect(shell.getByText('Updated just now')).resolves.toBeDefined();
+        expect(rows()).toEqual(rowsBefore);
+        rows().forEach((row, index) => expect(row).toBe(rowsBefore[index]));
+        // A refresh that fails during the outage keeps the same age, not a second voice for the cause.
+        harness.state.sourceBFails = true;
+        await settleWindow('manual', shell);
+        await expect(shell.getByText('Updated just now')).resolves.toBeDefined();
+        await expect(shell.queryByText('Showing the last known list')).resolves.toBeUndefined();
+        await visibleTexts(shell, ['Replace the duplicated normalizer']);
+    });
+
+    it('says a cold mount cannot reach a machine, in the list’s place, while the host band names the outage', async () => {
+        // QB-25(b): nothing materialized on this mount and the Run on Machine cannot answer. The list region says
+        // the one reachability line rather than a generic per-connection read failure; durable items stay.
+        const harness = createHarness();
+        harness.state.listInvocationFailure = () => new PluginError({ code: 'unavailable', retryable: true,
+            diagnostics: [{ code: 'plugin_action_machine_required', severity: 'error' }] });
+        const context = { ...sourceContextFixture(harness), requesterExecutionReady: true,
+            machineConnectionPending: false, machineExecutionReady: false };
+        const shell = await mountSurface(renderShellSurface, harness, 'triage-list-cold-outage', context);
+        await settleWindow('view', shell);
+        const listRegion = document.querySelector(`[data-testid="${TRIAGE_SHELL_LIST_REGION_TEST_ID_V1}"]`);
+        expect(listRegion).not.toBeNull();
+        expect(listRegion?.textContent).toContain('Your sources could not be reached');
+        const statusLines = [...document.querySelectorAll('[role="status"]')].map(node => node.textContent ?? '');
+        expect(statusLines.some(line => line.includes('could not be read') || line.includes('could not be reached.')), JSON.stringify(statusLines)).toBe(false);
+        // The host band carries the outage's one Retry; the page's Refresh stays.
+        expect((await shell.getAllByRole('button')).filter(button => button.name === 'Retry')).toHaveLength(0);
+        await expect(shell.getByRole('button', { name: 'Refresh' })).resolves.toBeDefined();
+        await expect(shell.queryByText('Nothing needs you')).resolves.toBeUndefined();
+    });
+
     it('names one shared cause once when every connection fails for it, still naming each connection', async () => {
         const harness = createHarness();
         const shell = await mountSurface(renderShellSurface, harness, 'triage-list', sourceContextFixture(harness), { directAccountData: true });
@@ -1884,7 +1928,7 @@ describe('the mounted PRs & Issues surface', () => {
         expect(harness.accountKv.setCallCount()).toBe(0);
     });
 
-    it.each([false, true])('keeps named cold source failure and Retry visible (initially unavailable=%s)', async initiallyUnavailable => {
+    it.each([false, true])('keeps a cold settled failure answered in the list body (initially unavailable=%s)', async initiallyUnavailable => {
         const harness = createHarness();
         harness.state.listInvocationFailure = () => new PluginError({
             code: 'unavailable', retryable: true,
@@ -1903,14 +1947,14 @@ describe('the mounted PRs & Issues surface', () => {
             await expect(shell.getByRole('button', { name: 'Retry' })).resolves.toBeDefined();
         }
 
-        // Readiness is a host execution fact. This context carries no fact that
-        // a host band is being presented; dropping the only body leaves D20's
-        // toolbar and column headers with no answer about the settled failure.
+        // Dropping the only body would leave D20's toolbar and column headers with no answer about the settled
+        // failure. With the Run on Machine unable to answer and nothing read on this mount, that answer is
+        // reachability state 5 (QB-25(b)): no machine can be reached. The host band holds the outage's Retry.
         await act(async () => { await shell.updateSurface({ ...context, machineConnectionPending: false, machineExecutionReady: false }); });
         expect(snapshot().pending).toBe('idle');
         expect(snapshot().window?.rows).toHaveLength(0);
-        expect(failureLines()).toEqual(expect.arrayContaining([expect.stringContaining(LABEL_A), expect.stringContaining(LABEL_B)]));
-        await expect(shell.getByRole('button', { name: 'Retry' })).resolves.toBeDefined();
+        expect(failureLines()).toEqual([expect.stringContaining('Your sources could not be reached')]);
+        await expect(shell.getByRole('button', { name: 'Refresh' })).resolves.toBeDefined();
     });
 
     it('keeps serving the picker after the page that opened the window unmounts', async () => {

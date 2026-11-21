@@ -465,17 +465,28 @@ export function readTriageListReadFailureNotice(
 ): TriageListFailureNoticeV1 {
   const reason = readHostSentence(state.message);
   const machineUnavailable = state.kind === 'sourcesUnreachable';
+  const machineNotice = readTriageMachineUnreachableNoticeV1(text);
   return Object.freeze({
-    title: machineUnavailable
-      ? text('plugins.triage.surface.sourcesUnreachable.title', 'Your sources could not be reached')
-      : text('plugins.triage.surface.listFailed', 'The list could not be read'),
+    title: machineUnavailable ? machineNotice.title : text('plugins.triage.surface.listFailed', 'The list could not be read'),
     // The SDK may use the machine-readable code as its default message. Keep
     // host recovery sentences, but use our translated explanation for bare codes.
     description: reason !== undefined
       ? resolveSourceFailureReason(text, reason)
       : machineUnavailable
-        ? text('plugins.triage.surface.sourcesUnreachable.description', 'Happier could not reach a machine for these sources, so nothing has been read yet. Your pins are still here, and Refresh tries again.')
+        ? machineNotice.description
         : text('plugins.triage.surface.listFailed.pinsAvailable', 'Happier could not read this list just now. Your pins are still here.'),
+  });
+}
+
+/**
+ * Reachability state 5 (`core/SURFACE.md` §6.2) in the page's words: nothing has been read on this mount and no
+ * machine can be reached for the sources. Said by the list-read failure and by a cold mount under the host's outage
+ * band, so the two cannot describe one state two ways.
+ */
+export function readTriageMachineUnreachableNoticeV1(text: TriageTextResolverV1 = ENGLISH_TEXT): TriageListFailureNoticeV1 {
+  return Object.freeze({
+    title: text('plugins.triage.surface.sourcesUnreachable.title', 'Your sources could not be reached'),
+    description: text('plugins.triage.surface.sourcesUnreachable.description', 'Happier could not reach a machine for these sources, so nothing has been read yet. Your pins are still here, and Refresh tries again.'),
   });
 }
 

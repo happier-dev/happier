@@ -194,6 +194,7 @@ import { readTriageWindowLensV1 } from './lens.js';
 import {
   readTriageHostOutageV1,
   readTriageListReadFailureNotice,
+  readTriageMachineUnreachableNoticeV1,
   readTriageRefreshPacingNotice,
   readTriageSourceFailureRowV1,
   resolveTriageListRefreshV1,
@@ -544,7 +545,9 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   // The toolbar's resting line states the read's age (lab "Updated just now") from the freshness owner's one
   // completion time. It is shown, and so wakes the clock each minute, only while no other line speaks: not while
   // refreshing, and not while "Showing the last known list" (or the body's own failure) says the window is behind.
-  const readAgeAtMs = state.kind === 'window' && !state.refreshing && !(state.showReadWarning && state.failure == null)
+  // While the host's band names a Machine outage those lines step aside, and the age is what that band leaves unsaid.
+  const readAgeAtMs = state.kind === 'window'
+    && (hostSpeaksForOutage ? state.window.rows.length > 0 : (!state.refreshing && !(state.showReadWarning && state.failure == null)))
     ? window.snapshot.completedAtMs
     : undefined;
   const eligibilityNowMs = useTriageRefreshEligibilityNowV1(window.snapshot.refreshBlocked, readAgeAtMs, surfaceActivity.active);
@@ -2186,7 +2189,9 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         age: formatTriageTimestampV1(surfaceContext.locale, readAgeAtMs, 'relative', eligibilityNowMs),
       }),
   };
-  const freshness = state.kind !== 'window' || hostSpeaksForOutage ? null : state.refreshing
+  // While the host's band names the outage, retained rows keep their age in its usual place (QB-25(a)): the band says
+  // why the list is read-only, the age says how old it is, and nothing above the rows comes or goes.
+  const freshness = state.kind !== 'window' ? null : hostSpeaksForOutage ? (rowCount === 0 ? null : readAge) : state.refreshing
     ? { tone: 'neutral' as const, pulsing: true, indicator: true, label: text('plugins.triage.surface.refreshing', 'Refreshing') }
     : state.showReadWarning
       // "The last known list" is a claim about rows on screen. With none, the body's failure state is the
@@ -2556,14 +2561,22 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   const outsideSourcesNotice = outsideSourcesAttention === null ? null : (
     <TriageOutsideSourcesNotice attention={outsideSourcesAttention} managing={editingSources} onReview={() => executeMountedOperation({ kind: 'setSourceManagementOpen', open: true })} />
   );
-  const listFailureStatus = listWindow?.failure == null || (hostSpeaksForOutage && rowCount > 0) ? null : (
+  // Reachability state 5 under the host's band (QB-25(b)): this mount has read nothing and its Run on Machine cannot
+  // answer, so the list's place says that no machine can be reached, the same words as a failed list read, rather than
+  // naming each connection as unread. The band holds the outage's Retry; the toolbar's Refresh stays.
+  const coldMachineOutage = hostSpeaksForOutage && state.kind === 'window' && window.snapshot.completedAtMs === undefined
+    && emptyAnswer?.kind === 'sourceFailure';
+  const machineUnreachable = coldMachineOutage ? readTriageMachineUnreachableNoticeV1(text) : null;
+  const listFailureStatus = listWindow?.failure == null || coldMachineOutage || (hostSpeaksForOutage && rowCount > 0) ? null : (
     <TriageListFailureStatus failure={listWindow.failure} manageSources={sourceManagementStatusAction}
       retry={<TriageFailureLineAction label={retryLabel}
         busy={refreshState.kind === 'running'} disabled={refreshState.kind === 'blocked'} onPress={refreshPage} />} />
   );
+  const failureLine = machineUnreachable === null ? listFailureStatus
+    : <Status tone="warning" label={machineUnreachable.title} value={machineUnreachable.description} />;
   // A failure in the list's own place keeps the reader's way out of their search or filter beneath its line.
-  const failureSlot = primaryNext === undefined ? listFailureStatus
-    : <Stack gap="small" align="flex-start">{listFailureStatus}{primaryNext}</Stack>;
+  const failureSlot = primaryNext === undefined ? failureLine
+    : <Stack gap="small" align="flex-start">{failureLine}{primaryNext}</Stack>;
 
   return (
     <Screen safeArea style={TRIAGE_FILL_STYLE_V1}>
