@@ -19415,7 +19415,7 @@ settingsSession: {
         addSavedHint: "保存済みのものを紐付け",
         addSavedTitle: "保存済みシークレットを使う",
         addSavedBound: ({ name }: { name: string }) => `設定 → シークレット の「${name}」を紐付けます`,
-        variablesEmptyBody: "シークレットか通常の値を追加するか、.env ファイルを貼り付けます。次のデプロイで反映されます。",
+        variablesEmptyBody: "シークレットか通常の値を追加するか、.env ファイルを貼り付けます。",
         linkMachine: "マシンを紐付け",
         linkTitle: ({ name }: { name: string }) => `${name} を実行する場所を選択`,
         linkLead: ({ name }: { name: string }) => `${name} はこのマシンにデプロイされます。デプロイするまで何も起動しません。`,

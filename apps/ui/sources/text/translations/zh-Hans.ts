@@ -19121,7 +19121,7 @@ settingsSession: {
         addSavedHint: "绑定你已保存的密钥",
         addSavedTitle: "使用已保存的密钥",
         addSavedBound: ({ name }: { name: string }) => `绑定 设置 → 密钥 中的“${name}”`,
-        variablesEmptyBody: "添加密钥或普通值，或粘贴 .env 文件。每项在下次部署时生效。",
+        variablesEmptyBody: "添加密钥或普通值，或粘贴 .env 文件。",
         linkMachine: "关联机器",
         linkTitle: ({ name }: { name: string }) => `选择 ${name} 的运行位置`,
         linkLead: ({ name }: { name: string }) => `${name} 会部署到这台机器。在你部署之前不会启动任何内容。`,

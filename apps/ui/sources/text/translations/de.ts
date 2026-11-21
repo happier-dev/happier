@@ -19612,7 +19612,7 @@ settingsSession: {
             addSavedHint: "Eines binden, das du schon gespeichert hast",
             addSavedTitle: "Gespeichertes Secret verwenden",
             addSavedBound: ({ name }: { name: string }) => `Bindet „${name}“ aus Einstellungen → Secrets`,
-            variablesEmptyBody: "Füge ein Secret oder einen einfachen Wert hinzu oder füge eine .env-Datei ein. Jede Änderung gilt beim nächsten Deploy.",
+            variablesEmptyBody: "Füge ein Secret oder einen einfachen Wert hinzu oder füge eine .env-Datei ein.",
             linkMachine: "Rechner verknüpfen",
             linkTitle: ({ name }: { name: string }) => `Wählen, wo ${name} läuft`,
             linkLead: ({ name }: { name: string }) => `${name} wird auf diesem Rechner bereitgestellt. Nichts startet, bevor du bereitstellst.`,

@@ -220,6 +220,7 @@ export function PluginEventAutomationComposerContent(props: Props) {
     const watcherProjectionTargets = React.useMemo(() => readPluginPresentedExecutionOriginProjectionTargets(props.model.watcherCandidates),
         [props.model.watcherCandidates]);
     const watcherSelectionOptions = React.useMemo<ReadonlyArray<SelectionListOption>>(
+        // Machines that can watch lead; the ones that can't follow with their reason (PAGE-ACCEPT-176 R10-D3).
         () => props.model.watcherCandidates.map((candidate) => {
             const origin = getPluginExecutionOriginCandidateOrigin(candidate);
             const key = watcherKey(origin);
@@ -235,7 +236,7 @@ export function PluginEventAutomationComposerContent(props: Props) {
                 subtitleLines: failure ? 2 : 1,
                 disabled: failure !== null,
             };
-        }),
+        }).sort((left, right) => Number(left.disabled) - Number(right.disabled)),
         [props.model.watcherCandidates, props.watcherOnly, watcherFailureByOrigin, watcherDisplayLabel],
     );
     // An unavailable row cannot carry its own control (a disabled row disables its secondary

@@ -208,7 +208,8 @@ export const DeploymentEnvironmentDraft = React.memo(
     const [imageName, setImageName] = React.useState('');
     const [imagePort, setImagePort] = React.useState('');
     const [ref, setRef] = React.useState<string | null>(null);
-    const [production, setProduction] = React.useState(props.copyFrom ? props.copyFrom.environment.protection === 'production' : stepped);
+    // A copy is a new Environment beside its source, never a second production one by default (PAGE-ACCEPT-176 R10-D12).
+    const [production, setProduction] = React.useState(props.copyFrom ? false : stepped);
     const [deployerMode, setDeployerMode] = React.useState<DeploymentEnvironmentDetailV1['environment']['deployerMode']>(
       props.copyFrom?.environment.deployerMode ?? 'managers',
     );
@@ -705,7 +706,8 @@ export const DeploymentEnvironmentDraft = React.memo(
           subtitle={`${reviewRuntime.tool} ${reviewRuntime.toolVersion} · ${reviewRuntime.pin}`} />
       </ItemGroup>
     ) : null;
-    const reviewBody = platformNotice || platformRuntime ? <>{platformNotice}{platformRuntime}{reviewFacts}</> : reviewFacts;
+    // What Happier creates leads; the build runtime is a developer detail after it (PAGE-ACCEPT-176 R10-D7).
+    const reviewBody = platformNotice || platformRuntime ? <>{platformNotice}{reviewFacts}{platformRuntime}</> : reviewFacts;
     const projectChoiceGroups = props.projectChoice ? <DeploymentProjectChoiceGroups model={props.projectChoice}
             testIDPrefix="project-deployments.draft.project"
             description={t('capabilities.store.appPage.projectDescription')}

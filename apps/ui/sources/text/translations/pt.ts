@@ -19607,7 +19607,7 @@ settingsSession: {
         addSavedHint: "Vincular um que já guardou",
         addSavedTitle: "Usar um segredo guardado",
         addSavedBound: ({ name }: { name: string }) => `Vincula “${name}” de Configurações → Segredos`,
-        variablesEmptyBody: "Adicione um segredo ou um valor simples, ou cole um ficheiro .env. Cada um aplica-se na próxima implantação.",
+        variablesEmptyBody: "Adicione um segredo ou um valor simples, ou cole um ficheiro .env.",
         linkMachine: "Vincular uma máquina",
         linkTitle: ({ name }: { name: string }) => `Escolha onde ${name} é executado`,
         linkLead: ({ name }: { name: string }) => `${name} é implantado nesta máquina. Nada inicia até você implantar.`,

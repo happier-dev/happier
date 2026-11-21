@@ -248,7 +248,8 @@ export function PluginEventAutomationEditor(props: Readonly<{
                     : model.selectedWatcherOrigin && model.eventCatalogStatus === 'loading'
                         ? <SurfaceStateCard size="line" kind="loading" title={t('common.loading')} /> : null}
                 <View style={styles.footer}>
-                    <RoundButton title={t('common.cancel')} size="small" onPress={props.onCancel} />
+                    {/* Continue is the step's one primary; Cancel stays quiet (PAGE-ACCEPT-176 R10-D3). */}
+                    <RoundButton title={t('common.cancel')} size="small" display="inverted" onPress={props.onCancel} />
                     <RoundButton title={t('common.continue')} size="small"
                         disabled={!model.selectedWatcherOrigin || model.sourceStatus !== 'configured'}
                         onPress={model.configureSource} />

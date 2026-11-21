@@ -72,8 +72,10 @@ export function DeploymentPrivateServiceExports(props: Readonly<{
     description={t('projects.deployments.settingsSections.privateSharingBody')}
     action={authoring.kind === 'ready' ? <SectionActionButton testID={`${id}.add`}
       title={t('projects.deployments.settingsSections.privateSharingAdd')} onPress={open} /> : undefined}>
-    {exports.map(entry => <Item key={entry.key} testID={`${id}.export:${entry.key}`} title={entry.key}
-      subtitle={`${entry.service}:${entry.containerPort}`} detail={privateServiceExportReachLabel(entry)} mode="info" />)}
+    {/* A share reads as the service and who can reach it; its port and export name are the Advanced details
+        (PAGE-ACCEPT-176 R10-D5). */}
+    {exports.map(entry => <Item key={entry.key} testID={`${id}.export:${entry.key}`} title={entry.service}
+      subtitle={privateServiceExportReachLabel(entry)} mode="info" />)}
     {/* A repository-defined Environment shares a service from its Compose file: the row leads to the agent that edits
         that file (the Environment's own Prepare with an agent), so sharing never ends at a sentence (PAGE-ACCEPT-176 R9-D2). */}
     {authoring.kind === 'unavailable' && authoring.reason === 'repository' && props.lifetime

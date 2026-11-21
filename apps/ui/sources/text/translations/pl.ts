@@ -19326,7 +19326,7 @@ settingsSession: {
         addSavedHint: "Powiąż już zapisany",
         addSavedTitle: "Użyj zapisanego sekretu",
         addSavedBound: ({ name }: { name: string }) => `Wiąże „${name}” z Ustawienia → Sekrety`,
-        variablesEmptyBody: "Dodaj sekret lub zwykłą wartość albo wklej plik .env. Każda zmiana działa od następnego wdrożenia.",
+        variablesEmptyBody: "Dodaj sekret lub zwykłą wartość albo wklej plik .env.",
         linkMachine: "Powiąż maszynę",
         linkTitle: ({ name }: { name: string }) => `Wybierz, gdzie działa ${name}`,
         linkLead: ({ name }: { name: string }) => `${name} jest wdrażane na tej maszynie. Nic nie startuje, dopóki nie wdrożysz.`,

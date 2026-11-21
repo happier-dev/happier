@@ -272,7 +272,8 @@ export function ServiceCheckDetail(
     [row.automationId, row.native.templateVersion, row.scope.accountId, row.scope.serverId],
   );
   const rowForPresence = React.useMemo(() => [row], [row]);
-  const offlineObservers = useServiceCheckOfflineObservers(rowForPresence, row.scope, addressEdit !== null);
+  // The pane says its Machine is offline at rest, not only once an editor opens (PAGE-ACCEPT-176 R10-D4).
+  const offlineObservers = useServiceCheckOfflineObservers(rowForPresence, row.scope, true);
   const stale = serviceCheckStale(row, offlineObservers);
   const failing =
     row.native.enabled &&
@@ -403,10 +404,16 @@ export function ServiceCheckDetail(
     <View testID={`services.check.${row.automationId}.${row.triggerId}`}>
       {props.renderHeader ? props.renderHeader(
         <View style={styles.headerActions}>
-          {settings ? <CheckNowButton checkNow={checkNow} /> : null}
+          {settings ? <CheckNowButton checkNow={checkNow} disabled={offlineObserver !== null} /> : null}
           <CheckMenu onEdit={() => openEditor()} />
         </View>,
       ) : null}
+      {offlineObserver && !addressEdit ? <ItemGroup surface="none" header="none">
+        <SurfaceStateCard testID="services.check.offline" size="line" kind="unavailable"
+          title={t(`${k}.checkMachineOffline`, { machine: observer ?? t('approvals.machineNotKnown') })}
+          action={{ label: t('runs.openMachine'), onPress: () => router.push(machinePageHref({ door: 'rail',
+            target: { machineId: offlineObserver, serverId } })) }} />
+      </ItemGroup> : null}
       {/* The head holds the meta line (beside the pane's title) and the check's actions; on the page (whose header holds
           the actions) it holds only what Check now says while it waits and Investigate, else nothing, so the bars stand
           right under the header (lab A3). */}
@@ -427,7 +434,7 @@ export function ServiceCheckDetail(
             <View style={styles.checkNow}>
               {props.renderHeader ? null : (
                 <View style={styles.headerActions}>
-                  <CheckNowButton checkNow={checkNow} />
+                  <CheckNowButton checkNow={checkNow} disabled={offlineObserver !== null} />
                   <CheckMenu onEdit={() => openEditor()} />
                 </View>
               )}
@@ -722,12 +729,13 @@ function useCheckNow(run: ServiceCheckSettings['run'] | null, scope: ManagedConf
   return React.useMemo(() => ({ state, run: () => void start(), cancel }), [cancel, start, state]);
 }
 
-function CheckNowButton(props: Readonly<{ checkNow: CheckNowControl }>) {
+function CheckNowButton(props: Readonly<{ checkNow: CheckNowControl; disabled?: boolean }>) {
   return (
     <RoundButton
       testID="services.check.checkNow"
       display="secondary"
       title={t(`${k}.checkNow`)}
+      disabled={props.disabled}
       loading={props.checkNow.state === 'running'}
       onPress={props.checkNow.run}
     />

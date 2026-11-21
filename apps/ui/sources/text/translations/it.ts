@@ -19503,7 +19503,7 @@ settingsSession: {
         addSavedHint: "Collega uno che hai già salvato",
         addSavedTitle: "Usa un segreto salvato",
         addSavedBound: ({ name }: { name: string }) => `Collega «${name}» da Impostazioni → Segreti`,
-        variablesEmptyBody: "Aggiungi un segreto o un valore semplice, o incolla un file .env. Ognuno si applica al prossimo deploy.",
+        variablesEmptyBody: "Aggiungi un segreto o un valore semplice, o incolla un file .env.",
         linkMachine: "Collega una macchina",
         linkTitle: ({ name }: { name: string }) => `Scegli dove viene eseguito ${name}`,
         linkLead: ({ name }: { name: string }) => `${name} viene distribuito su questa macchina. Non parte nulla finché non distribuisci.`,

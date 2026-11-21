@@ -302,22 +302,23 @@ describe('Environment draft Machine Home', () => {
       await waitForTestEvent(screen.subscribe, () => header().props.primaryAction.disabled, value => value === false);
       await act(async () => header().props.primaryAction.onPress());
       await waitForTestEvent(homes.subscribe, () => authored.length, value => value === 1);
-      expect(authored[0]).toMatchObject({ deployerMode: 'chosen', protection: 'production', deployerPrincipals: expectedPrincipals });
+      // A copy starts as a non-production Environment, whatever its source is (PAGE-ACCEPT-176 R10-D12).
+      expect(authored[0]).toMatchObject({ deployerMode: 'chosen', protection: 'nonProduction', deployerPrincipals: expectedPrincipals });
       await waitForTestEvent(screen.subscribe, () => header().props.primaryAction.loading, value => value === false);
       await act(async () => deployers()!.props.onChange('members'));
       await screen.pressByTestIdAsync('project-deployments.draft.production');
       await act(async () => header().props.primaryAction.onPress());
       await waitForTestEvent(homes.subscribe, () => authored.length, value => value === 2);
-      expect(authored[1]).toMatchObject({ deployerMode: 'members', protection: 'nonProduction' });
+      expect(authored[1]).toMatchObject({ deployerMode: 'members', protection: 'production' });
       await waitForTestEvent(screen.subscribe, () => header().props.primaryAction.loading, value => value === false);
       await act(async () => deployers()!.props.onChange('chosen'));
       await act(async () => header().props.primaryAction.onPress());
       await waitForTestEvent(homes.subscribe, () => authored.length, value => value === 3);
-      expect(authored[2]).toMatchObject({ deployerMode: 'chosen', protection: 'nonProduction', deployerPrincipals: expectedPrincipals });
+      expect(authored[2]).toMatchObject({ deployerMode: 'chosen', protection: 'production', deployerPrincipals: expectedPrincipals });
       await waitForTestEvent(screen.subscribe, () => header().props.primaryAction.loading, value => value === false);
       await act(async () => header().props.primaryAction.onPress());
       await waitForTestEvent(screen.subscribe, () => savedId, value => value === 'created-environment');
-      expect(createdInputs).toMatchObject([{ deployerMode: 'chosen', protection: 'nonProduction', deployerPrincipals: expectedPrincipals }]);
+      expect(createdInputs).toMatchObject([{ deployerMode: 'chosen', protection: 'production', deployerPrincipals: expectedPrincipals }]);
       await screen.unmount();
       const created = createdInputs[0];
       if (!created) throw new Error('missing_created_environment');

@@ -19375,7 +19375,7 @@ settingsSession: {
         addSavedHint: "Lier un secret déjà enregistré",
         addSavedTitle: "Utiliser un secret enregistré",
         addSavedBound: ({ name }: { name: string }) => `Lie « ${name} » depuis Réglages → Secrets`,
-        variablesEmptyBody: "Ajoutez un secret ou une valeur simple, ou collez un fichier .env. Chacun s’applique au prochain déploiement.",
+        variablesEmptyBody: "Ajoutez un secret ou une valeur simple, ou collez un fichier .env.",
         linkMachine: "Lier une machine",
         linkTitle: ({ name }: { name: string }) => `Choisir où ${name} s’exécute`,
         linkLead: ({ name }: { name: string }) => `${name} se déploie sur cette Machine. Rien ne démarre avant un déploiement.`,

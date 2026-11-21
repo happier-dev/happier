@@ -19501,7 +19501,7 @@ settingsSession: {
         addSavedHint: "Vincular uno que ya guardaste",
         addSavedTitle: "Usar un secreto guardado",
         addSavedBound: ({ name }: { name: string }) => `Vincula «${name}» desde Ajustes → Secretos`,
-        variablesEmptyBody: "Añade un secreto o un valor simple, o pega un archivo .env. Cada uno se aplica en el próximo despliegue.",
+        variablesEmptyBody: "Añade un secreto o un valor simple, o pega un archivo .env.",
         linkMachine: "Vincular una máquina",
         linkTitle: ({ name }: { name: string }) => `Elige dónde se ejecuta ${name}`,
         linkLead: ({ name }: { name: string }) => `${name} se despliega en esta máquina. Nada arranca hasta que despliegues.`,

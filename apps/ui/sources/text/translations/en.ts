@@ -22897,7 +22897,7 @@ const enProjects = {
       addSavedHint: "Bind one you already saved",
       addSavedTitle: "Use a saved secret",
       addSavedBound: ({ name }: { name: string }) => `Binds “${name}” from Settings → Secrets`,
-      variablesEmptyBody: "Add a secret or a plain value, or paste a .env file. Each applies on the next deploy.",
+      variablesEmptyBody: "Add a secret or a plain value, or paste a .env file.",
       linkMachine: "Link a machine",
       linkTitle: ({ name }: { name: string }) => `Choose where ${name} runs`,
       linkLead: ({ name }: { name: string }) => `${name} deploys to this Machine. Nothing starts until you deploy.`,

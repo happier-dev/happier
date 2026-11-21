@@ -236,6 +236,9 @@ it('keeps saved Check settings readable with the observing Machine offline and l
   const screen = await renderScreen(<ServiceCheckDetail row={row} nowMs={NOW} />);
   try {
     await vi.waitFor(() => expect(screen.findByTestId('services.check.settings.from')).not.toBeNull());
+    // The check says its Machine is offline at a glance and offers no Check now it cannot run (PAGE-ACCEPT-176 R10-D4).
+    await vi.waitFor(() => expect(screen.findByTestId('services.check.offline')).not.toBeNull());
+    expect(screen.findByTestId('services.check.checkNow')?.props.disabled).toBe(true);
     await screen.pressByTestIdAsync('services.check.settings.from');
     await vi.waitFor(() => expect(screen.findByTestId('automation-event-watcher-picker')).not.toBeNull());
     expect(screen.getTextContent()).toMatch(/choose a machine/i);
