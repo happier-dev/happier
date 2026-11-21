@@ -16,7 +16,7 @@ import { hasProviderExperimentalConfirmation, resolveProviderCompatibilityConfir
 import { resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
 import { getProviderExperimentalConfirmationCatalogSourceKeyV1 } from '@happier-dev/protocol/providers/settings/v1';
 import { ProviderModelBindingSourceV1Schema, projectProviderModelSourceStateV1 } from '@happier-dev/protocol/providers/binding-compatibility';
-import { readProviderConnectionBrokerImplementation } from '@/providers/broker/providerConnectionCpxBridge';
+import { readProviderConnectionBrokerImplementation } from '@/providers/broker/providerConnectionBrokerApplication';
 import { projectProviderModelReasoningForAgent } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 import { observedConnectedAccountDescriptors, type ObserveConnectedAccountModels } from './connectedAccountModelObservation';
 import type { ProviderBrokerSourceApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';

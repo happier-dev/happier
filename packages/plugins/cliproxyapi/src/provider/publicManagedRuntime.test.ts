@@ -634,28 +634,7 @@ describe('CLIProxyAPI managed runtime bound-purpose launch snapshot', () => {
   });
 
   it('composes the TypeScript declaration with the real wrapper for sparse bound purposes', async () => {
-    const accounts = connectedAccounts([]);
     const signal = new AbortController().signal;
-    let forbiddenBindOrStateCreationCount = 0;
-
-    await expect(CLIPROXYAPI_PUBLIC_MANAGED_PROVIDER_RUNTIME.start({
-      reason: 'explicitStartLocal',
-      endpointTemplateIds: requestedEndpointTemplateIds,
-    }, {
-      connectedAccounts: accounts.service,
-      managedServices: Object.freeze({
-        dependencies: Object.freeze({}) as never,
-        async supervise() {
-          forbiddenBindOrStateCreationCount += 1;
-          throw new Error('a zero-bound start must not create managed state');
-        },
-      }),
-      signal,
-    })).rejects.toThrow('requires an exact upstream source');
-
-    expect(accounts.getBinding).toHaveBeenCalledTimes(managedPurposeFamilies.length);
-    expect(forbiddenBindOrStateCreationCount).toBe(0);
-
     const root = await mkdtemp(join(tmpdir(), 'happier-cliproxyapi-composed-'));
     try {
       const executable = await buildManagedWrapper(root);
@@ -787,56 +766,19 @@ describe('CLIProxyAPI managed runtime bound-purpose launch snapshot', () => {
     // worst measurement and still bounds a wrapper that never becomes ready.
   }, 300_000);
 
-  it('starts one credential-free Provider Connection pass-through mode for an exact endpoint', async () => {
+  it('refuses an exact explicit start without a bound Connected Account before launching', async () => {
     const accounts = connectedAccounts([]);
     const signal = new AbortController().signal;
-    const request = vi.fn(async () => Object.freeze({
-      ok: true,
-      status: 200,
-      statusText: 'OK',
-      headers: Object.freeze({ 'content-type': 'application/json' }),
-      body: new Response(JSON.stringify({
-        v: 1,
-        contractVersion: 'happier.cliproxyapi-managed/v3',
-        sdkVersion: 'v8.0.61',
-        wrapperBuildVersion: 'cliproxyapi-test-build',
-        protocols: ['openai-responses'],
-        purposes: [],
-        modelListEnabled: false,
-        sourceClass: 'provider_connection',
-      })).body,
-    }));
-    const service = Object.freeze({ ...managedService([]), request });
-    const supervise = vi.fn<ManagedServices['supervise']>(async () => service);
+    const supervise = vi.fn<ManagedServices['supervise']>(async () => managedService([]));
 
-    const result = await CLIPROXYAPI_PUBLIC_MANAGED_PROVIDER_RUNTIME.start({
+    await expect(CLIPROXYAPI_PUBLIC_MANAGED_PROVIDER_RUNTIME.start({
       reason: 'explicitStartLocal',
       endpointTemplateIds: ['cliproxyapi-openai-responses'],
     }, {
       connectedAccounts: accounts.service,
       managedServices: Object.freeze({ dependencies: Object.freeze({}) as never, supervise }),
       signal,
-    });
-
-    expect(supervise).toHaveBeenCalledWith(expect.objectContaining({
-      mode: expect.objectContaining({
-        launch: expect.objectContaining({
-          env: expect.objectContaining({
-            HAPPIER_CLIPROXYAPI_MANAGED_PURPOSE_CONFIGURATION: JSON.stringify({
-              v: 3,
-              modelListEnabled: false,
-              purposes: [],
-              providerConnection: { protocol: 'openai-responses', downstreamBasePath: '/v1' },
-            }),
-          }),
-        }),
-      }),
-    }), { signal });
-    expect(supervise.mock.calls[0]![0]).not.toHaveProperty('requestAuth');
-    expect(result.endpoints).toEqual([{
-      endpointTemplateId: 'cliproxyapi-openai-responses',
-      endpoint: { kind: 'servicePath', path: '/v1' },
-    }]);
-    expect(request).toHaveBeenCalledOnce();
+    })).rejects.toThrow();
+    expect(supervise).not.toHaveBeenCalled();
   });
 });

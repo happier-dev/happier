@@ -9,7 +9,6 @@ import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/
 import { resolveTeamCredentialResourceSourceCatalogs } from './resourceTestCandidate';
 import { readProviderBrokerResponseBody } from '@/providers/broker/providerBroker.testkit';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
-import type { ManagedServiceRequest, ManagedServiceResponse } from '@happier-dev/plugin-sdk/managed-services';
 import {
   AccountSettingsSchema,
   DEFAULT_PROVIDER_SETTINGS_V1,
@@ -39,13 +38,13 @@ import {
   materializeProviderConnectionBrokerSource,
   resolveProviderConnectionBrokerSource,
   resolveProviderConnectionDirectSourceSnapshot,
-  type ProviderConnectionCpxBridge,
   type ProviderConnectionRegistryReader,
 } from './providerConnectionSource';
 import { providerBrokerApplicationFailureBody } from './providerBrokerApplicationFailure';
 import { createTeamCredentialBrokerSourceOwner } from './teamCredentialBrokerSourceOwner';
 import { createPrivateProviderBrokerStreamLifetime } from './daemonProviderBrokerRuntime';
-import { createProviderConnectionCpxBridge } from './providerConnectionCpxBridge';
+import { createProviderConnectionHttpTransport, type ProviderConnectionHttpTransport } from './providerConnectionHttpTransport';
+import type { PinnedHttpStreamRequest } from '@/network/pinnedHttp';
 import { createBrokerProviderRegistry } from './providerBroker.testkit';
 import { createDevelopmentPluginSourceCustody } from '@/plugins/runtime/lifecycle/contributions/runtimeIdentity.testkit';
 
@@ -76,7 +75,7 @@ const definition = ProviderContributionV1Schema.parse({
       destination: { kind: 'httpHeader', name: 'Authorization', format: 'bearer' },
     }, {
       // Valid for a different native Agent transport, but not executable by
-      // the CPX final-hop adapter. It must not make the unique header
+      // the direct HTTP transport. It must not make the unique header
       // transport ambiguous.
       id: 'query', protocols: ['openai-responses'], uses: ['runtime'],
       destination: { kind: 'queryParam', name: 'api_key', format: 'raw' },
@@ -203,7 +202,7 @@ describe('Provider Connection Team broker source', () => {
     ['resource', 'resource_not_current'],
     ['account', 'account_snapshot_unavailable'],
     ['activation', 'activation_occurrence_unavailable'],
-    ['bridge', 'managed_custody_unavailable'],
+    ['bridge', 'projection_not_current'],
     ['projection', 'projection_not_current'],
   ] as const)('composes a Team API-key OpenRouter-style source with OpenCode chat: %s', async (scenario, reason) => {
     const chatDefinition = ProviderContributionV1Schema.parse({ ...definition, requestCost: undefined,
@@ -246,16 +245,8 @@ describe('Provider Connection Team broker source', () => {
       readSourceModelCatalogs: models.readSourceModelCatalogs }))[0];
     if (!catalog) throw new Error('Expected Team source catalog');
     registryUnavailable = scenario === 'selectionTransport';
-    const custody: ManagedProviderExplicitStartCustody = {
-      acquire: async () => scenario === 'bridge' ? null : ({
-        access: { endpointUrl: () => 'http://127.0.0.1:43123/v1',
-          request: async () => ({ ok: true, status: 200, statusText: 'OK', headers: {}, body: null }) },
-        isCurrent: () => scenario !== 'projection', cleanup: async () => {},
-      }),
-      retire: async () => true, retireExternalApiKey: async () => true,
-      revalidateRetainedClaims: async () => 0, retireAll: async () => 0,
-    };
-    const bridge = createProviderConnectionCpxBridge({ custody });
+    const custody = { retire: async () => true };
+    const transport = createProviderConnectionHttpTransport();
     const sourceOwner = createTeamCredentialBrokerSourceOwner({ machineId: 'machine-a', custody,
       selectConnectedServicesSourceMember: async () => null, openConnectedServicesSource: async () => null,
       openProviderConnectionSource: createProviderConnectionBrokerSourceOpen({ machineId: 'machine-a',
@@ -265,7 +256,11 @@ describe('Provider Connection Team broker source', () => {
         getAccountSettingsSnapshot: () => scenario === 'account' ? null : settings,
         collectDnsEvidence: async () => new Map([['https://openrouter.ai/api/v1', ['1.1.1.1']]]),
         resolveExactSelection: models.resolveTeamCredentialBrokerSourceSelection,
-        openCpxProviderConnection: bridge.open,
+        openProviderConnectionTransport: async input => {
+          if (scenario === 'bridge') return null;
+          const opened = await transport.open(input);
+          return opened && scenario === 'projection' ? { ...opened, isCurrent: () => false } : opened;
+        },
       }),
     });
     const operation = { kind: 'session', sessionId: 'member-opencode' } as const;
@@ -292,7 +287,7 @@ describe('Provider Connection Team broker source', () => {
       withRegistry: async read => read(registry),
       getAccountSettingsSnapshot: () => ({ ...settings, savedSecretResources: [] }),
       collectDnsEvidence: async () => dnsEvidenceByEndpointUrl,
-      openCpxProviderConnection: async () => { throw new Error('Missing secret must not start a gateway'); },
+      openProviderConnectionTransport: async () => { throw new Error('Missing secret must not start a gateway'); },
     });
     await expect(open({ source, resourceId: 'resource-a', resourceRevision: 2, brokerMachineId: 'machine-a',
       operation: { kind: 'resource_test', actorAccountId: 'member', requestId: 'request' },
@@ -303,19 +298,16 @@ describe('Provider Connection Team broker source', () => {
     })).rejects.toMatchObject({ failure: { reasonCode: 'provider_secret_missing' } });
   });
 
-  it.each(['registry', 'custody'] as const)('retains a %s transport cause when establishing a broker source', async boundary => {
+  it.each(['registry', 'transport'] as const)('retains a %s transport cause when establishing a broker source', async boundary => {
     const settings = accountSettings();
     const source = resourceSource(settings);
     const failureCause = { phase: 'provider.registry', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
-    const unused = async (): Promise<never> => { throw new Error('Unavailable registry cannot acquire a source'); };
     const throwTransportFailure = async (): Promise<never> => { throw Object.assign(new Error('private runtime transport detail'), { failureCause }); };
-    const bridge = createProviderConnectionCpxBridge({ custody: { acquire: throwTransportFailure,
-      retire: unused, retireExternalApiKey: unused, revalidateRetainedClaims: unused, retireAll: unused } });
     const open = createProviderConnectionBrokerSourceOpen({ machineId: 'machine-a',
       withRegistry: async read => boundary === 'registry' ? await throwTransportFailure() : await read(registry),
       readResource: async () => ({ teamId: 'team-a', source, enabled: true, revision: 2,
         brokerPlacement: { kind: 'machine', machineId: 'machine-a' } }), getAccountSettingsSnapshot: () => snapshot(settings),
-      collectDnsEvidence: async () => dnsEvidenceByEndpointUrl, openCpxProviderConnection: bridge.open,
+      collectDnsEvidence: async () => dnsEvidenceByEndpointUrl, openProviderConnectionTransport: throwTransportFailure,
     });
     await expect(open({ source, resourceId: 'resource-a', resourceRevision: 2, brokerMachineId: 'machine-a',
       operation: { kind: 'resource_test', actorAccountId: 'member', requestId: 'request' },
@@ -323,7 +315,7 @@ describe('Provider Connection Team broker source', () => {
         implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
         endpointTemplateId: 'cliproxyapi-openai-responses', protocol: 'openai-responses' },
       signal: new AbortController().signal,
-    })).resolves.toMatchObject({ unavailable: boundary === 'registry' ? 'source_currentness_unknown' : 'managed_custody_unavailable', failureCause });
+    })).resolves.toMatchObject({ unavailable: 'source_currentness_unknown', failureCause });
   });
 
   it.each(['ready', 'temporarily_unavailable'] as const)('honors admitted Saved Secret availability %s despite retained ready resource bytes', (savedSecretCatalogState) => {
@@ -437,7 +429,7 @@ describe('Provider Connection Team broker source', () => {
       dnsEvidenceByEndpointUrl, getAccountSettingsSnapshot: () => current })).toMatchObject({ ok: false, error: { code: 'provider_secret_missing' } });
   });
 
-  it('opens the exact Provider source through CPX and leases current credential material per request', async () => {
+  it('opens the exact Provider source through its transport and leases current credential material per request', async () => {
     let settings = accountSettings();
     const sourceBinding = resourceSource(settings);
     const credentialValues: string[] = [];
@@ -462,7 +454,7 @@ describe('Provider Connection Team broker source', () => {
           }
         : null
     ));
-    const openCpxProviderConnection = vi.fn<ProviderConnectionCpxBridge['open']>(async (input) => ({
+    const openProviderConnectionTransport = vi.fn<ProviderConnectionHttpTransport['open']>(async (input) => ({
       access: {
         endpointUrl: () => 'http://127.0.0.1:43123/v1',
         request: async (request) => {
@@ -527,7 +519,7 @@ describe('Provider Connection Team broker source', () => {
       withRegistry: async (read) => await read(registry),
       getAccountSettingsSnapshot: () => snapshot(settings),
       collectDnsEvidence: async () => dnsEvidenceByEndpointUrl,
-      openCpxProviderConnection,
+      openProviderConnectionTransport,
       resolveExactSelection,
     });
     const sourceOwner = createTeamCredentialBrokerSourceOwner({
@@ -615,9 +607,9 @@ describe('Provider Connection Team broker source', () => {
       {},
       { authorization: 'Bearer worker-must-not-cross' },
     ]);
-    expect(openCpxProviderConnection).toHaveBeenCalledOnce();
-    expect(JSON.stringify(openCpxProviderConnection.mock.calls[0]?.[0])).not.toContain('source-secret');
-    expect(JSON.stringify(openCpxProviderConnection.mock.calls[0]?.[0])).not.toContain('worker-must-not-cross');
+    expect(openProviderConnectionTransport).toHaveBeenCalledOnce();
+    expect(JSON.stringify(openProviderConnectionTransport.mock.calls[0]?.[0])).not.toContain('source-secret');
+    expect(JSON.stringify(openProviderConnectionTransport.mock.calls[0]?.[0])).not.toContain('worker-must-not-cross');
     // A policy edit only advances the revision (a mutable policy fact the Home
     // rechecks per request). The next request on this stream presents the new
     // revision and keeps the same operation, projection and source custody.
@@ -641,7 +633,7 @@ describe('Provider Connection Team broker source', () => {
     })).resolves.toMatchObject({ status: 200 });
     expect(credentialValues).toEqual(['Bearer source-secret', 'Bearer source-secret']);
     expect(retire).not.toHaveBeenCalled();
-    expect(openCpxProviderConnection).toHaveBeenCalledOnce();
+    expect(openProviderConnectionTransport).toHaveBeenCalledOnce();
     settings = snapshotFromProviderSettings({ ...readProviderSettingsForCli(settings).settings, accountGrants: [] });
     await expect(access.access.request({
       pathAndQuery: '/v1/responses',
@@ -660,7 +652,7 @@ describe('Provider Connection Team broker source', () => {
     expect(cleanup).toHaveBeenCalledOnce();
   });
 
-  it('rejects a non-CPX application before Provider or secret resolution', async () => {
+  it('rejects a different application before Provider or secret resolution', async () => {
     const settings = accountSettings();
     const readResource = vi.fn(async () => ({
       source: resourceSource(settings),
@@ -669,14 +661,14 @@ describe('Provider Connection Team broker source', () => {
       enabled: true,
     }));
     const withRegistry: ProviderConnectionRegistryReader = vi.fn(async (read) => await read(registry));
-    const openCpxProviderConnection: ProviderConnectionCpxBridge['open'] = vi.fn(async () => null);
+    const openProviderConnectionTransport: ProviderConnectionHttpTransport['open'] = vi.fn(async () => null);
     const open = createProviderConnectionBrokerSourceOpen({
       machineId: 'machine-a',
       readResource,
       withRegistry,
       getAccountSettingsSnapshot: () => snapshot(settings),
       collectDnsEvidence: async () => dnsEvidenceByEndpointUrl,
-      openCpxProviderConnection,
+      openProviderConnectionTransport,
     });
     await expect(open({
       source: resourceSource(settings),
@@ -693,10 +685,10 @@ describe('Provider Connection Team broker source', () => {
       signal: new AbortController().signal,
     })).resolves.toEqual({ unavailable: 'application_unavailable' });
     expect(readResource).not.toHaveBeenCalled();
-    expect(openCpxProviderConnection).not.toHaveBeenCalled();
+    expect(openProviderConnectionTransport).not.toHaveBeenCalled();
   });
 
-  it.each(['gateway_stale', 'source_stale', 'source_unknown', 'selection_unknown'] as const)('settles the captured CPX join without repeating source admission: %s', async failure => {
+  it.each(['gateway_stale', 'source_stale', 'source_unknown', 'selection_unknown'] as const)('settles the captured source join without repeating source admission: %s', async failure => {
     const settings = accountSettings();
     const events: string[] = [];
     let joined = false;
@@ -722,7 +714,7 @@ describe('Provider Connection Team broker source', () => {
       withRegistry: async (read) => await read(registry),
       getAccountSettingsSnapshot: () => snapshot(settings),
       collectDnsEvidence: async () => dnsEvidenceByEndpointUrl,
-      openCpxProviderConnection: async () => {
+      openProviderConnectionTransport: async () => {
         joined = true;
         return {
           access: {
@@ -1052,44 +1044,30 @@ describe('Provider Connection Team broker source', () => {
     });
   });
 
-  it('composes the source owner through the real CPX bridge and revokes before the next request', async () => {
+  it('composes the source owner through the real HTTP transport and revokes before the next request', async () => {
     let settings = accountSettings();
     const failureCause = { phase: 'provider.credential_resolution', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
     let snapshotFailure: Error | null = null;
     let snapshotReadsUntilFailure = 0;
     const source = resourceSource(settings);
-    const managedRequests: ManagedServiceRequest[] = [];
+    const upstreamRequests: PinnedHttpStreamRequest[] = [];
     let resourceEnabled = true;
     let resourceReads = 0;
     let registryReads = 0;
     let dnsReads = 0;
     let selectionReads = 0;
-    const cleanup = vi.fn(async () => {});
-    const managedRequest = vi.fn(async (request: ManagedServiceRequest): Promise<ManagedServiceResponse> => {
-      managedRequests.push(request);
-      return {
-        ok: true,
-        status: 200,
-        statusText: 'OK',
-        headers: { 'content-type': 'application/json' },
-        body: new Response('{"ok":true}').body,
-      };
-    });
-    const custody: ManagedProviderExplicitStartCustody = {
-      acquire: vi.fn(async () => ({
-        access: {
-          endpointUrl: () => 'http://127.0.0.1:43123/v1',
-          request: managedRequest,
-        },
-        isCurrent: () => true,
-        cleanup,
-      })),
+    const custody = {
+      acquire: vi.fn<ManagedProviderExplicitStartCustody['acquire']>(),
       retire: vi.fn(async () => true),
-      retireExternalApiKey: vi.fn(),
-      revalidateRetainedClaims: vi.fn(async () => 0),
-      retireAll: vi.fn(async () => 0),
     };
-    const bridge = createProviderConnectionCpxBridge({ custody });
+    const transport = createProviderConnectionHttpTransport({
+      openHttp: async request => {
+        upstreamRequests.push(request);
+        const chunks = [new TextEncoder().encode('{"ok":true}')];
+        return { status: 200, headers: { 'content-type': 'application/json' }, contentLength: null,
+          read: async () => chunks.shift() ?? null, cancel() {} };
+      },
+    });
     let costCurrent = true;
     let costEndpoints = ['responses'];
     const costAcquisitions: unknown[] = [];
@@ -1114,7 +1092,7 @@ describe('Provider Connection Team broker source', () => {
       withRegistry: async (read) => { registryReads++; return await read(registry); },
       getAccountSettingsSnapshot: () => { if (snapshotFailure && snapshotReadsUntilFailure-- === 0) throw snapshotFailure; return snapshot(settings); },
       collectDnsEvidence: async () => { dnsReads++; return dnsEvidenceByEndpointUrl; },
-      openCpxProviderConnection: bridge.open,
+      openProviderConnectionTransport: transport.open,
       resolveExactSelection: async () => {
         selectionReads++;
         return {
@@ -1169,12 +1147,14 @@ describe('Provider Connection Team broker source', () => {
       body: new TextEncoder().encode('{}'),
     });
     expect(response.status).toBe(200);
-    expect(managedRequests).toHaveLength(1);
-    expect(managedRequests[0]?.headers).toMatchObject({
-      'x-happier-provider-source-credential': 'Bearer source-secret',
-      'accept-encoding': 'identity',
+    expect(custody.acquire).not.toHaveBeenCalled();
+    expect(upstreamRequests).toHaveLength(1);
+    expect(upstreamRequests[0]).toMatchObject({
+      url: 'https://gateway.example/v1/responses',
+      validatedAddresses: ['1.1.1.1'],
+      headers: { authorization: 'Bearer source-secret', 'accept-encoding': 'identity', 'x-client': 'happ' },
     });
-    expect(managedRequests[0]?.headers).not.toHaveProperty('authorization');
+    await readProviderBrokerResponseBody(response.body);
     expect({ resourceReads, registryReads, dnsReads, selectionReads }).toEqual({
       resourceReads: 1, registryReads: 1, dnsReads: 1, selectionReads: 1,
     });
@@ -1199,7 +1179,7 @@ describe('Provider Connection Team broker source', () => {
       body: new TextEncoder().encode('{}') });
     expect(afterRename.status).toBe(200);
     await new Response(await readProviderBrokerResponseBody(afterRename.body)).text();
-    expect(managedRequests).toHaveLength(2);
+    expect(upstreamRequests).toHaveLength(2);
     expect({ resourceReads, registryReads, dnsReads, selectionReads }).toEqual({
       resourceReads: 1, registryReads: 1, dnsReads: 1, selectionReads: 1,
     });
@@ -1232,8 +1212,8 @@ describe('Provider Connection Team broker source', () => {
       method: 'POST',
       body: new TextEncoder().encode('{}'),
     })).rejects.toMatchObject({ failure: { reasonCode: 'provider_connection_disabled' } });
-    expect(managedRequests).toHaveLength(2);
+    expect(upstreamRequests).toHaveLength(2);
     await lifetime.close();
-    expect(cleanup).toHaveBeenCalled();
+    expect(custody.acquire).not.toHaveBeenCalled();
   });
 });

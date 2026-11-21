@@ -34,15 +34,14 @@ type AuthEntry struct {
 }
 
 type Config struct {
-	Host               string                                      `json:"host"`
-	Port               int                                         `json:"port"`
-	DownstreamBearer   string                                      `json:"downstreamBearer"`
-	ConsumerAccessPath string                                      `json:"consumerAccessPath,omitempty"`
-	RuntimeDir         string                                      `json:"runtimeDir"`
-	AuthEntries        []AuthEntry                                 `json:"authEntries"`
-	Protocols          []ProviderProtocol                          `json:"protocols"`
-	ModelListEnabled   bool                                        `json:"modelListEnabled"`
-	ProviderConnection *ProviderConnectionPassThroughConfiguration `json:"providerConnection,omitempty"`
+	Host               string             `json:"host"`
+	Port               int                `json:"port"`
+	DownstreamBearer   string             `json:"downstreamBearer"`
+	ConsumerAccessPath string             `json:"consumerAccessPath,omitempty"`
+	RuntimeDir         string             `json:"runtimeDir"`
+	AuthEntries        []AuthEntry        `json:"authEntries"`
+	Protocols          []ProviderProtocol `json:"protocols"`
+	ModelListEnabled   bool               `json:"modelListEnabled"`
 }
 
 var (
@@ -65,11 +64,11 @@ func (c Config) Validate() error {
 	if !filepath.IsAbs(c.RuntimeDir) {
 		return fmt.Errorf("runtime directory must be absolute")
 	}
-	if c.ConsumerAccessPath != "" && (!filepath.IsAbs(c.ConsumerAccessPath) || strings.ContainsRune(c.ConsumerAccessPath, '\x00') || c.ProviderConnection != nil) {
+	if c.ConsumerAccessPath != "" && (!filepath.IsAbs(c.ConsumerAccessPath) || strings.ContainsRune(c.ConsumerAccessPath, '\x00')) {
 		return fmt.Errorf("consumer access configuration is invalid")
 	}
-	if (c.ProviderConnection == nil) == (len(c.AuthEntries) == 0) {
-		return fmt.Errorf("exactly one managed upstream source is required")
+	if len(c.AuthEntries) == 0 {
+		return fmt.Errorf("at least one managed auth entry is required")
 	}
 
 	ids := make(map[string]struct{}, len(c.AuthEntries))
@@ -88,13 +87,6 @@ func (c Config) Validate() error {
 		}
 		providers[entry.Provider] = struct{}{}
 	}
-	if c.ProviderConnection != nil {
-		if c.ModelListEnabled || c.ProviderConnection.validate() != nil ||
-			len(c.Protocols) != 1 || c.Protocols[0] != c.ProviderConnection.Protocol {
-			return fmt.Errorf("provider connection pass-through is invalid")
-		}
-	}
-
 	if len(c.Protocols) == 0 {
 		return fmt.Errorf("at least one Provider protocol is required")
 	}

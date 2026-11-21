@@ -1,15 +1,15 @@
-import { afterEach, describe, expect, it, onTestFinished } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { connect } from 'node:net';
-import { createServer, type IncomingHttpHeaders } from 'node:http';
+import { createServer } from 'node:http';
 import { once } from 'node:events';
 import tweetnacl from 'tweetnacl';
-import type { ManagedServiceRequest, ManagedServiceResponse } from '@happier-dev/plugin-sdk/managed-services';
 import type { ManagedProviderExplicitStartCustody } from '@/providers/connections/publicManagedRuntimeStart';
 import { createProviderConnectionBrokerSourceOpen, resolveProviderConnectionBrokerSource,
   materializeProviderConnectionBrokerSource } from './providerConnectionSource';
 import { readProviderSettingsForCli } from '@/providers/settings/read';
 import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
-import { createProviderConnectionCpxBridge } from './providerConnectionCpxBridge';
+import { createProviderConnectionHttpTransport } from './providerConnectionHttpTransport';
+import { openPinnedHttpStream, type PinnedHttpStreamRequest } from '@/network/pinnedHttp';
 import { createTeamCredentialBrokerSourceOwner } from './teamCredentialBrokerSourceOwner';
 import { startDaemonProviderBrokerRuntime } from './daemonProviderBrokerRuntime';
 import { PROVIDER_BROKER_ENDPOINT_PATH_HEADER } from './providerBrokerPrivateProtocol';
@@ -42,8 +42,6 @@ import { resolveTeamCredentialResourceSourceCatalogs, resolveTeamCredentialResou
 import { CLOUDFLARE_AI_GATEWAY_PROVIDER_CONTRIBUTION } from '../../../../../packages/plugins/cloudflare-ai-gateway/src/provider/contribution';
 import { CLIPROXYAPI_PROVIDER_CONTRIBUTION } from '../../../../../packages/plugins/cliproxyapi/src/provider/contribution';
 import { resolveTeamCredentialExternalRequestPolicy } from './externalRequestPolicy';
-import { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
-import { createManagedServiceProcessSupervisorHost } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
 
 const connectionId = ProviderConnectionIdSchema.parse('pc_cloudflare_team');
 const contributionKey = 'happier.provider.cloudflare-ai-gateway/cloudflare-ai-gateway';
@@ -312,7 +310,7 @@ describe('Cloudflare Provider source shared through the existing Team broker', (
     expect(await materialize()).toMatchObject({ ok: false });
   });
 
-  it('uses the custodian source after real Home admission and refuses withdrawn audience before another process request', async () => {
+  it('uses the custodian source after real Home admission and refuses withdrawn audience before another upstream request', async () => {
     const server = '../../../../server/sources/';
     const { createLightSqliteHarness }: typeof import('../../../../server/sources/testkit/lightSqliteHarness') = await import(server + 'testkit/lightSqliteHarness');
     const { db }: typeof import('../../../../server/sources/storage/db') = await import(server + 'storage/db');
@@ -382,20 +380,16 @@ describe('Cloudflare Provider source shared through the existing Team broker', (
     expect(opened.authority.payload.target.custodianAccountId).toBe(home.custodian.id);
     expect(JSON.stringify(opened)).not.toContain(token);
 
-    const processRequests: Array<{ path: string; headers: IncomingHttpHeaders }> = [];
-    // Only the managed OS process is replaced. It receives the real private CPX
-    // envelope over HTTP; the Go final-hop conformance exercises its interpreter.
+    const upstreamRequests: PinnedHttpStreamRequest[] = [];
     let upstreamStatus = 200;
     let rotateOnUnauthorized = false;
     const rotatedToken = 'cf-u3-synthetic-rotated-token';
-    const processBoundary = createServer(async (request, response) => {
+    const upstream = createServer(async (request, response) => {
       if (request.url === '/v1/_happier/provider-broker/endpoint') {
-        response.writeHead(204, { [PROVIDER_BROKER_ENDPOINT_PATH_HEADER]: '/v1' });
-        response.end();
+        response.writeHead(204, { [PROVIDER_BROKER_ENDPOINT_PATH_HEADER]: '/v1' }).end();
         return;
       }
-      processRequests.push({ path: request.url ?? '', headers: request.headers });
-      for await (const _chunk of request) { /* drain request at the process boundary */ }
+      for await (const _chunk of request) { /* drain the wire request */ }
       const status = upstreamStatus;
       if (rotateOnUnauthorized) {
         rotateOnUnauthorized = false;
@@ -405,12 +399,12 @@ describe('Cloudflare Provider source shared through the existing Team broker', (
       response.writeHead(status, { 'content-type': 'text/event-stream', 'x-echo-secret': token });
       response.end('data: {"type":"response.completed","response":{"model":"gpt-5.1","output_text":"done"}}\n\n');
     });
-    processBoundary.listen(0, '127.0.0.1');
-    await once(processBoundary, 'listening');
-    onTestFinished(async () => { processBoundary.closeAllConnections(); await new Promise<void>(resolve => processBoundary.close(() => resolve())); });
-    const address = processBoundary.address();
-    if (!address || typeof address === 'string') throw new Error('Missing process boundary');
-    const processOrigin = `http://127.0.0.1:${address.port}`;
+    upstream.listen(0, '127.0.0.1');
+    await once(upstream, 'listening');
+    onTestFinished(async () => { upstream.closeAllConnections(); await new Promise<void>(resolve => upstream.close(() => resolve())); });
+    const address = upstream.address();
+    if (!address || typeof address === 'string') throw new Error('Missing fake upstream');
+    const fixtureOrigin = `http://127.0.0.1:${address.port}`;
     const recipientCatalog = projectTeamCredentialProviderModels({ resourceId: resource.id, teamId: home.team.id,
       resourceRevision: resource.revision, agentTargetKey, application, allowedModelIds: null, source: fixture.source,
       deliveryMode: 'brokered', response: await fixture.projectModels({ machineId: home.broker.id, agentTargetKey, application,
@@ -441,49 +435,30 @@ describe('Cloudflare Provider source shared through the existing Team broker', (
     });
     const recipient = await openRecipient();
     expect(recipient.providerBinding.source).toMatchObject({ kind: 'team_resource', resourceId: resource.id });
-    expect(recipient.providerBinding.upstream.normalizedUrl).toBe(processOrigin + '/v1');
+    expect(recipient.providerBinding.upstream.normalizedUrl).toBe(fixtureOrigin + '/v1');
     expect(JSON.stringify(recipient)).not.toContain(token);
     expect(JSON.stringify(recipient)).not.toContain('gateway.ai.cloudflare.com');
     await recipient.cleanup();
-    const managed = createManagedServicesOwner({
-      processSupervisorHost: createManagedServiceProcessSupervisorHost({ custodyOwner: 'daemon' }),
-      dependencies: () => { throw new Error('Unexpected managed process dependency'); }, resolveScope: scope => scope,
-    });
-    onTestFinished(async () => await managed.dispose());
-    const operationIdentity = (request: Parameters<ManagedProviderExplicitStartCustody['retire']>[0]) => ({
-      operationId: JSON.stringify(request.operationClaim), pluginId: request.identity.pluginId,
-      contributionQualifiedId: `${request.identity.pluginId}/providers/${request.identity.localId}`,
-    });
-    const custody: ManagedProviderExplicitStartCustody = {
-      acquire: async request => {
-        const joined = await managed.runManagedProviderExplicitStart({ ...operationIdentity(request),
-          occurrenceId: 'cloudflare-process', purposeBindingsEqualityKey: JSON.stringify(request.purposeBindings),
-          lifecycleKind: 'providerBroker', signal: request.signal, isCurrent: request.isAuthorizationCurrent,
-          revalidateRetainedCurrentness: request.revalidateRetainedCurrentness,
-          establish: async () => ({ status: 'running', projection: { access: { endpointUrl: () => processOrigin + '/v1',
-        request: async (request: ManagedServiceRequest): Promise<ManagedServiceResponse> => {
-          const response = await fetch(processOrigin + request.pathAndQuery, { method: request.method,
-            headers: request.headers, body: request.body ? Buffer.from(request.body) : undefined, signal: request.signal });
-          return { ok: response.ok, status: response.status, statusText: response.statusText,
-            headers: Object.fromEntries(response.headers), body: response.body };
-        } }, isCurrent: () => true, cleanup: async () => {} } }),
-        });
-        return joined.status === 'established' ? joined.value.projection : null;
-      },
-      retire: async request => await managed.retireManagedProviderExplicitStart(operationIdentity(request)),
-      retireExternalApiKey: async () => true,
-      revalidateRetainedClaims: async (signal, selector, invalidation) => await managed.revalidateManagedProviderExplicitStarts(
-        signal, selector ? operationIdentity(selector) : undefined, invalidation),
-      retireAll: async () => await managed.retireManagedProviderExplicitStarts('providerBroker'),
+    const custody = {
+      acquire: vi.fn<ManagedProviderExplicitStartCustody['acquire']>(),
+      retire: vi.fn(async () => true),
     };
-    const bridge = createProviderConnectionCpxBridge({ custody });
+    const transport = createProviderConnectionHttpTransport({
+      openHttp: request => {
+        upstreamRequests.push(request);
+        // Map only the vendor socket boundary to the local fake upstream.
+        const target = new URL(request.url);
+        return openPinnedHttpStream({ ...request, url: fixtureOrigin + target.pathname + target.search,
+          validatedAddresses: ['127.0.0.1'] });
+      },
+    });
     const sourceOwner = createTeamCredentialBrokerSourceOwner({ machineId: home.broker.id, custody,
       selectConnectedServicesSourceMember: async () => null, openConnectedServicesSource: async () => null,
       openProviderConnectionSource: createProviderConnectionBrokerSourceOpen({ machineId: home.broker.id,
         withRegistry: async read => read(fixture.registry), getAccountSettingsSnapshot: fixture.snapshot,
         collectDnsEvidence: async () => fixture.dnsEvidenceByEndpointUrl,
         resolveExactSelection: fixture.models.resolveTeamCredentialBrokerSourceSelection,
-        openCpxProviderConnection: bridge.open,
+        openProviderConnectionTransport: transport.open,
         readResource: async () => {
           const current = await db.teamCredentialResource.findUnique({ where: { id: resource.id } });
           if (!current) return null;
@@ -535,37 +510,37 @@ describe('Cloudflare Provider source shared through the existing Team broker', (
         socket.once('close', () => resolve(Buffer.concat(chunks).toString('utf8')));
       });
     };
-    expect(processRequests).toHaveLength(0);
+    expect(upstreamRequests).toHaveLength(0);
     const permitted = await send();
     expect(permitted).toContain('HTTP/1.1 200');
     expect(permitted).toContain('response.completed');
     expect(permitted).not.toContain(token);
-    expect(processRequests).toHaveLength(1);
-    const sent = processRequests[0]!;
+    expect(upstreamRequests).toHaveLength(1);
+    const sent = upstreamRequests[0]!;
     expect(sent.headers.authorization).toBeUndefined();
     expect(sent.headers['x-api-key']).toBeUndefined();
-    expect(sent.path).toBe('/v1/responses');
-    expect(sent.headers['x-happier-provider-source-credential']).toBe(`Bearer ${token}`);
-    expect(JSON.parse(Buffer.from(String(sent.headers['x-happier-provider-source']), 'base64url').toString())).toMatchObject({
-      baseUrl, credentialHeaderName: 'cf-aig-authorization', publicHeaders: {
-        'cf-aig-collect-log': 'false', 'cf-aig-no-wholesale': 'true', 'cf-aig-skip-cache': 'true',
-      } });
+    expect(sent.url).toBe(baseUrl + '/responses');
+    expect(sent.validatedAddresses).toEqual(['1.1.1.1']);
+    expect(sent.headers).toMatchObject({
+      'cf-aig-authorization': `Bearer ${token}`,
+      'cf-aig-collect-log': 'false', 'cf-aig-no-wholesale': 'true', 'cf-aig-skip-cache': 'true',
+    });
+    expect(custody.acquire).not.toHaveBeenCalled();
     upstreamStatus = 401;
     rotateOnUnauthorized = true;
     expect(await send()).toContain('HTTP/1.1 401');
-    expect(processRequests).toHaveLength(2);
-    expect(processRequests[1]!.headers['x-happier-provider-source-credential']).toBe(`Bearer ${token}`);
+    expect(upstreamRequests).toHaveLength(2);
+    expect(upstreamRequests[1]!.headers['cf-aig-authorization']).toBe(`Bearer ${token}`);
     expect(await send()).toContain('HTTP/1.1 200');
-    expect(processRequests).toHaveLength(3);
-    expect(processRequests[2]!.headers['x-happier-provider-source-credential']).toBe(`Bearer ${rotatedToken}`);
+    expect(upstreamRequests).toHaveLength(3);
+    expect(upstreamRequests[2]!.headers['cf-aig-authorization']).toBe(`Bearer ${rotatedToken}`);
     // Tightening the Team sign-in policy is decided at admission only; a
     // Team wake does not re-evaluate this route (the opening credential
     // presented no evidence and would not qualify now).
     await db.team.update({ where: { id: home.team.id }, data: { authenticationPolicy: {
       v: 1, mode: 'restricted', accepted: [{ kind: 'home_method', methodId: 'email_password' }] } } });
-    expect(await custody.revalidateRetainedClaims(undefined, undefined, { facts: ['teams'] })).toBe(0);
     expect(await send()).toContain('HTTP/1.1 200');
-    expect(processRequests).toHaveLength(4);
+    expect(upstreamRequests).toHaveLength(4);
     await db.team.update({ where: { id: home.team.id }, data: { authenticationPolicy: { v: 1, mode: 'inherit' } } });
     // Audience withdrawal must make the admitted lease inactive at the next
     // request while a response already in flight can finish.
@@ -573,11 +548,10 @@ describe('Cloudflare Provider source shared through the existing Team broker', (
       authentication: teamAuthentication, input: { resourceId: resource.id, expectedRevision: resource.revision,
         allMembersAllowedRoutes: null, groupGrants: [], memberGrants: [] },
     }))).toMatchObject({ ok: true });
-    expect(await custody.revalidateRetainedClaims(undefined, undefined, { facts: ['teams'] })).toBe(0);
     const withdrawn = await send();
     expect(withdrawn).toContain('HTTP/1.1 403');
     expect(withdrawn).toContain('"code":"operation_not_current"');
-    expect(processRequests).toHaveLength(4);
+    expect(upstreamRequests).toHaveLength(4);
     const currentResource = await db.teamCredentialResource.findUniqueOrThrow({ where: { id: resource.id } });
     expect(await openTeamCredentialProviderBroker({ actorAccountId: home.creator.id,
       authentication: { ...TEST_AUTHENTICATION, tokenEpoch: 0 },

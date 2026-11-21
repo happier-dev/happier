@@ -14,7 +14,6 @@ import type {
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createSavedSecretMaterializerFromSnapshotV1, type SavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
 import { refreshSavedSecretCatalogForOperation } from '@/settings/secrets/hydrateSavedSecretCatalog';
-import type { ManagedProviderEndpointAccessProjection } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
 import { resolveProviderConnectionForMachine, resolveProviderConnectionSecurityFingerprintMatch } from '@/providers/registry';
 import type {
   ProviderContributionRegistryView,
@@ -30,8 +29,9 @@ import {
 import { resolveRuntimeProviderCredential } from '@/providers/spawn/runtimeCredential';
 import type { TeamCredentialBrokerSourceOpenInput, TeamCredentialBrokerOpenedSource, TeamCredentialBrokerSourceOpenFailureReason } from './teamCredentialBrokerSourceOwner';
 import { preserveBrokerSourceHealthFailure } from './sourceFailure';
+import { resolveProviderConnectionBrokerDownstreamUrl } from './providerConnectionBrokerApplication';
+import type { ProviderConnectionHttpTransport } from './providerConnectionHttpTransport';
 import {
-  isCpxBrokerApplication,
   providerConnectionBrokerSourceMember,
   sameTeamCredentialBrokerSource,
   teamCredentialBrokerResourceAcceptsMachine,
@@ -86,24 +86,6 @@ type ProviderConnectionOpenInput = TeamCredentialBrokerSourceOpenInput & Readonl
 type RuntimeCredentialResult = Awaited<ReturnType<typeof resolveRuntimeProviderCredential>>;
 type RuntimeCredentialLease = Extract<RuntimeCredentialResult, { ok: true }>['lease'];
 
-export type ProviderConnectionCpxBridgeOpenInput = Readonly<{
-  retirementGroup?: TeamCredentialBrokerSourceOpenInput['retirementGroup'];
-  application: ProviderConnectionOpenInput['application'];
-  operation: ProviderConnectionOpenInput['operation'];
-  endpoint: ProviderConnectionBrokerSourceSnapshot['endpoint'];
-  signal: AbortSignal;
-  isCurrent(signal?: AbortSignal): Promise<boolean>;
-  acquireRequestCredential(): Promise<RuntimeCredentialLease | null>;
-}>;
-
-export type ProviderConnectionCpxBridge = Readonly<{
-  open(
-    input: ProviderConnectionCpxBridgeOpenInput,
-  ): Promise<(ManagedProviderEndpointAccessProjection & Readonly<{
-    retire(): Promise<void>;
-  }>) | null>;
-}>;
-
 export type ProviderConnectionRegistryReader = <TResult>(
   read: (registry: ProviderContributionRegistryView) => TResult | Promise<TResult>,
 ) => Promise<TResult>;
@@ -137,7 +119,7 @@ function selectCredential(input: Readonly<{
     && candidate.protocols.includes(input.protocol)
     && candidate.destination.kind === 'httpHeader'
   ));
-  // The private CPX final hop carries the selected primary and required companion headers.
+  // The pinned final hop carries the selected primary and required companion headers.
   // Other transports for the same Provider protocol are valid for their
   // native Agent consumers and must not make this adapter ambiguous.
   const selected = input.expectedTransport
@@ -556,10 +538,8 @@ export async function materializeProviderConnectionBrokerSource(input: Readonly<
 }
 
 /**
- * Connects the exact Provider Connection owner to the private CPX/SVC09 data
- * plane. The open captures source metadata once; credential acquisition uses
- * that destination and the current Saved Secret. The bridge receives neither a retained
- * plaintext value nor a Provider/Settings object.
+ * Captures the admitted Provider destination once for the pinned HTTP transport.
+ * The transport acquires a fresh lease from the current Saved Secret per request.
  */
 export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
   acquireRequestCostParser?(identity: Readonly<{ pluginId: string; localId: string }>): Promise<import('@/plugins/projection/registry/types').ResolvedProviderRequestCostParser | null>;
@@ -582,7 +562,7 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
     signal: AbortSignal;
   }>): Promise<ProviderEndpointDnsEvidence>;
   localCandidateUrlsByConnectionId?: ResolveProviderConnectionBrokerSourceInput['localCandidateUrlsByConnectionId'];
-  openCpxProviderConnection: ProviderConnectionCpxBridge['open'];
+  openProviderConnectionTransport: ProviderConnectionHttpTransport['open'];
   resolveExactSelection?(input: Readonly<{
     machineId: string;
     teamId: string;
@@ -609,7 +589,8 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
     if (request.signal.aborted) return unavailable('request_cancelled');
 
     const capture = await input.withRegistry(async (registry) => {
-      if (!isCpxBrokerApplication(registry, request.application)) return unavailable('application_unavailable');
+      const applicationBaseUrl = resolveProviderConnectionBrokerDownstreamUrl(registry, request.application);
+      if (!applicationBaseUrl) return unavailable('application_unavailable');
       const resource = await input.readResource(request.resourceId, request.signal);
       if (!teamCredentialBrokerResourceAcceptsMachine(resource, request.brokerMachineId)
         || !sameTeamCredentialBrokerSource(resource.source, request.source)) return unavailable('resource_not_current');
@@ -699,7 +680,7 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
         return unavailable('source_selection_unavailable');
       }
       return resolved.snapshot.activationOccurrenceId !== null
-        ? { snapshot: resolved.snapshot, registry, dnsEvidenceByEndpointUrl, scopeKey: captured.scopeKey }
+        ? { snapshot: resolved.snapshot, registry, dnsEvidenceByEndpointUrl, applicationBaseUrl, scopeKey: captured.scopeKey }
         : unavailable('activation_occurrence_unavailable');
     }).catch(error => {
       preserveBrokerSourceHealthFailure(error);
@@ -721,8 +702,8 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
       ): Promise<boolean> => {
         return !signal.aborted && input.getAccountSettingsSnapshot()?.scopeKey === capture.scopeKey;
       };
-      const acquireRequestCredential = async (): Promise<RuntimeCredentialLease | null> => {
-        if (!await isCurrent()) return null;
+      const acquireRequestCredential = async (signal = rejoinSignal): Promise<RuntimeCredentialLease | null> => {
+        if (!await isCurrent(signal)) return null;
         try {
           const materialized = await materializeProviderConnectionBrokerSource({
             expected,
@@ -737,19 +718,18 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
             },
           });
           if (!materialized.ok) return preserveBrokerSourceHealthFailure(materialized.error);
-          if (rejoinSignal.aborted) { materialized.lease.close(); return null; }
+          if (signal.aborted) { materialized.lease.close(); return null; }
           return materialized.lease;
         } catch (error) {
           preserveBrokerSourceHealthFailure(error);
           throw error;
         }
       };
-      let projection: Awaited<ReturnType<typeof input.openCpxProviderConnection>>;
+      let projection: Awaited<ReturnType<typeof input.openProviderConnectionTransport>>;
       try {
-        projection = await input.openCpxProviderConnection({
-          ...(request.retirementGroup ? { retirementGroup: request.retirementGroup } : {}),
-          application: request.application,
-          operation: request.operation,
+        projection = await input.openProviderConnectionTransport({
+          applicationEndpointTemplateId: request.application.endpointTemplateId,
+          applicationBaseUrl: capture.applicationBaseUrl,
           endpoint: expected.endpoint,
           signal: rejoinSignal,
           isCurrent,
@@ -757,9 +737,9 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
         });
       } catch (error) {
         preserveBrokerSourceHealthFailure(error);
-        return unavailable('managed_custody_unavailable', error);
+        return unavailable('source_currentness_unknown', error);
       }
-      if (!projection) return unavailable('managed_custody_unavailable');
+      if (!projection) return unavailable(rejoinSignal.aborted ? 'request_cancelled' : 'projection_not_current');
       if (rejoinSignal.aborted || !projection.isCurrent()) {
         if (!rejoinSignal.aborted && !projection.isCurrent()) {
           await projection.retire().catch(() => undefined);

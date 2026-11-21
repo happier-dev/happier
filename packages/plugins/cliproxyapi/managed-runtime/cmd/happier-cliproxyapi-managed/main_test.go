@@ -102,27 +102,6 @@ func TestMaterializeGatewayConfigReadsExactProcessEnvironmentAndImmutableFacts(t
 	}
 }
 
-func TestMaterializeGatewayConfigAcceptsProviderConnectionWithoutRequestAuthCapability(t *testing.T) {
-	t.Parallel()
-	environment := map[string]string{
-		"HOST": "127.0.0.1",
-		"PORT": "32123",
-		managedruntime.DownstreamBearerEnvironmentVariable:            "host-secret",
-		managedruntime.ManagedPurposeConfigurationEnvironmentVariable: `{"v":3,"modelListEnabled":false,"purposes":[],"providerConnection":{"protocol":"anthropic","downstreamBasePath":"/"}}`,
-	}
-	config, brokerConfig, err := materializeGatewayConfig(func(name string) (string, bool) {
-		value, ok := environment[name]
-		return value, ok
-	})
-	if err != nil {
-		t.Fatalf("materializeGatewayConfig() error = %v", err)
-	}
-	if config.ProviderConnection == nil || config.ProviderConnection.Protocol != managedruntime.ProtocolAnthropic ||
-		config.ModelListEnabled || len(config.AuthEntries) != 0 || brokerConfig.ConsumerAccessPath != "" {
-		t.Fatalf("Provider Connection config = %#v; broker = %#v", config, brokerConfig)
-	}
-}
-
 func TestMaterializeGatewayConfigRejectsMissingOrMalformedEnvironmentWithoutEchoingSecrets(t *testing.T) {
 	t.Parallel()
 

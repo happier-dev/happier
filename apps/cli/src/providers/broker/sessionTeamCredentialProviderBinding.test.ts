@@ -1,16 +1,13 @@
+import { createBrokerProviderRegistry } from './providerBroker.testkit';
+import { resolveProviderConnectionBrokerDownstreamUrl } from './providerConnectionBrokerApplication';
 import { createProviderBrokerEndpointDiscovery } from './providerBrokerEndpointDiscovery';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { createUnavailableManagedServices } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import tweetnacl from 'tweetnacl';
-import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
-import { activate, PLUGIN_MANIFEST } from '@happier-dev/plugins-cliproxyapi';
-import type { ManagedServiceSpec } from '@happier-dev/plugin-sdk/managed-services';
-import { createCLIProxyAPIManagedHealthResponse } from '../../../../../packages/plugins/cliproxyapi/src/provider/managedHealth.testkit';
 import { evaluateTeamCredentialRequestPolicyV1 } from './requestPolicyV1';
 import { PROVIDER_BROKER_ENDPOINT_PATH_HEADER } from './providerBrokerPrivateProtocol';
 import type { PluginApi } from '@happier-dev/plugin-sdk';
@@ -328,32 +325,12 @@ describe('Session Team credential Provider binding', () => {
     ['openai-responses', 'cliproxyapi-openai-responses', '/v1/responses'],
     ['openai-chat', 'cliproxyapi-openai-chat', '/v1/chat/completions'],
   ] as const)('composes the declared Team %s endpoint with the real Agent SDK and request policy', async (protocol, endpointTemplateId, expectedPath) => {
-    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
-    const runtime = activation.registration('providers', 'cliproxyapi')?.managedRuntime;
-    if (!runtime) throw new Error('missing managed runtime');
-    const snapshot = { id: 'cliproxyapi-managed', state: 'healthy' as const, mode: 'spawn' as const,
-      baseUrl: 'http://127.0.0.1:45123', startedAtMs: 1, lastHealthyAtMs: 2, diagnostics: [], diagnosticsTruncated: false };
-    let launch: ManagedServiceSpec | undefined;
-    const service = {
-      snapshot: () => snapshot, waitUntilHealthy: async () => snapshot, observe: () => ({ dispose() {} }),
-      request: async () => createCLIProxyAPIManagedHealthResponse(launch),
-      stop: async () => ({ status: 'stopped' as const }), dispose: async () => undefined,
-    };
-    const declared = await runtime.start({ reason: 'explicitStartLocal', endpointTemplateIds: [endpointTemplateId] }, {
-      signal: new AbortController().signal,
-      connectedAccounts: {
-        getBinding: async () => null,
-      },
-      managedServices: {
-          ...createUnavailableManagedServices(), supervise: async (spec: ManagedServiceSpec) => { launch = spec; return service; } },
-      // Only managed-process and Connected Account service boundaries are
-      // supplied; the public plugin start and endpoint declaration stay real.
-    } as never);
-    await activation.dispose();
-    const endpoint = declared.endpoints.find(candidate => candidate.endpointTemplateId === endpointTemplateId);
-    if (!endpoint || endpoint.endpoint.kind !== 'servicePath') throw new Error('missing service endpoint');
-    const declaredPath = endpoint.endpoint.path;
-    const application = { ...row.application, endpointTemplateId, protocol };
+    const application = { ...row.application, implementationIdentity: {
+      pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi',
+    }, endpointTemplateId, protocol };
+    const downstreamUrl = resolveProviderConnectionBrokerDownstreamUrl(createBrokerProviderRegistry(), application);
+    if (!downstreamUrl) throw new Error('Missing declared endpoint');
+    const declaredPath = new URL(downstreamUrl).pathname;
     const selectedAuthority = { ...authority, payload: { ...authority.payload, application } };
     vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => new Response(null, {
       status: 204, headers: { [PROVIDER_BROKER_ENDPOINT_PATH_HEADER]: declaredPath },

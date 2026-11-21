@@ -1,5 +1,8 @@
+import { once } from 'node:events';
+import { createServer } from 'node:http';
+
 import { readProviderBrokerResponseBody } from '@/providers/broker/providerBroker.testkit';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { ManagedProviderEndpointHttpAccess } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
@@ -12,7 +15,9 @@ import {
     type SignedProviderBrokerModelRouteGrantV1,
 } from '@happier-dev/protocol';
 import { TeamCredentialSourceBindingV1Schema } from '@happier-dev/protocol/teams';
+import { createProviderRedactionLease } from '@/providers/spawn/redaction';
 import { createProviderBrokerRequestHandler } from './providerBrokerRequestHandler';
+import { createProviderConnectionHttpTransport } from './providerConnectionHttpTransport';
 
 const key = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(11));
 const payload: ProviderBrokerModelRouteGrantPayloadV1 = {
@@ -87,6 +92,54 @@ const request = { pathAndQuery: '/v1/chat/completions', method: 'POST' as const,
 function access(): ManagedProviderEndpointHttpAccess { return { endpointUrl: () => 'http://127.0.0.1:1234', request: vi.fn(async () => ({ ok: true, status: 200, statusText: 'OK', headers: {}, body: null })) }; }
 
 describe('createProviderBrokerRequestHandler', () => {
+    it('dispatches one admitted saved HTTP request directly with the source credential and configured team', async () => {
+        const hits: Array<{ url: string; authorization: string | undefined; providerHeader: unknown }> = [];
+        const upstream = createServer((incoming, response) => {
+            hits.push({ url: incoming.url!, authorization: incoming.headers.authorization, providerHeader: incoming.headers['x-provider-header'] });
+            incoming.resume();
+            response.end('upstream reply');
+        });
+        upstream.listen(0, '127.0.0.1');
+        await once(upstream, 'listening');
+        onTestFinished(async () => {
+            upstream.closeAllConnections();
+            await new Promise<void>(resolve => upstream.close(() => resolve()));
+        });
+        const address = upstream.address();
+        if (!address || typeof address === 'string') throw new Error('Expected TCP upstream');
+        const acquireRequestCredential = vi.fn(async () => ({
+            ...createProviderRedactionLease({ values: ['source-secret'] }),
+            credential: { kind: 'httpHeader' as const, name: 'authorization', value: 'Bearer source-secret' },
+            queryParameters: { teamId: 'configured-team' },
+        }));
+        const projection = await createProviderConnectionHttpTransport().open({
+            applicationEndpointTemplateId: payload.application.endpointTemplateId,
+            applicationBaseUrl: 'http://127.0.0.1/v1',
+            endpoint: { normalizedUrl: `http://gateway.provider.invalid:${address.port}/gateway`, resolvedAddresses: ['127.0.0.1'], publicHeaders: {} },
+            signal: new AbortController().signal,
+            isCurrent: async () => true,
+            acquireRequestCredential,
+        });
+        if (!projection) throw new Error('Expected opened Provider transport');
+        onTestFinished(() => projection.cleanup());
+        const admit = vi.fn(async () => ({ ok: true as const, access: projection.access }));
+        const handle = createProviderBrokerRequestHandler({ ...handlerSecurity, admit });
+
+        const result = await handle({ context, request: {
+            ...request, pathAndQuery: '/v1/chat/completions?teamId=caller&trace=a&teamId=other&trace=b',
+        } });
+        if (!result.ok) throw new Error(`Expected upstream response, got ${result.reasonCode}`);
+        expect(new TextDecoder().decode(await readProviderBrokerResponseBody(result.response.body))).toBe('upstream reply');
+        expect(hits).toHaveLength(1);
+        expect(hits[0]).toMatchObject({ authorization: 'Bearer source-secret', providerHeader: 'preserved' });
+        const target = new URL(hits[0]!.url, 'http://upstream.invalid');
+        expect(target.pathname).toBe('/gateway/chat/completions');
+        expect(target.searchParams.getAll('teamId')).toEqual(['configured-team']);
+        expect(target.searchParams.getAll('trace')).toEqual(['a', 'b']);
+        expect(admit).toHaveBeenCalledOnce();
+        expect(acquireRequestCredential).toHaveBeenCalledOnce();
+    });
+
     it('retains a typed source failure through an Account connection request', async () => {
         const failureCause = { phase: 'provider.credential_resolution', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
         const handle = createProviderBrokerRequestHandler({ ...handlerSecurity,

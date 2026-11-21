@@ -668,6 +668,12 @@ func TestValidateLeaseMirrorsFrozenCredentialContextBounds(t *testing.T) {
 	}
 }
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return function(request)
+}
+
 type sequenceBroker struct {
 	mu            sync.Mutex
 	leases        []RequestAuthHeaders

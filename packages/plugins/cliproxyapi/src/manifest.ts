@@ -1,6 +1,7 @@
 import { definePlugin } from '@happier-dev/plugin-sdk';
 
 import {
+  CLIPROXYAPI_PLUGIN_ID,
   CLIPROXYAPI_PROVIDER_CONTRIBUTION,
   CLIPROXYAPI_PROVIDER_LOCAL_ID,
 } from './provider/contribution.js';
@@ -9,7 +10,7 @@ import { CLIPROXYAPI_PUBLIC_MANAGED_PROVIDER_RUNTIME } from './provider/publicMa
 
 
 export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
-  id: 'happier.provider.cliproxyapi',
+  id: CLIPROXYAPI_PLUGIN_ID,
   version: '0.0.0',
   displayName: 'CLIProxyAPI',
   description: 'Use models served by an external or locally detected CLIProxyAPI gateway.',

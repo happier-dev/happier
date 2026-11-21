@@ -241,11 +241,15 @@ func TestRuntimeIdentityBuildMetadataDoesNotVetoGateway(t *testing.T) {
 			WrapperBuildVersion: strings.Repeat("v", 32768),
 		},
 	} {
-		config := Config{Host: "127.0.0.1", Port: reserveLoopbackPort(t),
-			DownstreamBearer: "fixture-downstream", RuntimeDir: t.TempDir(),
-			Protocols:          []ProviderProtocol{ProtocolOpenAIResponses},
-			ProviderConnection: &ProviderConnectionPassThroughConfiguration{Protocol: ProtocolOpenAIResponses, DownstreamBasePath: "/v1"}}
-		if _, err := NewGateway(config, identity, nil, nil); err != nil {
+		config := Config{
+			Host:             "127.0.0.1",
+			Port:             reserveLoopbackPort(t),
+			DownstreamBearer: "fixture-downstream",
+			RuntimeDir:       t.TempDir(),
+			AuthEntries:      []AuthEntry{testAuthEntry("codex", ProviderCodex, "openai-upstream")},
+			Protocols:        []ProviderProtocol{ProtocolOpenAIResponses},
+		}
+		if _, err := NewGateway(config, identity, &sequenceBroker{}, nil); err != nil {
 			t.Fatalf("diagnostic build metadata vetoed gateway: %v", err)
 		}
 	}

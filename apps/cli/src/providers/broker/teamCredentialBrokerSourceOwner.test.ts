@@ -10,12 +10,11 @@ import { createManagedServiceProcessSupervisorHost } from '@/plugins/runtime/inv
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import type { ManagedProviderExplicitStartCustody } from '@/providers/connections/publicManagedRuntimeStart';
 
-import { projectProviderConnectionBrokerApplication } from './providerConnectionCpxBridge';
+import { projectProviderConnectionBrokerApplication, resolveProviderConnectionBrokerDownstreamUrl } from './providerConnectionBrokerApplication';
 import { createBrokerProviderRegistry } from './providerBroker.testkit';
 
 import {
   createTeamCredentialBrokerSourceOwner,
-  isCpxBrokerApplication,
   teamCredentialBrokerPlacementAcceptsMachine,
 } from './teamCredentialBrokerSourceOwner';
 import { createConnectedServicesBrokerSourceOpen } from './connectedServicesSource';
@@ -348,17 +347,17 @@ describe('Team credential broker source owner', () => {
       protocol: 'openai-chat',
     });
     expect(projected).not.toBeNull();
-    expect(isCpxBrokerApplication(registry, projected!)).toBe(true);
-    expect(isCpxBrokerApplication({ providersByContributionKey: new Map() }, projected!)).toBe(false);
-    expect(isCpxBrokerApplication(registry, { ...projected!, endpointTemplateId: 'cliproxyapi-anthropic' })).toBe(false);
-    expect(isCpxBrokerApplication(registry, {
+    expect(resolveProviderConnectionBrokerDownstreamUrl(registry, projected!)).toBe('http://127.0.0.1:8317/v1');
+    expect(resolveProviderConnectionBrokerDownstreamUrl({ providersByContributionKey: new Map() }, projected!)).toBeNull();
+    expect(resolveProviderConnectionBrokerDownstreamUrl(registry, { ...projected!, endpointTemplateId: 'cliproxyapi-anthropic' })).toBeNull();
+    expect(resolveProviderConnectionBrokerDownstreamUrl(registry, {
       ...projected!,
       implementationIdentity: { pluginId: 'happier.provider.other', localId: 'other' },
-    })).toBe(false);
-    expect(isCpxBrokerApplication(registry, {
+    })).toBeNull();
+    expect(resolveProviderConnectionBrokerDownstreamUrl(registry, {
       ...projected!,
       protocol: 'not-a-managed-protocol',
-    })).toBe(false);
+    })).toBeNull();
   });
 
   it('routes Connected Accounts and connected_pool through the same Connected Services owner', async () => {

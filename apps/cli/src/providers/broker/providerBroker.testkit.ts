@@ -34,7 +34,7 @@ export function createBrokerProviderRegistry(): ProviderContributionRegistryView
   const definition = ProviderContributionV1Schema.parse({
     v: 1, id: identity.localId, name: 'Managed gateway', kind: 'aggregator',
     endpointTemplates: endpointTemplates.map((endpoint) => ({
-      ...endpoint, baseUrl: 'http://127.0.0.1:8317/v1',
+      ...endpoint, baseUrl: endpoint.protocol === 'anthropic' ? 'http://127.0.0.1:8317' : 'http://127.0.0.1:8317/v1',
       capabilities: { streaming: 'supported', toolRoundTrips: 'supported', statefulResponses: 'unknown', reasoningControls: 'supported' },
     })),
     catalog: { source: 'manual', manualModelPolicy: 'allowed' },

@@ -6,7 +6,6 @@ import type {
   ManagedServiceSpec,
 } from '@happier-dev/plugin-sdk/managed-services';
 
-import { PLUGIN_MANIFEST } from '../manifest.js';
 import {
   CLIPROXYAPI_MANAGED_ENV,
   CLIPROXYAPI_MANAGED_CLIENT_ACCESS,
@@ -15,11 +14,10 @@ import {
 } from './managedContract.js';
 import { CLIPROXYAPI_MANAGED_HEALTH_IDENTITY, CLIPROXYAPI_MANAGED_MODEL_LIST_ENABLED } from './managedProjection.js';
 import {
+  CLIPROXYAPI_PLUGIN_ID,
   CLIPROXYAPI_PROVIDER_CONTRIBUTION,
   CLIPROXYAPI_PROVIDER_LOCAL_ID,
 } from './contribution.js';
-
-type ManagedPurposeFamily = typeof CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES[number];
 
 type ManagedPurposeSnapshot = Readonly<{
   protocols: readonly string[];
@@ -30,7 +28,6 @@ type ManagedPurposeSnapshot = Readonly<{
   }>[];
   serializedPurposeConfiguration: string;
   modelListEnabled: boolean;
-  sourceClass: 'connected_account' | 'provider_connection';
 }>;
 
 function identityMismatch(): Error {
@@ -81,7 +78,7 @@ function matchesManagedHealthIdentity(
     && matchesProtocols(identity.protocols, purposeSnapshot.protocols)
     && matchesPurposes(identity.purposes, purposeSnapshot.healthPurposes)
     && identity.modelListEnabled === purposeSnapshot.modelListEnabled
-    && identity.sourceClass === purposeSnapshot.sourceClass;
+    && identity.sourceClass === 'connected_account';
 }
 
 function readContentType(
@@ -178,53 +175,25 @@ async function assertManagedHealthIdentity(
 }
 
 async function resolveManagedPurposeSnapshot(
-  request: Parameters<ManagedProviderRuntime['start']>[0],
   context: Parameters<ManagedProviderRuntime['start']>[1],
 ): Promise<ManagedPurposeSnapshot> {
   throwIfAborted(context.signal);
-  const families: ManagedPurposeFamily[] = [];
-  for (const family of CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES) {
+  const families = CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES;
+  let hasBoundPurpose = false;
+  for (const family of families) {
     const binding = await context.connectedAccounts.getBinding(
       family.purpose,
       { signal: context.signal },
     );
     throwIfAborted(context.signal);
-    if (binding !== null) families.push(family);
+    hasBoundPurpose ||= binding !== null;
   }
-  if (families.length === 0) {
-    if (request.reason !== 'explicitStartLocal' || request.endpointTemplateIds.length !== 1) {
-      throw new Error('CLIProxyAPI managed runtime requires an exact upstream source');
-    }
-    const endpointTemplateId = request.endpointTemplateIds[0]!;
-    const protocol = endpointTemplateId === 'cliproxyapi-openai-responses'
-      ? 'openai-responses'
-      : endpointTemplateId === 'cliproxyapi-openai-chat'
-        ? 'openai-chat'
-        : endpointTemplateId === 'cliproxyapi-anthropic'
-          ? 'anthropic'
-          : null;
-    if (!protocol) throw new Error('CLIProxyAPI managed runtime has no requested endpoint');
-    return Object.freeze({
-      protocols: Object.freeze([protocol]),
-      endpointTemplateIds: Object.freeze([endpointTemplateId]),
-      healthPurposes: Object.freeze([]),
-      modelListEnabled: false,
-      sourceClass: 'provider_connection' as const,
-      serializedPurposeConfiguration: JSON.stringify({
-        v: 3,
-        modelListEnabled: false,
-        purposes: [],
-        providerConnection: {
-          protocol,
-          downstreamBasePath: protocol === 'anthropic' ? '/' : '/v1',
-        },
-      }),
-    });
+  if (!hasBoundPurpose) {
+    throw new Error('CLIProxyAPI managed runtime requires an exact upstream source');
   }
   // Physical configuration declares supported translation families. The host's
   // per-consumer capability registry, rather than this union, grants access.
-  const boundFamilies = CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES;
-  const protocols = Object.freeze([...new Set(boundFamilies.flatMap((family) => [
+  const protocols = Object.freeze([...new Set(families.flatMap((family) => [
     ...family.protocols,
   ]))]);
   const endpointTemplateIds = Object.freeze(
@@ -232,9 +201,9 @@ async function resolveManagedPurposeSnapshot(
       .filter((endpoint) => protocols.includes(endpoint.protocol))
       .map((endpoint) => endpoint.id),
   );
-  const healthPurposes = Object.freeze(boundFamilies.map((family) => Object.freeze({
+  const healthPurposes = Object.freeze(families.map((family) => Object.freeze({
     consumer: Object.freeze({
-      pluginId: PLUGIN_MANIFEST.id,
+      pluginId: CLIPROXYAPI_PLUGIN_ID,
       localId: CLIPROXYAPI_PROVIDER_LOCAL_ID,
     }),
     purpose: family.purpose,
@@ -244,15 +213,14 @@ async function resolveManagedPurposeSnapshot(
     endpointTemplateIds,
     healthPurposes,
     modelListEnabled: CLIPROXYAPI_MANAGED_MODEL_LIST_ENABLED,
-    sourceClass: 'connected_account' as const,
     serializedPurposeConfiguration: JSON.stringify({
       v: 3,
       modelListEnabled: CLIPROXYAPI_MANAGED_MODEL_LIST_ENABLED,
-      purposes: boundFamilies.map((family) => ({
+      purposes: families.map((family) => ({
         id: family.authEntry.id,
         provider: family.authEntry.provider,
         consumer: {
-          pluginId: PLUGIN_MANIFEST.id,
+          pluginId: CLIPROXYAPI_PLUGIN_ID,
           localId: CLIPROXYAPI_PROVIDER_LOCAL_ID,
         },
         purpose: family.purpose,
@@ -268,14 +236,10 @@ function publicManagedServiceSpec(
 ): ManagedServiceSpec {
   return Object.freeze({
     id: CLIPROXYAPI_MANAGED_SERVICE.id,
-    ...(purposeSnapshot.sourceClass === 'connected_account'
-      ? {
-          requestAuth: Object.freeze({
-            kind: 'connectedAccountConsumerAccessPath' as const,
-            injectEnvironmentKey: CLIPROXYAPI_MANAGED_ENV.consumerAccessPath,
-          }),
-        }
-      : {}),
+    requestAuth: Object.freeze({
+      kind: 'connectedAccountConsumerAccessPath' as const,
+      injectEnvironmentKey: CLIPROXYAPI_MANAGED_ENV.consumerAccessPath,
+    }),
     clientAccess: CLIPROXYAPI_MANAGED_CLIENT_ACCESS,
     mode: Object.freeze({
       kind: 'spawn' as const,
@@ -324,7 +288,7 @@ const CATALOG_PROBE_ENDPOINT_TEMPLATE_IDS: ReadonlySet<string> = new Set(
 );
 
 const start: ManagedProviderRuntime['start'] = async (request, context) => {
-  const purposeSnapshot = await resolveManagedPurposeSnapshot(request, context);
+  const purposeSnapshot = await resolveManagedPurposeSnapshot(context);
   const admitsCatalogProbeEndpoints = request.reason === 'catalogProbe';
   const endpointTemplateIds = Object.freeze(request.endpointTemplateIds.filter(
     (endpointTemplateId) => purposeSnapshot.endpointTemplateIds.includes(

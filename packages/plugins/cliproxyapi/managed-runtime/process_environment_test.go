@@ -59,14 +59,11 @@ func TestManagedPurposeConfigurationRequiresAndPropagatesModelListDeclaration(t 
 	}
 }
 
-func TestParseManagedPurposeConfigurationAcceptsProviderConnectionPassThrough(t *testing.T) {
+func TestParseManagedPurposeConfigurationRejectsProviderConnectionPassThrough(t *testing.T) {
 	t.Parallel()
 
-	configuration, err := ParseManagedPurposeConfiguration(`{"v":3,"modelListEnabled":false,"purposes":[],"providerConnection":{"protocol":"openai-responses","downstreamBasePath":"/v1"}}`)
-	if err != nil {
-		t.Fatalf("ParseManagedPurposeConfiguration() error = %v", err)
-	}
-	if configuration.ProviderConnection == nil {
-		t.Fatal("provider connection pass-through configuration was not retained")
+	_, err := ParseManagedPurposeConfiguration(`{"v":3,"modelListEnabled":false,"purposes":[],"providerConnection":{"protocol":"openai-responses","downstreamBasePath":"/v1"}}`)
+	if err == nil {
+		t.Fatal("ParseManagedPurposeConfiguration() accepted a Provider Connection launch")
 	}
 }

@@ -39,12 +39,7 @@ func managedHealthIdentity(
 		Protocols:           append([]ProviderProtocol(nil), config.Protocols...),
 		Purposes:            purposes,
 		ModelListEnabled:    config.ModelListEnabled,
-		SourceClass: func() string {
-			if config.ProviderConnection != nil {
-				return "provider_connection"
-			}
-			return "connected_account"
-		}(),
+		SourceClass:         "connected_account",
 	}
 }
 

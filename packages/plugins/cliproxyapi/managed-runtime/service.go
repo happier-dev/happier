@@ -73,15 +73,11 @@ func newGateway(
 	if config.ConsumerAccessPath != "" {
 		routes[Route{Method: http.MethodPost, Path: ConsumerAccessSettlementPath}] = struct{}{}
 	}
-	var leaseProvider coreauth.RoundTripperProvider
-	if config.ProviderConnection == nil {
-		provider, providerErr := newLeaseRoundTripperProvider(config.AuthEntries, broker, upstream)
-		leaseProvider, err = provider, providerErr
-		if err != nil {
-			return nil, err
-		}
-		provider.consumerAccessRequired = config.ConsumerAccessPath != ""
+	leaseProvider, err := newLeaseRoundTripperProvider(config.AuthEntries, broker, upstream)
+	if err != nil {
+		return nil, err
 	}
+	leaseProvider.consumerAccessRequired = config.ConsumerAccessPath != ""
 
 	var selector coreauth.Selector = &coreauth.RoundRobinSelector{}
 	if config.ConsumerAccessPath != "" {
@@ -119,9 +115,6 @@ func newGateway(
 			func() bool { return managedModelsRegistered(config) },
 		),
 	}
-	if config.ProviderConnection != nil {
-		middleware = append(middleware, ProviderConnectionPassThroughMiddleware(*config.ProviderConnection, upstream))
-	}
 	service, err := cliproxy.NewBuilder().
 		WithConfig(upstreamConfig).
 		WithHooks(cliproxy.Hooks{OnBeforeStart: func(*sdkconfig.Config) {
@@ -145,9 +138,7 @@ func newGateway(
 	// Builder.Build installs its default provider unconditionally. The Happier
 	// provider must therefore be installed after Build so it is the final
 	// effective transport used after executor request shaping.
-	if leaseProvider != nil {
-		manager.SetRoundTripperProvider(leaseProvider)
-	}
+	manager.SetRoundTripperProvider(leaseProvider)
 	manager.SetCooldownStateStore(nil)
 	manager.SetRetryConfig(0, 0, 1)
 
@@ -160,9 +151,6 @@ func newGateway(
 }
 
 func managedModelsRegistered(config Config) bool {
-	if config.ProviderConnection != nil {
-		return true
-	}
 	for _, entry := range config.AuthEntries {
 		models := cliproxy.GlobalModelRegistry().GetAvailableModelsByProvider(string(entry.Provider))
 		family, _ := managedFamilyForProvider(entry.Provider)

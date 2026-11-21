@@ -2394,6 +2394,17 @@ not forward inference, expose upstream credentials or create a UsageEvent.
 Ordinary inference still passes through the request-policy and Home admission
 owners, including the canonical Anthropic `/v1/messages` route.
 
+In unreleased 0.3 source, the custodian sends a brokered same-protocol saved
+Provider Connection request directly to its admitted upstream endpoint. The
+member still receives the declared broker application base path. The custodian
+joins the protocol-relative path to the vendor base, dials the admitted addresses
+using the vendor's TLS identity, and inserts the source's configured headers and
+per-request Saved Secret. A source-declared query value replaces every caller
+value for the same parameter and preserves the other parameters. The broker
+refuses redirects and streams a filtered, redacted response through completion
+or cancellation. Managed subscription adapters such as Muse use CLIProxyAPI for
+upstream authentication and protocol translation.
+
 Run source preparation uses the admitted controller occurrence and its issued
 Account reader, not the process-global Account snapshot. The existing catalog
 owner projects that exact Account and purpose context with `current_only`, using

@@ -29,16 +29,15 @@ export function createCLIProxyAPIManagedHealthResponse(spec: ManagedServiceSpec 
     return { purpose: text(family.purpose), consumer: { pluginId: text(consumer.pluginId), localId: text(consumer.localId) },
       protocols: family.protocols.map(text) };
   });
-  const connection = config.providerConnection === undefined ? null : record(config.providerConnection);
   const identity = {
     v: CLIPROXYAPI_MANAGED_HEALTH_IDENTITY.v,
     contractVersion: CLIPROXYAPI_MANAGED_HEALTH_IDENTITY.contractVersion,
     sdkVersion: CLIPROXYAPI_MANAGED_HEALTH_IDENTITY.sdkVersion,
     wrapperBuildVersion: 'cliproxyapi-test-build',
-    protocols: connection ? [text(connection.protocol)] : [...new Set(families.flatMap(family => family.protocols))],
+    protocols: [...new Set(families.flatMap(family => family.protocols))],
     purposes: families.map(({ consumer, purpose }) => ({ consumer, purpose })),
     modelListEnabled: config.modelListEnabled,
-    sourceClass: connection ? 'provider_connection' : 'connected_account',
+    sourceClass: 'connected_account',
   };
   return { ok: true, status: 200, statusText: 'OK', headers: { 'content-type': 'application/json' }, body: Response.json(identity).body };
 }

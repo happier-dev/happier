@@ -15,22 +15,15 @@ const (
 )
 
 type ManagedPurposeConfiguration struct {
-	V                  int                                         `json:"v"`
-	ModelListEnabled   bool                                        `json:"modelListEnabled"`
-	Purposes           []ManagedPurposeConfigurationRow            `json:"purposes"`
-	ProviderConnection *ProviderConnectionPassThroughConfiguration `json:"providerConnection,omitempty"`
+	V                int                              `json:"v"`
+	ModelListEnabled bool                             `json:"modelListEnabled"`
+	Purposes         []ManagedPurposeConfigurationRow `json:"purposes"`
 }
 
 type managedPurposeConfigurationWire struct {
-	V                  int                                         `json:"v"`
-	ModelListEnabled   *bool                                       `json:"modelListEnabled"`
-	Purposes           []ManagedPurposeConfigurationRow            `json:"purposes"`
-	ProviderConnection *ProviderConnectionPassThroughConfiguration `json:"providerConnection,omitempty"`
-}
-
-type ProviderConnectionPassThroughConfiguration struct {
-	Protocol           ProviderProtocol `json:"protocol"`
-	DownstreamBasePath string           `json:"downstreamBasePath"`
+	V                int                              `json:"v"`
+	ModelListEnabled *bool                            `json:"modelListEnabled"`
+	Purposes         []ManagedPurposeConfigurationRow `json:"purposes"`
 }
 
 // ManagedPurposeConfigurationRow is a non-secret selected purpose family
@@ -63,10 +56,9 @@ func ParseManagedPurposeConfiguration(value string) (ManagedPurposeConfiguration
 		return ManagedPurposeConfiguration{}, fmt.Errorf("managed purpose configuration is invalid")
 	}
 	return normalizeManagedPurposeConfiguration(ManagedPurposeConfiguration{
-		V:                  wire.V,
-		ModelListEnabled:   *wire.ModelListEnabled,
-		Purposes:           wire.Purposes,
-		ProviderConnection: wire.ProviderConnection,
+		V:                wire.V,
+		ModelListEnabled: *wire.ModelListEnabled,
+		Purposes:         wire.Purposes,
 	})
 }
 
@@ -103,18 +95,14 @@ func ImmutableGatewayConfig(
 			}
 		}
 	}
-	if normalizedPurposeConfiguration.ProviderConnection != nil {
-		protocols = append(protocols, normalizedPurposeConfiguration.ProviderConnection.Protocol)
-	}
 	config := Config{
-		Host:               host,
-		Port:               port,
-		DownstreamBearer:   downstreamBearer,
-		RuntimeDir:         runtimeDir,
-		AuthEntries:        authEntries,
-		Protocols:          protocols,
-		ModelListEnabled:   normalizedPurposeConfiguration.ModelListEnabled,
-		ProviderConnection: normalizedPurposeConfiguration.ProviderConnection,
+		Host:             host,
+		Port:             port,
+		DownstreamBearer: downstreamBearer,
+		RuntimeDir:       runtimeDir,
+		AuthEntries:      authEntries,
+		Protocols:        protocols,
+		ModelListEnabled: normalizedPurposeConfiguration.ModelListEnabled,
 	}
 	if err := config.Validate(); err != nil {
 		return Config{}, err
@@ -125,23 +113,8 @@ func ImmutableGatewayConfig(
 func normalizeManagedPurposeConfiguration(
 	configuration ManagedPurposeConfiguration,
 ) (ManagedPurposeConfiguration, error) {
-	if configuration.V != 3 {
+	if configuration.V != 3 || len(configuration.Purposes) == 0 {
 		return ManagedPurposeConfiguration{}, fmt.Errorf("managed purpose configuration is invalid")
-	}
-	providerConnection := configuration.ProviderConnection
-	if (providerConnection == nil) == (len(configuration.Purposes) == 0) {
-		return ManagedPurposeConfiguration{}, fmt.Errorf("managed purpose configuration is invalid")
-	}
-	if providerConnection != nil {
-		if configuration.ModelListEnabled || providerConnection.validate() != nil {
-			return ManagedPurposeConfiguration{}, fmt.Errorf("managed purpose configuration is invalid")
-		}
-		return ManagedPurposeConfiguration{
-			V:                  3,
-			ModelListEnabled:   false,
-			Purposes:           []ManagedPurposeConfigurationRow{},
-			ProviderConnection: providerConnection.clone(),
-		}, nil
 	}
 	seenIDs := make(map[string]struct{}, len(configuration.Purposes))
 	seenProviders := make(map[Provider]struct{}, len(configuration.Purposes))

@@ -357,7 +357,7 @@ import {
   resolveAdmittedProviderConnectionDirectSourceSnapshot,
 } from '@/providers/broker/providerConnectionSource';
 import { createProviderConnectionTeamCredentialSourceSnapshot } from '@/providers/broker/teamCredentialSourceSnapshot';
-import { createProviderConnectionCpxBridge } from '@/providers/broker/providerConnectionCpxBridge';
+import { createProviderConnectionHttpTransport } from '@/providers/broker/providerConnectionHttpTransport';
 import { createAccountConnectionBrokerSourceOpen, retireAccountConnectionBrokerSource } from '@/providers/broker/accountConnectionSource';
 import { openAccountConnectionProviderBrokerAccess, reportAccountConnectionProviderBrokerOpenFailure } from '@/providers/broker/accountConnectionClient';
 import { createDaemonAccountConnectionManagedConsumerOpen } from './providers/accountConnectionManagedConsumerComposition';
@@ -3976,9 +3976,7 @@ export async function startDaemon(
                         }),
                       });
                     },
-                    openCpxProviderConnection: createProviderConnectionCpxBridge({
-                      custody: brokerManagedProviderCustody,
-                    }).open,
+                    openProviderConnectionTransport: createProviderConnectionHttpTransport().open,
                     resolveExactSelection: async (request) => await (
                       providerOperationsProducer?.machineServices
                         .resolveTeamCredentialBrokerSourceSelection(request)

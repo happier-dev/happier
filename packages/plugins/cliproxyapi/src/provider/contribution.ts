@@ -15,6 +15,8 @@ const CLIPROXYAPI_LOCAL_ORIGINS = [
 
 const CLIPROXYAPI_OPENAI_BASE_URLS = CLIPROXYAPI_LOCAL_ORIGINS.map((origin) => `${origin}/v1`);
 
+export const CLIPROXYAPI_PLUGIN_ID = 'happier.provider.cliproxyapi';
+
 /**
  * The one Provider local id for this plugin. It is the `definePlugin`
  * `providers` record key, the projected manifest row id, the activation

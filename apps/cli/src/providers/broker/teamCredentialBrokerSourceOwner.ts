@@ -1,7 +1,7 @@
 import type { ProviderBrokerSourceOpenFailureReasonV1, ProviderBrokerSourceApplicationBindingV1, ProviderBrokerModelRouteGrantPayloadV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ProviderBrokerRequestPolicySnapshot } from './providerBrokerRequestHandler';
-import { projectProviderConnectionBrokerApplication } from './providerConnectionCpxBridge';
+import { projectProviderConnectionBrokerApplication } from './providerConnectionBrokerApplication';
 import type { ProviderContributionRegistryView } from '@/providers/registry';
 import type { ManagedServiceRequest } from '@happier-dev/plugin-sdk/managed-services';
 import { computeTeamCredentialSourceMemberKeyV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
@@ -65,25 +65,17 @@ export function sameTeamCredentialBrokerSource(
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-/**
- * True when the signed request names an executable application whose
- * contribution declares the private source-envelope transport. The contribution
- * owns that identity, so the generic broker hosts compare against its own
- * projection instead of repeating a Provider id.
- */
+/** Checks the declared application used by the managed subscription carrier. */
 export function isCpxBrokerApplication(
   registry: ProviderContributionRegistryView,
   application: ProviderBrokerSourceApplicationBindingV1,
 ): boolean {
-  const projected = projectProviderConnectionBrokerApplication({
+  return projectProviderConnectionBrokerApplication({
     registry,
     agentTargetKey: application.agentTargetKey,
     protocol: application.protocol,
     expectedApplication: application,
-  });
-  return projected !== null
-    && projected.implementationIdentity.pluginId === application.implementationIdentity.pluginId
-    && projected.implementationIdentity.localId === application.implementationIdentity.localId;
+  }) !== null;
 }
 
 /** A Provider Connection source names its one credential slot exactly, so

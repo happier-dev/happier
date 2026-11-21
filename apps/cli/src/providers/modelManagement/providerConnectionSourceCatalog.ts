@@ -15,7 +15,7 @@ import { readProviderConnectionCatalogPresentation, projectProviderCatalogForPic
 import { awaitWithinProviderOperation, type ProviderOperationLifetime } from '@/providers/operationLifetime';
 import { projectProviderCatalogContextRuntimeState, type RuntimeProviderServices, type RuntimeProviderOperationScope } from '@/providers/probe/runtimeServices';
 import { projectProviderBrokerApplication } from '@/providers/broker/applicationProjection';
-import { projectProviderConnectionBrokerApplication } from '@/providers/broker/providerConnectionCpxBridge';
+import { projectProviderConnectionBrokerApplication } from '@/providers/broker/providerConnectionBrokerApplication';
 import type { ProviderBrokerSourceApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { createProviderSourceCatalogRevision, projectCurrentProviderSourceModelCatalogs, type ProviderSourceModelCatalog } from './sourceCatalog';
 import { projectProviderCatalogGatewaySlots } from '@/providers/catalog/assemble';

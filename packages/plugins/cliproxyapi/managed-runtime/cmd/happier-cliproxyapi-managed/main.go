@@ -41,12 +41,9 @@ func runWithContext(
 	if err != nil {
 		return err
 	}
-	var broker managedruntime.RequestAuthBroker
-	if brokerConfig.ConsumerAccessPath != "" {
-		broker, err = managedruntime.NewHTTPBroker(brokerConfig)
-		if err != nil {
-			return err
-		}
+	broker, err := managedruntime.NewHTTPBroker(brokerConfig)
+	if err != nil {
+		return err
 	}
 	gateway, err := managedruntime.NewGateway(
 		gatewayConfig,
@@ -110,19 +107,14 @@ func materializeGatewayConfig(
 		return managedruntime.Config{}, managedruntime.HTTPBrokerConfig{}, fmt.Errorf("managed purpose configuration environment is invalid")
 	}
 	consumerAccessPath, hasConsumerAccessPath := lookupEnvironment(managedruntime.ConsumerAccessPathEnvironmentVariable)
-	runtimeDir := filepath.Join(os.TempDir(), fmt.Sprintf("happier-cliproxyapi-managed-%d", port))
-	if purposeConfiguration.ProviderConnection == nil {
-		if !hasConsumerAccessPath || consumerAccessPath == "" || consumerAccessPath != strings.TrimSpace(consumerAccessPath) ||
-			!filepath.IsAbs(consumerAccessPath) || strings.ContainsRune(consumerAccessPath, '\x00') {
-			return managedruntime.Config{}, managedruntime.HTTPBrokerConfig{}, fmt.Errorf("managed consumer access environment is missing or invalid")
-		}
-		consumerAccessPath = filepath.Clean(consumerAccessPath)
-		runtimeDir = filepath.Dir(filepath.Dir(consumerAccessPath))
-		if runtimeDir == filepath.Dir(runtimeDir) {
-			return managedruntime.Config{}, managedruntime.HTTPBrokerConfig{}, fmt.Errorf("managed consumer access environment is missing or invalid")
-		}
-	} else if hasConsumerAccessPath {
-		return managedruntime.Config{}, managedruntime.HTTPBrokerConfig{}, fmt.Errorf("managed consumer access environment is invalid for Provider Connection")
+	if !hasConsumerAccessPath || consumerAccessPath == "" || consumerAccessPath != strings.TrimSpace(consumerAccessPath) ||
+		!filepath.IsAbs(consumerAccessPath) || strings.ContainsRune(consumerAccessPath, '\x00') {
+		return managedruntime.Config{}, managedruntime.HTTPBrokerConfig{}, fmt.Errorf("managed consumer access environment is missing or invalid")
+	}
+	consumerAccessPath = filepath.Clean(consumerAccessPath)
+	runtimeDir := filepath.Dir(filepath.Dir(consumerAccessPath))
+	if runtimeDir == filepath.Dir(runtimeDir) {
+		return managedruntime.Config{}, managedruntime.HTTPBrokerConfig{}, fmt.Errorf("managed consumer access environment is missing or invalid")
 	}
 	config, err := managedruntime.ImmutableGatewayConfig(
 		host,

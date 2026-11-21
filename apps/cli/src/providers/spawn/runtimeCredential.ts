@@ -231,7 +231,6 @@ export async function resolveRuntimeProviderCredential(
         redact: redaction.redact,
         containsSensitiveValue: redaction.containsSensitiveValue,
         createStreamingSanitizer: redaction.createStreamingSanitizer,
-        ...(additionalCredentials.length ? { registerSensitiveValues: redaction.add } : {}),
         close: redaction.close,
       }),
     };
