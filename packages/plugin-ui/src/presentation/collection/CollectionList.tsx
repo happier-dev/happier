@@ -909,6 +909,8 @@ export function HappierCollectionListGroupLabel(props: Readonly<{
       <View
         style={containerStyle}
         accessibilityRole="header"
+        // A group label heads its rows one level below the page (or column) title, never beside it as a level 1.
+        aria-level={2}
         onPointerEnter={() => setHovered(true)}
         onPointerLeave={() => setHovered(false)}
         {...(props.testID === undefined ? {} : { testID: props.testID })}
@@ -957,6 +959,7 @@ export function HappierCollectionListGroupLabel(props: Readonly<{
     <View
       style={containerStyle}
       accessibilityRole="header"
+      aria-level={2}
       {...(props.testID === undefined ? {} : { testID: props.testID })}
     >
       <View style={groupLabelLeadStyle}>

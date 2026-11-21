@@ -45,6 +45,8 @@ describe('remote viewer stage', () => {
         const viewport = { width: 375, height: 700 };
         const content = { x: 0, y: 0, width: 375, height: 234 };
         const fillScale = 700 / 234;
+        // The page's own size: well above what the fill draws, so the fill never passes it.
+        const page = { width: 1280, height: 800 };
         const viewTransform = (screen: Awaited<ReturnType<typeof renderScreen>>) => {
             const style = [screen.findByTestId('stage-view')?.props.style].flat(Infinity) as Array<{ transform?: Array<Record<string, number>> } | undefined>;
             const transform = Object.assign({}, ...(style.find(entry => entry?.transform)?.transform ?? []));
@@ -60,7 +62,7 @@ describe('remote viewer stage', () => {
             const Picture = () => { pictureRenders += 1; return null; };
             const Shell = (props: Readonly<{ passive: boolean }>) => {
                 shellRenders += 1;
-                return <RemoteViewerStage enabled viewport={viewport} content={content} passive={props.passive} testID="stage"
+                return <RemoteViewerStage enabled viewport={viewport} content={content} pictureSize={page} passive={props.passive} testID="stage"
                     renderInput={value => { controls = value; return null; }}><Picture /></RemoteViewerStage>;
             };
             const setMode = vi.spyOn(remoteViewerModes, 'set');
@@ -96,6 +98,24 @@ describe('remote viewer stage', () => {
                 expect(screen.findByTestId('stage-continues')).toBeNull();
             } finally {
                 setMode.mockRestore();
+                device.phone = false;
+                await screen.unmount();
+            }
+        });
+
+        it('keeps a small window whole and sharp instead of blowing it up to fill the pane', async () => {
+            device.phone = true;
+            let controls!: RemoteViewerStageControls;
+            // A 636 × 136 window drawn at its own size, centred on the stage.
+            const small = { x: 28.5, y: 316, width: 318, height: 68 };
+            const screen = await renderScreen(<RemoteViewerStage enabled viewport={viewport} content={small}
+                pictureSize={{ width: 318, height: 68 }} passive testID="stage"
+                renderInput={value => { controls = value; return null; }}>{null}</RemoteViewerStage>);
+            try {
+                expect(controls.restTransform).toEqual({ scale: 1, x: 0, y: 0 });
+                expect(viewTransform(screen).scale).toBe(1);
+                expect(screen.findByTestId('stage-continues')).toBeNull();
+            } finally {
                 device.phone = false;
                 await screen.unmount();
             }

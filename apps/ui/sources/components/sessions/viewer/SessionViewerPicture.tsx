@@ -1,8 +1,9 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
-import { FloatingFramePicture } from '@happier-dev/plugin-ui/presentation';
+import { FloatingFramePicture, HAPPIER_FLOATING_FRAME_METRICS } from '@happier-dev/plugin-ui/presentation';
 
 import { shadowLevelStyle } from '@/shadowElevation';
+import { SurfaceRim } from '@/components/ui/surfaces/SurfaceRim';
 import { SurfaceStateSizeProvider, useSurfaceStateCardSize } from '@/components/ui/surfaces/surfaceStateSize';
 
 import { useOptionalSessionViewerController } from './SessionViewerController';
@@ -10,7 +11,7 @@ import type { SessionViewerSource } from './sessionViewerPresentation';
 
 /**
  * The live picture as the viewer presents it (lab `b-watch` `.fa-pic`): the shared frame picture
- * material (`FloatingFramePicture`) with the app's floating elevation, and its accent ring while the
+ * material (`FloatingFramePicture`) with the app's floating elevation and rim, and its accent ring while the
  * person, not the Agent, drives it. In a pane the same element tree is drawn flush, so moving a body
  * between its pane and the viewer never remounts the player under it.
  */
@@ -38,6 +39,9 @@ export function SessionViewerPicture(
       testID={props.testID}
     >
       <SurfaceStateSizeProvider size={props.framed ? 'pane' : enclosingStateSize}>{props.children}</SurfaceStateSizeProvider>
+      {/* A floating picture keeps its edge at rest, when the frame's controls are hidden: the floating rim, not
+          a bare picture lying on the transcript (DESIGN Materials). */}
+      {props.framed ? <SurfaceRim role="floating" radius={HAPPIER_FLOATING_FRAME_METRICS.bodyRadius} border="modal" /> : null}
     </FloatingFramePicture>
   );
 }

@@ -95,6 +95,8 @@ describe('shared live stream gesture mapping', () => {
         // A desktop-shaped page drawn whole (contain, from the top) in a phone pane: 375 × 234 of 375 × 700.
         const viewport = { width: 375, height: 700 };
         const content = { x: 0, y: 0, width: 375, height: 234 };
+        // The page's own size: drawn at 375 wide it is well below it, so the fill never passes it.
+        const page = { width: 1280, height: 800 };
         const fill = { viewport, content, orientation: 'portrait', mode: 'direct', localZoom: true, dragPans: true,
             supports: () => true } as const;
         const remote = (point: { x: number; y: number }) => ({
@@ -109,15 +111,31 @@ describe('shared live stream gesture mapping', () => {
         };
 
         it('rests filling the pane height from the top-left corner', () => {
-            expect(fillViewTransform(viewport, content)).toEqual({ scale: 700 / 234, x: 0, y: 0 });
+            expect(fillViewTransform(viewport, content, page)).toEqual({ scale: 700 / 234, x: 0, y: 0 });
             // A page already filling its pane (the controller sized it) has nothing to fill.
-            expect(fillViewTransform(viewport, { x: 0, y: 0, width: 375, height: 700 })).toEqual({ scale: 1, x: 0, y: 0 });
+            expect(fillViewTransform(viewport, { x: 0, y: 0, width: 375, height: 700 }, page)).toEqual({ scale: 1, x: 0, y: 0 });
+        });
+
+        it('anchors a letterboxed picture at the pane\'s top-left corner', () => {
+            const letterboxed = { x: 50, y: 200, width: 275, height: 300 };
+            const view = fillViewTransform(viewport, letterboxed, { width: 1100, height: 1200 });
+            expect(view.scale).toBeCloseTo(700 / 300);
+            expect(letterboxed.x * view.scale + view.x).toBeCloseTo(0);
+            expect(letterboxed.y * view.scale + view.y).toBeCloseTo(0);
+        });
+
+        it('never draws a small picture past its own size: it stays whole instead of filling', () => {
+            // A 636x136 window shown at its own size (one picture pixel per point) on a phone pane.
+            const small = { x: 28.5, y: 282, width: 318, height: 68 };
+            expect(fillViewTransform(viewport, small, { width: 318, height: 68 })).toEqual({ scale: 1, x: 0, y: 0 });
+            // Drawn at half its size, the cover fill (about 10x) would still pass its own size: whole picture.
+            expect(fillViewTransform(viewport, small, { width: 636, height: 136 })).toEqual({ scale: 1, x: 0, y: 0 });
         });
 
         it('maps taps to the same remote point at fill, panned, and with the whole page shown', () => {
             const scale = 700 / 234;
             const mapper = createLiveStreamGestureMapper();
-            expect(mapper.setRestTransform(fillViewTransform(viewport, content)).transform).toEqual({ scale, x: 0, y: 0 });
+            expect(mapper.setRestTransform(fillViewTransform(viewport, content, page)).transform).toEqual({ scale, x: 0, y: 0 });
             const atFill = tapAt(mapper, 187.5, 350, 0);
             expect(atFill.x).toBeCloseTo(187.5 / scale / 375);
             expect(atFill.y).toBeCloseTo(0.5);
@@ -147,7 +165,7 @@ describe('shared live stream gesture mapping', () => {
 
         it('never pans past the page into the empty pane below it', () => {
             const mapper = createLiveStreamGestureMapper();
-            mapper.setRestTransform(fillViewTransform(viewport, content));
+            mapper.setRestTransform(fillViewTransform(viewport, content, page));
             mapper.map(event('start', 200, 600, 0), fill);
             mapper.map(event('move', 200, 100, 50), fill);
             expect(mapper.map(event('end', 200, 100, 60), fill).transform.y).toBe(0);
@@ -155,13 +173,13 @@ describe('shared live stream gesture mapping', () => {
 
         it('follows a new resting fill only while the viewer has not moved the picture', () => {
             const mapper = createLiveStreamGestureMapper();
-            mapper.setRestTransform(fillViewTransform(viewport, content));
+            mapper.setRestTransform(fillViewTransform(viewport, content, page));
             const taller = { ...fill, content: { x: 0, y: 0, width: 375, height: 350 } };
-            expect(mapper.setRestTransform(fillViewTransform(viewport, taller.content)).transform).toEqual({ scale: 2, x: 0, y: 0 });
+            expect(mapper.setRestTransform(fillViewTransform(viewport, taller.content, page)).transform).toEqual({ scale: 2, x: 0, y: 0 });
             mapper.map(event('start', 300, 350, 0), taller);
             mapper.map(event('move', 250, 350, 50), taller);
             const moved = mapper.map(event('end', 250, 350, 60), taller).transform;
-            expect(mapper.setRestTransform(fillViewTransform(viewport, content)).transform).toEqual(moved);
+            expect(mapper.setRestTransform(fillViewTransform(viewport, content, page)).transform).toEqual(moved);
         });
     });
 

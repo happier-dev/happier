@@ -205,6 +205,17 @@ describe('HappierCollectionList (list presentation)', () => {
     mount.unmount();
   });
 
+  it('announces a group label one level below the page title, folding or not', async () => {
+    const glyphHost: HappierCollectionListHost = { ...host, useGroupGlyphColor: () => '#000' };
+    const mount = mountThroughReactNativeWeb(<HappierCollectionListGroupLabel host={host} testID="group" title="Chats" />);
+    const level = () => mount.container.querySelector('[data-testid="group"]')?.getAttribute('aria-level');
+    expect(level()).toBe('2');
+    await mount.render(<HappierCollectionListGroupLabel host={glyphHost} testID="group" title="Chats"
+      disclosure={{ expanded: true, onToggle: () => {} }} />);
+    expect(level()).toBe('2');
+    mount.unmount();
+  });
+
   it('labels a group with its title and count', () => {
     const mount = mountThroughReactNativeWeb(
       <HappierCollectionListGroupLabel host={host} title="Available to install" count={4} first />,

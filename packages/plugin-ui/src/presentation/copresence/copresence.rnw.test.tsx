@@ -522,6 +522,14 @@ describe('HappierAgentCursor', () => {
     expect(placement.ring?.height).toBeCloseTo(43.5);
   });
 
+  it('keeps the hand on the drawn page when the agent acts past its edge', () => {
+    // A point reported below the page (the page grew since it was drawn) rests on the page's bottom edge.
+    const placement = resolveHappierAgentCursorPlacement({ x: 1.2, y: 1.4 }, { x: 0, y: 162.5, width: 600, height: 375 });
+    expect(placement.point).toEqual({ x: 600, y: 537.5 });
+    expect(resolveHappierAgentCursorPlacement({ x: -0.1, y: 0.5 }, { x: 10, y: 0, width: 100, height: 100 }).point)
+      .toEqual({ x: 10, y: 50 });
+  });
+
   it('mounts no hand until the agent acts, and stays out of the accessibility tree', () => {
     const render = (target: { x: number; y: number } | null) => (
       <HappierAgentCursor

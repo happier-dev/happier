@@ -62,6 +62,8 @@ export function RemoteViewerStage(props: Readonly<{
     viewport: Readonly<{ width: number; height: number }>;
     /** Where the picture is drawn whole in the viewport (contain); the fill and the edges derive from it. */
     content?: HappierLiveStreamRect | null;
+    /** The picture's own size in viewport units; the fill never draws it larger. Unknown: it is not filled. */
+    pictureSize?: Readonly<{ width: number; height: number }> | null;
     /** This viewer watches without driving the source. */
     passive?: boolean;
     enabled: boolean;
@@ -82,9 +84,12 @@ export function RemoteViewerStage(props: Readonly<{
     const contentY = content?.y ?? 0;
     const contentWidth = content?.width ?? 0;
     const contentHeight = content?.height ?? 0;
+    const pictureWidth = props.pictureSize?.width ?? contentWidth;
+    const pictureHeight = props.pictureSize?.height ?? contentHeight;
     const restTransform = React.useMemo(() => fill
-        ? fillViewTransform({ width: viewportWidth, height: viewportHeight }, { x: contentX, y: contentY, width: contentWidth, height: contentHeight })
-        : FIT, [fill, viewportWidth, viewportHeight, contentX, contentY, contentWidth, contentHeight]);
+        ? fillViewTransform({ width: viewportWidth, height: viewportHeight }, { x: contentX, y: contentY, width: contentWidth, height: contentHeight },
+            { width: pictureWidth, height: pictureHeight })
+        : FIT, [fill, viewportWidth, viewportHeight, contentX, contentY, contentWidth, contentHeight, pictureWidth, pictureHeight]);
     // The input layer's gesture owner publishes the view it holds; until it does (or after Reset) the view rests.
     const [published, setPublished] = React.useState<HappierLiveStreamViewTransform | null>(null);
     const transform = published ?? restTransform;
@@ -117,7 +122,8 @@ export function RemoteViewerStage(props: Readonly<{
     const controls = React.useMemo(() => ({ mode, setMode, resetZoom, zoomReset, restTransform, dragPansView: fill,
         onViewTransformChange, renderCursor, renderDragTrail }),
     [mode, setMode, resetZoom, zoomReset, restTransform, fill, onViewTransformChange, renderCursor, renderDragTrail]);
-    // A filled picture says which sides continue, so nothing past the pane is silently hidden.
+    // A filled picture says which sides continue, so nothing past the pane is silently hidden. The edge fades
+    // toward the stage's own tint, so a white page still shows it continues in the light theme.
     const edges = fill && content ? remoteViewerContinuingEdges(props.viewport, content, transform) : NO_FILL_EDGES;
     const continues = edges.top || edges.bottom || edges.left || edges.right;
     return <View style={styles.root}>
@@ -127,7 +133,7 @@ export function RemoteViewerStage(props: Readonly<{
             { scale: transform.scale },
         ] }]}>{props.children}</View>
         {continues ? <View testID={`${props.testID}-continues`} style={styles.edges}>
-            <ScrollEdgeFades color={theme.colors.surface.base} edges={edges} />
+            <ScrollEdgeFades color={theme.colors.surface.inset} edges={edges} />
         </View> : null}
         {props.renderInput(controls)}
     </View>;

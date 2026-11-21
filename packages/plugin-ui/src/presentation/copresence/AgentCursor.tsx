@@ -145,12 +145,15 @@ type Box = Readonly<{ left: number; top: number; width: number; height: number }
  * Where the hand and the ring sit inside the layer for a page-normalized target: the point maps into the
  * drawn page, and the ring sits a few pixels outside the element so it never covers its edge.
  */
+const clampUnit = (value: number) => Math.max(0, Math.min(1, value));
+
 export function resolveHappierAgentCursorPlacement(
   target: HappierAgentTarget | null,
   page: HappierAgentPageRect | null,
 ): Readonly<{ point: Readonly<{ x: number; y: number }> | null; ring: Box | null }> {
   if (!target || !page) return { point: null, ring: null };
-  const point = { x: page.x + target.x * page.width, y: page.y + target.y * page.height };
+  // The hand stays on the drawn page: a point reported past its edge (the page changed size since) rests on the edge.
+  const point = { x: page.x + clampUnit(target.x) * page.width, y: page.y + clampUnit(target.y) * page.height };
   const ring = typeof target.width === 'number' && typeof target.height === 'number'
     ? {
       left: page.x + (target.x - target.width / 2) * page.width - RING_OUTSET,

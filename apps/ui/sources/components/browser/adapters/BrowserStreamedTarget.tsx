@@ -416,10 +416,10 @@ export function BrowserStreamedTarget(props: Readonly<{
     React.useEffect(() => {
         // The Agent's cursor is drawn over the page where it rests: filled on a passive phone, whole elsewhere.
         // A viewer's own pan or pinch moves only the picture (as local zoom always has).
-        const view = fillsPane && pageRect && viewport ? fillViewTransform(viewport, pageRect) : null;
+        const view = fillsPane && pageRect && viewport ? fillViewTransform(viewport, pageRect, pageShape ?? pageRect) : null;
         onPageRectChange?.(view && pageRect ? { ...pageRect, x: pageRect.x * view.scale + view.x, y: pageRect.y * view.scale + view.y,
             width: pageRect.width * view.scale, height: pageRect.height * view.scale } : pageRect);
-    }, [onPageRectChange, fillsPane, viewport, pageRect?.x, pageRect?.y, pageRect?.width, pageRect?.height, frameSize]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [onPageRectChange, fillsPane, viewport, pageRect?.x, pageRect?.y, pageRect?.width, pageRect?.height, frameSize, pageShape?.width, pageShape?.height]); // eslint-disable-line react-hooks/exhaustive-deps
     React.useEffect(() => () => onPageRectChange?.(null), [onPageRectChange]);
 
     if (surfaceState === 'connecting' || (props.runtime?.connecting && !props.runtime.terminal && surfaceState === 'unavailable')) {
@@ -465,7 +465,7 @@ export function BrowserStreamedTarget(props: Readonly<{
     return (
         <View testID={`${props.testID}-${surfaceState}`} style={stylesheet.root} onLayout={onLayout}>
             <RemoteViewerStage key={input?.viewerKey} viewerKey={input?.viewerKey} viewport={viewport ?? {width: 1, height: 1}}
-                content={pageRect} passive={!controlling}
+                content={pageRect} pictureSize={pageShape} passive={!controlling}
                 enabled={Boolean(input && viewport && pageRect && surfaceState === 'live')}
                 testID={props.testID} renderInput={controls => input && viewport && pageRect && surfaceState === 'live' ? (
                     <BrowserStreamInput input={input} viewport={viewport} content={pageRect} controls={controls} keyboard={keyboardActions}
