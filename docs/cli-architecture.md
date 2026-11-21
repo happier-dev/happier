@@ -2863,6 +2863,15 @@ Its shared `dedicatedDaemonBootstrap.ts` composes the
 same setup steps and transient IPC codec for the CLI, desktop `hsetup` and mobile
 SSH adapters. The adapters provide command execution, payload transfer and prompt
 identifiers; they do not choose another identity or implement another installer.
+An enrollment that installs a user service as the enrolling account (not the
+dedicated `happier` user) also has that account enable its own systemd-logind
+linger over the same SSH session, so the service survives the end of that
+session. Hosts without a running systemd skip it. When logind refuses, enrollment
+fails with `daemon_service_not_ready` and the remedy (an administrator enables
+linger, or the Machine enrolls with a dedicated daemon user); it never reports an
+enrolled Machine that goes offline when the session closes.
+`machineSetup/userLinger.ts` owns the linger command and marker check for this
+step, the dedicated bootstrap and rootless Docker.
 Node-only SSH/file operations stay in `openSshRemoteCliTransport.ts`. The general
 SSH JSON executor owns ordinary enrollment commands' dedicated-user invocation;
 both streamed and labelled commands consume the captured identity.

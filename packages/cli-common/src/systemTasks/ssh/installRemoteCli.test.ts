@@ -64,3 +64,43 @@ describe('SSH bootstrap CLI source', () => {
     }
   });
 });
+
+describe('SSH bootstrap keeps the enrolling user service alive after the session', () => {
+  // The SSH exec is the process boundary: it answers with the token the remote linger command prints.
+  const enroll = (lingerOutcome: Readonly<{ status: number; stdout: string }>, serviceMode?: 'user' | 'none') => {
+    const commands: string[] = [];
+    const run = installRemoteCli({ channel: 'stable', bootstrap: {
+      parsed: { relay: { relayUrl: 'http://home.example' }, ...(serviceMode ? { serviceMode } : {}) },
+      createPromptId: () => 'unused',
+    }, transport: {
+      exec: async ({ command }) => {
+        commands.push(command);
+        return command.includes('/var/lib/systemd/linger/') ? { ...lingerOutcome, stderr: '' } : { status: 1, stdout: '', stderr: 'unexpected' };
+      },
+      install: async () => ({ binaryPath: '/home/bl2ssh/.happier/cli/current/happier' }),
+    } });
+    return { run, commands };
+  };
+
+  it('enables linger for the enrolling user before a user-mode service is installed', async () => {
+    const { run, commands } = enroll({ status: 0, stdout: 'linger_enabled\n' });
+    await expect(run).resolves.toBeUndefined();
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).toContain('/var/lib/systemd/linger/');
+  });
+
+  it('refuses enrollment with the remedy when logind will not keep the user manager running', async () => {
+    const { run } = enroll({ status: 1, stdout: 'linger_refused\n' });
+    await expect(run).rejects.toMatchObject({
+      code: 'daemon_service_not_ready',
+      message: expect.stringContaining('loginctl enable-linger'),
+    });
+  });
+
+  it('accepts hosts without systemd and skips the step when no service is installed', async () => {
+    await expect(enroll({ status: 0, stdout: 'linger_not_applicable\n' }).run).resolves.toBeUndefined();
+    const none = enroll({ status: 1, stdout: 'linger_refused\n' }, 'none');
+    await expect(none.run).resolves.toBeUndefined();
+    expect(none.commands).toEqual([]);
+  });
+});

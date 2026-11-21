@@ -14,6 +14,7 @@ import { createDockerEngineSetupSteps, dockerEnginePresenceCheck } from '../../m
 import { buildManagedSudoersSteps } from '../../machineSetup/managedSudoers.js';
 import { buildAgentIsolationBootstrapSteps } from '../../machineSetup/agentIsolationBootstrap.js';
 import { buildUserManagerGroupRefreshStep } from '../../machineSetup/userManagerGroups.js';
+import { buildUserLingerStep, SYSTEMD_LINGER_MARKER_DIR } from '../../machineSetup/userLinger.js';
 import { FIRST_PARTY_MANAGED_TOOLS_DIR_NAME } from '../../firstPartyRuntime/installLayoutContract.js';
 import { MachineAdministratorEstablishFrameSchema, MachineEffectInternalRecordSchema, MachineEffectInternalRequestSchema, type MachineAdministratorEstablishFrame, type MachineEffectInternalRequest, type MachineEffectInternalResult } from '../../machineSetup/effectInternalProtocol.js';
 
@@ -72,8 +73,7 @@ export async function prepareDedicatedDaemonBootstrap(input: DedicatedDaemonBoot
     ...buildAgentIsolationBootstrapSteps({ daemonUsername: 'happier', daemonPrimaryGroup: 'happier', binaryPath: input.binaryPath,
       toolsRoot: `${DEDICATED_DAEMON_INSTALL_HOME}/${FIRST_PARTY_MANAGED_TOOLS_DIR_NAME}` }),
     ...dockerSteps,
-    { id: 'daemon-user-linger', kind: 'command', executable: 'loginctl', args: ['enable-linger', 'happier'],
-      check: { executable: 'test', args: ['-f', '/var/lib/systemd/linger/happier'], unsatisfiedExitCodes: [1] } },
+    buildUserLingerStep({ id: 'daemon-user-linger', username: 'happier', markerPath: `${SYSTEMD_LINGER_MARKER_DIR}/happier` }),
     // Some images retain linger without logind activating the user at boot.
     // Pull in the existing manager directly; its template owns /run/user/UID.
     { id: 'daemon-user-manager-boot', kind: 'command', executable: 'systemctl',

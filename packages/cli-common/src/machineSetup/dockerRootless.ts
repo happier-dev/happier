@@ -1,3 +1,5 @@
+import { buildUserLingerStep, SYSTEMD_LINGER_MARKER_DIR } from './userLinger.js';
+
 const launcher = '/usr/local/bin/happier-docker-rootless';
 
 /** Docker owns the socket and persists its endpoint in the user's rootless context.
@@ -51,8 +53,8 @@ HAPPIER_ROOTLESS_USER
 
 export function createDockerRootlessSteps<T extends string | { kind: 'targetFact'; fact: 'daemon.username' }>(username: T) {
     // Preserve the concrete-step type for native callers and bind only recipe declarations.
-    const lingerPath = (typeof username === 'string' ? `/var/lib/systemd/linger/${username}`
-        : { kind: 'template', value: '/var/lib/systemd/linger/{username}', variables: { username } }) as
+    const lingerPath = (typeof username === 'string' ? `${SYSTEMD_LINGER_MARKER_DIR}/${username}`
+        : { kind: 'template', value: `${SYSTEMD_LINGER_MARKER_DIR}/{username}`, variables: { username } }) as
         T extends string ? string : { kind: 'template'; value: string; variables: { username: T } };
     return [
         { id: 'docker-rootless-prerequisites', kind: 'package' as const, manager: 'apt',
@@ -62,9 +64,8 @@ export function createDockerRootlessSteps<T extends string | { kind: 'targetFact
             content: typeof username === 'string'
                 ? { kind: 'literal' as const, value: installTemplate.replace('{daemonUsername}', () => username) + installBody }
                 : { kind: 'template' as const, value: `${installTemplate}{installBody}`, variables: { daemonUsername: username, installBody } } },
-        { id: 'docker-rootless-linger', kind: 'command' as const, executable: 'loginctl', args: ['enable-linger', username],
-            requiredFacts: [{ kind: 'init' as const, system: 'systemd' as const }],
-            check: { executable: 'test', args: ['-f', lingerPath], unsatisfiedExitCodes: [1] } },
+        buildUserLingerStep({ id: 'docker-rootless-linger', username, markerPath: lingerPath,
+            requiredFacts: [{ kind: 'init' as const, system: 'systemd' as const }] }),
         { id: 'docker-rootless-install', kind: 'script' as const, shell: 'sh' as const, body: `${launcher}\n`,
             requiredFacts: [{ kind: 'init' as const, system: 'systemd' as const }],
             review: { title: 'Set up rootless Docker for Happier', description: 'Creates a user Docker service and selects its rootless context. Loads a user-specific AppArmor profile where required. Keeps the shared Docker daemon unchanged.' },

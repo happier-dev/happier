@@ -3,6 +3,7 @@ import type { RemoteBootstrapMachineParams } from '../kinds/remoteSshBootstrapMa
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 import { prepareDedicatedDaemonBootstrap, type DedicatedDaemonBootstrapExec } from './dedicatedDaemonBootstrap.js';
 import { buildDedicatedDaemonAccountCommand, DEDICATED_DAEMON_INSTALL_HOME } from './remoteBootstrapCommandBuilder.js';
+import { buildEnsureCurrentUserLingerCommand, readCurrentUserLingerOutcome } from '../../machineSetup/userLinger.js';
 
 /** Installation placement is selected once here; platform adapters supply only IO. */
 export type RemoteCliInstallation = Readonly<{
@@ -85,4 +86,15 @@ export async function installRemoteCli(input: Readonly<{
     } : {}),
   });
   if (prepare) await prepare(installed.binaryPath);
+  // The dedicated bootstrap enables linger for its own account. Any other enrolling
+  // account's user service would stop when this SSH session ends without it.
+  if (bootstrap && identity?.kind !== 'dedicatedDaemonUser' && bootstrap.parsed.serviceMode !== 'none') {
+    const linger = await transport.exec({ command: buildEnsureCurrentUserLingerCommand(), signal: input.signal });
+    const outcome = readCurrentUserLingerOutcome(linger.stdout);
+    if (outcome !== 'linger_enabled' && outcome !== 'linger_not_applicable') {
+      throw new SystemTaskExecutionError('daemon_service_not_ready',
+        'The background service would stop when this SSH session ends: lingering could not be enabled for this account. '
+        + 'Run "sudo loginctl enable-linger <user>" on the machine, or enroll with a dedicated daemon user.');
+    }
+  }
 }
