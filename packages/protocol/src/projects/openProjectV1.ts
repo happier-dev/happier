@@ -8,7 +8,7 @@ import { ScmRepositoryCloneSourceV1Schema, ScmRepositoryCloneInputSchema, ScmRep
 import { QualifiedConnectedAccountRefSchema } from '../connect/qualifiedConnectedAccountPersistence.js';
 import { SessionAuthoringCheckoutCreationDraftV1Schema } from '../sessions/authoring/creationFieldsV1.js';
 import { HandoffWorkspaceActionV1Schema } from '../sessions/control/handoff/workspaceSyncSchemas.js';
-import { WorkspaceAddressV1Schema, WorkspaceAddressV2Schema, ManagedWorkspaceRefV2WriteSchema, WorkspaceRefV1WriteSchema, WorkspaceProjectFactsV1Schema } from '../workspaces/workspaceRefV1.js';
+import { WorkspaceAddressV2Schema, ManagedWorkspaceRefV2WriteSchema, WorkspaceRefV1WriteSchema, WorkspaceProjectFactsV1Schema } from '../workspaces/workspaceRefV1.js';
 import type { WorkspaceRefV1 } from '../workspaces/workspaceRefV1.js';
 import { ProjectSourceRepositorySelectorV1Schema } from './sources/projectSourceV1.js';
 import { ScmRepositoryProvisioningFailureResponseSchema, ScmRepositoryProvisioningRemediationSchema } from '../scm/repositoryProvisioning.js';
@@ -52,7 +52,7 @@ export const OpenProjectInputV1Schema = lazyZodSchema(() => z.strictObject({
       kind: z.literal('source'), id: IdSchema, revision: z.number().check(z.int(), z.positive()),
       selector: ProjectSourceRepositorySelectorV1Schema,
       defaultRef: z.optional(IdSchema), subdir: z.optional(ScmRepositoryContainedSubdirV1Schema),
-      checkout: z.optional(WorkspaceAddressV1Schema),
+      checkout: z.optional(WorkspaceAddressV2Schema),
     }),
     z.strictObject({ kind: z.literal('repository'), selector: ProjectSourceRepositorySelectorV1Schema }),
   ]),

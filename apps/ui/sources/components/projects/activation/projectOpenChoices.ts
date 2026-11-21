@@ -1,8 +1,8 @@
 import { OpenProjectInputV1Schema, suggestProjectOpenCloneDestinationV1, type OpenProjectInputV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import { OpenProjectDraftSelectionV1Schema, type OpenProjectDraftSelectionV1 } from '@happier-dev/protocol/projects/openProjectDraftV1';
 import { normalizeProjectSourceSubdirV1, type ProjectSourceV1, type ProjectSourceRepositorySelectorV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
-import type { WorkspaceAddressV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import { findWorkspaceProjectCandidatesV1, workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { isManagedWorkspaceRefV2, type WorkspaceAddressV2, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { findWorkspaceProjectCandidatesV1, workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { readScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 import type { ScmRepositoryDiscoverMatch, ScmRepositoryDiscoverRequest } from '@happier-dev/protocol/scm/repositoryDiscovery';
 import { buildSessionHandoffWorkspaceAction } from '@/sync/domains/sessionHandoff/sessionHandoffDefaults';
@@ -13,7 +13,7 @@ export type ProjectOpenSubject =
   | Readonly<{ kind: 'source'; source: Pick<ProjectSourceV1, 'id' | 'revision' | 'repository' | 'defaultRef' | 'subdir'> & Partial<Pick<ProjectSourceV1, 'name'>> }>
   | Readonly<{ kind: 'repository'; selector: ProjectSourceRepositorySelectorV1 }>
   | Readonly<{ kind: 'folder'; path: string }>
-  | Readonly<{ kind: 'workspace'; workspace: Pick<WorkspaceRefV1, 'id' | 'serverId' | 'machineId' | 'rootPath'> }>;
+  | Readonly<{ kind: 'workspace'; workspace: WorkspaceAddressV2 }>;
 export type ProjectOpenUse = 'existing' | 'worktree' | 'clone' | 'copy';
 export type ProjectOpenChoiceState = Readonly<{
   serverId: string;
@@ -31,7 +31,7 @@ export type ProjectOpenChoiceState = Readonly<{
   destination: string;
   /** An explicit checkout choice, never a shortest-path or repository-identity guess. */
   checkoutId?: string | null;
-  checkoutAddress?: WorkspaceAddressV1 | null;
+  checkoutAddress?: WorkspaceAddressV2 | null;
   checkouts: readonly WorkspaceRefV1[];
 }>;
 export type ProjectOpenUseOption = Readonly<{
@@ -95,10 +95,7 @@ export function resolveProjectOpenUseOptions(state: ProjectOpenChoiceState): rea
   const home = resolveServerProfileScopeIdForIdentifier(state.serverId);
   let candidates: readonly WorkspaceRefV1[];
   if (subject.kind === 'workspace') {
-    const result = resolveWorkspaceRefByAddress(state.checkouts, {
-      serverId: subject.workspace.serverId, workspaceId: subject.workspace.id,
-      machineId: subject.workspace.machineId, rootPath: subject.workspace.rootPath,
-    });
+    const result = resolveWorkspaceRefByAddress(state.checkouts, subject.workspace);
     candidates = result.kind === 'resolved' && resolveServerProfileScopeIdForIdentifier(result.ref.serverId) === home
       ? [result.ref] : result.kind === 'ambiguous'
         ? result.candidates.filter(ref => resolveServerProfileScopeIdForIdentifier(ref.serverId) === home) : [];
@@ -145,7 +142,7 @@ export function resolveProjectOpenDefaults(state: ProjectOpenChoiceState): Parti
   if ((use === 'existing' || use === 'worktree' || use === 'copy') && option && option.candidates.length === 1
     && (!option.from || !state.checkoutId)) {
     return { ...patch, checkoutId: option.candidates[0]!.id,
-      checkoutAddress: workspaceAddressFromRefV1(option.candidates[0]!) };
+      checkoutAddress: workspaceAddressFromRefV2(option.candidates[0]!) };
   }
   return patch;
 }
@@ -162,16 +159,15 @@ export function buildProjectOpenDraft(state: ProjectOpenChoiceState): OpenProjec
   const subject = state.subject;
   const option = resolveProjectOpenUseOptions(state).find(candidate => candidate.use === state.use);
   const exact = option?.from && (subject?.kind === 'workspace' || state.checkoutId === option.from.id)
-    ? workspaceAddressFromRefV1(option.from)
-    : subject?.kind === 'workspace' ? { serverId: subject.workspace.serverId, workspaceId: subject.workspace.id,
-      machineId: subject.workspace.machineId, rootPath: subject.workspace.rootPath }
+    ? workspaceAddressFromRefV2(option.from)
+    : subject?.kind === 'workspace' ? subject.workspace
       : state.checkoutAddress?.workspaceId === state.checkoutId ? state.checkoutAddress : undefined;
   const source = subject?.kind === 'source' && subject.source.repository ? {
     kind: 'source' as const, id: subject.source.id, revision: subject.source.revision, selector: subject.source.repository,
     ...(subject.source.defaultRef ? { defaultRef: subject.source.defaultRef } : {}),
     ...(subject.source.subdir ? { subdir: subject.source.subdir } : {}),
   } : subject?.kind === 'repository' ? { kind: 'repository' as const, selector: subject.selector }
-    : subject?.kind === 'workspace' ? { kind: 'workspace' as const, workspaceId: subject.workspace.id }
+    : subject?.kind === 'workspace' ? { kind: 'workspace' as const, workspaceId: subject.workspace.workspaceId }
     : subject?.kind === 'folder' ? { kind: 'folder' as const, path:
       OpenProjectInputV1Schema.shape.source.def.options[1].shape.path.safeParse(subject.path).success ? subject.path : '' } : undefined;
   let materialization: OpenProjectDraftSelectionV1['materialization'];
@@ -234,7 +230,7 @@ export function buildProjectOpenInput(selection: OpenProjectDraftSelectionV1, ch
   const selectedCheckout = selection.materialization?.kind === 'clone' && selection.source?.kind === 'source'
     ? undefined : editing?.checkout ?? capturedCheckout;
   if (needsCheckout && !selectedCheckout) return null;
-  let checkout: WorkspaceAddressV1 | undefined;
+  let checkout: WorkspaceAddressV2 | undefined;
   if (selectedCheckout) {
     const resolved = resolveWorkspaceRefByAddress(checkouts, selectedCheckout);
     if (resolved.kind !== 'resolved') return null;
@@ -242,7 +238,8 @@ export function buildProjectOpenInput(selection: OpenProjectDraftSelectionV1, ch
   }
   if (checkout && (resolveServerProfileScopeIdForIdentifier(checkout.serverId)
     !== resolveServerProfileScopeIdForIdentifier(selection.serverId)
-    || (selection.materialization?.kind !== 'sync' && checkout.machineId !== selection.machineId))) return null;
+    || (selection.materialization?.kind !== 'sync'
+      && (isManagedWorkspaceRefV2(checkout) || checkout.machineId !== selection.machineId)))) return null;
   let materialization = input.materialization;
   // Retained raw text is the displayed editing authority, not an older normalized sibling.
   if (materialization?.kind === 'clone' && editing?.destination !== undefined) {
@@ -296,11 +293,8 @@ export function projectOpenChoiceStateFromDraft(
   else if (source?.kind === 'workspace') {
     const resolved = checkout ? resolveWorkspaceRefByAddress(checkouts, checkout)
       : resolveWorkspaceRefById(checkouts, source.workspaceId, selection.serverId);
-    if (resolved.kind === 'resolved') subject = { kind: 'workspace', workspace: resolved.ref };
-    else if (checkout) subject = { kind: 'workspace', workspace: {
-      id: checkout.workspaceId, serverId: checkout.serverId,
-      machineId: checkout.machineId, rootPath: checkout.rootPath,
-    } };
+    if (resolved.kind === 'resolved') subject = { kind: 'workspace', workspace: workspaceAddressFromRefV2(resolved.ref) };
+    else if (checkout) subject = { kind: 'workspace', workspace: checkout };
   }
   const materialization = selection.materialization;
   return { serverId: selection.serverId, machineId: selection.machineId || null, machineHomeDir, subject,

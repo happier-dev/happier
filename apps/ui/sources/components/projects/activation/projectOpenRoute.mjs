@@ -6,12 +6,12 @@ const sourceSeedSchema = z.strictObject({ serverId: OpenProjectInputV1Schema.sha
     subdir: OpenProjectInputV1Schema.shape.subdir });
 
 /** An exact checkout seeds Open elsewhere; execution placement remains the person's choice.
- * @param {Pick<import('@happier-dev/protocol/workspaces/workspaceRefV1').WorkspaceAddressV1, 'serverId' | 'workspaceId'>} workspace
+ * @param {import('@happier-dev/protocol/workspaces/workspaceRefV1').WorkspaceAddressV2} workspace
  * @param {string | null} [ref]
  */
 export function buildProjectCheckoutOpenRoute(workspace, ref) {
     const seed = sourceSeedSchema.parse({ serverId: workspace.serverId,
-        source: { kind: 'workspace', workspaceId: workspace.workspaceId }, ...(ref ? { ref } : {}) });
+        source: { kind: 'workspace', workspaceId: workspace.workspaceId, checkout: workspace }, ...(ref ? { ref } : {}) });
     return { pathname: /** @type {const} */ ('/projects/open'), params: { openSource: JSON.stringify(seed) } };
 }
 

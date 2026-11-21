@@ -4,7 +4,8 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { SessionDraftAddressV2Schema } from '@happier-dev/protocol/drafts/sessionDraftsV2';
-import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { isManagedWorkspaceRefV2, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { randomUUID } from '@/platform/randomUUID';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { ensureSessionDraftAddressesHydrated, flushSessionDraftLocally } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
@@ -401,10 +402,15 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
         : { kind: 'none' };
   // Several checkouts of the Source on this Machine: the selected existing/worktree row names one and
   // changes which through the same menu pattern as Where (never a separate list on the page).
-  const checkoutKey = (ref: Readonly<{ machineId: string; rootPath: string; id: string }>) => `${ref.machineId}\u0000${ref.rootPath}\u0000${ref.id}`;
+  const checkoutKey = (ref: WorkspaceRefV1) => JSON.stringify(workspaceAddressFromRefV2(ref));
+  const checkoutPlace = (ref: WorkspaceRefV1) => isManagedWorkspaceRefV2(ref)
+    ? describeManagedCheckoutPlace({ controllerMachineId: ref.controller.machineId,
+        machineNameParts: (id) => ({ name: sentenceMachineName(id), hint: null }), managedName: ref.label ?? null }).machineName
+    : sentenceMachineName(ref.machineId);
   // A checkout's folder, home-relative on its own Machine (a copy's checkouts live on other Machines).
-  const checkoutPath = (ref: Readonly<{ machineId: string; rootPath: string }>) => formatPathRelativeToHome(ref.rootPath,
-    (ref.machineId === machineId ? choiceBase.machineHomeDir : readMachineHomeDir(machines.find((candidate) => candidate.id === ref.machineId))) ?? undefined);
+  const checkoutPath = (ref: WorkspaceRefV1) => formatPathRelativeToHome(ref.rootPath,
+    isManagedWorkspaceRefV2(ref) ? undefined
+      : (ref.machineId === machineId ? choiceBase.machineHomeDir : readMachineHomeDir(machines.find((candidate) => candidate.id === ref.machineId))) ?? undefined);
   const useRows = options.map((option) => ({
     use: option.use,
     ...(option.candidates.length > 1 ? {
@@ -414,22 +420,21 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
             ? t('projects.open.openedAgo', { when: formatRelativeTime(candidate.lastOpenedAtMs) }) : null;
           // A copy chooses among other Machines' checkouts: each names its Machine first, then its folder.
           return option.use === 'copy'
-            ? { id: checkoutKey(candidate), title: sentenceMachineName(candidate.machineId),
+            ? { id: checkoutKey(candidate), title: checkoutPlace(candidate),
                 subtitle: [checkoutPath(candidate), openedAgo].filter(Boolean).join(' · ') }
             : { id: checkoutKey(candidate), title: checkoutPath(candidate), ...(openedAgo ? { subtitle: openedAgo } : {}) };
         }),
         selectedId: option.from ? checkoutKey(option.from) : null,
         onSelect: (key: string) => {
           const candidate = option.candidates.find((ref) => checkoutKey(ref) === key);
-          if (candidate) edit({ checkoutId: candidate.id, checkoutAddress: { serverId: candidate.serverId,
-            workspaceId: candidate.id, machineId: candidate.machineId, rootPath: candidate.rootPath } });
+          if (candidate) edit({ checkoutId: candidate.id, checkoutAddress: workspaceAddressFromRefV2(candidate) });
         },
       },
     } : {}),
     ...describeProjectOpenUse({
       use: option.use,
       selected: option.use === effectiveUse,
-      fromMachine: option.from ? sentenceMachineName(option.from.machineId) : null,
+      fromMachine: option.from ? checkoutPlace(option.from) : null,
       fromPath: option.use === 'copy' && option.from ? checkoutPath(option.from) : option.from
         ? formatPathRelativeToHome(option.from.rootPath, choiceBase.machineHomeDir ?? undefined)
         : null,
@@ -561,7 +566,7 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
             machineName={(id) => machineNames.get(id) ?? getMachineDisplayName(machines.find((candidate) => candidate.id === id) ?? null) ?? id}
             sentenceMachineName={sentenceMachineName}
             onChooseCandidate={candidate => {
-            const checkout = workspaceAddressFromRefV1(candidate);
+            const checkout = workspaceAddressFromRefV2(candidate);
             if (!open.draft) return;
             open.setDraft({ ...open.draft, source: open.draft.source?.kind === 'source'
                 ? open.draft.source : { kind: 'workspace', workspaceId: checkout.workspaceId },
@@ -854,7 +859,7 @@ function ProjectOpenOutcome(props: Readonly<{ open: ReturnType<typeof useProject
     subfolder: string | null;
     machineName(machineId: string): string;
     sentenceMachineName(machineId: string): string;
-    onChooseCandidate(candidate: Parameters<typeof workspaceAddressFromRefV1>[0]): void }>) {
+    onChooseCandidate(candidate: WorkspaceRefV1): void }>) {
     const result = props.open.result;
     if (props.open.pending) return <AttentionBanner testID="projects.open.pending" tone="neutral" title={t('projects.open.resolving')} />;
     if (!result) {

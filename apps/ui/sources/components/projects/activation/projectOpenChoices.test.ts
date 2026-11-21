@@ -4,6 +4,7 @@ import { OpenProjectDraftSelectionV1Schema } from '@happier-dev/protocol/project
 import { StrictJsonValueSchema } from '@happier-dev/protocol/drafts/sessionDrafts';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { buildWorkspaceContentPolicy } from '@/sync/domains/sessionHandoff/sessionHandoffDefaults';
 import { MMKV } from 'react-native-mmkv';
 import { scopedStorageId } from '@/utils/system/storageScope';
@@ -335,9 +336,10 @@ describe('Project Open choices', () => {
   it('offers only the exact Workspace subject, never another row sharing its Project or repository', () => {
     const exact = { ...checkout('exact', 'mac', '/Users/me/happier'), projectKey: 'project' };
     const other = { ...checkout('other', 'devbox', '/x'), projectKey: 'project' };
-    expect(resolveProjectOpenUseOptions({ ...base, subject: { kind: 'workspace', workspace: exact },
+    const subject = { kind: 'workspace', workspace: workspaceAddressFromRefV2(exact) } as const;
+    expect(resolveProjectOpenUseOptions({ ...base, subject,
       checkouts: [other, exact] }).map(option => [option.use, option.from?.id])).toEqual([['copy', 'exact']]);
-    expect(resolveProjectOpenUseOptions({ ...base, subject: { kind: 'workspace', workspace: exact },
+    expect(resolveProjectOpenUseOptions({ ...base, subject,
       checkouts: [other] })).toEqual([]);
   });
 
@@ -410,11 +412,12 @@ describe('Project Open choices', () => {
     const first = checkout('duplicate', 'devbox', '/one');
     const chosen = checkout('duplicate', 'devbox', '/two');
     const checkouts = [first, chosen];
-    const draft = buildProjectOpenDraft({ ...base, subject: { kind: 'workspace', workspace: chosen },
+    const subject = { kind: 'workspace', workspace: workspaceAddressFromRefV2(chosen) } as const;
+    const draft = buildProjectOpenDraft({ ...base, subject,
       checkouts, use: 'existing' });
     expect(buildProjectOpenInput(draft, checkouts)?.source).toEqual({ kind: 'workspace', workspaceId: 'duplicate',
       checkout: { serverId: 'home', machineId: 'devbox', workspaceId: 'duplicate', rootPath: '/two' } });
-    expect(projectOpenChoiceStateFromDraft(draft, checkouts, null).subject).toEqual({ kind: 'workspace', workspace: chosen });
+    expect(projectOpenChoiceStateFromDraft(draft, checkouts, null).subject).toEqual(subject);
     expect(buildProjectOpenInput({ ...draft, editing: undefined }, checkouts)).toBeNull();
     expect(buildProjectOpenInput({ ...draft, source: { kind: 'workspace', workspaceId: 'wrong' } }, checkouts)).toBeNull();
     const sourceDraft = { ...draft, source: { kind: 'source' as const, id: source.id,

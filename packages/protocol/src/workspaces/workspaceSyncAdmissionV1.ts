@@ -107,6 +107,6 @@ export function projectWorkspaceSyncAdmissionInputV1(actionId: string, input: un
       ...(action.kind === 'relationship' ? { relationshipId: action.relationshipId } : {}) };
   }
   if (source.kind !== 'source' || !source.checkout) return undefined;
-  return { sourceMachineId: source.checkout.machineId, sourceWorkspaceRefId: source.checkout.workspaceId,
+  return { sourceMachineId: resolveWorkspaceSyncExecutionMachineIdV1(source.checkout), sourceWorkspaceRefId: source.checkout.workspaceId,
     ...(action.kind === 'relationship' ? { relationshipId: action.relationshipId } : {}) };
 }

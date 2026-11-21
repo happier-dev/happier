@@ -149,6 +149,30 @@ describe('Project Open rendered choices', () => {
         expect(screen.findAll(node => node.type === DropdownMenu && node.props.testID === 'projects.open.where')).toHaveLength(0);
     });
 
+    it('opens a managed checkout elsewhere by copying it to the selected controller Machine', async () => {
+        const scope = { serverId: 'home', accountId: 'account' };
+        const { machine } = await seedOpenDraft('00000000-0000-4000-8000-000000000081', scope);
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { workspaceAddressFromRefV2 } = await import('@happier-dev/protocol/workspaces/workspaceRefResolutionV1');
+        const { buildProjectCheckoutOpenRoute } = await import('./projectOpenRoute.mjs');
+        const checkout = { v: 2, kind: 'managed', id: 'guest-checkout', serverId: scope.serverId, managedId: 'guest',
+            controller: { machineId: machine.id, installationId: 'install' },
+            rootPath: '/home/coder/qa-rws-repo', createdAtMs: 1 } as const;
+        storage.getState().applyProjectAccountRowsForScope(scope, { scope, status: 'ready', coverage: 'complete',
+            workspaceRefs: [checkout], relationships: [], organizations: [], revisionsByPhysicalKey: {} });
+
+        const address = workspaceAddressFromRefV2(checkout);
+        const route = buildProjectCheckoutOpenRoute(address, 'master');
+        const screen = await renderScreen(<ProjectOpenScreen routeParams={route.params} />);
+        const where = () => screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'projects.open.where');
+        await vi.waitFor(() => expect(where()).toBeDefined());
+        await act(async () => { where()!.props.onSelect(machine.id); });
+
+        expect(screen.findByTestId('projects.open.use.copy')).toBeTruthy();
+        expect(screen.findByTestId('projects.open.use.existing')).toBeNull();
+        expect(screen.findByTestId('projects.open.submit')?.props.disabled).toBe(false);
+    });
+
     it.each(['source', 'another-source'])('carries an attached dashboard only after accepting its Source (%s)', async acceptedSourceId => {
         const draftId = acceptedSourceId === 'source' ? '00000000-0000-4000-8000-000000000083' : '00000000-0000-4000-8000-000000000084';
         const { createHomeGovernanceHarness, installHomeGovernanceBoundaries } = await import('@/dev/testkit/harness/homeGovernanceHarness');

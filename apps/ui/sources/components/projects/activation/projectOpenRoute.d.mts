@@ -1,12 +1,12 @@
 import type { OpenProjectInputV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { OpenProjectDraftSelectionV1 } from '@happier-dev/protocol/projects/openProjectDraftV1';
-import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 type ProjectSourceOpenRoute = { pathname: '/projects/open'; params: { openSource: string } };
 
 export function buildProjectCheckoutOpenRoute(
-    workspace: Pick<WorkspaceAddressV1, 'serverId' | 'workspaceId'>,
+    workspace: WorkspaceAddressV2,
     ref?: string | null,
 ): ProjectSourceOpenRoute;
 

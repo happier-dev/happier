@@ -4,7 +4,7 @@ import { DraftFieldV1Schema } from '../drafts/sessionDrafts.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { OpenProjectInputV1Schema, OpenProjectResultV1Schema, WorkspaceActivationRequestV1Schema } from './openProjectV1.js';
-import { WorkspaceAddressV1Schema } from '../workspaces/workspaceRefV1.js';
+import { WorkspaceAddressV2Schema } from '../workspaces/workspaceRefV1.js';
 
 /** Retained editing values share wire validators, admitting only unfinished fields. */
 export const OpenProjectDraftSelectionV1Schema = lazyZodSchema(() => {
@@ -22,7 +22,7 @@ export const OpenProjectDraftSelectionV1Schema = lazyZodSchema(() => {
       ref: z.optional(z.string()),
       subdir: z.optional(z.string()),
       folderPath: z.optional(z.string()),
-      checkout: z.optional(WorkspaceAddressV1Schema),
+      checkout: z.optional(WorkspaceAddressV2Schema),
     })),
     machineId: emptyOr(input.shape.machineId),
     source: z.discriminatedUnion('kind', [

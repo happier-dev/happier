@@ -26,12 +26,13 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { useWorkspaceRefs, useActiveMachineFacts } from '@/sync/domains/state/storage';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
-import { resolveWorkspaceRefById, resolveWorkspaceRefByScope, sameWorkspaceProject } from '@/sync/domains/workspaces/workspaceRefs';
+import { resolveProjectCheckoutWorkspaceRef, resolveWorkspaceRefById, sameWorkspaceProject } from '@/sync/domains/workspaces/workspaceRefs';
 import { t } from '@/text';
 import { resolveMachineDisplayNameParts, resolveSettledMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { useProjectMachineDisplays } from '../useProjectMachineDisplays';
 import { workspaceScopeFromProject } from '@/sync/domains/workspaces/workspaceScope';
 import { isManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { useManagedMachineName } from '@/components/approvals/approvalReferenceReading';
 import { describeManagedCheckoutPlace } from './projectCheckoutPlace';
 
@@ -199,12 +200,10 @@ export function useProjectShellCheckout(
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime?.isCurrent() || !areServerProfileIdentifiersEquivalent(lifetime.scope.serverId, props.workspaceRef.serverId)) return;
         const actualRef = snapshot?.branch.head;
-        const selected = resolveWorkspaceRefByScope(refs, { serverId: props.workspaceRef.serverId,
-          machineId: props.workspaceRef.machineId, rootPath: props.activeRootPath });
+        const selected = resolveProjectCheckoutWorkspaceRef(refs, props.workspaceRef, props.activeRootPath);
         fireAndForget(seedAndOpenProjectDraft({ lifetime, selection: { serverId: lifetime.scope.serverId,
-          ...(selected.kind === 'resolved' ? { source: { kind: 'workspace' as const, workspaceId: selected.ref.id },
-            editing: { checkout: { serverId: selected.ref.serverId, workspaceId: selected.ref.id,
-              machineId: selected.ref.machineId, rootPath: selected.ref.rootPath } } } : { editing: { folderPath: props.activeRootPath } }),
+          ...(selected ? { source: { kind: 'workspace' as const, workspaceId: selected.id, checkout: workspaceAddressFromRefV2(selected) } }
+            : { editing: { folderPath: props.activeRootPath } }),
           ...(actualRef ? { ref: actualRef } : {}) },
           navigate: navigateToOpen }), { tag: 'project.openElsewhere' });
       }
@@ -213,9 +212,7 @@ export function useProjectShellCheckout(
       branch,
       onSelectRootPath,
       openProject,
-      props.workspaceRef.id,
-      props.workspaceRef.serverId,
-      props.workspaceRef.machineId,
+      props.workspaceRef,
       props.activeRootPath,
       snapshot?.branch.head,
       props.onSelectWorkspace,

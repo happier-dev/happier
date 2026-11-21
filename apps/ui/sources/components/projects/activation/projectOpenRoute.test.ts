@@ -6,11 +6,12 @@ describe('Project Open entrance', () => {
         expect(buildProjectSourceOpenRoute('home', { id: 'source', revision: 1, name: 'Production', audience: [], createdByAccountId: 'account' })).toBeNull();
     });
     it('captures the exact checkout Home and branch without selecting an execution Machine', () => {
-        const route = buildProjectCheckoutOpenRoute({ serverId: 'other-home', workspaceId: 'checkout' }, 'feature');
+        const checkout = { serverId: 'other-home', workspaceId: 'checkout', machineId: 'machine', rootPath: '/checkout' };
+        const route = buildProjectCheckoutOpenRoute(checkout, 'feature');
         // No way to open is chosen for the person: Open starts on its own default once a Machine is chosen.
         expect(readProjectOpenRouteDraft(route.params)).toEqual({ serverId: 'other-home', machineId: '',
-            source: { kind: 'workspace', workspaceId: 'checkout' }, ref: 'feature' });
-        expect(readProjectOpenRouteDraft(buildProjectCheckoutOpenRoute({ serverId: 'home', workspaceId: 'checkout' }).params))
+            source: { kind: 'workspace', workspaceId: 'checkout', checkout }, ref: 'feature' });
+        expect(readProjectOpenRouteDraft(buildProjectCheckoutOpenRoute(checkout).params))
             .not.toHaveProperty('ref');
     });
     it('retains the exact selected Machine, folder and branch without executing or guessing a checkout name', () => {
