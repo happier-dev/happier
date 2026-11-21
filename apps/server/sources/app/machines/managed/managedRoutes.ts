@@ -127,7 +127,7 @@ export async function requireManagedPolicyRequest(request: FastifyRequest, path:
     if (!carrier?.payload.managedPolicy) throw new ManagedMachineError('permission_denied');
     const stoppedObservation = phase === 'observe-stop';
     if (stoppedObservation !== (carrier.purpose.kind === 'target-power-observation')
-        || (stoppedObservation && (carrier.actionOrigin || carrier.payload.managedPolicy.requestId !== input.requestId))) {
+        || (stoppedObservation && carrier.actionOrigin)) {
         throw new ManagedMachineError('permission_denied');
     }
     const verify = async (tx: Tx) => {
@@ -377,11 +377,8 @@ export function registerManagedMachineRoutes(app: Fastify): void {
     app.post(MANAGED_CONTROLLER_STOPPED_OBSERVATION_PATH_V1, { preHandler: app.authenticate,
         schema: { body: ManagedControllerStoppedObservationV1Schema, response: { 200: ManagedControllerStoppedObservationOutputV1Schema } },
     }, async (request, reply) => respond(reply, () => inManagedMachinePublicationTx(request.body, async tx => {
-        const { row, carrier } = await requireManagedPolicyRequest(request, MANAGED_CONTROLLER_STOPPED_OBSERVATION_PATH_V1,
+        const { row } = await requireManagedPolicyRequest(request, MANAGED_CONTROLLER_STOPPED_OBSERVATION_PATH_V1,
             request.body, 'observe-stop', tx);
-        const binding = carrier.payload.managedPolicy!;
-        if (request.body.expectedIntentRevision !== binding.expectedIntentRevision
-            || !sameManagedInput(request.body.controller, binding.controller)) throw new ManagedMachineError('permission_denied');
         await reportManagedStoppedObservationInTx(tx, row, request.body);
         return { observed: true };
     })));

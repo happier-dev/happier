@@ -81,9 +81,9 @@ describe("managed acquisition durable authority", () => {
         onTestFinished(() => app.close());
         registerManagedMachineRoutes(app);
         const correlation = { homeId, managedId: row.id, controller, requestId: 'project-workspace-target', expectedIntentRevision: 3 };
-        const submit = (observedAt: number, signed = correlation, key = keys.secretKey) => {
+        const submit = (observedAt: number, signed = correlation, key = keys.secretKey,
+            body = { ...signed, observedAt }) => {
             const path = MANAGED_CONTROLLER_STOPPED_OBSERVATION_PATH_V1;
-            const body = { ...signed, observedAt };
             const proof = createManagedPolicyProofV1({ correlation: signed, purpose: { kind: 'target-power-observation' },
                 custodianAccountId: account.id, path, body, privateKey: key, ...(opaque ? {} : { resource }) });
             return app.inject({ method: 'POST', url: path, payload: body,
@@ -94,7 +94,10 @@ describe("managed acquisition durable authority", () => {
         expect((await submit(99, correlation, tweetnacl.sign.keyPair().secretKey)).statusCode).toBe(403);
         expect((await submit(9)).statusCode).toBe(200);
         expect(await read()).toMatchObject({ observation: { power: 'running', observedAt: 10 } });
-        const reply = await submit(20);
+        const reply = await submit(20, correlation, keys.secretKey, {
+            ...correlation, requestId: 'read-label', expectedIntentRevision: 2,
+            controller: { ...controller, installationId: crypto.randomUUID() }, observedAt: 20,
+        });
         expect(reply.statusCode, reply.body).toBe(200);
         expect(await read()).toMatchObject({ desired: 'start', intentRevision: 3, admittedInput: {},
             observation: { observedAt: 20, availability: 'present', power: 'stopped', storage: 'retained' } });
