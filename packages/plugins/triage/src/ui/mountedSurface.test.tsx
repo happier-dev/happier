@@ -11,7 +11,7 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 import { act } from 'react';
 import { createPluginClientTestkit, createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit, PluginUiTestkitOpenSurfaceInput } from '@happier-dev/plugin-sdk/testing';
-import { defineUiSurface, type PluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui';
+import { defineUiSurface, formatHappierAsOfTime, type PluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import type { PluginUiContextEnrichmentV1, PluginUiUpdateEntityDragDropRequestV1, RenderSurface } from '@happier-dev/plugin-sdk/ui';
 import {
@@ -205,11 +205,11 @@ function createHarness(options: Readonly<{ tasks?: boolean; details?: boolean; c
     /** Derived from the existing 1,000-row store fixture, not an observed F cardinality. */
     mixedFailureScale?: boolean;
     /** Source A answers one complete page that asks nothing of the reader. */
-    quietFirstPage?: boolean }> = {}) {
+    quietFirstPage?: boolean; singleSource?: boolean }> = {}) {
     const { collections, control } = createTestkitCorpusCollections();
     control.sourceInstances.seed(toCorpusStoredValue(instanceRow('a', SOURCE_A, INSTANCE_A, 1,
         options.mixedFailureScale ? 'GitHub workspace' : LABEL_A)));
-    control.sourceInstances.seed(toCorpusStoredValue(instanceRow('b', SOURCE_B, INSTANCE_B, 2,
+    if (!options.singleSource) control.sourceInstances.seed(toCorpusStoredValue(instanceRow('b', SOURCE_B, INSTANCE_B, 2,
         options.mixedFailureScale ? 'Bitbucket workspace' : LABEL_B)));
     const acmeSource = { pluginId: 'happier.third.acme', localId: 'issues' };
     const acmeInstance = '33333333-3333-4333-8333-333333333333';
@@ -219,6 +219,7 @@ function createHarness(options: Readonly<{ tasks?: boolean; details?: boolean; c
     const scans = new Map<object, ScanFn>();
     const scanCalls = { count: 0 };
     const state = { sourceAFails: false, sourceBFails: false, accountReadsUnavailable: false,
+        sourceARetryNotBeforeMs: null as number | null,
         sessionLinksUnavailable: false, savedViewsUnavailable: false, pinsUnavailable: false,
         fixPullRequestsUnavailable: false, resourceUnavailable: false, entryReadUnavailable: false,
         sessionRead: 'ready' as 'ready' | 'missing' | 'failed' | 'pending', sessionReads: 0,
@@ -267,6 +268,10 @@ function createHarness(options: Readonly<{ tasks?: boolean; details?: boolean; c
     const scanA: ScanFn = async (input) => {
         scanCalls.count += 1;
         await state.scanGate;
+        if (state.sourceARetryNotBeforeMs !== null) {
+            return { kind: 'failed', failure: { class: 'rateLimit', code: 'sentry-rate-limited',
+                retryNotBeforeMs: state.sourceARetryNotBeforeMs } };
+        }
         if (state.sourceAFails) {
             return { kind: 'failed', failure: { class: 'transient', code: 'provider-busy' } };
         }
@@ -313,7 +318,7 @@ function createHarness(options: Readonly<{ tasks?: boolean; details?: boolean; c
         };
     };
 
-    const admitted = [admittedSource(SOURCE_A, scanA), ...(options.sourceBUnavailable ? [] : [admittedSource(SOURCE_B, scanB)]),
+    const admitted = [admittedSource(SOURCE_A, scanA), ...(options.singleSource || options.sourceBUnavailable ? [] : [admittedSource(SOURCE_B, scanB)]),
         ...(options.mixedFailureScale ? [admittedSource(acmeSource, async input => {
             const { offset, limit } = input.page.kind === 'initial'
                 ? { offset: 0, limit: input.page.limit }
@@ -465,7 +470,8 @@ function createHarness(options: Readonly<{ tasks?: boolean; details?: boolean; c
         // enumerates the built-in source for allConfigured; selecting the
         // harness inventory avoids inventing an unavailable personal source.
         return await listTriageEntries({ ...parsed, sources: parsed.sources.kind === 'allConfigured'
-            ? await selectTestkitConfiguredSources([INSTANCE_A, INSTANCE_B, ...(options.mixedFailureScale ? [acmeInstance] : [])], collections.sourceInstances) : parsed.sources }, {
+            ? await selectTestkitConfiguredSources([INSTANCE_A, ...(options.singleSource ? [] : [INSTANCE_B]),
+                ...(options.mixedFailureScale ? [acmeInstance] : [])], collections.sourceInstances) : parsed.sources }, {
             sourceInstances: collections.sourceInstances,
             readSourceSnapshot: async () => ({ contributions: admitted }),
             executeScan,
@@ -2055,6 +2061,55 @@ describe('the mounted PRs & Issues surface', () => {
         await expect(shell.getByText('Nothing matches your search')).resolves.toBeDefined();
         await expect(shell.queryByText('Nothing matches these filters')).resolves.toBeUndefined();
         await expect(shell.queryByText('Nothing needs you')).resolves.toBeUndefined();
+    });
+
+    it('keeps mounted rows through a provider throttle and reads once on the first eligible Refresh (QB-24)', async () => {
+        const harness = createHarness({ quietFirstPage: true, singleSource: true });
+        const now = vi.spyOn(Date, 'now');
+        try {
+            const shell = await mountSurface(renderShellSurface, harness, 'triage-list-provider-throttle',
+                sourceContextFixture(harness), { directAccountData: true });
+            await settleWindow('view', shell);
+            const title = 'Replace the duplicated normalizer';
+            await visibleTexts(shell, [title]);
+            expect(harness.scanCalls.count).toBe(1);
+
+            const arrival = Date.now();
+            now.mockReturnValue(arrival);
+            vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+            const deadline = arrival + 120_000;
+            harness.state.sourceARetryNotBeforeMs = deadline;
+            const refresh = () => shell.getByRole('button', { name: 'Refresh' });
+            await act(async () => { await shell.press(await refresh()); });
+            await settleWindow('view', shell);
+            expect(harness.scanCalls.count).toBe(2);
+            const snapshot = () => readTriageListWindowSnapshot(shell.context.hostApi, harness.ephemeralSharedScope);
+            expect(snapshot().refreshBlocked).toEqual({ reason: 'sourceRetryDeadline', nextEligibleAtMs: deadline });
+            await expect(shell.getByText('Waiting before the next read')).resolves.toBeDefined();
+            const time = formatHappierAsOfTime(deadline, arrival, shell.context.surface.locale);
+            expect(document.body.textContent).toContain(`Try again at ${time}.`);
+            await visibleTexts(shell, [title]);
+            expect((await refresh()).state?.disabled).toBe(true);
+
+            now.mockReturnValue(deadline - 1);
+            await settleWindow('manual', shell);
+            expect(harness.scanCalls.count).toBe(2);
+            await visibleTexts(shell, [title]);
+
+            now.mockReturnValue(deadline);
+            harness.state.sourceARetryNotBeforeMs = null;
+            await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+            expect(harness.scanCalls.count).toBe(2);
+            expect((await refresh()).state?.disabled).not.toBe(true);
+            await act(async () => { await shell.press(await refresh()); });
+            await settleWindow('view', shell);
+            expect(harness.scanCalls.count).toBe(3);
+            await expect(shell.queryByText('Waiting before the next read')).resolves.toBeUndefined();
+            await visibleTexts(shell, [title]);
+        } finally {
+            vi.useRealTimers();
+            now.mockRestore();
+        }
     });
 
     it('reads the provider again only when the reader asks', async () => {
