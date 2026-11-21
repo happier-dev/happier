@@ -199,7 +199,8 @@ export function projectExternalActionRequesterInvocationV1(args: Readonly<{
   const review = childReview ?? args.context.presentUserApproval;
   if (review?.actionId === args.actionId && review.decidingAccountId !== undefined
     && review.decidingAccountId !== args.account.accountId) return null;
-  const reviewedParent = readHostReviewedParentV1(args.context);
+  // A plugin child keeps its caller identity. The host's local parent review has no meaning in that requester envelope.
+  const reviewedParent = args.context.actionCaller?.kind === 'host' ? readHostReviewedParentV1(args.context) : null;
   const confirmation = !childReview && args.context.presentUserConfirmation?.inputDigest !== undefined
     ? args.context.presentUserConfirmation
     : review?.actionId === args.actionId ? {

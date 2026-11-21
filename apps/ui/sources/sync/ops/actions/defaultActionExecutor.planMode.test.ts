@@ -909,7 +909,22 @@ describe('default Action executor mode and catalog contracts', () => {
     const triage = client === 'triage_send' || client === 'triage_schema_unavailable';
     const surface = client === 'voice' ? 'voice' : triage ? 'plugin' : 'ui';
     const triageCaller = { kind: 'plugin' as const, pluginId: 'happier.triage', contributionLocalId: 'sessions/run-configured-v1',
-      occurrenceId: '["@happier-dev/plugins-triage","happier.triage","0.0.0"]' };
+      occurrenceId: '["@happier-dev/plugins-triage","happier.triage","0.0.0"]',
+      sourceCustody: { kind: 'development' as const, registeredRootId: 'triage-test-root' } };
+    let triageAttachments;
+    if (triage) {
+      const { buildTriageEntryAttachmentDraftV1, buildTriageEntryAttachmentPresentation } =
+        await import('../../../../../../packages/plugins/triage/src/composer/mutationPlan');
+      const { testkitEntryRef, TESTKIT_SOURCE_INSTANCE_ID } =
+        await import('../../../../../../packages/plugins/triage/src/corpus/testkit/observations.test-support');
+      const entryRef = testkitEntryRef();
+      const draft = buildTriageEntryAttachmentDraftV1({ entryRef,
+        sourceInstance: { source: entryRef.source, sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID },
+        presentation: buildTriageEntryAttachmentPresentation({ title: 'Fixture entry', scopeLabel: 'Fixture repository' }),
+      });
+      if (!draft) throw new Error('Expected a valid Triage entry attachment');
+      triageAttachments = [draft];
+    }
     const retiring = client === 'composer_presentation_retired' || client === 'composer_account_retired';
     const group = client === 'composer_group' || retiring;
     const reply = client === 'human_return' || client === 'composer' || group ? 'return' : client === 'extended_send' || triage || client === 'native_command' || client === 'schema_nested_legacy_none' || client === 'review_send' ? 'none' : 'wait';
@@ -974,6 +989,12 @@ describe('default Action executor mode and catalog contracts', () => {
     let legacyOccurrence = false;
     homes.answer(serverId, '/v1/actions/action.spec.get', { select: body => {
       const authorized = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+      if (triage) {
+        const requester = openExternalActionRequesterAccountContextV1({ authorization: authorized.executionAuthorization,
+          purpose: { kind: 'external_action' }, machineId: 'machine-a', installationId: 'ask-installation', serverIdentityId: 'srv_mode_home',
+          installationPrivateKey: installation.secretKey, includeInvocation: true });
+        expect(requester?.invocation).toMatchObject({ caller: triageCaller, surface: 'plugin', authority: 'account_automation' });
+      }
       if (client === 'triage_schema_unavailable') return { body: { v: 1, actionId: 'action.spec.get',
         requestId: authorized.envelope.requestId, execution: { ok: false,
           errorCode: 'plugin_action_execution_placement_unavailable', error: 'plugin_action_execution_placement_unavailable' } } };
@@ -1001,7 +1022,7 @@ describe('default Action executor mode and catalog contracts', () => {
       if (typeof receiver !== 'string' || !['ask-session', 'refused-session', 'pass-session'].includes(receiver)) throw new Error('Unexpected exact receiver');
       sentTo.push(receiver);
       expect(authorized.envelope).toMatchObject({ target: { kind: 'machine', machineId: 'machine-a' }, input: triage ? {
-        sessionId: 'ask-session', message: 'What did you find?', idempotencyKey: 'triage-receipt-input',
+        sessionId: 'ask-session', message: 'What did you find?', idempotencyKey: 'triage-receipt-input', attachments: triageAttachments,
       } : client === 'native_command' ? {
         sessionId: 'ask-session', kind: 'sessionSubagentCommand', command: { kind: 'agent_team_delete', teamId: 'team-1' },
         localId: 'ask-input', idempotencyKey: 'native-command-1',
@@ -1028,7 +1049,7 @@ describe('default Action executor mode and catalog contracts', () => {
       } catch (error) { boundaryFailure = error; throw error; }
     } });
     const input = triage ? {
-      sessionId: 'ask-session', message: 'What did you find?', idempotencyKey: 'triage-receipt-input',
+      sessionId: 'ask-session', message: 'What did you find?', idempotencyKey: 'triage-receipt-input', attachments: triageAttachments,
     } as const : client === 'native_command' ? {
       sessionId: 'ask-session', kind: 'sessionSubagentCommand', command: { kind: 'agent_team_delete', teamId: 'team-1' },
       localId: 'ask-input', idempotencyKey: 'native-command-1',
@@ -1136,13 +1157,26 @@ describe('default Action executor mode and catalog contracts', () => {
     // Account bootstrap deliberately refreshes the complete Machine census;
     // measure only the sends after that fixture-owned acquisition has settled.
     const machineListReadsBeforeSend = homes.requests.filter(request => request.path.split('?')[0] === '/v1/machines').length;
+    const executeTriageSend = async () => {
+      const { invokeHostReviewedChildV1 } = await import('@happier-dev/protocol/actions/actionExecutor');
+      const triageContext = { ...context(), surface: 'plugin', authority: 'account_automation',
+        actionCaller: { ...triageCaller, pluginVersion: '0.0.0', mountedInvocationKind: 'clientPluginAction' },
+      } as const;
+      const executor = createDefaultActionExecutor();
+      if (client === 'triage_schema_unavailable') return executor.execute('session.message.send', input, triageContext);
+      return invokeHostReviewedChildV1({
+        parent: { actionId: 'action.invoke', input: { action: { pluginId: triageCaller.pluginId, localId: triageCaller.contributionLocalId } } },
+        context: triageContext,
+        child: { action: 'session.message.send', role: 'actions.execute', input },
+        admittedReview: { action: 'session.message.send', role: 'actions.execute', surface: 'plugin' },
+        execute: (operand, childContext, childActionId) => executor.execute(childActionId, operand, childContext),
+      });
+    };
     const result = client === 'composer' || client === 'composer_wait' || group ? await composerSubmit() : surface === 'voice'
       ? JSON.parse(await (await import('@/voice/tools/handlers')).createVoiceToolHandlers({
           resolveSessionId: explicit => explicit ?? 'origin-session', currentSessionAddress: { serverId, sessionId: 'origin-session' },
         }).action_execute({ actionId: 'session.message.send', input }, { serverId }))
-      : await createDefaultActionExecutor().execute('session.message.send', input, triage
-        ? { ...context(), surface, authority: 'account_automation', actionCaller: { ...triageCaller, pluginVersion: '0.0.0' } }
-        : context());
+      : triage ? await executeTriageSend() : await createDefaultActionExecutor().execute('session.message.send', input, context());
     if (client === 'legacy' || client === 'schema_legacy' || client === 'schema_nested_legacy' || client === 'schema_nested_legacy_none' || client === 'triage_schema_unavailable') {
       // A known refusal before dispatch is a domain rejection; the plugin SDK
       // must not throw it into Triage's genuinely ambiguous transport catch.
@@ -1151,7 +1185,7 @@ describe('default Action executor mode and catalog contracts', () => {
       if (client === 'triage_schema_unavailable') {
         const { log } = await import('@/log');
         const prefix = '[session-input-schema] ';
-        const diagnostic = log.getLogs().find(line => line.startsWith(prefix));
+        const diagnostic = log.getLogs().findLast(line => line.startsWith(prefix));
         expect(diagnostic && JSON.parse(diagnostic.slice(prefix.length))).toMatchObject({
           phase: 'session.message.input_schema', errorCode: 'plugin_action_execution_placement_unavailable',
         });
@@ -1254,6 +1288,7 @@ describe('default Action executor mode and catalog contracts', () => {
     expect(result, JSON.stringify(homes.requestsFor('/v1/actions/session.message.send').map(request => request.path))).toMatchObject({ ok: true, result: outcome });
     expect(homes.requestsFor('/v1/actions/session.message.send')).toHaveLength(1);
     expect(homes.requestsFor('/v2/sessions/ask-session/pending')).toHaveLength(0);
+    if (triage) expect(homes.requestsFor('/v1/actions/action.spec.get')).toHaveLength(1);
     if (client === 'repeated_send') {
       let sendNumber = 0;
       const send = () => createDefaultActionExecutor().execute('session.message.send', { ...input, localId: `ask-input-${++sendNumber}` }, context());
