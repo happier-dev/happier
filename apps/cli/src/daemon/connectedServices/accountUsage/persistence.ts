@@ -63,6 +63,7 @@ export async function persistProviderAccountUsageWithDaySummaries(input: Readonl
   material?: AccountScopedCryptoMaterial; signal?: AbortSignal; nowMs: number;
   randomBytes?: (length: number) => Uint8Array;
   writer?: typeof writeQualifiedProviderAccountUsageV4;
+  stageDaySummaries?: (recordId: string, throughMs: number) => void;
 }>) {
   const result = await (input.writer ?? writeQualifiedProviderAccountUsageV4)({ token: input.token, write: input.write,
     ...(input.material ? { material: input.material } : {}), ...(input.signal ? { signal: input.signal } : {}) });
@@ -71,8 +72,13 @@ export async function persistProviderAccountUsageWithDaySummaries(input: Readonl
     throw new ProviderAccountUsageSourceLinkError(result.source.reason);
   }
   const write = QualifiedProviderAccountUsageWriteV4Schema.parse(input.write);
+  const nowMs = Math.max(input.nowMs, write.fetchedAt ?? 0);
+  if (input.stageDaySummaries) {
+    input.stageDaySummaries(write.recordId, nowMs);
+    return { ...result, dailySummary: null };
+  }
   const dailySummary = await maintainProviderAccountUsageDaySummariesForRecord({ ...input, recordId: write.recordId,
-    accountMode: write.payloadMode === 'plain_json_v1' ? 'plain' : 'e2ee', nowMs: Math.max(input.nowMs, write.fetchedAt ?? 0) });
+    accountMode: write.payloadMode === 'plain_json_v1' ? 'plain' : 'e2ee', nowMs });
   return { ...result, dailySummary };
 }
 

@@ -83,6 +83,7 @@ import {
   setActiveAccountSettingsSnapshot,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import {
+  listQualifiedConnectedAccountsV4,
   resolveQualifiedConnectedAccountPeerOperationTransport,
 } from '@/api/client/qualifiedConnectedAccountApi';
 import { resolveConnectedServiceAccountMode } from '@/cloud/connectedServices/resolveConnectedServiceAccountMode';
@@ -277,10 +278,11 @@ it.each(['covered-observation', 'exhausted-backoff'] as const)('bounds unchanged
   const release = inventory.subscribeInvalidations(event => coordinator.invalidateInventory(event));
   onTestFinished(release);
   const tick = () => runWithServerHttpBaseUrl('https://quota-work.test', () => coordinator.tickOnce());
+  // One cold pass for one account: one inventory read, one quota read, one day-summary read.
   const initial = await tick();
   expect({ initial, requests }).toEqual({
     initial: { nextAutomaticRunAfterMs: failing ? retryMs : null },
-    requests: { accounts: 1, quotas: 1, summaries: failing ? 2 : 1 },
+    requests: { accounts: 1, quotas: 1, summaries: 1 },
   });
   const providerInvocations = () => readFile(fixture.marker, 'utf8').catch(() => '');
 
@@ -300,7 +302,7 @@ it.each(['covered-observation', 'exhausted-backoff'] as const)('bounds unchanged
   // another immediate pass over the same stored evidence.
   expect({ due, requests, provider: await providerInvocations() }).toEqual({
     due: { nextAutomaticRunAfterMs: null },
-    requests: { accounts: failing ? 2 : 1, quotas: failing ? 2 : 1, summaries: failing ? 2 : 1 },
+    requests: { accounts: failing ? 2 : 1, quotas: failing ? 2 : 1, summaries: 1 },
     provider: failing ? 'quota-account\n' : '',
   });
 
@@ -308,13 +310,13 @@ it.each(['covered-observation', 'exhausted-backoff'] as const)('bounds unchanged
   refresh();
   await tick();
   await tick();
-  expect(requests).toEqual({ accounts: failing ? 2 : 1, quotas: failing ? 3 : 2, summaries: failing ? 2 : 1 });
+  expect(requests).toEqual({ accounts: failing ? 2 : 1, quotas: failing ? 3 : 2, summaries: 1 });
 
   fetchedAt = now;
   refresh();
   await tick();
   await tick();
-  expect(requests).toEqual({ accounts: failing ? 2 : 1, quotas: failing ? 4 : 3, summaries: failing ? 3 : 2 });
+  expect(requests).toEqual({ accounts: failing ? 2 : 1, quotas: failing ? 4 : 3, summaries: 2 });
 
   if (!failing) {
     summariesAvailable = false;
@@ -333,6 +335,70 @@ it.each(['covered-observation', 'exhausted-backoff'] as const)('bounds unchanged
     expect(requests).toEqual({ accounts: 1, quotas: 5, summaries: 4 });
   }
   expect(await providerInvocations()).toBe(failing ? 'quota-account\n' : '');
+});
+
+it.each([1, 2])('reads one day index per record after processing two due profiles over %i records', async (recordCount) => {
+  const now = 1_000_000;
+  const service = { pluginId: 'example.quota-work', localId: 'account' };
+  const profiles = [0, 1].map((index): QualifiedConnectedAccountProfileV4 => ({
+    ref: { service, accountId: `quota-profile-${index}` },
+    status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
+    credentialRevision: 'csr_abcdefghijklmnopqrstuv', configurationRevision: null, configurationReady: true,
+    providerIdentity: { accountId: `provider-account-${index % recordCount}` }, scopes: [],
+  }));
+  const fixture = await createQualifiedQuotaRuntimeFixture(profiles[0]!, now, { profiles });
+  const providerId = buildQualifiedPluginContributionKey(service);
+  const recordKeys = profiles.map((profile): ProviderAccountUsageRecordKeyV1 => ({
+    providerId, accountSubjectId: profile.providerIdentity!.accountId!, subjectKind: 'account', quotaScope: 'account',
+  }));
+  const recordIds = recordKeys.map(buildProviderAccountUsageRecordId);
+  const detailWrites: string[] = [];
+  const detailsAtDayIndex: string[][] = [];
+  const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
+    if (new URL(String(url)).pathname !== '/v4/connect/qualified/provider-account-usage/day-summaries') {
+      throw new Error('Unexpected quota fixture route');
+    }
+    detailsAtDayIndex.push([...detailWrites]);
+    return { status: 200, data: { summaries: [], missingDays: [] } };
+  });
+  onTestFinished(() => get.mockRestore());
+  const coordinator = new ConnectedServiceQuotasCoordinator({
+    credentials: fixture.credentials, quotaFetchers: [], discoveryEnabled: false,
+    now: () => now, randomBytes: length => new Uint8Array(length),
+    api: { getAccountEncryptionMode: async () => 'plain',
+      getConnectedServiceQuotaSnapshotSealed: async () => null, getConnectedServiceCredentialSealed: async () => null },
+    qualifiedConnectedAccountRuntime: {
+      resolvePeerClass: () => 'advertised_v4', establishedRuntimeOwner: fixture.owner,
+      resolveUsageIdentity: fixture.resolveUsageIdentity,
+      listScheduledAccounts: async () => profiles,
+      readQuota: async ({ ref }) => {
+        const index = profiles.findIndex(profile => profile.ref.accountId === ref.accountId);
+        const recordKey = recordKeys[index]!;
+        const recordId = recordIds[index]!;
+        const fetchedAt = now - 10_000;
+        const snapshot: ProviderAccountUsageSnapshotV1 = {
+          v: 1, providerId, recordKey, recordId, accountSubject: { kind: 'providerSubject', id: recordKey.accountSubjectId },
+          observedAtMs: fetchedAt, fetchedAtMs: fetchedAt, staleAfterMs: 120_000, source: 'providerHttp',
+          confidence: 'confirmed', state: 'loaded_empty', meters: [],
+        };
+        return { ref, sourceResolution: { source: { ref, bindingKind: 'account' }, recordId,
+          providerAccountId: recordKey.accountSubjectId, fetchedAt, staleAfterMs: snapshot.staleAfterMs },
+          content: { t: 'plain', v: projectProviderAccountUsageSnapshotToQualifiedConnectedAccountQuotaSnapshotV4({ snapshot, ref }) },
+          metadata: { fetchedAt, staleAfterMs: snapshot.staleAfterMs, status: 'ok', refreshRequestedAt: now },
+        };
+      },
+      writeProviderAccountUsage: async ({ write }) => {
+        detailWrites.push(QualifiedProviderAccountUsageWriteV4Schema.parse(write).recordId);
+        return { success: true, source: { status: 'linked' } };
+      },
+    },
+  });
+  onTestFinished(() => coordinator.disposeInBandQuotaPersistence());
+  await runWithServerHttpBaseUrl('https://quota-work.test', () => coordinator.tickOnce());
+
+  expect(detailWrites).toEqual(recordIds);
+  expect(detailsAtDayIndex).toHaveLength(recordCount);
+  if (recordCount === 1) expect(detailsAtDayIndex[0]).toEqual(recordIds);
 });
 
 it('polls actual group members through shared inventory without expanding every scheduled account into every group', async () => {
