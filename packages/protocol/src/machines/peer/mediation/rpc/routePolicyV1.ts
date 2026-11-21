@@ -21,6 +21,7 @@ import { LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS } from '../../../../local/serv
 import { ACTION_INVOKE_ACTION_ID_V1, isExecutionRunStartActionIdV1, isMachineAgentInventoryReadActionIdV1, isWorkspaceSyncRelationshipWriteActionId, readMachineAgentSignInOperationV1, WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS, type WorkflowActionIdV1 } from '../../../../actions/actionIds.js';
 import { AGENT_SIGN_IN_PREPARE_RPC_METHOD, AGENT_SIGN_IN_STATUS_RPC_METHOD } from '../../../../daemon/agentSignInMethods.js';
 import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD } from '../../../../rpc/methods.js';
+import { CONNECTED_SERVICES_CATALOG_LIST_ACTION_ID_V1 } from '../../../../connect/configurationActionIdsV1.js';
 import { isApprovalDecisionReviewerBindingV1 } from '../../../../actions/externalActionBindingAuthority.js';
 import { isProviderActionIdV1, resolveProviderActionRpcEffectV1 } from '../../../../providers/providerActionIdsV1.js';
 
@@ -1178,6 +1179,13 @@ export function resolveMachineRpcExternalActionEffectV1(method: string,
       || signIn !== 'start' && method === RPC_METHODS.DAEMON_TERMINAL_LIST
       || signIn !== 'cancel' && (method === AGENT_SIGN_IN_PREPARE_RPC_METHOD || method === RPC_METHODS.DAEMON_TERMINAL_ENSURE);
     return phase && binding.target.kind === 'machine' && binding.target.machineId === binding.machineId
+      && (!selectedTarget || selectedTarget.machineId === binding.machineId && selectedTarget.installationId === binding.installationId)
+      ? binding.actionId : null;
+  }
+  if (method === CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD && binding?.actionId === CONNECTED_SERVICES_CATALOG_LIST_ACTION_ID_V1) {
+    // The catalog Action emits describeService on the custodian-only control carrier.
+    return binding.accountId === binding.custodianAccountId
+      && binding.target.kind === 'machine' && binding.target.machineId === binding.machineId
       && (!selectedTarget || selectedTarget.machineId === binding.machineId && selectedTarget.installationId === binding.installationId)
       ? binding.actionId : null;
   }

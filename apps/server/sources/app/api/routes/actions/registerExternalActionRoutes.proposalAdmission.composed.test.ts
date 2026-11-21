@@ -58,6 +58,8 @@ import { DEFAULT_PUBLIC_PROFILE_POLICY_V1 } from '@happier-dev/protocol/account/
 import { DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1, DEFAULT_PUBLIC_PROFILE_LAYOUT_V1 } from '@happier-dev/protocol/account/publicProfilePublication';
 import type { Socket } from 'socket.io';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { buildConnectedAccountListDescriptionCommand, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
+import { CONNECTED_SERVICES_CATALOG_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/connect/configurationActionIdsV1';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { rpcHandler } from '@/app/api/socket/rpcHandler';
@@ -619,6 +621,58 @@ describe('installed Session proposal admission at the Home mint route', () => {
             const reply = vi.fn();
             await getSocketHandler(socket, SOCKET_RPC_EVENTS.CALL)({ method, requestId, params, externalActionExecution: execution }, reply);
             expect(reply).toHaveBeenCalledWith({ ok: true, result: { nativeTypedRequestAccepted: true } });
+            expect(emitWithAck).toHaveBeenCalledTimes(1);
+        } finally { publishedSession.mockRestore(); await app.close(); }
+    });
+
+    it('forwards the signed Machine catalog description from a live owner Session', async () => {
+        const actionId = CONNECTED_SERVICES_CATALOG_LIST_ACTION_ID_V1;
+        const service = { pluginId: 'happier.agent.muse', localId: 'muse-account' };
+        const { app, mint } = createApp('account');
+        const readSession = storage.db.session.findUnique;
+        const publishedSession = vi.spyOn(storage.db.session, 'findUnique').mockImplementation(async args => {
+            const row = await readSession(args);
+            return row ? { ...row, active: true, archivedAt: null, lastActiveAt: new Date(2),
+                publisherGeneration: 1n, publisherGenerationLastActiveAt: new Date(2) } : null;
+        });
+        try {
+            const minted = await mint(actionId, proposal(actionId, { machineId: 'machine', service }));
+            expect(minted.statusCode, minted.body).toBe(200);
+            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
+            expect(authorization.binding.sessionActionOrigin?.caller.sessionId).toBe('session');
+            const compatibility = evaluateAccountStoredContentCompatibility({ status: 'valid',
+                declaration: CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION });
+            const method = `machine:${CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD}`;
+            const response = { status: 'described' };
+            const emitWithAck = vi.fn(async () => response);
+            const target = { id: 'catalog-receiver', connected: true,
+                data: { clientType: 'machine-scoped', machineId: 'machine', verifiedMachineInstallationId: 'installation',
+                    accountStoredContentCompatibility: compatibility }, timeout: () => ({ emitWithAck }) };
+            const publisher = { data: { sessionPublisherAuthority: { v: 1, accountId: 'account', sessionId: 'session',
+                machineId: 'machine', committedFenceMs: 2, publisherGeneration: '1' } } };
+            const io = createSocketRoomDiscoveryHarness(async room => room === 'session:session:account' ? [publisher]
+                : room === target.id || room === `rpc:account:${method}` ? [target] : []);
+            const socket = Object.assign(createAuthenticatedFakeSocket({ data: { clientType: 'machine-scoped', machineId: 'machine',
+                verifiedMachineInstallationId: 'installation', authAuthority: 'account_automation', authTokenKind: 'account',
+                authTokenEpoch: 1, accountStoredContentCompatibility: compatibility } }),
+            { handshake: { auth: { token: await auth.createToken('account', undefined, { kind: 'account', authority: 'present_user' }) } } });
+            rpcHandler('account', socket as unknown as Socket, { io, sessionPublisherPresence: createSessionPublisherPresence() });
+            const requestId = 'exact-machine-catalog';
+            const params = { v: 1, machineId: 'machine', command: buildConnectedAccountListDescriptionCommand(service) };
+            const execution = { v: 1 as const, authorization, effectActionId: actionId,
+                target: authorization.binding.target, installationId: 'installation',
+                machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: authorization.token,
+                    effectActionId: actionId, target: authorization.binding.target, installationId: 'installation',
+                    method, requestId, params, privateKey: installation.secretKey }) };
+            const call = getSocketHandler(socket, SOCKET_RPC_EVENTS.CALL);
+            const reply = vi.fn();
+            await call({ method, requestId, params, externalActionExecution: execution }, reply);
+            expect(reply).toHaveBeenCalledWith({ ok: true, result: response });
+
+            const tamperedReply = vi.fn();
+            await call({ method, requestId, params: { ...params, command: { operation: 'listPendingAttempts', service } },
+                externalActionExecution: execution }, tamperedReply);
+            expect(tamperedReply).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
             expect(emitWithAck).toHaveBeenCalledTimes(1);
         } finally { publishedSession.mockRestore(); await app.close(); }
     });
