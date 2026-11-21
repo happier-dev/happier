@@ -112,11 +112,16 @@ export const FieldTextInput = React.memo(React.forwardRef<React.ElementRef<typeo
         const colors = resolveFieldBoxColors(theme, invalid ? 'invalid' : 'idle', presentation);
         // A document grows with its text instead of scrolling inside a fixed box.
         const grows = (presentation === 'document' || props.growWithText === true) && props.multiline === true;
-        const [contentHeight, setContentHeight] = React.useState<number | null>(null);
+        // The web reports the taller of the text and the box, so a height is only true under the minimum it was measured
+        // with. When the minimum changes (Describe's tall field settles to a note) it is dropped and measured again: the
+        // handler's new identity makes the input re-measure itself once the box has its new size.
+        const minLines = props.minLines;
+        const [measured, setMeasured] = React.useState<Readonly<{ height: number; minLines: number | undefined }> | null>(null);
         const handleContentSizeChange = React.useCallback((event: Readonly<{ nativeEvent: Readonly<{ contentSize?: Readonly<{ height?: number }> }> }>) => {
             const height = event.nativeEvent.contentSize?.height;
-            if (typeof height === 'number' && Number.isFinite(height) && height > 0) setContentHeight(Math.ceil(height));
-        }, []);
+            if (typeof height === 'number' && Number.isFinite(height) && height > 0) setMeasured({ height: Math.ceil(height), minLines });
+        }, [minLines]);
+        const contentHeight = measured !== null && measured.minLines === minLines ? measured.height : null;
         return (
             <HappierFieldTextBox
                 themeSurface={{ surface: 'input', part: 'root', state: surfaceState }}

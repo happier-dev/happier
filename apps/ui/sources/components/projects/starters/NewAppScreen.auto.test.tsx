@@ -252,6 +252,13 @@ it('Describe your app replaces the Ask-an-agent door: one run on a ready Machine
       'A small landing page for my bakery',
     );
     expect(calls('projects.starters.create')).toHaveLength(0);
+    // Back returns to the cards it came from, kept: the answer is the person's, and a new one costs another run
+    // (DESIGN-ACCEPT-2 K-BACK).
+    await screen.pressByTestIdAsync('newApp.back');
+    await waitForHomeGovernance(() =>
+      expect(screen.findByTestId('newApp.auto.recommendations')).toBeTruthy(),
+    );
+    expect(calls('execution.run.start')).toHaveLength(1);
     await screen.unmount();
   } finally {
     await standardCleanup();

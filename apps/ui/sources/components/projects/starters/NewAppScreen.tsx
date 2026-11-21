@@ -554,7 +554,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       if (deployFrame) deployFrame.back();
       else leaveDeploy();
     }
-    else if (step === 'describe') setStep('start');
+    // A setup chosen from the suggestions goes back to those cards, kept; a starter picked by hand, to the source step.
+    else if (step === 'describe') setStep(appliedSuggestion ? 'auto' : 'start');
     else if (step === 'auto') {
       auto.stop();
       setStep('start');
@@ -565,7 +566,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     )
       setStep('describe');
     else close();
-  }, [addingMachine, auto.stop, close, create?.kind, deployFrame, leaveDeploy, step]);
+  }, [addingMachine, appliedSuggestion, auto.stop, close, create?.kind, deployFrame, leaveDeploy, step]);
   const pageBack = usePageBackControl('newApp.back', back);
 
   const deployStep = step === 'deploy' ? deployFrame?.step ?? 'where' : null;
@@ -660,7 +661,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     step === 'auto'
       ? phone ? null
         : autoKind === 'working' ? t('newApp.auto.workingNote')
-        : autoKind === 'recommendations' ? auto.suggestedBy
+        // Adjusting reads as a draft (jdF-autoAdjust): its footer says nothing is made yet, beside three actions.
+        : autoKind === 'recommendations' ? adjustingNow ? t('newApp.deploy.nothingCreated') : auto.suggestedBy
         : autoKind === 'noAgent' ? t('newApp.auto.descriptionKept')
         : null :
     deployStep === 'where' && deployFrame?.waitingFor ? deployFrame.waitingFor :

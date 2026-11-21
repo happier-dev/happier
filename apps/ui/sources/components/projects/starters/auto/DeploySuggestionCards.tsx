@@ -180,6 +180,9 @@ export function DeploySuggestionCardTiles(
       testIdPrefix={props.testIdPrefix}
       maximumColumns={1}
       subtitleLines={0}
+      // The facts stand under the title on the card's own edge, as the Where cards' do (jdF-autoRecs); a card has no
+      // glyph, so no icon column is held for it.
+      descriptionPlacement="below"
       accessibilityLabel={t('newApp.auto.recommendationsTitle')}
       value={props.value}
       onChange={(id) => {

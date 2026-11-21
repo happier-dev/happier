@@ -96,4 +96,18 @@ describe('FieldTextInput', () => {
         expect(await heightAfterResize(true)).toBe(96);
         expect(await heightAfterResize(false)).toBeUndefined();
     });
+    it('drops a height measured under a taller minimum when the minimum shrinks (Describe fills its sheet, then settles)', async () => {
+        const { FieldTextInput } = await import('./FieldTextInput');
+        const { flattenTestStyle } = await import('@/dev/testkit');
+        const { act } = await import('react-test-renderer');
+        const field = (minLines: number) => <FieldTextInput testID="field" value="Two short lines" onChangeText={() => {}}
+            accessibilityLabel="Description" multiline minLines={minLines} growWithText />;
+        const screen = await renderScreen(field(26));
+        // The web reports the taller of the text and the box, so a tall minimum comes back as the measured height.
+        await act(async () => { screen.findByTestId('field')!.props.onContentSizeChange?.({ nativeEvent: { contentSize: { height: 520 } } }); });
+        expect(flattenTestStyle(screen.findByTestId('field')!.props.style).height).toBe(520);
+        await screen.update(field(4));
+        expect(flattenTestStyle(screen.findByTestId('field')!.props.style).height).toBeUndefined();
+        await screen.unmount();
+    });
 });

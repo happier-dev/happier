@@ -89,10 +89,8 @@ export function useNewAppAutoSuggestions(
   // Stop is a request: the step stays on the Run until its target confirms the stop, and a refusal stays on screen.
   const stop = React.useCallback(() => {
     const controller = abort.current;
-    if (!controller) {
-      setPhase((current) => (current.kind === 'describe' ? current : { kind: 'describe' }));
-      return;
-    }
+    // Nothing is running: a settled answer stays for when the person comes back to it (DESIGN-ACCEPT-2 K-BACK).
+    if (!controller) return;
     setPhase((current) => (current.kind === 'working' ? { ...current, stop: 'stopping' } : current));
     if (!controller.signal.aborted) {
       controller.abort();
@@ -111,7 +109,8 @@ export function useNewAppAutoSuggestions(
       setPhase((current) => (current.kind === 'working' ? { ...current, stop: { refused: result.errorCode } } : current));
     });
   }, []);
-  // Leaving the step or closing the dialog stops the run (request_response, ephemeral).
+  // Leaving the step or closing the dialog stops a run still going (request_response, ephemeral); its answer, once
+  // settled, is kept.
   React.useEffect(() => {
     if (!params.active) stop();
   }, [params.active, stop]);
