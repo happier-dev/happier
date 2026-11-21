@@ -311,7 +311,7 @@ export const NewSessionDraftsSectionView = React.memo(function NewSessionDraftsS
     React.useLayoutEffect(() => {
         deletionPropsRef.current = props;
     }, [props]);
-    const handleDelete = React.useCallback(async (draftId: string) => {
+    const handleDelete = React.useCallback(async (draftId: string, rowScope?: ServerAccountScope) => {
         const current = deletionPropsRef.current;
         const deletedIndex = current.drafts.findIndex((draft) => draft.draftId === draftId);
         const candidateDraftIds = current.drafts
@@ -319,8 +319,8 @@ export const NewSessionDraftsSectionView = React.memo(function NewSessionDraftsS
             .filter((candidate) => candidate.draftId !== draftId)
             .sort((left, right) => left.distance - right.distance || right.index - left.index)
             .map((candidate) => candidate.draftId);
-        const deleted = current.rowScope
-            ? await current.onDelete(draftId, current.rowScope)
+        const deleted = rowScope
+            ? await current.onDelete(draftId, rowScope)
             : await current.onDelete(draftId);
         if (deleted) setPendingFocusRestore({ deletedDraftId: draftId, candidateDraftIds });
         return deleted;
@@ -515,13 +515,14 @@ const ServerScopedNewSessionDraftsSection = React.memo(function ServerScopedNewS
         }));
     }, [activeRequest, props.scope]);
     const handleDelete = React.useCallback(async (draftId: string, scope?: ServerAccountScope) => {
-        if (!scope || scope.serverId !== props.scope.serverId || scope.accountId !== props.scope.accountId) {
-            return false;
-        }
         // The Action owner rechecks launch custody after its configurable review,
         // then the canonical tombstone closes any pending Runner activation.
-        return deleteNewSessionDraft({ execute: action.execute, draftId, isCurrent: action.isCurrent });
-    }, [action.execute, action.isCurrent, props.scope]);
+        return deleteNewSessionDraft({
+            execute: scope?.serverId === props.scope.serverId && scope.accountId === props.scope.accountId
+                ? action.execute : null,
+            draftId,
+        });
+    }, [action.execute, props.scope]);
 
     return (
         <NewSessionDraftsSectionView

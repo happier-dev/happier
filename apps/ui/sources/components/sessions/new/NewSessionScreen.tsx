@@ -405,10 +405,11 @@ function NewSessionScreenReady(props: NewSessionScreenProps & Readonly<{
         return focusNewSessionComposerWhenPresented(draftIdentity.draftId);
     }, [draftIdentity.draftId]);
     const deleteDraft = React.useCallback(async () => {
-        if (!draftScope || launchInCustody) return;
-        const deleted = await deleteNewSessionDraft({ execute: draftAction.execute, draftId: draftIdentity.draftId,
-            isCurrent: draftAction.isCurrent });
-        if (!deleted) return;
+        const deleted = await deleteNewSessionDraft({
+            execute: draftAction.execute,
+            draftId: draftIdentity.draftId,
+        });
+        if (!deleted || !draftScope || !draftAction.isCurrent()) return;
         clearOrdinaryNewSessionDraftIdExact(draftScope, draftIdentity.draftId);
         if (committedDraftIdRef.current === draftIdentity.draftId) {
             openDraft(resolveOrdinaryEntry({ forceFresh: true }));
@@ -418,7 +419,6 @@ function NewSessionScreenReady(props: NewSessionScreenProps & Readonly<{
         draftAction.isCurrent,
         draftIdentity.draftId,
         draftScope,
-        launchInCustody,
         openDraft,
         resolveOrdinaryEntry,
     ]);

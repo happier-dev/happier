@@ -21,32 +21,32 @@ function tell(message: string, failure?: unknown): void {
 
 /**
  * The one way a surface deletes a New Session draft: the `session.draft.delete` Action, then its outcome.
- * Resolves `true` when the draft is gone. When it is not, the person is told why, once (JOURNEY-OPUS-83 D13:
- * a refused or unanswered Delete left the text and its row with no word). A declined confirmation, or a
- * surface that is no longer current, stays quiet.
+ * Resolves `true` when the draft is gone. Action refusals are presented even
+ * when the initiating view retires. An explicit decline settles in the review.
  */
 export async function deleteNewSessionDraft(
   params: Readonly<{
-    execute: DeleteExecute;
+    execute: DeleteExecute | null;
     draftId: string;
-    isCurrent?: () => boolean;
   }>,
 ): Promise<boolean> {
-  const isCurrent = params.isCurrent ?? (() => true);
   const fallback = t('errors.operationFailed');
   let outcome: ActionExecuteResult;
   try {
-    outcome = await params.execute('session.draft.delete', {
-      draftId: params.draftId,
-    });
+    outcome = params.execute
+      ? await params.execute('session.draft.delete', { draftId: params.draftId })
+      : { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
   } catch (error) {
-    if (isCurrent()) tell(resolveActionExecutionErrorMessage(error, fallback), error);
+    tell(resolveActionExecutionErrorMessage(error, fallback), error);
     return false;
   }
-  if (!isCurrent()) return false;
   if (!outcome.ok) {
-    if (!isActionApprovalDeclinedErrorCode(outcome.errorCode))
-      tell(resolveActionExecutionFailureMessage(outcome, fallback) ?? fallback, outcome);
+    if (!isActionApprovalDeclinedErrorCode(outcome.errorCode)) {
+      const message = outcome.errorCode === 'action_account_scope_changed'
+        ? t('errors.tryAgain')
+        : resolveActionExecutionFailureMessage(outcome, fallback) ?? fallback;
+      tell(message, outcome);
+    }
     return false;
   }
   const parsed = AppShellActionOutputSchemas['session.draft.delete'].safeParse(

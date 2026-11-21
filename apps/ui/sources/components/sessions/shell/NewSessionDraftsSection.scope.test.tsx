@@ -226,6 +226,24 @@ it('keeps the inactive-Home waiting row when its authoritative delete is rejecte
     } finally { await fixture.dispose(); }
 });
 
+it('refuses a delete addressed to a different Home and leaves both drafts in place', async () => {
+    const fixture = await createScopeFixture(); fixture.add('waiting');
+    const { Modal } = await import('@/modal');
+    const alert = vi.spyOn(Modal, 'alert').mockClear();
+    try {
+        const screen = await fixture.mount();
+        await vi.waitFor(() => expect(screen.findByTestId(rowId(waitingDraftId))).not.toBeNull());
+        await act(async () => {
+            const section = sectionForOtherHome(screen, fixture.otherHome.id);
+            expect(await section.props.onDelete(waitingDraftId, fixture.account.scope)).toBe(false);
+        });
+        expect(alert).toHaveBeenCalledTimes(1);
+        expect(draftMutations(fixture)).toEqual([]);
+        expect(screen.findByTestId(rowId(waitingDraftId))).not.toBeNull();
+        expect(screen.findByTestId(rowId(activeDraftId))).not.toBeNull();
+    } finally { alert.mockRestore(); await fixture.dispose(); }
+});
+
 it('never falls back to the active repository when an inactive Home endpoint is unavailable', async () => {
     const fixture = await createScopeFixture(); fixture.add('waiting');
     try {
@@ -259,18 +277,21 @@ it('publishes and removes nothing after the inactive-Home section retires', asyn
     } finally { gate.resolve(); await fixture.dispose(); }
 });
 
-it('does not remove a waiting row when the section retires before delete responds', async () => {
+it('reports the retirement of an exact draft delete pressed before its section retires', async () => {
     const fixture = await createScopeFixture(); fixture.add('waiting');
     const gate = createDeferred<void>(); fixture.holdDelete(gate.promise);
+    const { Modal } = await import('@/modal');
+    const alert = vi.spyOn(Modal, 'alert').mockClear();
     try {
         const screen = await fixture.mount();
         await vi.waitFor(() => expect(screen.findByTestId(rowId(waitingDraftId))).not.toBeNull());
-        const deletion: Promise<boolean> = sectionForOtherHome(screen, fixture.otherHome.id).props.onDelete(waitingDraftId, fixture.otherScope);
+        const press = screen.findByTestId(`session-draft-delete:new-session:${waitingDraftId}`)!.props.onPress;
+        await act(async () => { press(); });
         await vi.waitFor(() => expect(draftMutations(fixture)).toHaveLength(1));
         await screen.unmount(); gate.resolve();
-        expect(await deletion).toBe(false);
+        await vi.waitFor(() => expect(alert).toHaveBeenCalledTimes(1));
         expect(getSessionDraftSnapshot(fixture.otherScope, { kind: 'newSession', draftId: waitingDraftId })).not.toBeNull();
-    } finally { gate.resolve(); await fixture.dispose(); }
+    } finally { alert.mockRestore(); gate.resolve(); await fixture.dispose(); }
 });
 
 it('renders nothing until a focused Home Account scope exists', async () => {
