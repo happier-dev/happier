@@ -2987,6 +2987,55 @@ describe('SessionView (direct sessions)', () => {
     expect(screen.findByTestId('session-usageLimit-recovery-consumeResetCredit')).toBeNull();
   });
 
+  it('does not show the default connected login\'s quota for a session bound to its native login', async () => {
+    featureEnabledState['connectedServices.quotas'] = true;
+    storageState.profile = {
+      connectedServicesV2: [{
+        serviceId: 'openai-codex',
+        profiles: [{ profileId: 'work', status: 'connected', kind: 'oauth' }],
+      }],
+    };
+    storageState.sessions.s1 = {
+      ...storageState.sessions.s1,
+      metadata: {
+        ...storageState.sessions.s1.metadata,
+        connectedServices: { bindingsByServiceId: { 'openai-codex': { source: 'native' } } },
+      },
+    };
+    quotaSnapshotsState.current = {
+      'openai-codex/work': buildOpenAiCodexWorkQuotaSnapshot({ fetchedAt: 2_000, used: 82 }),
+    };
+
+    const screen = await renderSessionViewAndSettle();
+
+    expect(quotaSnapshotsState.requestedProfiles).toEqual([]);
+    expect(findAgentInput(screen).props.providerUsageGauge ?? null).toBeNull();
+  });
+
+  it('applies the default connected login\'s pinned meters and name when the session has no binding', async () => {
+    featureEnabledState['connectedServices.quotas'] = true;
+    storageState.profile = {
+      connectedServicesV2: [{
+        serviceId: 'openai-codex',
+        profiles: [{ profileId: 'work', status: 'connected', kind: 'oauth' }],
+      }],
+    };
+    const snapshot = buildOpenAiCodexWorkQuotaSnapshot({ fetchedAt: 2_000, used: 82 });
+    quotaSnapshotsState.current = {
+      'openai-codex/work': { ...snapshot, meters: [
+        ...snapshot.meters,
+        { ...snapshot.meters[0]!, meterId: 'daily', label: 'Daily', windowDurationMs: 86_400_000, used: 95 },
+      ] },
+    };
+    settingByKeyState.current.connectedServicesQuotaPinnedMeterIdsByKey = { 'openai-codex/work': ['daily'] };
+
+    const screen = await renderSessionViewAndSettle();
+
+    const gauge = findAgentInput(screen).props.providerUsageGauge;
+    expect(gauge.usageRings.map((ring: { meterId: string }) => ring.meterId)).toContain('daily');
+    expect(gauge.activeAccountDisplayLabel).not.toBeNull();
+  });
+
   it('combines global windows with the active connected account favorites', async () => {
     featureEnabledState['connectedServices.quotas'] = true;
     installConnectedServiceWorkProfileRecoveryCreditSession();

@@ -4020,30 +4020,40 @@ function SessionViewLoaded({
     const providerAccountUsageRecordIds = React.useMemo(
         () => readProviderAccountUsageRecordIdsFromMetadata(session.metadata), [session.metadata],
     );
+    // A session bound to its native login never shows the default connected login's quota.
+    const sessionBoundToNativeLogin = React.useMemo(() => {
+        const bindings = readConnectedServicesBindingsFromMetadata(session.metadata, liveComposerState.agentId);
+        return (getAgentCore(liveComposerState.agentId).connectedServices?.usageServiceIds ?? [])
+            .some((serviceId) => bindings[serviceId]?.source === 'native');
+    }, [session.metadata, liveComposerState.agentId]);
     const usageRequests = React.useMemo(() => [{
         providerId: liveComposerState.agentId,
         sessionId,
         profileRef: connectedServiceQuotaProfileRef,
         metadataRecordIds: providerAccountUsageRecordIds,
-        nativeAccount: usageLimitRecovery?.selectedAuth?.kind === 'native',
+        nativeAccount: usageLimitRecovery?.selectedAuth?.kind === 'native' || sessionBoundToNativeLogin,
         sessionCheckNowSupported: usageLimitRecoveryCheckNowSupported,
         recoveryCredits: usageLimitRecoveryCredits,
     }], [sessionId, liveComposerState.agentId, connectedServiceQuotaProfileRef, providerAccountUsageRecordIds,
-        usageLimitRecovery?.selectedAuth?.kind, usageLimitRecoveryCheckNowSupported, usageLimitRecoveryCredits]);
+        usageLimitRecovery?.selectedAuth?.kind, sessionBoundToNativeLogin, usageLimitRecoveryCheckNowSupported,
+        usageLimitRecoveryCredits]);
     const [usageSource] = useProviderUsageSources({ requests: usageRequests,
         // A retained but hidden session surface keeps its last result and does no live polling.
         connectedServices: accountProfile?.connectedServicesV2 ?? [], fetchEnabled: surfaceFocused });
+    // The profile whose usage is shown: the session's binding, or the default connected login the
+    // owner selected for it. Profile-dependent gauge controls follow this one.
+    const usageProfileRef = usageSource.profileRef;
     const connectedServiceQuotaProfileKey = usageSource.profileKey;
     const connectedServiceQuotaDisplaySnapshot = usageSource.quotaDisplaySnapshot;
     const connectedServiceQuotaActiveAccountLabel = React.useMemo(() => {
-        if (!connectedServiceQuotaProfileRef) return connectedServiceQuotaDisplaySnapshot?.accountLabel ?? null;
+        if (!usageProfileRef) return connectedServiceQuotaDisplaySnapshot?.accountLabel ?? null;
         return resolveConnectedServiceProfileLabel({
             labelsByKey: settings.connectedServicesProfileLabelByKey,
-            serviceId: connectedServiceQuotaProfileRef.serviceId,
-            profileId: connectedServiceQuotaProfileRef.profileId,
-        }) ?? connectedServiceQuotaDisplaySnapshot?.accountLabel ?? connectedServiceQuotaProfileRef.profileId;
+            serviceId: usageProfileRef.serviceId,
+            profileId: usageProfileRef.profileId,
+        }) ?? connectedServiceQuotaDisplaySnapshot?.accountLabel ?? usageProfileRef.profileId;
     }, [
-        connectedServiceQuotaProfileRef,
+        usageProfileRef,
         connectedServiceQuotaDisplaySnapshot?.accountLabel,
         settings.connectedServicesProfileLabelByKey,
     ]);
@@ -4059,8 +4069,8 @@ function SessionViewLoaded({
             windowMode: sessionProviderUsageGaugeWindowMode,
             windowModes: sessionProviderUsageGaugeWindowModesSetting,
             numberWindowMode: sessionProviderUsageGaugeNumberWindowMode,
-            additionalMeterIds: connectedServiceQuotaProfileRef
-                && gaugeSource.snapshot.serviceId === connectedServiceQuotaProfileRef.serviceId
+            additionalMeterIds: usageProfileRef
+                && gaugeSource.snapshot.serviceId === usageProfileRef.serviceId
                 ? pinnedQuotaMeterIdsByKey[connectedServiceProfileKey(gaugeSource.snapshot)] ?? []
                 : [],
             quotaLimitSelection: connectedServiceQuotaLimitSelection,
@@ -4070,8 +4080,8 @@ function SessionViewLoaded({
             // the composer's own provider, whatever service keys it.
             providerDisplayName: providerUsageDisplaySnapshotSource?.kind === 'connected_service_quota_view'
                 && gaugeSource.sourceKind !== 'native_runtime_evidence'
-                && connectedServiceQuotaProfileRef
-                && gaugeSource.snapshot.serviceId === connectedServiceQuotaProfileRef.serviceId
+                && usageProfileRef
+                && gaugeSource.snapshot.serviceId === usageProfileRef.serviceId
                 ? resolveConnectedServiceProviderDisplayName(gaugeSource.snapshot.serviceId)
                 : t(getAgentCore(liveComposerState.agentId).displayNameKey),
             activeAccountDisplayLabel: providerUsageDisplaySnapshotSource?.kind === 'connected_service_quota_view'
@@ -4085,7 +4095,7 @@ function SessionViewLoaded({
         connectedServiceQuotaDisplaySnapshot,
         providerUsageDisplaySnapshotSource?.kind,
         providerUsageGaugeSource,
-        connectedServiceQuotaProfileRef,
+        usageProfileRef,
         pinnedQuotaMeterIdsByKey,
         connectedServiceQuotaLimitSelection,
         sessionProviderUsageGaugeWindowModesSetting,
@@ -4096,7 +4106,7 @@ function SessionViewLoaded({
     const providerUsageGaugeConnectedServiceProfileRef =
         providerUsageGaugeSource
         && isConnectedServiceBoundProviderUsageDisplaySource(providerUsageDisplaySnapshotSource)
-            ? connectedServiceQuotaProfileRef
+            ? usageProfileRef
             : null;
     const [providerUsageRecoveryCreditPending, setProviderUsageRecoveryCreditPending] = React.useState(false);
     const handleProviderUsageRecoveryCreditPress = React.useCallback(async () => {

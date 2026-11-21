@@ -153,7 +153,8 @@ vi.mock('@/components/sessions/actions/SessionHeaderActionMenu', () => ({
 vi.mock('@/components/sessions/terminal/openAttachedSessionTerminal', () => ({
   useOpenAttachedSessionTerminal: () => attachedTerminalState,
 }));
-vi.mock('@/components/sessions/agentInput/hooks/useSessionConnectedServicesAuthSwitch', () => ({
+vi.mock('@/components/sessions/agentInput/hooks/useSessionConnectedServicesAuthSwitch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/components/sessions/agentInput/hooks/useSessionConnectedServicesAuthSwitch')>()),
   useSessionConnectedServicesAuthSwitch: (props: unknown) => {
     sessionConnectedServicesAuthSwitchSpy(props);
     return { connectedServicesAuthChip: null, statusBadges: [] };
