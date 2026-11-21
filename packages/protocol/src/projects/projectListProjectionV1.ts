@@ -2,7 +2,36 @@ import type { ProjectAccountOrganizationV1, ProjectAccountRowKeyV1 } from './pro
 import type { QualifiedProjectKeyV1, WorkspaceRefV1 } from '../workspaces/workspaceRefV1.js';
 import { projectWorkspaceRefV1, workspaceAddressFromRefV2 } from '../workspaces/workspaceRefResolutionV1.js';
 import { resolveWorkspaceSyncExecutionMachineIdV1 } from '../workspaces/workspaceSyncTopology.js';
-import { QualifiedProjectKeyV1Schema } from '../workspaces/workspaceRefV1.js';
+import { isManagedWorkspaceRefV2, QualifiedProjectKeyV1Schema, WorkspaceAddressV2Schema, WorkspaceRefV2MachineWriteSchema } from '../workspaces/workspaceRefV1.js';
+import { ProjectAccountWorkspaceRefKeyV1Schema } from './workspaceRefKeyV1.js';
+import { ScmWorktreeSchema } from '../scm/workingSnapshot.js';
+import { lazyZodSchema } from '../lazyZodSchema.js';
+import { z } from '../zodRuntimePolicy.js';
+
+export const ProjectsListOutputV1Schema = lazyZodSchema(() => {
+  const workspace = WorkspaceRefV2MachineWriteSchema.shape;
+  const worktree = ScmWorktreeSchema.shape;
+  return z.strictObject({
+    items: z.array(z.strictObject({
+      ...z.pick(WorkspaceRefV2MachineWriteSchema, { serverId: true, rootPath: true, label: true }).shape,
+      projectKey: z.pick(ProjectAccountWorkspaceRefKeyV1Schema, { serverId: true, id: true }),
+      project: QualifiedProjectKeyV1Schema,
+      workspaceAddress: WorkspaceAddressV2Schema,
+      machineId: z.optional(workspace.machineId),
+      sourceId: z.optional(workspace.id),
+      hidden: z.boolean(),
+      pinned: z.boolean(),
+      listed: z.boolean(),
+      reachable: z.nullable(z.boolean()),
+      forge: workspace.repositoryIdentity,
+      worktrees: z.array(z.strictObject({ path: worktree.path, branch: worktree.branch,
+        isCurrent: worktree.isCurrent, isMain: z.nonoptional(worktree.isMain) })),
+    })),
+    truncated: z.boolean(),
+    coverage: z.enum(['complete', 'partial', 'unknown']),
+  });
+});
+export type ProjectsListOutputV1 = z.infer<typeof ProjectsListOutputV1Schema>;
 
 export type ProjectListOrganizationV1 = Readonly<{
   key: Extract<ProjectAccountRowKeyV1, { kind: 'project-organization' }>;
@@ -84,7 +113,10 @@ export function projectProjectListV1(input: Readonly<{
     .filter(group => input.listing !== 'listed' || group.listed || group.hidden).flatMap(group => group.items
     .filter(ref => input.machineId === undefined || ref.machineId === input.machineId)
     .map(ref => ({ ref, project: group.projectKey, projectKey: { serverId: ref.serverId, id: ref.id },
-      workspaceAddress: workspaceAddressFromRefV2(ref), hidden: group.hidden, pinned: group.pinned, listed: group.listed })));
+      workspaceAddress: workspaceAddressFromRefV2(ref), hidden: group.hidden, pinned: group.pinned, listed: group.listed,
+      serverId: ref.serverId, rootPath: ref.rootPath,
+      ...(!isManagedWorkspaceRefV2(ref) ? { machineId: ref.machineId } : {}),
+      ...(ref.label ? { label: ref.label } : {}) })));
   const items = input.limit === undefined ? leaves : leaves.slice(0, input.limit);
   const truncated = items.length < leaves.length || (input.coverage ?? 'complete') !== 'complete';
   return { projectGroups, hiddenProjectGroups, listedProjectGroups, unlistedProjectGroups, items, truncated,

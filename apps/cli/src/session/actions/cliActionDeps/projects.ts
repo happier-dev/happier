@@ -403,9 +403,9 @@ export function createCliProjectActionDeps(
         await admitted.assertCurrent();
         const items = projected.items.map(({ ref, ...item }) => {
           const machine = machines?.find(candidate => candidate.id === ref.machineId);
-          return { ...item, serverId: ref.serverId, machineId: ref.machineId, rootPath: ref.rootPath,
-            ...(ref.label ? { label: ref.label } : {}),
-            reachable: machines === null ? null : Boolean(machine?.active && machine.revokedAt === null && machine.replacedByMachineId === null),
+          return { ...item,
+            reachable: item.machineId === undefined || machines === null
+              ? null : Boolean(machine?.active && machine.revokedAt === null && machine.replacedByMachineId === null),
             ...(ref.repositoryIdentity ? { forge: ref.repositoryIdentity } : {}), worktrees: [] };
         });
         return { items, truncated: projected.truncated, coverage: projected.coverage };

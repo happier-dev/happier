@@ -1,6 +1,7 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { OpenProjectInputV1Schema, OpenProjectResultV1Schema } from '../../projects/openProjectV1.js';
+import { ProjectsListOutputV1Schema } from '../../projects/projectListProjectionV1.js';
 import { ProjectContextUpdateInputV1Schema, ProjectContextUpdateOutputV1Schema } from '../../projects/projectContextV1.js';
 import { ProjectVisibilitySetInputV1Schema, ProjectVisibilitySetOutputV1Schema } from '../../projects/projectVisibilityV1.js';
 import { ProjectOrganizationUpdateInputV1Schema, ProjectOrganizationUpdateOutputV1Schema } from '../../projects/projectOrganizationV1.js';
@@ -244,7 +245,7 @@ function createProjectContextActionSpecs() {
         { path: 'includeUnlisted', title: 'Include folders from your sessions', widget: 'boolean' },
       ],
     },
-    outputSchema: StrictJsonValueSchema,
+    outputSchema: ProjectsListOutputV1Schema,
     inputSchema: ProjectsListInputSchema,
     cli: { acceptsServerId: true, commands: [{ path: ['projects', 'list'], visibility: 'canonical' }] },
   } satisfies PreNormalizedActionSpec,

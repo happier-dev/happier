@@ -203,6 +203,34 @@ function accountBoundary(options?: Readonly<{
 }
 
 describe('projects.list through the real CLI Account composition', () => {
+  it('returns a listed managed checkout through Action output validation', async () => {
+    const { rows } = accountBoundary();
+    const key = { kind: 'workspace-ref', serverId: 'home-a', id: 'coder-checkout' } as const;
+    const controller = { machineId: 'machine-a', installationId: 'coder-installation' };
+    const rootPath = '/home/coder/qa-rws-repo';
+    rows.push(ProjectAccountRowV1Schema.parse({ key, revision: 0, content: { t: 'plain', v: {
+      key, value: { v: 2, kind: 'managed', id: key.id, serverId: key.serverId, managedId: 'coder-guest',
+        controller, rootPath, createdAtMs: 1, source: { sourceId: 'coder-source', revision: 1 } },
+    } } }));
+
+    const listed = await executor().execute('projects.list', {}, { surface: 'cli', bypassApprovals: true });
+
+    expect(listed.ok, listed.ok ? undefined : listed.errorCode).toBe(true);
+    expect(listed).toMatchObject({ ok: true, result: { items: expect.arrayContaining([
+      expect.objectContaining({ workspaceAddress: {
+        v: 2, kind: 'managed', workspaceId: key.id, serverId: key.serverId, managedId: 'coder-guest', controller, rootPath,
+      }, reachable: null }),
+      expect.objectContaining({ workspaceAddress: {
+        workspaceId: 'visible', serverId: key.serverId, machineId: 'machine-a', rootPath: '/work/visible',
+      }, machineId: 'machine-a' }),
+    ]) } });
+    if (listed.ok) {
+      const managed = (listed.result as { items: { workspaceAddress: { workspaceId: string } }[] }).items
+        .find(item => item.workspaceAddress.workspaceId === key.id);
+      expect(managed).not.toHaveProperty('machineId');
+    }
+  });
+
   it('includes Session-only Projects only when includeUnlisted is admitted', async () => {
     const { rows } = accountBoundary();
     const key = { kind: 'workspace-ref' as const, serverId: 'home-a', id: 'session-only' };

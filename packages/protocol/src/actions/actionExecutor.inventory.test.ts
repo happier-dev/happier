@@ -73,7 +73,7 @@ function createDeps(): ActionExecutorDeps {
     sessionSpawnNew: vi.fn(async () => ({})),
 
     pathsListRecent: vi.fn(async () => ({ items: [] })),
-    projectsList: vi.fn(async () => ({ items: [] })),
+    projectsList: vi.fn(async () => ({ items: [], truncated: false, coverage: 'complete' })),
     machinesList: vi.fn(async () => ({ items: [] })),
     serversList: vi.fn(async () => ({ items: [] })),
     reviewEnginesList: vi.fn(async () => ({ items: [] })),

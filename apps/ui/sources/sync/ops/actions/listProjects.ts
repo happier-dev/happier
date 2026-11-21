@@ -1,6 +1,8 @@
 import { readProjectRepositoryIdentityV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
 import { projectProjectListV1 } from '@happier-dev/protocol/workspaces';
-import type { ProjectKeyV1, QualifiedProjectKeyV1, WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { isManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { resolveWorkspaceSyncExecutionMachineIdV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
+import type { ProjectsListOutputV1 } from '@happier-dev/protocol/projects/projectListProjectionV1';
 
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
@@ -41,44 +43,8 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
  * exact when it is set.
  */
 
-export type ProjectsListResult = Readonly<{
-    items: readonly ProjectsListItem[];
-    /**
-     * Whether a caller-supplied `limit` cut the answer short.
-     *
-     * There is no cap of this projection's own. The registry is
-     * the opened Account row census — state this client already holds
-     * resident and already renders elsewhere
-     * (`components/projects/ProjectsListView.tsx`) — so walking it fetches
-     * nothing and a row ceiling here would protect no measured resource while
-     * silently making a partial answer look complete. Only an explicit `limit`
-     * truncates a complete census, and incomplete/unavailable coverage also
-     * reports truncation so callers cannot infer exactness from retained rows.
-     */
-    truncated: boolean;
-    coverage: 'complete' | 'partial' | 'unknown';
-}>;
-
-export type ProjectsListItem = Readonly<{
-    sourceId?: string;
-    projectKey: ProjectKeyV1;
-    project: QualifiedProjectKeyV1;
-    workspaceAddress: WorkspaceAddressV1;
-    hidden: boolean;
-    pinned: boolean;
-    serverId: string;
-    machineId: string;
-    rootPath: string;
-    label?: string;
-    reachable: boolean;
-    forge?: Readonly<{ kind: string; deployment: string; repository: string }>;
-    worktrees: readonly Readonly<{
-        path: string;
-        branch: string | null;
-        isMain: boolean;
-        isCurrent: boolean;
-    }>[];
-}>;
+export type ProjectsListResult = ProjectsListOutputV1;
+type ProjectsListItem = ProjectsListOutputV1['items'][number];
 
 
 function worktreesOf(snapshot: ScmWorkingSnapshot | null): ProjectsListItem['worktrees'] {
@@ -153,14 +119,13 @@ export async function listProjectsForActions(params: Readonly<{
         workspaceRefs: rows?.workspaceRefs ?? [], organizations: rows?.organizations,
         coverage: rows?.status === 'ready' ? rows.coverage : 'unknown', normalizeServerId: resolveServerProfileScopeIdForIdentifier });
     for (const { ref, ...item } of projected.items) {
-        const scope = { serverId: ref.serverId, machineId: ref.machineId, rootPath: ref.rootPath };
-        const snapshot = readSnapshot ? readSnapshot(scope) : null;
+        const managed = isManagedWorkspaceRefV2(ref);
+        const scope = { serverId: ref.serverId, machineId: resolveWorkspaceSyncExecutionMachineIdV1(ref), rootPath: ref.rootPath };
+        const snapshot = !managed && readSnapshot ? readSnapshot(scope) : null;
         const forge = readProjectRepositoryIdentityV1({ checkout: ref, snapshot });
         items.push({
             ...item,
-            ...scope,
             ...(ref.source ? { sourceId: ref.source.sourceId } : {}),
-            ...(ref.label ? { label: ref.label } : {}),
             reachable: reachabilityOf(state, scope, activeServerId, rows?.scope ?? null),
             ...(forge ? { forge } : {}),
             worktrees: worktreesOf(snapshot),
