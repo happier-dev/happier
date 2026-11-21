@@ -729,7 +729,7 @@ describe('AE.P02.F8-shared-consent', () => {
     let leafApprovalId: string | undefined;
     await waitFor(async () => {
       const result = await actor.execute('workflow.run.invocations.list', { runId: staleRun.runId,
-        lifecycles: ['needs_attention'], includeContent: true });
+        lifecycles: ['waiting_for_approval'], includeContent: true });
       expect(result.ok, JSON.stringify(result)).toBe(true);
       if (!result.ok) throw new Error(result.errorCode);
       const held = WorkflowInvocationListResultV1Schema.parse(result.result).invocationDetails?.find(detail =>
