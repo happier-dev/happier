@@ -18,11 +18,73 @@ import { tryWorkspaceBuildResources } from './workspace_build_admission.mjs';
 import { createWorkspaceBundleLockPriorityScope } from '../../../../../packages/cli-common/workspaceBundleLock.mjs';
 import { DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../../packages/cli-common/fileChangeObserver.mjs';
 import { admitWorkerDiskBudget } from '../dev_targets/worker_disk_budget.mjs';
-import { HEAVYWEIGHT_COMMAND_RESOURCES } from '../dev_targets/command_resources.mjs';
+import { HEAVYWEIGHT_COMMAND_RESOURCES, resolveAdmissionCpuCost, resolveColdAdmissionCpuCost } from '../dev_targets/command_resources.mjs';
 import { createLoadSentinel } from '../../perf/load-sentinel.mjs';
 import { postBoardEntry } from '../../../../../scripts/board/postBoardEntry.mjs';
 
 const linux = { skip: process.platform !== 'linux' };
+
+test('admission catalog has a finite cold worker bound for every class', () => {
+  for (const [className, spec] of Object.entries(HEAVYWEIGHT_COMMAND_RESOURCES)) {
+    assert.notEqual(spec.cpuCores, 'host', className);
+    assert.ok(Number.isSafeInteger(resolveColdAdmissionCpuCost(className)), className);
+    assert.ok(resolveColdAdmissionCpuCost(className) > 0, className);
+  }
+  assert.ok(Number.isSafeInteger(resolveAdmissionCpuCost('unclassified')));
+});
+
+test('all admission classes deliver the same worker limit they reserve and size exact CPU history', linux, async t => {
+  const gib = 1024 * 1024;
+  const { root, broker } = await fixture(t, { cpuCores: 128, readCpuPressure: () => 0,
+    readMemory: () => ({ availableMemoryKiB: 100 * gib, totalMemoryKiB: 100 * gib }) });
+  const entry = 'node exact-worker-budget-fixture.mjs';
+  const key = JSON.stringify(['cpu-millicores/validation', '.', entry, []]);
+  await writeFile(join(root, 'identity-kernel-peaks.json'), JSON.stringify({ [key]: [1200] }));
+  for (const className of Object.keys(HEAVYWEIGHT_COMMAND_RESOURCES)) {
+    for (const [cmd, expected] of className === 'validation'
+      ? [[entry, 2], ['node new-worker-budget-fixture.mjs', resolveColdAdmissionCpuCost(className)]]
+      : [[entry, resolveColdAdmissionCpuCost(className)]]) {
+      const result = await runAdmittedTask({ root, className, entry: cmd,
+        component: '.', floorKiB: HEAVYWEIGHT_COMMAND_RESOURCES[className].memoryKiB,
+        env: { GOMAXPROCS: '100', HAPPIER_VITEST_MAX_WORKERS: '100', VITEST_MIN_FORKS: '100' },
+        readJobPeakKiB: () => null, repoDir: root, cacheBaseDir: root }, env => {
+        assert.equal(broker.status().reservedCpuCores, expected, className + ': ' + cmd);
+        assert.equal(env.GOMAXPROCS, String(expected));
+        assert.equal(env.HAPPIER_VITEST_GOVERNOR_MAX_WORKERS, String(expected));
+        assert.equal(env.HAPPIER_VITEST_MAX_WORKERS, String(expected));
+        assert.equal(env.VITEST_MIN_FORKS, String(expected));
+        assert.equal(env.npm_config_child_concurrency, String(expected));
+        return 0;
+      });
+      assert.equal(result, 0);
+      await requestAdmissionSample(root);
+    }
+  }
+});
+
+test('a head past its class learned duration stops focused backfill until it can start', { ...linux, timeout: 6000 }, async t => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const clock = captureRecoveryClock(t);
+  const { root } = await fixture(t, { cpuCores: 12, readCpuPressure: () => 0 });
+  const className = 'validation';
+  const history = JSON.stringify([className, '.', 'node prior-validation.mjs', []]);
+  await writeFile(join(root, 'identity-durations.json'), JSON.stringify({ [history]: [500, 1000] }));
+  const blocker = await (await acquire(root, 70, t, { className: 'native-source-test' })).admit();
+  const head = await acquire(root, 80, t, { className, arrivedAt: now });
+  now += 1000;
+  const early = await (await acquire(root, 1, t, { className: 'focused-validation', arrivedAt: now })).admit();
+  await early.release();
+  now += 1;
+  const late = await acquire(root, 1, t, { className: 'focused-validation', arrivedAt: now });
+  await clock.tick();
+  const blocked = await requestAdmissionSample(root);
+  assert.equal(blocked.waitingCount, 2, 'the smaller job fits but must wait behind the late head');
+  assert.equal(blocked.activeCount, 1);
+  await blocker.release();
+  await head.admit();
+  await late.admit();
+});
 
 test('status flags each admitted slot once only after twice its recorded class p99 and never releases it', linux, async t => {
   let now = Date.now();
@@ -398,12 +460,12 @@ test('an admitted command reports its run time, excluding its queue wait, once f
 test('CPU admission grants reach the real payload worker controls', linux, async t => {
   const { root } = await fixture(t, { cpuCores: 2 });
   const resultPath = join(root, 'worker-controls.json');
-  for (const env of [{}, { GOMAXPROCS: '', HAPPIER_VITEST_GOVERNOR_MAX_WORKERS: '' }]) {
+  for (const [index, env] of [{}, { GOMAXPROCS: '', HAPPIER_VITEST_GOVERNOR_MAX_WORKERS: '' }].entries()) {
     const status = await runAdmissionCommand({ root, className: 'native-source-test', floorKiB: 1,
       // KiB-unit fixture: the runner's real cgroup peak must not size the repeat.
       readJobPeakKiB: () => null,
       machine: 'fixture', repoDir: root, cacheBaseDir: root, env, command: process.execPath,
-      args: ['--input-type=module', '-e',
+      component: '.', entry: `node worker-budget-fixture-${index}.mjs`, args: ['--input-type=module', '-e',
         'import{writeFileSync}from"node:fs";writeFileSync(process.argv[1],JSON.stringify({go:process.env.GOMAXPROCS,vitest:process.env.HAPPIER_VITEST_GOVERNOR_MAX_WORKERS}))',
         resultPath] });
     assert.equal(status, 0);
@@ -440,22 +502,23 @@ test('fixed CPU capacity queues work without observing memory until a holder rel
 });
 
 test('CPU capacity refusal is observable and dynamic export workers fit both resources', linux, async t => {
-  const { root, broker } = await fixture(t, { cpuCores: 2 });
-  const oversized = await acquire(root, 1, t, { requestedCpuCores: 3 });
+  const gib = 1024 * 1024;
+  const exportFloor = 9 * gib;
+  const { root, broker } = await fixture(t, { cpuCores: 2,
+    readMemory: () => ({ availableMemoryKiB: exportFloor, totalMemoryKiB: exportFloor }) });
+  const oversized = await acquire(root, 1, t, { cpuCost: 3, className: 'native-source-test' });
   assert.equal((await oversized.next()).reason, 'HSTACK_CPU_CAPACITY');
-  const client = await acquire(root, 90, t, { commandClass: 'source-web-export', floorOptions: [
-    { floorKiB: 90, workers: 3 }, { floorKiB: 80, workers: 2 }, { floorKiB: 60, workers: 1 },
-  ] });
+  const client = await acquire(root, 32 * gib, t, { className: 'source-web-export' });
   const held = await client.admit();
   assert.equal(held.admitted.workers, 2);
   assert.equal(held.admitted.cpuCores, 2);
-  assert.equal(broker.status().reservedMemoryKiB, 80);
+  assert.equal(broker.status().reservedMemoryKiB, exportFloor);
   assert.equal(broker.status().reservedCpuCores, 2);
 });
 
 test('broker succession recovers CPU reservations from live slot sockets', linux, async t => {
   const { root, broker, sampleResources } = await fixture(t, { cpuCores: 2 });
-  const first = await acquire(root, 1, t, { requestedCpuCores: 2 });
+  const first = await acquire(root, 1, t, { cpuCost: 2 });
   const held = await first.admit();
   await broker.close();
   let capacityReads = 0;
@@ -507,12 +570,12 @@ test('tsrs compilation retains its memory floor and charges its observed CPU cla
 test('compilation grants reach parallel and explicit single-threaded payloads', linux, async t => {
   const { root } = await fixture(t, { cpuCores: 48 });
   const resultPath = join(root, 'compiler-core-grant');
-  for (const [compilerArgs, cores] of [
-    [[], '6'], [['--singleThreaded'], '2'], [['--singleThreaded', 'false'], '6'],
+  for (const [project, compilerArgs, cores] of [
+    ['parallel', [], '6'], ['serial', ['--singleThreaded'], '2'], ['explicit-parallel', ['--singleThreaded', 'false'], '6'],
   ]) {
     const status = await runAdmissionCommand({ root, className: 'compilation', floorKiB: 1,
       readJobPeakKiB: () => null, machine: 'fixture', repoDir: root, cacheBaseDir: root, env: {},
-      authoredArgs: ['node', 'scripts/workspaces/runTypeScriptCli.mjs', ...compilerArgs],
+      authoredArgs: ['node', 'scripts/workspaces/runTypeScriptCli.mjs', ...compilerArgs], projects: [project],
       command: process.execPath, args: ['-e',
         'require("node:fs").writeFileSync(process.argv[1], process.env.GOMAXPROCS)', resultPath] });
     assert.equal(status, 0);
@@ -539,7 +602,7 @@ test('memory-fitting CPU-heavy waiters admit up to cores minus runnable pressure
   const { root, broker } = await fixture(t, { cpuCores: 12, readCpuPressure: () => pressure });
   const waiters = [];
   for (let index = 0; index < 9; index++) {
-    waiters.push(await acquire(root, 1, t, { className: 'package-dist', requestedCpuCores: 4 }));
+    waiters.push(await acquire(root, 1, t, { className: 'package-dist', cpuCost: 4 }));
   }
   const snapshot = await requestAdmissionSample(root);
   assert.equal(snapshot.activeCount, 2);
@@ -550,11 +613,11 @@ test('memory-fitting CPU-heavy waiters admit up to cores minus runnable pressure
   for (const waiter of waiters.slice(0, 2)) {
     assert.equal((await waiter.admit()).admitted.cpuCores, 4);
   }
-  const check = await request(root, { kind: 'check', floorKiB: 1, className: 'package-dist', requestedCpuCores: 4, cpuCost: 'host' });
+  const check = await request(root, { kind: 'check', floorKiB: 1, className: 'package-dist', cpuCost: 4 });
   assert.equal((await check.next()).reason, 'HSTACK_CPU_BUSY');
   check.socket.destroy();
   pressure = 0;
-  const afterPressureDrop = await request(root, { kind: 'check', floorKiB: 1, className: 'package-dist', requestedCpuCores: 4, cpuCost: 'host' });
+  const afterPressureDrop = await request(root, { kind: 'check', floorKiB: 1, className: 'package-dist', cpuCost: 4 });
   assert.equal((await afterPressureDrop.next()).kind, 'admitted');
   afterPressureDrop.socket.destroy();
   await clock.tick();
@@ -570,8 +633,8 @@ test('an idle host starts only its memory-fitting head under outside CPU pressur
     readCpuPressure: () => 12,
     readMemory: () => ({ availableMemoryKiB, totalMemoryKiB: 100 }),
   });
-  const head = await acquire(root, 40, t, { className: 'package-dist', requestedCpuCores: 4 });
-  const second = await acquire(root, 10, t, { className: 'package-dist', requestedCpuCores: 4 });
+  const head = await acquire(root, 40, t, { className: 'package-dist', cpuCost: 4 });
+  const second = await acquire(root, 10, t, { className: 'package-dist', cpuCost: 4 });
   const memoryBlocked = await requestAdmissionSample(root);
   assert.equal(memoryBlocked.activeCount, 0, 'the smaller second request must not get the idle exception');
   assert.equal(memoryBlocked.waitingCount, 2);
@@ -631,6 +694,12 @@ test('an aged head can use the sole CPU-pressure exception on a busy host across
   assert.equal(blockedByReservations.activeCount, 2, 'a smaller job must not backfill while the aged head fits memory');
   assert.equal(blockedByReservations.waitingCount, 2);
 
+  const focused = await acquire(root, 1, t, { className: 'focused-validation', noWait: true });
+  const withBackfill = await requestAdmissionSample(root);
+  assert.equal(withBackfill.activeCount, 3, 'a focused run may use the unpledged core the aged head cannot use');
+  assert.equal(withBackfill.reservedCpuCores, 6);
+  await (await focused.admit()).release();
+
   pressure = 12;
   await releasing.release();
   const offered = await requestAdmissionSample(root);
@@ -673,10 +742,10 @@ test('admitted scope runnable threads leave remaining cores available', linux, a
   t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
 
   const { root } = await fixture(t, { cpuCores: 12, readCpuPressure: () => hostPressure });
-  await (await acquire(root, 1, t, { requestedCpuCores: 4 })).admit();
-  await (await acquire(root, 1, t, { requestedCpuCores: 2 })).admit();
+  await (await acquire(root, 1, t, { cpuCost: 4 })).admit();
+  await (await acquire(root, 1, t, { cpuCost: 2 })).admit();
   hostPressure = 6;
-  const next = await acquire(root, 1, t, { requestedCpuCores: 6 });
+  const next = await acquire(root, 1, t, { cpuCost: 6 });
   const snapshot = await requestAdmissionSample(root);
   assert.equal(snapshot.activeCount, 3, 'the holder’s own runnable threads must not block the remaining six cores');
   assert.equal(snapshot.cpuPressureCores, 0);
@@ -684,11 +753,42 @@ test('admitted scope runnable threads leave remaining cores available', linux, a
   await held.release();
 
   hostPressure = 8;
-  const check = await request(root, { kind: 'check', floorKiB: 1, requestedCpuCores: 6 });
+  const check = await request(root, { kind: 'check', floorKiB: 1, cpuCost: 6 });
   const outcome = await check.next();
   check.socket.destroy();
   assert.equal(outcome.cpuPressureCores, 2, 'shared scope members count only once and outside pressure remains charged');
   assert.equal(outcome.reason, 'HSTACK_CPU_BUSY');
+});
+
+test('each compilation class passes its cold or exact learned CPU bound to the payload', linux, async t => {
+  const memoryKiB = 64 * 1024 * 1024;
+  const { root } = await fixture(t, { cpuCores: 48,
+    readMemory: () => ({ availableMemoryKiB: memoryKiB, totalMemoryKiB: memoryKiB }) });
+  const classes = [
+    ['compilation', 6], ['compilation-ui', 6], ['compilation-ui-tsrs', 17],
+    ['compilation-cli', 6], ['compilation-server', 6], ['package-dist', 3],
+    ['gate-package-typecheck', 6], ['gate-declaration-comparison', 6], ['gate-final-recheck', 6],
+  ];
+  const entry = 'node scripts/workspaces/runTypeScriptCli.mjs';
+  const component = 'apps/cli';
+  const knownProjects = ['packages/protocol'];
+  for (const [className, coldCores] of classes) {
+    const observation = await (await acquire(root, 1, t, { className, component, entry, projects: knownProjects })).admit();
+    await observation.report({ kind: 'slot-completed', status: 0, cpuMilliCores: 1000 });
+    await requestAdmissionSample(root);
+    await observation.release();
+    while ((await requestAdmissionSample(root)).activeCount) await new Promise(resolve => setImmediate(resolve));
+    for (const [projects, cores] of [[['apps/cli'], coldCores], [knownProjects, 2]]) {
+      const result = await runAdmittedTask({ root, className, floorKiB: 1, machine: 'fixture', repoDir: root,
+        component, entry, projects, noWait: true, requestedCpuCores: 'host', env: { GOMAXPROCS: '48' } }, async env => {
+        assert.equal(env.GOMAXPROCS, String(cores), className + ' compiler bound');
+        assert.equal((await requestAdmissionSample(root)).reservedCpuCores, cores, className + ' reservation');
+        return 0;
+      });
+      assert.equal(result, 0);
+      while ((await requestAdmissionSample(root)).activeCount) await new Promise(resolve => setImmediate(resolve));
+    }
+  }
 });
 
 test('cold preparers use their completed class CPU observations', linux, async t => {
@@ -728,7 +828,7 @@ test('commit-gate jobs use cold admission charges and learn under their own clas
         ...(className === 'gate-final-recheck' ? { [key('gate-declaration-comparison')]: [2 * gib] } : {}),
       }));
       assert.equal(resolveAdmissionDiskClass(className), diskClass);
-      assert.equal(resolveAdmissionCpuCost(className, ['--singleThreaded']), diskClass === 'compilation' ? 2 : 'host');
+      assert.equal(resolveAdmissionCpuCost(className, ['--singleThreaded']), diskClass === 'compilation' ? 2 : coldCores);
       const floorKiB = resolveHeavyweightMemoryFloorKiB(className);
       const first = await (await acquire(root, floorKiB, t, identity)).admit();
       assert.equal(first.admitted.floorKiB, coldGiB * gib);
@@ -757,7 +857,7 @@ test('small validation jobs stay concurrent on a large host', { ...linux, timeou
   assert.equal(snapshot.activeCount, 24);
   assert.equal(snapshot.reservedCpuCores, 24 * 3);
   for (const waiter of waiters) assert.equal((await waiter.admit()).admitted.cpuCores, 3);
-  const oneWorker = await acquire(root, 1, t, { className: 'validation', requestedCpuCores: 1 });
+  const oneWorker = await acquire(root, 1, t, { className: 'focused-validation' });
   assert.equal((await oneWorker.admit()).admitted.cpuCores, 1);
 });
 
@@ -1888,12 +1988,12 @@ test('finite Expo exports charge exactly their worker bound alongside nl3 reserv
 
 test('reload preparation fits its esbuild worker grant on an occupied host', linux, async t => {
   const gib = 1024 * 1024;
-  const identity = { className: 'source-reload', component: '.', entry: 'node --input-type=module', projects: [] };
+  const identity = { className: 'source-reload', component: '.', entry: 'node --input-type=module -e', projects: [] };
   const key = className => JSON.stringify([className, identity.component, identity.entry, identity.projects]);
   for (const { name, occupied, inherited, expectedWorkers, memoryPeak, cpuPeak } of [
     { name: 'cold', occupied: 69, inherited: '128', expectedWorkers: 3 },
-    { name: 'learned class', occupied: 69, expectedWorkers: 6, memoryPeak: 10.25 * gib, cpuPeak: 4000 },
-    { name: 'learned class under pressure', occupied: 107, expectedWorkers: 1, memoryPeak: 10.25 * gib, cpuPeak: 4000 },
+    { name: 'learned identity', occupied: 69, expectedWorkers: 6, memoryPeak: 10.25 * gib, cpuPeak: 4000 },
+    { name: 'learned identity under pressure', occupied: 107, expectedWorkers: 1, memoryPeak: 10.25 * gib, cpuPeak: 4000 },
   ]) await t.test(name, async t => {
     const { root } = await fixture(t, { cpuCores: 128, readCpuPressure: () => 20,
       readMemory: () => ({ availableMemoryKiB: 70 * gib, totalMemoryKiB: 200 * gib }) });
@@ -1919,7 +2019,7 @@ test('reload preparation fits its esbuild worker grant on an occupied host', lin
   });
 });
 
-test('an unrecorded web export identity uses the class history for its worker and memory grant', linux, async t => {
+test('an unrecorded web export identity uses cold CPU and its related memory history', linux, async t => {
   const gib = 1024 * 1024;
   const { root, broker } = await fixture(t, { readMemory: () => ({ availableMemoryKiB: 100 * gib, totalMemoryKiB: 100 * gib }) });
   const identity = { className: 'source-web-export', component: '.',
@@ -1931,8 +2031,8 @@ test('an unrecorded web export identity uses the class history for its worker an
   }));
   const held = await (await acquire(root, 32 * gib, t, { ...identity, entry: 'node other-export.mjs' })).admit();
   assert.equal(broker.status().reservedMemoryKiB, 16.5 * gib);
-  assert.equal(held.admitted.workers, 9);
-  assert.equal(held.admitted.cpuCores, 9);
+  assert.equal(held.admitted.workers, 8);
+  assert.equal(held.admitted.cpuCores, 8);
 });
 
 for (const resourceClass of ['focused-validation-ui', 'entry-loads']) {
@@ -2997,7 +3097,7 @@ test('measured package floors fit at capacity and queued work resumes after rele
 
 test('dynamic measured floor options select the most workers at the largest fitting floor', linux, async t => {
   const { root, broker } = await fixture(t);
-  const client = await acquire(root, 120, t, { floorOptions: [{ floorKiB: 120, workers: 4 },
+  const client = await acquire(root, 120, t, { cpuCost: 4, floorOptions: [{ floorKiB: 120, workers: 4 },
     { floorKiB: 90, workers: 2 }, { floorKiB: 90, workers: 3 }, { floorKiB: 60, workers: 1 }] });
   const held = await client.admit();
   assert.equal(held.admitted.floorKiB, 90);

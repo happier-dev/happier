@@ -1,14 +1,15 @@
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { availableParallelism } from 'node:os';
 import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { NATIVE_TYPESCRIPT_PACKAGE_JSON, resolveTypeScriptApiExecutable } from './resolveTypeScriptApiExecutable.mjs';
 import { resolveRemoteCommandPolicy } from '../../apps/stack/scripts/utils/dev_targets/remote_commands.mjs';
-import { isSingleThreadedTypeScript, resolveColdAdmissionCpuCost, resolveTypeScriptAdmissionClass }
+import { resolveTypeScriptAdmissionClass }
   from '../../apps/stack/scripts/utils/dev_targets/command_resources.mjs';
 import { isWorkspaceBuildStartup } from '../../apps/stack/scripts/utils/proc/workspace_build_admission.mjs';
+
+import { isNativeTypeScriptCompile, resolveNativeTypeScriptThreadBudget } from './runAdmittedTypeScript.mjs';
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
@@ -59,27 +60,6 @@ export function requiresTypeScriptAdmission({ env = process.env, platform = proc
     || env.HAPPIER_HSTACK_LOCAL_ADMISSION_REQUIRED === '1' || Boolean(env.HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN));
 }
 
-function rustCompilerThreadLimits(args, env, admissionClass) {
-  const granted = Number(env.GOMAXPROCS);
-  const coldCores = resolveColdAdmissionCpuCost(admissionClass);
-  const cores = Math.min(availableParallelism(), Number.isSafeInteger(granted) && granted > 0
-    ? granted : typeof coldCores === 'number' ? coldCores : availableParallelism());
-  // tsrs runs separate native checkers and a Rayon front-end pool. Bound both,
-  // leaving one core for its coordinator. The pinned compiler uses this Rayon
-  // variable for its own pool, independently of Go's scheduler.
-  const serial = isSingleThreadedTypeScript(args);
-  const limit = serial ? 1 : Math.max(1, Math.floor((cores - 1) / 2));
-  const rayon = Number(env.RAYON_NUM_THREADS);
-  const checkerIndex = args.findLastIndex(arg => /^--checkers(?:=|$)/i.test(arg));
-  const requested = checkerIndex === -1 ? undefined : Number(args[checkerIndex].includes('=')
-    ? args[checkerIndex].split('=')[1] : args[checkerIndex + 1]);
-  return {
-    compilerThreadEnv: { RAYON_NUM_THREADS: String(Number.isSafeInteger(rayon) && rayon > 0 ? Math.min(rayon, limit) : limit) },
-    ...(!serial && (requested === undefined || (Number.isSafeInteger(requested) && requested > limit))
-      ? { compilerThreadArgs: ['--checkers', String(limit)] } : {}),
-  };
-}
-
 export function resolveTypeScriptCliInvocation(params) {
   const processExecPath = params.processExecPath ?? process.execPath;
   const requireResolve = params.requireResolve ?? createRequire(import.meta.url).resolve;
@@ -98,6 +78,7 @@ export function resolveTypeScriptCliInvocation(params) {
   const options = Array.isArray(params.args) && compilerOverride !== 'microsoft' && params.invocationKind !== 'build'
     && (supported || compilerOverride === 'tsrs')
     ? typecheckCompilerOptions(params.args, params.workspaceDir ?? process.cwd()) : undefined;
+  const compiler = options ? 'tsrs' : 'microsoft';
   const packageName = options ? 'tsrs/package.json' : NATIVE_TYPESCRIPT_PACKAGE_JSON;
   const binaryName = options ? 'tsrs' : 'tsc';
   const packageJsonPath = requireResolve(packageName);
@@ -121,7 +102,7 @@ export function resolveTypeScriptCliInvocation(params) {
     ['node', 'scripts/workspaces/runTypeScriptCli.mjs', ...(params.admissionArgs ?? params.args ?? [])],
     { cwd: relative(params.repoRoot ?? REPO_ROOT, params.workspaceDir ?? process.cwd()) || '.',
       repoRoot: params.repoRoot ?? REPO_ROOT },
-  ).heavyClass, options ? 'tsrs' : 'microsoft');
+  ).heavyClass, compiler);
   // Preparation is a phase of this compilation, inside its authenticated
   // admission. Microsoft emission and the consumer never reserve twice.
   const prepare = params.prepareWorkspaceDeclarations && Array.isArray(params.args)
@@ -134,16 +115,26 @@ export function resolveTypeScriptCliInvocation(params) {
   // Match the native local admission owner's ordinary CI exemption. Placed
   // workers, explicit local overrides and admitted descendants retain guards.
   const needsAdmission = requiresTypeScriptAdmission({ env, platform });
-  const threadLimits = options && platform === 'linux' && (needsAdmission || env.HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT)
-    ? rustCompilerThreadLimits(params.args, env, admissionClass) : {};
+  const compile = isNativeTypeScriptCompile(params.args);
+  const threadLimits = compile && !needsAdmission
+    ? resolveNativeTypeScriptThreadBudget({ compiler, admissionClass, args: params.args, env }) : {};
   if (needsAdmission) {
     // Routing markers select transport; only the native admission owner can
     // validate/reuse an admitted ancestor or wait for compilation headroom.
+    // The grant can change while this command waits. Derive native flags on
+    // the acquired side, including when the native client reuses a grant.
+    const identity = compile
+      ? [`--identity-cwd=${relative(params.repoRoot ?? REPO_ROOT, params.workspaceDir ?? process.cwd()) || '.'}`,
+        ...[processExecPath, ...compilerArgs, ...params.args].map(arg => `--identity-arg=${arg}`)]
+      : [];
+    const admittedArgs = compile
+      ? [fileURLToPath(new URL('./runAdmittedTypeScript.mjs', import.meta.url)), compiler, admissionClass, ...compilerArgs]
+      : compilerArgs;
     return {
       command: resolve(REPO_ROOT, 'apps/stack/bin/hstack-exec'),
       argsPrefix: ['--heavyweight-admission', `--class=${admissionClass}`,
         `--machine=${env.HAPPIER_DEV_TARGET_EXECUTION === '1' ? 'worker' : 'local'}`,
-        '--exec-admitted', '--', processExecPath, ...compilerArgs],
+        ...identity, '--exec-admitted', '--', processExecPath, ...admittedArgs],
       compilerPath,
       admissionClass,
       ...apiExecutable,

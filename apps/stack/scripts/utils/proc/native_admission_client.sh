@@ -101,11 +101,6 @@ run_heavyweight_admission() {
   shift 3
   [ "$#" -gt 0 ] || { printf '%s\n' '[preferred-execution] heavyweight admission requires a command' >&2; exit 1; }
   ensure_native_job_cpu_budget || exit 1
-  heavyweight_requested_cpu=$(heavyweight_requested_cpu_cores "$@") || exit 1
-  case "${heavyweight_admission_requested_cpu-0}" in
-    ''|0) ;;
-    *) heavyweight_include_requested_cpu "$heavyweight_admission_requested_cpu" ;;
-  esac
   case "$(uname -s 2>/dev/null || true)" in
     Linux) ;;
     *)
@@ -126,7 +121,7 @@ run_heavyweight_admission() {
   # The client's own dispatch scope makes its payload's kernel peak readable at
   # completion, which sizes this identity's next reservation (native_process_priority.sh).
   exec_in_jobs_scope node "$admission_client" --run "--root=$heavyweight_admission_root" "--class=$heavyweight_admission_class" \
-    "--floor-kib=$heavyweight_floor" "--machine=$heavyweight_admission_machine" "--cpu-cores=$heavyweight_requested_cpu" \
+    "--floor-kib=$heavyweight_floor" "--machine=$heavyweight_admission_machine" \
     "--projects=${heavyweight_admission_projects:-${policy_projectPaths:-${policy_component:-.}}}" \
     "--failure-id=${heavyweight_failure_id-}" "--repo=$repo_root" "--workspace-locks=${heavyweight_workspace_locks:-[]}" "$@"
 }
@@ -134,8 +129,7 @@ run_heavyweight_admission() {
 check_heavyweight_admission() {
   [ "$(uname -s 2>/dev/null || true)" = Linux ] || return 0
   heavyweight_floor=$(heavyweight_memory_floor_kib "$heavyweight_admission_class" "${heavyweight_admission_placement-worker}") || return 1
-  if heavyweight_uses_worker_grant "$heavyweight_admission_class"; then set -- "--class=$heavyweight_admission_class"; else set --; fi
-  node "$admission_client" --check "--root=$heavyweight_admission_root" "--floor-kib=$heavyweight_floor" "$@"
+  node "$admission_client" --check "--root=$heavyweight_admission_root" "--floor-kib=$heavyweight_floor" "--class=$heavyweight_admission_class"
 }
 
 if [ "${1-}" = --heavyweight-admitted-exec ]; then

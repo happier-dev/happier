@@ -1031,20 +1031,7 @@ test('native CPU projection preserves canonical cold and declared demand with ex
   const exportWithoutWorkerCount = spawnSync('/bin/sh', ['-c', [policy, 'heavyweight_cpu_cores source-web-export 128 "" host'].join('\n')], { encoding: 'utf8' });
   assert.equal(exportWithoutWorkerCount.status, 0, exportWithoutWorkerCount.stderr);
   assert.equal(Number(exportWithoutWorkerCount.stdout), resources.COLD_ADMISSION_CPU_CORES['source-web-export']);
-  const neutralEnv = { ...process.env, ...Object.fromEntries(resources.ADMISSION_CPU_WORKER_ENV_NAMES.map(name => [name, ''])) };
-  for (const { args, env } of [
-    { args: [], env: {} },
-    { args: [], env: { GOMAXPROCS: '7' } },
-    { args: ['--maxWorkers=6'], env: {} },
-    { args: ['--maxWorkers'], env: {} },
-    { args: ['--maxWorkers=50%'], env: {} },
-    { args: ['--minWorkers', '4'], env: { VITEST_MAX_THREADS: '3' } },
-  ]) {
-    const inputs = { args, env: { ...neutralEnv, ...env } };
-    const native = spawnSync('/bin/sh', ['-c', [policy, 'heavyweight_requested_cpu_cores "$@"'].join('\n'), 'requested-cpu', ...args], { env: inputs.env, encoding: 'utf8' });
-    assert.equal(native.status, 0, native.stderr);
-    assert.equal(native.stdout, String(resources.resolveRequestedAdmissionCpuCores(inputs)));
-  }
+
 });
 
 test('focused source validation uses its measured shape while compiler and suite demand retain their floor', async t => {

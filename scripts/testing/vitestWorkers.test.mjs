@@ -57,7 +57,7 @@ const configs = [
 test('ordinary source test pools share the bounded default and honor an explicit override', async () => {
   const previous = process.env.HAPPIER_VITEST_MAX_WORKERS;
   const previousUi = process.env.VITEST_UI_MAX_FORKS;
-  const externalKeys = ['HAPPIER_VITEST_GOVERNOR_MAX_WORKERS', 'VITEST_MAX_FORKS', 'VITEST_MIN_FORKS', 'VITEST_MAX_THREADS', 'VITEST_MIN_THREADS'];
+  const externalKeys = ['HAPPIER_ADMISSION_WORKERS', 'HAPPIER_VITEST_GOVERNOR_MAX_WORKERS', 'VITEST_MAX_FORKS', 'VITEST_MIN_FORKS', 'VITEST_MAX_THREADS', 'VITEST_MIN_THREADS'];
   const externalValues = externalKeys.map(key => [key, process.env[key]]);
   for (const key of externalKeys) delete process.env[key];
   delete process.env.VITEST_UI_MAX_FORKS;
@@ -112,11 +112,12 @@ test('worker overrides are explicit and the legacy UI allocation is not clamped'
   assert.equal(resolveVitestWorkers({ env, legacyUiOverride: true }).maxWorkers, 20);
   assert.equal(resolveVitestWorkers({ env: { ...env, HAPPIER_VITEST_MAX_WORKERS: '2' }, legacyUiOverride: true }).maxWorkers, 2);
   assert.equal(resolveVitestWorkers({ env: { ...env, HAPPIER_VITEST_GOVERNOR_MAX_WORKERS: '1' }, legacyUiOverride: true }).maxWorkers, 20);
+  assert.equal(resolveVitestWorkers({ env: { ...env, HAPPIER_ADMISSION_WORKERS: '3' }, legacyUiOverride: true }).maxWorkers, 3);
   assert.equal(resolveVitestWorkers({ env: { HAPPIER_VITEST_GOVERNOR_MAX_WORKERS: 'invalid' } }).maxWorkers, expected);
 });
 
 test('the governor can reduce package workers without widening policy or explicit overrides', async () => {
-  const keys = ['HAPPIER_VITEST_GOVERNOR_MAX_WORKERS', 'HAPPIER_VITEST_MAX_WORKERS', 'VITEST_UI_MAX_FORKS',
+  const keys = ['HAPPIER_ADMISSION_WORKERS', 'HAPPIER_VITEST_GOVERNOR_MAX_WORKERS', 'HAPPIER_VITEST_MAX_WORKERS', 'VITEST_UI_MAX_FORKS',
     'VITEST_MAX_FORKS', 'VITEST_MIN_FORKS', 'VITEST_MAX_THREADS', 'VITEST_MIN_THREADS'];
   const previous = keys.map(key => [key, process.env[key]]);
   try {

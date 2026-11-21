@@ -125,7 +125,9 @@ async function runTscBuild({
     outDir: stagingDistDir,
     env,
   });
-  runChecked(invocation.command, invocation.args, { cwd: packageDir, env, stdio }, runCommandImpl);
+  runChecked(invocation.command, invocation.args, {
+    cwd: packageDir, env: { ...env, ...invocation.compilerThreadEnv }, stdio,
+  }, runCommandImpl);
 }
 
 function resolveDefaultPackageDir() {

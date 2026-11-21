@@ -11,7 +11,7 @@ import { basename, isAbsolute, relative, resolve } from 'node:path';
 import { createFileChangeObserver, DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../../packages/cli-common/fileChangeObserver.mjs';
 import { readProcessJobScopeCpuUsageUsec, readProcessJobScopeWorkingSetKiB } from './admission_memory.mjs';
 import { brokerAddress } from './admission_socket.mjs';
-import { SOURCE_RELOAD_ADMISSION_CLASS, SOURCE_WEB_EXPORT_ADMISSION_CLASS, resolveAdmissionCpuCost, resolveAdmissionDiskClass, resolveRequestedAdmissionCpuCores, usesAdmissionWorkerGrant } from '../dev_targets/command_resources.mjs';
+import { ADMISSION_CPU_WORKER_FLAGS, SOURCE_WEB_EXPORT_ADMISSION_CLASS, resolveAdmissionCpuCost, resolveAdmissionDiskClass } from '../dev_targets/command_resources.mjs';
 
 export const DECLARATION_COMPARISON_STALL_MARKER = 'HAPPIER_DECLARATION_COMPARISON_INCOMPLETE ';
 const execFileAsync = promisify(execFile);
@@ -138,7 +138,7 @@ async function runPayload({ command, args, env, signal }) {
  */
 export async function runAdmittedTask({ root, className, floorKiB, machine,
   locks = [], noWait = false, requireInherited = false, failureId, repoDir = process.cwd(),
-  requestedCpuCores, cpuCost = resolveAdmissionCpuCost(className), projects, component, entry, readJobPeakKiB,
+  cpuCost = resolveAdmissionCpuCost(className), projects, component, entry, readJobPeakKiB,
   treeIds = [], selectedFiles = [], commandArgs = process.argv,
   cacheBaseDir = process.env.HAPPIER_STACK_PM_CACHE_BASE_DIR, env = process.env, signal } = {}, action) {
   if (typeof action !== 'function') throw new TypeError('Admission requires a task callback');
@@ -227,8 +227,6 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
     const request = { kind: 'acquire', className: resolveAdmissionDiskClass(className), resourceClass: className, floorKiB,
       ...(durationClass && Number.isFinite(p99DurationMs) && p99DurationMs > 0 ? { durationClass, p99DurationMs } : {}),
       cpuCost,
-      requestedCpuCores: usesAdmissionWorkerGrant(className) ? 0
-        : requestedCpuCores ?? resolveRequestedAdmissionCpuCores({ env }),
       pid: process.pid, arrivedAt,
       repoDir, cacheBaseDir, noWait, locks, projects, judgment, acceptsDeclarationStall: true,
       ...(typeof entry === 'string' && typeof component === 'string' ? { component, entry } : {}),
@@ -330,22 +328,8 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
               HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT: String(process.pid),
               HAPPIER_HEAVYWEIGHT_ADMISSION_FLOOR_KIB: String(selectedFloorKiB),
               HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED: '0' };
-            if (selectedWorkers !== undefined) {
-              acquiredEnv.GOMAXPROCS = String(selectedWorkers);
-              if (className === SOURCE_WEB_EXPORT_ADMISSION_CLASS) {
-                acquiredEnv.HAPPIER_STACK_EXPO_EXPORT_MAX_WORKERS = String(selectedWorkers);
-              }
-            }
-            if (selectedCpuCores !== undefined) {
-              // The reload's Go compiler uses the admitted CPU budget even
-              // when its caller supplied a host-sized setting.
-              if (!acquiredEnv.GOMAXPROCS || className === SOURCE_RELOAD_ADMISSION_CLASS) {
-                acquiredEnv.GOMAXPROCS = String(selectedCpuCores);
-              }
-              if (!acquiredEnv.HAPPIER_VITEST_GOVERNOR_MAX_WORKERS) {
-                acquiredEnv.HAPPIER_VITEST_GOVERNOR_MAX_WORKERS = String(selectedCpuCores);
-              }
-            }
+            const workers = selectedWorkers ?? selectedCpuCores;
+            if (workers !== undefined) applyWorkerLimit(acquiredEnv, workers, className);
             // Include the terminal scope observation before the lifetime socket
             // closes. The broker combines it with its in-flight observations.
             const report = line => Promise.all([...slotConnections].map(socket =>
@@ -490,6 +474,57 @@ async function admissionJudgment({ repoDir, component, commandArgs, selectedFile
   return { treeIds: checkoutTree ? [checkoutTree] : treeIds, commandDigest };
 }
 
+function applyWorkerLimit(env, workers, className) {
+  const limit = String(workers);
+  env.HAPPIER_ADMISSION_WORKERS = limit;
+  env.GOMAXPROCS = limit; // Go, esbuild, Bun, and the destination TypeScript launcher
+  env.UV_THREADPOOL_SIZE = limit;
+  env.npm_config_child_concurrency = limit;
+  env.HAPPIER_VITEST_GOVERNOR_MAX_WORKERS = limit;
+  for (const name of ['HAPPIER_VITEST_MAX_WORKERS', 'VITEST_UI_MAX_FORKS',
+    'VITEST_MAX_FORKS', 'VITEST_MIN_FORKS', 'VITEST_MAX_THREADS', 'VITEST_MIN_THREADS']) {
+    if (env[name] !== undefined) env[name] = String(boundedWorkerOption(env[name], workers));
+  }
+  if (className === SOURCE_WEB_EXPORT_ADMISSION_CLASS) env.HAPPIER_STACK_EXPO_EXPORT_MAX_WORKERS = limit;
+}
+
+function boundedWorkerOption(value, workers) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? Math.min(parsed, workers) : workers;
+}
+
+function applyWorkerLimitToArgs(command, args, env) {
+  const workers = Number(env.HAPPIER_ADMISSION_WORKERS);
+  if (!Number.isSafeInteger(workers) || workers < 1) return args;
+  const payload = args[0] === '--heavyweight-admitted-exec' && args[1] === '--' ? 2 : -1;
+  const executable = basename(payload === -1 ? command : args[payload] ?? '').replace(/\.(?:cmd|exe)$/, '');
+  const firstArg = payload + 1;
+  const commandArgs = args.slice(firstArg);
+  const isNodeTest = ['node', 'nodejs'].includes(executable) && commandArgs.includes('--test');
+  const isVitest = executable === 'vitest'
+    || (['pnpm', 'yarn', 'npm'].includes(executable) && commandArgs.some(arg => arg === 'vitest' || /^test(?::|$)/.test(arg)))
+    || (['node', 'nodejs'].includes(executable) && commandArgs.some(arg => /(?:^|[/\\])vitest\.mjs$/.test(arg)));
+  if (!isNodeTest && !isVitest) return args;
+
+  const bounded = args.slice(0, firstArg);
+  let explicitNodeConcurrency = false;
+  for (let index = 0; index < commandArgs.length; index += 1) {
+    const arg = commandArgs[index];
+    const [flag, value] = arg.split('=', 2);
+    if (flag === '--test-concurrency' ? !isNodeTest : !isVitest || !ADMISSION_CPU_WORKER_FLAGS.includes(flag)) {
+      bounded.push(arg);
+      continue;
+    }
+    explicitNodeConcurrency ||= flag === '--test-concurrency';
+    if (value !== undefined) bounded.push(`${flag}=${boundedWorkerOption(value, workers)}`);
+    else if (commandArgs[index + 1] && !commandArgs[index + 1].startsWith('-')) {
+      bounded.push(flag, String(boundedWorkerOption(commandArgs[++index], workers)));
+    } else bounded.push(arg);
+  }
+  if (isNodeTest && !explicitNodeConcurrency) bounded.splice(firstArg, 0, `--test-concurrency=${workers}`);
+  return bounded;
+}
+
 export async function runAdmissionCommand({ command, args = [], authoredArgs, validationPreparation, ...options } = {}) {
   let payloadStarted = false;
   let payloadStartedAt;
@@ -497,12 +532,11 @@ export async function runAdmissionCommand({ command, args = [], authoredArgs, va
     const identity = options.entry !== undefined ? {} : admissionCommandIdentity({ repoDir: options.repoDir, command, args });
     const admission = { ...identity, ...options, commandArgs: authoredArgs ?? commandArgv(command, args),
       cpuCost: resolveAdmissionCpuCost(options.className, authoredArgs ?? args),
-      requestedCpuCores: options.requestedCpuCores ?? resolveRequestedAdmissionCpuCores({ env: options.env ?? process.env, args }),
     };
     const launch = (env, signal) => {
       payloadStarted = true;
       payloadStartedAt = Date.now();
-      return runPayload({ command, args, env, signal });
+      return runPayload({ command, args: applyWorkerLimitToArgs(command, args, env), env, signal });
     };
     const nativeCustody = validationPreparation
       ? await import('../dev_targets/native_custody_preparation.mjs')
@@ -605,8 +639,7 @@ export async function runAdmissionClient(argv = process.argv.slice(2)) {
   if (options.some(option => ['--sample', '--queue-snapshot', '--active-count', '--waiting-count', '--unreserved-memory', '--check'].includes(option))) {
     const sample = await requestAdmissionSample(root, options.includes('--check')
       ? { kind: 'check', className: value('class'), floorKiB: Number(value('floor-kib')),
-        cpuCost: resolveAdmissionCpuCost(value('class')),
-        requestedCpuCores: value('cpu-cores') === 'host' ? 'host' : Number(value('cpu-cores') ?? 0) }
+        cpuCost: resolveAdmissionCpuCost(value('class')) }
       // Placement's sample for a routed command: the broker answers the floor it would reserve for this identity.
       : { kind: 'sample', ...(options.includes('--queue-snapshot') ? { includeQueue: true } : {}),
         ...(identity.entry !== undefined && value('class') ? { identity: { ...identity,
@@ -633,8 +666,6 @@ export async function runAdmissionClient(argv = process.argv.slice(2)) {
     floorKiB: Number(value('floor-kib')), machine: value('machine'),
     projects, treeIds: value('judged-trees')?.split(','),
     selectedFiles: options.filter(item => item.startsWith('--judged-file=')).map(item => item.slice('--judged-file='.length)),
-    requestedCpuCores: value('cpu-cores') === undefined ? undefined
-      : value('cpu-cores') === 'host' ? 'host' : Number(value('cpu-cores')),
     repoDir, locks: JSON.parse(value('workspace-locks') ?? '[]'),
     noWait: options.includes('--no-wait'), requireInherited: options.includes('--require-inherited'),
     failureId: value('failure-id'), command: argv[delimiter + 1], args: argv.slice(delimiter + 2),

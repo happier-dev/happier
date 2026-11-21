@@ -58,8 +58,13 @@ export function resolveTypeScriptBuildInvocation({
     tsconfigPath = 'tsconfig.json',
     outDir,
 } = {}) {
+    const compilerArgs = resolveWorkspaceTypeScriptCompilerArgs({
+        compilerArgs: ['-p', tsconfigPath, '--outDir', outDir], env,
+    });
     const invocation = resolveTypeScriptCliInvocation({
         repoRoot,
+        invocationKind: 'build',
+        args: compilerArgs,
         workspaceDir: packageDir,
         processExecPath,
         requireResolve,
@@ -74,9 +79,8 @@ export function resolveTypeScriptBuildInvocation({
 
     return {
         command: invocation.command,
-        args: [...invocation.argsPrefix, ...resolveWorkspaceTypeScriptCompilerArgs({
-            compilerArgs: ['-p', tsconfigPath, '--outDir', outDir], env,
-        })],
+        args: [...invocation.argsPrefix, ...compilerArgs, ...(invocation.compilerThreadArgs ?? [])],
+        ...(invocation.compilerThreadEnv ? { compilerThreadEnv: invocation.compilerThreadEnv } : {}),
     };
 }
 
@@ -88,7 +92,7 @@ async function runTscBuild({ packageDir, stagingDistDir, env }) {
     });
     const result = spawnSync(invocation.command, invocation.args, {
         cwd: packageDir,
-        env,
+        env: { ...env, ...invocation.compilerThreadEnv },
         stdio: 'inherit',
     });
     if (result.error) {

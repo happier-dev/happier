@@ -761,6 +761,7 @@ export async function buildTypeScriptPackageDist({
       const invocation = resolveTypeScriptCliInvocationImpl({
         repoRoot,
         invocationKind: 'build',
+        args: compilerArgs,
         workspaceDir: resolvedPackageDir,
         processExecPath: process.execPath,
         env: stagedBuildEnv,
@@ -769,10 +770,10 @@ export async function buildTypeScriptPackageDist({
       try {
         await runChecked(
           invocation.command,
-          [...(invocation.argsPrefix ?? []), ...compilerArgs],
+          [...(invocation.argsPrefix ?? []), ...compilerArgs, ...(invocation.compilerThreadArgs ?? [])],
           {
             cwd: resolvedPackageDir,
-            env: stagedBuildEnv,
+            env: { ...stagedBuildEnv, ...invocation.compilerThreadEnv },
             stdio,
             ...(invocation.windowsVerbatimArguments
               ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments }

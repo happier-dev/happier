@@ -297,7 +297,6 @@ if [ "${1-}" = --heavyweight-admission ] || [ "${1-}" = --heavyweight-admission-
   heavyweight_admission_root=
   heavyweight_admission_class=validation
   heavyweight_admission_machine=local
-  heavyweight_admission_requested_cpu=0
   heavyweight_no_wait=0
   heavyweight_exec_admitted=0
   heavyweight_require_inherited=0
@@ -310,7 +309,7 @@ if [ "${1-}" = --heavyweight-admission ] || [ "${1-}" = --heavyweight-admission-
       --admission-root=*) heavyweight_admission_root=${1#--admission-root=} ;;
       --class=*) heavyweight_admission_class=${1#--class=} ;;
       --machine=*) heavyweight_admission_machine=${1#--machine=} ;;
-      --cpu-cores=*) heavyweight_admission_requested_cpu=${1#--cpu-cores=} ;;
+      --cpu-cores=*) ;; # Compatibility with an in-flight older launcher.
       --failure-id=*) heavyweight_failure_id=${1#--failure-id=} ;;
       --workspace-locks=*) heavyweight_workspace_locks=${1#--workspace-locks=} ;;
       # The admission identity's project set (newline-separated), e.g. the owner
@@ -511,7 +510,7 @@ run_local() {
   fi
   if [ "$local_focused_test" = 1 ]; then
     # The run keeps the worker grant admission would give its class.
-    local_focused_cpu=$(heavyweight_cpu_cores "$heavyweight_local_class" "$(getconf _NPROCESSORS_ONLN 2>/dev/null || printf 1)" '' "$(heavyweight_requested_cpu_cores "$@")") || exit 1
+    local_focused_cpu=$(heavyweight_cpu_cores "$heavyweight_local_class" "$(getconf _NPROCESSORS_ONLN 2>/dev/null || printf 1)") || exit 1
     if [ -z "${HAPPIER_VITEST_GOVERNOR_MAX_WORKERS-}" ]; then HAPPIER_VITEST_GOVERNOR_MAX_WORKERS=$local_focused_cpu; export HAPPIER_VITEST_GOVERNOR_MAX_WORKERS; fi
     if [ -z "${GOMAXPROCS-}" ]; then GOMAXPROCS=$local_focused_cpu; export GOMAXPROCS; fi
     printf '[preferred-execution] focused test run (class=%s) starts without the admission queue\n' "$heavyweight_local_class" >&2
@@ -1316,8 +1315,6 @@ if [ -n "$heavyweight_placement_class" ]; then
     minimum_memory_capacity_kib=$(heavyweight_memory_floor_kib "$heavyweight_placement_class")
   fi
 fi
-# Explicit worker options are declared demand, resolved by the generated policy.
-heavyweight_requested_cpu=$(eval "${explicit_remote_environment-}"; heavyweight_requested_cpu_cores "$@") || exit 1
 heavyweight_remote_class=$policy_heavyClass
 # The routed command's admission identity (admissionCommandIdentity in
 # admission_client.mjs): its cwd and argv, with the admission script in place of
@@ -2058,7 +2055,7 @@ for result_path in "$probe_tmp"/[0-9]* "$probe_tmp/local"; do
         IFS=' ' read -r candidate_total_cpu candidate_unreserved_cpu candidate_queued_cpu <<EOF
 $candidate_cpu_sample
 EOF
-        candidate_cpu_required=$(heavyweight_cpu_cores "$heavyweight_placement_class" "$candidate_total_cpu" "${heavyweight_placement_workers:-$candidate_total_cpu}" "$heavyweight_requested_cpu") || exit 1
+        candidate_cpu_required=$(heavyweight_cpu_cores "$heavyweight_placement_class" "$candidate_total_cpu" "${heavyweight_placement_workers-}") || exit 1
         [ "$candidate_unreserved_cpu" -ge "$candidate_cpu_required" ] || candidate_cpu_fits=0
         candidate_queue_pressure=$(awk -v memory="$candidate_queue_pressure" -v queued="$candidate_queued_cpu" -v total="$candidate_total_cpu" 'BEGIN {cpu=queued/total; printf "%.9f", (cpu>memory?cpu:memory)}')
       fi
@@ -2526,7 +2523,7 @@ if [ "$heavyweight_admission_required" -eq 1 ] && [ "${policy_selfPublisher-0}" 
   # The same native launcher owns local and target admission. The target's
   # POSIX account home is machine-local rather than target-config-local, so
   # independently routed jobs contend even when their CLI homes differ.
-  heavyweight_admission_prefix=" cd -- $(quote_remote "$remote_repo"); $(quote_remote "$remote_executor_repo/apps/stack/bin/hstack-exec") --heavyweight-admission $(quote_remote "--class=$heavyweight_remote_class") $(quote_remote "--machine=$selected_name") $(quote_remote "--cpu-cores=$heavyweight_requested_cpu") $(quote_remote "--failure-id=$admission_failure_id")$admission_identity_options$remote_validation_preparation_options --"
+  heavyweight_admission_prefix=" cd -- $(quote_remote "$remote_repo"); $(quote_remote "$remote_executor_repo/apps/stack/bin/hstack-exec") --heavyweight-admission $(quote_remote "--class=$heavyweight_remote_class") $(quote_remote "--machine=$selected_name") $(quote_remote "--failure-id=$admission_failure_id")$admission_identity_options$remote_validation_preparation_options --"
   if [ -n "$remote_workspace_lock_argument" ]; then
     heavyweight_admission_prefix="${heavyweight_admission_prefix% --}$remote_workspace_lock_argument --"
   fi

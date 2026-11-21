@@ -4,7 +4,7 @@ import { appendFileSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, 
 import { createConnection, createServer } from 'node:net';
 import { dirname, isAbsolute, join, posix, relative } from 'node:path';
 import { availableParallelism } from 'node:os';
-import { COLD_ADMISSION_CPU_CORES, FOCUSED_TEST_ADMISSION_CLASSES, HEAVYWEIGHT_COMMAND_RESOURCES, SOURCE_RELOAD_ADMISSION_CLASS, SOURCE_WEB_EXPORT_ADMISSION_CLASS, SOURCE_WEB_EXPORT_MEMORY, resolveSourceWebExportMemoryFloorKiB, resolveAdmissionCpuCores, isTypeScriptCompilationClass, resolveColdAdmissionCpuCost, usesAdmissionWorkerGrant } from '../dev_targets/command_resources.mjs';
+import { COLD_ADMISSION_CPU_CORES, FOCUSED_TEST_ADMISSION_CLASSES, HEAVYWEIGHT_COMMAND_RESOURCES, SOURCE_RELOAD_ADMISSION_CLASS, SOURCE_WEB_EXPORT_ADMISSION_CLASS, SOURCE_WEB_EXPORT_MEMORY, resolveSourceWebExportMemoryFloorKiB, resolveColdAdmissionCpuCost, usesElasticAdmissionWorkers } from '../dev_targets/command_resources.mjs';
 import { createInterface } from 'node:readline';
 import { DURATION_WINDOW, nearestRankP99 } from '../dev_targets/execution_provenance.mjs';
 import { pathToFileURL } from 'node:url';
@@ -320,6 +320,7 @@ export function createAdmissionBroker({ root,
   }
   function recordIdentityDuration(key, durationMs) {
     const durations = recordedIdentityDurations();
+    learnedClassMaximums = undefined;
     durations.set(key, [...(durations.get(key) ?? []), durationMs].slice(-DURATION_WINDOW));
     const target = join(root, IDENTITY_DURATIONS_FILENAME);
     writeFileSync(`${target}.tmp`, JSON.stringify(Object.fromEntries(durations)), { mode: 0o600 });
@@ -334,14 +335,12 @@ export function createAdmissionBroker({ root,
     return key === null ? undefined : nearestRank(recordedIdentityDurations().get(key) ?? [], 0.5);
   }
   const roundPeak = peakKiB => Math.ceil(peakKiB / IDENTITY_FLOOR_ROUNDING_KIB) * IDENTITY_FLOOR_ROUNDING_KIB;
-  function recordedIdentityResource(item, cpu = false) {
-    const identity = identityKey(item);
-    const key = cpu ? cpuHistoryKey(identity) : identity;
+  function recordedIdentityPeakKiB(item) {
+    const key = identityKey(item);
     const own = recordedIdentityPeaks().get(key);
     if (own) return nearestRank(own, 0.95);
 
-    const className = item.resourceClass ?? item.className;
-    const resourceClass = cpu ? CPU_HISTORY_PREFIX + className : className;
+    const resourceClass = item.resourceClass ?? item.className;
     const projects = [...(item.projects ?? [])].sort();
     const projectSet = JSON.stringify(projects);
     const supersets = [];
@@ -366,16 +365,15 @@ export function createAdmissionBroker({ root,
     return nearestRank(supersets, 0.5) ?? nearestRank(family, 0.5)
       ?? nearestRank(sameProjects, 0.5) ?? nearestRank(sameClass, 0.5);
   }
-  const recordedIdentityPeakKiB = item => recordedIdentityResource(item);
-  function hostCpuCores(item) {
-    const observed = recordedIdentityResource(item, true);
+  function workerCeiling(item) {
     const className = item.resourceClass ?? item.className;
     const cold = resolveColdAdmissionCpuCost(className);
-    const coldCores = typeof cold === 'number' ? cold : totalCpuCores;
-    const learnedCores = observed === undefined ? coldCores : Math.ceil(observed * 1.5 / 1000);
-    // Existing CPU rows mix serial and parallel compiler modes and measure a
-    // run average. Neither can lower the parallel launch budget.
-    return Math.min(totalCpuCores, isTypeScriptCompilationClass(className) ? Math.max(coldCores, learnedCores) : learnedCores);
+    // A distinct numeric declaration specifies a fixed CPU limit, such as
+    // the two-core single-threaded compiler mode. Older queued clients with
+    // symbolic declarations follow the current broker's class policy.
+    if (Number.isSafeInteger(item.cpuCost) && item.cpuCost !== cold) return item.cpuCost;
+    const observed = nearestRank(recordedIdentityPeaks().get(cpuHistoryKey(identityKey(item))) ?? [], 0.95);
+    return Math.min(totalCpuCores, observed === undefined ? cold : Math.ceil(observed * 1.5 / 1000));
   }
   function requestedColdFloorKiB(item) {
     // Pre-calibration clients retain the old catalog default in their acquire
@@ -395,16 +393,15 @@ export function createAdmissionBroker({ root,
   function sizeWaitingItem(item, peak = recordedIdentityPeakKiB(item)) {
     item.floorKiB = peak === undefined ? requestedColdFloorKiB(item) : roundPeak(peak);
     const resourceClass = item.resourceClass ?? item.className;
-    const workerGrant = usesAdmissionWorkerGrant(resourceClass);
-    if (workerGrant || (item.cpuCost ?? 'host') === 'host') item.hostCpuCores = hostCpuCores(item);
+    const workerGrant = usesElasticAdmissionWorkers(resourceClass);
+    item.workerCeiling = workerCeiling(item);
     const sourceWebExport = resourceClass === SOURCE_WEB_EXPORT_ADMISSION_CLASS;
-    // The destination sizes each offer from its CPU history. The same count
-    // becomes the CPU reservation and the payload's worker limit.
-    const ceiling = sourceWebExport ? Math.min(item.hostCpuCores, SOURCE_WEB_EXPORT_MEMORY.parallelThreads) : item.hostCpuCores;
+    const ceiling = Math.min(totalCpuCores, item.workerCeiling,
+      sourceWebExport ? SOURCE_WEB_EXPORT_MEMORY.parallelThreads : totalCpuCores);
     const options = workerGrant ? Array.from({ length: ceiling }, (_, index) => {
       const workers = ceiling - index;
       return { workers, floorKiB: sourceWebExport ? resolveSourceWebExportMemoryFloorKiB(workers) : item.floorKiB };
-    }) : item.requestedFloorOptions;
+    }) : item.requestedFloorOptions?.map(option => ({ ...option, workers: Math.min(option.workers, ceiling) }));
     if (peak === undefined || !options) {
       item.floorOptions = options;
       return;
@@ -449,7 +446,12 @@ export function createAdmissionBroker({ root,
       || (resourceClass === 'source-bundle' && item.ownPriority === PRODUCER_RANK
         && item.preparesClass === SOURCE_RELOAD_ADMISSION_CLASS);
   };
-  const compareService = now => (left, right) => Number(reload(right)) - Number(reload(left))
+  const pastLearnedDuration = (item, now) => now - item.arrivedAt >
+    (collectLearnedClassMaximums().get(item.resourceClass ?? item.className) ?? Infinity);
+  const compareService = now => (left, right) =>
+    Number(pastLearnedDuration(right, now)) - Number(pastLearnedDuration(left, now))
+    || (pastLearnedDuration(left, now) ? left.arrivedAt - right.arrivedAt || left.arrivalOrder - right.arrivalOrder : 0)
+    || Number(reload(right)) - Number(reload(left))
     || Number(overdue(right, now)) - Number(overdue(left, now))
     || (overdue(left, now) ? 0 : right.headPriority - left.headPriority)
     || left.arrivedAt - right.arrivedAt || left.arrivalOrder - right.arrivalOrder;
@@ -509,16 +511,11 @@ export function createAdmissionBroker({ root,
     }
   }
   function accountedCpuCores(item, workers) {
-    const declaration = item.cpuCost ?? 'host';
-    const cost = declaration === 'host' ? item.hostCpuCores ?? hostCpuCores(item) : declaration;
-    return resolveAdmissionCpuCores(cost, { totalCpuCores, workers, requestedCpuCores: item.requestedCpuCores,
-      className: item.resourceClass ?? item.className });
+    return workers ?? item.workerCeiling;
   }
   function validCpuRequest(request) {
-    return (request.cpuCost === undefined || request.cpuCost === 'host' || request.cpuCost === 'workers'
-      || (Number.isSafeInteger(request.cpuCost) && request.cpuCost > 0))
-      && (request.requestedCpuCores === undefined || request.requestedCpuCores === 'host'
-        || (Number.isSafeInteger(request.requestedCpuCores) && request.requestedCpuCores >= 0));
+    return request.cpuCost === undefined || request.cpuCost === 'host' || request.cpuCost === 'workers'
+      || (Number.isSafeInteger(request.cpuCost) && request.cpuCost > 0);
   }
   function minimumCpuCores(item) {
     return item.floorOptions ? Math.min(...item.floorOptions.map(option => accountedCpuCores(item, option.workers))) : accountedCpuCores(item);
@@ -663,7 +660,9 @@ export function createAdmissionBroker({ root,
       stallObservation.unref();
     }
   }
+  let learnedClassMaximums;
   function collectLearnedClassMaximums() {
+    if (learnedClassMaximums) return learnedClassMaximums;
     const maximums = new Map();
     for (const [key, durations] of recordedIdentityDurations()) {
       if (!durations.length) continue;
@@ -672,6 +671,7 @@ export function createAdmissionBroker({ root,
       if (!Object.hasOwn(HEAVYWEIGHT_COMMAND_RESOURCES, resourceClass)) continue;
       maximums.set(resourceClass, Math.max(maximums.get(resourceClass) ?? 0, ...durations));
     }
+    learnedClassMaximums = maximums;
     return maximums;
   }
   // Use the job's dedicated scope so completed children remain in the cumulative
@@ -1081,10 +1081,13 @@ export function createAdmissionBroker({ root,
       && minimumCpuCores(pressureHead) > availableCpuCores;
     const pledgingHead = waiting.find(item => canReserveHead(item, budget.memoryWithinBoundKiB, now));
     const reservation = headReservation(pledgingHead);
+    const capacityHead = waiting.find(item => !item.slot && !item.blocked && !item.socket.destroyed
+      && (item.floorOptions?.at(-1).floorKiB ?? item.floorKiB) <= sample.totalMemoryKiB
+      && minimumCpuCores(item) <= totalCpuCores);
     // Coordination 2026-11-13 11:22Z: source bundles (including stack reloads)
     // cannot move hosts. Let fitting ones use a relocatable head's pledge first.
     // Reorder only this pass, never the arrival queue or the retained pledge.
-    const hostBoundFirst = new Set(!protectPressureHead && pledgingHead?.className !== 'source-bundle' && !(pledgingHead?.headPriority > 0) && reservation.memoryKiB > 0
+    const hostBoundFirst = new Set(!protectPressureHead && !(capacityHead && pastLearnedDuration(capacityHead, now)) && pledgingHead?.className !== 'source-bundle' && !(pledgingHead?.headPriority > 0) && reservation.memoryKiB > 0
       ? waiting.filter(item => item.className === 'source-bundle' && canReserveHead(item, budget.memoryWithinBoundKiB, now)
         && item.floorKiB <= Math.min(reservation.memoryKiB, availableMemoryKiB)
         && minimumCpuCores(item) <= availableCpuCores) : []);
@@ -1100,8 +1103,12 @@ export function createAdmissionBroker({ root,
       availableCpuCores = Math.max(0, availableCpuCores - reservation.cpuCores);
       if (lendableKiB > 0) headStartAt = projectedHeadStartAt(head, Date.now());
     };
+    let protectingCpuHead = false;
+    let backfillBlockedBy;
+    let foundCapacityWaiter = false;
     for (const item of ordered) {
       if (item.slot || item.blocked) continue;
+      if (protectingCpuHead && !FOCUSED_TEST_ADMISSION_CLASSES.includes(item.resourceClass ?? item.className)) continue;
       if (item.socket.destroyed) { removeWaiting(item); continue; }
       const minimumFloorKiB = item.floorOptions?.at(-1).floorKiB ?? item.floorKiB;
       if (minimumFloorKiB > sample.totalMemoryKiB) {
@@ -1110,6 +1117,10 @@ export function createAdmissionBroker({ root,
       }
       if (minimumCpuCores(item) > totalCpuCores) {
         refuse(item, 'HSTACK_CPU_CAPACITY');
+        continue;
+      }
+      if (backfillBlockedBy) {
+        if (item.noWait) refuse(item, backfillBlockedBy);
         continue;
       }
       const offerCpuCores = item === pressureHead && !hasExemption
@@ -1149,8 +1160,18 @@ export function createAdmissionBroker({ root,
             item.blocked = true;
             item.resourceSnapshot = resources.snapshot;
           } else {
+            if (!foundCapacityWaiter) {
+              foundCapacityWaiter = true;
+              if (pastLearnedDuration(item, now)) {
+                backfillBlockedBy = item.waitingForMemory ? 'HSTACK_MEMORY_BUSY' : 'HSTACK_CPU_BUSY';
+              }
+            }
             if (!head && canReserveHead(item, budget.memoryWithinBoundKiB, now)) assignHead(item);
-            if (item === pressureHead && protectPressureHead && !item.waitingForMemory) break;
+            if (item === pressureHead && protectPressureHead && !item.waitingForMemory) {
+              // Keep releases pledged to the head. Focused work can use the
+              // already-free capacity without taking the pressure exception.
+              protectingCpuHead = true;
+            }
           }
         }
         continue;
@@ -1167,7 +1188,7 @@ export function createAdmissionBroker({ root,
       const pressureExempt = cpuCores > availableCpuCores;
       const address = slotAddress(root, item.pid, floorKiB, slotId, cpuCores, pressureExempt);
       const key = identityKey(item);
-      const slot = { address, pid: item.pid, className: item.className, resourceClass: item.resourceClass, projects: item.projects, floorKiB, cpuCores, workers: fitting?.workers, control: item.socket,
+      const slot = { address, pid: item.pid, className: item.className, resourceClass: item.resourceClass, projects: item.projects, floorKiB, cpuCores, workers: cpuCores, control: item.socket,
         slotId, durationClass: item.durationClass, p99DurationMs: item.p99DurationMs, identityKey: key,
         monitorsDeclaration: item.acceptsDeclarationStall === true && DECLARATION_COMPARISON_ENTRIES.has(admissionScriptClass(item)),
         memoryWarmupMs: recordedMemoryWarmupMs(key), pressureExempt,
@@ -1335,9 +1356,8 @@ export function createAdmissionBroker({ root,
       if (request.kind === 'check') {
         const valid = Number.isSafeInteger(request.floorKiB) && request.floorKiB > 0 && validCpuRequest(request);
         const available = status(readCpuPressureForOffer());
-        const probe = { cpuCost: request.cpuCost, requestedCpuCores: request.requestedCpuCores,
-          className: request.className, floorKiB: request.floorKiB };
-        if (valid && usesAdmissionWorkerGrant(probe.className)) sizeWaitingItem(probe);
+        const probe = { cpuCost: request.cpuCost, className: request.className, floorKiB: request.floorKiB };
+        if (valid) sizeWaitingItem(probe);
         const minimumFloorKiB = probe.floorOptions?.at(-1).floorKiB ?? probe.floorKiB;
         const memoryFits = minimumFloorKiB <= available.unreservedMemoryKiB;
         const cpuCores = valid ? minimumCpuCores(probe) : 0;

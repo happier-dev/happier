@@ -675,21 +675,17 @@ with the existing catch-up interval covering abrupt broker death. The original
 arrival survives a reconnect. Succession loads the broker check for retained
 clients. The reconnect change takes effect when a client process starts.
 
-Focused validation and native source/custody jobs declare one core. Managed
-exports declare their selected workers against both resources. Ordinary validation
-honors an explicit worker count. Compilers and compound publishers start from
-class-specific cold costs in the command-resource catalog. The broker then uses
-host-local identity or related class history when available. Each successful
-attributable payload contributes its cgroup CPU usage delta divided by its run
-duration. The grant includes 50% headroom on learned CPU use, rounded up to a
-whole core, and feeds the Go and Vitest worker controls. Native TypeScript
-compilation reserves at least its parallel launch budget even when host history
-contains smaller serial averages. Explicit `--singleThreaded` compilation reserves
-two cores. Ordinary parallel compilation starts at six, and parallel Rust UI
-compilation starts at seventeen. On admitted Linux runs, the Go scheduler uses
-the grant and Rust's checker and parser pools fit within the compiler budget.
-This controls compiler concurrency without setting an OS quota. Nonnumeric worker
-requests reserve the whole host and can wait for runnable pressure to clear.
+Every admission class declares a finite cold worker count. A destination with
+successful CPU history for the exact command and project selection uses its
+nearest-rank p95 with 50% headroom, rounded up to a whole core and capped by
+destination capacity. Each sample divides the payload's cgroup CPU usage
+delta by its elapsed run time. For a new command, focused validation and native
+source/custody start at one worker, a source-bundle producer starts at two, and
+validation and entry loads start at three. Parallel TypeScript starts at six
+workers, or seventeen for Rust UI. Explicit single-threaded TypeScript uses a
+two-core limit. The admitted count controls TypeScript 7, Go, esbuild, Bun,
+pnpm child concurrency, Node's test runner, and Vitest. Expo export and reload
+preparation can launch with fewer workers when that makes their request fit.
 
 On succession, the broker adopts live slot charges before offering capacity to
 reconnecting waiters. A zero or absent legacy charge uses the largest cold class
@@ -723,8 +719,14 @@ holds (`held`) and resends it when it re-registers with a successor broker, so a
 succession does not restart the head's pledge at zero. No new timer or tunable is used. The head is offered capacity first
 as soon as it fits. Its pledge clears on admission, refusal, withdrawal or
 replacement by another head. Status and read-only admission checks deduct the
-same pledge from unreserved memory and CPU. The sample exposes head age,
+same pledge from unreserved memory and CPU. A focused validation may use
+unpledged capacity behind a CPU-blocked head. The head retains its exclusive
+CPU-pressure exception and earns the usual pledge as slots release. The sample exposes head age,
 `reservationDelayMs` and `reservationActive` alongside `reservationKiB`.
+Waiters that have waited past their class’s longest recorded successful run
+are served first in arrival order. Once such a waiter is blocked at the head,
+the broker stops admitting smaller jobs until the head fits. Classes with no
+recorded duration use the existing head-reservation rules.
 Two kinds of work unblock every lane and are served before ordinary waiters
 (Systemic, 2026-11-15): first the shared runtime producer (`source-bundle` running
 `apps/stack/scripts/build/build_source_runtime.mjs`) and the shared web export every
@@ -740,9 +742,9 @@ focused runs are served in arrival order and later focused runs cannot starve it
 exact-worker package typechecks and the controller declaration comparison as
 `gate-entry-loads`, `gate-package-typecheck` and
 `gate-declaration-comparison`. The serial final replay has a separate
-`gate-final-recheck` class. The broker learns each class and selected-project
-identity in the ordinary queue. A packet that has passed retains its original
-arrival for post-loss requests. The broker uses that arrival
+`gate-final-recheck` class. The broker learns memory by command and project selection.
+A packet that has passed retains its original arrival for post-loss requests.
+The broker uses that arrival
 in its existing queue order. Syntax, eager cycles, manifests and ordinary
 CAS need no admission slot. Each HEAD writer waits for every selected entry
 graph to return a verdict before moving the ref. Every nonempty candidate with

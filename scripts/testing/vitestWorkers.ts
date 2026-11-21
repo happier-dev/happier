@@ -22,12 +22,12 @@ export function resolveVitestWorkers(options: {
     // The execution governor may reduce the package default. Keep this budget
     // separate from Vitest's pool env/argv, which override package policy.
     const governor = positiveInteger(env.HAPPIER_VITEST_GOVERNOR_MAX_WORKERS);
+    const admission = positiveInteger(env.HAPPIER_ADMISSION_WORKERS);
     const defaultWorkers = Math.max(1, Math.min(4, Math.floor(availableParallelism() / 2)));
     return {
         minWorkers: 1,
-        maxWorkers: override
-            ?? legacy
-            ?? Math.min(defaultWorkers, governor ?? defaultWorkers),
+        maxWorkers: Math.min(admission ?? Infinity,
+            override ?? legacy ?? Math.min(defaultWorkers, governor ?? defaultWorkers)),
     };
 }
 

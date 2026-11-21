@@ -42,6 +42,23 @@ const SOURCE_RELOAD_COLD_CPU_CORES = 3; // Completed average max 1.943 cores × 
 const sourceReloadMemory = COMMAND_MEMORY_MEASUREMENTS[SOURCE_RELOAD_ADMISSION_CLASS];
 const ENTRY_LOAD_MEMORY_KIB = 3 * 1024 * 1024;
 const COMPILATION_COLD_MEMORY_KIB = Math.ceil(11_364_896 * 1.5 / (1024 * 1024)) * 1024 * 1024;
+// Cold core charges for commands without exact destination history. Short cgroup
+// cpu.stat deltas (2026-11-19 22:16Z, controller, nl1, nl3, windows2-linux):
+// source-bundle 1.079 and tsrs UI 11.153. Use 1.5×, rounded up. Generic
+// validation keeps 3 cores against the completed 2.946-core maximum.
+// Completed cgroup averages (2026-11-20 01:14Z, nl1/nl3/windows2-linux):
+// dependency-install 1.590 max (7 runs) and source-reload 1.856 max
+// (4 runs), also 1.5×. Package-dist completed p95 was 2.050 cores (111
+// nl3 rows, 1.308 nl1, 1.099 windows2-linux). Three cores covers p95 × 1.4
+// and both the 2.547 completed max and earlier 2.552 short delta.
+// Entry-loads use the validation envelope. Completed local identities replace
+// cold estimates. The broker passes the selected worker count to the command.
+// The 1.38-core compilation observation was single-threaded. Reserve two
+// cores for that explicit mode and six for an ordinary native compile:
+// four default TS7 checkers × 1.5 for front-end and runtime work.
+const SINGLE_THREADED_TYPESCRIPT_CPU_CORES = 2;
+const TYPESCRIPT_CPU_CORES = 6;
+const ENTRY_LOAD_CPU_CORES = 3;
 export const HEAVYWEIGHT_COMMAND_RESOURCES = Object.freeze({
   // Finite daemon Plugin UI preparation uses the destination worker grant.
   // The cold core count also bounds the payload during broker succession.
@@ -52,7 +69,7 @@ export const HEAVYWEIGHT_COMMAND_RESOURCES = Object.freeze({
   // Owner Q1 (2026-10-29): successful measured peak rounded up to whole GiB,
   // with no blanket margin. Three loaded deployment-protocol suite runs
   // peaked at 1,825,056 KiB; validation-floor-sizing-1104/measurements.json.
-  validation: { memoryKiB: 2 * 1024 * 1024, cpuCores: 'host', diskClass: 'validation' },
+  validation: { memoryKiB: 2 * 1024 * 1024, cpuCores: 3, diskClass: 'validation' },
   // 2026-11-04 loaded Linux workers, focused UI/CLI/server/package files:
   // largest successful sampled tree RSS 779,072 KiB, rounded without margin.
   // validation-floor-sizing-1104/measurements.json retains all run peaks.
@@ -67,9 +84,9 @@ export const HEAVYWEIGHT_COMMAND_RESOURCES = Object.freeze({
   'focused-validation-cli': { memoryKiB: 2 * 1024 * 1024, cpuCores: 1, diskClass: 'validation', focusedTest: true },
   // 2026-11-04 repeated loaded entry-load runs reached 2,361,852 KiB.
   // validation-floor-sizing-1104/measurements.json; round up without margin.
-  'entry-loads': { memoryKiB: ENTRY_LOAD_MEMORY_KIB, cpuCores: 'host', diskClass: 'validation' },
+  'entry-loads': { memoryKiB: ENTRY_LOAD_MEMORY_KIB, cpuCores: ENTRY_LOAD_CPU_CORES, diskClass: 'validation' },
   // The gate uses the entry-load envelope and learns its exact-tree identity separately.
-  'gate-entry-loads': { memoryKiB: ENTRY_LOAD_MEMORY_KIB, cpuCores: 'host', diskClass: 'validation' },
+  'gate-entry-loads': { memoryKiB: ENTRY_LOAD_MEMORY_KIB, cpuCores: ENTRY_LOAD_CPU_CORES, diskClass: 'validation' },
   // Fresh Linux source-test processes peaked at 103,824 KiB;
   // SYSTEMIC-DELETE/step10-native-source-test-measurement.log. Only one
   // proven built-in/source-only file receives this class;
@@ -91,13 +108,13 @@ export const HEAVYWEIGHT_COMMAND_RESOURCES = Object.freeze({
   // Successful isolated Linux x64 server source bundle, 2026-11-08:
   // sampled tree RSS 11,856,864 KiB, rounded up without a blanket margin.
   // admission-floor-classes-1108/c2-isolated-source-server-measurement.json.
-  'source-bundle': { memoryKiB: 12 * 1024 * 1024, cpuCores: 'host', diskClass: 'source-bundle' },
-  [SOURCE_WEB_EXPORT_ADMISSION_CLASS]: { memoryKiB: Math.ceil(SOURCE_WEB_EXPORT_MEMORY.parallelKiB / SOURCE_WEB_EXPORT_MEMORY.gibKiB) * SOURCE_WEB_EXPORT_MEMORY.gibKiB, cpuCores: 'workers', diskClass: 'source-web-export' },
+  'source-bundle': { memoryKiB: 12 * 1024 * 1024, cpuCores: 2, diskClass: 'source-bundle' },
+  [SOURCE_WEB_EXPORT_ADMISSION_CLASS]: { memoryKiB: Math.ceil(SOURCE_WEB_EXPORT_MEMORY.parallelKiB / SOURCE_WEB_EXPORT_MEMORY.gibKiB) * SOURCE_WEB_EXPORT_MEMORY.gibKiB, cpuCores: SOURCE_WEB_EXPORT_MEMORY.intermediateThreads, diskClass: 'source-web-export' },
   // Two fresh isolated canonical dependency installs succeeded; larger live
   // tree VmHWM sum 2,374,684 KiB rounds to 3 GiB. Retained raw evidence:
   // SYSTEMIC-DELETE/step10-dependency-install{,-topological-setup}-measurement.log.
-  'dependency-install': { memoryKiB: 3 * 1024 * 1024, cpuCores: 'host', diskClass: 'dependency-install' },
-  'package-dist': { memoryKiB: Math.ceil(COMMAND_MEMORY_MEASUREMENTS['package-dist'].maxKiB / COMMAND_MEMORY_MEASUREMENTS['package-dist'].roundingKiB) * COMMAND_MEMORY_MEASUREMENTS['package-dist'].roundingKiB, cpuCores: 'host', diskClass: 'package-dist' },
+  'dependency-install': { memoryKiB: 3 * 1024 * 1024, cpuCores: 3, diskClass: 'dependency-install' },
+  'package-dist': { memoryKiB: Math.ceil(COMMAND_MEMORY_MEASUREMENTS['package-dist'].maxKiB / COMMAND_MEMORY_MEASUREMENTS['package-dist'].roundingKiB) * COMMAND_MEMORY_MEASUREMENTS['package-dist'].roundingKiB, cpuCores: 3, diskClass: 'package-dist' },
   // 2026-10-29 linux1 x64 strict Protocol build, n2 cold + n2 warm:
   // sampled peak tree RSS 4,482,316 KiB; live VmHWM sum 4,483,876 KiB.
   // Plus the legacy unmeasured margin rounds to 6 GiB for that workload,
@@ -105,29 +122,33 @@ export const HEAVYWEIGHT_COMMAND_RESOURCES = Object.freeze({
   // their historical reported 16,442,992 KiB + 1,608,848 rounds to 18 GiB.
   // Retain that envelope: its original capture is unavailable, and Protocol
   // alone cannot recalibrate the larger full-runtime workload.
-  'runtime-build': { memoryKiB: 18874368, cpuCores: 'host', diskClass: 'runtime-build' },
+  'runtime-build': { memoryKiB: 18874368, cpuCores: 4, diskClass: 'runtime-build' },
   // 2026-11-19 controller compilation class, four completed identities:
   // max dedicated-cgroup working set 11,364,896 KiB (commit type coherence).
   // No completed general-compilation rows on nl1, nl3 or windows2-linux.
   // Max × 1.5, rounded up to a whole GiB, gives a 17 GiB cold reservation.
   // Evidence: .project/tmp/P03-ADMISSION-4/cold-floor-before-controller.log.
-  compilation: { memoryKiB: COMPILATION_COLD_MEMORY_KIB, cpuCores: 'host', diskClass: 'compilation' },
+  compilation: { memoryKiB: COMPILATION_COLD_MEMORY_KIB, cpuCores: TYPESCRIPT_CPU_CORES, diskClass: 'compilation' },
   // Both gate compiler steps have the ordinary cold envelope and independent history.
-  'gate-package-typecheck': { memoryKiB: COMPILATION_COLD_MEMORY_KIB, cpuCores: 'host', diskClass: 'compilation' },
-  'gate-declaration-comparison': { memoryKiB: COMPILATION_COLD_MEMORY_KIB, cpuCores: 'host', diskClass: 'compilation' },
+  'gate-package-typecheck': { memoryKiB: COMPILATION_COLD_MEMORY_KIB, cpuCores: TYPESCRIPT_CPU_CORES, diskClass: 'compilation' },
+  'gate-declaration-comparison': { memoryKiB: COMPILATION_COLD_MEMORY_KIB, cpuCores: TYPESCRIPT_CPU_CORES, diskClass: 'compilation' },
   // Final replay runs entry loads and declaration comparison serially under one slot.
-  'gate-final-recheck': { memoryKiB: COMPILATION_COLD_MEMORY_KIB, cpuCores: 'host', diskClass: 'compilation' },
-  'compilation-ui': { memoryKiB: 20 * 1024 * 1024, cpuCores: 'host', diskClass: 'compilation' },
+  'gate-final-recheck': { memoryKiB: COMPILATION_COLD_MEMORY_KIB, cpuCores: TYPESCRIPT_CPU_CORES, diskClass: 'compilation' },
+  'compilation-ui': { memoryKiB: 20 * 1024 * 1024, cpuCores: TYPESCRIPT_CPU_CORES, diskClass: 'compilation' },
   // Host memory: 2026-11-07, 51 live snapshots over 25 minutes, three tsrs UI
   // holders. Max live VmHWM sum 9,477,228 KiB + measured within-holder RSS
   // range 41,512 KiB, rounded up to whole GiB, gives 10 GiB. Evidence:
   // .project/tmp/finalizer-floor-1106/live-holders-summary.json. Microsoft UI
   // retains 20 GiB (18,909,772 KiB historical peak).
   // Waiting diagnostics show this floor; capacity/OOM refusal owns recovery.
-  'compilation-ui-tsrs': { memoryKiB: 10 * 1024 * 1024, cpuCores: 'host', diskClass: 'compilation' },
-  'compilation-cli': { memoryKiB: 15 * 1024 * 1024, cpuCores: 'host', diskClass: 'compilation' },
-  'compilation-server': { memoryKiB: 16 * 1024 * 1024, cpuCores: 'host', diskClass: 'compilation' },
+  'compilation-ui-tsrs': { memoryKiB: 10 * 1024 * 1024, cpuCores: 17, diskClass: 'compilation' },
+  'compilation-cli': { memoryKiB: 15 * 1024 * 1024, cpuCores: TYPESCRIPT_CPU_CORES, diskClass: 'compilation' },
+  'compilation-server': { memoryKiB: 16 * 1024 * 1024, cpuCores: TYPESCRIPT_CPU_CORES, diskClass: 'compilation' },
 });
+
+export const COLD_ADMISSION_CPU_CORES = Object.freeze(Object.fromEntries(
+  Object.entries(HEAVYWEIGHT_COMMAND_RESOURCES).map(([name, { cpuCores }]) => [name, cpuCores])));
+const UNKNOWN_ADMISSION_CPU_CORES = COLD_ADMISSION_CPU_CORES['package-dist'];
 
 // Owner ruling 2026-11-16 ("small suites local"): focused test runs placed
 // on the invoking machine start without the shared admission queue. Placed
@@ -151,45 +172,6 @@ export function resolveTypeScriptAdmissionClass(admissionClass, compiler) {
   return admissionClass;
 }
 
-// Cold core charges for commands without a worker declaration. Short cgroup
-// cpu.stat deltas (2026-11-19 22:16Z, controller, nl1, nl3, windows2-linux):
-// source-bundle 1.079 and tsrs UI 11.153. Use 1.5×, rounded up. Generic
-// validation keeps 3 cores against the completed 2.946-core maximum.
-// Completed cgroup averages (2026-11-20 01:14Z, nl1/nl3/windows2-linux):
-// dependency-install 1.590 max (7 runs) and source-reload 1.856 max
-// (4 runs), also 1.5×. Package-dist completed p95 was 2.050 cores (111
-// nl3 rows, 1.308 nl1, 1.099 windows2-linux). Three cores covers p95 × 1.4
-// and both the 2.547 completed max and earlier 2.552 short delta.
-// Entry-loads use the validation envelope. Completed local identities replace
-// cold estimates. Fixed worker classes and dynamic exports use their declarations.
-// The 1.38-core compilation observation was single-threaded. Reserve two
-// cores for that explicit mode and six for an ordinary native compile:
-// four default TS7 checkers × 1.5 for front-end and runtime work.
-const SINGLE_THREADED_TYPESCRIPT_CPU_CORES = 2;
-const TYPESCRIPT_CPU_CORES = 6;
-const ENTRY_LOAD_CPU_CORES = 3;
-export const COLD_ADMISSION_CPU_CORES = Object.freeze({
-  [SOURCE_RELOAD_ADMISSION_CLASS]: SOURCE_RELOAD_COLD_CPU_CORES,
-  // Existing default Metro knee measured at eight workers (see exportWorkers.mjs).
-  [SOURCE_WEB_EXPORT_ADMISSION_CLASS]: SOURCE_WEB_EXPORT_MEMORY.intermediateThreads,
-  validation: 3,
-  'entry-loads': ENTRY_LOAD_CPU_CORES,
-  'gate-entry-loads': ENTRY_LOAD_CPU_CORES,
-  'source-bundle': 2,
-  'dependency-install': 3,
-  'package-dist': 3,
-  'runtime-build': 4,
-  compilation: TYPESCRIPT_CPU_CORES,
-  'gate-package-typecheck': TYPESCRIPT_CPU_CORES,
-  'gate-declaration-comparison': TYPESCRIPT_CPU_CORES,
-  'gate-final-recheck': TYPESCRIPT_CPU_CORES,
-  'compilation-ui': TYPESCRIPT_CPU_CORES,
-  'compilation-ui-tsrs': 17,
-  'compilation-cli': TYPESCRIPT_CPU_CORES,
-  'compilation-server': TYPESCRIPT_CPU_CORES,
-});
-export const UNKNOWN_ADMISSION_CPU_CORES = COLD_ADMISSION_CPU_CORES['package-dist'];
-
 export function isTypeScriptCompilationClass(className) {
   return HEAVYWEIGHT_COMMAND_RESOURCES[className]?.diskClass === 'compilation';
 }
@@ -201,57 +183,29 @@ export function isSingleThreadedTypeScript(args) {
   return value === undefined ? args[index + 1]?.toLowerCase() !== 'false' : value === 'true';
 }
 
-// The destination broker sizes symbolic host-class costs from its own history.
 export function resolveAdmissionCpuCost(className, args = []) {
   if (isTypeScriptCompilationClass(className) && isSingleThreadedTypeScript(args)) {
     return SINGLE_THREADED_TYPESCRIPT_CPU_CORES;
   }
-  return HEAVYWEIGHT_COMMAND_RESOURCES[className]?.cpuCores ?? 'host';
+  return resolveColdAdmissionCpuCost(className);
 }
 
 export function resolveColdAdmissionCpuCost(className) {
-  const declared = resolveAdmissionCpuCost(className);
-  return typeof declared === 'number' ? declared : Object.hasOwn(COLD_ADMISSION_CPU_CORES, className)
+  return Object.hasOwn(COLD_ADMISSION_CPU_CORES, className)
     ? COLD_ADMISSION_CPU_CORES[className] : UNKNOWN_ADMISSION_CPU_CORES;
 }
 
-export function usesAdmissionWorkerGrant(className) {
+export function usesElasticAdmissionWorkers(className) {
   return className === SOURCE_RELOAD_ADMISSION_CLASS || className === SOURCE_WEB_EXPORT_ADMISSION_CLASS;
 }
 
-export function resolveAdmissionCpuCores(cost, { totalCpuCores, workers, requestedCpuCores = 0, className } = {}) {
-  if (usesAdmissionWorkerGrant(className)) return Math.min(totalCpuCores, workers ?? resolveColdAdmissionCpuCost(className));
-  // An explicit count sizes ordinary Vitest runs more directly than a class sample.
-  if (className === 'validation' && Number.isSafeInteger(requestedCpuCores) && requestedCpuCores > 0) return requestedCpuCores;
-  const base = cost === 'workers' ? workers ?? totalCpuCores : cost === 'host' ? totalCpuCores : cost;
-  return Math.max(base, requestedCpuCores === 'host' ? totalCpuCores : requestedCpuCores);
+export function resolveAdmissionCpuCores(cost, { totalCpuCores, workers, className } = {}) {
+  return Math.min(totalCpuCores, (usesElasticAdmissionWorkers(className) ? workers : undefined)
+    ?? (Number.isSafeInteger(cost) && cost > 0 ? cost : resolveColdAdmissionCpuCost(className)));
 }
 
-export const ADMISSION_CPU_WORKER_ENV_NAMES = Object.freeze([
-  'GOMAXPROCS', 'HAPPIER_VITEST_MAX_WORKERS', 'VITEST_UI_MAX_FORKS',
-  'VITEST_MAX_FORKS', 'VITEST_MAX_THREADS', 'VITEST_MIN_FORKS', 'VITEST_MIN_THREADS',
-  'HAPPIER_VITEST_GOVERNOR_MAX_WORKERS',
-]);
 export const ADMISSION_CPU_WORKER_FLAGS = Object.freeze([
-  '--maxWorkers', '--max-workers', '--minWorkers', '--min-workers',
+  '--test-concurrency', '--maxWorkers', '--max-workers', '--minWorkers', '--min-workers',
   '--poolOptions.threads.maxThreads', '--poolOptions.forks.maxForks',
   '--poolOptions.threads.minThreads', '--poolOptions.forks.minForks',
 ]);
-
-export function resolveRequestedAdmissionCpuCores({ env = process.env, args = [] } = {}) {
-  const values = ADMISSION_CPU_WORKER_ENV_NAMES.map(name => env[name]);
-  for (let index = 0; index < args.length; index += 1) {
-    const [flag, value] = args[index].split('=', 2);
-    if (ADMISSION_CPU_WORKER_FLAGS.includes(flag)) {
-      const size = value ?? args[index + 1];
-      if (size === undefined) return 'host';
-      values.push(size);
-    }
-  }
-  // Percentages and other explicit sizing are evaluated by the tool itself;
-  // retain that behavior and reserve the host instead of guessing its meaning.
-  if (values.some(value => value !== undefined && value !== '' &&
-    (typeof value !== 'string' || !/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value))))) return 'host';
-  return values.reduce((maximum, value) => typeof value === 'string' && /^\d+$/.test(value)
-    && Number.isSafeInteger(Number(value)) ? Math.max(maximum, Number(value)) : maximum, 0);
-}

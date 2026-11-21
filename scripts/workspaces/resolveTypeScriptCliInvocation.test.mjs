@@ -12,6 +12,7 @@ import {
   resolveTypeScriptCliInvocation,
   shouldRouteTypeScriptCliThroughHstack,
 } from './resolveTypeScriptCliInvocation.mjs';
+import { resolveTypeScriptBuildInvocation } from '../../packages/cli-common/scripts/packageDistBuildPhases.mjs';
 import { createTempFixture } from '../../apps/stack/scripts/testkit/core/temp_fixture.mjs';
 import { writeFakeBin } from '../../apps/stack/scripts/testkit/core/fake_bin_harness.mjs';
 import { buildNativeAdmissionFixtureEnv, installNativeAdmissionFixture } from '../../apps/stack/scripts/testkit/core/native_admission_fixture.mjs';
@@ -88,6 +89,39 @@ test('the pinned Rust compiler accepts the bounded checker and parser settings',
   const serial = resolveTypeScriptCliInvocation({ args: ['--noEmit', '--singleThreaded', 'sample.ts'], env, workspaceDir: fixture.root });
   assert.equal(serial.compilerThreadArgs, undefined);
   assert.deepEqual(serial.compilerThreadEnv, { RAYON_NUM_THREADS: '1' });
+});
+
+test('the pinned Microsoft compiler accepts the admitted checker limit', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-microsoft-worker-budget-' });
+  await writeFile(fixture.path('sample.ts'), 'export const value: number = 3;\n');
+  const env = { CI: 'true', HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT: '1', GOMAXPROCS: '2', HAPPIER_TYPESCRIPT_COMPILER: 'microsoft' };
+  const args = ['--noEmit', '--checkers', '48', 'sample.ts'];
+  const call = resolveTypeScriptCliInvocation({ args, env, workspaceDir: fixture.root, admissionClass: 'compilation' });
+  assert.deepEqual(call.compilerThreadArgs, ['--checkers', '2']);
+  assert.equal(call.compilerThreadEnv.GOMAXPROCS, '2');
+  const result = spawnSync(call.command, [...call.argsPrefix, ...args, ...call.compilerThreadArgs], {
+    cwd: fixture.root, env: { ...env, ...call.compilerThreadEnv }, encoding: 'utf8',
+  });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+});
+
+test('CLI Common dist launches the pinned compiler with the inherited worker bound', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-dist-worker-budget-' });
+  await writeFile(fixture.path('sample.ts'), 'export const value: number = 3;\n');
+  await writeFile(fixture.path('tsconfig.json'), JSON.stringify({ compilerOptions: { types: [] }, files: ['sample.ts'] }));
+  const env = { CI: 'true', HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT: '1', GOMAXPROCS: '2' };
+  const invocation = resolveTypeScriptBuildInvocation({
+    packageDir: fixture.root, outDir: fixture.path('dist'), env,
+  });
+  assert.deepEqual(invocation.args.slice(-2), ['--checkers', '2']);
+  assert.equal(invocation.compilerThreadEnv?.GOMAXPROCS, '2');
+  const result = spawnSync(invocation.command, invocation.args, {
+    cwd: fixture.root, env: { ...env, ...invocation.compilerThreadEnv }, encoding: 'utf8',
+  });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(existsSync(fixture.path('dist/sample.js')), true);
 });
 
 test('runner checks, recovers incrementally and switches to Microsoft without sharing compiler snapshots', {
