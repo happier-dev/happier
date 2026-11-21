@@ -101,10 +101,13 @@ describe('voiceAgentPrompt', () => {
     const prompt = render();
     expect(prompt).toContain('pass the name you heard in spokenModelName');
     expect(prompt).toMatch(/unclear model name.*pass the words you heard in spokenModelName.*ask which model.*before creating/i);
+    expect(prompt).toMatch(/keep the coding Agent separate from its model.*model name.*spokenModelName.*never reinterpret.*additional Agent/i);
     expect(prompt).not.toContain('look it up before creating the Session');
     expect(prompt).not.toContain('When the person names a model, resolve it with listAgentModels');
     expect(prompt).not.toContain('When the person names a model, call resolveActionOptions');
-    expect(prompt).toMatch(/provider_model_ambiguous.*provider_model_not_found.*details\.candidates.*submit the chosen label in spokenModelName.*needsModelPicker.*model picker on the device/);
+    expect(prompt).toMatch(/provider_model_ambiguous.*provider_model_not_found.*details\.candidates.*read each offered label in full.*version.*variant.*qualifier/i);
+    expect(prompt).toMatch(/if the reply is incomplete, garbled, or could match more than one label.*ask the person to confirm.*before calling spawn again/i);
+    expect(prompt).toMatch(/when the person unambiguously chooses.*submit the chosen label in spokenModelName.*needsModelPicker.*model picker on the device/i);
     expect(prompt).toContain('Omit the model fields only when the person names no model');
     expect(prompt).toMatch(/session\.status\.get.*before claiming work is running, will run, or is done/);
   });
@@ -217,14 +220,14 @@ describe('voiceAgentPrompt', () => {
       digest: createHash('sha256').update(rendered, 'utf8').digest('hex'),
     }).toEqual({
       id: 'happier.global_voice_agent',
-      revision: 17,
+      revision: 18,
       blockIds: [
         'voice.global_agent.identity',
         'voice.global_agent.authority',
         'voice.global_agent.custody',
         'voice.global_agent.results',
       ],
-      digest: '0eab4d9601dc5846650363c2c9552d892cb70355392af0f5aada8de2d3bb374a',
+      digest: '7269759a210df5c791b1928816f56be69b45614cfda8d49e939bb61fc06b7cf5',
     });
 
     expect(rendered).toContain("Happier's global Voice agent");
