@@ -32,8 +32,8 @@ export async function runGitPushWithConnectedAccount(input: Readonly<{
     if (!input.remote) return authRequired();
     const recordedSource = readCurrentBackendRuntimeServices()?.projectFilesSource;
     if (!recordedSource) return authRequired();
-    const sourceUrl = recordedSource.repository.cloneUrl
-        ?? `${recordedSource.provider.baseUrl.replace(/\/+$/, '')}/${recordedSource.repository.nameWithOwner}`;
+    const repositoryUrl = `${recordedSource.provider.baseUrl.replace(/\/+$/, '')}/${recordedSource.repository.nameWithOwner}`;
+    const sourceUrl = recordedSource.repository.cloneUrl ?? repositoryUrl;
     const normalizedSourceUrl = normalizeRemoteUrl(sourceUrl);
     if (!normalizedSourceUrl) return authRequired();
     // Read the effective push destination after Git's insteadOf/pushurl rules. A guest can edit
@@ -41,16 +41,22 @@ export async function runGitPushWithConnectedAccount(input: Readonly<{
     const configured = await runScmCommand({ ...input.command, args: ['remote', 'get-url', '--push', '--all', input.remote] });
     if (!configured.success) return configured;
     const destinations = configured.stdout.split(/\r?\n/).map(url => url.trim()).filter(Boolean);
-    if (destinations.length !== 1 || normalizeRemoteUrl(destinations[0]) !== normalizedSourceUrl) return destinationMismatch();
+    if (destinations.length !== 1) return destinationMismatch();
+    const destination = normalizeRemoteUrl(destinations[0]);
+    // A saved GitHub Source can carry the repository address, while a clone uses GitHub's .git endpoint.
+    const cloneEndpoint = recordedSource.provider.kind === 'github' && recordedSource.protocol === 'https'
+        && normalizedSourceUrl === repositoryUrl && repositoryUrl.startsWith('https://') ? `${repositoryUrl}.git` : undefined;
+    const pushUrl = destination === normalizedSourceUrl ? sourceUrl : destination === cloneEndpoint ? cloneEndpoint : undefined;
+    if (!pushUrl) return destinationMismatch();
     const registry = await resolveDefaultPullRequestStatusProjectionRegistry();
     const runtimeServices = readCurrentHostingProviderRuntimeServices();
     const repositories: { url: string; authorizationHeader: string }[] = [];
-    const detected = registry.detectRemote({ remoteName: input.remote, remoteUrl: sourceUrl! });
+    const detected = registry.detectRemote({ remoteName: input.remote, remoteUrl: pushUrl });
     if (detected.kind !== 'resolved') return authRequired();
     const kind = ScmHostingProviderKindSchema.safeParse(detected.provider.kind);
     if (!kind.success) return authRequired();
     let parsed: URL;
-    try { parsed = new URL(sourceUrl!); } catch { return authRequired(); }
+    try { parsed = new URL(pushUrl); } catch { return authRequired(); }
     if (!['https:', 'http:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) return authRequired();
     const capability = registry.getRepositoryClone(detected.providerId);
     const authentication = await capability?.resolveCloneAuthentication?.({ provider: {
@@ -59,7 +65,7 @@ export async function runGitPushWithConnectedAccount(input: Readonly<{
         urlSafety: { ...detected.provider.urlSafety, allowedSchemes: [...(detected.provider.urlSafety?.allowedSchemes ?? ['https:'])] },
     }, ...(runtimeServices ? { runtimeServices } : {}) });
     if (authentication?.kind !== 'available') return authRequired();
-    repositories.push({ url: sourceUrl!, authorizationHeader: authentication.authorizationHeader });
+    repositories.push({ url: pushUrl, authorizationHeader: authentication.authorizationHeader });
     // Preserve the remote name so Git updates refs/remotes/<name>; the host transport supplies
     // the credential and rewrites only the matching source URL for the admitted command.
     return transport.run({ repositories,
