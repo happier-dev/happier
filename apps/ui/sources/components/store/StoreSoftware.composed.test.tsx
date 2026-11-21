@@ -121,6 +121,28 @@ async function setup() {
     return { target, entries, homeId, control, machines };
 }
 
+it('configures the selected journal remedy as the catalog’s Setup recipe', async () => {
+    const { target, entries } = await setup();
+    const { PLUGIN_MANIFEST } = await import('../../../../../packages/plugins/machine-recipes/src/manifest');
+    const definition = PLUGIN_MANIFEST.contributes?.machineRecipes?.find(entry => entry.id === 'journal-reader');
+    if (!definition) throw new Error('Journal reader recipe is missing');
+    const value = { pluginId: PLUGIN_MANIFEST.id, recipeId: definition.id, revision: definition.revision };
+    entries.push(PluginProjectedMachineRecipeEntryV1Schema.parse({ id: `${value.pluginId}/${value.recipeId}`,
+        pluginId: value.pluginId, pluginVersion: PLUGIN_MANIFEST.version, definition }));
+    const { StoreSoftwareEntry } = await import('./StoreSoftwareEntry');
+    let detail: StoreSoftwareEntryState | undefined;
+    const listing = await renderScreen(<StoreSoftwareEntry target={target} selection={{ value, label: 'Read system logs' }} demand={{ presented: true }}>
+        {state => { detail = state; return null; }}
+    </StoreSoftwareEntry>);
+    try {
+        await waitForHomeGovernance(() => expect(detail?.status).toBe('ready'));
+        const inputs = { journalGroup: 'systemd-journal' };
+        expect(detail?.configure(inputs)).toMatchObject({ ok: true, setup: {
+            items: [{ kind: 'setupRecipe', selection: { ref: value, inputs } }],
+        } });
+    } finally { await listing.unmount(); }
+});
+
 it('mounts Software from the one option-demand owner: summaries only, exact selected declaration, hidden zero reads', async () => {
     const { target, entries } = await setup();
     let current: StoreSoftwareList | undefined;

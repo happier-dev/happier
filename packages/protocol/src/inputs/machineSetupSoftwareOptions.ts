@@ -85,5 +85,6 @@ export async function resolveMachineSetupSoftwareOptions(params: Readonly<{
     ...(entry.brand ? { brand: entry.brand } : {}),
     ...(entry.definition.description ? { description: typeof entry.definition.description === 'string'
       ? entry.definition.description : entry.definition.description.fallback } : {}),
-  })), ...toolchains], ...(!params.softwareOnly || offerings || recipeRefs === undefined || recipeRefs.length === 0 ? {} : { machineRecipeDetails: chosen }) };
+  })), ...toolchains], ...(offerings || !recipeRefs?.length || recipeField && !params.softwareOnly
+    ? {} : { machineRecipeDetails: chosen }) };
 }

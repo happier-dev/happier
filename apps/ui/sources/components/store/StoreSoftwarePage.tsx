@@ -382,9 +382,9 @@ function SoftwareListingBody(
   // A recipe joins a preset as itself with the values typed here; a runtime's Mise configuration is not a preset item.
   const presetItem = React.useMemo((): StorePresetDoorItem | null => {
     const recipe = toolchain ? null : MachineRecipeReferenceV1Schema.safeParse(item.value);
-    return recipe?.success
-      ? { kind: 'softwareRecipe', selection: { ref: recipe.data, inputs: omitBlankSoftwareInputs(draft) ?? {} } } : null;
-  }, [item.value, toolchain, draft]);
+    return recipe?.success && state.recipeKind
+      ? { kind: state.recipeKind, selection: { ref: recipe.data, inputs: omitBlankSoftwareInputs(draft) ?? {} } } : null;
+  }, [item.value, toolchain, draft, state.recipeKind]);
   const [presetHandoff, setPresetHandoff] = React.useState<StorePresetChoice | null>(null);
   const returnFromPreset = React.useCallback(() => setPresetHandoff(null), []);
   const key = actionInputOptionValueKey(item.value);

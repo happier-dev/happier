@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useSoftwareOptions, type StoreSoftwareItem, type StoreSoftwareTarget } from './catalog/storeSoftware';
+import { useMachineSetupListingOption, type StoreSoftwareItem, type StoreSoftwareTarget } from './catalog/storeSoftware';
 import type { StoreDemand } from './catalog/storeKinds';
 import { MachineRecipeReferenceV1Schema, machineRecipeInputConstraintsSatisfiedV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import { MachineSetupToolchainSoftwareChoiceV1Schema } from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
@@ -16,7 +16,8 @@ import type { MachineSetupPreparedApply } from '@/components/settings/machines/m
 const execute = createFrontDoorActionExecute();
 
 export type StoreSoftwareConfiguration = Readonly<{ ok: true; setup: MachineSetupV1 }> | ActionExecuteFailure;
-export type StoreSoftwareEntryState = ReturnType<typeof useSoftwareOptions>['state'] & Readonly<{
+export type StoreSoftwareEntryState = ReturnType<typeof useMachineSetupListingOption>['state'] & Readonly<{
+    recipeKind: 'setupRecipe' | 'softwareRecipe' | null;
     configure: (inputs: JsonValue) => StoreSoftwareConfiguration;
     prepare: (input: Readonly<{ inputs: JsonValue; targets: readonly StoreSoftwareTarget[]; selectedMachineId?: string }>) => Promise<MachineSetupPreparedApply>;
     apply: (input: MachineSetupApplyInputV1) => ReturnType<typeof execute>;
@@ -30,11 +31,12 @@ export function StoreSoftwareEntry(props: Readonly<{
     refreshKey?: string;
     children: (state: StoreSoftwareEntryState) => React.ReactNode;
 }>): React.ReactNode {
-    const native = useSoftwareOptions(props.target, props.demand, [props.selection.value], props.refreshKey);
+    const native = useMachineSetupListingOption(props.target, props.demand, props.selection.value, props.refreshKey);
     const declaration = native.state.machineRecipeDetails?.[0]?.definition;
+    const recipeKind = declaration ? declaration.software === true ? 'softwareRecipe' : 'setupRecipe' : null;
     const schema = React.useMemo(() => declaration ? preparePluginJsonSchema(declaration.inputSchema) : null, [declaration]);
-    const latest = React.useRef({ native, props, schema });
-    latest.current = { native, props, schema };
+    const latest = React.useRef({ native, props, schema, declaration, recipeKind });
+    latest.current = { native, props, schema, declaration, recipeKind };
     const choiceKey = actionInputOptionValueKey(props.selection.value);
     const preparation = React.useRef<AbortController | null>(null);
     const scopeKey = JSON.stringify([props.target.scope, props.target.machine]);
@@ -52,10 +54,9 @@ export function StoreSoftwareEntry(props: Readonly<{
             return { ok: true, setup: { toolchain: { adapterId: toolchain.data.adapterId, config: inputs } } };
         }
         const ref = MachineRecipeReferenceV1Schema.safeParse(choice.value);
-        const definition = state.machineRecipeDetails?.[0]?.definition;
-        if (!ref.success || !definition || !current.schema?.validate(inputs)
-            || !machineRecipeInputConstraintsSatisfiedV1(definition, inputs)) return failure('invalid_parameters');
-        return { ok: true, setup: MachineSetupV1Schema.parse({ items: [{ kind: 'softwareRecipe', selection: { ref: ref.data, inputs } }] }) };
+        if (!ref.success || !current.recipeKind || !current.declaration || !current.schema?.validate(inputs)
+            || !machineRecipeInputConstraintsSatisfiedV1(current.declaration, inputs)) return failure('invalid_parameters');
+        return { ok: true, setup: MachineSetupV1Schema.parse({ items: [{ kind: current.recipeKind, selection: { ref: ref.data, inputs } }] }) };
     }, []);
     const prepare = React.useCallback(async (input: Parameters<StoreSoftwareEntryState['prepare']>[0]): Promise<MachineSetupPreparedApply> => {
         const configured = configure(input.inputs);
@@ -83,5 +84,5 @@ export function StoreSoftwareEntry(props: Readonly<{
         return execute.confirmed('machines.setup.apply', input, { surface: 'ui', serverId: props.target.scope?.serverId,
             expectedAccountId: props.target.scope?.accountId });
     }, [props.target.scope?.serverId, props.target.scope?.accountId]);
-    return props.children({ ...native.state, configure, prepare, apply });
+    return props.children({ ...native.state, recipeKind, configure, prepare, apply });
 }

@@ -84,9 +84,10 @@ export const ActionOptionsResolveResultSchema = lazyZodSchema(() => z.strictObje
   })),
 }).check(z.superRefine((value, ctx) => {
   if (value.machineRecipeDetails !== undefined
+    && value.optionsSourceId !== 'machines.setup.recipes.available'
     && (value.optionsSourceId !== 'machines.setup.software.available'
       || value.machineRecipeDetails.some(entry => entry.definition.software !== true))) {
-    ctx.addIssue({ code: 'custom', path: ['machineRecipeDetails'], message: 'Recipe details belong to software selection' });
+    ctx.addIssue({ code: 'custom', path: ['machineRecipeDetails'], message: 'Recipe details belong to an exact Machine recipe or software selection' });
   }
   if (value.modelCatalog !== undefined
     && (value.actionId !== 'session.spawn_new' || value.fieldPath !== 'modelSelection')) {

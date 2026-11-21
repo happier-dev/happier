@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { actionInputOptionValueKey } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
+import { MachineRecipeReferenceV1Schema } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { getResolvedAgentCatalogEntries } from '@/agents/backendCatalog/agentCatalogProjection';
@@ -26,6 +27,12 @@ const RECIPE_FIELD = { path: 'recipes', optionsSourceId: 'machines.setup.recipes
 export function useSoftwareOptions(target: StoreSoftwareTarget | null | undefined, demand: StoreDemand,
     values?: readonly ActionFieldOption['value'][], refreshKey?: string) {
     return useMachineSetupOptions(SOFTWARE_FIELD, target, demand, values, refreshKey);
+}
+
+export function useMachineSetupListingOption(target: StoreSoftwareTarget, demand: StoreDemand,
+    value: ActionFieldOption['value'], refreshKey?: string) {
+    const field = MachineRecipeReferenceV1Schema.safeParse(value).success ? RECIPE_FIELD : SOFTWARE_FIELD;
+    return useMachineSetupOptions(field, target, demand, [value], refreshKey);
 }
 
 /** Attached recipe presentation uses Account declarations, independently of a Machine's support or presence. */
