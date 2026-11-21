@@ -81,7 +81,13 @@ export function createRequesterSessionAccessLossEnd(
         const tracked = readTracked(sessionId, accountId);
         if (!tracked) return 'ended';
         if (reachedBoundary(items, tracked)) break;
-        if (!waited) logger.infoFile('[DAEMON RUN] Access-loss Session end waits for its turn', { sessionId });
+        if (!waited) {
+          // Closed live-work states only: which fact holds the end (absent = no report for this runner).
+          const state = (category: LiveWorkItemV1['category']) =>
+            items.find(item => item.ownerRef === tracked && item.category === category)?.state ?? 'absent';
+          logger.infoFile('[DAEMON RUN] Access-loss Session end waits for its turn', { sessionId,
+            session: state('session'), input: state('input'), agents: state('agents') });
+        }
         waited = true;
         if (!changed)
           await new Promise<void>((resolve) => {

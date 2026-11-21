@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -130,6 +130,90 @@ describe('Machine access-loss installation custody receiver', () => {
       expect(await rpc.handleRequest(request)).toEqual({ kind: 'incomplete' });
       expect(disposed).toBe(1);
     } finally { watches.retire(); await rm(directory, { recursive: true, force: true }); }
+  });
+
+  describe('member retirement on a Home access-loss delivery (no transport request id, as the Home forwards it)', () => {
+    const members = (directory: string, operations: ReturnType<typeof createHostActionOperationRuntime>) =>
+      (resolveInstallationId: () => string) => {
+        const unused = (): never => { throw new Error('No native setup expected'); };
+        return createAgentIsolationMemberOperations({
+          observeExecution: operations.observeExecution, operations, serverId: 'home', activeServerDir: directory,
+          readActivityInventory: () => createManagedActivityInventory({ producers: [] }), captureMetadataPort: unused,
+          target: () => ({ homeServerIdentityId: 'home', machineId: 'machine-a', installationId: resolveInstallationId(),
+            custodianAccountId: 'alice', encryptionMode: 'plain' }),
+          effects: { platform: 'linux', installedCli: '/opt/happier/cli/current/happier',
+            readRoots: () => [], readSessionsToReplace: () => 0, publishStatus: unused,
+            elevation: { installationId: 'installation-a', installedCli: '/opt/happier/cli/current/happier', readPolicy: unused, observe: unused },
+            backend: { observe: unused, apply: unused } },
+        });
+      };
+    const settledResources: CleanupRequesterMachineTerminals = async () => ({ kind: 'settled' });
+
+    it('settles when this Machine holds no member for the withdrawn person (no separate users)', async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'happier-access-loss-no-member-'));
+      try {
+        const operations = createHostActionOperationRuntime({ machineId: 'machine-a', resolveAccountId: async () => 'alice' });
+        const { rpc, request } = fixture('plain', undefined, members(directory, operations), settledResources);
+        expect(await rpc.handleRequest(request)).toEqual({ kind: 'settled' });
+      } finally { await rm(directory, { recursive: true, force: true }); }
+    });
+
+    it.skipIf(process.platform !== 'linux')('keeps a real member subject incomplete rather than retiring it without an identified request', async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'happier-access-loss-member-'));
+      try {
+        await writeAgentIsolationMemberBinding(directory, { ...deriveAgentIsolationMemberIdentity({ homeServerIdentityId: 'home',
+          requester: { serverId: 'home', accountId: 'bob', machineId: 'machine-a', installationId: 'installation-a' } }),
+          agentUid: 2402, agentGid: 2402 });
+        const operations = createHostActionOperationRuntime({ machineId: 'machine-a', resolveAccountId: async () => 'alice' });
+        const { rpc, request } = fixture('plain', undefined, members(directory, operations), settledResources);
+        expect(await rpc.handleRequest(request)).toEqual({ kind: 'incomplete' });
+        // A request that carries its identity reaches the operation; a failed native retirement stays incomplete.
+        expect(await rpc.handleRequest({ ...request, requestId: 'rpc_00000000-0000-4000-8000-000000000001' }))
+          .toEqual({ kind: 'incomplete' });
+      } finally { await rm(directory, { recursive: true, force: true }); }
+    });
+  });
+
+  it.skipIf(process.platform !== 'linux')('joins a re-dispatch to the member retirement already waiting for the natural boundary', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-access-loss-join-'));
+    try {
+      await writeAgentIsolationMemberBinding(directory, { ...deriveAgentIsolationMemberIdentity({ homeServerIdentityId: 'home',
+        requester: { serverId: 'home', accountId: 'bob', machineId: 'machine-a', installationId: 'installation-a' } }),
+        agentUid: 2403, agentGid: 2403 });
+      // The withdrawn person's admitted work is still running; each retirement execution observes it once.
+      let reads = 0;
+      let active = true;
+      const listeners = new Set<() => void>();
+      const inventory = createManagedActivityInventory({ producers: [{
+        read: () => {
+          reads += 1;
+          return { coverage: 'complete' as const, items: active ? [{ category: 'terminal' as const, ownerRef: 'bob-work', state: 'active' as const,
+            attribution: { serverId: 'home', accountId: 'bob', machineId: 'machine-a', installationId: 'installation-a' } }] : [] };
+        },
+        subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+      }] });
+      const operations = createHostActionOperationRuntime({ machineId: 'machine-a', resolveAccountId: async () => 'alice' });
+      const unused = (): never => { throw new Error('No native setup expected'); };
+      const { rpc, request } = fixture('plain', undefined, resolveInstallationId => createAgentIsolationMemberOperations({
+        observeExecution: operations.observeExecution, operations, serverId: 'home', activeServerDir: directory,
+        readActivityInventory: () => inventory, captureMetadataPort: unused,
+        target: () => ({ homeServerIdentityId: 'home', machineId: 'machine-a', installationId: resolveInstallationId(),
+          custodianAccountId: 'alice', encryptionMode: 'plain' }),
+        effects: { platform: 'linux', installedCli: '/opt/happier/cli/current/happier',
+          readRoots: () => [], readSessionsToReplace: () => 0, publishStatus: unused,
+          elevation: { installationId: 'installation-a', installedCli: '/opt/happier/cli/current/happier', readPolicy: unused, observe: unused },
+          backend: { observe: unused, apply: unused } },
+      }), async () => ({ kind: 'settled' }));
+      const first = rpc.handleRequest({ ...request, requestId: 'rpc_00000000-0000-4000-8000-00000000000a' });
+      await vi.waitFor(() => expect(reads).toBe(1));
+      const second = rpc.handleRequest({ ...request, requestId: 'rpc_00000000-0000-4000-8000-00000000000b' });
+      await new Promise(resolve => setTimeout(resolve, 50));
+      expect(reads).toBe(1);
+      active = false;
+      for (const listener of listeners) listener();
+      // No native setup is runnable here, so the joined retirement stays incomplete for the Home to re-dispatch.
+      expect(await Promise.all([first, second])).toEqual([{ kind: 'incomplete' }, { kind: 'incomplete' }]);
+    } finally { await rm(directory, { recursive: true, force: true }); }
   });
 
   it('reads the reconnect census without verifying back and refuses the next request after withdrawal', async () => {

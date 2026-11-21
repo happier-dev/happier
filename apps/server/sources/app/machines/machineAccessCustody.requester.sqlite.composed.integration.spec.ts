@@ -1273,6 +1273,34 @@ describe('Machine grant withdrawal through requester runtime custody', () => {
         } finally { eventRouter.clearIo(); }
     });
 
+    it('identifies every access-loss forward, live and on reconnect, with its own transport request id', async () => {
+        const owner = await db.account.create({ data: {} });
+        const requester = await db.account.create({ data: {} });
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id,
+            active: true, metadata: 'encrypted-metadata', installationId: randomUUID() } });
+        const method = `${machine.id}:${RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS}`;
+        const requestIds: unknown[] = [];
+        const target = { id: 'identified-daemon', data: { clientType: 'machine-scoped', userId: owner.id,
+            machineId: machine.id, verifiedMachineInstallationId: machine.installationId },
+            timeout: () => ({ emitWithAck: async (_event: string, payload: { requestId?: unknown; params?: { kind?: unknown } }) => {
+                requestIds.push(payload.requestId);
+                // The daemon's reconnect census names the withdrawn person; each dispatch settles.
+                return payload.params?.kind === 'requesters'
+                    ? { kind: 'requesters', accountIds: [requester.id], coverage: 'complete' } : { kind: 'settled' };
+            } }) };
+        const io = createSocketRoomDiscoveryHarness(async room => room === target.id || room === `rpc:${owner.id}:${method}` ? [target] : []);
+        eventRouter.setIo(io, { forwardRpc: request => forwardRpcCall({ io, ...request }) });
+        try {
+            const custody = { machineId: machine.id, expectedCustodianAccountId: owner.id, expectedInstallationId: machine.installationId! };
+            expect(await dispatchMachineAccessLossCustody({ ...custody, subjectAccountId: requester.id })).toEqual({ kind: 'settled' });
+            await recoverMachineAccessLossCustody(custody);
+        } finally { eventRouter.clearIo(); }
+        // Live dispatch, reconnect census, reconnect re-dispatch: each its own id, none persisted or reused.
+        expect(requestIds).toHaveLength(3);
+        for (const id of requestIds) expect(id).toMatch(/^rpc_[0-9a-f-]{36}$/u);
+        expect(new Set(requestIds).size).toBe(3);
+    });
+
     it('lets the Machine custodian see and stop a removed member running Service without widening Manage visibility', async () => {
         const custodian = await db.account.create({ data: { encryptionMode: 'plain' } });
         const member = await db.account.create({ data: { encryptionMode: 'plain' } });

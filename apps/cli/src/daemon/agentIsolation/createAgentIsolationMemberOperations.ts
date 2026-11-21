@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { isSocketRpcMachineAccessLossServerOriginAuthorizationContext } from '@happier-dev/protocol/socketRpc';
@@ -13,7 +14,7 @@ import type { HostActionOperationRuntime } from '../actionOperations/createHostA
 import type { ManagedActivityInventory } from '../lifecycle/managedActivity';
 import { waitForRequesterMachineNaturalBoundary } from './naturalBoundary';
 import { memberIdentityRetirementInput, supersedeMemberIdentityRetirement } from './supersedeRetirement';
-import { readAgentIsolationMemberLaunchIdentity, readAgentIsolationMemberRequesterForWorkspacePath } from './memberBindings';
+import { readAgentIsolationMemberBindings, readAgentIsolationMemberLaunchIdentity, readAgentIsolationMemberRequesterForWorkspacePath } from './memberBindings';
 import { isAgentIsolationMemberCliCurrent } from './memberCliRuntime';
 import { retireAgentIsolationMemberIdentity, readProvisionedRequesterAccounts,
   ensureAgentIsolationMember, applyAgentIsolationMemberEffects, type EnsureAgentIsolationMemberResult,
@@ -230,16 +231,33 @@ export function createAgentIsolationMemberOperations(options: Readonly<{
       };
       const { rpcContext } = input, target = captureTarget(rpcContext);
       if (!target) return incomplete('target_unavailable');
-      if (!input.accountId || !rpcContext.transportRequestId) return incomplete('request_unidentified');
+      if (!input.accountId) return incomplete('request_unidentified');
       const current = localCustody(target, rpcContext, input.isCurrentInstallation);
       if (!current()) return incomplete('custody_not_current');
+      // The member binding inventory decides whether this Machine holds a member for the person.
+      // With none (complete coverage), only the receiver's owned-work cleanup remains: no
+      // operation runs, so no request identity is needed.
+      const bindings = await readAgentIsolationMemberBindings({ activeServerDir: options.activeServerDir,
+        homeServerIdentityId: target.homeServerIdentityId, machineId: target.machineId, installationId: target.installationId });
+      if (bindings.coverage === 'complete' && !bindings.bindings.some(binding => binding.accountId === input.accountId)) {
+        const owned = await input.cleanupOwnedWork();
+        if (owned.kind !== 'settled') return incomplete('owned_work_incomplete');
+        return current() ? { kind: 'settled' } : incomplete('custody_not_current');
+      }
+      // An operation binds its execution record to the identified request.
+      if (!rpcContext.transportRequestId) return incomplete('request_unidentified');
       let cleanup: Promise<RetirementResult> | undefined;
       const cleanupOwnedWork = () => cleanup ??= input.cleanupOwnedWork();
       try {
+        const retirementInput = memberIdentityRetirementInput(target, input.accountId);
         const outcome = await options.observeExecution({ actionId: 'machines.agentIsolation.set',
-          input: memberIdentityRetirementInput(target, input.accountId),
+          input: retirementInput,
+          // A Home re-dispatch while this member's retirement still runs joins it instead of a second native retirement.
+          joinEarlierActive: earlier => isDeepStrictEqual(earlier, retirementInput),
           actionRequestId: `member-retirement:${rpcContext.transportRequestId}`, rpcContext,
           execute: async operation => {
+            // Joined re-dispatch: the running retirement's own result answers it; no second native retirement.
+            if (operation.earlierActiveResult) return await operation.earlierActiveResult;
             const operationId = operation.operationAcceptance?.operationId;
             if (!operationId) return { ok: false, errorCode: 'machine_setup_operation_unavailable', error: 'machine_setup_operation_unavailable' };
             operation.operationOwnerUpdate.update({ cancellation: 'supported' });

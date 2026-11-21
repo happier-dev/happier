@@ -45,6 +45,8 @@ async function forwardMachineAccessCustody(input: MachineCustody, callParams: Ma
     const response = await eventRouter.forwardServerOwnedRpc({
         targetUserId: input.expectedCustodianAccountId, method: `${input.machineId}:${RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS}`,
         callParams, authorization: MACHINE_ACCESS_LOSS_SERVER_ORIGIN,
+        // The daemon binds member retirement to this request; live and each reconnect re-dispatch mint their own.
+        identifyRequest: true,
         machineAdmission, targetGuard: {
             filterTargets: async targets => {
                 const matched = targets.filter(matches);

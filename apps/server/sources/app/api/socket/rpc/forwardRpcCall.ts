@@ -240,6 +240,8 @@ async function executeRpcForwardCall(params: Readonly<{
         requestId: string;
     }>) => Promise<ExternalActionExecutionAuthorizationV1>;
     targetGuard?: RpcForwardTargetGuard;
+    /** A server-owned forward whose receiver binds work to the request: mint a fresh correlation id for it. */
+    identifyRequest?: true;
     /** The admitted route's canonical presence owner distinguishes target loss from a missing method. */
     isTargetUnavailable?: () => Promise<boolean>;
     cancellation?: Readonly<{
@@ -450,7 +452,7 @@ async function executeRpcForwardCall(params: Readonly<{
             return { ok: false, error: 'operation has timed out', errorCode: MACHINE_RPC_TIMEOUT_ERROR_CODE };
         }
         const targetRequestId = params.cancellation?.targetRequestId
-            ?? (params.createCallerInputAuthorization ? `rpc_${randomUUID()}` : undefined);
+            ?? (params.createCallerInputAuthorization || params.identifyRequest ? `rpc_${randomUUID()}` : undefined);
         const request: SocketRpcRequestPayload = {
             method: params.method,
             params: params.callParams,
