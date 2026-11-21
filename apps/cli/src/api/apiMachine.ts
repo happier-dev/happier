@@ -4611,7 +4611,7 @@ export class ApiMachineClient {
             const result = admitted?.ok
                 ? await this.rpcHandlerManager.invokeLocal(input.method, input.request, {
                     ...(input.signal ?? input.context.signal ? { signal: input.signal ?? input.context.signal } : {}),
-                    ...(input.context.localActionContext ? { localActionContext: input.context.localActionContext } : {}),
+                    ...(input.operationContext ? { localActionContext: input.operationContext } : {}),
                     admissionResult: { ok: true, ...(admitted.workspaceSyncPrivateExecution
                         ? { workspaceSyncPrivateExecution: admitted.workspaceSyncPrivateExecution } : {}) },
                     rpcContext: { machineAdmission: admitted.machineAdmission,
@@ -4780,6 +4780,7 @@ export class ApiMachineClient {
         physicalEndpoint?: MachineInstallationPublicIdentityV1;
         physicalEndpointInstallationId?: string;
         seedCarrier?: Readonly<{ publicKey: string; onGranted: (carrier: WorkspaceSyncSeedCarrierV1) => void }>;
+        operationContext?: WorkspaceSyncTargetPhaseDescriptor['operationContext'];
         routing: Readonly<{ workspaceSyncSourceRouting: WorkspaceSyncSourceRoutingV1 }>
             | Readonly<{ workspaceSyncSeedRouting: WorkspaceSyncSeedRoutingV1 }>
             | Readonly<{ workspaceSyncTargetRouting: WorkspaceSyncTargetRoutingV1 }>
@@ -4791,6 +4792,10 @@ export class ApiMachineClient {
         const admission = input.context.machineAdmission;
         const installation = readInstallationIdentityIfExistsSync();
         const custodianAccountId = readAccountIdFromToken(this.token);
+        const removalContinuation = input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_REMOVE
+            && input.operationContext
+            ? { onContinuation: createWorkspaceSyncSourceOperationContinuation(input.operationContext), waitForResultOnCancel: true }
+            : {};
         const forwardWork = input.requireCurrentAdmission;
         const seedRouting = 'workspaceSyncSeedRouting' in input.routing ? input.routing.workspaceSyncSeedRouting : undefined;
         const writerTarget = 'workspaceSyncSourceWriterTargetRouting' in input.routing ? input.routing.workspaceSyncSourceWriterTargetRouting : undefined;
@@ -4969,8 +4974,7 @@ export class ApiMachineClient {
             const content = createWorkspaceSyncTargetContent({ destination, method: `${input.machineId}:${input.method}`, routing: writerTarget });
             const result = readMachineActionRpcResult(await callSocketRpc({ socket, target: { kind: 'machine', id: input.machineId }, method: input.method,
                 params: input.request, content, workspaceSyncSourceWriterTargetRouting: writerTarget,
-                ...(writerTarget.target.phase === 'remove' && input.context.localActionContext
-                    ? { onContinuation: createWorkspaceSyncSourceOperationContinuation(input.context.localActionContext), waitForResultOnCancel: true } : {}),
+                ...removalContinuation,
                 ...(projectSourceExecution ? { workspaceSyncSourceExecution: projectSourceExecution } : {}),
                 ...(jointTarget ? { workspaceSyncTargetRouting: targetRouting } : {}), timeoutMs: null,
                 ...((forwardWork || retainedWriterCopyPhase) && signedAuthorization ? { createExternalActionExecution: wire => {
@@ -5023,8 +5027,7 @@ export class ApiMachineClient {
         return readMachineActionRpcResult(await callSocketRpc({ socket,
             target: { kind: 'machine', id: input.machineId }, method: input.method,
             params: input.request, content, ...input.routing, timeoutMs: null,
-            ...(input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_REMOVE && input.context.localActionContext
-                ? { onContinuation: createWorkspaceSyncSourceOperationContinuation(input.context.localActionContext), waitForResultOnCancel: true } : {}),
+            ...removalContinuation,
             // Forward work exercises the original signed credential. Cleanup releases retained custody
             // under the current installed child's socket and exact captured context, even after borrower revocation.
             ...(forwardWork && signedAuthorization ? { createExternalActionExecution: (wire) => {
