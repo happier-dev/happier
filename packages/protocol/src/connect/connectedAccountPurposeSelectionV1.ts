@@ -4,10 +4,12 @@ import { sameQualifiedConnectedAccountRef } from './qualifiedConnectedAccountPer
 import { isQualifiedConnectedAccountProfileActiveV4, resolveQualifiedConnectedAccountGroupActiveAccountV4 } from './qualifiedConnectedAccountProjectionsV4.js';
 import type { QualifiedConnectedAccountProfileV4, QualifiedConnectedAccountGroupV4 } from './qualifiedConnectedAccountsV4.js';
 import type { PluginConnectedAccountAuthenticationV2 } from './pluginConnectedAccountAuthenticationV2.js';
-import type { PluginProjectedActionV2, PluginProjectedMachineProvisionerEntryV1, PluginProjectedResourceV2, PluginProjectionInstalledPackageV2 } from '../daemon/contributionRegistryProjection.js';
+import type { PluginProjectedActionV2, PluginProjectedMachineProvisionerEntryV1, PluginProjectedResourceV2, PluginProjectionInstalledPackageV2, PluginProjectionV2 } from '../daemon/contributionRegistryProjection.js';
 import type { PluginAccountExecutionSelectionV1 } from '../plugins/availability/accountExecution.js';
 import { resolvePluginActionConnectedAccountUseRequestsV2, resolvePluginResourceConnectedAccountUseRequestsV2 } from '../plugins/manifest/v2.js';
-import { qualifyPluginContributionReferenceV1 } from '../plugins/contributionKey.js';
+import { buildQualifiedPluginContributionKey, qualifyPluginContributionReferenceV1 } from '../plugins/contributionKey.js';
+import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
+import { resolveScmHostingConnectedAccountPurposeV1, SCM_HOSTING_CONNECTED_ACCOUNT_PURPOSE_ID } from '../plugins/contributions/scmHostingProviders.js';
 
 /** The installed Resource is the declaration authority, shared by setup and Action admission. */
 export function readDeclaredConnectedAccountResourcePurposeV1(input: Readonly<{
@@ -31,6 +33,7 @@ export type ConnectedAccountNativePurposeDeclarationInputV1 = Readonly<{
   machineProvisionersById: Readonly<Record<string, PluginProjectedMachineProvisionerEntryV1>>;
   projection: Parameters<typeof readDeclaredConnectedAccountResourcePurposeV1>[0]['projection'] & Readonly<{
     actionsById?: Readonly<Record<string, PluginProjectedActionV2>>;
+    familiesById?: Pick<PluginProjectionV2['familiesById'], 'scmHostingProviders'>;
   }>;
 }>;
 
@@ -56,18 +59,24 @@ export function readDeclaredConnectedAccountPurposeV1(input: ConnectedAccountNat
       return [{ purpose, consumerKind: 'systemTool' as const,
         serviceRefs: [qualifyPluginContributionReferenceV1(launch.service, manifest.id)] }];
     });
+    const scmPurposes = manifest.contributes.scmHostingProviders.flatMap(provider => {
+      if (provider.id !== consumer.localId || purpose !== SCM_HOSTING_CONNECTED_ACCOUNT_PURPOSE_ID || !provider.authService) return [];
+      return [{ purpose, consumerKind: 'scmHostingProvider' as const,
+        serviceRefs: resolveScmHostingConnectedAccountPurposeV1(consumer, provider.authService).serviceRefs }];
+    });
     const candidates = [
       ...projectUseRequests(resolvePluginResourceConnectedAccountUseRequestsV2(manifest, consumer.localId), 'resource'),
       ...(provisioners.length === 1 ? projectUseRequests(
         resolvePluginActionConnectedAccountUseRequestsV2(manifest, provisioners[0]!.actions.acquire), 'machineProvisioner') : []),
       ...projectUseRequests(resolvePluginActionConnectedAccountUseRequestsV2(manifest, consumer.localId), 'action'),
       ...systemToolPurposes,
+      ...scmPurposes,
     ];
     // Account and native origins share the same one-consumer purpose identity.
     return candidates.length === 1 ? candidates[0]! : null;
   }
   const resource = readDeclaredConnectedAccountResourcePurposeV1(input);
-  const consumer = input.purpose.consumer;
+  const { consumer, purpose } = input.purpose;
   if (input.projection.installedPackagesById[consumer.pluginId]?.enabled !== true) return null;
   const provisioners = Object.values(input.machineProvisionersById).filter(entry =>
     entry.pluginId === consumer.pluginId && entry.definition.id === consumer.localId);
@@ -77,11 +86,19 @@ export function readDeclaredConnectedAccountPurposeV1(input: ConnectedAccountNat
     entry.pluginId === consumer.pluginId && entry.id === consumer.localId && entry.available !== false);
   const actionDeclarations = actions.length === 1 ? actions[0]!.connectedAccountPurposes?.filter(declaration =>
     declaration.purpose === input.purpose.purpose) ?? [] : [];
+  const provider = input.projection.familiesById?.scmHostingProviders?.entriesById[buildQualifiedPluginContributionKey(consumer)];
+  const scmAuthService = purpose === SCM_HOSTING_CONNECTED_ACCOUNT_PURPOSE_ID
+    && provider?.pluginId === consumer.pluginId && provider.localId === consumer.localId
+    ? PluginContributionIdentityV1Schema.safeParse(provider.authService) : null;
+  const candidates = [
+    ...(resource ? [{ ...resource, consumerKind: 'resource' as const }] : []),
+    ...declarations.map(declaration => ({ ...declaration, consumerKind: 'machineProvisioner' as const })),
+    ...actionDeclarations.map(declaration => ({ ...declaration, consumerKind: 'action' as const })),
+    ...(scmAuthService?.success ? [{ purpose, consumerKind: 'scmHostingProvider' as const,
+      serviceRefs: resolveScmHostingConnectedAccountPurposeV1(consumer, scmAuthService.data).serviceRefs }] : []),
+  ];
   // A qualified purpose identifies one consumer, including across contribution families.
-  if (Number(Boolean(resource)) + declarations.length + actionDeclarations.length !== 1) return null;
-  return resource ? { ...resource, consumerKind: 'resource' as const }
-    : declarations.length === 1 ? { ...declarations[0]!, consumerKind: 'machineProvisioner' as const }
-    : { ...actionDeclarations[0]!, consumerKind: 'action' as const };
+  return candidates.length === 1 ? candidates[0]! : null;
 }
 
 /** Read-only projection of one existing selected purpose, never a selection writer. */

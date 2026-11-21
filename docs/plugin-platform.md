@@ -10963,6 +10963,11 @@ GitHub uses the host purpose owner's selected account or declared native CLI log
 without a separate adapter-owned credential fallback. Unbound public reads remain
 anonymous only when the provider observes public repository visibility.
 
+An SCM hosting provider's `authService` declares its `authentication` purpose.
+Use `connectedServices.purposes.default.set` to select the account for that
+exact provider and service. When supplied, `machineId` selects the installed
+Machine declaration. Otherwise the Action resolves the selected Account manifest.
+
 ### Connected Account purpose setup (0.3 development)
 
 An Account can choose a default connected account for a system tool's declared

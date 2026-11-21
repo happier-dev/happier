@@ -11,7 +11,7 @@ import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { PluginEventAutomationHistoryGapResetActionInputV1Schema } from '@happier-dev/protocol/automations/event-history-gap-reset-action';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { QualifiedConnectedAccountPurposeV1Schema } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
-import { SCM_HOSTING_CONNECTED_ACCOUNT_PURPOSE_ID } from '@happier-dev/protocol/plugins/contributions/scmHostingProviders';
+import { resolveScmHostingConnectedAccountPurposeV1 } from '@happier-dev/protocol/plugins/contributions/scmHostingProviders';
 import { readInputPath as readActionInputPath } from '@happier-dev/protocol/inputs/inputPredicates';
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { ConnectedAccountSourceReconnectRequiredError, readDeclaredConnectedAccountActionSelection } from '@happier-dev/cli-common/connectedAccounts';
@@ -647,14 +647,7 @@ export function deriveScmHostingProviderConnectedAccountPurposeAuthorization(
   ) {
     throw new Error('connected_account_scm_hosting_purpose_consumer_identity_mismatch');
   }
-  const service = qualifyServiceReference(consumer.pluginId, authService);
-  return Object.freeze({
-    purpose: Object.freeze(QualifiedConnectedAccountPurposeV1Schema.parse({
-      consumer,
-      purpose: SCM_HOSTING_CONNECTED_ACCOUNT_PURPOSE_ID,
-    })),
-    serviceRefs: Object.freeze([service]),
-  });
+  return resolveScmHostingConnectedAccountPurposeV1(consumer, authService);
 }
 
 function serviceRefsKey(serviceRefs: readonly PluginContributionIdentityV1[]): string {

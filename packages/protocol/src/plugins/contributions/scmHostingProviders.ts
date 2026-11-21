@@ -2,7 +2,8 @@ import * as zMini from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
-import { PluginContributionIdentityV1Schema, PluginContributionLocalIdSchema } from '../contributionIdentity.js';
+import { PluginContributionIdentityV1Schema, PluginContributionLocalIdSchema, type PluginContributionIdentityV1 } from '../contributionIdentity.js';
+import { qualifyPluginContributionReferenceV1 } from '../contributionKey.js';
 import { PluginContributionReferenceV2Schema, PluginJsonValueV2Schema, PluginLocalizedStringV2Schema } from './publicTypes.js';
 import { asProtocolZod, projectZodProtocolSchema } from "../actions/internalProtocolZodAdapter.js";
 
@@ -64,3 +65,13 @@ export type ScmHostingProviderContribution = z.infer<typeof ScmHostingProviderCo
  * the forge with it. The provider's qualified identity is the purpose consumer.
  */
 export const SCM_HOSTING_CONNECTED_ACCOUNT_PURPOSE_ID = 'authentication';
+
+export function resolveScmHostingConnectedAccountPurposeV1(
+  consumer: PluginContributionIdentityV1,
+  authService: string | PluginContributionIdentityV1,
+) {
+  return Object.freeze({
+    purpose: Object.freeze({ consumer, purpose: SCM_HOSTING_CONNECTED_ACCOUNT_PURPOSE_ID }),
+    serviceRefs: Object.freeze([Object.freeze(qualifyPluginContributionReferenceV1(authService, consumer.pluginId))]),
+  });
+}

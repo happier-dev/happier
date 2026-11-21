@@ -1079,6 +1079,10 @@ export function buildPluginConnectedAccountAdmissionProjectionV2(params: Readonl
                 familyContext,
                 connectedAccountProjectionFamily,
             ),
+            scmHostingProviders: buildPluginProjectionFamilyV2(
+                familyContext,
+                scmHostingProviderProjectionFamily,
+            ),
             machineProvisioners: buildPluginProjectionFamilyV2(
                 familyContext,
                 machineProvisionersProjectionFamily,
