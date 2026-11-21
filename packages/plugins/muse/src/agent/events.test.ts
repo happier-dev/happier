@@ -368,6 +368,55 @@ it.each([0, 1, 3])('normalizes 1000 native arrivals once with %i watchers and fa
   projection.dispose();
 });
 
+it('settles a direct Muse child and exposes its native result in the launch sidechain', async () => {
+  // Sanitized MSP view/page frames from the live Providers replay on Muse 1.4.24.
+  const sessionId = '01a1fe39-7d80-75e0-a771-ba17d83c00b4';
+  const turnId = '01a1fe39-83ad-73d8-a9af-7fbd468bcf34';
+  const subagentId = 'subagent-1';
+  const launch = { itemId: '01a1fe39-923a-7631-aef3-8bb5ac82c3db', kind: 'subagent', subagentId, turnId,
+    status: 'inProgress' };
+  const childSessionId = '01a1fe39-9250-7613-9fc5-1f8ec2be6e6e';
+  const resultItemId = '01a1fe39-9d76-7ae2-a28a-bd2e5cb4466e';
+  const text = 'QA_MUSE_CHILD_TERMINAL_1121';
+  const result = { itemId: resultItemId, kind: 'subagentResult', subagentId, turnId, revision: 1,
+    status: 'completed', resultStatus: 'completed', text, fallbackText: 'Subagent result · subagent-1 · completed' };
+  const observed: AgentSessionRuntimeEvent[] = [];
+  const statuses: string[] = [];
+  const projection = createMuseEventProjection({ sessionId: 'host', async onChild(child) { statuses.push(child.status); } });
+  projection.watch(event => observed.push(AgentSessionRuntimeEventV1Schema.parse(event)));
+  projection.observeSession({ sessionId });
+  try {
+    await projection.observe({ method: 'item/started', params: { sessionId, item: {
+      ...launch, revision: 1, controlStatus: 'accepted',
+    } } });
+    await projection.observe({ method: 'item/updated', params: { sessionId, item: {
+      ...launch, revision: 5, controlStatus: 'resultReady', childSessionId,
+      result: { text, summary: text, artifactRefs: [], evidenceRefs: [] },
+    } } });
+    expect(observed.filter(event => event.kind === 'tool-result')).toEqual([]);
+    await projection.observe({ method: 'item/completed', params: { sessionId, item: result } });
+    await projection.observe({ method: 'item/updated', params: { sessionId, item: {
+      ...launch, revision: 6, controlStatus: 'resultReady', childSessionId,
+      result: { text, summary: text, artifactRefs: [], evidenceRefs: [], drained: true },
+      terminalRowAfterItemId: '01a1fe39-9d6e-7592-b06b-7f47cefa6b60',
+    } } });
+    await projection.replayHistoryEvent({ method: 'item/completed', params: { sessionId, item: result } });
+
+    expect(observed.filter(event => event.kind === 'tool-result')).toMatchObject([
+      { toolCallId: subagentId, output: { status: 'completed', text }, isError: false },
+    ]);
+    expect(observed.filter(event => event.kind === 'tool-call')).toMatchObject([
+      { toolCallId: subagentId, toolName: 'Task' },
+    ]);
+    expect(observed.filter(event => event.kind === 'transcript-message-committed')).toMatchObject([
+      { messageId: resultItemId, role: 'assistant', text, sidechainId: subagentId },
+    ]);
+    expect(statuses).toEqual(['starting', 'running', 'completed', 'completed']);
+  } finally {
+    projection.dispose();
+  }
+});
+
 it('retains the native workflow continuation and late child after its parent terminal', async () => {
   await withNativeProjection('child-follow', async ({ events, workflowCompleted }) => {
     await workflowCompleted;

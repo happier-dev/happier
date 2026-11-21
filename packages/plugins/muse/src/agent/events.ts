@@ -20,7 +20,8 @@ type Admission = { commandId: string; request: AgentSessionSendRequest; accepted
 type NativeItem = { value: NativeRecord; revision: number; streamedText: string; committed: boolean;
   compaction?: Pick<AgentSessionCompactRequest, 'compactionId' | 'trigger'>;
   presentation?: Readonly<{ toolCallId: string; toolName: string; input: JsonValue }> };
-type NativeChild = { state?: NativeItem; workflowChild?: NativeRecord; label?: string; workflowRunId?: string };
+type ChildTerminal = 'completed' | 'failed' | 'cancelled' | 'interrupted';
+type NativeChild = { state?: NativeItem; terminal?: ChildTerminal; workflowChild?: NativeRecord; label?: string; workflowRunId?: string };
 type ChildObservation = AgentSessionSubagentObservation;
 
 export function createMuseEventProjection<SessionId extends string | undefined = undefined>(options: Readonly<{ sessionId?: SessionId;
@@ -207,22 +208,25 @@ export function createMuseEventProjection<SessionId extends string | undefined =
     return { objective: item.objective ?? null, role: item.role ?? null, nativeChild: item };
   }
 
-  function finishChild(state: NativeItem, terminal: JsonValue | undefined) {
-    if (state.committed || typeof state.value.subagentId !== 'string') return;
-    if (terminal !== 'completed' && terminal !== 'failed' && terminal !== 'cancelled' && terminal !== 'interrupted') return;
-    state.committed = true;
+  function readChildTerminal(value: JsonValue | undefined): ChildTerminal | undefined {
+    if (value === 'completed' || value === 'failed' || value === 'cancelled' || value === 'interrupted') return value;
+  }
+
+  function finishChild(child: NativeChild, terminal: ChildTerminal | undefined, output?: JsonValue) {
+    const state = child.state;
+    if (!terminal || !state || child.terminal || typeof state.value.subagentId !== 'string') return;
+    child.terminal = terminal;
     publish({ kind: 'tool-result', toolCallId: state.value.subagentId,
-      output: state.value.result ?? { status: terminal }, isError: terminal !== 'completed' });
+      output: output ?? state.value.result ?? { status: terminal }, isError: terminal !== 'completed' });
   }
 
   function childStatus(child: NativeChild): ChildObservation['status'] | undefined {
     const workflow = child.workflowChild;
     const status = workflow?.status === 'terminal' ? workflow.terminal : workflow?.status;
-    if (status === 'completed' || status === 'failed') return status;
-    if (status === 'cancelled' || status === 'interrupted') return 'aborted';
+    const terminal = child.terminal ?? readChildTerminal(status);
+    if (terminal === 'completed' || terminal === 'failed') return terminal;
+    if (terminal) return 'aborted';
     const native = child.state?.value;
-    if (native?.status === 'completed' || native?.status === 'failed') return native.status;
-    if (native?.status === 'cancelled' || native?.status === 'interrupted') return 'aborted';
     if (native?.controlStatus === 'running' || native?.controlStatus === 'resultReady') return 'running';
     if (native?.controlStatus === 'accepted' || status === 'scheduled') return 'starting';
     return undefined;
@@ -277,8 +281,8 @@ export function createMuseEventProjection<SessionId extends string | undefined =
       childItems.set(id, child);
       if (!previous) publish({ kind: 'tool-call', toolCallId: item.subagentId, toolName: 'Task', input: childInput(item) });
       else publish({ kind: 'tool-progress', toolCallId: item.subagentId,
-        progress: { toolName: 'Task', rawInput: childInput(item), status: item.status ?? 'unknown' } });
-      finishChild(state, item.status);
+        progress: { toolName: 'Task', rawInput: childInput(item), status: child.terminal ?? item.status ?? 'unknown' } });
+      finishChild(child, readChildTerminal(item.status));
       if (initialReplay) return;
       if (typeof item.childSessionId === 'string' && item.usage !== undefined && item.usage !== null
         && (previous?.value.childSessionId !== item.childSessionId || previous.value.usage === undefined || previous.value.usage === null)) {
@@ -304,7 +308,7 @@ export function createMuseEventProjection<SessionId extends string | undefined =
         native.workflowRunId = runId;
         if (typeof child.label === 'string') native.label = child.label;
         childItems.set(child.childId, native);
-        if (native.state) finishChild(native.state, child.status === 'terminal' ? child.terminal : child.status);
+        finishChild(native, readChildTerminal(child.status === 'terminal' ? child.terminal : child.status));
         changed.push([child.childId, native]);
       }
       if (initialReplay) return;
@@ -398,6 +402,23 @@ export function createMuseEventProjection<SessionId extends string | undefined =
       }
     }
     if (!initialReplay && compactionItem(item.itemId, state, previous)) return;
+    if (completed && item.kind === 'subagentResult' && typeof item.subagentId === 'string') {
+      const child = childItems.get(item.subagentId);
+      const terminal = readChildTerminal(item.resultStatus);
+      if (child?.state && terminal) {
+        if (state.committed) return;
+        state.committed = true;
+        // Direct children keep their launch item in progress. This separate native
+        // result carries the outcome and child identity, even after the result is drained.
+        const text = typeof item.text === 'string' ? item.text : undefined;
+        finishChild(child, terminal, { ...readMuseRecord(child.state.value.result), status: terminal,
+          ...(text === undefined ? {} : { text }) });
+        if (text) publish({ kind: 'transcript-message-committed', messageId: item.itemId,
+          sidechainId: item.subagentId, role: 'assistant', text });
+        if (!initialReplay) return publishChild(item.subagentId, child);
+        return;
+      }
+    }
     const childPublication = childItem(state, previous, initialReplay);
     const textPublication = textItem(item.itemId, state, completed, initialReplay);
     toolItem(item.itemId, state, previous, completed);
