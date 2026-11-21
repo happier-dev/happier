@@ -45,6 +45,7 @@ import { Typography } from '@/constants/Typography';
 import { ReviewCommentSnapshotView } from './ReviewCommentSnapshotView';
 import { resolveReviewCommentBodyText, resolveReviewCommentSnapshot, splitReviewCommentBody } from './content';
 import { buildReviewCommentLabels } from './sessionSurfaceLabels';
+import { ReviewFindingAnchorContext } from './ReviewFindingAnchor';
 
 type ReviewChangesView = 'files' | 'walkthrough';
 
@@ -141,7 +142,10 @@ const excerptStyles = StyleSheet.create((theme) => ({
 export function ReviewChangesHost(props: ReviewChangesHostProps) {
     const presented = useLayoutPresentationActive();
     if (props.active === false || !presented) return null;
-    return <ScopedReviewChanges {...props} />;
+    // A finding under its line opens the finding on this page.
+    return <ReviewFindingAnchorContext.Provider value={props.onOpenComment}>
+        <ScopedReviewChanges {...props} />
+    </ReviewFindingAnchorContext.Provider>;
 }
 
 function ScopedReviewChanges(props: ReviewChangesHostProps) {
@@ -204,7 +208,8 @@ function BoundReviewChanges(props: ReviewChangesHostProps & Readonly<{
         <SurfaceStateCard size="line" kind="error" title={unavailable} action={{ label: t('common.retry'), onPress: index.retry }} />
         {excerpts}
     </> : <SurfaceStateCard kind="loading" title={t('common.loading')} />;
-    return <WorkspaceScmReviewBody comparison={comparison} view={props.view} scopeLabel={scopeLabel}
+    // The changes keep the page's column, on the edge its sections and tabs stand on.
+    return <View style={excerptStyles.inset}><WorkspaceScmReviewBody hosted comparison={comparison} view={props.view} scopeLabel={scopeLabel}
         scopeOptions={NO_SCOPE_OPTIONS} onSelectComparison={ignore} onSelectView={selectView} rootPath={cwd}
         activeReviewFile={activeReviewFile} onVisibleFileRowCountChange={setIndexPageSize} headerAccessory={hideViewedToggle}
         explain={false} onExplainChange={ignore} filesState={filesState}
@@ -217,7 +222,7 @@ function BoundReviewChanges(props: ReviewChangesHostProps & Readonly<{
             {...limits} page={index.page} onLoadMore={index.loadMore} loadingMore={index.loading} error={index.error}
             onRefresh={index.retry} onUpsertReviewCommentDraft={saveGutterComment} onReviewCommentError={reportCommentError} /> : null}
         renderWalkthrough={(context) => <ReviewChangesWalkthrough context={context} capture={capture} comparison={comparison}
-            scopeLabel={scopeLabel} serverId={serverId} machine={machine} onOpenFile={openFile} />} />;
+            scopeLabel={scopeLabel} serverId={serverId} machine={machine} onOpenFile={openFile} />} /></View>;
 }
 
 type ReviewChangesWalkthroughProps = Readonly<{

@@ -168,10 +168,16 @@ it.each([undefined, 'cmwnalobm00h105mc6nucsgo7'])('keeps saved gutter comments a
     const comment = buildReviewCommentFixture({ id: 'saved-gutter', reviewId: 'gutter-review', roundOrdinal: 1,
         author: { kind: 'user', userId: 'alice' }, anchor: { kind: 'line', filePath: 'total.ts', line: 2, side: 'after' },
         body: 'Preserve addition: subtraction returns a negative total.', snapshot: { kind: 'none', capturedAt: 1 } });
+    // A finding on the same line is the page's own row: under its line it is one line that opens it, not its body again.
+    const finding = buildReviewCommentFixture({ id: 'saved-finding', reviewId: 'gutter-review', roundOrdinal: 1, findingId: 'f1',
+        findingSeverity: 'high', anchor: { kind: 'line', filePath: 'total.ts', line: 2, side: 'after' }, snapshot: { kind: 'none', capturedAt: 1 },
+        body: 'Total subtracts every price.', finding: { id: 'f1', title: 'Total subtracts every price', summary: 'The reducer subtracts.',
+            severity: 'high', category: 'correctness' } });
+    const onOpenComment = vi.fn();
     const props = { reviewId: 'gutter-review', roundOrdinal: 1, scope: { serverId: fixture.scope.serverId, accountId: 'alice' },
         capture: { target: { kind: 'machine', machineId: 'm1' }, input: { cwd: '/repo', comparisonId: comparison.id,
             source: comparison.source, ...(comparisonSessionId ? { sessionId: comparisonSessionId } : {}) } } satisfies ReviewRoundComparisonCaptureV1,
-        comments: [comment], view: 'files', onSelectView() {}, onOpenComment() {} } as const;
+        comments: [comment, finding], view: 'files', onSelectView() {}, onOpenComment } as const;
     const screen = await fixture.render(<ReviewChangesHost {...props} />);
     await vi.waitFor(() => expect(screen.findAllByType(WorkspaceScmReviewBody)).toHaveLength(1));
     await act(async () => screen.findByType(WorkspaceScmReviewBody)
@@ -179,6 +185,9 @@ it.each([undefined, 'cmwnalobm00h105mc6nucsgo7'])('keeps saved gutter comments a
     await vi.waitFor(() => expect(screen.findAllByType(DiffViewer)).toHaveLength(1));
     await vi.waitFor(() => expect(screen.getTextContent()).toContain('Preserve addition: subtraction returns a negative total.'));
     expect(screen.findAllByType(ReviewCommentCard).map(card => card.props.comment.id)).toEqual(['saved-gutter']);
+    expect(screen.getTextContent()).not.toContain('The reducer subtracts.');
+    await screen.pressByTestIdAsync('review-finding-anchor:saved-finding');
+    expect(onOpenComment).toHaveBeenCalledWith('saved-finding');
     const lines = screen.findByType(DiffViewer).props.precomputedLines;
     const renderAfterLine = screen.findByType(DiffViewer).props.renderAfterLine;
     expect(renderAfterLine(lines.find((line: { kind: string }) => line.kind === 'remove'))).toBeNull();
@@ -196,7 +205,7 @@ it.each([undefined, 'cmwnalobm00h105mc6nucsgo7'])('keeps saved gutter comments a
     await screen.pressByTestIdAsync('diff-file-viewed');
     await vi.waitFor(() => expect(decodeBase64StoredJsonContentEnvelope(kv.read(marksKey)?.value ?? ''))
         .toMatchObject({ t: 'plain', v: { reviewedChangeKeys: [] } }));
-    await screen.update(fixture.wrap(<ReviewChangesHost {...props} comments={[{ ...comment, body: '', flags: { redacted: true } }]} />));
+    await screen.update(fixture.wrap(<ReviewChangesHost {...props} comments={[{ ...comment, body: '', flags: { redacted: true } }, finding]} />));
     expect(screen.getTextContent()).not.toContain('Preserve addition: subtraction returns a negative total.');
     await screen.unmount();
 });

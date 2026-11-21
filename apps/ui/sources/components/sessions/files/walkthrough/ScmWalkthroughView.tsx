@@ -62,6 +62,8 @@ export type ScmWalkthroughViewProps = Readonly<{
     startedReviewRunIds?: readonly string[] | null;
     /** Start review again with these engines selected (a partial review's failed reviewer). */
     onRetryReviewEngines?: (engineIds: readonly string[]) => void;
+    /** Hosted by a page that heads the comparison and states its review (a Review): no header of its own. */
+    hosted?: boolean;
 }>;
 
 /**
@@ -340,6 +342,7 @@ export const ScmWalkthroughView = React.memo(function ScmWalkthroughView(props: 
                         selectedOutput={{ output: 'walkthrough', comparisonId: capturedComparison.id, resultId: viewModel.resultId }} /> : null}
                 savedActions={savedActions.panel}
                 findSurfaceId={findSurfaceId}
+                hosted={props.hosted}
             />
             </WalkthroughStopExchangesProvider>
         </View>

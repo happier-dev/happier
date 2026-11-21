@@ -68,16 +68,21 @@ export function getPierreDiffWorkerPool(params?: Readonly<{ style?: PierreDiffPr
     if (existingPool !== undefined) {
         if (existingPool && poolThemeKeyByStyle[style] !== themeKey) {
             poolThemeKeyByStyle[style] = themeKey;
-            void existingPool.setRenderOptions({
-                theme: {
-                    light: themeIds.light,
-                    dark: themeIds.dark,
-                },
-                lineDiffType: config.defaultLineDiffType,
-            }).catch(() => {
-                if (poolThemeKeyByStyle[style] === themeKey) {
-                    poolThemeKeyByStyle[style] = undefined;
-                }
+            // Viewers ask for the pool while rendering, and re-theming redraws every mounted diff, whose
+            // post-render callbacks set React state: apply it once that render has finished.
+            queueMicrotask(() => {
+                if (poolThemeKeyByStyle[style] !== themeKey || poolByStyle[style] !== existingPool) return;
+                void existingPool.setRenderOptions({
+                    theme: {
+                        light: themeIds.light,
+                        dark: themeIds.dark,
+                    },
+                    lineDiffType: config.defaultLineDiffType,
+                }).catch(() => {
+                    if (poolThemeKeyByStyle[style] === themeKey) {
+                        poolThemeKeyByStyle[style] = undefined;
+                    }
+                });
             });
         }
         return existingPool ?? null;

@@ -116,4 +116,28 @@ describe('getPierreDiffWorkerPool', () => {
         expect(getPierreDiffWorkerPool({ style: 'split', themeIds })).toBe(pool);
         await vi.waitFor(() => expect(pool.getDiffRenderOptions().theme).toEqual(themeIds));
     });
+
+    it('re-themes mounted diffs after the reading render that asked for it, never inside it', async () => {
+        // A viewer reads its pool while rendering. Re-theming redraws every mounted diff, whose post-render
+        // callbacks set React state: inside that render, React reports "Cannot update a component while rendering".
+        const { getPierreDiffWorkerPool } = await import('./pierreWorkerPool.web');
+        const { ensureHappierPierreThemeRegistered, resolveHappierPierreThemeIds } = await import('./pierreThemeRegistry.web');
+        const pool = getPierreDiffWorkerPool({ style: 'unified' });
+        if (!pool) throw new Error('Expected a unified pool');
+        pools.push(pool);
+        await pool.initialize();
+        const setRenderOptions = vi.spyOn(pool, 'setRenderOptions');
+        const colors = { text: { primary: '#654321' } };
+        ensureHappierPierreThemeRegistered({ isDark: true, colors });
+        const themeIds = resolveHappierPierreThemeIds({ isDark: true, colors });
+
+        expect(getPierreDiffWorkerPool({ style: 'unified', themeIds })).toBe(pool);
+        expect(setRenderOptions).not.toHaveBeenCalled();
+        await Promise.resolve();
+        expect(setRenderOptions).toHaveBeenCalledTimes(1);
+        // Several viewers reading the same new theme in one render re-theme once.
+        getPierreDiffWorkerPool({ style: 'unified', themeIds });
+        await Promise.resolve();
+        expect(setRenderOptions).toHaveBeenCalledTimes(1);
+    });
 });

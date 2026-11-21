@@ -33,6 +33,8 @@ export type ScmReviewViewContext = Readonly<{
      */
     renderBar: (actions?: React.ReactNode, sections?: readonly ScmComparisonMenuSection[], review?: React.ReactNode) => React.ReactNode;
     onShowFiles: () => void;
+    /** Drawn inside a page that already names and heads the comparison (see `hosted`). */
+    hosted?: boolean;
 }>;
 
 export type WorkspaceScmReviewBodyProps = Readonly<{
@@ -83,6 +85,12 @@ export type WorkspaceScmReviewBodyProps = Readonly<{
     headerAccessory?: React.ReactNode;
     /** The same host actions as rows of the Files menu (the bar's ⋯, or the phone header's menu). */
     barMenuSection?: ScmComparisonMenuSection | null;
+    /**
+     * Hosted by a page that already names the comparison, its scope and its state (a Review's Changes tab): the
+     * bar is the view switch and its actions, without the scope, its file count or a review's status, on every
+     * width; the Files header keeps only the person's marks; the Walkthrough draws no header of its own.
+     */
+    hosted?: boolean;
 }>;
 
 const REVIEW_VIEWS: readonly SessionScmReviewView[] = ['files', 'walkthrough'];
@@ -137,6 +145,7 @@ export const WorkspaceScmReviewBody = React.memo(function WorkspaceScmReviewBody
         if (presented && props.view === 'files' && visibleFileRowCount !== null) props.onVisibleFileRowCountChange?.(visibleFileRowCount);
     }, [presented, props.view, visibleFileRowCount, props.onVisibleFileRowCountChange]);
     const views = props.views ?? REVIEW_VIEWS;
+    const hosted = props.hosted === true;
     const reading = props.reading;
     // Explicit code navigation reveals the active file; a view switch retains Files' own scroll and folding.
     const showFiles = React.useCallback(() => {
@@ -168,10 +177,11 @@ export const WorkspaceScmReviewBody = React.memo(function WorkspaceScmReviewBody
         const countShown = (fileCount: number | null) => (fileCount === 0 ? null : fileCount);
         const renderLeading = (fileCount: number | null) => <>
             {props.hostSwitch ? <View style={HOST_SWITCH_STYLE}>{props.hostSwitch}</View> : null}
-            <ScmComparisonViewSwitch view={props.view} views={views} onSelect={props.onSelectView} commitsCount={props.commitsCount} />
-            <ScmComparisonScopePicker options={props.scopeOptions} current={props.comparison} currentLabel={props.scopeLabel}
+            <ScmComparisonViewSwitch view={props.view} views={views} onSelect={props.onSelectView} commitsCount={props.commitsCount}
+                divided={!hosted} />
+            {hosted ? null : <ScmComparisonScopePicker options={props.scopeOptions} current={props.comparison} currentLabel={props.scopeLabel}
                 currentEvidenceSessionId={props.evidenceSessionId}
-                fileCount={countShown(fileCount)} onSelect={props.onSelectComparison} />
+                fileCount={countShown(fileCount)} onSelect={props.onSelectComparison} />}
         </>;
         // A comparison with no changes has nothing to review or to commit: no action is offered for it.
         const noChanges = props.fileCount === 0;
@@ -202,6 +212,8 @@ export const WorkspaceScmReviewBody = React.memo(function WorkspaceScmReviewBody
         // The host's actions belong to the files they act on (the review comments panel opens over Files).
         const withBarMenu = (sections?: readonly ScmComparisonMenuSection[]) => props.barMenuSection ? [props.barMenuSection, ...(sections ?? [])] : sections;
         const renderBar = (actions?: React.ReactNode, sections?: readonly ScmComparisonMenuSection[], review?: React.ReactNode) => {
+            if (hosted) return <ScmComparisonBar leading={renderLeading(null)}
+                trailing={<>{actions}{sections ? <ScmComparisonMoreMenu sections={sections} interactiveTargetGapPx={SCM_COMPARISON_ACTIONS_GAP_PX} /> : null}</>} />;
             if (stacked) return renderPhoneHeader(props.fileCount ?? reading?.source.fileCount ?? null, <>{actions}{review}</>, sections);
             const menu = review && startReviewSection ? [startReviewSection, ...(sections ?? [])] : sections;
             return <ScmComparisonBar leading={renderLeading(props.fileCount ?? null)}
@@ -209,19 +221,19 @@ export const WorkspaceScmReviewBody = React.memo(function WorkspaceScmReviewBody
         };
         // While a state stands in for the files (loading, not a repository, unreachable), the bar keeps its
         // place and its views, but nothing offers to act on files that are not there.
-        const renderStateBar = () => stacked
+        const renderStateBar = () => stacked && !hosted
             ? renderPhoneHeader(null, undefined, undefined, false)
             : <ScmComparisonBar leading={renderLeading(null)} trailing={props.barActions} />;
         const chrome: ScmReviewComparisonChrome = {
             // On a phone the stacked header under this one counts the files; the phone header names only the scope.
-            renderBar: stacked ? (_coverage, actions, sections) => renderPhoneHeader(null, actions, withBarMenu(sections)) : undefined,
+            renderBar: stacked && !hosted ? (_coverage, actions, sections) => renderPhoneHeader(null, actions, withBarMenu(sections)) : undefined,
             renderBarLeading: (coverage) => renderLeading(coverage.fileCount),
             barTrailing: <>{props.barActions}{trailing}</>,
             belowBar: props.barPanel,
             menuSections: props.barMenuSection ? [props.barMenuSection] : undefined,
             // An empty comparison has nothing to head or explain: the review's own empty state stands alone.
             renderHeader: (coverage, facts) => coverage.fileCount === 0 && !reading ? null : <><ScmComparisonHeader
-                viewLabel={resolveSessionScmReviewViewLabel(props.view)} scopeLabel={props.scopeLabel} scopeDetail={props.scopeDetail}
+                viewLabel={resolveSessionScmReviewViewLabel(props.view)} scopeLabel={props.scopeLabel} scopeDetail={props.scopeDetail} hosted={hosted}
                 title={reading?.title ?? null} coverage={coverage} changeCount={props.changeCount ?? reading?.source.changeCount ?? null}
                 analysis={reading?.analysis ? <WalkthroughAnalysisFact parts={reading.analysis.parts} analysed={reading.analysis.analysed}
                     total={reading.analysis.total} model={props.modelLabel} stopped={reading.phase === 'cancelled' || reading.phase === 'failed'}
@@ -256,13 +268,13 @@ export const WorkspaceScmReviewBody = React.memo(function WorkspaceScmReviewBody
             renderIndexAccessory: props.explain && reading ? (path) => <WalkthroughFileStops reading={reading} path={path} /> : null,
         };
         return { chrome, renderBar, renderStateBar };
-    }, [stacked, rail, views, reading, readInWalkthrough, props.hostSwitch, props.view, props.onSelectView,
+    }, [stacked, hosted, rail, views, reading, readInWalkthrough, props.hostSwitch, props.view, props.onSelectView,
         props.commitsCount, props.scopeOptions, props.comparison, props.scopeLabel, props.evidenceSessionId,
         props.onSelectComparison, props.fileCount, props.onStartReview, props.proposeCommits, props.onProposeCommits,
         props.reviewDisabled, props.reviewDisabledReason, props.barMenuSection, props.barActions, props.barPanel, props.headerAccessory,
         props.scopeDetail, props.changeCount, props.modelLabel, props.analysisMark, props.marksAvailable,
         props.marksPending, props.explain, props.onExplainChange, props.onExplainDraft, props.rootPath, captioned, captionFocus]);
-    const context: ScmReviewViewContext = { layout: stacked ? 'phone' : rail ? 'wide' : 'narrow', renderBar, onShowFiles: showFiles };
+    const context: ScmReviewViewContext = { layout: stacked ? 'phone' : rail ? 'wide' : 'narrow', renderBar, onShowFiles: showFiles, hosted };
     return <View style={{ flex: 1, minHeight: 0 }} onLayout={onLayout}>
         {stacked && props.hostSwitch ? <View style={HOST_SWITCH_STACKED_STYLE}>{props.hostSwitch}</View> : null}
         {props.view === 'walkthrough' ? props.renderWalkthrough(context)

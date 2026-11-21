@@ -36,6 +36,8 @@ export type ScmComparisonHeaderProps = Readonly<{
     accessory?: React.ReactNode;
     /** Narrow widths: one coverage fact per line, the accessory row under them. */
     stacked?: boolean;
+    /** Inside a page that already names and counts the comparison (a Review): no eyebrow and no source fact. */
+    hosted?: boolean;
     testID?: string;
 }>;
 
@@ -48,12 +50,12 @@ export const ScmComparisonHeader = React.memo(function ScmComparisonHeader(props
     const testID = props.testID ?? 'scm-comparison-header';
     const title = typeof props.title === 'string' && props.title.trim().length > 0 ? props.title.trim() : null;
     const coverage = props.coverage;
-    const source = <ScmComparisonSourceFact coverage={coverage} changeCount={props.changeCount} testID={`${testID}-source`} />;
+    const source = props.hosted ? null : <ScmComparisonSourceFact coverage={coverage} changeCount={props.changeCount} testID={`${testID}-source`} />;
 
     return (
         <View testID={testID} style={[styles.header, props.stacked ? styles.headerStacked : null]}>
             <View style={styles.main}>
-                {props.stacked ? null : (
+                {props.stacked || props.hosted ? null : (
                     <ScmComparisonEyebrow icon="files" viewLabel={props.viewLabel} scope={props.scopeLabel} detail={props.scopeDetail} />
                 )}
                 {title ? <Text accessibilityRole="header" style={styles.title}>{title}</Text> : null}

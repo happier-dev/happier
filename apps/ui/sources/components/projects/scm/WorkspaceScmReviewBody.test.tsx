@@ -190,6 +190,40 @@ describe('WorkspaceScmReviewBody', () => {
     expect(onStartReview).toHaveBeenCalledTimes(1);
   });
 
+  it.each([1440, 390])('hosted in a page that names the comparison (a Review), says its views once at %s px: no scope, count, review status or second header', async (width) => {
+    windowSize.width = width;
+    try {
+      const contexts: Array<{ hosted?: boolean }> = [];
+      const coverage = { fileCount: 6, added: 3, removed: 1, linesKnown: true };
+      const viewedFacts = { viewed: <Text testID="viewed-fact">0 of 6 viewed</Text>, changedSinceViewedCount: 0 };
+      const props = {
+        comparison: { kind: 'workingTree' as const }, scopeLabel: 'Pending changes', scopeOptions: [], hosted: true,
+        fileCount: 6, onSelectComparison: vi.fn(), onSelectView: vi.fn(), explain: false, onExplainChange: vi.fn(),
+        renderFiles: (chrome: Parameters<React.ComponentProps<typeof WorkspaceScmReviewBody>['renderFiles']>[0]) => <>
+          {chrome.renderBar ? chrome.renderBar(coverage, null) : chrome.renderBarLeading(coverage)}
+          {chrome.renderHeader?.(coverage, viewedFacts)}</>,
+        renderWalkthrough: (context: { hosted?: boolean; renderBar: (a?: React.ReactNode, s?: undefined, r?: React.ReactNode) => React.ReactNode }) => {
+          contexts.push(context);
+          return context.renderBar(null, undefined, <Text testID="review-status">Partial · 1 finding</Text>);
+        },
+      };
+      const files = await renderScreen(<WorkspaceScmReviewBody {...props} view="files" />);
+      // The page owns the scope ("Changes", its round): the bar is the view switch, the header only the person's marks.
+      expect(files.findHostByTestId('scm-comparison-scope')).toBeNull();
+      expect(files.findHostByTestId('scm-comparison-phone-header')).toBeNull();
+      expect(files.findHostByTestId('scm-comparison-header-source')).toBeNull();
+      expect(files.findHostByTestId('viewed-fact')).not.toBeNull();
+      const walk = await renderScreen(<WorkspaceScmReviewBody {...props} view="walkthrough" />);
+      expect(walk.findHostByTestId('scm-comparison-scope')).toBeNull();
+      expect(walk.findHostByTestId('scm-comparison-phone-header')).toBeNull();
+      // The Review's own state line already says how its reviewers did.
+      expect(walk.findHostByTestId('review-status')).toBeNull();
+      expect(contexts.at(-1)?.hosted).toBe(true);
+    } finally {
+      windowSize.width = 1200;
+    }
+  });
+
   it('states the phone Files file count once: the header names the scope, the coverage line counts the files', async () => {
     windowSize.width = 390;
     try {

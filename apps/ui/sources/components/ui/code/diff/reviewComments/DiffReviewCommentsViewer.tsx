@@ -10,6 +10,7 @@ import { useCodeLinesReviewComments } from '@/components/ui/code/reviewComments/
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { ReviewCommentCard } from '@/components/reviews/ReviewCommentCard';
+import { ReviewFindingAnchor, ReviewFindingAnchorContext } from '@/components/reviews/ReviewFindingAnchor';
 import { buildReviewCommentLabels } from '@/components/reviews/sessionSurfaceLabels';
 import { resolveCodeLineAnchor } from '@/components/ui/code/reviewComments/resolveCodeLineAnchor';
 import { filterReviewCommentDraftsForFile } from '@/sync/domains/input/reviewComments/filterReviewCommentDrafts';
@@ -157,13 +158,15 @@ function DiffReviewCommentsViewerInner(props: DiffReviewCommentsViewerProps) {
         return result;
     }, [props.reviewComments, props.filePath, lines]);
     const labels = commentsByLineId.size > 0 ? buildReviewCommentLabels() : null;
+    const openFinding = React.useContext(ReviewFindingAnchorContext);
     const renderAfterLine = React.useCallback((line: CodeLine) => {
         const notes = props.renderAfterLine?.(line);
         const comments = controls?.renderAfterLine?.(line);
         const saved = commentsByLineId.get(line.id);
-        return notes || comments || saved ? <>{notes}{labels && saved?.map(comment =>
-            <ReviewCommentCard key={comment.id} comment={comment} serverId={props.serverId} labels={labels} />)}{comments}</> : null;
-    }, [controls?.renderAfterLine, props.renderAfterLine, commentsByLineId, props.serverId, labels]);
+        return notes || comments || saved ? <>{notes}{labels && saved?.map(comment => openFinding && comment.finding
+            ? <ReviewFindingAnchor key={comment.id} comment={comment} onOpen={openFinding} />
+            : <ReviewCommentCard key={comment.id} comment={comment} serverId={props.serverId} labels={labels} />)}{comments}</> : null;
+    }, [controls?.renderAfterLine, props.renderAfterLine, commentsByLineId, props.serverId, labels, openFinding]);
 
     return (
         <View style={viewport ?? undefined}>

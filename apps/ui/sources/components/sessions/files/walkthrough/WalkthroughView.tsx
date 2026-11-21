@@ -145,6 +145,11 @@ export type WalkthroughViewProps = Readonly<{
   notify?: React.ReactNode;
   /** The Find surface id the comparison bar's Find control opens; keyboard Find works without it. */
   findSurfaceId?: string;
+  /**
+   * Hosted by a page that already heads the comparison and states its review (a Review's Changes tab): the
+   * reading starts at its first stop, without its own title, facts, overview or the review's band.
+   */
+  hosted?: boolean;
 }>;
 
 /**
@@ -471,7 +476,7 @@ export const WalkthroughView = React.memo(function WalkthroughView(
     props.admission === 'outcomeUnknown' &&
     (reading.phase === 'inventory' || reading.phase === 'arriving');
   const notices: React.ReactNode[] = [];
-  if (props.review?.notice)
+  if (props.review?.notice && !props.hosted)
     notices.push(
       <React.Fragment key="review">{props.review.notice}</React.Fragment>,
     );
@@ -629,8 +634,8 @@ export const WalkthroughView = React.memo(function WalkthroughView(
         headerOffset.current = event.nativeEvent.layout.y;
       }}
     >
-      {props.review?.beforeHeader}
-      <WalkthroughEditorialHeader
+      {props.hosted ? null : props.review?.beforeHeader}
+      {props.hosted ? null : <WalkthroughEditorialHeader
         reading={reading}
         scopeLabel={props.scopeLabel}
         scopeDetail={props.scopeDetail}
@@ -649,7 +654,7 @@ export const WalkthroughView = React.memo(function WalkthroughView(
         uncertain={uncertainStart}
         extraFact={props.review?.headerFact}
         note={props.review?.headerNote}
-      />
+      />}
       <View
         style={phone ? styles.padPhone : null}
         onLayout={(event) => {

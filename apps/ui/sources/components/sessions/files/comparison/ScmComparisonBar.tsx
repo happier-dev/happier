@@ -63,6 +63,8 @@ export function ScmComparisonViewSwitch(props: Readonly<{
     onSelect: (view: SessionScmReviewView) => void;
     /** How many commits the pending proposal holds ("Commits 3"); absent before one exists. */
     commitsCount?: number | null;
+    /** False when nothing follows the switch in the bar (a hosted comparison has no scope beside it). */
+    divided?: boolean;
 }>) {
     const tabs = React.useMemo(() => props.views.map((view) => ({
         id: view,
@@ -96,7 +98,7 @@ export function ScmComparisonViewSwitch(props: Readonly<{
                 segmentSizing="content"
                 accessibilityLabel={t('scmComparison.viewA11y')}
             />
-            <View style={styles.divider} />
+            {props.divided === false ? null : <View style={styles.divider} />}
         </View>
     );
 }
