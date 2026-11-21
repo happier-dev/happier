@@ -23,7 +23,8 @@ import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -350,13 +351,21 @@ it.each([true, false])('captures an admitted exact provider Git commit without a
     await expect(captured.assertSourceCurrent()).rejects.toMatchObject({ code: 'action_forbidden' });
 });
 
-it('requires a local workspace for native materialization and refuses provider refs without a resolver', async () => {
+it.each(['no checkout row', 'removed checkout', 'non-Git checkout'] as const)('offers to check out a repository for Upload with %s', async observation => {
     const environment = createDeploymentEnvironmentDetailV1();
-    if (environment.content.definition.kind !== 'repository') throw new Error('Repository fixture required');
-    environment.content.definition.ref = 'release';
+    environment.content.definition = { kind: 'repository', ref: 'release' };
     const sourceIntent = createDeploymentReceiptDetailV1().content.sourceIntent;
     if (sourceIntent.kind !== 'repository') throw new Error('Repository fixture required');
-    mockProjectAccountRowsHttpBoundary([]);
+    const directory = await mkdtemp(join(tmpdir(), 'deployment-checkout-'));
+    onTestFinished(() => rm(directory, { recursive: true, force: true }));
+    const runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+        runtimeOptions: { pluginIds: ['happier.scm.backend.git'] } });
+    onTestFinished(() => runtime.dispose());
+    mockProjectAccountRowsHttpBoundary(observation !== 'no checkout row' ? [createPlainProjectAccountRefRow({
+        id: 'checkout', serverId: 'home', machineId: 'controller',
+        rootPath: observation === 'removed checkout' ? join(directory, 'removed') : directory,
+        createdAtMs: 1, source: { sourceId: sourceIntent.projectSourceId, revision: sourceIntent.sourceRevision },
+    })] : []);
     const source = ProjectSourcesReadOutputV1Schema.parse({ ok: true, canManage: true, source: {
         id: sourceIntent.projectSourceId, revision: sourceIntent.sourceRevision, name: 'App', audience: [], createdByAccountId: 'owner',
         defaultRef: 'main', subdir: 'workers/site',
@@ -376,8 +385,8 @@ it('requires a local workspace for native materialization and refuses provider r
             const requester = await identityOwner.resolveActionRequester!(current);
             try { return requester.identity; } finally { await requester.dispose(); }
         } };
-    // No checkout row on the controller: a typed remedy that survives deployment and public CLI projection.
-    const missingCheckout = await readDeploymentSourceIntentForHost({ host, request: { environment, sourceIntent, context } })
+    // The checkout can be absent even when the Account retains a row for it.
+    const missingCheckout = await readDeploymentSourceIntentForHost({ host, request: { environment, context, requireWorkspace: true } })
         .then(() => { throw new Error('A missing checkout cannot select a source'); }, (error: unknown) => error);
     const failure = normalizeActionExecuteResult(projectDeploymentException(missingCheckout));
     if (failure.ok) throw new Error('A missing checkout cannot become success');

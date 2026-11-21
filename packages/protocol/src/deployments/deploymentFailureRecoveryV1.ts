@@ -75,7 +75,7 @@ const recoveries = {
     deployment_build_input_missing: recovery('The Dockerfile tried to copy an input that is missing from its build context. Check the COPY path and ignored files, commit any required files, and deploy that revision.', 'source', 'Review build inputs'),
     deployment_execution_format_error: recovery('An executable could not run in the image build. Check its architecture, executable format and interpreter in the Dockerfile before deploying again.', 'source', 'Review build executable'),
     native_build_failed: recovery('The image build failed. Read its build output to fix the reported command or executable before deploying again.', 'logs', 'Open build output'),
-    deployment_source_unavailable: recovery('Open Source details and set the Repository address and default branch or revision. Then open or accept its checkout on the selected Machine. Choose a revision containing your Compose file, then review the deployment again.', 'source', 'Open Source details'),
+    deployment_source_unavailable: recovery('Open Source details and check the repository address and selected branch or revision. Then review the deployment again.', 'source', 'Open Source details'),
     deployment_source_checkout_required: recovery("The Environment's Machine has no checkout of this Source yet. Open the Source's checkout on that Machine, then deploy again.", 'source', 'Open checkout'),
     deployment_source_clone_failed: recovery('Happier could not clone the repository on the selected Machine. Open Source details and check the repository address and its access, then deploy again.', 'source', 'Open Source details'),
     deployment_source_dirty: recovery('Commit or discard the changes in this checkout, then review the deployment again.', 'source', 'Open source'),
@@ -256,6 +256,7 @@ const fallback = recovery('Happier could not complete this change. Check deploym
 const supersededRemedies: ReadonlySet<string> = new Set([legacyGenericRemedy,
     'A machine operation failed. Open the deployment logs to find the failed step before trying again.',
     fallback.remedy,
+    'Open Source details and set the Repository address and default branch or revision. Then open or accept its checkout on the selected Machine. Choose a revision containing your Compose file, then review the deployment again.',
     // Daemons before DEPLOY-REACCEPT-1113 D7 authored this beside activeDomainMembers; its one remedy is now Deploy.
     'Deploy the app so it is running on this Machine, then add the domain']);
 const transactionRollbackRecovery = recovery('The Home could not record this change and rolled it back. Review the deployment and try again.', 'review', 'Review deployment');

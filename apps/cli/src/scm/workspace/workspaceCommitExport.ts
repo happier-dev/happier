@@ -1,3 +1,4 @@
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm';
 import type { ScmBackendRegistry } from '../registry';
 import { runWithScmBackendRegistryLease } from '../scmBackendCatalog';
 import { resolveScmSelectionOutcome } from '../resolveScmSelection';
@@ -7,8 +8,9 @@ import { buildScmWorkspaceIntegrationWorkspaceExportArtifactsWithBlobProviderFro
 async function requireWorkspaceCommitSelection(sourcePath: string, registry: ScmBackendRegistry) {
     const outcome = await resolveScmSelectionOutcome({ workingDirectory: sourcePath, cwd: sourcePath, registry });
     if (outcome.kind === 'selected') return outcome;
-    throw Object.assign(new Error('SCM source is unavailable',
-        outcome.kind === 'undetermined' ? { cause: outcome.error } : undefined), { code: 'git_selection_unavailable' });
+    const cause = outcome.kind === 'undetermined' ? outcome.error
+        : Object.assign(new Error('The workspace folder has no repository'), { errorCode: SCM_OPERATION_ERROR_CODES.NOT_REPOSITORY });
+    throw Object.assign(new Error('SCM source is unavailable', { cause }), { code: 'git_selection_unavailable' });
 }
 
 /** Configured-remote authority and fetched-ref verification stay with the selected SCM backend. */

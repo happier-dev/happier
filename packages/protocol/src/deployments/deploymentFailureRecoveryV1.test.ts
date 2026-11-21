@@ -361,6 +361,13 @@ describe('deployment refusal recovery (a refused press: banner and platform shee
             .toEqual({ kind: 'navigate', destination: 'source', label: 'Open checkout' });
     });
 
+    it('uses repository recovery for an unavailable source without a Compose file failure', () => {
+        const previousRemedy = 'Open Source details and set the Repository address and default branch or revision. Then open or accept its checkout on the selected Machine. Choose a revision containing your Compose file, then review the deployment again.';
+        const generic = readDeploymentRefusalRecoveryV1('deployment_source_unavailable', { remedy: previousRemedy });
+        expect(generic?.remedy).toMatch(/repository/i);
+        expect(generic?.remedy).not.toMatch(/compose/i);
+    });
+
     it('names the missing Compose file of the selected revision instead of the generic Source setup', () => {
         // The daemon's file boundary refuses with these typed details (nativeComposeSource.ts).
         const details = { kind: 'deploymentSourceFileUnavailable', path: 'deploy/compose.yaml', reason: 'absent' };

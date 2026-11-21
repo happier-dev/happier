@@ -153,7 +153,7 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
     })) : undefined;
     const workspace = repository ? rows?.snapshot.workspaceRefs.find(ref => ref.serverId === host.serverId
         && ref.machineId === host.machineId && ref.source?.sourceId === sourceId && ref.source.revision === sourceRevision) : undefined;
-    if (needsWorkspace && !workspace) {
+    const refuseMissingCheckout = (): never => {
         if (sourceRevision === undefined || !sourceRepository) return refuse('deployment_source_unavailable');
         // The person or agent opens this Source's checkout through projects.open (its own review), then deploys again.
         const code = 'deployment_source_checkout_required';
@@ -166,7 +166,8 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
             ...(definition.kind === 'repository' && definition.ref !== undefined ? { ref: definition.ref } : {}),
             materialization: { kind: 'clone', ...destination } }) };
         throw Object.assign(createActionExecuteFailureError(failure), { cause: failure });
-    }
+    };
+    if (needsWorkspace && !workspace) return refuseMissingCheckout();
     if (publishedGitProviders && workspace) {
         const status = await runScmCommand({ bin: 'git', cwd: workspace.rootPath, signal,
             args: ['--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=normal', '--ignore-submodules=none'] });
@@ -185,6 +186,12 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
                     try {
                         sha = await resolveWorkspaceCommitRef({ sourcePath: workspace.rootPath, ref: definition.ref, signal });
                     } catch (error) {
+                        const cause = error instanceof Error ? error.cause : undefined;
+                        if (needsWorkspace && cause instanceof Error && 'errorCode' in cause
+                            && (cause.errorCode === SCM_OPERATION_ERROR_CODES.ROOT_NOT_FOUND
+                                || cause.errorCode === SCM_OPERATION_ERROR_CODES.NOT_REPOSITORY)) {
+                            return refuseMissingCheckout();
+                        }
                         if (publishedGitProviders || !(error instanceof Error && 'code' in error && error.code === SCM_OPERATION_ERROR_CODES.NOT_FOUND)
                             || !sourceRepository || !host.resolveRepositoryRef) return rethrowDeploymentSourceAcquisitionFailure(error);
                         sha = await host.resolveRepositoryRef(sourceRepository, definition.ref, request.context);
