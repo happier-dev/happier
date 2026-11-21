@@ -3,7 +3,7 @@ import type { ScmComparisonCaptureInput } from '../scm/diffSummary.js';
 import { RpcError } from '../rpc/errors.js';
 import type { ReviewArtifactV1, ReviewRecordPortV1, ReviewRoundComparisonCaptureV1, ReviewSourceKindV1 } from './reviewArtifactV1.js';
 import type { ReviewPrepareRoundInputV1, ReviewPreparedRoundV1 } from './reviewRoundActionsV1.js';
-import { reviewReviewerIdsForStartV1, reviewWorkingTreeAreaV1, type ReviewStartInput } from './reviewStart.js';
+import { reviewReviewerDisplayNamesForStartV1, reviewReviewerIdsForStartV1, reviewWorkingTreeAreaV1, type ReviewStartInput } from './reviewStart.js';
 import { readRecord } from '../inputs/inputRecords.js';
 
 /** An explicit comparison keeps its original selector; ordinary changes select their admitted area. */
@@ -69,6 +69,7 @@ export async function prepareReviewRoundV1(input: ReviewPrepareRoundInputV1, dep
     reviewId: input.reviewRound.reviewId, title: 'Code review',
     subjectKind: comparison ? 'comparison' : 'repository', sourceKind: deps.sourceKind ?? 'workflow',
     reviewerIds: reviewReviewerIdsForStartV1(input.reviewInput),
+    reviewerDisplayNames: reviewReviewerDisplayNamesForStartV1(input.reviewInput),
     ...(comparison ? { comparisonId: comparison.id } : {}),
     ...(comparison && comparisonCapture && deps.comparisonTarget ? { comparisonCapture: {
       target: deps.comparisonTarget, input: { ...retainedCaptureInput,

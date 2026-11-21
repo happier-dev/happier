@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import {
   openReviewArtifactV1,
-  projectReviewRoundQualityV1,
+  describeReviewRoundQualityV1,
   REVIEW_ARTIFACT_KIND_V1,
   type ReviewArtifactV1,
   type ReviewRoundStateV1,
@@ -265,6 +265,7 @@ export function ReviewDetailHost(props: Readonly<{
   const humanActions = useReviewHumanActions(scope, human);
   const round = record?.rounds.find((item) => item.ordinal === selectedRound) ?? record?.rounds.at(-1);
   const qualityAggregation = useSetting('reviewQualityAggregation');
+  const roundQuality = React.useMemo(() => describeReviewRoundQualityV1(round, qualityAggregation), [round, qualityAggregation]);
   const rounds = React.useMemo(() => record?.rounds.map(item => {
     const projected = projectRound(item);
     const people = human ? projectPeople({ human, round: item.ordinal, names, viewerAccountId: scope?.accountId ?? null }) : null;
@@ -520,7 +521,9 @@ export function ReviewDetailHost(props: Readonly<{
         ...(operations.canManage ? [{ id: 'delete', testID: 'review-detail:delete', title: t('artifacts.delete'), destructive: true,
           loading: operations.deleting, onSelect: operations.remove }] : [])]}
       glance={projectReviewGlance(round, review, { countsOnChips: true, fixedCount })}
-      quality={projectReviewRoundQualityV1(round, qualityAggregation)}
+      quality={roundQuality.quality}
+      qualityUnavailableReason={roundQuality.unavailableReason}
+      qualityReviewers={roundQuality.reviewers}
       rounds={rounds}
       selectedRound={selectedRound}
       onSelectRound={ordinal => { void viewCommands.invoke('review.detail.round', { ordinal }); }}

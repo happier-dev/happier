@@ -123,10 +123,27 @@ export function reviewReviewersForEngineIdsV1(engineIds: readonly string[]): Pic
   return engineIds.map(engineId => ({ kind: 'engine', engineId }));
 }
 
-export function reviewReviewerIdsForStartV1(input: Pick<ReviewStartInput, 'reviewers' | 'steps'>): string[] {
+function reviewExecutableRosterForStartV1(input: Pick<ReviewStartInput, 'reviewers' | 'steps'>) {
   return (input.steps ?? [{ reviewers: input.reviewers }]).flatMap((step, stepIndex) =>
     step.reviewers.flatMap((reviewer, reviewerIndex) => reviewer.kind === 'person' ? []
-      : [reviewReviewerIdForSelectionV1(reviewerIndex, stepIndex)]));
+      : [{ reviewer, id: reviewReviewerIdForSelectionV1(reviewerIndex, stepIndex) }]));
+}
+
+export function reviewReviewerIdsForStartV1(input: Pick<ReviewStartInput, 'reviewers' | 'steps'>): string[] {
+  return reviewExecutableRosterForStartV1(input).map(({ id }) => id);
+}
+
+/** Bind a display identity to the intentional roster slot when it is admitted. */
+export function reviewReviewerDisplayNamesForStartV1(input: Pick<ReviewStartInput, 'reviewers' | 'steps'>,
+  readEngineLabel?: (reviewer: ReviewEngineReviewerSelectionV1, id: string) => string | undefined): Readonly<Record<string, string>> {
+  return Object.fromEntries(reviewExecutableRosterForStartV1(input).flatMap(({ reviewer, id }) => {
+    const name = reviewer.kind === 'engine'
+      ? reviewer.teamCredentialModel?.modelId ?? reviewer.modelSelection?.modelId ?? reviewer.modelId
+        ?? readEngineLabel?.(reviewer, id) ?? reviewer.engineId
+      : reviewer.kind === 'model' ? reviewer.launch.modelSelection?.ref.modelId ?? reviewer.launch.agentTarget.identity.localId
+      : undefined;
+    return name ? [[id, name]] : [];
+  }));
 }
 
 /** Read compatibility for observed persisted pre-roster Run inputs, once at this owner. */

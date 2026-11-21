@@ -20,11 +20,11 @@ afterEach(async () => {
 });
 
 /** A completed round whose three model reviewers each recorded a 1–5 score and its reason. */
-function reviewArtifact(serverId: string): DecryptedArtifact {
+function reviewArtifact(serverId: string, state: 'completed' | 'partial'): DecryptedArtifact {
   const rounds = [
     {
       ordinal: 1,
-      state: 'completed',
+      state,
       startedAt: 1,
       finishedAt: 2,
       reviewerIds: [
@@ -36,6 +36,7 @@ function reviewArtifact(serverId: string): DecryptedArtifact {
       reviewerQuality: [
         {
           reviewerId: 'step-1-reviewer-1',
+          displayName: 'Codex',
           score: 4,
           rationale: 'Clean backoff with a cap and a give-up path.',
         },
@@ -77,6 +78,7 @@ function reviewArtifact(serverId: string): DecryptedArtifact {
 
 async function renderReview(
   settings?: Readonly<{ reviewQualityAggregation: 'lowest' | 'median' }>,
+  state: 'completed' | 'partial' = 'completed',
 ) {
   fixture = await createSessionFilesViewFixture({
     serverUrl: 'https://review-quality.test',
@@ -85,7 +87,7 @@ async function renderReview(
   const { ReviewDetailHost } = await import('./ReviewDetailHost');
   return await fixture.render(
     <ReviewDetailHost
-      artifact={reviewArtifact(fixture.scope.serverId)}
+      artifact={reviewArtifact(fixture.scope.serverId, state)}
       bodyState="ready"
       onRetry={() => {}}
     />,
@@ -142,5 +144,20 @@ it("shows the recorded score the Host combined with the person's setting, and sa
     );
   } finally {
     await median.unmount();
+  }
+});
+
+
+it('passes partial-round score evidence and the typed reason through the mounted Host', async () => {
+  const screen = await renderReview(undefined, 'partial');
+  const { ReviewDetailView } = await import('./ReviewDetailView');
+  try {
+    await vi.waitFor(() => expect(screen.findByType(ReviewDetailView).props).toMatchObject({
+      quality: null, qualityUnavailableReason: 'partial',
+      qualityReviewers: expect.arrayContaining([{ reviewerId: 'step-1-reviewer-1', displayName: 'Codex',
+        score: 4, rationale: 'Clean backoff with a cap and a give-up path.' }]),
+    }));
+  } finally {
+    await screen.unmount();
   }
 });

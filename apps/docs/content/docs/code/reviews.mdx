@@ -99,6 +99,13 @@ Its relation to the selected changes comes from captured code evidence.
 Insufficient or conflicting evidence stays unknown. A **Seen before** link or
 an older Review does not prove that the issue predates the change.
 
+When a completed round has reviewer scores, the Review shows one quality score
+under its verdict, such as "Quality 3/5 · Lowest of 3 reviewers". **Show all**
+lists each reviewer's score and reason. In **Settings → Source control → Walkthroughs**,
+choose the lowest score or the median. When the median falls between two whole
+numbers, the displayed score uses the lower one. Partial rounds retain the
+individual reviewer evidence and have no combined score.
+
 Choose **Implement fix**, **Ignore**, **Decide later** or **Ask for clarification**
 for a finding. A reviewer's verdict and its native evidence remain separate
 from your decision. [Manual review comments](/code/review-comments) still let

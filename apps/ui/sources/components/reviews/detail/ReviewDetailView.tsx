@@ -4,7 +4,8 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierReviewGlanceLine, type HappierReviewGlance } from '@happier-dev/plugin-ui/presentation';
 import { useWorkTheme, WORK_HOST } from '@/components/work/map/WorkMapView';
 
-import type { ReviewRoundQualityV1, ReviewRoundStateV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
+import type { ReviewRoundQualityUnavailableReasonV1, ReviewRoundQualityV1, ReviewRoundReviewerQualityV1, ReviewRoundStateV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
+import { presentReviewRoundQualityV1 } from '@happier-dev/protocol/reviews/reviewQualityPresentationV1';
 
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
@@ -89,6 +90,8 @@ export type ReviewDetailViewProps = Readonly<{
   glance: ReviewDetailGlance | null;
   /** The round's reviewer score as the Host aggregated it (lowest or median, the person's setting); `null` when none was recorded. */
   quality?: ReviewRoundQualityV1 | null;
+  qualityUnavailableReason?: ReviewRoundQualityUnavailableReasonV1 | null;
+  qualityReviewers?: readonly ReviewRoundReviewerQualityV1[];
   /** One line under the glance when part of the round failed or the Home is offline (with its retry). */
   notice?: React.ReactNode;
   rounds: readonly ReviewDetailRound[];
@@ -220,6 +223,7 @@ export function ReviewGlanceLine(
  */
 function ReviewQualityLines(props: Readonly<{ quality: ReviewRoundQualityV1 }>) {
   const { quality } = props;
+  const presentation = presentReviewRoundQualityV1(quality);
   const [expanded, setExpanded] = React.useState(false);
   const count = quality.reviewers.length;
   const basis = count > 1 ? t(quality.aggregation === 'median' ? 'reviewWalkthrough.detail.qualityMedian'
@@ -230,7 +234,7 @@ function ReviewQualityLines(props: Readonly<{ quality: ReviewRoundQualityV1 }>) 
     <View testID="review-detail:quality" style={styles.quality}>
       <View style={styles.qualityLine}>
         <Text variant="meta" style={styles.participantQuiet}>
-          <Text testID="review-detail:quality-score">{t('reviewWalkthrough.detail.quality', { score: quality.score })}</Text>
+          <Text testID="review-detail:quality-score">{t('reviewWalkthrough.detail.quality', { score: presentation.displayScore })}</Text>
           {basis ? <>{' · '}<Text testID="review-detail:quality-basis">{basis}</Text></> : null}
           {' · '}
         </Text>

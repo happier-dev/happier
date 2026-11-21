@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createReviewRecordPortV1, projectReviewRoundQualityV1, ReviewRoundComparisonCaptureV1Schema, type ReviewArtifactTransportV1 } from './reviewArtifactV1.js';
+import { presentReviewRoundQualityV1 } from './reviewQualityPresentationV1.js';
 import { ReviewReviewerOutcomeV1Schema } from './reviewPublicationEvidence.js';
 
 function fixture() {
@@ -104,7 +105,8 @@ describe('durable Review rounds', () => {
   it('opens settled quality for each admitted reviewer without inventing scores for old or missing evidence', async () => {
     const f = fixture();
     const start = { reviewId: 'quality-review', title: 'Review', subjectKind: 'repository' as const,
-      sourceKind: 'workflow' as const, reviewerIds: ['one', 'two', 'legacy'], startedAt: 1 };
+      sourceKind: 'workflow' as const, reviewerIds: ['one', 'two', 'legacy'],
+      reviewerDisplayNames: { one: 'GPT-6.1', two: 'Claude Opus' }, startedAt: 1 };
     const binding = await f.records.start(start);
     const one = { score: 2, rationale: 'A regression remains.' };
     const two = { score: 5, rationale: 'The change has complete coverage.' };
@@ -118,11 +120,17 @@ describe('durable Review rounds', () => {
     await f.records.start({ ...start, startedAt: 3, newRound: true });
     const rounds = (await f.records.read(binding.reviewId))?.rounds;
     expect(rounds).toMatchObject([
-      { ordinal: 1, state: 'completed', reviewerQuality: [{ reviewerId: 'one', ...one }, { reviewerId: 'two', ...two }] },
+      { ordinal: 1, state: 'completed', medianQualityScore: 3.5, reviewerQuality: [{ reviewerId: 'one', displayName: 'GPT-6.1', ...one }, { reviewerId: 'two', displayName: 'Claude Opus', ...two }] },
       { ordinal: 2, state: 'running' },
     ]);
     expect(projectReviewRoundQualityV1(rounds?.[0], 'lowest')?.score).toBe(2);
-    expect(projectReviewRoundQualityV1(rounds?.[0], 'median')?.score).toBe(3.5);
+    const median = projectReviewRoundQualityV1(rounds?.[0], 'median');
+    expect(median?.score).toBe(3.5);
+    expect(presentReviewRoundQualityV1(median)).toEqual({
+      aggregation: 'median', displayScore: 3, reviewers: [{ reviewerId: 'one', displayName: 'GPT-6.1', ...one }, { reviewerId: 'two', displayName: 'Claude Opus', ...two }],
+    });
+    expect(presentReviewRoundQualityV1(projectReviewRoundQualityV1(rounds?.[0], 'lowest'))?.displayScore).toBe(2);
+    expect(presentReviewRoundQualityV1(null)).toBeNull();
     expect(projectReviewRoundQualityV1(rounds?.[1], 'lowest')).toBeNull();
   });
 
@@ -154,15 +162,26 @@ describe('durable Review rounds', () => {
     const start = { reviewId: 'review-1', title: 'Review', subjectKind: 'comparison' as const, sourceKind: 'direct' as const,
       reviewerIds: ['one', 'two'], startedAt: 10 };
     const binding = await f.records.start(start);
+    const quality = { score: 5, rationale: 'This reviewer found no issues.' };
     await f.records.settle({ ...binding, outcome: 'partial', finishedAt: 21,
-      reviewerOutcomes: [{ key: 'one', outcome: 'completed', materialization: { kind: 'complete' } },
+      reviewerOutcomes: [{ key: 'one', outcome: 'completed', materialization: { kind: 'complete' }, quality },
         { key: 'two', outcome: 'failed' }],
       runs: [{ kind: 'workflow', runId: 'workflow-1' }, { kind: 'execution', machineId: 'machine-1', runId: 'one' },
         { kind: 'execution', machineId: 'machine-2', runId: 'two' }] });
     expect(f.writes()).toBe(2);
     const next = await f.records.start({ ...start, startedAt: 30, comparisonId: 'new-code', newRound: true });
     expect(next).toEqual({ reviewId: 'review-1', roundOrdinal: 2 });
-    expect((await f.records.read('review-1'))?.rounds).toMatchObject([{ ordinal: 1, state: 'partial' }, { ordinal: 2, comparisonId: 'new-code', state: 'running' }]);
-    expect((await f.records.read('review-1'))?.rounds[0]).not.toHaveProperty('results');
+    const rounds = (await f.records.read('review-1'))?.rounds;
+    expect(rounds).toMatchObject([
+      { ordinal: 1, state: 'partial', reviewerQuality: [{ reviewerId: 'one', ...quality }] },
+      { ordinal: 2, comparisonId: 'new-code', state: 'running' },
+    ]);
+    expect(projectReviewRoundQualityV1(rounds?.[0], 'lowest')).toBeNull();
+    expect(projectReviewRoundQualityV1(rounds?.[0], 'median')).toBeNull();
+    const { describeReviewRoundQualityV1 } = await import('./reviewArtifactV1.js');
+    expect(describeReviewRoundQualityV1(rounds?.[0], 'median')).toEqual({
+      quality: null, unavailableReason: 'partial', reviewers: [{ reviewerId: 'one', ...quality }],
+    });
+    expect(rounds?.[0]).not.toHaveProperty('results');
   });
 });

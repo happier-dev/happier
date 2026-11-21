@@ -12,7 +12,7 @@ import { ReviewWalkthroughRequestSchema, ReviewExplainFindingsRequestSchema, Rev
 import { resolveSessionIdFromInput, resolveServerIdForExecutionRunScope } from '../sessionScope.js';
 import { resolveExecutionRunLaunchOrigin, buildExecutionRunCallOptions, checkDetachedExecutionRunProtocolV2, normalizeExecutionBackendOptionValue, normalizeExecutionBackendTargetValue, resolveFanoutTeamCredentialModel, resolveFanoutConnectedServicesSelections, readReviewRunActionPayload, readFanoutStartError, fanoutStarts, classifyExecutionRunStartFailure } from '../executionRuns.js';
 import { readRecord, hasOwn } from '../../../inputs/inputRecords.js';
-import { requiresReviewWorkflowCompositionV1, reviewReviewerIdForSelectionV1, reviewReviewerIdsForStartV1, type ReviewStartInput } from '../../../reviews/reviewStart.js';
+import { requiresReviewWorkflowCompositionV1, reviewReviewerDisplayNamesForStartV1, reviewReviewerIdForSelectionV1, reviewReviewerIdsForStartV1, type ReviewStartInput } from '../../../reviews/reviewStart.js';
 import { SESSION_TRANSCRIPT_GET_MAX_LIMIT, SessionTranscriptGetResultSchema } from '../../specs/session/transcript.js';
 import { createPermissionPolicyResult, resolveAgentExecutionRunPermission } from '../callerContext.js';
 import { EXECUTION_RUN_ACTION_PERMISSION_MODES } from '../../executionRunActionPermissionMode.js';
@@ -371,7 +371,9 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
             ...(ctx.actionCaller?.kind === 'workflowRun' ? { workflowId: ctx.actionCaller.workflowId } : {}),
             ...(reviewInput.comparisonId ? { comparisonId: reviewInput.comparisonId } : {}),
             ...(comparisonCapture ? { comparisonCapture } : {}),
-            reviewerIds: reviewReviewerIdsForStartV1(reviewInput), startedAt: Date.now(), signal: ctx.signal });
+            reviewerIds: reviewReviewerIdsForStartV1(reviewInput),
+            reviewerDisplayNames: reviewReviewerDisplayNamesForStartV1(reviewInput),
+            startedAt: Date.now(), signal: ctx.signal });
           const people = (reviewInput.steps ?? [{ reviewers: reviewInput.reviewers }]).flatMap(step =>
             step.reviewers.flatMap(reviewer => reviewer.kind === 'person'
               ? [{ principal: reviewer.principal, required: reviewer.required }] : []));
@@ -547,7 +549,9 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           ...(ctx.actionCaller?.kind === 'workflowRun' ? { workflowId: ctx.actionCaller.workflowId } : {}),
           ...(reviewInput.comparisonId ? { comparisonId: reviewInput.comparisonId } : {}),
           ...(comparisonCapture ? { comparisonCapture } : {}),
-          reviewerIds: reviewReviewerIdsForStartV1(reviewInput), startedAt: Date.now(), signal: ctx.signal });
+          reviewerIds: reviewReviewerIdsForStartV1(reviewInput),
+          reviewerDisplayNames: reviewReviewerDisplayNamesForStartV1(reviewInput, (_selection, id) => selectedReviewEngineItems.get(id)?.label),
+          startedAt: Date.now(), signal: ctx.signal });
         const reviewGroupId = reviewRound.reviewId;
         const reviewLaunchOptions = executionRunDispatchOpts;
         const results = await fanoutStarts({

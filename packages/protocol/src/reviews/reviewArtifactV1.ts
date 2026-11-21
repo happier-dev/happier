@@ -58,34 +58,54 @@ export type ReviewMetadataWriteV1 = z.infer<typeof ReviewMetadataWriteV1Schema>;
 export const ReviewArtifactHeaderV1Schema = z.strictObject({ kind: z.literal(REVIEW_ARTIFACT_KIND_V1), v: z.literal(1),
   reviewId: z.string(), title: z.string() });
 const ReviewRoundReviewerQualityV1Schema = lazyZodSchema(() => z.strictObject({
-  reviewerId: z.string().check(z.minLength(1)), ...ReviewQualityV1Schema.shape,
+  reviewerId: z.string().check(z.minLength(1)),
+  displayName: z.optional(z.string().check(z.minLength(1))), ...ReviewQualityV1Schema.shape,
 }));
 export const ReviewArtifactBodyV1Schema = z.strictObject({ v: z.literal(1), rounds: z.array(z.strictObject({
   ordinal: z.number().check(z.int(), z.minimum(1)), comparisonId: z.optional(z.string()),
   comparisonCapture: z.optional(ReviewRoundComparisonCaptureV1Schema),
   state: ReviewRoundStateV1Schema, startedAt: z.number(), finishedAt: z.nullable(z.number()),
   reviewerIds: z.array(z.string()), runs: z.array(ReviewRunReferenceV1Schema),
+  reviewerDisplayNames: z.optional(z.record(z.string(), z.string().check(z.minLength(1)))),
   reviewerQuality: z.optional(z.array(ReviewRoundReviewerQualityV1Schema)),
+  medianQualityScore: z.optional(z.number().check(z.minimum(1), z.maximum(5))),
   summary: z.optional(z.string()),
 })) });
 export type ReviewArtifactBodyV1 = z.infer<typeof ReviewArtifactBodyV1Schema>;
 export type ReviewArtifactV1 = Readonly<z.infer<typeof ReviewArtifactHeaderV1Schema> & ReviewArtifactBodyV1>;
+export type ReviewRoundReviewerQualityV1 = z.infer<typeof ReviewRoundReviewerQualityV1Schema>;
 export type ReviewRoundQualityV1 = Readonly<{
   aggregation: ReviewQualityAggregationV1;
   score: number;
-  reviewers: readonly z.infer<typeof ReviewRoundReviewerQualityV1Schema>[];
+  reviewers: readonly ReviewRoundReviewerQualityV1[];
 }>;
 
 export function projectReviewRoundQualityV1(
   round: ReviewArtifactV1['rounds'][number] | undefined, aggregation: ReviewQualityAggregationV1,
 ): ReviewRoundQualityV1 | null {
-  const reviewers = round?.reviewerQuality;
-  if (!reviewers?.length) return null;
+  return describeReviewRoundQualityV1(round, aggregation).quality;
+}
+
+export type ReviewRoundQualityUnavailableReasonV1 = Exclude<ReviewRoundStateV1, 'completed'> | 'no_scores' | 'no_round';
+
+export function describeReviewRoundQualityV1(
+  round: ReviewArtifactV1['rounds'][number] | undefined, aggregation: ReviewQualityAggregationV1,
+): Readonly<{ quality: ReviewRoundQualityV1 | null; unavailableReason: ReviewRoundQualityUnavailableReasonV1 | null;
+  reviewers: readonly ReviewRoundReviewerQualityV1[] }> {
+  const reviewers = round?.reviewerQuality ?? [];
+  if (!round) return { quality: null, unavailableReason: 'no_round', reviewers };
+  if (round.state !== 'completed') return { quality: null, unavailableReason: round.state, reviewers };
+  if (reviewers.length === 0) return { quality: null, unavailableReason: 'no_scores', reviewers };
+  const score = aggregation === 'lowest'
+    ? reviewers.reduce((lowest, reviewer) => Math.min(lowest, reviewer.score), reviewers[0]!.score)
+    : round.medianQualityScore ?? medianReviewerScore(reviewers);
+  return { quality: { aggregation, score, reviewers }, unavailableReason: null, reviewers };
+}
+
+function medianReviewerScore(reviewers: readonly ReviewRoundReviewerQualityV1[]): number {
   const scores = reviewers.map(reviewer => reviewer.score).sort((left, right) => left - right);
   const midpoint = Math.floor(scores.length / 2);
-  const score = aggregation === 'lowest' ? scores[0]
-    : scores.length % 2 === 0 ? (scores[midpoint - 1] + scores[midpoint]) / 2 : scores[midpoint];
-  return { aggregation, score, reviewers };
+  return scores.length % 2 === 0 ? (scores[midpoint - 1]! + scores[midpoint]!) / 2 : scores[midpoint]!;
 }
 
 type Revision = Readonly<{ headerVersion: number; bodyVersion: number }>;
@@ -98,7 +118,7 @@ export interface ReviewArtifactTransportV1 {
 export type ReviewRoundStartV1 = Readonly<{ reviewId: string; title: string; subjectKind: ReviewSubjectKindV1;
   sourceKind: ReviewSourceKindV1; projectSourceId?: string; workflowId?: string; comparisonId?: string;
   comparisonCapture?: ReviewRoundComparisonCaptureV1;
-  reviewerIds: readonly string[]; startedAt: number; newRound?: boolean; signal?: AbortSignal }>;
+  reviewerIds: readonly string[]; reviewerDisplayNames?: Readonly<Record<string, string>>; startedAt: number; newRound?: boolean; signal?: AbortSignal }>;
 export type ReviewRoundSettlementV1 = Readonly<ReviewRoundBindingV1 & {
   outcome: Exclude<ReviewRoundStateV1, 'running'>; finishedAt: number; runs: readonly ReviewRunReferenceV1[];
   reviewerOutcomes?: readonly ReviewReviewerOutcomeV1[];
@@ -133,6 +153,10 @@ export function createReviewRecordPortV1(transport: ReviewArtifactTransportV1) {
       const lastOrdinal = previous?.rounds.at(-1)?.ordinal ?? 0;
       if (previous && !input.newRound) return { reviewId: input.reviewId, roundOrdinal: lastOrdinal };
       const ordinal = lastOrdinal + 1;
+      const reviewerDisplayNames = Object.fromEntries(input.reviewerIds.flatMap(id => {
+        const name = input.reviewerDisplayNames?.[id];
+        return name ? [[id, name]] : [];
+      }));
       const comparisonId = input.comparisonCapture?.input.comparisonId ?? input.comparisonId;
       const reviewMetadata: ReviewMetadataWriteV1 = { projectSourceId: input.projectSourceId ?? null,
         workflowId: input.workflowId ?? null, subjectKind: input.subjectKind, sourceKind: input.sourceKind,
@@ -141,7 +165,8 @@ export function createReviewRecordPortV1(transport: ReviewArtifactTransportV1) {
         title: previous?.title ?? input.title, rounds: [...previous?.rounds ?? [], { ordinal,
           ...(comparisonId ? { comparisonId } : {}),
           ...(input.comparisonCapture ? { comparisonCapture: input.comparisonCapture } : {}), state: 'running', startedAt: input.startedAt,
-          finishedAt: null, reviewerIds: [...input.reviewerIds], runs: [] }] };
+          finishedAt: null, reviewerIds: [...input.reviewerIds], runs: [],
+          ...(Object.keys(reviewerDisplayNames).length ? { reviewerDisplayNames } : {}) }] };
       if (!row) await transport.create({ artifactId: input.reviewId, ...content(next), reviewMetadata, signal: input.signal });
       else {
         const result = await transport.update({ artifactId: input.reviewId, expectedRevision: row.revision, ...content(next), reviewMetadata, signal: input.signal });
@@ -164,10 +189,12 @@ export function createReviewRecordPortV1(transport: ReviewArtifactTransportV1) {
           ? [[reviewer.key, reviewer.quality] as const] : []));
       const reviewerQuality = round.reviewerIds.flatMap(reviewerId => {
         const quality = byReviewer.get(reviewerId);
-        return quality ? [{ reviewerId, ...quality }] : [];
+        const displayName = round.reviewerDisplayNames?.[reviewerId];
+        return quality ? [{ reviewerId, ...(displayName ? { displayName } : {}), ...quality }] : [];
       });
       const nextRound = { ...round, state: outcome, finishedAt: input.finishedAt, runs: [...input.runs],
         ...(reviewerQuality.length ? { reviewerQuality } : {}),
+        ...(outcome === 'completed' && reviewerQuality.length > 0 ? { medianQualityScore: medianReviewerScore(reviewerQuality) } : {}),
         ...(input.summary === undefined ? {} : { summary: input.summary }) };
       const next = { ...current, rounds: current.rounds.map(item => item === round ? nextRound : item) };
       const reviewMetadata: ReviewMetadataWriteV1 = { currentRoundOrdinal: input.roundOrdinal, state: outcome, finishedAt: input.finishedAt };
