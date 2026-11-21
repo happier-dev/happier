@@ -8,6 +8,7 @@ import { SessionHandoffProgressCheckpointSchema, SessionHandoffActionResultV1Sch
 import { SESSION_HANDOFF_PROGRESS_FULL_TIMELINE, SESSION_HANDOFF_PROGRESS_FULL_TIMELINE_WITH_SOURCE_SCAN, resolveSessionHandoffProgressTimeline, type SessionHandoffProgressCheckpoint, type SessionHandoffStatus } from '@happier-dev/protocol/sessions/control/handoff/handoffStatus';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { HandoffWorkspaceOutcomeV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 
 import type { CustomModalInjectedProps } from '@/modal';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
@@ -17,6 +18,7 @@ import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { Typography } from '@/constants/Typography';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { presentProviderError } from '@/providers/connection/errorPresentation';
 import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
 import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -607,6 +609,10 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
                     ? t('sessionHandoff.cancelled.title')
                     : t('sessionHandoff.progress.title'));
     const operationFailureCode = operationFailed || requestFailure ? requestFailure?.errorCode ?? operation?.error?.errorCode : null;
+    const providerFailure = operationFailureCode === SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED
+        ? presentProviderError(requestFailure?.error ?? operation?.error?.error)
+        : null;
+    const providerFailureMessage = providerFailure?.action ? t(providerFailure.descriptionKey) : null;
     const operationFailureTranslationKey = operationFailureCode === SESSION_HANDOFF_SANDBOX_PRESET_REQUIRED
         ? 'sessionHandoff.failure.targetRequiresSandboxPreset'
         : resolveWorkspaceSyncErrorTranslationKey(operationFailureCode);
@@ -617,11 +623,11 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
         ?? (outcomeLabel && !isFailureState
             ? t('sessionHandoff.progress.completedMessage')
             : isAwaitingRecovery
-            ? t('sessionHandoff.recovery.messageAfterSourceStop')
+            ? [providerFailureMessage, t('sessionHandoff.recovery.messageAfterSourceStop')].filter(Boolean).join(' ')
             : isAwaitingUserResume
                 ? t('externalSessions.operationStatusNeedsResume')
                 : isFailureState
-                    ? t(operationFailureTranslationKey ?? 'sessionHandoff.failure.message')
+                    ? providerFailureMessage ?? t(operationFailureTranslationKey ?? 'sessionHandoff.failure.message')
                     : operationCancelled
                         ? t('sessionHandoff.cancelled.message')
                         : t('sessionHandoff.progress.message'));

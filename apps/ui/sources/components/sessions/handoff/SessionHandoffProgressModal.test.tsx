@@ -33,6 +33,20 @@ async function expandProgressDetails(screen: Awaited<ReturnType<typeof renderScr
 }
 
 describe('SessionHandoffProgressModal', () => {
+    it('shows the destination Provider refusal alongside source recovery', async () => {
+        const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
+        const screen = await renderScreen(<SessionHandoffProgressModal
+            onClose={vi.fn()}
+            setChrome={vi.fn()}
+            status={{ handoffId: 'handoff-1', status: 'awaiting_recovery', phase: 'resuming', recoveryActions: [] }}
+            requestFailure={{ ok: false, errorCode: 'SPAWN_VALIDATION_FAILED', error: 'provider_not_enabled_on_machine' }}
+        />);
+
+        const status = screen.findByTestId('session-handoff-progress-status');
+        expect(status?.props.accessibilityLabel).toContain('settingsProviders.errors.notEnabledOnMachineDescription');
+        expect(status?.props.accessibilityLabel).toContain('sessionHandoff.recovery.messageAfterSourceStop');
+    });
+
     it('shows how to recover when the receiving Machine requires a sandbox preset', async () => {
         const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
         const screen = await renderScreen(<SessionHandoffProgressModal onClose={vi.fn()} setChrome={vi.fn()}
