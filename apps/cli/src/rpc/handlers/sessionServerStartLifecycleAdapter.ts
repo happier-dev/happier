@@ -11,6 +11,7 @@ export type MachineSessionServerStartSpawnLifecycleTransportOptions = Readonly<{
 
 export type MachineSessionDirectTargetTransportOptions = Readonly<{
     machineId: string;
+    readMachineMetadataSnapshot?: SessionSpawnDirectTargetTransport['readMachineMetadataSnapshot'];
     spawnLifecycleHandler: SessionLifecycleActionHandler;
     resolveSpawnSessionByNonce?: SpawnSessionNonceResolver;
 }>;
@@ -66,6 +67,7 @@ export function createMachineSessionDirectTargetTransport(
 ): SessionSpawnDirectTargetTransport {
     return {
         machineId: options.machineId,
+        ...(options.readMachineMetadataSnapshot ? { readMachineMetadataSnapshot: options.readMachineMetadataSnapshot } : {}),
         prepare: async (request, prepareOptions) =>
             await prepareSessionCreationTarget({
                 request,

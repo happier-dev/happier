@@ -93,6 +93,9 @@ export function registerMachineSessionRpcHandlers(params: MachineSessionRpcFamil
     ...(params.deps?.currentServerId ? { requesterBootstrapBoundary: {
       serverId: params.deps.currentServerId, serverHttpBaseUrl: resolveServerHttpBaseUrl(),
       happyHomeDir: configuration.happyHomeDir, spawnLifecycleHandler,
+      ...(params.deps?.sessionServerStart?.readMachineMetadataSnapshot ? {
+        readMachineMetadataSnapshot: params.deps.sessionServerStart.readMachineMetadataSnapshot,
+      } : {}),
       readInstallation: readCurrentMachineInstallation,
       getObservedServerIdentityId: () => {
         const snapshot = params.deps?.getServerFeaturesSnapshot?.();

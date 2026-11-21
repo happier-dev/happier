@@ -1,5 +1,6 @@
 import axios, { AxiosHeaders } from 'axios';
 import nacl from 'tweetnacl';
+import { tmpdir } from 'node:os';
 import { afterEach, expect, it, vi } from 'vitest';
 import { FeaturesResponseSchema, SessionSpawnNewInputV2Schema, accountSettingsParse } from '@happier-dev/protocol';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
@@ -17,7 +18,8 @@ import { createApiSessionSocketStub, bindApiSessionSocketMock } from '@/testkit/
 import { socketRpcCodec } from '@happier-dev/sync-client';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
+import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { SessionCreationTargetPreparationRequestV1Schema, SessionCreationTargetPreparationResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1';
 import { SpawnDaemonSessionRequestSchema } from '@/rpc/handlers/spawnSessionOptionsContract';
 import { io } from 'socket.io-client';
@@ -25,6 +27,9 @@ import { projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncr
 import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
 import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { CapabilitiesDetectResponse } from '@/capabilities/types';
+import { registerMachineSessionServerStartRpcHandler } from '@/rpc/handlers/sessionServerStartMachineBinding';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, ActionAutomationIndexV1Schema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
+import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 
 vi.mock('socket.io-client', () => ({ io: vi.fn() }));
 
@@ -36,6 +41,8 @@ it.each([
   { active: false, protocolVersion: 4, path: true, checkout: true },
 ].flatMap(testCase => [
   { ...testCase, localMachineId: undefined, differentRoot: false, admitted: true },
+  ...(testCase.protocolVersion === 4 && !testCase.active && testCase.path && !testCase.checkout
+    ? [{ ...testCase, localMachineId: 'machine-1', differentRoot: false, admitted: true }] : []),
   ...(testCase.protocolVersion === 4 && !testCase.active && !testCase.path
     ? [{ ...testCase, localMachineId: 'another-local-machine', differentRoot: false, admitted: true },
       { ...testCase, localMachineId: 'parent-machine', differentRoot: true, admitted: true },
@@ -48,10 +55,11 @@ it.each([
   const rootMachineId = differentRoot ? 'parent-machine' : 'machine-1';
   const targetInstallationId = differentRoot ? 'target-installation' : 'installation-1';
   const targetKey = nacl.box.keyPair.fromSecretKey(new Uint8Array(32).fill(9));
+  const exactDaemon = localMachineId === 'machine-1';
   const checkoutCreationDraft = checkout ? { kind: 'git_worktree' as const, displayName: 'bot', baseRef: 'main', branchMode: 'new' as const } : undefined;
   const input = SessionSpawnNewInputV2Schema.parse({ creationKey: 'finite-template-birth',
     executionTarget: { serverId: 'home-a', machineId: 'machine-1' }, directory: authoredPath
-      ? { kind: 'path', path: 'C:\\Users\\Remote\\project' } : { kind: 'managed' },
+      ? { kind: 'path', path: exactDaemon ? tmpdir() : 'C:\\Users\\Remote\\project' } : { kind: 'managed' },
     agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
     connectedServices: { v: 2, bindingsByServiceId: {} }, memoryEnabled: false,
     ...(checkoutCreationDraft ? { checkoutCreationDraft } : {}),
@@ -136,19 +144,38 @@ it.each([
   let bornSession: Record<string, unknown> | undefined;
   let boundaryFailure: unknown;
   let machineBound = false;
+  vi.spyOn(axios, 'request').mockImplementation(async request => {
+    if (!request.url) throw new Error('Expected fixture HTTP URL');
+    if ((request.method ?? 'get').toLowerCase() === 'get') return axios.get(request.url, request);
+    if (request.method?.toLowerCase() === 'post') return axios.post(request.url, request.data, request);
+    throw new Error(`Unexpected HTTP method ${request.method}`);
+  });
   vi.spyOn(axios, 'get').mockImplementation(async url => {
     const path = new URL(String(url)).pathname;
+    if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+    if (path === '/v2/session-organization') return { status: 200, data: { snapshot: {
+      schemaVersion: 1, version: 0, pins: [], folders: [], tags: [], folderAssignments: [], tagAssignments: [], orderEntries: [], labels: [],
+    } } };
+    if (path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) return { status: 200,
+      data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
     if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'plain', version: 1,
       signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
     if (path === '/v1/machines/machine-1') return { status: 200, data: { machine: { id: 'machine-1', active,
       installationId: targetInstallationId, installationPublicKey: Buffer.from(targetKey.publicKey).toString('base64'),
-      kind: 'persistent', storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+      kind: 'persistent', managedMachineRef: null, storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+      // Home's opaque projection need not provide the daemon's opened metadata.
+      // Target admission remains readable; native spawn uses its held publication.
+      metadata: exactDaemon ? null : encodePlainMachineStoredContent(MachinePublishedMetadataV1Schema.parse({
+        host: 'fixture', platform: process.platform, happyCliVersion: '0.0.0-test', homeDir: tmpdir(), happyHomeDir: tmpdir(),
+      })), metadataVersion: 1, daemonState: null, daemonStateVersion: 0,
       revokedAt: null, replacedByMachineId: null, operationProtocolCapabilitiesRevision: 1,
       operationProtocolCapabilities: { sessionSpawn: { protocolVersions: protocolVersion === 4 ? [1, 2, 3, 4] : [1, 2, 3] }, sessionSpawnPlacementOrigin: { protocolVersions: [1] } } } } };
     if (path === `/v1/access-keys/${sessionId}/machine-1`) return { status: 200,
       data: { accessKey: machineBound ? { data: 'bound-key' } : null } };
     if (path === `/v2/sessions/${sessionId}`) return { status: 200, data: { session: bornSession } };
-    throw new Error(`Unexpected Home read ${path}`);
+    const error = new Error(`Unexpected Home read ${path}`);
+    boundaryFailure ??= error;
+    throw error;
   });
   vi.spyOn(axios, 'post').mockImplementation(async (url, raw, config) => {
     try {
@@ -200,8 +227,11 @@ it.each([
     } catch (error) { boundaryFailure ??= error; throw error; }
   });
   vi.stubGlobal('fetch', vi.fn(async url => {
+    if (new URL(String(url)).pathname === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) {
+      return Response.json(ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }));
+    }
     if (String(url).endsWith('/v1/account/profile')) return Response.json({ id: accountId });
-    if (String(url).endsWith('/v1/features')) return Response.json(FeaturesResponseSchema.parse({ features: {},
+    if (String(url).endsWith('/v1/features')) return Response.json(FeaturesResponseSchema.parse({ features: { sessions: { enabled: true }, sharing: { session: { enabled: true } } },
       capabilities: { encryption: { storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'plain' } } }));
     throw new Error(`Unexpected fetch ${url}`);
   }));
@@ -210,7 +240,26 @@ it.each([
     externalActionMachineInstallationId: 'installation-1',
     externalActionMachineRequestPrivateKey: nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7)).secretKey,
     actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({ memoryUpkeepInNewBots: false }) }),
-    ...(localMachineId ? { sessionSpawnDirectTargetTransport: {
+    ...(exactDaemon ? { sessionSpawnDirectTargetTransport: (() => {
+      const transport = registerMachineSessionServerStartRpcHandler({ registerHandler() {} }, { machineId: 'machine-1',
+        token, readCredentials: async () => credentials, resolveAccountId: async () => accountId,
+        resolveInstallationId: () => 'installation-1',
+        resolveAccountEncryptionCurrentness: async () => ({ mode: 'plain', version: 1,
+          signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }),
+        readMachineMetadataSnapshot: () => ({ status: 'ready', metadataVersion: 1, metadata: {} }),
+        spawnLifecycleHandler: async raw => {
+          const request = SpawnDaemonSessionRequestSchema.parse(raw);
+          expect(request).toMatchObject({ directory: tmpdir(), existingSessionId: sessionId });
+          events.push('spawn');
+          return { type: 'success', sessionId, sessionCreationOutcome: {
+            disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] } } };
+        },
+      });
+      return { ...transport, prepare: async (...args: Parameters<typeof transport.prepare>) => {
+        events.push(args[0].sessionCreationTag ? 'prepare' : 'preflight');
+        return transport.prepare(...args);
+      } };
+    })() } : localMachineId ? { sessionSpawnDirectTargetTransport: {
       machineId: localMachineId,
       // This daemon adapter is an OS boundary for a different Machine. Its
       // presence must leave the approved remote target on the Home transport.
@@ -223,11 +272,21 @@ it.each([
   });
   // The Account-placement root executes on its controller. Its approved child
   // selects another Machine; retain the real admitted custody/sealing owner.
-  const projected = await projectRequesterAccountActionAuthorization({ authorization, serverIdentityId: 'home-a',
+  const projectedAccount = await projectRequesterAccountActionAuthorization({ authorization, serverIdentityId: 'home-a',
+    invocation: { caller: { kind: 'host' }, surface: 'cli', authority: differentRoot ? 'account_automation' : 'present_user' },
     bootstrap: { credentials, serverHttpBaseUrl: 'https://home-a.example.test', isCurrent: async () => true,
       attribution: { serverId: 'home-a', accountId, machineId: rootMachineId, installationId: 'installation-1' } } });
+  const projected = projectedAccount && await projectExternalActionRequesterHttpAuthorization({
+    authorization: projectedAccount, serverId: 'home-a', serverIdentityId: 'home-a',
+    serverHttpBaseUrl: 'https://home-a.example.test', target: envelope.target, installationId: 'installation-1',
+    privateKey: nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7)).secretKey,
+    isCurrent: async () => true, rootAdmitted: true,
+  });
   expect(projected).not.toBeNull();
-  const context: ActionExecutorContext = { surface: 'cli', authority: differentRoot ? 'account_automation' : 'present_user', actionCaller: { kind: 'host' },
+  const context: ActionExecutorContext = exactDaemon ? {
+    surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+    runtimeAccountId: accountId, serverId: 'home-a', serverIdentityId: 'home-a', actionRequestId: envelope.requestId,
+  } : { surface: 'cli', authority: differentRoot ? 'account_automation' : 'present_user', actionCaller: { kind: 'host' },
     runtimeAccountId: accountId, serverId: 'home-a', serverIdentityId: 'home-a', actionRequestId: envelope.requestId,
     externalActionExecutionAuthorization: projected!, externalActionTarget: authorization.binding.target, originalActionEnvelope: envelope };
   const result = await invokeHostReviewedChildV1({ parent: { actionId: 'template.instantiate', input: { creation: input } }, context,

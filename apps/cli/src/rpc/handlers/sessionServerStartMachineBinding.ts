@@ -51,6 +51,7 @@ function projectActionFailure(failure: ActionExecuteFailure): Extract<SessionSpa
 
 export type MachineSessionServerStartRpcRegistrationOptions = Readonly<{
     machineId: string;
+    readMachineMetadataSnapshot?: SessionSpawnDirectTargetTransport['readMachineMetadataSnapshot'];
     token: string;
     readCredentials: () => Promise<StoredCredentials | null>;
     resolveAccountId: (signal?: AbortSignal) => Promise<string | null>;
@@ -78,6 +79,7 @@ export function registerMachineSessionServerStartRpcHandler(
 ): SessionSpawnDirectTargetTransport {
     const directTargetTransport = createMachineSessionDirectTargetTransport({
         machineId: options.machineId,
+        ...(options.readMachineMetadataSnapshot ? { readMachineMetadataSnapshot: options.readMachineMetadataSnapshot } : {}),
         spawnLifecycleHandler: options.spawnLifecycleHandler,
         ...(options.resolveSpawnSessionByNonce
             ? { resolveSpawnSessionByNonce: options.resolveSpawnSessionByNonce }

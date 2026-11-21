@@ -413,6 +413,7 @@ export function registerSessionSpawnNewRpcHandlers(params: Readonly<{
         readInstallation?(): Promise<CurrentMachineInstallation | null>;
         spawnLifecycleHandler: SessionLifecycleActionHandler;
         resolveSpawnSessionByNonce?: SpawnSessionNonceResolver;
+        readMachineMetadataSnapshot?: SessionSpawnDirectTargetTransport['readMachineMetadataSnapshot'];
     }>;
     observeExecution?: RegisterActionSpecRpcHandlersParams['observeExecution'];
 }>): void {
@@ -501,6 +502,9 @@ export function registerSessionSpawnNewRpcHandlers(params: Readonly<{
                 ? createMachineSessionDirectTargetTransport({
                     machineId: requester.attribution.machineId,
                     spawnLifecycleHandler: params.requesterBootstrapBoundary.spawnLifecycleHandler,
+                    ...(params.requesterBootstrapBoundary.readMachineMetadataSnapshot ? {
+                        readMachineMetadataSnapshot: params.requesterBootstrapBoundary.readMachineMetadataSnapshot,
+                    } : {}),
                     ...(params.requesterBootstrapBoundary.resolveSpawnSessionByNonce
                         ? { resolveSpawnSessionByNonce: params.requesterBootstrapBoundary.resolveSpawnSessionByNonce } : {}),
                 })
