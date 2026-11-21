@@ -832,7 +832,7 @@ function resolveDaemonTargetAction(
     };
 }
 
-it.each(['cold', 'pinned Machine mount', 'unavailable'] as const)(
+it.each(['cold', 'pinned Machine mount', 'unavailable', 'already settled', 'published before subscription', 'cancelled while cold'] as const)(
     'settles Tasks draft custody through the client Action and destination (%s)', async mode => {
         const { PLUGIN_MANIFEST } = await import('@happier-dev/plugins-triage/manifest');
         const { activate } = await import('@happier-dev/plugins-triage/happier-plugin-ui/triage-mounted-ui-action-native');
@@ -865,14 +865,16 @@ it.each(['cold', 'pinned Machine mount', 'unavailable'] as const)(
         onTestFinished(clearPluginAccountAvailabilityProjection);
         const owner = readPluginAccountAvailability(lifetime.scope);
         expect(owner.readCurrentAccountExecution(manifest.id)).toMatchObject({ code: 'account_availability_not_loaded' });
+        if (mode === 'already settled') publishClientActionAvailabilityFixture(lifetime.scope, manifest);
         const subscribed = Promise.withResolvers<void>();
         let waits = 0;
         let releases = 0;
         const spy = vi.spyOn(availability, 'readPluginAccountAvailability').mockImplementation(scope => {
             const reader = readPluginAccountAvailability(scope);
             return { ...reader, subscribe(listener, pluginId) {
+                if (pluginId !== manifest.id) return reader.subscribe(listener, pluginId);
+                if (mode === 'published before subscription') publishClientActionAvailabilityFixture(lifetime.scope, manifest);
                 const unsubscribe = reader.subscribe(listener, pluginId);
-                if (pluginId !== manifest.id) return unsubscribe;
                 waits++;
                 subscribed.resolve();
                 return () => { releases++; unsubscribe(); };
@@ -891,20 +893,33 @@ it.each(['cold', 'pinned Machine mount', 'unavailable'] as const)(
                     serverId: lifetime.scope.serverId, accountLifetime: lifetime } } : {}),
         });
         const invocation = dispatch();
+        if (mode === 'cancelled while cold') {
+            await expect(Promise.race([invocation, subscribed.promise])).resolves.toBeUndefined();
+            memory.abort();
+            expect(await invocation).toMatchObject({ ok: false });
+            expect(handler).not.toHaveBeenCalled();
+            expect(open).not.toHaveBeenCalled();
+            expect(waits).toBe(1);
+            expect(releases).toBe(1);
+            return;
+        }
         // On the old dispatch, the synchronous custody snapshot lets the Action finish before
         // Account publication. With the fix, publication releases the one scoped subscription.
-        await Promise.race([invocation, subscribed.promise]);
         const enabled = mode !== 'unavailable';
-        publishClientActionAvailabilityFixture(lifetime.scope, manifest, enabled);
+        if (mode === 'cold' || mode === 'unavailable' || pinned) {
+            await Promise.race([invocation, subscribed.promise]);
+            publishClientActionAvailabilityFixture(lifetime.scope, manifest, enabled);
+        }
+        const outcome = await invocation;
         const admission = owner.readCurrentAccountExecution(manifest.id);
         if (!enabled) {
             expect(admission.kind).toBe('unavailable');
             if (admission.kind !== 'unavailable') throw new Error('Expected unavailable Account custody');
-            expect(await invocation).toMatchObject({ ok: false, code: 'unavailable', reason: admission.code });
+            expect(outcome).toMatchObject({ ok: false, code: 'unavailable', reason: admission.code });
             expect(handler).not.toHaveBeenCalled();
             expect(open).not.toHaveBeenCalled();
         } else {
-            expect(await invocation).toEqual({ ok: true, result: { status: 'applied' } });
+            expect(outcome).toEqual({ ok: true, result: { status: 'applied' } });
             if (admission.kind !== 'available') throw new Error('Expected Account custody after publication');
             const launch = TriageTaskDraftLaunchV1Schema.parse(open.mock.calls[0]?.[0].input);
             const fixture = await createPluginUiTestkit({
@@ -945,7 +960,7 @@ it.each(['cold', 'pinned Machine mount', 'unavailable'] as const)(
                 expect(open).toHaveBeenCalledTimes(2);
             }
         }
-        expect(waits).toBe(pinned ? 0 : 1);
+        expect(waits).toBe(pinned || mode === 'already settled' ? 0 : 1);
         expect(releases).toBe(waits);
     },
 );
