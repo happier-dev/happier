@@ -21,7 +21,7 @@ describe('plugin Workflow source initialization', () => {
     });
     expect(WorkflowPluginSourceV1Schema.parse(source)).toMatchObject({
       workflow: 'plugin:com.acme.workflows/review',
-      definition: { blocks: [{ actionId: 'com.acme.workflows/publish' }] },
+      definition: { blocks: [{ actionId: 'com.acme.workflows/actions/publish' }] },
     });
   });
   it('keeps an external participant declaration and item binding through the strict source reader', () => {

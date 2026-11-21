@@ -46,15 +46,15 @@ describe('declarative plugin workflows', () => {
             condition: { kind: 'literal', value: { kind: 'ready' } },
           } },
           { kind: 'action', id: 'nested-local', actionId: 'wait/check', input: {} }],
-        otherwise: [{ kind: 'action', id: 'foreign', actionId: 'com.other.plugin/post', input: {} },
-          { kind: 'action', id: 'unavailable', actionId: 'com.missing.plugin/post', input: {} }],
+        otherwise: [{ kind: 'action', id: 'foreign', actionId: 'com.other.plugin/actions/post', input: {} },
+          { kind: 'action', id: 'unavailable', actionId: 'com.missing.plugin/actions/post', input: {} }],
       }] }] }],
     }] } };
     const normalized = normalizePluginWorkflowContributionV1(authored, 'com.acme.post');
     const parsed = PluginContributesV2Schema.parse({ workflows: [normalized] }).workflows[0]!;
     expect(walkWorkflowBlocks(parsed.definition.blocks).flatMap((block) => block.kind === 'action' ? [block.actionId] : [])).toEqual([
-      'com.acme.post/judge', 'com.acme.post/post', 'notifications.notify_me', 'wait', 'com.acme.post/wait/check',
-      'com.other.plugin/post', 'com.missing.plugin/post',
+      'com.acme.post/actions/judge', 'com.acme.post/actions/post', 'notifications.notify_me', 'wait', 'com.acme.post/actions/wait/check',
+      'com.other.plugin/actions/post', 'com.missing.plugin/actions/post',
     ]);
     expect(normalizePluginWorkflowContributionV1(normalized, 'com.acme.post')).toEqual(normalized);
     expect(authored.definition.blocks[0]?.repetition.evaluator.actionId).toBe('judge');

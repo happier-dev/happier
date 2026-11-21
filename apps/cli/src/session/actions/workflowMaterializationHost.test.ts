@@ -103,7 +103,7 @@ describe('exact-machine workflow materialization effects', () => {
       });
       const admission = await host({ machineId: 'run-machine', directory: '/repo' });
       if (boundary === 'action-schema' || boundary === 'roster') {
-        await expect(admission.effects.readActionContract?.('test.action/invoke')).rejects.toBe(refused);
+        await expect(admission.effects.readActionContract?.('test.action/actions/invoke')).rejects.toBe(refused);
       } else {
         await expect(admission.effects.resolveTargetAvailability({
           blockId: 'writer', kind: 'step', selection: {
@@ -625,7 +625,7 @@ describe('exact-machine workflow materialization effects', () => {
     ('distinguishes a malformed Action contract from failed or cancelled reads: %s', async (failure) => {
       const controller = new AbortController();
       const aborted = new Error('caller_aborted_action_schema_read');
-      const actionId = failure.startsWith('core_') ? 'session.inspect' : 'test.action/check';
+      const actionId = failure.startsWith('core_') ? 'session.inspect' : 'test.action/actions/check';
       const roster = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
         protocolVersion: 1, projection: { v: 2, generation: 1, actionsById: {
           'test.action/check': { id: 'test.action/check', pluginId: 'test.action', occurrenceId: 'action-occurrence',

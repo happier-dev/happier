@@ -1,13 +1,8 @@
-import { DaemonContributionRegistryProjectionDescribeResponseSchema, DaemonPluginActionSchemasReadResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
-import { buildMachineAgentsDetectRequest, buildMachineAgentInventoryDescriptors, projectMachineAgentsDetectResponse } from '@happier-dev/protocol/capabilities/machineAgentInventory';
+import { createWorkflowMaterializationHostV1 as createPortableWorkflowMaterializationHostV1, type WorkflowMaterializationHostDepsV1, type WorkflowMaterializationMachineTargetV1 } from '@happier-dev/protocol/actions/executor/workflowMaterializationHost';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import { listAgentExecutionTargetsV1 } from '@happier-dev/protocol/agents/executionTargetV1';
-import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
-import type { requireReadyAcpCatalog } from '@/agent/acp/catalog/configured/resolveBackend';
 import type { refreshActiveAcpCatalog } from '@/agent/acp/catalog/hydrateAcpCatalog';
 import type { readAccountLaunchProfiles } from '@/settings/profiles/readProfilesFromAccountSettings';
 import type { AiLaunchProfile, AccountSettings, materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import type { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { StoredCredentials } from '@/persistence';
@@ -17,18 +12,12 @@ import type { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshot
 import type { prepareActiveAccountRoleOverrides } from '@/settings/prompts/hydratePromptLibraryCatalog';
 import type { createRoleSourceReader, RoleSourceReader } from '@/session/roles/roleSources';
 import type { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import type { resolveWorkflowAuthorizedSession } from '@/daemon/workflows/invocationRecoveryObserver';
-import type { WorkflowTargetUnavailableDetailsV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
-import { ActionSessionAddressV1Schema } from '@happier-dev/protocol/actions/sessionTargetV1';
-import type { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import type { WorkflowSessionConversation } from '@/daemon/workflows/sessionStepExecutor';
-import { freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
 
 type Materialization = Pick<Parameters<typeof materializeWorkflowAcceptedSnapshotV1>[0], 'roleSelection' | 'effects'>;
 type RoleSelection = NonNullable<Materialization['roleSelection']>;
-type MachineTarget = Readonly<{ machineId: string; directory: string; signal?: AbortSignal;
-  roleSelection?: RoleSelection | (() => Promise<RoleSelection>) }>;
+type MachineTarget = WorkflowMaterializationMachineTargetV1;
 
 /** Origin selection is a contextual fallback; Role and explicit engine overrides remain Protocol-owned. */
 export function projectWorkflowConversationRoleSelection(origin: WorkflowSessionConversation, machineId: string): RoleSelection {
@@ -43,264 +32,25 @@ export function projectWorkflowConversationRoleSelection(origin: WorkflowSession
   };
 }
 
-export type WorkflowMaterializationHostDeps = Readonly<{
+export type WorkflowMaterializationHostDeps = Omit<WorkflowMaterializationHostDepsV1, 'readAuthorizedSession' | 'isHomeEquivalent'> & Readonly<{
   credentials: StoredCredentials;
-  serverId?: string;
-  serverIdentityId?: string;
   serverHttpBaseUrl?: string;
-  callMachineAction: (input: Readonly<{ machineId: string; method: string; request: unknown; signal?: AbortSignal }>) => Promise<unknown>;
-  readRoleSelection: (roleId: string, signal?: AbortSignal) => Promise<RoleSelection>;
-  acpCatalogSnapshot?: AcpCatalogSnapshotV1;
-  readAcpCatalog?: (signal?: AbortSignal) => Promise<AcpCatalogSnapshotV1>;
-  readLaunchProfile: (profileId: string, signal?: AbortSignal) => Promise<AiLaunchProfile | null>;
-  readWorkflowDefinition: (ref: Parameters<NonNullable<Materialization['effects']['readWorkflowDefinition']>>[0], signal?: AbortSignal)
-    => ReturnType<NonNullable<Materialization['effects']['readWorkflowDefinition']>>;
-  /** The executing machine's host Action catalog, never the relay's local catalog. */
-  readHostActionContract?: (actionId: string, target: MachineTarget) => ReturnType<NonNullable<Materialization['effects']['readActionContract']>>;
 }>;
 
-function object(value: unknown): Readonly<Record<string, unknown>> | null {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : null;
-}
-
-/** Captures one exact-machine catalog observation for one admission. */
+/** CLI boundary adapter for the shared exact-Machine materialization owner. */
 export function createWorkflowMaterializationHostV1(deps: WorkflowMaterializationHostDeps) {
-  return async (target: MachineTarget): Promise<Materialization> => {
-    const { resolveWorkflowAuthorizedSession } = await import('@/daemon/workflows/invocationRecoveryObserver');
-    const call = (method: string, request: unknown) => deps.callMachineAction({
-      machineId: target.machineId, method, request, ...(target.signal ? { signal: target.signal } : {}),
-    });
-    const observeRoster = async () => {
-      try {
-        return DaemonContributionRegistryProjectionDescribeResponseSchema.parse(await call(
-          RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
-          { machineId: target.machineId, selection: 'workflowMaterialization' },
-        ));
-      } catch (error) {
-        target.signal?.throwIfAborted();
-        throw error;
-      }
-    };
-    let rosterObservation: ReturnType<typeof observeRoster> | undefined;
-    const readRoster = () => rosterObservation ??= observeRoster();
-    const observeMachine = async () => {
-      try {
-        const roster = await readRoster();
-        if (!roster) return null;
-        const agents = buildMachineAgentInventoryDescriptors(roster.projection);
-        const request = buildMachineAgentsDetectRequest({ agents });
-        const response = await call(RPC_METHODS.CAPABILITIES_DETECT, {
-          ...request, requests: [...(request.requests ?? []), { id: 'tool.executionRuns' }],
-        });
-        const inventory = projectMachineAgentsDetectResponse({ agents, response });
-        const results = object(object(response)?.results);
-        const detached = object(results?.['tool.executionRuns']);
-        const detachedFacts = detached?.ok === true ? object(detached.data) : null;
-        return { roster, inventory, detachedFacts,
-          detachedBackends: object(detachedFacts?.backends), detachedFeatures: object(detachedFacts?.features) };
-      } catch (error) {
-        target.signal?.throwIfAborted();
-        throw error;
-      }
-    };
-    let observation: ReturnType<typeof observeMachine> | undefined;
-    const readMachine = () => observation ??= observeMachine();
-    const sessions = new Map<string, ReturnType<typeof resolveWorkflowAuthorizedSession>>();
-    const { runWithServerHttpBaseUrl } = await import("@/api/client/serverHttpBaseUrl");
-    const readSession = (sessionId: string) => {
-      let observation = sessions.get(sessionId);
-      if (!observation) {
-        const read = () => resolveWorkflowAuthorizedSession({ credentials: deps.credentials, sessionId,
-          ...(target.signal ? { signal: target.signal } : {}) });
-        observation = (deps.serverHttpBaseUrl ? runWithServerHttpBaseUrl(deps.serverHttpBaseUrl, read) : read())
-          .catch((error) => {
-            target.signal?.throwIfAborted();
-            throw error;
-          });
-        sessions.set(sessionId, observation);
-      }
-      return observation;
-    };
-    let catalogObservation: Promise<AcpCatalogSnapshotV1 | undefined> | undefined;
-    const readDefinitionIds = async (required = false) => {
-      catalogObservation ??= deps.readAcpCatalog
-        ? deps.readAcpCatalog(target.signal) : Promise.resolve(deps.acpCatalogSnapshot);
-      const catalog = await catalogObservation;
-      target.signal?.throwIfAborted();
-      // Optional contextual choices cannot make native admission depend on the
-      // configured catalog. Explicit selections still require ready membership.
-      const { requireReadyAcpCatalog } = await import("@/agent/acp/catalog/configured/resolveBackend");
-      return !required && catalog?.status !== 'ready' ? [] : requireReadyAcpCatalog(catalog).record.definitions.map((definition) => definition.id);
-    };
-    const readAmbientRoleSelection = async (): Promise<RoleSelection> => {
-      const roleSelection = { ...(typeof target.roleSelection === 'function'
-        ? await target.roleSelection() : target.roleSelection) };
-      if (roleSelection.defaultEngine) {
-        // Contextual second-opinion selection can choose another Agent family.
-        // Observe that inventory before roles; availability is still decided by
-        // the materializer only after its policy admission.
-        const machine = await readMachine();
-        const definitionIds = machine && Object.values(machine.roster.projection.agentsById)
-          .some((agent) => agent.identity && listAgentExecutionTargetsV1(agent.identity).length === 0)
-          ? await readDefinitionIds() : [];
-        roleSelection.availableAgentTargetKeys = machine ? Object.entries(machine.roster.projection.agentsById).flatMap(([agentId, agent]) => {
-          const item = machine.inventory.items.find((candidate) => candidate.agentId === agentId);
-          return agent.identity ? listAgentExecutionTargetsV1(agent.identity, definitionIds).flatMap((executionTarget) => {
-            const key = buildBackendTargetKeyV2(executionTarget);
-            const available = executionTarget.definitionId === undefined
-              ? item?.installed && item.platform.supported && item.dependencies.every((dependency) => dependency.installed)
-              : object(machine.detachedBackends?.[key])?.available === true;
-            return available ? [key] : [];
-          }) : [];
-        }) : [];
-      }
-      return roleSelection;
-    };
-    const observeActionContract: NonNullable<Materialization['effects']['readActionContract']> = async (actionId) => {
-      // Native and contributed Action contracts do not consume Agent launch
-      // readiness; a missing requester OS user must not hide their schemas.
-      const roster = await readRoster();
-      if (!roster) return null;
-      const contributed = roster.projection.actionsById[actionId];
-      if (contributed?.available === false) return null;
-      try {
-        target.signal?.throwIfAborted();
-        if (!contributed) {
-          const contract = await deps.readHostActionContract?.(actionId, target) ?? null;
-          target.signal?.throwIfAborted();
-          return contract;
-        }
-        const response = await call(RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ, {
-          machineId: target.machineId, qualifiedActionId: actionId, expectedOccurrenceId: contributed.occurrenceId,
-        });
-        target.signal?.throwIfAborted();
-        const schemas = DaemonPluginActionSchemasReadResponseSchema.safeParse(response);
-        return schemas.success && schemas.data.ok ? freezeWorkflowActionContractV1({ ...schemas.data,
-          inputHints: contributed.inputHints }) : null;
-      } catch (error) {
-        target.signal?.throwIfAborted();
-        throw error;
-      }
-    };
-    const actionContracts = new Map<string, ReturnType<typeof observeActionContract>>();
-    const readActionContract: typeof observeActionContract = async (actionId) => {
-      target.signal?.throwIfAborted();
-      let contract = actionContracts.get(actionId);
-      if (!contract) {
-        // Schema freezing, availability and repeated leaves consume the same
-        // admission observation. A replay creates a new host and rechecks it.
-        contract = observeActionContract(actionId);
-        actionContracts.set(actionId, contract);
-      }
-      return contract;
-    };
-    return {
-      roleSelection: typeof target.roleSelection === 'function' ? undefined : target.roleSelection,
-      effects: {
-        readRoleSelection: async (roleId) => {
-          if (roleId === undefined) return readAmbientRoleSelection();
-          target.signal?.throwIfAborted();
-          const selected = await deps.readRoleSelection(roleId, target.signal);
-          target.signal?.throwIfAborted();
-          return selected;
-        },
-        readWorkflowDefinition: (ref) => deps.readWorkflowDefinition(ref, target.signal),
-        readLaunchProfile: (profileId) => deps.readLaunchProfile(profileId, target.signal),
-        readActionContract,
-        resolveSessionTarget: async (value) => {
-          target.signal?.throwIfAborted();
-          const serverId = deps.serverIdentityId ?? deps.serverId;
-          if (!serverId || !deps.serverId) return null;
-          const address = ActionSessionAddressV1Schema.safeParse(typeof value === 'string'
-            ? { serverId, sessionId: value } : value);
-          if (!address.success) return null;
-          const { isServerProfileHomeIdentity } = await import("@/server/serverProfiles");
-          if (address.data.serverId !== serverId && address.data.serverId !== deps.serverId
-            && !await isServerProfileHomeIdentity(deps.serverId, address.data.serverId)) return null;
-          const authorized = await readSession(address.data.sessionId);
-          target.signal?.throwIfAborted();
-          return authorized ? { address: { serverId: address.data.serverId, sessionId: authorized.target.sessionId }, machineId: authorized.machineId } : null;
-        },
-        resolveTargetAvailability: async (leaf, { sessionIds }) => {
-          const unavailable = (reason: WorkflowTargetUnavailableDetailsV1['reason'],
-            facts: Pick<WorkflowTargetUnavailableDetailsV1, 'agentId' | 'errorCode' | 'platformReason'> = {}): WorkflowTargetUnavailableDetailsV1 => (
-            { code: 'target_unavailable', reason, ...facts }
-          );
-          const participant = leaf.participant;
-          if (participant) {
-            const serverId = deps.serverIdentityId ?? deps.serverId;
-            const participantServerId = participant.kind === 'session'
-              ? participant.session.serverId : participant.launch.executionTarget.serverId;
-            const { isServerProfileHomeIdentity } = await import("@/server/serverProfiles");
-            if (!deps.serverId || !serverId || participantServerId !== serverId
-              && participantServerId !== deps.serverId
-              && !await isServerProfileHomeIdentity(deps.serverId, participantServerId)) {
-              return unavailable('selection_unavailable');
-            }
-            if (participant.kind === 'session') {
-              const authorized = await readSession(participant.session.sessionId);
-              target.signal?.throwIfAborted();
-              if (!authorized || authorized.machineId !== participant.machineId) return unavailable('session_unavailable');
-            } else if (participant.launch.executionTarget.machineId !== target.machineId
-              || participant.launch.directory.kind === 'managed'
-              || participant.launch.checkoutCreationDraft != null) {
-              return unavailable('selection_unavailable');
-            }
-          }
-          for (const sessionId of sessionIds) {
-            const conversation = leaf.selection.conversation;
-            const machineId = conversation?.kind === 'existing_session' && conversation.sessionId === sessionId
-              ? conversation.machineId : target.machineId;
-            const authorized = await readSession(sessionId);
-            target.signal?.throwIfAborted();
-            if (!authorized || authorized.machineId !== machineId) return unavailable('session_unavailable');
-          }
-          if (leaf.kind === 'wait' || leaf.kind === 'workflow') return true;
-          if (leaf.actionId) return (await readActionContract(leaf.actionId)) !== null || unavailable('action_unavailable');
-          const selection = leaf.selection;
-          // Bound Session steps continue that Session's own Agent. Synthetic
-          // Action Agent-start checks still require creation inventory.
-          if (leaf.kind === 'step' && leaf.executionTarget.kind === 'session'
-            && (selection.conversation?.kind === 'origin_session' || selection.conversation?.kind === 'existing_session')) return true;
-          const agentTarget = participant?.kind === 'model' ? participant.launch.agentTarget : selection.agentTarget;
-          if (!agentTarget) return unavailable('selection_unavailable');
-          const definitionIds = agentTarget.definitionId === undefined ? [] : await readDefinitionIds(true);
-          if (agentTarget.definitionId !== undefined && !definitionIds.includes(agentTarget.definitionId)) return unavailable('selection_unavailable');
-          const key = buildBackendTargetKeyV2(agentTarget);
-          const machine = await readMachine();
-          if (!machine) return unavailable('machine_check_failed');
-          const { roster, inventory, detachedFacts, detachedBackends, detachedFeatures } = machine;
-          const entry = Object.entries(roster.projection.agentsById).find(([, agent]) => agent.identity
-            && listAgentExecutionTargetsV1(agent.identity, definitionIds).some((executionTarget) => buildBackendTargetKeyV2(executionTarget) === key));
-          if (!entry) return unavailable('selection_unavailable');
-          const [agentId, agent] = entry;
-          const backend = object(detachedBackends?.[agentTarget.definitionId === undefined ? agent.catalogAgentId ?? agentId : key]);
-          if (leaf.executionTarget.kind === 'session') {
-            if (agent.capabilities?.sessions?.open.includes('create') !== true) return unavailable('session_creation_unavailable', { agentId });
-            if (agentTarget.definitionId !== undefined) {
-              return backend?.available === true || unavailable('selection_unavailable', { agentId });
-            }
-          }
-          // A Session-backed detached Run opens the same Agent executable.
-          // Declared Run support cannot override the Machine's installation facts.
-          // Configured commands and execution-only factories retain their own owners.
-          if (agent.capabilities?.sessions && agentTarget.definitionId === undefined) {
-            const current = inventory.items.find((item) => item.agentId === agentId);
-            if (!current) {
-              const failed = inventory.unavailable?.find((item) => item.agentId === agentId);
-              return unavailable('agent_probe_failed', { agentId, ...(failed?.errorCode ? { errorCode: failed.errorCode } : {}) });
-            }
-            if (!current.installed) return unavailable('agent_not_installed', { agentId });
-            if (!current.platform.supported) return unavailable('platform_unsupported', { agentId, platformReason: current.platform.reason });
-            if (!current.dependencies.every((dependency) => dependency.installed)) return unavailable('dependency_not_installed', { agentId });
-          }
-          if (leaf.executionTarget.kind === 'session') return true;
-          return (detachedFacts?.available === true && detachedFeatures?.detachedScope === true && backend?.available === true)
-            || unavailable('detached_execution_unavailable', { agentId });
-        },
-      },
-    };
-  };
+  return createPortableWorkflowMaterializationHostV1({ ...deps,
+    readAuthorizedSession: async (sessionId, signal) => {
+      const { resolveWorkflowAuthorizedSession } = await import('@/daemon/workflows/invocationRecoveryObserver');
+      const read = () => resolveWorkflowAuthorizedSession({ credentials: deps.credentials, sessionId, ...(signal ? { signal } : {}) });
+      const { runWithServerHttpBaseUrl } = await import('@/api/client/serverHttpBaseUrl');
+      return deps.serverHttpBaseUrl ? runWithServerHttpBaseUrl(deps.serverHttpBaseUrl, read) : read();
+    },
+    isHomeEquivalent: async serverId => {
+      const { isServerProfileHomeIdentity } = await import('@/server/serverProfiles');
+      return deps.serverId ? isServerProfileHomeIdentity(deps.serverId, serverId) : false;
+    },
+  });
 }
 
 /** Shared opened Account sources for direct, trigger and definition admissions. */

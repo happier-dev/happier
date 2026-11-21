@@ -66,7 +66,7 @@ describe('plugin workflows through the canonical projection', () => {
         });
         const projection = buildPluginProjectionV2({ registry, generation: 1 });
         const source = readPluginWorkflowSources(registry)[0]!;
-        expect(source.definition.blocks[0]).toMatchObject({ actionId: `${pluginId}/post` });
+        expect(source.definition.blocks[0]).toMatchObject({ actionId: `${pluginId}/actions/post` });
         expect(projection.actionsById[`${pluginId}/post`]).toMatchObject({ id: 'post',
             occurrenceId: registry.occurrenceIdsByPluginId?.[pluginId],
         });
@@ -95,11 +95,11 @@ describe('plugin workflows through the canonical projection', () => {
                 authorization: { principal: { kind: 'host' } },
             },
         });
-        expect(accepted, JSON.stringify(accepted)).toMatchObject({ ok: true, snapshot: { materializedLeaves: [{ blockId: 'send', actionId: `${pluginId}/post`,
+        expect(accepted, JSON.stringify(accepted)).toMatchObject({ ok: true, snapshot: { materializedLeaves: [{ blockId: 'send', actionId: `${pluginId}/actions/post`,
             actionInput: { message: 'Hello' }, actionContract: { inputSchema, outputSchema },
         }] } });
         expect(projection.familiesById.workflows?.entriesById[`${pluginId}/send`]).toMatchObject({
-            definition: { definition: { blocks: [{ actionId: `${pluginId}/post` }] } },
+            definition: { definition: { blocks: [{ actionId: `${pluginId}/actions/post` }] } },
         });
         expect(authored.blocks[0]).toMatchObject({ actionId: 'post' });
     });

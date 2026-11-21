@@ -7344,10 +7344,13 @@ not supply a separate binding resolver or gain authority from a reference.
 Generated SDK bindings and composed live validation close at the integrated
 Workflow boundary.
 
-The [workflow contribution-family normalizer](../packages/protocol/src/plugins/contributions/workflows.ts)
+The [workflow contribution-family normalizer](../packages/protocol/src/workflows/workflowPluginSourceV1.ts)
 qualifies plugin-local Action ids, including nested blocks and evaluators, through
-the existing contribution identity owner. Explicit host and qualified Action ids
-retain their meaning. The family runs `validateWorkflowDefinition` and refuses
+the canonical Action identity owner as `<pluginId>/actions/<localId>`. Explicit
+host and canonical qualified Action ids retain their meaning. Contribution roster
+keys and schema-read RPCs use `<pluginId>/<localId>`; the Workflow materialization
+owner translates the executable Action id to that lookup key. The family runs
+`validateWorkflowDefinition` and refuses
 invalid graphs with `plugin_workflow_invalid`, carrying the plugin, workflow and
 canonical path-level issues. Reference availability stays at run admission;
 normalization does not discard references to unavailable contributions or grant

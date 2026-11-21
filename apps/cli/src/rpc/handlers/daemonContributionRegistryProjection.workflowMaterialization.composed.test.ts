@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DaemonContributionRegistryProjectionDescribeResponseSchema, materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 
 import type { RpcHandler } from '@/api/rpc/types';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
@@ -166,7 +167,7 @@ describe('external Settings declarations and Workflow materialization', () => {
         expect((await read()).projection.actionsById[actionId]?.executionOrigin).toBeUndefined();
     });
 
-    it.each([false, true])('materializes a valid Action with only Agent/Action demand; missing schema wiring fails closed (%s)', async (miswired) => {
+    it.each([false, true])('materializes a canonical Action with only Agent/Action demand; missing schema transport propagates (%s)', async (miswired) => {
         const routes = handlers();
         if (miswired) routes.delete(RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ);
         const projectedCounts: number[] = [];
@@ -195,14 +196,15 @@ describe('external Settings declarations and Workflow materialization', () => {
             },
         });
         const target = { machineId, directory: '/repo' };
-        const result = await materializeWorkflowAcceptedSnapshotV1({ ...await host(target), admission: { kind: 'user' },
-            definition: { version: 1, defaults: {}, blocks: [{ kind: 'action', id: 'read', actionId, input: {} }] },
+        const result = materializeWorkflowAcceptedSnapshotV1({ ...await host(target), admission: { kind: 'user' },
+            definition: { version: 1, defaults: {}, blocks: [{ kind: 'action', id: 'read',
+                actionId: formatQualifiedPluginActionId({ pluginId, localId: 'read' }), input: {} }] },
             context: { source: { kind: 'inline' }, inputs: {}, machineId, executionTarget: { kind: 'session' },
                 workspaceTarget: { project: { ...target, checkoutRootPath: target.directory } },
                 authorization: { principal: { kind: 'host' } } },
         });
-        expect(result).toMatchObject(miswired ? { ok: false, error: { code: 'target_unavailable' } }
-            : { ok: true, snapshot: { materializedLeaves: [{ actionContract: {
+        if (miswired) await expect(result).rejects.toThrow('rpc_method_not_found');
+        else expect(await result).toMatchObject({ ok: true, snapshot: { materializedLeaves: [{ actionContract: {
                 inputSchema: { type: 'object', additionalProperties: false }, outputSchema: { type: 'string' },
             } }] } });
         expect(selections).toEqual(['workflowMaterialization']);

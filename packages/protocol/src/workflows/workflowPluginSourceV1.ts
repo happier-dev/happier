@@ -2,13 +2,8 @@ import { ActionIdSchema } from '../actions/actionIds.js';
 import type { WorkflowValidationIssue } from './workflowV1.js';
 import { walkWorkflowBlocks } from './workflowDefinitionEditV1.js';
 import { validateWorkflowDefinition } from './workflowValidationV1.js';
-import {
-  PluginContributionLocalIdSchema,
-  buildQualifiedPluginContributionKey,
-  createPluginContributionIdentity,
-  parseQualifiedPluginContributionKey,
-  qualifyPluginContributionReferenceV1,
-} from '../plugins/contributionIdentity.js';
+import { PluginContributionLocalIdSchema } from '../plugins/contributionIdentity.js';
+import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '../plugins/actions/qualifiedActionId.js';
 import { PluginWorkflowContributionV1Schema, type PluginWorkflowContributionV1 } from '../plugins/contributions/workflowDeclarationV1.js';
 
 export class PluginWorkflowContributionErrorV1 extends Error {
@@ -30,12 +25,10 @@ export function normalizePluginWorkflowContributionV1(value: unknown, pluginId: 
   const contribution = PluginWorkflowContributionV1Schema.parse(value);
   for (const block of walkWorkflowBlocks(contribution.definition.blocks)) {
     if (block.kind !== 'action' || ActionIdSchema.safeParse(block.actionId).success
-      || parseQualifiedPluginContributionKey(block.actionId) !== null) continue;
+      || parseQualifiedPluginActionId(block.actionId) !== null) continue;
     const local = PluginContributionLocalIdSchema.safeParse(block.actionId);
     if (!local.success) continue;
-    block.actionId = buildQualifiedPluginContributionKey(createPluginContributionIdentity(
-      qualifyPluginContributionReferenceV1(local.data, pluginId),
-    ));
+    block.actionId = formatQualifiedPluginActionId({ pluginId, localId: local.data });
   }
   // Availability stays at run admission. Missing Actions/children retain their
   // exact qualified references; structural graph errors never enter the catalog.
