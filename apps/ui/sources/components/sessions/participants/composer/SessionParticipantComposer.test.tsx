@@ -729,7 +729,7 @@ describe('SessionParticipantComposer', () => {
         const input = agentInputSpy.mock.lastCall?.[0] as React.ComponentProps<typeof import('@/components/sessions/agentInput').AgentInput>;
         if (!input.composerRef) throw new Error('Expected participant composer identity');
         const ref = input.composerRef;
-        await act(async () => { input.onChangeText('Look at the settings modal first'); });
+        await act(async () => { input.onChangeText?.('Look at the settings modal first'); });
 
         const scope = { serverId: 'server-1', accountId: 'account-1' };
         activeScopeState.value = scope;
