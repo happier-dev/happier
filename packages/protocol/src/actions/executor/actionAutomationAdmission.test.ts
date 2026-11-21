@@ -108,9 +108,10 @@ it('keeps the refused admission unavailable while a concurrent admission reopens
 });
 
 it.each([
-  { source: 'one Workflow', reads: 0, hasChild: false },
-  { source: 'a Workflow with a pinned child', reads: 4, hasChild: true },
-])('checks unchanged consent for $source without materialization or writes', async ({ reads, hasChild }) => {
+  { scenario: 'keeps unchanged Workflow consent without materialization', reads: 0, hasChild: false, addsNativeAction: false },
+  { scenario: 'keeps unchanged child Workflow consent without materialization', reads: 4, hasChild: true, addsNativeAction: false },
+  { scenario: 'asks again for an added native Action whose Machine cannot supply its contract', reads: 1, hasChild: false, addsNativeAction: true },
+])('$scenario', async ({ reads, hasChild, addsNativeAction }) => {
   const childRef = '22222222-2222-4222-8222-222222222222';
   const child = WorkflowDefinitionV1Schema.parse({ version: 1,
     defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
@@ -131,7 +132,10 @@ it.each([
     openContext: async row => row.executionRecipe?.v === 2 && row.executionRecipe.workflow.t === 'plain' ? row.executionRecipe.workflow.v : null,
     sealContext: async ({ templateVersion, context }) => ({ v: 2, templateVersion,
       workflow: { t: 'plain', v: context }, triggerEvidence: null, managedTarget: null, visibleTeamId: null }),
-    resolveMaterializer: async () => { materializationCalls += 1; return { effects: {} }; },
+    resolveMaterializer: async () => {
+      materializationCalls += 1;
+      return { effects: { readActionContract: async () => null } };
+    },
     automations: {
       get: async () => retained,
       list: async () => ({ automations: [], nextCursor: null }),
@@ -159,11 +163,24 @@ it.each([
   workflowReads = 0;
   materializationCalls = 0;
   reconcileWrites = 0;
-  const selection = { workflow: 'root', workflowRevision: 1, matching, project,
+  if (addsNativeAction) {
+    revisions.set('root', 2);
+    definitions.set('root', WorkflowDefinitionV1Schema.parse({ ...root, blocks: [...root.blocks, {
+      kind: 'action', id: 'write-marker', actionId: 'machines.command.run',
+      input: { command: { kind: 'literal', value: 'printf edited' } },
+    }] }));
+  }
+  const selection = { workflow: 'root', workflowRevision: revisions.get('root')!, matching, project,
     saved: { automationId: saved.automationId, triggerId: saved.triggerId, workflowRevision: saved.workflowRevision }, consentTrigger };
-  expect(await actions.readActorConsent(selection, caller)).toMatchObject({ current: true });
-  expect(await actions.readActorConsent(selection, caller)).toMatchObject({ current: true });
-  expect({ workflowReads, materializationCalls, reconcileWrites }).toEqual({ workflowReads: reads, materializationCalls: 0, reconcileWrites: 0 });
+  if (addsNativeAction) {
+    expect(await actions.readActorConsent(selection, caller)).toEqual({ current: false,
+      review: { reason: 'steps', changedSteps: [{ sourceKey: '$root', blockId: 'write-marker' }] } });
+  } else {
+    expect(await actions.readActorConsent(selection, caller)).toMatchObject({ current: true });
+    expect(await actions.readActorConsent(selection, caller)).toMatchObject({ current: true });
+  }
+  expect({ workflowReads, materializationCalls, reconcileWrites }).toEqual({ workflowReads: reads,
+    materializationCalls: addsNativeAction ? 1 : 0, reconcileWrites: 0 });
 });
 
 describe('Approval profile subject admission', () => {

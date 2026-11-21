@@ -110,6 +110,7 @@ export async function materializeWorkflowTriggerActionDefinition(input: Readonly
   deferTargetAvailability?: boolean;
 }>) {
   const children: Record<string, WorkflowDefinitionV1> = {};
+  const effects = input.materializer?.effects;
   const materialized = await materializeWorkflowDefinitionAuthorityV1({ definition: input.definition,
     ...(input.materializer?.roleSelection ? { roleSelection: input.materializer.roleSelection } : {}),
     context: { source: { kind: 'inline' }, inputs: input.inputs, machineId: input.project.machineId,
@@ -117,10 +118,13 @@ export async function materializeWorkflowTriggerActionDefinition(input: Readonly
       workspaceTarget: { project: { ...input.project, checkoutRootPath: input.project.directory } },
       authorization: { principal: { kind: 'host' } } },
     effects: {
-      ...input.materializer?.effects,
+      ...effects,
       resolveTargetAvailability: input.deferTargetAvailability === true ? async () => true
-        : input.materializer?.effects.resolveTargetAvailability ?? (async leaf => leaf.kind === 'action' || leaf.kind === 'workflow'),
-      readActionContract: input.materializer?.effects.readActionContract ?? readNativeActionContract,
+        : effects?.resolveTargetAvailability ?? (async leaf => leaf.kind === 'action' || leaf.kind === 'workflow'),
+      // Before Run admission, review uses native declarations and the exact contributed schema.
+      readActionContract: input.deferTargetAvailability === true
+        ? async id => await readNativeActionContract(id) ?? await effects?.readActionContract?.(id) ?? null
+        : effects?.readActionContract ?? readNativeActionContract,
       readWorkflowDefinition: async ref => {
         const key = formatWorkflowDefinitionRefV1(ref);
         const definition = await input.resolveWorkflow(key);
@@ -141,11 +145,7 @@ export async function readWorkflowTriggerActionConsent(input: WorkflowTriggerCon
   const materializer = input.materializer;
   const { materialized, program } = await materializeWorkflowTriggerActionDefinition({ definition,
     inputs: resolveWorkflowRunStartInputsV1(definition, input.context.inputs), project: input.project,
-    resolveWorkflow: input.resolveWorkflow, deferTargetAvailability: materializer !== undefined,
-    ...(materializer ? { materializer: { ...materializer, effects: { ...materializer.effects,
-      readActionContract: async (id) => await readNativeActionContract(id)
-        ?? await materializer.effects.readActionContract?.(id) ?? null,
-    } } } : {}) });
+    resolveWorkflow: input.resolveWorkflow, deferTargetAvailability: materializer !== undefined, materializer });
   if (!materialized.ok) throw Object.assign(new Error(materialized.error.code), { code: materialized.error.code });
   const materializedLeaves = materialized.materializedLeaves;
   return { steps: projectWorkflowTriggerConsentSteps({ definition, children: program.children, materializedLeaves, deployment,
