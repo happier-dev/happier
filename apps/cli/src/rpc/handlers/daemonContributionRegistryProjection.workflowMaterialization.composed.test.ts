@@ -2,6 +2,15 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DaemonContributionRegistryProjectionDescribeResponseSchema, materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { createAccountWorkflowTriggerActions } from '@happier-dev/protocol/actions';
+
+import type { AutomationDefinitionDetail } from '@happier-dev/protocol/automations/automationApiV3';
+import { AutomationTriggerDetailSchema } from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
+import { automationSubjectKeyV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
+import { createActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
+import { answerApprovalAutomaticConsentV1, createApprovalAutomaticChecksV1, readApprovalAutomaticSelectionV1 } from '@happier-dev/protocol/actions/executor/automaticApprovalContinuation';
+import { createWorkflowActorConsentPortV1 } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
+import { WorkflowDefinitionV1Schema } from '@happier-dev/protocol/workflows/workflowV1';
 
 import type { RpcHandler } from '@/api/rpc/types';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
@@ -209,5 +218,104 @@ describe('external Settings declarations and Workflow materialization', () => {
             } }] } });
         expect(selections).toEqual(['workflowMaterialization']);
         expect(projectedCounts).toEqual([1]);
+    });
+
+    it('asks again for a newly attached contributed Action after an invocation-scoped Skip', async () => {
+        const routes = handlers();
+        const schemaReads: unknown[] = [];
+        let occurrenceId: string | undefined;
+        const project = { machineId, directory: '/repo' };
+        const host = createWorkflowMaterializationHostV1({ credentials: { token: 'workflow-fixture', encryption: null },
+            readRoleSelection: async () => ({}), readLaunchProfile: async () => null, readWorkflowDefinition: async () => null,
+            callMachineAction: async ({ machineId: target, method, request }) => {
+                expect(target).toBe(machineId);
+                if (method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ) schemaReads.push(request);
+                const handler = routes.get(method);
+                if (!handler) throw new Error(`Unexpected Machine method: ${method}`);
+                const response = await handler(request);
+                if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+                    occurrenceId = DaemonContributionRegistryProjectionDescribeResponseSchema.parse(response).projection.actionsById[actionId]?.occurrenceId;
+                }
+                return response;
+            },
+        });
+        const childRef = '22222222-2222-4222-8222-222222222222';
+        const rootWithPrompt = (text: string) => WorkflowDefinitionV1Schema.parse({ version: 1,
+            defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
+            blocks: [{ kind: 'step', id: 'review', document: { text, references: [], attachments: [] } }],
+        });
+        const child = WorkflowDefinitionV1Schema.parse({ version: 1, blocks: [{ kind: 'action', id: 'plugin-review',
+            actionId: formatQualifiedPluginActionId({ pluginId, localId: 'read' }), input: {} }] });
+        let root = rootWithPrompt('Review the command.');
+        let revision = 1;
+        let stored: AutomationDefinitionDetail | null = null;
+        const workflowReads: string[] = [];
+        const actions = createAccountWorkflowTriggerActions({
+            nativeAccount: { accountId: 'actor', serverId: 'home', isCurrent: async () => true },
+            resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+            randomBytes: length => new Uint8Array(length), newId: kind => `${kind}-actor`,
+            resolveWorkflow: async ref => {
+                workflowReads.push(ref);
+                return { definition: ref === childRef ? child : root, revision: { headerVersion: 1, bodyVersion: ref === childRef ? 1 : revision } };
+            },
+            openContext: async row => row.executionRecipe?.v === 2 && row.executionRecipe.workflow.t === 'plain' ? row.executionRecipe.workflow.v : null,
+            sealContext: async ({ templateVersion, context }) => ({ v: 2, templateVersion,
+                workflow: { t: 'plain', v: context }, triggerEvidence: null, managedTarget: null, visibleTeamId: null }),
+            resolveMaterializer: host,
+            automations: {
+                get: async () => stored,
+                list: async () => ({ automations: [], nextCursor: null }),
+                listDetails: async () => ({ automations: [], nextCursor: null }),
+                create: async input => {
+                    stored = { id: input.automationId, name: input.name, description: input.description ?? null, enabled: input.enabled,
+                        targetType: null, existingSessionId: null, templateVersion: 1, workflowDefinitionId: input.workflowDefinitionId ?? null,
+                        scopeSessionId: null, lastRunAt: null, createdAt: 1, updatedAt: 1, assignments: [], executionRecipe: input.executionRecipe,
+                        triggers: input.triggers.map(item => AutomationTriggerDetailSchema.parse({ ...item.trigger,
+                            id: item.triggerId, revision: 1, createdAt: 1, updatedAt: 1, triggerDefinitionEnvelope: null })) };
+                    return stored;
+                },
+                reconcile: async () => { throw new Error('Skip and changed steps must retain the existing consent row'); },
+                delete: async () => ({ ok: true }),
+            },
+        });
+        const subject = { kind: 'machine' as const, machineId, serverId: 'home' };
+        const source = { automationId: 'source', triggerId: 'source-trigger', triggerRevision: 1, workflowId: 'root', workflowRevision: 1,
+            ownerAccountId: 'author', actionIds: ['machines.command.run'], phase: 'before' as const, mode: 'wait' as const,
+            reachesOthers: true, subjectKind: subject.kind, subjectKey: automationSubjectKeyV1(subject, 'root') };
+        const caller = { surface: 'cli' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const },
+            runtimeAccountId: 'actor', serverId: 'home', actionRequestId: 'initial' };
+        const admit = { ...caller, authority: 'account_automation' as const, externalActionTarget: subject };
+        const consent = createWorkflowActorConsentPortV1({ accountId: 'actor', resolveProject: async () => project, actions });
+        const consentTarget = { automationId: source.automationId, triggerId: source.triggerId };
+        const saved = await consent.allowConsent({ selection: { ...source, subject, consent: { status: 'missing' } },
+            context: caller, executionContext: admit, decisionInput: { artifactId: 'first', decision: 'approve',
+                triggerConsent: { ...consentTarget, decision: 'allow' } } });
+        const select = (context: typeof admit) => createActionAutomationPortV1({ accountId: 'actor',
+            seed: async () => ({ v: 1, rows: [{ ...source, workflowRevision: revision }, saved] }), settle: async () => {},
+        }).select({ actionId: source.actionIds[0]!, input: { command: 'printf checked' }, context, resolveConsent: consent.resolveConsent });
+
+        root = rootWithPrompt('Inspect the command carefully.');
+        revision = 2;
+        const skipContext = { ...admit, actionRequestId: 'skip' };
+        const review = createApprovalAutomaticChecksV1(await select(skipContext), false);
+        expect(review.consents).toEqual([expect.objectContaining({ decision: 'pending', review: { reason: 'steps',
+            changedSteps: [{ sourceKey: '$root', blockId: 'review' }] } })]);
+        const skipped = await answerApprovalAutomaticConsentV1({ artifactId: 'skip', checks: review,
+            answer: { ...consentTarget, decision: 'skip' }, context: caller, executionContext: skipContext });
+        expect(skipped).toMatchObject({ consents: [{ decision: 'skip' }], notices: [{ reason: 'consentSkipped' }] });
+        if ('ok' in skipped) throw new Error(skipped.errorCode);
+        expect(readApprovalAutomaticSelectionV1({ automaticChecks: skipped })?.before).toEqual([]);
+        expect(schemaReads).toEqual([]);
+
+        root = WorkflowDefinitionV1Schema.parse({ ...root, blocks: [...root.blocks, { kind: 'workflow', id: 'child', workflowRef: childRef }] });
+        revision = 3;
+        workflowReads.length = 0;
+        const next = createApprovalAutomaticChecksV1(await select({ ...admit, actionRequestId: 'renewed' }), false);
+        expect(next).toMatchObject({ phase: 'consent', consents: [{ ...consentTarget, decision: 'pending', review: {
+            reason: 'steps', changedSteps: [{ sourceKey: childRef, blockId: 'plugin-review' }, { sourceKey: '$root', blockId: 'review' }],
+        } }] });
+        expect(workflowReads).toEqual(['root', childRef]);
+        expect(occurrenceId).toEqual(expect.any(String));
+        expect(schemaReads).toEqual([{ machineId, qualifiedActionId: actionId, expectedOccurrenceId: occurrenceId }]);
     });
 });
