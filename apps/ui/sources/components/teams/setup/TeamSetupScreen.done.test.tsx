@@ -68,6 +68,7 @@ function view(overrides: Partial<ViewProps>): React.ReactElement {
       folder: null,
       adopted: new Map(),
       failure: null,
+      noneFound: false,
     },
     ...overrides,
   };

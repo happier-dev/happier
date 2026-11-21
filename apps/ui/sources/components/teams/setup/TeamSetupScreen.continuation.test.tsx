@@ -68,6 +68,7 @@ function view(overrides: Partial<ViewProps>): React.ReactElement {
       folder: null,
       adopted: new Map(),
       failure: null,
+      noneFound: false,
     },
     ...overrides,
   };
@@ -129,6 +130,7 @@ it('finds existing clones on request and shows an adopted clone in place of a fr
         searching: false,
         folder: '/home/mara/code',
         failure: null,
+        noneFound: false,
         adopted: new Map([['acme-web', '/home/mara/code/acme-web']]),
       },
     }),
@@ -148,6 +150,7 @@ it('keeps a folder search failure visible with its reason', async () => {
         folder: '/home/mara/gone',
         adopted: new Map(),
         failure: 'ENOENT: no such directory',
+        noneFound: false,
       },
     }),
   );

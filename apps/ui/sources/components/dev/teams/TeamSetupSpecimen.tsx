@@ -184,7 +184,7 @@ function SetupFrame(props: Readonly<{ done?: boolean }>) {
           onOpen: noop,
         } : null}
         presetChange={props.done ? null : { revision: 7, onReview: noop }}
-        clones={{ onFind: noop, searching: false, folder: '/Users/leo/code', adopted: ADOPTED, failure: null }}
+        clones={{ onFind: noop, searching: false, folder: '/Users/leo/code', adopted: ADOPTED, failure: null, noneFound: false }}
       />
     </ItemList>
   );

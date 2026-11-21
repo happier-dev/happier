@@ -70,7 +70,7 @@ it('offers exact Setup recovery while keeping operation details reachable', asyn
     hasPreset={false} machinePlan={null} repositories={[]} repositoryFreeSources={[]}
     excluded={new Set()} onToggleRepository={vi.fn()} batch={null} sharedKeys={[]} keyDisplayNames={{}}
     firstTask={null} presetChange={null}
-    clones={{ onFind: null, searching: false, folder: null, adopted: new Map(), failure: null }}
+    clones={{ onFind: null, searching: false, folder: null, adopted: new Map(), failure: null, noneFound: false }}
   />);
   await screen.pressByTestIdAsync('team-setup-retry-failed');
   await screen.pressByTestIdAsync('team-setup-stopped-secondary-action');
