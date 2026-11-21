@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { ReactTestInstance } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { act, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { TranscriptListShell } from '@/components/sessions/transcript/viewport/shell/TranscriptListShell';
@@ -181,7 +182,7 @@ describe('ThemeActionResultView', () => {
         });
         // The width the tile takes in its row: its own, or (a phone row with a trailing Try) its frame's.
         const tileWidth = (key: string) => {
-          let node = screen.tree.findAll(node => typeof node.type === 'string' && node.props.testID === `card:option:${key}`)[0] ?? null;
+          let node: ReactTestInstance | null = screen.tree.findAll(node => typeof node.type === 'string' && node.props.testID === `card:option:${key}`)[0] ?? null;
           for (; node; node = node.parent) {
             if (typeof node.type !== 'string') continue;
             const width = StyleSheet.flatten(typeof node.props.style === 'function' ? node.props.style({ pressed: false }) : node.props.style)?.width;

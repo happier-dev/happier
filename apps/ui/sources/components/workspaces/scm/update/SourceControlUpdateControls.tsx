@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { Theme } from '@/theme';
 import { Pressable, View } from 'react-native';
 
 import { Text, TextInput } from '@/components/ui/text/Text';
@@ -18,7 +19,7 @@ export type SourceControlUpdateTheme = Readonly<{
         }>;
         state: Readonly<{
             success: Readonly<{ foreground?: string }>;
-            danger: Readonly<{ foreground?: string }>;
+            danger: Partial<Pick<Theme['colors']['state']['danger'], 'textForeground'>>;
         }>;
         surface: Readonly<{
             base: string;

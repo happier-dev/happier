@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { expect, it, onTestFinished, vi } from 'vitest';
 import { act, flushHookEffects, measureMountedCollections, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { findAllHostTestInstances } from '@/dev/testkit/render/renderScreen';
 import { installPromptRegistriesCommonModuleMocks } from '@/components/settings/prompts/registries/promptRegistriesScreenTestHelpers';
 import { createArtifactInventoryDemandHarness, initializeArtifactInventoryDemandHarness } from '@/dev/testkit/harness/artifactInventoryDemandHarness';
 import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
@@ -135,7 +136,7 @@ it('acquires only measured near-viewport packages and reuses them across scroll-
     await vi.waitFor(async () => expect(await foot(cards[0]!)).toBe('Dark · Colors only'));
     expect(await foot(cards[2]!), 'a card off screen has nothing settled to say yet').toBe('');
     expect(reads.sort()).toEqual(['icons', 'near-a', 'near-b']);
-    const pendingShell = surfaces[1]!.screen.findAll(node => typeof node.type === 'string' && node.type === 'View')[0]!;
+    const pendingShell = findAllHostTestInstances(surfaces[1]!.screen, node => node.type === 'View')[0]!;
     expect(surfaces[1]!.screen.findAllByType(HappierBrandMark)).toHaveLength(1);
     const beforePositiveArrival = liveRows.current!.rows;
     const beforePositivePreviewCommits = commits;
@@ -149,7 +150,7 @@ it('acquires only measured near-viewport packages and reuses them across scroll-
     console.info('STORE-PERF-1117 directory census', { initialRows: initialRows.size,
         retainedRows: liveRows.current!.rows.length, membershipTitleCommits, positiveArrivalTitleCommits: 0,
         positiveArrivalPreviewCommits });
-    expect(surfaces[1]!.screen.findAll(node => typeof node.type === 'string' && node.type === 'View')[0]).toBe(pendingShell);
+    expect(findAllHostTestInstances(surfaces[1]!.screen, node => node.type === 'View')[0]).toBe(pendingShell);
     const browse = await renderHook(() => useRegistryItems({ kind: 'theme', sourceIds: [sourceId] }));
     await vi.waitFor(() => expect(browse.getCurrent().items).toHaveLength(60));
     const rows = await renderHook(() => useStoreThemeRows(browse.getCurrent(), () => {}, () => 'Themes'));
@@ -173,13 +174,13 @@ it('acquires only measured near-viewport packages and reuses them across scroll-
         offset = next;
         tracker.onScroll({ nativeEvent: { contentOffset: { x: 0, y: next } } });
     });
-    const failedShell = surfaces[3]!.screen.findAll(node => typeof node.type === 'string' && node.type === 'View')[0]!;
+    const failedShell = findAllHostTestInstances(surfaces[3]!.screen, node => node.type === 'View')[0]!;
     await scroll(1400);
     await vi.waitFor(() => expect(reads.sort()).toEqual(['failed', 'far', 'icons', 'near-a', 'near-b']));
     await vi.waitFor(() => expect(surfaces[2]!.screen.findAllByType(ThemeMiniaturePreview)).toHaveLength(1));
     expect(surfaces[3]!.screen.findAllByType(ThemeMiniaturePreview)).toHaveLength(0);
     expect(surfaces[3]!.screen.findAllByType(HappierBrandMark)).toHaveLength(1);
-    expect(surfaces[3]!.screen.findAll(node => typeof node.type === 'string' && node.type === 'View')[0]).toBe(failedShell);
+    expect(findAllHostTestInstances(surfaces[3]!.screen, node => node.type === 'View')[0]).toBe(failedShell);
     await scroll(0);
     const originalMiniature = surfaces[0]!.screen.findAllByType(ThemeMiniaturePreview)[0]!.props.miniature;
     await surfaces[0]!.screen.unmount();

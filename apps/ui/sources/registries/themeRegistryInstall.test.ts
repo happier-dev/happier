@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { parseThemeProfileDocument, type ThemeReference } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { RegistryThemeFaceV1Schema, type RegistryThemeAcquisitionV1 } from '@happier-dev/protocol/registries/registryThemeV1';
-import type { RegistryProvenanceV1 } from '@happier-dev/protocol/registries/registryItemsV1';
+import type { RegistryRemoteProvenanceV1 } from '@happier-dev/protocol/registries/registryItemsV1';
 import { createThemeProfileLibrary, type ThemeProfileArtifactAdapter } from '@/theme/profiles/themeProfileLibrary';
 import { projectThemeLibraryEntry } from '@/theme/profiles/themeProfilePresentation';
 import * as themeColors from '@/theme/profiles/deriveThemeColors';
@@ -55,7 +55,7 @@ function setup(acquisitionGate?: Promise<void>) {
     const themes = ['light', 'dark'].map(mode => ({ key: mode, label: mode, mode: mode as 'light' | 'dark',
         document: document(`store-${mode}`, mode === 'light' ? '.store-detail { color: red; }' : undefined) }));
     const ref = { kind: 'version' as const, version: '1.0.0' };
-    const acquired: RegistryThemeAcquisitionV1 = {
+    const acquired: RegistryThemeAcquisitionV1 & { provenance: RegistryRemoteProvenanceV1 } = {
         item: { summary: { kind: 'theme', ...listing, title: 'Paper', version: '1.0.0' }, fetchedAt: 0,
             payload: { kind: 'theme', state: 'ready', version: '1.0.0', ref, themes,
                 listing: { includes: themes.map(({ key, label, mode }) => ({ key, label, mode })), license: 'LicenseRef-Custom' } } },
@@ -73,7 +73,7 @@ function setup(acquisitionGate?: Promise<void>) {
                 acquisitionFailure = undefined;
                 throw error;
             }
-            const provenance: RegistryProvenanceV1 = operation.expectedScope?.accountId === 'account-b'
+            const provenance: RegistryRemoteProvenanceV1 = operation.expectedScope?.accountId === 'account-b'
                 ? { ...upstream.provenance, format: 'git', sourceUrl: 'https://themes.example.test/account-b/catalog', sourceId: key.sourceId, itemId: key.itemId }
                 : { ...upstream.provenance, sourceId: key.sourceId, itemId: key.itemId };
             return { ...upstream, item: { ...upstream.item, summary: { ...upstream.item.summary, ...key } }, provenance };
@@ -81,7 +81,7 @@ function setup(acquisitionGate?: Promise<void>) {
     return { lifecycle, library, rows, listing, options, failed, savedFaces, acquired, selection, reverted,
         failNextAcquisition: (error: Error) => { acquisitionFailure = error; },
         publishVersion: (version: string) => { const ref = { kind: 'version', version } as const;
-            const provenance: RegistryProvenanceV1 = { ...acquired.provenance, ref };
+            const provenance: RegistryRemoteProvenanceV1 = { ...acquired.provenance, ref };
             upstream = { ...acquired,
             item: { ...acquired.item, summary: { ...acquired.item.summary, version },
                 payload: { ...acquired.item.payload, version, ref } },
@@ -110,8 +110,7 @@ describe('Store theme lifecycle through the MODEL library', () => {
                 return {
                     item: { ...acquired.item, summary: { ...acquired.item.summary, ...listing },
                         payload: { ...acquired.item.payload, themes: faces } },
-                    provenance: { sourceId: listing.sourceId, itemId: listing.itemId, format: 'git', sourceUrl: 'https://themes.example.test/catalog',
-                        ref: acquired.item.payload.ref, importedAt: 0 },
+                    provenance: { ...acquired.provenance, sourceId: listing.sourceId, itemId: listing.itemId },
                 };
             },
             withThemeProfileContext: async () => { throw new Error('Gallery must not read theme library storage'); },

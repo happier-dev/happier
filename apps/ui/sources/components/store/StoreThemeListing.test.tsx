@@ -331,7 +331,7 @@ it('opens one theme acquisition through the shared listing body and retries Keep
     let barCommits = 0;
     const countBar = () => { barCommits++; };
     const closeListing = () => {};
-    type ThemeListingReference = Extract<React.ComponentProps<typeof StoreListingBody>['reference'], { type: 'registryItem'; kind: 'theme' }>;
+    type ThemeListingReference = Extract<React.ComponentProps<typeof StoreListingBody>['reference'], { type: 'registryItem' }>;
     const listingSurface = (presented: boolean, presentation: 'pane' | 'page' = 'pane', currentReference: ThemeListingReference = reference) => <>
         <PluginSurfaceFocusEligibilityProvider active={presented}>
             <React.Profiler id="theme-listing" onRender={countListing}>
@@ -466,6 +466,7 @@ it('opens one theme acquisition through the shared listing body and retries Keep
         throw new Error('Expected a registry theme listing route');
     }
     const installedReference = selectedListing.reference;
+    if (installedReference.type !== 'registryItem') throw new Error('Expected a registry listing');
     expect(installedReference).toEqual(reference);
     await screen.update(listingSurface(true, 'page', installedReference));
     await vi.waitFor(() => expect(view()?.installed).toBe(true));

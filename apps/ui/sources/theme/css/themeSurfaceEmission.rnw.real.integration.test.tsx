@@ -111,8 +111,17 @@ describe('theme surface hooks on the rendered owning primitives', () => {
         root = createRoot(container);
         const session = createSessionFixture({ id: 's1', serverId: runtime.serverId, active: true, activeAt: Date.now(),
             presence: 'online', thinking: true, thinkingAt: Date.now() });
-        const rowViewModel = (selected: boolean) => createSessionItemRowViewModel({ session, serverId: runtime.serverId,
-            overrides: { selected, sessionStatus: getSessionStatus(session, Date.now()), secondaryLineMode: 'status', activityAt: Date.now() - 60_000 } });
+        const calmSession = createSessionFixture({ id: 's2', serverId: runtime.serverId });
+        const statusWordContext = {
+            leadingMark: 'agent', leadingMarkShowsProject: false, projectPlacement: 'none',
+            project: null, projectFaviconSource: null, checkout: null, machine: null, pullRequest: null, changes: null,
+            pluginContext: null, pluginMark: null, accessibleLabel: '', statusWords: true, currentWork: false, progress: false,
+        } as const;
+        const rowViewModel = (rowSession: typeof session, selected: boolean) => createSessionItemRowViewModel({
+            session: rowSession, serverId: runtime.serverId,
+            overrides: { selected, sessionStatus: getSessionStatus(rowSession, Date.now()), activityAt: Date.now() - 60_000,
+                rowContext: rowSession === session ? statusWordContext : null },
+        });
         const railEntries = buildAppRailEntries(resolveCompactAppDestinations({
             builtins: { externalSessions: true, search: true, inbox: true, workflows: true, friends: true, bots: true }, pages: [],
         }));
@@ -168,8 +177,10 @@ describe('theme surface hooks on the rendered owning primitives', () => {
                 <div data-fixture="editable"><AgentInput {...composerProps} /></div>
                 <div data-fixture="disabled"><AgentInput {...composerProps} disabled /></div>
                 <div data-fixture="read-only"><AgentInput {...composerProps} onChangeText={undefined} /></div>
-                <SessionItem session={session} serverId={runtime.serverId} variant="default" compact={false} selected={false} rowViewModel={rowViewModel(false)} />
-                <SessionItem session={session} serverId={runtime.serverId} variant="default" compact={false} selected rowViewModel={rowViewModel(true)} />
+                {[calmSession, session].map(rowSession => [false, true].map(selected => (
+                    <SessionItem key={`${rowSession.id}:${selected}`} session={rowSession} serverId={runtime.serverId}
+                        rowViewModel={rowViewModel(rowSession, selected)} />
+                )))}
                 <div data-fixture="bubble"><UserMessageBubble><MarkdownView profile="user" markdown="Prompt" /></UserMessageBubble></div>
                 <div data-fixture="attention"><UserMessageBubble attention={{ sessionAddress: { serverId: runtime.serverId, sessionId: session.id }, routeMessageId: 'message-1', radius: 12 }}><MarkdownView profile="user" markdown="Prompt" /></UserMessageBubble></div>
             </runtime.Wrapper>);

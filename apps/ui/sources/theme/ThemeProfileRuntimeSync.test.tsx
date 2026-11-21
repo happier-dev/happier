@@ -93,7 +93,7 @@ describe('Theme runtime synchronization', () => {
         shared.machineRpc.mockImplementation(async ({ method, payload }) => {
             expect(method).toBe(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE);
             const request = DaemonContributionRegistryProjectionDescribeRequestSchema.parse(payload);
-            if (!request.sectionRead) return currentProjection.manifest;
+            if (!('sectionRead' in request) || !request.sectionRead) return currentProjection.manifest;
             const { digest, offset, includeDigests } = request.sectionRead;
             sectionReads.push(digest, ...includeDigests ?? []);
             return currentProjection.read(digest, offset, includeDigests);
@@ -269,7 +269,7 @@ describe('Theme runtime synchronization', () => {
         });
         const onFailure = (error: unknown) => { throw error; };
         function Draft({ document }: { document: ThemeProfileDocument }) {
-            useThemeProfileEditorPreview({ owner, draft: { document, draft: document.profile, mode: 'light' }, preview: editor.preview, onFailure });
+            useThemeProfileEditorPreview({ owner, draft: { document, mode: 'light' }, preview: editor.preview, onFailure });
             return <ThemeProfileRuntimeSync />;
         }
         const { parseThemeProfileDocument, mergeThemeProfileDocumentEdit } = await import('@happier-dev/protocol/account/settings/themeProfiles');

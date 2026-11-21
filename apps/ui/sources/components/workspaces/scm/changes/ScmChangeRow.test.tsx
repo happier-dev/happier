@@ -55,7 +55,7 @@ function createScmChangeRowTheme() {
                 link: '#09f',
             },
             state: {
-                active: { foreground: '#09f', background: '#eaf5ff' },
+                active: { foreground: '#09f', background: '#eaf5ff', textForeground: '#0064d2' },
                 success: { foreground: '#0a0', textForeground: '#075' },
                 danger: { foreground: '#a00', textForeground: '#800' },
                 neutral: { foreground: '#b60', textForeground: '#850' },

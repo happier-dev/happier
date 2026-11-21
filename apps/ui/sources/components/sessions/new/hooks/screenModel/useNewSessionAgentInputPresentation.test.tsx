@@ -19,8 +19,8 @@ vi.mock('@/text', async () => {
 const sessionAgentInputTheme = {
     colors: {
         state: {
-            success: { foreground: '#0f0' },
-            danger: { foreground: '#f00' },
+            success: { foreground: '#0f0', textForeground: '#075' },
+            danger: { foreground: '#f00', textForeground: '#800' },
         },
     },
 } as const;
@@ -86,8 +86,8 @@ describe('useNewSessionAgentInputPresentation', () => {
             theme: {
                 colors: {
                     state: {
-                        success: { foreground: 'success' },
-                        danger: { foreground: 'danger' },
+                        success: { foreground: 'success', textForeground: 'success-text' },
+                        danger: { foreground: 'danger', textForeground: 'danger-text' },
                     },
                 },
             },
@@ -193,7 +193,7 @@ describe('useNewSessionAgentInputPresentation', () => {
         publishMachineActivityForTest([machine]);
         readiness = resolveMachineSpawnReadiness({ scope, selectedMachineId: 'm1', machine, keyAvailable: false, rpcAvailable: true });
         await hook.rerender();
-        expect(hook.getCurrent().connectionStatus).toMatchObject({ text: 'newSession.machineOfflineInlineTitle', dotColor: 'danger' });
+        expect(hook.getCurrent().connectionStatus).toMatchObject({ text: 'newSession.machineOfflineInlineTitle', color: 'danger-text', dotColor: 'danger' });
         expect(canAttemptMachineSpawn({ scope, selectedMachineId, machine, spawnReadiness: readiness })).toBe(false);
         machine = null;
         await hook.rerender();
@@ -223,8 +223,8 @@ describe('useNewSessionAgentInputPresentation', () => {
             theme: {
                 colors: {
                     state: {
-                        success: { foreground: 'success' },
-                        danger: { foreground: 'danger' },
+                        success: { foreground: 'success', textForeground: 'success-text' },
+                        danger: { foreground: 'danger', textForeground: 'danger-text' },
                     },
                 },
             },
@@ -364,8 +364,8 @@ describe('useNewSessionAgentInputPresentation', () => {
             theme: {
                 colors: {
                     state: {
-                        success: { foreground: '#0f0' },
-                        danger: { foreground: '#f00' },
+                        success: { foreground: '#0f0', textForeground: '#075' },
+                        danger: { foreground: '#f00', textForeground: '#800' },
                     },
                 },
             },
@@ -464,8 +464,8 @@ describe('useNewSessionAgentInputPresentation', () => {
             theme: {
                 colors: {
                     state: {
-                        success: { foreground: '#0f0' },
-                        danger: { foreground: '#f00' },
+                        success: { foreground: '#0f0', textForeground: '#075' },
+                        danger: { foreground: '#f00', textForeground: '#800' },
                     },
                 },
             },

@@ -5,6 +5,7 @@ import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 import { describeScmChangeKind, resolveScmChangeToneColor } from '@/scm/scmChangeKind';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import type { Theme as AppTheme } from '@/theme';
 import type { ThemeStyleScales } from '@/theme/themeStyleScales';
 import { t } from '@/text';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
@@ -40,10 +41,11 @@ type Theme = Pick<ThemeStyleScales, 'space'> & Readonly<{
             link?: string;
         }>;
         state: Readonly<{
-            active: Readonly<{ foreground: string; background: string }>;
-            success: Readonly<{ foreground?: string }>;
-            neutral: Readonly<{ foreground?: string }>;
-            danger: Readonly<{ foreground?: string }>;
+            active: Pick<AppTheme['colors']['state']['active'], 'foreground' | 'background' | 'textForeground'>;
+            success: Partial<Pick<AppTheme['colors']['state']['success'], 'textForeground'>>;
+            neutral: Partial<Pick<AppTheme['colors']['state']['neutral'], 'textForeground'>>;
+            danger: Partial<Pick<AppTheme['colors']['state']['danger'], 'textForeground'>>;
+            warning?: Partial<Pick<AppTheme['colors']['state']['warning'], 'textForeground'>>;
         }>;
     }>;
 }>;

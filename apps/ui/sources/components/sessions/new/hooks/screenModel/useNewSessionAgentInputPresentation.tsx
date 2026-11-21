@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { Theme } from '@/theme';
 import { View } from 'react-native';
 
 import type { ActionId} from '@happier-dev/protocol/actions/actionIds';
@@ -35,8 +36,8 @@ import { createTemporaryComputerTeamAccessActionChip } from '@/components/sessio
 type ThemeLike = Readonly<{
     colors: Readonly<{
         state: Readonly<{
-            success: Readonly<{ foreground: string }>;
-            danger: Readonly<{ foreground: string }>;
+            success: Pick<Theme['colors']['state']['success'], 'foreground' | 'textForeground'>;
+            danger: Pick<Theme['colors']['state']['danger'], 'foreground' | 'textForeground'>;
         }>;
     }>;
 }>;

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { StyleSheet } from 'react-native';
 import { describe, expect, it, vi } from 'vitest';
 import { act, renderScreen, renderSettingsView } from '@/dev/testkit';
 import { measureMountedCollections } from '@/dev/testkit/render/renderInCollectionLayout';
@@ -184,7 +185,7 @@ describe('theme library and editor views', () => {
       screen.findAllByProps({ testID: 'settings-theme-notice' }),
     ).toHaveLength(1);
     const notice = screen.findByTestId('settings-theme-notice')!;
-    expect(notice.findAllByType(Text)[0]!.props.style.color).toBe(lightTheme.colors.state.warning.textForeground);
+    expect(StyleSheet.flatten(notice.findAllByType(Text)[0]!.props.style)?.color).toBe(lightTheme.colors.state.warning.textForeground);
   });
 
   it('puts Share as plugin right after Export file in the editor menu', async () => {
