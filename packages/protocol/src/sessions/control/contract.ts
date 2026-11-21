@@ -7,6 +7,7 @@ import { projectZodProtocolSchema } from '../../plugins/actions/internalProtocol
 import { ConnectedServiceBindingsV2Schema } from '../../connect/connectedServiceBindings.js';
 import { SessionTeamCredentialBindingIntentV1Schema } from '../../teams/credentials/sessionBindingIntentV1.js';
 import { z } from '../../zodRuntimePolicy.js';
+import { SessionExternalIdentityTagV1Schema } from './externalIdentityTagV1.js';
 import { SessionManagerV1Schema, SessionManagedSessionsV1Schema } from '../follow/sessionManagerV1.js';
 import { SessionEffectiveAccessV1Schema, type SessionEffectiveAccessV1 } from '../access/sessionEffectiveAccessV1.js';
 import { SessionAccessAccountSummaryV1Schema } from '../access/sessionAccessPrincipalV1.js';
@@ -545,9 +546,8 @@ const SessionLookupTagV2Schema = lazyZodSchema(() => z
  * It is distinct from the immutable creation `tag`, unique per Account, and
  * replaceable only by the Session that holds it.
  */
-export const SessionExternalIdentityTagV1Schema = lazyZodSchema(() => z
-  .string().check(z.regex(/^direct:v1:[0-9a-f]{64}$/)));
-export type SessionExternalIdentityTagV1 = z.infer<typeof SessionExternalIdentityTagV1Schema>;
+export { SessionExternalIdentityTagV1Schema };
+export type { SessionExternalIdentityTagV1 } from './externalIdentityTagV1.js';
 
 export const SessionLookupByTagsRequestV2Schema = lazyZodSchema(() => z.strictObject({
     tags: z
