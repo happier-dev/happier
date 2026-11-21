@@ -1670,7 +1670,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     ...executionRunActionDeps,
     ...(roleArtifactStore ? { reviewRecords: (context: ActionExecutorContext) => {
       const authorizationHeaders = (request: Readonly<{ method: string; path: string; body?: unknown }>) =>
-        resolveAccountStorageHeaders(context, 'review.start', request);
+        resolveAccountStorageHeaders(context, context.externalActionExecutionAuthorization?.binding.actionId ?? 'review.start', request);
       const invoke = <T>(operation: () => Promise<T>) => params.serverHttpBaseUrl
         ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, operation) : operation();
       return createReviewRecordPortV1(createAcknowledgedAccountArtifactTransport({

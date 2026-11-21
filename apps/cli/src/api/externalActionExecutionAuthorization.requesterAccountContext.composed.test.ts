@@ -1145,6 +1145,59 @@ it('spends the same contributed requester custody through CLI and native HTTP po
 });
 
 describe('ordinary CLI requester Account custody on the existing Action carrier', () => {
+  it.each(['review.start', 'review.new_round', 'review.prepare_round', 'review.settle_round'] as const)(
+    'retains the admitted Review record root %s at the Artifact HTTP boundary', async actionId => {
+      await withConfiguredDaemonTestHome({ prefix: 'review-record-root-' }, async () => {
+        const observed: Array<Readonly<{ path: string; effect: unknown; authorization: unknown; signature: unknown }>> = [];
+        const artifacts = fastify();
+        // Home authorization is covered by its server composed suite. This HTTP
+        // boundary returns the ordinary missing-record response after observing
+        // the real caller's signed JSON frame through its canonical decoder.
+        artifacts.post('/v1/artifacts/:artifactId', async (request, reply) => {
+          const frame = decodeExternalActionHttpBodyV1(request.body);
+          if (!frame) throw new Error('Expected signed Artifact read frame');
+          observed.push({ path: request.url, effect: frame.headers['x-happier-action-effect'],
+            authorization: frame.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER],
+            signature: frame.headers[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER] });
+          return reply.code(404).send({ error: 'artifact_not_found' });
+        });
+        await artifacts.ready();
+        const target = await home('plain', [], { originalOwnAction: actionId, artifacts });
+        const channel = await createRequesterCurrentnessSocketHarness();
+        const credentials: StoredCredentials = { token: token(), encryption: null, credentialProvenance: 'stored_session' };
+        const serverId = configuration.activeServerId;
+        const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'admitted-review-record', binding: {
+          accountId: 'bob', custodianAccountId: 'alice', authentication: { kind: 'account', tokenEpoch: 7 },
+          accountEncryptionMode: 'plain', serverIdentityId: homeIdentityId, machineId: 'alice-machine',
+          installationId: 'alice-installation', actionId, requestId: 'review-record-request',
+          requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'alice-machine' },
+        } });
+        let requester: Awaited<ReturnType<typeof admitRequesterAccountActionContext>> = null;
+        try {
+          requester = await runWithServerHttpBaseUrl(target.url, () => admitRequesterAccountActionContext({
+            authorization: root, credentials, serverId, serverIdentityId: homeIdentityId,
+            serverHttpBaseUrl: target.url, isCurrent: async () => true,
+          }));
+          if (!requester) throw new Error('Expected admitted Review requester');
+          const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: requester.authorization,
+            serverId, serverIdentityId: homeIdentityId, serverHttpBaseUrl: target.url, target: root.binding.target,
+            installationId: root.binding.installationId, privateKey: target.privateKey, rootAdmitted: true });
+          if (!authorization?.requesterHttpProjection) throw new Error('Expected Review requester HTTP projection');
+          const deps = createCliActionDeps({ token: credentials.token, credentials, serverId,
+            serverIdentityId: homeIdentityId, serverHttpBaseUrl: target.url, sessionId: '',
+            externalActionMachineInstallationId: root.binding.installationId,
+            externalActionMachineRequestPrivateKey: target.privateKey });
+          const records = deps.reviewRecords?.({ surface: 'cli', authority: 'present_user',
+            externalActionTarget: root.binding.target, externalActionExecutionAuthorization: authorization });
+          if (!records) throw new Error('Expected real Review record port');
+          expect(await records.read('new-review-record')).toBeNull();
+          const read = observed.find(request => request.path === '/v1/artifacts/new-review-record');
+          expect(read).toMatchObject({ effect: actionId,
+            authorization: root.token, signature: expect.any(String) });
+        } finally { await requester?.dispose(); await channel.close(); await artifacts.close(); }
+      });
+    });
+
   it.each(['same', 'installation', 'target', 'account', 'home', 'automation', 'api-token'] as const)('reuses disclosed requester custody only for its exact installed target (%s)', async mismatch => {
     await withConfiguredDaemonTestHome({ prefix: 'ordinary-child-custody-' }, async () => {
       const events: string[] = [];

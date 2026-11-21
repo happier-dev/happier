@@ -22,6 +22,11 @@ export const REVIEW_START_ACTION_ID_V1 = 'review.start' as const;
 export const REVIEW_PREPARE_ROUND_ACTION_ID_V1 = 'review.prepare_round' as const;
 export const REVIEW_SETTLE_ROUND_ACTION_ID_V1 = 'review.settle_round' as const;
 export const REVIEW_NEW_ROUND_ACTION_ID_V1 = 'review.new_round' as const;
+/** These roots persist Review round records through the existing Artifact writer. */
+export function isReviewRecordWriteActionIdV1(actionId: string): boolean {
+  return actionId === REVIEW_START_ACTION_ID_V1 || actionId === REVIEW_NEW_ROUND_ACTION_ID_V1
+    || actionId === REVIEW_PREPARE_ROUND_ACTION_ID_V1 || actionId === REVIEW_SETTLE_ROUND_ACTION_ID_V1;
+}
 /** Both actions admit a child reviewer Run from a retained occurrence. */
 export function isReviewRunStartActionIdV1(actionId: string): boolean {
   return actionId === REVIEW_NEW_ROUND_ACTION_ID_V1 || actionId === 'review.follow_up';

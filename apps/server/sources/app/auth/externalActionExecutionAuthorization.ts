@@ -29,7 +29,7 @@ import { TEAM_CREDENTIAL_CREATE_ACTION_ID_V1, TEAM_CREDENTIAL_GET_ACTION_ID_V1,
 import { MachinePresetActionInputSchemasV1, MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { isMachinePresetFiniteOperationActionIdV1, MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
 import { MACHINE_ISOLATION_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineIsolationActionIdsV1';
-import { REVIEW_START_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1, isAccountApiTokenLabelActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
+import { REVIEW_START_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1, isAccountApiTokenLabelActionIdV1, isReviewRecordWriteActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { isManagedCreationContinuationRootV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { PRIVATE_LABEL_RECIPIENT_CENSUS_PATH, PrivateLabelRecipientCensusRequestV1Schema }
     from '@happier-dev/protocol/crypto/privateLabelRecipientCensusV1';
@@ -250,6 +250,7 @@ import { DISCUSSION_SECOND_OPINION_PREVIEW_HTTP_PATH_V1, DiscussionSecondOpinion
 import { ArtifactAccessGrantSetInputV1Schema, ArtifactRecipientKeyEnvelopeCommitInputV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { ArtifactJsonUpdateHttpInputV1Schema } from '@/app/artifacts/artifactMutationHttpContract';
 import { ArtifactJsonCreateHttpInputV1Schema } from '@happier-dev/protocol';
+import { REVIEW_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { bindDiscussionCandidatePeopleReadV1, projectDiscussionCandidateSessionQueryV1 } from '@happier-dev/protocol/actions/discussionActionFamily';
 import { UsersSearchQueryV1Schema } from '@happier-dev/protocol/social/friends';
 import { SESSION_FOLLOW_RULES_ROUTE_V1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleV1';
@@ -3844,6 +3845,20 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
         return list.success && list.data.state === 'active' && list.data.anchorDocArtifactId !== undefined
             && list.data.anchorSessionId === undefined && list.data.creationLocalId === undefined && list.data.limit === undefined
             && isAccountActionHttpOperation('discussion.list', proof);
+    }
+    if (isReviewRecordWriteActionIdV1(root) && verified.effectActionId === root) {
+        // The keyholding host signs the Review record selected by the admitted
+        // root; Artifact routes retain requester access, mode and revision CAS.
+        if (isReadOnlyArtifactHttpPurpose(proof) || isArtifactRecipientKeyPreparationHttpPurpose(proof)) return true;
+        const body = proof.body !== null && typeof proof.body === 'object' && !Array.isArray(proof.body)
+            ? proof.body as Readonly<Record<string, unknown>> : null;
+        if (body?.reviewMetadata !== undefined && decodeArtifactKindV1(body.kind).kindHint === REVIEW_ARTIFACT_KIND_V1) {
+            if (proof.method.toUpperCase() === 'POST' && proof.path === '/v1/artifacts') {
+                const create = ArtifactJsonCreateHttpInputV1Schema.safeParse(proof.body);
+                return create.success && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, create.data));
+            }
+            if (isArtifactJsonUpdateHttpPurpose(proof)) return true;
+        }
     }
     if (root === 'discussion.second_opinion.start') {
         if (verified.effectActionId === root) {

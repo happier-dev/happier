@@ -3,6 +3,10 @@ import axios from 'axios';
 import nacl from 'tweetnacl';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { ArtifactJsonCreateHttpInputV1Schema, ArtifactJsonUpdateHttpInputV1Schema } from '@happier-dev/protocol/artifacts/artifactMutationHttpV1';
+import { encodeArtifactKindV1, REVIEW_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
+import { ArtifactRecipientKeyEnvelopeCommitInputV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { SESSION_DATA_KEY_ENVELOPE_BYTES_V1 } from '@happier-dev/protocol/sessions/encryption/sessionDataKeyEnvelopes';
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeV1Schema,
     EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
     EXTERNAL_ACTION_RESOLVED_TARGET_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
@@ -29,7 +33,7 @@ describe('installed Session signed lifecycle scope', () => {
     }, 300_000);
     afterAll(async () => { await harness?.close(); });
 
-    async function fixture(actionId: 'session.stop' | 'session.archive' | 'session.unarchive' | 'session.open' | 'discussion.second_opinion.start' | 'review.start' | 'usage.recap.compose' | 'usage.recap.export' | 'usage.recap.deliver' | 'usage.coach.dismiss' | 'usage.coach.snooze' | 'usage.coach.apply' | 'usage.coach.undo' | 'artifact.get' | 'action.operations.cancel', installed = true, sessionTarget = false) {
+    async function fixture(actionId: 'session.stop' | 'session.archive' | 'session.unarchive' | 'session.open' | 'discussion.second_opinion.start' | 'review.start' | 'review.new_round' | 'review.prepare_round' | 'review.settle_round' | 'usage.recap.compose' | 'usage.recap.export' | 'usage.recap.deliver' | 'usage.coach.dismiss' | 'usage.coach.snooze' | 'usage.coach.apply' | 'usage.coach.undo' | 'artifact.get' | 'action.operations.cancel', installed = true, sessionTarget = false) {
         const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
         const keys = nacl.sign.keyPair();
         const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: account.id,
@@ -187,6 +191,41 @@ describe('installed Session signed lifecycle scope', () => {
             f.root.id, 'discussion.second_opinion.start', 'session.transcript.get')).not.toBeNull();
         expect(await f.verifyRequest('GET', `/v2/sessions/${f.root.id}/messages/replies/pending`, undefined,
             f.root.id, 'discussion.second_opinion.start', 'session.transcript.get')).toBeNull();
+    });
+
+    it.each(['review.start', 'review.new_round', 'review.prepare_round', 'review.settle_round'] as const)(
+        'admits %s requester Review records without granting unrelated Artifact mutations', async actionId => {
+        const f = await fixture(actionId, false, true);
+        const id = crypto.randomUUID();
+        const path = `/v1/artifacts/${id}`;
+        const kind = encodeArtifactKindV1({ kind: 'other', kindHint: REVIEW_ARTIFACT_KIND_V1 });
+        const reviewMetadata = { projectSourceId: null, workflowId: null, subjectKind: 'repository', sourceKind: 'direct',
+            state: 'running', currentRoundOrdinal: 1, startedAt: Date.now(), finishedAt: null };
+        // Home verifies signed JSON grammar and non-content Review metadata;
+        // the Artifact route owns access and the Account codec owns sealed bytes.
+        const create = ArtifactJsonCreateHttpInputV1Schema.parse({ id, kind, reviewMetadata,
+            header: 'sealed-header', body: 'sealed-body', dataEncryptionKey: 'sealed-key' });
+        const update = ArtifactJsonUpdateHttpInputV1Schema.parse({ kind, reviewMetadata,
+            header: 'sealed-header', body: 'sealed-body', expectedHeaderVersion: 0, expectedBodyVersion: 0 });
+        expect.soft(await f.verifyRequest('GET', path)).not.toBeNull();
+        expect.soft(await f.verifyRequest('POST', '/v1/artifacts', create)).not.toBeNull();
+        expect.soft(await f.verifyRequest('POST', path, update)).not.toBeNull();
+        const envelopes = ArtifactRecipientKeyEnvelopeCommitInputV1Schema.parse({ artifactId: id,
+            expectedDataEncryptionKey: Buffer.alloc(SESSION_DATA_KEY_ENVELOPE_BYTES_V1).toString('base64'),
+            recipientKeyEnvelopes: [] });
+        expect.soft(await f.verifyRequest('GET', `${path}/access/recipients`)).not.toBeNull();
+        expect.soft(await f.verifyRequest('POST', `${path}/access/key-envelopes`, envelopes)).not.toBeNull();
+        expect(await f.verifyRequest('GET', `${path}/access/recipients?extra=1`)).toBeNull();
+        expect(await f.verifyRequest('POST', `${path}/access/key-envelopes`, { ...envelopes, artifactId: 'other' })).toBeNull();
+        expect(await f.verifyRequest('PUT', path, { body: 'changed' })).toBeNull();
+        expect(await f.verifyRequest('GET', `${path}/access/grants`)).toBeNull();
+        expect(await f.verifyRequest('GET', `${path}?extra=1`)).toBeNull();
+        expect(await f.verifyRequest('POST', '/v1/artifacts', { ...create, kind: 'prompt' })).toBeNull();
+        const { reviewMetadata: _reviewMetadata, ...unrelatedUpdate } = update;
+        expect(await f.verifyRequest('POST', path, unrelatedUpdate)).toBeNull();
+        expect(await f.verifyRequest('POST', `${path}/revisions/0/restore`, update)).toBeNull();
+        expect(await f.verifyRequest('POST', path, update, undefined,
+            actionId === 'review.start' ? 'review.new_round' : 'review.start')).toBeNull();
     });
 
     it('admits the real Review child Workflow storage adapter under its original Session proof', async () => {
