@@ -1966,6 +1966,7 @@ export async function sendSessionMessage(
   let admissionResult: SessionInputEnqueueResultV1 | undefined;
   let machineAdmissionInvoked = false;
   let resumeOnRequesterMachine: Extract<Awaited<ReturnType<typeof prepareOriginalAccountPendingSessionResume>>, { deliver: unknown }> | null = null;
+  let resumeThroughPendingActivation = false;
   try {
     if (requiresMachineAdmission || hostOnboarding) {
       const admissionTransport = params.machineAdmissionTransport;
@@ -2116,13 +2117,15 @@ export async function sendSessionMessage(
           credentials: params.credentials,
           sessionId, machineId: targetMachineId, requestId: localId,
           serverHttpBaseUrl: resolveServerHttpBaseUrl(),
-          serverIdentityId: params.serverIdentityId ?? readServerIdentityIdFromFeaturesSnapshot(params.serverFeaturesSnapshot) ?? undefined,
+          serverIdentityId: params.serverIdentityId ?? readServerIdentityIdFromFeaturesSnapshot(serverFeaturesSnapshot) ?? undefined,
           personStopHeld: crossesStopHold,
           ...(params.signal ? { signal: params.signal } : {}),
         }).catch(() => ({ ok: false as const }));
         const cancelled = cancelledBeforeAdmission(params.signal, true);
         if (cancelled) return cancelled;
-        if (resume) {
+        if (resume === 'pending-activation') {
+          resumeThroughPendingActivation = true;
+        } else if (resume) {
           if (!('deliver' in resume)) return { ok: false, code: 'admission_rejected',
             admissionResult: rejectedProtectedInputBeforeAdmission('admission_rejected', 'session.message.requester_resume') };
           resumeOnRequesterMachine = resume;
@@ -2267,8 +2270,9 @@ export async function sendSessionMessage(
     return { ok: true, sessionId, localId, waited: false, admissionResult, receiverDelivery };
   }
 
-  // Home owns an acknowledged managed wake. A person-Stop hold still needs explicit Resume authority.
-  if (shouldResumeInactiveSession && (crossesStopHold || enqueueResult.managedActivationLocalId === undefined)) {
+  // Pending retains parked guests and Home-owned wakes. A person-Stop hold needs explicit Resume authority.
+  if (shouldResumeInactiveSession && !resumeThroughPendingActivation
+    && (crossesStopHold || enqueueResult.managedActivationLocalId === undefined)) {
     const resumeResult: InactiveSessionResumeResult = resumeOnRequesterMachine
       ? await resumeOnRequesterMachine.deliver().then(result => result.ok ? { ok: true } : {
         ok: false, code: 'resume_failed', message: result.error,

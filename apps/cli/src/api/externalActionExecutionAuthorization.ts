@@ -79,6 +79,7 @@ import type { SessionInputSourceSessionV1 } from '@happier-dev/protocol/sessions
 import { SOCKET_RPC_EVENTS, SessionActionRpcOriginV1Schema, type WorkspaceSyncSourceWriterTargetRoutingV1,
   type WorkspaceSyncSourceExecutionV1 } from '@happier-dev/protocol/socketRpc';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import { isMachineReachableV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1, ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionHttpErrorSchema, projectExternalActionPendingResetStartAdmissionV1, projectExternalActionApprovalDecisionAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { openExternalActionRequestV2, openExternalActionResponseV2, sealExternalActionRequestV2, type ExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
@@ -130,7 +131,7 @@ import { recordRequesterCurrentnessRefusal, rethrowRequesterHomeReadFailure,
 import { createHttpStatusError } from '@/api/client/httpStatusError';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { ACTION_ID_FAMILIES_V1, ActionIdSchema, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1, requiresOriginalAccountInvocationMachineProofV1, isWorkspaceSyncRelationshipWriteActionId, isWorkspaceSyncRelationshipControlActionId } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_ID_FAMILIES_V1, ActionIdSchema, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_OPEN_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1, requiresOriginalAccountInvocationMachineProofV1, isWorkspaceSyncRelationshipWriteActionId, isWorkspaceSyncRelationshipControlActionId } from '@happier-dev/protocol/actions/actionIds';
 import { isScmDiffSummaryRunAction } from '@happier-dev/protocol/actions/actionSpecs';
 import { readDiscussionSecondOpinionModelChildV1 } from '@happier-dev/protocol/discussions/secondOpinionActions';
 import { DiscussionDetailsResponseV1Schema, DiscussionListResponseV1Schema } from '@happier-dev/protocol/discussions/api';
@@ -945,6 +946,7 @@ function createTelemetryCollectorKeyPinPorts(input: Readonly<{ homeUrl: string; 
 type OriginalAccountActionPreparation = ActionExecuteResult | Readonly<{
   deliver: () => Promise<ActionExecuteResult>;
 }> | null;
+type PendingSessionResumePreparation = OriginalAccountActionPreparation | 'pending-activation';
 
 export function dispatchOriginalAccountAction(input: OriginalAccountActionInput & Readonly<{ foreignTargetOnly: true }>): Promise<ActionExecuteResult | null>;
 export function dispatchOriginalAccountAction(input: OriginalAccountActionInput): Promise<ActionExecuteResult>;
@@ -969,9 +971,9 @@ export async function prepareOriginalAccountPendingSessionResume(input: Readonly
   personStopHeld: boolean;
   signal?: AbortSignal;
   isCurrent?: () => boolean | Promise<boolean>;
-}>): Promise<OriginalAccountActionPreparation> {
+}>): Promise<PendingSessionResumePreparation> {
   return await prepareOriginalAccountAction({
-    actionId: 'session.open',
+    actionId: SESSION_OPEN_ACTION_ID_V1,
     input: { serverId: input.serverIdentityId, sessionId: input.sessionId, intent: 'resume' },
     requestId: input.requestId,
     target: { kind: 'machine', machineId: input.machineId },
@@ -984,10 +986,17 @@ export async function prepareOriginalAccountPendingSessionResume(input: Readonly
   }, { personStopHeld: input.personStopHeld });
 }
 
+function prepareOriginalAccountAction(
+  input: OriginalAccountActionInput & Readonly<{ foreignTargetOnly?: true }>,
+): Promise<OriginalAccountActionPreparation>;
+function prepareOriginalAccountAction(
+  input: OriginalAccountActionInput & Readonly<{ foreignTargetOnly?: true }>,
+  pendingSessionResume: Readonly<{ personStopHeld: boolean }>,
+): Promise<PendingSessionResumePreparation>;
 async function prepareOriginalAccountAction(
   input: OriginalAccountActionInput & Readonly<{ foreignTargetOnly?: true }>,
   pendingSessionResume?: Readonly<{ personStopHeld: boolean }>,
-): Promise<OriginalAccountActionPreparation> {
+): Promise<PendingSessionResumePreparation> {
   // Preparation cannot start the effect; delivery owns evidence after submission.
   const fail = (errorCode: string, issuerPhase?: string): ActionExecuteFailure => ({
     ok: false, errorCode, error: errorCode, effectAttempted: false,
@@ -1015,7 +1024,7 @@ async function prepareOriginalAccountAction(
   const publisherAccountId = readAccountIdFromToken(input.credentials.token);
   const homeUrl = normalizeServerHttpBaseUrl(input.serverHttpBaseUrl);
   if (input.target.kind === 'session' && input.actionId !== SESSION_MESSAGE_SEND_ACTION_ID_V1) return fail('target_unavailable', 'dispatch.target_kind');
-  const requiresMachineProof = input.invocation?.caller.kind === 'plugin'
+  let requiresMachineProof = input.invocation?.caller.kind === 'plugin'
     || requiresOriginalAccountInvocationMachineProofV1(input.actionId) && input.invocation !== undefined
     || input.managedContinuation !== undefined
     || requiresOriginalAccountMachineActionProof(input.actionId, input.input,
@@ -1156,12 +1165,24 @@ async function prepareOriginalAccountAction(
     const ordinary = readAuthTokenProvenance(claims, { allowLegacyHome: true });
     if (pendingSessionResume) {
       if (!own?.access || !accountId) return fail('target_unavailable', 'dispatch.machine_inventory');
-      if (own.managedMachineRef || own.access.custodian.accountId === accountId) return null;
+      const foreign = own.access.custodian.accountId !== accountId;
+      const pairedTerminal = hasStoredSessionCredentialProvenance(input.credentials) && ordinary?.provenance.kind === 'terminal';
       // A terminal's Home-issued root has the automation floor. It cannot
       // clear a person's Stop on another installation.
-      if (!hasStoredSessionCredentialProvenance(input.credentials)
-        || ordinary?.provenance.kind !== 'terminal' || pendingSessionResume.personStopHeld) {
+      if (foreign && (!pairedTerminal || pendingSessionResume.personStopHeld)) {
         return fail('target_unavailable', 'dispatch.pending_session_resume');
+      }
+      // Home's native observation and the installed guest's presence must agree
+      // before the immediate Resume. Pending activation retains a parked guest
+      // until the existing wake policy or a person's Start makes it runnable.
+      if (own.managedMachineRef && !pendingSessionResume.personStopHeld
+        && (own.managedInputRuntime?.nativeReady !== true || !isMachineReachableV1({ machine: own }))) {
+        return 'pending-activation';
+      }
+      if (!foreign) {
+        if (!own.managedMachineRef || !pairedTerminal || pendingSessionResume.personStopHeld) return null;
+        // A paired terminal uses the installed Resume for its own reachable guest too.
+        requiresMachineProof = true;
       }
     }
     // A native approval has already committed consent in the CLI owner. Its

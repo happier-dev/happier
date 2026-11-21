@@ -6,6 +6,7 @@ import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract'
 import { buildTrustedHostSessionInputAdmissionV1, deriveWorkflowSessionInputLocalIdV2, SessionMessageSendResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { buildSessionStopHoldV1 } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createSocketTransportAdapter } from '@happier-dev/sync-client';
 import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
@@ -14,6 +15,7 @@ import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSet
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { handleActionsCommand } from '@/cli/commands/actions';
+import { handleSessionCommand } from '@/cli/commands/session/handleSessionCommand';
 import { captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
 import { ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -21,7 +23,7 @@ import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protoc
 import tweetnacl from 'tweetnacl';
 
 const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
-const sockets = vi.hoisted(() => ({ connect: vi.fn() }));
+const sockets = vi.hoisted(() => ({ connect: vi.fn(), refuseMachineRpc: false }));
 // HTTP and Machine RPC are external boundaries; admission and resume logic stay real.
 vi.mock('axios', async importOriginal => {
   const actual = await importOriginal<typeof import('axios')>();
@@ -36,7 +38,12 @@ vi.mock('@/configuration', async importOriginal => {
 });
 vi.mock('@/api/session/sockets', async importOriginal => {
   const actual = await importOriginal<typeof import('@/api/session/sockets')>();
-  return { ...actual, createSessionScopedSocketConnection: sockets.connect };
+  return { ...actual, createSessionScopedSocketConnection: sockets.connect,
+    createUserScopedSocketConnection: (...args: Parameters<typeof actual.createUserScopedSocketConnection>) => {
+      if (sockets.refuseMachineRpc) throw Object.assign(new Error('Forbidden'), { code: 'RPC_FORBIDDEN' });
+      return actual.createUserScopedSocketConnection(...args);
+    },
+  };
 });
 
 const sessionId = 'c123456789012345678901234';
@@ -57,6 +64,7 @@ beforeEach(() => {
   receiverMetadata = {};
   receiverMuteScopes = [];
   muteReadAvailable = true;
+  sockets.refuseMachineRpc = false;
   http.get.mockReset();
   http.post.mockReset();
   http.get.mockImplementation(async (url: string) => {
@@ -146,9 +154,14 @@ describe('a message send after Stop', () => {
       admissionResult: { status: 'rejected', code: 'session_input_target_unavailable' } });
   });
 
-  it.each(['physical Stop', 'person Stop', 'denied Resume'] as const)(
-    'routes a paired member Send through Home and the Session Resume Action after %s', async scenario => {
+  it.each(['physical Stop', 'person Stop', 'denied Resume', 'managed guest after Start', 'managed guest while stopped', 'owned managed guest after Start'] as const)(
+    'routes a paired terminal Send through Home and the Session Resume Action after %s', async scenario => {
       if (scenario === 'person Stop') heldStop();
+      const own = scenario === 'owned managed guest after Start';
+      const managed = own || scenario === 'managed guest after Start' || scenario === 'managed guest while stopped';
+      const reachable = scenario !== 'managed guest while stopped';
+      const custodianAccountId = own ? 'member' : 'custodian';
+      const role = own ? 'manage' : 'use';
       receiverMetadata.lifecycleState = 'stopped';
       const account = Buffer.from(JSON.stringify({ sub: 'member', tokenEpoch: 0,
         provenance: { v: 1, kind: 'terminal', authority: 'account_automation' },
@@ -164,28 +177,30 @@ describe('a message send after Stop', () => {
             runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} }, ...receiverMetadata }),
         }) } };
         if (url.endsWith('/v1/machines/machine-1')) return { status: 200, data: { machine: {
-          id: 'machine-1', kind: 'persistent', managedMachineRef: null, metadata: null, metadataVersion: 0,
-          daemonState: null, daemonStateVersion: 0, seq: 1, active: true, activeAt: 1, createdAt: 1, updatedAt: 1,
+          id: 'machine-1', kind: 'persistent',
+          managedMachineRef: managed ? { homeId: serverIdentityId, managedId: 'lima-guest' } : null,
+          ...(managed ? { managedInputRuntime: { nativeReady: reachable, wakeState: null, asleepWake: 'off' } } : {}),
+          metadata: null, metadataVersion: 0,
+          daemonState: null, daemonStateVersion: 0, seq: 1, active: reachable, activeAt: Date.now(), createdAt: 1, updatedAt: 1,
           revokedAt: null, replacedByMachineId: null, installationId: 'installation-1',
           installationPublicKey: Buffer.from(key.publicKey).toString('base64'),
-          access: { custodian: { accountId: 'custodian', displayName: 'Custodian' }, role: 'use',
+          storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+          access: { custodian: { accountId: custodianAccountId, displayName: 'Custodian' }, role,
             resourceMode: 'plain', accessState: 'ready' },
         } } };
         if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
-        if (url.endsWith('/v1/features') || url.endsWith('/v1/features/authenticated')) {
-          return { status: 200, data: { features: {}, capabilities: { serverIdentity: { serverIdentityId } } } };
-        }
         return readSession?.(url);
       });
       const pending = http.post.getMockImplementation();
       const effects: string[] = [];
+      let pendingInput: unknown;
       http.post.mockImplementation(async (url: string, body: unknown) => {
         if (url.endsWith('/session.open/execution-authorization')) {
           effects.push('resume admission');
           const { envelope } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
           if (scenario === 'denied Resume') return { status: 403, data: { error: 'target_unavailable' } };
           return { status: 200, data: { v: 1, token: 'signed-resume',
-            binding: { accountId: 'member', custodianAccountId: 'custodian', accountEncryptionMode: 'plain', admittedMachineRole: 'use',
+            binding: { accountId: 'member', custodianAccountId, accountEncryptionMode: 'plain', admittedMachineRole: role,
               authentication: { kind: 'terminal', tokenEpoch: 0 }, serverIdentityId, machineId: 'machine-1',
               installationId: 'installation-1', actionId: 'session.open', requestId: envelope.requestId, target: envelope.target,
               requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) },
@@ -194,21 +209,52 @@ describe('a message send after Stop', () => {
         if (url.endsWith('/session.open')) {
           const { envelope, executionAuthorization } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
           expect(envelope).toMatchObject({ v: 1, input: { sessionId, intent: 'resume', serverId: serverIdentityId } });
-          expect(openExternalActionRequesterAccountContextV1({ authorization: executionAuthorization!,
-            purpose: { kind: 'external_action' }, machineId: 'machine-1', installationId: 'installation-1',
-            serverIdentityId, installationPrivateKey: key.secretKey, includeInvocation: true })).toMatchObject({
-              credentials: { token: credentials.token },
-            });
+          if (!own) {
+            expect(openExternalActionRequesterAccountContextV1({ authorization: executionAuthorization!,
+              purpose: { kind: 'external_action' }, machineId: 'machine-1', installationId: 'installation-1',
+              serverIdentityId, installationPrivateKey: key.secretKey, includeInvocation: true })).toMatchObject({
+                credentials: { token: credentials.token },
+              });
+          }
           effects.push('resume dispatch');
           return { status: 200, data: { v: 1, actionId: 'session.open', requestId: envelope.requestId,
             execution: { ok: true, result: { status: 'opened', sessionId, serverId: serverIdentityId } } } };
         }
-        if (url.endsWith('/pending')) effects.push('pending');
+        if (url.endsWith('/pending')) {
+          effects.push('pending');
+          pendingInput = body;
+        }
+        if (url.endsWith('/delivery/block')) {
+          effects.push('blocked');
+          return { status: 200, data: { ok: true } };
+        }
         return pending?.(url);
       });
+      if (managed) {
+        // Bare Machine RPC can refuse the terminal's automatic spawn. Home
+        // still receives Account Pending and can admit the installed Action.
+        sockets.refuseMachineRpc = true;
+      }
       const priorExit = process.exitCode;
       const stdout = captureStdoutJsonOutput();
+      const fetchFeatures = vi.spyOn(globalThis, 'fetch').mockImplementation(async request => {
+        const url = String(request);
+        if (!url.endsWith('/v1/features') && !url.endsWith('/v1/features/authenticated')) {
+          throw new Error(`Unexpected fetch request: ${url}`);
+        }
+        return Response.json({ features: {}, capabilities: { serverIdentity: { serverIdentityId } } });
+      });
       try {
+        if (managed) {
+          await handleSessionCommand(['send', sessionId, 'Pick this back up', '--json'], {
+            readCredentialsFn: async () => credentials,
+          });
+          const result = stdout.json();
+          expect(result, JSON.stringify({ result, effects })).toMatchObject({ ok: true, kind: 'session_send', data: { sessionId } });
+          expect(effects).toEqual(reachable ? ['resume admission', 'pending', 'resume dispatch'] : ['pending']);
+          expect(pendingInput).toMatchObject({ targetMachineId: 'machine-1', requestedAction: { kind: 'send_now' } });
+          return;
+        }
         await handleActionsCommand([
           'invoke', 'session.message.send', '--input-json', JSON.stringify({ sessionId, message: 'Pick this back up' }), '--json',
         ], {
@@ -223,6 +269,7 @@ describe('a message send after Stop', () => {
           ? { status: 'rejected', code: 'session_input_target_unavailable' }
           : { status: 'accepted' } });
       } finally {
+        fetchFeatures.mockRestore();
         stdout.restore();
         process.exitCode = priorExit;
       }
