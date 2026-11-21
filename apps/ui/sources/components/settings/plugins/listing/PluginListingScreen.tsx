@@ -26,7 +26,7 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { useActivePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
 
-import { catalogReviewStatusLabel, formatCatalogEntryVersion } from '../model/pluginMarketplaceModel';
+import { catalogReviewStatusLabel, formatCatalogEntryVersion, indexInstalledPluginIdsByCatalogEntry } from '../model/pluginMarketplaceModel';
 import { usePluginSettingsScreenState, type PluginSettingsScreenState } from '../model/usePluginSettingsScreenState';
 import { buildPluginDetailRoute, buildPluginsHomeRoute } from '../model/pluginsSurfaceRoutes';
 import { usePluginsSurfaceHost } from '../model/usePluginsSurfaceHost';
@@ -109,7 +109,13 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
             if (route && catalogAccountLifetime.isCurrent()) router.push(route as never);
         } : undefined}
     /> : null;
-    const installed = state.installedPluginById.has(props.pluginId);
+    const resolveInstalledPluginId = React.useMemo(
+        () => indexInstalledPluginIdsByCatalogEntry(state.installedPluginById),
+        [state.installedPluginById],
+    );
+    const installedPluginId = entry ? resolveInstalledPluginId(entry) : null;
+    const installed = installedPluginId !== null;
+    const shownPluginId = installedPluginId ?? props.pluginId;
     const title = entry?.title ?? props.pluginId;
     // Install's evaluated review opens here, where it was pressed; its outcome stays under the action.
     const approvalReview = useInPlaceApprovalReview(state.pluginActionApproval);
@@ -160,16 +166,16 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
     const closePresetHandoff = React.useCallback(() => setPresetHandoff(null), []);
     // Once installed the listing reads as the installed plugin: what it still needs, then who can use it and the
     // way into its full management.
-    const installedSetup = entry && installed ? (
+    const installedSetup = installedPluginId ? (
         <>
-            <InstalledPluginListingSetup key={props.pluginId} pluginId={props.pluginId} title={title} host={host} state={state}
+            <InstalledPluginListingSetup key={installedPluginId} pluginId={installedPluginId} title={title} host={host} state={state}
                 onAddToPreset={(choice, item) => setPresetHandoff({ choice, item })} />
             <ItemGroup>
-                <PluginProjectScopeItem pluginId={props.pluginId} testID="settings.plugins.listing.projectScope" />
+                <PluginProjectScopeItem pluginId={installedPluginId} testID="settings.plugins.listing.projectScope" />
                 <Item
                     testID="settings.plugins.listing.manage"
                     title={t('settingsPlugins.managePlugin')}
-                    onPress={() => router.push(buildPluginDetailRoute(host, entry.id))}
+                    onPress={() => router.push(buildPluginDetailRoute(host, installedPluginId))}
                 />
             </ItemGroup>
         </>
@@ -202,8 +208,8 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
                 // The name sits beside the mark on its title line; the purpose and facts start at the mark's edge
                 // (lab detail-pane and detail-page alike).
                 markSpan="title"
-                leading={<PluginMark title={title} pluginId={props.pluginId} iconAgentId={state.pluginProjectionById[props.pluginId]?.iconAgentId ?? null} size="page"
-                    installedPackage={state.pluginProjectionById[props.pluginId]?.installedPackage} machineId={state.executionMachineId} serverId={state.executionServerId} />}
+                leading={<PluginMark title={title} pluginId={shownPluginId} iconAgentId={state.pluginProjectionById[shownPluginId]?.iconAgentId ?? null} size="page"
+                    installedPackage={state.pluginProjectionById[shownPluginId]?.installedPackage} machineId={state.executionMachineId} serverId={state.executionServerId} />}
                 {...(entry?.description ? { description: entry.description } : {})}
                 meta={entry ? [
                     ...(entry.publisher.displayName ? [{ key: 'publisher', text: entry.publisher.displayName }] : []),

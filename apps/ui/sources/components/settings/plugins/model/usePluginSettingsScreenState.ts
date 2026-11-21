@@ -60,6 +60,7 @@ import {
     readDevelopmentCreateAvailable,
     readDevelopmentSourceInstallAvailable,
     projectAccountInstalledPlugins,
+    indexInstalledPluginIdsByCatalogEntry,
     projectPluginMutationResult,
     type PluginMutationResult,
     readPluginCreateResult,
@@ -529,7 +530,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         if (params.method === 'install') {
             if (
                 !exactInstallEntry
-                || installedBefore !== null
+                || indexInstalledPluginIdsByCatalogEntry(installedPluginByIdRef.current)(exactInstallEntry) !== null
             ) {
                 return;
             }
@@ -646,7 +647,8 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                                 params.method === 'install' ? { confirmed: true } : undefined);
                             if (!execution.ok) return actionFailure(execution, 'plugins.install');
                             return { supported: true as const, response: { ok: true as const,
-                                result: projectPluginMutationResult(execution.result, params.method, params.pluginId),
+                                result: projectPluginMutationResult(execution.result, params.method,
+                                    actionInput.source.kind === 'gitCatalog' ? null : params.pluginId),
                             } };
                         }
                         const actionId = {

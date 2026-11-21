@@ -13343,6 +13343,9 @@ Relative entries inherit the catalog repository's ref, and entries with no
 ref use the default branch. Review and installed provenance carry the resolved
 commit. The Git update channel retains the catalog pointer when applicable,
 and the existing update check compares resolved commits for Git sources.
+The selected Machine includes that pointer in installed inventory. Browse and
+the listing use the source and item IDs to find the installed plugin and open
+management under the ID assigned by the daemon.
 Git acquisition uses the checkout owner and the managed generation owner.
 
 Manifest admission converts Claude, Codex, Cursor, and Agent Plugins packages

@@ -102,6 +102,22 @@ describe('PluginListingScreen', () => {
         expect(state.value.runCatalogAction).not.toHaveBeenCalled();
     });
 
+    it('manages the installed identity for a Git catalog listing', async () => {
+        state.value = screenState({
+            discoverEntries: [{ ...listing, gitCatalogItemId: 'tools' }],
+            installedPluginById: new Map([['imported.vendor-tools', {
+                pluginId: 'imported.vendor-tools',
+                install: { trust: { distribution: {
+                    kind: 'git', catalog: { sourceId: listing.sourceId, itemId: 'tools' },
+                } } },
+            }]]),
+        });
+        const screen = await renderListing();
+        expect(screen.findByTestId('settings.plugins.listing.install')).toBeNull();
+        await act(async () => { screen.pressByTestId('settings.plugins.listing.manage'); });
+        expect(routerPush).toHaveBeenCalledWith(expect.objectContaining({ params: { pluginId: 'imported.vendor-tools' } }));
+    });
+
     it('offers a declared setup recipe on the installed listing before any Machine has run it', async () => {
         state.value = screenState({
             installedPluginById: new Map([[listing.id, {}]]),

@@ -67,6 +67,7 @@ import {
     projectInstalledPluginPresentation,
     installedPluginVersionLabel,
     isPluginIncludedWithHappier,
+    indexInstalledPluginIdsByCatalogEntry,
     partitionInstalledPlugins,
     type DevelopmentPluginEntry,
     type InstalledPluginEntry,
@@ -1237,11 +1238,15 @@ export function DiscoverListingsSection(props: Readonly<{
         openKey: props.selectedListing ? `${props.selectedListing.sourceId}:${props.selectedListing.pluginId}` : null,
         onOpenChange,
     });
-    const anatomy = useDiscoverListingAnatomy(props, presentation);
+    const installedIdForEntry = React.useMemo(
+        () => indexInstalledPluginIdsByCatalogEntry(props.installedPluginById),
+        [props.installedPluginById],
+    );
+    const anatomy = useDiscoverListingAnatomy(props, presentation, installedIdForEntry);
     const controls = React.useMemo(() => new Map(items.map((item) => [
         readDiscoverListingKey(item),
-        discoverListingControl(item.entry, props),
-    ] as const)), [items, props]);
+        discoverListingControl(item.entry, props, installedIdForEntry(item.entry) !== null),
+    ] as const)), [installedIdForEntry, items, props]);
     // "All" on a section the page shortened, "All results" on the one it focused.
     const groupAction = React.useCallback((sectionId: string) => {
         if (view.focusedSectionId === sectionId) {
@@ -1299,7 +1304,6 @@ type DiscoverListingActionInputs = Readonly<{
     machineName?: string | null;
     settlement?: PluginRoutineOperationSettlement | null;
     serverId?: string | null;
-    installedPluginById: ReadonlyMap<string, InstalledPluginEntry>;
     canRunActions: boolean;
     installDisabledReason?: string | null;
     loading: boolean;
@@ -1308,8 +1312,8 @@ type DiscoverListingActionInputs = Readonly<{
     onNavigateToPlugin: (pluginId: string) => void;
 }>;
 
-function discoverListingControl(entry: PluginMarketplaceCatalogEntry, props: DiscoverListingActionInputs): React.ReactNode {
-    if (props.installedPluginById.has(entry.id) || !entry.installable) return null;
+function discoverListingControl(entry: PluginMarketplaceCatalogEntry, props: DiscoverListingActionInputs, installed: boolean): React.ReactNode {
+    if (installed || !entry.installable) return null;
     return <DiscoverQuickInstall
         key={JSON.stringify([props.serverId, props.machineId, entry.sourceId, entry.id, entry.itemId, entry.version])}
         entry={entry}
@@ -1356,22 +1360,23 @@ function DiscoverQuickInstall({ entry, machineName, disabled, pending, disabledR
 /** One anatomy for the grid's cards and the list's rows. A withdrawal outranks "Installed". */
 function useDiscoverListingAnatomy(props: DiscoverListingActionInputs & Readonly<{
     projectionByPluginId?: PluginProjectionFactsById;
-}>, presentation: PluginsCollectionPresentation): CollectionAnatomy<DiscoverListingItem> {
+}>, presentation: PluginsCollectionPresentation, installedIdForEntry: ReturnType<typeof indexInstalledPluginIdsByCatalogEntry>): CollectionAnatomy<DiscoverListingItem> {
     const host = resolvePluginsSurfaceHost(usePathname());
-    const { installedPluginById, projectionByPluginId } = props;
+    const { projectionByPluginId } = props;
     return React.useMemo(() => ({
         destination: ({ entry }) => ({ href: buildPluginsHomeRoute(host, {
             view: 'browse', open: { kind: 'listing', sourceId: entry.sourceId, pluginId: entry.id,
                 ...(entry.itemId ? { itemId: entry.itemId } : {}), ...(entry.version ? { version: entry.version } : {}) },
         }) }),
-        glyph: ({ entry }) => (
-            <PluginMark title={entry.title} pluginId={entry.id} iconAgentId={projectionByPluginId?.[entry.id]?.iconAgentId ?? null}
-                installedPackage={projectionByPluginId?.[entry.id]?.installedPackage} machineId={props.machineId} serverId={props.serverId} />
-        ),
+        glyph: ({ entry }) => {
+            const pluginId = installedIdForEntry(entry) ?? entry.id;
+            return <PluginMark title={entry.title} pluginId={pluginId} iconAgentId={projectionByPluginId?.[pluginId]?.iconAgentId ?? null}
+                installedPackage={projectionByPluginId?.[pluginId]?.installedPackage} machineId={props.machineId} serverId={props.serverId} />;
+        },
         title: ({ entry }) => entry.title,
         // A registry the install needs is the one fact to read before installing, on cards and rows alike; it
         // takes the byline's place until the listing is installed.
-        where: ({ entry }) => (!installedPluginById.has(entry.id) && entry.registrySelectionOrigin !== null
+        where: ({ entry }) => (installedIdForEntry(entry) === null && entry.registrySelectionOrigin !== null
             ? t('settingsPlugins.discover.registrySelectionRequired', { origin: entry.registrySelectionOrigin })
             // Where it comes from first, then what it adds (lab ideas-1118-platform scene 1).
             : [entry.sourceTitle, ...(entry.vendorPlugin?.contentCounts
@@ -1380,7 +1385,7 @@ function useDiscoverListingAnatomy(props: DiscoverListingActionInputs & Readonly
         description: ({ entry }) => entry.description || null,
         // Healthy is quiet: only a withdrawal or "Installed" speaks; a withdrawal outranks "Installed".
         reason: ({ entry }) => props.settlement?.pluginId === entry.id && props.settlement.sourceId === entry.sourceId
-            && (props.settlement.outcome === 'failed' || props.settlement.outcome === 'unknown') && !installedPluginById.has(entry.id) ? (
+            && (props.settlement.outcome === 'failed' || props.settlement.outcome === 'unknown') && installedIdForEntry(entry) === null ? (
             <Status
                 testID={`settings.plugins.marketplace.installOutcome.${entry.sourceId}.${entry.id}`}
                 // The owner's cause sentence when it has one; otherwise what happened and what to do.
@@ -1394,7 +1399,7 @@ function useDiscoverListingAnatomy(props: DiscoverListingActionInputs & Readonly
                 label={catalogReviewStatusLabel(entry)}
                 tone="warning" presentation="inline" indicator
             />
-        ) : installedPluginById.has(entry.id) ? (
+        ) : installedIdForEntry(entry) !== null ? (
             <Status
                 testID={`settings.plugins.marketplace.installedStatus.${entry.sourceId}.${entry.id}`}
                 label={t('settingsPlugins.surfaces.installed')}
@@ -1403,12 +1408,12 @@ function useDiscoverListingAnatomy(props: DiscoverListingActionInputs & Readonly
         ) : null,
         // A card's control sits in its footer; a list row's is its row action (`useDiscoverListingRowActions`),
         // which the Collection draws in every list geometry, so the list does not draw it a second time.
-        ...(presentation === 'grid' ? { action: (item: DiscoverListingItem) => discoverListingControl(item.entry, props) } : {}),
+        ...(presentation === 'grid' ? { action: (item: DiscoverListingItem) => discoverListingControl(item.entry, props, installedIdForEntry(item.entry) !== null) } : {}),
         accessibilityLabel: ({ entry }) => buildActionRowAccessibilityLabel([entry.title, t('common.details'), entry.sourceTitle]) ?? entry.title,
         testID: ({ entry }) => `settings.plugins.marketplace.entry.${entry.sourceId}.${entry.id}`,
         columnTitles: { title: t('settingsPlugins.surfaces.navigationTitle') },
     // `props` carries the action inputs `discoverListingControl` reads; its identity is the render's.
-    }), [host, installedPluginById, presentation, projectionByPluginId, props]);
+    }), [host, installedIdForEntry, presentation, projectionByPluginId, props]);
 }
 
 const sectionStylesheet = StyleSheet.create((theme) => ({

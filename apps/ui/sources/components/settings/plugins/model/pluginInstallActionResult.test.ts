@@ -12,6 +12,14 @@ describe('plugin install Action result adaptation', () => {
         expect(projectPluginMutationResult(emitted, 'update', 'acme.plugin').kind).toBe('committed');
     });
 
+    it('accepts the installed identity assigned by the daemon for a Git catalog install', () => {
+        const change = { kind: 'committed', pluginId: 'imported.vendor-kit', desiredGeneration: 'new', appliedGeneration: 'new', pendingSurfaces: [] };
+        const outputSchema = getActionSpec('plugins.install').outputSchema;
+        if (!outputSchema) throw new Error('Expected the plugin install Action output schema');
+        const emitted = outputSchema.parse({ ok: true, kind: 'plugins_install', outcome: 'applied', change });
+        expect(projectPluginMutationResult(emitted, 'install', null).kind).toBe('committed');
+    });
+
     it('preserves the daemon uncertainty instead of claiming success or inviting a replay', () => {
         const change = { kind: 'outcomeUnknown', pluginId: 'acme.plugin', expectedCandidate: 'candidate-2' };
         const outputSchema = getActionSpec('plugins.install').outputSchema;

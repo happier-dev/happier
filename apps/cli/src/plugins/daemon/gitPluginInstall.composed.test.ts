@@ -122,6 +122,11 @@ describe('Git vendor plugin installation', () => {
       const [installed] = await readInstalledPluginCatalog({ happyHomeDir });
       expect(installed?.manifest?.contributes.skills).toMatchObject([{ id: 'command-runbook' }]);
       const entry = InstalledPluginCapabilityEntryV1Schema.parse(installed);
+      if (mode === 'catalog') {
+        expect(entry.install.trust?.distribution).toMatchObject({
+          kind: 'git', catalog: { sourceId: 'vendor', itemId: 'kit' },
+        });
+      }
       expect(entry.source)
         .toMatchObject({ kind: 'git', locator, subdirectory: 'plugins/kit', resolvedCommit: expectedCommit, notImported: { hooks: 1 } });
       const materializedRoot = installed?.source.resolvedPath;

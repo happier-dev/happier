@@ -458,6 +458,20 @@ export function readPendingPluginChangeReview(
     return readPluginInstallationReviewChange(value.change, expectedPluginId);
 }
 
+/** Join a Git listing to the installed identity recorded by the selected Machine. */
+export function indexInstalledPluginIdsByCatalogEntry(installedById: ReadonlyMap<string, InstalledPluginEntry>) {
+    const installedByGitCatalogItem = new Map<string, string>();
+    for (const [pluginId, entry] of installedById) {
+        const distribution = entry.install?.trust?.distribution;
+        if (distribution?.kind === 'git' && distribution.catalog) {
+            installedByGitCatalogItem.set(JSON.stringify([distribution.catalog.sourceId, distribution.catalog.itemId]), pluginId);
+        }
+    }
+    return (entry: PluginMarketplaceCatalogEntry): string | null => entry.gitCatalogItemId
+        ? installedByGitCatalogItem.get(JSON.stringify([entry.sourceId, entry.gitCatalogItemId])) ?? null
+        : installedById.has(entry.id) ? entry.id : null;
+}
+
 export type PluginMutationResult = Readonly<{
     kind: string | null;
     failureReason: string | null;
@@ -470,7 +484,7 @@ export type PluginMutationResult = Readonly<{
 export function projectPluginMutationResult(
     value: unknown,
     action: PluginMarketplaceActionRequest['method'],
-    expectedPluginId: string,
+    expectedPluginId: string | null,
 ): PluginMutationResult {
     const empty: PluginMutationResult = { kind: null, failureReason: null, managedResources: null,
         registryRequirement: null, disabledNoop: false };
@@ -492,7 +506,8 @@ export function projectPluginMutationResult(
     const change = nativeInstall && !isRecord(value.change)
         ? value.outcome === 'applied' ? { kind: 'committed' } : { kind: 'failed' }
         : value.change;
-    if (!isRecord(change) || 'pluginId' in change && change.pluginId !== expectedPluginId) return empty;
+    const catalogGitInstall = nativeInstall && action === 'install' && expectedPluginId === null;
+    if (!isRecord(change) || !catalogGitInstall && 'pluginId' in change && change.pluginId !== expectedPluginId) return empty;
     const kind = readNonEmptyString(change.kind);
     let managedResources: PluginMutationResult['managedResources'] = null;
     let registryRequirement: PluginMutationResult['registryRequirement'] = null;
