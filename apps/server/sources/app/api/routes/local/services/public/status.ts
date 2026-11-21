@@ -17,13 +17,21 @@ export async function readLocalServicePublicStatus(input: Readonly<{
     resolvePreview: (previewId: string) => LocalServicePreviewResourceV1 | null | undefined;
     authorizePreview: (preview: LocalServicePreviewResourceV1) => Promise<boolean>;
     authorizeSession: (sessionId: string) => Promise<boolean>;
+    /** The exposure owner's answer for a Service link whose Service binding has ended. */
+    isRetiredExposureEntitled: (exposureId: string) => boolean;
 }>): Promise<StatusResult> {
     const { request } = input;
     const denied = (reasonCode: string): StatusResult => ({ ok: false, statusCode: 403, error: 'public_preview_denied', reasonCode });
     let scopedPreview: LocalServicePreviewResourceV1 | null = null;
     if (request.previewId) {
         const preview = input.resolvePreview(request.previewId);
-        if (!preview) return { ok: false, statusCode: 404, error: 'preview_not_found', reasonCode: 'preview_not_found' };
+        if (!preview) {
+            // An ended Service's links stay visible only to their own people; everyone else sees no preview.
+            const snapshot = input.getStatus(request);
+            const exposures = snapshot.exposures.filter(exposure => input.isRetiredExposureEntitled(exposure.exposureId));
+            return exposures.length > 0 ? { ok: true, snapshot: scopeSnapshot(snapshot, exposures) }
+                : { ok: false, statusCode: 404, error: 'preview_not_found', reasonCode: 'preview_not_found' };
+        }
         if (preview.machineId !== request.machineId || preview.sessionId !== request.sessionId
             || request.serviceTarget && !isDeepStrictEqual(preview.serviceTarget, request.serviceTarget)) {
             return denied('preview_binding_mismatch');
@@ -50,7 +58,7 @@ export async function readLocalServicePublicStatus(input: Readonly<{
         if (exposure.serviceTarget) {
             const preview = input.resolvePreview(exposure.previewId);
             if (!preview || preview.machineId !== exposure.machineId || preview.sessionId !== exposure.sessionId
-                || !isDeepStrictEqual(preview.serviceTarget, exposure.serviceTarget)) return false;
+                || !isDeepStrictEqual(preview.serviceTarget, exposure.serviceTarget)) return input.isRetiredExposureEntitled(exposure.exposureId);
             // Share admission only after each link matches its current canonical preview binding.
             let authorization = previewAuthorizations.get(preview.previewId);
             if (!authorization) {
@@ -67,9 +75,15 @@ export async function readLocalServicePublicStatus(input: Readonly<{
         }
         return authorization;
     }));
-    const exposures = snapshot.exposures.filter((_, index) => authorized[index]);
+    return { ok: true, snapshot: scopeSnapshot(snapshot, snapshot.exposures.filter((_, index) => authorized[index])) };
+}
+
+function scopeSnapshot(
+    snapshot: LocalServicePublicPreviewSnapshotV1,
+    exposures: LocalServicePublicPreviewSnapshotV1['exposures'],
+): LocalServicePublicPreviewSnapshotV1 {
     const exposureIds = new Set(exposures.map(exposure => exposure.exposureId));
-    return { ok: true, snapshot: { ...snapshot, exposures,
+    return { ...snapshot, exposures,
         diagnostics: snapshot.diagnostics.filter(diagnostic => !diagnostic.publicExposureId || exposureIds.has(diagnostic.publicExposureId)),
-    } };
+    };
 }

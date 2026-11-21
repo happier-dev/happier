@@ -289,6 +289,7 @@ export function registerLocalServiceRoutes(
         admitViewer: (input) => runtimes.public.admitViewer(input),
         resolveExposure: (exposureId) => runtimes.public.resolveExposure(exposureId),
         resolveExposureByHost: (hostname) => runtimes.public.resolveExposureByHost(hostname),
+        isRetiredExposureEntitled: (exposureId, accountId) => runtimes.public.isRetiredExposureEntitled(exposureId, accountId),
         trustProxy: resolveApiTrustProxy(env),
         externalProtocol,
         retainConnection: (exposureId, close) => {

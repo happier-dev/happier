@@ -122,6 +122,8 @@ export type LocalServicePublicRuntime = Readonly<{
     admitViewer(input: Readonly<{ exposureId: string; viewerAccountId: string }>): Promise<LocalServicePublicRuntimeAdmissionResult>;
     resolveExposure(exposureId: string): LocalServicePublicExposureV1 | null;
     resolveExposureByHost(hostname: string): LocalServicePublicExposureV1 | null;
+    /** True only for a Service link whose Service binding has ended, asked by its creator or Service owner. */
+    isRetiredExposureEntitled(exposureId: string, accountId: string): boolean;
     retainConnection(exposureId: string, close: () => void): () => void;
     retireMachineAccess(input: Readonly<{ machineId: string; accountId: string }>): void;
     validateAccess(input: LocalServicePublicRuntimeAccessInput): LocalServicePublicRuntimeAccessResult;
@@ -543,6 +545,19 @@ export function createLocalServicePublicRuntime(
         return { ok: true, preview: currentPreview };
     }
 
+    /**
+     * Once its Service binding ends, current-Service admission can admit no one,
+     * so the link stays known only to the people its changes were published to:
+     * its creator and the Service owner. The link is already unreachable then.
+     */
+    function isRetiredExposureEntitled(exposureId: string, accountId: string): boolean {
+        const entry = entries.get(exposureId);
+        if (!entry?.preview.serviceTarget) return false;
+        const owner = entry.preview.owner;
+        if (accountId !== entry.actorId && !(owner.kind === 'user' && owner.id === accountId)) return false;
+        return !resolveCurrentPreviewForAccess(entry).ok;
+    }
+
     function validateAccess(validateInput: LocalServicePublicRuntimeAccessInput): LocalServicePublicRuntimeAccessResult {
         let entry = entries.get(validateInput.exposureId);
         if (!entry) {
@@ -864,6 +879,7 @@ export function createLocalServicePublicRuntime(
         admitViewer,
         resolveExposure,
         resolveExposureByHost,
+        isRetiredExposureEntitled,
         retainConnection,
         retireMachineAccess,
         validateAccess,

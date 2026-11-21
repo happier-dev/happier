@@ -47,6 +47,8 @@ export type RegisterLocalServicePublicRoutesOptions = Readonly<{
     resolvePreview: (previewId: string) => LocalServicePreviewResourceV1 | null | undefined;
     resolveExposure?: (exposureId: string) => LocalServicePublicExposureV1 | null | undefined;
     resolveExposureByHost?: (hostname: string) => LocalServicePublicExposureV1 | null | undefined;
+    /** The exposure owner's answer for a Service link whose Service binding has ended. */
+    isRetiredExposureEntitled?: (exposureId: string, accountId: string) => boolean;
     authorizeServiceAccess?: (input: Readonly<{
         userId: string;
         preview: LocalServicePreviewResourceV1;
@@ -420,6 +422,10 @@ async function handleGetStatus(
         authorizeSession: sessionId => isSessionAuthorized(request, options, {
             sessionId, machineId: statusRequest.machineId, purpose: 'public_status',
         }),
+        isRetiredExposureEntitled: exposureId => {
+            const userId = readString(request.userId);
+            return Boolean(userId && options.isRetiredExposureEntitled?.(exposureId, userId));
+        },
     });
     if (!result.ok) {
         sendError(reply, result.statusCode, result.error, result.reasonCode);
@@ -541,9 +547,12 @@ async function handleRevokeExposure(
         return;
     }
     const preview = options.resolvePreview(exposure.previewId);
+    const actorId = readString(request.userId);
     if (!(exposure.serviceTarget
         ? preview && preview.machineId === exposure.machineId && isDeepStrictEqual(preview.serviceTarget, exposure.serviceTarget)
-            && await isPreviewAuthorized(request, options, preview, 'public_revoke')
+            ? await isPreviewAuthorized(request, options, preview, 'public_revoke')
+            // An ended Service admits no one; its own people settle the already unreachable link.
+            : Boolean(actorId && options.isRetiredExposureEntitled?.(exposure.exposureId, actorId))
         : exposure.sessionId && await isSessionAuthorized(request, options, {
             sessionId: exposure.sessionId, machineId: exposure.machineId, purpose: 'public_revoke',
         }))) {
@@ -551,7 +560,7 @@ async function handleRevokeExposure(
         return;
     }
 
-    const result = options.revokeExposure(revokeRequest.exposureId, { actorId: readString(request.userId) ?? "unknown" });
+    const result = options.revokeExposure(revokeRequest.exposureId, { actorId: actorId ?? "unknown" });
     if (!result.ok) {
         sendError(reply, 404, "public_preview_not_found", result.reasonCode);
         return;
