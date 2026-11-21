@@ -184,6 +184,8 @@ export function ApprovalProfileSelect(props: Choice & Readonly<{
             // The chip row's one trigger: quiet while inherited, bordered once changed (WF-ACCEPT-1119 item 7).
             : chip ? ({ toggle }) => <SessionAuthoringChipTrigger title={t('workflows.triggers.guided.profile.title')}
                 label={chip.label} changed={props.changed === true}
+                // In a set of chips its mark names the field the value belongs to ("Machine default").
+                {...(props.icon === undefined ? {} : { leading: props.icon })}
                 {...(props.changed === true && props.changedAccessibilityHint !== undefined
                     ? { accessibilityHint: props.changedAccessibilityHint } : {})}
                 open={open} disabled={disabled} onPress={toggle} testID={`${props.testID}-chip`} /> : row ? ({ toggle }) => <Item testID={`${props.testID}-row`}

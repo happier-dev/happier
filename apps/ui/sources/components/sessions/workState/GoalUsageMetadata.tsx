@@ -36,11 +36,12 @@ export function GoalUsageMetadata(props: Readonly<{ goal: SessionWorkStateItem }
     const timeText = timeSeconds > 0 ? formatGoalTimeUsed(timeSeconds) : null;
 
     if (!hasBudget && !hasUsage) {
-        // An ACTIVE goal with no usage yet (e.g. Claude, which reports usage only on completion)
-        // renders nothing — "No usage yet" under a running goal reads as "nothing is happening".
-        // Honest emptiness beats fake status. Non-active goals (paused/complete with genuinely no
-        // usage) keep the muted fallback line.
-        if (props.goal.status === 'active') {
+        // An open goal with no usage yet (e.g. Claude, which reports usage only on completion)
+        // renders nothing — "No usage yet" under a running goal reads as "nothing is happening",
+        // and under a blocked one it contradicts the "Usage limit reached" beside it
+        // (FIN-DESIGN-ACCEPT-3 R4). Honest emptiness beats fake status. A settled goal
+        // (complete or cancelled) with genuinely no usage keeps the muted fallback line.
+        if (props.goal.status !== 'complete' && props.goal.status !== 'cancelled') {
             return null;
         }
         return (

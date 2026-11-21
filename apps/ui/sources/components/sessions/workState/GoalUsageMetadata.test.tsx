@@ -70,6 +70,15 @@ describe('GoalUsageMetadata', () => {
         act(() => tree.unmount());
     });
 
+    it('renders nothing for a blocked or paused goal with no usage (it is still open, as an active one is)', () => {
+        // FIN-DESIGN-ACCEPT-3 R4: "No usage yet" sat under a visible "Usage limit reached".
+        for (const status of ['blocked', 'paused', 'pending'] as const) {
+            const tree = render({ ...base, status });
+            expect(tree.toJSON()).toBeNull();
+            act(() => tree.unmount());
+        }
+    });
+
     it('shows a muted "no usage yet" line for a NON-active goal with no tokens or time', () => {
         const tree = render({ ...base, status: 'complete' });
         expect(collectText(tree.toJSON())).toContain('session.workState.goal.noUsageYet');

@@ -20,7 +20,7 @@ describe('trigger-run fold presentation (07 S15)', () => {
     it('maps each Keep going stop arm to its neutral outcome', () => {
         expect(settled({ kind: 'stop_condition', arm: 0 })).toMatchObject({ verb: 'workflows.triggerRunFold.keptGoing',
             details: ['workflows.triggerRunFold.turns:{"count":3}', 'workflows.triggerRunFold.goalReached'], icon: 'target',
-            meta: 'workflows.triggerRunFold.meta:{"workflow":"workflows.builtins.keepGoing.title","trigger":"workflows.triggerRunFold.trigger.turnEnds"}' });
+            meta: 'workflows.triggerRunFold.meta:{"workflow":"workflows.builtins.keepGoing.title","trigger":"workflows.triggers.kind.turnEnds"}' });
         expect(settled({ kind: 'stop_condition', arm: 1 }).details[1]).toBe('workflows.triggerRunFold.outOfBudget');
         expect(settled({ kind: 'stop_condition', arm: 2 }, { inputs: { strikes: 2 } }).details[1])
             .toBe('workflows.triggerRunFold.noProgress:{"count":2}');

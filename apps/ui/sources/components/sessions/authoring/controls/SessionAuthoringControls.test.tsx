@@ -458,6 +458,25 @@ describe('SessionAuthoringControls', () => {
     await screen.unmount();
   });
 
+  it('leads each chip of a whole Session set with its field mark and leaves out a feature turned off', async () => {
+    // FIN-DESIGN-ACCEPT-3 R2: Step options' summary read as loose words ("Default", "Happier"), with a
+    // "Profiles are off…" help sentence inside it.
+    const { Icon } = await import('@/components/ui/icons/Icon');
+    const { screen } = await renderControls({
+      presentation: 'chips',
+      engineChipBeside: true,
+      fields: ['permissionMode', 'unlistedTools', 'transcriptStorage', 'profileId'],
+      facts: { agentTargets: [directCapableClaude()], profilesEnabled: false, profiles: [] },
+    });
+    for (const field of ['permissionMode', 'unlistedTools', 'transcriptStorage']) {
+      const chip = screen.root.find((node) => node.props?.testID === `session-authoring-control-${field}`
+        && typeof node.props?.onPress === 'function');
+      expect(chip.findAllByType(Icon).length).toBeGreaterThan(0);
+    }
+    expect(screen.findByTestId('session-authoring-control-profileId-unavailable')).toBeNull();
+    await screen.unmount();
+  });
+
   it('says why the Profile choice is unavailable and what to do about it', async () => {
     // A bare "Unavailable" left the reader guessing whether profiles were off or simply missing.
     const off = await renderControls({

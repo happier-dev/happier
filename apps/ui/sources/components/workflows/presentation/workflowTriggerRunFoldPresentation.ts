@@ -10,6 +10,7 @@ import type {
 import { t, tLoose } from '@/text';
 
 import { describeWorkflowRunState } from './workflowLifecyclePresentation';
+import { formatTriggerSummary } from '../triggers/formatTriggerSummary';
 
 type AutomationRunCause = NonNullable<
   Extract<WorkflowRunSummaryV1['origin'], { kind: 'automation' }>['cause']
@@ -73,25 +74,15 @@ function readCount(
     : fallback;
 }
 
+/** What started the run, in the words Session Automations use for the same trigger ("When a turn ends"). */
 function describeTrigger(
   cause: WorkflowTriggerRunFoldInput['trigger'],
 ): string | null {
   if (cause?.kind !== 'trigger') return null;
   if (cause.triggerKind === 'schedule')
-    return t('workflows.triggerRunFold.trigger.schedule');
+    return t('workflows.triggers.summary.schedule');
   if (cause.triggerKind !== 'sessionLifecycle') return null;
-  switch (cause.evidence.event) {
-    case 'parentTurnCompleted':
-      return t('workflows.triggerRunFold.trigger.turnEnds');
-    case 'sessionStarted':
-      return t('workflows.triggerRunFold.trigger.sessionStarts');
-    case 'userActionRequired':
-      return t('workflows.triggerRunFold.trigger.needsYou');
-    case 'sessionArchived':
-      return t('workflows.triggerRunFold.trigger.sessionArchived');
-    default:
-      return null;
-  }
+  return formatTriggerSummary({ kind: 'sessionLifecycle', events: [cause.evidence.event] });
 }
 
 /**

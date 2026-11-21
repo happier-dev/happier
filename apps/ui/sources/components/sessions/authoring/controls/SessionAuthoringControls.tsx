@@ -305,6 +305,7 @@ function SessionAuthoringFieldControl(props: Readonly<{
         ...(props.reset === undefined ? {} : { reset: props.reset }),
     };
     const testID = `${props.testIDPrefix}-${control.field}`;
+    const chipMark = sessionAuthoringChipMark(control.field);
 
     const apply = React.useCallback((optionId: string, groupId?: string) => {
         onChangeField(control.field, resolveSessionAuthoringFieldValue({
@@ -387,7 +388,8 @@ function SessionAuthoringFieldControl(props: Readonly<{
                     controlId={control.field}
                     fieldSpan="row"
                     {...(props.presentation === 'selects' && control.field === 'permissionMode'
-                        ? { leading: <SessionAuthoringFieldMark name={PERMISSION_CONTROL_ICON} /> } : {})}
+                        ? { leading: <SessionAuthoringFieldMark name={PERMISSION_CONTROL_ICON} /> }
+                        : props.presentation === 'chips' && chipMark !== undefined ? { leading: chipMark } : {})}
                     title={control.title}
                     options={control.options}
                     selectedOptionId={control.selectedOptionId}
@@ -421,6 +423,7 @@ function SessionAuthoringFieldControl(props: Readonly<{
                             title={group.title}
                             options={group.options}
                             selectedOptionId={group.selectedOptionId}
+                            {...(props.presentation === 'chips' && chipMark !== undefined ? { leading: chipMark } : {})}
                             {...(props.disabled === true ? { disabled: true } : {})}
                             {...chipState}
                             onSelect={(optionId) => apply(optionId, group.id)}
@@ -759,6 +762,7 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
                     // Quiet while inherited and bordered once changed, as every chip in its row (WF-ACCEPT-1119 item 7).
                     changed={isChanged('approvalProfileId')}
                     {...(props.overriddenAccessibilityHint === undefined ? {} : { changedAccessibilityHint: props.overriddenAccessibilityHint })}
+                    {...(presentation === 'chips' ? { icon: sessionAuthoringChipMark('approvalProfileId') } : {})}
                     onChange={value => props.onChangeField('approvalProfileId', value)} disabled={props.disabled}
                     titleMeta={props.fieldMeta?.approvalProfileId} testID={`${testIDPrefix}-approvalProfileId`} />));
                 if (presentation !== 'chips' && field === 'profileId' && !props.values.profileId) return null;
@@ -813,8 +817,10 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
                 if (presentation === 'chips') {
                     if ((engineField !== undefined || props.engineChipBeside === true)
                         && control.kind === 'unavailable' && control.reason === 'requires_agent_target') return null;
-                    // A host listing a subject's whole set (a step's options) leaves out what it can never offer, as a form does.
-                    return props.engineChipBeside === true && isNeverOfferedHere(control) ? null : rendered;
+                    // A host listing a subject's whole set (a step's options) leaves out what it can never offer, as a form does,
+                    // and a feature turned off: its help belongs to Settings, not inside the set (FIN-DESIGN-ACCEPT-3 R2).
+                    return props.engineChipBeside === true && (isNeverOfferedHere(control)
+                        || (control.kind === 'unavailable' && control.reason === 'feature_disabled')) ? null : rendered;
                 }
                 // A row of field selects, like a form, holds only the decisions this subject has (see below).
                 if (presentation === 'selects') return control.kind === 'unavailable' && (control.reason === 'not_supported_on_target'
@@ -865,6 +871,8 @@ export function SessionAuthoringApprovalProfileField(props: Readonly<{
     /** Set for this subject rather than inherited (the `chips` presentation borders it). */
     changed?: boolean;
     changedAccessibilityHint?: string;
+    /** The chip's field mark, in a set of chips. */
+    icon?: React.ReactNode;
 }>) {
     const source = useApprovalProfiles(props.value, props.serverId ?? undefined, { demand: false, machineId: props.machineId });
     const machineDefault = React.useMemo(() => resolveApprovalProfileMachineDefault(source, props.machineId),
@@ -872,6 +880,7 @@ export function SessionAuthoringApprovalProfileField(props: Readonly<{
     return <ApprovalProfileSelect mode="session" value={props.value} source={source} machineDefault={machineDefault}
         testID={props.testID} disabled={props.disabled} titleMeta={props.titleMeta} presentation={props.presentation}
         {...(props.inherited === true ? { inherited: true } : {})} onChange={props.onChange}
+        {...(props.icon === undefined ? {} : { icon: props.icon })}
         {...(props.changed === true ? { changed: true } : {})}
         {...(props.changedAccessibilityHint === undefined ? {} : { changedAccessibilityHint: props.changedAccessibilityHint })} />;
 }
@@ -887,8 +896,33 @@ function sessionAuthoringUnavailableText(field: SessionAuthoringFieldId, reason:
     return t('common.unavailable');
 }
 
-/** A field select's leading mark, at the size and tone the placement fields' marks use. */
-function SessionAuthoringFieldMark(props: Readonly<{ name: React.ComponentProps<typeof Icon>['name'] }>): React.ReactElement {
+/** A field select's leading mark, at the size and tone the placement fields' marks use; a chip's in its tint. */
+function SessionAuthoringFieldMark(props: Readonly<{ name: React.ComponentProps<typeof Icon>['name']; tone?: 'chip' }>): React.ReactElement {
     const { theme } = useUnistyles();
-    return <Icon name={props.name} size={14} color={theme.colors.text.secondary} />;
+    return <Icon name={props.name} size={14} color={props.tone === 'chip' ? theme.colors.composer.chipTint : theme.colors.text.secondary} />;
+}
+
+/**
+ * The mark that names a field in a set of chips, where a chip shows only its value: "Default" or "Happier" reads as
+ * the field it belongs to (lab round 1116b A). The engine draws its Agent's mark; MCP and Connected Services their own.
+ */
+const SESSION_AUTHORING_FIELD_MARKS: Readonly<Partial<Record<SessionAuthoringFieldId, React.ComponentProps<typeof Icon>['name']>>> = {
+    allowedTools: 'list-checks',
+    unlistedTools: 'question',
+    permissionMode: PERMISSION_CONTROL_ICON,
+    approvalProfileId: 'hand',
+    acpSessionModeId: 'sparkle',
+    profileId: 'user-circle',
+    sessionConfigOptionOverrides: 'sliders-horizontal',
+    transcriptStorage: 'archive',
+    terminal: 'terminal',
+    runtimeDescriptorV1: 'cpu',
+    windowsRemoteSessionLaunchMode: 'windows-logo',
+    windowsRemoteSessionConsole: 'windows-logo',
+    windowsTerminalWindowName: 'windows-logo',
+};
+
+function sessionAuthoringChipMark(field: SessionAuthoringFieldId): React.ReactElement | undefined {
+    const name = SESSION_AUTHORING_FIELD_MARKS[field];
+    return name === undefined ? undefined : <SessionAuthoringFieldMark name={name} tone="chip" />;
 }
