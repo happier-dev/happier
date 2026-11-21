@@ -523,6 +523,7 @@ import { createOperationAccountCurrentnessSource, fetchSessionByIdWithServerScop
 import { createSessionRouteReader } from '@/sync/engine/sessions/routeReader';
 import { runWithHomeCredentialRequestSignal } from '@/sync/runtime/orchestration/serverScopedRpc/serverAccountScopeRequestGuard';
 import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
+import { hasOrdinaryRowsForServer } from '@/sync/store/domains/sessionListIndexFinalization';
 import {
     captureServerRequestAuthorityForServerAccountScope,
     type ServerAccountRequestAuthority,
@@ -7630,7 +7631,11 @@ class Sync {
                 extra: { serverId: activeServerId },
             });
         });
-        if (!hasLastKnownOrganizationSnapshot) await organizationSnapshotOutcome;
+        // Cold page one needs the initial pin demand. When ordinary rows are already displayed,
+        // fetch their refresh alongside organization and join newly discovered pins below.
+        if (activeServerId && !hasLastKnownOrganizationSnapshot && !hasOrdinaryRowsForServer(initialState, activeServerId)) {
+            await organizationSnapshotOutcome;
+        }
         const organizationPinnedSessionIds = isAppend
             ? []
             : resolvePinnedSessionIdsForServer(storage.getState(), activeServerId);

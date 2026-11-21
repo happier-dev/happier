@@ -101,7 +101,7 @@ export function readOrdinarySessionListRowsForServer(
     );
 }
 
-function hasOrdinaryRowsForServer(state: OrdinaryRowsState, serverId: string): boolean {
+export function hasOrdinaryRowsForServer(state: OrdinaryRowsState, serverId: string): boolean {
     const rows = state.sessionListRowsByServerId?.[serverId];
     if (!rows) return false;
     return (state.ordinarySessionListMembershipByServerId?.[serverId] ?? []).some(sessionId => rows[sessionId] !== undefined);

@@ -10,11 +10,15 @@ import { SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol
 import { V2SessionByIdNotFoundSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { SessionMetadataTuplePatchV1Schema, SessionMetadataTuplePatchSuccessV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
-import { createPlainAccountEncryptionCurrentnessFixture, standardCleanup } from '@/dev/testkit';
+import { createDeferred, createPlainAccountEncryptionCurrentnessFixture, standardCleanup } from '@/dev/testkit';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { storage, readSessionOrganizationProjectionCached } from '@/sync/domains/state/storage';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { prepareWarmCacheEncryptionKey } from '@/sync/domains/state/warmCacheEncryptionKey';
+import { saveSessionListWarmCacheEntries } from '@/sync/domains/state/warmCachePersistence';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { fetchAndApplySessionOrganizationSnapshot } from '@/sync/ops/sessionOrganization/fetchSessionOrganizationSnapshot';
 import { createCompactSessionListRowFixture, createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 
@@ -35,6 +39,48 @@ describe('ordinary Session refresh hydrates every personal pin surface', () => {
         await standardCleanup();
         await connection?.dispose();
         connection = undefined;
+    });
+
+    it('reads the ordinary list while a warm Home’s first organization snapshot is pending', async () => {
+        const serverId = 'srv_warm_pin_refresh';
+        const accountId = 'warm-pin-refresh';
+        const organization = createDeferred<void>();
+        const requestPaths = new Set<string>();
+        const sessionId = 'retained-ordinary-session';
+        await prepareWarmCacheEncryptionKey();
+        saveSessionListWarmCacheEntries(serverId, accountId, {
+            [sessionId]: {
+                sessionId, name: 'Retained Session', path: '/repo',
+                metadataVersion: 1, agentStateVersion: 0, updatedAt: 2, createdAt: 1,
+                active: false, activeAt: 2, archivedAt: null,
+            },
+        });
+        try {
+            connection = await restoreServerAccountForTest({
+                serverUrl: 'https://warm-pin-refresh.example.test', serverIdentityId: serverId, accountId,
+                request: async (input, init) => {
+                    const path = new URL(String(input)).pathname;
+                    requestPaths.add(path);
+                    if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+                    if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+                    if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+                    if (path === '/v1/account/profile') return Response.json({ id: accountId });
+                    if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
+                    if (path === '/v2/session-organization') await organization.promise;
+                    return createEmptyAccountBootstrapHttpResponse(path, init);
+                },
+            });
+            expect(storage.getState().sessionListRowsByServerId[serverId]?.[sessionId]?.metadata?.name)
+                .toBe('Retained Session');
+            await vi.waitFor(() => expect(requestPaths.has('/v2/session-organization')).toBe(true));
+            await vi.waitFor(() => expect(requestPaths.has('/v2/sessions/active')).toBe(true));
+            expect(storage.getState().sessionOrganizationSnapshotVersionByServerId[serverId]).toBeUndefined();
+        } finally {
+            organization.resolve();
+        }
+        const { sync } = await import('@/sync/sync');
+        await sync.refreshSessions();
+        expect(storage.getState().sessionOrganizationSnapshotVersionByServerId[serverId]).toBe(0);
     });
 
     it.each(['retained', 'new', 'new-listed', 'unlisted-batch-unavailable', 'batched', 'batched-reloaded', 'overtaken', 'list-only-newer', 'reloaded', 'reloaded-unavailable', 'reloaded-unrecognized', 'reloaded-removed', 'phone-pinned'] as const)('hydrates %s pinned Bots alongside list and dual-surface pins', async membership => {
