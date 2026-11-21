@@ -66,7 +66,7 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
     const [transcriptToolCallsCollapsedPreviewCount, setTranscriptToolCallsCollapsedPreviewCount] = useSettingMutable('transcriptToolCallsCollapsedPreviewCount');
     const [transcriptToolCallsGroupShowBackground, setTranscriptToolCallsGroupShowBackground] = useSettingMutable('transcriptToolCallsGroupShowBackground');
     const [transcriptMessageTimestampDisplayMode, setTranscriptMessageTimestampDisplayMode] = useSettingMutable('transcriptMessageTimestampDisplayMode');
-    const [transcriptShowTurnDuration, setTranscriptShowTurnDuration] = useSettingMutable('transcriptShowTurnDuration');
+    const transcriptShowTurnDuration = useSetting('transcriptShowTurnDuration');
     const [transcriptLinkAgentNames, setTranscriptLinkAgentNames] = useSettingMutable('transcriptLinkAgentNames');
     const [transcriptMessageSelectionEnabled, setTranscriptMessageSelectionEnabled] = useSettingMutable('transcriptMessageSelectionEnabled');
     const [transcriptMessageCopyActionEnabled, setTranscriptMessageCopyActionEnabled] = useSettingMutable('transcriptMessageCopyActionEnabled');
@@ -272,11 +272,11 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
                     rightElement={
                         <Switch
                             value={transcriptShowTurnDuration !== false}
-                            onValueChange={(v) => setTranscriptShowTurnDuration(Boolean(v))}
+                            onValueChange={(v) => { void setSetting(TRANSCRIPT_SETTINGS.settings.showTurnDuration, Boolean(v)); }}
                         />
                     }
                     showChevron={false}
-                    onPress={() => setTranscriptShowTurnDuration(transcriptShowTurnDuration === false)}
+                    onPress={() => { void setSetting(TRANSCRIPT_SETTINGS.settings.showTurnDuration, transcriptShowTurnDuration === false); }}
                 />
                 <SettingRow
                     setting={TRANSCRIPT_SETTINGS.settings.linkAgentNames}

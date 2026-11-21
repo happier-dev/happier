@@ -56,9 +56,16 @@ describe('Transcript preferences through Actions', () => {
         onTestFinished(async () => { standardCleanup(); await connection.dispose(); });
         const scope = { serverId: connection.home.id, accountId: 'alice' };
         storage.getState().applySettingsForScope(scope, settingsParse(saved), version);
+        const { Modal } = await import('@/modal');
+        const alert = vi.spyOn(Modal, 'alert');
+        onTestFinished(() => alert.mockRestore());
         const screen = await renderScreen(<TranscriptSettingsView />);
         await screen.pressByTestIdAsync('settings-session-transcript-agent-html-network:ask');
+        await vi.waitFor(() => expect(alert).toHaveBeenCalled());
+        alert.mockClear();
+        // The turn-duration switch goes through the same Settings Action: refused, it stays on and says why.
         await screen.pressByTestIdAsync('settings-session-transcript-show-turn-duration');
+        await vi.waitFor(() => expect(alert).toHaveBeenCalled());
         expect(storage.getState().settings.agentHtmlNetworkPolicy).toBe('allowed');
         expect(storage.getState().settings.transcriptShowTurnDuration).toBe(true);
         expect(writes).toEqual([]);
