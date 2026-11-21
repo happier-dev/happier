@@ -20387,6 +20387,12 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         liveEvents: 'События в реальном времени',
         addToWorkflow: 'Добавить в этот процесс',
         added: 'Добавлено в этот процесс',
+        makeWorkflow: 'Создать процесс из этого',
+        addToAWorkflow: 'Добавить в процесс…',
+        addToAWorkflowTitle: 'Добавить в процесс',
+        newWorkflowFromThis: 'Новый процесс из этого',
+        openInEvents: 'Открыть в событиях',
+        addsWhen: ({ when }: { when: string }) => `Добавит: ${when}`,
     },
     tabsAccessibility: {
         savedRuns: 'Сохранённые рабочие процессы или запуски',

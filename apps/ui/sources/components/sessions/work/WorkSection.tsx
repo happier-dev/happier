@@ -18,6 +18,7 @@ import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { Item } from '@/components/ui/lists/Item';
+import { useItemGroupRowPosition } from '@/components/ui/lists/ItemGroupRowPosition';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
@@ -131,10 +132,14 @@ function WorkSectionAsSetupRow(props: WorkSectionProps) {
         key: sectionKey, title: props.title, expanded, onExpandedChange, available: disclosure !== null,
     }]);
     const value = props.loading ? undefined : (props.summary ?? readCountText(props) ?? undefined);
+    // The closed row is a one-line sheet row like Role beside it, so it parts by spacing (the one list-row rule);
+    // an open section's body is parted from the next row, and the sheet's last row draws none.
+    const rowPosition = useItemGroupRowPosition();
     return (
         <View nativeID={props.nativeID} collapsable={false}>
             <ExpandableItem
                 testID={props.testID}
+                showDivider={expanded && rowPosition?.isLast !== true}
                 expanded={expanded}
                 onExpandedChange={onExpandedChange}
                 header={({ expanded: open, headerProps }) => (

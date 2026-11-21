@@ -20419,6 +20419,12 @@ const fr = translated(workflowValueReferenceTranslations.fr, {
         liveEvents: 'Événements en direct',
         addToWorkflow: 'Ajouter à ce flux de travail',
         added: 'Ajouté à ce flux de travail',
+        makeWorkflow: 'Créer un flux de travail à partir de ceci',
+        addToAWorkflow: 'Ajouter à un flux de travail…',
+        addToAWorkflowTitle: 'Ajouter à un flux de travail',
+        newWorkflowFromThis: 'Nouveau flux de travail à partir de ceci',
+        openInEvents: 'Ouvrir dans Événements',
+        addsWhen: ({ when }: { when: string }) => `Ajoute ${when}`,
     },
     tabsAccessibility: {
         savedRuns: 'Flux de travail enregistrés ou exécutions',

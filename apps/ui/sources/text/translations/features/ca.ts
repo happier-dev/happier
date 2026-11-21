@@ -20376,6 +20376,12 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
         liveEvents: 'Esdeveniments en directe',
         addToWorkflow: 'Afegeix a aquest flux de treball',
         added: 'Afegit a aquest flux de treball',
+        makeWorkflow: 'Crea un flux de treball a partir d’això',
+        addToAWorkflow: 'Afegeix a un flux de treball…',
+        addToAWorkflowTitle: 'Afegeix a un flux de treball',
+        newWorkflowFromThis: 'Flux de treball nou a partir d’això',
+        openInEvents: 'Obre a Esdeveniments',
+        addsWhen: ({ when }: { when: string }) => `Afegeix ${when}`,
     },
     tabsAccessibility: {
         savedRuns: 'Fluxos de treball desats o execucions',

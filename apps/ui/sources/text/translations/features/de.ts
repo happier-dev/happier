@@ -19856,6 +19856,12 @@ const de = translated(workflowValueReferenceTranslations.de, {
         liveEvents: 'Live-Ereignisse',
         addToWorkflow: 'Zu diesem Workflow hinzufügen',
         added: 'Zu diesem Workflow hinzugefügt',
+        makeWorkflow: 'Workflow daraus machen',
+        addToAWorkflow: 'Zu einem Workflow hinzufügen…',
+        addToAWorkflowTitle: 'Zu einem Workflow hinzufügen',
+        newWorkflowFromThis: 'Neuer Workflow daraus',
+        openInEvents: 'In Ereignissen öffnen',
+        addsWhen: ({ when }: { when: string }) => `Fügt hinzu: ${when}`,
     },
     tabsAccessibility: {
         savedRuns: 'Gespeicherte Workflows oder Läufe',

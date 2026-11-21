@@ -10,8 +10,13 @@ import { resolveWorkflowProjectTargetOnMachine } from '@/components/workflows/sc
 import {
   buildTriggerDefinition,
   createDefaultWhen,
+  isSessionLifecycleWhen,
+  type SessionLifecycleWhen,
   type TriggerWhenValue,
 } from '@/components/workflows/triggers/sessionTriggerForm';
+import { formatTriggerSummary } from '@/components/workflows/triggers/formatTriggerSummary';
+import { prepareWorkflowSentenceEditorEntry } from '@/components/workflows/authoring/workflowSentenceAuthoring';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 /** The Events filter chips, in order: everything, then one chip per kind of fact the feed carries. */
 export const WORKFLOW_EVENT_FILTERS = [
@@ -93,6 +98,36 @@ export function readWorkflowEventDraftIntent(
   }
   const trigger = readWorkflowEventTrigger(fact);
   return trigger === null ? null : { trigger };
+}
+
+/**
+ * "Make a workflow from this": a new workflow in the ordinary editor that already starts on the fact (its trigger, or a
+ * Machine fact's native seed on that Machine). The editor owns Save (`workflow.definition.create`).
+ */
+export function prepareWorkflowEventEditorEntry(
+  fact: Parameters<typeof readWorkflowEventTrigger>[0],
+  name: string,
+  lifetime: ServerAccountScopeLifetime,
+  placement?: Parameters<typeof readWorkflowEventDraftIntent>[1],
+): ReturnType<typeof prepareWorkflowSentenceEditorEntry> {
+  const seed = readWorkflowEventDraftIntent(fact, placement);
+  return seed === null ? null : prepareWorkflowSentenceEditorEntry({ name, ...seed }, lifetime);
+}
+
+/**
+ * The start "Add to a workflow…" links to a saved workflow: a Session start, which the trigger editor offers as is.
+ * A Run's exact source and a Machine's native setup are authored in the editor (Make a workflow), never linked blind.
+ */
+export function readWorkflowEventLinkWhen(fact: WorkflowActivityFact): SessionLifecycleWhen | null {
+  const when = readWorkflowEventWhen(fact);
+  return when !== null && isSessionLifecycleWhen(when) ? when : null;
+}
+
+/** The companion's line above its Add: which start the event brings ("Adds When a turn starts"). */
+export function readWorkflowEventAddsLine(fact: WorkflowActivityFact): string | null {
+  const trigger = readWorkflowEventTrigger(fact);
+  if (trigger === null || (trigger.kind !== 'sessionLifecycle' && trigger.kind !== 'runLifecycle')) return null;
+  return t('workflows.events.addsWhen', { when: formatTriggerSummary(trigger) });
 }
 
 /** Authoring intent only: the ordinary Event setup Action acquires source identity and cursor. */

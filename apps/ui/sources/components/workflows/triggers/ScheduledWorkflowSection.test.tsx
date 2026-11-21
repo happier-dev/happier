@@ -88,7 +88,9 @@ describe('Scheduled Work rows', () => {
         expect(screen.findByTestId('scheduled-workflow:habit:timer-next')?.props.children).toContain('nextHours(count=3)');
         expect(screen.getTextContent().split('nextHours').length - 1).toBe(1);
         await screen.update(<ScheduledWorkflowSectionView rows={rows} onOpen={() => {}} sessionId="session-one" />);
-        expect(screen.findByTestId('scheduled-workflow:habit:timer-next')?.props.children).toContain('nextHours(count=3)');
+        // In a Session's Writes here the next run is the title line's meta, not the trailing column.
+        expect(screen.findByTestId('scheduled-workflow:habit:timer-next')).toBeNull();
+        expect(screen.getTextContent().split('nextHours(count=3)').length - 1).toBe(1);
         const subtitle = screen.findByTestId('scheduled-workflow:habit:timer-subtitle');
         expect(JSON.stringify(subtitle?.props.children)).toContain('sessionWork.scheduled.step(ordinal=2,title=Draft the notes)');
         expect(JSON.stringify(subtitle?.props.children)).not.toContain('nextHours');

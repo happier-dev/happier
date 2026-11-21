@@ -7,7 +7,7 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ getPreferredLanguage: () => language.value });
 });
 
-const { formatTriggerResultDecides, formatTriggerSetSummary, formatTriggerSummary, formatNextScheduledRun, formatNextScheduledRunAccessibilityLabel, readNextScheduledRunRefreshAtMs, readSessionLifecycleKind } = await import('./formatTriggerSummary');
+const { formatTriggerResultDecides, formatTriggerSetSentence, formatTriggerSetSummary, formatTriggerSummary, formatNextScheduledRun, formatNextScheduledRunAccessibilityLabel, readNextScheduledRunRefreshAtMs, readSessionLifecycleKind } = await import('./formatTriggerSummary');
 const { resolveTriggerEventGroup } = await import('./triggerEventGroups');
 const { formatClockTime, parseCalendarSchedule, parseClockTime } = await import('./triggerSchedule');
 const { formatAsOfTime } = await import('@/utils/time/formatAsOfTime');
@@ -219,5 +219,15 @@ describe('formatTriggerResultDecides', () => {
         expect(formatTriggerResultDecides([before(['deployments.deploy'], 'notify'),
             { kind: 'action', phase: 'after', actionIds: ['deployments.deploy'] }, cron('0 9 * * *')], titles)).toBeNull();
         expect(formatTriggerResultDecides([], titles)).toBeNull();
+    });
+});
+
+describe('formatTriggerSetSentence', () => {
+    it('says a start once when several triggers read the same (two "When a turn ends" rows on one workflow)', () => {
+        const turnEnds = { kind: 'sessionLifecycle', events: ['parentTurnCompleted', 'parentTurnFailed', 'parentTurnCancelled'] } as const;
+        const sessionStarts = { kind: 'sessionLifecycle', events: ['sessionStarted'] } as const;
+        const sentence = formatTriggerSetSentence([turnEnds, turnEnds, sessionStarts, turnEnds]);
+        expect(sentence).toBe(formatTriggerSetSentence([turnEnds, sessionStarts]));
+        expect(sentence).not.toBe(formatTriggerSetSentence([turnEnds]));
     });
 });

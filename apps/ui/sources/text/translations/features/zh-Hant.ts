@@ -20237,6 +20237,12 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         liveEvents: '即時事件',
         addToWorkflow: '加入此工作流程',
         added: '已加入此工作流程',
+        makeWorkflow: '用它建立工作流程',
+        addToAWorkflow: '加入工作流程…',
+        addToAWorkflowTitle: '加入工作流程',
+        newWorkflowFromThis: '用它新增工作流程',
+        openInEvents: '在事件中開啟',
+        addsWhen: ({ when }: { when: string }) => `加入：${when}`,
     },
     tabsAccessibility: {
         savedRuns: '已儲存的工作流程或執行紀錄',

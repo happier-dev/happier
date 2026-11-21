@@ -321,9 +321,17 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderWidth: 1,
         borderColor: theme.colors.border.default,
     },
+    // The chosen filter is filled with ink, the one strong mark in the row; the others stay bordered.
     pillActive: {
-        backgroundColor: theme.colors.surface.inset,
-        borderColor: theme.colors.surface.inset,
+        backgroundColor: theme.colors.button.primary.background,
+        borderColor: theme.colors.button.primary.background,
+    },
+    pillLabelActive: {
+        color: theme.colors.button.primary.tint,
+    },
+    pillCountActive: {
+        color: theme.colors.button.primary.tint,
+        opacity: 0.65,
     },
     innerPlain: {
         backgroundColor: 'transparent',
@@ -973,7 +981,7 @@ function SegmentedTabBarInner<T extends string>(controlled: SegmentedTabBarProps
                                     plain && showOwnActiveSurface ? styles.plainActive : null,
                                     pills ? styles.pillSurface : null,
                                     pills && active ? styles.pillActive : null,
-                                    showOwnActiveSurface && !inherited ? { backgroundColor: glassThumb ? theme.colors.surface.selectedFocused : paintColor(pills ? theme.colors.surface.inset : plain ? theme.colors.surface.selected : theme.colors.segmentedControl.activeBackground, undefined, pills || plain ? undefined : 'solidControl') } : null,
+                                    showOwnActiveSurface && !inherited ? { backgroundColor: glassThumb ? theme.colors.surface.selectedFocused : paintColor(pills ? theme.colors.button.primary.background : plain ? theme.colors.surface.selected : theme.colors.segmentedControl.activeBackground, undefined, pills || plain ? undefined : 'solidControl') } : null,
                                     happierFocusRingStyle({ visible: !tabDisabled && focusedTabId === tab.id, color: theme.colors.border.focus }),
                                     !disabled && tab.disabled === true ? styles.tabDisabled : null,
                                     Platform.OS === 'web' && showOwnActiveSurface ? combinedWebGradientStyle(activeGradient, null, true) : null,
@@ -1012,13 +1020,14 @@ function SegmentedTabBarInner<T extends string>(controlled: SegmentedTabBarProps
                                             props.labelSize === 'field' ? styles.tabLabelField : null,
                                             pills ? styles.pillLabel : null,
                                             active ? styles.tabLabelActive : null,
+                                            pills && active ? styles.pillLabelActive : null,
                                             active && inherited ? styles.tabLabelInherited : null,
                                             active ? props.activeLabelStyle : null,
                                             themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'tab-bar', part: 'label', state: surfaceState } : undefined),
                                         ]}
                                     >
                                         {tab.label}
-                                        {tab.count && (fit.counts || tab.countTone !== undefined) ? <TabCount tab={tab} /> : null}
+                                        {tab.count && (fit.counts || tab.countTone !== undefined) ? <TabCount tab={tab} onInk={pills && active} /> : null}
                                     </Text>
                                     {tab.shortcut ? <KeyCombinationHint label={tab.shortcut} /> : null}
                                     {tab.badge ? <StatusPill variant="info" hideDot label={tab.badge} /> : null}
@@ -1163,11 +1172,11 @@ function countToneStyle(tone: 'danger' | 'warning') {
 }
 
 /** A tab's count after its label: quiet, or the needs-you count after a dot in its tone (`countTone`). */
-function TabCount(props: Readonly<{ tab: Pick<SegmentedTab, 'count' | 'countTone'> }>) {
+function TabCount(props: Readonly<{ tab: Pick<SegmentedTab, 'count' | 'countTone'>; onInk?: boolean }>) {
     const styles = stylesheet;
     return props.tab.countTone
         ? <Text style={[styles.tabCount, countToneStyle(props.tab.countTone)]}>{` • ${props.tab.count}`}</Text>
-        : <Text style={styles.tabCount}>{` ${props.tab.count}`}</Text>;
+        : <Text style={[styles.tabCount, props.onInk ? styles.pillCountActive : null]}>{` ${props.tab.count}`}</Text>;
 }
 
 function PlainTabCaption(props: Readonly<{

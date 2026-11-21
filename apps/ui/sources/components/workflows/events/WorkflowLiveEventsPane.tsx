@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { PageRowDensityProvider } from '@/components/ui/lists/useResolvedItemDensity';
+import { ContainedPageScopeProvider } from '@/components/ui/lists/listPresentation';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presentation';
@@ -9,8 +10,10 @@ import { HEADER_BAND_HORIZONTAL_PADDING_PX } from '@/components/ui/layout/header
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { InlineStatus } from '@/components/ui/status/InlineStatus';
+import { IconButton } from '@/components/ui/buttons/IconButton';
+import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { Text } from '@/components/ui/text/Text';
 import type { TriggerWhenValue } from '@/components/workflows/triggers/sessionTriggerForm';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -20,6 +23,7 @@ import type { WorkflowTriggerDraftSeedIntent } from '../triggers/workflowTrigger
 import { t } from '@/text';
 
 import {
+  readWorkflowEventAddsLine,
   readWorkflowEventWhen,
   readWorkflowEventDraftIntent,
   type WorkflowEventFilter,
@@ -28,7 +32,8 @@ import {
   useWorkflowEventFact,
   useWorkflowEventPresentation,
 } from './useWorkflowEventPresentation';
-import { WorkflowEventCarries } from './WorkflowEventDetail';
+import { WorkflowEventCarries, useWorkflowEventIntents } from './WorkflowEventDetail';
+import { createWorkflowEventRoute } from '../workflowsRoutes';
 import { WorkflowEventStartedRuns } from './WorkflowEventStartedRuns';
 import {
   WorkflowEventsFilters,
@@ -91,6 +96,9 @@ export const WorkflowLiveEventsPane = React.memo(
       [feed.projection, feed.retained?.runs, scope, isAdded, onAddTrigger, add, props.testID, props.active],
     );
     return (
+      // The pane owns its insets in both hosts: inside the phone sheet its list adds no card gutter of its own, so the
+      // rows sit as they do in the side pane rather than one gutter further in.
+      <ContainedPageScopeProvider contained={false}>
       <View testID={props.testID} style={styles.pane}>
         {props.onClose === null ? null : (
           <PaneHeader
@@ -129,6 +137,7 @@ export const WorkflowLiveEventsPane = React.memo(
           />
         </ItemList>
       </View>
+      </ContainedPageScopeProvider>
     );
   },
 );
@@ -149,6 +158,8 @@ const LiveEventBody = React.memo(function LiveEventBody(
   const router = useRouter();
   const fact = useWorkflowEventFact(props.projection, props.eventKey);
   const presentation = useWorkflowEventPresentation(fact, props.scope, props.retainedRuns, props.active);
+  const intents = useWorkflowEventIntents(presentation, props.active, { addTo: false });
+  const [menuOpen, setMenuOpen] = React.useState(false);
   const seed = !props.active || fact == null ? null : readWorkflowEventDraftIntent(fact);
   if (presentation === null) return null;
   const when: TriggerWhenValue | null = seed?.nativeEvent
@@ -156,6 +167,15 @@ const LiveEventBody = React.memo(function LiveEventBody(
     : readWorkflowEventWhen(presentation.fact);
   const open = presentation.open;
   const { onAdd, eventKey } = props;
+  const canAdd = when !== null && onAdd !== null;
+  const addsLine = canAdd && !props.added ? readWorkflowEventAddsLine(presentation.fact) : null;
+  // One primary in the pane (Add to this workflow); the rest of what the event allows waits behind its ⋯ (S2).
+  const menu: (DropdownMenuItem & { run: () => void })[] = [
+    ...(intents.make === null ? [] : [{ id: 'make', title: t('workflows.events.newWorkflowFromThis'), run: intents.make }]),
+    ...(intents.open === null ? [] : [{ id: 'automate', title: t('workflows.events.automate'), run: intents.open }]),
+    { id: 'events', title: t('workflows.events.openInEvents'), run: () => router.push(createWorkflowEventRoute(eventKey) as never) },
+    ...(open === null ? [] : [{ id: 'open', title: open.label, run: () => router.push(open.href as never) }]),
+  ];
   return (
     <View testID={`${props.testID}:expanded`} style={styles.body}>
       {/* A side pane's facts take the inspector's row size, as Session Info's do: the event's own rows stay larger. */}
@@ -172,8 +192,11 @@ const LiveEventBody = React.memo(function LiveEventBody(
         scope={props.scope}
         testID={`${props.testID}:expanded`}
       />
+      {addsLine === null ? null : (
+        <Text testID={`${props.testID}:adds`} variant="meta" style={styles.adds}>{addsLine}</Text>
+      )}
       <View style={styles.actions}>
-        {when === null || onAdd === null ? null : props.added ? (
+        {!canAdd ? null : props.added ? (
           <InlineStatus tone="success" label={t('workflows.events.added')} />
         ) : (
           <RoundButton
@@ -183,15 +206,31 @@ const LiveEventBody = React.memo(function LiveEventBody(
             onPress={() => onAdd(eventKey, when, seed?.nativeEvent ? { nativeEvent: seed.nativeEvent } : undefined)}
           />
         )}
-        {open === null ? null : (
-          <SectionActionButton
-            testID={`${props.testID}:open`}
-            destination
-            title={open.label}
-            onPress={() => router.push(open.href as never)}
+        <View ref={intents.anchorRef} collapsable={false}>
+          <DropdownMenu
+            open={menuOpen}
+            onOpenChange={setMenuOpen}
+            items={menu.map(({ run: _run, ...item }) => ({ ...item, testID: `${props.testID}:more:${item.id}` }))}
+            onSelect={(id) => menu.find((item) => item.id === id)?.run()}
+            placement="auto"
+            matchTriggerWidth={false}
+            trigger={({ open: shown, toggle }) => (
+              <IconButton
+                testID={`${props.testID}:more`}
+                iconName="dots-three"
+                variant="plain"
+                accessibilityRole="button"
+                accessibilityLabel={t('common.moreActions')}
+                accessibilityHint={presentation.title}
+                onPress={toggle}
+                expanded={shown}
+                hasPopup="menu"
+              />
+            )}
           />
-        )}
+        </View>
       </View>
+      {intents.builder}
     </View>
   );
 });
@@ -206,6 +245,12 @@ const styles = StyleSheet.create((theme) => ({
   },
   list: { backgroundColor: 'transparent' },
   body: { paddingBottom: theme.space.s12 },
+  // What Add brings, on the facts' text edge just above it.
+  adds: {
+    color: theme.colors.text.secondary,
+    paddingTop: theme.space.s8,
+    paddingHorizontal: HAPPIER_COLLECTION_LIST_METRICS.contentInset,
+  },
   actions: {
     flexDirection: 'row',
     alignItems: 'center',

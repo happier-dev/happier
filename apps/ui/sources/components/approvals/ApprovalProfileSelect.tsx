@@ -187,7 +187,7 @@ export function ApprovalProfileSelect(props: Choice & Readonly<{
                 {...(props.changed === true && props.changedAccessibilityHint !== undefined
                     ? { accessibilityHint: props.changedAccessibilityHint } : {})}
                 open={open} disabled={disabled} onPress={toggle} testID={`${props.testID}-chip`} /> : row ? ({ toggle }) => <Item testID={`${props.testID}-row`}
-                title={t('workflows.triggers.guided.profile.title')} icon={props.icon} density="compact"
+                title={t('workflows.triggers.guided.profile.title')} icon={props.icon}
                 // The short choice ("Machine default", a profile's name) keeps the value beside its label; the menu names
                 // the Machine's own profile.
                 detail={displayReady || typeof props.value !== 'string'

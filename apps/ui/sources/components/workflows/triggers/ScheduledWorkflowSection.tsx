@@ -215,8 +215,11 @@ const ScheduledRow = React.memo(function ScheduledRow(props: Readonly<{
             {destinations.map(sessionId => <DestinationChip key={sessionId} sessionId={sessionId} rowKey={row.key} />)}
         </View></> : quiet}
         subtitleTestID={oneLine ? undefined : `scheduled-workflow:${row.key}-subtitle`}
-        detail={formatNextScheduledRunTime(row.trigger.nextRunAt, enabled, nowMs)}
-        detailTestID={`scheduled-workflow:${row.key}-next`}
+        // In a Session's section the next run is the title line's meta, as a Run's state word is (lab Writes here); the
+        // session list keeps it in the trailing column its Session rows use.
+        {...(props.sessionId !== undefined
+            ? { titleMeta: formatNextScheduledRunTime(row.trigger.nextRunAt, enabled, nowMs) }
+            : { detail: formatNextScheduledRunTime(row.trigger.nextRunAt, enabled, nowMs), detailTestID: `scheduled-workflow:${row.key}-next` })}
         icon={<Icon name={props.sessionId !== undefined ? 'sign-in' : resolveTriggerEventGroup(row.trigger).glyph} />}
         {...listRow}
         accessibilityLabel={label} showChevron={false} onPress={() => props.onOpen(row)} />;

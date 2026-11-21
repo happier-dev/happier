@@ -307,7 +307,6 @@ export const SessionRoleValueRow = React.memo(function SessionRoleValueRow(props
                     title={t('roles.rail.title')}
                     icon={props.icon}
                     detail={value}
-                    density="compact"
                     accessibilityLabel={t('sessionWork.role.a11y', { role: value })}
                     onPress={openPopover}
                 />

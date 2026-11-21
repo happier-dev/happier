@@ -306,11 +306,17 @@ export function HappierSkeletonRows(props: HappierSkeletonRowsProps) {
             gap: geometry.gap,
             paddingLeft: geometry.insetStart,
             paddingRight: geometry.insetEnd,
-            ...(props.dividerColor === undefined ? {} : dividerPlacement === 'below'
-              ? { borderBottomWidth: 1, borderBottomColor: props.dividerColor }
-              : index > firstIndex ? { borderTopWidth: 1, borderTopColor: props.dividerColor } : {}),
           }}
         >
+          {/* The hairline the real rows draw: from the row's text column (past its glyph) to its trailing inset. */}
+          {props.dividerColor !== undefined && (dividerPlacement === 'below' || index > firstIndex) ? (
+            <View style={{
+              position: 'absolute', height: 1, backgroundColor: props.dividerColor,
+              left: geometry.insetStart + (geometry.glyphColumn > 0 ? geometry.glyphColumn + geometry.gap : 0),
+              right: geometry.insetEnd,
+              ...(dividerPlacement === 'below' ? { bottom: 0 } : { top: 0 }),
+            }} />
+          ) : null}
           {geometry.glyphColumn > 0 ? (
             <View style={{ width: geometry.glyphColumn, alignItems: 'flex-start', justifyContent: 'center' }}>
               <HappierSkeletonBlock {...common} width={glyphSize} height={glyphSize} radius={SKELETON_GLYPH.radius} />

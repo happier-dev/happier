@@ -281,7 +281,9 @@ export function formatTriggerSummary(trigger: TriggerSummarySource, context?: Tr
  */
 export function formatTriggerSetSentence(triggers: readonly TriggerSummarySource[], context?: TriggerSummaryContext): string {
     if (triggers.length === 0) return t('workflows.triggers.card.manualSentence');
-    return joinList(triggers.map((trigger, index) => index === 0 ? formatTriggerSummary(trigger, context) : lowerSentenceStart(formatTriggerSummary(trigger, context))));
+    // Triggers that read the same are said once: the sentence names each way the workflow starts, not each row.
+    const clauses = [...new Set(triggers.map(trigger => formatTriggerSummary(trigger, context)))];
+    return joinList(clauses.map((clause, index) => index === 0 ? clause : lowerSentenceStart(clause)));
 }
 
 /**

@@ -69,6 +69,7 @@ import {
     type ExecutableTriggerFormValue,
     type TriggerFormValue,
     type TriggerRunsIn,
+    type TriggerThenKind,
     type TriggerThenValue,
     type TriggerWhenValue,
 } from './sessionTriggerForm';
@@ -143,6 +144,8 @@ type TriggerPopoverBaseProps = Readonly<{
     initialWhen?: TriggerWhenValue;
     /** Contextual Action targets prefill the existing Action fields without creating a trigger. */
     initialActionTargets?: readonly TriggerTargetV1[];
+    /** A new trigger's starting Then ("Add to a workflow…" starts on Run a workflow); defaults to Send a prompt. */
+    initialThenKind?: TriggerThenKind;
     initialEventSeed?: PluginUiOpenAutomationEventRequestV1;
     initialEventEditSeed?: PluginEventAutomationEditSeed;
     onEditSeedApplied?: React.ComponentProps<typeof TriggerPluginEventRows>['onEditSeedApplied'];
@@ -409,7 +412,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
     const observationOnly = triggerScope === 'account' && props.showThen !== false && when.kind === 'pluginEvent'
         ? when.observationOnly : undefined;
     const [then, setThen] = React.useState<TriggerThenValue>(() => props.initial?.then
-        ?? (props.initialActionTargets?.[0] ? readTriggerThen(props.initialActionTargets[0], { kind: 'detached_run' }) : createDefaultThen('sendPrompt')));
+        ?? (props.initialActionTargets?.[0] ? readTriggerThen(props.initialActionTargets[0], { kind: 'detached_run' }) : createDefaultThen(props.initialThenKind ?? 'sendPrompt')));
     const enabled = props.initial?.enabled ?? true;
     const [pending, setPending] = React.useState(false);
     const [failure, setFailure] = React.useState<WorkflowProblemPresentation | null>(null);

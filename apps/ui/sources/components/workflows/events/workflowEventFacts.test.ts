@@ -20,7 +20,11 @@ const {
   readWorkflowEventStartedRuns,
   readWorkflowEventDraftSeed,
   readWorkflowEventDraftIntent,
+  readWorkflowEventAddsLine,
+  readWorkflowEventLinkWhen,
+  prepareWorkflowEventEditorEntry,
 } = await import('./workflowEventFacts');
+const { readWorkflowDefinitionDraftSeed } = await import('@/sync/domains/workflows/workflowDefinitionDraftSeed');
 const { readWorkflowTriggerStartId } =
   await import('../triggers/workflowTriggerStarts');
 
@@ -86,6 +90,32 @@ describe('workflowEventFacts', () => {
       source: { kind: 'workflow_run', runId: 'r1' }, condition: 'terminal' });
     expect(readWorkflowEventTrigger({ ...run, event: 'needs_attention' })).toEqual({ kind: 'runLifecycle', enabled: true,
       source: { kind: 'workflow_run', runId: 'r1' }, condition: 'needs_attention' });
+  });
+
+  it('makes a workflow from a fact as a new editor draft that already starts on it', () => {
+    const scope = { serverId: 'home', accountId: 'account' };
+    const lifetime = { scope, isCurrent: () => true } as const;
+    const route = prepareWorkflowEventEditorEntry(turn, 'A turn started', lifetime);
+    expect(route).toMatchObject({ pathname: '/workflows/[id]', params: { id: 'new', serverId: 'home' } });
+    expect(readWorkflowDefinitionDraftSeed(route!.params.definitionDraftSeedId, scope))
+      .toMatchObject({ name: 'A turn started', trigger: readWorkflowEventTrigger(turn) });
+    // A Machine fact keeps its native seed and the place it was read from.
+    const placed = prepareWorkflowEventEditorEntry(machine, 'nl-build-3 went offline', lifetime,
+      { machines: [{ id: 'm1', active: false, activeAt: 1, seq: 1, metadata: { host: 'm1', homeDir: '/home/m1' } } as never],
+        recentMachinePaths: [] });
+    expect(readWorkflowDefinitionDraftSeed(placed!.params.definitionDraftSeedId, scope))
+      .toMatchObject({ nativeEvent: machine, project: { machineId: 'm1', directory: '~' } });
+    // Another Account took over: nothing is opened for the old one.
+    expect(prepareWorkflowEventEditorEntry(turn, 'A turn started', { scope, isCurrent: () => false })).toBeNull();
+  });
+
+  it('says which start an added event brings, and links a saved workflow only from a Session start', () => {
+    expect(readWorkflowEventAddsLine(turn)).toBe('workflows.events.addsWhen(when=workflows.triggers.kind.turnStarts)');
+    expect(readWorkflowEventAddsLine(machine)).toBeNull();
+    expect(readWorkflowEventLinkWhen(started)).toEqual(readWorkflowEventWhen(started));
+    // A Run's exact source and a Machine's native setup are authored in the editor, never linked blind.
+    expect(readWorkflowEventLinkWhen(run)).toBeNull();
+    expect(readWorkflowEventLinkWhen(machine)).toBeNull();
   });
 
   it('offers no configured trigger when a Machine fact lacks its declaration-owned setup seed', () => {

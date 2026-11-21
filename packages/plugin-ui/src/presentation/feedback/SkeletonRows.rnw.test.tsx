@@ -26,7 +26,7 @@ function rowsOf(container: HTMLElement): HTMLElement[] {
 /** The pulsing bars inside one row: every leaf view with a fill. */
 function barsOf(row: HTMLElement): HTMLElement[] {
   return [...row.querySelectorAll<HTMLElement>('div')].filter(
-    (node) => node.children.length === 0 && node.style.backgroundColor !== '',
+    (node) => node.children.length === 0 && node.style.backgroundColor !== '' && node.style.position !== 'absolute',
   );
 }
 
@@ -71,7 +71,11 @@ describe('HappierSkeletonRows (the one loading-rows owner)', () => {
     for (const row of rows) {
       expect(row.style.height).toBe('36px');
       expect(row.style.paddingLeft).toBe('22px');
-      expect(row.style.borderBottomColor).toBe(cssColor('#405060'));
+      // The row's hairline starts at its text column (inset, glyph column, gap) and stops on its trailing inset.
+      const rule = [...row.children].map((node) => node as HTMLElement)
+        .find((node) => node.style.position === 'absolute' && node.style.height === '1px')!;
+      expect(rule.style.backgroundColor).toBe(cssColor('#405060'));
+      expect([rule.style.left, rule.style.right, rule.style.bottom]).toEqual(['52px', '22px', '0px']);
       // One line: the glyph and the title bar, no meta bar.
       const bars = barsOf(row);
       expect(bars).toHaveLength(2);
@@ -131,9 +135,14 @@ describe('HappierSkeletonRows (the one loading-rows owner)', () => {
     expect(first.style.height).toBe('');
     expect(first.style.minHeight).toBe('36px');
     expect(first.style.paddingTop).toBe('5px');
-    // Hairlines only between rows.
-    expect(first.style.borderTopWidth).toBe('');
-    expect(second.style.borderTopColor).toBe(cssColor('#405060'));
+    // Hairlines only between rows, from the text column (past the glyph) to the trailing inset, as the real rows draw them.
+    const ruleOf = (row: HTMLElement) => [...row.children].map((node) => node as HTMLElement)
+      .find((node) => node.style.position === 'absolute' && node.style.height === '1px');
+    expect(ruleOf(first)).toBeUndefined();
+    const rule = ruleOf(second)!;
+    expect(rule.style.backgroundColor).toBe(cssColor('#405060'));
+    expect(rule.style.left).toBe('74px');
+    expect(rule.style.right).toBe('22px');
     // Each bar stands in its line's own box.
     const boxes = [...first.querySelectorAll<HTMLElement>('div')].filter((node) => node.style.height === '20px' || node.style.height === '16px');
     expect(boxes.map((node) => node.style.height)).toEqual(['20px', '16px']);

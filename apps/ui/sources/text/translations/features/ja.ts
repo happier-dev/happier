@@ -20297,6 +20297,12 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         liveEvents: 'ライブイベント',
         addToWorkflow: 'このワークフローに追加',
         added: 'このワークフローに追加しました',
+        makeWorkflow: 'これからワークフローを作成',
+        addToAWorkflow: 'ワークフローに追加…',
+        addToAWorkflowTitle: 'ワークフローに追加',
+        newWorkflowFromThis: 'これから新しいワークフロー',
+        openInEvents: 'イベントで開く',
+        addsWhen: ({ when }: { when: string }) => `追加: ${when}`,
     },
     tabsAccessibility: {
         savedRuns: '保存済みワークフローまたは実行',

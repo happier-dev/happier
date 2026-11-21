@@ -325,6 +325,12 @@ export const en = {
         liveEvents: 'Live events',
         addToWorkflow: 'Add to this workflow',
         added: 'Added to this workflow',
+        makeWorkflow: 'Make a workflow from this',
+        addToAWorkflow: 'Add to a workflow…',
+        addToAWorkflowTitle: 'Add to a workflow',
+        newWorkflowFromThis: 'New workflow from this',
+        openInEvents: 'Open in Events',
+        addsWhen: ({ when }: { when: string }) => `Adds ${when}`,
     },
     tabsAccessibility: {
         savedRuns: 'Saved workflows or runs',

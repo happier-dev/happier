@@ -20237,6 +20237,12 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         liveEvents: '实时事件',
         addToWorkflow: '添加到此工作流',
         added: '已添加到此工作流',
+        makeWorkflow: '用它创建工作流',
+        addToAWorkflow: '添加到工作流…',
+        addToAWorkflowTitle: '添加到工作流',
+        newWorkflowFromThis: '用它新建工作流',
+        openInEvents: '在事件中打开',
+        addsWhen: ({ when }: { when: string }) => `添加：${when}`,
     },
     tabsAccessibility: {
         savedRuns: '已保存的工作流或运行记录',

@@ -20362,6 +20362,12 @@ const it = translated(workflowValueReferenceTranslations.it, {
         liveEvents: 'Eventi dal vivo',
         addToWorkflow: 'Aggiungi a questo flusso di lavoro',
         added: 'Aggiunto a questo flusso di lavoro',
+        makeWorkflow: 'Crea un flusso di lavoro da questo',
+        addToAWorkflow: 'Aggiungi a un flusso di lavoro…',
+        addToAWorkflowTitle: 'Aggiungi a un flusso di lavoro',
+        newWorkflowFromThis: 'Nuovo flusso di lavoro da questo',
+        openInEvents: 'Apri in Eventi',
+        addsWhen: ({ when }: { when: string }) => `Aggiunge ${when}`,
     },
     tabsAccessibility: {
         savedRuns: 'Flussi di lavoro salvati o esecuzioni',
