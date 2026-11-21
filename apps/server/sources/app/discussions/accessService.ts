@@ -426,10 +426,10 @@ function projectModelParticipant(row: Readonly<{ participantSlotId: string; mode
     return parsed.success ? discussionSuccess(parsed.data) : discussionFailure("discussion_invalid_content");
 }
 
-/** The current HTTP/DB Home scopes identity; serverId is only a client's local transport alias. */
+/** The current Home scopes identity. Local Home aliases and display titles can vary at birth. */
 function modelParticipantLaunchesEqual(stored: unknown, launch: DiscussionModelParticipantLaunchV1): boolean {
     const parsed = DiscussionModelParticipantLaunchV1Schema.safeParse(stored);
-    const identity = (value: DiscussionModelParticipantLaunchV1) => createCanonicalJsonSigningInput({ ...value,
+    const identity = ({ title: _displayTitle, ...value }: DiscussionModelParticipantLaunchV1) => createCanonicalJsonSigningInput({ ...value,
         executionTarget: { ...value.executionTarget, serverId: null },
         ...normalizeSessionCreationSelectionIdentityV1(value) });
     return parsed.success && identity(parsed.data) === identity(launch);

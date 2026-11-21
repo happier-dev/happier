@@ -1614,8 +1614,9 @@ selection. An unresolved start retries that slot rather than selecting another
 creation identity. An unstarted slot selected in the Discussion composer is also
 resolved through that same owner on explicit Ask/Send, never through a composer-local
 launcher; editing or opening/selecting a mention alone does not start it. Ordinary Session birth carries the strict `discussion`
-origin and exact Discussion/slot correspondence; the server validates the
-current reservation, creator and launch before committing its backing Session.
+origin and exact Discussion/slot correspondence. The server validates the
+current reservation, creator and launch selections before committing its backing
+Session. The display title can be assigned at Session birth.
 The backing Session belongs to the person adding the model, who retains ordinary
 Session control; the thread owner does not acquire that control through Discussion
 administration. The ordinary launch uses the adding person's execution context and

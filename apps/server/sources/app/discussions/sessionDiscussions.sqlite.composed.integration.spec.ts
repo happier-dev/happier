@@ -8,6 +8,7 @@ import { DiscussionInviteResponseV1Schema, DiscussionRemoveParticipantResponseV1
 import { buildDiscussionMutationRequestBodyV1, DiscussionCreateResponseV1Schema, DiscussionDetailsResponseV1Schema, DiscussionPostResponseV1Schema, DiscussionMessagesResponseV1Schema, DiscussionAgentPostResponseV1Schema, DiscussionAgentPublisherResponseV1Schema,
     DISCUSSION_AGENT_POST_EVENT_V1, DISCUSSION_HTTP_PATHS_V1, type DiscussionCreateRequestV1 } from '@happier-dev/protocol/discussions/api';
 import { createDiscussionMessageRefV1, DiscussionMessageRefV1Schema } from '@happier-dev/protocol/discussions/messageRefs';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { db } from '@/storage/db';
 import { APPROVAL_ARTIFACT_KINDS_V1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
 import { deriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
@@ -82,11 +83,7 @@ import { createDiscussionFollowInputIntake } from '../../../../cli/src/agent/run
 import { createMutableApiSessionClientFixture } from '../../../../cli/src/testkit/backends/sessionFixtures';
 import { runWithServerHttpBaseUrl } from '../../../../cli/src/api/client/serverHttpBaseUrl';
 import { installAxiosFastifyAdapter } from '../../../../cli/src/testkit/http/axiosAdapter';
-import { registerAccountEncryptionRoutes } from '@/app/api/routes/account/registerAccountEncryptionRoutes';
-import { registerSessionListingRoutes } from '@/app/api/routes/session/registerSessionListingRoutes';
 import { registerSessionLookupByTagsRoute } from '@/app/api/routes/session/registerSessionLookupByTagsRoute';
-import { registerSessionFollowRoutes } from '@/app/api/routes/session/registerSessionFollowRoutes';
-import { registerSessionMessageRoutes } from '@/app/api/routes/session/registerSessionMessageRoutes';
 import { SessionPendingEnqueueByMachineRequestV1Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1';
 
 const document = (text: string) => ({ v: 1 as const, parts: [{ t: 'text' as const, text }] });
@@ -1669,8 +1666,62 @@ describe('First-class Discussions service (SQLite)', () => {
         expect((await inTx(tx => observePendingSessionFollowForDestinationInTx(tx, { principal: {
             kind: 'destination_runtime', destinationRuntimeAccountId: invitee.id, authentication }, destinationSessionId: receiver.id }))).observations).toEqual([]);
     });
+    async function modelDiscussionFixture() {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const { id: discussionId } = await db.discussion.create({ data: {
+            ownerAccountId: owner.id, encryptionMode: 'plain', dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER),
+            creationLocalId: crypto.randomUUID(), creationEqualityEvidenceV1: {}, lastMessageAt: new Date(),
+            titleContent: { t: 'plain', v: { v: 1, title: 'Workflow Discussion' } },
+        } });
+        return { owner, discussionId };
+    }
+
+    it('binds a reserved model Session with a Workflow display title and denies an ungranted Account', async () => {
+        const { owner, discussionId } = await modelDiscussionFixture();
+        const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id, metadata: '{}' } });
+        const launch = { executionTarget: { serverId: 'home', machineId: machine.id }, directory: { kind: 'path' as const, path: '/tmp' },
+            agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } };
+        const { prepareLayout1SessionCreate } = await import('@/app/session/create/prepareLayout1SessionCreate');
+        const { createOrRejoinLayout1SessionByTag } = await import('@/app/session/create/createOrRejoinLayout1SessionByTag');
+        const reserve = async () => {
+            const participantSlotId = crypto.randomUUID();
+            expect(await inviteDiscussionParticipant({ authentication, actorAccountId: owner.id, discussionId,
+                request: { participant: { kind: 'model', participantSlotId, launch } } })).toMatchObject({ ok: true });
+            return { discussionId, participantSlotId };
+        };
+        const birth = async (accountId: string, discussionParticipant: Awaited<ReturnType<typeof reserve>>,
+            discussionParticipantLaunch: typeof launch & { title?: string }) => {
+            const prepared = prepareLayout1SessionCreate({ accountId, tag: crypto.randomUUID(), metadata: JSON.stringify({ v: 1 }),
+                ownerMetadata: { t: 'plain', v: { v: 1 } }, agentState: null, dataEncryptionKey: null, requestedEncryptionMode: 'plain',
+                requestedStorageState: undefined, organizationPlacement: undefined, accountEncryptionMode: 'plain',
+                storagePolicy: 'optional', defaultAccountMode: 'plain', originKind: 'discussion', discussionParticipant, discussionParticipantLaunch });
+            if (!prepared.ok) throw new Error(prepared.rejection.reason);
+            return createOrRejoinLayout1SessionByTag(prepared.prepared, authentication);
+        };
+        expect(await birth(owner.id, await reserve(), launch)).toMatchObject({ kind: 'created' });
+
+        const discussionParticipant = await reserve();
+        const titledLaunch = { ...launch, title: 'Generated Workflow step title' };
+        expect(await birth(outsider.id, discussionParticipant, titledLaunch))
+            .toEqual({ kind: 'rejected', rejection: { reason: 'session-origin-forbidden' } });
+        const changedLaunch = { ...titledLaunch, directory: { ...launch.directory, path: '/changed-workspace' } };
+        expect(await birth(owner.id, discussionParticipant, changedLaunch))
+            .toEqual({ kind: 'rejected', rejection: { reason: 'session-origin-forbidden' } });
+        expect(await db.discussionParticipant.findUniqueOrThrow({ where: { discussionId_participantSlotId: discussionParticipant } }))
+            .toMatchObject({ sessionId: null });
+        const created = await birth(owner.id, discussionParticipant, titledLaunch);
+        expect(created).toMatchObject({ kind: 'created' });
+        if (created.kind !== 'created') throw new Error('Expected the reserved model Session');
+        expect(await db.discussionParticipant.findUniqueOrThrow({ where: { discussionId_participantSlotId: discussionParticipant } }))
+            .toMatchObject({ sessionId: created.session.id, modelLaunch: launch });
+        expect(await inviteDiscussionParticipant({ authentication, actorAccountId: owner.id, discussionId,
+            request: { participant: { kind: 'model', participantSlotId: discussionParticipant.participantSlotId, launch: titledLaunch } } }))
+            .toMatchObject({ ok: true, value: { changed: false, modelParticipant: { sessionId: created.session.id, launch } } });
+    });
+
     it('reserves a model slot once before allocation and refuses a changed launch on retry', async () => {
-        const { owner, discussionId } = await fixture();
+        const { owner, discussionId } = await modelDiscussionFixture();
         const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id, metadata: '{}' } });
         const participantSlotId = crypto.randomUUID();
         const launch = { executionTarget: { serverId: 'home', machineId: machine.id }, directory: { kind: 'path' as const, path: '/tmp' },
@@ -1688,15 +1739,16 @@ describe('First-class Discussions service (SQLite)', () => {
             .toMatchObject({ ok: true, value: { changed: false, modelParticipant: { launch } } });
         expect(await db.discussionParticipant.count({ where: { discussionId } })).toBe(1);
         expect(await db.session.count({ where: { accountId: owner.id } })).toBe(0);
+        const changedLaunch = { ...launch, directory: { ...launch.directory, path: '/changed-workspace' } };
         expect(await inviteDiscussionParticipant({ authentication, actorAccountId: owner.id, discussionId,
-            request: { ...request, participant: { ...request.participant, launch: { ...launch, title: 'Changed recipe' } } } })).toEqual({ ok: false, error: 'discussion_idempotency_conflict' });
+            request: { ...request, participant: { ...request.participant, launch: changedLaunch } } })).toEqual({ ok: false, error: 'discussion_idempotency_conflict' });
         const { validateDiscussionParticipantBirthInTx, bindDiscussionParticipantSessionInTx } = await import('./accessService');
         const discussionParticipant = { discussionId, participantSlotId };
         const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
         expect(await inTx(tx => validateDiscussionParticipantBirthInTx(tx, { accountId: outsider.id, discussionParticipant, launch })))
             .toMatchObject({ ok: false });
         expect(await inTx(tx => validateDiscussionParticipantBirthInTx(tx, { accountId: owner.id, discussionParticipant,
-            launch: { ...launch, title: 'Changed recipe' } }))).toEqual({ ok: false, error: 'discussion_idempotency_conflict' });
+            launch: changedLaunch }))).toEqual({ ok: false, error: 'discussion_idempotency_conflict' });
         const session = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), metadata: '{}', encryptionMode: 'plain',
             originKind: 'discussion', originDiscussionId: discussionId, originDiscussionParticipantSlotId: participantSlotId } });
         const bind = () => inTx(tx => bindDiscussionParticipantSessionInTx(tx, { accountId: owner.id, discussionParticipant, launch, sessionId: session.id }));
