@@ -22,6 +22,7 @@ import { ArtifactJsonUpdateHttpInputV1Schema } from '../artifacts/artifactMutati
 import { ActionOperationAddressV1Schema } from '../actions/operations/addressV1.js';
 import { HealthCheckResultV1Schema } from './healthCheckV1.js';
 import { DeploymentOwnServerTargetMachinesV1Schema } from './deploymentEnvironmentCreateV1.js';
+import { CloudflareTunnelConnectorsPerMachineV1Schema } from './cloudflareTunnelConnectorsV1.js';
 export { deploymentDomainFailureFactsV1, DeploymentDomainNativeRequiredFactV1Schema,
     DeploymentDomainCaddyFailureV1Schema, type DeploymentDomainCaddyFailureV1,
     deploymentDomainCaddyRequiredFactsV1, type DeploymentDomainCaddyRequiredFactV1,
@@ -49,7 +50,7 @@ export type DeploymentDomainMachineTopologyV1 = z.infer<typeof DeploymentDomainM
 export const DeploymentDomainTopologyV1Schema = lazyZodSchema(() => z.strictObject({
     members: z.array(z.strictObject({ machineId: id, installationId: id })),
     machines: z.array(DeploymentDomainMachineTopologyV1Schema),
-    tunnelOrigin: z.optional(z.strictObject({ service: id, members: z.array(z.strictObject({
+    tunnelOrigin: z.optional(z.strictObject({ service: id, connectorsPerMachine: CloudflareTunnelConnectorsPerMachineV1Schema, members: z.array(z.strictObject({
         machineId: id, installationId: id, containerId: id, networkName: id, nativeServer: id,
     })) })),
 }));

@@ -4,6 +4,7 @@ import type { DeploymentDomainHeaderV1, DeploymentDomainTopologyV1 } from '@happ
 import type { DeploymentDomainTunnelOwnershipV1, DeploymentDomainTunnelDispositionV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { type DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { parseMachineSecretGrantSubjectKey } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
+import { DEFAULT_CLOUDFLARE_TUNNEL_CONNECTORS_PER_MACHINE } from '@happier-dev/protocol/deployments/cloudflareTunnelConnectorsV1';
 import { readCloudflareNamedControllerSelection } from '@happier-dev/cli-common/relayAccess';
 import { getRelayAccessProviderDescriptor, type RelayAccessConfig } from '@happier-dev/cli-common/relayAccess/catalog';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
@@ -50,6 +51,7 @@ type Prepared = { kind: 'prepared' | 'unknown' | 'refused'; code?: string; provi
 export async function prepareCloudflareDomainForHost(input: Readonly<{
     domain: DeploymentDomainHeaderV1; content: DeploymentDomainContentV1;
     membershipReconciliation: boolean;
+    reconcileTunnelConnectorsOnly?: true;
     topology: DeploymentDomainTopologyV1; context: ActionExecutorContext;
     host: Readonly<{ serverId: string; machineId: string; credentials: StoredCredentials; installedCredentials?: StoredCredentials;
         serverHttpBaseUrl: string;
@@ -60,22 +62,37 @@ export async function prepareCloudflareDomainForHost(input: Readonly<{
     if (!selected) return { domain, content };
     if (!content.hostname) return refuse('deployment_content_unavailable');
     const origin = topology.tunnelOrigin;
+    if (!origin) return refuse('required_fact_unavailable', { requiredFact: 'cloudflare_tunnel_origin' });
+    const previous = content.cloudflarePreparation;
+    const routePath = content.target.path || undefined;
+    const desired = [{ hostname: content.hostname, ...(content.target.path ? { path: content.target.path } : {}),
+        service: origin.service }];
+    if (input.reconcileTunnelConnectorsOnly) {
+        const capture = domain.placements?.find(item => item.desired);
+        if (!capture || !previous?.connectors || previous.owned.length !== desired.length
+            || !previous.owned.some(route => route.hostname === content.hostname && route.path === routePath
+                && route.expectedService === origin.service)
+            || !origin.members.every(member => previous.connectors?.some(connector => connector.machineId === member.machineId
+                && connector.installationId === member.installationId && connector.networkName === member.networkName))) {
+            return refuse('required_fact_unavailable', { requiredFact: 'cloudflarePreparation' });
+        }
+        // The existing Domain job reads the already sealed grant on each target.
+        // A count edit has no provider, token, or origin changes to approve.
+        const updated = { ...content, cloudflarePreparation: { ...previous, connectorsPerMachine: origin.connectorsPerMachine } };
+        return { domain: await host.persistPreparedContent({ domain, capture, context, content: updated }), content: updated };
+    }
     const identity = readInstallationIdentityIfExistsSync();
     const child = context.hostReviewedChild;
-    if (!origin) return refuse('required_fact_unavailable', { requiredFact: 'cloudflare_tunnel_origin' });
     if (!identity) return refuse('required_fact_unavailable', { requiredFact: 'installation_identity' });
     if (!child) return refuse('required_fact_unavailable', { requiredFact: 'reviewed_cloudflare_child' });
     const credentialRef = readCloudflareDomainAccount(selected.selection);
     if (!credentialRef) return refuse('connected_account_required');
-    const previous = content.cloudflarePreparation;
     // Membership can reconfigure a recorded tunnel. A pending new tunnel
     // needs the Domain add that can commit its Environment creation proof.
     if (input.membershipReconciliation && !previous && selected.controller.tunnel.kind === 'create')
         return refuse('required_fact_unavailable', { requiredFact: 'cloudflarePreparation' });
     const admissions: Awaited<ReturnType<typeof readEnvironmentDomainSecretLaunchAdmissionForHost>>[] = [];
     const acknowledged: Grant[] = [];
-    const desired = [{ hostname: content.hostname, ...(content.target.path ? { path: content.target.path } : {}),
-        service: origin.service }];
     try {
         for (const member of origin.members) {
             const capture = domain.placements?.find(item => item.desired && item.placement.machineId === member.machineId
@@ -117,6 +134,8 @@ export async function prepareCloudflareDomainForHost(input: Readonly<{
             try {
                 preparedContent = { ...content,
                     cloudflarePreparation: { tunnelId, owned: desired.map(({ service, ...route }) => ({ ...route, expectedService: service })),
+                        ...(origin.connectorsPerMachine === DEFAULT_CLOUDFLARE_TUNNEL_CONNECTORS_PER_MACHINE
+                            ? {} : { connectorsPerMachine: origin.connectorsPerMachine }),
                         ...(!createdTunnel && tunnelOwnership ? { tunnelOwnership } : {}),
                         dnsOwnership: [...(prepared?.dnsOwnership ?? previous?.dnsOwnership ?? selected.controller.dnsOwnership)],
                         connectors: [...(previous?.connectors ?? []).filter(old => !connectors.some(current =>
@@ -184,5 +203,6 @@ export function cloudflareDomainConnectorForTarget(content: DeploymentDomainCont
     const prepared = content.cloudflarePreparation;
     const connector = prepared?.connectors?.find(item => item.machineId === target.machineId && item.installationId === target.installationId);
     return prepared && connector ? { tunnelId: prepared.tunnelId, grantRef: connector.grantRef,
+        ...(prepared.connectorsPerMachine === undefined ? {} : { connectorsPerMachine: prepared.connectorsPerMachine }),
         connector: { imageRef: connector.imageRef, version: connector.version }, networkName: connector.networkName } : undefined;
 }

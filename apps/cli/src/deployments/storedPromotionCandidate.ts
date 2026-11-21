@@ -56,7 +56,7 @@ export function createStoredPromotionReceiptContentForHost(
 ) {
     return DeploymentOwnServerContentV1Schema.parse({ sourceIntent: promotion.candidateEnvironmentContent.definition,
         machines: promotion.link.machines, buildMachineId: promotion.buildMachineId,
-        ...(promotion.destination.environment.ingress ? { ingress: promotion.destination.environment.ingress } : {}),
+        ...(promotion.destination.content.ingress ? { ingress: promotion.destination.content.ingress } : {}),
         onFailure,
         images: promotion.sourceReceipt.content.images, machineResults: [], steps: [] });
 }

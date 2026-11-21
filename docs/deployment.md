@@ -5834,6 +5834,13 @@ Action admission. The same Action serves UI and agent callers. Home binds the
 candidate to the admitted patch and CAS; dedicated binding, backup and template
 fields remain unchanged by this ingress preparation. Cloudflare Tunnel accepts a
 nonempty own-server member set; edge Caddy retains its two-Machine requirement.
+For Cloudflare Tunnel, `patch.ingress.connectorsPerMachine` defaults to one.
+On the next apply the existing Domain owner reconciles that many connectors
+per serving Machine. Happier retains the first connector's name and appends
+`-2`, `-3`, and so on for further replicas. They use the same sealed token.
+Extra connectors cover a connector restart or crash. Use separate Machines
+to cover Machine failure. [Cloudflare limits a tunnel to 25 replicas across
+all Machines](https://developers.cloudflare.com/tunnel/configuration/#replicas-and-high-availability).
 
 For a failed Cloudflare Domain whose preparation was not saved, Remove derives the
 current private origin through the same native observation and route-selection

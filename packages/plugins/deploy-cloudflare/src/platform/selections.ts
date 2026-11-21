@@ -3,6 +3,7 @@ import type { PluginAccountActionHandler } from '@happier-dev/plugin-sdk/actions
 import { AccessProviderSelectionV1Schema } from '@happier-dev/plugin-sdk/access-providers';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/plugin-sdk/connected-accounts';
 import { defineProtocolArray as array, defineProtocolLiteral as literal, defineProtocolObject as object,
+  DEFAULT_CLOUDFLARE_TUNNEL_CONNECTORS_PER_MACHINE, ProtocolCloudflareTunnelConnectorsPerMachineV1Schema,
   defineProtocolString as string, defineProtocolNumber as number, defineProtocolUnion as union, type ProtocolJsonValue } from '@happier-dev/plugin-sdk/protocol';
 import { isObject } from '../connectedAccounts/probe.js';
 import { CloudflareProviderRefusal, cloudflareHasNextPage, cloudflareRemoteTunnel,
@@ -19,7 +20,8 @@ const connectorDiscovery = { kind: 'unavailable', reason: 'connector_discovery_u
 const selectionOption = object({ label: text, selection: AccessProviderSelectionV1Schema }, closed);
 const zoneOption = object({ zoneId: text, name: text }, closed);
 const connectorSchema = object({ imageRef: text, version: text }, closed);
-const defaultsSchema = object({ accountId: text.optional(), connector: connectorSchema }, closed);
+const defaultsSchema = object({ accountId: text.optional(), connector: connectorSchema,
+  connectorsPerMachine: ProtocolCloudflareTunnelConnectorsPerMachineV1Schema.optional() }, closed);
 const selectionsInput = object({ credentialRef: QualifiedConnectedAccountRefSchema, accountId: text.optional(), zoneId: text.optional(),
   hostname: text, connector: connectorSchema.optional() }, closed);
 const selectionsResult = union([
@@ -86,6 +88,7 @@ const readSelectionsImpl = async (input: Parameters<SelectionHandler>[0], contex
       && account.ref.service.localId === input.credentialRef.service.localId)?.account : undefined;
   const connectedAccountId = profile?.providerIdentity?.accountId;
   const defaults = { connector: CLOUDFLARE_CONNECTOR_DEFAULTS,
+    ...(zonesOnly ? {} : { connectorsPerMachine: DEFAULT_CLOUDFLARE_TUNNEL_CONNECTORS_PER_MACHINE }),
     ...(typeof connectedAccountId === 'string' && connectedAccountId.length > 0 ? { accountId: connectedAccountId } : {}) };
   const unavailable = (reason: string, providerStatus?: number) => ({ kind: 'unavailable' as const, options: [], reason,
     ...selectionRecovery(reason), ...(providerStatus === undefined ? {} : { providerStatus }), defaults, connectorDiscovery });

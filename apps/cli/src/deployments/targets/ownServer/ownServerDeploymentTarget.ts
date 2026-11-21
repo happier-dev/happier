@@ -76,6 +76,7 @@ export type OwnServerDeploymentRetentionRequest = Readonly<{
 export type OwnServerDeploymentMemberRouteEnrollmentForHost = Readonly<{
     link: DeploymentTargetLinkHeaderV1;
     signal: AbortSignal;
+    reconcileTunnelConnectorsOnly?: true;
 }>;
 export type OwnServerDeploymentReadContext = Readonly<{
     environmentId: string;

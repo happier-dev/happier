@@ -170,7 +170,7 @@ export const DeploymentOwnServerContentV1Schema = z.strictObject({
     teardown: z.optional(DeploymentTeardownContentV1Schema),
     platform: z.optional(z.never()),
 }).check(z.refine(content => new Set(content.machines).size === content.machines.length
-    && (content.ingress === undefined || content.machines.length > 1)
+    && (content.ingress?.kind !== 'edgeCaddy' || content.machines.length > 1)
     && new Set(content.machineResults.map(result => result.machineId)).size === content.machineResults.length
     && content.machineResults.every(result => content.machines.includes(result.machineId))
     && (content.ownServer?.imageArchives ?? []).every(archive => content.images.some(image =>

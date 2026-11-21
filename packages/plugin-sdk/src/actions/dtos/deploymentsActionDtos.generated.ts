@@ -86,6 +86,7 @@ export type DeploymentsActionInputById = {
                     recordId: string;
                 }[];
                 tunnelOwnership?: 'adopted' | 'created' | undefined;
+                connectorsPerMachine?: number | undefined;
                 connectors?: undefined | {
                     machineId: string;
                     installationId: string;
@@ -299,6 +300,7 @@ export type DeploymentsActionInputById = {
                     recordId: string;
                 }[];
                 tunnelOwnership?: 'adopted' | 'created' | undefined;
+                connectorsPerMachine?: number | undefined;
                 connectors?: undefined | {
                     machineId: string;
                     installationId: string;
@@ -3985,6 +3987,7 @@ export type DeploymentsActionInputById = {
             dataAgentAccess?: 'none' | 'read' | 'readWriteAsk' | 'readWriteNoApproval' | undefined;
             ingress?: null | undefined | {
                 kind: 'cloudflareTunnel';
+                connectorsPerMachine?: number | undefined;
             } | {
                 kind: 'edgeCaddy';
                 edgeMachineId: string;
@@ -7405,6 +7408,7 @@ export type DeploymentsActionResultById = {
                 buildMachineId?: string | undefined;
                 ingress?: undefined | {
                     kind: 'cloudflareTunnel';
+                    connectorsPerMachine?: number | undefined;
                 } | {
                     kind: 'edgeCaddy';
                     edgeMachineId: string;
@@ -7594,6 +7598,7 @@ export type DeploymentsActionResultById = {
                 buildMachineId?: string | undefined;
                 ingress?: undefined | {
                     kind: 'cloudflareTunnel';
+                    connectorsPerMachine?: number | undefined;
                 } | {
                     kind: 'edgeCaddy';
                     edgeMachineId: string;
@@ -14538,6 +14543,7 @@ export type DeploymentsActionResultById = {
             buildMachineId?: string | undefined;
             ingress?: undefined | {
                 kind: 'cloudflareTunnel';
+                connectorsPerMachine?: number | undefined;
             } | {
                 kind: 'edgeCaddy';
                 edgeMachineId: string;
@@ -15161,6 +15167,7 @@ export type DeploymentsActionResultById = {
             buildMachineId?: string | undefined;
             ingress?: undefined | {
                 kind: 'cloudflareTunnel';
+                connectorsPerMachine?: number | undefined;
             } | {
                 kind: 'edgeCaddy';
                 edgeMachineId: string;
@@ -15574,6 +15581,7 @@ export type DeploymentsActionResultById = {
             buildMachineId?: string | undefined;
             ingress?: undefined | {
                 kind: 'cloudflareTunnel';
+                connectorsPerMachine?: number | undefined;
             } | {
                 kind: 'edgeCaddy';
                 edgeMachineId: string;

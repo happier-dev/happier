@@ -6,6 +6,7 @@ import type { DeploymentIngressV1, DeploymentDomainAddInputV1, DeploymentDomainH
     DeploymentDomainListInputV1, DeploymentDomainListResultV1Schema, DeploymentDomainTopologyV1,
     DeploymentDomainMachineTopologyV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { type DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import { CLOUDFLARE_TUNNEL_CONNECTOR_LIMIT, DEFAULT_CLOUDFLARE_TUNNEL_CONNECTORS_PER_MACHINE } from '@happier-dev/protocol/deployments/cloudflareTunnelConnectorsV1';
 import { readDeploymentDomainArtifactV1, type DeploymentArtifactDocumentV1 } from '@happier-dev/deployments';
 import type { createNativeCaddyRoutes, NativeCaddyStartFirstLeg } from '@/machines/reachability/nativeCaddyRoutes';
 import { caddyPublicHttpServerId, type CaddyDomainRouteInput } from './caddyRouteMaterialization';
@@ -28,7 +29,7 @@ export function resolveDomainIngress(domain: DeploymentDomainContentV1, ingress?
             remedy: 'Choose a named Cloudflare tunnel and zone, then add the Domain again.',
         },
     };
-    return { status: 'ready', ingress: selection ? { kind: 'cloudflareTunnel' } : ingress, selection };
+    return { status: 'ready', ingress: selection && ingress?.kind !== 'cloudflareTunnel' ? { kind: 'cloudflareTunnel' } : ingress, selection };
 }
 
 export type DomainCaddyMemberObservation = Readonly<{
@@ -104,7 +105,13 @@ export function selectDomainCaddyPlacements(input: Readonly<{
             remedy: 'No ingress is recorded for this multi-Machine Environment. Choose the Domain ingress before adding it.' }
             : activeDomainMembersDetails };
     const placements: Placement[] = [];
-    const tunnelMachineIds = input.ingress?.kind === 'cloudflareTunnel' ? members.map(member => member.machineId) : undefined;
+    const tunnelIngress = input.ingress?.kind === 'cloudflareTunnel' ? input.ingress : undefined;
+    const tunnelMachineIds = tunnelIngress ? members.map(member => member.machineId) : undefined;
+    const connectorsPerMachine = tunnelIngress?.connectorsPerMachine ?? DEFAULT_CLOUDFLARE_TUNNEL_CONNECTORS_PER_MACHINE;
+    if (tunnelMachineIds && connectorsPerMachine * new Set(members.map(member => member.dockerEngineId)).size > CLOUDFLARE_TUNNEL_CONNECTOR_LIMIT) {
+        return { status: 'unavailable', reason: 'required_fact_unavailable', machineIds: tunnelMachineIds,
+            details: { requiredFact: 'cloudflareTunnelConnectorLimit' } };
+    }
     const tunnelMembers: Array<{ machineId: string; installationId: string; containerId: string; nativeServer: string;
         origins: NonNullable<Extract<NativeCaddyObservationResult, { status: 'ready' }>['containerOrigins']> }> = [];
     for (const member of members) {
@@ -130,7 +137,7 @@ export function selectDomainCaddyPlacements(input: Readonly<{
                     containerId: member.containerId, networkName: origin.networkName, nativeServer: member.nativeServer }] : [];
             });
             if (selected.length === members.length) {
-                tunnelOrigin = { service: candidate.service, members: selected };
+                tunnelOrigin = { service: candidate.service, connectorsPerMachine, members: selected };
                 break;
             }
         }

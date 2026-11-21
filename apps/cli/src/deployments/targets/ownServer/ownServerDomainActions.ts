@@ -18,6 +18,7 @@ import {
 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { OwnServerDeploymentTargetHostInput } from './ownServerDeploymentTarget';
 import { resolveDomainIngress, selectDomainCaddyPlacements, readDomainIngressMembersForHost, selectDomainMembershipMachines } from './domainRouteSelection';
+import { DEFAULT_CLOUDFLARE_TUNNEL_CONNECTORS_PER_MACHINE } from '@happier-dev/protocol/deployments/cloudflareTunnelConnectorsV1';
 import { DeploymentDomainPreparedContentInputV1Schema, type DeploymentDomainPlacementV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { getDeploymentTargetLinkLineageV1, type DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { type DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
@@ -415,7 +416,8 @@ export function createOwnServerDomainActions(host: Readonly<{
 }>) {
     type Execute = NonNullable<ActionExecutorDeps['deploymentAction']>;
     const execute = async (actionId: Parameters<Execute>[0], raw: Parameters<Execute>[1], context: ActionExecutorContext,
-        admitted?: Readonly<{ domain: DeploymentDomainHeaderV1; content: DeploymentDomainContentV1 }>):
+        admitted?: Readonly<{ domain: DeploymentDomainHeaderV1; content: DeploymentDomainContentV1 }>,
+        reconcileTunnelConnectorsOnly?: true):
         Promise<Awaited<ReturnType<Execute>>> => {
         if (!isDeploymentDomainChildActionIdV1(actionId)) return failure('unsupported_action');
         let issued = false;
@@ -480,7 +482,7 @@ export function createOwnServerDomainActions(host: Readonly<{
                     // Add's discovery already opened this private content; preparation returns its own authored update.
                     const prepared = await prepareCloudflareDomainForHost({ domain, content: privateContent!,
                         membershipReconciliation: 'membershipDeploymentId' in input && input.membershipDeploymentId !== undefined,
-                        topology, context, host });
+                        topology, context, host, ...(reconcileTunnelConnectorsOnly ? { reconcileTunnelConnectorsOnly } : {}) });
                     domain = prepared.domain;
                     captures = domain.placements ?? [];
                     privateContent = prepared.content;
@@ -558,7 +560,7 @@ export function createOwnServerDomainActions(host: Readonly<{
             return failure(result.error, undefined, undefined, undefined, nativeScope);
         return result;
     };
-    async function reconcileMembership(input: DomainMembershipInput & Readonly<{ deploymentId: string }>,
+    async function reconcileMembership(input: DomainMembershipInput & Readonly<{ deploymentId: string; reconcileTunnelConnectorsOnly?: true }>,
         admittedContext: ActionExecutorContext, admitted?: Readonly<{
             environment: Awaited<ReturnType<typeof host.readEnvironment>>;
             membershipMachines: ReturnType<typeof selectDomainMembershipMachines>;
@@ -572,17 +574,30 @@ export function createOwnServerDomainActions(host: Readonly<{
         if (!link) return failure('target_mismatch');
         const membershipMachines = admitted?.membershipMachines ?? selectDomainMembershipMachines(link.members, input.machines);
         const lineage = getDeploymentTargetLinkLineageV1(link, environment.targetLinks.map(item => item.targetLink));
+        const ingress = environment.content.ingress;
+        if (input.reconcileTunnelConnectorsOnly && ingress?.kind !== 'cloudflareTunnel') return failure('deployment_conflict');
+        const count = (ingress?.kind === 'cloudflareTunnel' ? ingress.connectorsPerMachine : undefined)
+            ?? DEFAULT_CLOUDFLARE_TUNNEL_CONNECTORS_PER_MACHINE;
         let revision = environment.environment.revision;
         for await (const domain of readEnvironmentDomainsForHost(input.environmentId, context, host)) {
             if (!lineage.has(domain.targetLinkId)) continue;
             context.signal?.throwIfAborted();
+            if (input.reconcileTunnelConnectorsOnly) {
+                if (domain.provider || domain.state === 'removing') continue;
+                const opened = readDeploymentDomainArtifactV1(domain, await host.open(domain.contentArtifactId, context));
+                if (!opened.ok) return failure(opened.error, undefined, opened.failureCause);
+                const prepared = opened.content.cloudflarePreparation;
+                if (!prepared?.connectors?.length || opened.content.target.kind === 'telemetry') continue;
+                if (domain.state === 'active'
+                    && (prepared.connectorsPerMachine ?? DEFAULT_CLOUDFLARE_TUNNEL_CONNECTORS_PER_MACHINE) === count) continue;
+            }
             const result = await execute('deployments.domains.add', { serverId: host.serverId,
                 environmentId: input.environmentId, domainId: domain.id, expectedDomainRevision: domain.revision,
                 expectedRevision: revision, targetLinkId: link.id, expectedTargetLinkRevision: link.revision,
                 contentArtifactId: domain.contentArtifactId, contentHeaderVersion: domain.contentHeaderVersion,
                 contentBodyVersion: domain.contentBodyVersion,
                 requestKey: createHash('sha256').update(JSON.stringify([input.requestKey, domain.id])).digest('hex'),
-                membershipDeploymentId: input.deploymentId, membershipMachines }, context);
+                membershipDeploymentId: input.deploymentId, membershipMachines }, context, undefined, input.reconcileTunnelConnectorsOnly);
             if (isActionExecuteFailure(result)) return result;
             const settled = DeploymentActionOutputSchemasV1['deployments.domains.add'].safeParse(result);
             if (!settled.success) return deploymentOutputValidationFailure('deployments.domains.add', undefined, settled.error);

@@ -82,17 +82,18 @@ const seedFs = vi.hoisted(() => ({ root: '' }));
 // checks ownership and digests, stages and atomically activates the seed.
 vi.mock('node:fs/promises', async importOriginal => {
     const actual = await importOriginal<typeof import('node:fs/promises')>();
+    const isolatedEtcPath = (value: unknown): value is string => !!seedFs.root && typeof value === 'string'
+        && ['/etc/cloudflared', '/etc/tmpfiles.d'].some(prefix => value === prefix || value.startsWith(prefix + '/'));
     const path = <T,>(value: T): T => {
         if (!seedFs.root || typeof value !== 'string') return value;
         if (value === '/var/lib/happier' || value.startsWith('/var/lib/happier/'))
             return (seedFs.root + '/state' + value.slice('/var/lib/happier'.length)) as T;
         if (value === '/run/happier-caddy' || value.startsWith('/run/happier-caddy/'))
             return (seedFs.root + '/admin' + value.slice('/run/happier-caddy'.length)) as T;
-        if (value === '/etc/cloudflared' || value.startsWith('/etc/cloudflared/'))
-            return (seedFs.root + '/cloudflared' + value.slice('/etc/cloudflared'.length)) as T;
+        if (isolatedEtcPath(value)) return (seedFs.root + value.slice('/etc'.length)) as T;
         return value;
     };
-    const protectedConnectorPath = (value: unknown) => seedFs.root && typeof value === 'string'
+    const protectedConnectorPath = (value: unknown) => typeof value === 'string' && !!seedFs.root
         && (value === '/etc/cloudflared' || value.startsWith('/etc/cloudflared/'));
     return { ...actual,
         lstat: async (...args: Parameters<typeof actual.lstat>) => {
@@ -109,7 +110,7 @@ vi.mock('node:fs/promises', async importOriginal => {
         },
         mkdtemp: async (...args: Parameters<typeof actual.mkdtemp>) => {
             const physical = await actual.mkdtemp(path(args[0]), args[1]);
-            return protectedConnectorPath(args[0]) ? '/etc/cloudflared' + String(physical).slice((seedFs.root + '/cloudflared').length)
+            return isolatedEtcPath(args[0]) ? '/etc' + String(physical).slice(seedFs.root.length)
                 : seedFs.root && String(args[0]).startsWith('/var/lib/happier/')
                     ? '/var/lib/happier' + String(physical).slice((seedFs.root + '/state').length) : physical;
         },
@@ -178,6 +179,8 @@ async function observed(address: string, port: number, edge = false,
         await chmod(join(root, 'state'), 0o711);
         await chmod(join(root, 'state', 'caddy'), 0o750);
         await chmod(join(root, 'admin'), 0o750);
+        await mkdir('/etc/tmpfiles.d', { mode: 0o755 });
+        await chmod('/etc/tmpfiles.d', 0o755);
         for (const name of ['data', 'config', 'logs']) {
             await mkdir(`/var/lib/happier/caddy/${name}`, { mode: 0o700 });
             await chmod(`/var/lib/happier/caddy/${name}`, 0o700);
@@ -291,8 +294,10 @@ async function observed(address: string, port: number, edge = false,
         container.NetworkSettings.Networks = { incumbent_default: { IPAddress: '172.18.0.2' } };
     }
     nativeDocker.set(containerNetwork.retainedSeed === undefined ? socketPath : '/run/happier-caddy/admin.sock', { engineId: 'engine-a', async run(args, signal) {
-        if (containerNetwork.retainedSeed !== undefined && args.some(arg => arg.startsWith('name=^/happier-cloudflared-')))
-            return { exitCode: 0, stdout: JSON.stringify(retainedConnector.id), stderr: '' };
+        if (containerNetwork.retainedSeed !== undefined && args.some(arg => arg.startsWith('name=^/happier-cloudflared-'))) {
+            const listed = args.includes('{{json .Names}}') ? `happier-cloudflared-${retainedConnector.subject.connectorId}` : retainedConnector.id;
+            return { exitCode: 0, stdout: JSON.stringify(listed), stderr: '' };
+        }
         if (containerNetwork.retainedSeed !== undefined && args.includes(retainedConnector.id)) {
             if (args.includes('inspect')) return { exitCode: 0, stdout: JSON.stringify([{
                 Id: retainedConnector.id, Name: `/happier-cloudflared-${retainedConnector.subject.connectorId}`, State: { Running: true },
@@ -569,6 +574,10 @@ it.skipIf(process.platform === 'win32')('selects one container origin common to 
         { machineId: 'a', installationId: 'installed-a', containerId: 'caddy-100.70.0.2', networkName: 'network-a', nativeServer: 'private_app' },
         { machineId: 'b', installationId: 'installed-b', containerId: 'caddy-100.70.0.3', networkName: 'network-b', nativeServer: 'private_app' },
     ] } });
+    expect(selectDomainCaddyPlacements({ ingress: { kind: 'cloudflareTunnel', connectorsPerMachine: 12 },
+        members: [member, peer] })).toMatchObject({ status: 'ready', tunnelOrigin: { connectorsPerMachine: 12 } });
+    expect(selectDomainCaddyPlacements({ ingress: { kind: 'cloudflareTunnel', connectorsPerMachine: 13 },
+        members: [member, peer] })).toMatchObject({ status: 'unavailable', details: { requiredFact: 'cloudflareTunnelConnectorLimit' } });
     if (selected.status !== 'ready') throw new Error('Expected a shared native origin');
     const topology = DeploymentDomainTopologyV1Schema.parse({ members: [member, peer].map(({ machineId, installationId }) => ({ machineId, installationId })),
         machines: [member, peer].map(({ machineId, installationId, dockerEngineId, caddy }) => ({
@@ -1515,7 +1524,7 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
             expect(result).toMatchObject({ ok: false, errorCode: 'native_route_unavailable' });
             expect(admissions).toHaveLength(1);
             expect(children).toHaveLength(1);
-            expect(children[0]?.topology?.tunnelOrigin).toEqual({ service: 'http://172.18.0.2:9381', members: [
+            expect(children[0]?.topology?.tunnelOrigin).toEqual({ service: 'http://172.18.0.2:9381', connectorsPerMachine: 1, members: [
                 { machineId: 'a', installationId: 'installed-a', containerId: 'caddy-100.70.0.2', networkName: 'exact_generation', nativeServer: 'private_app' },
                 { machineId: 'b', installationId: 'installed-b', containerId: 'caddy-100.70.0.3', networkName: 'exact_generation', nativeServer: 'private_app' },
             ] });

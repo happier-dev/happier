@@ -157,7 +157,8 @@ it.each(['connector grant authorization refused', 'create connector grant author
     environment.environment.owner = { kind: 'account', accountId: 'owner' };
     const domainIngressOnly = scenario === 'authored domain ingress' || scenario === 'authored domain ingress null configuration' || scenario === 'authored domain DNS refused';
     if (domainIngressOnly || scenario === 'recovery Add no recorded ingress' || scenario === 'recovery Add no recorded ingress multiple members') delete environment.content.ingress;
-    else environment.content.ingress = { kind: 'cloudflareTunnel' };
+    else environment.content.ingress = { kind: 'cloudflareTunnel',
+        ...(scenario === 'connector admitted Domain child proof' ? { connectorsPerMachine: 2 } : {}) };
     // The creating Domain has already been removed. Only the Environment
     // retains its creation proof by exact Cloudflare account and tunnel.
     const environmentContent = sharedCreation ? { ...environment.content, cloudflareTunnels: [{
@@ -865,7 +866,8 @@ it.each(['connector grant authorization refused', 'create connector grant author
                 expect(nativeJobs[0]).toMatchObject({ expectedDomainRevision: 1, actionOperationId: 'domain-operation',
                     capture: { content: { contentBodyVersion: 2 }, placement: { nativeServer: 'private_app' } },
                     cloudflareConnector: { tunnelId: 'reviewed-tunnel', networkName: 'environment_default', grantRef,
-                        connector: vendorController.connector } });
+                        connector: vendorController.connector,
+                        ...(scenario === 'connector admitted Domain child proof' ? { connectorsPerMachine: 2 } : {}) } });
                 if (creatingTunnel) expect(nativeJobs[0]).toMatchObject({ capture: { environmentContent: { contentBodyVersion: 2 } } });
             }
         }

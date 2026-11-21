@@ -222,7 +222,13 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
     }
     // Keep the refusal until the deployed-current-image producer and ingress
     // owner are both mounted. Native success alone never commits membership.
-    if (joining.length && !host.enrollMemberRoutes) {
+    const desiredIngress = receipt.content.ingress;
+    const servingIngress = admitted.selected?.content.ingress;
+    const reconcileTunnelConnectorsOnly = joining.length === 0 && admitted.selected !== undefined
+        && request.actionId !== 'deployments.rollback' && desiredIngress?.kind === 'cloudflareTunnel'
+        && (desiredIngress.connectorsPerMachine !== undefined
+            || servingIngress?.kind === 'cloudflareTunnel' && servingIngress.connectorsPerMachine !== undefined);
+    if ((joining.length || reconcileTunnelConnectorsOnly) && !host.enrollMemberRoutes) {
         return rejectBeforeEffects('unsupported_action');
     }
     const versions = await host.readMemberVersions?.({ environmentId: receipt.deployment.environmentId,
@@ -275,11 +281,11 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
                     ...receipt.content, failure: projectFailure('restore', receipt.content.machineResults.some(row =>
                         row.health === 'unknown' || row.health === 'unhealthy') ? 'deployment_health_failed' : 'deployment_conflict') });
             }
-            if (joining.length) {
+            if (joining.length || reconcileTunnelConnectorsOnly) {
                 // The ingress owner reconciles the complete admitted member set,
                 // after every joining receiver has restored serving U.
                 const enrolled = await host.enrollMemberRoutes!(request, { link: admitted.link,
-                    signal: initial.signal });
+                    signal: initial.signal, ...(reconcileTunnelConnectorsOnly ? { reconcileTunnelConnectorsOnly: true } : {}) });
                 await read();
                 if (!current()) return finishChild(enrolled);
                 if (!enrolled.ok) return await write(enrolled.errorCode === 'outcome_unknown' ? 'outcome_unknown' : 'failed',

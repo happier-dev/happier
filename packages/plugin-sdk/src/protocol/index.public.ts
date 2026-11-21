@@ -203,6 +203,8 @@ export {
     ProtocolDeploymentSourceIntentV1Schema,
     ProtocolDeploymentReceiptOperationV1Schema,
     ProtocolDeploymentControllerAvailabilityV1Schema,
+    DEFAULT_CLOUDFLARE_TUNNEL_CONNECTORS_PER_MACHINE,
+    ProtocolCloudflareTunnelConnectorsPerMachineV1Schema,
     DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
     deploymentRevisionShortLabelV1,
     readDeploymentFailureRecoveryV1,

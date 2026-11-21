@@ -22,6 +22,7 @@ export { ConversationPullRequestV1Fields } from './conversationDelivery.js';
 export { ConversationPullRequestV1Schema } from './conversationDelivery.js';
 export { ConversationResolvedEndpointV1ProtocolSchema } from './conversationDelivery.js';
 export { DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1 } from './protocolFacade.js';
+export { DEFAULT_CLOUDFLARE_TUNNEL_CONNECTORS_PER_MACHINE } from './deployment.js';
 export { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from './deployment.js';
 export { DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from './deployment.js';
 export { DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from './deployment.js';
@@ -101,6 +102,7 @@ export { ProtocolActionApprovalRequestCreatedResultSchema } from './actionApprov
 export type { ProtocolArrayOptions } from './protocolFacade.js';
 export { ProtocolArtifactGetOutputV1Schema } from './artifact.js';
 export { ProtocolAutomationTriggerRevisionV1Schema } from './automationTriggerIdentity.js';
+export { ProtocolCloudflareTunnelConnectorsPerMachineV1Schema } from './deployment.js';
 export type { ProtocolCollectionOpaqueCursorV1 } from './collectionCursor.js';
 export { ProtocolCollectionOpaqueCursorV1Schema } from './collectionCursor.js';
 export type { ProtocolComposableSchema } from './protocolFacade.js';

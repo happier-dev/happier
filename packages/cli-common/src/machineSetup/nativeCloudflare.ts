@@ -1,12 +1,14 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import type { MachineRecipeStepV1, MachineSetupApplyResultV1 } from './index.js';
 import type { MachineSetupNativeCommand, MachineSetupNativeCommandResult } from './nativeBackend.js';
+import { CLOUDFLARE_TUNNEL_CONNECTOR_LIMIT, DEFAULT_CLOUDFLARE_TUNNEL_CONNECTORS_PER_MACHINE } from '@happier-dev/protocol/deployments/cloudflareTunnelConnectorsV1';
 import { compareVersions } from '../update/compareVersions.js';
 
 /** Actor-selected private Domain config, never a host-selected image default. */
 export type NativeCloudflareConnectorSelection = Readonly<{ imageRef: string; version: string }>;
 export type NativeCloudflareConnectorInput = Readonly<{
     tunnelId: string; connector: NativeCloudflareConnectorSelection;
+    connectorsPerMachine?: number;
     /** P41's captured container origin supplies this exact network. */
     networkName: string; grantRef: string;
 }>;
@@ -46,7 +48,10 @@ function object(value: unknown): Record<string, unknown> | undefined { return is
 function tokenPath(tunnelId: string): string {
     return `/etc/cloudflared/happier-${encodeURIComponent(tunnelId)}.token`;
 }
-function containerName(tunnelId: string): string { return `happier-cloudflared-${tunnelId}`; }
+function containerName(tunnelId: string, index = 1): string {
+    const base = `happier-cloudflared-${tunnelId}`;
+    return index === 1 ? base : `${base}-${index}`;
+}
 function command(input: ContainerInput): string[] {
     // The empty CLI token overrides image env/config token defaults. The
     // vendor then reads token-file; no credential bytes occur in arguments.
@@ -79,12 +84,13 @@ export function createCloudflareConnectorRemovalSteps(input: Pick<NativeCloudfla
         owner: 'root', group: 'root', mode: 0o600,
         content: { kind: 'secretGrant', grantRef: input.grantRef } }];
 }
+function escapeDockerName(name: string): string { return name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
 type OwnedContainer = Readonly<{ status: 'observed'; containerId: string; running: boolean; restarts: number }>;
-async function inspect(input: ContainerInput, options: NativeOptions): Promise<OwnedContainer
+async function inspect(input: ContainerInput, options: NativeOptions, name: string): Promise<OwnedContainer
     | Exclude<NativeCloudflareConnectorObservation, { status: 'ready' | 'stopped' }>> {
-    const name = containerName(input.tunnelId);
     const listed = await runDocker(options, ['container', 'ls', '--all', '--no-trunc', '--filter',
-        `name=^/${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, '--format', '{{json .ID}}']);
+        `name=^/${escapeDockerName(name)}$`, '--format', '{{json .ID}}']);
     if (listed.code !== 0) return unavailable('required_fact_unavailable', 'cloudflare_connector_inventory');
     let ids: unknown[];
     try { ids = listed.stdout.trim() ? listed.stdout.trim().split('\n').map(line => JSON.parse(line)) : []; }
@@ -124,14 +130,14 @@ async function inspect(input: ContainerInput, options: NativeOptions): Promise<O
         restarts: typeof state.RestartCount === 'number' ? state.RestartCount : 0 };
 }
 type Connecting = Readonly<{ status: 'connecting' }>;
-async function observe(input: NativeCloudflareConnectorInput, options: NativeOptions): Promise<NativeCloudflareConnectorObservation>;
-async function observe(input: NativeCloudflareConnectorInput, options: NativeOptions,
+async function observe(input: NativeCloudflareConnectorInput, options: NativeOptions, name: string): Promise<NativeCloudflareConnectorObservation>;
+async function observe(input: NativeCloudflareConnectorInput, options: NativeOptions, name: string,
     started: true): Promise<NativeCloudflareConnectorObservation | Connecting>;
-async function observe(input: NativeCloudflareConnectorInput, options: NativeOptions,
+async function observe(input: NativeCloudflareConnectorInput, options: NativeOptions, name: string,
     started = false): Promise<NativeCloudflareConnectorObservation | Connecting> {
     options.signal?.throwIfAborted();
     try {
-        const container = await inspect(input, options);
+        const container = await inspect(input, options, name);
         if (container.status !== 'observed') return container;
         if (!container.running || started && container.restarts > 0) return { status: 'stopped', containerId: container.containerId };
         const version = await runDocker(options, ['exec', '--user', '0:0', container.containerId, 'cloudflared', '--version']);
@@ -152,7 +158,14 @@ async function observe(input: NativeCloudflareConnectorInput, options: NativeOpt
 export async function observeNativeCloudflareConnector(input: NativeCloudflareConnectorInput,
     options: NativeOptions): Promise<NativeCloudflareConnectorObservation> {
     if (!supportedVersion(input.connector.version)) return unavailable('required_fact_unavailable', 'supported_cloudflare_connector_version');
-    return observe(input, options);
+    const count = input.connectorsPerMachine ?? DEFAULT_CLOUDFLARE_TUNNEL_CONNECTORS_PER_MACHINE;
+    const primary = await observe(input, options, containerName(input.tunnelId));
+    if (primary.status !== 'ready') return primary;
+    for (let index = 2; index <= count; index++) {
+        const observed = await observe(input, options, containerName(input.tunnelId, index));
+        if (observed.status !== 'ready') return observed;
+    }
+    return primary;
 }
 /** Same admitted native operation, after the real P20 file result. No service
  * process belongs to Happier's daemon lifetime, and no local retry is added.
@@ -160,19 +173,31 @@ export async function observeNativeCloudflareConnector(input: NativeCloudflareCo
  * selection, then recreation with the NEW one; config mismatch never authorizes
  * deleting a container. Actual version/readiness failure after start stays an
  * honest partial outcome rather than pretending the root file was not written. */
+type ApplyOptions = NativeOptions & Readonly<{ setupResult: MachineSetupApplyResultV1 }>;
 export async function ensureNativeCloudflareConnector(input: NativeCloudflareConnectorInput,
-    options: NativeOptions & Readonly<{ setupResult: MachineSetupApplyResultV1 }>): Promise<NativeCloudflareConnectorResult> {
+    options: ApplyOptions): Promise<NativeCloudflareConnectorResult> {
     options.signal?.throwIfAborted();
     if (options.setupResult.status !== 'applied') return { status: 'needs_setup' };
     if (!supportedVersion(input.connector.version)) return unavailable('required_fact_unavailable', 'supported_cloudflare_connector_version');
+    const count = input.connectorsPerMachine ?? DEFAULT_CLOUDFLARE_TUNNEL_CONNECTORS_PER_MACHINE;
+    const primary = await ensureReplica(input, options, containerName(input.tunnelId));
+    if (primary.status !== 'ready') return primary;
+    for (let index = 2; index <= count; index++) {
+        const replica = await ensureReplica(input, options, containerName(input.tunnelId, index));
+        if (replica.status !== 'ready') return replica;
+    }
+    const retired = await removeReplicas(input, options, count);
+    return retired.status === 'removed' ? primary : retired;
+}
+async function ensureReplica(input: NativeCloudflareConnectorInput, options: ApplyOptions, name: string): Promise<NativeCloudflareConnectorResult> {
     let issued = false;
     try {
-        const container = await inspect(input, options);
+        const container = await inspect(input, options, name);
         if (container.status === 'unavailable') return container;
         let id: string;
         if (container.status === 'needs_setup') {
             issued = true;
-            const created = await runDocker(options, ['container', 'create', '--name', containerName(input.tunnelId),
+            const created = await runDocker(options, ['container', 'create', '--name', name,
                 '--label', `${ownerLabel}=${ownerValue}`, '--restart', 'unless-stopped', '--user', '0:0',
                 '--network', input.networkName, '--entrypoint', 'cloudflared', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
                 '--mount', `type=bind,src=${tokenPath(input.tunnelId)},dst=${tokenPath(input.tunnelId)},readonly`,
@@ -191,11 +216,11 @@ export async function ensureNativeCloudflareConnector(input: NativeCloudflareCon
                 if (settled.code !== 0) return { status: 'outcome_unknown', reason: 'native_effect_failed' };
             }
         }
-        if (!issued) return await observe(input, options);
+        if (!issued) return await observe(input, options, name);
         // The started container's own exit and the operation's cancel bound
         // this wait; a connector that never connects stays visibly pending.
         for (;;) {
-            const verified = await observe(input, options, true);
+            const verified = await observe(input, options, name, true);
             if (verified.status === 'ready') return verified;
             if (verified.status === 'stopped') return { status: 'outcome_unknown', reason: 'native_effect_failed',
                 details: { requiredFact: 'cloudflare_connector_running' } };
@@ -213,10 +238,42 @@ export async function ensureNativeCloudflareConnector(input: NativeCloudflareCon
  * never unlink the protected file from this container adapter. */
 export async function removeNativeCloudflareConnector(input: ContainerInput,
     options: NativeOptions): Promise<NativeCloudflareConnectorRemovalResult> {
+    return removeReplicas(input, options, 0);
+}
+
+async function removeReplicas(input: ContainerInput, options: NativeOptions, retained: number): Promise<NativeCloudflareConnectorRemovalResult> {
     options.signal?.throwIfAborted();
+    let names: unknown[];
+    const primary = containerName(input.tunnelId);
+    try {
+        const listed = await runDocker(options, ['container', 'ls', '--all', '--filter',
+            `name=^/${escapeDockerName(primary)}(-[0-9]+)?$`, '--format', '{{json .Names}}']);
+        if (listed.code !== 0) return unavailable('required_fact_unavailable', 'cloudflare_connector_inventory');
+        names = listed.stdout.trim() ? listed.stdout.trim().split('\n').map(line => JSON.parse(line)) : [];
+    } catch {
+        options.signal?.throwIfAborted();
+        return unavailable('required_fact_unavailable', 'cloudflare_connector_inventory');
+    }
+    const ownedNames = new Set<string>();
+    for (const name of names) {
+        if (typeof name !== 'string' || name !== primary && !name.startsWith(`${primary}-`)) {
+            return unavailable('required_fact_unavailable', 'cloudflare_connector_inventory');
+        }
+        const index = name === primary ? 1 : Number(name.slice(primary.length + 1));
+        if (Number.isInteger(index) && index > retained && index <= CLOUDFLARE_TUNNEL_CONNECTOR_LIMIT
+            && name === containerName(input.tunnelId, index)) ownedNames.add(name);
+    }
+    for (const name of ownedNames) {
+        const removed = await removeReplica(input, options, name);
+        if (removed.status !== 'removed') return removed;
+    }
+    return { status: 'removed' };
+}
+
+async function removeReplica(input: ContainerInput, options: NativeOptions, name: string): Promise<NativeCloudflareConnectorRemovalResult> {
     let issued = false;
     try {
-        const container = await inspect(input, options);
+        const container = await inspect(input, options, name);
         if (container.status === 'unavailable') return container;
         if (container.status === 'needs_setup') return { status: 'removed' };
         issued = true;

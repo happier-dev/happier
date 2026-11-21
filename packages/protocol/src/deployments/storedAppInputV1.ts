@@ -15,6 +15,7 @@ import { AutomationTriggerIdSchema, AutomationTriggerRevisionSchema } from '../a
 import { AutomationOccurrenceKeyV1Schema } from '../automations/automationOccurrenceKeyV1.js';
 import { ProjectSourcesCreateInputV1Schema, ProjectSourceOwnerV1Schema } from '../projects/sources/projectSourceV1.js';
 import { WorkspaceManifestRelativePathSchema } from '../workspaces/manifestSchema.js';
+import { CloudflareTunnelConnectorsPerMachineV1Schema } from './cloudflareTunnelConnectorsV1.js';
 
 /** Source syntax only; native Compose remains the effective model and merge owner. */
 export async function parseDeploymentComposeSourceV1(document: string): Promise<Record<string, unknown>> {
@@ -76,9 +77,9 @@ export const OwnServerEnvironmentConfigurationV1Schema = z.strictObject({
 });
 export type OwnServerEnvironmentConfigurationV1 = z.infer<typeof OwnServerEnvironmentConfigurationV1Schema>;
 
-/** Multi-server ingress intent. Source/placement admission validates the referenced edge. */
+/** Environment ingress intent. Source/placement admission validates the referenced edge and serving topology. */
 export const DeploymentIngressV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-    z.strictObject({ kind: z.literal('cloudflareTunnel') }),
+    z.strictObject({ kind: z.literal('cloudflareTunnel'), connectorsPerMachine: z.optional(CloudflareTunnelConnectorsPerMachineV1Schema) }),
     z.strictObject({ kind: z.literal('edgeCaddy'), edgeMachineId: id }),
 ]));
 export type DeploymentIngressV1 = z.infer<typeof DeploymentIngressV1Schema>;

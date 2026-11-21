@@ -227,6 +227,7 @@ const missingFacts = {
     cloudflare_selection_required: recovery('Choose the Cloudflare account and tunnel for this address before adding it.', 'domains', 'Choose Cloudflare tunnel'),
     domain_ingress_required: recovery('Choose how this address reaches the app before adding it to an Environment with several machines.', 'domains', 'Choose address route'),
     activeDomainMembers: recovery('Nothing is serving this app yet. Deploy it, then add the address.', 'deploy', 'Deploy'),
+    cloudflareTunnelConnectorLimit: recovery('Cloudflare limits the total connectors per tunnel. Lower the connector count per Machine or reduce the number of serving Machines, then apply again.', 'settings', 'Environment settings'),
     memberCaddyObservation: recovery('Happier could not read the address proxy on a serving machine. Reconnect the machine and check its services.', 'machines', 'Check address proxy'),
     publicCaddyObservation: recovery('Happier could not read the public address proxy. Reconnect the edge machine and check its services.', 'machines', 'Check public proxy'),
     edgeCaddyMachine: recovery('The edge machine selected for this address is unavailable. Reconnect it or choose another route.', 'domains', 'Change edge route'),

@@ -1,4 +1,6 @@
 import { projectZodProtocolSchema } from '@happier-dev/protocol/plugins/actions/internalProtocolZodAdapter';
+import { CloudflareTunnelConnectorsPerMachineV1Schema } from '@happier-dev/protocol/deployments/cloudflareTunnelConnectorsV1';
+export { DEFAULT_CLOUDFLARE_TUNNEL_CONNECTORS_PER_MACHINE } from '@happier-dev/protocol/deployments/cloudflareTunnelConnectorsV1';
 import { DeploymentDeploySemanticInputV1Schema, type DeploymentDeploySemanticInputV1 } from '@happier-dev/protocol/deployments/deploymentDeployIntentV1';
 import { DeploymentCorrelationV1Schema, type DeploymentCorrelationV1 } from '@happier-dev/protocol/deployments/deploymentReceiptContentV1';
 import { DeploymentEnvironmentHeaderV1Schema, type DeploymentEnvironmentHeaderV1, DeploymentReceiptHeaderV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -76,6 +78,8 @@ export type { DeploymentContentV1 } from '@happier-dev/protocol/deployments/depl
 export type { DeploymentReceiptFailureV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 
 /** Portable declarations use the original owners for parsing and JSON Schema. */
+export const ProtocolCloudflareTunnelConnectorsPerMachineV1Schema: ProtocolComposableSchema<unknown, number> =
+    projectZodProtocolSchema(CloudflareTunnelConnectorsPerMachineV1Schema);
 export const ProtocolDeploymentDeploySemanticInputV1Schema: ProtocolComposableSchema<unknown, DeploymentDeploySemanticInputV1> = projectZodProtocolSchema(DeploymentDeploySemanticInputV1Schema);
 export const ProtocolDeploymentCorrelationV1Schema: ProtocolComposableSchema<unknown, DeploymentCorrelationV1> = projectZodProtocolSchema(DeploymentCorrelationV1Schema);
 export const ProtocolDeploymentEnvironmentHeaderV1Schema: ProtocolComposableSchema<unknown, DeploymentEnvironmentHeaderV1> = projectZodProtocolSchema(DeploymentEnvironmentHeaderV1Schema);

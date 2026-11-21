@@ -14,7 +14,7 @@ const zoneListInput = { credentialRef, accountId, hostname: input.hostname, conn
 const zone = { id: zoneId, name: 'example.test', account: { id: accountId }, status: 'active', paused: false, type: 'full' };
 const tunnel = { id: '11111111-1111-4111-8111-111111111111', name: 'deliberate-tunnel', account_tag: accountId,
   config_src: 'cloudflare', deleted_at: null, status: 'inactive' };
-const defaults = { accountId, connector: { imageRef: 'cloudflare/cloudflared:2026.10.0', version: '2026.10.0' } };
+const defaults = { accountId, connectorsPerMachine: 1, connector: { imageRef: 'cloudflare/cloudflared:2026.10.0', version: '2026.10.0' } };
 const connectorDiscovery = { kind: 'unavailable', reason: 'connector_discovery_unavailable' };
 const selection = { provider: { kind: 'builtin', id: 'cloudflareNamed' },
   config: { hostname: input.hostname, controller: { accountId, zoneId, connector: input.connector,
@@ -109,7 +109,7 @@ it('reports missing selected provider account metadata without using the profile
       options: [], reason: 'account_id_unavailable', requiredFact: 'cloudflareAccountId', remedy: expect.any(String), defaults: { connector: { imageRef: expect.any(String), version: expect.any(String) } } });
     expect(state.requests).toEqual([]);
     expect(await state.invoke()).toEqual({ kind: 'ready', options: [{ label: tunnel.name, selection }], createOption,
-      defaults: { connector: defaults.connector }, connectorDiscovery });
+      defaults: { connector: defaults.connector, connectorsPerMachine: 1 }, connectorDiscovery });
   } finally { await state.kit.dispose(); }
 });
 

@@ -6,6 +6,7 @@ import { RPC_METHODS } from '../rpc/methods.js';
 import { sameStrictJsonValue, StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
 import { DeploymentArtifactContentReferenceV1Schema } from './deploymentArtifactContentReferenceV1.js';
+import { CloudflareTunnelConnectorsPerMachineV1Schema } from './cloudflareTunnelConnectorsV1.js';
 import { DEFAULT_DEPLOYMENT_ON_FAILURE_V1, EnvironmentSecretBindingV1Schema } from './storedAppInputV1.js';
 import { DeploymentBindingsSetInputV1Schema } from './deploymentBindingPatchV1.js';
 import { DeploymentDeployInputV1Schema, DeploymentDeployIntentInputV1Schema, DeploymentRollbackInputV1Schema, DeploymentRollbackIntentInputV1Schema } from './deploymentDeployIntentV1.js';
@@ -73,6 +74,7 @@ export const DeploymentDomainChildRpcV1Schema = lazyZodSchema(() => z.safeExtend
     /** Private admitted Account result; removal includes it only after the
      * Domain parent's existing last-consumer decision. */
     cloudflareConnector: z.optional(z.strictObject({ tunnelId: id,
+        connectorsPerMachine: z.optional(CloudflareTunnelConnectorsPerMachineV1Schema),
         connector: z.strictObject({ imageRef: id, version: id }), networkName: id, grantRef: id })),
 }));
 export type DeploymentDomainChildRpcV1 = z.infer<typeof DeploymentDomainChildRpcV1Schema>;

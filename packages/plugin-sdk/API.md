@@ -2587,6 +2587,7 @@
 | `./protocol` | `ConversationPullRequestV1Schema` | value | any |
 | `./protocol` | `ConversationResolvedEndpointV1ProtocolSchema` | value | any |
 | `./protocol` | `DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1` | value | any |
+| `./protocol` | `DEFAULT_CLOUDFLARE_TUNNEL_CONNECTORS_PER_MACHINE` | value | any |
 | `./protocol` | `DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1` | value | any |
 | `./protocol` | `DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1` | value | any |
 | `./protocol` | `DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1` | value | any |
@@ -2666,6 +2667,7 @@
 | `./protocol` | `ProtocolArrayOptions` | type | any |
 | `./protocol` | `ProtocolArtifactGetOutputV1Schema` | value | any |
 | `./protocol` | `ProtocolAutomationTriggerRevisionV1Schema` | value | any |
+| `./protocol` | `ProtocolCloudflareTunnelConnectorsPerMachineV1Schema` | value | any |
 | `./protocol` | `ProtocolCollectionOpaqueCursorV1` | type | any |
 | `./protocol` | `ProtocolCollectionOpaqueCursorV1Schema` | value | any |
 | `./protocol` | `ProtocolComposableSchema` | type | any |

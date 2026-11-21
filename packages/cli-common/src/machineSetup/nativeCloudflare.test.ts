@@ -38,7 +38,7 @@ function fixture() {
         HostConfig: { NetworkMode: string; RestartPolicy: { Name: string }; Binds: null; Mounts: Array<{ Type: string; Source: string; Target: string; ReadOnly: boolean }>;
             PortBindings: object; Privileged: false; ReadonlyRootfs: true; PublishAllPorts: false; CapAdd: null; CapDrop: string[]; SecurityOpt: string[] };
         NetworkSettings: { Networks: Record<string, object> }; State: { Running: boolean; RestartCount?: number } };
-    let container: Container | undefined;
+    const containers = new Map<string, Container>();
     // Docker is the genuine process/OS boundary. Native selection, ownership,
     // command construction, interpreter settlement and redaction remain real.
     const run = async (command: MachineSetupNativeCommand): Promise<MachineSetupNativeCommandResult> => {
@@ -46,7 +46,14 @@ function fixture() {
         commands.push(command);
         expect(command.executable).toBe('docker');
         const args = command.args;
-        if (args[0] === 'container' && args[1] === 'ls') return ok(container ? JSON.stringify(container.Id) + '\n' : '');
+        if (args[0] === 'container' && args[1] === 'ls') {
+            const filter = args[args.indexOf('--filter') + 1];
+            const name = new RegExp(filter.slice('name='.length));
+            const format = args[args.indexOf('--format') + 1];
+            return ok([...containers.values()].filter(container => name.test(container.Name))
+                .map(container => JSON.stringify(format === '{{json .Names}}' ? container.Name.slice(1) : container.Id)).join('\n'));
+        }
+        const container = [...containers.values()].find(candidate => candidate.Id === args.at(-1));
         if (args[0] === 'container' && args[1] === 'inspect') return container ? ok(JSON.stringify([container])) : { code: 1, stdout: '', stderr: '' };
         if (args[0] === 'container' && args[1] === 'create') {
             const value = (flag: string) => {
@@ -58,7 +65,9 @@ function fixture() {
             const mount = Object.fromEntries(value('--mount').split(',').map(part => part.split('=')));
             const image = value('--');
             if (!mount.type || !mount.src || !mount.dst) throw new Error('Missing bind mount operand');
-            container = { Id: 'owned-connector', Name: `/${value('--name')}`,
+            const name = value('--name');
+            if (containers.has(name)) throw new Error('Duplicate connector name');
+            const container: Container = { Id: containers.size === 0 ? 'owned-connector' : `owned-${name}`, Name: `/${name}`,
                 Config: { Image: image, Entrypoint: [value('--entrypoint')],
                     Cmd: [...args.slice(args.indexOf('--') + 2)], User: value('--user'), Labels: labels },
                 HostConfig: { NetworkMode: value('--network'), RestartPolicy: { Name: value('--restart') }, Binds: null,
@@ -66,6 +75,7 @@ function fixture() {
                     PortBindings: {}, Privileged: false, ReadonlyRootfs: true, PublishAllPorts: false,
                     CapAdd: null, CapDrop: [value('--cap-drop')], SecurityOpt: [value('--security-opt')] },
                 NetworkSettings: { Networks: { [value('--network')]: {} } }, State: { Running: false } };
+            containers.set(name, container);
             if (lostCreate) { lostCreate = false; throw new Error('lost create acknowledgement'); }
             return ok(container.Id);
         }
@@ -77,7 +87,11 @@ function fixture() {
             if (!container) throw new Error('Missing container');
             container.State.Running = false; return ok(container.Id);
         }
-        if (args[0] === 'container' && args[1] === 'rm') { container = undefined; return ok(); }
+        if (args[0] === 'container' && args[1] === 'rm') {
+            if (!container || container.State.Running) throw new Error('Connector must be stopped before removal');
+            containers.delete(container.Name.slice(1));
+            return ok();
+        }
         if (args[0] === 'exec' && args.at(-1) === '--version') return ok(`cloudflared version ${version} (test build)\n`);
         if (args[0] === 'exec' && args.at(-1) === 'ready') {
             const answer = readyAnswers.length > 0 ? readyAnswers.shift()! : readable;
@@ -86,7 +100,8 @@ function fixture() {
         }
         throw new Error('Unexpected Docker operation');
     };
-    return { commands, run, get container() {
+    return { commands, run, containers, get container() {
+        const container = containers.values().next().value;
         if (!container) throw new Error('Missing container');
         return container;
     }, version: (value: string) => { version = value; },
@@ -118,6 +133,33 @@ it('starts a persistent private connector with the exact selected image, reader 
     const before = f.commands.length;
     expect(await ensureNativeCloudflareConnector(input, { run: f.run, setupResult: await settled() })).toEqual({ status: 'ready', containerId: 'owned-connector' });
     expect(f.commands.slice(before).filter(command => ['create', 'start', 'restart'].includes(command.args[1] ?? ''))).toHaveLength(0);
+});
+
+it('reconciles three same-token replicas down to the original connector and retires all replicas', async () => {
+    const f = fixture();
+    const setupResult = await settled();
+    const options = { run: f.run, setupResult };
+    const name = `happier-cloudflared-${input.tunnelId}`;
+    const three = { ...input, connectorsPerMachine: 3 };
+
+    expect((await ensureNativeCloudflareConnector(input, options)).status).toBe('ready');
+    expect([...f.containers.keys()]).toEqual([name]);
+    const original = f.container.Id;
+
+    expect((await ensureNativeCloudflareConnector(three, options)).status).toBe('ready');
+    expect([...f.containers.keys()]).toEqual([name, `${name}-2`, `${name}-3`]);
+    expect([...f.containers.values()].every(container => container.State.Running &&
+        container.HostConfig.Mounts[0]?.Source === tokenPath)).toBe(true);
+
+    expect((await ensureNativeCloudflareConnector(input, options)).status).toBe('ready');
+    expect([...f.containers.keys()]).toEqual([name]);
+    expect(f.container.Id).toBe(original);
+
+    expect((await ensureNativeCloudflareConnector(three, options)).status).toBe('ready');
+    // Retirement observes the owned set even if the final adopter was captured
+    // before the Environment's count changed.
+    expect(await removeNativeCloudflareConnector(input, options)).toEqual({ status: 'removed' });
+    expect(f.containers.size).toBe(0);
 });
 
 it('does not treat User 0 or a matching image label as reader or actual-version evidence', async () => {

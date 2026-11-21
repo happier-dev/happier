@@ -63,7 +63,7 @@ export function createDaemonDeploymentChildExecutor(host: OwnServerDeploymentTar
             || content.ownServer
                 && !isDeepStrictEqual(content.ownServer.imageArchives, promotion.sourceReceipt.content.ownServer?.imageArchives)
             || content.buildMachineId !== promotion.buildMachineId
-            || !isDeepStrictEqual(content.ingress, promotion.destination.environment.ingress)
+            || !isDeepStrictEqual(content.ingress, promotion.destination.content.ingress)
             || content.steps.length || content.machineResults.length) {
             throw createActionExecuteFailureError({ ok: false, errorCode: 'target_mismatch', error: 'target_mismatch' });
         }

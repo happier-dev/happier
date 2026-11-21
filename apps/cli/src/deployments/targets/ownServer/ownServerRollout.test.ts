@@ -900,9 +900,10 @@ it.each(['action_forbidden', 'outcome_unknown'] as const)(
     expect(receipt.content.machineResults[0]).toMatchObject({ activation: 'succeeded', currentDeploymentId: receipt.deployment.id });
 });
 
-it.each(['offline', 'unknown', 'staleSettlement', 'revokedSettlement', 'missingBaseline', 'missingPlatform', 'missingVariant', 'lostAck', 'buildLostAck', 'incompleteBuild', 'baselineObserve', 'baselineObserveLostAck', 'keepPartialBaselineObserve', 'joiningNoRoute', 'joiningWriteRejected', 'joiningHealthy', 'joiningStored', 'joiningStoredEdited', 'joiningChangedRepository', 'joiningChangedStored', 'joiningChangedConfiguration', 'joiningMixed', 'joiningMultiple', 'joiningUnhealthy', 'joiningRouteRefused'] as const)('keeps %s transport settlement truthful without early aggregate success or uncertain replay', async mode => {
+it.each(['offline', 'unknown', 'staleSettlement', 'revokedSettlement', 'missingBaseline', 'missingPlatform', 'missingVariant', 'lostAck', 'buildLostAck', 'incompleteBuild', 'baselineObserve', 'baselineObserveLostAck', 'keepPartialBaselineObserve', 'joiningNoRoute', 'joiningWriteRejected', 'joiningHealthy', 'joiningStored', 'joiningStoredEdited', 'joiningChangedRepository', 'joiningChangedStored', 'joiningChangedConfiguration', 'joiningMixed', 'joiningMultiple', 'joiningUnhealthy', 'joiningRouteRefused', 'scalingTunnel'] as const)('keeps %s transport settlement truthful without early aggregate success or uncertain replay', async mode => {
     const enrollJoining = mode.startsWith('joining') && mode !== 'joiningNoRoute' && mode !== 'joiningWriteRejected';
     const changedSource = mode === 'joiningChangedRepository' || mode === 'joiningChangedStored';
+    const scalingTunnel = mode === 'scalingTunnel';
     const environment = createDeploymentEnvironmentDetailV1();
     const noticeBoundary = ['offline', 'unknown', 'staleSettlement', 'revokedSettlement'].includes(mode) ? createSettlementNoticeHttpBoundary('https://home.test') : null;
     if (mode === 'unknown' || mode === 'staleSettlement') environment.environment.protection = 'production';
@@ -933,6 +934,10 @@ it.each(['offline', 'unknown', 'staleSettlement', 'revokedSettlement', 'missingB
         runtimeProjections: link.members.map(({ machineId, installationId }) => ({ machineId, installationId, ...nativeBasis, platform: 'linux/amd64' })) }) };
     const uniform = structuredClone(receipt);
     uniform.deployment = { ...uniform.deployment, id: 'uniform-v1', state: 'succeeded' };
+    if (scalingTunnel) {
+        uniform.content.ingress = { kind: 'cloudflareTunnel' };
+        receipt.content.ingress = environment.content.ingress = { kind: 'cloudflareTunnel', connectorsPerMachine: 2 };
+    }
     if (mode === 'joiningChangedConfiguration') {
         environment.content.ownServer = OwnServerEnvironmentConfigurationV1Schema.parse({ ...environment.content.ownServer,
             autoRestorePreviousRelease: !environment.content.ownServer?.autoRestorePreviousRelease });
@@ -1021,7 +1026,7 @@ it.each(['offline', 'unknown', 'staleSettlement', 'revokedSettlement', 'missingB
                 deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: input.state };
         },
         runtime: { async acquire() { throw new Error('Remote members must not acquire controller native custody'); } },
-        ...(enrollJoining ? { async enrollMemberRoutes(_request: OwnServerDeploymentRequest, input: OwnServerDeploymentMemberRouteEnrollmentForHost) {
+        ...(enrollJoining || scalingTunnel ? { async enrollMemberRoutes(_request: OwnServerDeploymentRequest, input: OwnServerDeploymentMemberRouteEnrollmentForHost) {
             expect(input.link.id).toBe(link.id);
             for (const joining of input.link.members.filter(member => member.state === 'joining')) {
                 expect(receipt.content.machineResults.find(row => row.machineId === joining.machineId
@@ -1029,7 +1034,8 @@ it.each(['offline', 'unknown', 'staleSettlement', 'revokedSettlement', 'missingB
                     currentDeploymentId: 'uniform-v1', restoration: 'succeeded', health: 'healthy' });
             }
             expect(buildDispatches).toBe(0);
-            expect(link.members[2].state).toBe('joining');
+            expect(link.members[2].state).toBe(scalingTunnel ? 'active' : 'joining');
+            if (scalingTunnel) expect(input).toMatchObject({ reconcileTunnelConnectorsOnly: true });
             dispatched.push('enroll');
             return mode === 'joiningRouteRefused' ? { ok: false as const, errorCode: 'native_route_unavailable', error: 'native_route_unavailable' }
                 : { ok: true as const, environmentId: environment.environment.id, revision: environment.environment.revision,
@@ -1040,7 +1046,7 @@ it.each(['offline', 'unknown', 'staleSettlement', 'revokedSettlement', 'missingB
             expect(receipt.deployment.state).toBe('running');
             expect(dispatched.filter(phase => !phase.startsWith('observe:'))).toEqual(enrollJoining
                 ? mode === 'joiningMultiple' ? ['restore:machine-c', 'restore:machine-d', 'enroll']
-                    : ['restore:machine-c', 'enroll'] : []);
+                    : ['restore:machine-c', 'enroll'] : scalingTunnel ? ['enroll'] : []);
             receipt.content.images = builtImages;
             const builderId = receipt.content.buildMachineId;
             const builderInstallationId = builderId === 'builder-c' ? 'installation-c' : 'installation-a';
@@ -1069,7 +1075,7 @@ it.each(['offline', 'unknown', 'staleSettlement', 'revokedSettlement', 'missingB
             if (mode === 'missingBaseline' || mode === 'missingPlatform' || mode === 'missingVariant' || mode === 'incompleteBuild') return { ok: false, errorCode: 'machine_unavailable', error: 'machine_unavailable' };
             if (input.phase === 'activate' && input.machineId === 'machine-a' && mode !== 'joiningNoRoute' && !enrollJoining) { beginActivation(); await activationGate; }
             if (input.phase !== 'observe' && input.machineId === 'machine-b' && mode !== 'joiningNoRoute'
-                && mode !== 'baselineObserve' && mode !== 'keepPartialBaselineObserve' && !enrollJoining) {
+                && mode !== 'baselineObserve' && mode !== 'keepPartialBaselineObserve' && !enrollJoining && !scalingTunnel) {
                 const errorCode = mode === 'unknown' || mode === 'staleSettlement' || mode === 'revokedSettlement' ? 'outcome_unknown' : 'machine_unavailable';
                 if (mode === 'unknown') return projectDeploymentTransitionOutcomeUnknownForHost({ response: {
                     status: 503, data: { error: 'database_transaction_conflict_exhausted' },
@@ -1124,6 +1130,13 @@ it.each(['offline', 'unknown', 'staleSettlement', 'revokedSettlement', 'missingB
         expect(uniform).toEqual(immutableUniform);
         // The server transition owner alone commits membership after final route proofs.
         expect(link.members[2].state).toBe('joining');
+        return;
+    }
+    if (scalingTunnel) {
+        continueActivation();
+        expect(await target.execute(request)).toMatchObject({ ok: true, state: 'succeeded' });
+        expect(dispatched).toContain('enroll');
+        expect(dispatched.indexOf('enroll')).toBeLessThan(dispatched.indexOf('activate:machine-a'));
         return;
     }
     if (mode === 'baselineObserve' || mode === 'keepPartialBaselineObserve') {

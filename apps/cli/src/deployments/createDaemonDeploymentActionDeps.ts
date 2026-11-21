@@ -573,7 +573,9 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         async enrollMemberRoutes(request, input) {
             const result = await domainActions.reconcileMembership({ environmentId: request.input.environmentId,
                 targetLinkId: input.link.id, deploymentId: request.receipt.deploymentId,
-                requestKey: request.input.requestKey }, { ...request.context, signal: input.signal });
+                requestKey: request.input.requestKey,
+                ...(input.reconcileTunnelConnectorsOnly ? { reconcileTunnelConnectorsOnly: true } : {}),
+            }, { ...request.context, signal: input.signal });
             return result ?? request.receipt;
         },
         async readExpectedDownDomains(request) {
@@ -1353,7 +1355,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     const initial = DeploymentContentV1Schema.parse({ sourceIntent, machines: link.machines,
                         ...(previewDomain ? { previewDomain } : {}),
                         ...(request.services ? { services: request.services } : {}),
-                        buildMachineId: builder, ...(environment.environment.ingress ? { ingress: environment.environment.ingress } : {}),
+                        buildMachineId: builder, ...(environment.content.ingress ? { ingress: environment.content.ingress } : {}),
                         onFailure: request.onFailure ?? DEFAULT_OWN_SERVER_DEPLOYMENT_ON_FAILURE, images: [], machineResults, steps: [] });
                     const created = await atHome(async () => createDeploymentArtifactForHost({ artifacts,
                         owner: environment.environment.owner,
