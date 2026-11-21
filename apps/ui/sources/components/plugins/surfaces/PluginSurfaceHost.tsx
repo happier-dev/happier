@@ -136,6 +136,7 @@ import {
     createCanonicalPluginReactNativeHostApiAdapter,
 } from '@/components/plugins/reactNative/hostApi';
 import { PluginSurfaceFallback, resolvePluginSurfaceStateAction } from '@/components/sessions/panes/PluginSurfaceFallback';
+import { readPluginSurfaceTransferFailureCodes } from '@/components/plugins/shared/pluginSurfaceDiagnosticLog';
 import {
     resolvePluginSurfaceStatePresentation,
     type PluginSurfacePresentationState,
@@ -1967,7 +1968,7 @@ function PluginSurfaceHostMount(props: Readonly<(
     const [declarationLoad, setDeclarationLoad] = React.useState<Readonly<{
         reader: PluginAccountAvailabilityReader;
         pluginId: string;
-        failed: boolean;
+        failure: 'plugin_ui_artifact_invalid' | 'artifact_source_unavailable' | null;
     }> | null>(null);
     const [declarationRetry, retryDeclaration] = React.useReducer((revision: number) => revision + 1, 0);
     const declarationAdmission = availabilityReader?.readCurrentAccountExecution(mountedPluginId);
@@ -1976,10 +1977,13 @@ function PluginSurfaceHostMount(props: Readonly<(
     React.useEffect(() => {
         if (!availabilityReader || !declarationPending) return;
         let active = true;
-        const settle = (failed: boolean) => {
-            if (active) setDeclarationLoad({ reader: availabilityReader, pluginId: mountedPluginId, failed });
+        const settle = (failure: NonNullable<typeof declarationLoad>['failure']) => {
+            if (active) setDeclarationLoad({ reader: availabilityReader, pluginId: mountedPluginId, failure });
         };
-        void availabilityReader.ensureCurrentAccountExecution(mountedPluginId).then(() => settle(false), () => settle(true));
+        void availabilityReader.ensureCurrentAccountExecution(mountedPluginId).then(() => settle(null), (error: unknown) => {
+            const { outcomeCode } = readPluginSurfaceTransferFailureCodes(error);
+            settle(outcomeCode === 'plugin_ui_declaration_invalid' ? 'plugin_ui_artifact_invalid' : 'artifact_source_unavailable');
+        });
         return () => { active = false; };
     }, [availabilityReader, declarationPending, declarationRetry, mountedPluginId]);
     // Registry projections are immutable for the lifetime of one render input.
@@ -3560,8 +3564,8 @@ function PluginSurfaceHostMount(props: Readonly<(
         return renderUnavailable(renderGate.reason, renderGate.state);
     }
     if (declarationPending) {
-        return declarationLoad?.failed && declarationLoad.reader === availabilityReader && declarationLoad.pluginId === mountedPluginId
-            ? renderUnavailable('plugin_ui_artifact_invalid', 'unavailable', retryDeclaration)
+        return declarationLoad?.failure && declarationLoad.reader === availabilityReader && declarationLoad.pluginId === mountedPluginId
+            ? renderUnavailable(declarationLoad.failure, 'unavailable', retryDeclaration)
             : renderUnavailable('plugin_ui_declaration_pending', 'loading');
     }
     // A retained Machine declaration still names the page while the Account

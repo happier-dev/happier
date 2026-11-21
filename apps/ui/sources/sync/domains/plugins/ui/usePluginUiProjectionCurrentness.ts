@@ -31,6 +31,7 @@ import { daemonProjectionHasSections, loadDaemonMergedProjectionCacheEntry, read
 import {
     useEndpointLastConnectedAt,
     useEndpointOnlineVerdict,
+    useEndpointStatus,
     useSetting,
 } from '@/sync/domains/state/storage';
 import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
@@ -288,6 +289,7 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
         targetKey && machineId ? { machineId, serverId } : null
     ), [machineId, serverId, targetKey]);
     const endpointOnline = useEndpointOnlineVerdict();
+    const endpointStatus = useEndpointStatus();
     const endpointLastConnectedAt = useEndpointLastConnectedAt();
     const machinePresence = useMachinePresenceSummary(serverId, machineId?.trim() ?? null);
     const appliedServerId = React.useSyncExternalStore(
@@ -587,6 +589,11 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
         && loadedProjection.targetKey === targetKey
         && loadedProjection.accountLifetime === accountLifetime,
     );
+    // Retained bytes can describe the installation while the Home first connects.
+    // A reconnect after confirmed transport still withdraws live authority.
+    const awaitingFocusedEndpoint = usesFocusedEndpoint && !endpointOnline
+        && endpointStatus === 'connecting' && endpointLastConnectedAt === null
+        && machinePresence.reachability !== 'unreachable';
     const phase: PluginUiProjectionPhase = !targetKey || !accountLifetimeCurrent
         ? accountResolving ? 'establishing' : 'unavailable'
         : !hasLoadedCurrentScope
@@ -596,14 +603,16 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
                 : loadedProjection.phase === 'current'
                     && loadedProjection.connectedAccountProjection === CONNECTED_ACCOUNT_PROJECTION_TRANSPORT_ERROR
                     ? 'retainedOffline'
-                : !authorityKey
-                    ? loadedProjection.phase === 'current'
-                        ? 'retainedOffline'
-                        : 'unavailable'
-                    : loadedProjection.phase === 'current'
-                        && (loadedProjection.authorityKey === authorityKey || loadedProjection.failedRefreshAuthorityKey === authorityKey)
-                        ? 'current'
-                        : 'establishing';
+                    : awaitingFocusedEndpoint
+                        ? 'establishing'
+                        : !authorityKey
+                            ? loadedProjection.phase === 'current'
+                                ? 'retainedOffline'
+                                : 'unavailable'
+                            : loadedProjection.phase === 'current'
+                                && (loadedProjection.authorityKey === authorityKey || loadedProjection.failedRefreshAuthorityKey === authorityKey)
+                                ? 'current'
+                                : 'establishing';
     const interactionEnabled = phase === 'current';
     const unavailableReasonCode = (phase === 'unavailable' || phase === 'retainedOffline') && targetKey && accountLifetimeCurrent
         ? loadedProjection.connectedAccountProjection === CONNECTED_ACCOUNT_PROJECTION_UNSUPPORTED

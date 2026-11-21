@@ -1285,6 +1285,40 @@ describe('usePluginUiProjectionCurrentness', () => {
     expect(resolvePluginUiClientExecutablePlatform()).toBe('web');
   });
 
+    it('keeps a retained cold projection pending while the focused Home connects', async () => {
+        projectionRuntime.describe.mockResolvedValueOnce(supportedProjection('Retained catalog'));
+        const readProjection = () => usePluginUiProjectionCurrentness({ machineId: 'machine-1', serverId: serverIdentityId });
+        const warm = await renderHook(readProjection);
+        await waitForHomeGovernance(() => expect(warm.getCurrent().phase).toBe('current'));
+        await warm.unmount();
+
+        clearDaemonMergedProjectionCacheForTests();
+        storage.setState({ endpointStatus: 'connecting', endpointOnlineRetained: false, endpointLastConnectedAt: null });
+        const reply = createDeferred<unknown>();
+        projectionRuntime.describe.mockReset().mockImplementationOnce(() => reply.promise);
+        const cold = await renderHook(readProjection);
+        try {
+            expect(cold.getCurrent()).toMatchObject({ phase: 'establishing', interactionEnabled: false });
+            expect(cold.getCurrent().unavailableReasonCode).toBeUndefined();
+            expect(cold.getCurrent().pluginUiProjection?.translationsByPluginId['acme.preview']?.bundles)
+                .toEqual({ en: { title: 'Retained catalog' } });
+            expect(projectionRuntime.describe).not.toHaveBeenCalled();
+
+            await act(async () => storage.setState({ endpointStatus: 'online' }));
+            await waitForHomeGovernance(() => expect(projectionRuntime.describe).toHaveBeenCalledTimes(1));
+            expect(cold.getCurrent()).toMatchObject({ phase: 'establishing', interactionEnabled: false });
+            await act(async () => reply.resolve(supportedProjection('Current catalog')));
+            await waitForHomeGovernance(() => {
+                expect(cold.getCurrent()).toMatchObject({ phase: 'current', interactionEnabled: true });
+                expect(cold.getCurrent().pluginUiProjection?.translationsByPluginId['acme.preview']?.bundles)
+                    .toEqual({ en: { title: 'Current catalog' } });
+            });
+        } finally {
+            reply.resolve(supportedProjection('Current catalog'));
+            await cold.unmount();
+        }
+    });
+
     it('boots a fresh process from retained device custody when every daemon is unreachable', async () => {
         // Warm run: the server is reachable and the daemon answers once. This
         // is the only moment admission currentness is confirmed.

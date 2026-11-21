@@ -7127,6 +7127,17 @@ not execution authority or proof that an exact configured connection works.
 No plugin-private configured instances are read: Accounts with different active
 instances but identical published contributor and native facts rank the same. A missing source
 remains visible in the plugin and the person can change **Runs on**.
+
+A retained Machine projection stays establishing during its focused Home's
+first connection when Machine presence has no settled unreachable verdict. It can
+present retained declarations while Administration settles the execution origin.
+Mounted Host API reads use the existing connection wait during establishment
+and admit against the current origin once it is ready.
+
+A cold mounted Account surface shows loading while its bundled declaration is
+being read. A failed declaration-source read offers the surface's existing Retry.
+An artifact-invalid diagnostic requires an explicit declaration identity failure.
+
 Fresh execution and execution-origin Action reads revalidate that
 same choice. An explicit Machine pin takes precedence, including when unavailable;
 an unpinned operation re-picks when its current origin becomes ineligible.

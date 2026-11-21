@@ -17,8 +17,10 @@ import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { pluginArtifactTransferDaemonState } from '@/dev/testkit/harness/pluginArtifactTransferBoundary';
 import { createAccountNoticeArtifactFixture } from '@/dev/testkit/fixtures/usageNoticeFixtures';
 import { createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { createDeferred, renderScreen } from '@/dev/testkit';
 
 const packaged = vi.hoisted(() => ({
+    declarationRead: null as Promise<void> | null,
     accountExecutableBytes: null as Promise<void> | null,
     accountExecutableReads: 0,
     bytes: new TextEncoder().encode(`
@@ -161,7 +163,10 @@ vi.mock('./generatedBundledPluginUiArtifacts', async () => {
         declaredExecution: { daemonActions: true, contributionPoints: false } };
     return { BUNDLED_PLUGIN_UI_APP_DECLARATIONS: [uiDeclaration, pointlessDeclaration].map(declaration => ({
         ...declaration, normalizedManifest: undefined, presentationManifest: declaration.normalizedManifest,
-        loadDeclaration: async () => declaration,
+        loadDeclaration: async () => {
+            await packaged.declarationRead;
+            return declaration;
+        },
     })),
         BUNDLED_PLUGIN_UI_APP_ARTIFACTS: [artifactGraph, accountGraph].map((graph, index) => ({
         pluginId: manifest.id, releaseVersion: manifest.version, artifactId: graph.artifactId, tier: graph.tier,
@@ -204,7 +209,8 @@ const { PluginSurfaceHost, PluginSurfacePlacementHost } = await import('@/compon
 const { NavigationTitleChromeProvider } = await import('@/components/ui/layout/navigationTitleChrome');
 const { PluginAppPageScreen } = await import('@/components/appShell/plugins/PluginAppPageScreen');
 const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
-const { replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection, failPluginAccountAvailabilityProjection } = await import('./projection');
+const { replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection, failPluginAccountAvailabilityProjection,
+    readPluginAccountAvailability } = await import('./projection');
 const { BUNDLED_PLUGIN_UI_APP_ARTIFACTS, BUNDLED_PLUGIN_UI_APP_DECLARATIONS } = await import('./generatedBundledPluginUiArtifacts');
 const { PluginMachineMaterializationV1Schema } = await import('@happier-dev/protocol/plugins/availability');
 const { normalizePluginInstalledUiDeclarations } = await import('@/sync/domains/plugins/ui/projection');
@@ -223,6 +229,7 @@ const enabledPluginFeatures = createRootLayoutFeaturesResponse({ features: { plu
 } } });
 
 afterEach(async () => {
+    packaged.declarationRead = null;
     packaged.accountExecutableBytes = null;
     packaged.accountExecutableReads = 0;
     packaged.machineRpc.mockReset();
@@ -230,6 +237,40 @@ afterEach(async () => {
     await account.reset();
     storage.setState(storage.getInitialState(), true);
     vi.restoreAllMocks();
+});
+
+it('presents a retryable declaration read failure on a cold Account route and admits the declaration on Retry', async () => {
+    const read = createDeferred<void>();
+    packaged.declarationRead = read.promise;
+    await account.restore({ machines: [], features: enabledPluginFeatures, serverIdentityId: 'srv_bundled_account_page' });
+    const scope = storage.getState().profileScope!;
+    replacePluginAccountAvailabilityProjection({ scope, snapshot: {
+        availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [],
+    } });
+    const screen = await renderScreen(<AppPaneProvider><AppShellPluginUiProjectionProvider>
+        <PluginAppPageScreen pluginId="happier.fixture" localId="account-page" subPath="" />
+    </AppShellPluginUiProjectionProvider></AppPaneProvider>);
+    try {
+        await waitForHomeGovernance(() => expect(screen.findByTestId(
+            'plugin-surface-unavailable-diagnostic-plugin_ui_declaration_pending',
+        )).toBeTruthy());
+        await act(async () => read.reject(Object.assign(new Error('Bundle fetch unavailable'), { code: 'ERR_NETWORK' })));
+        await waitForHomeGovernance(() => {
+            expect(screen.findByTestId('plugin-surface-unavailable-diagnostic-plugin_ui_artifact_invalid')).toBeNull();
+            expect(screen.findByTestId('plugin-surface-unavailable-diagnostic-artifact_source_unavailable')).toBeTruthy();
+        });
+        packaged.declarationRead = null;
+        await act(async () => { screen.pressByTestId('plugin-surface-unavailable-action'); });
+        const reader = readPluginAccountAvailability(scope);
+        await waitForHomeGovernance(() => {
+            expect(reader.readCurrentAccountExecution('happier.fixture')).toMatchObject({ kind: 'available' });
+            expect(screen.findByTestId('plugin-surface-unavailable-diagnostic-artifact_source_unavailable')).toBeNull();
+            expect(screen.findByTestId('plugin-surface-unavailable-diagnostic-plugin_ui_declaration_pending')).toBeNull();
+        });
+    } finally {
+        read.resolve(undefined);
+        await screen.unmount();
+    }
 });
 
 it('retains bundled Account custody across admission reads while observing current disablement and Account retirement', () => {
