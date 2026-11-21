@@ -17,7 +17,7 @@ export const DEFAULT_VOICE_ASSISTANT_NAME = 'Happier Voice';
 
 export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_ID =
   'happier.global_voice_agent';
-export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION = 16;
+export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION = 17;
 
 const VOICE_AGENT_DIRECT_IDENTITY_RULE =
   'Speak as the coding assistant directly, not as a coordinator or wrapper.';

@@ -100,6 +100,7 @@ describe('voiceAgentPrompt', () => {
   ] as const)('requires spoken-label model recovery and observed child progress in %s', (_carrier, render) => {
     const prompt = render();
     expect(prompt).toContain('pass the name you heard in spokenModelName');
+    expect(prompt).toMatch(/unclear model name.*pass the words you heard in spokenModelName.*ask which model.*before creating/i);
     expect(prompt).not.toContain('look it up before creating the Session');
     expect(prompt).not.toContain('When the person names a model, resolve it with listAgentModels');
     expect(prompt).not.toContain('When the person names a model, call resolveActionOptions');
@@ -216,14 +217,14 @@ describe('voiceAgentPrompt', () => {
       digest: createHash('sha256').update(rendered, 'utf8').digest('hex'),
     }).toEqual({
       id: 'happier.global_voice_agent',
-      revision: 16,
+      revision: 17,
       blockIds: [
         'voice.global_agent.identity',
         'voice.global_agent.authority',
         'voice.global_agent.custody',
         'voice.global_agent.results',
       ],
-      digest: 'dede678fdc89c344693450fd6122612a064d002d7e200642afb73f2eda812ad3',
+      digest: '0eab4d9601dc5846650363c2c9552d892cb70355392af0f5aada8de2d3bb374a',
     });
 
     expect(rendered).toContain("Happier's global Voice agent");
