@@ -11,6 +11,8 @@ const identity = () => z.string().check(z.minLength(1));
 export const MediaAnnotationTargetV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('composerAttachment'), ref: asProtocolZod(ComposerRefV1Schema), attachmentId: identity() }),
   z.strictObject({ kind: z.literal('sessionImage'), sessionId: identity(), mediaId: identity() }),
+  // One frame of a video a Session received, at a time in milliseconds: marked like a picture and copied into a Session.
+  z.strictObject({ kind: z.literal('sessionVideoFrame'), sessionId: identity(), mediaId: identity(), timeMs: z.number().check(z.int(), z.minimum(0)) }),
   z.strictObject({ kind: z.literal('browserView'), browserSessionId: identity(), viewId: identity() }),
   z.strictObject({ kind: z.literal('capture'), captureRef: identity() }),
   z.strictObject({ kind: z.literal('recordingFrame'), captureRef: identity(), sourceTimeMs: z.number().check(z.int(), z.minimum(0)) }),
@@ -24,7 +26,7 @@ export const MediaAnnotationApplyInputV1Schema = lazyZodSchema(() => z.strictObj
   reset: z.optional(z.literal(true)),
   into: z.optional(z.strictObject({ sessionId: identity() })),
 }).check(z.refine(input => (input.operations !== undefined) !== (input.reset === true)
-  && (input.target.kind !== 'sessionImage' || input.into !== undefined)
+  && ((input.target.kind !== 'sessionImage' && input.target.kind !== 'sessionVideoFrame') || input.into !== undefined)
   && (input.target.kind !== 'recordingFrame' || input.into === undefined)
   && (input.target.kind !== 'capture' || input.into === undefined)
   && (input.cause === undefined || input.target.kind === 'recordingFrame'))));
@@ -63,7 +65,7 @@ function createMediaAnnotationActionSpecs() {
   inputHints: { title: 'Read picture marks', fields: [...fields] },
 }, {
   ...client, id: 'media.annotation.apply', title: 'Apply picture marks',
-  description: 'Apply image-space mark operations through the same flatten and picture replacement used by the annotator. Blur is burned into PNG pixels. Numbered comments are step marks with an optional note: add, edit or remove one with mark.add, mark.update or mark.remove; removing a step renumbers the rest. Reset restores the original. Session images require an into Session and create a copy; source messages are never changed.',
+  description: 'Apply image-space mark operations through the same flatten and picture replacement used by the annotator. Blur is burned into PNG pixels. Numbered comments are step marks with an optional note: add, edit or remove one with mark.add, mark.update or mark.remove; removing a step renumbers the rest. Reset restores the original. Session images and Session video frames (a received video at timeMs) require an into Session and create a copy; source messages are never changed.',
   cli: { commands: [{ path: ['media', 'annotation', 'apply'], visibility: 'canonical' }] },
   bindings: { mcpToolName: 'media_annotation_apply' },
   inputSchema: MediaAnnotationApplyInputV1Schema, outputSchema: MediaAnnotationApplyResultV1Schema,

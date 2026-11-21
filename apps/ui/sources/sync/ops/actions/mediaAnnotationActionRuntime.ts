@@ -16,6 +16,8 @@ import type { ImageAnnotationSource } from '@/components/ui/media/annotation/typ
 import { executeRecordingFrameAnnotation } from './recordingActionRuntime';
 import { readRegisteredBrowserContextAnnotationAdapter } from '@/sync/domains/browser/context/runtimeAnnotationRegistry';
 import { requestCaptureAnnotationAction } from '@/desktop/capture/captureAnnotationActions';
+import { withVideoFrameSource } from '@/components/workspaces/files/file/videoFrameAccess';
+import { formatPlaybackTime } from '@/components/workspaces/files/file/filePageMediaFacts';
 
 function annotationFailure(reason: string): MediaAnnotationApplyResultV1 | ActionExecuteFailure {
     if (reason === 'canvasUnavailable' || reason === 'decodeFailed') return { status: 'unavailable', reason: `flatten.${reason}` };
@@ -23,17 +25,26 @@ function annotationFailure(reason: string): MediaAnnotationApplyResultV1 | Actio
     return { ok: false, errorCode: reason, error: reason };
 }
 
-/** Read only the addressed, already-loaded Session; no annotator or media registry is introduced. */
-async function readSessionImage(input: Readonly<{ scope: ServerAccountScope; sessionId: string; mediaId: string; signal?: AbortSignal }>): Promise<
-    Readonly<{ source: ImageAnnotationSource; name: string; dispose: () => void | Promise<void> }> | ActionExecuteFailure | null
+/**
+ * Read only the addressed, already-loaded Session; no annotator or media registry is introduced. A video
+ * target yields its frame at `timeMs` as the picture (the same frame the Media stage holds when paused), and
+ * the frame's time leads the copy's words.
+ */
+async function readSessionPicture(input: Readonly<{ scope: ServerAccountScope; sessionId: string; mediaId: string; timeMs?: number;
+    signal?: AbortSignal }>): Promise<
+    Readonly<{ source: ImageAnnotationSource; name: string; caption?: string; dispose: () => void | Promise<void> }> | ActionExecuteFailure | null
 > {
     const state = storage.getState();
     if (!areServerAccountScopesEqual(state.profileScope, input.scope) || state.sessions[input.sessionId]?.access?.capabilities.readTranscript !== true) return null;
     const transcript = state.sessionMessages[input.sessionId];
     if (!transcript) return null;
-    let media: SessionMediaInlineImageAvailableSummary | null = null;
+    const video = input.timeMs !== undefined;
+    let media: Readonly<{ name: string; path: string; mimeType: string; sizeBytes: number; attachmentHandle?: SessionMediaInlineImageAvailableSummary['attachmentHandle'] }> | null = null;
     for (const message of Object.values(transcript.messagesById)) {
-        const candidate = readTranscriptSessionMediaMeta('meta' in message ? message.meta : null)?.inlineImages.find(image => image.id === input.mediaId);
+        const meta = readTranscriptSessionMediaMeta('meta' in message ? message.meta : null);
+        const candidate = video
+            ? meta?.inlineMedia.find(item => item.id === input.mediaId && item.mediaKind === 'video')
+            : meta?.inlineImages.find(image => image.id === input.mediaId);
         if (candidate && candidate.status !== 'unavailable') { media = candidate; break; }
     }
     if (!media) return null;
@@ -45,9 +56,21 @@ async function readSessionImage(input: Readonly<{ scope: ServerAccountScope; ses
         : await createSessionFilePreviewSource({ ...options, scope: workspace!, filePath: media.path });
     if (!preview.ok) return preview.errorCode ? { ok: false, errorCode: preview.errorCode, error: preview.errorCode } : null;
     const dispose = () => preview.source.kind === 'object-url' ? preview.source.revoke() : preview.source.delete();
-    const source = await readComposerPictureSource({ kind: 'preview', source: { uri: preview.source.uri } });
-    if (!source) { await dispose(); return null; }
-    return { source, name: media.name, dispose };
+    try {
+        // A video frame arrives as a decoded PNG with its size, so it needs no second decode to be measured.
+        const picture = video
+            ? await withVideoFrameSource(preview.source.uri, player => player.readFrame({ timeSeconds: input.timeMs! / 1000, signal: input.signal }),
+                input.signal).then(frame => ({ uri: frame.uri, width: frame.width, height: frame.height }))
+            : { uri: preview.source.uri };
+        const source = await readComposerPictureSource({ kind: 'preview', source: picture });
+        if (!source) { await dispose(); return null; }
+        const caption = video ? formatPlaybackTime(input.timeMs! / 1000) : undefined;
+        return { source, name: caption ? `${media.name} · ${caption}` : media.name, ...(caption ? { caption } : {}), dispose };
+    } catch (error) {
+        await dispose();
+        if (input.signal?.aborted) throw error;
+        return null;
+    }
 }
 
 /** ActionExecutor admits the closed input once; this adapter resolves the live picture owner. */
@@ -82,8 +105,9 @@ export async function executeMediaAnnotationAction(request: MediaAnnotationActio
         const { width, height, scale } = draft.source;
         return { document: draft.document, image: { width, height, scale }, hasBlur: hasBlur(draft.document) };
     }
-    if (input.target.kind === 'sessionImage') {
-        const picture = await readSessionImage({ scope: input.scope, sessionId: input.target.sessionId, mediaId: input.target.mediaId, signal: request.signal });
+    if (input.target.kind === 'sessionImage' || input.target.kind === 'sessionVideoFrame') {
+        const picture = await readSessionPicture({ scope: input.scope, sessionId: input.target.sessionId, mediaId: input.target.mediaId,
+            ...(input.target.kind === 'sessionVideoFrame' ? { timeMs: input.target.timeMs } : {}), signal: request.signal });
         if (!picture) return unavailable;
         if ('ok' in picture) return picture;
         try {
@@ -92,7 +116,8 @@ export async function executeMediaAnnotationAction(request: MediaAnnotationActio
             if (request.actionId === 'media.annotation.read') return { image, hasBlur: false };
             const next = applyImageMarksOperations(document, request.input.reset ? [{ kind: 'reset' }] : request.input.operations!);
             const result = await copyAnnotatedPicture({ source: picture.source, document: next, name: picture.name,
-                sessionTarget: { ...input.scope, sessionId: request.input.into!.sessionId } });
+                sessionTarget: { ...input.scope, sessionId: request.input.into!.sessionId },
+                ...(picture.caption ? { caption: picture.caption } : {}) });
             return result.ok ? { status: result.status, imageNumber: result.imageNumber } : annotationFailure(result.reason);
         } finally { await picture.dispose(); }
     }

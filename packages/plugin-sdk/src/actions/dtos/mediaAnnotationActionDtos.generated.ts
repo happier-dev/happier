@@ -54,6 +54,11 @@ export type MediaAnnotationActionInputById = {
             kind: 'sessionImage';
             sessionId: string;
             mediaId: string;
+        } | {
+            kind: 'sessionVideoFrame';
+            sessionId: string;
+            mediaId: string;
+            timeMs: number;
         };
     } & {
         clientId?: string | undefined;
@@ -108,6 +113,11 @@ export type MediaAnnotationActionInputById = {
             kind: 'sessionImage';
             sessionId: string;
             mediaId: string;
+        } | {
+            kind: 'sessionVideoFrame';
+            sessionId: string;
+            mediaId: string;
+            timeMs: number;
         };
         operations?: ({
             kind: 'crop.clear';

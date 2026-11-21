@@ -12296,7 +12296,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `media.annotation.apply`
 
-**Apply picture marks** — Apply image-space mark operations through the same flatten and picture replacement used by the annotator. Blur is burned into PNG pixels. Numbered comments are step marks with an optional note: add, edit or remove one with mark.add, mark.update or mark.remove; removing a step renumbers the rest. Reset restores the original. Session images require an into Session and create a copy; source messages are never changed.
+**Apply picture marks** — Apply image-space mark operations through the same flatten and picture replacement used by the annotator. Blur is burned into PNG pixels. Numbered comments are step marks with an optional note: add, edit or remove one with mark.add, mark.update or mark.remove; removing a step renumbers the rest. Reset restores the original. Session images and Session video frames (a received video at timeMs) require an into Session and create a copy; source messages are never changed.
 
 - Safety: `safe`; side effect: `external`.
 - Approval: `required` result; `blocking` flow.
