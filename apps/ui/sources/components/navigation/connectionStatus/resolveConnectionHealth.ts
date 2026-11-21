@@ -102,9 +102,11 @@ export function resolveConnectionHealth(input: Readonly<{
         };
     }
 
-    // A background sync failure is not a transport verdict. Current endpoint
-    // and socket success supersede it; auth and failed Home reads stay actionable.
-    if ((params.hasSyncError && !(params.endpointStatus === 'online' && params.socketStatus === 'connected'))
+    // An online endpoint and a connected or still-opening socket take precedence
+    // over a generic sync error. Explicit socket and Home read errors still surface.
+    const onlineWithActiveSocket = params.endpointStatus === 'online'
+        && (params.socketStatus === 'connected' || params.socketStatus === 'connecting');
+    if ((params.hasSyncError && !onlineWithActiveSocket)
         || params.socketStatus === 'error' || params.machineGroups.some((group) => group.status === 'error')) {
         return {
             kind: 'server_error',

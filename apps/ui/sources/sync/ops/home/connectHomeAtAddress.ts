@@ -65,6 +65,7 @@ export async function connectHomeAtAddress(input: ConnectHomeAtAddressInput): Pr
     const readiness = await createEndpointReadinessProbe({
         endpoint: enteredUrl,
         token: null,
+        purpose: 'home_address_connection',
         ...(input.signal ? { signal: input.signal } : {}),
     })();
     throwIfAborted(input.signal);

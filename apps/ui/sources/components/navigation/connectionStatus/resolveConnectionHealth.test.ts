@@ -81,6 +81,19 @@ describe('resolveConnectionHealth', () => {
         }).kind).toBe('connecting');
     });
 
+    it('keeps Home startup resolving when an online endpoint and a connecting socket have a generic sync error', () => {
+        const startup = {
+            endpointStatus: 'online' as const,
+            endpointReason: 'initial_connect',
+            hasSyncError: true,
+            syncErrorKind: 'unknown' as const,
+            machineGroups: [{ machineCount: null, onlineCount: null, status: 'loading' as const }],
+        };
+
+        expect(resolveConnectionHealth({ ...startup, socketStatus: 'connecting' }).kind).toBe('connecting');
+        expect(resolveConnectionHealth({ ...startup, socketStatus: 'error' }).kind).toBe('server_error');
+    });
+
     it('returns no_machine when the server is connected and there are no machines', () => {
         const result = resolveConnectionHealth({
             socketStatus: 'connected',

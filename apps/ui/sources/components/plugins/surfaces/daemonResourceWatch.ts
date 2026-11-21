@@ -5,7 +5,7 @@ import { bindPluginSurfaceResourceInput, readPluginResourceStoreSnapshot, type P
 import { readPluginSurfaceHostApiFailureMetadata } from './createPluginSurfaceHostApi';
 import type { PluginUiReadAuthorityReferenceV1 } from '@happier-dev/protocol/plugins/ui/client';
 import type { DaemonPluginStructuredMessageActionExecuteRequest } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
-import { isRuntimeActive, subscribeToRuntimeActiveChange } from '@/utils/runtime/isRuntimeActive';
+import { isRuntimeActive, subscribeToRuntimeActiveChange, waitForRuntimeActive } from '@/utils/runtime/isRuntimeActive';
 
 import type { PluginResourceContextV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
@@ -83,28 +83,6 @@ function waitForReconnectBackoff(ms: number, signal: AbortSignal): Promise<void>
         // The signal could have retired between the first check and listener
         // installation. Resolve through the same cleanup path in that case.
         if (signal.aborted) settle();
-    });
-}
-
-/**
- * Parks the pump while the runtime is inactive (hidden page, backgrounded app).
- * Resolves when the runtime is active again or the watch retires.
- */
-function waitForRuntimeActive(signal: AbortSignal): Promise<void> {
-    return new Promise<void>((resolve) => {
-        if (signal.aborted || isRuntimeActive()) {
-            resolve();
-            return;
-        }
-        let stopListening: (() => void) | null = null;
-        const settle = (): void => {
-            stopListening?.();
-            stopListening = null;
-            signal.removeEventListener('abort', settle);
-            resolve();
-        };
-        stopListening = subscribeToRuntimeActiveChange(() => { if (isRuntimeActive()) settle(); });
-        signal.addEventListener('abort', settle, { once: true });
     });
 }
 

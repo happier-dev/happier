@@ -3,13 +3,16 @@ import type { ManagedConnectionState, ReadinessProbeResult } from '@happier-dev/
 import { Platform } from 'react-native';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { sanitizeEndpointErrorMessage } from './sanitizeEndpointErrorMessage';
-import { isRuntimeActive } from '@/utils/runtime/isRuntimeActive';
+import { throwIfAborted } from '@/utils/runtime/abortSignals';
+import { isRuntimeActive, waitForRuntimeActive } from '@/utils/runtime/isRuntimeActive';
 import { acquireServerReachabilitySupervisor, subscribeServerReachabilityState } from './serverReachabilitySupervisorPool';
 
 /** Probe-local browser refusal detail, independent of the message shown to people. */
 export type EndpointReadinessProbeResult = ReadinessProbeResult & Readonly<{
-    blockedBy?: 'mixed_content';
+    blockedBy?: 'inactive' | 'mixed_content';
 }>;
+
+type EndpointReadinessProbePurpose = 'home_address_connection' | 'home_carrier_admission';
 
 function normalizeAbsoluteHttpBaseUrl(raw: string): string | null {
     const value = String(raw ?? '').trim();
@@ -63,13 +66,13 @@ export function readEndpointReadinessResultFromState(state: ManagedConnectionSta
 
 export function readEndpointReadinessBlockedResult(
     endpoint: string,
-    purpose?: 'home_carrier_admission',
+    purpose?: EndpointReadinessProbePurpose,
 ): EndpointReadinessProbeResult | null {
     const backgroundRetryAfterMs = 60_000;
     // A desktop app window can acquire its Home before native reveals the window.
     const canVerifyHiddenCarrier = purpose === 'home_carrier_admission' && isDesktopHost();
     if (!canVerifyHiddenCarrier && !isRuntimeActive()) {
-        return { status: 'retry_later', retryAfterMs: backgroundRetryAfterMs, errorMessage: 'Runtime is inactive' };
+        return { status: 'retry_later', retryAfterMs: backgroundRetryAfterMs, blockedBy: 'inactive', errorMessage: 'Runtime is inactive' };
     }
     const normalized = normalizeAbsoluteHttpBaseUrl(endpoint);
     if (!normalized) return { status: 'server_unreachable', errorMessage: 'Invalid endpoint URL' };
@@ -88,7 +91,7 @@ export function createEndpointReadinessProbe(params: Readonly<{
     endpoint: string;
     token: string | null | (() => string | null) | (() => Promise<string | null>);
     signal?: AbortSignal;
-    purpose?: 'home_carrier_admission';
+    purpose?: EndpointReadinessProbePurpose;
 }>): () => Promise<EndpointReadinessProbeResult> {
     const endpoint = normalizeAbsoluteHttpBaseUrl(params.endpoint);
     const resolveToken = async (): Promise<string | null> => {
@@ -103,7 +106,13 @@ export function createEndpointReadinessProbe(params: Readonly<{
     };
 
     return async () => {
-        const blocked = readEndpointReadinessBlockedResult(params.endpoint, params.purpose);
+        let blocked = readEndpointReadinessBlockedResult(params.endpoint, params.purpose);
+        // Keep an explicit Home connection pending until it can observe readiness.
+        while (params.purpose === 'home_address_connection' && blocked?.blockedBy === 'inactive') {
+            await waitForRuntimeActive(params.signal);
+            throwIfAborted(params.signal);
+            blocked = readEndpointReadinessBlockedResult(params.endpoint, params.purpose);
+        }
         if (blocked) return blocked;
         // The guard above establishes an absolute HTTP endpoint.
         if (!endpoint) throw new Error('Invalid endpoint URL');

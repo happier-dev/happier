@@ -148,6 +148,43 @@ describe('connectHomeAtAddress', () => {
         expect(profileFacts()).toEqual(before);
     });
 
+    it('keeps a supplied Home resolving in a hidden tab and connects it when the tab becomes visible', async () => {
+        const tab = Object.assign(new EventTarget(), { visibilityState: 'hidden' });
+        vi.stubGlobal('document', tab);
+        const { operation, before, profileFacts } = await owner();
+        const onSettled = vi.fn();
+        const attempt = operation.connectHomeAtAddress(input({ source: 'url' })).then((result) => {
+            onSettled();
+            return result;
+        });
+
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(onSettled).not.toHaveBeenCalled();
+        expect(boundary.fetch).not.toHaveBeenCalled();
+        expect(profileFacts()).toEqual(before);
+
+        tab.visibilityState = 'visible';
+        tab.dispatchEvent(new Event('visibilitychange'));
+        await expect(attempt).resolves.toMatchObject({ kind: 'connected' });
+        expect(profileFacts()).toHaveLength(before.length + 1);
+    });
+
+    it('cancels a supplied Home connection while waiting for the tab to become visible', async () => {
+        const tab = Object.assign(new EventTarget(), { visibilityState: 'hidden' });
+        vi.stubGlobal('document', tab);
+        const { operation, before, profileFacts } = await owner();
+        const controller = new AbortController();
+        const attempt = operation.connectHomeAtAddress(input({ source: 'url', signal: controller.signal }));
+        const cancellation = expect(attempt).rejects.toMatchObject({ name: 'AbortError' });
+
+        controller.abort();
+        await cancellation;
+        tab.visibilityState = 'visible';
+        tab.dispatchEvent(new Event('visibilitychange'));
+        expect(boundary.fetch).not.toHaveBeenCalled();
+        expect(profileFacts()).toEqual(before);
+    });
+
     it('asks before insecure remote HTTP and leaves declined addresses unsaved', async () => {
         const { operation, before, profileFacts } = await owner();
         const attempt = input({ serverUrl: 'http://home.example.test', confirmInsecureHttp: async () => false });

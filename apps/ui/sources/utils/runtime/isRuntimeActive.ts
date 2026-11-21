@@ -99,6 +99,22 @@ export function subscribeToRuntimeActiveChange(listener: () => void, options?: R
     };
 }
 
+/** Waits for an active runtime or for the caller's lifetime to end. */
+export function waitForRuntimeActive(signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted || isRuntimeActive()) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+        const settle = () => {
+            stopListening();
+            signal?.removeEventListener('abort', settle);
+            resolve();
+        };
+        const stopListening = subscribeToRuntimeActiveChange(() => {
+            if (isRuntimeActive()) settle();
+        });
+        signal?.addEventListener('abort', settle, { once: true });
+    });
+}
+
 /** Unknown physical focus cannot suppress another device's alert. */
 export function readComputerUiFocusState(): Readonly<{ computer: boolean; focused: boolean }> {
     const focus = readHostWindowFocus();
