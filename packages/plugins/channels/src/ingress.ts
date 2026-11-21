@@ -4149,11 +4149,14 @@ async function dispatchIngressObligationAttempt(input: Readonly<{
   const dispatchTarget = obligation.value.payload.target;
   if (dispatchTarget === null) throw pluginError('channels_ingress_target_missing', 'An active ingress obligation has no frozen target.');
   if (dispatchTarget.kind === 'discussion') {
-    // Admission already read this binding. Recovery needs only its display
-    // label, never another authority decision or the provider's opaque label.
+    // Admission already read this binding. Recovery needs only its display facts.
     const displayBinding = currentBinding ?? (input.bindingId === undefined ? undefined
       : asBinding(readStateRow(await requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION)
         .get(input.bindingId, { signal: input.context.signal }))));
+    const bindingEndpoint = displayBinding?.value.payload.endpoint;
+    const threadTitle = bindingEndpoint && fullText.endpoint.kind === 'thread'
+      && fullText.endpoint.parentId === bindingEndpoint.id ? fullText.endpoint.label?.trim() : undefined;
+    const conversationDisplayName = threadTitle || (readConversationBindingEndpointName(bindingEndpoint ?? {}) ?? 'External conversation');
     const connection = fullText.endpoint.kind !== 'thread' ? undefined : authority?.connection
       ?? asConnection(readStateRow(await requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION)
         .get(input.connectionId, { signal: input.context.signal })) ?? null);
@@ -4172,7 +4175,7 @@ async function dispatchIngressObligationAttempt(input: Readonly<{
         localId: dispatchTarget.localId,
         ...(threadRootLocalId === undefined ? {} : { threadRootLocalId }),
         providerPluginId: dispatchTarget.providerPluginId, observation: fullText,
-        conversationDisplayName: readConversationBindingEndpointName(displayBinding?.value.payload.endpoint ?? {}) ?? 'External conversation',
+        conversationDisplayName,
         attachments: channelFileSessionAttachments({ connectionId: input.connectionId,
           connectionAuthorityEpoch: obligation.value.payload.sourceAuthority.connectionAuthorityEpoch, observation: fullText }),
       }, input.context);
@@ -4731,7 +4734,7 @@ async function ingestConversationObservationForInvocation(
         await notifyInboundConversation({
           conversationId: await opaqueHmacRowId({ routingIdentityKey: connectionState.value.payload.routingIdentityKey,
             domain: 'inbound-conversation', parts: [connectionState.value.id, shell.endpoint.kind, shell.endpoint.id] }),
-          displayName: shell.endpoint.label,
+          displayName: fullTextObservation(ingress)?.endpoint.label,
         }, context);
       } catch (error) {
         context.services.logger.warn('[Channels] Conversation Inbox notice unavailable', { error: projectPluginFailureText(error) });

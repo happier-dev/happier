@@ -6239,8 +6239,10 @@ these facts confer no routing or posting authority. New inbound conversations,
 including unbound ones, submit a stable conversation-keyed item through the
 existing notifications service and private Inbox notice store. The new
 `inbound-conversations` category is distinct from the published
-`external-conversations` Session-info section. The item opens Channels, carries
-no message or principal content, and requests no native notification channels.
+`external-conversations` Session-info section. The item opens Channels and uses
+the provider conversation label, when available from a full observation, as its
+private Inbox title. The producer includes no message body or actor fields and
+requests no native notification channels.
 Equal submissions remain the notice owner's deduplication responsibility. A
 notice-write failure is logged without reopening admitted ingress. The
 notifications owner replays the same request's result within an occurrence;
@@ -6282,7 +6284,9 @@ Session, Workflow and thread-router targets retain their own policies. Channels
 admits the external sender at dispatch before calling `discussion.post` under
 the binding Account's existing Discussion access and Action approval settings.
 The normal Discussion writer seals the optional `externalSource` display fact
-inside the message content envelope; display provenance grants no authority.
+inside the message content envelope. A thread routed through a parent binding
+uses the admitted thread label when present. An exact binding retains its saved
+conversation name when available. Display provenance grants no authority.
 Mixed and file-only input fetches bytes through the existing Channels file-input
 owner and supplies native `attachmentSources`; the Discussion writer owns binary
 upload and E2EE sealing. The native plugin Actions adapter retains its existing

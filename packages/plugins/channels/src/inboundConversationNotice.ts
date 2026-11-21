@@ -14,8 +14,7 @@ export async function notifyInboundConversation(input: Readonly<{
     itemId: input.conversationId,
     type: 'update',
     resolved: false,
-    title: 'External conversation',
-    ...(input.displayName === undefined ? {} : { body: input.displayName }),
+    title: input.displayName ?? 'External conversation',
     channelIds: [],
     page: { pageId: CHANNELS_PAGE_VIEW_ID },
   }, { signal: context.signal });

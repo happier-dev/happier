@@ -408,6 +408,7 @@ function observation(input: Readonly<{
   providerTimestamp?: number;
   occurrenceId?: string;
   endpointId?: string;
+  endpointLabel?: string;
   transport?: 'poll' | 'socket' | 'webhook';
 }>): ConversationProviderObservationIngestInputV1 {
   const now = input.occurredAt ?? Date.now();
@@ -426,6 +427,7 @@ function observation(input: Readonly<{
             kind: 'direct',
             audience: 'direct',
             id: input.endpointId ?? 'telegram:chat:100',
+            ...(input.endpointLabel === undefined ? {} : { label: input.endpointLabel }),
           },
           actor: {
             principalId: 'telegram:user:42',
@@ -1463,7 +1465,8 @@ describe('thread router admission', () => {
     harness.rows.set(row.rowId, stateRow({ ...row.value, payload: { ...record(row.value.payload), inputMode: 'allAllowedMessages',
       ...(targetKind === 'discussion' ? { target: { kind: 'discussion', discussionId: 'discussion-1', policy: { deliveryMode: 'repliesOnly' } } } : {}),
     } }));
-    const input = topicObservation(`parent-${targetKind}`);
+    const topicLabel = 'Release planning thread';
+    const input = topicObservation(`parent-${targetKind}`, undefined, undefined, topicLabel);
     const endpoint = fullTextIngress(input).endpoint;
     await ingestConversationProviderObservationForInvocation(input, harness.context);
     await runConversationIngressDueWorkForInvocation({}, harness.context);
@@ -1476,6 +1479,11 @@ describe('thread router admission', () => {
       principalId: 'telegram:user:99' })).toBe(false);
     if (targetKind === 'session') expect(harness.send).toHaveBeenCalledOnce();
     else expect(harness.execute.mock.calls.filter(([id]) => id === (targetKind === 'discussion' ? 'discussion.post' : 'automation.conversation.admit'))).toHaveLength(1);
+    if (targetKind === 'discussion') {
+      expect(harness.execute).toHaveBeenCalledWith('discussion.post', expect.objectContaining({
+        content: expect.objectContaining({ externalSource: expect.objectContaining({ conversationDisplayName: topicLabel }) }),
+      }), { signal: harness.context.signal });
+    }
     await ingestConversationProviderObservationForInvocation(input, harness.context);
     expect([...harness.rows.values()].filter(row => row.value['record-kind'] === 'binding')).toHaveLength(1);
     const parent = harness.rows.get('binding-1')!;
@@ -3571,27 +3579,31 @@ describe('Conversation provider observation ingress', () => {
 
   it('surfaces an inbound conversation through private Inbox custody without a second native delivery', async () => {
     const harness = createIngressHarness();
-    await ingestConversationProviderObservationForInvocation(observation({ messageRevision: 'inbox-first' }), harness.context);
+    const endpointLabel = 'Release planning conversation';
+    const first = observation({ messageRevision: 'inbox-first', endpointLabel });
+    await ingestConversationProviderObservationForInvocation(first, harness.context);
     expect(harness.notify).toHaveBeenCalledWith(expect.objectContaining({
       categoryId: 'inbound-conversations',
       itemId: expect.any(String),
       type: 'update',
       resolved: false,
+      title: endpointLabel,
       channelIds: [],
     }), { signal: harness.context.signal });
     const request = harness.notify.mock.calls[0]![0];
     expect(JSON.stringify(request)).not.toContain('Hello from Telegram');
     expect(JSON.stringify(request)).not.toContain('telegram:user:42');
     expect(harness.send).toHaveBeenCalledOnce();
-    await ingestConversationProviderObservationForInvocation(observation({ messageRevision: 'inbox-first' }), harness.context);
+    await ingestConversationProviderObservationForInvocation(first, harness.context);
     expect(harness.notify).toHaveBeenCalledOnce();
-    await ingestConversationProviderObservationForInvocation(observation({ messageRevision: 'inbox-followup',
+    await ingestConversationProviderObservationForInvocation(observation({ messageRevision: 'inbox-followup', endpointLabel,
       occurrenceId: 'telegram:update:9002', messageId: 'telegram:message:6' }), harness.context);
     expect(harness.notify.mock.calls[1]![0]).toEqual(request);
     expect(harness.send).toHaveBeenCalledTimes(2);
     await ingestConversationProviderObservationForInvocation(observation({ messageRevision: 'inbox-unbound',
       endpointId: 'telegram:chat:unbound', occurrenceId: 'telegram:update:9003', messageId: 'telegram:message:7' }), harness.context);
     expect(harness.notify.mock.calls[2]![0].itemId).not.toBe(request.itemId);
+    expect(harness.notify.mock.calls[2]![0].title).toBe('External conversation');
     expect(harness.send).toHaveBeenCalledTimes(2);
   });
 
