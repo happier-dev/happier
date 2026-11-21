@@ -25,7 +25,6 @@
     "dist",
     ".happier-plugin",
     ".happier-plugin-build",
-    "assets",
     "package.json"
   ],
   "scripts": {
