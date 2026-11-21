@@ -84,6 +84,22 @@ async function addButton(page: PluginUiTestkit) {
   return await page.getByRole('button', { name: 'Add check' });
 }
 
+it('does not offer to turn alerts off while Add check waits for its read-only preview', async () => {
+  const calls: unknown[] = [];
+  let finishPreview: (value: JsonValue) => void = () => {};
+  const pending = new Promise<JsonValue>(resolve => { finishPreview = resolve; });
+  const { page, settled } = await mount({ initialInput: { v: 1, subject } }, {}, async request => {
+    calls.push(request);
+    return pending;
+  });
+  expect(await page.queryByRole('button', { name: 'Turn alerts off' })).toBeUndefined();
+  await act(async () => { finishPreview({ mode: 'preview', destinationSelectionContext,
+    sourceConfig: { v: 1, subject, alerts: { channels: [], phases: ['open', 'recovered'] } } }); });
+  await expect(page.getByText('Off')).resolves.toBeDefined();
+  expect(calls).toEqual([expect.objectContaining({ input: expect.objectContaining({ mode: 'preview' }) })]);
+  expect(settled).toEqual([]);
+});
+
 it('prefills first Configure alert defaults without losing the retained automatic investigation', async () => {
   const calls: unknown[] = [];
   const investigation = { mode: 'auto_start', configuredActionId: 'saved-investigation' };

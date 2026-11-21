@@ -26,11 +26,9 @@ export function SavedHealthAlertControls(props: Readonly<{
     const preparedAlerts = prepared.alerts;
     const alerts = props.alerts;
     return h(Field, { label: t('machineServices.healthSetup.alerts', 'Alerts') }, h(Stack, {},
-        h(Text, { value: alerts === undefined
-            ? t('machineServices.healthSetup.alerts.default', 'Alert destinations have not been configured for this subject.')
-            : alerts.channels.length === 0
+        alerts ? h(Text, { value: alerts.channels.length === 0
                 ? t('machineServices.healthSetup.alerts.off', 'Off')
-                : t('machineServices.healthSetup.alerts.saved', 'Saved destinations are kept when you add a check.') }),
+                : t('machineServices.healthSetup.alerts.saved', 'Saved destinations are kept when you add a check.') }) : null,
         ...(alerts?.channels.map((channel, index) => h(Stack, { key: `${channel.channelId}:${index}` },
             h(Text, { value: channel.channelId }),
             props.testContext ? h(Action.Control, {
@@ -110,9 +108,9 @@ export function SavedHealthAlertControls(props: Readonly<{
             ],
             onChange: (phase: AlertPhaseChoice) => props.onChange({ ...alerts, phases: phase === 'both' ? ['open', 'recovered'] : [phase] }),
         }) : null,
-        alerts === undefined || alerts.channels.length > 0 ? h(Button, {
+        alerts && alerts.channels.length > 0 ? h(Button, {
             title: t('machineServices.healthSetup.alerts.turnOff', 'Turn alerts off'), variant: 'plain',
-            onPress: () => props.onChange({ channels: [], phases: alerts?.phases ?? ['open', 'recovered'] }),
+            onPress: () => props.onChange({ channels: [], phases: alerts.phases }),
         }) : null,
     ));
 }
