@@ -5,7 +5,13 @@ import { PassThrough } from 'node:stream';
 
 import { describe, expect, it } from 'vitest';
 
-import { readUpdaterAdmission, reportUpdaterAdmission, UPDATER_ADMISSION_FD_ENV } from './updaterAdmission';
+import {
+  applyUpdaterAdmissionPathArg,
+  readUpdaterAdmission,
+  reportUpdaterAdmission,
+  UPDATER_ADMISSION_FD_ENV,
+  UPDATER_ADMISSION_PATH_ENV,
+} from './updaterAdmission';
 
 describe('updater admission report', () => {
   it('writes exactly one line to the named descriptor, then never again', () => {
@@ -17,6 +23,22 @@ describe('updater admission report', () => {
       reportUpdaterAdmission({ admitted: true }, env);
       expect(readFileSync(path, 'utf8')).toBe('{"admitted":false,"code":"cli_update_in_progress","message":"busy"}\n');
       expect(env[UPDATER_ADMISSION_FD_ENV]).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('writes the same one line to the admission file a scheduled task can leave behind', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'happier-admission-file-'));
+    try {
+      const path = join(dir, 'nested', 'admission.json');
+      const env: NodeJS.ProcessEnv = { [UPDATER_ADMISSION_PATH_ENV]: path };
+      const argv = applyUpdaterAdmissionPathArg(['self', 'update', '--preview', '--admission-path', path], env);
+      expect(argv).toEqual(['self', 'update', '--preview']);
+      reportUpdaterAdmission({ admitted: true }, env);
+      reportUpdaterAdmission({ admitted: false, code: 'cli_update_failed', message: 'late' }, env);
+      expect(readFileSync(path, 'utf8')).toBe('{"admitted":true}\n');
+      expect(env[UPDATER_ADMISSION_PATH_ENV]).toBeUndefined();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

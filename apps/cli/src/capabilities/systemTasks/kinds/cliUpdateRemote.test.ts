@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 
 import { describe, expect, it } from 'vitest';
@@ -42,16 +43,17 @@ describe('cli.update.v1 hosted by the daemon (remote CLI update)', () => {
       nowMs: () => 1_700_000_000_000,
     });
 
+    const logPath = join('/home/u/.happier/logs', 'cli-update-1700000000000.log');
     await expect(run(kind, {})).resolves.toEqual({
       started: true,
       currentVersion: '0.2.13-preview.1',
       channel: 'preview',
-      logPath: '/home/u/.happier/logs/cli-update-1700000000000.log',
+      logPath,
     });
     expect(spawns).toEqual([expect.objectContaining({
       script: '/home/u/.happier/cli-preview/versions/0.2.13-preview.1/happier',
       args: ['self', 'update', '--preview'],
-      logPath: '/home/u/.happier/logs/cli-update-1700000000000.log',
+      logPath,
     })]);
   });
 
@@ -85,7 +87,7 @@ describe('cli.update.v1 hosted by the daemon (remote CLI update)', () => {
         return { started: true, admission };
       },
     });
-    await expect(run(kind, {})).rejects.toMatchObject({ code: 'cli_update_start_failed', message: expect.stringContaining('/x/logs/cli-update-7.log') });
+    await expect(run(kind, {})).rejects.toMatchObject({ code: 'cli_update_start_failed', message: expect.stringContaining(join('/x/logs', 'cli-update-7.log')) });
   });
 
   it('fails by name when the updater could not be started', async () => {
@@ -112,6 +114,30 @@ describe('cli.update.v1 hosted by the daemon (remote CLI update)', () => {
     const error = await run(kind, {}).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(SystemTaskExecutionError);
     expect(error).toMatchObject({ code: 'cli_not_managed', message: expect.stringContaining('npm install -g @happier-dev/cli@latest') });
+  });
+
+  it('starts a managed Windows update through the scheduled task, not as a daemon child', async () => {
+    const spawns: Array<Parameters<DetachedUpdaterSpawn>[0]> = [];
+    const kind = createCliUpdateRemoteTaskKind({
+      readFacts: () => facts({ channel: 'stable', currentVersion: '0.2.21', updateCommand: 'happier self update' }),
+      publicReleaseRing: 'stable',
+      script: 'C:\\Users\\u\\.happier\\bin\\happier.exe',
+      cwd: 'C:\\Users\\u',
+      logsDir: 'C:\\Users\\u\\.happier\\logs',
+      platform: 'win32',
+      spawnWindows: (spawnParams) => {
+        spawns.push(spawnParams);
+        const admission = new PassThrough();
+        admission.end('{"admitted":true}\n');
+        return { started: true, admission };
+      },
+      nowMs: () => 42,
+    });
+    await expect(run(kind, {})).resolves.toMatchObject({ started: true, logPath: 'C:\\Users\\u\\.happier\\logs\\cli-update-42.log' });
+    expect(spawns).toEqual([expect.objectContaining({
+      args: ['self', 'update'],
+      script: 'C:\\Users\\u\\.happier\\bin\\happier.exe',
+    })]);
   });
 
   it('refuses where the updater cannot outlive the service restart (Windows)', async () => {

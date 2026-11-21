@@ -34,7 +34,7 @@ import { handleSelfMigrateCommand } from './self/handleSelfMigrateCommand';
 import { maybeRunVersionGatedRuntimeMigration } from './self/maybeRunVersionGatedRuntimeMigration';
 import { maybeRunDoctorRepair } from './self/maybeRunDoctorRepair';
 import { resolveRunningCliPackageManagerOrigin } from '@/cli/runtime/update/cliUpdateFacts';
-import { reportUpdaterAdmission } from '@/cli/runtime/update/updaterAdmission';
+import { applyUpdaterAdmissionPathArg, reportUpdaterAdmission } from '@/cli/runtime/update/updaterAdmission';
 import {
   assertWindowsCliUpdateIsOutsideManagedProcessTree,
   quiesceInstalledCliWindowsPayloadOwners,
@@ -265,7 +265,8 @@ function printCheckResult(params: Readonly<{ channel: SelfChannel; current: stri
   console.log(chalk.green('Up to date.'));
 }
 
-async function cmdUpdate(argv: string[], rawArgv: readonly string[] = process.argv): Promise<void> {
+async function cmdUpdate(argvInput: string[], rawArgv: readonly string[] = process.argv): Promise<void> {
+  const argv = applyUpdaterAdmissionPathArg(argvInput, process.env);
   const channelResolution = resolveSelfReleaseChannel({ args: argv, rawArgv });
   const channel = channelResolution.ringId;
   const steps = createStepPrinter({ enabled: true });

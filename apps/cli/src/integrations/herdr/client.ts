@@ -117,9 +117,20 @@ function* textRequestChunks(method: string, paneId: string, text: string): Gener
   }
 }
 
+/**
+ * Herdr's Windows server writes a marker file at the socket path and listens on the named pipe
+ * `\\.\pipe\` plus that path (`interprocess` GenericNamespaced). Node connects to the marker file
+ * itself and fails with ENOTSOCK. Paths that are already pipe names, including this module's
+ * Windows test server, stay unchanged. POSIX paths are filesystem sockets.
+ */
+export function resolveHerdrSocketEndpoint(socketPath: string, platform: NodeJS.Platform = process.platform): string {
+  if (platform !== 'win32') return socketPath;
+  return socketPath.startsWith('\\\\.\\pipe\\') ? socketPath : `\\\\.\\pipe\\${socketPath}`;
+}
+
 function request(socketPath: string, method: string, params: JsonRecord, timeoutMs: number): Promise<JsonRecord> {
   return new Promise((resolve, reject) => {
-    const socket = createConnection(socketPath);
+    const socket = createConnection(resolveHerdrSocketEndpoint(socketPath));
     socket.setEncoding('utf8');
     let settled = false;
     let buffer = '';
