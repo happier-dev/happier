@@ -2075,6 +2075,9 @@ export function useCreateNewSession(params: Readonly<{
                     );
                     if (!operation || (!lateLaunchFailure && (!isLaunchScopeStillActive() || sourceDraftCancellation.signal.aborted))) {
                         adoptCanonicalActionOperationSettlement();
+                        if (mountedRef.current) {
+                            current.setIsCreating(false);
+                        }
                         return;
                     }
                     observedCanonicalSettlement = true;

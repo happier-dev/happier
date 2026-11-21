@@ -1045,7 +1045,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
     await hook.unmount();
   });
 
-  it('retains canonical custody when unmounted while joining an accepted operation', async () => {
+  it.each(['unmount', 'edit'] as const)('retains canonical custody when the observer retires during an accepted operation (%s)', async (retire) => {
     const { useCreateNewSession, sessionSpawnNewRpcSpy, actionOperationGetRpcSpy } = await setupHarness();
     const requestId = 'request-owned-by-accepted-operation';
     const operationId = 'accepted-operation-observer';
@@ -1062,9 +1062,14 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
     const afterCreated = vi.fn();
     const onAfterCreatedSettled = vi.fn();
     const router = { push: vi.fn(), replace: vi.fn() };
-    const hook = await renderHook(() => useCreateNewSession(buildCreateSessionHookParams({
-      router, launchUserAttemptId: requestId,
-    }) as any));
+    let launchIntentSignature = 'test-launch-intent';
+    const hook = await renderHook(() => {
+      const [isCreating, setIsCreating] = React.useState(false);
+      const creator = useCreateNewSession(buildCreateSessionHookParams({
+        router, launchUserAttemptId: requestId, launchIntentSignature, setIsCreating,
+      }) as any);
+      return { ...creator, isCreating };
+    });
     let createPromise: Promise<void> | undefined;
     try {
       await act(async () => {
@@ -1073,7 +1078,13 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
       });
       await vi.waitFor(() => expect(actionOperationGetRpcSpy).toHaveBeenCalledWith({ operationId, waitForTerminal: true }));
       expect(sessionSpawnNewRpcSpy.mock.calls[0]?.[0].creationKey).toBe(`manual:${requestId}`);
-      await hook.unmount();
+      expect(hook.getCurrent().isCreating).toBe(true);
+      if (retire === 'unmount') {
+        await hook.unmount();
+      } else {
+        launchIntentSignature = 'updated-launch-intent';
+        await hook.rerender();
+      }
       await act(async () => {
         operationReply.resolve(ActionOperationGetV1ResponseSchema.parse({ kind: 'found', operation: { ...operation, revision: 2, state: 'succeeded', startedAt: 1, settledAt: 2,
           result: { type: 'success', disposition: 'created', sessionId: 'pending-created-session',
@@ -1087,6 +1098,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
       expect(router.replace).not.toHaveBeenCalled();
       expect(modalAlertSpy).not.toHaveBeenCalled();
       expect(onAfterCreatedSettled).not.toHaveBeenCalledWith({ status: 'rejected' });
+      if (retire === 'edit') expect(hook.getCurrent().isCreating).toBe(false);
       const { readManualSessionSpawnOperation } = await import('@/sync/domains/session/spawn/manualSessionSpawnOperation');
       expect(readManualSessionSpawnOperation({ serverId: 'server-a', accountId: 'account-a' }, requestId))
         // The unmounted launcher consumed nothing (asserted above); the canonical record keeps the
