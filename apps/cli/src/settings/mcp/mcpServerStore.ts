@@ -13,7 +13,7 @@ import { readPluginMcpServerMetadata } from '@/mcp/runtime/pluginMcpServerItems'
 import { McpServerCatalogUnavailableError } from '@/mcp/servers/readMcpServersSettingsFromAccountSettings';
 import { MCP_SERVER_CATALOG_ROWS_ROUTE_V1, McpServerCatalogRowReadResponseV1Schema,
   McpServerCatalogRowMutationV1Schema, McpServerCatalogRowMutationResponseV1Schema, sealMcpServerCatalogContentV1,
-  listMcpServerCatalogSavedSecretRefsV1, type McpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
+  listMcpServerCatalogSavedSecretRefsV1, remapMcpServerCatalogSavedSecretReferencesV1, type McpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { resolveCliAccountStorageContext } from '@/api/client/accountKvJsonTransport';
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
@@ -28,7 +28,7 @@ import { readAccountSettingsV2Raw, replaceAccountSettingsV2RawForOwnerCutover } 
 import { normalizeCliAccountSettingsHistoryAfterTransfer } from '@/settings/accountSettings/accountSettingsHistoryNormalization';
 import { createInvocationSavedSecretOperationContextV1, type SavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
 import { importLegacySavedSecretsForOperation } from "@/settings/secrets/hydrateSavedSecretCatalog";
-import { captureSavedSecretReferencesForOperation } from "@/settings/secrets/savedSecretCatalogRead";
+import { captureSavedSecretReferencesForOperation, SavedSecretOperationAdmissionError } from "@/settings/secrets/savedSecretCatalogRead";
 
 export type McpServerStoreAuthorizationRequest = Readonly<{ method: 'GET' | 'POST'; path: string; body?: unknown }>;
 export type McpServerStoreAuthorization = (request: McpServerStoreAuthorizationRequest) =>
@@ -160,28 +160,40 @@ function createCapturedStore(input: Readonly<{
     return createInvocationSavedSecretOperationContextV1({ credentials: input.credentials, serverHttpBaseUrl: base,
       snapshot, isCurrent: async () => { try { await verifyCurrent(); return true; } catch { return false; } } });
   };
-  const writeCatalog = async (value: Readonly<{ catalog: McpServerCatalogV1; expectedRevision: number | 'absent'; sourceSettingsVersion?: number }>) => {
-    const referencedSavedSecretIds = [...new Set(listMcpServerCatalogSavedSecretRefsV1(value.catalog).map(ref => ref.secretId))];
+  const writeCatalog = async (value: Readonly<{ catalog: McpServerCatalogV1; expectedRevision: number | 'absent'; sourceSettingsVersion?: number }>,
+    previousCatalog?: McpServerCatalogV1) => {
+    let catalog = value.catalog;
+    let referencedSavedSecretIds = [...new Set(listMcpServerCatalogSavedSecretRefsV1(catalog).map(ref => ref.secretId))];
     let savedSecretRevisions: { resourceId: string; expectedRevision: number }[] = [];
     if (referencedSavedSecretIds.length) {
       const context = await operationContext();
       const scopeKey = context.readSnapshot()?.scopeKey;
       if (!scopeKey) throw Object.assign(new Error('MCP references are unavailable'), { code: 'invalid-reference' });
+      let previousReferences: Set<string> | undefined;
+      const canResolveResourceId = previousCatalog && ((id: string) =>
+        !(previousReferences ??= new Set(listMcpServerCatalogSavedSecretRefsV1(previousCatalog).map(ref => ref.secretId))).has(id));
       const proof = await runWithServerHttpBaseUrl(base, () => captureSavedSecretReferencesForOperation({ expectedScopeKey: scopeKey,
-        operationContext: context, signal: input.signal, references: referencedSavedSecretIds }));
+        operationContext: context, signal: input.signal, references: referencedSavedSecretIds, canResolveResourceId })).catch(cause => {
+        if (cause instanceof SavedSecretOperationAdmissionError) {
+          throw Object.assign(new Error('MCP Saved Secret reference refused'), { code: cause.reason });
+        }
+        throw cause;
+      });
+      referencedSavedSecretIds = proof.referencedSavedSecretIds;
       savedSecretRevisions = proof.savedSecretRevisions;
+      if (proof.referenceRemapping) catalog = remapMcpServerCatalogSavedSecretReferencesV1(catalog, proof.referenceRemapping);
     }
     const context = await readStorageContext();
     const mutation = McpServerCatalogRowMutationV1Schema.parse({ expectedRevision: value.expectedRevision,
-      content: sealMcpServerCatalogContentV1({ ...context, catalog: value.catalog }), sourceSettingsVersion: value.sourceSettingsVersion,
+      content: sealMcpServerCatalogContentV1({ ...context, catalog }), sourceSettingsVersion: value.sourceSettingsVersion,
       referencedSavedSecretIds, savedSecretRevisions });
     const result = McpServerCatalogRowMutationResponseV1Schema.safeParse(await request(MCP_SERVER_CATALOG_ROWS_ROUTE_V1, mutation));
     if (!result.success) throw Object.assign(new Error('MCP mutation outcome is unknown'), { code: 'outcome_unknown' });
     return result.data;
   };
-  const writeAndPublishCatalog = async (value: Parameters<typeof writeCatalog>[0]) => {
+  const writeAndPublishCatalog = async (value: Parameters<typeof writeCatalog>[0], previousCatalog?: McpServerCatalogV1) => {
     const publishMutation = await input.prepareMutationPublication?.();
-    const result = await writeCatalog(value);
+    const result = await writeCatalog(value, previousCatalog);
     if (result.status === 'updated' && publishMutation) {
       // Projection failure cannot turn an acknowledged effect into a replayable failure.
       try { await publishMutation(); } catch { /* The captured refresh owner retains recovery. */ }
@@ -312,7 +324,7 @@ function createCapturedStore(input: Readonly<{
       const commit = (current: Extract<McpServerCatalogSnapshotV1, { status: 'ready' }> & { revision: number }) =>
         commitMcpServerCatalogMutationV1({ catalog: current.catalog, revision: current.revision, change, scope,
         ctx: { nowMs: Date.now(), newId: randomUUID, pluginItemIds },
-        writeCatalog: writeAndPublishCatalog });
+        writeCatalog: value => writeAndPublishCatalog(value, current.catalog) });
       let current = { ...snapshot, revision: snapshot.revision };
       let result = await commit(current);
       if (change.kind !== 'tools-snapshot') return result;

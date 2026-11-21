@@ -2,6 +2,7 @@ import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ActionExecuteFailureSchema, ClientActionRpcFailureCodeV1Schema, projectActionFailureCauseV1, readUnexpectedActionErrorDiagnosticV1, type ActionExecuteFailure, type ActionExecuteResult } from '../../actions/actionExecutionResult.js';
 import { readRpcErrorCode } from '../../rpc/errors.js';
+import { SavedSecretOperationAdmissionFailureReasonV1Schema } from '../../account/settings/savedSecretReferenceV1.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from '../../actions/executor/types.js';
 import type { PluginAgentToolsCapabilityV2 } from '../../plugins/contributions/v2.js';
 import { ConnectedAccountDaemonControlResponseSchema, type ConnectedAccountDaemonControlCommand } from '../../connect/connectedAccountDaemonRpcV1.js';
@@ -74,6 +75,7 @@ class ConnectedServiceActionRefusal extends Error {
 
 const catalogFailureCodes = new Set<string>([
   ...McpServerCatalogSnapshotV1Schema._zod.def.options[1].shape.reason.options,
+  ...SavedSecretOperationAdmissionFailureReasonV1Schema.options,
   'invalid-mutation', 'reference-conflict', 'outcome_unknown', 'server_scope_mismatch',
   'not_authenticated', 'permission_denied', 'admission_unavailable', 'invalid_action_output',
   'machine_unreachable', 'mcp_catalog_unavailable', 'database_transaction_conflict_exhausted',
@@ -360,8 +362,9 @@ export function createMcpServerActionExecuteV1(ports: McpServerActionPortsV1) {
         } catch (cause) {
           return { ...projectMcpServerActionFailureV1(cause), details: { movedSecrets: prepared.movedSecrets } };
         }
-        if (receipt.status !== 'updated') return { ok: false, errorCode: receipt.status === 'conflict' || receipt.status === 'settings-conflict'
-          ? 'mcp_catalog_conflict' : 'mcp_catalog_operation_failed', error: 'MCP catalog import did not settle',
+        if (receipt.status !== 'updated') return {
+          ...projectMcpServerActionFailureV1({ code: receipt.status === 'conflict' || receipt.status === 'settings-conflict'
+            ? 'mcp_catalog_conflict' : receipt.status }),
           details: { movedSecrets: prepared.movedSecrets } };
         result = { ok: true, revision: receipt.revision, serverIds: prepared.entries.map(entry => entry.id),
           duplicates: prepared.duplicates, movedSecrets: prepared.movedSecrets }; break;

@@ -2134,6 +2134,14 @@ existence or inspect E2EE Settings. Shared references retain the resource owner'
 authorization and captured-revision checks. Unknown or malformed reference
 carriers remain diagnostic and cannot silently become active configuration.
 
+When a CLI MCP catalog mutation adds a binding, its `savedSecret.secretId`
+can carry the qualified `secretRef` or the bare `secretId` returned by
+`secrets.create` or `secrets.list` for an Account-owned resource. The Saved
+Secret owner resolves a bare ID against Account catalog metadata and refuses
+collisions with retained personal IDs. The MCP catalog stores the qualified
+reference and submits its revision for the existing server admission check.
+Saving the binding does not acquire the secret value.
+
 In 0.3 development source, MCP environment values are delivered through the
 existing private runtime configuration files. A stdio server with environment
 values runs through the stdio launcher. Remote bridge environment values also

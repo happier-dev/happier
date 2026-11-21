@@ -3,7 +3,7 @@ import axios from '@/api/client/credentialAxios';
 import { listSecretReferenceOverlayV1BindingNames, readSecretReferenceOverlayV1Reference } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
 import { openEncryptedDataKeyEnvelopeV1 } from "@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1";
 
-import { parseSavedSecretRefV1, type SharedSavedSecretReferenceSelectionV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { formatSharedSavedSecretRefV1, parseSavedSecretRefV1, type SharedSavedSecretReferenceSelectionV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { SharedSavedSecretListOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 
@@ -410,25 +410,53 @@ export async function captureSavedSecretReferencesForOperation(input: Readonly<{
   expectedScopeKey: string;
   references: readonly string[];
   selectedSecrets?: readonly SharedSavedSecretReferenceSelectionV1[];
+  /** New authoring operands may name an owned resource by the ID returned by secrets.create/list. */
+  canResolveResourceId?: (id: string) => boolean;
   operationContext?: SavedSecretOperationContextV1;
   signal?: AbortSignal;
 }>): Promise<Readonly<{
   referencedSavedSecretIds: string[];
   savedSecretRevisions: { resourceId: string; expectedRevision: number }[];
+  referenceRemapping?: Readonly<Record<string, string>>;
 }>> {
   input.signal?.throwIfAborted();
-  const references = [...new Set(input.references)];
   const context = input.operationContext;
   if (context && !await context.isCurrent(input.signal)) throw new Error('saved_secret_account_lifetime_changed');
   const snapshot = context ? context.readSnapshot() : getActiveAccountSettingsSnapshot();
   if (!snapshot || snapshot.scopeKey !== input.expectedScopeKey) throw new Error('saved_secret_account_snapshot_unavailable');
   const lifetime = getActiveAccountSettingsSnapshotLifetimeToken();
-  const shared = sharedOperationReferences(snapshot, references.map(ref => ({ ref })));
-  if (shared.length !== references.length) throw new Error('saved_secret_reference_revision_unavailable');
+  const remapping = new Map<string, string>();
+  const resourceIds = new Map<string, string>();
+  for (const ref of new Set(input.references)) {
+    let parsed: ReturnType<typeof parseSavedSecretRefV1>;
+    try { parsed = parseSavedSecretRefV1(ref); }
+    catch { throw new SavedSecretOperationAdmissionError({ reason: 'reference_unavailable', reference: ref }); }
+    if (parsed.kind === 'shared_resource') {
+      resourceIds.set(ref, parsed.resourceId);
+      continue;
+    }
+    if (!input.canResolveResourceId?.(ref)) {
+      throw new SavedSecretOperationAdmissionError({ reason: 'reference_unavailable', reference: ref });
+    }
+    if (snapshot.settings.secrets.some(secret => secret.id === ref)) {
+      throw new SavedSecretOperationAdmissionError({ reason: 'reference_collision_migration_required', reference: ref });
+    }
+    let qualified: string;
+    try { qualified = formatSharedSavedSecretRefV1(parsed.personalId); }
+    catch { throw new SavedSecretOperationAdmissionError({ reason: 'reference_unavailable', reference: ref }); }
+    remapping.set(ref, qualified);
+    resourceIds.set(qualified, parsed.personalId);
+  }
+  const references = [...resourceIds.keys()];
+  for (const collision of resolveActiveSavedSecretCatalogCollisionState(snapshot).collisions) {
+    if (resourceIds.has(collision.ref)) {
+      throw new SavedSecretOperationAdmissionError({ reason: 'reference_collision_migration_required', reference: collision.ref });
+    }
+  }
   const selections = new Map<string, number>();
   for (const selection of input.selectedSecrets ?? []) {
     if (!references.includes(selection.ref) || selections.has(selection.ref) && selections.get(selection.ref) !== selection.resourceRevision) {
-      throw new Error('saved_secret_reference_revision_unavailable');
+      throw new SavedSecretOperationAdmissionError({ reason: 'reference_stale', reference: selection.ref });
     }
     selections.set(selection.ref, selection.resourceRevision);
   }
@@ -446,11 +474,15 @@ export async function captureSavedSecretReferencesForOperation(input: Readonly<{
     || getActiveAccountSettingsSnapshot()?.scopeKey !== input.expectedScopeKey) throw new Error('saved_secret_account_lifetime_changed');
   const catalog = SharedSavedSecretListOutputV1Schema.parse(response.data);
   const entries = new Map(catalog.resources.flatMap(entry => 'ref' in entry ? [[entry.ref, entry] as const] : []));
-  return { referencedSavedSecretIds: references, savedSecretRevisions: references.map(ref => {
+  const refsFromResourceIds = new Set(remapping.values());
+  const savedSecretRevisions = [...resourceIds].map(([ref, resourceId]) => {
     const entry = entries.get(ref);
-    const parsed = parseSavedSecretRefV1(ref);
     if (!entry || !entry.capabilities.use || entry.materialStatus !== 'ready' || entry.revision === null
-      || parsed.kind !== 'shared_resource') throw new SavedSecretOperationAdmissionError({ reason: 'reference_unavailable', reference: ref });
-    return { resourceId: parsed.resourceId, expectedRevision: selections.get(ref) ?? entry.revision };
-  }) };
+      || (refsFromResourceIds.has(ref) && entry.relationship !== 'owner')) {
+      throw new SavedSecretOperationAdmissionError({ reason: 'reference_unavailable', reference: ref });
+    }
+    return { resourceId, expectedRevision: selections.get(ref) ?? entry.revision };
+  });
+  return { referencedSavedSecretIds: references, savedSecretRevisions,
+    ...(remapping.size ? { referenceRemapping: Object.fromEntries(remapping) } : {}) };
 }
