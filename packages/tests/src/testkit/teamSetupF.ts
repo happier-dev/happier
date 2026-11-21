@@ -24,6 +24,8 @@ export async function startTeamSetupFFixture(params: Readonly<{
   dbProvider?: 'postgres' | 'sqlite';
   guestReachableHome?: Parameters<typeof startProjectDaemonFixture>[0]['guestReachableHome'];
   observeActionRequests?: boolean;
+  /** Observe daemon requests sent to the authenticated Home address as well as fixture-client requests. */
+  advertiseRequestObservationEndpoint?: boolean;
   /** Observe requested/returned saved-health Trigger locators without exposing envelopes. */
   observeSavedHealthSourceSelections?: boolean;
   /** Retain responses for a caller's closed Automation-write failure projection. */
@@ -35,6 +37,7 @@ export async function startTeamSetupFFixture(params: Readonly<{
   serverEnv?: Parameters<typeof startProjectDaemonFixture>[0]['serverEnv'];
 }>) {
   const core = await startProjectDaemonFixture({ testDir: params.testDir,
+    advertiseRequestObservationEndpoint: params.advertiseRequestObservationEndpoint,
     dbProvider: params.dbProvider, guestReachableHome: params.guestReachableHome, serverEnv: params.serverEnv,
     ...((params.observeActionRequests || params.observeSavedHealthSourceSelections || params.observeAutomationWriteFailures || params.beforeHttpRequest || params.beforeForwardResponse || params.captureRequestBody)
       ? { requestObservation: {
@@ -121,10 +124,11 @@ export async function startTeamSetupFFixture(params: Readonly<{
       },
       /** The real vendor process reaches its native MCP host; the test supplies no caller authority. */
       async executeSessionMcpAction(account: Awaited<ReturnType<typeof createAccount>>,
-        session: Readonly<{ sessionId: string; logPath: string }>, actionId: ActionId, input: unknown) {
-        const requestId = randomUUID();
+        session: Readonly<{ sessionId: string; logPath: string }>, actionId: ActionId, input: unknown,
+        options?: Readonly<{ actionRequestId: string }>) {
+        const requestId = options?.actionRequestId ?? randomUUID();
         const sent = await account.execute('session.message.send', { sessionId: session.sessionId,
-          message: `SESSION_MCP_ACTION_JSON:${JSON.stringify({ requestId, actionId, input })}`, reply: 'none' });
+          message: `SESSION_MCP_ACTION_JSON:${JSON.stringify({ requestId, actionId, input, ...options })}`, reply: 'none' });
         if (!sent.ok) throw createActionExecuteFailureError(sent);
         const admission = SessionMessageSendResultV1Schema.parse(sent.result);
         if (admission.status !== 'accepted' && admission.status !== 'alreadyAccepted') {

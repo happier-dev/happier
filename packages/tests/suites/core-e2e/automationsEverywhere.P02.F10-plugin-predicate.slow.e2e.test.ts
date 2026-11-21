@@ -1,4 +1,4 @@
-import { cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -14,8 +14,6 @@ import { waitFor } from '../../src/testkit/timing';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { ApprovalQueueListResultV1Schema, ApprovalRequestGetResultV1Schema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
 import { AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1 } from '../../../protocol/src/automations/automationActionOccurrenceV1';
-import { repoRootDir } from '../../src/testkit/paths';
-import { buildCurrentSourcePublicPluginFixture } from '../../src/testkit/pluginPlatform/currentManagedStackPluginUiQa';
 
 describe('Automations everywhere: input-sensitive plugin effects', () => {
   let fixture: TeamSetupFFixture | undefined;
@@ -321,100 +319,5 @@ describe('Automations everywhere: input-sensitive plugin effects', () => {
       expect(JSON.stringify(observed)).not.toContain(liveSentinel);
       return observed.length === 1 && typeof observed[0]!.producedSessionId === 'string';
     }, { failFast: true, context: 'Retained live plugin starts one safe review Run' });
-  }, 0);
-
-  it('settles an actual reverse UI-hosted effect through the published client artifact and real currentness owner', async () => {
-    const testDir = await mkdtemp(join(tmpdir(), 'ae-p02-plugin-ui-reverse-'));
-    fixture = await startTeamSetupFFixture({ testDir, observeActionRequests: true,
-      serverEnv: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } });
-    const actor = await fixture.createAccount('actor');
-    const machine = await fixture.enrollDaemon(actor, { env: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } });
-    const session = await fixture.assertKnownGoodSessionControl(actor, machine);
-    const pluginId = 'acme.automation-ui-reverse';
-    const actionId = formatQualifiedPluginActionId({ pluginId, localId: 'apply' });
-    const pluginRoot = join(testDir, 'client-plugin');
-    await mkdir(pluginRoot, { recursive: true });
-    const sourceFixture = join(repoRootDir(), 'packages/tests/fixtures/plugin-platform/current-source-native-public');
-    await cp(join(sourceFixture, 'tsconfig.json'), join(pluginRoot, 'tsconfig.json'));
-    const packageJson = JSON.parse(await readFile(join(sourceFixture, 'package.json'), 'utf8')) as Record<string, unknown>;
-    await writeFile(join(pluginRoot, 'package.json'), JSON.stringify({ ...packageJson,
-      name: '@happier-qa/automation-ui-reverse', exports: { './happier-plugin-ui/effect-client': './client.ts' } }));
-    await writeFile(join(pluginRoot, 'index.ts'), [
-      "import { definePlugin } from '@happier-dev/plugin-sdk';",
-      'const plugin = definePlugin({',
-      `id: ${JSON.stringify(pluginId)}, version: '1.0.0', entrypoints: { daemon: './dist/index.js' },`,
-      "actions: { apply: { title: 'Apply UI fixture', dangerLevel: 'safe', readOnly: false, scopes: ['global'],",
-      "surfaces: ['ui', 'cli'], execution: { target: 'client', client: { artifactId: 'effect-client', exportName: 'activate' }, platforms: ['web'] },",
-      "inputSchema: { type: 'object', properties: { mode: { type: 'string' } }, required: ['mode'], additionalProperties: false } } } });",
-      'export const manifest = plugin.manifest; export const activate = plugin.activate;',
-    ].join('\n'));
-    await writeFile(join(pluginRoot, 'client.ts'), [
-      "import type { PluginClientApi } from '@happier-dev/plugin-sdk';",
-      "export function activate(api: PluginClientApi) { api.actions.register('apply', async input => input); }",
-    ].join('\n'));
-    await buildCurrentSourcePublicPluginFixture(pluginRoot);
-    await applyTrustedLocalPluginFixture({ daemonPort: machine.daemon.state.httpPort,
-      controlToken: machine.daemon.state.controlToken, pluginRoot, pluginId, interactionId: 'automation-client-install' });
-    const context = { defaultSessionId: session.sessionId, externalActionTarget: { kind: 'machine' as const,
-      machineId: machine.target.machineId, project: { machineId: machine.target.machineId, directory: machine.workspaceDir } } };
-    const linked = await actor.executeAsPerson('workflow.trigger.add', {
-      target: { kind: 'inline', definition: { version: 1,
-        defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
-        blocks: [{ kind: 'step', id: 'review', document: { text: 'Review the completed UI effect.', references: [], attachments: [] },
-          input: [], result: { kind: 'text' } }],
-      } }, project: { machineId: machine.target.machineId, directory: machine.workspaceDir },
-      trigger: { kind: 'action', phase: 'after', enabled: true, actionIds: [actionId] },
-    }, context);
-    expect(linked.ok, JSON.stringify(linked)).toBe(true);
-    if (!linked.ok) throw new Error('UI effect trigger refused');
-    const saved = WorkflowTriggerWriteResultV1Schema.parse(linked.result);
-    const [{ connectUiPersonActionClient }, React, { renderScreen }, { MainAppTabStateProvider }, { AppPaneProvider },
-      { AppShellPluginUiProjectionProvider }, { CurrentUiContextProvider }, { CurrentUiContextActionHost },
-      { ClientActionReverseRuntime }, { readCurrentAppShellPluginUiProjection }, { resolvePluginUiClientActionRegistration }] = await Promise.all([
-      import('@happier-tests/ui-action-client'), import('react'),
-      import('../../../../apps/ui/sources/dev/testkit/render/renderScreen'),
-      import('../../../../apps/ui/sources/components/navigation/mobile/chrome/MainAppTabStateProvider'),
-      import('../../../../apps/ui/sources/components/appShell/panes/AppPaneProvider'),
-      import('../../../../apps/ui/sources/components/appShell/plugins/AppShellPluginUiProjection'),
-      import('../../../../apps/ui/sources/components/appShell/currentUiContext/CurrentUiContextProvider'),
-      import('../../../../apps/ui/sources/components/appShell/currentUiContext/currentUiContextVoiceToolPort'),
-      import('../../../../apps/ui/sources/components/appShell/runtime/ClientActionReverseRuntime'),
-      import('../../../../apps/ui/sources/components/appShell/plugins/committedPluginUiProjection'),
-      import('../../../../apps/ui/sources/components/plugins/reactNative/clientExecutableContributions'),
-    ]);
-    const ui = await connectUiPersonActionClient({ serverUrl: fixture.actionServerApiUrl,
-      addressAnchorUrl: fixture.server.baseUrl, accountSecret: actor.auth.accountSigningSeed });
-    let mounted: Awaited<ReturnType<typeof renderScreen>> | undefined;
-    try {
-      mounted = await renderScreen(React.createElement(MainAppTabStateProvider, null,
-        React.createElement(AppPaneProvider, null, React.createElement(AppShellPluginUiProjectionProvider, null,
-          React.createElement(CurrentUiContextProvider, null, React.createElement(CurrentUiContextActionHost),
-            React.createElement(ClientActionReverseRuntime))))));
-      await waitFor(() => {
-        const action = readCurrentAppShellPluginUiProjection()?.actionsById[actionId];
-        return ui.isMachineActive(machine.target.machineId) && Boolean(action
-          && resolvePluginUiClientActionRegistration({ action, platform: 'web' }));
-      }, { context: 'Published UI client artifact is current and activated by AppShell' });
-      const requestId = 'reverse-ui-original-action-request';
-      fixture.takeRequestObservations();
-      expect(await actor.execute('action.invoke', { action: { pluginId, localId: 'apply' }, input: { mode: 'save' } },
-        { ...context, actionRequestId: requestId })).toMatchObject({ ok: true, result: { mode: 'save' } });
-      const occurrences = fixture.readActionOccurrences().filter(value => value.evidence.actionId === actionId);
-      expect(occurrences).toHaveLength(1);
-      expect(occurrences[0]).toMatchObject({ evidence: { requestId, phase: 'after', status: 'succeeded' },
-        triggers: [{ automationId: saved.set.automationId, triggerId: saved.triggerId, triggerRevision: saved.triggerRevision }] });
-      expect(fixture.takeRequestObservations().filter(request => request.method === 'POST'
-        && request.path === AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1)).toHaveLength(1);
-      await waitFor(async () => {
-        const response = await fetchJson<unknown>(`${fixture!.server.baseUrl}/v3/automations/${encodeURIComponent(saved.set.automationId)}/runs`, {
-          headers: { Authorization: `Bearer ${actor.credentials.token}`,
-            ...buildAccountStoredContentCompatibilityHttpHeadersV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION) },
-        });
-        expect(response.status).toBe(200);
-        const observed = AutomationV3RunListResponseSchema.parse(response.data).runs;
-        expect(observed.length).toBeLessThanOrEqual(1);
-        return observed.length === 1 && typeof observed[0]!.producedSessionId === 'string';
-      }, { failFast: true, context: 'Reverse UI-hosted plugin effect starts one review Run' });
-    } finally { await mounted?.unmount(); await ui.close(); }
   }, 0);
 });

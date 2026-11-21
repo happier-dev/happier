@@ -194,10 +194,13 @@ export function connectUiPersonActionClient(params: Readonly<{
     accountEncryptionMode?: AccountEncryptionModeResponse['mode'];
     withAppShellActions?: boolean;
     withCurrentUiActionPort?: boolean;
+    withClientActionReverseRuntime?: boolean;
     withAccountLifecycle?: boolean;
     presentedMachineAction?: Readonly<{ action: PluginContributionIdentityV1; target: MachineAdministrationTargetV1 }>;
 }>): Promise<Awaited<ReturnType<typeof connectUiActionClient>> & Readonly<{
     isPresentedMachineActionReady(): boolean;
+    hasRegisteredClientActionMethod(machineId: string, method: string): boolean;
+    hasActivatedClientAction(identity: PluginContributionIdentityV1): Promise<boolean>;
 }>>;
 
 export function connectUiTriageActionClient(params: Parameters<typeof connectUiPersonActionClient>[0] & Readonly<{

@@ -1395,7 +1395,7 @@ async function runSdkStreamUntilEof() {
         { parentURL: require('node:url').pathToFileURL(__filename).href,
           tsconfig: path.resolve(__dirname, '../../../../apps/cli/tsconfig.json') },
       );
-      const result = await executeSessionMcpAction(request.actionId, request.input);
+      const result = await executeSessionMcpAction(request.actionId, request.input, { actionRequestId: request.actionRequestId });
       safeAppendJsonl(logPath, { type: 'session_mcp_action_result', invocationId,
         requestId: request.requestId, result, pid: process.pid, ts: Date.now() });
       emitSdk(createUserMessage([{ type: 'tool_result', tool_use_id: toolUseId,

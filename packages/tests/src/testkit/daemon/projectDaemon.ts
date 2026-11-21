@@ -55,12 +55,16 @@ export async function startProjectDaemonFixture(params: Readonly<{
   requestObservation?: Omit<Parameters<typeof startHttpRequestRecordingProxy>[0], 'targetBaseUrl'>;
   daemonEnv?: EnvOverrides;
   observeActionRequests?: boolean;
+  advertiseRequestObservationEndpoint?: boolean;
   beforeHttpRequest?: (request: RecordedHttpProxyRequest) => void | Promise<void>;
 }>) {
   const sourceOptions = withWorkspaceSourceRuntime(process.env).NODE_OPTIONS;
   const serverSourceOptions = [sourceOptions, ...(params.serverPreloadModules ?? []).flatMap(module => ['--import', module])].join(' ');
   const port = await reserveAvailablePort();
+  const homeTarget = `http://127.0.0.1:${port}`;
+  const requestObservation = { onRequestStart: params.beforeHttpRequest, ...params.requestObservation };
   let ingress: HttpRequestRecordingProxy | undefined;
+  let requestProxy: HttpRequestRecordingProxy | undefined;
   let tls: Awaited<ReturnType<typeof createEphemeralTlsServerFixture>> | undefined;
   let previousCertificates: string[] | undefined;
   if (params.guestReachableHome) {
@@ -70,21 +74,24 @@ export async function startProjectDaemonFixture(params: Readonly<{
     tls = await createEphemeralTlsServerFixture({ additionalIpAddresses: [host] });
     try {
       ingress = await startHttpRequestRecordingProxy({ ...params.requestObservation,
-        targetBaseUrl: `http://127.0.0.1:${port}`, listenHost: host,
+        targetBaseUrl: homeTarget, listenHost: host,
         tls: { key: await readFile(tls.privateKeyPath), cert: await readFile(tls.leafCertificatePath) } });
       // The signed-in Node UI client follows the same published TLS descriptor.
       previousCertificates = getCACertificates('default');
       setDefaultCACertificates([...previousCertificates, await readFile(tls.caCertificatePath, 'utf8')]);
     } catch (error) { await tls.cleanup(); throw error; }
   }
+  if (params.advertiseRequestObservationEndpoint && !ingress) {
+    requestProxy = await startHttpRequestRecordingProxy({ ...requestObservation, targetBaseUrl: homeTarget });
+  }
   const enrollmentEnv = tls ? { NODE_EXTRA_CA_CERTS: tls.caCertificatePath } : {};
   const serverEnv = { NODE_OPTIONS: serverSourceOptions, HAPPIER_E2E_PROVIDER_USE_SERVER_SOURCE_ENTRYPOINT: '1',
     HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: '1',
     // Real CLI enrollment retains the authenticated descriptor published for this ingress.
-    HAPPIER_PUBLIC_SERVER_URL: ingress?.baseUrl ?? `http://127.0.0.1:${port}`, ...params.serverEnv };
+    HAPPIER_PUBLIC_SERVER_URL: ingress?.baseUrl ?? requestProxy?.baseUrl ?? homeTarget, ...params.serverEnv };
   const server = await startServerLight({ testDir: join(params.testDir, 'server'), port,
     dbProvider: params.dbProvider ?? 'postgres', extraEnv: serverEnv }).catch(async error => {
-      try { await ingress?.stop(); } finally {
+      try { await (ingress ?? requestProxy)?.stop(); } finally {
         if (previousCertificates) setDefaultCACertificates(previousCertificates);
         await tls?.cleanup();
       }
@@ -92,11 +99,9 @@ export async function startProjectDaemonFixture(params: Readonly<{
     });
   const daemons: StartedDaemon[] = [];
   const accountObservers: ReturnType<typeof observeSessionSocketEvents>[] = [];
-  let requestProxy: HttpRequestRecordingProxy | undefined;
   try {
-    if (params.observeActionRequests || params.beforeHttpRequest || params.requestObservation) {
-      requestProxy = await startHttpRequestRecordingProxy({ targetBaseUrl: server.baseUrl,
-        onRequestStart: params.beforeHttpRequest, ...params.requestObservation });
+    if (!requestProxy && (params.observeActionRequests || params.beforeHttpRequest || params.requestObservation)) {
+      requestProxy = await startHttpRequestRecordingProxy({ ...requestObservation, targetBaseUrl: server.baseUrl });
     }
     const actionServerApiUrl = requestProxy?.baseUrl ?? server.baseUrl;
     const features = await fetchJson<unknown>(`${server.baseUrl}/v1/features`);

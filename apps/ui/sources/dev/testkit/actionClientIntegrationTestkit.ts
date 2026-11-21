@@ -5,6 +5,7 @@ import { installNativeRuntimeFetchBoundary } from './harness/nativeRuntimeFetch'
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { RegistryKindV1 } from '@happier-dev/protocol/registries';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
 import type { AccountEncryptionModeResponse } from '@happier-dev/protocol/account/encryptionMode';
 import { authGetTokenAtEndpoint } from '@/auth/flows/getToken';
@@ -275,7 +276,7 @@ export async function connectUiActionClient(params: Readonly<{ serverUrl: string
             },
             isAccountReady: () => Boolean(getActiveServerAccountScope()),
             lendScopedSocketClient: () => apiSocket.lendScopedSocketClient({
-                serverUrl: params.serverUrl, token: params.credentials.token,
+                serverUrl: params.serverUrl, reachabilityServerUrl: profileUrl, token: params.credentials.token,
             }),
             async waitForPluginAccountAvailability(): Promise<void> {
                 await getSyncSingleton().refreshPluginAccountAvailability();
@@ -321,6 +322,7 @@ export async function connectUiPersonActionClient(params: Readonly<{
     /** Triage fixtures provide their own Account projection and executable port. */
     withAppShellActions?: boolean;
     withCurrentUiActionPort?: boolean;
+    withClientActionReverseRuntime?: boolean;
     /** Triage fixtures keep the restored Account lifetime as their authority. */
     withAccountLifecycle?: boolean;
     /** The contributed control the fixture presents before a Person presses it. */
@@ -333,16 +335,24 @@ export async function connectUiPersonActionClient(params: Readonly<{
         requireKeyChallengeV2: true,
         requireExistingAccount: true,
     });
+    const accountCredentials = params.accountEncryptionMode === 'plain'
+        ? { token: credentials.token } : { ...credentials, secret: encodeBase64(params.accountSecret) };
     const client = await connectUiActionClient({ serverUrl: params.serverUrl, addressAnchorUrl: params.addressAnchorUrl,
-        withAccountLifecycle: false,
-        credentials: params.accountEncryptionMode === 'plain'
-            ? { token: credentials.token }
-            : { ...credentials, secret: encodeBase64(params.accountSecret) } });
+        withAccountLifecycle: false, credentials: accountCredentials });
     let unmount: (() => Promise<void>) | undefined;
+    const registeredClientMethods = new Set<string>();
+    let reverseSocket: ReturnType<typeof client.lendScopedSocketClient> = null;
     try {
+        if (params.withClientActionReverseRuntime) {
+            reverseSocket = client.lendScopedSocketClient();
+            if (!reverseSocket) throw new Error('UI reverse Action requires the live Account socket');
+            reverseSocket.on(SOCKET_RPC_EVENTS.REGISTERED, (payload: { method?: string }) => {
+                if (typeof payload.method === 'string') registeredClientMethods.add(payload.method);
+            });
+        }
         if (params.presentedMachineAction) await getSyncSingleton().refreshPluginAccountAvailability();
         const [{ renderHook }, { createMountedCurrentUiContextWrapper }, { createElement, Fragment },
-            { PluginSurfaceProjectionDemand }, { REGISTRY_SOURCE_PROJECTION_SECTIONS, pluginUiSections },
+            { PluginSurfaceProjectionDemand }, { PLUGIN_UI_SECTIONS, REGISTRY_SOURCE_PROJECTION_SECTIONS, pluginUiSections },
             { useRegistryListSourceSelection }, { REGISTRY_ACTION_IDS_V1, RegistryKindV1Schema }, { waitForTestEvent },
             { useAppShellPluginUiProjection }, { resolveCurrentContributedAction }, { readCurrentAppShellPluginUiProjection }] = await Promise.all([
             import('./hooks/renderHook'), import('./harness/mountedCurrentUiContext'),
@@ -355,6 +365,9 @@ export async function connectUiPersonActionClient(params: Readonly<{
         ]);
         const AppShell = await createMountedCurrentUiContextWrapper({ withAppShellActions: params.withAppShellActions !== false,
             withCurrentUiActionPort: params.withCurrentUiActionPort, withAccountLifecycle: params.withAccountLifecycle !== false });
+        const reverseRuntime = params.withClientActionReverseRuntime
+            ? createElement((await import('@/components/appShell/runtime/ClientActionReverseRuntime')).ClientActionReverseRuntime)
+            : null;
         const scope = getActiveServerAccountScope();
         const shell = await renderHook((kind: RegistryKindV1 | undefined) => {
             const registrySourcesPending = useAppShellPluginUiProjection(value => value.registrySourcesPending === true);
@@ -363,11 +376,12 @@ export async function connectUiPersonActionClient(params: Readonly<{
         }, {
             wrapper: ({ children }) => createElement(AppShell, null, createElement(Fragment, null,
                 createElement(PluginSurfaceProjectionDemand, { accountScope: scope,
-                    presents: 'allInstallations', sections: REGISTRY_SOURCE_PROJECTION_SECTIONS }),
+                    presents: 'allInstallations', sections: params.withClientActionReverseRuntime
+                        ? PLUGIN_UI_SECTIONS : REGISTRY_SOURCE_PROJECTION_SECTIONS }),
                 params.presentedMachineAction && createElement(PluginSurfaceProjectionDemand, {
                     accountScope: scope, pluginId: params.presentedMachineAction.action.pluginId,
                     contextualTarget: params.presentedMachineAction.target,
-                }), children)),
+                }), reverseRuntime, children)),
         });
         unmount = shell.unmount;
         if (params.presentedMachineAction) {
@@ -389,14 +403,14 @@ export async function connectUiPersonActionClient(params: Readonly<{
                 await waitForTestEvent(shell.subscribe, shell.getCurrent, pending => !pending);
             }
         };
-        const execute: typeof client.execute = Object.assign(async (...args: Parameters<typeof client.execute>) => {
-            await waitForRegistry(args[0], args[1]);
-            return client.execute(...args);
-        }, { prepare: client.execute.prepare, confirmed: client.execute.confirmed });
         const executeConfirmed: typeof client.executeConfirmed = async (...args) => {
             await waitForRegistry(args[0], args[1]);
             return client.executeConfirmed(...args);
         };
+        const execute: typeof client.execute = Object.assign(async (...args: Parameters<typeof client.execute>) => {
+            await waitForRegistry(args[0], args[1]);
+            return client.execute(...args);
+        }, { prepare: client.execute.prepare, confirmed: client.execute.confirmed });
         const executePresented: typeof client.executePresented = Object.assign(async (...args: Parameters<typeof client.executePresented>) => {
             await waitForRegistry(args[0], args[1]);
             return client.executePresented(...args);
@@ -408,10 +422,22 @@ export async function connectUiPersonActionClient(params: Readonly<{
                 () => readCurrentAppShellPluginUiProjection({ scope, declarationsOnly: true }), presentation.action);
             return action?.kind === 'machine' && action.origin.machineId === presentation.target.machineId;
         };
-        return { ...client, execute, executeConfirmed, executePresented, isPresentedMachineActionReady, async close() {
-            try { await unmount?.(); } finally { await client.close(); }
+        return { ...client, execute, executeConfirmed, executePresented, isPresentedMachineActionReady,
+            hasRegisteredClientActionMethod: (machineId: string, method: string) => registeredClientMethods.has(`${machineId}:${method}`),
+            async hasActivatedClientAction(identity: PluginContributionIdentityV1) {
+                const [{ createPluginUiProjectedActionResolver }, { resolvePluginUiClientActionRegistration }] = await Promise.all([
+                    import('@/sync/domains/plugins/ui/projection'),
+                    import('@/components/plugins/reactNative/clientExecutableContributions'),
+                ]);
+                const action = createPluginUiProjectedActionResolver(readCurrentAppShellPluginUiProjection()?.actionsById)(identity);
+                return Boolean(action && resolvePluginUiClientActionRegistration({ action, platform: 'web' }));
+            },
+            async close() {
+                reverseSocket?.disconnect();
+                try { await unmount?.(); } finally { await client.close(); }
         } };
     } catch (error) {
+        reverseSocket?.disconnect();
         try { await unmount?.(); } finally { await client.close(); }
         throw error;
     }
