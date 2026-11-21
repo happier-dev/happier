@@ -12,6 +12,13 @@ import { admitUsageAnalyticsServerPrices } from '@happier-dev/protocol/usage/usa
 
 type AccountingRead = UsageAnalyticsQueryResponse | { error: 'not_found' | 'usage_query_failed' };
 
+/** An authenticated batch refused one query, not the Home read itself. */
+export class UsageAccountingSliceRefusal extends Error {
+    readonly code = 'denied';
+
+    constructor() { super('Usage slice unavailable'); }
+}
+
 /** Raw-detail admission is part of the existing accounting answer's identity. */
 export function getUsageAccountingReadKey(request: UsageAnalyticsQueryRequest, includeContributions: boolean, includeSessionIds = false, workOnly = false): string {
     return JSON.stringify([getUsageAnalyticsQueryRequestKey(request), includeContributions, includeSessionIds, ...(workOnly ? [true] : [])]);
@@ -130,8 +137,10 @@ export function createUsageAccountingReader(context: Readonly<{
                 scope: captured.transport.scope ?? captured.binding, signal: cancellation.signal, onIssued,
             }) : read([key], cancellation.signal, () => {}, () => onIssued?.())).finally(cancellation.dispose);
             const result = values.get(key)!;
-            if ('error' in result) throw new HappyError('Usage slice unavailable', false,
-                result.error === 'not_found' ? { status: 404, code: 'denied' } : { code: 'usage_query_failed' });
+            if ('error' in result) {
+                if (result.error === 'not_found') throw new UsageAccountingSliceRefusal();
+                throw new HappyError('Usage slice unavailable', false, { code: 'usage_query_failed' });
+            }
             return result;
         },
     };

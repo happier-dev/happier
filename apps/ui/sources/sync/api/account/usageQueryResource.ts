@@ -12,7 +12,7 @@ import type { ResourceContent, ResourceSubscriptionEvent } from '@happier-dev/pl
 import { createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
 import { getUsageQueryBatchKey, getUsageQueryKey, normalizeUsageQuery, normalizeUsageQueryBatchInput, resolveUsageQueryPeriod, usageAnalyticsRequestToQuery, usageQueryToAnalyticsRequest, usageQueryNeedsContributionRows, type UsageQuery, type UsageQueryBatchInput } from '@happier-dev/protocol/inputs/usageQuery';
 import { collectUsageWorkSources, readUsageWorkSessionTurns } from '@happier-dev/protocol/usage/usageWorkSources';
-import { readUsageAccountingReadAtMs, resolveUsagePageAccountingReads, resolveUsageAccountingAsOfMs, resolveUsageQuotaSourceSnapshot, retainAccountingOnReadFailure, retainUsageQueryResultReferences, canRetainUsageReadFailure, isUsageQuerySourceOutstanding, UsageQueryBatchResultSchema, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot, type UsageQueryBatchResult, type UsageWorkSourceSnapshot, type UsageQuerySourceState, type UsageQueryResultSlice, type UsageQuotaSourceSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { readUsageAccountingReadAtMs, resolveUsagePageAccountingReads, resolveUsageAccountingAsOfMs, resolveUsageComparisonQuery, resolveUsageQuotaSourceSnapshot, retainAccountingOnReadFailure, retainUsageQueryResultReferences, canRetainUsageReadFailure, isUsageQuerySourceOutstanding, UsageQueryBatchResultSchema, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot, type UsageQueryBatchResult, type UsageWorkSourceSnapshot, type UsageQuerySourceState, type UsageQueryResultSlice, type UsageQuotaSourceSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { ConnectedServicePoolSelectionGetRequestV1Schema, type ConnectedServicePoolSelectionGetRequestV1, type ConnectedServicePoolSelectionGetResponseV1 } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import { readRpcErrorCode, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { isMachineRequestReachabilityFailureV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
@@ -35,7 +35,7 @@ import { resolveServerScopedTransport } from '@/sync/runtime/orchestration/serve
 import { subscribeHomeAccountChange, type HomeAccountChangeEvent } from '@/sync/runtime/orchestration/homeAccountChange';
 import { parseToken } from '@/utils/auth/parseToken';
 import { queryUsageAnalytics } from './apiUsage';
-import { createUsageAccountingReader, getUsageAccountingReadKey } from './usageAccountingReader';
+import { createUsageAccountingReader, getUsageAccountingReadKey, UsageAccountingSliceRefusal } from './usageAccountingReader';
 import { captureAccountEncryptionCurrentness } from './apiAccountEncryptionMode';
 import { classifyAccountStorageReadFailure } from '@/sync/encryption/accountStorageContext';
 import { resolveSessionScmRequestTarget } from '@/sync/ops/sessionScm';
@@ -1362,18 +1362,24 @@ function readWorkSessionIds(accounting: UsageAccountingSourceSnapshot['value']):
     return [...new Set(readUsageWorkSessionTurns(accounting)?.map(turn => turn.sessionId) ?? [])];
 }
 
-async function readSessionWorkEvidence(context: UsageQueryAccountContext, queries: readonly UsageQuery[],
-    accounting: readonly UsageAccountingSourceSnapshot[], sessionReads: Map<string, Promise<SessionWorkSourceResult>>,
-    readMachine: Parameters<typeof collectUsageWorkSources>[0]['readMachine'], signal?: AbortSignal): Promise<readonly UsageWorkSourceSnapshot[]> {
-    return collectUsageWorkSources({ queries, accounting, sessionReads, assertCurrent: () => requireCurrent(context, signal),
-        resolveSession: async sessionId => {
-            const scope = context.accountLifetime.scope;
-            const target = resolveSessionScmRequestTarget(sessionId, RPC_METHODS.SCM_WORK_EVIDENCE_READ, {}, scope.serverId, scope.accountId);
-            return target.ok ? { machineId: target.machineId, cwd: target.cwd }
-                : { errorCode: target.failure.actionErrorCode ?? target.failure.errorCode };
-        },
-        readMachine,
-    });
+type UsageWorkSessionTarget = Readonly<{ machineId: string; cwd: string } | { errorCode: string }>;
+type UsageWorkSessionTargets = ReadonlyMap<string, UsageWorkSessionTarget>;
+type UsageWorkMachineInput = Readonly<{
+    queryKey: string; sessionIds: readonly string[]; targetKey: string; machineKey: string;
+}>;
+
+function resolveUsageWorkSessionTargets(scope: UsageQueryAccountContext['accountLifetime']['scope'],
+    sessionIds: readonly string[], resolved: Map<string, UsageWorkSessionTarget>): UsageWorkSessionTargets {
+    return new Map<string, UsageWorkSessionTarget>(sessionIds.map(sessionId => {
+        let target = resolved.get(sessionId);
+        if (!target) {
+            const request = resolveSessionScmRequestTarget(sessionId, RPC_METHODS.SCM_WORK_EVIDENCE_READ, {}, scope.serverId, scope.accountId);
+            target = request.ok ? { machineId: request.machineId, cwd: request.cwd }
+                : { errorCode: request.failure.actionErrorCode ?? request.failure.errorCode };
+            resolved.set(sessionId, target);
+        }
+        return [sessionId, target];
+    }));
 }
 
 /** Capture the Home carrier and real Account lifetime; neither is a query input. */
@@ -1433,8 +1439,8 @@ export async function readUiUsageQueryBatch(
     options?: Readonly<{
         /** Async consumers return their existing progress drain so settlement can reuse its projection. */
         onProgress?: (reproject: UsageQueryReprojection) => void | Promise<void>;
-        /** The Resource retains the Machine facts consumed at this Work admission. */
-        onWorkAdmission?: (accounting: UsageAccountingSourceSnapshot['value']) => void;
+        /** The Resource retains the exact Session targets consumed by this Work read. */
+        onWorkAdmission?: (queryKey: string, targets: UsageWorkSessionTargets) => void;
         /** Only the shared explicit Read now Action may open unconverted wide-window Sessions. */
         readUnconvertedHistory?: boolean;
         /** A wake of another Usage input does not demand replacement allowance acquisition. */
@@ -1530,6 +1536,7 @@ export async function readUiUsageQueryBatch(
     const evidenceQueries = queries.filter(query => query.includeAccounting && query.includeSessionEvidence);
     let work: readonly UsageWorkSourceSnapshot[] = queries.map(query => ({ query, status: query.includeAccounting && query.includeWorkEvidence ? 'pending' : 'not_loaded' }));
     const sessionWorkReads = new Map<string, Promise<SessionWorkSourceResult>>();
+    const sessionWorkTargets = new Map<string, UsageWorkSessionTarget>();
     const readWorkMachine = createUsageWorkMachineReader(context, signal);
     const sessionInputReader = accountOwner.readSessionInput;
     // KV disclosure and Session evidence share this finite Account batch's identity.
@@ -1619,31 +1626,60 @@ export async function readUiUsageQueryBatch(
         // responses still progress independently while that work runs.
         if (accountingAdmissions.length) await Promise.all(accountingAdmissions);
         publish();
-        const accountingTasks = new Map(requests.map(query => [getUsageQueryKey(query), (async () => {
+        const accountingTasks = new Map(requests.map(query => {
+        const key = getUsageQueryKey(query);
+        return [key, (async () => {
         let snapshot: UsageAccountingSourceSnapshot;
         try {
-            const read = accountingReads.get(getUsageQueryKey(query))!;
+            const read = accountingReads.get(key)!;
             if (!(read instanceof Promise)) return;
             const answer = await read;
-            accountingAnswers.set(getUsageQueryKey(query), answer);
+            accountingAnswers.set(key, answer);
             snapshot = snapshotForAnswer(query, answer);
         } catch (error) {
             requireCurrent(context, signal);
+            if (error instanceof UsageAccountingSliceRefusal) {
+                accountOwner.withdrawSessionAccess(query, error.code);
+                // Withdraw this slice's facts while keeping the mounted Account
+                // watch alive for the Session's existing access/key wake.
+                const refused = { status: 'error' as const, errorCode: error.code };
+                accounting.set(key, { query, period: periods.get(key), ...refused });
+                const comparison = resolveUsageComparisonQuery(query, periods.get(key));
+                if (comparison) {
+                    const comparisonKey = getUsageQueryKey(comparison);
+                    const pending = accounting.get(comparisonKey);
+                    if (pending?.status === 'pending') accounting.set(comparisonKey, { query: comparison, period: pending.period, status: 'pending' });
+                }
+                if (previous) previous = { ...previous, results: previous.results.filter(slice => slice.key !== key) };
+                if (admittedPrevious) admittedPrevious = { ...admittedPrevious, results: admittedPrevious.results.filter(slice => slice.key !== key) };
+                priorAccounting.delete(key);
+                priorSlices.delete(key);
+                if (query.includeWorkEvidence) work = work.map(source => getUsageQueryKey(source.query) === key
+                    ? { query, ...refused } : source);
+                if (query.includeSessionEvidence) {
+                    howYouWorkByQuery.set(key, { query, errorCode: error.code });
+                    howYouWork = [...howYouWorkByQuery.values()];
+                    settledHowYouWorkQueries.add(key);
+                }
+                publish();
+                return false;
+            }
             const errorCode = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'usage_query_failed';
             // Malformed wire is a typed admission failure, not a usable partial
             // source. The Resource still owns retaining its last valid bytes.
             if (errorCode === 'usage_query_result_invalid') throw error;
             if (!canRetainUsageReadFailure(errorCode)) throw error;
-            const retained = priorAccounting.get(getUsageQueryKey(query));
+            const retained = priorAccounting.get(key);
             // Detail/Work membership must see the same retained accounting as
             // aggregation, rather than shrinking to the currently hydrated Sessions.
-            snapshot = retainAccountingOnReadFailure({ query, period: periods.get(getUsageQueryKey(query)), status: 'error', errorCode },
+            snapshot = retainAccountingOnReadFailure({ query, period: periods.get(key), status: 'error', errorCode },
                 retained?.value, retained?.asOfMs, retained?.readAtMs)!;
         }
         requireCurrent(context, signal);
-        accounting.set(getUsageQueryKey(query), snapshot);
+        accounting.set(key, snapshot);
         publish();
-        })()]));
+        })()] as const;
+        }));
         await Promise.all([
         (async () => {
             if (!evidenceQueries.some(query => query.includeCoach !== false)) return;
@@ -1660,10 +1696,18 @@ export async function readUiUsageQueryBatch(
             if (!query.includeAccounting || !query.includeWorkEvidence) return;
             // Each slice needs only its own contributions. Native Session reads
             // are still shared across slices within this one Action admission.
-            await accountingTasks.get(getUsageQueryKey(query));
+            if (await accountingTasks.get(getUsageQueryKey(query)) === false) return;
             requireCurrent(context, signal);
-            readOptions?.onWorkAdmission?.(accounting.get(getUsageQueryKey(query))?.value);
-            const sources = await readSessionWorkEvidence(context, [query], [...accounting.values()], sessionWorkReads, readWorkMachine, signal);
+            const queryKey = getUsageQueryKey(query);
+            const targets = resolveUsageWorkSessionTargets(context.accountLifetime.scope,
+                readWorkSessionIds(accounting.get(queryKey)?.value), sessionWorkTargets);
+            readOptions?.onWorkAdmission?.(queryKey, targets);
+            const sources = await collectUsageWorkSources({
+                queries: [query], accounting: [...accounting.values()], sessionReads: sessionWorkReads,
+                assertCurrent: () => requireCurrent(context, signal),
+                resolveSession: async sessionId => targets.get(sessionId) ?? null,
+                readMachine: readWorkMachine,
+            });
             work = work.map((source, sourceIndex) => sourceIndex === index
                 ? { ...sources[0]!, ...(sources[0]!.status === 'error' ? {} : { asOfMs: accountingNowMs }) } : source);
             publish();
@@ -1671,7 +1715,7 @@ export async function readUiUsageQueryBatch(
         ...evidenceQueries.map(async query => {
             // Current accounting owns historical dimension membership. A held
             // comparison or sibling query must not delay this slice's detail.
-            await accountingTasks.get(getUsageQueryKey(query));
+            if (await accountingTasks.get(getUsageQueryKey(query)) === false) return;
             requireCurrent(context, signal);
             const history = readUsageHistoryEntry(accountOwner, query);
             history.beginRead();
@@ -1809,14 +1853,14 @@ export type UsageQueryResourceEntry = Omit<PluginUiResourceEntry, 'refresh'> & R
     /** Cold presentations wait for admission; revisits immediately retain their last-known facts. */
     isPresentationReady(): boolean;
 }>;
-type UsageQueryResourceStore = Omit<PluginUiResourceStore, 'getEntry'> & Readonly<{
+type UsageQueryResourceStore = Omit<ReturnType<typeof createPluginUiResourceStore>, 'getEntry'> & Readonly<{
     getEntry(reference: Parameters<PluginUiResourceStore['getEntry']>[0], callerContext?: ActionExecutorContext): UsageQueryResourceEntry;
 }>;
 
 const usagePresentationReady = () => true;
 
 /** Explicit recovery replaces this entry's read; ordinary push wakes stay coalesced. */
-function withExplicitAllowanceRefresh(store: PluginUiResourceStore,
+function withExplicitAllowanceRefresh(store: ReturnType<typeof createPluginUiResourceStore>,
     withCaller: <T>(callerContext: ActionExecutorContext | undefined, admitted: boolean, acquire: () => T) => T,
     requestFresh: (reference: Parameters<PluginUiResourceStore['getEntry']>[0]) => void,
     isAllowanceReadPending: (reference: Parameters<PluginUiResourceStore['getEntry']>[0]) => boolean,
@@ -1879,6 +1923,7 @@ type UsageAccountingAnswer = {
     prepared?: PreparedUsageAccountingSnapshot;
 };
 type AccountResourceOwner = Readonly<{ store: UsageQueryResourceStore; invalidate(event?: UsageQueryInvalidation, quotaRecordIds?: readonly string[]): void; readSessionInput: SessionInputReader;
+    withdrawSessionAccess(query: UsageQuery, errorCode: UsageAccountingSliceRefusal['code']): void;
     coachSuppressions: UsageCoachSuppressionStateV1 | undefined;
     readCoachSuppressions(read: () => Promise<UsageCoachSuppressionStateV1>): Promise<void>;
     publishCoachSuppressions(state: UsageCoachSuppressionStateV1): void;
@@ -1891,6 +1936,21 @@ type AccountResourceOwner = Readonly<{ store: UsageQueryResourceStore; invalidat
     readAccounting(request: Parameters<typeof queryUsageAnalytics>[1], query: UsageQuery, signal?: AbortSignal,
         includeContributions?: boolean, includeSessionIds?: boolean, workOnly?: boolean, onIssued?: () => void): UsageAccountingAnswer | Promise<UsageAccountingAnswer>;
     projectionDocuments: ProviderAccountUsageProjectionDocuments }>;
+
+type WithdrawUsageQuery = (query: UsageQuery) => boolean;
+function readUsageSessionScope(selection: UsageQuery['session'] | undefined): readonly string[] {
+    return typeof selection === 'string' ? [selection] : selection ?? [];
+}
+
+function withdrawUsageQuerySlice(slice: UsageQueryResultSlice, errorCode: UsageAccountingSliceRefusal['code']): UsageQueryResultSlice {
+    // Quota belongs to the viewing Account. Everything admitted through the
+    // private Session, including its independent comparison read, is withdrawn.
+    const sources = slice.sources.filter(source => source.source === 'quota' || source.source.startsWith('quota:'));
+    return { key: slice.key, requestedQuery: slice.requestedQuery, shownQuery: slice.requestedQuery,
+        ...(slice.quota === undefined ? {} : { quota: slice.quota }),
+        sources: [{ source: 'accounting', status: 'error', errorCode }, ...sources],
+        pending: sources.some(source => isUsageQuerySourceOutstanding(slice.requestedQuery, source)) };
+}
 // This is the existing Resource store's Account ownership, not a response cache.
 const accountStores = new WeakMap<ServerAccountScopeLifetime, AccountResourceOwner>();
 function readUsageHistoryEntry(owner: AccountResourceOwner, query: UsageQuery): UsageHistoryEntry {
@@ -2029,11 +2089,24 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
     // first mount must keep the retained input's instant after a scoped wake.
     const accountingInputKey = (query: UsageQuery) => getUsageQueryKey({ ...query, metric: 'tokens' });
     const accountingInputs = new Map<string, { query: UsageQuery; identity: object; nowMs?: number }>();
+    const readingAccess = new Set<(matches: WithdrawUsageQuery, errorCode: UsageAccountingSliceRefusal['code'],
+        refusedQueryKey: string) => void>();
     let retainedCurrentness = captureAccountEncryptionCurrentness(lifetime.scope.serverId);
     const replaceAccounting = () => {
         admittedAccounting = undefined;
         accountingInputs.clear();
         accountingReads.invalidate();
+    };
+    const retireAccountingReads = (affected: (request: UsageAnalyticsQueryRequest) => boolean, nowMs?: number) => {
+        if (admittedAccounting) {
+            const { answers } = admittedAccounting;
+            for (const key of answers.keys()) {
+                const [queryKey] = JSON.parse(key) as [string];
+                if (affected(JSON.parse(queryKey) as UsageAnalyticsQueryRequest)) answers.delete(key);
+            }
+            if (nowMs !== undefined) admittedAccounting = { nowMs, answers };
+        }
+        accountingReads.invalidate(affected);
     };
     const replaceAccountInputs = () => {
         resourceInputs = {};
@@ -2097,7 +2170,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
     // are the same Account Resource's admitted slices, independent of batch membership.
     // Keep private evidence and selector state beside accounting so a changed
     // widget demand cannot retire only part of the same query's admission.
-    const slicesByQuery = new Map<string, UsageQueryBatchResult['results'][number]>();
+    const slicesByQuery = new Map<string, Readonly<{ slice: UsageQueryResultSlice; workInput?: UsageWorkMachineInput }>>();
     const sessionInputs = createUsageQuerySessionInputs({ lifetime, signal: evidenceAbort.signal,
         assertCurrent: () => requireCurrent(sharedContext, evidenceAbort.signal) });
     const listeners = new Map<(event: ResourceSubscriptionEvent, change?: UsageQueryInvalidation, quotaRecordIds?: readonly string[]) => void, Readonly<{
@@ -2145,12 +2218,15 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
         }
         return [...ids];
     };
-    const readWorkMachineInput = (sessionIds: readonly string[]) => {
+    const readWorkMachineInput = (queryKey: string, targets: UsageWorkSessionTargets): UsageWorkMachineInput => {
         const opened = readOpenedQuotaScope(sharedContext);
-        const ids = opened ? readWorkSessionMachineIds(sessionIds, opened) : [];
+        const ids = [...new Set([...targets.values()].flatMap(target => 'machineId' in target ? [target.machineId] : []))];
         const machines = Object.fromEntries(ids.flatMap(id => opened?.state.machines[id] ? [[id, opened.state.machines[id]!] as const] : []));
-        return { sessionIds, key: getUsageQueryMachineInvalidationKey(machines, Date.now(), lifetime.scope,
-            { includeMachineNames: false, poolMachineFilters: [], sessionMachineIds: ids }) };
+        return {
+            queryKey, sessionIds: [...targets.keys()], targetKey: JSON.stringify([...targets]),
+            machineKey: getUsageQueryMachineInvalidationKey(machines, Date.now(), lifetime.scope,
+                { includeMachineNames: false, poolMachineFilters: [], sessionMachineIds: ids }),
+        };
     };
     // Read and watch consume the same Account admission. The watch can name
     // its retained identity so establishment converges after its mandatory read,
@@ -2185,12 +2261,25 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
         const derivationCurrent = !!admission && nowMs >= admission.derivationInterval.fromMs && nowMs < admission.derivationInterval.untilMs;
         const inputsCurrent = !!admission && admission.inputs.length === readInputs.length
             && admission.inputs.every((identity, index) => identity === readInputs[index]);
-        const workMachinesCurrent = admission?.workMachineInputs.every(input => readWorkMachineInput(input.sessionIds).key === input.key) ?? true;
+        let workMachinesCurrent = true;
+        let changedWorkTargets: Set<string> | undefined;
+        let workTargets: Map<string, UsageWorkSessionTarget> | undefined;
+        const reconcileWorkInput = (input: UsageWorkMachineInput) => {
+            const targets = resolveUsageWorkSessionTargets(lifetime.scope, input.sessionIds, workTargets ??= new Map());
+            const current = readWorkMachineInput(input.queryKey, targets);
+            return { targetChanged: current.targetKey !== input.targetKey, machineChanged: current.machineKey !== input.machineKey };
+        };
+        for (const input of admission?.workMachineInputs ?? []) {
+            const { targetChanged, machineChanged } = reconcileWorkInput(input);
+            if (targetChanged) (changedWorkTargets ??= new Set()).add(input.queryKey);
+            if (machineChanged) workMachinesCurrent = false;
+        }
+        workMachinesCurrent &&= !changedWorkTargets;
         const current = !snapshot.error && inputsCurrent && workMachinesCurrent;
         const admitted = current && admission?.settled === true && quotaClockCurrent;
         const sourcesCurrent = admission?.settled === true && workMachinesCurrent && admission.inputs.length === readInputs.length
             && admission.inputs.every((identity, index) => index === 0 || identity === readInputs[index]);
-        return { readInputs, nowMs, admission, quotaClockCurrent, derivationCurrent, sourcesCurrent, error: !!snapshot.error,
+        return { readInputs, nowMs, admission, quotaClockCurrent, derivationCurrent, sourcesCurrent, changedWorkTargets, reconcileWorkInput, error: !!snapshot.error,
             currentSnapshot: current || snapshot.error ? snapshot : undefined,
             content: admitted ? content : undefined, reusable: admitted && admission?.reusable === true };
     };
@@ -2301,6 +2390,38 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 } finally { cancellation.dispose(); }
             })();
         },
+        withdrawSessionAccess(query, errorCode) {
+            const denied = readUsageSessionScope(query.session);
+            // Public-profile preparation can be refused by its own feature
+            // decision. A multi-Session denial identifies the requested scope,
+            // without identifying a denied member within it.
+            if (!denied.length || query.population === 'public_eligible_personal') return;
+            const intersects = (selection: readonly string[]) => selection.some(id => denied.includes(id));
+            const matches: WithdrawUsageQuery = candidate => candidate.population !== 'public_eligible_personal'
+                && intersects(readUsageSessionScope(candidate.session));
+            for (const [key, input] of accountingInputs) {
+                if (matches(input.query)) accountingInputs.set(key, { ...input, identity: {} });
+            }
+            retireAccountingReads(request => request.population !== 'public_eligible_personal'
+                && intersects(request.filters?.sessionIds ?? []));
+            for (const [key, { slice }] of slicesByQuery) {
+                if (matches(slice.requestedQuery)) slicesByQuery.delete(key);
+            }
+            const refusedQueryKey = getUsageQueryKey(query);
+            for (const withdraw of readingAccess) withdraw(matches, errorCode, refusedQueryKey);
+            owner.store.replaceRetainedValues(content => {
+                const admitted = decodedValues.get(content);
+                if (!admitted) return content;
+                const { value, admission } = admitted;
+                if (!value.results.some(slice => matches(slice.requestedQuery))) return content;
+                const replacement = { ...value, results: value.results.map(slice => matches(slice.requestedQuery)
+                    ? withdrawUsageQuerySlice(slice, errorCode) : slice) };
+                const next = createUsageQueryResourceContent(replacement);
+                decodedValues.set(next, { value: replacement,
+                    admission: admission && { ...admission, reusable: false } });
+                return next;
+            });
+        },
         readSessionInput: sessionInputs.read,
         readSessionSelection: sessionInputs.readSelection,
         projectSessionSelection: sessionInputs.projectSelection,
@@ -2336,11 +2457,22 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 const queries = normalizeUsageQueryBatchInput(reference.input).queries;
                 const readDemand = [...listeners.values()].filter(watched => resourceKey(watched.reference) === resourceKey(reference))
                     .map(watched => watched.takeReadDemand());
+                let withdrawn: Map<string, Readonly<{ errorCode: UsageAccountingSliceRefusal['code']; identity?: object; direct: boolean }>> | undefined;
+                const withdraw = (matches: WithdrawUsageQuery, errorCode: UsageAccountingSliceRefusal['code'], refusedQueryKey: string) => {
+                    for (const query of queries) if (matches(query)) {
+                        const key = getUsageQueryKey(query);
+                        (withdrawn ??= new Map()).set(key, {
+                            errorCode, identity: accountingInputs.get(accountingInputKey(query))?.identity,
+                            direct: key === refusedQueryKey,
+                        });
+                    }
+                };
                 try {
                 if (readDemand.some(demand => demand.authorityChanged)) replaceAccountInputs();
                 const retained = readUsageAdmission(reference, queries);
                 const { readInputs, nowMs, admission, quotaClockCurrent } = retained;
                 if (retained.reusable && retained.content && (readDemand.length === 0 || readDemand.every(demand => demand.unchanged))) return retained.content;
+                if (queries.some(query => query.session !== null)) readingAccess.add(withdraw);
                 // Keep the admitted facts, not the superseded serialized bytes,
                 // in this async frame while unrelated source reads are pending.
                 const { value: ownPrevious, reproject: previousReproject } = (() => {
@@ -2349,18 +2481,33 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                         reproject: retained ? decodedValues.get(retained)?.reproject : undefined };
                 })();
                 const previousByKey = new Map(ownPrevious?.results.map(slice => [slice.key, slice]));
+                const ownWorkInputs = new Map(admission?.workMachineInputs.map(input => [input.queryKey, input]));
+                const seedWorkInputs = new Map<string, UsageWorkMachineInput>();
                 const sharedAllowance = allowance;
                 const heads = [...(sharedAllowance?.heads.values() ?? [])];
                 const head: UsageAllowanceProjection = { quota: heads.map(row => row.read), sources: heads.map(row => row.state) };
                 const previousSlices = queries.flatMap(query => {
                     const key = getUsageQueryKey(query);
-                    const slice = previousByKey.get(key) ?? slicesByQuery.get(key);
+                    const own = previousByKey.get(key);
+                    const siblingSlice = own ? undefined : slicesByQuery.get(key);
+                    let slice = own ?? siblingSlice?.slice;
+                    if (slice && query.includeWorkEvidence) {
+                        const witness = own ? ownWorkInputs.get(key) : siblingSlice?.workInput;
+                        const targetCurrent = witness && (own ? !retained.changedWorkTargets?.has(key)
+                            : !retained.reconcileWorkInput(witness).targetChanged);
+                        if (targetCurrent) seedWorkInputs.set(key, witness);
+                        else {
+                            // Work without a matching target cannot seed a progressive or failed replacement.
+                            const { work: _work, workSummary: _summary, mergedOutcomes: _outcomes, publicProfileEvidence: _profile, ...inputs } = slice;
+                            slice = { ...inputs, sources: inputs.sources.filter(source => source.source !== 'work') };
+                        }
+                    }
                     if (query.includeQuota === false || !sharedAllowance) return slice ? [slice] : [];
                     const sibling = sharedAllowance.slices.get(getRetainedQuotaPeriodKey(query));
                     if (!slice && !sibling && !heads.length) return [];
                     const base = slice ?? { key, requestedQuery: query, shownQuery: query, sources: [], pending: false };
-                    const retained = mergeRetainedUsageAllowance(head, base);
-                    const merged = sibling ? mergeRetainedUsageAllowance(retained, sibling) : retained;
+                    const retainedAllowance = mergeRetainedUsageAllowance(head, base);
+                    const merged = sibling ? mergeRetainedUsageAllowance(retainedAllowance, sibling) : retainedAllowance;
                     return [{ ...base, quota: merged.quota,
                         sources: [...base.sources.filter(source => source.source !== 'quota' && !source.source.startsWith('quota:')), ...merged.sources] }];
                 });
@@ -2374,8 +2521,18 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     });
                 };
                 let settledRead = false;
-                let workMachineInputs = retained.admission?.workMachineInputs ?? [];
-                const keepContent = (content: ResourceContent, value: UsageQueryBatchResult): ResourceContent => {
+                const acquiredWorkInputs = new Map(ownWorkInputs);
+                const keepContent = (content: ResourceContent, value: UsageQueryBatchResult, publishSlices = false): ResourceContent => {
+                    const workMachineInputs: UsageWorkMachineInput[] = [];
+                    for (const slice of value.results) {
+                        const status = slice.requestedQuery.includeWorkEvidence
+                            ? slice.sources.find(source => source.source === 'work')?.status : undefined;
+                        // A pending or retained failure still describes the seed's Work, even
+                        // after its replacement has issued SCM for a different target.
+                        const workInput = (status === 'pending' || status === 'stale' ? seedWorkInputs : acquiredWorkInputs).get(slice.key);
+                        if (workInput) workMachineInputs.push(workInput);
+                        if (publishSlices) slicesByQuery.set(slice.key, { slice, workInput });
+                    }
                     // Keep the read's initial clock basis: a held read that
                     // crosses a quota boundary cannot renew its old derivation.
                     // Lasting coverage refusals settle this input basis too.
@@ -2385,8 +2542,10 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     // Action releases its consumer and the producer tears down.
                     const settled = settledRead || value.results.every(slice => !slice.pending
                         && !slice.sources.some(source => isUsageQuerySourceOutstanding(slice.requestedQuery, source)));
+                    // A masked sibling may settle this read without disclosing facts,
+                    // but only a direct refusal can satisfy another acquisition.
                     const reusable = settled && value.results.every(slice => !slice.pending
-                        && slice.sources.every(source => source.status !== 'pending'
+                        && withdrawn?.get(slice.key)?.direct !== false && slice.sources.every(source => source.status !== 'pending'
                             && (source.status === 'unsupported' || (source.errorCode
                                 ? !readUsageHistoryFailure({ errorCode: source.errorCode }).retryable
                                 : source.status !== 'error' && !source.updateRequired))));
@@ -2400,13 +2559,23 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     // Progress reaches this owner only after the accounting
                     // reader's physical-issuance barrier. Keep that same
                     // admission identity available to newly mounted bodies.
-                    decodedValues.set(content, { value, ...(reproject ? { reproject } : {}),
-                        admission: { inputs: readInputs, quotaInterval, derivationInterval, reusable, settled, workMachineInputs } });
+                    // The denial itself rotated the input. Publish only its
+                    // stripped result against that exact authority revision.
+                    const inputs = withdrawn ? readInputs.map((identity, index) => {
+                        const query = queries[index - (readInputs.length - queries.length)];
+                        return (query && withdrawn?.get(getUsageQueryKey(query))?.identity) ?? identity;
+                    }) : readInputs;
+                    decodedValues.set(content, { value, ...(reproject && !withdrawn ? { reproject } : {}),
+                        admission: { inputs, quotaInterval, derivationInterval, reusable, settled, workMachineInputs } });
                     return content;
                 };
                 const contentFor = async (batch: UsageQueryBatchResult): Promise<ResourceContent> => {
                     assertProjectionCurrent();
                     requireCurrent(sharedContext, options?.signal);
+                    if (withdrawn) batch = { ...batch, results: batch.results.map(slice => {
+                        const refusal = withdrawn?.get(slice.key);
+                        return refusal ? withdrawUsageQuerySlice(slice, refusal.errorCode) : slice;
+                    }) };
                     // Usage arrivals age the admitted answer; they do not revoke
                     // it. Publish completed facts with their original input basis,
                     // so Refresh/reopen can acquire the newer accounting inputs.
@@ -2466,8 +2635,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     // terminal read commonly repeats its last progress revision.
                     if (current && value === currentBatch) return keepContent(current, currentBatch);
                     allowance = retainUsageAllowance(value, allowance);
-                    for (const slice of value.results) slicesByQuery.set(slice.key, slice);
-                    return keepContent(createUsageQueryResourceContent(value), value);
+                    return keepContent(createUsageQueryResourceContent(value), value, true);
                 };
                 let queuedProgress: UsageQueryReprojection | null = null;
                 let progressContent: Promise<void> | null = null;
@@ -2499,7 +2667,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 // an explicit refresh or coalesced acquisition always wins.
                 const missedProjectionOnly = readDemand.length === 0 && retained.sourcesCurrent && admission?.reusable
                     && readResourceInputChanges(admission.inputs[0]!, readInputs[0]!)?.length === 0;
-                if (previousReproject && (!admission || quotaClockCurrent)
+                if (previousReproject && !retained.changedWorkTargets && (!admission || quotaClockCurrent)
                     && (missedProjectionOnly || readDemand.length > 0 && readDemand.every(demand => demand.projectionOnly))) {
                     projectionIsCurrent = () => readDemand.length > 0
                         ? readDemand.every(demand => demand.isCurrent()) : retainedCurrentness.isCurrent();
@@ -2519,11 +2687,11 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     // enters Action admission once and consumes these same facts.
                     const allowanceDemands = readDemand.filter(demand => demand.allowance !== false);
                     const read = async () => {
-                        if (!retainedProjection) workMachineInputs = [];
+                        if (!retainedProjection) acquiredWorkInputs.clear();
                         return await readUiUsageQueryBatch(readContext, { queries }, options?.signal, previous,
                         {
-                            onWorkAdmission: accounting => {
-                                workMachineInputs = [...workMachineInputs, readWorkMachineInput(readWorkSessionIds(accounting))];
+                            onWorkAdmission: (queryKey, targets) => {
+                                acquiredWorkInputs.set(queryKey, readWorkMachineInput(queryKey, targets));
                             },
                             retainedProjection,
                             retainAllowance: readDemand.length > 0 && readDemand.every(demand => demand.allowance === false),
@@ -2592,7 +2760,10 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 await progressContent;
                 settledRead = true;
                 return await contentFor(result);
-                } finally { for (const demand of readDemand) demand.finish(); }
+                } finally {
+                    readingAccess.delete(withdraw);
+                    for (const demand of readDemand) demand.finish();
+                }
             },
             async watchResource(reference, listener, options) {
                 requireCurrent(sharedContext, options?.signal);
@@ -2866,18 +3037,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     }
                     const affected = (request: UsageAnalyticsQueryRequest) => changedRequests.has(getUsageAnalyticsQueryRequestKey(request))
                         || usageAccountingChangeAffectsQueries([usageAnalyticsRequestToQuery(request)], change);
-                    if (admittedAccounting) {
-                        const answers = admittedAccounting.answers;
-                        for (const key of answers.keys()) {
-                            const [queryKey] = JSON.parse(key) as [string];
-                            const request = JSON.parse(queryKey) as UsageAnalyticsQueryRequest;
-                            if (affected(request)) answers.delete(key);
-                        }
-                        // A pending pre-change answer cannot re-enter admission;
-                        // keep unaffected answers at the same accounting instant.
-                        admittedAccounting = { nowMs, answers };
-                    }
-                    accountingReads.invalidate(affected);
+                    retireAccountingReads(affected, nowMs);
                 }
             }
             if (homeChange === 'session-evidence') sessionEvidenceInputs = {};
@@ -3052,8 +3212,8 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
         // The existing publication names changed/hydrated identities, including
         // arrivals after a cold empty list. No whole-Session-map walk is needed.
         const consumed = new Set(queries.flatMap(query => selectUsageQueryWorkEvidenceSessionIds({ query,
-            sessions: [...ids].map(id => ({ id })), contributions: slicesByQuery.get(getUsageQueryKey(query))?.accounting?.contributions,
-            sessionMembership: readUsageAccountingSessionMembership(slicesByQuery.get(getUsageQueryKey(query))?.accounting) })));
+            sessions: [...ids].map(id => ({ id })), contributions: slicesByQuery.get(getUsageQueryKey(query))?.slice.accounting?.contributions,
+            sessionMembership: readUsageAccountingSessionMembership(slicesByQuery.get(getUsageQueryKey(query))?.slice.accounting) })));
         const changedIds = [...ids].filter(id => consumed.has(id));
         const changed = sessionInputs.reconcile(changedIds, { scopeChanged,
             membershipChangedSessionIds: changedIds.filter(id => Boolean(previous?.sessions[id]) !== Boolean(state.sessions[id])),
@@ -3114,7 +3274,7 @@ const decodedValues = new WeakMap<ResourceContent, Readonly<{
     reproject?: UsageQueryReprojection;
     admission?: Readonly<{ inputs: readonly object[]; quotaInterval: Readonly<{ fromMs: number; untilMs: number }>;
         derivationInterval: Readonly<{ fromMs: number; untilMs: number }>; reusable: boolean; settled: boolean;
-        workMachineInputs: readonly Readonly<{ sessionIds: readonly string[]; key: string }>[] }>;
+        workMachineInputs: readonly UsageWorkMachineInput[] }>;
 }>>();
 
 export function decodeUsageQueryResource(value: ResourceContent): UsageQueryBatchResult {

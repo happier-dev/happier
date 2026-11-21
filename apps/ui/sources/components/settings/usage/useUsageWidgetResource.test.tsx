@@ -1467,8 +1467,10 @@ describe('Usage widget shared Resource selection', () => {
         let detailIssued = false;
         let denied = false;
         const credentials = await mountHome(request => {
+            if (denied && request.path === '/v2/usage/query-batch') {
+                return Response.json({ error: 'forbidden' }, { status: 403 });
+            }
             if (request.path === '/v2/usage/query') {
-                if (denied) return Response.json({ error: 'forbidden' }, { status: 403 });
                 const query = UsageAnalyticsQueryRequestSchema.parse(request.body);
                 return query.filters?.sessionIds?.includes('slow-session') ? slowAccounting.promise : Response.json(accounting);
             }
@@ -1576,8 +1578,12 @@ describe('Usage widget shared Resource selection', () => {
 
     it('shares the exact slice between widget bodies and removes it on Home authority refusal', async () => {
         let denied = false;
-        const credentials = await mountHome(request => request.path === '/v2/usage/query'
-            ? denied ? Response.json({ error: 'forbidden' }, { status: 403 }) : Response.json(accounting) : undefined);
+        const credentials = await mountHome(request => {
+            if (denied && request.path === '/v2/usage/query-batch') {
+                return Response.json({ error: 'forbidden' }, { status: 403 });
+            }
+            return request.path === '/v2/usage/query' ? Response.json(accounting) : undefined;
+        });
         const queryPlan = plan(normalizeUsageQuery({ period: { startMs: 1000 }, granularity: 'day' }));
         const hook = await renderHook(() => {
             const resource = useUsageWidgetResource({ credentials, enabled: true, plan: queryPlan });

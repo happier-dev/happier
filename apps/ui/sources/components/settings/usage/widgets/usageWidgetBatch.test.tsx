@@ -570,20 +570,32 @@ describe('Usage page batch', () => {
       storage.setState(state => ({ settings: { ...state.settings, usageNightHoursV1: originalNightHours } }));
     }
   });
-  it('readmits a mounted private widget on its recipient-private envelope wake without a Session-list delta or Refresh', async () => {
+  it.each(['envelope-only', 'access-grant', 'combined-denial'] as const)(
+    'readmits a mounted private widget on its recipient-private %s wake without a Session-list delta or Refresh', async scenario => {
     const [{ Encryption }, { encodeBase64 }, { sealEncryptedDataKeyEnvelopeV1 },
       { createAccountEncryptionCurrentnessFixtureForCredentials }, { createUsageSessionFactRecordsV1 },
       { UsageParallelWidget }, { IntervalTimeline }, { captureAccountEncryptionCurrentness },
-      { publishHomeAccountChangeWake }] = await Promise.all([
+      { publishHomeAccountChangeWake }, resourceOwner, { projectNativeJsonValueForTransport }] = await Promise.all([
       import('@/sync/encryption/encryption'), import('@/encryption/base64'),
       import('@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1'),
       import('@/dev/testkit/fixtures/accountEncryptionCurrentness'), import('@happier-dev/protocol/usage/usageWorkEvidence'),
       import('./UsageParallelWidget'), import('@happier-dev/plugin-ui/presentation'),
       import('@/sync/api/account/apiAccountEncryptionMode'), import('@/sync/runtime/orchestration/homeAccountChange'),
+      import('@/sync/api/account/usageQueryResource'), import('@happier-dev/protocol/json/strictJsonValue'),
     ]);
     const nowMs = Date.UTC(2026, 10, 7, 12);
     vi.spyOn(Date, 'now').mockReturnValue(nowMs);
     const id = 'mounted-key-recipient';
+    const otherId = 'readable-session';
+    const unrelatedId = 'unrelated-session';
+    let unrelatedReads = 0;
+    let readableTokens = 15;
+    const heldReadable = createDeferred<void>();
+    let readableIssued = false;
+    const inFlightStartMs = nowMs - 2000;
+    const heldReplacement = createDeferred<void>();
+    let holdReplacement = false;
+    let replacementIssued = false;
     const secret = new Uint8Array(32).fill(7);
     const sessionKey = new Uint8Array(32).fill(9);
     const encryption = await Encryption.create(secret);
@@ -598,16 +610,40 @@ describe('Usage page batch', () => {
     const encryptedFacts = new Map(await Promise.all(facts.map(async fact => [fact.kind, await sessionEncryption.encryptRaw(fact)] as const)));
     const credentials = { token: createServedHomeAccountToken('account-a'), secret: encodeBase64(secret, 'base64url') };
     let envelope: string | null = null;
+    let hasAccess = scenario === 'envelope-only';
+    let rejectedAccountingReads = 0;
     let evidenceReads = 0;
     const access = { v: 1 as const, level: 'view' as const, sources: [{ kind: 'direct' as const, shareId: 'recipient-share' }],
       capabilities: createSessionAccessFixture('view').capabilities };
     home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-mounted-key-recovery.test', accountId: 'account-a',
       credentials, accountMode: 'e2ee', encryptionCurrentness: () => ({
         ...createAccountEncryptionCurrentnessFixtureForCredentials(credentials), version: 1,
-      }) }], route: request => {
-      if (request.path === '/v2/usage/query') return Response.json(accounting);
+      }) }], route: async request => {
+      if (request.path === '/v2/usage/query') {
+        const query = UsageAnalyticsQueryRequestSchema.parse(request.body);
+        if (!hasAccess && query.filters?.sessionIds?.includes(id)) {
+          rejectedAccountingReads++;
+          if (holdReplacement) {
+            replacementIssued = true;
+            await heldReplacement.promise;
+          }
+          return Response.json({ error: 'Session not found' }, { status: 404 });
+        }
+        if (query.filters?.sessionIds?.includes(unrelatedId)) unrelatedReads++;
+        if (query.filters?.sessionIds?.includes(otherId)) {
+          const tokens = readableTokens;
+          if (query.dateRange?.startMs === inFlightStartMs && !readableIssued) {
+            readableIssued = true;
+            await heldReadable.promise;
+          }
+          return Response.json({ ...accounting,
+            totals: { ...accounting.totals, tokens: { ...accounting.totals.tokens, total: tokens } } });
+        }
+        return Response.json(accounting);
+      }
       if (request.path === USAGE_SESSION_EVIDENCE_PATH) {
         evidenceReads++;
+        if (!hasAccess) return Response.json({ error: 'Session not found' }, { status: 404 });
         const input = UsageSessionEvidenceRequestSchema.parse(request.body);
         return Response.json(UsageSessionEvidenceResponseSchema.parse({
           requests: input.requests.map(demand => ({ query: demand.query, sessionIds: [id] })),
@@ -625,20 +661,45 @@ describe('Usage page batch', () => {
     storage.setState({ profileScope: accountScope, settingsScope: accountScope, profile: AccountProfileSchema.parse({ id: 'account-a' }) });
     const input = { ...scope, period: { startMs: nowMs - 1000, endMs: nowMs }, session: id, style: 'timeline' };
     let observed: UsageWidgetBodyModel | undefined;
+    let privateQuery: ReturnType<typeof normalizeUsageQuery> | null = null;
+    let otherQuery: ReturnType<typeof normalizeUsageQuery> | null = null;
+    let comparisonQuery: ReturnType<typeof normalizeUsageQuery> | null = null;
     function PrivateWidget() {
       const { model, query } = useUsageWidgetModel(input, 'usage_parallel');
       observed = model;
+      privateQuery = query;
       return model.slice && query ? <UsageParallelWidget id="usage_parallel" model={model} slice={model.slice} query={query}
         serverId={server.id} testID="key-recovery" presentation={{ style: 'timeline' }} /> : null;
     }
-    const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
-      <UsageWidgetBatchProvider clauses={clauses}><PrivateWidget /></UsageWidgetBatchProvider>
-    </InjectedAuthProvider>);
+    function OtherSessionWidget() {
+      const { query } = useUsageWidgetModel({ ...input, session: otherId }, 'usage_daily');
+      otherQuery = query;
+      return null;
+    }
+    function PrivateComparisonWidget() {
+      const { query } = useUsageWidgetModel(input, 'usage_efficiency');
+      comparisonQuery = query;
+      return null;
+    }
+    const page = (batch: 'private' | 'other' | 'both') => <InjectedAuthProvider credentials={credentials}>
+      <UsageWidgetBatchProvider key={batch} clauses={clauses}>
+        {batch !== 'other' ? <PrivateWidget /> : null}
+        {batch !== 'private' ? <OtherSessionWidget /> : null}
+        {batch === 'both' ? <PrivateComparisonWidget /> : null}
+      </UsageWidgetBatchProvider>
+    </InjectedAuthProvider>;
+    const screen = await renderScreen(page('private'));
     const accountCurrentness = captureAccountEncryptionCurrentness(server.id);
     try {
-      await expect.poll(() => observed?.slice !== null && observed?.pending === false).toBe(true);
-      expect(observed?.slice?.sources).toContainEqual(expect.objectContaining({ errorCode: 'encrypted_access_pending' }));
-      expect(observed?.slice?.howYouWork?.intervals).toBeNull();
+      if (scenario !== 'envelope-only') {
+        await expect.poll(() => rejectedAccountingReads).toBeGreaterThan(0);
+        await expect.poll(() => observed?.pending).toBe(false);
+        expect(observed?.slice?.accounting ?? null).toBeNull();
+      } else {
+        await expect.poll(() => observed?.slice !== null && observed?.pending === false).toBe(true);
+        expect(observed?.slice?.sources).toContainEqual(expect.objectContaining({ errorCode: 'encrypted_access_pending' }));
+      }
+      expect(observed?.slice?.howYouWork?.intervals ?? null).toBeNull();
       expect(screen.findAllByType(IntervalTimeline)).toHaveLength(0);
       const beforeMaterial = evidenceReads;
       const beforeSessions = storage.getState().sessions;
@@ -646,6 +707,7 @@ describe('Usage page batch', () => {
       await act(async () => {
         // writeSessionDataKeyEnvelopeInTx marks only this recipient's Session
         // changed. Its Account wake precedes any Session-list/detail hydration.
+        hasAccess = true;
         envelope = sealedEnvelope;
         publishHomeAccountChangeWake(server.id, { t: 'account-change',
           changeKinds: ['session'], entityIds: [id] }, 'socket');
@@ -661,7 +723,151 @@ describe('Usage page batch', () => {
       console.info('USAGE-KEY-ENVELOPE-WAKE', JSON.stringify({ evidenceReadmissions: evidenceReads - beforeMaterial,
         sessionListDeltaChanged: storage.getState().sessionListRenderableDelta !== beforeListDelta,
         accountCurrentnessChanged: !accountCurrentness.isCurrent(), agentTimeMs: observed?.slice?.howYouWork?.intervals?.agentTimeMs }));
-    } finally { accountCurrentness.dispose(); await screen.unmount(); }
+      if (scenario === 'combined-denial') {
+        const [{ createUiUsageActionPorts }, { captureLazyActionAccountContext }] = await Promise.all([
+          import('@/sync/ops/actions/usageActionDeps'), import('@/sync/ops/actions/actionAccountContext'),
+        ]);
+        const context = resourceOwner.captureUiUsageQueryAccountContext(credentials)!;
+        const store = resourceOwner.getUsageQueryResourceStore(context);
+        const entry = (query: ReturnType<typeof normalizeUsageQuery>) => store.getEntry({
+          hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [query] }),
+        });
+        const slice = (resource: ReturnType<typeof entry>) => {
+          const value = resource.getSnapshot().value;
+          return value ? resourceOwner.decodeUsageQueryResource(value).results[0] : undefined;
+        };
+        const x = privateQuery!;
+        const xWithCompare = normalizeUsageQuery({ ...x, includeComparison: true });
+        const y = normalizeUsageQuery({ ...x, session: otherId, includeSessionEvidence: false });
+        const z = normalizeUsageQuery({ ...y, session: unrelatedId });
+        const caller = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
+        const actionAccount = await captureLazyActionAccountContext(server.id);
+        const action = createUiUsageActionPorts(actionAccount);
+        try {
+          await Promise.all([xWithCompare, y, z].map(query => entry(query).acquire(caller)));
+          expect(slice(entry(xWithCompare))?.comparison?.accounting?.totals.tokens.total).toBe(15);
+          expect(slice(entry(xWithCompare))?.howYouWork?.intervals?.agentTimeMs).toBe(300);
+          expect(slice(entry(y))?.accounting?.totals.tokens.total).toBe(15);
+          expect(slice(entry(z))?.accounting?.totals.tokens.total).toBe(15);
+          await screen.update(page('other'));
+          expect(entry(x).getSnapshot().subscription).toBe('ended');
+          const retainedZ = entry(z).getSnapshot().value;
+          const readsBeforeDenial = unrelatedReads;
+          const inFlightY = normalizeUsageQuery({ ...y, period: { startMs: inFlightStartMs, endMs: nowMs } });
+          const readBeforeDenial = entry(inFlightY).acquire(caller);
+          void readBeforeDenial.catch(() => {});
+          await expect.poll(() => readableIssued).toBe(true);
+          hasAccess = false;
+          envelope = null;
+          readableTokens = 19;
+          const refused = await action.query({ queries: [normalizeUsageQuery({ ...x,
+            session: [id, otherId], includeSessionEvidence: false })] }, caller);
+          expect(refused).toMatchObject({ results: [{ sources: expect.arrayContaining([
+            expect.objectContaining({ source: 'accounting', errorCode: 'denied' }),
+          ]) }] });
+          expect.soft(slice(entry(x))?.accounting ?? null, 'combined denial withdraws singleton X accounting').toBeNull();
+          expect.soft(slice(entry(xWithCompare))?.comparison?.accounting, 'combined denial withdraws singleton X comparison').toBeUndefined();
+          expect.soft(slice(entry(y))?.accounting ?? null, 'Y waits for its own fresh admission').toBeNull();
+          holdReplacement = true;
+          await screen.update(page('private'));
+          // The held replacement keeps the UI at its first projection.
+          expect.soft(screen.findAllByType(IntervalTimeline), 'reopening X renders no retained private interval').toHaveLength(0);
+          expect.soft(observed?.slice?.accounting ?? null, 'reopening X publishes no retained private accounting').toBeNull();
+          expect.soft(slice(entry(x))?.howYouWork?.intervals ?? null, 'reopening X retains no private interval').toBeNull();
+          const recovered = await action.query({ queries: [y] }, caller);
+          expect.soft('results' in recovered && recovered.results[0]?.accounting?.totals.tokens.total).toBe(19);
+          heldReadable.resolve();
+          await readBeforeDenial;
+          await flushHookEffects({ cycles: 2 });
+          expect.soft(slice(entry(inFlightY))?.accounting ?? null, 'Y cannot republish the pre-denial answer').toBeNull();
+          const recoveredInFlight = await action.query({ queries: [inFlightY] }, caller);
+          expect.soft('results' in recoveredInFlight && recoveredInFlight.results[0]?.accounting?.totals.tokens.total,
+            'a concurrent overlapping read does not cache the combined refusal for Y').toBe(19);
+          await entry(z).acquire(caller);
+          expect.soft(entry(z).getSnapshot().value, 'Z retains the same admission').toBe(retainedZ);
+          expect.soft(unrelatedReads, 'unrelated Z does not refetch').toBe(readsBeforeDenial);
+          if (slice(entry(x))?.accounting == null) await expect.poll(() => replacementIssued).toBe(true);
+        } finally { actionAccount.dispose(); }
+      }
+      if (scenario === 'access-grant') {
+        const context = resourceOwner.captureUiUsageQueryAccountContext(credentials)!;
+        expect(context).not.toBeNull();
+        const store = resourceOwner.getUsageQueryResourceStore(context);
+        const entry = (queries: readonly ReturnType<typeof normalizeUsageQuery>[]) => store.getEntry({
+          hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries }),
+        });
+        const slices = (resource: ReturnType<typeof entry>) => {
+          const value = resource.getSnapshot().value;
+          return value ? resourceOwner.decodeUsageQueryResource(value).results : [];
+        };
+        const work = (resource: ReturnType<typeof entry>) => slices(resource)
+          .find(slice => slice.requestedQuery.session?.includes(id) && !slice.requestedQuery.includeComparison)?.howYouWork?.intervals?.agentTimeMs;
+        const other = (resource: ReturnType<typeof entry>) => slices(resource)
+          .find(slice => slice.requestedQuery.session?.includes(otherId))?.accounting?.totals?.tokens.total;
+        const comparison = (resource: ReturnType<typeof entry>) => slices(resource)
+          .find(slice => slice.requestedQuery.session?.includes(id) && slice.requestedQuery.includeComparison)?.comparison?.accounting?.totals?.tokens.total;
+        await screen.update(page('both'));
+        await expect.poll(() => privateQuery !== null && otherQuery !== null && comparisonQuery !== null).toBe(true);
+        const closed = entry([privateQuery!, otherQuery!, comparisonQuery!]);
+        await expect.poll(() => slices(closed).length, { message: 'the mounted mixed batch admits each widget query' }).toBe(3);
+        await expect.poll(() => work(closed), { message: 'both batches have the admitted private fact' }).toBe(300);
+        await expect.poll(() => comparison(closed), { message: 'the closed batch has an independently admitted comparison' }).toBe(15);
+        expect(other(closed), 'the mixed batch also has an unrelated Session').toBe(15);
+        await screen.update(page('other'));
+        const unrelated = entry([otherQuery!]);
+        await expect.poll(() => other(unrelated)).toBe(15);
+        const retainedOther = unrelated.getSnapshot().value;
+        await screen.update(page('private'));
+        await expect.poll(() => observed?.slice?.howYouWork?.intervals?.agentTimeMs).toBe(300);
+        expect(closed.getSnapshot().subscription).toBe('ended');
+        await act(async () => {
+          hasAccess = false;
+          envelope = null;
+          publishHomeAccountChangeWake(server.id, { t: 'account-change',
+            changeKinds: ['session'], entityIds: [id] }, 'socket');
+        });
+        await expect.poll(() => observed?.slice?.sources.find(source => source.source === 'accounting')?.errorCode).toBe('denied');
+        expect(observed?.slice?.accounting ?? null).toBeNull();
+        expect(observed?.slice?.howYouWork?.intervals ?? null).toBeNull();
+        expect(screen.findAllByType(IntervalTimeline)).toHaveLength(0);
+        expect.soft(work(closed), 'the same denial has already withdrawn the closed entry').toBeUndefined();
+        expect.soft(comparison(closed), 'withdrawal also clears the retained comparison').toBeUndefined();
+        expect.soft(other(closed), 'withdrawal leaves the other Session in the mixed batch').toBe(15);
+        expect.soft(unrelated.getSnapshot().value, 'an unrelated retained entry is unchanged').toBe(retainedOther);
+        holdReplacement = true;
+        await screen.update(page('both'));
+        await expect.poll(() => replacementIssued).toBe(true);
+        expect.soft(work(closed), 'the pending replacement cannot expose the revoked interval').toBeUndefined();
+        expect.soft(comparison(closed), 'the pending replacement cannot expose the comparison').toBeUndefined();
+        expect.soft(screen.findAllByType(IntervalTimeline), 'the reopened private widget renders no revoked interval').toHaveLength(0);
+        expect.soft(observed?.slice?.accounting ?? null, 'the denied Session has no retained accounting').toBeNull();
+        heldReplacement.resolve();
+        const [{ createUiUsageActionPorts }, { captureLazyActionAccountContext }] = await Promise.all([
+          import('@/sync/ops/actions/usageActionDeps'), import('@/sync/ops/actions/actionAccountContext'),
+        ]);
+        const actionAccount = await captureLazyActionAccountContext(server.id);
+        const cancellation = new AbortController();
+        const result = createUiUsageActionPorts(actionAccount).query({ queries: [privateQuery!] }, {
+          surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, signal: cancellation.signal,
+        });
+        try {
+          await expect.poll(async () => {
+            const state = await Promise.race([result, Promise.resolve('pending' as const)]);
+            return state === 'pending' ? state : 'results' in state
+              ? state.results[0]?.sources.find(source => source.source === 'accounting')?.errorCode : state.errorCode;
+          }, { message: 'the closed Action settles the current scoped accounting refusal' }).toBe('denied');
+        } finally {
+          cancellation.abort();
+          await result.catch(() => undefined);
+          actionAccount.dispose();
+        }
+      }
+    } finally {
+      heldReplacement.resolve();
+      heldReadable.resolve();
+      accountCurrentness.dispose();
+      await screen.unmount();
+    }
   });
 
   it('recovers a mounted Capacity quota after an HTTP failure on warm reopen without Refresh', async () => {

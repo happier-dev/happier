@@ -356,7 +356,10 @@ export function createPluginUiResourceStore(input: Readonly<{
   pluginId?: string;
   /** Host-private dependency release at this entry's existing demand/retirement boundary. */
   onDemandEnd?: (resource: PluginUiResourceReference) => void;
-}>): PluginUiResourceStore {
+}>): PluginUiResourceStore & Readonly<{
+  /** Withdraw or replace retained content on a host-owned authority change. */
+  replaceRetainedValues(replace: (value: ResourceContent) => ResourceContent): void;
+}> {
   const accountLifetime = input.accountLifetime ?? null;
   const pluginId = input.pluginId ?? null;
   const entries = new Map<string, MutableEntry>();
@@ -385,7 +388,7 @@ export function createPluginUiResourceStore(input: Readonly<{
     }
   }
 
-  function publish(entry: MutableEntry, next: PluginUiResourceSnapshot): void {
+  function publish(entry: MutableEntry, next: PluginUiResourceSnapshot, deferredListeners?: Set<() => void>): void {
     const previousError = entry.snapshot.error;
     const previousLoss = previousError && readLostResourceReadAuthorityCode(previousError);
     // Pending work, control events and transport failures do not re-admit
@@ -405,7 +408,10 @@ export function createPluginUiResourceStore(input: Readonly<{
     if (entry.snapshot.value === undefined) {
       for (const projection of entry.projections.values()) projection.update(entry.snapshot);
     }
-    for (const listener of [...entry.listeners]) listener();
+    for (const listener of [...entry.listeners]) {
+      if (deferredListeners) deferredListeners.add(listener);
+      else listener();
+    }
   }
 
   function getProjection<T>(entry: MutableEntry, projection: PluginUiResourceProjection<T>) {
@@ -1116,13 +1122,25 @@ export function createPluginUiResourceStore(input: Readonly<{
       });
       return facade;
     },
+    replaceRetainedValues(replace: (value: ResourceContent) => ResourceContent): void {
+      if (!isStoreCurrent()) return;
+      const listeners = new Set<() => void>();
+      for (const entry of entries.values()) {
+        const current = entry.snapshot.value;
+        if (!isEntryCurrent(entry) || current === undefined) continue;
+        const value = replace(current);
+        if (value !== current) publish(entry, { ...entry.snapshot, value,
+          digest: input.client.delivery === 'pages' ? value.digest : undefined, freshness: 'stale' }, listeners);
+      }
+      for (const listener of listeners) listener();
+    },
     dispose(): void {
       if (disposed) return;
       disposed = true;
       for (const entry of [...entries.values()]) disposeEntry(entry, true);
       accountRetirement?.dispose();
     },
-  } satisfies PluginUiResourceStore);
+  });
 
   accountRetirement = accountLifetime?.onRetire(() => { store.dispose(); });
   return store;

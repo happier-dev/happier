@@ -3476,6 +3476,111 @@ describe('usage query captured Resource adapter', () => {
     } finally { release(); account.dispose(); }
   });
 
+  it.each([
+    { change: 'a new workspace on the same Machine', nextPaths: ['/repo/third', '/repo/second'] },
+    { change: 'two Sessions swapping workspaces with the same Machine set', nextPaths: ['/repo/second', '/repo/first'] },
+    { change: 'rebatching Work after a workspace move', nextPaths: ['/repo/third', '/repo/second'], rebatch: true },
+  ])('reconciles $change before the closed Action reuses Work', async ({ nextPaths, rebatch }) => {
+    const captured = await context(request => {
+      if (request.path === '/v2/usage/query') return Response.json({ ...value,
+        contributions: [workContribution, { ...workContribution, id: 'sibling-cost', sessionId: 'work-sibling' }] });
+      return createPlainMachineReadHttpResponseFixture(request.path, {
+        method: request.method, ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
+      }, 'account-a', { active: true, activeAt: Date.now(), presenceProtocolVersion: 1 }) ?? undefined;
+    });
+    const scope = captured.accountLifetime.scope;
+    const machine = createHydratedPlainMachineFixture({ id: 'work-machine', accountId: 'account-a',
+      machine: { active: true, activeAt: Date.now(), presenceProtocolVersion: 1 } });
+    await publishMachineInventoryForTest(scope, [machine]);
+    const sessionIds = ['work-session', 'work-sibling'];
+    const originalPaths = ['/repo/first', '/repo/second'];
+    const applyPaths = (paths: readonly string[], metadataVersion: number) => storage.getState().applySessions(
+      sessionIds.map((id, index) => createSessionFixture({ id, active: true, serverId: scope.serverId, metadataVersion,
+        metadata: { machineId: machine.id, path: paths[index]!, host: 'test', homeDir: '/home/test' } })));
+    applyPaths(originalPaths, 1);
+    const branchFor = (path: string) => `refs/heads/${path.split('/').at(-1)}`;
+    const held = createDeferred<void>();
+    let replacementIssued = false;
+    scmTransport.mockImplementation(async ({ payload }: { payload: ScmWorkEvidenceReadRequest }) => {
+      if (rebatch && payload.sessions.some(row => row.cwd === nextPaths[0])) {
+        replacementIssued = true;
+        await held.promise;
+      }
+      return ScmWorkEvidenceReadResponseSchema.parse({
+        sessions: payload.sessions.map(({ sessionId, cwd, turnIds }) => ({
+          sessionId, status: 'partial', evidence: [{
+            sessionId, turnId: turnIds[0], repositoryKey: cwd, checkpointRef: 'checkpoint',
+            checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40),
+            attributionScope: 'no_happier_checkpoint_overlap_observed',
+            pullRequest: { provider: { id: 'forge', kind: 'github', displayName: 'Forge', baseUrl: 'https://github.com',
+              nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } },
+              number: 1, title: 'Merged', url: 'https://github.com/owner/repo/pull/1',
+              baseBranch: 'main', headBranch: 'feature', state: 'merged' },
+          }], branchEvidence: [{ sessionId, turnId: turnIds[0], repositoryKey: cwd,
+            checkpointRef: 'checkpoint', checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40),
+            attributionScope: 'no_happier_checkpoint_overlap_observed',
+            branch: { ref: branchFor(cwd), headSha: 'b'.repeat(40) } }],
+        })),
+      });
+    });
+    const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeQuota: false, includeQuotaHistory: false,
+      includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: true, includeCoach: false,
+      workProjection: 'detail', includeComparison: false });
+    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [query] }) });
+    const account = await captureLazyActionAccountContext(scope.serverId);
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({ usageActions: createUiUsageActionPorts(account) }));
+    const read = async (queries = [query], waitForWork = true) => {
+      const response = await executor.execute('usage.query', { queries },
+        { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+          ...(waitForWork ? { usageQueryReadiness: 'public_profile' as const } : {}) });
+      if (!response.ok) throw new Error(response.errorCode);
+      const results = UsageQueryBatchResultSchema.parse(response.result).results;
+      return results.find(slice => slice.requestedQuery.includeWorkEvidence) ?? results[0]!;
+    };
+    const branches = (slice: Awaited<ReturnType<typeof read>>) => sessionIds.map(id =>
+      slice.work?.branchAllocations.find(allocation => allocation.contribution.sessionId === id)?.branch?.branch.ref);
+    const accountingReads = () => home!.httpRequests.filter(request => request.path === '/v2/usage/query-batch').length;
+    let release = entry.subscribe(() => {}, true);
+    try {
+      await entry.refresh({ supersede: false });
+      await expect.poll(() => entry.getSnapshot().subscription === 'live' && entry.getSnapshot().pending === 'idle').toBe(true);
+      expect(branches(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!)).toEqual(originalPaths.map(branchFor));
+      release(); release = () => {};
+      expect(branches(await read())).toEqual(originalPaths.map(branchFor));
+      expect(scmTransport, 'unchanged Work targets reuse the closed admission').toHaveBeenCalledTimes(1);
+      const beforeAccounting = accountingReads();
+      if (rebatch) {
+        const warm = await read();
+        expect(warm.work?.outcomes.length).toBeGreaterThan(0);
+        const sibling = normalizeUsageQuery({ ...query, session: 'work-sibling', includeWorkEvidence: false });
+        expect((await read([sibling])).accounting).toBeDefined();
+        applyPaths(nextPaths, 2);
+        const rebatchEntry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
+          input: projectNativeJsonValueForTransport({ queries: [query, sibling] }) });
+        // Keep the finite SCM read visible after the Action returns its accounting-ready snapshot.
+        // This static observation starts no live Usage view or watch.
+        const stop = rebatchEntry.subscribe(() => {}, false);
+        try {
+          const current = await read([query, sibling], false);
+          expect(current.accounting?.totals.tokens.total).toBe(15);
+          expect.soft(branches(current), 'old workspace branch is absent while replacement Work is held')
+            .toEqual([undefined, undefined]);
+          expect.soft(current.work?.outcomes ?? [], 'old workspace PR outcome is absent while replacement Work is held')
+            .toEqual([]);
+          expect.soft(current.workSummary?.mergedPrCount ?? 0, 'the old workspace PR contributes no totals').toBe(0);
+          expect(current.sources).toContainEqual(expect.objectContaining({ source: 'work', status: 'pending' }));
+          await expect.poll(() => replacementIssued).toBe(true);
+        } finally { stop(); }
+        return;
+      }
+      applyPaths(nextPaths, 2);
+      expect(branches(await read()), 'closed Action attributes Work to each changed Session workspace').toEqual(nextPaths.map(branchFor));
+      expect(branches(await read())).toEqual(nextPaths.map(branchFor));
+      expect(scmTransport, 'only the changed target basis reads Work again').toHaveBeenCalledTimes(2);
+      expect(accountingReads(), 'changing only Work targets reuses accounting').toBe(beforeAccounting);
+    } finally { held.resolve(); release(); account.dispose(); }
+  });
+
   it('refreshes quota-free Work after an authenticated Machine reconnect', async () => {
     let daemonReachable = false;
     const captured = await context(request => {
