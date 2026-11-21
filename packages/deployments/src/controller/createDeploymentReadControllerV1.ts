@@ -535,7 +535,9 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
                 // Receipt stages also feed the collection's latest-attempt row.
                 // Only pages containing that Environment need the header refresh.
                 const affected = hints.some(hint => resource.kind === 'activity' ? hint.activityChanged === true
-                    : hint.activityChanged === true ? false : resource.kind === 'domainPage' || resource.kind === 'dataServicePage' ? true : resource.kind === 'collection'
+                    : hint.activityChanged === true ? false : resource.kind === 'domainPage' || resource.kind === 'dataServicePage'
+                        ? hint.deploymentId === undefined
+                        : resource.kind === 'collection'
                     ? resource.environmentIds !== undefined
                         ? hint.deploymentId === undefined && resource.environmentIds.has(hint.environmentId)
                         : hint.deploymentId === undefined || collection === null || collection.items.some(row => row.environment.id === hint.environmentId)

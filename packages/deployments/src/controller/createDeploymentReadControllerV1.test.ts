@@ -160,13 +160,22 @@ describe('deployment demand read controller', () => {
         await lease.refresh();
         expect(read).toHaveBeenCalledTimes(2);
         expect(lease.getSnapshot().value).toMatchObject({ hasNextPage: false, hasPreviousPage: true });
+        // Receipt progress never changes the account Domain or Database page.
+        controller.invalidate(Array.from({ length: 3 }, (_, index) => ({
+            environmentId: base.environment.id, deploymentId: `receipt-${index}`,
+        })));
+        expect(read).toHaveBeenCalledTimes(2);
+        // Link activation, membership and Domain writes publish an Environment hint.
+        controller.invalidate({ environmentId: base.environment.id });
+        expect(read).toHaveBeenCalledTimes(3);
+        await lease.refresh();
         lease.setDemand(hidden);
         controller.invalidate({ environmentId: base.environment.id });
         await controller.refreshDemanded();
-        expect(read).toHaveBeenCalledTimes(2);
+        expect(read).toHaveBeenCalledTimes(3);
         lease.setDemand(active);
         await lease.refresh();
-        expect(read).toHaveBeenCalledTimes(3);
+        expect(read).toHaveBeenCalledTimes(4);
         expect(base.transport.readEnvironment).toHaveBeenCalledTimes(0);
         expect(observeDomainHealth).toHaveBeenCalledTimes(0);
         expect(observeEnvironmentHealth).toHaveBeenCalledTimes(0);

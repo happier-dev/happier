@@ -54,6 +54,7 @@ function readEnvironmentPresentation(environment: DeploymentEnvironmentCollectio
 }
 
 async function readArtifactsByRow<T>(artifactIds: readonly string[], read: (ids: string[]) => Promise<T[]>): Promise<(T | undefined)[]> {
+    if (artifactIds.length === 0) return [];
     const ids = [...new Set(artifactIds)];
     const results = await read(ids);
     const byId = new Map(ids.map((id, index) => [id, results[index]]));
@@ -156,6 +157,12 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
         if (!page.items.every(row => (scope.projectSourceId === undefined || row.projectSourceId === scope.projectSourceId)
             && (requestedEnvironmentIds === undefined || requestedEnvironmentIds.has(row.id))
             && areServerProfileIdentifiersEquivalent(row.serverId, lifetime.scope.serverId))) return failure('invalid_response');
+        if (page.runtimeTargetLinks?.length) {
+            const environmentsById = new Map(page.items.map(row => [row.id, row]));
+            if (page.runtimeTargetLinks.some(link => environmentsById.get(link.environmentId)?.runtimeTargetLinkId !== link.id)) {
+                return failure('invalid_response');
+            }
+        }
         return { ok: true as const, value: page };
     };
     const transport = {
@@ -190,11 +197,12 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
         listDataServicePage: (scope, query, options) => scoped(scope, options, async account => {
             let page: Pick<DeploymentDataPageSuccessV1, 'items' | 'nextCursor' | 'coverage' | 'projectSources'>;
             let byId: Map<string, Awaited<ReturnType<LazyActionAccountContext['readArtifactContents']>>[number] | undefined>;
-            let selectedMetadata: Awaited<ReturnType<typeof readEnvironmentMetadata>> | undefined;
+            let selectedMetadata: Extract<Awaited<ReturnType<typeof readEnvironmentMetadata>>, { ok: true }>['value'] | undefined;
             if (query.environmentId !== undefined) {
-                selectedMetadata = await readEnvironmentMetadata(scope, query.environmentId, options);
-                if (!selectedMetadata.ok) return selectedMetadata;
-                const environment = selectedMetadata.value.environment;
+                const metadata = await readEnvironmentMetadata(scope, query.environmentId, options);
+                if (!metadata.ok) return metadata;
+                selectedMetadata = metadata.value;
+                const environment = selectedMetadata.environment;
                 const [artifact] = await account.readArtifactContents([environment.contentArtifactId], { signal: options.signal });
                 page = { items: [{ environment }], nextCursor: null };
                 byId = new Map([[environment.contentArtifactId, artifact]]);
@@ -213,9 +221,19 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
             let coverage = page.coverage;
             const sourceNames = new Map(page.projectSources?.map(source => [source.id, source.name]));
             const previousById = new Map(options.previousItems?.map(item => [item.environment.id, item]));
-            for (const { environment } of page.items) {
+            const rows = page.items.map(({ environment }) => {
                 const artifact = byId.get(environment.contentArtifactId);
-                const row = readDeploymentEnvironmentArtifactV1(environment, artifact?.status === 'fulfilled' ? artifact.value : null);
+                return { environment, row: readDeploymentEnvironmentArtifactV1(environment,
+                    artifact?.status === 'fulfilled' ? artifact.value : null) };
+            });
+            const databaseEnvironmentIds = rows.flatMap(({ environment, row }) => row.ok && row.content.template?.data?.length
+                ? [environment.id] : []);
+            const pageMetadata = selectedMetadata === undefined && databaseEnvironmentIds.length > 0
+                ? await readEnvironmentPageMetadata(scope, { environmentIds: databaseEnvironmentIds }, options) : undefined;
+            const metadataEnvironments = new Map(pageMetadata?.ok ? pageMetadata.value.items.map(environment => [environment.id, environment]) : []);
+            const runtimeByEnvironment = new Map(pageMetadata?.ok
+                ? pageMetadata.value.runtimeTargetLinks?.map(link => [link.environmentId, link]) : []);
+            for (const { environment, row } of rows) {
                 if (!row.ok) { coverage = 'partial'; continue; }
                 const previous = previousById.get(environment.id);
                 let databaseTargets: DatabaseTargetsListResultV1 | undefined;
@@ -240,11 +258,11 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 }
                 const databaseSizes: DeploymentDatabaseSizeV1[] = [];
                 const data = row.content.template?.data ?? [];
-                const metadata = selectedMetadata ?? (data.length > 0
-                    ? await readEnvironmentMetadata(scope, environment.id, options) : null);
-                const runtimeTargetLink = metadata?.ok ? selectDeploymentRuntimeTargetLinkV1({
-                    environment: metadata.value.environment,
-                    targetLinks: metadata.value.targetLinks.map(targetLink => ({ targetLink })),
+                const runtimeLink = runtimeByEnvironment.get(environment.id);
+                const runtimeEnvironment = selectedMetadata?.environment ?? metadataEnvironments.get(environment.id);
+                const runtimeTargetLink = runtimeEnvironment ? selectDeploymentRuntimeTargetLinkV1({
+                    environment: runtimeEnvironment,
+                    targetLinks: (selectedMetadata?.targetLinks ?? (runtimeLink ? [runtimeLink] : [])).map(targetLink => ({ targetLink })),
                 }) : null;
                 const nativeTarget = deploymentDataTargetOperands({ environment,
                     runtimeTargetLink });
@@ -252,7 +270,7 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                     const unavailable = (reason: string): DeploymentDatabaseSizeV1 => ({ service: service.service,
                         size: { status: 'unavailable', reason }, growth: { status: 'unavailable', reason } });
                     if (!nativeTarget || !runtimeTargetLink?.activeDeploymentId) {
-                        databaseSizes.push(unavailable(metadata && !metadata.ok ? metadata.failure.code : 'active_deployment_required')); continue;
+                        databaseSizes.push(unavailable(pageMetadata && !pageMetadata.ok ? pageMetadata.failure.code : 'active_deployment_required')); continue;
                     }
                     try {
                         const measured = DeploymentDataSizeResultV1Schema.safeParse(await execute(DEPLOYMENT_DATA_SIZE_ACTION_ID_V1,
@@ -332,7 +350,6 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
             if (!metadata.ok) return metadata;
             const page = metadata.value;
             const environmentsById = new Map(page.items.map(row => [row.id, row]));
-            if (page.runtimeTargetLinks?.some(link => environmentsById.get(link.environmentId)?.runtimeTargetLinkId !== link.id)) return failure('invalid_response');
             const runtimeByEnvironment = new Map(page.runtimeTargetLinks?.map(link => [link.environmentId, link]));
             const sourceNames = new Map(page.projectSources?.map(source => [source.id, source.name]));
             const receipts = query.environmentIds === undefined

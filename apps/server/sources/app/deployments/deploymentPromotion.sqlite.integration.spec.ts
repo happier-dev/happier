@@ -267,7 +267,7 @@ describe('stored promotion storage composition', () => {
                     actionId: 'deployments.promote', actionInput, path, body: input }), payload: input });
             const response = await promote();
             expect(response.statusCode, response.body).toBe(200);
-            expect(response.json()).toMatchObject({ ok: true, state: 'queued' });
+            expect(response.json()).toMatchObject({ ok: true, state: 'queued', revision: to.revision + 2 });
             const receipt = await db.deployment.findUniqueOrThrow({ where: { id: response.json().deploymentId } });
             expect(receipt).toMatchObject({ operation: 'promote', promotedFromDeploymentId: retained.id, predecessorDeploymentId: serving.id });
             const read = await app.inject({ method: 'GET',

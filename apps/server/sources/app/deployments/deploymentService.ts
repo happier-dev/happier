@@ -63,7 +63,7 @@ export function projectDeploymentReceiptHeader(row: Receipt) {
     });
 }
 
-function receiptResult(row: Receipt, environmentRevision: number, environmentRemoved = false) {
+function receiptResult(row: Pick<Receipt, 'id' | 'environmentId' | 'revision' | 'state'>, environmentRevision: number, environmentRemoved = false) {
     const result = DeploymentReceiptResultV1Schema.parse({ ok: true, environmentId: row.environmentId, revision: environmentRevision,
         deploymentId: row.id, deploymentRevision: row.revision, state: row.state,
         ...(environmentRemoved ? { environmentRemoved: true } : {}) });
@@ -241,7 +241,7 @@ export async function createDeploymentInTx(tx: Tx, actorAccountId: string,
         ...(takePending || operation === 'teardown' ? { pendingDeployContent: getActivePrismaRuntime().DbNull } : {}),
     } });
     if (changed.count !== 1) throw new Error('Locked deployment Environment changed during receipt admission');
-    const admittedEnvironment = await tx.deploymentEnvironment.findUniqueOrThrow({ where: { id: loaded.row.id }, select: { revision: true } });
+    const admittedRevision = environmentRevision + 1;
     const builder = buildMachineId ? admittedMachines.placements.get(buildMachineId) : undefined;
     const acceptedExecution = accepted ? createDeploymentAcceptedExecution({ controller: accepted.controller,
         ...(builder ? { builder } : {}) }) : null;
@@ -259,9 +259,9 @@ export async function createDeploymentInTx(tx: Tx, actorAccountId: string,
         predecessorDeploymentId: link.activeDeploymentId, rollbackOfDeploymentId, restoreBackupId,
         ...(promotedFromDeploymentId ? { promotedFromDeploymentId } : {}), ...deploymentContentReference(input),
     } });
-    await publishDeploymentChangesInTx(tx, loaded.admission, loaded.row.id, admittedEnvironment.revision, undefined, false, accountIds);
+    await publishDeploymentChangesInTx(tx, loaded.admission, loaded.row.id, admittedRevision, undefined, false, accountIds);
     await publishDeploymentChangesInTx(tx, loaded.admission, loaded.row.id, row.revision, row.id, true, accountIds);
-    return receiptResult(row, admittedEnvironment.revision);
+    return receiptResult(row, admittedRevision);
 }
 
 /** Native outcomes enter through one installation-signed receipt CAS; old results cannot advance a newer release. */
@@ -480,13 +480,14 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
             await publishDeploymentChangesInTx(tx, loaded, loaded.row.id, loaded.row.revision, undefined, false, accountIds);
         }
     }
-    const current = await tx.deployment.findUniqueOrThrow({ where: { id: row.id } });
     if (loaded.row.pendingDeployContent !== null && input.state !== 'queued' && input.state !== 'running'
         && input.expectedTargetLinkRevision === undefined && !completeTeardown) {
         await publishDeploymentChangesInTx(tx, loaded, loaded.row.id, loaded.row.revision, undefined, false, accountIds);
     }
-    await publishDeploymentChangesInTx(tx, loaded, loaded.row.id, current.revision, row.id,
+    const deploymentRevision = input.expectedRevision + 1;
+    await publishDeploymentChangesInTx(tx, loaded, loaded.row.id, deploymentRevision, row.id,
         !isDeepStrictEqual(projectDeploymentReceiptActivityV1(DeploymentStateV1Schema.parse(row.state)),
             projectDeploymentReceiptActivityV1(input.state)), accountIds);
-    return receiptResult(current, environmentRevision, removeEnvironment && completeTeardown);
+    return receiptResult({ id: row.id, environmentId: row.environmentId, revision: deploymentRevision, state: input.state },
+        environmentRevision, removeEnvironment && completeTeardown);
 }

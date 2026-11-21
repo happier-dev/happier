@@ -9,7 +9,9 @@ import { createDeploymentEnvironmentV1 } from '@happier-dev/deployments/testing/
 import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { db, getDbProviderFromEnv, initDbMysql, initDbPostgres } from '@/storage/db';
+import { createDbMaintenanceClient, type PrismaClientType } from '@/storage/prisma';
 import { inTx, type Tx } from '@/storage/inTx';
+import { recordDriverStatements } from '@/testkit/driverStatements';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import type { Fastify } from '@/app/api/types';
 import { registerDeploymentRoutes } from '@/app/api/routes/deployments/deploymentRoutes';
@@ -30,6 +32,20 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('deployment tra
     const previousIdentity = process.env.HAPPIER_SERVER_IDENTITY_ID;
     const previousSecret = process.env.HANDY_MASTER_SECRET;
     const previousRetries = process.env.HAPPIER_DB_TX_MAX_RETRIES;
+    const statements: string[] = [];
+    const revisionReads = () => statements.filter(sql => {
+        const projection = /^SELECT (.+?) FROM (?:"[^"]+"\.)?"DeploymentEnvironment" /.exec(sql)?.[1];
+        return projection?.includes('."revision"') && projection.split(', ').every(column =>
+            /\."(?:id|revision)"(?: AS "(?:id|revision)")?$/.test(column));
+    });
+    const receiptReadsAfterWrite = () => {
+        const write = statements.findIndex(sql => /^UPDATE (?:"[^"]+"\.)?"Deployment" /.test(sql));
+        expect(write).toBeGreaterThanOrEqual(0);
+        return statements.slice(write + 1).filter(sql =>
+            /^SELECT .*\."revision".* FROM (?:"[^"]+"\.)?"Deployment" /.test(sql));
+    };
+    let observedClient: PrismaClientType | undefined;
+    let originalTransaction: typeof db.$transaction | undefined;
     let connected = false;
     beforeAll(async () => {
         const target = provider === 'mysql' ? process.env.HAPPIER_TEST_MYSQL_DATABASE_URL : process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL;
@@ -43,8 +59,21 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('deployment tra
         if (provider === 'mysql') await initDbMysql(); else initDbPostgres();
         await db.$connect();
         connected = true;
+        if (provider === 'postgres') {
+            const client = await createDbMaintenanceClient('postgres', undefined, {
+                onDriverStatement: recordDriverStatements(({ query }) => { statements.push(query); }),
+            });
+            observedClient = client;
+            await client.$connect();
+            originalTransaction = db.$transaction;
+            db.$transaction = new Proxy(originalTransaction, { apply(_target, _receiver, args) {
+                return Reflect.apply(client.$transaction, client, args);
+            } });
+        }
     });
     afterAll(async () => {
+        if (originalTransaction) db.$transaction = originalTransaction;
+        await observedClient?.$disconnect();
         if (connected) await db.$disconnect();
         for (const [key, value] of Object.entries({ HAPPIER_SERVER_IDENTITY_ID: previousIdentity,
             HANDY_MASTER_SECRET: previousSecret, HAPPIER_DB_TX_MAX_RETRIES: previousRetries })) {
@@ -114,12 +143,16 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('deployment tra
                 url: `/v1/deployments/environments/${environment.id}/${operation}`,
                 headers: { 'x-test-user-id': owner.id }, payload });
             const atPublication = (sql: string) => sql.includes('FROM "Account"') && sql.includes('FOR NO KEY UPDATE');
+            statements.length = 0;
             const { result: response, advances } = await withAccountPublicationBeforeTransactionSql(owner.id, atPublication, request);
             expect(response.statusCode, response.body).toBe(200);
             expect(response.json()).toMatchObject({ ok: true, state: 'queued', revision: admittedRevision });
             expect(advances).toBe(1);
+            expect(revisionReads(), statements.filter(sql => sql.includes('"DeploymentEnvironment"')).join('\n')).toHaveLength(0);
             const sequence = (await db.account.findUniqueOrThrow({ where: { id: owner.id } })).seq;
+            statements.length = 0;
             expect((await request()).json()).toEqual(response.json());
+            expect(revisionReads()).toHaveLength(0);
             expect((await db.account.findUniqueOrThrow({ where: { id: owner.id } })).seq).toBe(sequence);
             const competing = await request({ ...input, requestKey: randomUUID(), actionOperationId: randomUUID() });
             expect(competing.statusCode, competing.body).toBe(409);
@@ -127,6 +160,11 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('deployment tra
             expect(await db.deployment.count({ where: { environmentId: environment.id } })).toBe(retainedReceipts + 1);
             expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environment.id } })).revision).toBe(admittedRevision);
             await db.deployment.update({ where: { id: response.json().deploymentId }, data: { state: 'failed' } });
+            statements.length = 0;
+            const stale = await request({ ...input, requestKey: randomUUID(), actionOperationId: randomUUID() });
+            expect(stale.statusCode, stale.body).toBe(409);
+            expect(stale.json()).toMatchObject({ ok: false, error: 'deployment_conflict' });
+            expect(revisionReads()).toHaveLength(0);
             const next = () => request({ ...input, expectedRevision: admittedRevision, requestKey: randomUUID(), actionOperationId: randomUUID() });
             const concurrent = await Promise.all([next(), next()]);
             expect(concurrent.map(answer => answer.statusCode).sort()).toEqual([200, 409]);
@@ -164,13 +202,16 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('deployment tra
             expect(response.statusCode, response.body).toBe(200);
             expect(advances).toBe(1);
             const sequence = (await db.account.findUniqueOrThrow({ where: { id: owner.id } })).seq;
-            expect((await request()).json()).toEqual(response.json());
+            expect((await request()).json()).toEqual({ ...response.json(), replayed: true });
             expect((await db.account.findUniqueOrThrow({ where: { id: owner.id } })).seq).toBe(sequence);
             const next = { ...input, requestKey: randomUUID(),
                 ...(newProject ? { newProject: { requestKey: randomUUID(), name: 'Concurrent install Project', owner: { kind: 'account' as const, accountId: owner.id } } } : {}) };
             const concurrent = await Promise.all([request(next), request(next)]);
             expect(concurrent.map(answer => answer.statusCode), concurrent.map(answer => answer.body).join('\n')).toEqual([200, 200]);
-            expect(concurrent[0].json()).toEqual(concurrent[1].json());
+            const created = concurrent.find(answer => answer.json().replayed !== true);
+            const replayed = concurrent.find(answer => answer.json().replayed === true);
+            expect(created).toBeDefined();
+            expect(replayed?.json()).toEqual({ ...created!.json(), replayed: true });
             expect(await db.deploymentEnvironment.count({ where: { createdByAccountId: owner.id } })).toBe(2);
             expect(await db.projectSource.count({ where: { createdByAccountId: owner.id } })).toBe(newProject ? 3 : 1);
             expect((await request({ ...next, protection: 'production' })).json()).toMatchObject({ ok: false, error: 'deployment_conflict' });
@@ -382,8 +423,13 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('deployment tra
             installationId: machine.installationId!, accountId: owner.id, deploymentTransition: { serverId,
                 environmentId: environment.id, deploymentId: receipt.id, actionOperationId: receipt.actionOperationId,
                 expectedRevision: 1, requestBodyDigest: computeDeploymentTransitionRequestDigestV1(body) } }, privateKey: keys.secretKey });
+        statements.length = 0;
         const result = await inTx(tx => transitionDeploymentInTx(tx, owner.id, { ...body, proof }), { isolationLevel: 'Serializable' });
         expect(result).toMatchObject({ ok: true, deploymentId: receipt.id, deploymentRevision: 2, state: 'running' });
+        if (provider === 'postgres') {
+            const reads = receiptReadsAfterWrite();
+            expect(reads, reads.join('\n')).toHaveLength(0);
+        }
         expect(await db.deployment.findUniqueOrThrow({ where: { id: receipt.id } })).toMatchObject({ state: 'running', contentBodyVersion: 2 });
         const readerChanges = await db.accountChange.findMany({ where: { accountId: reader.id, kind: 'account' } });
         expect(readerChanges.map(readDeploymentAccountChangeV1)).toContainEqual(expect.objectContaining({
@@ -424,10 +470,15 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('deployment tra
             const request = () => app.inject({ method: 'POST',
                 url: `/v1/deployments/environments/${environment.id}/deployments/${receipt.id}/transitions`,
                 headers: { 'x-test-user-id': owner.id }, payload: settle });
+            statements.length = 0;
             const { result: response, advances } = await withAccountPublicationBeforeTransactionSql(owner.id, atPublication, request);
             expect(response.statusCode, response.body).toBe(200);
             expect(response.json()).toMatchObject({ ok: true, state: 'succeeded', deploymentRevision: 3 });
             expect(advances).toBe(1);
+            if (provider === 'postgres') {
+                const reads = receiptReadsAfterWrite();
+                expect(reads, reads.join('\n')).toHaveLength(0);
+            }
             const publishedSeq = (await db.account.findUniqueOrThrow({ where: { id: owner.id } })).seq;
             const repeated = await request();
             expect(repeated.statusCode, repeated.body).toBe(200);

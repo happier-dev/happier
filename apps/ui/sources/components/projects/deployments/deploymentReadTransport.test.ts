@@ -46,6 +46,24 @@ describe('deployment scoped read transport', () => {
     beforeEach(async () => { await homes.reset(); });
     afterEach(() => standardCleanup());
 
+    it('opens the empty Apps collection without Artifact or authoring requests after Action admission', async () => {
+        const serverId = await homes.addHome({ name: 'Empty deployments', serverUrl: 'https://empty-deployments.test',
+            serverIdentityId: 'srv_empty_deployments', accountId: 'account-owner', accountEncryptionMode: 'plain' });
+        const scope = { serverId, accountId: 'account-owner' };
+        homes.answer(serverId, '/v1/deployments/environments', { body: { ok: true, items: [], nextCursor: null,
+            coverage: 'complete', totalCount: 0 } });
+        const lifetime: ServerAccountScopeLifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        const controller = createDeploymentReadControllerV1({ scope, transport: createDeploymentReadTransport(lifetime) });
+        const before = homes.requests.length;
+        const lease = controller.acquireCollection({}, { mounted: true, visible: true, focused: true });
+        try {
+            await lease.refresh();
+            expect(lease.getSnapshot().value).toMatchObject({ items: [], totalCount: 0 });
+            expect(homes.requests.slice(before).map(request => new URL(request.path, 'https://home.invalid').pathname).sort())
+                .toEqual(['/v1/account/encryption', '/v1/auth/ping', '/v1/deployments/environments', '/v2/account/settings']);
+        } finally { lease.release(); controller.retire(); }
+    });
+
     it.each(['plain', 'e2ee'] as const)('opens %s Environment and Backup subject names from private headers on the addressed Home', async mode => {
         const token = `e30.${Buffer.from(JSON.stringify({ sub: 'account-owner' })).toString('base64url')}.signature`;
         const secret = new Uint8Array(32).fill(11);
@@ -105,6 +123,49 @@ describe('deployment scoped read transport', () => {
         expect(homes.requests).toHaveLength(beforeForeign);
     });
 
+    it('reads runtime links for the visible Account Database page as one exact Environment set', async () => {
+        const serverId = await homes.addHome({ name: 'Database page', serverUrl: 'https://database-page.test',
+            serverIdentityId: 'srv_database_page', accountId: 'account-owner', accountEncryptionMode: 'plain' });
+        const scope = { serverId, accountId: 'account-owner' };
+        const environments = ['first-db', 'second-db'].map(id => createDeploymentEnvironmentHeaderV1({ id, serverId,
+            runtimeTargetLinkId: `target-${id}`, contentArtifactId: `artifact-${id}` }));
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const writer = await captureLazyActionAccountContext(serverId);
+        const artifacts = [];
+        try {
+            for (const environment of environments) {
+                const detail = createDeploymentEnvironmentDetailV1({ environment });
+                const content = { ...detail.content, template: {
+                    templateRef: { sourceId: 'catalog', itemId: 'postgres', version: '1', ref: { kind: 'version', version: '1' } },
+                    definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` }, services: ['database'],
+                    data: [{ service: 'database', engine: 'postgres' }] } };
+                await writer.createArtifactDocument({ artifactId: environment.contentArtifactId,
+                    header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: environment.id }, body: JSON.stringify(content) });
+                const stored = homes.artifacts(serverId).read(environment.contentArtifactId);
+                if (!stored) throw new Error('Expected the fixture Artifact');
+                artifacts.push(projectArtifactBoundaryReadRow(stored));
+            }
+        } finally { writer.dispose(); }
+        const path = '/v1/deployments/environments';
+        const links = environments.map(environment => createDeploymentTargetLinkHeaderV1({ id: environment.runtimeTargetLinkId!,
+            environmentId: environment.id, state: 'configured', activeDeploymentId: undefined }));
+        homes.answer(serverId, '/v1/deployments/data-services', { body: { ok: true,
+            items: environments.map(environment => ({ environment })), artifacts, nextCursor: null } });
+        homes.answer(serverId, path, { body: { ok: true, items: environments, runtimeTargetLinks: links, nextCursor: null } });
+        for (const [index, environment] of environments.entries()) {
+            homes.answer(serverId, `${path}/${environment.id}`, { body: { ok: true, environment, targetLinks: [links[index]] } });
+        }
+        const lifetime: ServerAccountScopeLifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        const before = homes.requests.length;
+        const result = await createDeploymentReadTransport(lifetime).listDataServicePage(scope, {}, { signal: new AbortController().signal });
+        const metadata = homes.requests.slice(before).filter(request => request.path.startsWith(path))
+            .map(request => new URL(request.path, 'https://home.invalid'));
+        expect(metadata.map(url => url.pathname)).toEqual([path]);
+        expect(metadata[0]?.searchParams.getAll('environmentIds')).toEqual(environments.map(environment => environment.id));
+        expect(result).toMatchObject({ ok: true, value: { items: environments.map(environment => ({ environment,
+            databaseSizes: [{ service: 'database', size: { status: 'unavailable', reason: 'active_deployment_required' } }] })) } });
+    });
+
     it.each(['deployment_service', 'managed_deployment', 'deployment_service_disabled', 'selected_environment', 'selected_environment_refused',
         'selected_environment_cold'] as const)('reads %s database size and only discovers Workbench subjects for a selected Environment', async kind => {
         const disabled = kind === 'deployment_service_disabled';
@@ -149,6 +210,8 @@ describe('deployment scoped read transport', () => {
         const targets = nativeKind ? [selected] : [selected, managed('second-database')];
         homes.answer(serverId, `/v1/deployments/environments/${detail.environment.id}`, { body: { ok: true,
             environment: detail.environment, targetLinks: [runtimeLink] } });
+        homes.answer(serverId, '/v1/deployments/environments', { body: { ok: true,
+            items: [detail.environment], runtimeTargetLinks: [runtimeLink], nextCursor: null } });
         const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
         const writer = await captureLazyActionAccountContext(serverId);
         try { await writer.createArtifactDocument({ artifactId: detail.environment.contentArtifactId,
