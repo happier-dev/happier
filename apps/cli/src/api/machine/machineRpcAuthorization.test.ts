@@ -171,6 +171,12 @@ describe('authorizeMachineRpcRequest', () => {
     ] });
     // A genuine Machine permit does not let a direct caller mint Session proofs.
     expect(await rpc.handleRequest(request)).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false });
+    // A custodian Agent's daemon placement does not supply the evidence method's Home stamp.
+    expect(await authorizeMachineRpcRequest({ ...request, authorization: undefined,
+      sessionActionOrigin: { v: 1, caller: { kind: 'session', sessionId: 'admitted-session', starterDepth: 0, turnDepth: 0 },
+        sourceTurnId: 'turn', callerPermissionMode: 'default', requestId: 'read-evidence' },
+    }, { ...boundary, readAgentIsolation: () => ({ enabled: false }) }, 'authenticated_home_socket'))
+      .toMatchObject({ ok: false, admissionPredicate: 'session_authorization' });
     for (const authorization of [undefined, { kind: 'scm.workEvidence' as const, sessionIds: ['session'] },
       { kind: 'session.write' as const, sessionId: 'session' }]) {
       expect(await rpc.handleRequest({ ...request, authorization }, undefined, 'authenticated_home_socket'))

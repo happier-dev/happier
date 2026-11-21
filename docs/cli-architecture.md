@@ -2264,6 +2264,10 @@ uses the owner's Agent placement (`sharedAgent` when isolation is enabled,
 `daemon` when disabled). macOS and Windows do not provision member users.
 Native readiness is still required for an enabled isolation transport; a broken
 member setup never silently falls back. Unknown requester custody still refuses.
+When the verified custodian's Agent has Manage and Machine policy selects
+`daemon`, Machine RPC uses that placement for admitted operations, including Git
+push and forge actions such as opening a pull request. Route-specific admission,
+approval and credential checks still apply.
 Placement changes neither requester credentials nor Session ownership or the
 Session's role at the Computer gate. Happier's Computer controls require Manage
 to access the owner's real display. In fallback mode, a guest's Agent runs as you

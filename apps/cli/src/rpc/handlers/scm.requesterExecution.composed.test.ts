@@ -19,6 +19,7 @@ import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/acces
 import { registerScmHandlers } from '@/rpc/handlers/scm';
 import { createHostScmCommandRunner } from '@/scm/runtime';
 import { createScmBackendRegistry } from '@/scm/registry';
+import { createScmHostingProviderRegistry } from '@/scm/hostingProviders/registry';
 import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/registeredScmBackendAdapter';
 import { removeTempDir } from '@/testkit/fs/tempDir';
 import { createGitScmBackendRuntimeRegistration } from '../../../../../packages/plugins/scm-git/src/backend';
@@ -351,6 +352,30 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     expect(execFileSync('git', ['--git-dir', remote, 'rev-parse', 'main'], { encoding: 'utf8' }).trim())
       .toBe(git(f.ownerRepository, 'rev-parse', 'main').trim());
     expect(os.runAs).toEqual([]);
+  });
+
+  it('uses the Machine isolation decision for an owner Session opening a pull request', async () => {
+    const origin = { v: 1, caller: { kind: 'session', sessionId: 'build-session', starterDepth: 0, turnDepth: 0 },
+      sourceTurnId: 'build-turn', callerPermissionMode: 'default', workspaceWrites: 'allow', requestId: 'approved-pr' } as const;
+    const direct = await fixture({ sourceRuntimeIsolation: 'disabled' });
+    git(direct.ownerRepository, 'remote', 'add', 'origin', 'https://github.com/example/fixture.git');
+    const registry = createScmHostingProviderRegistry({ providers: [] });
+    const open = (f: Awaited<ReturnType<typeof fixture>>, accountId: string, role: 'manage' | 'use') =>
+      runWithHostingProviderRuntimeServices({ resolveScmHostingProviderRegistry: async () => registry },
+        () => f.invoke(RPC_METHODS.SCM_PULL_REQUEST_OPEN_OR_REUSE, { cwd: f.ownerRepository, base: 'main', title: 'Fixture change' },
+          accountId, role, undefined, undefined, origin));
+
+    // The admitted request reaches the real Git backend and resolves the empty forge inventory.
+    expect(await open(direct, 'owner-account', 'manage')).toMatchObject({ success: false, errorCode: 'FEATURE_UNSUPPORTED' });
+    expect(daemonGit().length).toBeGreaterThan(0);
+    expect(await open(direct, 'member-account', 'manage'))
+      .toMatchObject({ errorCode: 'agent_isolation_unavailable', effectAttempted: false });
+    expect(await open(direct, 'member-account', 'use'))
+      .toMatchObject({ errorCode: 'machine_manage_required', effectAttempted: false });
+
+    const separated = await fixture({ sourceRuntimeIsolation: 'required' });
+    expect(await open(separated, 'owner-account', 'manage'))
+      .toMatchObject({ errorCode: 'agent_isolation_unavailable', effectAttempted: false });
   });
 
   it('pushes for Manage on an isolated Machine', async () => {

@@ -50,7 +50,7 @@ import {
 } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { ScmWorkEvidenceAdmissionSchema } from '@happier-dev/protocol/scm';
-import { getScmRpcSideEffectClass, isScmLocalRepositoryReadRpcMethod, isScmLocalRepositoryRpcMethod } from '@happier-dev/protocol/actions/scmGitActionSpecs';
+import { getScmRpcSideEffectClass, isScmLocalRepositoryReadRpcMethod } from '@happier-dev/protocol/actions/scmGitActionSpecs';
 import {
   PreparedTransferRpcRequestV1Schema,
   resolvePreparedTransferRpcPhaseV1,
@@ -1694,6 +1694,7 @@ export async function authorizeMachineRpcRequest(
       ))
   )
     return forbidden();
+  let authorized: Extract<RpcAuthorizationResult, { ok: true }> = { ok: true };
   if (request.machineAdmission !== undefined) {
     const admission = SocketRpcMachineAdmissionContextV1Schema.safeParse(
       request.machineAdmission,
@@ -1984,12 +1985,12 @@ export async function authorizeMachineRpcRequest(
         const personLocalRepositoryRead = identity.kind === 'isolated' && (identity.presentPerson || identity.accountAutomation)
           && isScmLocalRepositoryReadRpcMethod(rpcMethod);
         const unrestricted = isHostRequesterUnrestrictedOwner(identity);
-        if (!unrestricted && identity.kind === 'isolated' && context.role === 'manage'
-          && isScmLocalRepositoryRpcMethod(rpcMethod)
-          && canExecuteRequesterWorkspaceOnDaemonForHost(identity, machine.readAgentIsolation)) {
-          return { ok: true, directScmWorkspaceRequester: identity };
-        }
-        if (!receivingManager && !unrestricted && !personLocalRepositoryRead) {
+        const directRequester = !unrestricted && identity.kind === 'isolated' && context.role === 'manage'
+          && canExecuteRequesterWorkspaceOnDaemonForHost(identity, machine.readAgentIsolation);
+        if (directRequester) {
+          // Placement never substitutes for the method's remaining authorization checks.
+          authorized = { ok: true, directScmWorkspaceRequester: identity };
+        } else if (!receivingManager && !unrestricted && !personLocalRepositoryRead) {
           const refuseExecution = (errorCode: string, error: string): RpcAuthorizationResult => ({
             ok: false, errorCode, error,
             failureCause: projectActionFailureCauseV1({ code: errorCode }, 'rpc.admission.requester_execution_isolation',
@@ -2085,17 +2086,17 @@ export async function authorizeMachineRpcRequest(
       : forbidden('session_authorization');
   }
   if (sessionRule?.optionalSessionScope) {
-    if (request.authorization === undefined) return { ok: true };
+    if (request.authorization === undefined) return authorized;
     return parseSocketRpcAuthorizationContext(request.authorization)?.kind ===
       'session.write'
-      ? { ok: true }
+      ? authorized
       : forbidden('session_authorization');
   }
   const authorizationMethod = resolveSocketRpcSessionWriteAuthorizationMethod(
     request.method,
   );
   if (!authorizationMethod) {
-    return { ok: true };
+    return authorized;
   }
 
   const requestedSessionId = readSessionIdFromParams(
