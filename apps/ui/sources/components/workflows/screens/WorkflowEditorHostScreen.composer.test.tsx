@@ -32,7 +32,7 @@ import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/e
 import { createAccountTokenForTests, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { workflowRunStoreKey } from '@/sync/store/domains/workflowRuns';
 
-const runStart = vi.fn<(request: ReturnType<typeof WorkflowRunStartRequestV1Schema.parse>) => Promise<unknown>>();
+const runStart = vi.fn<(request: ReturnType<typeof WorkflowRunStartRequestV1Schema.parse>, project: unknown) => Promise<unknown>>();
 let runFailure: Readonly<{ errorCode: string; error: string }> | null = null;
 const runBoundaries = new Map<string, Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>>>();
 const viewport = vi.hoisted(() => ({ width: 1280 }));
@@ -124,7 +124,7 @@ async function addComposerHome(name: string, serverUrl: string) {
         credentials: { token: createAccountTokenForTests('account-a', { currentAccount: true }) } });
     runBoundaries.set(new URL(serverUrl).origin, await createExternalActionAccountHttpBoundary({
         serverUrl, serverIdentityId, accountId: 'account-a', machineId: 'machine-1', tokenEpoch: 0,
-        actionId: 'workflow.run.start', execute: raw => runStart(WorkflowRunStartRequestV1Schema.parse(raw)),
+        actionId: 'workflow.run.start', execute: (raw, { target }) => runStart(WorkflowRunStartRequestV1Schema.parse(raw), target.project),
         failure: () => runFailure,
     }));
     if (accountConnection) {
@@ -882,6 +882,57 @@ describe('editor workflow composer', () => {
         // An editable document's agent step gets the Test Run's output line (output, duration, Open details) too.
         await vi.waitFor(() => expect(screen.root.findAllByType(WorkflowStepDataEditor)
             .some((node) => node.props.editable === true && node.props.footerAccessory != null)).toBe(true));
+    });
+
+    it('starts a Workflow from Automate in the exact managed Project checkout', async () => {
+        const { ProjectAutomationsWidgetBody } = await import('@/components/projects/widgets/ProjectAutomationsWidgetBody');
+        const { WidgetFrame } = await import('@/components/widgets/frame/WidgetFrame');
+        const { WidgetFrameBodyMetaContext } = await import('@/components/widgets/frame/widgetFrameBodyCaption');
+        const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
+        const { router } = await import('expo-router');
+        const checkout = { v: 2, kind: 'managed', id: 'coder-checkout', serverId: appliedHome.serverId,
+            managedId: 'qa-rws-workspace', controller: { machineId: 'machine-1', installationId: 'controller-install' },
+            rootPath: '/home/coder/qa-rws-repo', createdAtMs: 1 } as const;
+        function ProjectAutomations() {
+            const [meta, setMeta] = React.useState<React.ReactNode>(null);
+            return <WidgetFrameBodyMetaContext.Provider value={setMeta}>
+                <WidgetFrame testID="project-automations" frameStyle="card" placement="home" title="Automations"
+                    meta={meta} body={{ kind: 'content', children: <ProjectAutomationsWidgetBody
+                        target={{ kind: 'project', projectKey: 'coder-repo', checkout }} serverId={appliedHome.serverId} /> }} />
+            </WidgetFrameBodyMetaContext.Provider>;
+        }
+        runStart.mockImplementation(async request => ({ admission: 'created', run: createWorkflowRunSummaryFixture({ id: request.runId }) }));
+        const screen = await renderScreen(<AppPaneProvider><ProjectAutomations /></AppPaneProvider>, {
+            createNodeMock: () => ({ getBoundingClientRect: () => ({ left: 600, top: 100, width: 160, height: 40 }),
+                addEventListener: () => {}, removeEventListener: () => {}, scrollTo: () => {},
+                measureInWindow: (receive: (x: number, y: number, width: number, height: number) => void) => receive(600, 100, 160, 40) }),
+        });
+        await screen.pressByTestIdAsync('subject-triggers-add');
+        await screen.pressByTestIdAsync('workflow-builder-open-editor');
+        const entry = vi.mocked(router.push).mock.calls.at(-1)?.[0];
+        if (typeof entry !== 'object' || typeof entry.params?.definitionDraftSeedId !== 'string') {
+            throw new Error('Automate did not open a seeded editor');
+        }
+        await screen.update(<AppPaneProvider><WorkflowEditorHostScreen source={{ kind: 'new',
+            definitionDraftSeedId: entry.params.definitionDraftSeedId }} /></AppPaneProvider>);
+        const body = screen.root.findByType(WorkflowEditorBody);
+        const expectedProject = { machineId: 'machine-1', directory: checkout.rootPath, workspaceRefId: checkout.id };
+        expect.soft(body.props.projectTarget).toEqual(expect.objectContaining(expectedProject));
+        await act(async () => {
+            const draft = body.props.draftStore.get();
+            body.props.onChange({ ...draft, defaults: savedAgentDefinition().defaults,
+                blocks: [{ kind: 'step', id: 'check', input: [], result: { kind: 'text' },
+                document: { text: 'Check the repository', references: [], attachments: [] } }] });
+        });
+        await act(async () => {
+            body.props.onChangeExecutionTarget?.('session');
+        });
+        const run = screen.findByTestId('workflow-editor-run-now');
+        expect(run?.props.accessibilityHint).toBeUndefined();
+        await screen.pressByTestIdAsync('workflow-editor-run-now');
+        await vi.waitFor(() => expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false));
+        await screen.pressByTestIdAsync('workflow-run-inputs-run');
+        expect(runStart.mock.calls.map(([, acceptedProject]) => acceptedProject)).toEqual([expect.objectContaining(expectedProject)]);
     });
 
     it('runs the reviewed saved draft with its granted Team without saving or substituting saved contents', async () => {

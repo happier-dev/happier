@@ -4,6 +4,7 @@ import type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/auto
 import type { ProjectSurfaceTargetV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
 import { resolveWorkspaceRefDisplayName } from '@/components/projects/resolveWorkspaceRefDisplayName';
 import { SubjectTriggersSection } from '@/components/workflows/triggers/SubjectTriggersSection';
+import { workflowProjectTargetFromCheckout } from '@/sync/domains/workflows/workflowProjectTarget';
 
 /**
  * The Project Overview's Automations widget (Plan 05 S5, lab automations-v-project): the shared resource section on
@@ -14,10 +15,7 @@ export function ProjectAutomationsWidgetBody(props: Readonly<{ target: ProjectSu
     const { projectKey, checkout } = props.target;
     const subject = React.useMemo((): AutomationSubjectV1 => ({ kind: 'project', serverId: props.serverId, projectKey }),
         [props.serverId, projectKey]);
-    const machineId = checkout?.machineId;
-    const directory = checkout?.rootPath;
-    const executionContext = React.useMemo(() => machineId && directory ? { machineId, directory } : undefined,
-        [machineId, directory]);
+    const executionContext = React.useMemo(() => checkout ? workflowProjectTargetFromCheckout(checkout) : undefined, [checkout]);
     const name = props.target.source?.source.name ?? (checkout ? resolveWorkspaceRefDisplayName(checkout) : projectKey);
     return <SubjectTriggersSection subject={subject} subjectName={name} executionContext={executionContext} presentation="widget" />;
 }

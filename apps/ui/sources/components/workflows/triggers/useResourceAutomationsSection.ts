@@ -50,7 +50,7 @@ export type ResourceAutomationsSectionInput = Readonly<{
     /** The physical host's selected catalog Machine, independent of workflow execution placement. */
     machineId?: string;
     /** Execution placement is independent of the selected resource's identity. */
-    executionContext?: Pick<WorkflowProjectTargetV1, 'machineId' | 'directory'>;
+    executionContext?: WorkflowProjectTargetV1;
     serverId?: string;
     subjectName?: string;
     deploymentEnvironment?: DeploymentEnvironmentRefV1;
@@ -70,7 +70,7 @@ export type SelectedAutomationsSectionRead = Readonly<{
 
 export type ResourceAutomationsSectionRead = SelectedAutomationsSectionRead & Readonly<{
     machineId: string | null;
-    project: Pick<WorkflowProjectTargetV1, 'machineId' | 'directory'> | undefined;
+    project: WorkflowProjectTargetV1 | undefined;
     audience: readonly PrincipalRefV1[] | undefined;
     /** Session lifetime and Channels context stay separate from the selected subject's attachments. */
     session: (SessionWorkflowContextRead & Readonly<{
@@ -167,7 +167,7 @@ export function useActionAutomationsSection(props: Readonly<{ actionId: Extract<
 }
 
 /** Resource section data and mutations, consuming the incumbent read and presentation lifetimes. */
-export function useResourceAutomationsSection(props: LegacyResourceAutomationsSectionInput): ResourceAutomationsSectionRead & { project: Pick<WorkflowProjectTargetV1, 'machineId' | 'directory'> };
+export function useResourceAutomationsSection(props: LegacyResourceAutomationsSectionInput): ResourceAutomationsSectionRead & { project: WorkflowProjectTargetV1 };
 export function useResourceAutomationsSection(props: ResourceAutomationsSectionInput): ResourceAutomationsSectionRead;
 export function useResourceAutomationsSection(props: ResourceAutomationsSectionInput | LegacyResourceAutomationsSectionInput): ResourceAutomationsSectionRead;
 export function useResourceAutomationsSection(props: ResourceAutomationsSectionInput | LegacyResourceAutomationsSectionInput): ResourceAutomationsSectionRead {
@@ -233,7 +233,7 @@ export function useResourceAutomationsSection(props: ResourceAutomationsSectionI
 function useWorkflowLinkController(input: Readonly<{
     subject: AutomationSubjectV1 | null; subjectName?: string; sourceAudience?: readonly PrincipalRefV1[];
     binding: ServerAccountScopeLifetime | null | undefined; demanded: boolean;
-    editor: SelectedAutomationsSectionRead['editor']; project?: Pick<WorkflowProjectTargetV1, 'machineId' | 'directory'>;
+    editor: SelectedAutomationsSectionRead['editor']; project?: WorkflowProjectTargetV1;
     whenOptions: readonly WorkflowLinkTriggerStartOption[]; whenStatus: ResourceAutomationsSectionRead['link']['whenStatus'];
     retryWhen(): void;
 }>) {

@@ -1,6 +1,7 @@
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
 import type { SessionDirectoryIntentV1 } from '@happier-dev/protocol/sessions/creation/sessionDirectoryIntentV1';
 import type { SessionProjectFilesV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
+import { resolveWorkspaceSyncExecutionMachineIdV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 
 import { resolveWorkspaceRefByScope } from '@/sync/domains/workspaces/workspaceRefs';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
@@ -37,6 +38,14 @@ export type WorkflowAuthoringTarget = WorkflowProjectTargetV1 | Readonly<{
 
 export function isWorkflowProjectTarget(target: WorkflowAuthoringTarget): target is WorkflowProjectTargetV1 {
     return typeof target.directory === 'string';
+}
+
+export function workflowProjectTargetFromCheckout(checkout: WorkspaceRefV1): WorkflowProjectTargetV1 {
+    return {
+        machineId: resolveWorkspaceSyncExecutionMachineIdV1(checkout),
+        directory: checkout.rootPath,
+        workspaceRefId: checkout.id,
+    };
 }
 
 /**

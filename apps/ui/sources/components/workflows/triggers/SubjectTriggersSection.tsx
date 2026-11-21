@@ -96,7 +96,7 @@ export type SubjectTriggersSectionProps = Readonly<{
       contextSubjects?: readonly AutomationSubjectV1[];
       /** The admitted host Machine for Action/event catalogs; does not imply an execution directory. */
       machineId?: string;
-      executionContext?: Pick<WorkflowProjectTargetV1, 'machineId' | 'directory'>;
+      executionContext?: WorkflowProjectTargetV1;
       serverId?: string;
       /** The host's mounted Account lifetime, when its read borrows one; explicit null makes no read. */
       accountLifetime?: ServerAccountScopeLifetime | null;
