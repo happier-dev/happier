@@ -95,8 +95,9 @@ export function supportsLlmTaskRunnerPermissionV1(
 
 /**
  * The one owner of "which Agent + model + connected service + effort + permission
- * level runs this background task". The person's explicit choice always wins
- * unchanged. Auto follows the task's cost policy among every enabled Agent that is ready
+ * level runs this background task". The person's explicit choice wins unless
+ * its Agent is known to lack the required permission support.
+ * Auto follows the task's cost policy among every enabled Agent that is ready
  * on the machine; the Session's own Agent wins a tie, then catalog order. It asks
  * for the model's lowest effort unless the person set one. A disabled, signed-out
  * or unavailable Agent is never used; nothing fits ⇒ a typed failure.
@@ -114,13 +115,21 @@ export function resolveLlmTaskRunnerV1<C extends LlmTaskRunnerCandidateV1>(param
   const task = LLM_TASK_DECLARATIONS_V1[params.task];
   const choice = params.choice;
   const permissionMode = readPermissionMode(task, choice?.permissionMode);
+  const unavailableAgents = params.unavailableAgents ?? [];
+  const canEnforcePermission = (candidate: C) => supportsLlmTaskRunnerPermissionV1(permissionMode, candidate.noTools);
   if (!isLlmTaskRunnerAutoV1(choice)) {
+    if (permissionMode === 'no_tools') {
+      // Tool enforcement belongs to the Agent, across its models and credential routes.
+      const selectedAgent = params.candidates.find(candidate => candidate.modelSelection.agentTargetKey === choice.modelSelection.agentTargetKey);
+      if (selectedAgent && !canEnforcePermission(selectedAgent)) {
+        return { ok: false, errorCode: 'LLM_TASK_RUNNER_UNAVAILABLE', reason: 'no_matching_model', unavailableAgents };
+      }
+    }
     return { ok: true, source: 'explicit', runner: { ...choice, permissionMode } };
   }
-  const unavailableAgents = params.unavailableAgents ?? [];
   const unavailableKeys = new Set(unavailableAgents.map(agent => agent.agentTargetKey));
   const ready = params.candidates.filter(candidate => !unavailableKeys.has(candidate.modelSelection.agentTargetKey));
-  const eligible = ready.filter(candidate => supportsLlmTaskRunnerPermissionV1(permissionMode, candidate.noTools)
+  const eligible = ready.filter(candidate => canEnforcePermission(candidate)
     && (task.structuredOutput === 'optional' || candidate.structuredOutput === 'supported')
     && (task.costTiers !== 'low_only' || candidate.costTier === 'low'));
   const picked = pickPreferredCost(eligible, params.sessionAgentTargetKey ?? null, task.costTiers);
