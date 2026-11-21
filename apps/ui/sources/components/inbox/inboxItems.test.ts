@@ -571,8 +571,11 @@ describe('one Inbox row projection', () => {
         expect(buildInboxItems({ ...named, notices: [reviewNotice(true)] }, requested)).toBe(requested);
         const pendingOnly = buildInboxItems({ ...named, notices: [reviewNotice(false)] }, requested);
         expect(pendingOnly[1]).not.toBe(requested[1]);
-        expect(pendingOnly[1]).not.toHaveProperty('sourceLabel');
-        expect(pendingOnly[1]?.source.displayName).toBe('Acme Review');
+        expect(pendingOnly[1]).toMatchObject({
+            sourceLabel: `${t('reviewWalkthrough.collection.needsYourDecision')} · ${t('reviewWalkthrough.collection.subjectPullRequest')}`,
+            source: { displayName: 'Acme Review' },
+        });
+        expect(buildInboxItems({ ...named, notices: [reviewNotice(false)] }, pendingOnly)).toBe(pendingOnly);
     });
 
     it('reads an open health notice as failing and a recovered one as quiet', () => {

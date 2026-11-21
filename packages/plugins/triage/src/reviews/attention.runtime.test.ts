@@ -10,15 +10,16 @@ import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 type Notice = Parameters<PluginInvocationContext['services']['notifications']['send']>[0];
 
 describe('Review attention invalidation', () => {
-  it('settles the same notice from a hinted Review, ignores unrelated entities, and rescans on reconnect', async () => {
+  it('updates the same notice from requested verdict to pending decision to settled', async () => {
     vi.useFakeTimers();
     const { watchableCollections } = createTestkitCorpusCollections();
     const listeners = new Map<string, (event: { payload: unknown }) => Promise<void>>();
     const calls: string[] = [];
     const notices: Notice[] = [];
     let needsYou = true;
+    let requestedVerdict = true;
     const facts = () => ({ reviewId: 'review-a', roundOrdinal: 1, reason: 'review_needs_you' as const,
-      needsYou, requestedVerdict: needsYou, pendingDecisions: false, canSubmitVerdict: true });
+      needsYou, requestedVerdict, pendingDecisions: needsYou && !requestedVerdict, canSubmitVerdict: true });
     const controller = new AbortController();
     const context = { signal: controller.signal, services: {
       storage: { account: { collection: () => watchableCollections.sourceInstances } },
@@ -56,16 +57,23 @@ describe('Review attention invalidation', () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(calls).toEqual(['list']);
       expect(notices).toHaveLength(1);
+      requestedVerdict = false;
+      await listeners.get('@happier/account/entities-invalidated')?.({ payload: { entityIds: ['review-a'], reviewIds: ['review-a'] } });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(notices).toHaveLength(2);
+      expect(notices[1]).toMatchObject({ itemId: notices[0]?.itemId, page: notices[0]?.page,
+        type: 'decision', resolved: false, reviewAttention: { requestedVerdict: false, subjectKind: 'comparison' } });
       needsYou = false;
       await listeners.get('@happier/account/entities-invalidated')?.({ payload: { entityIds: ['review-a'], reviewIds: ['review-a'] } });
       await vi.advanceTimersByTimeAsync(0);
-      expect(calls).toEqual(['list', 'review.get:review-a']);
-      expect(notices).toHaveLength(2);
-      expect(notices[1]).toMatchObject({ itemId: notices[0]?.itemId, page: notices[0]?.page,
-        type: 'decision', resolved: true, reviewAttention: { requestedVerdict: false, subjectKind: 'comparison' } });
+      expect(calls).toEqual(['list', 'review.get:review-a', 'review.get:review-a']);
+      expect(notices).toHaveLength(3);
+      expect(notices[2]).toMatchObject({ itemId: notices[0]?.itemId, page: notices[0]?.page,
+        type: 'decision', resolved: true });
+      expect(notices[2]).not.toHaveProperty('reviewAttention');
       await listeners.get('@happier/automation/event-sources-invalidated')?.({ payload: { reason: 'reconnect' } });
       await vi.advanceTimersByTimeAsync(0);
-      expect(calls).toEqual(['list', 'review.get:review-a', 'list']);
+      expect(calls).toEqual(['list', 'review.get:review-a', 'review.get:review-a', 'list']);
       expect(notices.at(-1)).toMatchObject({ itemId: notices[0]?.itemId, resolved: true });
     } finally { controller.abort(); await running; vi.useRealTimers(); }
   });

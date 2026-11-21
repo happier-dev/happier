@@ -286,13 +286,15 @@ export function buildInboxItems(input: InboxItemsInput, previous: readonly Inbox
                 createdAt: entry.artifact.createdAt, header: entry.header,
                 pageRoute: resolveInboxItemPageRoute(focus, { notice: entry.header }),
                 pluginDisplayName: entry.header.source.kind === 'plugin' ? input.pluginDisplayNames?.get(entry.header.source.pluginId) : null });
+            if (!row) continue;
             // An open health notice (failed deploy, failing service or backup) reads as failing; recovery stays quiet.
             const failing = entry.header.healthPhase === 'open' ? { workStatus: resolveWorkStatusTone({ kind: 'health_notice',
                 facts: { word: t('inbox.work.healthNotice.failing') } }) } : {};
-            const requested = entry.header.reviewAttention?.requestedVerdict === true
-                ? { sourceLabel: `${t('reviewWalkthrough.detail.requestedFromYou')} · ${reviewSubjectLabel(entry.header.reviewAttention.subjectKind)}` }
-                : {};
-            if (row) rows.push({ ...row, ...failing, ...requested, ...(entry.expectedDuring ? { expectedDuring: entry.expectedDuring } : {}) });
+            const review = entry.header.reviewAttention;
+            const reviewByline = review ? { sourceLabel: `${t(review.requestedVerdict
+                ? 'reviewWalkthrough.detail.requestedFromYou'
+                : 'reviewWalkthrough.collection.needsYourDecision')} · ${reviewSubjectLabel(review.subjectKind)}` } : {};
+            rows.push({ ...row, ...failing, ...reviewByline, ...(entry.expectedDuring ? { expectedDuring: entry.expectedDuring } : {}) });
         }
     }
     if (input.discussions) {

@@ -35,7 +35,8 @@ function title(reviewId: string, titles: ReadonlyMap<string, string>): string {
 function attention(facts: Facts, subjectKind: Review['subjectKind'], titles: ReadonlyMap<string, string>): Extract<TriageReadAttentionResultV1, { kind: 'page' }>['items'][number] {
     return { localRef: reviewTriageLocalRefV1(facts.reviewId), reason: facts.reason, type: 'decision',
         title: title(facts.reviewId, titles), resolved: !facts.needsYou,
-        reviewAttention: { requestedVerdict: facts.requestedVerdict, subjectKind } };
+        // For active attention, a request takes precedence. Without one, a finding needs a decision.
+        ...(facts.needsYou ? { reviewAttention: { requestedVerdict: facts.requestedVerdict, subjectKind } } : {}) };
 }
 
 /** The Review owner already intersected request eligibility with Artifact access. */
