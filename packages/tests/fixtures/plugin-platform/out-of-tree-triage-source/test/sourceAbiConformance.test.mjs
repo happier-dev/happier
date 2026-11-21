@@ -175,10 +175,9 @@ function createHarnessTarget(slots) {
 }
 
 /**
- * Installs the source and a target, then hands back exactly what a target may
- * hold: opaque admitted operation handles.
+ * Activates the shipped source and the target that owns its admission.
  */
-async function install({ accountListingStatus, shipped = manifest } = {}) {
+async function activateSourceAndTarget(shipped, accountListingStatus) {
     const source = await createPluginTestkit({
         manifest: shipped,
         module: { activate },
@@ -192,26 +191,10 @@ async function install({ accountListingStatus, shipped = manifest } = {}) {
         targetedContributionContributors: [source],
     });
 
-    const conformance = checkTriageSourceContributionV1(shipped);
-    assert.equal(conformance.ok, true, JSON.stringify(conformance));
-    const [contribution] = conformance.manifest.contributes.targetedPluginContributions.filter(
-        (candidate) => candidate.target.pluginId === TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1
-            && candidate.target.pointId === TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
-    );
-    assert.ok(contribution);
-
-    for (const role of ['listInstances', 'scan', 'get']) {
-        slots[role] = target.issueAdmittedTargetedOperation({
-            point: harness.contributionPoints[TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1],
-            contributor: { testkit: source, contributionId: LEDGER_CONTRIBUTION_LOCAL_ID },
-            role,
-            action: { pluginId: shipped.id, localId: contribution.operations[role] },
-        });
-    }
-
     return {
         source,
         target,
+        slots,
         point: harness.contributionPoints[TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1],
         listInstances: (input) => target.invokeAction(HARNESS_ACTION_IDS.listInstances, input),
         scan: (input) => target.invokeAction(HARNESS_ACTION_IDS.scan, input),
@@ -221,6 +204,24 @@ async function install({ accountListingStatus, shipped = manifest } = {}) {
             await source.dispose();
         },
     };
+}
+
+async function install({ accountListingStatus, shipped = manifest } = {}) {
+    const installed = await activateSourceAndTarget(shipped, accountListingStatus);
+    try {
+        const { contributions } = installed.target.readTargetedContributionFixture(installed.point);
+        const [admitted] = contributions;
+        assert.equal(contributions.length, 1, 'Expected the host to admit the fixture');
+        for (const role of Object.keys(HARNESS_ACTION_IDS)) {
+            const operation = admitted.operations[role];
+            assert.ok(operation, `Expected a host-admitted ${role} handle`);
+            installed.slots[role] = operation;
+        }
+        return installed;
+    } catch (error) {
+        await installed.dispose();
+        throw error;
+    }
 }
 
 async function walkEveryPage(installed) {
@@ -247,8 +248,13 @@ async function walkEveryPage(installed) {
 // QB-01 — public source ABI, admitted with no Triage aggregate edit
 // ---------------------------------------------------------------------------
 
-test('QB-01: the happier.triage sources point admits the out-of-tree source with no target edit', async () => {
-    const installed = await install();
+test('QB-01: the provider declaration conforms to the public Triage source protocol', () => {
+    const conformance = checkTriageSourceContributionV1(manifest);
+    assert.equal(conformance.ok, true, JSON.stringify(conformance));
+});
+
+test('QB-01: the host admits the out-of-tree source through the published contribution point', async () => {
+    const installed = await activateSourceAndTarget(manifest);
     try {
         const snapshot = installed.target.readTargetedContributionFixture(installed.point);
         const admitted = snapshot.contributions.filter(
@@ -640,7 +646,7 @@ function mutableManifest() {
     return JSON.parse(JSON.stringify(manifest));
 }
 
-for (const [name, mutate] of [
+const admissionMismatches = [
     ['a wrong target plugin id', (declared) => {
         declared.contributes.targetedPluginContributions[0].target.pluginId = 'acme.other-aggregate';
     }],
@@ -650,6 +656,10 @@ for (const [name, mutate] of [
     ['a wrong protocol version', (declared) => {
         declared.contributes.targetedPluginContributions[0].protocol.version = 2;
     }],
+];
+
+for (const [name, mutate] of [
+    ...admissionMismatches,
     ['a role bound to an undeclared Action', (declared) => {
         declared.contributes.targetedPluginContributions[0].operations.get = 'ledger/not-declared';
     }],
@@ -657,7 +667,7 @@ for (const [name, mutate] of [
         declared.contributes.targetedPluginContributions[0].operations.search = LEDGER_ACTION_IDS.get;
     }],
 ]) {
-    test(`QB-04: admission rejects ${name}`, () => {
+    test(`QB-04: provider conformance rejects ${name}`, () => {
         const declared = mutableManifest();
         mutate(declared);
         const result = checkTriageSourceContributionV1(declared);
@@ -666,34 +676,20 @@ for (const [name, mutate] of [
     });
 }
 
-test('QB-04: a rejected declaration is not admitted at the contribution point either', async () => {
-    const declared = mutableManifest();
-    declared.contributes.targetedPluginContributions[0].protocol.version = 2;
+for (const [name, mutate] of admissionMismatches) {
+    test(`QB-04: the host contribution point rejects ${name}`, async () => {
+        const declared = mutableManifest();
+        mutate(declared);
 
-    const source = await createPluginTestkit({
-        manifest: declared,
-        module: { activate },
-        services: { connectedAccounts: connectedAccountsService() },
+        const installed = await activateSourceAndTarget(declared);
+        try {
+            const snapshot = installed.target.readTargetedContributionFixture(installed.point);
+            assert.deepEqual(snapshot.contributions, []);
+        } finally {
+            await installed.dispose();
+        }
     });
-    const harness = createHarnessTarget({});
-    const target = await createPluginTestkit({
-        manifest: harness.manifest,
-        module: { activate: harness.activate },
-        targetedContributionContributors: [source],
-    });
-    try {
-        const snapshot = target.readTargetedContributionFixture(
-            harness.contributionPoints[TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1],
-        );
-        assert.deepEqual(
-            snapshot.contributions.filter((c) => c.contributor.pluginId === declared.id),
-            [],
-        );
-    } finally {
-        await target.dispose();
-        await source.dispose();
-    }
-});
+}
 
 // ---------------------------------------------------------------------------
 // QB-05 — continuation custody

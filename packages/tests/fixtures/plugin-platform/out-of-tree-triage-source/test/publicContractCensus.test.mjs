@@ -34,16 +34,21 @@ function clone(value) {
     return JSON.parse(JSON.stringify(value));
 }
 
-/** Normalizes one discriminated-union arm into the facts a census can judge. */
+/** The scan result nests the shared window union alongside its failure arm. */
+function readUnionMembers(schema) {
+    const members = schema.anyOf ?? schema.oneOf;
+    if (!Array.isArray(members)) return null;
+    return members.flatMap((member) => readUnionMembers(member) ?? [member]);
+}
+
+/** Normalizes discriminated-union arms into the facts a census can judge. */
 function readUnionArms(schema) {
-    const arms = schema.anyOf ?? schema.oneOf;
-    if (!Array.isArray(arms)) return null;
-    return arms.map((arm) => ({
+    return readUnionMembers(schema)?.map((arm) => ({
         kind: arm.properties?.kind?.const,
         properties: Object.keys(arm.properties ?? {}).sort(),
         required: [...(arm.required ?? [])].sort(),
         closed: arm.additionalProperties === false,
-    }));
+    })) ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -75,8 +80,8 @@ const EXPECTED_HEALTH_ARMS = Object.freeze({
  */
 export function censusScanEvidence(schema) {
     const findings = [];
-    const resultArms = schema.anyOf ?? schema.oneOf;
-    if (!Array.isArray(resultArms)) return ['scan result is not a discriminated union'];
+    const resultArms = readUnionMembers(schema);
+    if (resultArms === null) return ['scan result is not a discriminated union'];
 
     const carriers = [];
     for (const arm of resultArms) {
@@ -125,7 +130,7 @@ test('QB-22: published scan evidence carries only bounded enumeration health', (
     // The census is looking at every carrier, not one sample: both non-failed
     // scan arms report health, and a census that read only the first would be
     // half blind.
-    const carriers = (scanResultSchema.anyOf ?? scanResultSchema.oneOf)
+    const carriers = readUnionMembers(scanResultSchema)
         .filter((arm) => arm.properties?.evidence !== undefined)
         .map((arm) => arm.properties.kind.const)
         .sort();
@@ -135,7 +140,7 @@ test('QB-22: published scan evidence carries only bounded enumeration health', (
 test('QB-22: the census rejects health promoted into watermark, completeness or absence authority', () => {
     // Wrong implementation 1: health gains durable resume state.
     const withWatermark = clone(scanResultSchema);
-    const partialOf = (schema, resultKind) => (schema.anyOf ?? schema.oneOf)
+    const partialOf = (schema, resultKind) => readUnionMembers(schema)
         .find((arm) => arm.properties?.kind?.const === resultKind)
         .properties.evidence.anyOf
         .find((arm) => arm.properties.kind.const === 'partial');
@@ -145,7 +150,7 @@ test('QB-22: the census rejects health promoted into watermark, completeness or 
 
     // Wrong implementation 2: health gains a fourth arm that establishes absence.
     const withAbsence = clone(scanResultSchema);
-    const pageEvidence = (withAbsence.anyOf ?? withAbsence.oneOf)
+    const pageEvidence = readUnionMembers(withAbsence)
         .find((arm) => arm.properties?.kind?.const === 'page').properties.evidence;
     pageEvidence.anyOf.push({
         type: 'object',
@@ -261,7 +266,7 @@ test('QB-20: the census rejects a fifth arm, a justified absence, and an absence
     // Wrong implementation 3: a completed walk reports the entries it did not
     // see, so the scan complement becomes deletion evidence.
     const walkKnowsAbsence = clone(scanResultSchema);
-    (walkKnowsAbsence.anyOf ?? walkKnowsAbsence.oneOf)
+    readUnionMembers(walkKnowsAbsence)
         .find((arm) => arm.properties.kind.const === 'complete')
         .properties.absentRefs = { type: 'array' };
     assert.ok(censusAuthoritativeReadArms(getResultSchema, walkKnowsAbsence)
