@@ -19036,6 +19036,7 @@ const enWelcome = {
   // returning users because — they obviously do already use Happier.
   welcomeReturningLoginButton: "Login — let's get back to it",
   welcomeReturningStartFreshButton: 'Start fresh — create a new account',
+  welcomeMakingKeyTitle: 'Making your key…',
   welcomeReturningStartFreshSubtitle: 'Generate a new key on this device.',
 
   // Welcome step footer links
@@ -19408,6 +19409,7 @@ const enSetupOnboarding = {
   removeRelayConfirmBody:
     'This removes it from your saved Homes on this device.',
   homeAddressStep: {
+    checking: 'Checking Home…',
     title: 'Your Home’s address',
     pairingHelp: 'A pairing link works too.',
   },

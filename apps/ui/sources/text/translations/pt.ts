@@ -15965,6 +15965,7 @@ settingsSession: {
     // returning users because — they obviously do already use Happier.
     welcomeReturningLoginButton: "Entrar — vamos retomar de onde paramos",
     welcomeReturningStartFreshButton: "Comece do zero — crie uma nova conta",
+    welcomeMakingKeyTitle: 'Criando sua chave…',
     welcomeReturningStartFreshSubtitle: "Gere uma nova chave neste dispositivo.",
 
     // Welcome step footer links
@@ -16233,6 +16234,7 @@ settingsSession: {
         removeRelayConfirmTitle: 'Remover Home?',
         removeRelayConfirmBody: 'Isso o remove dos seus Homes salvos neste dispositivo.',
 	    homeAddressStep: {
+	      checking: 'Verificando a Casa…',
 	      title: 'O endereço do teu Home',
 	      pairingHelp: 'Também podes usar um link de emparelhamento.',
 	    },

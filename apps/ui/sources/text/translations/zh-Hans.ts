@@ -15357,6 +15357,7 @@ settingsSession: {
     // returning users because — they obviously do already use Happier.
     welcomeReturningLoginButton: "登录 — 继续上次的工作",
     welcomeReturningStartFreshButton: "重新开始 — 创建一个新账户",
+    welcomeMakingKeyTitle: '正在生成你的密钥…',
     welcomeReturningStartFreshSubtitle: "在本设备上生成一把新密钥。",
 
     // Welcome step footer links
@@ -15785,6 +15786,7 @@ settingsSession: {
         removeRelayConfirmTitle: '移除 Home？',
         removeRelayConfirmBody: '这会将它从此设备上已保存的 Home 中移除。',
 	    homeAddressStep: {
+	      checking: '正在检查主站…',
 	      title: '你的 Home 地址',
 	      pairingHelp: '也可以使用配对链接。',
 	    },

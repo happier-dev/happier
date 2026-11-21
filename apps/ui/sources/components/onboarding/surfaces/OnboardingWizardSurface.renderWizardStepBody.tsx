@@ -106,6 +106,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
     urlDraft: string;
     onUrlDraftChange: (next: string) => void;
     onHomeAddressSubmit?: () => Promise<void>;
+    homeAddressChecking: boolean;
     homeAddressError: string | null;
 
     relaySelectionServerUrl: string | null;
@@ -262,6 +263,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
                         autoCapitalize="none"
                         keyboardType="url"
                         value={params.urlDraft}
+                        editable={!params.homeAddressChecking}
                         onChangeText={params.onUrlDraftChange}
                         returnKeyType="go"
                         onSubmitEditing={() => { void params.onHomeAddressSubmit?.(); }}

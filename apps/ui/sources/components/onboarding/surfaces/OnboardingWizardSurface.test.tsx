@@ -1852,7 +1852,26 @@ describe('OnboardingWizardSurface', () => {
         await act(async () => {
             relayInput?.props.onChangeText?.(`https://${platform}.local-relay.example.test`);
         });
-        await pressOnboarding(screen, 'onboarding-wizard-primary');
+        let releaseProbe!: () => void;
+        let probeStarted = false;
+        const probe = new Promise<void>(resolve => { releaseProbe = resolve; });
+        const respond = runtimeFetchMock.getMockImplementation()!;
+        runtimeFetchMock.mockImplementation(async (input, init) => {
+            if (String(input) === `https://${platform}.local-relay.example.test/health`) {
+                probeStarted = true;
+                await probe;
+            }
+            return respond(input, init);
+        });
+        let submitted: Promise<void> | undefined;
+        act(() => { submitted = pressOnboarding(screen, 'onboarding-wizard-primary'); });
+        try {
+            await vi.waitFor(() => expect(probeStarted).toBe(true));
+            expect(screen.findByTestId('onboarding-wizard-primary')?.props.disabled).toBe(true);
+        } finally {
+            releaseProbe();
+            await submitted;
+        }
 
         await vi.waitFor(() => expect(getOnboardingStepId(screen)).toBe('background_service_handoff'));
 

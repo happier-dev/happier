@@ -12,6 +12,7 @@ import type { WelcomeAuthenticationMethod, WelcomeEntryModel } from './composeWe
 type Action = Readonly<{
     testID: string;
     title: string;
+    pendingTitle?: string;
     subtitle?: string;
     primary?: boolean;
     presentation?: 'pill' | 'link';
@@ -129,6 +130,7 @@ function describeAction(
                         : t('welcome.newHereHomeSubtitle', { home });
             }
             return { ...frame, testID, title, subtitle, iconName: presentation.iconName,
+                pendingTitle: newHere && kind === 'generated_key' ? t('welcome.welcomeMakingKeyTitle') : undefined,
                 accentColor: request.method.presentation?.connectButtonColor };
         }
     }

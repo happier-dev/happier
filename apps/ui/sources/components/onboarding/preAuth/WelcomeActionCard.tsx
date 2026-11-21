@@ -27,6 +27,7 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
     testID: string;
     actionId?: string;
     title: string;
+    pendingTitle?: string;
     subtitle?: string;
     primary?: boolean;
     /**
@@ -74,6 +75,7 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
     const escape = props.escape === true;
     const actionId = props.actionId ?? props.testID;
     const pending = !escape && admission.pendingActionId === actionId;
+    const title = pending ? props.pendingTitle ?? props.title : props.title;
     const row = props.presentation === 'row';
     const web = Platform.OS === 'web';
     const descriptionId = React.useId();
@@ -99,7 +101,7 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
             >
                 <WelcomeActionGround fill={theme.colors.surface.base} radius={CARD_RADIUS} />
                 <View testID={`${props.testID}-text`} style={[styles.textBlock, styles.unavailableText]}>
-                    <Text testID={`${props.testID}-title`} style={[styles.title, { color: theme.colors.text.primary }]}>{props.title}</Text>
+                    <Text testID={`${props.testID}-title`} style={[styles.title, { color: theme.colors.text.primary }]}>{title}</Text>
                     {props.subtitle ? <Text testID={`${props.testID}-subtitle`} style={[styles.subtitle, { color: theme.colors.text.secondary }]}>{props.subtitle}</Text> : null}
                 </View>
                 {props.unavailable.accessory ?? null}
@@ -113,7 +115,7 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
             nativeID={web ? undefined : props.testID}
             controlRef={props.controlRef}
             accessibilityRole="button"
-            accessibilityLabel={props.title}
+            accessibilityLabel={title}
             accessibilityHint={props.subtitle}
             describedById={subtitleId}
             disabled={props.disabled || (!escape && admission.pendingActionId !== null)}
@@ -161,7 +163,7 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
                     ) : null}
                     {linkLine ? (
                         <Text testID={`${props.testID}-text`} style={[styles.linkLine, { color: theme.colors.text.secondary }]}>
-                            <Text testID={`${props.testID}-title`} style={[styles.linkTitle, { color: theme.colors.text.primary }]}>{props.title}</Text>
+                            <Text testID={`${props.testID}-title`} style={[styles.linkTitle, { color: theme.colors.text.primary }]}>{title}</Text>
                             {props.subtitle ? <Text nativeID={subtitleId} testID={`${props.testID}-subtitle`}>{` · ${props.subtitle}`}</Text> : null}
                         </Text>
                     ) : (
@@ -169,9 +171,9 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
                         style={button ? [styles.buttonText, pill ? styles.pillText : null] : styles.textBlock}>
                         {pill ? (
                             // A pill is one line: a long title (a Home's address) gives up its middle, never wraps.
-                            <MiddleEllipsisText testID={`${props.testID}-title`} value={props.title} style={[styles.pillTitle, { color: foreground }]} />
+                            <MiddleEllipsisText testID={`${props.testID}-title`} value={title} style={[styles.pillTitle, { color: foreground }]} />
                         ) : (
-                            <Text testID={`${props.testID}-title`} style={[row ? styles.rowTitle : styles.title, { color: foreground }]}>{props.title}</Text>
+                            <Text testID={`${props.testID}-title`} style={[row ? styles.rowTitle : styles.title, { color: foreground }]}>{title}</Text>
                         )}
                         {props.subtitle && !row && !pill ? <Text nativeID={subtitleId} testID={`${props.testID}-subtitle`} style={[styles.subtitle, { color: subtitleColor }]}>{props.subtitle}</Text> : null}
                     </View>

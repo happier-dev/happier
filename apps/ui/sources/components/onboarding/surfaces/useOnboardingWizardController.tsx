@@ -17,6 +17,7 @@ import { runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import type { WizardAction } from '../state/wizardTypes';
 import { t } from '@/text';
 import { Modal } from '@/modal';
+import { useAsyncCommand } from '@/hooks/ui/useAsyncCommand';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 
@@ -770,7 +771,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         dispatch({ type: 'wizard/goToStep', stepId: 'relay_select' });
     }, [setupPolicy.relay.allowRelaySelection]);
 
-    const handleSaveCustomRelayUrl = React.useCallback(async () => {
+    const [homeAddressChecking, handleSaveCustomRelayUrl] = useAsyncCommand(async () => {
         const trimmed = urlDraft.trim();
         setHomeAddressError(null);
         const destination = resolveHomeConnectLink(enteredHomeLink);
@@ -790,7 +791,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
                 relayUrl: trimmed,
             },
         ), setHomeAddressError);
-    }, [applyWizardAdvanceResolution, enteredHomeLink, homeRouter, state, urlDraft]);
+    });
 
     const showBack = stepId !== 'welcome';
     const showSkip = stepId !== 'relay_select'
@@ -818,7 +819,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
             : stepId === 'desktop_handoff'
                 ? t('setupOnboarding.webDesktopOnlyPrimary')
                 : stepId === 'relay_enter_url'
-                    ? t('homesJourneys.connect')
+                    ? t(homeAddressChecking ? 'setupOnboarding.homeAddressStep.checking' : 'homesJourneys.connect')
                     : t('common.continue');
 
     const selectedRelayFooterUrl = React.useMemo(() => {
@@ -985,7 +986,8 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         || (
             stepId === 'relay_enter_url'
             && (
-                activeReachabilityRemediation != null
+                homeAddressChecking
+                || activeReachabilityRemediation != null
                 || isActiveReachabilityRemediationPending
             )
         )
@@ -1395,6 +1397,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         urlDraft,
         onUrlDraftChange: changeHomeAddress,
         onHomeAddressSubmit: primaryDisabled ? undefined : handleSaveCustomRelayUrl,
+        homeAddressChecking,
         homeAddressError,
         relaySelectionServerUrl,
         confirmRelayUrl,

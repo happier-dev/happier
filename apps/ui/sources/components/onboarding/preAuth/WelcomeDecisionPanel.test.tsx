@@ -7,7 +7,7 @@ vi.hoisted(() => vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON', JS
     accountService: { url: 'https://api.happier.dev' },
 })));
 import { act } from 'react-test-renderer';
-import { Dimensions, StyleSheet } from 'react-native';
+import { Dimensions } from 'react-native';
 
 import { renderScreen } from '@/dev/testkit';
 import type { AccountServiceEntryOptions } from '@/components/account/auth/useAccountServiceEntryOptions';
@@ -16,12 +16,13 @@ import { buildServerFeaturesResponse } from '@/hooks/server/serverFeaturesTestUt
 import { lastSignInMethodState, onboardingAuthHistoryState } from '@/sync/domains/state/onboardingUiState';
 import { t } from '@/text';
 import { FirstOpenWelcomeModelContext } from '@/components/onboarding/firstOpen/FirstOpenWelcomeModelContext';
-import { ShellHeaderClearanceContext } from '@/components/onboarding/unauthShell/shellCorner';
+import { ShellHeaderClearanceContext, ShellWelcomeOverflowContext } from '@/components/onboarding/unauthShell/shellCorner';
 
 import { WelcomeDecisionPanel } from './WelcomeDecisionPanel';
 import { WelcomeEntryView, type WelcomeEntryViewModel } from './WelcomeEntryView';
 
 it('uses only the clearance below the shell header for a Welcome notice', async () => {
+    const setOverflow = vi.fn<(height: number) => void>();
     const model: WelcomeEntryViewModel = {
         heading: { title: 'Welcome', subtitle: 'Continue here' },
         doors: [],
@@ -29,9 +30,11 @@ it('uses only the clearance below the shell header for a Welcome notice', async 
         notices: [{ slot: 'home', testID: 'unavailable', kind: 'unavailable', title: 'Home is unavailable' }],
     };
     const view = (clearance: number) => (
-        <ShellHeaderClearanceContext.Provider value={clearance}>
-            <WelcomeEntryView compact model={model} />
-        </ShellHeaderClearanceContext.Provider>
+        <ShellWelcomeOverflowContext.Provider value={setOverflow}>
+            <ShellHeaderClearanceContext.Provider value={clearance}>
+                <WelcomeEntryView compact model={model} />
+            </ShellHeaderClearanceContext.Provider>
+        </ShellWelcomeOverflowContext.Provider>
     );
     const screen = await renderScreen(view(24));
     const notice = screen.findByTestId('welcome-notice-slot');
@@ -39,11 +42,11 @@ it('uses only the clearance below the shell header for a Welcome notice', async 
     await act(async () => {
         notice?.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 358, height: 77 } } });
     });
-    const slotStyle = () => StyleSheet.flatten(screen.findByTestId('welcome-notice-slot')?.props.style);
-    expect(slotStyle()?.position).not.toBe('absolute');
-    expect(slotStyle()?.marginTop).toBe(-24);
-    await screen.update(view(0));
-    expect(slotStyle()?.marginTop ?? 0).toBe(0);
+    expect(setOverflow).toHaveBeenLastCalledWith(77);
+    expect(screen.findAllByTestId('welcome-notice-slot')).toHaveLength(1);
+    await screen.update(view(100));
+    expect(setOverflow).toHaveBeenLastCalledWith(0);
+    expect(screen.findAllByTestId('welcome-notice-slot')).toHaveLength(1);
 });
 
 it('renders the same display model live and in an inert opening replica', async () => {
@@ -743,6 +746,7 @@ describe('WelcomeDecisionPanel', () => {
         let pressPromise: Promise<void> | null = null;
         act(() => { pressPromise = screen.pressByTestIdAsync('welcome-primary-start'); });
         await vi.waitFor(() => expect(screen.findByTestId('welcome-primary-start')?.props.accessibilityState.busy).toBe(true));
+        expect(screen.findByTestId('welcome-primary-start-title')?.props.children).toBe(t('welcome.welcomeMakingKeyTitle'));
         expect(screen.findByTestId('welcome-scan-existing-home')?.props.accessibilityState.busy).toBe(false);
         await act(async () => {
             resolveAction?.();

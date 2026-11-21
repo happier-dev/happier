@@ -14889,6 +14889,7 @@ settingsSession: {
         // returning users because — they obviously do already use Happier.
         welcomeReturningLoginButton: 'Inicia sessió — reprenem-ho',
         welcomeReturningStartFreshButton: 'Comença de nou — crea un compte nou',
+        welcomeMakingKeyTitle: 'S’està generant la teva clau…',
         welcomeReturningStartFreshSubtitle: 'Genera una clau nova en aquest dispositiu.',
 
         // Welcome step footer links
@@ -15059,6 +15060,7 @@ settingsSession: {
             removeRelayConfirmTitle: 'Vols eliminar el Home?',
             removeRelayConfirmBody: 'Això l’elimina dels teus Homes desats en aquest dispositiu.',
 	        homeAddressStep: {
+	          checking: 'S’està comprovant la llar…',
 	          title: 'L’adreça del teu Home',
 	          pairingHelp: 'També pots fer servir un enllaç d’aparellament.',
 	        },

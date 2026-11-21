@@ -12960,6 +12960,7 @@ settingsSession: {
         // returning users because — they obviously do already use Happier.
         welcomeReturningLoginButton: '登入 — 繼續上次的工作',
         welcomeReturningStartFreshButton: '重新開始 — 建立新帳戶',
+        welcomeMakingKeyTitle: '正在產生你的金鑰…',
         welcomeReturningStartFreshSubtitle: '在本裝置上產生一把新金鑰。',
 
         // Welcome step footer links
@@ -13172,6 +13173,7 @@ settingsSession: {
 	        preAuthTitle: '你的 Home 應該放在哪裡？',
 	        preAuthBody: 'Home 會保存你的帳戶、工作階段與設定。之後還可以新增其他 Home。',
         homeAddressStep: {
+          checking: '正在檢查主站…',
           title: '你的 Home 位址',
           pairingHelp: '也可以使用配對連結。',
         },

@@ -16133,6 +16133,7 @@ settingsSession: {
     // returning users because — they obviously do already use Happier.
     welcomeReturningLoginButton: "ログイン — 続きから始めましょう",
     welcomeReturningStartFreshButton: "新しく始める — 新しいアカウントを作成",
+    welcomeMakingKeyTitle: '鍵を作成しています…',
     welcomeReturningStartFreshSubtitle: "この端末で新しい鍵を生成します。",
 
     // Welcome step footer links
@@ -16401,6 +16402,7 @@ settingsSession: {
             removeRelayConfirmTitle: 'Home を削除しますか？',
             removeRelayConfirmBody: 'このデバイスの保存済み Home から削除されます。',
 	    homeAddressStep: {
+	      checking: 'ホームを確認しています…',
 	      title: 'Home のアドレス',
 	      pairingHelp: 'ペアリングリンクも使えます。',
 	    },
