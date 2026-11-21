@@ -290,6 +290,44 @@ test('restarting selected source never enters fresh-source preparation', { timeo
     'recovery must not create a fresh-source preparation record');
 });
 
+test('a placed prepared reload releases obsolete trees once the replacement is ready', { skip: process.platform === 'win32' }, async t => {
+  const { rootDir, stackName, runtimeStatePath } = await createRestartPreflightFixture(t, 'run.mjs');
+  const sourceRoot = join(dirname(runtimeStatePath), 'source-runtime');
+  const entrypoints = {};
+  for (const id of ['abcdef01', 'abcdef02', 'abcdef03']) {
+    entrypoints[id] = join(sourceRoot, `tree-server-${id}/main.mjs`);
+    await mkdir(dirname(entrypoints[id]), { recursive: true });
+    await writeFile(entrypoints[id], '');
+  }
+  await writeFile(join(sourceRoot, 'selected-server.json'), JSON.stringify({ entrypoint: entrypoints.abcdef03 }));
+  await writeFile(join(sourceRoot, 'rollback.json'), JSON.stringify({ selections: { server: { entrypoint: entrypoints.abcdef02 } } }));
+  const { createServer } = await import('node:http');
+  const endpoint = createServer((_request, response) => {
+    response.setHeader('content-type', 'application/json');
+    response.end(JSON.stringify({ status: 'ok', service: 'happier-server' }));
+  });
+  endpoint.listen(0, '127.0.0.1');
+  await once(endpoint, 'listening');
+  t.after(() => endpoint.close());
+  await writeFile(join(rootDir, 'scripts', 'run.mjs'), 'setInterval(() => {}, 1000);');
+  try {
+    const result = await stackEnvRunner.runStackScriptWithStackEnv({
+      rootDir, stackName, scriptPath: 'run.mjs', background: true,
+      args: ['--runtime=source', '--restart', '--reuse-source-runtime', '--prepared-source-reload',
+        '--no-server', `--server-url=http://127.0.0.1:${endpoint.address().port}`,
+        '--no-daemon', '--no-ui', '--no-browser', '--no-dev-targets'],
+      extraEnv: { HAPPIER_DEV_TARGET_EXECUTION: '1', HAPPIER_STACK_SKIP_REFRESH_DEPS: '1' },
+    });
+    assert.equal(result.readiness, 'ready');
+    await assert.rejects(readFile(entrypoints.abcdef01), { code: 'ENOENT' });
+    assert.equal(await readFile(entrypoints.abcdef02, 'utf8'), '');
+    assert.equal(await readFile(entrypoints.abcdef03, 'utf8'), '');
+  } finally {
+    const runtime = JSON.parse(await readFile(runtimeStatePath, 'utf8'));
+    if (runtime.ownerPid && isPidAlive(runtime.ownerPid)) process.kill(runtime.ownerPid, 'SIGTERM');
+  }
+});
+
 test('restart waits for the cleanup completion signal beyond the standalone lock deadline', async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-restart-completion-wait-' });
   const stackName = 'restart-completion-wait';

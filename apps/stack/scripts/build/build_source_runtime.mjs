@@ -40,7 +40,7 @@ import { resolveRuntimeBuildAuthority } from '../runtime/shared/runtime_build_au
 import { readGreenSourceRuntimeCandidateGroups, sourceRuntimeCaptureUnavailable } from './source_runtime_last_green.mjs';
 import { assertSourceReloadBundledPluginFailures } from '../runtime/launch/sourceReloadPluginFailures.mjs';
 import { rememberSourceCaptureFailure, withSourceCaptureRetry } from './source_capture_retry.mjs';
-import { readSourceSelectionRollbackPaths } from '../runtime/shared/source_selection_rollback.mjs';
+import { readSourceSelectionPaths, readSourceSelectionRollbackPaths, sourceRecordReferencePaths } from '../runtime/shared/source_selection_rollback.mjs';
 import { readRevisionServerClientRoots, requestRevisionInstallArchive, resolveRevisionDependencyRoot, sourceRevisionTreesRoot } from './source_revision_install.mjs';
 import { applySourceRevision, canResolveSourceRevisions, parseSourceOverlayPaths, readSourceCaptureBuildInputs, readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionIdentity, writeSourceRevisionDescriptor } from './source_revision.mjs';
 
@@ -428,11 +428,6 @@ function readSourceRetentionRecord(path) {
   }
 }
 
-function sourceRecordReferencePaths(record) {
-  return [record?.entrypoint, record?.uiDir, record?.exportDir, record?.runtimeDir]
-    .filter(path => typeof path === 'string');
-}
-
 async function readSourceRetentionStack(stackBaseDir) {
   const sourceRoot = join(stackBaseDir, 'source-runtime');
   const pending = readSourceRetentionRecord(join(sourceRoot, 'start.pending.json'));
@@ -440,8 +435,7 @@ async function readSourceRetentionStack(stackBaseDir) {
   const active = await privateSourceStackActive(stackBaseDir, state, pending);
   const references = [];
   if (pending && isPidAlive(pending.pid)) references.push(...(pending.preparationDirs ?? []), pending.preparationDir);
-  const selections = ['daemon', 'server', 'ui'].flatMap(component =>
-    sourceRecordReferencePaths(readSourceRetentionRecord(join(sourceRoot, `selected-${component}.json`))));
+  const selections = readSourceSelectionPaths(stackBaseDir);
   // An unsettled reload may still restart the incumbent revision it replaced.
   references.push(...readSourceSelectionRollbackPaths(stackBaseDir));
   if (active && [state?.ownerPid, state?.processes?.daemonPid, ...(state?.processes?.daemonPids ?? [])].some(isPidAlive)) {

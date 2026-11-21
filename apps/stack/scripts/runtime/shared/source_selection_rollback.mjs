@@ -14,9 +14,21 @@ function selectionPath(stackBaseDir, component) {
   return join(stackBaseDir, 'source-runtime', `selected-${component}.json`);
 }
 
-function selectionPaths(selection) {
+export function sourceRecordReferencePaths(selection) {
   return [selection?.entrypoint, selection?.uiDir, selection?.exportDir, selection?.runtimeDir]
     .filter(path => typeof path === 'string');
+}
+
+function readSourceReferenceRecord(path) {
+  try { return JSON.parse(readFileSync(path, 'utf8')); }
+  catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw Object.assign(new Error('Source retention record unavailable'), { code: 'ERETENTIONRECORD' });
+  }
+}
+
+export function readSourceSelectionPaths(stackBaseDir) {
+  return COMPONENTS.flatMap(component => sourceRecordReferencePaths(readSourceReferenceRecord(selectionPath(stackBaseDir, component))));
 }
 
 function unavailable(reason) {
@@ -52,10 +64,8 @@ async function readIncumbentHomeBindings({ stackBaseDir, env }) {
 
 /** Paths a pending rollback still needs; the retention and tree-release owners keep them. */
 export function readSourceSelectionRollbackPaths(stackBaseDir) {
-  let record;
-  try { record = JSON.parse(readFileSync(rollbackPath(stackBaseDir), 'utf8')); }
-  catch (error) { if (error.code === 'ENOENT') return []; throw error; }
-  return Object.values(record?.selections ?? {}).flatMap(selectionPaths);
+  const record = readSourceReferenceRecord(rollbackPath(stackBaseDir));
+  return Object.values(record?.selections ?? {}).flatMap(sourceRecordReferencePaths);
 }
 
 /** Restore the selections changed by activation after its replacement failed readiness.

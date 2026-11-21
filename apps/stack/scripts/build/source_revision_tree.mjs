@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { chmod, lstat, mkdir, readdir, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { pathToFileURL } from 'node:url';
@@ -18,7 +18,7 @@ import { publishDependencyRefreshMarker, resolveDependencyInstallRoot, resolveDe
 import { cloneTree, extractRevision, isRevisionDependencyInput, prepareRevisionInstall, revisionInstallDir, sourceRevisionTreesRoot, sweepUnreferencedInstalls, withBaseLock } from './source_revision_install.mjs';
 import { SOURCE_RELOAD_ADMISSION_CLASS } from '../utils/dev_targets/remote_commands.mjs';
 import { runSourceBuildCommand, sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
-import { readSourceSelectionRollbackPaths } from '../runtime/shared/source_selection_rollback.mjs';
+import { readSourceSelectionPaths, readSourceSelectionRollbackPaths } from '../runtime/shared/source_selection_rollback.mjs';
 import { BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH } from '../../../../packages/cli-common/bundledPluginPublicationPolicy.mjs';
 import { deriveRevisionGeneratedInputs, isRevisionGeneratorInput, isRevisionKeptUntrackedPath, readDeclaredShippedPaths, readSourceRevisionDescriptor, readSourceRevisionOverlayBytes, resolveSourceRevisionIdentity, sourceRevisionKey, writeSourceRevisionDescriptor } from './source_revision.mjs';
 
@@ -760,20 +760,32 @@ export async function releaseStackSourceTrees({ stackBaseDir, components = ['ser
   // The preparing request is that in-flight reload itself (`preparing`).
   if (!preparing && isPidAlive((await readJson(join(sourceRoot, 'start.pending.json')))?.pid)) return [];
   const entries = await readdir(sourceRoot, { withFileTypes: true }).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error));
-  // A reload that has not settled may still restart the incumbent's revision.
-  const rollbackPaths = readSourceSelectionRollbackPaths(stackBaseDir).map(path => resolve(path));
+  const stacksRoot = dirname(resolve(stackBaseDir));
+  if (!entries.some(entry => entry.isDirectory() && entry.name.startsWith('tree-'))) return [];
+  // A selection or rollback on this host may refer to this stack's trees
+  // through a different spelling of the storage path.
+  const stacks = await readdir(stacksRoot, { withFileTypes: true });
+  const references = (await Promise.all(stacks.filter(entry => entry.isDirectory() || entry.isSymbolicLink()).map(async entry => {
+    const base = join(stacksRoot, entry.name);
+    if (entry.isSymbolicLink() && !(await stat(base).catch(error => {
+      if (error.code !== 'ENOENT') throw error;
+      return null;
+    }))?.isDirectory()) return [];
+    return [...readSourceSelectionPaths(base), ...readSourceSelectionRollbackPaths(base)];
+  }))).flat();
+  const retained = await Promise.all(references.map(path => realpath(path).catch(error =>
+    error.code === 'ENOENT' ? resolve(path) : Promise.reject(error))));
   const released = [];
   let liveCommands;
   for (const component of components) {
-    const selected = await readJson(join(sourceRoot, `selected-${component}.json`));
-    const selectedEntrypoint = typeof selected?.entrypoint === 'string' ? resolve(selected.entrypoint) : null;
     // Finished trees only: `tree-<component>[-<id>]`, never a preparation's staging directory.
     const pattern = new RegExp(`^tree-${component}(?:-[a-f0-9]{8})?$`);
     for (const entry of entries) {
       if (!entry.isDirectory() || !pattern.test(entry.name)) continue;
       const treeDir = join(sourceRoot, entry.name);
-      if (selectedEntrypoint?.startsWith(treeDir + sep)) continue;
-      if (rollbackPaths.some(path => path.startsWith(treeDir + sep))) continue;
+      const canonicalTree = await realpath(treeDir).catch(error =>
+        error.code === 'ENOENT' ? null : Promise.reject(error));
+      if (canonicalTree === null || retained.some(path => path === canonicalTree || path.startsWith(canonicalTree + sep))) continue;
       // A superseded preparation may still be writing its tree; its marker comes last.
       if (preparing && !existsSync(join(treeDir, TREE_MARKER))) continue;
       // One observation per release sweep, shared with the low-level release owner.

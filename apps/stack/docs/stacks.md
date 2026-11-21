@@ -422,8 +422,11 @@ again (on each execution host too) and restarts it once, then reports
 `ESOURCERELOADROLLEDBACK`, or `ESOURCERELOADROLLBACKFAILED` if the incumbent
 revision did not restart either. A readiness budget that runs out on a live
 runner is reported as pending, not rolled back. A successful reload releases
-the controller's record; an execution host keeps the previous revision's tree
-until that Stack's next reload.
+the controller's rollback record. The controller and execution hosts retire
+obsolete server and daemon trees once the replacement is ready. A tree stays
+on disk while a Stack on the host selects it, a rollback record names it, or
+a live process uses it. The execution host keeps its rollback record for the
+previous revision until that Stack's next reload.
 
 A successful source daemon start or Session-preserving restart clears a retained
 daemon reload refusal after the loaded identity is confirmed. It preserves a

@@ -931,10 +931,16 @@ async function runStackScriptWithStackEnvOnce({ rootDir, stackName, scriptPath, 
       let restartDeferredBrowserCleanup = false;
       const ownsSourceReloadRollback = env.HAPPIER_DEV_TARGET_EXECUTION !== '1';
       const settleSourceReload = async () => {
-        if (!retiredForSourceReload || !ownsSourceReloadRollback || startOutcome.readiness !== 'ready') return;
-        await settleSourceSelectionRollback({ stackBaseDir: baseDir });
-        const { releaseStackSourceTrees } = await import('../build/source_revision_tree.mjs');
-        await releaseStackSourceTrees({ stackBaseDir: baseDir });
+        if (scriptPath !== 'run.mjs' || env.HAPPIER_STACK_PREPARED_SOURCE_RELOAD !== '1'
+          || startOutcome.readiness !== 'ready') return;
+        try {
+          if (ownsSourceReloadRollback) await settleSourceSelectionRollback({ stackBaseDir: baseDir });
+          const { releaseStackSourceTrees } = await import('../build/source_revision_tree.mjs');
+          await releaseStackSourceTrees({ stackBaseDir: baseDir });
+        } catch (error) {
+          // The replacement already serves. A cleanup error must not undo it.
+          console.error(`[reload] ${stackName}: source tree retirement failed: ${redactFailureDiagnostic(error.message, env)}`);
+        }
       };
       let preservedDaemonForRestart = false;
       let preserveDaemonForRestart = true;

@@ -61,6 +61,27 @@ test('source tree release retains a surviving Session host until that process ex
   assert.equal((await lstat(replacement)).isDirectory(), true);
 });
 
+test('tree retirement honors selections and rollback from sibling stacks', { skip: process.platform === 'win32' }, async t => {
+  const fixture = await createTempFixture(t);
+  const stackBaseDir = fixture.path('owner');
+  const sourceRoot = join(stackBaseDir, 'source-runtime');
+  const peerRoot = fixture.path('peer/source-runtime');
+  const selected = join(sourceRoot, 'tree-server-01234567');
+  const rollback = join(sourceRoot, 'tree-daemon-89abcdef');
+  const stale = join(sourceRoot, 'tree-server-abcdef01');
+  await Promise.all([selected, rollback, stale, peerRoot].map(path => mkdir(path, { recursive: true })));
+  await writeFile(join(selected, 'main.mjs'), '');
+  await writeFile(join(rollback, 'main.mjs'), '');
+  await writeFile(join(peerRoot, 'selected-server.json'), JSON.stringify({ runtimeDir: selected }));
+  await writeFile(join(peerRoot, 'rollback.json'), JSON.stringify({ selections: {
+    daemon: { entrypoint: join(rollback, 'main.mjs') },
+  } }));
+
+  assert.deepEqual(await releaseStackSourceTrees({ stackBaseDir }), [stale]);
+  assert.equal((await lstat(selected)).isDirectory(), true);
+  assert.equal((await lstat(rollback)).isDirectory(), true);
+});
+
 test('daemon revision trees publish voice graphs at their declared plugin roots and reuse unchanged inputs', async t => {
   const { fixture, repoDir } = await createRevisionFixture(t);
   const ownerUrl = path => new URL(path, import.meta.url).href;
