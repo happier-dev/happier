@@ -29,11 +29,14 @@ describe('RequesterCodeCard', () => {
     const frame = screen.findHostByTestId('restore-requester-qr-pending');
     expect(frame).toBeTruthy();
     expect(screen.findHostByTestId('restore-requester-qr')).toBeNull();
+    const pill = screen.findHostByTestId('restore-requester-status');
+    expect(pill).toBeTruthy();
 
     await act(async () => screen.update(
       <RequesterCodeCard link={LINK} qrAvailable expiresAtMs={Date.now() + 290_000} approved={false} />,
     ));
     expect(screen.findHostByTestId('restore-requester-qr')).toBe(frame);
+    expect(screen.findHostByTestId('restore-requester-status')).toBe(pill);
   });
 
   // M4: approval keeps the code where it was under a check, and the one status line says so in place.

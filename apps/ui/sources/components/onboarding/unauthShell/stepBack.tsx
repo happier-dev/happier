@@ -31,10 +31,10 @@ export function StepRowWayButton(
   >,
 ) {
   // The well stands on the welcome atmosphere as an Element: glass over the planet and field, its exact solid paint
-  // under Reduce Transparency. Its fill and hover take that material's inner step through the shared resolver.
+  // under Reduce Transparency. The glass supplies the resting fill and edge.
   return (
     <GlassSurface surfaceGroup="card" nested finishRole={null} style={STEP_ROW_WELL_STYLE}>
-      <IconButton {...props} size={STEP_ROW_BUTTON_PX} iconSize={STEP_ROW_GLYPH_PX} variant="outlined" />
+      <IconButton {...props} size={STEP_ROW_BUTTON_PX} iconSize={STEP_ROW_GLYPH_PX} variant="plain" />
     </GlassSurface>
   );
 }

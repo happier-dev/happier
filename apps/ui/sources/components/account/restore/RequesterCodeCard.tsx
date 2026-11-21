@@ -196,14 +196,14 @@ export const RequesterCodeCard = React.memo(function RequesterCodeCard(
         )}
       </View>
       {/* One status line in one box: approved, its words rise into the place the waiting words held. */}
-      {props.link !== null ? <PairingStatusPill
+      <PairingStatusPill
         testID="restore-requester-status"
         style={props.approved && waitingPillWidth !== null ? { width: waitingPillWidth } : undefined}
         onLayout={onWaitingLayout}
       >
         {props.approved ? null : (
           <View style={pairingStatusStyles.line}>
-            <PairingStatusWaitingDot />
+            {props.link !== null ? <PairingStatusWaitingDot /> : null}
             {props.expiresAtMs !== null ? (
               <PairingCountdown
                 testID="restore-requester-countdown"
@@ -215,7 +215,7 @@ export const RequesterCodeCard = React.memo(function RequesterCodeCard(
               />
             ) : (
               <Text style={pairingStatusStyles.text}>
-                {t('connect.waitingForApproval')}
+                {t(props.link === null ? 'common.loading' : 'connect.waitingForApproval')}
               </Text>
             )}
           </View>
@@ -235,7 +235,7 @@ export const RequesterCodeCard = React.memo(function RequesterCodeCard(
             </Text>
           </Animated.View>
         ) : null}
-      </PairingStatusPill> : null}
+      </PairingStatusPill>
     </View>
   );
 });

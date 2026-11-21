@@ -335,10 +335,7 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
     const pendingCode = embedded && props.entryIntent === 'enter_home' && pairing.phase === 'generating';
     const code = pairing.phase === 'ready' ? pairing : approvedCode;
     const visibleTargetLabel = presentation.contextualFacts !== 'none' ? targetLabel : null;
-    const hasStatusContent = presentation.activity
-        || (presentation.contextualFacts !== 'none' && targetLabel != null)
-        || pairing.phase === 'ready'
-        || approvedCode !== null;
+    const hasStatusContent = pendingCode || code !== null || presentation.activity || visibleTargetLabel !== null;
     const openSecretKeyLogin = () => {
         if (embedded && props.onOpenSecretKeyLogin) {
             props.onOpenSecretKeyLogin();
@@ -462,14 +459,15 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                                     disabled={approvalVisible}
                                     onPress={openSecretKeyLogin}
                                 />
-                                {/* The link is the code's secret: it goes the moment the code is approved. */}
-                                {pairing.phase === 'ready' ? (
+                                {/* Reserve the way during generation. The secret is only available while the code is ready. */}
+                                {pendingCode || pairing.phase === 'ready' ? (
                                     <StepRowWayButton
                                         testID="restore-requester-link-details"
                                         accessibilityLabel={t('connect.showPairingLink')}
                                         tooltip={t('connect.showPairingLink')}
                                         iconName="link"
                                         expanded={pairingLinkShown}
+                                        disabled={pendingCode}
                                         onPress={() => setPairingLinkShown((shown) => !shown)}
                                     />
                                 ) : null}

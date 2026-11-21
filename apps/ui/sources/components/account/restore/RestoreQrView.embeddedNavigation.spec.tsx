@@ -74,6 +74,7 @@ const heldResponses: Array<ReturnType<typeof createDeferred<Response>>> = [];
 let link = '';
 let registerCount = 0;
 let registered = true;
+let pendingCodeStart: Promise<Response> | null = null;
 let approvalPollSignal: AbortSignal | null;
 let features = createRootLayoutFeaturesResponse();
 
@@ -134,7 +135,7 @@ beforeEach(async () => {
     focusedProfileId = await homes.addHome({ name: 'Focused Home', serverUrl: 'https://focused-home.test' });
     await seedHome();
     poll = createDeferred<Response>(); heldResponses.push(poll);
-    link = ''; registerCount = 0; registered = true; approvalPollSignal = null;
+    link = ''; registerCount = 0; registered = true; pendingCodeStart = null; approvalPollSignal = null;
     setRuntimeFetch(async (input, init) => {
         const url = new URL(input instanceof Request ? input.url : String(input));
         if (url.origin !== descriptor.canonicalServerUrl) return homes.request(input, init);
@@ -149,6 +150,7 @@ beforeEach(async () => {
                 approvalPollSignal = init?.signal ?? null;
                 return waitForNetworkResponseForTests(poll.promise, init?.signal);
             }
+            if (pendingCodeStart) return waitForNetworkResponseForTests(pendingCodeStart, init?.signal);
             return Response.json({ state: 'requested' });
         }
         return homes.request(input, init);
@@ -163,6 +165,23 @@ afterEach(async () => {
 });
 
 describe('RestoreQrView known-target requester QR', () => {
+    it('keeps the pairing-link way in the row before the invite arrives and cannot open it early', async () => {
+        const codeStart = createDeferred<Response>();
+        pendingCodeStart = codeStart.promise;
+        heldResponses.push(codeStart);
+        const screen = await renderScreen(<AuthProvider initialCredentials={null}>
+            <RestoreQrView embedded entryIntent="enter_home" targetProfileId={profileId} />
+        </AuthProvider>);
+        expect(screen.findHostByTestId('restore-requester-qr-pending')).toBeTruthy();
+        const way = screen.findHostByTestId('restore-requester-link-details');
+        expect(way).toBeTruthy();
+        expect(way?.props.accessibilityState?.disabled).toBe(true);
+        codeStart.resolve(Response.json({ state: 'requested' }));
+        await vi.waitFor(() => expect(screen.findHostByTestId('restore-requester-qr')).toBeTruthy());
+        expect(screen.findHostByTestId('restore-requester-link-details')).toBe(way);
+        expect(way?.props.accessibilityState?.disabled).not.toBe(true);
+    });
+
     it('renders the exact known-target requester QR with no code or approval controls', async () => {
         const screen = await mount();
         expect(parseHomeQrInviteDeepLink(link)?.invite.home).toEqual(descriptor);

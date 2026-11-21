@@ -2,9 +2,10 @@ import { HappierDivider } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { flattenTestStyle, renderScreen, standardCleanup } from '@/dev/testkit';
 
 import { StepOrDivider } from './StepFormParts';
+import { StepRowWayButton } from './stepBack';
 
 vi.mock('react-native', async () => {
   const { createReactNativeWebMock } =
@@ -32,4 +33,17 @@ describe('StepOrDivider', () => {
       screen.findAllByType('Text' as never).map((node) => node.props.children),
     ).toContain('or');
   });
+});
+
+it('lets the resting glass well show through while keeping the way operable', async () => {
+  const onPress = vi.fn();
+  const screen = await renderScreen(
+    <StepRowWayButton testID="step-way" iconName="link" accessibilityLabel="Pairing link" onPress={onPress} />,
+  );
+  const buttonPaint = flattenTestStyle(screen.findByTestId('step-way-surface')!.props.style);
+  expect(buttonPaint.width).toBe(44);
+  expect(buttonPaint.borderWidth).toBeUndefined();
+  expect(buttonPaint.backgroundColor).toBeUndefined();
+  await screen.pressByTestIdAsync('step-way');
+  expect(onPress).toHaveBeenCalledOnce();
 });
