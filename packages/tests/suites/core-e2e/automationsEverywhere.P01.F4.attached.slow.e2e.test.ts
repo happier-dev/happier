@@ -484,8 +484,12 @@ describe('Automations everywhere: selected attached summaries', () => {
         source: index === 0 ? preferredHealthSource : healthSourceRefs[1],
       })) }))));
     // Withdrawal changes discovery at the next read; it never exposes the old row.
-    expect(await owner.execute('artifact.access.grants.remove', { artifactId: sharedWorkflows[0],
-      principal: { kind: 'account', accountId: readerId } })).toMatchObject({ ok: true });
+    expect(await owner.executeAsPerson('artifact.access.grants.remove', { artifactId: sharedWorkflows[0],
+      principal: { kind: 'account', accountId: readerId } })).toMatchObject({
+      ok: true, result: { artifactId: sharedWorkflows[0], changed: true },
+    });
+    expect(await reader.execute('workflow.definition.get', { definitionId: sharedWorkflows[0] }))
+      .toMatchObject({ ok: false, errorCode: 'content_unavailable' });
     const afterWithdrawal = await reader.execute('workflow.trigger.list', { subject });
     expect(afterWithdrawal.ok, JSON.stringify(afterWithdrawal)).toBe(true);
     if (!afterWithdrawal.ok) throw new Error(`Selected summaries refused (${afterWithdrawal.errorCode})`);
@@ -499,8 +503,10 @@ describe('Automations everywhere: selected attached summaries', () => {
     });
     expect(await reader.execute('workflow.trigger.list', { actionId: 'machines.command.run', phase: 'after' }))
       .toMatchObject({ ok: true, result: { skippedNotSharedCount: 0 } });
-    expect(await owner.execute('machines.access.grant.remove', { ...machine.target,
-      principal: { kind: 'account', accountId: readerId } })).toMatchObject({ ok: true });
+    expect(await owner.executeAsPerson('machines.access.grant.remove', { ...machine.target,
+      principal: { kind: 'account', accountId: readerId } })).toMatchObject({
+      ok: true, result: { kind: 'removed' },
+    });
     const afterMachineWithdrawal = await reader.execute('workflow.trigger.list', { subject });
     expect(afterMachineWithdrawal).toMatchObject({ ok: true, result: { skippedNotSharedCount: 0 } });
     if (!afterMachineWithdrawal.ok) throw new Error(afterMachineWithdrawal.errorCode);
