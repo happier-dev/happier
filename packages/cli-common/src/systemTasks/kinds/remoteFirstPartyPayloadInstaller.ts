@@ -295,6 +295,7 @@ export async function installRemoteFirstPartyComponentPayload(
     params.onPhase?.('transfer');
     return await installManagedGuestCliViaRemoteDownload({ homeUrl: params.homeUrl, channel, ...target,
       guestCli: params.guestCli, remoteHomeDir: params.remoteHomeDir, signal: params.signal,
+      onPromote: () => params.onPhase?.('promote'),
       transferArchive: async ({ path, chunks }) => {
         const localStage = await mkdtemp(join(tmpdir(), 'happier-pinned-archive-'));
         try {

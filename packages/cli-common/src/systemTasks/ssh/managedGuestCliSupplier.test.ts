@@ -69,6 +69,8 @@ describe('managed guest CLI source supplier', () => {
       ] });
       // The admitted producer descriptor remains fixed while download bytes change.
       if (!matching) archive = new Uint8Array([...archive, 0]);
+      let phase: string | undefined;
+      let phaseAtPromotion: string | undefined;
       const runRemoteText = async (command: string) => {
           // A controller-only origin must never become a guest HTTP request.
           expect(command).not.toContain(homeUrl);
@@ -90,9 +92,13 @@ describe('managed guest CLI source supplier', () => {
           });
         },
         runRemoteText,
-      }) : installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli', homeUrl, channel: 'stable', guestCli }, {
+      }) : installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli', homeUrl, channel: 'stable', guestCli,
+        onPhase: value => { phase = value; } }, {
         resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
-        runRemoteText: request => runRemoteText(request.remoteCommand),
+        runRemoteText: request => {
+          if (request.remoteCommand.includes('tar -xf')) phaseAtPromotion = phase;
+          return runRemoteText(request.remoteCommand);
+        },
         copyLocalDirectoryToRemote: async ({ localPath, remotePath }) => {
           await cp(localPath, join(remotePath, basename(localPath)), { recursive: true });
         },
@@ -107,6 +113,7 @@ describe('managed guest CLI source supplier', () => {
         await expect(access(join(home, '.happier/cli/current/happier'))).rejects.toThrow();
         await expect(access(extraction)).rejects.toThrow();
       }
+      if (transport === 'ssh') expect(phaseAtPromotion).toBe('promote');
       expect(requested).toEqual(['/v1/runtime/guest-cli/payloads/linux/x64']);
     } finally {
       server.closeAllConnections();

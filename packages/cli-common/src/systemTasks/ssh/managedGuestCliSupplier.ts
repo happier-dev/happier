@@ -255,6 +255,7 @@ export async function installManagedGuestCliViaRemoteDownload(input: Readonly<{
   runRemoteText: RemoteText;
   signal?: AbortSignal;
   fetchImpl?: typeof fetch;
+  onPromote?(): void;
   /** Existing file/exec transport; no Home HTTP client is required on the guest. */
   transferArchive?: (input: Readonly<{ path: string; chunks: AsyncIterable<Uint8Array> }>) => Promise<void>;
   /** The admitted source-Home snapshot; this supplier selects its probed target once. */
@@ -294,6 +295,7 @@ export async function installManagedGuestCliViaRemoteDownload(input: Readonly<{
         runRemoteText: input.runRemoteText, ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}) });
     }
     input.signal?.throwIfAborted();
+    input.onPromote?.();
     const result = await executeRemoteSelfDownloadFirstPartyInstallPlan({ componentId: 'happier-cli', channel: input.channel, remoteHomeDir: input.remoteHomeDir,
       plan, runRemoteText: input.runRemoteText });
     if (result.status !== 0) throw new SystemTaskExecutionError('remote_command_failed', `Guest CLI promotion failed (exit ${result.status}).`);
