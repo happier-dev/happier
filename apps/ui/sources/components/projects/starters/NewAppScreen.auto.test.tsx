@@ -248,6 +248,15 @@ it('Describe your app replaces the Ask-an-agent door: one run on a ready Machine
     await waitForHomeGovernance(() =>
       expect(screen.findByTestId('newApp.nameField')).toBeTruthy(),
     );
+    // The step now creates the chosen setup: it is titled for that, and a disabled Create app says what it waits for
+    // (DESIGN-ACCEPT-2 batch 5).
+    {
+      const { t } = await import('@/text');
+      expect(screen.getTextContent()).toContain(t('newApp.createDescription'));
+      expect(screen.getTextContent()).not.toContain(t('newApp.describeDescription'));
+      expect(screen.findByTestId('newApp.create')?.props.disabled).toBe(true);
+      expect(screen.getTextContent()).toContain(t('newApp.createNeeds.name'));
+    }
     expect(screen.findByTestId('newApp.description')?.props.value).toBe(
       'A small landing page for my bakery',
     );

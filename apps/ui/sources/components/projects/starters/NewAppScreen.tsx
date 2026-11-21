@@ -53,6 +53,7 @@ import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToH
 
 import {
   buildStarterCreateInput,
+  starterCreateNeed,
   createStarterIntentKeys,
   deriveRepositoryName,
   readStarterCreateOutcome,
@@ -303,9 +304,12 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   const scratch = starterId === null && appliedSuggestion?.recommendation.source.kind === 'scratch';
 
   const repositoryName = deriveRepositoryName(name);
+  const starterDraft = { starterId, scratch, description, name, machineId: effectiveMachineId };
+  // What a disabled Create app waits for, said in the footer (DESIGN-ACCEPT-2 batch 5).
+  const createNeed = starterCreateNeed(starterDraft, { homeDir, owner: owner.kind === 'ready' ? owner.owner : null });
   const input = scope
     ? buildStarterCreateInput(
-        { starterId, scratch, description, name, machineId: effectiveMachineId },
+        starterDraft,
         {
           serverId: scope.serverId,
           homeDir,
@@ -672,7 +676,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     step === 'start' && !phone && !starter && codeSourceId === null && door === null && pastedRepository === null
       ? t('newApp.startPick')
       : step === 'describe'
-        ? t('newApp.reviewNote')
+        ? createNeed ? t(`newApp.createNeeds.${createNeed}`) : t('newApp.reviewNote')
         : null;
   // A selected managed creation owns Cancel, including its disabled state while acquisition is pending.
   const machineOwnsExit = addingMachine && machineCreationDraft !== null;
@@ -942,7 +946,10 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     body = (
       <>
         {/* A chosen starter names this step; Describe your app is the other way in, not this one (PAGE-ACCEPT-176 R8-D8). */}
-        {header(starter?.title ?? t('newApp.describeTitle'), t('newApp.describeDescription'))}
+        {/* After a suggested setup the words are given: the step creates that setup, named by its starter when it has
+            one (DESIGN-ACCEPT-2 batch 5). */}
+        {header(starter?.title ?? t(appliedSuggestion ? 'newApp.createTitle' : 'newApp.describeTitle'),
+          t(appliedSuggestion ? 'newApp.createDescription' : 'newApp.describeDescription'))}
         <ItemGroup surface="none" header="none">
           <FieldTextInput
             testID="newApp.description"

@@ -53,6 +53,21 @@ export function deriveRepositoryName(name: string): string {
 }
 
 /** The exact operands the review shows, or null while one of them is still missing. */
+/** What Create still needs, the first missing thing first: the button and its footer note read this one answer. */
+export type StarterCreateNeed = 'starter' | 'description' | 'name' | 'machine' | 'codeOwner';
+export function starterCreateNeed(
+  draft: NewAppDraft,
+  facts: Readonly<{ homeDir: string | null; owner: string | null }>,
+): StarterCreateNeed | null {
+  if (!draft.starterId && !draft.scratch) return 'starter';
+  if (!draft.description.trim()) return 'description';
+  if (!deriveRepositoryName(draft.name)) return 'name';
+  // A Machine that has not answered with its home folder can't build yet: it is the same need as choosing one.
+  if (!draft.machineId || !facts.homeDir) return 'machine';
+  if (!facts.owner) return 'codeOwner';
+  return null;
+}
+
 export function buildStarterCreateInput(
   draft: NewAppDraft,
   facts: Readonly<{
@@ -64,29 +79,25 @@ export function buildStarterCreateInput(
     requestKey: string;
   }>,
 ): StarterCreateInput | null {
+  if (starterCreateNeed(draft, facts) !== null) return null;
+  // starterCreateNeed settled every fact below as present.
   const description = draft.description.trim();
   const name = deriveRepositoryName(draft.name);
-  if (
-    (!draft.starterId && !draft.scratch) ||
-    !description ||
-    !name ||
-    !draft.machineId ||
-    !facts.homeDir ||
-    !facts.owner
-  )
-    return null;
+  const machineId = draft.machineId!;
+  const homeDir = facts.homeDir!;
+  const owner = facts.owner!;
   return {
     serverId: facts.serverId,
-    machineId: draft.machineId,
+    machineId,
     requestKey: facts.requestKey,
     ...(draft.scratch ? { source: { kind: 'scratch' as const } } : { starterId: draft.starterId! }),
     description,
-    destinationParentPath: projectCheckoutParentPath(facts.homeDir),
+    destinationParentPath: projectCheckoutParentPath(homeDir),
     destinationDirectoryName: name,
     repository: {
       providerKind: facts.providerKind ?? DEFAULT_PROJECT_REPOSITORY_PROVIDER_KIND_V1,
       ...(facts.provider ? { providerId: facts.provider.id, providerBaseUrl: facts.provider.baseUrl } : {}),
-      owner: facts.owner, name, visibility: 'private',
+      owner, name, visibility: 'private',
     },
   };
 }

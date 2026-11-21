@@ -111,6 +111,11 @@ type Copy = Readonly<{
   detailBranch: string;
   detailAction: string;
   reviewNote: string;
+  /** The describe step after a suggested setup: it creates that setup (DESIGN-ACCEPT-2 batch 5). */
+  createTitle: string;
+  createDescription: string;
+  /** What a disabled Create app waits for (newAppDraft `starterCreateNeed`). */
+  createNeeds: Readonly<{ starter: string; description: string; name: string; machine: string; codeOwner: string }>;
   create: string;
   creatingTitle: (p: Name) => string;
   creatingDescription: string;
@@ -361,6 +366,10 @@ export const newAppTranslations: Readonly<
     detailBranch: 'Branch',
     detailAction: 'Action',
     reviewNote: 'Nothing is created until you press Create app',
+    createTitle: 'Create your app',
+    createDescription: 'Name it and choose where its code lives. A Session then builds the setup you chose.',
+    createNeeds: { starter: 'Pick a starter to continue', description: 'Describe the app to continue', name: 'Name the app to continue',
+      machine: 'Choose a Machine that is online to continue', codeOwner: 'Choose where its code lives to continue' },
     create: 'Create app',
     creatingTitle: ({ name }) => `Making ${name}`,
     creatingDescription:
@@ -587,6 +596,10 @@ export const newAppTranslations: Readonly<
     detailBranch: 'Branca',
     detailAction: 'Acció',
     reviewNote: 'No es crea res fins que premis Crea l’aplicació',
+    createTitle: 'Crea la teva aplicació',
+    createDescription: 'Posa-li nom i tria on viu el codi. Després una sessió construeix la configuració que has triat.',
+    createNeeds: { starter: 'Tria una plantilla per continuar', description: 'Descriu l’aplicació per continuar', name: 'Posa nom a l’aplicació per continuar',
+      machine: 'Tria una Machine en línia per continuar', codeOwner: 'Tria on viu el codi per continuar' },
     create: 'Crea l’aplicació',
     creatingTitle: ({ name }) => `Creant ${name}`,
     creatingDescription:
@@ -813,6 +826,10 @@ export const newAppTranslations: Readonly<
     detailBranch: 'Branch',
     detailAction: 'Aktion',
     reviewNote: 'Nichts wird erstellt, bevor du App erstellen drückst',
+    createTitle: 'Deine App erstellen',
+    createDescription: 'Gib ihr einen Namen und wähle, wo ihr Code liegt. Danach baut eine Session die gewählte Einrichtung.',
+    createNeeds: { starter: 'Wähle eine Vorlage, um fortzufahren', description: 'Beschreibe die App, um fortzufahren', name: 'Gib der App einen Namen, um fortzufahren',
+      machine: 'Wähle eine Machine, die online ist, um fortzufahren', codeOwner: 'Wähle, wo der Code liegt, um fortzufahren' },
     create: 'App erstellen',
     creatingTitle: ({ name }) => `${name} wird erstellt`,
     creatingDescription:
@@ -1039,6 +1056,10 @@ export const newAppTranslations: Readonly<
     detailBranch: 'Rama',
     detailAction: 'Acción',
     reviewNote: 'No se crea nada hasta que pulses Crear app',
+    createTitle: 'Crea tu app',
+    createDescription: 'Ponle nombre y elige dónde vive su código. Después una sesión construye la configuración que elegiste.',
+    createNeeds: { starter: 'Elige una plantilla para continuar', description: 'Describe la app para continuar', name: 'Ponle nombre a la app para continuar',
+      machine: 'Elige una Machine en línea para continuar', codeOwner: 'Elige dónde vive el código para continuar' },
     create: 'Crear app',
     creatingTitle: ({ name }) => `Creando ${name}`,
     creatingDescription:
@@ -1265,6 +1286,10 @@ export const newAppTranslations: Readonly<
     detailBranch: 'Branche',
     detailAction: 'Action',
     reviewNote: 'Rien n’est créé avant que vous appuyiez sur Créer l’app',
+    createTitle: 'Créer votre app',
+    createDescription: 'Nommez-la et choisissez où vit son code. Une session construit ensuite la configuration choisie.',
+    createNeeds: { starter: 'Choisissez un modèle pour continuer', description: 'Décrivez l’app pour continuer', name: 'Nommez l’app pour continuer',
+      machine: 'Choisissez une Machine en ligne pour continuer', codeOwner: 'Choisissez où vit le code pour continuer' },
     create: 'Créer l’app',
     creatingTitle: ({ name }) => `Création de ${name}`,
     creatingDescription:
@@ -1491,6 +1516,10 @@ export const newAppTranslations: Readonly<
     detailBranch: 'Branch',
     detailAction: 'Azione',
     reviewNote: 'Non viene creato nulla finché non premi Crea app',
+    createTitle: 'Crea la tua app',
+    createDescription: 'Dalle un nome e scegli dove vive il codice. Poi una sessione costruisce la configurazione scelta.',
+    createNeeds: { starter: 'Scegli un modello per continuare', description: 'Descrivi l’app per continuare', name: 'Dai un nome all’app per continuare',
+      machine: 'Scegli una Machine online per continuare', codeOwner: 'Scegli dove vive il codice per continuare' },
     create: 'Crea app',
     creatingTitle: ({ name }) => `Creazione di ${name}`,
     creatingDescription:
@@ -1717,6 +1746,10 @@ export const newAppTranslations: Readonly<
     detailBranch: 'ブランチ',
     detailAction: 'アクション',
     reviewNote: '「アプリを作成」を押すまで何も作成されません',
+    createTitle: 'アプリを作成',
+    createDescription: '名前を付けて、コードの置き場所を選びます。その後、セッションが選んだ構成を作ります。',
+    createNeeds: { starter: '続けるにはスターターを選んでください', description: '続けるにはアプリを説明してください', name: '続けるにはアプリに名前を付けてください',
+      machine: '続けるにはオンラインの Machine を選んでください', codeOwner: '続けるにはコードの置き場所を選んでください' },
     create: 'アプリを作成',
     creatingTitle: ({ name }) => `${name} を作成中`,
     creatingDescription:
@@ -1943,6 +1976,10 @@ export const newAppTranslations: Readonly<
     detailBranch: 'Gałąź',
     detailAction: 'Akcja',
     reviewNote: 'Nic nie powstanie, dopóki nie naciśniesz Utwórz aplikację',
+    createTitle: 'Utwórz aplikację',
+    createDescription: 'Nazwij ją i wybierz, gdzie będzie jej kod. Potem sesja zbuduje wybraną konfigurację.',
+    createNeeds: { starter: 'Wybierz szablon, aby kontynuować', description: 'Opisz aplikację, aby kontynuować', name: 'Nazwij aplikację, aby kontynuować',
+      machine: 'Wybierz Machine online, aby kontynuować', codeOwner: 'Wybierz, gdzie będzie kod, aby kontynuować' },
     create: 'Utwórz aplikację',
     creatingTitle: ({ name }) => `Tworzenie: ${name}`,
     creatingDescription:
@@ -2169,6 +2206,10 @@ export const newAppTranslations: Readonly<
     detailBranch: 'Branch',
     detailAction: 'Ação',
     reviewNote: 'Nada é criado até você tocar em Criar app',
+    createTitle: 'Crie seu app',
+    createDescription: 'Dê um nome e escolha onde o código fica. Depois uma sessão constrói a configuração escolhida.',
+    createNeeds: { starter: 'Escolha um modelo para continuar', description: 'Descreva o app para continuar', name: 'Dê um nome ao app para continuar',
+      machine: 'Escolha uma Machine online para continuar', codeOwner: 'Escolha onde o código fica para continuar' },
     create: 'Criar app',
     creatingTitle: ({ name }) => `Criando ${name}`,
     creatingDescription:
@@ -2395,6 +2436,10 @@ export const newAppTranslations: Readonly<
     detailBranch: 'Ветка',
     detailAction: 'Действие',
     reviewNote: 'Ничего не создаётся, пока вы не нажмёте «Создать приложение»',
+    createTitle: 'Создайте приложение',
+    createDescription: 'Назовите его и выберите, где будет код. Затем сессия соберёт выбранную настройку.',
+    createNeeds: { starter: 'Выберите шаблон, чтобы продолжить', description: 'Опишите приложение, чтобы продолжить', name: 'Назовите приложение, чтобы продолжить',
+      machine: 'Выберите Machine в сети, чтобы продолжить', codeOwner: 'Выберите, где будет код, чтобы продолжить' },
     create: 'Создать приложение',
     creatingTitle: ({ name }) => `Создаём ${name}`,
     creatingDescription:
@@ -2620,6 +2665,10 @@ export const newAppTranslations: Readonly<
     detailBranch: '分支',
     detailAction: '操作',
     reviewNote: '按下“创建应用”之前不会创建任何内容',
+    createTitle: '创建你的应用',
+    createDescription: '给它命名并选择代码存放位置。之后会话会构建你选择的设置。',
+    createNeeds: { starter: '选择一个模板以继续', description: '描述应用以继续', name: '为应用命名以继续',
+      machine: '选择一台在线的 Machine 以继续', codeOwner: '选择代码存放位置以继续' },
     create: '创建应用',
     creatingTitle: ({ name }) => `正在创建 ${name}`,
     creatingDescription: '不到一分钟。之后会打开发给智能体的第一条消息，由你发送。',
@@ -2842,6 +2891,10 @@ export const newAppTranslations: Readonly<
     detailBranch: '分支',
     detailAction: '動作',
     reviewNote: '按下「建立應用程式」之前不會建立任何內容',
+    createTitle: '建立你的應用程式',
+    createDescription: '為它命名並選擇程式碼存放位置。之後工作階段會建置你選擇的設定。',
+    createNeeds: { starter: '選擇一個範本以繼續', description: '描述應用程式以繼續', name: '為應用程式命名以繼續',
+      machine: '選擇一台在線的 Machine 以繼續', codeOwner: '選擇程式碼存放位置以繼續' },
     create: '建立應用程式',
     creatingTitle: ({ name }) => `正在建立 ${name}`,
     creatingDescription: '不到一分鐘。之後會開啟傳給代理程式的第一則訊息，由你傳送。',
