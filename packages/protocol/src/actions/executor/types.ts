@@ -779,6 +779,14 @@ export type ActionExecutorContext = Readonly<{
   /** Original receiving Machine custody, retained in-process through approval; never accepted from Action input. */
   machineAdmission?: import('../../rpc/socket.js').SocketRpcMachineAdmissionContextV1;
 
+  /** Authenticated private-root identity retained in-process; never an Action/RPC DTO or persisted approval origin. */
+  authenticatedLocalRootCustody?: Readonly<{
+    serverIdentityId: string;
+    accountId: string;
+    machineId: string;
+    installationId: string;
+  }>;
+
   /** Host-private current admission of the deciding human; never accepted from Action input. */
   verifyMachineAdmissionCurrent?: () => Promise<boolean>;
 

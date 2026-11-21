@@ -23,12 +23,7 @@ import type { AgentLaunchMaterialization } from './agentLaunchMaterials';
 import type { AgentIsolationDaemonObservation, AgentIsolationMemberRequester } from './provisioning';
 
 /** Captured only by authenticated private root ingress; never an Action/RPC DTO. */
-export type AuthenticatedLocalRootCustody = Readonly<{
-    serverIdentityId: string;
-    accountId: string;
-    machineId: string;
-    installationId: string;
-}>;
+export type AuthenticatedLocalRootCustody = NonNullable<ActionExecutorContext['authenticatedLocalRootCustody']>;
 
 /** Host child ingress has verified its exact admitted packet/job. Reconciles a
  * retained root binding, never grants an execution role or changes provenance. */

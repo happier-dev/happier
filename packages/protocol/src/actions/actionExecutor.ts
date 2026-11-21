@@ -2161,6 +2161,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       ...(args.ctx.verifyMachineAdmissionCurrent ? { verifyMachineAdmissionCurrent: args.ctx.verifyMachineAdmissionCurrent } : {}),
       ...(retainedPluginContext?.context.machineAdmission
         ? { machineAdmission: retainedPluginContext.context.machineAdmission } : {}),
+      ...(retainedPluginContext?.context.authenticatedLocalRootCustody
+        ? { authenticatedLocalRootCustody: retainedPluginContext.context.authenticatedLocalRootCustody } : {}),
       ...(retainedPluginContext?.context.verifyMachineAdmissionCurrent
         ? { verifyMachineAdmissionCurrent: retainedPluginContext.context.verifyMachineAdmissionCurrent } : {}),
       ...(!appOwnedContextReplay && replayCaller.kind === 'workflowRun'

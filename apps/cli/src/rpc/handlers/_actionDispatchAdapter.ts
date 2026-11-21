@@ -23,7 +23,6 @@ type HostRequesterContext = Pick<RpcHandlerContext, 'authorization' | 'machineAd
     | 'originalActionEnvelope' | 'workspaceSyncSourceExecution' | 'deadlineAtMs' | 'requestStartedAtMs' | 'reviewedChildActionContext'>;
 
 export type RpcActionExecutorContext = ActionExecutorContext & HostRequesterContext & Readonly<{
-    authenticatedLocalRootCustody?: RpcLocalActionContext['authenticatedLocalRootCustody'];
     verifiedExternalActionRequester?: VerifiedExternalActionRequester;
     signal?: AbortSignal;
     operationProgress?: NonNullable<RpcLocalActionContext['operationProgress']>;

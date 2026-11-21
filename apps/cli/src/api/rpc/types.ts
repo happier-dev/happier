@@ -9,7 +9,6 @@ import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protoc
 import type { AdmittedRequesterSessionBootstrap } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import type { RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
-import type { AuthenticatedLocalRootCustody } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import type {
     SocketRpcRequestPayload,
     SessionActionRpcOriginV1,
@@ -38,9 +37,8 @@ export type RpcLocalActionContext = Readonly<Partial<Pick<
     | 'presentUserApproval' | 'actionRequestAttributionV1' | 'handoffTargetReplacementApproval'
     | 'originalActionEnvelope' | 'signExternalActionApprovalInput' | 'externalActionTarget' | 'runtimeAccountId' | 'serverId'
     | 'agentStartContext' | 'agentStartWorkDepth' | 'agentStartWorkspaceWrites' | 'sessionAgentSpawnPolicyV1' | 'actionAutomationPort'
+    | 'authenticatedLocalRootCustody'
 >> & {
-    /** Captured authenticated private-root identity; never serialized in an RPC request. */
-    authenticatedLocalRootCustody?: AuthenticatedLocalRootCustody;
     /** Admitted headless Resume invocation, retained only through the in-process native launcher. */
     resumeActionContext?: ActionExecutorContext;
     /** Exact Workflow invocation store, admitted only by an in-process host. */

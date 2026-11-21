@@ -50,11 +50,11 @@ afterEach(() => vi.restoreAllMocks());
 afterAll(() => pluginReloadController.shutdown());
 
 it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-approval-verify', 'account-agent-approval-verify',
-  'plugin-approval-verify', 'unobserved-plugin-approval-verify', 'account-approval-reject', 'account-approval-cancel', 'approval-reject', 'approval-cancel', 'owner-verify', 'owner-local-verify', 'owner-prepare', 'owner-foreign-use', 'owner-foreign-manage',
+  'plugin-approval-verify', 'unobserved-plugin-approval-verify', 'local-unobserved-plugin-approval-verify', 'account-approval-reject', 'account-approval-cancel', 'approval-reject', 'approval-cancel', 'owner-verify', 'owner-local-verify', 'owner-prepare', 'owner-foreign-use', 'owner-foreign-manage',
   'owner-unadmitted', 'owner-retarget', 'owner-home'] as const)('runs mounted source %s through its serving Machine SDK executor without minting an Account root', async shape => {
   const approvalShape = shape.includes('approval-');
   const accountChild = shape.startsWith('account-');
-  const unobservedPluginChild = shape === 'unobserved-plugin-approval-verify';
+  const unobservedPluginChild = shape === 'unobserved-plugin-approval-verify' || shape === 'local-unobserved-plugin-approval-verify';
   const localPluginChild = shape === 'plugin-approval-verify' || unobservedPluginChild;
   const accountOrigin = shape === 'account-agent-approval-verify' ? 'agent' as const : 'cli' as const;
   const verifyShape = shape.endsWith('verify');
@@ -315,8 +315,12 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-ap
       }
       if (localPluginChild) {
         const approvalContext = { surface: 'plugin' as const, authority: 'account_automation' as const,
-          runtimeAccountId: accountId, serverId, serverIdentityId: 'srv_review_home', machineAdmission: packet.machineAdmission,
-          verifyMachineAdmissionCurrent: async () => { throw new Error('Finite children must not re-admit the parent'); } };
+          runtimeAccountId: accountId, serverId, serverIdentityId: 'srv_review_home',
+          ...(shape === 'local-unobserved-plugin-approval-verify' ? {
+            authenticatedLocalRootCustody: { serverIdentityId: 'srv_review_home', accountId,
+              machineId, installationId: 'review-installation' },
+          } : { machineAdmission: packet.machineAdmission,
+            verifyMachineAdmissionCurrent: async () => { throw new Error('Finite children must not re-admit the parent'); } }) };
         child = executeContributedAction({ runtimeRegistry: runtime.registry, actionId: request.qualifiedActionId,
           input: providerInput, approvalContext, actionsSettings: { v: 1, actions: {} }, context: {
             ...approvalContext, operationRequestId: request.requestId, operationRpcContext: approvalContext,
@@ -359,7 +363,7 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-ap
         expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true });
         if (unobservedPluginChild) {
           result = await child!;
-          expect(result).toMatchObject({ ok: true, result: { kind: 'verified' } });
+          expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'verified' } });
         } else {
           if (!held) throw new Error('Expected retained source operation');
           const terminal = await operations.handlers.getV2({ operationId: held.operationId, waitForTerminal: true });
