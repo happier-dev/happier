@@ -275,8 +275,12 @@ describe('execution lifecycle restart recovery', () => {
       occurrenceId: 'old-occurrence', turn: { turnId: 'old-turn', state: 'failed', inputIds: ['exact-input'] },
     });
     const pending = await restarted.takeWorkerUpdate('parent-session', new AbortController().signal);
-    expect(pending?.update).toMatchObject({ ownerState: 'failed', transcriptPointer: { kind: 'execution_run', runId: run.runId } });
-    expect(pending?.update.result).toContain('lost');
+    expect(pending?.update).toMatchObject({
+      ownerState: 'failed',
+      transcriptPointer: { kind: 'execution_run', runId: run.runId },
+      runtimeIssueV1: { status: 'failed', code: 'execution_run_host_lost' },
+    });
+    expect(pending?.update).not.toHaveProperty('result');
     const nextRestart = bridge();
     expect((await nextRestart.takeWorkerUpdate('parent-session', new AbortController().signal))?.localId).toBe(pending?.localId);
     pending?.acknowledgeAccepted();
