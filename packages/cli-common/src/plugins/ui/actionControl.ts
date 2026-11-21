@@ -6,6 +6,7 @@ import {
     type PluginUiActionControlPreparationV1,
     type PluginUiActionControlRequestV1,
 } from '@happier-dev/protocol/plugins/ui/client';
+import { projectUnexpectedActionFailureV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isPluginError, PluginError } from '../errors.js';
 import { mergeAbortSignals } from '../http/service.js';
 import type { Disposable } from '../registration/contracts.js';
@@ -112,6 +113,11 @@ export async function createPluginUiActionControlBinding(params: Readonly<{
                     if (!unsettled()) return;
                     preparation.settled = true;
                     preparation.abort.abort();
+                    if (input !== null && params.lifetimeSignal.aborted) {
+                        // Mount retirement can lose the receipt after the submitted effect ran.
+                        settle({ ...projectUnexpectedActionFailureV1(null), requestId: event.requestId });
+                        return;
+                    }
                     const aborted = executionCancellation.signal?.aborted === true;
                     settle({ ok: false, errorCode: aborted ? 'aborted' : isPluginError(error) ? error.code : 'action_outcome_unknown',
                         error: aborted ? 'aborted' : error instanceof Error ? error.message || 'action_outcome_unknown' : 'action_outcome_unknown' });

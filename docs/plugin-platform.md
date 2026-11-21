@@ -8334,7 +8334,9 @@ Direct `hostApi.actionControl` options separate these lifetimes too: `signal`
 means explicit Stop, while `withdrawalSignal` or handle disposal retires the
 control without cancelling admitted work. Stop settles once with the existing
 typed `aborted` result; it does not promise a later successful execution response.
-The mounted surface's own lifetime remains a cancellation boundary.
+The mounted surface's own lifetime remains a cancellation boundary. When
+surface retirement loses the response to a submitted control execution,
+settlement reports `action_outcome_unknown` with the original host request ID.
 
 Inline bindings require the native or same-realm RNW private presentation host.
 Hosted HTML deliberately has no inline binding bridge, and unsupported hosts keep

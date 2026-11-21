@@ -915,6 +915,7 @@ describe('mounted picker approval through the Account relay to the daemon', () =
         { name: 'refuses a declared mounted review when preparation changes the reviewed input', change: 'changed-control' },
         { name: 'COORD R2 confirms an explicitly Ask-gated Account Action through the runtime relay', change: 'ask-control' },
         { name: 'COORD R2 leaves a declined carried review editable without executing the Action', change: 'ask-cancel' },
+        { name: 'reports an unknown outcome when the mount retires after the approved write commits', change: 'ask-retired' },
         { name: 'retains the acquired declaration when the mounted Account row is cold', change: 'cold-declaration' },
         { name: 'does not execute a declined picker mutation', change: 'decline' },
         { name: 'executes the approved operands after the trusted Account source changes', change: 'source' },
@@ -941,7 +942,7 @@ describe('mounted picker approval through the Account relay to the daemon', () =
         const pluginId = 'acme.reviewed-picker';
         const localId = 'assign';
         const input = { issue: 'ISSUE-42', assignee: 'alice' };
-        const carriedReview = change === 'ask-control' || change === 'ask-cancel';
+        const carriedReview = change === 'ask-control' || change === 'ask-cancel' || change === 'ask-retired';
         const isControl = change === 'contributed-control' || carriedReview || mountedReview;
         const previous = getStorage().getState();
         let effects = 0;
@@ -951,6 +952,7 @@ describe('mounted picker approval through the Account relay to the daemon', () =
         const carriedRequests: { requestId: string; reviewDigest: string | undefined; result: unknown }[] = [];
         let boundaryFailure: unknown;
         let dispatches = 0;
+        let retireMount: (() => void) | undefined;
         const accountSource = change === 'bundled' || mountedReview
             ? { kind: 'bundled_first_party' as const, packagedRuntime: { kind: 'cli_version_root' as const, versionRootId: 'fixture-cli-root' } }
             : { kind: 'account_release' as const, pluginId, version: '1.2.3', archiveDigestSha256: `sha256:${'a'.repeat(64)}` };
@@ -1029,6 +1031,7 @@ describe('mounted picker approval through the Account relay to the daemon', () =
                     });
                     carriedRequests.push({ requestId: context.authorization.binding.requestId,
                         reviewDigest: context.invocation.presentUserConfirmation?.reviewDigest, result });
+                    if (change === 'ask-retired' && result.ok) retireMount?.();
                     return result.ok ? result.result : result;
                 }
                 // Mutate only the opened transport payload, then enter the real
@@ -1146,6 +1149,7 @@ describe('mounted picker approval through the Account relay to the daemon', () =
         const facade = createCanonicalPluginReactNativeHostApiAdapter({ surface, requestSurface: controller.surfaceContext,
             requestIdPrefix: 'picker-consent', installedMethods: controller.hostApi.admissionMethods,
             handleRequest: controller.hostApi.handleRequest });
+        retireMount = facade.retire;
         let settledStatus = 'idle';
         let settledExecution: unknown;
         const unregisterControlPort = isControl
@@ -1203,6 +1207,13 @@ describe('mounted picker approval through the Account relay to the daemon', () =
                 expect(settledExecution).toMatchObject({ ok: false, errorCode: 'approval_stale', effectAttempted: false });
                 expect(dispatches).toBe(0);
                 expect({ confirmations, effects, secondArtifacts }).toEqual({ confirmations: 0, effects: 0, secondArtifacts: 0 });
+                return;
+            }
+            if (change === 'ask-retired') {
+                expect({ confirmations, effects, secondArtifacts }).toEqual({ confirmations: 1, effects: 1, secondArtifacts: 0 });
+                expect(carriedRequests).toHaveLength(2);
+                expect(carriedRequests[1]?.result).toMatchObject({ ok: true });
+                expect(settledExecution).toMatchObject({ ok: false, errorCode: 'action_outcome_unknown', requestId: expect.any(String) });
                 return;
             }
             if (change === 'ask-cancel') {
