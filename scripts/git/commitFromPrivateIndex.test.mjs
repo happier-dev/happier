@@ -103,6 +103,18 @@ test('refuses a producer change that drops an export an unchanged importer still
   assert.equal(f.git('rev-parse', 'HEAD'), before);
 });
 
+test('refuses removing the workspace lockfile from the exact candidate', async (t) => {
+  const f = fixture(t);
+  f.write('package.json', '{"name":"root"}');
+  f.write('pnpm-lock.yaml', "lockfileVersion: '9.0'\n");
+  f.git('add', '--', 'package.json', 'pnpm-lock.yaml');
+  f.git('commit', '-qm', 'test: lockfile basis');
+  const before = f.git('rev-parse', 'HEAD');
+  fs.unlinkSync(path.join(f.cwd, 'pnpm-lock.yaml'));
+  await assert.rejects(commitFromPrivateIndex({ ...f, paths: ['pnpm-lock.yaml'] }), /removed pnpm-lock.yaml/);
+  assert.equal(f.git('rev-parse', 'HEAD'), before);
+});
+
 test('refuses a lockfile that names a workspace package whose package.json is untracked', async (t) => {
   const f = fixture(t);
   fs.mkdirSync(path.join(f.cwd, 'packages/ghost'), { recursive: true });
@@ -356,7 +368,7 @@ exec "$real_git" "$@"
       ...(treeGateMode ? { HAPPIER_COMMIT_TREE_GATE: treeGateMode } : {}), HAPPIER_COMMIT_TYPECHECK_GATE: 'report',
       HAPPIER_COMMIT_TYPECHECK_DIR: path.join(f.cwd, '.git', 'typecheck-state'),
       TEST_TREE_GATE_LOCKS: treeGateLocks, TEST_FINAL_GRANTS: finalGrants, TEST_FINAL_ACTIVE: finalActive,
-      TEST_FINAL_DENY: refuseFinalAdmission ? '1' : '0', TEST_FINAL_HEAD: additionalWinners.at(-1) ?? '', TEST_ACQUISITIONS: acquisitions, TEST_BASE: base, TEST_FLOCK: flock, TEST_LOCK: lock, TEST_WINNER: winner },
+      TEST_FINAL_DENY: refuseFinalAdmission ? '1' : '0', TEST_FINAL_HEAD: base, TEST_ACQUISITIONS: acquisitions, TEST_BASE: base, TEST_FLOCK: flock, TEST_LOCK: lock, TEST_WINNER: winner },
   });
   assert(!fs.existsSync(finalActive), 'the final entry grant was released');
   return { result, acquisitions: fs.existsSync(acquisitions) ? fs.readFileSync(acquisitions, 'utf8').trim().split('\n') : [], flock, lock,
@@ -394,7 +406,7 @@ function treeGraphReplayFixture(t, { uiGraph = false, winnerInput = 'apps/cli/sr
   fs.mkdirSync(path.join(f.cwd, 'apps/stack/scripts/build'), { recursive: true });
   fs.mkdirSync(path.join(f.cwd, 'apps/stack/bin'), { recursive: true });
   fs.writeFileSync(path.join(f.cwd, 'apps/stack/bin/hstack-exec'), `#!/bin/sh
-[ "$1" = --heavyweight-admission ] && [ "$2" = --class=gate-entry-loads ] || exit 91
+case "$1" in --execution-workers=*) exit 0;; esac\n[ "$1" = --heavyweight-admission ] && [ "$2" = --class=gate-entry-loads ] || exit 91
 while [ "$1" != -- ]; do
   case "$1" in --projects=*) export TEST_ENTRY_PROJECTS="\${1#--projects=}" ;; esac
   shift
@@ -491,18 +503,23 @@ test('refuses an unloadable CLI entry even when its parent is broken and the leg
   assert.equal(f.git('rev-parse', 'HEAD').trim(), head);
 });
 
-test('refuses an unrelated packet when its candidate CLI cannot load', { skip: !hasFlock }, t => {
-  const { f, packet } = treeGraphReplayFixture(t);
-  const entry = 'apps/cli/src/index.mjs';
-  f.write(entry, 'throw new Error("Cannot load the CLI on this tree");\n');
-  f.git('add', '--', entry);
-  f.git('commit', '-qm', 'test: broken CLI parent');
+test('refuses an unloadable daemon entry even when its parent is broken', { skip: !hasFlock }, t => {
+  const { f } = treeGraphReplayFixture(t);
+  const entry = 'apps/cli/src/daemon/startDaemon.ts';
+  fs.mkdirSync(path.join(f.cwd, 'apps/cli/src/daemon'));
+  f.write(entry, 'throw new Error("Cannot load this daemon");\n');
+  f.write('apps/stack/scripts/perf/entry-graphs.mjs', `export const ENTRY_GRAPHS = ${JSON.stringify([
+    { id: 'cli', entry: 'apps/cli/src/index.mjs' }, { id: 'daemon', entry },
+  ])};`);
+  f.git('add', '--', 'apps');
+  f.git('commit', '-qm', 'test: broken daemon parent');
   const head = f.git('rev-parse', 'HEAD').trim();
+  f.write(entry, 'throw new Error("Cannot load this daemon");\nexport const value = 1;\n');
 
-  const { result } = runWithCommitLockContender(f, head, packet);
+  const { result } = runWithCommitLockContender(f, head, entry);
 
   assert.notEqual(result.status, 0, result.stdout);
-  assert.match(result.stderr, /cli: .*Cannot load the CLI on this tree/);
+  assert.match(result.stderr, /daemon: .*Cannot load this daemon/);
   assert.equal(f.git('rev-parse', 'HEAD').trim(), head);
 });
 
@@ -518,58 +535,39 @@ test('leaves HEAD unchanged if the selected CLI entry does not return a result',
   assert.equal(f.git('rev-parse', 'HEAD').trim(), base);
 });
 
-test('reuses a successful CLI load after a competing packet leaves its inputs unchanged', { skip: !hasFlock }, t => {
-  const { f, base, winner, packet } = treeGraphReplayFixture(t, { winnerInput: 'notes.md' });
-  const { result, acquisitions, treeGateLocks } = runWithCommitLockContender(f, winner, packet);
-
+test('loads the affected entry exactly once under the lock, after a competing commit lands', { skip: !hasFlock }, t => {
+  const { f, base, winner, packet } = treeGraphReplayFixture(t, { uiGraph: true });
+  const { result, acquisitions, treeGateLocks, finalGrants } = runWithCommitLockContender(f, winner, packet);
   assert.equal(result.status, 0, result.stderr);
-  assert.doesNotMatch(result.stderr, /Released the commit lock for the full gate/);
+  assert.deepEqual(treeGateLocks, ['cli:1', 'ui:1']);
   assert.deepEqual(acquisitions, [base]);
-  assert.deepEqual(treeGateLocks, ['cli:0']);
+  assert.deepEqual(finalGrants, [base]);
   assert.equal(f.git('rev-parse', 'HEAD^').trim(), winner);
-  assert.equal(f.git('show', `HEAD:${packet}`), 'export const value = 2;\n');
 });
 
-test('releases the lock and reruns only entry graphs whose inputs changed since the accepted base', { skip: !hasFlock }, t => {
+test('a refused entry admission leaves the commit lock and HEAD untouched', { skip: !hasFlock }, t => {
   const { f, base, winner, packet } = treeGraphReplayFixture(t, { uiGraph: true });
-  const { result, acquisitions, treeGateLocks } = runWithCommitLockContender(f, winner, packet);
-
-  assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(treeGateLocks, ['cli:0', 'ui:0', 'cli:0'], 'only the CLI graph reloads, outside the lock');
-  assert.deepEqual(acquisitions, [base, winner]);
-  assert.equal(f.git('rev-parse', 'HEAD^').trim(), winner);
-  assert.equal(f.git('show', `HEAD:${packet}`), 'export const value = 2;\n');
-});
-
-function staleVerdictAndCasLossFixture(t, refuseFinalAdmission) {
-  const { f, base, winner, packet } = treeGraphReplayFixture(t, { uiGraph: true });
-  f.write('apps/cli/src/index.mjs', 'export const value = 3;\n');
-  f.git('add', '--', 'apps/cli/src/index.mjs');
-  const casWinner = f.git('commit-tree', f.git('write-tree').trim(), '-p', winner, '-m', 'test: wins compare-and-swap').trim();
-  f.git('read-tree', base);
-
-  return { f, casWinner, ...runWithCommitLockContender(f, winner, packet,
-    { additionalWinners: [casWinner], refuseFinalAdmission }) };
-}
-
-test('after one stale verdict and one CAS loss obtains entry admission before locking and reloads only the affected graph', { skip: !hasFlock }, t => {
-  const { f, casWinner, result, treeGateLocks, finalGrants, flock, lock } = staleVerdictAndCasLossFixture(t, false);
-  assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(finalGrants, [casWinner]);
-  assert.deepEqual(treeGateLocks, ['cli:0', 'ui:0', 'cli:0', 'cli:1']);
-  assert.equal(f.git('rev-parse', 'HEAD^').trim(), casWinner);
-  assert.equal(spawnSync(flock, ['-n', lock, 'true']).status, 0);
-});
-
-test('after one stale verdict and one CAS loss an entry admission refusal leaves HEAD and the final lock untouched', { skip: !hasFlock }, t => {
-  const { f, casWinner, result, acquisitions, treeGateLocks, finalGrants, flock, lock } = staleVerdictAndCasLossFixture(t, true);
+  const { result, acquisitions, treeGateLocks } = runWithCommitLockContender(f, winner, packet, { refuseFinalAdmission: true });
   assert.equal(result.status, 11, result.stderr);
   assert.match(result.stderr, /entry-load-admission-unavailable/);
-  assert.deepEqual(finalGrants, []);
-  assert(!acquisitions.includes(casWinner));
-  assert.deepEqual(treeGateLocks, ['cli:0', 'ui:0', 'cli:0']);
+  assert.deepEqual(acquisitions, []);
+  assert.deepEqual(treeGateLocks, []);
+  assert.equal(f.git('rev-parse', 'HEAD').trim(), base);
+});
+
+test('a foreign CAS winner is preserved without replaying the gate', { skip: !hasFlock }, t => {
+  const { f, base, winner } = treeGraphReplayFixture(t, { winnerInput: 'notes.md' });
+  const packet = 'apps/cli/src/index.mjs';
+  f.write('notes.txt', 'another writer\n');
+  f.git('add', '--', 'notes.txt');
+  const casWinner = f.git('commit-tree', f.git('write-tree').trim(), '-p', winner, '-m', 'test: wins CAS').trim();
+  f.git('read-tree', base);
+  f.write(packet, 'export const packet = true;\n');
+  const { result, acquisitions, treeGateLocks } = runWithCommitLockContender(f, winner, packet, { additionalWinners: [casWinner] });
+  assert.notEqual(result.status, 0, result.stderr);
+  assert.deepEqual(acquisitions, [base]);
+  assert.deepEqual(treeGateLocks, ['cli:1']);
   assert.equal(f.git('rev-parse', 'HEAD').trim(), casWinner);
-  assert.equal(spawnSync(flock, ['-n', lock, 'true']).status, 0);
 });
 
 test('refuses a replay when the winning commit removed its producer and releases the commit lock', { skip: !hasFlock }, (t) => {

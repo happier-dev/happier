@@ -209,3 +209,29 @@ test('entry graph generation and workspace resolution stay inside the judged tre
   const result = await commitTreeEntryLoads({ repo, base: tree, tree, graphIds: ['isolated'], root });
   assert.deepEqual(result.results.map(row => row.status), ['passed'], JSON.stringify(result));
 });
+
+test('the synchronous scope ignores a UI-only packet for CLI and daemon and keeps both for a CLI input', async t => {
+  const registry = [
+    { id: 'cli', entry: 'apps/cli/src/index.ts' },
+    { id: 'daemon', entry: 'apps/cli/src/daemon/startDaemon.ts' },
+    { id: 'ui-catalog', entry: 'apps/ui/sources/catalog.test.ts', testFiles: ['sources/catalog.test.ts'] },
+  ];
+  const { repo, tree, write } = miniatureRevision(t, {
+    'apps/stack/scripts/perf/entry-graphs.mjs': `export const ENTRY_GRAPHS = ${JSON.stringify(registry)};`,
+    'apps/cli/package.json': '{"name":"@fixture/cli"}',
+    'apps/ui/package.json': '{"name":"@fixture/ui"}',
+    'apps/cli/src/index.ts': 'export {};\n',
+    'apps/cli/src/daemon/startDaemon.ts': 'export {};\n',
+    'apps/ui/sources/catalog.test.ts': 'export {};\n',
+  });
+  const commit = (path, value) => {
+    write(path, value);
+    execFileSync('git', ['add', '--', path], { cwd: repo });
+    execFileSync('git', ['commit', '-qm', path], { cwd: repo });
+    return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+  };
+  const ui = commit('apps/ui/sources/ui.ts', 'export {};\n');
+  assert.deepEqual((await selectCommitTreeEntryGraphs({ repo, base: tree, tree: ui, phase: 'commit' })).selected, []);
+  const cli = commit('apps/cli/src/index.ts', 'export const cli = 1;\n');
+  assert.deepEqual((await selectCommitTreeEntryGraphs({ repo, base: ui, tree: cli, phase: 'commit' })).selected, ['cli', 'daemon']);
+});

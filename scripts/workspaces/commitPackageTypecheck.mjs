@@ -48,6 +48,8 @@ import { packageNameOfSpecifier, resolveWorkspaceSource, workspaceSourcePackageC
 import { readCommitTreeWorkspacePackages } from './commitTreeEntryLoads.mjs';
 import { collectPackageBuildOutputTargets } from '../../packages/cli-common/packageBuildOutputTargets.mjs';
 
+const EXACT_DECLARATION_DIRS = new Set(['packages/protocol', 'packages/plugin-sdk']);
+const BROAD_REPLAY_PATH = /^(?:(?:apps|packages|scripts)\/.*\.(?:[cm]?[jt]sx?|json)$|pnpm-(?:lock|workspace)\.yaml$|package\.json$|patches\/)/u;
 const COMPILER_INPUT = /\.(?:[cm]?[jt]sx?|json)$/u;
 /** App workspaces the rolling HEAD typecheck follows, one scope each. */
 export const ROLLING_APP_SCOPES = Object.freeze(['apps/server', 'apps/cli', 'apps/ui']);
@@ -721,7 +723,9 @@ export async function reportCommitGateTypecheck({ repo, commit, env = process.en
   const state = commitPackageTypecheckStateDir(repo, env);
   const verdictPath = join(state, 'verdicts.log');
   mkdirSync(state, { recursive: true });
-  const supersededBy = coveringRollingHead(repo, verdictPath, sha, packages);
+  // A range verdict cannot substitute for the exact declaration comparison of each Protocol or SDK commit.
+  const supersededBy = packages.some(dir => EXACT_DECLARATION_DIRS.has(dir))
+    ? undefined : coveringRollingHead(repo, verdictPath, sha, packages);
   if (supersededBy) {
     const result = { touched: packages, packages, detached, skipped: true, fresh: [], incomplete: [], unavailable: [],
       timings: [], ms: Date.now() - started, supersededBy };
@@ -730,13 +734,50 @@ export async function reportCommitGateTypecheck({ repo, commit, env = process.en
   }
   const result = await commitGateTypecheck({ repo, base, tree: sha, env, log, remote, workers, record: false });
   if (result.fresh.length) {
-    const subject = git(['log', '-1', '--format=%s', sha]).trim();
-    try { post(urgentEntry({ commit: sha, subject, lane: commitLane(sha, boardPaths), rows: result.fresh, base, head: sha, how: 'the commit gate typecheck (report mode) finds' })); }
+    const [subject, author] = git(['log', '-1', '--format=%s%n%an', sha]).trim().split('\n');
+    try { post(urgentEntry({ commit: sha, subject, author, lane: commitLane(sha, boardPaths), rows: result.fresh, base, head: sha, how: 'the commit gate typecheck (report mode) finds' })); }
     catch (error) { log(`[commit-gate-typecheck] board post failed for ${sha.slice(0, 11)}: ${error?.message ?? error}`); }
   }
   const verdict = result.fresh.length ? 'RED' : result.incomplete.length || result.unavailable.length ? 'incomplete' : 'ok';
   recordGateReport(verdictPath, sha, result, verdict);
   return result;
+}
+
+function hasBroadCommitReplay(repo, commit) {
+  return gitAt(repo)(['diff', '--no-renames', '--name-only', '-z', `${commit}^`, commit])
+    .split('\0').some(path => BROAD_REPLAY_PATH.test(path));
+}
+
+async function reportBroadCommitReplay({ repo, commit, env, post = entry => postBoardEntry(repo, entry),
+  boardPaths = [BOARD_PATH, ARCHIVED_BOARD_PATH].map(path => join(repo, path)),
+  log = message => process.stderr.write(`${message}\n`) }) {
+  const script = join(repo, 'scripts/workspaces/runCommitPostChecks.sh');
+  if (!existsSync(script) || !hasBroadCommitReplay(repo, commit) || process.platform === 'win32') return;
+  const git = gitAt(repo);
+  const base = git(['rev-parse', `${commit}^`]).trim();
+  // The existing report consumer runs each exact replay outside the commit lock.
+  // Its entry and bundle phases acquire and release their own grants in sequence.
+  const child = spawn('bash', [script, base, commit], { cwd: repo, env, stdio: ['ignore', 'inherit', 'inherit'] });
+  const [status] = await once(child, 'close').catch(error => {
+    log(`[commit-checks] broad replay could not start for ${commit}: ${error.message}`);
+    return [75];
+  });
+  const verdict = status === 0 ? 'ok' : status === 10 ? 'RED' : 'incomplete';
+  const state = commitPackageTypecheckStateDir(repo, env);
+  appendFileSync(join(state, 'verdicts.log'), `${new Date().toISOString()} BROAD-REPORT-${verdict} commit=${commit} exit=${status}\n`);
+  if (status !== 10) return;
+  const lane = commitLane(commit, boardPaths);
+  const author = git(['log', '-1', '--format=%an', commit]).trim();
+  const addressees = lane && lane !== 'P03 ORCH' ? `${lane}, P03 ORCH` : 'P03 ORCH';
+  const stamp = new Date().toISOString().replace('T', ' ').slice(0, 16);
+  const entry = [
+    `### ${stamp} UTC — P03-COMMIT-CHECKS → ${addressees} — URGENT — Broad post-commit checks failed for ${commit.slice(0, 11)}`,
+    `- ${lane ? `${lane}: fix forward` : `P03 ORCH: route to author ${author} for a fix forward`}. The exact commit ${commit} adds an entry, bundle or export failure over its parent ${base}.`,
+    '- The compilation report lists the failing check and affected paths in runs/gate-report.log under the commit typecheck state directory.',
+    '',
+  ].join('\n');
+  try { post(entry); }
+  catch (error) { log(`[commit-checks] broad report board post failed for ${commit}: ${error.message}`); }
 }
 
 const gateReportQueuePath = state => join(state, 'gate-report-queue');
@@ -770,7 +811,7 @@ async function takeQueuedCommit(state) {
  * lets go (2026-11-18 21:00-21:12Z: one detached process per commit, 10 in 12 min, piled up behind the gate lane).
  */
 export async function drainCommitGateReports({ repo, env = process.env, worker, workerCandidates, ...options }) {
-  const eligible = workerCandidates ? filterExecutionWorkers(workerCandidates, env) : [...typecheckWorkerConnections(repo, env).keys()];
+  const eligible = workerCandidates ? filterExecutionWorkers(workerCandidates, env) : [...typecheckWorkerConnections(repo, env, GATE_PACKAGE_CHECK_CLASS).keys()];
   worker ??= eligible[0];
   if (!eligible.includes(worker)) return [];
   const state = commitPackageTypecheckStateDir(repo, env);
@@ -782,6 +823,11 @@ export async function drainCommitGateReports({ repo, env = process.env, worker, 
     await withWorkspaceBundleLock(async () => {
       for (let commit; (commit = await takeQueuedCommit(state));) {
         await reportCommitGateTypecheck({ repo, env, commit, workers, ...options });
+        try {
+          await reportBroadCommitReplay({ repo, commit, env, ...options });
+        } catch (error) {
+          (options.log ?? console.error)(`[commit-checks] broad report unavailable for ${commit}: ${error.message}`);
+        }
         drained.push(commit);
       }
     }, { lockPath: join(state, `gate-report-${worker}.lock`), timeoutMs: null, wait: false });
@@ -815,12 +861,12 @@ export function commitLane(commit, boardPaths) {
   return undefined;
 }
 
-function urgentEntry({ commit, subject, lane, rows, base, head, how }) {
+function urgentEntry({ commit, subject, author, lane, rows, base, head, how }) {
   const stamp = new Date().toISOString().replace('T', ' ').slice(0, 16);
   const addressees = lane && lane !== 'P03 ORCH' ? `${lane}, P03 ORCH` : 'P03 ORCH';
   return [
     `### ${stamp} UTC — P03-COMMIT-CHECKS → ${addressees} — URGENT — new type errors from ${commit.slice(0, 11)}`,
-    `- ${lane ? `${lane}: fix forward` : 'P03 ORCH: route to the author'}: ${how ? `${how} ${rows.length} new error(s) in \`${commit.slice(0, 11)}\` ("${subject}") against its parent ${base.slice(0, 11)}.`
+    `- ${lane ? `${lane}: fix forward` : `P03 ORCH: route to ${author ?? 'the author'} for a fix forward`}: ${how ? `${how} ${rows.length} new error(s) in \`${commit.slice(0, 11)}\` ("${subject}") against its parent ${base.slice(0, 11)}.`
       : `the rolling HEAD typecheck attributes ${rows.length} new error(s) to \`${commit.slice(0, 11)}\` ("${subject}") by bisecting ${base.slice(0, 11)}..${head.slice(0, 11)}.`}`,
     ...rows.slice(0, 8).map(row => `  - ${row.file}(${row.line},${row.column}): TS${row.code} ${row.text.replace(/\s+/gu, ' ').slice(0, 200)}`),
     ...(rows.length > 8 ? [`  - … ${rows.length - 8} more: \`node scripts/workspaces/commitPackageTypecheck.mjs ${commit.slice(0, 11)}\``] : []),
@@ -1397,11 +1443,11 @@ export function kickRollingHeadTypecheck({ repo, env = process.env, commit }) {
   }
   // The landed commit's gate typecheck in report-and-URGENT mode (P03 ORCH 2026-11-18): its own detached process and
   // worker lane, only for a commit that touches packages/* or packages/plugins/* workspaces.
-  if (commit && commitGateTypecheckPlan({ repo, base: `${commit}^`, tree: commit }).blocking.length) {
+  if (commit && (commitGateTypecheckPlan({ repo, base: `${commit}^`, tree: commit }).blocking.length || hasBroadCommitReplay(repo, commit))) {
     queueCommitGateReport({ repo, env, commit });
     const reportLog = openSync(join(state, 'runs', 'gate-report.log'), 'a');
     try {
-      for (const worker of typecheckWorkerConnections(repo, env).keys()) {
+      for (const worker of typecheckWorkerConnections(repo, env, GATE_PACKAGE_CHECK_CLASS).keys()) {
         spawn(process.execPath, [fileURLToPath(new URL('./commitGateTypecheck.mjs', import.meta.url)), '--report-queue', `--worker=${worker}`],
           { cwd: repo, env: childEnv, detached: true, stdio: ['ignore', reportLog, reportLog] }).unref();
       }

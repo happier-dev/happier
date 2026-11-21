@@ -5,7 +5,7 @@
 // that the base tree does not already have.
 //
 //   node scripts/workspaces/checkCommitTypeCoherence.mjs --base=<rev> --tree=<tree-ish>
-//   ... --base=<head> --tree=<private-tree> --message-file=<file>  (check, replay if needed, CAS commit)
+//   ... --base=<head> --tree=<private-tree> --message-file=<file>  (exact tree safety gate and CAS commit)
 //   node scripts/workspaces/checkCommitTypeCoherence.mjs <commit>...     (each against its first parent)
 //
 // Exit status: 0 coherent, 1 new diagnostics or unowned sources, 2 usage or runtime failure. It reads Git objects, so it
@@ -25,7 +25,7 @@
 // schema (the build's digest rule and derivation, deriveRevisionGeneratedInputs). Workspace packages resolve to their sources (the `happier-source` condition, and
 // tsconfig `paths` into packages/*/dist redirected to src), which is what CI type-checks after it
 // builds those packages at the commit. This is a fast slice check, not a package typecheck verdict:
-// importers reached only through barrels are not roots, and the package typecheck remains the gate.
+// importers reached only through barrels are not roots, and the rolling package typecheck checks the full program after landing.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
@@ -47,8 +47,6 @@ export { commitProducerClosure };
 // Blocking plugin import-boundary check of the packet tree (PLUGIN-BOUNDARY-ZERO-1115-ENFORCEMENT ask):
 // the canonical validator over the packet's changed plugin files, manifests materialized from Git objects.
 export { commitExtensionBoundaries };
-// The touched packages/* typecheck (owner ruling 2026-11-15) runs in its warm per-host worktree under
-// its own admission; its CLI owns the blocking/warn decision and exits 1 only when it refuses.
 
 const require = createRequire(import.meta.url);
 let ts;
@@ -673,106 +671,26 @@ function replayPacket(git, base, tree, head) {
   }
 }
 
-/** Finalizes an in-memory checker result. The caller still owns identity, hooks, own-hunk
- * verification and shared-index synchronization. CLI compiler admission precedes finalization. Before every
- * compare-and-swap the packet passes the commit gate every HEAD writer runs (commitGate.mjs); a refusal
- * returns with `checked.gate` and no commit. The ref moves under the commit wrapper's lock. */
+/** Publish the frozen packet through the same exact-tree gate as every other writer. */
 export async function finalizeCommitTypeCoherence({ repo, checked, message, ref = 'HEAD' }) {
   const git = repository(repo);
-  const original = checked;
-  const packetPaths = git.sliceOf(original.base, original.tree).map(({ path }) => path);
-  if (!packetPaths.length) throw new Error('Cannot finalize an empty packet');
-  const rechecked = new Set();
-  const outcome = (commit) => ({
-    commit, checked,
-    recheckedGroups: [...rechecked].sort(),
-    reusedGroups: checked.groups.map(group => group.id).filter(id => !rechecked.has(id)).sort(),
-  });
-  // Loaded here, not at module scope: the gate's import-cycle check loads the TypeScript compiler, and the CLI loads no
-  // compiler module before its admission (the plain TS CLI re-enters admitted).
+  const original = { ...checked, base: git.gitText(['rev-parse', checked.base]).trim() };
+  if (!git.sliceOf(original.base, original.tree).length) throw new Error('Cannot finalize an empty packet');
   const { finalizeGatedCommit } = await import('./commitGate.mjs');
-  const blocked = () => checked.fresh.length || checked.unowned.length || checked.gate;
-  if (blocked()) return outcome();
-
-  const refresh = (head) => {
-    const replayStarted = Date.now();
-    git.git(['merge-base', '--is-ancestor', checked.base, head]);
-    const tree = replayPacket(git, original.base, original.tree, head);
-    if (tree === git.gitText(['rev-parse', `${head}^{tree}`]).trim())
-      throw new Error('Packet is already present at HEAD');
-    const entries = git.treeEntries(tree);
-    const packetChanges = git.sliceOf(head, tree).filter(({ path }) => TYPESCRIPT_SOURCE.test(path));
-    const roots = [...new Set([
-      ...packetChanges.filter(({ status }) => status !== 'D').map(({ path }) => path),
-      ...git.importersOf(tree, packetChanges),
-    ])];
-    const discovered = git.groupRoots(roots, entries);
-    const previousEntries = git.treeEntries(checked.tree);
-    // The verdict belongs to these exact inputs. Intervening edits that were reverted
-    // cannot change it; compare the checked tree with the replayed tree, not commit history.
-    const changed = new Set(nulList(git.gitText([
-      'diff', '--name-only', '-z', '--no-renames', checked.tree, tree,
-    ])));
-    const contextChanges = new Map();
-    const changesContext = path => {
-      if (contextChanges.has(path)) return contextChanges.get(path);
-      const before = previousEntries.get(path);
-      const after = entries.get(path);
-      const blobs = git.readBlobs([...new Set([before?.oid, after?.oid].filter(Boolean))]);
-      const prior = sourceContext(path, before ? blobs.get(before.oid) : 'export {};');
-      const next = sourceContext(path, after ? blobs.get(after.oid) : 'export {};');
-      // A module outside the closure can still add/remove global declarations through
-      // its own body or changed imports. Those changes keep the existing recheck path.
-      const changed = prior.global || next.global || prior.dependencies !== next.dependencies;
-      contextChanges.set(path, changed);
-      return changed;
-    };
-    const affected = new Set(checked.groups.filter(group => {
-      const paths = new Set(group.paths);
-      const members = new Set(group.members);
-      return [...changed].some(path => paths.has(path)
-        || members.has(path) && changesContext(path)
-        || ['pnpm-lock.yaml', 'pnpm-workspace.yaml'].includes(path)
-        || path.startsWith('patches/')
-        // New compiler inputs in this project's directory can join its configured membership
-        // or resolve an import that was previously unresolved.
-        || (!previousEntries.has(path) && COMPILER_INPUT.test(path)
-          && (group.id === '.' || path.startsWith(`${group.id}/`))));
-    }).map(group => group.id));
-    for (const [id, files] of discovered.groups) {
-      const previous = checked.candidates.find(group => group.id === id);
-      if (!previous || files.some(file => !previous.roots.includes(file))) affected.add(id);
-    }
-    const replayLog = `[commit-coherence] replay head=${head} reused=${checked.groups.map(group => group.id).filter(id => !affected.has(id)).sort().join(',') || 'none'} rechecked=${[...affected].sort().join(',') || 'none'}`;
-    console.error(`${replayLog} phase=start`);
-    let groups = checked.groups;
-    if (affected.size) {
-      const refreshed = checkCommitTypeCoherence({ repo, base: head, tree, onlyGroups: affected });
-      for (const id of affected) rechecked.add(id);
-      groups = [...groups.filter(group => !affected.has(group.id)), ...refreshed.groups];
-    }
-    checked = {
-      ...checked, base: head, tree, groups,
-      candidates: [...discovered.groups].map(([id, files]) => ({ id, roots: files })),
-      roots: groups.reduce((sum, group) => sum + group.roots.length, 0),
-      unowned: discovered.unowned,
-      fresh: groups.flatMap(group => group.fresh),
-    };
-    console.error(`${replayLog} phase=complete ms=${Date.now() - replayStarted}`);
-  };
   const result = await finalizeGatedCommit({
-    repo, ref, label: 'checkCommitTypeCoherence', packet: checked,
+    repo, ref, label: 'checkCommitTypeCoherence', packet: original,
     replay: (head) => {
-      refresh(head);
-      return blocked() ? undefined : checked;
+      git.git(['merge-base', '--is-ancestor', original.base, head]);
+      const tree = replayPacket(git, original.base, original.tree, head);
+      if (tree === git.gitText(['rev-parse', `${head}^{tree}`]).trim()) throw new Error('Packet is already present at HEAD');
+      return { base: head, tree };
     },
     createCommit: ({ base, tree }) => {
       const sign = git.gitText(['config', '--bool', '--default=false', '--get', 'commit.gpgsign']).trim() === 'true';
       return git.git(['commit-tree', ...(sign ? ['-S'] : []), tree, '-p', base], { input: message, encoding: 'utf8' }).trim();
     },
   });
-  if (result.gate) checked = { ...checked, gate: result.gate };
-  return outcome(result.commit);
+  return { commit: result.commit, checked: { ...checked, base: result.head ?? original.base, tree: result.tree ?? original.tree, gate: result.gate } };
 }
 
 async function main(argv) {
@@ -809,6 +727,24 @@ async function main(argv) {
     );
     return 2;
   }
+  if (messageFile) {
+    const finalized = await finalizeCommitTypeCoherence({
+      repo, checked: targets[0], message: readFileSync(messageFile, 'utf8'), ref: option('ref'),
+    });
+    if (!finalized.commit) {
+      const { COMMIT_GATE_EXIT, formatCommitGateIncomplete, formatCommitGateRefusal } = await import('./commitGate.mjs');
+      const gate = finalized.checked.gate;
+      if (gate?.verdict === 'incomplete') {
+        console.error(formatCommitGateIncomplete(gate));
+        return COMMIT_GATE_EXIT.incomplete;
+      }
+      if (gate) console.error(formatCommitGateRefusal(gate));
+      return 1;
+    }
+    console.log(`committed ${finalized.commit}: parent=${finalized.checked.base}`);
+    console.log(kickRollingHeadTypecheck({ repo, commit: finalized.commit }));
+    return 0;
+  }
   let incoherent = 0;
   // This marker selects the re-entered CLI body; the API launcher still owns admission.
   // Replacing the process releases its heap while the canonical launcher queues.
@@ -839,27 +775,7 @@ async function main(argv) {
       );
     for (const file of result.unowned) console.log(`  unowned source: ${file} (no ancestor tsconfig.json)`);
     if (result.fresh.length || result.unowned.length || closure.length || boundary.length) incoherent += 1;
-    if (messageFile) {
-      // The commit gate (closure and boundary included) refuses inside finalization, as in every other writer.
-      const finalized = await finalizeCommitTypeCoherence({ repo, checked: result, message: readFileSync(messageFile, 'utf8'), ref: option('ref') });
-      if (!finalized.commit) {
-        for (const row of finalized.checked.fresh)
-          console.log(`  ${row.file}(${row.line},${row.column}): TS${row.code} ${row.text}`);
-        for (const file of finalized.checked.unowned) console.log(`  unowned source: ${file} (no ancestor tsconfig.json)`);
-        if (finalized.checked.gate) {
-          const { COMMIT_GATE_EXIT, formatCommitGateIncomplete, formatCommitGateRefusal } = await import('./commitGate.mjs');
-          if (finalized.checked.gate.verdict === 'incomplete') {
-            console.error(formatCommitGateIncomplete(finalized.checked.gate));
-            return COMMIT_GATE_EXIT.incomplete;
-          }
-          console.log(formatCommitGateRefusal(finalized.checked.gate));
-        }
-        console.error(`Packet refused: new=${finalized.checked.fresh.length} unowned=${finalized.checked.unowned.length} gate=${finalized.checked.gate?.check ?? 'pass'}`);
-        return 1;
-      }
-      console.log(`committed ${finalized.commit}: parent=${finalized.checked.base} reused=${finalized.reusedGroups.join(',')} rechecked=${finalized.recheckedGroups.join(',')}`);
-      console.log(kickRollingHeadTypecheck({ repo, commit: finalized.commit }));
-    }
+
   }
   return incoherent ? 1 : 0;
 }

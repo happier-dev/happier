@@ -16,6 +16,10 @@ const ENTRY_LOAD_READY = 'HAPPIER_COMMIT_ENTRY_LOAD_READY';
 const ENTRY_GRAPHS_PATH = 'apps/stack/scripts/perf/entry-graphs.mjs';
 const ENTRY_LOAD_PATH = 'apps/stack/scripts/perf/entry-load.mjs';
 const CLI_GRAPH = 'cli';
+const DAEMON_GRAPH = 'daemon';
+const DAEMON_ENTRY = 'apps/cli/src/daemon/startDaemon.ts';
+const REQUIRED_RUNTIME_GRAPHS = new Set([CLI_GRAPH, DAEMON_GRAPH]);
+const TEST_OR_DOC = /(?:^|\/)(?:__tests__|__snapshots__|docs)\/|\.(?:test|spec)\.[cm]?[jt]sx?$|\.mdx?$/iu;
 const GENERATED = 'apps/server/generated';
 // Route composition of the tree's server (P03 ORCH 2026-11-18): the entry graphs stop at the server's import probe,
 // so an Action a route names but the packet's Protocol lacks (1f986f64d8a: review.get) passed them. This graph
@@ -27,6 +31,7 @@ const SERVER_ROUTES_INPUT = /^packages\/protocol\/src\/actions\/|^apps\/server\/
 const GENERATOR_INPUTS = ['apps/server/prisma/schema.prisma', 'apps/server/prisma/sqlite/schema.prisma',
   'apps/server/prisma/mysql/schema.prisma', 'apps/server/scripts/generateClients.ts'];
 // Root-level paths a source graph can load (scripts, configs, manifests, the lockfile, patches).
+const COMMIT_ROOT_RUNTIME_INPUT = /^(?:package\.json$|pnpm-(?:lock|workspace)\.yaml$|\.npmrc$|tsconfig[^/]*\.json$|\.github\/feature-policy\/|patches\/)/u;
 const ROOT_RUNTIME_INPUT = /(\.[cm]?[jt]sx?|\.json|\.ya?ml)$|^patches\//;
 // The entry-load harness and the process probe it runs every graph through.
 const HARNESS = /^apps\/stack\/scripts\/(perf|utils\/proc)\//;
@@ -62,31 +67,8 @@ export function readCommitTreeWorkspacePackages(repo, tree) {
   return treeWorkspacePackages(gitAt(repo), tree);
 }
 
-/** Scope inputs use the same Git-tree manifests and workspace closure as entry loads. */
-export async function selectWorkspaceClosureInputs({ repo, revisions, scopes, paths }) {
-  const git = gitAt(repo);
-  const { workspaceSourcePackageClosure } = await import(new URL('packages/cli-common/sourceRuntimeEntries.mjs', tooling).href);
-  const selected = new Set(scopes.filter(dir => paths.some(path => path.startsWith(`${dir}/`))));
-  if (selected.size === scopes.length) return scopes;
-  for (const revision of revisions) {
-    const packages = treeWorkspacePackages(git, revision);
-    const byRoot = new Map([...packages].map(([name, { root }]) => [root, name]));
-    for (const dir of scopes) {
-      if (selected.has(dir)) continue;
-      const inputs = workspaceSourcePackageClosure(packages, [byRoot.get(dir)]);
-      if ([...inputs].some(name => paths.some(path => path.startsWith(`${packages.get(name).root}/`)))) selected.add(dir);
-    }
-  }
-  return scopes.filter(dir => selected.has(dir));
-}
-
-/**
- * Each nonempty packet must load the CLI it would publish. Other graphs run when a changed workspace is
- * in the workspace dependency closure of the package that owns the graph's entry (the same closure
- * source runtimes resolve). A root-level script, config, manifest, lockfile or patch reaches every
- * graph; other root files (docs, images) do not select additional graphs.
- */
-export async function selectCommitTreeEntryGraphs({ repo, base, tree, prior, priorBase }) {
+/** The commit gate loads affected runtime entry points. Reports can include the full harness. */
+export async function selectCommitTreeEntryGraphs({ repo, base, tree, phase = 'report' }) {
   const git = gitAt(repo);
   const hasPath = (revision, path) => git(['ls-tree', '--name-only', revision, '--', path]).length > 0;
   const hasRegistry = revision => hasPath(revision, ENTRY_GRAPHS_PATH);
@@ -104,17 +86,19 @@ export async function selectCommitTreeEntryGraphs({ repo, base, tree, prior, pri
   if (!graphs.some(graph => graph.id === CLI_GRAPH) && hasPath(tree, 'apps/cli/package.json')) {
     throw new Error('candidate is missing the required CLI entry graph');
   }
+  if (!graphs.some(graph => graph.id === DAEMON_GRAPH) && hasPath(tree, DAEMON_ENTRY)) {
+    throw new Error('candidate is missing the required daemon entry graph');
+  }
   const pathsBetween = (from, to) => git(['diff', '--no-renames', '--name-only', '-z', from, to]).toString().split('\0').filter(Boolean);
   const changed = pathsBetween(base, tree);
-  const packages = treeWorkspacePackages(git, tree);
   const { workspaceSourcePackageClosure } = await import(new URL('packages/cli-common/sourceRuntimeEntries.mjs', tooling).href);
-  const roots = [...packages].map(([name, { root }]) => [name, root]).sort((a, b) => b[1].length - a[1].length);
-  const ownerOf = path => roots.find(([, root]) => path.startsWith(`${root}/`))?.[0] ?? null;
-  const reaches = paths => {
+  const reaches = (paths, packages, rootInput) => {
+    const roots = [...packages].map(([name, { root }]) => [name, root]).sort((a, b) => b[1].length - a[1].length);
+    const ownerOf = path => roots.find(([, root]) => path.startsWith(`${root}/`))?.[0] ?? null;
     const owners = new Set();
     for (const path of paths) {
       const owner = ownerOf(path);
-      if (HARNESS.test(path) || (!owner && ROOT_RUNTIME_INPUT.test(path))) return () => true;
+      if (HARNESS.test(path) || (!owner && rootInput.test(path))) return () => true;
       if (owner) owners.add(owner);
     }
     return entry => {
@@ -128,27 +112,17 @@ export async function selectCommitTreeEntryGraphs({ repo, base, tree, prior, pri
   let routes = false;
   try { git(['cat-file', '-e', `${tree}:${SERVER_ROUTES_ENTRY}`]); routes = true; } catch { /* no server in this tree */ }
   const entries = routes ? [...graphs, { id: SERVER_ROUTES_GRAPH, entry: SERVER_ROUTES_ENTRY }] : graphs;
-  const packetReaches = reaches(changed);
-  let selected = entries.filter(({ id, entry }) => {
-    if (id === CLI_GRAPH) return changed.length > 0;
-    if (id === SERVER_ROUTES_GRAPH) return changed.some(path => SERVER_ROUTES_INPUT.test(path));
-    return packetReaches(entry);
+  const inputs = phase === 'commit' ? changed.filter(path => !TEST_OR_DOC.test(path) || HARNESS.test(path)) : changed;
+  const rootInput = phase === 'commit' ? COMMIT_ROOT_RUNTIME_INPUT : ROOT_RUNTIME_INPUT;
+  const candidateReaches = reaches(inputs, treeWorkspacePackages(git, tree), rootInput);
+  const baseReaches = phase === 'commit' ? reaches(inputs, treeWorkspacePackages(git, base), rootInput) : () => false;
+  const selected = entries.filter(({ id, entry, args, testFiles }) => {
+    const broad = args || testFiles || id === 'sdk-browser' || id === 'daemon-entry-preparation';
+    if (phase === 'commit' && broad || phase === 'deferred' && !broad) return false;
+    if (phase === 'report' && id === CLI_GRAPH) return changed.length > 0;
+    if (id === SERVER_ROUTES_GRAPH) return inputs.some(path => SERVER_ROUTES_INPUT.test(path));
+    return candidateReaches(entry) || baseReaches(entry);
   });
-  if (prior && selected.length) {
-    // The shell wrapper passes a candidate commit, while the private-index helpers supply its parent explicitly.
-    let acceptedBase = priorBase;
-    if (!acceptedBase) {
-      try { acceptedBase = git(['rev-parse', '--verify', `${prior}^`]).toString().trim(); }
-      catch { /* A bare prior tree gives no basis for reusing the old comparison. */ }
-    }
-    if (acceptedBase) {
-      // A failure that used to be inherited can become new if the parent fixed it. Check changes to both sides.
-      const moved = [...pathsBetween(acceptedBase, base), ...pathsBetween(prior, tree)];
-      const inputMoved = reaches(moved);
-      selected = selected.filter(({ id, entry }) => inputMoved(entry)
-        || (id === SERVER_ROUTES_GRAPH && moved.some(path => SERVER_ROUTES_INPUT.test(path))));
-    }
-  }
   return { graphs: entries.map(graph => graph.id), selected: selected.map(graph => graph.id), changed };
 }
 
@@ -207,32 +181,31 @@ function childCpuMs() {
  * not, takes part: a packet that needs another lane's uncommitted producer fails, and another lane's
  * unfinished edit never fails an unrelated packet (owner ruling 2026-11-18).
  *
- * Returns `{ findings, preexisting, results, selected, timings }`. A CLI load failure always refuses the candidate.
+ * Returns `{ findings, preexisting, results, selected, timings }`. A CLI or daemon load failure always refuses the candidate.
  * Other graphs report failures they share with the base. Extraction, derivation or missing harness results make
  * the check unavailable.
  */
-export async function commitTreeEntryLoads({ repo, base, tree, installDir = repo, root = defaultRoot(), env = process.env, signal, graphIds, prior, priorBase, cheapOnly = false, finalEntryRecheck = false, compareAdmittedEntryLoads }) {
+export async function commitTreeEntryLoads({ repo, base, tree, installDir = repo, root = defaultRoot(), env = process.env, signal, graphIds, phase = 'report', compareAdmittedEntryLoads }) {
   const git = gitAt(repo);
   [base, tree] = git(['rev-parse', `${base}^{tree}`, `${tree}^{tree}`]).toString().trim().split('\n');
-  const selection = await selectCommitTreeEntryGraphs({ repo, base, tree, prior, priorBase });
+  const selection = await selectCommitTreeEntryGraphs({ repo, base, tree, phase });
   const selected = graphIds ? selection.graphs.filter(id => graphIds.includes(id)) : selection.selected;
   const empty = { findings: [], preexisting: [], results: [], selected, graphs: selection.graphs.length, timings: {} };
   if (!selected.length) return empty;
-  if (cheapOnly && !compareAdmittedEntryLoads && !finalEntryRecheck) return { ...empty, needsFull: true };
-  const request = { repo, base, tree, installDir, root, selected, graphs: selection.graphs.length, waitForDependencies: !cheapOnly };
+  const request = { repo, base, tree, installDir, root, selected, graphs: selection.graphs.length, waitForDependencies: !compareAdmittedEntryLoads };
   return compareAdmittedEntryLoads
     ? await compareAdmittedEntryLoads(request)
-    : await admitEntryLoads(request, { env, signal, requireInherited: cheapOnly });
+    : await admitEntryLoads(request, { env, signal });
 }
 
-function entryLoadAdmissionCommand(repo, projects, payload, { base, tree, requireInherited } = {}) {
+function entryLoadAdmissionCommand(repo, projects, payload, { base, tree } = {}) {
   if (process.platform === 'win32') return payload;
   const localLauncher = join(repo, 'apps/stack/bin/hstack-exec');
   const launcher = existsSync(localLauncher) ? localLauncher : fileURLToPath(new URL('apps/stack/bin/hstack-exec', tooling));
   return [launcher, '--heavyweight-admission', `--class=${ENTRY_LOAD_ADMISSION_CLASS}`, '--machine=local',
     `--projects=${projects.join('\n')}`, '--identity-arg=node', '--identity-arg=scripts/workspaces/commitTreeEntryLoads.mjs',
     ...(base && tree ? [`--judged-trees=${base},${tree}`] : []),
-    ...(requireInherited ? ['--require-inherited'] : []), '--', ...payload];
+    '--', ...payload];
 }
 
 async function spawnEntryLoadCommand({ repo, projects, payload, signal, env, stdio, ...options }) {
@@ -243,7 +216,7 @@ async function spawnEntryLoadCommand({ repo, projects, payload, signal, env, std
 
 export class EntryLoadAdmissionUnavailable extends Error {
   constructor(status) {
-    super(`entry-load admission did not grant the final recheck (exit ${status})`);
+    super(`entry-load admission did not grant the commit gate (exit ${status})`);
     this.status = status;
   }
 }
@@ -253,11 +226,16 @@ export class EntryLoadAdmissionUnavailable extends Error {
  * from the lock holder. Leave its input open through CAS to retain the slot.
  * Reserve the packet's reachable set because HEAD can move while admission waits.
  */
-export async function withAdmittedCommitEntryPhase({ repo, base, tree, env = process.env }, run) {
-  const { selected: projects } = await selectCommitTreeEntryGraphs({ repo, base, tree });
-  if (!projects.length) return await run();
+export async function withAdmittedCommitEntryPhase({ repo, base, tree, phase, env = process.env }, run) {
+  const { selected: projects } = await selectCommitTreeEntryGraphs({ repo, base, tree, phase });
+  const assertCovered = request => {
+    if (request.selected.some(project => !projects.includes(project))) {
+      throw new Error('HEAD changed the reachable entry points during admission; retry against current HEAD');
+    }
+  };
+  if (!projects.length) return await run(assertCovered);
   const child = await spawnEntryLoadCommand({ repo, projects, env, stdio: ['pipe', 'pipe', 'inherit'],
-    payload: [process.execPath, self, '--entry-load-final-session'] });
+    payload: [process.execPath, self, '--entry-load-commit-session'] });
   const terminal = waitForTreeChild(child);
   // The stream can close before the child reports its exit status.
   terminal.catch(() => {});
@@ -277,9 +255,10 @@ export async function withAdmittedCommitEntryPhase({ repo, base, tree, env = pro
       throw new EntryLoadAdmissionUnavailable(status);
     }
     return await run(async request => {
+      assertCovered(request);
       child.stdin.write(JSON.stringify(request) + '\n');
       const line = await readLine(line => line.startsWith(ENTRY_LOAD_RESULT));
-      if (!line) throw new Error(`admitted entry-load recheck did not return a verdict (exit ${await terminal})`);
+      if (!line) throw new Error(`admitted entry loads did not return a verdict (exit ${await terminal})`);
       return JSON.parse(line.slice(ENTRY_LOAD_RESULT.length));
     });
   } finally {
@@ -289,8 +268,8 @@ export async function withAdmittedCommitEntryPhase({ repo, base, tree, env = pro
   }
 }
 
-async function admitEntryLoads(request, { env, signal, requireInherited }) {
-  const child = await spawnEntryLoadCommand({ ...request, projects: request.selected, signal, requireInherited,
+async function admitEntryLoads(request, { env, signal }) {
+  const child = await spawnEntryLoadCommand({ ...request, projects: request.selected, signal,
     payload: [process.execPath, self, '--entry-load-admitted'],
     env: { ...env, HAPPIER_COMMIT_ENTRY_LOAD_REQUEST: JSON.stringify(request) },
     stdio: ['ignore', 'pipe', 'inherit'] });
@@ -314,8 +293,10 @@ async function compareSelectedEntryLoads({ repo, base, tree, installDir, root, s
       cpuMs: Math.round((cpu.user + cpu.system) / 1000) + (children !== null && childBefore !== null ? children - childBefore : 0) } };
   };
   const candidate = await loadTreeGraphs({ repo, tree, ids: selected, installDir, root, env, signal, timings, waitForDependencies });
-  const cliFailure = candidate.failures.find(failure => failure.graph === CLI_GRAPH);
-  if (cliFailure) return finish({ findings: [cliFailure.finding], preexisting: [], results: candidate.results });
+  const requiredFailures = candidate.failures.filter(failure => REQUIRED_RUNTIME_GRAPHS.has(failure.graph));
+  if (requiredFailures.length) return finish({
+    findings: requiredFailures.map(failure => failure.finding), preexisting: [], results: candidate.results,
+  });
   // Non-CLI graphs keep reporting the delta for checks such as manifest generation and route composition.
   const failing = candidate.failures.map(failure => failure.graph);
   const baseFindings = failing.length
@@ -515,7 +496,7 @@ if (process.argv[1] && existsSync(process.argv[1]) && realpathSync(process.argv[
   const interrupt = () => stop.abort();
   process.once('SIGINT', interrupt);
   process.once('SIGTERM', interrupt);
-  if (args.includes('--entry-load-final-session')) {
+  if (args.includes('--entry-load-commit-session')) {
     const requests = createInterface({ input: process.stdin, crlfDelay: Infinity });
     stop.signal.addEventListener('abort', () => requests.close(), { once: true });
     process.stdout.write(`${ENTRY_LOAD_READY}\n`);
@@ -559,12 +540,12 @@ if (process.argv[1] && existsSync(process.argv[1]) && realpathSync(process.argv[
     }
     const record = entry => { if (ledger) appendFileSync(ledger, `${JSON.stringify({ at: new Date().toISOString(), label, base, tree, ...entry })}\n`); };
     try {
-      const result = await commitTreeEntryLoads({ repo, base, tree, installDir: resolve(option('install-dir') ?? repo), signal: stop.signal });
+      const result = await commitTreeEntryLoads({ repo, base, tree, phase: args.includes('--post-commit') ? 'deferred' : 'report', installDir: resolve(option('install-dir') ?? repo), signal: stop.signal });
       for (const finding of result.findings) console.error(`tree entry load: ${finding}`);
       for (const finding of result.preexisting) console.error(`tree entry load (also fails at the base): ${finding}`);
       console.log(`commit tree entry loads: ${result.selected.length}/${result.graphs} graph(s), ${result.findings.length} failure(s), ${JSON.stringify(result.timings)}`);
       record({ verdict: result.findings.length ? 'would-refuse' : 'pass', selected: result.selected, findings: result.findings, preexisting: result.preexisting, results: result.results, timings: result.timings });
-      process.exitCode = result.findings.length ? 1 : 0;
+      process.exitCode = result.findings.length ? (args.includes('--post-commit') ? 10 : 1) : 0;
     } catch (error) {
       console.error(`commit tree entry loads unavailable: ${String(error?.stack ?? error).slice(0, 800)}`);
       record({ verdict: 'unavailable', error: String(error?.message ?? error).slice(0, 400) });

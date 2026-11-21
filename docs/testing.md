@@ -147,11 +147,11 @@ The SDK's separate Action/cancellation/cleanup scenario still runs in its existi
 validator suite. Existing package import-order, semantic and performance tests remain necessary for
 their narrower contracts.
 
-The exact-tree commit gate selects entry graphs from the packet's workspace
-dependency closure. It retains a prior verdict across HEAD changes outside
-those inputs. After two replay losses, the gate can run the affected entry
-graphs locally under the final commit lock before moving the ref. Dependency
-refresh and uncached worker comparisons remain outside that lock.
+The exact-tree commit gate selects affected runtime entry graphs from the
+packet's workspace dependency closure. It reserves entry-load capacity
+before the commit lock, runs the selected graphs on the tree formed under
+the lock and updates the ref only after they pass. Broad entry probes run
+in the rolling post-commit report.
 
 ### Primary workload standby preparation (0.3 development)
 
@@ -727,42 +727,28 @@ Waiters that have waited past their class’s longest recorded successful run
 are served first in arrival order. Once such a waiter is blocked at the head,
 the broker stops admitting smaller jobs until the head fits. Classes with no
 recorded duration use the existing head-reservation rules.
-Two kinds of work unblock every lane and are served before ordinary waiters
-(Systemic, 2026-11-15): first the shared runtime producer (`source-bundle` running
-`apps/stack/scripts/build/build_source_runtime.mjs`) and the shared web export every
-stack's QA browsers consume (`source-web-export` running
-`apps/stack/scripts/build/build_source_web_ui.mjs`, same rank), then the blocking commit
-compiler (`compilation` running `scripts/workspaces/checkCommitTypeCoherence.mjs`;
-every commit gate, because whether a candidate repairs HEAD is known only after its
-gate). The rolling HEAD typecheck
-(`scripts/workspaces/commitPackageTypecheck.mjs`, the compiler check for every
-`packages/*` commit since 2026-11-16) shares the focused-test rank below, so it and
+The shared runtime producer (`source-bundle` running
+`apps/stack/scripts/build/build_source_runtime.mjs`) and the shared web export
+(`source-web-export` running `apps/stack/scripts/build/build_source_web_ui.mjs`)
+are served before ordinary waiters. The rolling HEAD typecheck
+(`scripts/workspaces/commitPackageTypecheck.mjs`) shares the focused-test rank, so
 focused runs are served in arrival order and later focused runs cannot starve it
-(P03 ORCH, 2026-11-17). The commit gate admits selected tree entry loads,
-exact-worker package typechecks and the controller declaration comparison as
-`gate-entry-loads`, `gate-package-typecheck` and
-`gate-declaration-comparison`. The serial final replay has a separate
-`gate-final-recheck` class. The broker learns memory by command and project selection.
-A packet that has passed retains its original arrival for post-loss requests.
-The broker uses that arrival
-in its existing queue order. Syntax, eager cycles, manifests and ordinary
-CAS need no admission slot. Each HEAD writer waits for every selected entry
-graph to return a verdict before moving the ref. Every nonempty candidate with
-a CLI must prove that its CLI entry loads, regardless of the changed paths.
-An unloadable CLI refuses the packet even when the parent has the same
-failure. A replay can reuse a passing verdict while the CLI's inputs on both
-sides are unchanged. An incomplete
-entry-load result leaves the ref unchanged. Standalone reports use the same
-admission owner.
-After two lost attempts, the final replay takes admission before locking and
-retains it through the ref update. When both entry loads and declaration
-comparison are needed, they run serially within one `gate-final-recheck`
-grant. That class starts at the larger phase reservation and sizes subsequent
-runs from the combined scope's observed working set. Entry-only and
-declaration-only replays retain their own classes. While locked, the gate
-judges only changed entry graphs and Protocol or Plugin SDK declaration
-inputs. If admission or an exact comparison is incomplete, the ref stays at
-the winning commit.
+(P03 ORCH, 2026-11-17). The commit gate admits affected runtime entry loads as
+`gate-entry-loads` before taking the commit lock. The broker learns memory by command and project selection.
+While locked, the gate composes
+the frozen packet against the current ref and checks the exact tree once.
+Changed-source syntax, new eager import cycles, dependency imports and
+exports, plugin manifests, workspace and lockfile sanity, and affected
+runtime loads protect HEAD. An affected CLI or daemon entry must load even
+if the parent has the same failure. An unavailable check or failed
+compare-and-swap leaves the packet unpublished. The gate releases the lock
+after the ref update.
+
+The existing rolling checks run full package and app typechecks. The
+post-commit report compares Protocol and Plugin SDK declarations against
+the exact parent and runs the broader entry, bundle and export checks.
+Findings are attributed to the introducing SHA and sent to its author for
+a fix forward. Before and after the ref update are separate verdicts.
 
 For Protocol and Plugin SDK declarations, the controller admits the original
 comparison, materializing one exact Git tree at a time. The dispatcher removes
@@ -771,21 +757,20 @@ cancellation. It links workspace packages from each judged tree. A newly added
 package has no parent diagnostics. The controller can reuse the published
 installation when its pnpm lockfile supplies the selected packages' external
 dependency closure. Workspace changes and unrelated importers can reuse that
-installation. When the external closure differs, the gate uses the exact-tree
+installation. When the external closure differs, the report uses the exact-tree
 worker's dependency preparation. One finite worker dispatch receives the
 judged Git objects and committed tooling. It prepares each tree's dependencies
 in the dependency-install class before taking that tree's compiler admission.
 The compiler grant ends with the tree's verdict. Only the on-disk worktree is
 kept between dispatches. A busy worker yields to the next worker. If no worker
-can judge, the gate returns `declaration-comparison-incomplete`.
+can judge, the report returns `declaration-comparison-incomplete`.
 
 Once the declaration comparison is admitted on Linux, the broker stops it
 after five consecutive minutes without observed process-tree CPU progress or
 twice the longest successful duration recorded for that command identity on
-the host. Queue time is excluded. Without a duration record, the current commit
-wrapper has no elapsed deadline. A stall logs the measured elapsed and CPU
-values and any recorded duration and peak, releases the admitted job and
-returns typed incomplete before writing the ref.
+the host. Queue time is excluded. A stall logs measured elapsed and CPU values and any
+recorded duration and peak, releases the admitted job and returns typed
+incomplete to the report.
 Priority waiters keep arrival order within their rank. A priority head
 pledges releases at once instead of after the 22m24s bound, and ordinary source
 bundles cannot borrow its pledge. A shared-producer head (rank 2) holds its whole

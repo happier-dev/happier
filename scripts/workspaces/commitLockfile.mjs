@@ -15,7 +15,7 @@ function frozen(repo, rev) {
   const git = (...args) => execFileSync('git', args, { cwd: repo, maxBuffer: 2 ** 31 });
   const files = git('ls-tree', '-r', '--name-only', '-z', rev).toString().split('\0')
     .filter(path => path && DEPENDENCY_INPUT.test(path) && !`/${path}`.includes('/node_modules/'));
-  if (!files.includes('pnpm-lock.yaml')) return { status: 'unavailable', detail: 'no pnpm-lock.yaml at the revision' };
+  if (!files.includes('pnpm-lock.yaml')) return { status: 'no-lockfile' };
   const dir = mkdtempSync(join(tmpdir(), 'happier-commit-lockfile-'));
   try {
     execFileSync('tar', ['-x', '-C', dir], { input: git('archive', '--format=tar', rev, '--', ...files), maxBuffer: 2 ** 31 });
@@ -41,14 +41,23 @@ function frozen(repo, rev) {
   }
 }
 
-/** `{ findings, note }`: a finding is drift the candidate adds; a check that cannot run is a note and never refuses. */
+/** Report newly introduced lockfile drift. A frozen check without a verdict must be retried. */
 export function commitLockfile({ repo, base, tree }) {
-  const changed = execFileSync('git', ['diff', '--no-renames', '--name-only', '-z', base, tree], { cwd: repo, encoding: 'utf8', maxBuffer: 1 << 28 })
+  const git = args => execFileSync('git', args, { cwd: repo, encoding: 'utf8', maxBuffer: 1 << 28 });
+  const changed = git(['diff', '--no-renames', '--name-only', '-z', base, tree])
     .split('\0').filter(path => path && DEPENDENCY_INPUT.test(path));
   if (!changed.length) return { findings: [], note: 'the packet changes no dependency input' };
   const candidate = frozen(repo, tree);
-  if (candidate.status === 'ok') return { findings: [], note: 'the candidate passes pnpm\'s frozen check' };
-  if (candidate.status === 'unavailable') return { findings: [], note: `frozen check unavailable, not judged: ${candidate.detail}` };
-  if (frozen(repo, base).status === 'drift') return { findings: [], note: `frozen check fails at the base too (pre-existing, not refused): ${candidate.detail}` };
+  if (candidate.status === 'ok') return { findings: [], note: 'the candidate passes pnpm’s frozen check' };
+  if (candidate.status === 'no-lockfile') {
+    if (git(['ls-tree', '--name-only', base, '--', 'pnpm-lock.yaml']).trim()) {
+      return { findings: ['candidate removed pnpm-lock.yaml'], note: '' };
+    }
+    return { findings: [], note: 'this checkout uses no pnpm lockfile' };
+  }
+  if (candidate.status === 'unavailable') throw new Error(`candidate frozen check unavailable: ${candidate.detail}`);
+  const previous = frozen(repo, base);
+  if (previous.status === 'unavailable') throw new Error(`base frozen check unavailable: ${previous.detail}`);
+  if (previous.status === 'drift') return { findings: [], note: `frozen check fails at the base too (pre-existing, not refused): ${candidate.detail}` };
   return { findings: [`lockfile out of date with the candidate's manifests: ${candidate.detail}`], note: '' };
 }

@@ -1129,94 +1129,60 @@ test('an excluded fallback worker is never contacted for Git preparation', { ski
 });
 
 
-test('the P03 gate refuses a declaration regression in Protocol or Plugin SDK using the rolling cache', async t => {
+test('a failed broader check reports the exact landed SHA for a fix forward', { skip: process.platform === 'win32' }, async t => {
+  const { repo, commit } = await workspace(t);
+  const runner = join(repo, 'scripts/workspaces/runCommitPostChecks.sh');
+  await mkdir(dirname(runner), { recursive: true });
+  // The shell check is a process boundary. Exercise the real post-commit queue and reporter.
+  await writeFile(runner, 'printf "%s\\n" "$1" "$2" > replayed\nexit 10\n');
+  const sha = await commit('packages/leaf/src/index.ts', 'export const value = 42;\n');
+  const base = execFileSync('git', ['rev-parse', `${sha}^`], { cwd: repo, encoding: 'utf8' }).trim();
+  const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: join(repo, '.git/typecheck-state') };
+  const posts = [];
+  queueCommitGateReport({ repo, env, commit: sha });
+  const remote = (trees, dirs) => new Map(trees.map(tree => [tree, new Map(dirs.map(dir => [dir, []]))]));
+  const drained = await drainCommitGateReports({
+    repo, env, workerCandidates: ['nl1'], remote, post: entry => posts.push(entry), boardPaths: [],
+  });
+  assert.deepEqual(drained, [sha]);
+  assert.equal(readFileSync(join(repo, 'replayed'), 'utf8'), `${base}\n${sha}\n`);
+  assert.equal(posts.length, 1);
+  assert.match(posts[0], /Package Typecheck Test for a fix forward/u);
+  assert.ok(posts[0].includes(sha));
+  assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim(), sha);
+});
+
+test('Protocol and SDK declaration diagnostics are fix-forward reports after landing, regardless of a legacy block setting', async t => {
   const { repo, commit } = await workspace(t);
   const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  git('rm', '-r', '--quiet', '--', 'apps/cli');
+  git('commit', '--quiet', '-m', 'remove fixture CLI for declaration-only check');
   const state = join(repo, '.git/typecheck-state');
   const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state,
-    HAPPIER_COMMIT_TYPECHECK_GATE: 'report', HAPPIER_COMMIT_TREE_GATE: 'off',
-    HAPPIER_COMMIT_TYPECHECK_WORKERS: ' ' };
+    HAPPIER_COMMIT_TYPECHECK_GATE: 'block', HAPPIER_COMMIT_TYPECHECK_WORKERS: ' ' };
   await commit('packages/plugin-sdk/package.json', JSON.stringify({ name: '@x/plugin-sdk', scripts: { typecheck: 'tsc' } }));
   await commit('packages/plugin-sdk/src/index.ts', 'export function api(): number { return 0; }\n');
-  const judge = (base, tree, options) => runCommitGate({ repo, base, tree, env, label: 'commit-partial', ...options });
-  // Seed the existing worker-result boundary, keeping the Git comparison and gate real.
-  const cache = async (rev, dir, rows) => {
-    const tree = git('rev-parse', `${rev}^{tree}`);
-    const results = join(state, 'results', tree);
-    await mkdir(results, { recursive: true });
-    await writeFile(join(results, `${dir.replaceAll('/', '__')}.prepared-declarations.json`), JSON.stringify({ rows }));
-  };
   for (const dir of ['packages/protocol', 'packages/plugin-sdk']) {
     await commit(`${dir}/tsconfig.json`, JSON.stringify({ compilerOptions: { declaration: true, isolatedDeclarations: true } }));
     const file = `${dir}/src/index.ts`;
-    const clean = await commit(file, 'export function api(): number { return 1; }\n');
-    const broken = await commit(file, 'export function api() { return 1; }\n');
-    const diagnostic = { file, line: 1, column: 17, code: 9007,
-      text: 'Function must have an explicit return type annotation with --isolatedDeclarations.' };
-    await cache(clean, dir, []);
-    await cache(broken, dir, [diagnostic]);
-    const verdict = await judge(clean, broken);
-    assert.equal(verdict.verdict, 'refused', dir);
-    assert.match(verdict.findings.join('\n'), /TS9007/u);
-    const replay = await judge(clean, broken, { prior: clean, cheapOnly: true });
-    assert.equal(replay.verdict, 'refused', dir);
-    assert.match(replay.findings.join('\n'), /TS9007/u);
-    assert.equal((await judge(clean, broken, { prior: clean })).verdict, 'refused', dir);
-
-    const inherited = await commit(file, 'export function api() { return 2; }\n');
-    await cache(inherited, dir, [diagnostic]);
-    assert.equal((await judge(broken, inherited)).verdict, 'pass', dir);
+    const base = await commit(file, 'export function api(): number { return 1; }\n');
+    const tree = await commit(file, 'export function api() { return 1; }\n');
+    const diagnostic = { file, line: 1, column: 17, code: 9007, text: 'Function must have an explicit return type annotation.' };
+    for (const [rev, rows] of [[base, []], [tree, [diagnostic]]]) {
+      const resultDir = join(state, 'results', git('rev-parse', `${rev}^{tree}`));
+      await mkdir(resultDir, { recursive: true });
+      await writeFile(join(resultDir, `${dir.replaceAll('/', '__')}.prepared-declarations.json`), JSON.stringify({ rows }));
+    }
+    await writeFile(join(state, 'verdicts.log'), `2026-11-21T00:00:00.000Z ROLLING-ok scope=packages base=${base} head=${tree} packages=${dir} new=0 incomplete=- unavailable=- 1.0s\n`, { flag: 'a' });
+    const verdict = await runCommitGate({ repo, base, tree, env, label: 'commit-partial' });
+    assert.equal(verdict.verdict, 'pass', dir);
+    const posts = [];
+    const report = await reportCommitGateTypecheck({ repo, commit: tree, env, post: entry => posts.push(entry) });
+    assert.equal(report.fresh[0]?.code, 9007, dir);
+    assert.equal(posts.length, 1);
+    assert.match(posts[0], /TS9007/u);
+    assert.equal(git('rev-parse', 'HEAD'), tree);
   }
-  const other = await commit('packages/leaf/src/index.ts', 'export const value = 3;\n');
-  const verdict = await judge(`${other}^`, other);
-  assert.equal(verdict.verdict, 'pass');
-  assert.ok(verdict.notes.every(note => !note.includes('package typecheck')));
-});
-
-
-test('the scoped declaration gate reports a typed incomplete result when no worker can judge', async t => {
-  const { repo, commit } = await workspace(t);
-  const tree = await commit('packages/protocol/src/index.ts', 'export const value = 2;\n');
-  const env = { ...process.env, HAPPIER_COMMIT_TREE_GATE: 'off', HAPPIER_COMMIT_TYPECHECK_GATE: 'report',
-    HAPPIER_COMMIT_TYPECHECK_DIR: join(repo, 'empty-cache'), HAPPIER_COMMIT_TYPECHECK_WORKERS: ' ' };
-  const gate = await runCommitGate({ repo, base: `${tree}^`, tree, env, label: 'commit-partial' });
-  assert.equal(gate.verdict, 'incomplete');
-  assert.deepEqual(gate.reason, { code: 'declaration-comparison-incomplete', packages: ['packages/protocol'] });
-  const cli = spawnSync(process.execPath, [fileURLToPath(new URL('./commitGate.mjs', import.meta.url)),
-    '--label=commit-partial', `--base=${tree}^`, `--tree=${tree}`], { cwd: repo, env, encoding: 'utf8' });
-  assert.equal(cli.status, 11, cli.stdout + cli.stderr);
-  assert.match(cli.stdout, /"code":"declaration-comparison-incomplete"/u);
-});
-
-test('the scoped declaration replay reuses Protocol across unrelated commits and rechecks SDK dependencies', async t => {
-  const { repo, commit } = await workspace(t);
-  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
-  const env = { ...process.env, HAPPIER_COMMIT_TREE_GATE: 'off', HAPPIER_COMMIT_TYPECHECK_GATE: 'report',
-    HAPPIER_COMMIT_TYPECHECK_DIR: join(repo, 'empty-cache'), HAPPIER_COMMIT_TYPECHECK_WORKERS: ' ' };
-  await commit('packages/plugin-sdk/package.json', JSON.stringify({
-    name: '@x/plugin-sdk', dependencies: { '@x/sdk': 'workspace:*' },
-  }));
-  await commit('packages/plugin-sdk/src/index.ts', 'export const sdk = 1;\n');
-  const protocol = 'packages/protocol/src/index.ts';
-  const sdk = 'packages/plugin-sdk/src/index.ts';
-  const history = async (packetPath, packet, landedPath, landed) => {
-    const base = git('rev-parse', 'HEAD');
-    const prior = await commit(packetPath, packet);
-    await commit(packetPath, git('show', `${base}:${packetPath}`) + '\n');
-    const nextBase = await commit(landedPath, landed);
-    const tree = await commit(packetPath, packet);
-    return { base: nextBase, tree, prior, priorBase: base };
-  };
-  const run = options => runCommitGate({ repo, env, label: 'commit-partial', cheapOnly: true, ...options });
-  const unrelated = await run(await history(protocol, 'export const value = 2;\n',
-    'packages/leaf/src/index.ts', 'export const value = 3;\n'));
-  assert.equal(unrelated.verdict, 'pass');
-  assert.ok(unrelated.notes.every(note => !note.includes('package typecheck')));
-
-  const relevant = await run(await history(sdk, 'export const sdk = 2;\n', protocol, 'export const value = 5;\n'));
-  assert.equal(relevant.verdict, 'needs-full', 'SDK reads Protocol through its workspace dependency closure');
-  assert.equal(relevant.check, 'package declarations');
-  assert.match(relevant.notes.join('\n'), /package typecheck: packages\/plugin-sdk /u);
 });
 
 test('the gate reports missing published workspace declarations as incomplete instead of attributing them', async t => {
