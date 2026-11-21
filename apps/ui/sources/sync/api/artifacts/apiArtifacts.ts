@@ -214,6 +214,11 @@ async function artifactHttpReadError(response: Response, fallback: string, code?
     const payload: unknown = await response.json().catch(() => null);
     const transient = readTransientAvailabilityFailure(payload && typeof payload === 'object' ? Reflect.get(payload, 'error') : undefined);
     if (transient) return new HappyError(transient.code, true, { status: response.status, code: transient.code });
+    if (response.status === 403) {
+        const refusal = ArtifactAccessErrorCodeV1Schema.safeParse(payload && typeof payload === 'object' ? Reflect.get(payload, 'error') : undefined);
+        return new HappyError(refusal.success ? refusal.data : fallback, false,
+            { status: response.status, code: refusal.success ? refusal.data : code ?? 'content_unavailable' });
+    }
     if (response.status === 404) {
         return new HappyError('Artifact not found', false, { status: 404, code: code ?? 'not_found' });
     }

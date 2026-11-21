@@ -9,9 +9,13 @@ import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from '@happier-dev/pr
 import { ArtifactReadBatchInputV1Schema, ArtifactReadBatchHttpInputV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 
 const runtimeFetch = vi.hoisted(() => vi.fn());
-vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch: (...args: unknown[]) => runtimeFetch(...args) ,
-    get runtimeFetchManualResponse() { return this.runtimeFetch; },
-}));
+vi.mock('@/utils/system/runtimeFetch', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/utils/system/runtimeFetch')>();
+    return { ...actual,
+        runtimeFetch: (...args: unknown[]) => runtimeFetch(...args),
+        runtimeFetchManualResponse: (...args: unknown[]) => runtimeFetch(...args),
+    };
+});
 afterEach(() => runtimeFetch.mockReset());
 
 // The shared setup resets this real owner; load its cold graph outside the hook budget.
@@ -306,5 +310,23 @@ describe('Artifact read acquisition', () => {
                 .resolves.toMatchObject([{ artifactId: ids[0], ok: false }]);
             expect(attempts).toBe(2);
         } finally { release.resolve(); }
+    });
+});
+
+
+describe('requester Artifact HTTP refusal causes', () => {
+    it.each(['artifact_access_forbidden', 'artifact_data_key_changed'])(
+        'keeps the closed 403 code %s for the requester presenter', async code => {
+            const { fetchArtifact } = await import('./apiArtifacts');
+            const readTransport = capturedRead(async () => Response.json({ error: code }, { status: 403 }));
+            await expect(fetchArtifact({ token: 'same-authority' }, 'refused-document', { readTransport, retry: 'none' }))
+                .rejects.toMatchObject({ code, status: 403 });
+        });
+
+    it('does not turn foreign HTTP prose into a requester cause', async () => {
+        const { fetchArtifact } = await import('./apiArtifacts');
+        const readTransport = capturedRead(async () => Response.json({ error: 'private upstream diagnostic' }, { status: 403 }));
+        await expect(fetchArtifact({ token: 'same-authority' }, 'refused-document', { readTransport, retry: 'none' }))
+            .rejects.toMatchObject({ code: 'content_unavailable', message: 'Failed to fetch artifact' });
     });
 });
