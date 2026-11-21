@@ -3,6 +3,7 @@ import { ActionPolicyInputSchemas, isActionPolicyActionId, readActionAudiencePol
     applyActionPolicyMutation, type ActionPolicyActionId, type ActionPolicySetResult } from '@happier-dev/protocol/actions';
 import type { ReadableApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfiles';
 import type { SessionApprovalConsentsStoreV1 } from '@happier-dev/protocol/actions/sessionApprovalConsentsV1';
+import type { ActionPolicyOutputSchemas } from '@happier-dev/protocol/actions/actionPolicyActionFamily';
 import { executeSessionApprovalConsentPolicyV1 } from '@happier-dev/protocol/actions/sessionApprovalConsentPolicyV1';
 import type { ApprovalProfileArtifactChangeV1, executeApprovalProfileArtifactChangeV1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
@@ -100,6 +101,8 @@ class RejectedSettingMutation extends Error {
 }
 type SettingsDeclarationActionResult = z.output<(typeof SettingsDeclarationActionOutputSchemasV1)[SettingsDeclarationActionIdV1]>
     | ActionPolicySetResult
+    // The Session target's row listing (actions.policy.get { session }).
+    | z.output<typeof ActionPolicyOutputSchemas['actions.policy.get']>
     | Readonly<{ profiles: readonly ReadableApprovalProfileV1[] }>
     | ReturnType<typeof refuse> | ActionApprovalRequestCreatedResult;
 class ConditionalSettingConflict extends Error {}
