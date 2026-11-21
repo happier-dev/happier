@@ -187,9 +187,10 @@ export async function resolveActionCurrentSessionScopeFailure(
   // A current-Session default is selection, not a restriction on this control.
   if (actionId === 'session.compact' && context.surface === 'agent') return null;
   // Own-Session destinations already passed above. Copy may read any authorized
-  // source, but current-Session access still restricts where it writes.
+  // source. Led-subtree reads do not expand the caller's Board write scope.
   if (isSessionBoardActionIdV1(actionId) && inputRecord.copySource !== undefined) {
-    return context.sessionListAccess === 'current_session' ? refuse('current_session_only') : null;
+    return context.sessionListAccess === 'current_session' || context.sessionListAccess === 'led_subtree'
+      ? refuse('current_session_only') : null;
   }
   if (!defaultSessionId) {
     return refuse('default_session_unavailable');

@@ -68,14 +68,20 @@ describe('Session visual copy through the Action', () => {
     expect(sourceReads()).toBe(1);
   });
 
-  // Owner ruling 2026-11-10: copy sources may be cross-Session; destinations may not.
-  it.each(['agent', 'mcp'] as const)('refuses a foreign destination for current-Session %s access', async surface => {
-    const { executor, saved, confirmations } = copyExecutor();
+  // Own-Session writes can copy readable visuals across Sessions, including for a native Agent with led-subtree reads.
+  it.each([
+    ['agent', 'current_session'],
+    ['mcp', 'current_session'],
+    ['agent', 'led_subtree'],
+    ['mcp', 'led_subtree'],
+  ] as const)('refuses a foreign copy destination for %s with %s access', async (surface, sessionListAccess) => {
+    const { executor, saved, confirmations, sourceReads } = copyExecutor();
     const result = await executor.execute('session.board.item.upsert', copyInput, {
-      surface, serverId: 'home', defaultSessionId: 'source', sessionListAccess: 'current_session',
+      surface, serverId: 'home', defaultSessionId: 'source', sessionListAccess,
       actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'session.board.item.upsert': [surface] } }),
     });
     expect(result).toMatchObject({ ok: false, errorCode: 'unsupported_action', details: { cause: 'current_session_only' } });
+    expect(sourceReads()).toBe(0);
     expect(saved).toEqual([]);
     expect(confirmations).toEqual([]);
   });

@@ -1459,8 +1459,8 @@ Action policy; it does not decide approval itself. Unchanged or narrower
 capabilities keep the reversible UI default. An explicit per-Action/surface
 waiver remains authoritative. Copying another Session's visual asks because
 the independent copy gains its destination Session's host access.
-In unreleased 0.3 source, an agent with `current_session` Session access may copy
-from any Session the Account can read, but only into its current Session.
+In unreleased 0.3 source, a Session agent with `current_session` or `led_subtree`
+access may copy from any Session the Account can read into its own Session.
 The Session-scope owner refuses another destination with the existing
 `current_session_only` cause. Account-wide agents and present-user UI copies
 retain their existing scope; source reads still require ordinary read authority.
