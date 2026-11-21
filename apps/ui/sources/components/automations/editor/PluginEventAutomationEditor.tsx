@@ -26,6 +26,7 @@ import {
 } from '@/sync/domains/automations/pluginEventAutomationEditSeed';
 import {
     usePluginEventAutomationComposer,
+    type NewNativeSourceSetup,
     type PluginEventAutomationComposerModel,
 } from './usePluginEventAutomationComposer';
 
@@ -162,6 +163,10 @@ export function PluginEventAutomationEditor(props: Readonly<{
     savedSourceSetup?: NonNullable<Parameters<typeof usePluginEventAutomationComposer>[0]['savedSourceSetup']> & Readonly<{
         renderUnavailable: (retry: () => void, machineName: string | null) => React.ReactNode;
     }>;
+    /** Open the seeded native form directly and settle an observation without a workflow target. */
+    newSourceSetup?: NewNativeSourceSetup & Readonly<{
+        renderUnavailable: (retry: () => void, machineName: string | null) => React.ReactNode;
+    }>;
     observationOnly?: PluginEventAutomationEditorIntent['observationOnly'];
     authoringMachineId: string | null;
     serverId: string | null;
@@ -188,14 +193,17 @@ export function PluginEventAutomationEditor(props: Readonly<{
     }> | null>(null);
     const currentObservation = props.value?.observationTransport ?? currentSeed?.observation ?? null;
     const [catalogRefresh, setCatalogRefresh] = React.useState(0);
-    const setup = props.savedSourceSetup;
+    const setup = props.savedSourceSetup ?? props.newSourceSetup;
+    const chooseWatcher = props.savedSourceSetup?.chooseWatcher === true;
+    const newSetup = props.newSourceSetup !== undefined && props.savedSourceSetup === undefined;
+    const authoringMachineId = props.newSourceSetup?.seed.monitoringMachineId ?? props.authoringMachineId;
     const placement = endpointPlacement !== null && endpointPlacement.seed === currentSeed && endpointPlacement.lifetime === accountLifetime
         && accountLifetime?.isCurrent() ? endpointPlacement.machineId : null;
-    const machineId = setup?.chooseWatcher && !placement ? null : resolvePluginEventEditorProjectionMachineId({
+    const machineId = chooseWatcher && !placement ? null : resolvePluginEventEditorProjectionMachineId({
         observation: currentObservation,
-        authoringMachineId: props.authoringMachineId,
+        authoringMachineId,
         resolvedEndpointMachineId: placement,
-        selectedWatcherMachineId: currentObservation === null || setup?.chooseWatcher ? placement : null,
+        selectedWatcherMachineId: currentObservation === null || chooseWatcher ? placement : null,
     });
     const setupMachineName = useServerScopedMachineLabel(props.serverId, setup ? machineId : null);
     const projection = useDaemonMergedProjectionInputs({
@@ -215,32 +223,37 @@ export function PluginEventAutomationEditor(props: Readonly<{
         initialEventRef: props.initialEventRef,
         initialSetupSeed: props.initialSetupSeed,
         savedSourceSetup: props.savedSourceSetup,
-        defaultWatcherMachineId: props.authoringMachineId,
+        newSourceSetup: newSetup ? props.newSourceSetup : undefined,
+        defaultWatcherMachineId: authoringMachineId,
     });
     React.useEffect(() => {
         // A new Event reads the authoring Machine's catalog and follows the selected watcher's Machine
         // (the composer pre-selects one there). Saved endpoint placement still belongs to the existing endpoint reader.
-        const selectedMachineId = currentObservation === null || (setup?.chooseWatcher && currentObservation.kind !== 'durablePush')
+        const selectedMachineId = currentObservation === null || (chooseWatcher && currentObservation.kind !== 'durablePush')
             ? model.selectedWatcherOrigin ? getPluginMachineExecutionOriginRef(model.selectedWatcherOrigin).machineId : null
             : model.seededObservationMachineId;
         setEndpointPlacement(selectedMachineId && accountLifetime?.isCurrent()
             ? { seed: currentSeed, lifetime: accountLifetime, machineId: selectedMachineId } : null);
-    }, [accountLifetime, currentSeed, currentObservation, model.seededObservationMachineId, model.selectedWatcherOrigin, setup?.chooseWatcher]);
+    }, [accountLifetime, currentSeed, currentObservation, model.seededObservationMachineId, model.selectedWatcherOrigin, chooseWatcher]);
     const nativeSetupStarted = React.useRef(false);
+    const readyToOpen = newSetup
+        ? model.sourceStatus === 'idle' && model.selectedEvent !== null && model.selectedWatcherOrigin !== null
+        : model.sourceStatus === 'configured';
     React.useEffect(() => {
-        if (!setup || setup.chooseWatcher || nativeSetupStarted.current || model.sourceStatus !== 'configured') return;
+        if (!setup || chooseWatcher || nativeSetupStarted.current || !readyToOpen) return;
         nativeSetupStarted.current = true;
         model.configureSource();
-    }, [model.configureSource, model.sourceStatus, setup]);
+    }, [chooseWatcher, model.configureSource, readyToOpen, setup]);
     if (setup) {
         const retrySetup = () => {
-            if (model.eventCatalogStatus === 'ready' && model.selectedEvent) model.configureSource();
+            if (model.eventCatalogStatus === 'ready' && model.selectedEvent
+                && (!newSetup || model.selectedWatcherOrigin)) model.configureSource();
             else {
                 nativeSetupStarted.current = false;
                 setCatalogRefresh(current => current + 1);
             }
         };
-        if (setup.chooseWatcher && model.sourceStatus !== 'settingUp') {
+        if (chooseWatcher && model.sourceStatus !== 'settingUp') {
             return <View style={styles.content}>
                 <PluginEventAutomationComposerContent model={model} watcherOnly />
                 {model.selectedWatcherOrigin && (model.sourceStatus === 'unavailable' || model.eventCatalogStatus === 'unavailable')
@@ -257,7 +270,8 @@ export function PluginEventAutomationEditor(props: Readonly<{
             </View>;
         }
         const waiting = model.eventCatalogStatus === 'loading' || model.sourceStatus === 'settingUp'
-            || (!setup.chooseWatcher && model.eventCatalogStatus === 'ready' && model.sourceStatus === 'idle');
+            || (newSetup ? readyToOpen && !nativeSetupStarted.current
+                : !chooseWatcher && model.eventCatalogStatus === 'ready' && model.sourceStatus === 'idle');
         if (waiting) return <SurfaceStateCard size="line" kind="loading" title={t('common.loading')} />;
         if (model.sourceStatus === 'configured') return null;
         return setup.renderUnavailable(retrySetup, setupMachineName);

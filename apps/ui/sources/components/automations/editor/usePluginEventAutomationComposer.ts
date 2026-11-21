@@ -82,6 +82,17 @@ type WebhookEndpointRefreshRequest = Readonly<{
     setupScope: AbortController;
 }>;
 
+type NativeSourceConfigured = Readonly<{
+    kind: 'configured';
+    trigger: NonNullable<ReturnType<typeof buildPluginEventAutomationTriggerInput>>;
+}>;
+type NativeSourceCancelled = Readonly<{ kind: 'cancelled' }>;
+export type NewNativeSourceSetup = Readonly<{
+    seed: PluginUiOpenAutomationEventRequestV1;
+    onSettled: (settlement: (NativeSourceConfigured & Readonly<{ observationOnly: Readonly<{ kind: 'observationOnly' }> }>)
+        | NativeSourceCancelled) => void;
+}>;
+
 /**
  * Presentation facts for one daemon-declared Event plugin. The composer only
  * reflects projection/account currentness here; it never derives a parallel
@@ -269,14 +280,12 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     onEditSeedApplied?: (trigger: NonNullable<ReturnType<typeof buildPluginEventAutomationTriggerInput>>, seed: PluginEventAutomationEditSeed) => void;
     initialEventRef?: Readonly<{ pluginId: string; localId: string }> | null;
     initialSetupSeed?: PluginUiOpenAutomationEventRequestV1;
+    newSourceSetup?: NewNativeSourceSetup;
     /** Observe submission of the native form in a direct saved-source edit. */
     savedSourceSetup?: Readonly<{
         input: NonNullable<PluginUiOpenAutomationEventRequestV1['setupInput']>;
         chooseWatcher: boolean;
-        onSettled: (settlement: Readonly<{
-            kind: 'configured';
-            trigger: NonNullable<ReturnType<typeof buildPluginEventAutomationTriggerInput>>;
-        }> | Readonly<{ kind: 'cancelled' }>) => void;
+        onSettled: (settlement: NativeSourceConfigured | NativeSourceCancelled) => void;
     }>;
     /** The surface's Machine (a workflow's Runs on): a new Event watches from its installation unless the person picks another. */
     defaultWatcherMachineId?: string | null;
@@ -288,8 +297,9 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     const classifyRelease = useActivePluginAccountAvailabilityReleaseClassifier();
     const machineSnapshots = useAllProfileMachineInventorySnapshots();
     const initialEditSeed = params.initialEditSeed ?? null;
+    const initialSetupSeed = params.newSourceSetup?.seed ?? params.initialSetupSeed;
     const movingSavedSource = params.savedSourceSetup?.chooseWatcher === true;
-    const initialEventRef = params.initialEventRef ?? params.initialSetupSeed?.eventRef
+    const initialEventRef = params.initialEventRef ?? initialSetupSeed?.eventRef
         ?? (movingSavedSource ? initialEditSeed?.eventRef : null) ?? null;
     const [selectedEvent, setSelectedEvent] = React.useState<DaemonContributionRegistryProjectionAutomationEligibleEventV1 | null>(null);
     const selectedEventRef = React.useRef(selectedEvent);
@@ -456,9 +466,9 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         [availabilityReader],
     );
     const watcherPluginId = selectedEvent?.event.identity.pluginId ?? initialEditSeed?.eventRef.pluginId ?? initialEventRef?.pluginId ?? '';
-    const monitoringMachineId = params.initialSetupSeed && (!selectedEvent
-        || arePluginContributionIdentitiesEqual(params.initialSetupSeed.eventRef, selectedEvent.event.identity))
-        ? params.initialSetupSeed.monitoringMachineId : undefined;
+    const monitoringMachineId = initialSetupSeed && (!selectedEvent
+        || arePluginContributionIdentitiesEqual(initialSetupSeed.eventRef, selectedEvent.event.identity))
+        ? initialSetupSeed.monitoringMachineId : undefined;
     React.useEffect(() => {
         if (!watcherPluginId || !monitoringMachineId || !availabilityReader) return;
         fireAndForget(availabilityReader.ensureAutomationEventDeclarations({ pluginId: watcherPluginId, machineId: monitoringMachineId }), {
@@ -630,7 +640,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     // The one current installation there is chosen for the person; any other watcher stays one pick away.
     const defaultWatcherMachineId = params.defaultWatcherMachineId ?? null;
     React.useEffect(() => {
-        const seed = params.initialSetupSeed;
+        const seed = initialSetupSeed;
         const eventRef = selectedEvent?.event.identity ?? initialEventRef;
         if (!eventRef || initialEditSeed || selectedWatcherOrigin) return;
         const preferredMachineId = seed?.monitoringMachineId && arePluginContributionIdentitiesEqual(seed.eventRef, eventRef)
@@ -640,7 +650,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             getPluginMachineExecutionOriginRef(getPluginExecutionOriginCandidateOrigin(candidate)).machineId;
         const candidates = selectableWatchers.filter(candidate => machineId(candidate) === preferredMachineId);
         if (candidates.length === 1) selectWatcher(candidates[0]!);
-    }, [defaultWatcherMachineId, initialEditSeed, initialEventRef, params.initialSetupSeed, selectedEvent, selectedWatcherOrigin,
+    }, [defaultWatcherMachineId, initialEditSeed, initialEventRef, initialSetupSeed, selectedEvent, selectedWatcherOrigin,
         selectWatcher, selectableWatchers]);
 
     const resolveExecutionOrigin = React.useCallback(() => {
@@ -880,14 +890,15 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             setSourceFailure(null);
             const configured = await configurePluginEventAutomationSetup({
                 commandBridge,
+                requireNativeRenderer: params.newSourceSetup !== undefined,
                 savedSourceRendererInput: params.savedSourceSetup?.input,
                 eligibleEvent: currentEvent,
                 ...(configuredSetup && arePluginContributionIdentitiesEqual(configuredSetup.draft.eventRef, currentEvent.event.identity)
                     ? { initialSource: configuredSetup.draft.source }
                     : initialEditSeed && arePluginContributionIdentitiesEqual(initialEditSeed.eventRef, currentEvent.event.identity)
                         ? { initialSource: initialEditSeed.source } : {}),
-                ...(params.initialSetupSeed && arePluginContributionIdentitiesEqual(params.initialSetupSeed.eventRef, currentEvent.event.identity)
-                    ? { initialSetupSeed: params.initialSetupSeed } : {}),
+                ...(initialSetupSeed && arePluginContributionIdentitiesEqual(initialSetupSeed.eventRef, currentEvent.event.identity)
+                    ? { initialSetupSeed } : {}),
                 observationTransport: effectiveObservationTransport,
                 filter: filter.value,
                 maximumObservationAgeMs: maximumObservationAgeMs.value,
@@ -912,7 +923,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             if (configured.kind === 'cancelled') {
                 setSourceStatus(previousStatus);
                 setSourceFailure(previousFailure);
-                params.savedSourceSetup?.onSettled({ kind: 'cancelled' });
+                (params.savedSourceSetup ?? params.newSourceSetup)?.onSettled({ kind: 'cancelled' });
                 return;
             }
             if (configured.kind !== 'configured') {
@@ -934,13 +945,16 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             setSourceFailure(configured.webhookEndpointUnavailable
                 ? { code: 'webhook_endpoint_unavailable', reason: 'webhook_endpoint_unavailable' } : null);
             advanceRevision();
-            if (params.savedSourceSetup) {
+            if (params.savedSourceSetup || params.newSourceSetup) {
                 const watcher = resolveExecutionOrigin();
                 const trigger = watcher && buildPluginEventAutomationTriggerInput({
                     eligibleEvents, draft: configured.draft.draft, watcherOrigin: watcher.origin,
                 });
-                if (trigger) params.savedSourceSetup.onSettled({ kind: 'configured', trigger });
-                else setSourceStatus('unavailable');
+                const observationOnly = configured.draft.draft.source.observationOnly;
+                if (trigger && params.savedSourceSetup) params.savedSourceSetup.onSettled({ kind: 'configured', trigger });
+                else if (trigger && observationOnly && params.newSourceSetup) {
+                    params.newSourceSetup.onSettled({ kind: 'configured', trigger, observationOnly });
+                } else setSourceStatus('unavailable');
             }
         })();
     }, [
@@ -959,7 +973,8 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         setupScope,
         sourceStatus,
         sourceFailure,
-        params.initialSetupSeed,
+        initialSetupSeed,
+        params.newSourceSetup,
         params.savedSourceSetup,
     ]);
 

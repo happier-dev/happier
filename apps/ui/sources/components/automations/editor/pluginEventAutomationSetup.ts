@@ -236,6 +236,7 @@ function resolveCurrentSetupSnapshot(params: Readonly<{
  */
 export async function configurePluginEventAutomationSetup(params: Readonly<{
     initialSetupSeed?: PluginUiOpenAutomationEventRequestV1;
+    requireNativeRenderer?: boolean;
     /** A saved source edit passes these values only to its native renderer. */
     savedSourceRendererInput?: NonNullable<PluginUiOpenAutomationEventRequestV1['setupInput']>;
     /** The saved source is the initial draft when editing an existing Event. */
@@ -314,7 +315,7 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
         if (seed && (!arePluginContributionIdentitiesEqual(seed.eventRef, initial.event.event.identity)
             || (seed.monitoringMachineId !== undefined && seed.monitoringMachineId !== initial.origin.machineTarget.target.machineId))) return { kind: 'unavailable', reason: 'invalid_seed' };
         const customSetupSurface = initial.event.setupSurface?.selectedRenderer.availability.state === 'available';
-        if (params.savedSourceRendererInput && !customSetupSurface) return { kind: 'unavailable' };
+        if ((params.requireNativeRenderer || params.savedSourceRendererInput) && !customSetupSurface) return { kind: 'unavailable' };
         actionSnapshotRef.current = initial.actionSnapshot;
         const controller = createPluginContributedActionController({
             resolveCurrent: () => actionSnapshotRef.current,

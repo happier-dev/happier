@@ -1063,6 +1063,108 @@ it.each([
     }
 });
 
+it('settles a new native Add check as one observation-only trigger', async () => {
+    const { PluginEventAutomationEditor } = await import('./PluginEventAutomationEditor');
+    const { Modal } = await import('@/modal');
+    const { subjectStarterEventSeed } = await import('@/components/workflows/triggers/subjectTriggerStarters');
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+    const { readPluginUiExecutionOriginCandidates } = await import('@/sync/domains/plugins/ui/projectionUnion');
+    const { publishCommittedAppShellPluginUiProjection } = await import('@/components/appShell/plugins/committedPluginUiProjection');
+    const { installRealActionExecutorModuleLoader } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
+    const disposeLoader = await installRealActionExecutorModuleLoader();
+    const accountId = 'native-add-check';
+    const serverIdentityId = 'srv_native_add_check';
+    const http = createHomeHubArtifactHttpBoundary(accountId);
+    let exactIntentRead: unknown;
+    const connection = await restoreServerAccountForTest({ serverUrl: 'https://native-add-check.test',
+        serverIdentityId, accountId, request: async (input, init) => {
+            const path = new URL(String(input)).pathname;
+            if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'] && exactIntentRead)
+                return Response.json(exactIntentRead);
+            if (path === '/v1/features' || path === '/v1/features/authenticated')
+                return Response.json(createRootLayoutFeaturesResponse());
+            return http.request(input, init);
+        } });
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    if (!lifetime) throw new Error('Expected Add check Account');
+    const { machineId, pluginId, event, fresh, inputs, projection } = healthSetupFixture(
+        connection.serverId, serverIdentityId, true, { eventId: HEALTH_CHECK_EVENT_REFS_V1.status.localId, actionId: 'health/setup' },
+    );
+    const { replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+    const admitted = ingestPluginManifestV2(PLUGIN_MANIFEST);
+    if (!admitted.ok) throw new Error('Expected the Machine services manifest');
+    const declarationDigestSha256: `sha256:${string}` = `sha256:${'a'.repeat(64)}`;
+    const intentRead: PluginAccountAvailabilityIntentReadResponseV1 = {
+        availabilityCursor: 1, hostingCapability: { enabled: false },
+        intent: { pluginId, enabled: true, desiredVersion: null, offlineUiHosting: 'disabled', writableCollections: [], revision: 'health-declaration' },
+        release: null, uiArtifacts: [], packageAssets: [], currentDeclaration: null,
+        machineDeclarations: [{ machineId, machineInstallationId: 'health-installation', declaration: { declarationDigestSha256 } }],
+    };
+    exactIntentRead = { ...intentRead, declarationBodies: [{ declarationDigestSha256, manifest: admitted.manifest }] };
+    replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot: {
+        availabilityCursor: 1, materializations: [], snapshots: [], intentReads: [{ pluginId, response: intentRead }],
+    } });
+    const subject = { kind: 'environment' as const, environmentId: 'production' };
+    const sourceInstanceId = createHealthCheckSourceInstanceIdV1(subject);
+    const setupInput = HealthCheckSetupInputV1ProtocolSchema.parse({ v: 1, subject,
+        checks: [{ checkId: 'http', kind: { pluginId, localId: 'http' }, binding: { kind: 'healthCheck' },
+            config: { endpoint: 'https://production.example.test/health', expectStatus: 200 },
+            periodMs: 60_000, consecutiveFailuresBeforeAlerting: 1 }] });
+    const sourceFacts = readPluginUiExecutionOriginCandidates({ pluginId, projection: inputs.pluginUiProjection,
+        members: [{ machineId, serverId: connection.serverId, serverIdentityId,
+            projection: inputs.pluginUiProjection, phase: 'current', interactionEnabled: true }] });
+    const disposeProjection = publishCommittedAppShellPluginUiProjection(() => inputs.pluginUiProjection,
+        id => id === pluginId ? sourceFacts : null);
+    rpc.respond = request => {
+        if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)
+            return { protocolVersion: 1, projection, automationEligibleEvents: [event] };
+        if (request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE)
+            return { ok: true, result: { v: 1, sourceInstanceId, sourceContractVersion: 1,
+                sourceConfig: HealthCheckSetupInputV1ProtocolSchema.parse(Reflect.get(Object(request.payload), 'input')),
+                displayLabel: 'Production Health', observationOnly: { kind: 'observationOnly' } } };
+        return undefined;
+    };
+    const modal = vi.spyOn(Modal, 'show').mockImplementation(config => {
+        expect(config.component).not.toBe(ActionInputFormModal);
+        expect(config.props).toMatchObject({ launchInput: { observerMachineId: machineId, initialInput: { subject } } });
+        return 'native-add-check';
+    });
+    const onSettled = vi.fn();
+    let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+    try {
+        await waitForHomeGovernance(() => expect(storage.getState().isDataReady).toBe(true));
+        storage.getState().applyMachines([fresh.machineTarget.machine], true, { sourceServerId: connection.serverId });
+        observeMachinePresenceForTest(lifetime.scope, [machineId]);
+        const seed = subjectStarterEventSeed('addCheck', { subject: { ...subject, machineId }, controllerMachineId: machineId });
+        if (!seed) throw new Error('Expected the Environment Add check seed');
+        screen = await renderScreen(<PluginEventAutomationEditor automationId="new" clientId="add-check" value={null}
+            seed={null} serverId={connection.serverId} authoringMachineId={machineId} onComplete={vi.fn()} onCancel={vi.fn()}
+            newSourceSetup={{ seed, onSettled, renderUnavailable: () => null }} />);
+        await waitForHomeGovernance(() => expect(modal).toHaveBeenCalledTimes(1));
+        expect(rpc.hostActions).toEqual([]);
+        expect(onSettled).not.toHaveBeenCalled();
+        const settle: unknown = Reflect.get(Object(modal.mock.calls[0]?.[0].props), 'onSettle');
+        if (typeof settle !== 'function') throw new Error('Expected native setup settlement');
+        await act(async () => { settle({ kind: 'submitted', input: setupInput }); });
+        await waitForHomeGovernance(() => expect(onSettled).toHaveBeenCalledExactlyOnceWith({
+            kind: 'configured',
+            trigger: expect.objectContaining({ kind: 'pluginEvent', sourceInstanceId,
+                observationTransport: expect.objectContaining({ watcherMaterializationRef: expect.objectContaining({ machineId }) }) }),
+            observationOnly: { kind: 'observationOnly' },
+        }));
+        expect(rpc.hostActions).toHaveLength(1);
+    } finally {
+        await screen?.unmount();
+        modal.mockRestore();
+        disposeProjection();
+        clearDaemonMergedProjectionCacheForTests();
+        await connection.dispose();
+        disposeLoader();
+    }
+});
+
 // WF-EVENT-TRIGGER-1115: the workflow editor's Runs on Machine is the new Event's watcher, and a catalog that cannot offer
 // an Event says why with a way forward instead of an empty picker.
 it.each([
