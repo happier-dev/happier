@@ -2,6 +2,7 @@ import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMac
 import {
     normalizeWorkspaceRootPath,
     normalizeWorkspaceScopeBase,
+    tryBuildWorkspaceCacheKey,
     type WorkspaceScopeBase,
 } from '@/sync/domains/workspaces/workspaceScope';
 
@@ -17,7 +18,8 @@ function fileKey(target: Target, path: string): string | null {
     const absolutePath = normalizeWorkspaceRootPath(resolveMachineAbsolutePath({
         rootPath: scope.rootPath, requestPath: path, pathKind: 'workspace_entry',
     }));
-    return absolutePath ? JSON.stringify([scope.serverId, accountId, scope.machineId, absolutePath]) : null;
+    return absolutePath ? JSON.stringify([scope.workspace ? tryBuildWorkspaceCacheKey(scope) : scope.serverId,
+        accountId, scope.machineId, absolutePath]) : null;
 }
 
 /** Mounted saved-byte readers share acknowledgements; this holds neither file bytes nor history. */

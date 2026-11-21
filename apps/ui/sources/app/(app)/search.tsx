@@ -9,7 +9,7 @@ import { useUniversalSearchRuntime } from '@/components/appShell/search/Universa
 import { resolveUniversalSearchRouteInitialScope } from '@/components/appShell/search/universalSearchScope';
 import { TERMINAL_JUMP_ROUTE_PARAM } from '@/components/sessions/terminal/jump/terminalJumpTarget';
 
-type UniversalSearchRouteParams = { q?: string | string[]; source?: string | string[]; sessionId?: string | string[]; accountId?: string | string[]; serverId?: string | string[]; machineId?: string | string[]; rootPath?: string | string[]; replace?: string | string[]; [TERMINAL_JUMP_ROUTE_PARAM]?: string | string[] };
+type UniversalSearchRouteParams = { q?: string | string[]; source?: string | string[]; sessionId?: string | string[]; accountId?: string | string[]; serverId?: string | string[]; machineId?: string | string[]; rootPath?: string | string[]; workspace?: string | string[]; replace?: string | string[]; [TERMINAL_JUMP_ROUTE_PARAM]?: string | string[] };
 
 function readRouteSource(source: UniversalSearchRouteParams['source']) {
     return source === 'fileContent' || source === 'files' || source === 'symbols' ? source : undefined;

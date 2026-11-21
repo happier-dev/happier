@@ -1,4 +1,4 @@
-import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
+import { tryBuildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import type { FileTargetAnchor } from '@/utils/url/sessionFileDeepLink';
 import type { ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import type { ChatFindSeed, FileFindSeed as FindSeed } from '@/components/appShell/panes/fileFindSeedHandoff';
@@ -36,14 +36,11 @@ export type UniversalSearchTarget =
         sourceItemId: string; query: string }>
     | (Readonly<{ kind: 'memoryDocument'; serverId: string; accountId: string }>
         & Pick<MemoryDocumentSearchHitV1, 'ref' | 'location' | 'factId'>)
-    | Readonly<{
+    | (WorkspaceScopeBase & Readonly<{
         kind: 'project';
         workspaceRefId: string;
-        serverId: string;
         accountId: string;
-        machineId: string;
-        rootPath: string;
-    }>
+    }>)
     | Readonly<{ kind: 'settingsPage'; route: string }>
     /**
      * Workspace rows carry the whole `{ serverId, machineId, rootPath }` tuple
@@ -160,6 +157,18 @@ export function buildUniversalSearchScopeKey(
         .map((part) => (part === null || part === undefined ? '' : String(part)))
         .map((part) => `${part.length}:${part}`)
         .join('');
+}
+
+/** Existing workspace identity distinguishes guests sharing a controller and path. */
+export function buildUniversalSearchWorkspaceScopeKey(
+    accountId: string,
+    scope: WorkspaceScopeBase,
+    parts: ReadonlyArray<string | number | null | undefined> = [],
+): string {
+    return buildUniversalSearchScopeKey([
+        accountId, scope.serverId, scope.machineId, scope.rootPath, ...parts,
+        ...(scope.workspace ? [tryBuildWorkspaceCacheKey(scope)] : []),
+    ]);
 }
 
 /** Key session display metadata by the same exact Home/session scope as its result. */

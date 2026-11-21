@@ -4,8 +4,10 @@ import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
 import { resolveServerProfileScopeId } from '@/sync/domains/server/serverProfiles';
 import { resolveServerProfileScopeIdForSelectionIdentifier } from '@/sync/domains/server/selection/serverSelectionProfileScopeIds';
 import type { UniversalSearchScopeSeed } from './UniversalSearchRuntimeContext';
-import { buildUniversalSearchScopeKey } from './universalSearchResult';
+import { buildUniversalSearchScopeKey, buildUniversalSearchWorkspaceScopeKey } from './universalSearchResult';
+import { workspaceScopeFromProject } from '@/sync/domains/workspaces/workspaceScope';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
+import { ManagedWorkspaceAddressV2Schema } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 export type UniversalSearchScopeChoice = Readonly<{
     key: string;
@@ -19,6 +21,7 @@ type UniversalSearchRouteScopeParams = Readonly<{
     sessionId?: string | string[];
     machineId?: string | string[];
     rootPath?: string | string[];
+    workspace?: string | string[];
 }>;
 
 function routeScopePart(value: string | string[] | undefined): string | null {
@@ -39,18 +42,32 @@ export function resolveUniversalSearchRouteInitialScope(
         params.sessionId,
         params.machineId,
         params.rootPath,
+        params.workspace,
     ].some((value) => value !== undefined);
     if (!hasScopeParameter) return undefined;
-    return {
+    const scope = {
         accountId: routeScopePart(params.accountId),
         serverId: routeScopePart(params.serverId),
         sessionId: routeScopePart(params.sessionId),
         machineId: routeScopePart(params.machineId),
         rootPath: routeScopePart(params.rootPath),
     };
+    if (params.workspace === undefined) return scope;
+    try {
+        const workspace = ManagedWorkspaceAddressV2Schema.parse(JSON.parse(routeScopePart(params.workspace) ?? 'null'));
+        return { ...scope, serverId: workspace.serverId, machineId: workspace.controller.machineId,
+            rootPath: workspace.rootPath, workspace };
+    } catch {
+        return { ...scope, machineId: null, rootPath: null, sessionId: null };
+    }
 }
 
 export function buildUniversalSearchScopeKeyFromSeed(scope: UniversalSearchScopeSeed): string {
+    if (scope.workspace && scope.accountId && scope.serverId && scope.machineId && scope.rootPath) {
+        return buildUniversalSearchWorkspaceScopeKey(scope.accountId, {
+            serverId: scope.serverId, machineId: scope.machineId, rootPath: scope.rootPath, workspace: scope.workspace,
+        }, [scope.sessionId]);
+    }
     return buildUniversalSearchScopeKey([
         scope.accountId,
         scope.serverId,
@@ -97,20 +114,20 @@ export function buildUniversalSearchScopeChoices(input: Readonly<{
         if (!serverId) continue;
         const accountId = input.accountIdByServerId.get(serverId);
         if (!accountId) continue;
-        const session = input.sessions.find((candidate) => {
+        const workspaceScope = workspaceScopeFromProject(workspace, workspace.rootPath);
+        const session = workspaceScope.workspace ? undefined : input.sessions.find((candidate) => {
             if (resolveServerProfileScopeIdForSelectionIdentifier(input.profiles, candidate.serverId) !== serverId) return false;
             const target = input.readMachineTarget({
                 accountId,
                 serverId,
                 sessionId: candidate.id,
             });
-            return target?.machineId === workspace.machineId && target.basePath === workspace.rootPath;
+            return target?.machineId === workspaceScope.machineId && target?.basePath === workspaceScope.rootPath;
         });
         const scope = {
             accountId,
+            ...workspaceScope,
             serverId,
-            machineId: workspace.machineId,
-            rootPath: workspace.rootPath,
             sessionId: session?.id ?? null,
         } satisfies UniversalSearchScopeSeed;
         choices.push({

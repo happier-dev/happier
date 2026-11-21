@@ -8,6 +8,18 @@ export type WorkspaceFileSearchActionInputById = {
         rootPath: string;
         query: string;
         machineId: string;
+        workspace?: undefined | {
+            v: 2;
+            kind: 'managed';
+            serverId: string;
+            workspaceId: string;
+            managedId: string;
+            controller: {
+                machineId: string;
+                installationId: string;
+            };
+            rootPath: string;
+        };
         matchCase?: boolean | undefined;
         regex?: boolean | undefined;
         includeHidden?: boolean | undefined;
@@ -18,6 +30,18 @@ export type WorkspaceFileSearchActionInputById = {
         rootPath: string;
         query: string;
         replacement: string;
+        workspace?: undefined | {
+            v: 2;
+            kind: 'managed';
+            serverId: string;
+            workspaceId: string;
+            managedId: string;
+            controller: {
+                machineId: string;
+                installationId: string;
+            };
+            rootPath: string;
+        };
         includeHidden?: boolean | undefined;
         contextLines?: number | undefined;
         cursor?: undefined | {
@@ -59,6 +83,18 @@ export type WorkspaceFileSearchActionInputById = {
         };
         machineId: string;
         rootPath: string;
+        workspace?: undefined | {
+            v: 2;
+            kind: 'managed';
+            serverId: string;
+            workspaceId: string;
+            managedId: string;
+            controller: {
+                machineId: string;
+                installationId: string;
+            };
+            rootPath: string;
+        };
     };
 };
 export type WorkspaceFileSearchActionResultById = {

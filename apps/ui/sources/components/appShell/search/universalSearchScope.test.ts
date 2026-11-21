@@ -6,6 +6,19 @@ import {
 } from './universalSearchScope';
 
 describe('Universal Search local scope', () => {
+    it('retains managed workspace identity without joining an unrelated Machine Session', () => {
+        const workspace = { id: 'managed-a', v: 2 as const, kind: 'managed' as const, serverId: 'home',
+            managedId: 'guest-a', controller: { machineId: 'controller', installationId: 'installation' }, rootPath: '/repo', createdAtMs: 1 };
+        const choices = buildUniversalSearchScopeChoices({ accountIdByServerId: new Map([['home', 'account']]),
+            profiles: [{ id: 'home', name: 'Home' }] as never,
+            workspaces: [workspace, { ...workspace, id: 'managed-b', managedId: 'guest-b' }],
+            sessions: [{ id: 'unrelated', serverId: 'home' }], readMachineTarget: () => null,
+        });
+        expect(choices[1]?.scope).toMatchObject({ accountId: 'account', serverId: 'home', machineId: 'controller',
+            rootPath: '/repo', sessionId: null, workspace: { kind: 'managed', workspaceId: 'managed-a', managedId: 'guest-a',
+                controller: workspace.controller, rootPath: '/repo' } });
+        expect(choices[1]?.key).not.toBe(choices[2]?.key);
+    });
     it('adds an all-machines scope within each credential-bound Home', () => {
         const choices = buildUniversalSearchScopeChoices({ accountIdByServerId: new Map([['home', 'account']]),
             profiles: [{ id: 'home', name: 'Home' }] as never, workspaces: [], sessions: [], readMachineTarget: () => null,
@@ -141,6 +154,13 @@ describe('Universal Search local scope', () => {
             sessionId: null,
             machineId: null,
             rootPath: null,
+        });
+    });
+
+    it('does not reinterpret a malformed managed route as a controller filesystem scope', () => {
+        expect(resolveUniversalSearchRouteInitialScope({ accountId: 'account', serverId: 'home', sessionId: 'session',
+            machineId: 'controller', rootPath: '/repo', workspace: '{invalid' })).toMatchObject({
+            machineId: null, rootPath: null, sessionId: null,
         });
     });
 });

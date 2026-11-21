@@ -3,6 +3,17 @@ import { describe, expect, it } from 'vitest';
 import { buildUniversalSearchWorkspaceFileResults } from './workspaceFileSearchResults';
 
 describe('buildUniversalSearchWorkspaceFileResults', () => {
+    it('keeps same-path managed file results distinct from each other and their controller', () => {
+        const scope = { serverId: 'home', machineId: 'controller', rootPath: '/repo' };
+        const workspace = { v: 2 as const, kind: 'managed' as const, serverId: 'home', workspaceId: 'checkout-a', managedId: 'guest-a',
+            controller: { machineId: 'controller', installationId: 'installation' }, rootPath: '/repo' };
+        const scopes = [scope, { ...scope, workspace }, { ...scope, workspace: { ...workspace, workspaceId: 'checkout-b', managedId: 'guest-b' } }];
+        const rows = scopes.map(target => buildUniversalSearchWorkspaceFileResults({
+            files: [{ fileName: 'README.md', filePath: '', fullPath: 'README.md', fileType: 'file' }],
+            accountId: 'account', scope: target, workspaceRefId: null, sessionId: null,
+        })[0]!);
+        expect(new Set(rows.map(row => row.scopeKey)).size).toBe(3);
+    });
     it('maps only actual files to openable Universal Search results', () => {
         const scope = { serverId: 'server-a', machineId: 'machine-a', rootPath: '/repo' } as const;
 

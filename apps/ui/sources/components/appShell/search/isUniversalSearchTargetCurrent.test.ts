@@ -6,6 +6,22 @@ import { isUniversalSearchTargetCurrent } from './isUniversalSearchTargetCurrent
 import type { UniversalSearchTarget } from './universalSearchResult';
 
 describe('isUniversalSearchTargetCurrent', () => {
+    it('activates only the saved managed filesystem that produced a file result', () => {
+        const workspace = { v: 2 as const, kind: 'managed' as const, serverId: 'home', workspaceId: 'checkout', managedId: 'guest',
+            controller: { machineId: 'controller', installationId: 'installation' }, rootPath: '/repo' };
+        const ref = { ...workspace, id: workspace.workspaceId, createdAtMs: 1 };
+        const base = { accountScope: { serverId: 'home', accountId: 'account', current: true },
+            workspaces: [ref], settingsPages: new Map(), resolveSessionWorkspaceTarget: () => null, isWorkspaceScopeReachable: () => true };
+        const target = { kind: 'workspaceFile' as const, scope: { serverId: 'home', machineId: 'controller', rootPath: '/repo', workspace },
+            path: 'README.md', workspaceRefId: 'checkout', serverId: 'home', accountId: 'account', sessionId: null };
+        expect(isUniversalSearchTargetCurrent({ ...base, target })).toBe(true);
+        expect(isUniversalSearchTargetCurrent({ ...base, target: { ...target, scope: { ...target.scope,
+            workspace: { ...workspace, managedId: 'other-guest' } } } })).toBe(false);
+        const project = { kind: 'project' as const, ...target.scope, accountId: 'account', workspaceRefId: 'checkout' };
+        expect(isUniversalSearchTargetCurrent({ ...base, target: project })).toBe(true);
+        expect(isUniversalSearchTargetCurrent({ ...base, target: { ...project,
+            workspace: { ...workspace, managedId: 'other-guest' } } })).toBe(false);
+    });
     it('rejects duplicate saved checkout candidates before project or file activation', () => {
         const scope = { serverId: 'home', machineId: 'machine', rootPath: '/repo' };
         const ref = { id: 'workspace', ...scope, createdAtMs: 1 };

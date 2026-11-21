@@ -146,7 +146,7 @@ export const WorkspaceCodeBrowserView = React.memo(function WorkspaceCodeBrowser
     const openFolder = React.useCallback((path: string) => onNavigate({ path, kind: 'folder' }), [onNavigate]);
     const openFile = props.onOpenFile;
     // Go to file is quick open scoped to this project (P3 §3.6): one picker, one ranking.
-    const quickOpenScope = React.useMemo(() => props.scope, [props.scope.serverId, props.scope.machineId, props.scope.rootPath]);
+    const quickOpenScope = React.useMemo(() => props.scope, [workspaceKey]);
     const launchQuickOpen = useQuickOpenFilesLauncher({ scope: quickOpenScope });
     const openQuickOpen = React.useMemo(() => launchQuickOpen ? () => launchQuickOpen() : null, [launchQuickOpen]);
     const onVisibleEntriesChange = props.onVisibleEntriesChange;

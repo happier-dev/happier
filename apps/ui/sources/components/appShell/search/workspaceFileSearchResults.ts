@@ -3,7 +3,7 @@ import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScop
 import { leafFolderName } from '@/utils/path/pathUtils';
 
 import {
-    buildUniversalSearchScopeKey,
+    buildUniversalSearchWorkspaceScopeKey,
     UNIVERSAL_SEARCH_SOURCE_IDS,
     type UniversalSearchResult,
 } from './universalSearchResult';
@@ -17,12 +17,7 @@ export function buildUniversalSearchWorkspaceFileResults(input: Readonly<{
     /** Changed files' line counts by path; those rows carry their +/− (lab FB2, FB2t). */
     changes?: Pick<ReadonlyMap<string, Readonly<{ added: number; removed: number }>>, 'get'>;
 }>): UniversalSearchResult[] {
-    const scopeKey = buildUniversalSearchScopeKey([
-        input.accountId,
-        input.scope.serverId,
-        input.scope.machineId,
-        input.scope.rootPath,
-    ]);
+    const scopeKey = buildUniversalSearchWorkspaceScopeKey(input.accountId, input.scope);
     // Every row names its folder (lab FB2): a root file by the root's own name, so rows keep one rhythm.
     const rootName = leafFolderName(input.scope.rootPath) ?? '';
     return input.files.flatMap((file) => file.fileType === 'file' ? [{

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   DaemonWorkspaceFileListRequestSchema,
+  DaemonWorkspaceFileSearchRequestSchema,
+  DaemonWorkspaceFileReplacePreviewRequestSchema,
+  DaemonWorkspaceFileReplaceApplyRequestSchema,
   DaemonWorkspaceFileListResponseSchema,
   DaemonWorkspaceFileReplaceApplyResponseSchema,
   DaemonWorkspaceFileReplacePreviewResponseSchema,
@@ -12,6 +15,21 @@ import {
 import { EXTERNAL_ACTION_RESULT_MAX_SERIALIZED_BYTES } from '../actions/externalActionLimits.js';
 
 describe('workspace file response budgets', () => {
+  it('preserves the admitted managed address in search and replacement requests while retaining Machine inputs', () => {
+    const workspace = { v: 2, kind: 'managed', serverId: 'home', workspaceId: 'checkout', managedId: 'guest',
+      controller: { machineId: 'controller', installationId: 'installation' }, rootPath: '/repo' };
+    const requests = [
+      [DaemonWorkspaceFileSearchRequestSchema, { rootPath: '/repo', query: 'needle' }],
+      [DaemonWorkspaceFileReplacePreviewRequestSchema, { rootPath: '/repo', query: 'needle', replacement: 'new' }],
+      [DaemonWorkspaceFileReplaceApplyRequestSchema, { rootPath: '/repo', operation: { kind: 'replace',
+        matcher: { query: 'needle', replacement: 'new', matchCase: false, regex: false }, files: [] } }],
+    ] as const;
+    for (const [schema, input] of requests) {
+      expect(schema.safeParse(input).success).toBe(true);
+      expect(schema.parse({ ...input, workspace })).toMatchObject({ workspace });
+      expect(schema.safeParse({ ...input, workspace: { ...workspace, extra: true } }).success).toBe(false);
+    }
+  });
   it('keeps machine file replies within the successful Action result carrier', () => {
     expect(WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES).toBeLessThanOrEqual(EXTERNAL_ACTION_RESULT_MAX_SERIALIZED_BYTES);
     expect(WORKSPACE_FILE_LIST_MAX_RESPONSE_UTF8_BYTES).toBe(WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES);

@@ -6,6 +6,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { standardCleanup } from '@/dev/testkit';
 import { createSessionFilesViewFixture, fileViewSnapshot, installSessionFilesViewBoundaries, prepareSessionFilesViewTestkit } from '@/components/sessions/files/views/sessionFilesViewTestkit';
 import type { WorkspaceCodeLocation } from './WorkspaceCodeBrowserView';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 import type { CapturingLegendListMockState } from '@/dev/testkit/mocks/legendList';
 
@@ -210,15 +211,15 @@ describe('Code consumes the qualified browser and real entry-history batch', () 
     it('is one column: folder entries, then the bounded file reader in their place', async () => {
         const rootPath = '/code-aside-consumer';
         fixture = await createSessionFilesViewFixture({ rootPath, rpc: request => {
-            if (request.method === RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY) return { ok: true, path: rootPath, truncated: false,
-                entries: [{ name: 'LICENSE', path: `${rootPath}/LICENSE`, type: 'file' }] };
+            if (request.method === RPC_METHODS.LIST_DIRECTORY) return { success: true, truncated: false,
+                entries: [{ name: 'LICENSE', type: 'file' }] };
             return { success: false, errorCode: 'FEATURE_UNSUPPORTED', error: 'Unavailable boundary operation' };
         } });
         // Go to file is quick open (P3 §3.6): the page hands Search its own workspace, Files scope.
         const searchRuntime = { open: vi.fn(), buildCommands: () => [] };
-        const renderPage = (location: WorkspaceCodeLocation) => <UniversalSearchRuntimeProvider value={searchRuntime}>
+        const renderPage = (location: WorkspaceCodeLocation, scope: WorkspaceScopeBase = fixture!.scope) => <UniversalSearchRuntimeProvider value={searchRuntime}>
             <WorkspaceCodeBrowserView paneScopeId="code-aside-test"
-                scope={fixture!.scope} rootLabel="Code" location={location} onNavigate={() => {}} onOpenFile={() => {}} history={null} />
+                scope={scope} rootLabel="Code" location={location} onNavigate={() => {}} onOpenFile={() => {}} history={null} />
         </UniversalSearchRuntimeProvider>;
         const screen = await fixture.render(renderPage({ path: '', kind: 'folder' }));
         await vi.waitFor(() => expect(screen.findByTestId('repository-tree-row-LICENSE')).toBeTruthy());
@@ -229,6 +230,15 @@ describe('Code consumes the qualified browser and real entry-history batch', () 
         expect(reader.props).toMatchObject({ scope: fixture.scope, filePath: 'LICENSE', presentation: 'screen' });
         expect(screen.findByTestId('workspace-code-bar-goto')).toBeTruthy();
         expect(screen.findByTestId('workspace-code')?.props.scrollEnabled).toBe(false);
+        const workspace = { v: 2 as const, kind: 'managed' as const, serverId: fixture.scope.serverId,
+            workspaceId: 'checkout-a', managedId: 'guest-a', controller: { machineId: fixture.scope.machineId,
+                installationId: 'installation' }, rootPath };
+        for (const address of [workspace, { ...workspace, workspaceId: 'checkout-b', managedId: 'guest-b' }]) {
+            await screen.update(fixture.wrap(renderPage({ path: 'LICENSE', kind: 'file' }, { ...fixture.scope, workspace: address })));
+            await screen.pressByTestIdAsync('workspace-code-bar-goto');
+            expect(searchRuntime.open).toHaveBeenLastCalledWith(undefined,
+                expect.objectContaining({ workspace: address, sessionId: null }), { source: 'files' });
+        }
     });
 
     it('discloses inline without navigating, navigates by real entry kind, and demands the actual folder', async () => {

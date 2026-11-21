@@ -4,6 +4,7 @@ import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import {
     normalizeWorkspaceScopeBase,
+    tryBuildWorkspaceCacheKey,
     type WorkspaceScopeBase,
 } from '@/sync/domains/workspaces/workspaceScope';
 import type { UniversalSearchTarget } from './universalSearchResult';
@@ -11,13 +12,8 @@ import { SETTINGS_ROUTES, settingsRoutePathname } from '@/components/settings/ca
 import { resolveWorkspaceRefByAddress } from '@/sync/domains/workspaces/workspaceRefs';
 
 function areWorkspaceScopesEqual(left: WorkspaceScopeBase, right: WorkspaceScopeBase): boolean {
-    const normalizedLeft = normalizeWorkspaceScopeBase(left);
-    const normalizedRight = normalizeWorkspaceScopeBase(right);
-    return normalizedLeft !== null
-        && normalizedRight !== null
-        && areServerProfileIdentifiersEquivalent(normalizedLeft.serverId, normalizedRight.serverId)
-        && normalizedLeft.machineId === normalizedRight.machineId
-        && normalizedLeft.rootPath === normalizedRight.rootPath;
+    const leftKey = tryBuildWorkspaceCacheKey(left);
+    return leftKey !== null && leftKey === tryBuildWorkspaceCacheKey(right);
 }
 
 /**
@@ -47,7 +43,7 @@ export function isUniversalSearchTargetCurrent(input: Readonly<{
         return input.accountScope?.current === true
             && input.accountScope.accountId === target.accountId
             && areServerProfileIdentifiersEquivalent(input.accountScope.serverId, target.serverId)
-            && resolveWorkspaceRefByAddress(input.workspaces, { serverId: target.serverId,
+            && resolveWorkspaceRefByAddress(input.workspaces, target.workspace ?? { serverId: target.serverId,
                 workspaceId: target.workspaceRefId, machineId: target.machineId, rootPath: target.rootPath }).kind === 'resolved'
             && input.isWorkspaceScopeReachable(target);
     }
@@ -73,7 +69,7 @@ export function isUniversalSearchTargetCurrent(input: Readonly<{
     // is offline; the File page owns whether saved/cached content is available.
     const opensFile = target.kind === 'workspaceFile' || target.kind === 'workspaceSymbol';
     if (target.workspaceRefId) {
-        return resolveWorkspaceRefByAddress(input.workspaces, { ...capturedScope, workspaceId: target.workspaceRefId }).kind === 'resolved'
+        return resolveWorkspaceRefByAddress(input.workspaces, capturedScope.workspace ?? { ...capturedScope, workspaceId: target.workspaceRefId }).kind === 'resolved'
             && (opensFile || input.isWorkspaceScopeReachable(capturedScope));
     }
     if (!target.sessionId) return false;

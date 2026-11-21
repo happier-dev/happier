@@ -12,6 +12,8 @@ import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/acces
 import { registerFileSystemHandlers } from '@/rpc/handlers/fileSystem/registerFileSystemHandlers';
 import { registerWorkspaceFileSearchHandler } from '@/rpc/handlers/workspaceFileSearch';
 import { registerWorkspaceFileListHandler } from '@/rpc/handlers/workspaceFileList';
+import { previewWorkspaceFileReplace, applyWorkspaceFileReplace } from '@/rpc/handlers/workspaceFileReplace';
+import { buildWorkspaceFileRestoreOperation } from '@happier-dev/protocol/machines/workspaceFilesReplace';
 import { createFilesystemEffectRpcRegistrar } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { runScmCommand } from '@/scm/runtime';
 import { createWriteFileRpcActionExecutor } from '@/rpc/handlers/fileSystem/writeFileHandler';
@@ -101,8 +103,8 @@ function createFakeTargetSource(visibleRoot: string, backingRoot: string) {
       calls.push(`spawn:${request.command}:${request.cwd}`);
       if (request.command === 'difft') return fakeChild('target-difft-output');
       if (request.command !== 'rg') return fakeChild('target-scm-output');
-      return fakeChild(request.args.includes('--files')
-        ? 'target-only.txt\n'
+      return fakeChild(request.args.includes('--files') || request.args.includes('--files-with-matches')
+        ? `target-only.txt${request.args.includes('--null') ? '\0' : '\n'}`
         : [
           { type: 'begin', data: { path: { text: 'target-only.txt' } } },
           { type: 'match', data: { path: { text: 'target-only.txt' }, lines: { text: 'TARGET\n' }, line_number: 1,
@@ -146,11 +148,12 @@ describe('workspace source consumers', () => {
     machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
       installationId: 'installation', role: 'use', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true });
 
-  function registerSelected(source: WorkspaceSource) {
+  function registerSelected(source: WorkspaceSource, managedId?: string) {
     const handlers = new Map<string, RpcHandler>();
     const registrar = { registerHandler: (method: string, handler: RpcHandler) => { handlers.set(method, handler as RpcHandler); } };
     const admission = createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => 'home',
-      resolveWorkspaceTarget: placement => placement.rootPath === visibleRoot ? source : null,
+      resolveWorkspaceTarget: placement => placement.rootPath === visibleRoot
+        && (!managedId || placement.workspace?.managedId === managedId) ? source : null,
     });
     const filesystem = registerFileSystemHandlers(registrar, visibleRoot, {
       effectAdmission: admission, accessPolicy: { kind: 'restrictedRoots', roots: [visibleRoot] },
@@ -168,8 +171,39 @@ describe('workspace source consumers', () => {
       (await createWriteFileRpcActionExecutor(deps).execute('daemon.filesystem.writeFile', input, ownerContext())));
     const mutate = (actionId: 'daemon.filesystem.createDirectory' | 'daemon.filesystem.rename' | 'daemon.filesystem.delete', input: Record<string, unknown>) =>
       action(input, () => executeFilesystemMutationAction({ ...deps, actionId, input }));
-    return { call, write, mutate, dispose: () => filesystem.dispose() };
+    return { call, write, mutate, action, dispose: () => filesystem.dispose() };
   }
+
+  it('searches, previews, replaces and restores the explicitly addressed managed filesystem at the same controller path', async () => {
+    await fs.writeFile(join(visibleRoot, 'target-only.txt'), 'LOCAL');
+    await fs.writeFile(join(backingRoot, 'target-only.txt'), 'TARGET');
+    const target = createFakeTargetSource(visibleRoot, backingRoot);
+    const { call, action, dispose } = registerSelected(target.source, 'guest');
+    const workspace = { v: 2 as const, kind: 'managed' as const, serverId: 'home', workspaceId: 'checkout', managedId: 'guest',
+      controller: { machineId: 'machine', installationId: 'installation' }, rootPath: visibleRoot };
+    const matcher = { query: 'TARGET', replacement: 'REPLACED', matchCase: true, regex: false };
+    const policy = { kind: 'restrictedRoots' as const, roots: [visibleRoot] };
+    try {
+      const search = await call(RPC_METHODS.DAEMON_WORKSPACE_FILES_SEARCH, { rootPath: visibleRoot, workspace, query: matcher.query });
+      expect(search).toMatchObject({ ok: true, files: [{ path: 'target-only.txt', matches: [{ text: 'TARGET' }] }] });
+      const previewInput = { rootPath: visibleRoot, workspace, ...matcher };
+      const preview = await action(previewInput, () => previewWorkspaceFileReplace(previewInput, visibleRoot, policy));
+      expect(preview).toMatchObject({ ok: true, files: [{ path: 'target-only.txt', matchCount: 1 }] });
+      if (!preview.ok) throw new Error('Managed preview failed');
+      const replaceInput = { rootPath: visibleRoot, workspace, operation: { kind: 'replace' as const, matcher,
+        files: preview.files.map(file => ({ path: file.path, expectedHash: file.hash, excludedMatches: [] })) } };
+      const replaced = await action(replaceInput, () => applyWorkspaceFileReplace(replaceInput, visibleRoot, policy));
+      expect(replaced).toMatchObject({ ok: true, results: [{ status: 'replaced' }] });
+      await expect(fs.readFile(join(backingRoot, 'target-only.txt'), 'utf8')).resolves.toBe('REPLACED');
+      await expect(fs.readFile(join(visibleRoot, 'target-only.txt'), 'utf8')).resolves.toBe('LOCAL');
+      if (!replaced.ok) throw new Error('Managed replacement failed');
+      const restoreInput = { rootPath: visibleRoot, workspace, operation: buildWorkspaceFileRestoreOperation(replaced.results) };
+      expect(await action(restoreInput, () => applyWorkspaceFileReplace(restoreInput, visibleRoot, policy)))
+        .toMatchObject({ ok: true, results: [{ status: 'restored' }] });
+      await expect(fs.readFile(join(backingRoot, 'target-only.txt'), 'utf8')).resolves.toBe('TARGET');
+      await expect(fs.readFile(join(visibleRoot, 'target-only.txt'), 'utf8')).resolves.toBe('LOCAL');
+    } finally { await dispose(); }
+  });
 
   it('routes every admitted file panel operation to the source chosen at admission (same path, different content)', async () => {
     const target = createFakeTargetSource(visibleRoot, backingRoot);

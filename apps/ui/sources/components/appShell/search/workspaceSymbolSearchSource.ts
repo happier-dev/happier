@@ -3,7 +3,7 @@ import { mergeAbortSignals } from '@happier-dev/plugin-sdk/async';
 import type { LanguageIntelligenceQueryResult } from '@happier-dev/protocol/machines/languageIntelligence';
 import { loadDocumentOutlineBaseline } from '@/sync/domains/workspaces/languageIntelligence/loadDocumentOutlineBaseline';
 import { selectDocumentOutline, type DocumentOutlineServerAnswer } from '@/sync/domains/workspaces/languageIntelligence/documentOutline';
-import { buildUniversalSearchScopeKey, type UniversalSearchResult, type UniversalSearchTarget } from './universalSearchResult';
+import { buildUniversalSearchWorkspaceScopeKey, type UniversalSearchResult, type UniversalSearchTarget } from './universalSearchResult';
 import { buildUniversalSearchSymbolResults } from './workspaceSymbolSearchResults';
 import { boundedReplyHints } from './searchBoundedReplyHints';
 
@@ -37,10 +37,8 @@ export function createWorkspaceSymbolSearchSource(input: WorkspaceSymbolSearchIn
     let pending: AbortController | null = null;
     return {
         status: 'ready',
-        resolverKey: buildUniversalSearchScopeKey([
-            input.target.accountId, input.target.scope.serverId, input.target.scope.machineId,
-            input.target.scope.rootPath, input.target.path, input.resolverKey,
-        ]),
+        resolverKey: buildUniversalSearchWorkspaceScopeKey(input.target.accountId, input.target.scope,
+            [input.target.path, input.resolverKey]),
         resolve: async (query, callerSignal) => {
             pending?.abort();
             const operation = new AbortController();

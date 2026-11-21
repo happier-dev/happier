@@ -6,6 +6,7 @@ import { DaemonWorkspaceFileReplaceApplyResponseSchema, type DaemonWorkspaceFile
 import { DaemonLspApplyResponseSchema } from '@happier-dev/protocol/machines/languageIntelligence';
 import { executeOriginalAccountMachineAction } from '@/sync/api/externalActionAccountTransport';
 import { acknowledgeWorkspaceFileWrites } from '@/sync/domains/workspaces/files/workspaceFileAcknowledgements';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { getActionOperation } from '@/sync/ops/actionOperations';
@@ -15,12 +16,13 @@ import { projectExternalActionRequesterCallerV1 } from '@happier-dev/protocol/se
 const failure = (errorCode: string) => ({ ok: false as const, errorCode, error: errorCode });
 
 type MachineWriteContext = Parameters<NonNullable<ActionExecutorDeps['workspaceFilesReplace']>>[1];
-type WriteTarget = Readonly<{ machineId: string; rootPath: string }>;
+type WriteTarget = Pick<WorkspaceScopeBase, 'machineId' | 'rootPath' | 'workspace'>;
 
 function acknowledgeResult(account: LazyActionAccountContext, input: WriteTarget,
     result: Extract<DaemonWorkspaceFileReplaceApplyResponse, { ok: true }>) {
     if (!account.accountOnlyLifetime.isCurrent()) return;
-    acknowledgeWorkspaceFileWrites({ serverId: account.serverId, accountId: account.accountId, machineId: input.machineId, rootPath: input.rootPath },
+    acknowledgeWorkspaceFileWrites({ serverId: account.serverId, accountId: account.accountId, machineId: input.machineId,
+        rootPath: input.rootPath, ...(input.workspace ? { workspace: input.workspace } : {}) },
         result.results.filter(file => file.status === 'replaced' || file.status === 'restored').flatMap(file => file.renameTo
             ? [{ path: file.path, hash: null }, { path: file.renameTo, hash: file.hash ?? null }]
             : [{ path: file.path, hash: file.hash ?? null }]));

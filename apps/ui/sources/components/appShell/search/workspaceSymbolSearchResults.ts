@@ -1,14 +1,12 @@
 import type { DocumentOutlineEntry } from '@/sync/domains/workspaces/languageIntelligence/documentOutline';
 
-import { buildUniversalSearchScopeKey, UNIVERSAL_SEARCH_SOURCE_IDS, type UniversalSearchResult, type UniversalSearchTarget } from './universalSearchResult';
+import { buildUniversalSearchScopeKey, buildUniversalSearchWorkspaceScopeKey, UNIVERSAL_SEARCH_SOURCE_IDS, type UniversalSearchResult, type UniversalSearchTarget } from './universalSearchResult';
 
 export function buildUniversalSearchSymbolResults(
     symbols: readonly DocumentOutlineEntry[],
     target: Extract<UniversalSearchTarget, { kind: 'workspaceFile' }>,
 ): UniversalSearchResult[] {
-    const scopeKey = buildUniversalSearchScopeKey([
-        target.accountId, target.scope.serverId, target.scope.machineId, target.scope.rootPath, target.path,
-    ]);
+    const scopeKey = buildUniversalSearchWorkspaceScopeKey(target.accountId, target.scope, [target.path]);
     return symbols.map(symbol => ({
         id: buildUniversalSearchScopeKey([target.path, symbol.line, symbol.column, symbol.name]),
         scopeKey,

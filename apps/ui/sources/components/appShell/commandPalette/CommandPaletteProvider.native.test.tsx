@@ -206,12 +206,14 @@ describe('CommandPaletteProvider native', () => {
         expect(readRuntime().routeSymbols).toBeUndefined();
     });
 
-    it('serializes an explicit requested Session scope instead of the ambient active Session', async () => {
+    it.each(['machine', 'managed'] as const)('serializes an explicit %s scope instead of the ambient active Session', async (kind) => {
         testState.segments.push('(app)', 'session', '[id]');
         testState.routeParams = { id: 'ambient-session' };
         const { renderScreen } = await import('@/dev/testkit');
         const { useUniversalSearchRuntime } = await import('@/components/appShell/search/UniversalSearchRuntimeContext');
         const { CommandPaletteProvider } = await import('./CommandPaletteProvider');
+        const workspace = { v: 2 as const, kind: 'managed' as const, serverId: 'home-b', workspaceId: 'checkout', managedId: 'guest',
+            controller: { machineId: 'machine-b', installationId: 'installation' }, rootPath: '/repo/b' };
 
         function ExplicitScopeOpener(): React.ReactElement {
             const search = useUniversalSearchRuntime();
@@ -222,6 +224,7 @@ describe('CommandPaletteProvider native', () => {
                     sessionId: 'requested-session',
                     machineId: 'machine-b',
                     rootPath: '/repo/b',
+                    ...(kind === 'managed' ? { workspace } : {}),
                 }),
             });
         }
@@ -240,7 +243,13 @@ describe('CommandPaletteProvider native', () => {
                 sessionId: 'requested-session',
                 machineId: 'machine-b',
                 rootPath: '/repo/b',
+                ...(kind === 'managed' ? { workspace: JSON.stringify(workspace) } : {}),
             },
+        });
+        const { resolveUniversalSearchRouteInitialScope } = await import('@/components/appShell/search/universalSearchScope');
+        expect(resolveUniversalSearchRouteInitialScope(routerPushSpy.mock.lastCall?.[0].params)).toMatchObject({
+            accountId: 'account-b', serverId: 'home-b', machineId: 'machine-b', rootPath: '/repo/b',
+            ...(kind === 'managed' ? { workspace } : {}),
         });
     });
 

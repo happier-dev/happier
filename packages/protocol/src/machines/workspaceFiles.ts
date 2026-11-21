@@ -96,6 +96,7 @@ export const WORKSPACE_FILE_SEARCH_MAX_RESPONSE_UTF8_BYTES = WORKSPACE_FILE_RPC_
 
 export const DaemonWorkspaceFileSearchRequestSchema = lazyZodSchema(() => z.strictObject({
   rootPath: z.string().check(z.trim(), z.minLength(1), z.maxLength(10_000)),
+  workspace: z.optional(ManagedWorkspaceAddressV2Schema),
   query: z.string().check(z.minLength(1)),
   matchCase: z.optional(z.boolean()),
   regex: z.optional(z.boolean()),
@@ -170,6 +171,7 @@ export const WorkspaceFileReplaceCursorSchema = lazyZodSchema(() => z.strictObje
 export const DaemonWorkspaceFileReplacePreviewRequestSchema = lazyZodSchema(() => z.strictObject({
   ...WorkspaceFileReplaceMatcherSchema.shape,
   rootPath: z.string().check(z.trim(), z.minLength(1)),
+  workspace: z.optional(ManagedWorkspaceAddressV2Schema),
   includeHidden: z.optional(z.boolean()),
   contextLines: z.optional(z.number().check(z.int(), z.minimum(0), z.maximum(2))),
   cursor: z.optional(WorkspaceFileReplaceCursorSchema),
@@ -222,6 +224,7 @@ export const WorkspaceFileRestoreOperationSchema = lazyZodSchema(() => z.strictO
 }));
 export const DaemonWorkspaceFileReplaceApplyRequestSchema = lazyZodSchema(() => z.strictObject({
   rootPath: z.string().check(z.trim(), z.minLength(1)),
+  workspace: z.optional(ManagedWorkspaceAddressV2Schema),
   operation: z.discriminatedUnion('kind', [
     WorkspaceFileReplaceOperationSchema,
     WorkspaceFileRestoreOperationSchema,

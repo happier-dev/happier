@@ -114,7 +114,8 @@ export function createUiFilesystemAction(account?: LazyActionAccountContext, del
             const request = FilesystemWriteFileInputSchema.safeParse(input);
             const response = FilesystemWriteFileOutputSchema.safeParse(result);
             if (source && request.success && response.success && response.data.success) {
-                acknowledgeWorkspaceFileWrites({ ...source, machineId: target.machineId, rootPath: request.data.rootPath },
+                acknowledgeWorkspaceFileWrites({ ...source, machineId: target.machineId, rootPath: request.data.rootPath,
+                    ...(request.data.workspace ? { workspace: request.data.workspace } : {}) },
                     [{ path: request.data.path, hash: response.data.hash }]);
             }
         };

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { parseUnifiedDiffHunks } from '@happier-dev/protocol/diff/hunks';
 import { WorkspaceFilesReplaceActionInputSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
@@ -12,6 +12,7 @@ import type {
   WorkspaceReplaceMatcher,
   WorkspaceReplacePreviewFile,
 } from './workspaceFileReplace';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
@@ -259,6 +260,41 @@ describe('useWorkspaceReplace', () => {
     let scope = { serverId: 'home', machineId: 'mac', rootPath: '/repo' };
     const previewOk = { ok: true, files: [modal, doc], skipped: { notText: 1 }, hasMore: false, coverage: 'complete' };
     let account = lifetime();
+
+    it('keeps same-path managed previews, writes and Undo on their original filesystem', async () => {
+        const workspace = { v: 2 as const, kind: 'managed' as const, serverId: scope.serverId,
+            workspaceId: 'checkout-a', managedId: 'guest-a', controller: { machineId: scope.machineId, installationId: 'installation' }, rootPath: scope.rootPath };
+        const first: WorkspaceScopeBase = { ...scope, workspace };
+        const second: WorkspaceScopeBase = { ...scope, workspace: { ...workspace, workspaceId: 'checkout-b', managedId: 'guest-b' } };
+        const writes = { first: [] as Array<string | null>, second: [] as Array<string | null>, controller: [] as Array<string | null> };
+        const disposes = [
+            subscribeAcknowledgedWorkspaceFileWrites({ ...first, accountId: 'acct' }, doc.path, write => writes.first.push(write.hash)),
+            subscribeAcknowledgedWorkspaceFileWrites({ ...second, accountId: 'acct' }, doc.path, write => writes.second.push(write.hash)),
+            subscribeAcknowledgedWorkspaceFileWrites({ ...scope, accountId: 'acct' }, doc.path, write => writes.controller.push(write.hash)),
+        ];
+        onTestFinished(() => disposes.forEach(dispose => dispose()));
+        rpc.call.mockImplementation((request: { method: string; payload?: { operation?: { kind: string } } }) => {
+            if (request.method === 'daemon.workspaceFiles.replace.preview.v1') return previewOk;
+            if (request.payload?.operation?.kind === 'restore') return { ok: true, results: [{ path: doc.path, status: 'restored', hash: hash('b') }] };
+            return { ok: true, results: [{ path: doc.path, status: 'replaced', hash: hash('c'), matchCount: 1,
+                edits: [{ startUtf16: 4, deleteLength: 19, insertText: 'useSettingsModalKey', originalText: 'useSettingsRouteKey' }] }] };
+        });
+        const hook = await renderHook(({ target }: { target: WorkspaceScopeBase }) =>
+            useWorkspaceReplace({ scope: target, accountLifetime: account, matcher, unsavedPaths: [] }), { initialProps: { target: first } });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().canApply).toBe(true));
+        expect(rpc.call.mock.calls.filter(([request]) => request.method === 'daemon.workspaceFiles.replace.preview.v1')
+            .map(([request]) => request.payload.workspace)).toEqual([workspace]);
+        await act(async () => { hook.getCurrent().toggleFile(modal.path); });
+        await act(async () => { await hook.getCurrent().apply(); });
+        await hook.rerender({ target: second });
+        await waitForHomeGovernance(() => expect(rpc.call.mock.calls.some(([request]) =>
+            request.method === 'daemon.workspaceFiles.replace.preview.v1' && request.payload.workspace?.managedId === 'guest-b')).toBe(true));
+        await act(async () => { expect(await hook.getCurrent().undoOnClose?.run()).toMatchObject({ restored: 1 }); });
+        expect(rpc.call.mock.calls.filter(([request]) => request.method === 'workspace.files.replace')
+            .map(([request]) => ({ workspace: request.payload.workspace, kind: request.payload.operation.kind })))
+            .toEqual([{ workspace, kind: 'replace' }, { workspace, kind: 'restore' }]);
+        expect(writes).toEqual({ first: [hash('c'), hash('b')], second: [], controller: [] });
+    });
 
     it('shows every unmodified target when an oversized apply reply is explicitly truncated', async () => {
         rpc.call.mockImplementation((request: { method: string }) => request.method === 'daemon.workspaceFiles.replace.preview.v1'

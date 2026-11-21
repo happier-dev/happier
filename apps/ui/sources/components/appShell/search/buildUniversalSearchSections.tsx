@@ -46,6 +46,7 @@ import {
     UNIVERSAL_SEARCH_PAGE_SIZE,
     buildUniversalSearchOptionId,
     buildUniversalSearchScopeKey,
+    buildUniversalSearchWorkspaceScopeKey,
     type UniversalSearchResult,
 } from './universalSearchResult';
 
@@ -100,6 +101,7 @@ export type UniversalSearchProjectEntity = Readonly<{
     accountId: string;
     machineId: string;
     rootPath: string;
+    workspace?: WorkspaceScopeBase['workspace'];
     title: string;
     subtitle?: string;
     lastOpenedAtMs: number;
@@ -1044,12 +1046,7 @@ export function buildUniversalSearchSections(
             title: t('universalSearch.sections.projects'),
             options: projects.map((project) => localOption({
                 id: project.workspaceRefId,
-                scopeKey: buildUniversalSearchScopeKey([
-                    project.accountId,
-                    project.serverId,
-                    project.machineId,
-                    project.rootPath,
-                ]),
+                scopeKey: buildUniversalSearchWorkspaceScopeKey(project.accountId, project),
                 sourceId: UNIVERSAL_SEARCH_SOURCE_IDS.projects,
                 kind: 'project',
                 title: project.title,
@@ -1061,6 +1058,7 @@ export function buildUniversalSearchSections(
                     accountId: project.accountId,
                     machineId: project.machineId,
                     rootPath: project.rootPath,
+                    ...(project.workspace ? { workspace: project.workspace } : {}),
                 },
             }, 'folder-open', query || undefined)),
         });

@@ -32,6 +32,14 @@ function lifetime(): ServerAccountScopeLifetime & { retire(): void } {
 describe('searchWorkspaceFileContents', () => {
     beforeEach(() => { rpc.call.mockReset(); });
 
+    it('searches the admitted managed filesystem instead of the controller root', async () => {
+        const workspace = { v: 2 as const, serverId: scope.serverId, kind: 'managed' as const, workspaceId: 'project', managedId: 'guest',
+            controller: { machineId: scope.machineId, installationId: 'installation' }, rootPath: scope.rootPath };
+        rpc.call.mockResolvedValue({ ok: true, files: [], hasMore: false, coverage: 'complete' });
+        await searchWorkspaceFileContents({ scope: { ...scope, workspace }, accountLifetime: lifetime(), query: 'needle' });
+        expect(rpc.call).toHaveBeenCalledWith(expect.objectContaining({ payload: expect.objectContaining({ workspace }) }));
+    });
+
     it('requests the displayed two context lines from the exact Home and Account without rewriting query text', async () => {
         const files = [{ path: 'src/a.ts', matches: [{ line: 4, column16: 4, length16: 6, text: 'é😀needle', before: ['before'], after: ['after'] }] }];
         rpc.call.mockResolvedValue({ ok: true, files, hasMore: true, coverage: 'partial' });

@@ -202,6 +202,24 @@ afterEach(async () => {
 });
 
 describe('shared workspace filesystem Action admission', () => {
+    it('acknowledges a managed write only to readers of that guest', async () => {
+        const { subscribeAcknowledgedWorkspaceFileWrites } = await import('@/sync/domains/workspaces/files/workspaceFileAcknowledgements');
+        const workspace = { v: 2 as const, kind: 'managed' as const, serverId: target.serverId,
+            workspaceId: 'attached-checkout', managedId: 'native-guest',
+            controller: { machineId: target.machineId, installationId: 'installed-controller' }, rootPath: target.rootPath };
+        const guest = { ...target, accountId: accountScope.accountId, workspace };
+        const writes: Record<'guest' | 'controller', Array<string | null>> = { guest: [], controller: [] };
+        const disposes = [
+            subscribeAcknowledgedWorkspaceFileWrites(guest, 'file.txt', write => writes.guest.push(write.hash)),
+            subscribeAcknowledgedWorkspaceFileWrites({ ...target, accountId: accountScope.accountId }, 'file.txt', write => writes.controller.push(write.hash)),
+        ];
+        try {
+            filesystem.response = { success: true, hash: 'a'.repeat(64) };
+            expect(await workspaceWriteFile({ kind: 'managed', workspace }, 'file.txt', 'changed')).toMatchObject({ success: true });
+            expect(writes).toEqual({ guest: ['a'.repeat(64)], controller: [] });
+        } finally { disposes.forEach(dispose => dispose()); }
+    });
+
     it('routes a managed directory read through its controller without dropping the native address', async () => {
         const workspace = { v: 2 as const, kind: 'managed' as const, serverId: target.serverId,
             workspaceId: 'attached-checkout', managedId: 'native-guest',

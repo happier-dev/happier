@@ -4,6 +4,7 @@ import type { Command } from '@/components/appShell/commandPalette/types';
 import type { TerminalJumpTarget } from '@/components/sessions/terminal/jump/terminalJumpTarget';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import type { WorkspaceSymbolSearchInput } from './workspaceSymbolSearchSource';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 
 export type UniversalSearchScopeSeed = Readonly<{
     accountId: string | null;
@@ -11,6 +12,7 @@ export type UniversalSearchScopeSeed = Readonly<{
     sessionId: string | null;
     machineId: string | null;
     rootPath: string | null;
+    workspace?: WorkspaceScopeBase['workspace'];
     machineScope?: 'all';
 }>;
 

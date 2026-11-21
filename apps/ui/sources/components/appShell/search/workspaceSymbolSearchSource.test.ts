@@ -23,6 +23,20 @@ function fixture(serverId: string | null = 'home', serverOutline?: DocumentOutli
 }
 
 describe('active file symbol source', () => {
+    it('keeps same-path managed symbol sources and results distinct', async () => {
+        const workspace = { v: 2 as const, kind: 'managed' as const, serverId: 'home', workspaceId: 'checkout-a', managedId: 'guest-a',
+            controller: { machineId: 'machine', installationId: 'installation' }, rootPath: '/repo' };
+        const range = { start: { line: 0, character: 0 }, end: { line: 0, character: 14 } };
+        const sources = [workspace, { ...workspace, workspaceId: 'checkout-b', managedId: 'guest-b' }].map(address => {
+            const { input } = fixture('home', { capable: true, state: 'ready', loading: false,
+                symbols: [{ serverId: 'language-server', name: 'Fresh', kind: 5, range, selectionRange: range }] });
+            return createWorkspaceSymbolSearchSource({ ...input, target: { ...input.target,
+                scope: { ...input.target.scope, workspace: address } } });
+        });
+        const pages = await Promise.all(sources.map(source => source.resolve('Fresh', new AbortController().signal)));
+        expect(sources[0].resolverKey).not.toBe(sources[1].resolverKey);
+        expect(pages[0].results[0]?.scopeKey).not.toBe(pages[1].results[0]?.scopeKey);
+    });
     it.each(['no_capable_server', 'update_required', 'transport_failed'] as const)('keeps the document baseline explicitly scoped when the project query is %s', async reason => {
         const source = createWorkspaceSymbolSearchSource({ ...fixture().input,
             baselineHint: 'Symbols in box.ts',

@@ -1556,19 +1556,23 @@ describe('UniversalSearchController exact Home scope', () => {
 
     // Find lab ST "No folder in scope": opened from the app home or Settings, the Text in files scope
     // offers the recent folders instead of a false Machine-connection error; choosing one searches it.
-    it('offers recent folders in the Text in files scope with no folder, and choosing one searches it for the typed query', async () => {
+    it.each(['machine', 'managed'] as const)('offers recent %s folders in Text in files and searches the chosen filesystem', async (kind) => {
         fixture.singleHome = true;
         fixture.memoryMachine = { serverId: HOME_B, machine: { id: 'machine-b' } };
-        fixture.workspaceRefs = [{ id: 'ws-tide', serverId: HOME_B, machineId: 'machine-b', rootPath: '/home/leeroy/tidepool', label: 'tidepool', createdAtMs: 1 }];
+        const project = { id: 'ws-tide', serverId: HOME_B, rootPath: '/home/leeroy/tidepool', label: 'tidepool', createdAtMs: 1 };
+        const controller = { machineId: 'machine-b', installationId: 'installation-b' };
+        fixture.workspaceRefs = [kind === 'managed' ? { ...project, v: 2, kind, managedId: 'guest-b', controller }
+            : { ...project, machineId: 'machine-b' }];
         fixture.daemonRpc.mockImplementation(async ({ method }) => method === RPC_METHODS.DAEMON_WORKSPACE_FILES_LIST
             ? { ok: true, paths: [], truncated: false } : { ok: true, files: [], hasMore: false, coverage: 'complete' });
         const { UniversalSearchController } = await import('./UniversalSearchController');
         await renderScreen(<UniversalSearchController commands={[]} initialQuery="highWater" initialSource="fileContent"
             initialScope={{ accountId: 'account-1', serverId: HOME_B, sessionId: null, machineId: null, rootPath: null }}
             activeSessionId={null} presentation="modal" onRequestClose={vi.fn()} />);
-        await act(async () => { storage.setState({ machines: {
-            'machine-b': createMachineFixture({ id: 'machine-b', active: true, activeAt: Date.now() }),
-        } }); });
+        const machine = createMachineFixture({ id: 'machine-b', active: true, activeAt: Date.now(), presenceProtocolVersion: 1 });
+        const { publishMachineActivity } = await import('@/sync/domains/machines/machineActivity');
+        publishMachineActivity(machine, { active: machine.active, activeAt: machine.activeAt }, []);
+        await act(async () => { storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [HOME_B]: [machine] } }); });
         const textSection = () => {
             const section = selectionListProps()?.rootStep.sections.find(item => item.id === 'fileContent');
             if (!section) throw new Error('Missing Text in files section');
@@ -1590,10 +1594,11 @@ describe('UniversalSearchController exact Home scope', () => {
         const scopedSection = textSection();
         if (scopedSection.kind !== 'dynamic') throw new Error('The chosen folder should be searched');
         const scoped = await scopedSection.resolve('highWater', new AbortController().signal);
-        expect(scoped.emptyHint).toBe(t('universalSearch.content.noTextMatches', { scope: 'tidepool', query: 'highWater' }));
         expect(searches().map(([call]) => call.payload)).toEqual([
-            expect.objectContaining({ query: 'highWater', rootPath: '/home/leeroy/tidepool' }),
+            expect.objectContaining({ query: 'highWater', rootPath: project.rootPath, ...(kind === 'managed'
+                ? { workspace: { v: 2, serverId: HOME_B, kind, workspaceId: project.id, managedId: 'guest-b', controller, rootPath: project.rootPath } } : {}) }),
         ]);
+        expect(scoped.emptyHint).toBe(t('universalSearch.content.noTextMatches', { scope: 'tidepool', query: 'highWater' }));
     });
 
     // Replace (Alt+Shift+H) opens the same scope; with no folder its review waits for one instead of a false error.

@@ -1,5 +1,24 @@
 import { expect, it } from 'vitest';
 import { acknowledgeWorkspaceFileWrites, subscribeAcknowledgedWorkspaceFileWrites } from './workspaceFileAcknowledgements';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
+
+it('isolates same-path managed file acknowledgements from other guests and the controller', () => {
+    const controller = { serverId: 'home', accountId: 'account', machineId: 'controller', rootPath: '/repo' };
+    const workspace = { v: 2 as const, kind: 'managed' as const, serverId: 'home', workspaceId: 'checkout-a',
+        managedId: 'guest-a', controller: { machineId: 'controller', installationId: 'installation' }, rootPath: '/repo' };
+    const first: WorkspaceScopeBase & { accountId: string } = { ...controller, workspace };
+    const second = { ...first, workspace: { ...workspace, workspaceId: 'checkout-b', managedId: 'guest-b' } };
+    const writes = { first: [] as Array<string | null>, second: [] as Array<string | null>, controller: [] as Array<string | null> };
+    const disposes = [
+        subscribeAcknowledgedWorkspaceFileWrites(first, 'file.txt', write => writes.first.push(write.hash)),
+        subscribeAcknowledgedWorkspaceFileWrites(second, 'file.txt', write => writes.second.push(write.hash)),
+        subscribeAcknowledgedWorkspaceFileWrites(controller, 'file.txt', write => writes.controller.push(write.hash)),
+    ];
+    try {
+        acknowledgeWorkspaceFileWrites(first, [{ path: 'file.txt', hash: 'guest-write' }]);
+        expect(writes).toEqual({ first: ['guest-write'], second: [], controller: [] });
+    } finally { disposes.forEach(dispose => dispose()); }
+});
 
 it('matches canonical Windows file identity without crossing Account, Machine, or sibling roots', () => {
     const target = { serverId: 'home', accountId: 'account', machineId: 'machine', rootPath: 'C:\\repo' };

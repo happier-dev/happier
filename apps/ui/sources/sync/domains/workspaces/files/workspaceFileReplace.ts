@@ -13,7 +13,7 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMachineAbsolutePath';
 import { normalizeLocalPathForComparison } from '@/utils/path/resolvePathRelativeToRoot';
-import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
+import { tryBuildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import {
   machineWorkspaceFileReplaceApply,
   machineWorkspaceFileReplacePreview,
@@ -453,15 +453,12 @@ export function useWorkspaceReplace(
   authorRef.current = author;
   const targetKey =
     scope && accountId
-      ? JSON.stringify([scope.serverId, scope.machineId, scope.rootPath, accountId])
+      ? JSON.stringify([tryBuildWorkspaceCacheKey(scope), accountId])
       : null;
   const key =
-    scope && accountLifetime && matcher && matcher.query.length > 0
+    targetKey && accountLifetime && matcher && matcher.query.length > 0
       ? JSON.stringify([
-          scope.serverId,
-          scope.machineId,
-          scope.rootPath,
-          accountId,
+          targetKey,
           matcher.query,
           matcher.replacement,
           matcher.matchCase,
@@ -557,6 +554,7 @@ export function useWorkspaceReplace(
       scope.machineId,
       {
         rootPath: scope.rootPath,
+        ...(scope.workspace ? { workspace: scope.workspace } : {}),
         query: matcher.query,
         replacement: matcher.replacement,
         matchCase: matcher.matchCase,
@@ -631,6 +629,7 @@ export function useWorkspaceReplace(
       scope.machineId,
       {
         rootPath: scope.rootPath,
+        ...(scope.workspace ? { workspace: scope.workspace } : {}),
         query: reviewed.query,
         replacement: reviewed.replacement,
         matchCase: reviewed.matchCase,
@@ -774,6 +773,7 @@ export function useWorkspaceReplace(
         scope.machineId,
         {
           rootPath: scope.rootPath,
+          ...(scope.workspace ? { workspace: scope.workspace } : {}),
           operation: {
             kind: 'replace',
             matcher: preview.matcher,
@@ -884,6 +884,7 @@ export function useWorkspaceReplace(
           resultState.scope.machineId,
           {
             rootPath: resultState.scope.rootPath,
+            ...(resultState.scope.workspace ? { workspace: resultState.scope.workspace } : {}),
             operation: buildWorkspaceFileRestoreOperation(targets),
           },
           requestApproval ? { ...resultState.options,
