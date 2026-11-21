@@ -122,6 +122,10 @@ fi
 [ '{kind}' != incomplete ] || exit 11
 if [[ '{kind}' = cas-final-entry || '{kind}' = cas-final-declarations || '{kind}' = declaration-admission-refused || '{kind}' = declaration-admission-stall || '{kind}' = entry-admission-refused || '{kind}' = cas-churn || '{kind}' = cas-stale || '{kind}' = cas-worker-down ]] && [ -e '{d}/moved-twice' ]; then
  if [ -n "${{P03_SCAN_CHEAP_ONLY:-}}" ]; then
+   if [ '{kind}' = declaration-admission-stall ] && [ "${{P03_GATE_FINAL_DECLARATION_RECHECK:-}}" = 1 ]; then
+     touch '{d}/final-compiler-started'
+     exec sleep 120
+   fi
    if [ '{kind}' = cas-final-declarations ] && [ "${{P03_GATE_FINAL_DECLARATION_RECHECK:-}}" = 1 ]; then
      [ "$l" = locked ] && [ "${{TEST_ENTRY_LEASE:-}}" = held ] && [ "${{TEST_DECLARATION_LEASE:-}}" = held ] || exit 99
      exit 0
@@ -155,6 +159,20 @@ if [[ "$*" = *--class=gate-declaration-comparison* ]]; then
   echo declaration-attempt >> '{d}/admission'
   [ '{kind}' != declaration-admission-refused ] || exit 96
   if [ '{kind}' = declaration-admission-stall ]; then
+    set +e
+    export TEST_DECLARATION_LEASE=held HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT=declaration
+    while [ "$1" != -- ]; do shift; done
+    shift
+    # Simulate the broker terminating its admitted worker group before child cleanup.
+    setsid "$@" &
+    worker=$!
+    for _ in {{1..60}}; do
+      [ ! -e '{d}/final-compiler-started' ] || break
+      sleep 0.1
+    done
+    kill -KILL -- "-$worker"
+    wait "$worker"
+    [ -e '{d}/final-compiler-started' ] || exit 99
     printf '%s\n' 'HAPPIER_DECLARATION_COMPARISON_INCOMPLETE {{"cause":"no-cpu-progress","elapsedMs":301000,"cpuIdleMs":300000}}'
     exit 75
   fi
@@ -207,7 +225,7 @@ exec "$@"
         if kind == 'declaration-admission-stall':
             assert '"cpuIdleMs":300000' in run.stdout, run.stdout
             assert 'admission-unavailable' not in run.stdout, run.stdout
-        assert len(gates) == 2, gates
+        assert len(gates) == (3 if kind == 'declaration-admission-stall' else 2), gates
     elif kind == 'entry-admission-refused':
         assert run.returncode == 11 and git('rev-parse','HEAD') == later, run.stdout
         assert 'entry-load-admission-unavailable' in run.stdout, run.stdout

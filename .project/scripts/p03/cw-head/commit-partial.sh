@@ -261,11 +261,15 @@ declaration_admission_incomplete() {
 run_final_declaration_phase() {
   local launcher=$1 projects=$2
   local no_wait=() status=()
+  # Own the child's scratch outside the lease being watched. The admission
+  # broker can terminate its whole process group before the child's EXIT trap.
+  gateScratch=$(mktemp -d "${TMPDIR:-/tmp}/p03-gate-final.XXXXXX") || { declaration_admission_incomplete 75; return 11; }
   # A second grant must be independent from entry admission. The broker must
   # settle it immediately so no entry holder waits on a declaration holder.
   if [ "$entry_phase" = 1 ]; then no_wait=(--no-wait); fi
   (
     export P03_GATE_ENTRY_ADMISSION_SLOT=${HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT:-}
+    export TMPDIR=$gateScratch
     unset HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN HAPPIER_HEAVYWEIGHT_ADMISSION_FLOOR_KIB
     "$launcher" --heavyweight-admission --class=gate-declaration-comparison --machine=local "--projects=$projects" \
       --identity-arg=node --identity-arg=scripts/workspaces/commitGateTypecheck.mjs "${no_wait[@]}" \
@@ -281,6 +285,7 @@ run_final_declaration_phase() {
     { print; fflush() }
     END { if (stalled) exit 11 }'
   status=("${PIPESTATUS[@]}")
+  cleanup_gate
   if [ "${status[1]}" = 11 ]; then return 11; fi
   case ${status[0]} in
     0|3|10|11|130|143) return "${status[0]}";;
@@ -310,7 +315,7 @@ admit_final_phase() {
   [ -n "$entry_projects$declaration_projects" ] || return 0
   while [ "$(git rev-parse HEAD)" != "$head" ]; do
     rc=0
-    export P03_CP_FROZEN=$packet P03_CP_GATED="$gated $head" P03_CP_CAS_LOSSES=$cas_losses P03_CP_RECHECKED_AFTER_RELEASE=0
+    export P03_CP_FROZEN=$packet P03_CP_GATED="$gated $head" P03_CP_CAS_LOSSES=$cas_losses
     export P03_CP_FINAL_PREPARED=$final_prepared P03_CP_ROUNDS=$rounds P03_CP_DECLARATION_PROJECTS=$declaration_projects
     if [ -n "$entry_projects" ]; then
       "$launcher" --heavyweight-admission --class=gate-entry-loads --machine=local "--projects=$entry_projects" \
