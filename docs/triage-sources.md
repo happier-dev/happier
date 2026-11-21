@@ -401,6 +401,13 @@ validation before claiming phone availability.
 
 Triage's [`administerConfiguredSourceInstance.ts`](../packages/plugins/triage/src/corpus/configuration/administerConfiguredSourceInstance.ts) owns configured-instance writes and the exact source-ownership comparison. [`readConfiguredSourceRows.ts`](../packages/plugins/triage/src/corpus/configuration/readConfiguredSourceRows.ts) supplies the shared active-row read and cursor handling. Discovery produces candidates, not automatic durable creation; mounted source Settings uses the administration Action rather than a direct Collection writer. The read ABI distinguishes complete from truncated results and refuses invalid caller authority at admission. An admitted finite read completes across source revocation; the next request admits independently. Open observations still close on revoke, and caller cancellation remains effective through response completion.
 
+Use the public `@happier-dev/triage-protocol/v1` result schemas to handle
+configured-source outcomes in source Settings.
+`TriageReadConfiguredSourceInstancesResultV1Schema` defines the read refusal
+`invalidCaller`. `TriageSourceAdministrationActionResultV1Schema` also defines the
+lifecycle writer's `conflict` and `atMaximum` outcomes. Contribution currentness
+belongs to host admission.
+
 In 0.3 development, the aggregate list catalog returns each source's existing opaque Collection row address. Selected refreshes carry that address back to the configured-row owner, which reads just that row and checks its stable source id and active lifecycle; built-in Tasks still resolves through its static source owner. Refreshing K selected connections therefore reads K configured rows rather than K copies of the catalog.
 
 The presentation/control allocation is derived from the actual shared source
