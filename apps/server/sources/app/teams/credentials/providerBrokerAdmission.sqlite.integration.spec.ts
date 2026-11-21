@@ -3831,7 +3831,11 @@ describe('Team credential Provider broker admission', () => {
         const authorityReads = async <T>(run: () => Promise<T>) => {
             statements.length = 0;
             const result = await run();
-            return { result, reads: statements.filter(sql => /^\s*SELECT/i.test(sql) && authorityTables.test(sql)).length,
+            const selects = statements.filter(sql => /^\s*SELECT/i.test(sql));
+            return { result, reads: selects.filter(sql => authorityTables.test(sql)).length,
+                activeJobReads: selects.filter(sql => /JOIN "TeamCredentialResource" r\b/.test(sql)
+                    && /JOIN "Session" s\b/.test(sql)).length,
+                policyReads: selects.filter(sql => sql.includes('"requestPolicyJson"')).length,
                 statements: statements.length };
         };
         try {
@@ -3841,16 +3845,27 @@ describe('Team credential Provider broker admission', () => {
             // The open is the job's one admission.
             expect(opened.reads).toBeGreaterThan(0);
             const usage = () => db.usageEvent.count({ where: { teamCredentialResourceId: resource.id } });
-            const perRequest: number[] = [];
+            const perRequest = [];
             for (const requestId of ['job-1', 'job-2', 'job-3']) {
-                const admitted = await authorityReads(() => fixture.admit({ authority, resource, requestId }));
-                expect(admitted.result).toMatchObject({ ok: true, operation: { kind: 'session', sessionId: session.id } });
-                perRequest.push(admitted.reads);
+                const { result, ...counts } = await authorityReads(() => fixture.admit({ authority, resource, requestId }));
+                expect(result).toMatchObject({ ok: true, operation: { kind: 'session', sessionId: session.id } });
+                expect(counts).toMatchObject({ activeJobReads: 1, reads: 0, policyReads: 0 });
+                perRequest.push(counts);
             }
             console.info('BROKER_ADMISSION_AUTHORITY_READS', JSON.stringify({ open: opened.reads, openStatements: opened.statements, perRequest }));
-            // Zero requester re-authorizations per model request; accounting
-            // still records every request.
-            expect(perRequest).toEqual([0, 0, 0]);
+            expect(await usage()).toBe(3);
+
+            // The per-request protocol check rejects mismatched facts before the active-job lookup or usage.
+            const wrongRoute = await authorityReads(() => admitTeamCredentialProviderBrokerRequest({
+                authenticatedBrokerAccountId: fixture.custodian.id,
+                request: { v: 1, authority, expectedResourceRevision: resource.revision,
+                    sourceMemberKey: providerSourceMemberKey('connection-admitted-job', 'apiKey'), requestId: 'admitted-job-wrong-route',
+                    requestFacts: { generation: true, routeKind: 'anthropic_messages', modelId: 'model-1', reasoningEffort: null } },
+                observedAt: new Date(),
+                verifyAuthority: () => true,
+            }));
+            expect(wrongRoute).toMatchObject({ result: { ok: false, reasonCode: 'invalid_request' },
+                activeJobReads: 0, reads: 0, policyReads: 0 });
             expect(await usage()).toBe(3);
 
             // The wrong Account and a foreign Home signature are refused.

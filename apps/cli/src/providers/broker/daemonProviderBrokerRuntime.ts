@@ -101,6 +101,7 @@ export function revalidateExternalProviderBrokerAuthorization(
 
 type ProviderBrokerApplicationTargetInput = Readonly<{
   handshake: IrohProviderBrokerHandshake;
+  /** The exact authority verified by Machine carrier admission for this peer. */
   authority: SignedProviderBrokerRouteGrantV1 | SignedProviderBrokerRouteGrantV2 | SignedProviderBrokerActionRouteGrantV3;
   authenticatedRemoteEndpointId: string;
   localEndpointId: string;
@@ -907,45 +908,19 @@ export async function startDaemonProviderBrokerRuntime(input: Readonly<{
       }
       const modelAuthority = SignedProviderBrokerModelRouteGrantV1Schema.safeParse(parsedAuthority.data);
       if (!modelAuthority.success) return null;
-      const expected = expectedBinding(modelAuthority.data);
-      const verified: ProviderBrokerRouteGrantVerificationResultV1 = verify({
-        authority: request.authority,
-        authenticatedRemoteEndpointId: request.authenticatedRemoteEndpointId,
-        expected,
-      });
-      if (!verified.valid) return null;
-      const authoritative = SignedProviderBrokerModelRouteGrantV1Schema.safeParse(verified.authority);
-      if (!authoritative.success) return null;
-      const authority = authoritative.data;
-      if (
-        authority.payload.application.agentTargetKey
-          !== expected.application.agentTargetKey
-        || authority.payload.application.implementationIdentity.pluginId
-          !== expected.application.implementationIdentity.pluginId
-        || authority.payload.application.implementationIdentity.localId
-          !== expected.application.implementationIdentity.localId
-        || authority.payload.application.endpointTemplateId
-          !== expected.application.endpointTemplateId
-        || authority.payload.application.protocol
-          !== expected.application.protocol
-      ) return null;
+      const authority = modelAuthority.data;
+      const expected = expectedBinding(authority);
       // Expiry bounds new work, not the operation (L10/04 §5.6, L10/11 A3):
       // a stream admitted on an expired authority exists only to release
       // the exact claim that authority already names, so a long-lived
       // Session/Run can still retire its custody after the handshake TTL.
-      const current = verify({
-        authority: request.authority,
-        authenticatedRemoteEndpointId: request.authenticatedRemoteEndpointId,
-        expected,
-        enforceExpiry: true,
-      });
-      if (!current.valid && current.reasonCode !== 'grant_expired') return null;
+      const releaseOnly = authority.payload.expiresAt <= input.nowMs();
       request.signal.throwIfAborted();
       return await application.createStreamTarget({
         authenticatedRemoteEndpointId: request.authenticatedRemoteEndpointId,
         authority,
         expected,
-        releaseOnly: !current.valid,
+        releaseOnly,
         streamLifetime: createPrivateProviderBrokerStreamLifetime({
           sourceOwner: input.sourceOwner,
           application: authority.payload.application,

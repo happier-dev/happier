@@ -1,3 +1,4 @@
+import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { resolveProviderSecretBindingIdV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
 import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -202,6 +203,9 @@ export function resolveProviderConnectionBrokerSource(
   if (reference.reference.kind === 'apiKey') {
     const refs = [reference.reference.secretId, ...(reference.reference.additionalCredentials ?? []).map(row => row.secretId)];
     for (const ref of refs) {
+      // The reference owner already admitted personal settings storage.
+      // Only shared resources can contain a native external source.
+      if (parseSavedSecretRefV1(ref).kind === 'personal') continue;
       const content = materializer.resolveContent(ref);
       if (content.status === 'forbidden'
         || content.status === 'ready' && content.content.v === 2 && content.content.source.kind === 'external') {
@@ -507,6 +511,7 @@ export async function materializeProviderConnectionBrokerSource(input: Readonly<
       }),
     };
   }
+  const savedSecretMaterializer = createSavedSecretMaterializerFromSnapshotV1(accountSnapshot, { reuseOpenedContents: true });
   const current = resolveProviderConnectionBrokerSource({
     source: input.expected.source,
     machineId: input.expected.machineId,
@@ -519,7 +524,7 @@ export async function materializeProviderConnectionBrokerSource(input: Readonly<
     expectedCredentialTransport: input.expected.credentialRef.transport,
     accountSettings: accountSnapshot.settings,
     providerSettings: readProviderSettingsForCli(accountSnapshot).settings,
-    savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(accountSnapshot),
+    savedSecretMaterializer,
     registry: input.registry,
     dnsEvidenceByEndpointUrl: input.dnsEvidenceByEndpointUrl,
     ...(input.localCandidateUrlsByConnectionId
@@ -529,6 +534,9 @@ export async function materializeProviderConnectionBrokerSource(input: Readonly<
   if (!current.ok) return current;
   return resolveRuntimeProviderCredential({
     credentialRef: current.snapshot.credentialRef,
+    // Broker source selection already refused native external material.
+    // Render through the same Saved Secret owner and its request-local opens.
+    resolveSavedSecretMaterializer: async () => savedSecretMaterializer,
     // Materialize from the exact current snapshot whose connection, grant,
     // endpoint and credential slot were just revalidated. The credential
     // reference deliberately comes from that current snapshot so rotation of

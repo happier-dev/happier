@@ -8,6 +8,8 @@ import {
   FeaturesResponseSchema,
   ProviderBrokerModelCatalogAuthorizationV1Schema,
   ProviderBrokerRequestAdmissionV1Schema,
+  projectPrivateLabelForRecipientV1,
+  sealPrivateLabelV1,
   type SignedProviderBrokerModelRouteGrantV1,
 } from '@happier-dev/protocol';
 import type { TeamCredentialResourceSummaryV1 } from '@happier-dev/protocol/teams';
@@ -86,7 +88,15 @@ it('keeps admitted Team custody through a missing Home resource on wakes and clo
   } as const;
   const resource: TeamCredentialResourceSummaryV1 = {
     id: 'resource-1', teamId: 'team-1', custodianAccountId: 'custodian-account', sourceOwnerDisplayName: null,
-    displayName: 'Shared Codex', enabled: true, revision: 7, source,
+    displayName: projectPrivateLabelForRecipientV1({
+      recipientAccountId: 'custodian-account',
+      stored: sealPrivateLabelV1({
+        mode: 'plain',
+        value: 'Shared Codex',
+        binding: { entity: 'team_credential_resource', field: 'displayName', id: 'resource-1' },
+      }),
+    }),
+    enabled: true, revision: 7, source,
     deliveryPolicy: { preferredAllowedModes: ['brokered'] }, sessionUsePolicy: 'personal_allowed',
     sourcePresentation: { kind: 'connected_service', service: source.target.account.service },
     directExportSupport: 'unsupported', activeUsageLimitCount: 0, requestPolicy: null,

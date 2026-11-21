@@ -1,4 +1,6 @@
 import { mkdtemp, rm } from 'node:fs/promises';
+import tweetnacl from 'tweetnacl';
+import { encryptSecretStringV1 } from '@happier-dev/protocol/crypto/settingsSecretStringsV1';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRuntimeProviderModelManagementServices } from '@/providers/modelManagement/runtimeServices';
@@ -1045,7 +1047,21 @@ describe('Provider Connection Team broker source', () => {
   });
 
   it('composes the source owner through the real HTTP transport and revokes before the next request', async () => {
-    let settings = accountSettings();
+    const base = accountSettings();
+    const providerSettings = readProviderSettingsForCli(base).settings;
+    const ref = 'personal-broker-key';
+    const withPersonalSecret = (state: ActiveAccountSettingsSnapshot, value: string, revision: number): ActiveAccountSettingsSnapshot => ({
+      ...state,
+      settingsSecretsReadKeys: [key],
+      settings: { ...state.settings, secrets: [{ id: ref, name: 'Broker key', kind: 'apiKey',
+        createdAt: 1, updatedAt: revision, encryptedValue: {
+          _isSecretValue: true,
+          encryptedValue: encryptSecretStringV1(value, key, length => new Uint8Array(length).fill(revision)),
+        } }] },
+    });
+    let settings = withPersonalSecret(snapshotFromProviderSettings({ ...providerSettings, secretBindingsByConnectionId: {
+      [connectionId]: { account: { apiKey: ref } },
+    } }), 'source-secret', 1);
     const failureCause = { phase: 'provider.credential_resolution', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } as const;
     let snapshotFailure: Error | null = null;
     let snapshotReadsUntilFailure = 0;
@@ -1119,6 +1135,8 @@ describe('Provider Connection Team broker source', () => {
       },
       operation: { kind: 'session', sessionId: 'session-composed' },
     });
+    const decrypt = vi.spyOn(tweetnacl.secretbox, 'open');
+    onTestFinished(() => { decrypt.mockRestore(); });
     const access = await lifetime.acquireSource({
       resourceId: 'resource-composed',
       brokerMachineId: 'machine-a',
@@ -1140,6 +1158,7 @@ describe('Provider Connection Team broker source', () => {
     expect({ resourceReads, registryReads, dnsReads, selectionReads }).toEqual({
       resourceReads: 1, registryReads: 1, dnsReads: 1, selectionReads: 1,
     });
+    expect(decrypt).not.toHaveBeenCalled();
     const response = await access.access.request({
       pathAndQuery: '/v1/responses',
       method: 'POST',
@@ -1155,6 +1174,7 @@ describe('Provider Connection Team broker source', () => {
       headers: { authorization: 'Bearer source-secret', 'accept-encoding': 'identity', 'x-client': 'happ' },
     });
     await readProviderBrokerResponseBody(response.body);
+    expect(decrypt).toHaveBeenCalledTimes(1);
     expect({ resourceReads, registryReads, dnsReads, selectionReads }).toEqual({
       resourceReads: 1, registryReads: 1, dnsReads: 1, selectionReads: 1,
     });
@@ -1172,14 +1192,17 @@ describe('Provider Connection Team broker source', () => {
     snapshotFailure = null;
 
     const renamed = readProviderSettingsForCli(settings).settings;
-    settings = snapshotFromProviderSettings({ ...renamed, connections: renamed.connections.map(connection => ({
+    settings = withPersonalSecret(snapshotFromProviderSettings({ ...renamed, connections: renamed.connections.map(connection => ({
       ...connection, revision: connection.revision + 1, displayName: 'Renamed gateway',
-    })) });
+    })) }), 'rotated-secret', 2);
+    decrypt.mockClear();
     const afterRename = await access.access.request({ pathAndQuery: '/v1/responses', method: 'POST',
       body: new TextEncoder().encode('{}') });
     expect(afterRename.status).toBe(200);
     await new Response(await readProviderBrokerResponseBody(afterRename.body)).text();
     expect(upstreamRequests).toHaveLength(2);
+    expect(upstreamRequests[1]?.headers).toMatchObject({ authorization: 'Bearer rotated-secret' });
+    expect(decrypt).toHaveBeenCalledTimes(1);
     expect({ resourceReads, registryReads, dnsReads, selectionReads }).toEqual({
       resourceReads: 1, registryReads: 1, dnsReads: 1, selectionReads: 1,
     });
@@ -1205,14 +1228,17 @@ describe('Provider Connection Team broker source', () => {
     expect(unsupported.projection.requestCostParser).toBeUndefined();
     await unsupported.projection.cleanup();
 
-    const providerSettings = readProviderSettingsForCli(settings).settings;
-    settings = snapshotFromProviderSettings({ ...providerSettings, accountGrants: [] });
+    settings = withPersonalSecret(snapshotFromProviderSettings({ ...readProviderSettingsForCli(settings).settings,
+      accountGrants: [],
+    }), 'rotated-secret', 2);
+    decrypt.mockClear();
     await expect(access.access.request({
       pathAndQuery: '/v1/responses',
       method: 'POST',
       body: new TextEncoder().encode('{}'),
     })).rejects.toMatchObject({ failure: { reasonCode: 'provider_connection_disabled' } });
     expect(upstreamRequests).toHaveLength(2);
+    expect(decrypt).not.toHaveBeenCalled();
     await lifetime.close();
     expect(custody.acquire).not.toHaveBeenCalled();
   });

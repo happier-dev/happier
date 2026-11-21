@@ -5,7 +5,7 @@ import { ConnectedAccountSourceReconnectRequiredError } from '@/daemon/connected
 import { once } from 'node:events';
 import axios, { AxiosError } from 'axios';
 import tweetnacl from 'tweetnacl';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import {
   IROH_MACHINE_ADMISSION_PATH,
   IROH_MACHINE_APPLICATION_CAPABILITY_HEADER,
@@ -1191,12 +1191,11 @@ describe('startDaemonProviderBrokerRuntime', () => {
     expect(retire).not.toHaveBeenCalled();
   });
 
-  it('fails closed before creating a stream target when the signed application is not current', async () => {
+  it('fails closed when the verified application differs from the handshake', async () => {
     const runtime = await startDaemonProviderBrokerRuntime({
       machineId: 'broker-machine',
       resolveTrustRoots: () => [],
       nowMs: () => 150,
-      verifyAuthority: () => ({ valid: false as const, reasonCode: 'grant_binding_mismatch' }),
       resolveRequestPolicy: vi.fn(),
       admitRequest: vi.fn(),
       authorizeModelCatalog: vi.fn(),
@@ -1212,7 +1211,9 @@ describe('startDaemonProviderBrokerRuntime', () => {
     closeTasks.push(runtime.close);
     await expect(runtime.resolveProviderBrokerApplicationTarget({
       handshake: { v: 1, kind: 'provider_broker', authority },
-      authority,
+      authority: { ...authority, payload: { ...authority.payload,
+        application: { ...authority.payload.application, endpointTemplateId: 'other-endpoint' },
+      } },
       authenticatedRemoteEndpointId: authority.payload.initiator.endpointId,
       localEndpointId: authority.payload.target.endpointId,
       signal: new AbortController().signal,
@@ -1357,6 +1358,7 @@ function startBrokerAdmission(
   runtime: Awaited<ReturnType<typeof startDaemonProviderBrokerRuntime>>,
   nowMs: number,
   handshake?: Parameters<typeof runtime.resolveProviderBrokerApplicationTarget>[0]['handshake'],
+  resolveTrustRoots?: () => typeof homeTrustRoots,
 ) {
   const admission = createPeerMediationLoopbackApp({
     nowMs: () => nowMs,
@@ -1372,6 +1374,7 @@ function startBrokerAdmission(
       localEndpointId: authority.payload.target.endpointId,
       role: 'acceptor',
       allowedFlows: [],
+      resolveTrustRoots,
       resolveApplicationTarget: () => null,
       resolveProviderBrokerApplicationTarget: runtime.resolveProviderBrokerApplicationTarget,
     },
@@ -2112,7 +2115,7 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
     const admitStream = async (consumer: Consumer = authority.payload.consumer, expired = false) => {
       const key = operationKey(consumer);
       if (!consumers.has(key)) consumers.set(key, true);
-      return await startBrokerAdmission(runtime, 150, streamHandshake(consumer, expired))();
+      return await startBrokerAdmission(runtime, 150, streamHandshake(consumer, expired), runtimeInput.resolveTrustRoots)();
     };
     const requestsOnOneStream = async (steps: Parameters<typeof keepAliveRequestsThroughApplicationTarget>[0]['steps']) => {
       const target = await admitStream();
@@ -2298,12 +2301,16 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
     it('trusts the carrier-verified Team grant for later requests on its admitted stream', async () => {
       const target = await startRetainedTarget();
       const request = { path: '/v1/responses', body: JSON.stringify({ model: 'gpt-5', input: 'hello' }) };
+      const verifySignature = vi.spyOn(tweetnacl.sign.detached, 'verify');
+      onTestFinished(() => { verifySignature.mockRestore(); });
       let readsAtAdmission = 0;
       const responses = await target.requestsOnOneStream([request, { ...request, before: () => {
         readsAtAdmission = target.trustRootReads(); target.withdrawTrustRoots();
       } }]);
       for (const response of responses) expect(response).toContain('HTTP/1.1 200');
+      expect(readsAtAdmission).toBe(1);
       expect(target.trustRootReads()).toBe(readsAtAdmission);
+      expect(verifySignature).toHaveBeenCalledTimes(1);
       expect((await target.admitStream()).statusCode).toBe(403);
     });
 

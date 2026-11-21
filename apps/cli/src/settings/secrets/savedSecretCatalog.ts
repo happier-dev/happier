@@ -219,6 +219,8 @@ export function createSavedSecretMaterializerV1(input: Readonly<{
   /** Host-private, already authenticated installation contents for this exact admitted catalog. */
   openedInstallationContents?: ReadonlyMap<string, SavedSecretResourceContentV1>;
   externalAcquisitions?: SavedSecretExternalAcquisitionsV1;
+  /** Enable only for a materializer confined to one credential acquisition. */
+  reuseOpenedContents?: boolean;
 }>): SavedSecretMaterializerV1 {
   const personal = readPersonalSecrets(input.accountSettings);
   const resources = new Map(input.resources?.map((resource) => [resource.resourceId, resource]) ?? []);
@@ -303,9 +305,10 @@ export function createSavedSecretMaterializerV1(input: Readonly<{
     };
   };
 
-  const resolveContent = (ref: string): SavedSecretContentResolutionV1 => {
-    const inspected = inspect(ref);
-    if (inspected.status !== 'ready') return inspected;
+  const openedContents = input.reuseOpenedContents
+    ? new Map<string, Extract<SavedSecretContentResolutionV1, { status: 'ready' }>>()
+    : undefined;
+  const openContent = (ref: string, inspected: Extract<SavedSecretInspectionV1, { status: 'ready' }>): SavedSecretContentResolutionV1 => {
     if (inspected.source === 'personal') {
       const material = personal.get(ref)!;
       const value = decryptSecretValueWithKeysV1(material.secret, input.settingsSecretsReadKeys);
@@ -354,6 +357,16 @@ export function createSavedSecretMaterializerV1(input: Readonly<{
       fingerprint: inspected.fingerprint,
       source: 'shared_resource',
     };
+  };
+
+  const resolveContent = (ref: string): SavedSecretContentResolutionV1 => {
+    const inspected = inspect(ref);
+    if (inspected.status !== 'ready') return inspected;
+    const opened = openedContents?.get(ref);
+    if (opened) return opened;
+    const resolved = openContent(ref, inspected);
+    if (resolved.status === 'ready') openedContents?.set(ref, resolved);
+    return resolved;
   };
 
   const resolve = (ref: string): SavedSecretResolutionV1 => {
@@ -411,7 +424,8 @@ export function createSavedSecretMaterializerFromSnapshotV1(
   snapshot: ActiveAccountSettingsSnapshot,
   input?: Readonly<{ isCurrent?: () => boolean; operationContext?: SavedSecretOperationContextV1;
     externalAcquisitions?: SavedSecretExternalAcquisitionsV1;
-    openedInstallationContents?: ReadonlyMap<string, SavedSecretResourceContentV1> }>,
+    openedInstallationContents?: ReadonlyMap<string, SavedSecretResourceContentV1>;
+    reuseOpenedContents?: boolean }>,
 ): SavedSecretMaterializerV1 {
   const capturedActiveSnapshot = getActiveAccountSettingsSnapshot() === snapshot ? snapshot : null;
   const activeLifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
@@ -428,6 +442,7 @@ export function createSavedSecretMaterializerFromSnapshotV1(
     resourceCatalogState: snapshot.savedSecretCatalogState,
     isCurrent,
     ...(input?.externalAcquisitions ? { externalAcquisitions: input.externalAcquisitions } : {}),
+    ...(input?.reuseOpenedContents ? { reuseOpenedContents: true } : {}),
     ...(input?.openedInstallationContents ? { openedInstallationContents: input.openedInstallationContents } : {}),
   });
 }
