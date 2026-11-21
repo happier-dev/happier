@@ -107,6 +107,23 @@ describe('startMachineRegistrationRetryLoop', () => {
     vi.useRealTimers();
   });
 
+  it('registers once while retrying sync bootstrap after the server confirms the Machine', async () => {
+    vi.useFakeTimers();
+    const machine = createMachine('machine-1');
+    const bootstrap = vi.fn<StartMachineRegistrationRetryLoopParams['onMachineRegistered']>()
+      .mockRejectedValueOnce(createHttpStatusError(503, 'Machine sync bootstrap unavailable'))
+      .mockRejectedValueOnce(createHttpStatusError(503, 'Machine sync bootstrap unavailable'))
+      .mockResolvedValue(undefined);
+    const params = createLoopParams({ onMachineRegistered: bootstrap });
+    const registrationRequest = vi.mocked(params.api.getOrCreateMachine).mockResolvedValue(machine);
+
+    startMachineRegistrationRetryLoop(params);
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expect(bootstrap.mock.calls).toEqual(Array.from({ length: 3 }, () => [{ machineId: machine.id, machine }]));
+    expect(registrationRequest).toHaveBeenCalledTimes(1);
+  });
+
   it('wakes a retryable endpoint-outage registration retry when readiness returns online', async () => {
     vi.useFakeTimers();
     const retryWakeSource = createRetryWakeSourceHarness();

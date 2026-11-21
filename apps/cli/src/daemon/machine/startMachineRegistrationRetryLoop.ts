@@ -121,7 +121,7 @@ async function sleepUntilRetryOrShutdown(
 export function startMachineRegistrationRetryLoop(
   params: StartMachineRegistrationRetryLoopParams,
 ): MachineRegistrationRetryLoopHandle {
-  let preflightMachineRegistration = params.initialPreflightMachineRegistration;
+  let registeredMachine = params.initialPreflightMachineRegistration;
   let attempts = 0;
   let pausedForQuiescence = false;
   let resumeRequestedAfterCurrentRun = false;
@@ -152,7 +152,7 @@ export function startMachineRegistrationRetryLoop(
         }
         try {
           const ensured =
-            preflightMachineRegistration ??
+            registeredMachine ??
             await ensureMachineRegistered({
               api: params.api,
               machineId: params.resolveMachineId(),
@@ -162,7 +162,8 @@ export function startMachineRegistrationRetryLoop(
               caller: 'startDaemon',
               isShuttingDown: isRegistrationBlocked,
             });
-          preflightMachineRegistration = ensured;
+          // Sync bootstrap can retry after Home already confirmed this registration.
+          registeredMachine = ensured;
 
           if (params.isShuttingDown()) {
             completed = true;
@@ -172,8 +173,6 @@ export function startMachineRegistrationRetryLoop(
             pausedForQuiescence = true;
             return;
           }
-          preflightMachineRegistration = null;
-
           const machineId = ensured.machineId;
           params.setMachineId(machineId);
           const machine = ensured.machine;
