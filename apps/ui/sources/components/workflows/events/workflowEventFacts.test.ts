@@ -14,7 +14,7 @@ vi.mock('@/text', async () => {
 
 const {
   matchesWorkflowEventFilter,
-  orderWorkflowEventFilters,
+  buildWorkflowEventFilterTabs,
   readWorkflowEventTrigger,
   readWorkflowEventWhen,
   readWorkflowEventStartedRuns,
@@ -49,7 +49,7 @@ const turn = {
   key: 's:turn',
   kind: 'session',
   sessionId: 's1',
-  event: 'turn_started',
+  event: 'parentTurnStarted',
   turnId: 't1',
 } as const;
 const machine = {
@@ -111,8 +111,10 @@ describe('workflowEventFacts', () => {
   });
 
   it('says which start an added event brings, and links a saved workflow only from a Session start', () => {
-    expect(readWorkflowEventAddsLine(turn, null, null)).toBe('workflows.events.addsAnySession(when=workflows.triggers.kind.turnStarts)');
-    expect(readWorkflowEventAddsLine(machine, null, null)).toBeNull();
+    expect(readWorkflowEventAddsLine(turn, null)).toBe('workflows.events.adds(when=workflows.triggers.kind.turnStarts)');
+    expect(readWorkflowEventAddsLine(machine, null)).toBeNull();
+    expect(readWorkflowEventAddsLine(started, null))
+      .toBe('workflows.events.adds(when=workflows.events.whenASessionStarts)');
     expect(readWorkflowEventLinkWhen(started)).toEqual(readWorkflowEventWhen(started));
     // A Run's exact source and a Machine's native setup are authored in the editor, never linked blind.
     expect(readWorkflowEventLinkWhen(run)).toBeNull();
@@ -120,8 +122,8 @@ describe('workflowEventFacts', () => {
   });
 
   it('narrows a Session start to the picked Session, everywhere the event seeds a trigger', () => {
-    const match = { session: { serverId: 'home' } } as const;
-    const subject = { kind: 'session', serverId: 'home', sessionId: 's1' };
+    const subject = { kind: 'session', serverId: 'home', sessionId: 's1' } as const;
+    const match = { subject, label: 'Fix flaky test' };
     expect(readWorkflowEventWhen(turn, match)).toMatchObject({ kind: 'turnStarts', subject });
     expect(readWorkflowEventTrigger(turn, match)).toMatchObject({ kind: 'sessionLifecycle', subject });
     expect(readWorkflowEventDraftIntent(turn, undefined, match)).toEqual({ trigger: readWorkflowEventTrigger(turn, match) });
@@ -134,14 +136,35 @@ describe('workflowEventFacts', () => {
   });
 
   it('says in one sentence when a new workflow would start, and what Add brings', () => {
-    expect(readWorkflowEventStartsLine(turn, null, 'Fix flaky test'))
-      .toBe('workflows.events.wouldStartAnySession(when=workflows.triggers.kind.turnStarts)');
-    expect(readWorkflowEventStartsLine(turn, { session: { serverId: 'home' } }, 'Fix flaky test'))
+    const match = { subject: { kind: 'session', serverId: 'home', sessionId: 's1' }, label: 'Fix flaky test' } as const;
+    expect(readWorkflowEventStartsLine(turn, null))
+      .toBe('workflows.events.wouldStart(when=workflows.triggers.kind.turnStarts)');
+    expect(readWorkflowEventStartsLine(turn, match))
       .toBe('workflows.events.wouldStartInSession(when=workflows.triggers.kind.turnStarts,session=Fix flaky test)');
-    expect(readWorkflowEventStartsLine(run, null, null)).toBe('workflows.events.wouldStart(when=workflows.triggers.kind.runEnds)');
-    expect(readWorkflowEventStartsLine(machine, null, null)).toBeNull();
-    expect(readWorkflowEventAddsLine(turn, { session: { serverId: 'home' } }, 'Fix flaky test'))
+    expect(readWorkflowEventStartsLine(run, null)).toBe('workflows.events.wouldStart(when=workflows.triggers.kind.runEnds)');
+    expect(readWorkflowEventStartsLine(machine, null)).toBeNull();
+    expect(readWorkflowEventAddsLine(turn, match))
       .toBe('workflows.events.addsInSession(when=workflows.triggers.kind.turnStarts,session=Fix flaky test)');
+  });
+
+  it.each([
+    { kind: 'machine', serverId: 'home', machineId: 'm1' },
+    { kind: 'project', serverId: 'home', projectKey: 'project-key' },
+  ] as const)('uses $kind as the single declared Session lifecycle subject', subject => {
+    const match = { subject, label: 'Selected subject' };
+    expect(readWorkflowEventLinkWhen(started, match)).toMatchObject({ subject });
+    expect(readWorkflowEventTrigger(started, match)).toMatchObject({ subject });
+  });
+
+  it('starts and links each observed terminal result and needs-you using its exact lifecycle event', () => {
+    for (const event of ['parentTurnCompleted', 'parentTurnFailed', 'parentTurnCancelled'] as const) {
+      const end = { ...turn, event };
+      expect(readWorkflowEventLinkWhen(end)).toMatchObject({ kind: 'turnEnds', events: [event] });
+      expect(readWorkflowEventTrigger(end)).toMatchObject({ kind: 'sessionLifecycle', events: [event] });
+    }
+    const attention = { ...turn, event: 'userActionRequired', requestId: 'request', requestKind: 'permission' } as const;
+    expect(readWorkflowEventLinkWhen(attention)).toMatchObject({ kind: 'needsYou' });
+    expect(readWorkflowEventTrigger(attention)).toMatchObject({ kind: 'sessionLifecycle', events: ['userActionRequired'] });
   });
 
   it('offers no configured trigger when a Machine fact lacks its declaration-owned setup seed', () => {
@@ -260,10 +283,13 @@ describe('workflowEventFacts', () => {
   });
 });
 
-describe('orderWorkflowEventFilters', () => {
-  it('puts the populated kinds first so an empty kind, not the only populated one, waits behind More', () => {
-    expect(orderWorkflowEventFilters({ all: 6, session: 0, machine: 0, run: 6 })).toEqual(['all', 'run', 'session', 'machine']);
-    expect(orderWorkflowEventFilters({ all: 0, session: 0, machine: 0, run: 0 })).toEqual(['all', 'session', 'machine', 'run']);
-    expect(orderWorkflowEventFilters({ all: 3, session: 1, machine: 0, run: 2 })).toEqual(['all', 'session', 'run', 'machine']);
+describe('buildWorkflowEventFilterTabs', () => {
+  it('updates counts in place as each kind arrives', () => {
+    const empty = buildWorkflowEventFilterTabs({ all: 0, session: 0, machine: 0, run: 0 });
+    const populated = buildWorkflowEventFilterTabs({ all: 3, session: 0, machine: 2, run: 1 });
+    expect(populated.map(tab => tab.id)).toEqual(empty.map(tab => tab.id));
+    expect(populated).toMatchObject([
+      { id: 'all' }, { id: 'session' }, { id: 'machine', count: '2' }, { id: 'run', count: '1' },
+    ]);
   });
 });

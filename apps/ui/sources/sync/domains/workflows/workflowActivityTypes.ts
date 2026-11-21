@@ -2,7 +2,20 @@ import { isTerminalAutomationRunStateV3 } from '@happier-dev/protocol/automation
 import type { WorkflowRunStateV1, WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { WorkflowActivityListRequestV1, WorkflowRunListResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import type { AutomationRunLifecycleOccurrenceEvidenceV1 } from '@happier-dev/protocol/automations/automationRunLifecycle';
+import { AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1 } from '@happier-dev/protocol/automations/automationSessionLifecycle';
+import type { PrimaryTurnStatusV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import type { SessionUserActionRequiredRequestKindV1 } from '@happier-dev/protocol/sessions/userActionRequiredOccurrenceV1';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
+
+type TurnLifecycleEvent = typeof AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1['turnStarts' | 'turnEnds'][number];
+
+export const workflowActivityTurnEvents = {
+    in_progress: 'parentTurnStarted',
+    waiting: null,
+    completed: 'parentTurnCompleted',
+    failed: 'parentTurnFailed',
+    cancelled: 'parentTurnCancelled',
+} as const satisfies Record<PrimaryTurnStatusV1, TurnLifecycleEvent | null>;
 
 /** Live observations, retained Machine transitions, and retained Run finishes. */
 export type WorkflowActivityLiveFact = Readonly<{
@@ -11,7 +24,9 @@ export type WorkflowActivityLiveFact = Readonly<{
     coverage: 'live' | 'retained';
 }> & (
     | Readonly<{ kind: 'session'; sessionId: string; event: 'started' | 'archived'; sourceRevision: number }>
-    | Readonly<{ kind: 'session'; sessionId: string; event: 'turn_started'; turnId: string; sourceRevision: number }>
+    | Readonly<{ kind: 'session'; sessionId: string; event: TurnLifecycleEvent; turnId: string; sourceRevision: number }>
+    | Readonly<{ kind: 'session'; sessionId: string; event: 'userActionRequired'; turnId: string; sourceRevision: number;
+        requestId: string; requestKind: SessionUserActionRequiredRequestKindV1 }>
     | Readonly<{ kind: 'machine'; machineId: string; event: 'online' | 'offline'; sourceRevision: number }>
     | Readonly<{ kind: 'run'; runId: string; event: 'terminal' | 'needs_attention'; sourceRevision: number; state: WorkflowRunStateV1 }>
 );

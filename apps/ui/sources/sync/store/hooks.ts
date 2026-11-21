@@ -2912,15 +2912,30 @@ export function useServerScopedMachine<T>(serverId: string | null | undefined, m
  * goes from its locked or previous name straight to the opened one and never through an empty label.
  */
 export function useServerScopedMachineLabel(serverId: string | null | undefined, machineId: string | null | undefined): string | null {
-  const normalizedMachineId = typeof machineId === 'string' ? machineId.trim() : '';
-  const settledRef = React.useRef<Readonly<{ machineId: string; label: string | null }> | null>(null);
-  const select = React.useCallback((machine: Machine | null): string | null => {
-    const previous = settledRef.current?.machineId === normalizedMachineId ? settledRef.current.label : null;
-    const label = machine && isMachineDisplayHydrating(machine) ? previous : getSettledMachineDisplayName(machine);
-    settledRef.current = { machineId: normalizedMachineId, label };
+  return useServerScopedMachineLabelState(serverId, machineId) ?? null;
+}
+
+/** Undefined means the name is still opening. Null means the owner has no name to show. */
+export function useServerScopedMachineLabelState(serverId: string | null | undefined, machineId: string | null | undefined): string | null | undefined {
+  const store = getStorage();
+  const id = machineId?.trim() ?? '';
+  const settled = React.useRef<Readonly<{ serverId: typeof serverId; accountId: string | undefined; id: string; label: string | null }> | null>(null);
+  const getSnapshot = React.useCallback(() => {
+    if (!id) return null;
+    const state = store.getState();
+    const machine = resolveServerScopedMachine(state, serverId, id);
+    const previous = settled.current;
+    const accountId = state.profileScope?.accountId;
+    const scopeId = resolveServerProfileScopeIdForIdentifier(serverId);
+    if (machine ? isMachineDisplayHydrating(machine)
+      : state.machineListByServerId[scopeId] === undefined || state.machineListStatusByServerId[scopeId] === 'loading') {
+      return previous?.id === id && previous.serverId === serverId && previous.accountId === accountId ? previous.label : undefined;
+    }
+    const label = getSettledMachineDisplayName(machine);
+    settled.current = { serverId, accountId, id, label };
     return label;
-  }, [normalizedMachineId]);
-  return useServerScopedMachine(serverId, normalizedMachineId, select);
+  }, [store, serverId, id]);
+  return useServerScopedMachineSnapshot(getSnapshot, Boolean(id));
 }
 
 function useServerScopedMachineSnapshot<T>(getSnapshot: () => T, enabled: boolean): T {

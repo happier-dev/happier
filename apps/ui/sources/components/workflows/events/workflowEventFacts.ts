@@ -1,3 +1,5 @@
+import type { Dispatch, SetStateAction } from 'react';
+import type { AutomationSessionLifecycleSubjectV1 } from '@happier-dev/protocol/automations/automationSessionLifecycle';
 import type { AutomationTriggerDefinitionInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 import { deriveAutomationOccurrenceKeyV1, type AutomationTriggerOccurrenceEvidenceV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
@@ -9,12 +11,11 @@ import type { WorkflowTriggerEventOption } from '@/components/workflows/triggers
 import { resolveWorkflowProjectTargetOnMachine } from '@/components/workflows/screens/resolveContextualWorkflowTarget';
 import {
   buildTriggerDefinition,
-  createDefaultWhen,
   isSessionLifecycleWhen,
   type SessionLifecycleWhen,
   type TriggerWhenValue,
 } from '@/components/workflows/triggers/sessionTriggerForm';
-import { formatTriggerSummary, lowerTriggerSentenceStart } from '@/components/workflows/triggers/formatTriggerSummary';
+import { formatTriggerSummary, lowerTriggerSentenceStart, readSessionLifecycleKind } from '@/components/workflows/triggers/formatTriggerSummary';
 import { prepareWorkflowSentenceEditorEntry } from '@/components/workflows/authoring/workflowSentenceAuthoring';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
@@ -27,16 +28,12 @@ export const WORKFLOW_EVENT_FILTERS = [
 ] as const;
 export type WorkflowEventFilter = (typeof WORKFLOW_EVENT_FILTERS)[number];
 
-/**
- * The chips in showing order: All, then the kinds that have events (in the fixed order), then the empty ones, so a
- * narrow column's whole chips are the ones worth pressing and an empty kind waits behind More instead of the
- * populated one.
- */
-export function orderWorkflowEventFilters(
-  counts: Readonly<Record<WorkflowEventFilter, number>>,
-): readonly WorkflowEventFilter[] {
-  const empty = (filter: WorkflowEventFilter) => filter !== 'all' && counts[filter] === 0;
-  return [...WORKFLOW_EVENT_FILTERS.filter((filter) => !empty(filter)), ...WORKFLOW_EVENT_FILTERS.filter(empty)];
+export function buildWorkflowEventFilterTabs(counts: Readonly<Record<WorkflowEventFilter, number>>) {
+  return WORKFLOW_EVENT_FILTERS.map(id => ({
+    id,
+    label: t(`workflows.events.filters.${id}`),
+    ...(id === 'all' || counts[id] === 0 ? {} : { count: String(counts[id]) }),
+  }));
 }
 
 export function matchesWorkflowEventFilter(
@@ -58,18 +55,23 @@ export function readWorkflowEventWhen(
   if (fact.kind === 'run') return { kind: 'runLifecycle',
     source: fact.coverage === 'retained_cause' ? fact.evidence.source : { kind: 'workflow_run', runId: fact.runId }, condition: fact.event };
   if (fact.kind !== 'session') return null;
-  const when = createDefaultWhen(fact.event === 'started' ? 'sessionStarts' : fact.event === 'turn_started' ? 'turnStarts' : 'sessionArchived');
-  // The picked Session is the trigger owner's own Session subject (the editor's "Session" row), never a filter of ours.
-  return match?.session && isSessionLifecycleWhen(when)
-    ? { ...when, subject: { kind: 'session', serverId: match.session.serverId, sessionId: fact.sessionId } }
-    : when;
+  const event = readSessionLifecycleEvent(fact);
+  const kind = readSessionLifecycleKind([event]);
+  return { kind, ...(kind === 'turnEnds' ? { events: [event] } : {}), ...(match ? { subject: match.subject } : {}) };
 }
 
-/**
- * What a person picked from an event's carried values for the workflow to match. Only what the trigger owner can
- * express is offered: a Session start narrows to that Session (its subject). Other carried values stay facts.
- */
-export type WorkflowEventMatch = Readonly<{ session?: Readonly<{ serverId: string }> }>;
+function readSessionLifecycleEvent(fact: Extract<WorkflowActivityFact, { kind: 'session' }>) {
+  return fact.event === 'started' ? 'sessionStarted' : fact.event === 'archived' ? 'sessionArchived' : fact.event;
+}
+
+/** The person may narrow one event to one of its declared Session lifecycle subjects. */
+export type WorkflowEventMatch = Readonly<{ subject: AutomationSessionLifecycleSubjectV1; label: string }>;
+export type WorkflowEventMatchKind = AutomationSessionLifecycleSubjectV1['kind'];
+export type WorkflowEventMatchPick = Readonly<{ eventKey: string; kind: WorkflowEventMatchKind }>;
+export type WorkflowEventMatchSelection = Readonly<{
+  pickedSubject: WorkflowEventMatchPick | null;
+  setPickedSubject: Dispatch<SetStateAction<WorkflowEventMatchPick | null>>;
+}>;
 
 export function readWorkflowEventTrigger(
   fact: WorkflowActivityFact,
@@ -130,39 +132,28 @@ export function readWorkflowEventLinkWhen(fact: WorkflowActivityFact, match?: Wo
   return when !== null && isSessionLifecycleWhen(when) ? when : null;
 }
 
-/**
- * The start an event brings, said once: "A new workflow would start when a turn starts in any session" under the
- * event's facts, "Adds when a turn starts in Fix flaky test" above the companion's Add. A Machine fact has no start
- * of its own until the editor sets it up, so it says nothing.
- */
-function readWorkflowEventStartClause(
-  fact: WorkflowActivityFact,
-): Readonly<{ when: string; sessionScoped: boolean }> | null {
+function readWorkflowEventStartClause(fact: WorkflowActivityFact, match: WorkflowEventMatch | null | undefined): string | null {
   const trigger = readWorkflowEventTrigger(fact);
   if (trigger === null || (trigger.kind !== 'sessionLifecycle' && trigger.kind !== 'runLifecycle')) return null;
-  return { when: lowerTriggerSentenceStart(formatTriggerSummary(trigger)), sessionScoped: trigger.kind === 'sessionLifecycle' };
+  const useUnscopedSessionStart = fact.kind === 'session' && fact.event === 'started' && !match;
+  return lowerTriggerSentenceStart(useUnscopedSessionStart
+    ? t('workflows.events.whenASessionStarts') : formatTriggerSummary(trigger, { form: 'clause' }));
 }
 
-export function readWorkflowEventStartsLine(fact: WorkflowActivityFact, match: WorkflowEventMatch | null | undefined,
-  sessionName: string | null): string | null {
-  const start = readWorkflowEventStartClause(fact);
-  if (start === null) return null;
-  const { when } = start;
-  if (!start.sessionScoped) return t('workflows.events.wouldStart', { when });
-  return match?.session && sessionName !== null
-    ? t('workflows.events.wouldStartInSession', { when, session: sessionName })
-    : t('workflows.events.wouldStartAnySession', { when });
+export function readWorkflowEventStartsLine(fact: WorkflowActivityFact, match: WorkflowEventMatch | null | undefined): string | null {
+  const when = readWorkflowEventStartClause(fact, match);
+  if (when === null) return null;
+  return fact.kind === 'session' && match
+    ? t('workflows.events.wouldStartInSession', { when, session: match.label })
+    : t('workflows.events.wouldStart', { when });
 }
 
-export function readWorkflowEventAddsLine(fact: WorkflowActivityFact, match: WorkflowEventMatch | null | undefined,
-  sessionName: string | null): string | null {
-  const start = readWorkflowEventStartClause(fact);
-  if (start === null) return null;
-  const { when } = start;
-  if (!start.sessionScoped) return t('workflows.events.adds', { when });
-  return match?.session && sessionName !== null
-    ? t('workflows.events.addsInSession', { when, session: sessionName })
-    : t('workflows.events.addsAnySession', { when });
+export function readWorkflowEventAddsLine(fact: WorkflowActivityFact, match: WorkflowEventMatch | null | undefined): string | null {
+  const when = readWorkflowEventStartClause(fact, match);
+  if (when === null) return null;
+  return fact.kind === 'session' && match
+    ? t('workflows.events.addsInSession', { when, session: match.label })
+    : t('workflows.events.adds', { when });
 }
 
 /** Authoring intent only: the ordinary Event setup Action acquires source identity and cursor. */
@@ -198,7 +189,9 @@ function readWorkflowEventOccurrence(fact: WorkflowActivityFact): AutomationTrig
   switch (fact.event) {
     case 'started': return { ...base, kind: 'sessionLifecycle', event: 'sessionStarted', sourceSessionId: fact.sessionId };
     case 'archived': return { ...base, kind: 'sessionLifecycle', event: 'sessionArchived', sourceSessionId: fact.sessionId };
-    case 'turn_started': return { ...base, kind: 'sessionLifecycle', event: 'parentTurnStarted',
+    case 'userActionRequired': return { ...base, kind: 'sessionLifecycle', event: fact.event,
+      sourceSessionId: fact.sessionId, sourceTurnId: fact.turnId, requestId: fact.requestId, requestKind: fact.requestKind };
+    default: return { ...base, kind: 'sessionLifecycle', event: fact.event,
       sourceSessionId: fact.sessionId, sourceTurnId: fact.turnId };
   }
 }

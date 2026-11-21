@@ -14,9 +14,8 @@ import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAcc
 import { readWorkflowRunAccountChangeRunId } from '@/sync/runtime/orchestration/changesPlanner';
 import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction';
 import { executeMachineAccessHttpAction } from '@/sync/api/machines/machineAccessApi';
-import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 import { refreshWorkflowRunsByIds } from './refreshWorkflowRun';
-import { projectWorkflowActivityRunFact, type WorkflowActivityLiveFact, type WorkflowActivityObserver, type WorkflowActivitySource } from '@/sync/domains/workflows/workflowActivityTypes';
+import { projectWorkflowActivityRunFact, workflowActivityTurnEvents, type WorkflowActivityLiveFact, type WorkflowActivityObserver, type WorkflowActivitySource } from '@/sync/domains/workflows/workflowActivityTypes';
 
 const sources = new WeakMap<ServerAccountScopeLifetime, WorkflowActivitySource>();
 
@@ -27,21 +26,10 @@ function compareRuns(left: WorkflowRunSummaryV1, right: WorkflowRunSummaryV1): n
         : isBeyondWorkflowRunListSpan(rightPosition, leftPosition) ? -1 : 0;
 }
 
-function listeningSinceStorageKey(lifetime: ServerAccountScopeLifetime): string {
-    return `workflow-events-listening-since-v1:${encodeURIComponent(lifetime.scope.serverId)}:${encodeURIComponent(lifetime.scope.accountId)}`;
-}
-
-function readPersistedListeningSince(lifetime: ServerAccountScopeLifetime): number | null {
-    const raw = getPersistenceStorage().getString(listeningSinceStorageKey(lifetime));
-    if (!raw) return null;
-    const value = Number(raw);
-    return Number.isSafeInteger(value) && value >= 0 ? value : null;
-}
-
 function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySource {
     const observers = new Set<WorkflowActivityObserver>();
     const serverId = resolveServerProfileScopeIdForIdentifier(lifetime.scope.serverId);
-    let since: number | null = readPersistedListeningSince(lifetime);
+    let since: number | null = null;
     let page: WorkflowRunListResultV1 | undefined;
     const retainedRuns = new Map<string, WorkflowRunSummaryV1>();
     let failed = false;
@@ -96,13 +84,11 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
         queue?.stop();
         queue = null;
         failed = false;
+        since = null;
     };
     const open = () => {
-        if (since === null) {
-            since = Date.now();
-            getPersistenceStorage().set(listeningSinceStorageKey(lifetime), String(since));
-        }
-        const listeningSince = since;
+        const listeningSince = Date.now();
+        since = listeningSince;
         controller = new AbortController();
         const signal = controller.signal;
         const snapshot = storage.getState();
@@ -122,8 +108,10 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
             const ids = new Set([...next.sessionListRenderableDelta.changedSessionIds,
                 ...(next.sessionListRenderableDelta.hydratedSessionIds ?? [])]);
             for (const id of ids) {
-                const row = next.sessionListRowsByServerId[serverId]?.[id] ?? next.sessions[id];
-                const old = previous.sessionListRowsByServerId[serverId]?.[id] ?? previous.sessions[id];
+                const listed = next.sessionListRowsByServerId[serverId]?.[id];
+                const oldListed = previous.sessionListRowsByServerId[serverId]?.[id];
+                const row = listed ?? next.sessions[id];
+                const old = oldListed ?? previous.sessions[id];
                 if (!row || 'serverId' in row && row.serverId
                     && resolveServerProfileScopeIdForIdentifier(row.serverId) !== serverId) continue;
                 if (!old && row.createdAt >= listeningSince) batch.push({ kind: 'session', sessionId: id,
@@ -132,11 +120,21 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
                 if (row.archivedAt && !old?.archivedAt && row.archivedAt >= listeningSince) batch.push({ kind: 'session', sessionId: id,
                     event: 'archived', sourceRevision: row.seq, occurredAt: row.archivedAt, coverage: 'live',
                     key: serverAccountScopedResourceKey(lifetime.scope, 'session', id, 'archived', String(row.archivedAt)) });
-                if (row.latestTurnId && row.latestTurnId !== old?.latestTurnId && row.latestTurnStatus === 'in_progress'
+                const turnEvent = row.latestTurnStatus ? workflowActivityTurnEvents[row.latestTurnStatus] : null;
+                if (turnEvent && row.latestTurnId && (row.latestTurnId !== old?.latestTurnId || row.latestTurnStatus !== old?.latestTurnStatus)
                     && row.latestTurnStatusObservedAt != null && row.latestTurnStatusObservedAt >= listeningSince) {
-                    batch.push({ kind: 'session', sessionId: id, event: 'turn_started', turnId: row.latestTurnId,
+                    batch.push({ kind: 'session', sessionId: id, event: turnEvent, turnId: row.latestTurnId,
                         sourceRevision: row.seq, occurredAt: row.latestTurnStatusObservedAt, coverage: 'live',
-                        key: serverAccountScopedResourceKey(lifetime.scope, 'session', id, 'turn_started', row.latestTurnId) });
+                        key: serverAccountScopedResourceKey(lifetime.scope, 'session', id, turnEvent, row.latestTurnId) });
+                }
+                const request = listed?.currentRequestRef;
+                const occurredAt = listed?.pendingRequestObservedAt;
+                if (request?.turnId && request !== oldListed?.currentRequestRef && occurredAt != null && occurredAt >= listeningSince) {
+                    const requestKind = request.kind === 'permission' ? 'permission' : 'user_action';
+                    batch.push({ kind: 'session', sessionId: id, event: 'userActionRequired', turnId: request.turnId, requestId: request.requestId,
+                        requestKind, sourceRevision: row.seq, occurredAt, coverage: 'live',
+                        key: serverAccountScopedResourceKey(lifetime.scope, 'session', id, 'userActionRequired',
+                            request.turnId, requestKind, request.requestId) });
                 }
             }
             publish(batch);

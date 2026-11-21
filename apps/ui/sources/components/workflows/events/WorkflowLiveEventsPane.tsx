@@ -24,6 +24,7 @@ import {
   readWorkflowEventWhen,
   readWorkflowEventDraftIntent,
   type WorkflowEventFilter,
+  type WorkflowEventMatchSelection,
 } from './workflowEventFacts';
 import {
   useWorkflowEventFact,
@@ -76,9 +77,9 @@ export const WorkflowLiveEventsPane = React.memo(
     const toggle = useEventCallback((key: string) =>
       setExpanded((current) => (current === key ? null : key)),
     );
-    // Which event's Session a new start matches; the open row's body and the phone bar read the same pick.
-    const [pickedKey, setPickedKey] = React.useState<string | null>(null);
-    const picked = React.useMemo(() => ({ pickedKey, setPickedKey }), [pickedKey]);
+    // The open row and phone bar share the picked subject.
+    const [pickedSubject, setPickedSubject] = React.useState<WorkflowEventMatchSelection['pickedSubject']>(null);
+    const picked = React.useMemo(() => ({ pickedSubject, setPickedSubject }), [pickedSubject]);
     // The phone sheet carries the open row's actions in a bar over the list (S2), not inside the row.
     const barred = props.presentation === 'sheet';
     const { onAddTrigger } = props;
@@ -171,7 +172,7 @@ type LiveEventProps = Readonly<{
   retainedRuns: readonly WorkflowRunSummaryV1[] | undefined;
   added: boolean;
   onAdd: ((key: string, when: TriggerWhenValue, seed?: WorkflowTriggerDraftSeedIntent) => void) | null;
-  picked: Readonly<{ pickedKey: string | null; setPickedKey: React.Dispatch<React.SetStateAction<string | null>> }>;
+  picked: WorkflowEventMatchSelection;
   testID: string;
 }>;
 

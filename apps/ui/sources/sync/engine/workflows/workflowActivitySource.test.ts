@@ -4,6 +4,7 @@ vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
 import { installWorkflowActionHttpBoundary } from '@/dev/testkit/fixtures/workflowActionHttpBoundary';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
@@ -176,7 +177,30 @@ it('shares acquisition across hosts, publishes only changed facts and releases t
     storage.getState().applySessions([session]);
     storage.getState().applySessions([{ ...session, latestTurnId: 'real-control-turn', latestTurnStatus: 'in_progress',
         latestTurnStatusObservedAt: Date.now() }]);
-    expect(column.filter(row => row.kind === 'session').map(row => row.event)).toEqual(['started', 'turn_started']);
+    storage.getState().applySessions([{ ...session, latestTurnId: 'real-control-turn', latestTurnStatus: 'completed',
+        latestTurnStatusObservedAt: Date.now() }]);
+    const failed = { ...session, latestTurnId: 'second-turn', latestTurnStatus: 'failed' as const,
+        latestTurnStatusObservedAt: Date.now() };
+    storage.getState().applySessions([failed]);
+    storage.getState().applySessions([{ ...failed, seq: failed.seq + 1 }]);
+    const cancelled = { ...session, latestTurnId: 'third-turn', latestTurnStatus: 'cancelled' as const,
+        latestTurnStatusObservedAt: Date.now() };
+    storage.getState().applySessions([cancelled]);
+    const needsYou = { ...session, active: true, activeAt: Date.now(), agentStateVersion: 2,
+        agentState: { requests: { confirm: { kind: 'permission' as const, tool: 'Bash',
+            arguments: {}, createdAt: Date.now(), turnId: 'fourth-turn' } } } };
+    const requestRow = buildSessionListRenderableFromSession(needsYou, undefined, []);
+    expect(requestRow.currentRequestRef).toEqual({ requestId: 'confirm', turnId: 'fourth-turn', kind: 'permission' });
+    expect(requestRow.pendingRequestObservedAt).toBe(needsYou.agentState.requests.confirm.createdAt);
+    storage.getState().applyServerScopedSessionListRows(scope.serverId, [requestRow], { source: 'rowOnly', mode: 'append' });
+    storage.getState().applyServerScopedSessionListRows(scope.serverId, [{ ...requestRow, seq: requestRow.seq + 1 }], {
+        source: 'rowOnly', mode: 'append',
+    });
+    const sessionFacts = column.filter(row => row.kind === 'session');
+    expect(sessionFacts.map(row => row.event)).toEqual([
+        'started', 'parentTurnStarted', 'parentTurnCompleted', 'parentTurnFailed', 'parentTurnCancelled', 'userActionRequired',
+    ]);
+    expect(sessionFacts.at(-1)).toMatchObject({ turnId: 'fourth-turn', requestId: 'confirm', requestKind: 'permission' });
     const run = createWorkflowRunSummaryFixture({ id: 'arriving-attention', ownerAccountId: 'activity-account', updatedAt: new Date().toISOString(),
         // The shared row may carry opened detail; activity publishes public membership only.
         heldStep: null, where: null, startedBy: null, stepProgress: null, stepProgressCurrentness: null });
@@ -307,7 +331,7 @@ it('shares acquisition across hosts, publishes only changed facts and releases t
     expect(activeSubscriptions).toBe(0);
 });
 
-it('hydrates durable Machine presence transitions on every admission and keeps listening start stable across remounts', async () => {
+it('hydrates durable Machine history and starts a fresh live listening window after the last host closes', async () => {
     const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
     await upsertAndActivateServer({ serverUrl: 'https://workflow-activity-presence.test' });
     boundary = await installWorkflowActionHttpBoundary({ accountId: () => 'presence-account',
@@ -331,6 +355,7 @@ it('hydrates durable Machine presence transitions on every admission and keeps l
     const { getPersistenceStorage } = await import('@/sync/domains/state/persistenceStorage');
     const persistence = getPersistenceStorage();
     const listeningKey = `workflow-events-listening-since-v1:${encodeURIComponent(scope.serverId)}:${encodeURIComponent(scope.accountId)}`;
+    persistence.set(listeningKey, '1');
     const writes = vi.spyOn(persistence, 'set');
     const source = getWorkflowActivitySource()!;
     const first: WorkflowActivityLiveFact[] = [];
@@ -343,16 +368,21 @@ it('hydrates durable Machine presence transitions on every admission and keeps l
     await publishMachineInventoryForTest(scope, [{ ...machine, activeAt: 21 }]);
     expect(access.executeMachineAccessHttpAction).toHaveBeenCalledTimes(1);
     const listeningSince = source.listeningSince();
-    expect(listeningSince).not.toBeNull();
-    expect(writes.mock.calls.filter(([key]) => key === listeningKey)).toHaveLength(1);
+    expect(listeningSince).toBeGreaterThan(1);
+    expect(writes.mock.calls.filter(([key]) => key === listeningKey)).toHaveLength(0);
+    const overlappingHost = source.acquire({ onLive() {}, onRetained() {} });
+    releases.push(overlappingHost);
     release();
     expect(source.listeningSince()).toBe(listeningSince);
+    overlappingHost();
+    expect(source.listeningSince()).toBeNull();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(listeningSince! + 1000);
     const second: WorkflowActivityLiveFact[] = [];
     const remountRelease = source.acquire({ onLive: rows => second.push(...rows), onRetained() {} });
     releases.push(remountRelease);
+    clock.mockRestore();
     await vi.waitFor(() => expect(second.filter(row => row.kind === 'machine')).toHaveLength(2));
-    expect(source.listeningSince()).toBe(listeningSince);
+    expect(source.listeningSince()).toBe(listeningSince! + 1000);
     expect(access.executeMachineAccessHttpAction).toHaveBeenCalledTimes(2);
-    expect(writes.mock.calls.filter(([key]) => key === listeningKey)).toHaveLength(1);
-    expect(persistence.getString(listeningKey)).toBe(String(listeningSince));
+    expect(writes.mock.calls.filter(([key]) => key === listeningKey)).toHaveLength(0);
 });

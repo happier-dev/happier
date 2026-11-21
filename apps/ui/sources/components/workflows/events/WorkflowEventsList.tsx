@@ -28,7 +28,7 @@ import { t } from '@/text';
 
 import {
   matchesWorkflowEventFilter,
-  orderWorkflowEventFilters,
+  buildWorkflowEventFilterTabs,
   type WorkflowEventFilter,
 } from './workflowEventFacts';
 import {
@@ -131,18 +131,7 @@ export const WorkflowEventsFilters = React.memo(function WorkflowEventsFilters(
     }
     return next;
   }, [keys, projection]);
-  const tabs = React.useMemo(
-    () =>
-      orderWorkflowEventFilters(counts)
-        .map((id) => ({
-          id,
-          label: t(`workflows.events.filters.${id}`),
-          ...(id === 'all' || counts[id] === 0
-            ? {}
-            : { count: String(counts[id]) }),
-        })),
-    [counts],
-  );
+  const tabs = React.useMemo(() => buildWorkflowEventFilterTabs(counts), [counts]);
   return (
     <View style={styles.filters}>
       <SegmentedTabBar<WorkflowEventFilter>

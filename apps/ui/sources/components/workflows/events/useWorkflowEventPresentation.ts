@@ -11,7 +11,7 @@ import {
 } from '@/components/workflows/presentation/workflowRunDisplayName';
 import {
   useActiveServerAccountScopeLifetime,
-  useServerScopedMachineLabel,
+  useServerScopedMachineLabelState,
   useSessionListRowSelector,
   useWorkflowRun,
 } from '@/sync/store/hooks';
@@ -52,6 +52,7 @@ export type WorkflowEventPresentation = Readonly<{
    */
   rowTitle: Readonly<{ subject: string; verb: string }> | null;
   needsYou: boolean;
+  sessionMachineId?: string | null;
   lines: readonly WorkflowEventFactLine[];
   open: Readonly<{ label: string; href: string }> | null;
   /** Exact immutable causes from the retained page; names stay with the Run label owner. */
@@ -118,10 +119,11 @@ export function useWorkflowEventPresentation(
     sessionId,
     readSessionRowPresentationAgentId,
   );
-  const machineName = useServerScopedMachineLabel(
+  const machineLabel = useServerScopedMachineLabelState(
     serverId,
     fact?.kind === 'machine' ? fact.machineId : executionSource?.machineId ?? sessionMachineId,
   );
+  const machineName = machineLabel ?? null;
   const executionReferences = React.useMemo(() => executionSource === null ? NO_EXECUTION_RUN_HEADERS : [{
     source: executionSource, demanded: active, refreshKey: String(fact?.sourceRevision),
   }], [executionSource, active, fact?.sourceRevision]);
@@ -175,7 +177,8 @@ export function useWorkflowEventPresentation(
           glyph,
           agentId: sessionAgentId,
           rowTitle: null,
-          needsYou: false,
+          needsYou: fact.event === 'userActionRequired',
+          sessionMachineId,
           subtitle: sessionName,
           lines,
           title: formatSessionEventTitle(fact.event, agent),
@@ -186,6 +189,7 @@ export function useWorkflowEventPresentation(
         };
       }
       case 'machine': {
+        if (machineLabel === undefined) return null;
         const machine = machineName ?? t('workflows.events.someMachine');
         return {
           fact,
@@ -245,7 +249,7 @@ export function useWorkflowEventPresentation(
         };
       }
     }
-  }, [fact, executionSource, machineName, sessionName, sessionPath, sessionAgentId, workflowName, executionTitle, serverId, retainedRuns]);
+  }, [fact, executionSource, machineLabel, machineName, sessionName, sessionMachineId, sessionPath, sessionAgentId, workflowName, executionTitle, serverId, retainedRuns]);
 }
 
 type SessionEvent = Extract<WorkflowActivityFact, { kind: 'session' }>['event'];
@@ -254,7 +258,9 @@ function readSessionEventGlyph(event: SessionEvent): IconName {
   switch (event) {
     case 'started': return TRIGGER_LIFECYCLE_GLYPHS.sessionStarts;
     case 'archived': return TRIGGER_LIFECYCLE_GLYPHS.sessionArchived;
-    case 'turn_started': return TRIGGER_LIFECYCLE_GLYPHS.turnStarts;
+    case 'userActionRequired': return TRIGGER_LIFECYCLE_GLYPHS.needsYou;
+    case 'parentTurnStarted': return TRIGGER_LIFECYCLE_GLYPHS.turnStarts;
+    default: return TRIGGER_LIFECYCLE_GLYPHS.turnEnds;
   }
 }
 
@@ -263,7 +269,11 @@ function formatSessionEventTitle(event: SessionEvent, agent: string): string {
   switch (event) {
     case 'started': return t('workflows.events.sessionStarted');
     case 'archived': return t('workflows.events.sessionArchived');
-    case 'turn_started': return t('workflows.events.agentTurnStarted', { agent });
+    case 'userActionRequired': return t('workflows.events.agentNeedsYou', { agent });
+    case 'parentTurnStarted': return t('workflows.events.agentTurnStarted', { agent });
+    case 'parentTurnCompleted': return t('workflows.events.agentTurnFinished', { agent });
+    case 'parentTurnFailed': return t('workflows.events.agentTurnFailed', { agent });
+    case 'parentTurnCancelled': return t('workflows.events.agentTurnStopped', { agent });
   }
 }
 

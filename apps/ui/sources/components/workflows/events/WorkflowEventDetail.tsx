@@ -18,6 +18,11 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { WorkflowSentenceBuilder } from '@/components/workflows/sentence/WorkflowSentenceBuilder';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { useProjectAccountRows, useSessionListRowSelector } from '@/sync/store/hooks';
+import { projectGroupIdentityKey, readProjectBaselineRef } from '@/sync/domains/workspaces/projectGroupDisplay';
+import { resolveWorkspacePathBasenameV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
+import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { resolveVisibleMachinesForActiveServerFromState } from '@/sync/store/domains/machines/resolveMachinesForActiveServerFromState';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -36,6 +41,8 @@ import {
   readWorkflowEventLinkWhen,
   readWorkflowEventStartsLine,
   type WorkflowEventMatch,
+  type WorkflowEventMatchKind,
+  type WorkflowEventMatchSelection,
 } from './workflowEventFacts';
 import {
   useWorkflowEventFact,
@@ -74,30 +81,27 @@ export const WorkflowEventCarries = React.memo(function WorkflowEventCarries(
         // In an expanded card the check marks say it; a page's sheet says it above its rows.
         : pickable && props.surface !== 'none' ? { description: t('workflows.events.matchHint') } : {})}
     >
-      {props.presentation.lines.map((line) => pickable && line.key === 'session' ? (
-        <Item
-          key={line.key}
-          testID={`${props.testID}:carries:${line.key}`}
-          title={line.label}
-          detail={line.value}
-          showChevron={false}
-          accessibilityRole="checkbox"
-          accessibilityChecked={match.selected}
-          icon={<Icon name={match.selected ? 'check-circle' : 'circle'}
-            color={match.selected ? theme.colors.text.primary : theme.colors.text.secondary} />}
-          onPress={match.toggle}
-        />
-      ) : (
-        <Item
-          key={line.key}
-          testID={`${props.testID}:carries:${line.key}`}
-          title={line.label}
-          detail={line.value}
-          showChevron={false}
-          // On a sheet with a picked value, every fact keeps the check column so the labels share one edge.
-          {...(pickable ? { icon: <View /> } : {})}
-        />
-      ))}
+      {[...props.presentation.lines, ...(match?.projectLine ? [match.projectLine] : [])].map((line) => {
+        const kind = line.key === 'session' || line.key === 'machine' || line.key === 'project' ? line.key : null;
+        const checkable = kind !== null && match?.subjects[kind] !== undefined;
+        const selected = checkable && match.selected === kind;
+        return (
+          <Item
+            key={line.key}
+            testID={`${props.testID}:carries:${line.key}`}
+            title={line.label}
+            detail={line.value}
+            showChevron={false}
+            {...(checkable ? {
+              accessibilityRole: 'checkbox' as const,
+              accessibilityChecked: selected,
+              icon: <Icon name={selected ? 'check-circle' : 'circle'}
+                color={selected ? theme.colors.text.primary : theme.colors.text.secondary} />,
+              onPress: () => match.toggle(kind),
+            } : pickable ? { icon: <View /> } : {})}
+          />
+        );
+      })}
       {match?.startsLine ? (
         <Item
           testID={`${props.testID}:starts`}
@@ -113,37 +117,65 @@ export const WorkflowEventCarries = React.memo(function WorkflowEventCarries(
 
 /** What the person picked from an event's values, and the sentences that say what a new workflow would start on. */
 export type WorkflowEventMatchState = Readonly<{
-  /** Whether a carried value can narrow the start (a Session start's Session). */
   selectable: boolean;
-  selected: boolean;
-  toggle: () => void;
+  selected: WorkflowEventMatchKind | null;
+  subjects: Readonly<Partial<Record<WorkflowEventMatchKind, WorkflowEventMatch>>>;
+  projectLine: Readonly<{ key: 'project'; label: string; value: string }> | null;
+  toggle: (kind: WorkflowEventMatchKind) => void;
   match: WorkflowEventMatch | null;
   startsLine: string | null;
   addsLine: string | null;
 }>;
 
-/** One picked state per event: choosing another event starts unpicked again. */
+function readEventSessionProjectKey(row: SessionListRenderableSession | null): string | null {
+  return row?.projectKey ?? null;
+}
+
+/** One picked subject per event, shared when the companion renders the actions apart from the sheet. */
 export function useWorkflowEventMatch(
   presentation: WorkflowEventPresentation | null,
   scope: ServerAccountScope | null,
-  /** A host whose body and actions render apart (the companion's phone bar) shares one pick between them. */
-  shared?: Readonly<{ pickedKey: string | null; setPickedKey: React.Dispatch<React.SetStateAction<string | null>> }>,
+  shared?: WorkflowEventMatchSelection,
 ): WorkflowEventMatchState {
-  const [ownPickedKey, setOwnPickedKey] = React.useState<string | null>(null);
-  const pickedKey = shared ? shared.pickedKey : ownPickedKey;
-  const setPickedKey = shared ? shared.setPickedKey : setOwnPickedKey;
+  const [ownPickedSubject, setOwnPickedSubject] = React.useState<WorkflowEventMatchSelection['pickedSubject']>(null);
+  const pickedSubject = shared ? shared.pickedSubject : ownPickedSubject;
+  const setPickedSubject = shared ? shared.setPickedSubject : setOwnPickedSubject;
   const fact = presentation?.fact ?? null;
+  const session = fact?.kind === 'session' ? fact : null;
   const serverId = scope === null ? null : resolvePortableServerIdentityForRoutingId(scope.serverId);
-  const selectable = fact !== null && serverId !== null && readWorkflowEventLinkWhen(fact) !== null;
-  const selected = selectable && pickedKey === fact.key;
-  const factKey = fact?.key ?? null;
-  const toggle = React.useCallback(() => setPickedKey((current) => (current === factKey ? null : factKey)), [factKey, setPickedKey]);
-  const match = React.useMemo(() => (selected && serverId !== null ? { session: { serverId } } : null), [selected, serverId]);
-  const sessionName = presentation?.lines.find((line) => line.key === 'session')?.value ?? null;
+  const projectKey = useSessionListRowSelector(scope?.serverId ?? null, session?.sessionId ?? '', readEventSessionProjectKey);
+  const projectName = useProjectAccountRows((rows) => {
+    if (!rows || !scope || projectKey === null || !areServerAccountScopesEqual(rows.scope, scope)) return null;
+    const project = { serverId: scope.serverId, projectKey };
+    const key = projectGroupIdentityKey(project);
+    const named = rows.organizations.find(row => projectGroupIdentityKey(row.key) === key)?.value.label;
+    if (named) return named;
+    const baseline = readProjectBaselineRef(rows.workspaceRefs, project);
+    return baseline ? baseline.label ?? resolveWorkspacePathBasenameV1(baseline.rootPath) : null;
+  }, projectKey !== null);
+  const sessionName = presentation?.lines.find((line) => line.key === 'session')?.value;
+  const machineName = presentation?.lines.find((line) => line.key === 'machine')?.value;
+  const machineId = presentation?.sessionMachineId;
+  const subjects = React.useMemo(() => {
+    const choices: Partial<Record<WorkflowEventMatchKind, WorkflowEventMatch>> = {};
+    if (!session || !serverId) return choices;
+    if (sessionName) choices.session = { subject: { kind: 'session', serverId, sessionId: session.sessionId }, label: sessionName };
+    if (machineId && machineName) choices.machine = { subject: { kind: 'machine', serverId, machineId }, label: machineName };
+    if (projectKey && projectName) choices.project = { subject: { kind: 'project', serverId, projectKey }, label: projectName };
+    return choices;
+  }, [session, serverId, sessionName, machineId, machineName, projectKey, projectName]);
+  const factKey = fact?.key;
+  const selected = pickedSubject?.eventKey === factKey ? pickedSubject?.kind ?? null : null;
+  const match = selected === null ? null : subjects[selected] ?? null;
+  const toggle = React.useCallback((kind: WorkflowEventMatchKind) => {
+    if (factKey === undefined || subjects[kind] === undefined) return;
+    setPickedSubject((current) => current?.eventKey === factKey && current.kind === kind ? null : { eventKey: factKey, kind });
+  }, [factKey, setPickedSubject, subjects]);
   return {
-    selectable, selected, toggle, match,
-    startsLine: fact === null ? null : readWorkflowEventStartsLine(fact, match, sessionName),
-    addsLine: fact === null ? null : readWorkflowEventAddsLine(fact, match, sessionName),
+    selectable: Object.keys(subjects).length > 0, selected, subjects, toggle, match,
+    projectLine: subjects.project ? { key: 'project', label: t('workflows.events.eventProject'), value: subjects.project.label } : null,
+    startsLine: fact === null ? null : readWorkflowEventStartsLine(fact, match),
+    addsLine: fact === null ? null : readWorkflowEventAddsLine(fact, match),
   };
 }
 
@@ -276,7 +308,7 @@ export const WorkflowEventDetailPage = React.memo(
       automate.addToAnchorRef.current = node;
     }, [automate.anchorRef, automate.addToAnchorRef]);
     // A picked row the feed hasn't settled is waiting or unreachable, not gone: say that, with the feed's Retry.
-    if (presentation === null && props.eventKey !== null && (feed.status !== 'live' || feed.retained === null || feed.historyError !== null)) {
+    if (presentation === null && props.eventKey !== null && (fact !== undefined || feed.status !== 'live' || feed.retained === null || feed.historyError !== null)) {
       return (
         <View style={styles.pick} testID="workflow-events:pick">
           <SurfaceStateCard

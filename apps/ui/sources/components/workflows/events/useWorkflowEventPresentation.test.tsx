@@ -22,9 +22,11 @@ import { createMachineExecutionRunRoute } from '@/sync/domains/workflows/workflo
 import { notifyExecutionRunActivity } from '@/sync/runtime/executionRuns/executionRunActivityBus';
 import { useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { t } from '@/text';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { getStorage } from '@/sync/domains/state/storageStore';
-import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { buildSessionListRenderableFromSession, type SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 
 import { useWorkflowEventPresentation } from './useWorkflowEventPresentation';
@@ -151,17 +153,67 @@ it('names the Machine from its owner in the event title', async () => {
   expect(offline.getCurrent()?.glyph).not.toBe(hook.getCurrent()?.glyph);
 });
 
+it('waits for the Machine display to settle before publishing an event title', async () => {
+  const lifetime = captureActiveServerAccountScopeLifetime()!;
+  const machine = createMachineFixture({ id: 'awaiting-event-name' });
+  const event = { key: 'pending-machine-online', kind: 'machine', machineId: machine.id, event: 'online',
+    sourceRevision: 1, occurredAt: 300, coverage: 'retained' } as const satisfies WorkflowActivityFact;
+  await publishMachineInventoryForTest(lifetime.scope, [{ ...machine, metadata: null, availability: undefined }]);
+  const hook = await renderHook(() => useWorkflowEventPresentation(event, lifetime.scope));
+  expect(hook.getCurrent()).toBeNull();
+  await act(async () => { await publishMachineInventoryForTest(lifetime.scope, [machine]); });
+  const name = await renderHook(() => useServerScopedMachineLabel(lifetime.scope.serverId, machine.id));
+  expect(hook.getCurrent()?.title).toBe(t('workflows.events.machineOnline', { machine: name.getCurrent()! }));
+});
+
 it("names a Session's turn by its Agent and carries the Agent's mark (lab events:A)", async () => {
   const lifetime = captureActiveServerAccountScopeLifetime()!;
   const serverId = lifetime.scope.serverId;
   const row = createSessionFixture({ id: 'turn-session', metadata: { ...createSessionFixture().metadata!, flavor: 'claude' } });
   getStorage().setState((state) => ({ sessionListRowsByServerId: { ...state.sessionListRowsByServerId,
     [serverId]: { ...state.sessionListRowsByServerId[serverId], [row.id]: row as unknown as SessionListRenderableSession } } }));
-  const turn = { key: 'turn', kind: 'session', sessionId: row.id, event: 'turn_started', turnId: 'turn-1',
+  const turn = { key: 'turn', kind: 'session', sessionId: row.id, event: 'parentTurnStarted', turnId: 'turn-1',
     sourceRevision: 1, occurredAt: 400, coverage: 'live' } as const satisfies WorkflowActivityFact;
   const hook = await renderHook(() => useWorkflowEventPresentation(turn, lifetime.scope));
   expect(hook.getCurrent()).toMatchObject({ agentId: 'claude',
     title: t('workflows.events.agentTurnStarted', { agent: resolveAgentCatalogTitle('claude') }) });
+});
+
+it('keeps one checked subject when moving between Session, Machine and Project rows', async () => {
+  const lifetime = captureActiveServerAccountScopeLifetime()!;
+  const { useWorkflowEventMatch } = await import('./WorkflowEventDetail');
+  const fact = { key: 'check-subject', kind: 'session', event: 'started', sessionId: 'session-check',
+    sourceRevision: 1, occurredAt: 10, coverage: 'live' } as const satisfies WorkflowActivityFact;
+  const store = getStorage();
+  const session = createSessionFixture({ id: fact.sessionId, serverId: lifetime.scope.serverId, projectKey: 'payments' });
+  const row = buildSessionListRenderableFromSession(session, undefined, []);
+  if (!row) throw new Error('Expected the scoped Session row');
+  store.getState().applyServerScopedSessionListRows(lifetime.scope.serverId, [row], { source: 'rowOnly', mode: 'append' });
+  const presentation = { fact, title: 'Session started', subtitle: 'Session name', glyph: 'play', agentId: null,
+    rowTitle: null, needsYou: false, open: null, runsStarted: [],
+    lines: [{ key: 'session', value: 'Session name', label: 'Session' },
+      { key: 'machine', value: 'Machine name', label: 'Machine' }], sessionMachineId: source.machineId } as const;
+  const hook = await renderHook(() => useWorkflowEventMatch(presentation, lifetime.scope));
+  expect(hook.getCurrent().projectLine).toBeNull();
+  await act(async () => {
+    store.setState({ profileScope: lifetime.scope });
+    store.getState().activateProjectAccountRowsScope(lifetime.scope);
+    store.getState().applyProjectAccountRowsForScope(lifetime.scope, {
+      scope: lifetime.scope, status: 'ready', coverage: 'complete',
+      workspaceRefs: [{ id: 'payments-checkout', machineId: source.machineId, serverId: lifetime.scope.serverId,
+        rootPath: '/repo/payments', projectKey: 'payments', label: 'Payments', createdAtMs: 1 }],
+      relationships: [], organizations: [], revisionsByPhysicalKey: {},
+    });
+  });
+  expect(hook.getCurrent().projectLine).toMatchObject({ value: 'Payments' });
+  await act(async () => { hook.getCurrent().toggle('session'); });
+  expect(hook.getCurrent().match?.subject).toMatchObject({ kind: 'session', sessionId: fact.sessionId });
+  await act(async () => { hook.getCurrent().toggle('machine'); });
+  expect(hook.getCurrent().match?.subject).toMatchObject({ kind: 'machine', machineId: source.machineId });
+  await act(async () => { hook.getCurrent().toggle('project'); });
+  expect(hook.getCurrent().match?.subject).toMatchObject({ kind: 'project', projectKey: 'payments' });
+  await act(async () => { hook.getCurrent().toggle('project'); });
+  expect(hook.getCurrent().match).toBeNull();
 });
 
 it('waits for the selected event read despite a connected socket, then distinguishes failure from settled absence', async () => {
