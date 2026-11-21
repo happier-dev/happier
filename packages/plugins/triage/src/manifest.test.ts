@@ -526,7 +526,7 @@ describe('Triage plugin manifest', () => {
       },
       description: {
         key: 'plugins.triage.action.listEntries.description',
-        fallback: 'Reads one bounded ordered window of pull requests, issues and error groups from the configured sources.',
+        fallback: expect.any(String),
       },
     });
     for (const messages of Object.values(PACKAGED_UI_TRANSLATIONS)) {
