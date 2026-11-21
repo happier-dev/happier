@@ -2086,7 +2086,16 @@ not allocation-directory timestamps), and reclaims unreferenced bundles when pro
 (native Windows currently retains them). Emitted code remains unchanged between restarts. The existing
 server can also serve a finite source web export with `--ui=export`. Source QA
 defaults to borrowed Expo from its configured producer; `--no-ui` keeps a source
-worker headless. Same-host Stacks sharing
+worker headless.
+
+Pinned performance QA uses
+`hstack stack start <name> --runtime=source --restart --verify --rev=<commit> --ui=export`.
+Its readiness check requires the production UI selected by that reload. The
+server host can adopt an existing shared export, or the reload can request the
+producer's shared export for that cut. A borrowed Expo UI cannot satisfy this
+check. Moving-source development can continue to use borrowed Expo.
+
+Same-host Stacks sharing
 the configured source-products store reuse completed read-only web bytes when
 effective build options and installed dependencies match and the complete exported payload
 still validates. A hit performs no Plugin UI/SDK preparation, Metro export or

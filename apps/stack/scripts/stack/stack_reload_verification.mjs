@@ -1,3 +1,4 @@
+import { parseArgs } from '../utils/cli/args.mjs';
 import { projectStackReloadVerification } from './reload_verdict.mjs';
 
 /**
@@ -75,6 +76,8 @@ export async function readThisReloadRecord({ stackBaseDir, startedAt }) {
 /** Start retains lifecycle/wait authority; verification observes its settled result. */
 export async function runVerifiedStackStart({ rootDir, stackName, scriptPath, args }) {
   if (args.includes('--json')) throw new Error('[stack] --verify cannot be combined with the --json dry run');
+  const { kv } = parseArgs(args);
+  const requireSharedUi = kv.get('--ui') === 'export' && Boolean(kv.get('--rev'));
   const startedAt = Date.now();
   let check = 'baseline';
   let beforeManagedCli = null;
@@ -91,7 +94,7 @@ export async function runVerifiedStackStart({ rootDir, stackName, scriptPath, ar
     if (start?.readiness === 'pending') {
       return { ...projectStackReloadVerification({ info, beforeManagedCli, start }), durationMs: Date.now() - startedAt };
     }
-    return await verifyStartedStack({ rootDir, stackName, info, beforeManagedCli, startedAt });
+    return await verifyStartedStack({ rootDir, stackName, info, beforeManagedCli, startedAt, requireSharedUi });
   } catch (error) {
     // Never expose command output, auth envelopes or environment values in a verdict.
     return { ...projectStackReloadVerification({ beforeManagedCli, failure: { check, error } }), durationMs: Date.now() - startedAt };
@@ -102,7 +105,7 @@ export async function runVerifiedStackStart({ rootDir, stackName, scriptPath, ar
  * start's own readiness budget: a probe that never answers (a UI that never sends its first API request, a CLI that
  * never prints its envelope) settles NOT_READY at its check instead of holding the verify, and a QA green check's lock,
  * forever (P03-QA-TRAIN-2). */
-export async function verifyStartedStack({ rootDir, stackName, info, beforeManagedCli, startedAt, run, smokeWebBoot }) {
+export async function verifyStartedStack({ rootDir, stackName, info, beforeManagedCli, startedAt, run, smokeWebBoot, requireSharedUi = false }) {
   let check = 'daemon_tree';
   const { resolveBackgroundReadyTimeoutMs } = await import('./run_script_with_stack_env.mjs');
   const budgetMs = resolveBackgroundReadyTimeoutMs(process.env);
@@ -124,14 +127,14 @@ export async function verifyStartedStack({ rootDir, stackName, info, beforeManag
     const serverUrl = String(info?.urls?.canonicalServerUrl ?? info?.urls?.internalServerUrl ?? '').replace(/\/+$/, '');
     const signIn = serverUrl ? await probeKeyLogin(serverUrl) : { status: null };
     // Spawn the probe Agent only on an otherwise ready, signed-in runtime.
-    const verdict = projectStackReloadVerification({ info, beforeManagedCli, auth, reload, signIn, enforceValidity });
+    const verdict = projectStackReloadVerification({ info, beforeManagedCli, auth, reload, signIn, enforceValidity, requireSharedUi });
     if (verdict.status === 'NOT_READY' && verdict.check !== 'agent') {
       return { ...verdict, durationMs: Date.now() - startedAt };
     }
     check = 'agent';
     const agent = await probeStackAgentStart({ rootDir, stackName, runtimeMode, machineId: status.data?.machineId, run, remainingMs });
     // Resolve all non-render failures before acquiring a managed browser.
-    const agentVerdict = projectStackReloadVerification({ info, beforeManagedCli, auth, agent, reload, signIn, enforceValidity });
+    const agentVerdict = projectStackReloadVerification({ info, beforeManagedCli, auth, agent, reload, signIn, enforceValidity, requireSharedUi });
     if (agentVerdict.status === 'NOT_READY' && agentVerdict.check !== 'render') {
       return { ...agentVerdict, durationMs: Date.now() - startedAt };
     }
@@ -154,7 +157,7 @@ export async function verifyStartedStack({ rootDir, stackName, info, beforeManag
         process.removeListener('SIGTERM', cancel);
       }
     }
-    return { ...projectStackReloadVerification({ info, beforeManagedCli, auth, agent, render, reload, signIn, enforceValidity }),
+    return { ...projectStackReloadVerification({ info, beforeManagedCli, auth, agent, render, reload, signIn, enforceValidity, requireSharedUi }),
       durationMs: Date.now() - startedAt };
   } catch (error) {
     // Never expose command output, auth envelopes or environment values in a verdict.

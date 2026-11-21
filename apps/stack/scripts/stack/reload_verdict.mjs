@@ -3,7 +3,7 @@ import { readSourceReloadRefusal } from '../runtime/shared/source_reload_refusal
 /** Project the existing lifecycle owners' evidence into one reload verdict. */
 /** `enforceValidity` (QA train canary, owner 2026-11-18): the daemon-tree, sign-in and API-origin checks refuse READY only
  * on Stacks in the canary (`HAPPIER_STACK_QA_TRAIN=1`); elsewhere READY reports them under `validity` until the fleet default. */
-export function projectStackReloadVerification({ info, beforeManagedCli, start, auth, agent, render, reload, signIn, failure, enforceValidity = true } = {}) {
+export function projectStackReloadVerification({ info, beforeManagedCli, start, auth, agent, render, reload, signIn, failure, enforceValidity = true, requireSharedUi = false } = {}) {
   const runtime = info?.runtime;
   const hasBaseline = beforeManagedCli?.status === 'installed' && Boolean(beforeManagedCli.binaryPath);
   const baseline = hasBaseline ? {} : { baseline: 'unavailable' };
@@ -40,6 +40,10 @@ export function projectStackReloadVerification({ info, beforeManagedCli, start, 
     }
   } else if (!runtime.selectedSnapshotId || runtime.selectedSnapshotId !== runtime.loadedSnapshotId) {
     return notReady('identity:snapshot', { selected: runtime.selectedSnapshotId ?? null, loaded: runtime.loadedSnapshotId ?? null });
+  }
+  if (requireSharedUi && (runtime.sourceUi !== 'export' || !runtime.sourceUiLaunch?.uiDir || !info.urls?.uiUrl
+    || reload?.status !== 'ready' || reload.fresh !== true || !reload.sourceCaptures?.ui?.revision)) {
+    return notReady('source_ui', { reason: 'shared_production_ui_not_loaded' });
   }
   // The daemon runs this reload's tree (owner 2026-11-18, QA train): selected == loaded holds for a daemon the
   // reload never reselected, so this reload's own record must carry a daemon capture of the server's revision.

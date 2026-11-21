@@ -28,6 +28,23 @@ function readyInfo() {
     managedCli: { status: 'installed', binaryPath: '/managed/cli/versions/one/happier' } } };
 }
 
+test('performance verification requires a freshly adopted production UI before admitting readiness', () => {
+  const info = readyInfo();
+  const { reload, signIn } = validity();
+  const input = { info, reload, signIn, requireSharedUi: true,
+    auth: { authenticated: true }, agent: { status: 'ready' } };
+  assert.equal(projectStackReloadVerification(input).check, 'source_ui');
+  info.urls = { uiUrl: 'http://127.0.0.1:3000' };
+  info.runtime.sourceUi = 'borrowed';
+  input.render = { status: 'ready', apiOrigins: [info.urls.uiUrl], expectedApiOrigin: info.urls.uiUrl };
+  assert.equal(projectStackReloadVerification(input).check, 'source_ui');
+  info.runtime.sourceUi = 'export';
+  info.runtime.sourceUiLaunch = { uiDir: '/shared/web' };
+  assert.equal(projectStackReloadVerification(input).check, 'source_ui');
+  reload.sourceCaptures.ui = { revision: reload.sourceCaptures.server.revision };
+  assert.equal(projectStackReloadVerification(input).status, 'READY');
+});
+
 test('reload without a baseline requires an identified available replacement and matching loaded identity', () => {
   for (const beforeManagedCli of [null, { status: 'unavailable', binaryPath: null }, { status: 'absent', binaryPath: null }]) {
     const info = readyInfo();
