@@ -49,6 +49,8 @@ import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/se
 import { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { readMachineSetupAcceptedAppRuns, prepareMachineSetupAcceptedAppRuns } from '@/machines/setup/acceptedAppRuns';
+import { buildWorkflowActionContext } from '@/daemon/workflows/workflowActionContext';
+import { deriveMachineSetupCombinedRunIdV1 } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
 import { sealWorkflowProgressStoredEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1,
   serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import type { WorkflowProgressEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
@@ -318,10 +320,11 @@ describe('ApiMachine own Session Account read custody', () => {
       expect(await client.resolveInstalledAccountObservationRuntime(lifetime.signal)).toBeNull();
     } finally { profile.mockRestore(); osStore.identity = null; osStore.credentials = null; }
   });
-  it.each(['new-preset', 'retained-copy', 'foreign-personal', 'manage-direct', 'owner-direct', 'changed-review', 'report-fallback-retry', 'managed-plan', 'managed-apply-rejected', 'managed-app-item', 'managed-app-child', 'accepted-app-run', 'accepted-app-run-catalog', 'accepted-app-run-unreadable'] as const)('composes source setup (%s) with real installed custody and the registered finite terminal owner', async scenario => {
+  it.each(['new-preset', 'retained-copy', 'foreign-personal', 'manage-direct', 'owner-direct', 'changed-review', 'report-fallback-retry', 'managed-plan', 'managed-apply-rejected', 'managed-app-item', 'managed-app-child', 'accepted-app-run', 'accepted-app-run-catalog', 'accepted-app-run-unreadable', 'direct-setup-catalog-app'] as const)('composes source setup (%s) with real installed custody and the registered finite terminal owner', async scenario => {
     const accountChannel = await createRequesterCurrentnessSocketHarness();
     onTestFinished(() => accountChannel.close());
-    const acceptedApp = scenario === 'accepted-app-run' || scenario === 'accepted-app-run-catalog' || scenario === 'accepted-app-run-unreadable';
+    const directSetupApp = scenario === 'direct-setup-catalog-app';
+    const acceptedApp = directSetupApp || scenario === 'accepted-app-run' || scenario === 'accepted-app-run-catalog' || scenario === 'accepted-app-run-unreadable';
     const directScript = scenario === 'manage-direct' || scenario === 'owner-direct';
     const directScriptBody = 'echo raw-direct-setup';
     let refuseRunRead = false;
@@ -335,12 +338,13 @@ describe('ApiMachine own Session Account read custody', () => {
     let appMemberOrdinal = '';
     let templateMemberOrdinal = '';
     const actor = acceptedApp || scenario === 'owner-direct' ? 'alice' : 'bob';
-    const runId = '81111111-1111-4111-8111-111111111111';
+    const runId = directSetupApp ? deriveMachineSetupCombinedRunIdV1({ homeId: 'srv_home', accountId: actor,
+      requestId: 'setup-request' }) : '81111111-1111-4111-8111-111111111111';
     const workflowHostMachineId = 'different-workflow-host';
     const runStorage = createWorkflowRunStorageTestkit({ runId, machineId: workflowHostMachineId, accountId: 'alice', origin: { kind: 'direct' } });
     const templateRef = { sourceId: 'catalog', itemId: 'app', version: '1', ref: { kind: 'version' as const, version: '1' } };
     const appIntent = { name: 'Reviewed app', project: { kind: 'existing' as const, projectSourceId: 'source' },
-      definition: scenario === 'accepted-app-run-catalog'
+      definition: scenario === 'accepted-app-run-catalog' || directSetupApp
         ? { from: 'catalogApp' as const, templateRef: { ...templateRef, itemId: 'deployed-app' } }
         : { from: 'compose' as const, document: 'services: {}', profiles: [], services: [] }, bindings: [] };
     const templateIntent = { name: 'Reviewed template app', project: { kind: 'existing' as const, projectSourceId: 'source' },
@@ -570,9 +574,17 @@ describe('ApiMachine own Session Account read custody', () => {
             attribution: { serverId: configuration.activeServerId, accountId: actor, machineId: machine.id,
               installationId: osStore.identity.installationId }, isCurrent: requesterRuntime.isCurrent } });
         if (!projected) throw new Error('Requester read custody missing');
-        context = { ...context, externalActionExecutionAuthorization: { ...projected, requesterAccountProjection: projected.requesterAccountProjection,
-          requesterAccountExecutor: requesterExecutor,
-          binding: { ...projected.binding, workflowActionOrigin: { runId, requestId: projected.binding.requestId } } } };
+        const requesterAuthorization = { ...projected, requesterAccountProjection: projected.requesterAccountProjection,
+          requesterAccountExecutor: requesterExecutor };
+        if (directSetupApp) {
+          context = { ...context, ...buildWorkflowActionContext({ runId, authorization: {
+            principal: { kind: 'host' }, admittedPermissionCeiling: 'default',
+            externalActionExecutionAuthorization: requesterAuthorization,
+          } }), actionRequestId: `${runId}/native-setup/0` };
+        } else {
+          context = { ...context, externalActionExecutionAuthorization: { ...requesterAuthorization,
+            binding: { ...projected.binding, workflowActionOrigin: { runId, requestId: projected.binding.requestId } } } };
+        }
         refuseRunRead = scenario === 'accepted-app-run-unreadable';
       }
       if (scenario === 'managed-plan') {

@@ -38,6 +38,14 @@ export function machineSetupTargetHasApps(target: MachineSetupApplyTargetV1): bo
       && source.setup.items?.some(item => item.kind === 'app' || item.kind === 'agent'));
 }
 
+/** The accepted Setup's installed Run and the signed receiving leaf carry the same origin. */
+export function readMachineSetupAcceptedRunId(context: ActionExecutorContext): string | undefined {
+  const caller = context.actionCaller;
+  if (caller?.kind === 'workflowRun' && context.executionRunWorkflowRunId === caller.runId) return caller.runId;
+  const origin = context.externalActionExecutionAuthorization?.binding.workflowActionOrigin;
+  return origin && origin.requestId === context.actionRequestId ? origin.runId : undefined;
+}
+
 /** Resolve native placement from the admitted exact leaf or the incumbent Run owner. */
 async function isNativeMachineSetupApply(input: MachineSetupApplyInputV1, context: ActionExecutorContext,
   readDeps: () => ActionExecutorDeps): Promise<boolean> {
@@ -67,9 +75,7 @@ async function isNativeMachineSetupApply(input: MachineSetupApplyInputV1, contex
     && binding.target.kind === 'machine' && binding.target.machineId === target.machineId
     && binding.workflowActionOrigin.reviewedChild?.inputDigest
       === computeActionInputApprovalDigestV1(MACHINE_SETUP_APPLY_ACTION_ID_V1, input)) return true;
-  const runId = binding?.workflowActionOrigin?.runId
-    ?? (context.actionCaller?.kind === 'workflowRun' && context.executionRunWorkflowRunId === context.actionCaller.runId
-      ? context.actionCaller.runId : undefined);
+  const runId = readMachineSetupAcceptedRunId(context);
   const read = readDeps().readApprovedOperation;
   if (!runId || !read) return false;
   const approved = await read({ runId, actionId: 'machines.setup.apply', input, context, phase: 'dispatch' }).catch(() => null);

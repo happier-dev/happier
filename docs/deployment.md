@@ -3203,6 +3203,12 @@ Machine setup plan/apply for unfinished apps, not a replay ledger or another
 creation of completed apps. Explicit Deploy Require is folded into the parent
 review through the existing host-reviewed-child policy owner.
 
+Direct Machine Setup and applying a saved preset both install catalog Apps
+through the Run admitted by Setup Apply. The installed native Setup leaf and
+the signed remote leaf use that same accepted Run to associate the reviewed
+App actions with the saved Machine setup. Each App action retains its own
+deployment admission and settlement.
+
 The strict template review retains the selected descriptor's optional
 `firstRunSetup: true` hint, including inside the Machine setup parent's app
 reviews. It describes first-visitor administrator setup; it does not report that

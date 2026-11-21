@@ -26,6 +26,7 @@ import { readWorkflowInvocationRootV1, readWorkflowInvocationMembersV1,
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { prepareActionCompletionV1 } from '@happier-dev/protocol/actions/actionCompletion';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
+import { readMachineSetupAcceptedRunId } from './composeMachineSetup';
 
 type App = Readonly<{ intent: StoredAppPresetInputV1; authoredKey?: string; reference?: MachineSetupAcceptedAppRunV1 }>;
 type Outcome = Readonly<{ kind: 'completed' | 'not_completed' | 'failed' | 'unknown' }>;
@@ -122,7 +123,7 @@ export async function prepareMachineSetupAcceptedAppRuns(params: Readonly<{
   const authorization = params.context.externalActionExecutionAuthorization;
   const account = authorization?.requesterAccountProjection;
   const executor = authorization?.requesterAccountExecutor;
-  const runId = authorization?.binding.workflowActionOrigin?.runId;
+  const runId = readMachineSetupAcceptedRunId(params.context);
   if (!authorization || !account || !executor || !runId
     || authorization.binding.actionId !== 'machines.setup.apply'
     || authorization.binding.serverIdentityId !== params.input.homeId
