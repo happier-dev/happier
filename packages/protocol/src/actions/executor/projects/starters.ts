@@ -1,7 +1,7 @@
 import { ScmHostingRepositoryResolveAddressResponseV1Schema, ScmRepositoryCloneOutputSchema } from '../../../scm/repositoryClone.js';
 import { SCM_OPERATION_ERROR_CODES } from '../../../scm/operationError.js';
 import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } from '../../../registries/registryActionsV1.js';
-import type { ProjectStarterCreateInputV1, ProjectStarterCreateOutputV1 } from '../../../projects/starters/createV1.js';
+import { renderStarterSessionMessageV1, type ProjectStarterCreateInputV1, type ProjectStarterCreateOutputV1 } from '../../../projects/starters/createV1.js';
 import { ScmHostingRepositoryDescribePublishTargetsResponseSchema, ScmHostingRepositoryPublishResponseSchema, ScmHostingRepositorySummarySchema, ScmRepositoryInitResponseSchema } from '../../../scm/repositoryProvisioning.js';
 import { ProjectSourcesCreateOutputV1Schema, projectSourceRepositorySelectorFromHostingSummaryV1, type ProjectSourceRepositorySelectorV1 } from '../../../projects/sources/projectSourceV1.js';
 import { OpenProjectResultV1Schema } from '../../../projects/openProjectV1.js';
@@ -147,6 +147,7 @@ export async function createProjectFromStarter(input: ProjectStarterCreateInputV
   if (!project.facts?.projectKey) return failed('invalid_action_output');
   return { ok: true, result: { kind: 'created', projectId: project.facts.projectKey, sourceId, repositoryUrl,
     ...(!scratch && starterId ? { starterId } : {}), ...(resolvedCommit ? { commit: resolvedCommit } : {}), workspace: project.workspace,
-    sessionHandoff: { machineId: input.machineId, directory: project.directory, initialMessage: input.description },
+    sessionHandoff: { machineId: input.machineId, directory: project.directory,
+      initialMessage: renderStarterSessionMessageV1(input.description, { projectId: project.facts.projectKey, sourceId, repositoryUrl }) },
   } satisfies ProjectStarterCreateOutputV1 };
 }

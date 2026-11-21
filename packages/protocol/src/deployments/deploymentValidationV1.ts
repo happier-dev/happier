@@ -20,9 +20,9 @@ const DEPLOY_BUILD_PREVIEW_CREATE_EXAMPLE_V1 = {
     firstTargetLink: { machines: [{ machineId: 'MACHINE_ID', installationId: 'MACHINE_INSTALLATION_ID' }] },
 } as const;
 /** Every build target: the preview Environment's kind. */
-export const DEPLOY_BUILD_PREVIEW_RULES_V1 = 'Create the preview Environment with deployments.environments.create using protection nonProduction and purpose standard; purpose preview is only for a pull-request child of an existing template Environment. Take projectSourceId from projects.sources.list and use the branch you pushed. Read the Action\'s current schema before calling it.';
+export const DEPLOY_BUILD_PREVIEW_RULES_V1 = 'Create the preview Environment with deployments.environments.create using protection nonProduction and purpose standard; purpose preview is only for a pull-request child of an existing template Environment. Use the projectSourceId of the Project this Session works in, named in its first message, and the branch you pushed. Read the Action\'s current schema before calling it. Never print environment variables or secret values; read them through the existing Actions. Commit with the Machine\'s configured Git identity; never set one.';
 /** Own server only: it deploys the repository's Compose file from a Machine. */
 export const DEPLOY_BUILD_PREVIEW_OWN_SERVER_RULES_V1 = [
-    'Own server deploys the repository\'s Compose file: when the repository has none, add a compose.yaml whose web service serves the app with a healthcheck, then commit and push it before the preview. Take the Machine id and installationId from machines.list. The input has this shape:',
+    'Own server deploys the repository\'s Compose file: when the repository has none, add a compose.yaml whose web service serves the app with a healthcheck, then commit and push it before the preview. The target receives the repository, not this checkout: build the web image from it (build: . with a Dockerfile that copies the app files) instead of bind-mounting local files. Take the Machine id and installationId from machines.list. The input has this shape:',
     '```json\n' + JSON.stringify(DEPLOY_BUILD_PREVIEW_CREATE_EXAMPLE_V1) + '\n```',
 ].join('\n\n');

@@ -101,7 +101,9 @@ it.each([{ destination: 'absent', providerKind: 'github' }, { destination: 'abse
     return;
   }
   expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'created', sourceId: 'source',
-    sessionHandoff: { machineId: 'machine', directory, initialMessage: description } } });
+    sessionHandoff: { machineId: 'machine', directory,
+      // The person's words lead byte for byte; the Session then reads the Source this creation made.
+      initialMessage: expect.stringMatching(/^\nBuild a bakery website\.\nKeep this message\.\n\n\n.*"projectSourceId":"source"/s) } } });
   expect(result).not.toHaveProperty('result.commit');
   expect(runScmExecutable(directory, 'git', ['branch', '--show-current'])).toBe('main');
   expect(runScmExecutable(directory, 'git', ['remote', 'get-url', 'origin'])).toBe(cloneUrl);

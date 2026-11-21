@@ -36,6 +36,16 @@ export const ProjectStarterCreateInputV1Schema = lazyZodSchema(() => z.strictObj
   path: ['source'], message: 'Choose a starter or scratch source',
 })));
 export type ProjectStarterCreateInputV1 = z.infer<typeof ProjectStarterCreateInputV1Schema>;
+/**
+ * The first message of the Session a starter hands off to: the person's words byte for byte, then the Project this
+ * creation made, so deploy Actions take its Source rather than another Project's (AUTO-LIVE item 2, 11-20).
+ */
+export function renderStarterSessionMessageV1(description: string,
+  project: Readonly<{ projectId: string; sourceId: string; repositoryUrl: string }>): string {
+  return description + '\n\nThis Session works in the Project created for it: '
+    + JSON.stringify({ projectId: project.projectId, projectSourceId: project.sourceId, repositoryUrl: project.repositoryUrl })
+    + '. Deployment Actions take this projectSourceId; never use another Project\'s Source.';
+}
 export const ProjectStarterCreateOutputV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('created'), projectId: text(), sourceId: text(), repositoryUrl: z.string().check(z.url()),
     starterId: z.optional(text()), commit: z.optional(text()), workspace: WorkspaceAddressV1Schema,
