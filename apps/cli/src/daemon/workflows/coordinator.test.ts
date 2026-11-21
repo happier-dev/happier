@@ -1,7 +1,14 @@
 import { createTestWorkflowCoordinator as createWorkflowCoordinator } from './workflowCoordinator.testkit';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
+import axios from 'axios';
 import { AutomationRunCauseSchema } from '@happier-dev/protocol';
 import { createActionExecutor } from '@happier-dev/protocol/actions';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { createCliSettingsDeclarationAction } from '@/session/actions/settingsDeclarationAction';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { artifactListResponse } from '@/testkit/http/artifactHome';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 
 import {
@@ -27,6 +34,7 @@ import {
   type WorkflowWorkspaceResolver,
 } from './coordinator';
 import { createInMemoryWorkflowCoordinatorStore } from './workflowCoordinator.testkit';
+import { observeWorkflowInvocationRecoveryEvidence } from './invocationRecoveryObserver';
 import { createDaemonAdmissionDrain, waitForDaemonAdmission } from '../lifecycle/admissionDrain';
 import type { WorkflowJsonValue } from './input';
 
@@ -80,6 +88,70 @@ async function admitPreparedInput(params: Parameters<WorkflowStepExecutor>[0]): 
 }
 
 describe('workflow coordinator', () => {
+  it('recovers a reclaimed policy read as an interrupted Run without dispatching the old invocation again', async () => {
+    const credentials = { token: 'workflow-policy-read', encryption: null };
+    const home = 'http://workflow-policy-read.test';
+    setActiveAccountSettingsSnapshot({ scopeKey: resolveAccountSettingsScopeKey(credentials),
+      source: 'network', settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 1,
+      loadedAtMs: 1, settingsSecretsReadKeys: [] });
+    onTestFinished(resetActiveAccountSettingsSnapshotForTests);
+    const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
+      if (new URL(String(url)).pathname === '/v1/artifacts') {
+        return { status: 200, data: artifactListResponse(String(url), []) };
+      }
+      throw new Error('Unexpected Home read');
+    });
+    onTestFinished(() => get.mockRestore());
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      settingsDeclarationAction: createCliSettingsDeclarationAction({ credentials, serverHttpBaseUrl: home }) });
+    const workflow = definition([{ kind: 'action', id: 'profiles', actionId: 'actions.policy.get',
+      input: { profiles: { kind: 'literal', value: true } } }]);
+    const run = (runId: string, store: WorkflowCoordinatorStore) => {
+      const coordinator = createWorkflowCoordinator({ store, resolveWorkspace,
+        executeStep: async () => { throw new Error('Policy read does not run a Session step'); },
+        action: { executor, buildContext: async () => ({ surface: 'agent', authority: 'account_automation' }),
+          observeRun: async () => { throw new Error('Policy read does not launch a native Run'); } },
+      });
+      return runWithServerHttpBaseUrl(home,
+        () => coordinator.run({ runId, definition: workflow, inputs: {}, executionTarget, authorization }));
+    };
+
+    const control = createInMemoryWorkflowCoordinatorStore();
+    await expect(run('policy-read-control', control)).resolves.toMatchObject({ state: 'succeeded' });
+    const completed = control.list().find(row => row.blockId === 'profiles')!;
+    expect(completed).toMatchObject({ lifecycle: 'completed', result: { profiles: [] } });
+
+    // A completed leaf may be committed before the Run checkpoint advances.
+    const completedReclaim = createInMemoryWorkflowCoordinatorStore();
+    await completedReclaim.ensureIntent(completed);
+    await expect(run(completed.runId, completedReclaim)).resolves.toMatchObject({ state: 'succeeded' });
+    expect(completedReclaim.read(completed.key)?.result).toEqual({ profiles: [] });
+    expect(get).toHaveBeenCalledOnce();
+
+    // Round 19b's replacement claim saw this exact invocation shape after the
+    // prior lease expired during the policy read. No output made it to storage.
+    const store = createInMemoryWorkflowCoordinatorStore();
+    const runId = 'reclaimed-policy-read';
+    const key = workflowInvocationKey({ runId, blockId: 'profiles', scope: [], attempt: 0 });
+    await store.ensureIntent({ key, recordId: 'policy-read-invocation', runId, blockId: 'profiles', blockKind: 'action',
+      path: { blockId: 'profiles', scope: [] }, lifecycle: 'admitting', attempt: 0, acceptedAtMs: 1, memberOrdinal: '0' });
+    await store.commitFact({ key, lifecycle: 'admitting', execution: {
+      kind: 'action', actionId: 'actions.policy.get', actionRequestId: 'reclaimed-policy-read/policy-read-invocation/0',
+      localInputId: 'workflow:policy-read:action', input: { profiles: true },
+    } });
+
+    await expect(run(runId, store)).resolves.toMatchObject({ state: 'interrupted', reason: 'action_failed' });
+    expect(store.read(key)).toMatchObject({ lifecycle: 'failed', reason: 'action_failed', attempt: 0 });
+    expect(get).toHaveBeenCalledOnce();
+
+    const saved = await store.readInvocationBindingRow('policy-read-invocation');
+    const getRun = vi.fn();
+    await expect(observeWorkflowInvocationRecoveryEvidence({ runId, credentials, machineId: workspace.machineId,
+      progress: { ...saved!.progress, reason: { code: 'action_failed' } }, getRun }))
+      .resolves.toEqual({ activity: 'not_active', canReattach: false, canContinueConversation: false });
+    expect(getRun).not.toHaveBeenCalled();
+  });
+
   it.each(['completed', 'failed', 'cancelled'] as const)('repairs a settled %s leaf publication without re-executing it', async lifecycle => {
     const store = createInMemoryWorkflowCoordinatorStore();
     let executions = 0;

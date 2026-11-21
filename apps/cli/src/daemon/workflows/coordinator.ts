@@ -25,6 +25,7 @@ import { getWorkflowActionOutputKindV1, WorkflowMachineCommandOutputV1Schema } f
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readWorkflowActionApprovalSettlement } from './actionApproval';
+import { isWorkflowInlineAccountReadWithoutResult } from './actionReadRecovery';
 import { WorkflowInvocationSettlementFailure } from './invocationSettlementFailure';
 import { createWorkflowActionRequestIdV1 } from '@happier-dev/protocol/workflows/workflowSessionScopeV1';
 import { readRetainedWorkflowSessionStartupFailure, readWorkflowSessionStartupError } from './workflowSessionStartupFailure';
@@ -1913,7 +1914,15 @@ async function executeActionBlock(
     ? { output: row.execution.output, ...(row.execution.awaitedRuns ? { awaitedRuns: row.execution.awaitedRuns } : {}),
       ...(row.execution.awaitedOperations ? { awaitedOperations: row.execution.awaitedOperations } : {}),
       ...(row.execution.awaitedWorkflows ? { awaitedWorkflows: row.execution.awaitedWorkflows } : {}) } : undefined;
-  if (row.lifecycle !== 'pending' && !setupConsentHold && !completionState && !approvalHold) return await fail('outcome_uncertain', 'outcome_uncertain');
+  if (row.lifecycle !== 'pending' && !setupConsentHold && !completionState && !approvalHold) {
+    if (row.lifecycle === 'admitting' && row.execution?.kind === 'action' && row.execution.actionId === actionId
+      && !frozen.actionContract.completion && isWorkflowInlineAccountReadWithoutResult(row.execution)) {
+      // Losing the read's result leaves a failed leaf. Resume may offer an
+      // explicit retry through the existing control, without replay on reclaim.
+      return await fail('action_failed', 'failed', true);
+    }
+    return await fail('outcome_uncertain', 'outcome_uncertain');
+  }
   let workspace = row.workspace?.descriptor;
   let completed: Awaited<ReturnType<typeof resumeActionCompletionV1>> | undefined;
   let captureResult: ((output: WorkflowJsonValue) => WorkflowJsonValue | undefined) | undefined;

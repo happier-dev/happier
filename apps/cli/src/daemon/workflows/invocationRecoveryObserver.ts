@@ -43,6 +43,7 @@ import type { WorkflowInvocationRecoveryObservation } from './recovery';
 import { classifyWorkflowSessionInputResult, observeWorkflowDetachedExecutionRunInput, observeWorkflowSessionInputResult, resolveWorkflowDetachedExecutionRunInputTurn } from './stepExecution';
 import { observeWorkflowDetachedRunRecovery } from './detachedRunRecovery';
 import { readWorkflowActionApprovalSettlement } from './actionApproval';
+import { isWorkflowInlineAccountReadWithoutResult } from './actionReadRecovery';
 import { deriveWorkflowSessionInputLocalIdV2 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { isSessionStopConfirmed } from '@happier-dev/protocol/sessions/control/contract';
 import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
@@ -213,6 +214,10 @@ export async function observeWorkflowInvocationRecoveryEvidence(params: Readonly
       if (approval) return { activity: approval.kind === 'unresolved' ? 'unknown' : 'not_active',
         canReattach: approval.kind !== 'unresolved' || approval.code === 'approval_required', canContinueConversation: false };
       const reason = params.progress.reason;
+      if (params.progress.blockKind === 'action' && reason?.code === 'action_failed'
+        && isWorkflowInlineAccountReadWithoutResult(execution)) {
+        return { activity: 'not_active', canReattach: false, canContinueConversation: false };
+      }
       if (params.progress.blockKind === 'action'
         && execution.actionId === SESSION_AGENT_READINESS_CHILDREN_V1.acquire.action
         && reason?.code === 'native_effect_failed') {
