@@ -782,6 +782,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
             ...(source?.expectedAccountId ? { expectedAccountId: source.expectedAccountId } : {}),
             ...(source?.serverId ? { serverId: source.serverId } : {}),
             ...(source?.serverIdentityId ? { serverIdentityId: source.serverIdentityId } : {}),
+            ...(source?.authenticatedLocalRootCustody ? { authenticatedLocalRootCustody: source.authenticatedLocalRootCustody } : {}),
             ...(source?.machineAdmission ? { machineAdmission: source.machineAdmission } : {}),
             ...(source?.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: source.requesterWorkAttributionV1 } : {}),
             ...(source?.verifyMachineAdmissionCurrent ? { verifyMachineAdmissionCurrent: source.verifyMachineAdmissionCurrent } : {}),

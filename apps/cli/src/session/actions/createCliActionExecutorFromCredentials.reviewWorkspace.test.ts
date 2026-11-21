@@ -50,7 +50,7 @@ afterEach(() => vi.restoreAllMocks());
 afterAll(() => pluginReloadController.shutdown());
 
 it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-approval-verify', 'account-agent-approval-verify',
-  'plugin-approval-verify', 'unobserved-plugin-approval-verify', 'account-approval-reject', 'account-approval-cancel', 'approval-reject', 'approval-cancel', 'owner-verify', 'owner-prepare', 'owner-foreign-use', 'owner-foreign-manage',
+  'plugin-approval-verify', 'unobserved-plugin-approval-verify', 'account-approval-reject', 'account-approval-cancel', 'approval-reject', 'approval-cancel', 'owner-verify', 'owner-local-verify', 'owner-prepare', 'owner-foreign-use', 'owner-foreign-manage',
   'owner-unadmitted', 'owner-retarget', 'owner-home'] as const)('runs mounted source %s through its serving Machine SDK executor without minting an Account root', async shape => {
   const approvalShape = shape.includes('approval-');
   const accountChild = shape.startsWith('account-');
@@ -257,7 +257,12 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-ap
           surface: 'plugin', signal: new AbortController().signal, isOccurrenceCurrent: () => true,
           approvalContext: { surface: 'ui', authority: 'present_user', runtimeAccountId: accountId,
             serverId: shape === 'owner-home' ? `${serverId}-other` : serverId,
-            ...(shape === 'owner-unadmitted' ? {} : {
+            ...(shape === 'owner-local-verify' ? {
+              // The authenticated local control endpoint stamps this closed
+              // custody instead of the receiving RPC's Machine admission.
+              authenticatedLocalRootCustody: { serverIdentityId: 'srv_review_home', accountId,
+                machineId, installationId: 'review-installation' },
+            } : shape === 'owner-unadmitted' ? {} : {
               machineAdmission: { ...packet.machineAdmission,
                 actorAccountId: shape.startsWith('owner-foreign') ? 'another-account' : accountId,
                 role: shape === 'owner-foreign-use' ? 'use' as const : 'manage' as const },
