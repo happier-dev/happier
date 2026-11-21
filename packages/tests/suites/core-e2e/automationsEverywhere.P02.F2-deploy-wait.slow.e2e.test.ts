@@ -8,6 +8,7 @@ import { AutomationV3RunListResponseSchema,
 import { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ApprovalRequestGetResultV1Schema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
+import type { AutomationActionTrigger } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { connectExternalMcp, parseToolJson, type ExternalMcpClient, type ExternalMcpTransport } from '../../src/testkit/externalMcp';
 import { fetchJson } from '../../src/testkit/http';
@@ -37,14 +38,14 @@ describe('AE.P02.F2-deploy-wait', () => {
     mcp = await connectExternalMcp({ cliEntrypoint: resolve(repoRootDir(), 'apps/cli/src/index.ts'),
       sessionId: session.sessionId, cliHome: machine.homeDir, serverBaseUrl: fixture.actionServerApiUrl });
 
-    async function attachCheck(exitCode: number) {
+    async function attachCheck(exitCode: number, filter?: AutomationActionTrigger['filter']) {
       const saved = WorkflowTriggerWriteResultV1Schema.parse(await invoke('workflow.trigger.add', {
         actionApproval: 'automatic',
         project: { machineId: machine.target.machineId, directory: machine.workspaceDir },
         target: { kind: 'inline', definition: { version: 1, blocks: [{ kind: 'action', id: 'check',
           actionId: 'machines.command.run', input: { command: { kind: 'literal', value: `exit ${exitCode}` } } }] } },
         trigger: { kind: 'action', enabled: true, phase: 'before', mode: 'wait', onFailure: 'refuse',
-          actionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1] },
+          actionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1], ...(filter ? { filter } : {}) },
       }));
       return saved;
     }
@@ -139,17 +140,25 @@ describe('AE.P02.F2-deploy-wait', () => {
 
     await invoke('workflow.trigger.remove', { automationId: failed.set.automationId, triggerId: failed.triggerId });
     const passed = await attachCheck(0);
+    const skipped = await attachCheck(7, { v: 1, all: [{ op: 'eq', field: '/phase', value: 'after' }] });
     const approved = await begin();
-    const approvedArgs = (await readApproval(approved.artifactId)).actionArgs;
+    const approvalBeforeChecks = await readApproval(approved.artifactId);
+    expect(approvalBeforeChecks.automaticChecks?.selected).toEqual(expect.arrayContaining([
+      expect.objectContaining({ automationId: passed.set.automationId, triggerId: passed.triggerId }),
+      expect.objectContaining({ automationId: skipped.set.automationId, triggerId: skipped.triggerId }),
+    ]));
     expect(await runs(passed.set.automationId)).toEqual([]);
     await invoke('approval.request.decide', { artifactId: approved.artifactId, decision: 'approve' });
     await waitFor(async () => (await readApproval(approved.artifactId)).execution?.ok === true,
       { failFast: true, context: 'Passing check resumes the original deploy' });
     expect(await runs(passed.set.automationId)).toMatchObject([{ state: 'succeeded' }]);
+    expect(await runs(skipped.set.automationId)).toEqual([]);
     const completed = await readApproval(approved.artifactId);
-    expect(completed.actionArgs).toEqual(approvedArgs);
+    expect(completed.actionArgs).toEqual(approvalBeforeChecks.actionArgs);
     expect(completed).toMatchObject({ automaticChecks: { phase: 'passed',
       humanDecision: { kind: 'approve', authority: 'present_user' },
+      notices: expect.arrayContaining([expect.objectContaining({ code: 'action_automation_skipped',
+        reason: 'conditionNotMatched', automationId: skipped.set.automationId, triggerId: skipped.triggerId })]),
     } });
     await approved.pending;
     await waitFor(async () => (await activations()).length === 1, { context: 'Exactly one real daemon deployment effect' });
