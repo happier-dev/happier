@@ -153,6 +153,8 @@ process.stdin.on('data', receiveChunk);
 type InstalledFilesystemMachineFixture = Awaited<ReturnType<typeof createInstalledFilesystemMachineFixture>>;
 type NativeFilesystemFrame = Readonly<{ identity?: { username: string; agentUid: number; agentGid: number; home: string };
   executable: string; args: string[]; cwd: string; runtimeHome: string; materialCount: number }>;
+type NativeFilesystemInvoke = (method: string, params: unknown, accountId?: string, role?: 'use' | 'manage',
+  correlation?: 'request' | 'trace') => ReturnType<InstalledFilesystemMachineFixture['receive']>;
 /** Explicit so declaration emit does not serialize the whole composed fixture (TS7056). */
 export type NativeFilesystemMemberFixture = Omit<InstalledFilesystemMachineFixture, 'invoke'> & Readonly<{
   member: string;
@@ -162,8 +164,8 @@ export type NativeFilesystemMemberFixture = Omit<InstalledFilesystemMachineFixtu
   frames: NativeFilesystemFrame[];
   children: ChildProcess[];
   runAsUsers: string[];
-  invoke(method: string, params: unknown, accountId?: string, role?: 'use' | 'manage', correlation?: 'request' | 'trace'):
-    ReturnType<InstalledFilesystemMachineFixture['receive']>;
+  invoke: NativeFilesystemInvoke;
+  invokeFromHome: NativeFilesystemInvoke;
   preparation: ReturnType<typeof createAgentIsolationMemberPreparationBoundary> | undefined;
 }>;
 
@@ -183,6 +185,7 @@ export async function createNativeFilesystemMemberFixture(options: Readonly<{ re
   const readSnapshot = () => readAgentIsolationSnapshot({ metadata: { status: 'ready', metadataVersion, metadata },
     daemonState: { runtimeId: 'current' }, runtimeId: 'current', platform: 'linux' });
   const f = await createInstalledFilesystemMachineFixture({
+    registerSessions: true,
     ...(options.registerCleanup ? { registerCleanup: options.registerCleanup } : {}),
     ...(options.accountId === 'requester' ? { boundSessionId: 'owner-agent-files' } : {}), agentIsolation: {
     managedHappierBinaryPath: installedCli,
@@ -305,14 +308,16 @@ export async function createNativeFilesystemMemberFixture(options: Readonly<{ re
     if (stalled) throw new Error(`Native filesystem fixture did not settle; closed phases: ${phases.join(',') || 'before_frame'}`);
   });
   let correlationNumber = 0;
-  const invoke = async (method: string, params: unknown, accountId = 'member-a', role: 'use' | 'manage' = 'use', correlation: 'request' | 'trace' = 'request') => {
+  const invoke = (source?: 'authenticated_home_socket'): NativeFilesystemInvoke => async (
+    method, params, accountId = 'member-a', role = 'use', correlation = 'request',
+  ) => {
     const before = f.admissionChecks();
     const correlationId = `filesystem-native-${++correlationNumber}`;
-    const result = await f.receive({ method: `machine:${method}`, params,
+    const result = await f.rpcHandlerManager.handleRequest({ method: `machine:${method}`, params,
       ...(correlation === 'trace' ? { traceId: correlationId } : { requestId: correlationId }),
       callerAuthority: 'present_user', machineAdmission: { actorAccountId: accountId, custodianAccountId: 'requester',
-        machineId: f.machineId, installationId: f.installation.installationId, role, encryptionMode: 'plain' } });
-    expect(f.admissionChecks() - before).toBe(1);
+        machineId: f.machineId, installationId: f.installation.installationId, role, encryptionMode: 'plain' } }, undefined, source);
+    expect(f.admissionChecks() - before).toBe(source === 'authenticated_home_socket' ? 0 : 1);
     return result;
   };
   if (options.coldPolicy === 'reviewedMember') {
@@ -324,14 +329,16 @@ export async function createNativeFilesystemMemberFixture(options: Readonly<{ re
       effects: native.effects, runActionOperation: preparation.runtime.runActionOperation,
     });
     const desired = { machineId: f.machineId, enabled: true, memberProvisioning: 'linuxUsersV1' as const };
-    const preview = MachineAgentIsolationPreviewResultV1Schema.parse(await invoke('machines.agentIsolation.preview', desired, 'requester', 'manage'));
+    const invokeSetup = invoke();
+    const preview = MachineAgentIsolationPreviewResultV1Schema.parse(await invokeSetup('machines.agentIsolation.preview', desired, 'requester', 'manage'));
     if (preview.kind !== 'ready') throw new Error('Reviewed member setup was not previewable');
-    expect(await invoke('machines.agentIsolation.set', { ...desired, expectedMetadataVersion: preview.metadataVersion,
+    expect(await invokeSetup('machines.agentIsolation.set', { ...desired, expectedMetadataVersion: preview.metadataVersion,
       expectedPolicy: preview.policy, expectedPlanDigest: preview.plan.planDigest }, 'requester', 'manage')).toMatchObject({ kind: 'accepted' });
     expect(readMachineAgentIsolationPolicyV1(metadata)).toMatchObject({ status: 'ready', policy: { enabled: true, memberProvisioning: 'linuxUsersV1' } });
     expect(native.boundaryFailures).toEqual([]);
   }
-  return { ...f, member, foreign, identity, sharedHome, frames, children, runAsUsers, invoke, preparation };
+  return { ...f, member, foreign, identity, sharedHome, frames, children, runAsUsers,
+    invoke: invoke(), invokeFromHome: invoke('authenticated_home_socket'), preparation };
 }
 
 export function resetNativeFilesystemMemberBoundary(): void {

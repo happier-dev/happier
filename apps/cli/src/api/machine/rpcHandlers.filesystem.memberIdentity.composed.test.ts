@@ -58,7 +58,7 @@ describe.skipIf(process.platform !== 'linux')('installed Machine filesystem nati
   it('retains a shared Use requesters refused folder and worker UID in the daemon log', async () => {
     const f = await fixture({ legacy: true });
     const warnings = vi.spyOn(logger, 'warnLocalFile');
-    expect(await f.invoke(RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT,
+    expect(await f.invokeFromHome(RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT,
       { directory: { kind: 'path', path: f.foreign } })).toEqual({ ok: false, code: 'invalid_directory' });
     expect(warnings).toHaveBeenCalledWith('[sessionCreation] Directory preflight refused', expect.objectContaining({
       branch: 'directory_readiness', directoryKind: 'path', requestedDirectory: f.foreign,
@@ -68,17 +68,17 @@ describe.skipIf(process.platform !== 'linux')('installed Machine filesystem nati
   }, 120_000);
   it('keeps a fresh owners reviewed-member background folder status read-only', async () => {
     const f = await fixture({ accountId: 'requester', coldPolicy: 'reviewedMember', startupFailure: true });
-    const result = await f.invoke(RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT,
+    const result = await f.invokeFromHome(RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT,
       { directory: { kind: 'path', path: '~' } }, 'requester', 'manage');
     expect(f.preparation?.mutations).toEqual([]);
-    expect(result).toMatchObject({ code: 'agent_isolation_unavailable' });
+    expect(result).toMatchObject({ code: 'member_not_prepared' });
     expect(f.children).toEqual([]);
     expect(await readAgentIsolationMemberBindingForAccount({ activeServerDir: configuration.activeServerDir,
       homeServerIdentityId: f.homeServerIdentityId, machineId: f.machineId, installationId: f.installation.installationId }, 'requester')).toBeNull();
   }, 120_000);
   it('rejects preparation intent for a fresh owners managed request before native setup', async () => {
     const f = await fixture({ accountId: 'requester', coldPolicy: 'reviewedMember', startupFailure: true });
-    const result = await f.invoke(RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT,
+    const result = await f.invokeFromHome(RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT,
       { directory: { kind: 'managed' }, prepareAgentIsolationMember: true }, 'requester', 'manage');
     expect(f.preparation?.mutations).toEqual([]);
     expect(f.children).toEqual([]);
@@ -89,7 +89,7 @@ describe.skipIf(process.platform !== 'linux')('installed Machine filesystem nati
     const scope = { activeServerDir: configuration.activeServerDir, homeServerIdentityId: f.homeServerIdentityId,
       machineId: f.machineId, installationId: f.installation.installationId };
     expect(await readAgentIsolationMemberBindingForAccount(scope, 'requester')).toBeNull();
-    const prepared = await f.invoke(RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT,
+    const prepared = await f.invokeFromHome(RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT,
       { directory: { kind: 'path', path: '~' }, prepareAgentIsolationMember: true }, 'requester', 'manage');
     // The genuine OS child exits at the boundary; internal preparation must
     // already have committed the selected binding before that child starts.
@@ -101,21 +101,20 @@ describe.skipIf(process.platform !== 'linux')('installed Machine filesystem nati
   }, 120_000);
   it.each([false, true])('preflights the owners Agent directory as its member (denied=%s)', async denied => {
     const f = await fixture({ accountId: 'requester' });
-    const result = await f.invoke(RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT,
+    const result = await f.invokeFromHome(RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT,
       { directory: { kind: 'path', path: denied ? f.foreign : '~' } }, 'requester');
     expect(result).toEqual(denied ? { ok: false, code: 'invalid_directory' } : {
-      ok: true, directory: f.member, directoryKind: 'path', directoryCreationRequired: false, checkout: null,
+      ok: true, directory: f.identity.home, directoryKind: 'path', directoryCreationRequired: false, checkout: null,
     });
     assertNativeInvocation(f);
   }, 120_000);
   it.each(['request', 'trace'] as const)('preflights a Use grantee session directory in its native member home (%s correlation)', async correlation => {
     const f = await fixture();
-    expect(await f.invoke(RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT,
+    expect(await f.invokeFromHome(RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT,
       { directory: { kind: 'path', path: '~' } }, 'member-a', 'use', correlation)).toEqual({
-      // This OS-boundary fixture backs the member's HOME at f.member.
-      ok: true, directory: f.member, directoryKind: 'path', directoryCreationRequired: false, checkout: null,
+      ok: true, directory: f.identity.home, directoryKind: 'path', directoryCreationRequired: false, checkout: null,
     });
-    expect(await f.invoke(RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE,
+    expect(await f.invokeFromHome(RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE,
       { directory: { kind: 'path', path: '~' } }, 'member-a', 'use')).toMatchObject({ errorCode: 'agent_isolation_unavailable' });
     assertNativeInvocation(f);
   }, 120_000);

@@ -17,6 +17,7 @@ export async function createInstalledFilesystemMachineFixture(options: Readonly<
     readAdditionalHttpResponse?: NonNullable<Parameters<typeof createProjectSessionRuntimeFixture>[0]>['readAdditionalHttpResponse'];
     machineEncryption?: Readonly<{ encryptionKey: Uint8Array; encryptionVariant: 'dataKey' }>;
     metadata?: ConstructorParameters<typeof ApiMachineClient>[1]['metadata'];
+    registerSessions?: boolean;
     boundSessionId?: string;
     directTransferExport?: Parameters<ApiMachineClient['setRPCHandlers']>[0]['directTransferExport'];
     agentIsolation?: ApiMachineClientLifecycleDependencies['agentIsolation'];
@@ -55,13 +56,17 @@ export async function createInstalledFilesystemMachineFixture(options: Readonly<
             ...(options.createProjectFiniteRuntime ? { createProjectFiniteRuntime: options.createProjectFiniteRuntime } : {}),
             ...(options.agentIsolation ? { agentIsolation: options.agentIsolation } : {}) });
     (options.registerCleanup ?? onTestFinished)(() => machine.shutdown());
-    machine.setRPCHandlers({ spawnSession: async () => { throw new Error('No Session spawn expected'); },
+    const registration = machine.setRPCHandlers({ spawnSession: async () => { throw new Error('No Session spawn expected'); },
         stopSession: async () => true, requestShutdown() {},
         ...(options.directTransferExport ? { directTransferExport: options.directTransferExport } : {}) });
     // Network transport entry: retain actual authorization and its constructed
     // currentness callback rather than calling filesystem handlers directly.
     const manager: unknown = Reflect.get(machine, 'rpcHandlerManager');
     if (!(manager instanceof RpcHandlerManager)) throw new Error('Missing installed Machine RPC receiver');
+    if (options.registerSessions) {
+        const { registerMachineSessionRpcHandlers } = await import('@/api/machine/rpcHandlers.sessions');
+        registerMachineSessionRpcHandlers({ rpcHandlerManager: manager, ...registration.sessionsRoleFamily });
+    }
     return { ...f, machine, rpcHandlerManager: manager, machineId: 'machine', homeServerIdentityId,
         serverId: 'filesystem-profile', serverHttpBaseUrl: 'https://session-home.test',
         admissionChecks: () => homeChecks,
