@@ -8,6 +8,7 @@ import { ExternalActionMachineRpcExecutionV1Schema, verifyExternalActionMachineR
 import nacl from 'tweetnacl';
 import { createManagedGuestActivityTransport } from './managedActivityTransport';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import type { ManagedMachineExecutionOptions } from './acquire';
 import { ManagedMachineControllerError } from './controllerErrors';
 import { ApiMachineClient, type ManagedMachinePolicyInvalidation } from '@/api/apiMachine';
@@ -83,6 +84,20 @@ async function withConnectedTransport(run: (bridge: ReturnType<typeof createMana
 }
 
 describe('managed activity transport lifetime', () => {
+    it('preserves a guest daemon refusal from an after-idle Delete probe as a typed RPC error', async () => {
+        const { keys, authorization, current } = signedAccountAfterIdle('machines.managed.delete');
+        await withConnectedTransport(async (bridge, socket) => {
+            const failure = { error: 'Invalid RPC caller input authorization', errorCode: RPC_ERROR_CODES.FORBIDDEN,
+                effectAttempted: false, failureCause: { phase: 'rpc.admission.caller_input_authorization',
+                    errorClass: 'UnknownThrownValue', errorCode: RPC_ERROR_CODES.FORBIDDEN, httpStatus: null } };
+            socket.on(SOCKET_RPC_EVENTS.CALL, (_request: unknown, reply: (result: unknown) => void) => {
+                reply({ ok: true, result: failure });
+            });
+            await expect(bridge.read(current)).rejects.toMatchObject({ rpcErrorCode: failure.errorCode,
+                effectAttempted: false, failureCause: failure.failureCause });
+        }, { requestId: 'retention', context: { externalActionExecutionAuthorization: authorization,
+            externalActionTarget: { kind: 'machine', machineId: 'controller' } } }, current, keys.secretKey);
+    });
     it('observes an Account-owned guest without fabricating a native controller', async () => {
         const current = { ...machine, controller: undefined };
         await withConnectedTransport(async (bridge, socket) => {

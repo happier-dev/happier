@@ -37,6 +37,11 @@ import { currentAccountStoredContentCompatibilityHeaders, qualifyCurrentAccountS
 import type { Fastify as ServerFastify } from '@/app/api/types';
 import { socketRpcCodec } from '@happier-dev/sync-client';
 import { encrypt, decrypt } from '../../../../../cli/src/api/encryption';
+import { RpcHandlerManager } from '../../../../../cli/src/api/rpc/RpcHandlerManager';
+import { authorizeMachineRpcRequest } from '../../../../../cli/src/api/machine/machineRpcAuthorization';
+import { registerManagedActivityRpcHandlers } from '../../../../../cli/src/api/machine/rpcHandlers.managedActivity';
+import { createDaemonAdmissionDrain } from '../../../../../cli/src/daemon/lifecycle/admissionDrain';
+import { createManagedActivityInventory } from '../../../../../cli/src/daemon/lifecycle/managedActivity';
 import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 
 describe('external after-idle retained guest authority (real SQLite)', () => {
@@ -572,14 +577,31 @@ describe('external after-idle retained guest authority (real SQLite)', () => {
         expect(effect).not.toHaveBeenCalled();
     });
 
-    it('forwards busy then idle and reversible drain from the signed controller, observing access loss at the next admission', async () => {
-        const test = await setup('account', 'machines.managed.power.set');
+    it.each([
+        ['machines.managed.power.set', 'plain'],
+        ['machines.managed.delete', 'plain'],
+        ['machines.managed.delete', 'e2ee'],
+    ] as const)('returns busy then idle and reversible drain from the installed guest for signed after-idle %s (%s)', async (actionId, mode) => {
+        const test = await setup('account', actionId, mode);
         let idle = false;
-        const effect = vi.fn(async (_event: string, payload: { machineAdmission: unknown; params: { action?: string } }) => {
-            expect(payload.machineAdmission).toMatchObject({ actorAccountId: test.requester.id, machineId: test.guest.id,
-                installationId: test.guest.installationId, role: 'manage' });
-            return idle ? { kind: 'idle', since: 1 } : { kind: 'busy', reasons: ['finite'] };
-        });
+        const admissionDrain = createDaemonAdmissionDrain();
+        const activity = createManagedActivityInventory({ producers: [{
+            read: () => ({ coverage: 'complete', items: idle ? [] : [{ category: 'session', ownerRef: 'working-session',
+                attribution: { kind: 'unknown' }, state: 'active' }] }),
+            subscribe: () => () => {},
+        }] });
+        const guest = new RpcHandlerManager({ scopePrefix: test.guest.id, localMachineId: test.guest.id,
+            ...(mode === 'plain' ? { encryptionMode: 'plain' as const }
+                : { encryptionMode: 'e2ee' as const, encryptionKey: test.dataKey, encryptionVariant: 'dataKey' as const }),
+            logger() {},
+            authorizeRequest: (request, source) => authorizeMachineRpcRequest(request, {
+                machineId: test.guest.id, resolveInstallationId: () => test.guest.installationId,
+                resolveCustodianAccountId: async () => test.owner.id,
+                verifyMachineAdmission: async () => { throw new Error('The authenticated Home already admitted this request'); },
+            }, source) });
+        registerManagedActivityRpcHandlers({ rpcHandlerManager: guest, activity, admissionDrain });
+        const effect = vi.fn((_event: string, payload: Parameters<typeof guest.handleRequest>[0]) =>
+            guest.handleRequest(payload, undefined, 'authenticated_home_socket'));
         const target = { id: randomUUID(), data: { clientType: 'machine-scoped', userId: test.owner.id,
             machineId: test.guest.id, verifiedMachineInstallationId: test.guest.installationId }, timeout: () => ({ emitWithAck: effect }) };
         qualifyCurrentAccountStoredContentSocket(target);
@@ -598,20 +620,25 @@ describe('external after-idle retained guest authority (real SQLite)', () => {
             await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, { ...request, externalActionExecution: request.execution }, callback);
             return callback.mock.calls[0]?.[0];
         };
-        const busy = await call(MANAGED_ACTIVITY_READ_RPC_METHOD);
-        expect(busy, JSON.stringify(busy)).toMatchObject({ ok: true, result: { kind: 'busy' } });
-        idle = true;
-        expect(await call(MANAGED_ACTIVITY_READ_RPC_METHOD)).toMatchObject({ ok: true, result: { kind: 'idle' } });
-        expect(await call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, 'begin')).toMatchObject({ ok: true });
-        expect(await call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, 'resume')).toMatchObject({ ok: true });
-        effect.mockClear(); retire = true;
-        // Withdrawal after admission does not cancel this finite read/drain.
-        expect(await call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, 'begin')).toMatchObject({ ok: true });
-        expect(effect).toHaveBeenCalledTimes(1);
-        effect.mockClear();
-        expect(await call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, 'begin')).toMatchObject({ ok: true });
-        expect(effect).toHaveBeenCalledTimes(1);
-        expect(await resolveMachineAdmission({ actorAccountId: test.requester.id, machineId: test.controller.id,
-            actionId: test.actionId, requireOnline: true })).toMatchObject({ kind: 'denied', code: 'access_denied' });
+        try {
+            const busy = await call(MANAGED_ACTIVITY_READ_RPC_METHOD);
+            expect(busy, JSON.stringify(busy)).toMatchObject({ ok: true, result: { kind: 'busy' } });
+            expect(admissionDrain.isQuiescing()).toBe(false);
+            idle = true;
+            expect(await call(MANAGED_ACTIVITY_READ_RPC_METHOD)).toMatchObject({ ok: true, result: { kind: 'idle' } });
+            expect(await call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, 'begin')).toMatchObject({ ok: true, result: { kind: 'idle' } });
+            expect(admissionDrain.isQuiescing()).toBe(true);
+            expect(await call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, 'resume')).toMatchObject({ ok: true, result: { kind: 'idle' } });
+            expect(admissionDrain.isQuiescing()).toBe(false);
+            effect.mockClear(); retire = true;
+            // Withdrawal after admission does not cancel this finite read/drain.
+            expect(await call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, 'begin')).toMatchObject({ ok: true, result: { kind: 'idle' } });
+            expect(effect).toHaveBeenCalledTimes(1);
+            effect.mockClear();
+            expect(await call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, 'begin')).toMatchObject({ ok: true, result: { kind: 'idle' } });
+            expect(effect).toHaveBeenCalledTimes(1);
+            expect(await resolveMachineAdmission({ actorAccountId: test.requester.id, machineId: test.controller.id,
+                actionId: test.actionId, requireOnline: true })).toMatchObject({ kind: 'denied', code: 'access_denied' });
+        } finally { activity.dispose(); }
     });
 });

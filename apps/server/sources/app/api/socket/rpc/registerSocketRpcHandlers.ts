@@ -2378,8 +2378,11 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 callerSocketId: params.socket.id,
                 ...(liveApprovalOrigin ? { answeringClient: { requireSingle: true } } : answeringClient ? { answeringClient } : {}),
                 callerSocket: params.socket,
-                ...(sessionActionOrigin ? { sessionActionOrigin } : {}),
-                ...(verifiedExternalAction && externalActionExecution?.success && !deploymentReferenceServices
+                // Home has verified the controller's signed guest probe. The guest
+                // consumes its own Machine admission and needs no requester custody.
+                ...(sessionActionOrigin && !verifiedExternalAction?.managedGuestActivity ? { sessionActionOrigin } : {}),
+                ...(verifiedExternalAction && externalActionExecution?.success
+                    && !verifiedExternalAction.managedGuestActivity && !deploymentReferenceServices
                     ? { createCallerInputAuthorization: async () => externalActionExecution.data.authorization }
                     : {}),
                 ...(callerInputViewer && callerInputActionId ? { createCallerInputAuthorization: async ({ target, requestId }) => {

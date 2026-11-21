@@ -1,4 +1,5 @@
 import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
+import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD,
     ManagedActivityBridgeResultV1Schema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -92,7 +93,7 @@ export function createManagedGuestActivityTransport(input: Pick<ManagedMachineAc
         await waitUntilConnected(signal);
         if (failure) throw failure;
         if (!machineId || !rpcSocket) throw new ManagedMachineControllerError('admission_unavailable');
-        return ManagedActivityBridgeResultV1Schema.parse(await callSocketRpc({ socket: rpcSocket,
+        const result = await callSocketRpc({ socket: rpcSocket,
             target: { kind: 'machine', id: machineId }, method, params, content: { mode: 'plain' },
             timeoutMs: null, ...(signal ? { signal } : {}),
             ...(signed && externalAction ? { createExternalActionExecution: (request) => {
@@ -100,7 +101,8 @@ export function createManagedGuestActivityTransport(input: Pick<ManagedMachineAc
                 if (!execution) throw new ManagedMachineControllerError('admission_unavailable');
                 return execution;
             } } : {}),
-        }));
+        });
+        return ManagedActivityBridgeResultV1Schema.parse(readMachineActionRpcResult(result));
     };
     const read = async (current: ManagedMachineFullV1, signal = options.signal) => {
         if (!machineId) throw new ManagedMachineControllerError('admission_unavailable');
