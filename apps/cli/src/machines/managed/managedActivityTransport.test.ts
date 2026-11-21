@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { Server, type Socket } from 'socket.io';
 import { describe, expect, it } from 'vitest';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol';
-import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedMachineFullV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ExternalActionExecutionAuthorizationV1Schema, projectExternalActionManagedAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ExternalActionMachineRpcExecutionV1Schema, verifyExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions';
 import nacl from 'tweetnacl';
@@ -13,7 +13,7 @@ import type { ManagedMachineExecutionOptions } from './acquire';
 import { ManagedMachineControllerError } from './controllerErrors';
 import { ApiMachineClient, type ManagedMachinePolicyInvalidation } from '@/api/apiMachine';
 
-const machine = ManagedMachineV1Schema.parse({
+const machine = ManagedMachineFullV1Schema.parse({
     id: 'managed', homeId: 'srv_home', custodianAccountId: 'owner',
     controller: { machineId: 'controller', installationId: 'installation' },
     launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
