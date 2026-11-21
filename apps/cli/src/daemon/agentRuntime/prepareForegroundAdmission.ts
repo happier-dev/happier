@@ -1,6 +1,7 @@
 import { prepareProviderSettingsForCli } from '@/providers/settings/hydrate';
 import type { PrepareAgentIsolationMember } from '../spawn/prepareDaemonConnectedServices';
 import type { AgentLaunchMaterialization } from '../agentIsolation/agentLaunchMaterials';
+import { projectAgentIsolationSessionBootstrap } from '../agentIsolation/agentIsolationSessionContext';
 import { join } from 'node:path';
 import { createMemberAgentCliLaunchContext } from '@/plugins/runtime/exec/system/tools/agentCliBinding';
 import {
@@ -796,8 +797,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
       target: request.backendTarget,
       lease,
       ...(request.runtimeDescriptorV1 ? { launch: { runtimeDescriptorV1: request.runtimeDescriptorV1,
-        ...(agentLaunchMaterials ? { agentIsolationRuntimeHome: agentLaunchMaterials.runtimeHome } : {}),
-        ...(foregroundMemberIdentity ? { agentIsolationMemberIdentity: foregroundMemberIdentity } : {}),
+        ...projectAgentIsolationSessionBootstrap(dependencies.agentIsolation, agentLaunchMaterials),
       } } : {}),
     });
     const registration = lease.registry.agentRuntimesByAgentId.get(

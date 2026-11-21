@@ -2186,7 +2186,9 @@ Agent isolation (Separate users) uses the identity's installed managed CLI
 reviewed setup publishes the CLI and its companion files to a root-owned Linux
 runtime for member `agent-launch`. The shared Agent uses the same runtime when
 the managed CLI lives under a private daemon or user home. Each RunAs rule names
-the selected installed launch path exactly. Isolation requires a managed CLI
+the selected installed launch path exactly. In 0.3 development, the Agent's
+Happier MCP relay runs the Session holder shipped beside that selected CLI.
+Isolation requires a managed CLI
 installation. A missing or unreadable payload reports a typed unavailability,
 and an older installed payload runs older isolation code under a newer daemon.
 Each source daemon bundle carries a revision-matched native payload at

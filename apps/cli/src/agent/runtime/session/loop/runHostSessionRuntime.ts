@@ -3008,6 +3008,7 @@ async function runHostedSessionRuntime(
       signal: startupRegistrationLifetime.signal,
     });
     const isolatedIdentity = isolatedMaterial?.identity;
+    const managedHappierBinaryPath = isolatedMaterial?.target ? launch?.agentIsolationManagedHappierBinaryPath : undefined;
     if (isolatedMaterial?.target) nativeMcpRuntime = createSessionMcpStdioRuntime({
       target: isolatedMaterial.target, nativeIdentity: isolatedMaterial.identity,
       // Only the canonical native HOME and existing public executable search
@@ -3051,6 +3052,7 @@ async function runHostedSessionRuntime(
       localWorkflow: config.localWorkflow,
       readExecutionSource: readSessionMcpExecutionSource,
       ...(nativeMcpRuntime ? { admittedStdio: nativeMcpRuntime.runtime } : {}),
+      managedHappierBinaryPath,
       ...(isolatedIdentity ? { localTransport: { agentUid: isolatedIdentity.agentUid } }
         : process.platform !== 'win32' && process.getuid ? { localTransport: { agentUid: process.getuid() } } : {}),
       sessionMetadata: runtimeSessionMetadataSnapshot ?? runtimeMetadata,
@@ -3064,14 +3066,16 @@ async function runHostedSessionRuntime(
       selectedMaterials: Object.freeze(('selectedMaterials' in result ? result.selectedMaterials ?? [] : [])
         .map(file => Object.freeze({ ...file }))),
     });
-    return result;
+    return { profile: result, managedHappierBinaryPath };
   });
   // A failed preparation cannot return while its sibling is still creating
   // resources. Construction cleanup already owns the completed MCP profile.
   const [mcpPrepared, skillsPrepared] = await Promise.allSettled([mcpPreparation, skillsPreparation]);
   if (mcpPrepared.status === 'rejected') throw mcpPrepared.reason;
   if (skillsPrepared.status === 'rejected') throw skillsPrepared.reason;
-  const { happierMcpServer, mcpServers, mcpServersStrictMode, mcpServerIdentities, mcpToolPolicy, resolveMcpToolNaming, resolvedServers, reach: runnerMcpReach } = mcpPrepared.value;
+  const { profile: mcpProfile, managedHappierBinaryPath } = mcpPrepared.value;
+  const { happierMcpServer, mcpServers, mcpServersStrictMode, mcpServerIdentities, mcpToolPolicy,
+    resolveMcpToolNaming, resolvedServers, reach: runnerMcpReach } = mcpProfile;
   runnerSkills = skillsPrepared.value;
   if (runnerSkills) await publishRunnerSkillNotice(currentLifecycleSession, runnerSkills);
   startupPhaseStartedAt = performance.now();
@@ -3209,7 +3213,7 @@ async function runHostedSessionRuntime(
     messageQueue,
     messageBuffer,
     mcpServers,
-    get sessionMcpContext() { return mcpPrepared.value.sessionMcpContext; },
+    get sessionMcpContext() { return mcpProfile.sessionMcpContext; },
     get mcpLaunchMaterial() { return nativeMcpLaunchMaterial; },
     ...(nativeMcpRuntime && nativeMcpLaunchMaterial?.memberIdentity ? {
       memberTranscriptFilesystem: { home: nativeMcpLaunchMaterial.memberIdentity.home, open: nativeMcpRuntime.prepareFilesystemEffect },
@@ -3223,7 +3227,7 @@ async function runHostedSessionRuntime(
           prepareFilesystemEffect: native.prepareFilesystemEffect }) : undefined;
       return () => { releaseAttachments?.(); releaseExec(); };
     } } : {}),
-    get agentEnvironment() { return mcpPrepared.value.agentEnvironment; },
+    get agentEnvironment() { return mcpProfile.agentEnvironment; },
     resolveMcpToolNaming,
     mcpServerIdentities,
     ...(mcpServersStrictMode !== undefined ? { mcpServersStrictMode } : {}),
@@ -4072,6 +4076,7 @@ async function runHostedSessionRuntime(
     currentLifecycleSession.setSessionRuntimeControls({
       readToolNormalizationSource: () => toolNormalizationSource,
       resolveAccountSettingsSnapshot: resolveSessionAccountSettingsSnapshot,
+      managedHappierBinaryPath,
       readReferenceAction,
       readPermissionHandler: () => permissionHandler,
       readCodingPromptBehavior: () => resolveFreshSessionSystemPrompt?.readCodingPromptBehavior?.() ?? null,

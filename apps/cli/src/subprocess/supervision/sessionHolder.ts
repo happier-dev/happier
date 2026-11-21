@@ -320,8 +320,8 @@ export function spawnPlacedSessionWorkspaceProcess(command: string, args: readon
  * The shipped holder executable (also the Session MCP relay Agents launch). Required in every
  * build: absence is the typed refusal `session_holder_unavailable`.
  */
-export function requireSessionHolderExecutablePath(): string {
-    const executablePath = resolveSessionHolderExecutablePath();
+export function requireSessionHolderExecutablePath(options?: Parameters<typeof resolveSessionHolderExecutablePath>[0]): string {
+    const executablePath = resolveSessionHolderExecutablePath(options);
     if (!executablePath) {
         throw new PluginError({
             code: 'session_holder_unavailable',
@@ -334,10 +334,13 @@ export function requireSessionHolderExecutablePath(): string {
 
 /**
  * The holder executable as the Session's Agents can run it (the Session MCP relay
- * an Agent launches): in a placed Session the copy the daemon placed in the target.
+ * an Agent launches). Placed Sessions use the target's holder. An isolated local
+ * Agent uses the holder shipped in its selected installed CLI payload.
  */
-export function resolveAgentSessionHolderExecutablePath(): string {
-    return readSessionTargetPlacement(sessionProcessEnvironment())?.holderPath ?? requireSessionHolderExecutablePath();
+export function resolveAgentSessionHolderExecutablePath(managedHappierBinaryPath?: string): string {
+    return readSessionTargetPlacement(sessionProcessEnvironment())?.holderPath ?? requireSessionHolderExecutablePath(
+        managedHappierBinaryPath ? { packageRoot: join(dirname(managedHappierBinaryPath), 'node_modules', '@happier-dev', 'iroh-native') } : undefined,
+    );
 }
 
 /**

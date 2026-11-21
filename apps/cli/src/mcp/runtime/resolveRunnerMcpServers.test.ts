@@ -2,11 +2,12 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import axios, { AxiosHeaders } from 'axios';
 import { createServer, request as httpRequest, type IncomingMessage, type RequestOptions } from 'node:http';
 import { Server } from 'node:net';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { watch } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { readSessionCapabilityNoticeV1 } from '@happier-dev/protocol/sessions/messages/sessionCapabilityNoticeV1';
 import { accountSettingsParse, FeaturesResponseSchema, formatSavedSecretCatalogReferenceV1,
@@ -39,6 +40,7 @@ import { ServerBoundPermissionRpcHandlerManager } from '@/agent/permissions/test
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import { readClaudeMcpConfigServers } from '../../../../../packages/plugins/claude/src/agent/mcp/configServers';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { requireSessionHolderExecutablePath } from '@/subprocess/supervision/sessionHolder';
 
 const packageDownloadNetwork = vi.hoisted(() => ({ origin: '', requests: [] as string[] }));
 
@@ -103,6 +105,31 @@ function resolve(input: Readonly<{ snapshot: ActiveAccountSettingsSnapshot | nul
 }
 
 describe('resolveRunnerMcpServers catalog admission', () => {
+  it.runIf(process.platform === 'linux')('initializes the relay from the managed payload selected for an isolated Agent', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-isolated-mcp-payload-'));
+    const client = new Client({ name: 'isolated-mcp-fixture', version: '1' });
+    const sourceHolder = requireSessionHolderExecutablePath();
+    const payload = join(root, 'current');
+    const native = join(payload, 'node_modules', '@happier-dev', 'iroh-native', 'native');
+    const publishedHolder = join(native, basename(sourceHolder));
+    const placement = { managedHappierBinaryPath: join(payload, 'happier') };
+    try {
+      await mkdir(native, { recursive: true });
+      await copyFile(sourceHolder, publishedHolder);
+      const profile = await resolveRunnerMcpServersFromHost({ session: session(),
+        credentials, accountCredentials: null, accountSettings: null, accountSettingsSnapshot: null,
+        machineId: 'machine-1', directory: root, ...placement });
+      try {
+        const relay = profile.mcpServers.happier!;
+        expect(relay.command).toBe(publishedHolder);
+        await client.connect(new StdioClientTransport({ command: relay.command, args: [...relay.args ?? []], env: { ...relay.env } }));
+      } finally {
+        await client.close();
+        await profile.happierMcpServer.stop();
+      }
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
   it('keeps selected MCP servers and publishes a notice when requester native discovery is unavailable', async () => {
     const notices: unknown[] = [];
     const captured = snapshot([server('selected')]);

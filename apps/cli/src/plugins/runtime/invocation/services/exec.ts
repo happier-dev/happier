@@ -149,7 +149,12 @@ export type HostAgentNativeLaunchPreparation = (
 /** Placement selected by native admission; callers cannot manufacture an identity. */
 export type HostAgentNativeMcpPlacement =
     | Readonly<{ kind: 'direct'; nativeAdmission: HostAgentIsolationLaunchContext }>
-    | Readonly<{ kind: 'prepared'; nativeAdmission: HostAgentIsolationLaunchContext; localTransport: NonNullable<NonNullable<ReturnType<HostAgentIsolationLaunchContext['read']>>['localTransport']> }>;
+    | Readonly<{
+        kind: 'prepared';
+        nativeAdmission: HostAgentIsolationLaunchContext;
+        localTransport: NonNullable<NonNullable<ReturnType<HostAgentIsolationLaunchContext['read']>>['localTransport']>;
+        managedHappierBinaryPath: string;
+    }>;
 
 type NativeLaunchQualifiers = WeakSet<object>;
 const INTERNAL_NATIVE_LAUNCH_QUALIFIERS = new WeakMap<ExecService, NativeLaunchQualifiers>();
@@ -2597,7 +2602,8 @@ export function createStablePluginExecService(params: Readonly<{
         // Only a prepared invocation owns native transport. A Machine preference
         // cannot confer the selected Agent identity or provision it here.
         if (!params.agentIsolation || !snapshot?.launch || !snapshot.localTransport) return undefined;
-        return { kind: 'prepared', nativeAdmission, localTransport: snapshot.localTransport };
+        return { kind: 'prepared', nativeAdmission, localTransport: snapshot.localTransport,
+            managedHappierBinaryPath: snapshot.launch.managedHappierBinaryPath };
     }, authorize: async (launch, signal, nativeLaunch, agentLaunchKind, mcpLaunchMaterial) => {
         const combinedSignal = signal ? AbortSignal.any([params.signal, signal]) : params.signal;
         const nativeIsolation = nativeLaunch ? INTERNAL_NATIVE_OPERATIONS.get(nativeLaunch) : undefined;

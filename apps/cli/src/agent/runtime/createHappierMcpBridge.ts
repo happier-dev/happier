@@ -23,7 +23,10 @@ import type {
  * endpoint; this host serves every tool in-process (no per-Session bridge process). The relay
  * reads its context file path and registration bearer; it starts no tools and reads no settings.
  */
-export function resolveHappierMcpServerConfig(server: Readonly<{ localContext?: SessionMcpLocalContext; contextFilePath?: string }>): McpServerConfig {
+export function resolveHappierMcpServerConfig(
+  server: Readonly<{ localContext?: SessionMcpLocalContext; contextFilePath?: string }>,
+  managedHappierBinaryPath?: string,
+): McpServerConfig {
   if (!server.localContext) throw new SessionMcpUnavailableError()
   // An isolated Agent's context file is placed by its launch materialization (`resolveRunnerMcpServers`).
   // The relay's bearer selects its registration when a Session and its Runs share a Unix socket;
@@ -38,7 +41,7 @@ export function resolveHappierMcpServerConfig(server: Readonly<{ localContext?: 
     ...(contextFilePath ? { [SESSION_MCP_CONTEXT_FILE_ENV]: contextFilePath } : {}),
     [SESSION_MCP_BEARER_ENV]: server.localContext.bearerToken,
   }
-  return { command: resolveAgentSessionHolderExecutablePath(), args: ['mcp-relay'],
+  return { command: resolveAgentSessionHolderExecutablePath(managedHappierBinaryPath), args: ['mcp-relay'],
     ...(relayEnvironment ? { env: relayEnvironment } : {}) }
 }
 
@@ -46,6 +49,7 @@ export async function createHappierMcpBridge(
   session: HappyMcpSessionClient,
   opts: {
     localTransport?: SessionMcpLocalTransportOptions
+    managedHappierBinaryPath?: string
     sessionMetadata?: unknown
     sessionToolsBridge?: SessionMcpCustomToolsBridge
     commandMode?: 'direct-script' | 'current-process'
@@ -79,6 +83,7 @@ export async function createHappierMcpBridgeWithOptions(
   session: HappyMcpSessionClient,
   opts: {
     localTransport?: SessionMcpLocalTransportOptions
+    managedHappierBinaryPath?: string
     sessionMetadata?: unknown
     sessionToolsBridge?: SessionMcpCustomToolsBridge
     commandMode?: 'direct-script' | 'current-process'
@@ -136,7 +141,7 @@ export async function createHappierMcpBridgeWithOptions(
   })
   let mcpServers: Record<string, McpServerConfig>
   try {
-    mcpServers = happierToolsEnabled ? { happier: resolveHappierMcpServerConfig(happierMcpServer) } : {}
+    mcpServers = happierToolsEnabled ? { happier: resolveHappierMcpServerConfig(happierMcpServer, opts.managedHappierBinaryPath) } : {}
   } catch (error) {
     await happierMcpServer.stop()
     throw error

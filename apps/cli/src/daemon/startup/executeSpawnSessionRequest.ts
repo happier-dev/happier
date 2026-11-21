@@ -77,6 +77,7 @@ import { seedManagedSessionDirectory } from '@/session/creation/seedManagedSessi
 import { prepareDaemonAgentIsolationIdentity } from '../spawn/prepareDaemonAgentIsolationIdentity';
 import { projectPluginCodeRefusal } from '../spawn/pluginCodeRefusal';
 import { projectAgentIsolationLaunchMaterialFailure } from '../agentIsolation/agentIsolationLaunchMaterialFailure';
+import { projectAgentIsolationSessionBootstrap } from '../agentIsolation/agentIsolationSessionContext';
 import { isDefiniteSpawnPreAdmissionRejection } from '@/session/services/spawnPreAdmissionRejection';
 import { readSessionCreationTerminalSpawnErrorDetail } from '@/api/session/sessionCreationTerminalSpawnErrorDetail';
 import { prepareExecuteSpawnSessionRequest } from './prepareExecuteSpawnSessionRequest';
@@ -1507,12 +1508,7 @@ export async function executeSpawnSessionRequest(
                     descriptor: runnerAgentSessionDescriptor,
                     ...(startupRuntimeDescriptorV1 ? { launch: {
                         runtimeDescriptorV1: startupRuntimeDescriptorV1,
-                        ...(connectedServices.agentLaunchMaterials ? {
-                            agentIsolationRuntimeHome: connectedServices.agentLaunchMaterials.runtimeHome,
-                        } : {}),
-                        ...(connectedServices.agentLaunchMaterials?.memberIdentity ? {
-                            agentIsolationMemberIdentity: connectedServices.agentLaunchMaterials.memberIdentity,
-                        } : {}),
+                        ...projectAgentIsolationSessionBootstrap(params.agentIsolation, connectedServices.agentLaunchMaterials),
                         ...(terminalPresentation.kind === 'managed_terminal' || terminalPresentation.kind === 'provider_attach'
                             ? { terminalHostOwner: 'runtime' as const } : {}),
                         ...(connectedServices.sessionConnectedAccounts ? {

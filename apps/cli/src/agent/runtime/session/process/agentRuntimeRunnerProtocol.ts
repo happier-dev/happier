@@ -444,6 +444,8 @@ export const AgentRuntimeRunnerBootstrapV1Schema = lazyZodSchema(() => z.strictO
     agentIsolationMemberIdentity: z.optional(AgentIsolationMemberNativeIdentitySchema),
     /** Exact parent materialization target, never reconstructed by the child. */
     agentIsolationRuntimeHome: z.optional(BoundedPathSchema),
+    /** Selected installed payload for the Agent's executable sidecars. */
+    agentIsolationManagedHappierBinaryPath: z.optional(BoundedPathSchema),
   })),
 }));
 

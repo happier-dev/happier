@@ -65,7 +65,8 @@ export async function createNativeRunHappierMcpBridge(input: Readonly<{
     try {
         return {
             readContext: () => registration.localContext,
-            mcpServer: resolveHappierMcpServerConfig(registration),
+            mcpServer: resolveHappierMcpServerConfig(registration,
+                input.placement.kind === 'prepared' ? input.placement.managedHappierBinaryPath : undefined),
             async dispose() { await registration.retire(); await requests.dispose(); },
         };
     } catch (error) {

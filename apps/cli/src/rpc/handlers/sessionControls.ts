@@ -46,6 +46,8 @@ export type SessionRuntimeControls = {
   /** Same host-captured Account/Agent reader used by the current native runtime.
    * It is withdrawn with these controls, not reconstructed by child Runs. */
   resolveAccountSettingsSnapshot?: import('@/settings/accountSettings/activeAccountSettingsSnapshot').AccountSettingsSnapshotResolver;
+  /** The isolated Session's installed payload also supplies its child Runs' MCP relay. */
+  managedHappierBinaryPath?: string;
   /** The incumbent host permission owner; Session-owned Runs retain its live callbacks. */
   readPermissionHandler?: () => import('@/agent/acp/permissions/acpPermissionHandler').AcpPermissionHandler | null;
   /** Safe identities from this generation's applied model and auth owners. */

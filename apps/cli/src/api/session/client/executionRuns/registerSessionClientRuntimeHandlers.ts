@@ -613,6 +613,7 @@ export function registerSessionClientRuntimeHandlers(
                     ...(runAccountOperationContext ? { operationContext: runAccountOperationContext } : {}),
                     readExecutionSource,
                     isolationEnabled: context?.isolationEnabled,
+                    managedHappierBinaryPath: params.sessionRuntimeControls?.managedHappierBinaryPath,
                     ...(params.actionsSettingsProvider
                         ? { actionsSettingsProvider: params.actionsSettingsProvider }
                         : {}),

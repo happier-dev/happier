@@ -9,6 +9,23 @@ import type { AgentIsolationMemberRequester, AgentIsolationDaemonObservation } f
 import type { AgentIsolationMemberNativeIdentity } from './agentIsolationNativeIdentity';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
+import type { AgentRuntimeRunnerBootstrapLaunchV1 } from '@/agent/runtime/session/process/agentRuntimeRunnerProtocol';
+
+function selectManagedHappierBinaryPath<SharedPath extends string | undefined>(machine: HostAgentIsolationLaunchContext | undefined,
+  member: AgentIsolationMemberNativeIdentity | undefined, sharedPath: SharedPath): string | SharedPath {
+  return (member ? machine?.memberManagedHappierBinaryPath : undefined) ?? sharedPath;
+}
+
+/** Carry the prepared Session's native placement to the runner's MCP config. */
+export function projectAgentIsolationSessionBootstrap(machine: HostAgentIsolationLaunchContext | undefined,
+  material: Pick<AgentLaunchMaterialization, 'runtimeHome' | 'memberIdentity'> | undefined):
+  Pick<AgentRuntimeRunnerBootstrapLaunchV1, 'agentIsolationRuntimeHome' | 'agentIsolationMemberIdentity'
+    | 'agentIsolationManagedHappierBinaryPath'> {
+  if (!material) return {};
+  return { agentIsolationRuntimeHome: material.runtimeHome,
+    ...(material.memberIdentity ? { agentIsolationMemberIdentity: material.memberIdentity } : {}),
+    agentIsolationManagedHappierBinaryPath: selectManagedHappierBinaryPath(machine, material.memberIdentity, machine?.managedHappierBinaryPath) };
+}
 
 function withWorkspaceRoot(snapshot: HostAgentIsolationLaunchSnapshot | undefined,
   workspaceRoot: string | undefined): HostAgentIsolationLaunchSnapshot | undefined {
@@ -66,8 +83,7 @@ export function createAgentIsolationSessionContext(input: Readonly<{
     ...(input.machine ? { async prepareLaunch({ requesterIdentity, sessionMcpContext, mcpLaunchMaterial, agentNativeLaunch, signal }: Parameters<NonNullable<HostAgentIsolationLaunchContext['prepareLaunch']>>[0]) {
       const material = input.readMaterial();
       const member = material?.memberIdentity;
-      const managedHappierBinaryPath = (member ? input.machine?.memberManagedHappierBinaryPath : undefined)
-        ?? input.managedHappierBinaryPath;
+      const managedHappierBinaryPath = selectManagedHappierBinaryPath(input.machine, member, input.managedHappierBinaryPath);
       if (!material || !managedHappierBinaryPath
         || agentNativeLaunch && !sessionMcpContext) throw new PluginError({ code: 'agent_isolation_unavailable',
         message: 'Current Session isolation material is unavailable', retryable: false,
@@ -171,8 +187,7 @@ export function createAgentIsolationOperationContext(input: Readonly<{
     details: { phase: 'native_execution_preparation' } }); };
   input.signal.throwIfAborted();
   const member = input.memberIdentity;
-  const managedHappierBinaryPath = (member ? input.machine.memberManagedHappierBinaryPath : undefined)
-    ?? input.managedHappierBinaryPath;
+  const managedHappierBinaryPath = selectManagedHappierBinaryPath(input.machine, member, input.managedHappierBinaryPath);
   const identity = member ? requireAgentIsolationMaterialNativeIdentity(member, input.requesterIdentity)
     : 'nativeIdentity' in input ? input.nativeIdentity : unavailable();
   const requesterIdentity = { kind: input.requesterIdentity.kind, requester: input.requesterIdentity.requester,

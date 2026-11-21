@@ -213,6 +213,8 @@ type RunnerMcpServersParams = Readonly<{
   includeHappierMcpServer?: boolean;
   /** Admitted Agent identity/socket root supplied by the Machine launch owner. */
   localTransport?: SessionMcpLocalTransportOptions;
+  /** Installed payload selected by the isolated Agent's launch owner. */
+  managedHappierBinaryPath?: string;
   /** Actual held Machine policy, never a caller-selected execution identity. */
   isolationEnabled?: boolean;
   /** Explicit private composition fact; never derived from Session metadata. */
@@ -575,6 +577,7 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
     sessionToolsBridge,
     sessionMetadata: params.sessionMetadata ?? params.session.getMetadataSnapshot?.(),
     ...(params.localTransport ? { localTransport: params.localTransport } : {}),
+    managedHappierBinaryPath: params.managedHappierBinaryPath,
     mcpToolCallIdMetaKey: params.mcpToolCallIdMetaKey,
     commandMode: params.commandMode,
     sessionCredentials: params.credentials,
