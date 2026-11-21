@@ -211,7 +211,7 @@ export class MachineRpcMachineKindMismatchError extends RpcError {
 /** The calling Session host's installation, when this context names it. */
 function readSessionHostSigner(externalAction: NonNullable<Parameters<typeof callExactMachineRpc>[0]['externalAction']>) {
   const machineId = externalAction.context.defaultSessionMachineId;
-  return machineId === undefined ? undefined : { machineId, installationId: externalAction.installationId };
+  return machineId ? { machineId, installationId: externalAction.installationId } : undefined;
 }
 
 function isOriginalRequesterSource(externalAction: NonNullable<Parameters<typeof callExactMachineRpc>[0]['externalAction']>): boolean {

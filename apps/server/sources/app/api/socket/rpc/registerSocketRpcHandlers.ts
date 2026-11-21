@@ -2165,8 +2165,13 @@ export function registerSocketRpcHandlers(params: Readonly<{
                     const requiredRole = isHandoffCurrent || moveChildExecution && !deploymentArchiveChild ? 'use' as const : undefined;
                     // Client-supplied plugin bindings are raw Machine Action claims.
                     // Reuse the Action ingress policy in this same admission decision.
+                    // The original Session host delivers its own Home-admitted root as that Action's
+                    // RPC binding. Admit it under the same Action policy Home used at mint.
+                    const deliveredSessionRoot = verifiedExternalAction?.binding.sessionActionSource
+                        && verifiedExternalAction.effectActionId === verifiedExternalAction.binding.actionId
+                        && verifiedExternalAction.binding.machineId === machinePrefix ? verifiedExternalAction.binding.actionId : undefined;
                     const actionPolicy = structuredMessageRouting?.invocationKind === 'mountedPluginSurface'
-                        || structuredMessageRouting?.invocationKind === 'clientPluginAction' ? 'action.invoke' : undefined;
+                        || structuredMessageRouting?.invocationKind === 'clientPluginAction' ? 'action.invoke' : deliveredSessionRoot;
                     // Passive status and retained operation controls do not wake a Machine.
                     // Authority is admitted independently of persisted presence; the
                     // existing forwarder still requires the live exact installation.

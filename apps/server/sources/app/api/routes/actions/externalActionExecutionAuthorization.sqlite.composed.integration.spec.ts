@@ -10338,6 +10338,105 @@ describe("external Action execution authorization", () => {
         } finally { await app.close(); }
     });
 
+    it('delivers an Agent Session spawn on a Can-use Machine under the Session Action admission, not the raw custodian-only method', async () => {
+        // W14-CONSENT-SPAWN on #136: the source-signed root reached Home machine admission and was refused custodian_only.
+        const guest = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+        const guestKeys = tweetnacl.sign.keyPair();
+        const guestMachine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: guest.id, active: true,
+            metadata: encodePlainMachineStoredContent({ host: 'guest', platform: 'linux', happyCliVersion: 'test',
+                homeDir: '/home/guest', happyHomeDir: '/home/guest/.happier' }),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),
+            installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(guestKeys.publicKey) } });
+        const fixture = { account: guest, machine: guestMachine, keyPair: guestKeys };
+        const custodian = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const stranger = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const target = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: custodian.id, active: true,
+            metadata: fixture.machine.metadata, dataEncryptionKey: fixture.machine.dataEncryptionKey,
+            installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(tweetnacl.sign.keyPair().publicKey),
+            operationProtocolCapabilitiesRevision: 1,
+            operationProtocolCapabilities: { requesterExecutionIsolation: { protocolVersions: [1] } } } });
+        await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: target.id,
+            principal: { kind: 'account', accountId: fixture.account.id }, level: 'view' }));
+        const session = await db.session.create({ data: { accountId: fixture.account.id, tag: crypto.randomUUID(),
+            metadata: '{}', encryptionMode: 'plain' } });
+        await db.accessKey.create({ data: { accountId: fixture.account.id, machineId: fixture.machine.id,
+            sessionId: session.id, data: 'opaque-agent-spawn-source' } });
+        const presence = createSessionPublisherPresence();
+        const publisher = { data: {} };
+        expect((await presence.registerPublisher({ socket: publisher,
+            binding: { accountId: fixture.account.id, machineId: fixture.machine.id, sessionId: session.id },
+            completeActivitySnapshot: { state: 'active', activeCount: 1 } })).status).toBe('registered');
+        const method = `${target.id}:${RPC_METHODS.SESSION_SPAWN_NEW}`;
+        const delivered = vi.fn(async (_event: string, _request: unknown) => ({ type: 'success' }));
+        const receiver = { id: 'agent-spawn-target', data: { clientType: 'machine-scoped', machineId: target.id,
+            verifiedMachineInstallationId: target.installationId }, timeout: () => ({ emitWithAck: delivered }) };
+        qualifyCurrentAccountStoredContentSocket(receiver);
+        const io = createSocketRoomDiscoveryHarness(async room => room === getAccountSessionSocketRoom(fixture.account.id, session.id) ? [publisher]
+            : room === receiver.id || room === `rpc:${custodian.id}:${method}` ? [receiver] : []);
+        const resolvePublisher = (input: Readonly<{ accountId: string; sessionId: string }>) => resolveCurrentSessionMachineFromServer({ io, presence, ...input });
+        // No Team route is exercised; the test-only Team id is unused here.
+        const { app } = await createApp('unused-team', false, resolvePublisher);
+        const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const homeId = await getOrCreateServerIdentityId();
+        const source = { machineId: fixture.machine.id, installationId: fixture.machine.installationId! };
+        const origin = SessionActionRpcOriginV1Schema.parse({ v: 1,
+            caller: { kind: 'session', sessionId: session.id, starterDepth: 0, turnDepth: 0 },
+            sourceTurnId: 'agent-spawn-turn', requestId: crypto.randomUUID(), callerPermissionMode: 'default' });
+        const input = SessionSpawnNewInputV2Schema.parse({ creationKey: crypto.randomUUID(),
+            executionTarget: { serverId: homeId, machineId: target.id },
+            directory: { kind: 'path', path: '/workspace/agent-child' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } });
+        const envelope = { v: 1 as const, requestId: origin.requestId, target: { kind: 'machine' as const, machineId: target.id }, input };
+        const installationProof = signMachineInstallationProof({ privateKey: fixture.keyPair.secretKey,
+            payload: { version: 1, accountId: fixture.account.id, ...source,
+                externalActionOrigin: { homeId, actionId: 'session.spawn_new', requestId: origin.requestId,
+                    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), origin } } });
+        const call = async (userId: string, request: Readonly<{ method: string; params: unknown; requestId: string }>,
+            root?: ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse>) => {
+            const sender = Object.assign(createFakeSocket({ id: `agent-spawn-source-${userId}`, data: { clientType: 'user-scoped',
+                authTokenKind: 'account', authAuthority: 'present_user' } }), { handshake: { auth: {
+                    token: await auth.createToken(userId, undefined, { kind: 'account', authority: 'present_user' }) } } });
+            qualifyCurrentAccountStoredContentSocket(sender);
+            registerSocketRpcHandlers({ userId, socket: sender as unknown as Socket, io, sessionPublisherPresence: presence });
+            const callback = vi.fn();
+            await getSocketHandler(sender, SOCKET_RPC_EVENTS.CALL)({ ...request, ...(root ? { externalActionExecution: {
+                v: 1 as const, authorization: root, effectActionId: 'session.spawn_new', target: root.binding.target,
+                installationId: root.binding.installationId, machineSignature: signExternalActionMachineRpcRequestV1({
+                    authorizationToken: root.token, effectActionId: 'session.spawn_new', target: root.binding.target,
+                    installationId: root.binding.installationId, method: request.method, requestId: request.requestId,
+                    params: request.params, privateKey: fixture.keyPair.secretKey }) } } : {}) }, callback);
+            return callback;
+        };
+        try {
+            const issued = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1('session.spawn_new'),
+                headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: target.id,
+                    envelope, sessionActionOrigin: origin, sessionActionSource: source, installationProof } });
+            expect(issued.statusCode, issued.body).toBe(200);
+            const root = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
+            expect(root.binding).toMatchObject({ accountId: fixture.account.id, custodianAccountId: custodian.id,
+                machineId: target.id, sessionActionSource: source });
+            const spawn = { method, params: { v: 1, kind: 'targeted_action_rpc', target: root.binding.target, input },
+                requestId: root.binding.requestId };
+            // Control: the raw private method stays custodian-only without the admitted root.
+            expect(await call(fixture.account.id, spawn)).toHaveBeenCalledWith(expect.objectContaining({ ok: false,
+                failureCause: expect.objectContaining({ phase: 'rpc.admission.machine', errorCode: 'custodian_only' }) }));
+            expect(delivered).not.toHaveBeenCalled();
+            expect(await call(fixture.account.id, spawn, root)).toHaveBeenCalledWith({ ok: true, result: { type: 'success' } });
+            expect(delivered).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REQUEST, expect.objectContaining({
+                machineAdmission: expect.objectContaining({ actorAccountId: fixture.account.id, custodianAccountId: custodian.id,
+                    machineId: target.id, role: 'use' }) }));
+            delivered.mockClear();
+            // Control: a person with no grant on the Machine is still refused, root or not.
+            expect(await call(stranger.id, spawn, root)).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
+            expect(await call(stranger.id, spawn)).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
+            // Control: the admitted spawn root does not open a genuinely custodian-only method.
+            const describe = { method: `${target.id}:${RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE}`, params: {},
+                requestId: root.binding.requestId };
+            expect(await call(fixture.account.id, describe, root)).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
+            expect(delivered).not.toHaveBeenCalled();
+        } finally { await app.close(); }
+    });
+
     it.each(['owned', 'shared-use', 'shared-team-use'] as const)('does not spend an unrelated declined approval root on another original with %s access', async access => {
         vi.stubEnv('HAPPIER_FEATURE_SESSIONS__ENABLED', '1');
         vi.stubEnv('HAPPIER_FEATURE_SESSIONS_CONVERSATIONS__ENABLED', '1');
