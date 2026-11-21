@@ -168,6 +168,10 @@ export function describeSettingsDeclarationApprovalSummaryV1(actionId: SettingsD
   if (actionId === 'settings.invoke') {
     const collectionDeletion = readCollectionSpaceDeletionApprovalV1(parsed.data);
     if (collectionDeletion) return collectionDeletion.summary;
+    if (declaration.anchor === 'account.encryptionMode' && 'input' in parsed.data
+      && parsed.data.input?.kind === 'account_encryption_mode_convert' && parsed.data.input.toMode === 'plain') {
+      return 'Turn off end-to-end encryption for this Account. This Home will be able to read its data and the content of Artifacts you own, including associated Review comments, event details and verdict prose written by collaborators, even after their access was removed.';
+    }
   }
   const name = `“${declaration.title}”`;
   const described = actionId === 'settings.set' && 'value' in parsed.data ? describeSettingsDeclarationValueV1(declaration, parsed.data.value) : null;

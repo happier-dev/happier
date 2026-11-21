@@ -47,6 +47,8 @@ import { Encryption } from '@/sync/encryption/encryption';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
 import { openArtifactPrivateRevisionMetadata, sealArtifactPrivateRevisionMetadata } from '@/sync/domains/artifacts/accountArtifactEnvelope';
 import { AES256Encryption } from '@/sync/encryption/encryptor';
+import { splitReviewCommentV1, sealReviewCommentSensitiveEnvelopeV1, buildReviewCommentEventRequestBindingV1, buildReviewCommentEventSensitivePayloadV1, bindReviewCommentEventSensitiveEnvelopeV1 } from '@happier-dev/protocol/reviews/comments/content';
+import type { ReviewCommentV1, ReviewCommentEventV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { createPackageAssetArchiveV1, encodePackageAssetArchiveBodyV1 } from '@happier-dev/protocol/plugins/availability';
 import {
     MACHINE_PLAIN_DATA_KEY_MARKER,
@@ -84,6 +86,61 @@ describe('buildAccountEncryptionMigrationStorageDirectives', () => {
             labels: [],
         },
     };
+
+    it('reseals the complete Review graph under the replacement Artifact key and preserves recipient authorship', async () => {
+        const reviewId = '00000000-0000-4000-8000-000000000001';
+        const encryption = await Encryption.create(new Uint8Array(32).fill(31));
+        const comments = ['account-a', 'recipient'].map((accountId, index) => {
+            const comment: ReviewCommentV1 = { v: 1, id: `comment-${index}`, accountId: 'account-a', reviewId, projectId: 'project',
+                anchor: { kind: 'file', filePath: 'private.ts' },
+                snapshot: { kind: 'text', selectedLines: ['private source'], beforeContext: [], afterContext: [], selectedLinesHash: 'selected',
+                    contextWindowHash: 'context', capturedAt: 1, fileLength: 1, source: 'workingTree', isUncommitted: true, isUntracked: false,
+                    truncated: false, hasBidiControls: false, likelyMinified: false },
+                body: `private body ${index}`, bodyVersion: 1, edits: [], author: { kind: 'user', userId: accountId }, state: 'open',
+                flags: {}, dispositions: {}, threadId: `comment-${index}`, transitions: [], createdAt: 1, updatedAt: 1, serverRevision: 1 };
+            const { structural, sensitive } = splitReviewCommentV1(comment);
+            const event: ReviewCommentEventV1 = { eventId: `event-${index}`, commentId: comment.id, accountId: 'account-a', reviewId,
+                projectId: 'project', eventKind: 'created', actor: { kind: 'user', userId: 'recipient' }, createdAt: 1, serverRevision: 1,
+                event: { clientMutationId: `mutation-${index}` } };
+            const requestBinding = buildReviewCommentEventRequestBindingV1({ accountId: 'recipient', reviewId, projectId: 'project',
+                actor: event.actor, actionId: 'reviews.comments.create', input: { reviewId, projectId: 'project', clientMutationId: `mutation-${index}` } });
+            return { stored: { v: 1 as const, structural, sensitiveEnvelope: sealReviewCommentSensitiveEnvelopeV1({ structural, sensitive, mode: 'plain' }) },
+                events: [{ event, sensitiveEnvelope: bindReviewCommentEventSensitiveEnvelopeV1({ event, requestBinding,
+                    sensitive: { t: 'plain' as const, v: buildReviewCommentEventSensitivePayloadV1({ event, requestBinding, details: { ...event.event, reason: 'private event' } }) } }) }] };
+        });
+        const verdict = { reviewId, roundOrdinal: 1, accountId: 'recipient', revision: 2,
+            content: { t: 'plain' as const, v: { reviewId, roundOrdinal: 1, accountId: 'recipient', revision: 2, body: 'private verdict' } } };
+        const graph = { comments, verdicts: [verdict, { ...verdict, accountId: 'no-prose', content: null }] };
+        const row = { id: reviewId, ownership: { kind: 'ordinary' as const }, publicAudience: 'none' as const,
+            headerVersion: 1, bodyVersion: 1, header: encodePlainArtifactStoredContent({ kind: 'review.v1', title: 'Review' }),
+            body: encodePlainArtifactStoredContent({ body: 'Review' }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, revisions: [], reviewGraph: graph };
+        const input = { ...emptyTransitionInventories, fromMode: 'plain' as const, toMode: 'e2ee' as const, sourceEncryption: null,
+            targetEncryption: encryption, machines: [], todos: [], sessions: [], artifacts: [row],
+            sessionSourceCredentials: tokenOnlyCredentials, sessionTargetCredentials: legacyCredentials };
+        const sealed = await buildAccountEncryptionMigrationStorageDirectives(input);
+        expect(sealed.artifacts).toMatchObject({ action: 'migrate', items: [{ reviewGraph: { expected: graph,
+            target: { comments: comments.map(comment => ({ stored: { structural: comment.stored.structural, sensitiveEnvelope: { t: 'encrypted' } },
+                events: [{ sensitiveEnvelope: { sensitive: { t: 'encrypted' } } }] })),
+                verdicts: [{ content: { t: 'encrypted' } }, { content: null }] } } }] });
+        if (sealed.artifacts.action !== 'migrate') throw new Error('Expected Artifact conversion');
+        const item = sealed.artifacts.items[0]!;
+        if (!item.reviewGraph) throw new Error('Expected complete Review graph');
+        const converted = item.reviewGraph;
+        expect(JSON.stringify(converted.target)).not.toContain('private body');
+        expect(JSON.stringify(converted.target)).not.toContain('private event');
+        expect(JSON.stringify(converted.target)).not.toContain('private verdict');
+        const reversed = await buildAccountEncryptionMigrationStorageDirectives({ ...input, fromMode: 'e2ee', toMode: 'plain',
+            sourceEncryption: encryption, targetEncryption: null, sessionSourceCredentials: legacyCredentials, sessionTargetCredentials: null,
+            artifacts: [{ ...row, headerVersion: 2, bodyVersion: 2, header: item.header, body: item.body,
+                dataEncryptionKey: item.dataEncryptionKey, reviewGraph: converted.target }] });
+        expect(reversed.artifacts).toMatchObject({ action: 'migrate', items: [{ reviewGraph: { target: JSON.parse(JSON.stringify(graph)) } }] });
+        await expect(buildAccountEncryptionMigrationStorageDirectives({ ...input,
+            artifacts: [{ ...row, reviewGraph: { ...graph, comments: [{ ...comments[0]!, events: comments[1]!.events }, comments[1]!] } }] }))
+            .rejects.toThrow('review_comment_migration_event_binding_mismatch');
+        await expect(buildAccountEncryptionMigrationStorageDirectives({ ...input,
+            artifacts: [{ ...row, reviewGraph: { ...graph, verdicts: [{ ...verdict, content: { t: 'plain', v: { ...verdict.content.v, accountId: 'outsider' } } }] } }] }))
+            .rejects.toThrow('review_verdict_content_mismatch');
+    });
 
     it('reseals Workflow Action definitions with the replacement Artifact key and preserves their exact bindings', async () => {
         const artifactId = '00000000-0000-4000-8000-000000000002';

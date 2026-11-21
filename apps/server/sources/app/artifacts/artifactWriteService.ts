@@ -2,8 +2,10 @@ import { REVIEW_ARTIFACT_KIND_V1, type ReviewMetadataWriteV1 } from '@happier-de
 import { writeReviewRoundState } from '@/app/reviews/reviewRecordService';
 import { resolveReviewCreationPolicyInTx } from '@/app/reviews/reviewCreationPolicy';
 import { isTransactionStorageError } from '@/storage/transactionErrors';
+import { readArtifactReviewGraphsInTx, artifactReviewGraphMatches, artifactReviewGraphReplacementValid, writeArtifactReviewGraphInTx } from './artifactReviewGraphAccountEncryptionMigration';
 import { readArtifactActionTriggerDefinitionsInTx, artifactActionTriggerDefinitionsMatch, artifactActionTriggerDefinitionsReplacementValid,
     writeArtifactActionTriggerDefinitionsInTx, type ArtifactActionTriggerDefinitionMigrationRow } from './artifactActionTriggerDefinitionsAccountEncryptionMigration';
+import type { ArtifactReviewGraphAccountEncryptionMigrationV1 } from '@happier-dev/protocol/artifacts/artifactAccountEncryptionMigrationV1';
 import type { ArtifactActionTriggerDefinitionsAccountEncryptionMigrationV1 } from '@happier-dev/protocol/artifacts/artifactAccountEncryptionMigrationV1';
 import type { Prisma } from '@prisma/client';
 import type { ApprovalInputCustody } from '@happier-dev/protocol/approvals/approvalInputCustody';
@@ -160,6 +162,7 @@ export type ArtifactAccountEncryptionMigrationPostStateResult =
 
 export type ArtifactAccountEncryptionMigrationRow = Readonly<{
     id: string;
+    reviewGraph?: ArtifactReviewGraphAccountEncryptionMigrationV1;
     actionTriggerDefinitions?: ArtifactActionTriggerDefinitionsAccountEncryptionMigrationV1;
     actionTriggerDefinitionRows?: readonly ArtifactActionTriggerDefinitionMigrationRow[];
     header: Uint8Array;
@@ -211,6 +214,9 @@ export async function readArtifactAccountEncryptionMigrationRowsInTx(
             publicShare: { select: { expiresAt: true } },
             signedInLink: { select: { artifactId: true } },
             revisions: { select: { bodyVersion: true, body: true, blobId: true, provenance: true } },
+            reviewComments: { select: { id: true } },
+            reviewVerdicts: { orderBy: [{ roundOrdinal: 'asc' }, { accountId: 'asc' }],
+                select: { reviewId: true, roundOrdinal: true, accountId: true, revision: true, content: true } },
             blobs: { select: { id: true, storageKey: true, encryptionMode: true, storedSizeBytes: true } },
             pluginUiArtifact: {
                 select: {
@@ -232,8 +238,9 @@ export async function readArtifactAccountEncryptionMigrationRowsInTx(
             },
         },
     });
+    const graphs = await readArtifactReviewGraphsInTx(tx, rows);
     const actions = await readArtifactActionTriggerDefinitionsInTx(tx, rows.map(row => row.id));
-    return rows.map(row => ({ ...row,
+    return rows.map(row => ({ ...row, reviewGraph: graphs.get(row.id),
         actionTriggerDefinitions: actions.get(row.id)?.definitions, actionTriggerDefinitionRows: actions.get(row.id)?.rows }));
 }
 
@@ -300,6 +307,7 @@ export async function matchArtifactAccountEncryptionMigrationPostStateInTx(
     for (const row of rows) {
         const item = itemsById.get(row.id);
         if (!item) return { status: "mismatch" };
+        if (!artifactReviewGraphMatches(row.reviewGraph, item.reviewGraph?.target)) return { status: 'mismatch' };
         if (!artifactActionTriggerDefinitionsMatch(row.actionTriggerDefinitions, item.actionTriggerDefinitions?.target)) return { status: 'mismatch' };
         const retainedIds = new Set([row.currentBlobId, ...row.revisions.map(revision => revision.blobId)].filter((id): id is string => Boolean(id)));
         if (retainedIds.size !== item.blobs.length) return { status: 'mismatch' };
@@ -449,6 +457,8 @@ export async function migrateArtifactAccountEncryptionInTx(params: Readonly<{
     }>>();
     for (const row of rows) {
         const item = itemsById.get(row.id);
+        if (!artifactReviewGraphMatches(row.reviewGraph, item?.reviewGraph?.expected)
+            || !await artifactReviewGraphReplacementValid(row.id, row.reviewGraph, item?.reviewGraph?.target, params.toMode)) return { status: 'migration_incomplete' };
         if (!artifactActionTriggerDefinitionsMatch(row.actionTriggerDefinitions, item?.actionTriggerDefinitions?.expected)
             || !artifactActionTriggerDefinitionsReplacementValid(row.actionTriggerDefinitions, row.actionTriggerDefinitions,
                 row.actionTriggerDefinitionRows, params.fromMode)
@@ -683,6 +693,7 @@ export async function migrateArtifactAccountEncryptionInTx(params: Readonly<{
         if (updated.count !== 1) {
             throw new ArtifactAccountEncryptionMigrationConflictError();
         }
+        if (item.reviewGraph) await writeArtifactReviewGraphInTx(params.tx, item.artifactId, item.reviewGraph.expected, item.reviewGraph.target);
         if (item.actionTriggerDefinitions && !await writeArtifactActionTriggerDefinitionsInTx(params.tx, item.artifactId,
             actionRowsByArtifactId.get(item.artifactId) ?? [], item.actionTriggerDefinitions.target,
             { headerVersion: item.expectedHeaderVersion + 1, bodyVersion: item.expectedBodyVersion + 1 })) {

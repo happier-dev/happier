@@ -29,7 +29,7 @@ vi.mock("@/storage/db", async importOriginal => ({
 // relations alongside these unshared Artifact rows.
 function artifactAccessRow(encryptionMode: "plain" | "e2ee") {
     return { accountId: "account-1", account: { encryptionMode }, kind: null,
-        accountGrants: [], teamGrants: [], groupGrants: [] };
+        grants: [] };
 }
 
 const accountChangeUpsert = vi.fn(async () => ({}));
@@ -40,6 +40,35 @@ function publicationStorage() {
 }
 
 describe("migrateArtifactAccountEncryptionInTx", () => {
+    it('converts recipient-authored Review verdict content with the resource and rejects an omitted graph before writes', async () => {
+        const artifactId = '00000000-0000-4000-8000-000000000001';
+        const content = { t: 'encrypted' as const, c: 'sealed-verdict' };
+        const verdict = { reviewId: artifactId, roundOrdinal: 1, accountId: 'recipient', revision: 2, content };
+        const row = { ...artifactAccessRow('e2ee'), id: artifactId, headerVersion: 1, bodyVersion: 1, seq: 1,
+            header: Buffer.from([2, 1]), body: Buffer.from([2, 2]), dataEncryptionKey: Buffer.from([3, 4]),
+            revisions: [], blobs: [], reviewComments: [], reviewVerdicts: [] as typeof verdict[] };
+        const target = { t: 'plain' as const, v: { reviewId: artifactId, roundOrdinal: 1, accountId: 'recipient', revision: 2, body: 'Human verdict' } };
+        const item = { artifactId, expectedHeaderVersion: 1, expectedBodyVersion: 1, expectedDataEncryptionKey: row.dataEncryptionKey.toString('base64'),
+            dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, recipientKeyEnvelopes: [], blobs: [], revisions: [],
+            header: encodePlainArtifactStoredContent({ title: 'Review' }), body: encodePlainArtifactStoredContent({ body: 'Review' }),
+            reviewGraph: { expected: { comments: [], verdicts: [verdict] }, target: { comments: [], verdicts: [{ ...verdict, content: target }] } } };
+        const writes: string[] = [];
+        const tx = { automation: { findMany: async () => [] }, artifact: { findMany: async () => [row], findFirst: async () => null,
+            updateMany: async () => { writes.push('artifact'); return { count: 1 }; } },
+            artifactRevision: { count: async () => 0 },
+            reviewVerdict: { updateMany: async () => { writes.push('verdict'); return { count: 1 }; } },
+            artifactKeyEnvelope: { deleteMany: async () => { writes.push('envelopes'); return { count: 0 }; } },
+        } as unknown as Tx;
+        const options = { tx, accountId: 'account-1', fromMode: 'e2ee' as const, toMode: 'plain' as const, markChanged: async () => 1 };
+        const { reviewGraph: omitted, ...incomplete } = item;
+        await expect(migrateArtifactAccountEncryptionInTx({ ...options, directive: { action: 'migrate', items: [incomplete] } })).resolves.toEqual({ status: 'applied' });
+        writes.length = 0;
+        row.reviewVerdicts.push(verdict);
+        await expect(migrateArtifactAccountEncryptionInTx({ ...options, directive: { action: 'migrate', items: [incomplete] } })).resolves.toEqual({ status: 'migration_incomplete' });
+        expect(writes).toEqual([]);
+        await expect(migrateArtifactAccountEncryptionInTx({ ...options, directive: { action: 'migrate', items: [item] } })).resolves.toEqual({ status: 'applied' });
+        expect(writes).toEqual(['artifact', 'verdict', 'envelopes']);
+    });
     beforeEach(() => {
         vi.stubEnv("HAPPIER_DB_PROVIDER", "sqlite");
         vi.stubEnv("HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_ARTIFACTS_AT_REST", "none");
@@ -203,6 +232,7 @@ describe("migrateArtifactAccountEncryptionInTx", () => {
                 provenanceDataEncryptionKey: null,
             },
             data: {
+                lastUpdateOperation: null,
                 header: Buffer.from(encodePlainArtifactStoredContent({ title: "Plain" }), "base64"),
                 headerVersion: 2,
                 body: Buffer.from(encodePlainArtifactStoredContent({ body: "Body" }), "base64"),

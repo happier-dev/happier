@@ -1,5 +1,6 @@
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
 import { AccountEncryptionMigrateDiscussionsDirectiveV1Schema } from '../discussions/accountEncryptionMigration.js';
+import { ArtifactReviewGraphAccountEncryptionMigrationReplacementV1Schema } from '../artifacts/artifactAccountEncryptionMigrationV1.js';
 import { ArtifactActionTriggerDefinitionsAccountEncryptionMigrationReplacementV1Schema } from '../artifacts/artifactAccountEncryptionMigrationV1.js';
 import * as zMini from '../zodRuntimePolicy.js';
 import { zodSchemaToJsonSchemaObject } from '../actions/actionInputJsonSchema.js';
@@ -508,6 +509,7 @@ export type AccountEncryptionMigrateWorkspaceDirective = z.infer<typeof AccountE
 
 const AccountEncryptionMigrateArtifactItemSchema = lazyZodSchema(() => z.strictObject({
     artifactId: z.string().check(z.uuid()),
+    reviewGraph: z.optional(ArtifactReviewGraphAccountEncryptionMigrationReplacementV1Schema),
     actionTriggerDefinitions: z.optional(ArtifactActionTriggerDefinitionsAccountEncryptionMigrationReplacementV1Schema),
     expectedHeaderVersion: NonNegativeSafeIntegerSchema,
     expectedBodyVersion: NonNegativeSafeIntegerSchema,

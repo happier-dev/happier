@@ -2782,6 +2782,17 @@ submits the receipt, record ciphertext and encrypted event to
 mode/key binding and CAS before writing through the existing canonical storage
 and migration encoder; preparation creates no reservation row or second store.
 
+Account-mode conversion inventories only unattached private comments. The
+existing Artifact migration inventory carries the attached Review's comments
+with their edit history, all associated events, and verdict prose across
+authors and rounds. The client opens that graph with the admitted Artifact key
+and seals it with the replacement mode/key. The Artifact writer checks graph
+completeness and revisions and writes the graph, Artifact content and recipient
+envelopes in one transaction; an omitted or stale graph refuses the write.
+The existing Plain-conversion approval summary explicitly includes Review
+content authored by collaborators, including people whose access was removed.
+Their retained content becomes readable by Home along with the owned Artifact.
+
 Anchors, snapshots, bodies, edit history, evidence, reasons, sensitive finding fingerprints, links,
 fixes and metadata remain inside the sensitive envelope. New structural records
 retain the anchor kind, not raw path or message-hash indexes. Typed finding

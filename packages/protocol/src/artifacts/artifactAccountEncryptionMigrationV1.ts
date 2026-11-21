@@ -1,6 +1,11 @@
 import { z } from '../zodRuntimePolicy.js';
 import { PluginUiReleaseSlotV1Schema } from '../plugins/availability/v1.js';
 import { PackageAssetArchiveDescriptorV1Schema } from '../plugins/availability/packageAssetV1.js';
+import { StoredReviewCommentV1Schema, BoundReviewCommentEventSensitiveEnvelopeV1Schema } from '../reviews/comments/content.js';
+import { ReviewCommentEventV1Schema } from '../reviews/comments/v1.js';
+import { StoredJsonContentEnvelopeSchema } from '../storage/storedJsonContentEnvelope.js';
+import { ReviewVerdictContentV1Schema } from '../reviews/reviewHumanV1.js';
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { AutomationStoredContentEnvelopeV1Schema } from '../automations/automationStoredContentEnvelopeV1.js';
 import { AutomationTriggerIdSchema, AutomationTriggerRevisionSchema } from '../automations/automationTriggerIdentity.js';
 
@@ -15,6 +20,23 @@ export type ArtifactActionTriggerDefinitionsAccountEncryptionMigrationV1 = z.inf
 export const ArtifactActionTriggerDefinitionsAccountEncryptionMigrationReplacementV1Schema = z.strictObject({
   expected: ArtifactActionTriggerDefinitionsAccountEncryptionMigrationV1Schema,
   target: ArtifactActionTriggerDefinitionsAccountEncryptionMigrationV1Schema,
+});
+
+/** Resource-keyed content follows the Artifact owner, including other authors. */
+export const ArtifactReviewGraphAccountEncryptionMigrationV1Schema = lazyZodSchema(() => z.strictObject({
+  comments: z.array(z.strictObject({
+    stored: StoredReviewCommentV1Schema,
+    events: z.array(z.strictObject({ event: ReviewCommentEventV1Schema, sensitiveEnvelope: BoundReviewCommentEventSensitiveEnvelopeV1Schema })),
+  })),
+  verdicts: z.array(z.strictObject({
+    ...z.omit(ReviewVerdictContentV1Schema, { body: true }).shape,
+    content: z.nullable(StoredJsonContentEnvelopeSchema),
+  })),
+}));
+export type ArtifactReviewGraphAccountEncryptionMigrationV1 = z.infer<typeof ArtifactReviewGraphAccountEncryptionMigrationV1Schema>;
+export const ArtifactReviewGraphAccountEncryptionMigrationReplacementV1Schema = z.strictObject({
+  expected: ArtifactReviewGraphAccountEncryptionMigrationV1Schema,
+  target: ArtifactReviewGraphAccountEncryptionMigrationV1Schema,
 });
 
 /** Account-transition inventory V1: authority and content envelopes are closed. */
@@ -32,6 +54,7 @@ export const ArtifactAccountEncryptionMigrationRowV1Schema = z.strictObject({
   body: z.string().check(z.minLength(1)), bodyVersion: z.number().check(z.int(), z.nonnegative()), dataEncryptionKey: z.string().check(z.minLength(1)),
   provenance: z.optional(z.nullable(z.string().check(z.minLength(1)))),
   provenanceDataEncryptionKey: z.optional(z.nullable(z.string().check(z.minLength(1)))),
+  reviewGraph: z.optional(ArtifactReviewGraphAccountEncryptionMigrationV1Schema),
   actionTriggerDefinitions: z.optional(ArtifactActionTriggerDefinitionsAccountEncryptionMigrationV1Schema),
   revisions: z.array(z.strictObject({ bodyVersion: z.number().check(z.int(), z.nonnegative()), body: z.string().check(z.minLength(1)),
     provenance: z.optional(z.nullable(z.string().check(z.minLength(1)))) })),

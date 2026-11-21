@@ -43,7 +43,9 @@ import {
     type AccountEncryptionMigrationScope,
 } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { buildReviewCommentAccountEncryptionMigrationDirective } from '@/sync/domains/reviews/comments/accountEncryptionMigration';
+import { buildArtifactReviewGraphAccountEncryptionMigration } from './buildArtifactReviewGraphAccountEncryptionMigration';
 import { buildArtifactActionTriggerDefinitionsAccountEncryptionMigration } from './buildArtifactActionTriggerDefinitionsAccountEncryptionMigration';
+import type { ArtifactReviewGraphAccountEncryptionMigrationV1 } from '@happier-dev/protocol/artifacts/artifactAccountEncryptionMigrationV1';
 import { buildSessionOrganizationAccountEncryptionMigrationDirective } from '@/sync/ops/sessionOrganization/sessionOrganizationDisplayEnvelope';
 import { buildAccountEncryptionMigrationAutomations } from './buildAccountEncryptionMigrationAutomations';
 import { decodeAccountStoredJsonContent, encodeAccountStoredJsonContent } from '@/sync/encryption/accountStoredJsonContent';
@@ -80,6 +82,7 @@ export type AccountEncryptionMigrationKvRow = Readonly<{
 
 export type AccountEncryptionMigrationArtifactRow = Readonly<{
     id: string;
+    reviewGraph?: ArtifactReviewGraphAccountEncryptionMigrationV1;
     actionTriggerDefinitions?: ArtifactAccountEncryptionMigrationInventoryV1['items'][number]['actionTriggerDefinitions'];
     ownership: ArtifactAccountEncryptionMigrationOwnershipV1;
     publicAudience: ArtifactAccountEncryptionMigrationInventoryV1['items'][number]['publicAudience'];
@@ -485,6 +488,9 @@ async function buildArtifactDirective(params: Readonly<{
         if (params.toMode === 'plain') {
             items.push({
                 artifactId: row.id,
+                ...(row.reviewGraph ? { reviewGraph: { expected: row.reviewGraph, target: await buildArtifactReviewGraphAccountEncryptionMigration({
+                    reviewId: row.id, graph: row.reviewGraph, fromMode: params.fromMode, toMode: params.toMode,
+                    sourceEncryption: opened.encryption, targetEncryption: null }) } } : {}),
                 ...(row.actionTriggerDefinitions ? { actionTriggerDefinitions: { expected: row.actionTriggerDefinitions,
                     target: await buildArtifactActionTriggerDefinitionsAccountEncryptionMigration({
                         definitions: row.actionTriggerDefinitions, fromMode: params.fromMode, toMode: params.toMode,
@@ -530,6 +536,9 @@ async function buildArtifactDirective(params: Readonly<{
         const artifactEncryption = new ArtifactEncryption(dataKey);
         items.push({
             artifactId: row.id,
+            ...(row.reviewGraph ? { reviewGraph: { expected: row.reviewGraph, target: await buildArtifactReviewGraphAccountEncryptionMigration({
+                reviewId: row.id, graph: row.reviewGraph, fromMode: params.fromMode, toMode: params.toMode,
+                sourceEncryption: opened.encryption, targetEncryption: artifactEncryption }) } } : {}),
             ...(row.actionTriggerDefinitions ? { actionTriggerDefinitions: { expected: row.actionTriggerDefinitions,
                 target: await buildArtifactActionTriggerDefinitionsAccountEncryptionMigration({
                     definitions: row.actionTriggerDefinitions, fromMode: params.fromMode, toMode: params.toMode,

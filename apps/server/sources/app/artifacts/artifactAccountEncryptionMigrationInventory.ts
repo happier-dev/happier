@@ -51,6 +51,7 @@ export async function readArtifactAccountEncryptionMigrationInventoryInTx(params
             dataEncryptionKey: Buffer.from(row.dataEncryptionKey).toString('base64'), revisions,
             provenance: provenance ? privacyKit.encodeBase64(provenance) : null,
             provenanceDataEncryptionKey: row.provenanceDataEncryptionKey ? privacyKit.encodeBase64(new Uint8Array(row.provenanceDataEncryptionKey)) : null,
+            ...(row.reviewGraph ? { reviewGraph: row.reviewGraph } : {}),
             ...(row.actionTriggerDefinitions ? { actionTriggerDefinitions: row.actionTriggerDefinitions } : {}) });
     }
     return { ownerAccountId: params.accountId, encryptionMode: mode.mode, items,
