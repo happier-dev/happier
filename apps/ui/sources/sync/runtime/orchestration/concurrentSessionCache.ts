@@ -1847,7 +1847,6 @@ async function connectManagedServer(
                     transport.onError(() => {
                         if (!isManagedServerActive(entry) || entry.socket !== socket) return;
                         if (ingressAccountId) withdrawMachinePresenceForScope({ serverId: entry.id, accountId: ingressAccountId });
-                        accountEncryptionObservation?.disconnected();
                     }),
                     () => statusDemandTransport.dispose(),
                 ];

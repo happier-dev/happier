@@ -1907,8 +1907,7 @@ class ApiSocket {
             transport.onError((error: unknown) => {
                 if (this.socket !== socket || this.config !== transportConfig || transportConfig?.isCurrent?.() === false) return;
                 if (machineRequestScope) withdrawMachinePresenceForScope(machineRequestScope);
-                if (accountEncryptionObservation) accountEncryptionObservation.disconnected();
-                else if (accountScoped) invalidateAccountEncryptionModeCache({ serverId: transportConfig.serverId, reason: 'transport-withdrawal' });
+                // The adapter reports errors on an attached socket. Only withdrawal retires its Account observation.
                 this.setError(error instanceof Error ? error : new Error(String(error)));
                 this.updateStatus('error');
             }),

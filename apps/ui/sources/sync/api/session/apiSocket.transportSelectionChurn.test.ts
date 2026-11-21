@@ -46,6 +46,47 @@ describe('ApiSocket and scoped HTTP transport selection', () => {
         }
     });
 
+    it('keeps the reconnected Account observation available to captured identity readers', async () => {
+        const { captureAccountEncryptionObservationForHome, bindAccountEncryptionObservation } =
+            await import('@/sync/http/accountEncryptionObservationBinding');
+        const { fetchAccountEncryptionIdentity } = await import('../account/apiAccountEncryptionMode');
+        const { createPlainAccountEncryptionCurrentnessFixture } =
+            await import('@/dev/testkit/fixtures/accountEncryptionCurrentness');
+        const credentials = { token: h.homeA.token };
+        let currentness = createPlainAccountEncryptionCurrentnessFixture();
+        h.setResponder(async input => new URL(String(input)).pathname === '/v1/account/encryption/currentness'
+            ? Response.json(currentness) : null);
+        await h.startFocused(credentials);
+        const previous = h.socket(h.homeA);
+        const scope = { serverId: h.homeA.id, endpointUrl: h.homeA.serverUrl, credentials };
+        await vi.waitFor(() => expect(captureAccountEncryptionObservationForHome(scope)).toBeDefined());
+        const binding = captureAccountEncryptionObservationForHome(scope)!;
+        const request = bindAccountEncryptionObservation(createServerFetchAtEndpoint(scope), binding);
+        const readIdentity = () => fetchAccountEncryptionIdentity(credentials, { request, usage: 'identity' });
+        await expect(readIdentity()).resolves.toMatchObject({ mode: 'plain', updatedAt: 1 });
+
+        previous.trigger('disconnect', 'transport close');
+        expect(binding.peek()).toBeNull();
+        currentness = createPlainAccountEncryptionCurrentnessFixture({ version: 2, updatedAt: 2 });
+        await vi.waitFor(() => {
+            expect(h.socket(h.homeA)).not.toBe(previous);
+            expect(h.socket(h.homeA).socket.connected).toBe(true);
+        });
+        await expect(readIdentity()).resolves.toMatchObject({ mode: 'plain', updatedAt: 2 });
+
+        // The transport error channel can report an error on an admitted socket
+        // without a disconnect. No further connect event will follow it.
+        const reconnected = h.socket(h.homeA);
+        const reads = h.requests('/v1/account/encryption/currentness').length;
+        reconnected.trigger('error', {
+            type: 'peer-tunnel',
+            error: 'Server-routed peer tunnel frame arrived before an authorized open',
+        });
+        expect(reconnected.socket.connected).toBe(true);
+        await expect(readIdentity()).resolves.toMatchObject({ mode: 'plain', updatedAt: 2 });
+        expect(h.requests('/v1/account/encryption/currentness')).toHaveLength(reads);
+    });
+
     it('retains one admitted primary socket when healthy reads select two origins for the same Home and bearer', async () => {
         await h.select([h.homeA.id]);
         await h.startFocused();
