@@ -102,7 +102,9 @@ export async function refreshSessionListProjection(params: Readonly<{
             if (!result.sessionListRenderable) throw new Error('Session projection refresh returned no row');
             const cursor = snapshotRead.read()?.observationCursor;
             const address = normalizeSessionAddress(serverId, sessionId);
-            if (address && cursor !== undefined) sessionRuntimeObservations.recordServerObservation(address, cursor, result.sessionListRenderable, accountId);
+            if (address && cursor !== undefined) {
+                sessionRuntimeObservations.recordServerObservation(address, cursor, result.sessionListRenderable, accountId, 'exact-list-row');
+            }
             if (readExistingSession(sessionId)) params.deferHydration();
         } catch (error) {
             // A replacement owns the next publication. Local demand/scope

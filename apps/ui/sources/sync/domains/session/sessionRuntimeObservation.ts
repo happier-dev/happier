@@ -13,18 +13,30 @@ export type SessionRuntimeObservation = Readonly<{
 
 /** Retained runtime observations formerly owned by ActivityUpdateAccumulator. */
 export function createSessionRuntimeObservationSource() {
-    const observations = new Map<string, SessionRuntimeObservation & { fullPublicationUpdatedAt?: number;
-        serverObservationCursor?: number; serverObservationAccountId?: string }>();
+    const observations = new Map<string, SessionRuntimeObservation & {
+        fullPublicationUpdatedAt?: number;
+        serverObservationCursor?: number;
+        serverObservationAccountId?: string;
+        exactListRowObservationCursor?: number;
+    }>();
     const key = (address: ActivityInstanceAddress) => activityInstanceKey(address, 'ephemeral_activity_update');
     return {
         read: (address: ActivityInstanceAddress) => observations.get(key(address)),
         recordServerObservation: (address: ActivityInstanceAddress, cursor: number,
-            baseline: Pick<SessionRuntimeObservation, 'active' | 'activeAt' | 'thinking'>, accountId: string): void => {
+            baseline: Pick<SessionRuntimeObservation, 'active' | 'activeAt' | 'thinking'>, accountId: string,
+            source?: 'exact-list-row'): void => {
             const previous = observations.get(key(address));
-            if (previous?.serverObservationAccountId === accountId
-                && previous.serverObservationCursor !== undefined && previous.serverObservationCursor >= cursor) return;
+            const sameAccount = previous?.serverObservationAccountId === accountId ? previous : undefined;
+            const previousRowCursor = sameAccount?.exactListRowObservationCursor;
+            const serverObservationCursor = Math.max(cursor, sameAccount?.serverObservationCursor ?? cursor);
+            // A skinny socket publication can advance runtime observation without admitting list membership.
+            const exactListRowObservationCursor = source === 'exact-list-row'
+                ? Math.max(cursor, previousRowCursor ?? cursor)
+                : previousRowCursor;
+            if (sameAccount?.serverObservationCursor === serverObservationCursor
+                && previousRowCursor === exactListRowObservationCursor) return;
             observations.set(key(address), { ...baseline, ...previous,
-                serverObservationCursor: cursor, serverObservationAccountId: accountId });
+                serverObservationCursor, serverObservationAccountId: accountId, exactListRowObservationCursor });
         },
         recordFullPublication: (address: ActivityInstanceAddress, updatedAt: number,
             baseline?: Pick<SessionRuntimeObservation, 'active' | 'activeAt' | 'thinking'>): void => {

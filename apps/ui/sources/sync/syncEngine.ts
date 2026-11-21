@@ -599,7 +599,7 @@ import { projectAutomationDefinitionSessionLink } from './domains/automations/au
 import { readPluginEventAutomationEditSeed, type PluginEventAutomationEditSeed } from './domains/automations/pluginEventAutomationEditSeed';
 import { applyTodoSocketUpdates as applyTodoSocketUpdatesEngine, fetchTodos as fetchTodosEngine } from './engine/todos/syncTodos';
 import { fetchAndApplyAccountPets } from './domains/pets/syncAccountPets';
-import { placeSessionListRows } from './domains/session/listing/sessionListRowPlacement';
+import { placeSessionListRows, readSessionListRowPlacementFacts } from './domains/session/listing/sessionListRowPlacement';
 import type { AccountPetMetadata, AccountPetLibraryStatus } from './domains/pets/accountPetLibraryTypes';
 import {
     planSyncActionsFromChanges,
@@ -4606,7 +4606,9 @@ class Sync {
         return 'complete';
     };
 
-    private refreshListedSessionRows = async (serverId: string, sessionIds: readonly string[]): Promise<void> => {
+    private refreshListedSessionRows = async (
+        serverId: string, sessionIds: readonly string[], changeCursors?: ReadonlyMap<string, number>,
+    ): Promise<void> => {
         if (sessionIds.length === 0) return;
         const target = this.getAppliedTransportTarget();
         const credentials = this.credentials;
@@ -4625,6 +4627,15 @@ class Sync {
             const demandedHydrations: Array<() => Promise<void>> = [];
             for (const sessionId of sessionIds) {
                 if (!this.isSessionHydrationDemanded(sessionId, serverId)) {
+                    const changeCursor = changeCursors?.get(sessionId);
+                    if (changeCursor !== undefined) {
+                        const address = normalizeSessionAddress(serverId, sessionId);
+                        const observed = address ? sessionRuntimeObservations.read(address) : undefined;
+                        const row = readSessionListRowForServerId(storage.getState().sessionListRowsByServerId, serverId, sessionId);
+                        if (observed?.serverObservationAccountId === this.serverID
+                            && (observed.exactListRowObservationCursor ?? -1) >= changeCursor
+                            && row && readSessionListRowPlacementFacts(row)) continue;
+                    }
                     // Submit the logical set before awaiting admission. The shared
                     // parts reader owns physical batching and its HTTP body budget;
                     // a crypto worker window here fragments it into serial reads.
@@ -13869,7 +13880,15 @@ class Sync {
                                 await this.refreshListedSessionRows(plannedServerId, projectionSessionIds);
                                 refreshedByCatchUp.sessions = true;
                             },
-                            sessionRows: (sessionIds) => this.refreshListedSessionRows(plannedServerId, sessionIds),
+                            sessionRows: (sessionIds) => {
+                                const changeCursors = new Map<string, number>();
+                                for (const change of planned.changes) {
+                                    if (change.kind === 'session') {
+                                        changeCursors.set(change.entityId, Math.max(change.cursor, changeCursors.get(change.entityId) ?? change.cursor));
+                                    }
+                                }
+                                return this.refreshListedSessionRows(plannedServerId, sessionIds, changeCursors);
+                            },
                             sessionFolderAssignments: async (sessionIds) => {
                                 if (
                                     !plannedServerId

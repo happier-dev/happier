@@ -66,6 +66,23 @@ describe('Session runtime observations', () => {
         source.clear();
         expect(source.read(address)).toBeUndefined();
     });
+
+    it('keeps exact list-row coverage separate from runtime observations and exact to the Account', () => {
+        const source = createSessionRuntimeObservationSource();
+        const address = { serverId: 'home', sessionId: 'same-session' };
+        const baseline = { active: true, activeAt: 100 };
+        source.recordServerObservation(address, 5, baseline, 'account-a');
+        source.recordServerObservation(address, 3, baseline, 'account-a', 'exact-list-row');
+        const observed = source.read(address);
+        expect(observed).toMatchObject({ serverObservationCursor: 5, exactListRowObservationCursor: 3 });
+        source.recordServerObservation(address, 3, baseline, 'account-a', 'exact-list-row');
+        expect(source.read(address)).toBe(observed);
+
+        source.recordServerObservation(address, 5, baseline, 'account-b');
+        expect(source.read(address)).toMatchObject({ serverObservationAccountId: 'account-b', serverObservationCursor: 5 });
+        expect(source.read(address)?.exactListRowObservationCursor).toBeUndefined();
+    });
+
     it.each([
         { rawActive: true, inputActive: false, rawThinking: true, inputThinking: false },
         { rawActive: false, inputActive: true, rawThinking: false, inputThinking: true },

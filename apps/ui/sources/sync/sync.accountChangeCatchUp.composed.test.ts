@@ -1222,6 +1222,53 @@ describe('sync AccountChange catch-up projection', () => {
         expect(currentnessReads - before).toBe(connectedSocket ? 0 : 2);
     });
 
+    it.each([1, 2])('reuses only a socket row that covers AccountChange cursor %s', async (changeCursor) => {
+        const id = 'socket-row-before-account-change';
+        const row = {
+            ...createPlainSessionCurrentProjectionRecordFixture({ id, seq: 1 }),
+            viewer: createSessionViewerFixture({ relevance: { relevant: true, reasons: ['owned_by_me'] } }),
+        };
+        let publishedRow = row;
+        let observedCursor = 1;
+        const batches: string[][] = [];
+        await restoreTestAccount({ connectedSocket: true, physicalRequest: (url, init) => {
+            if (new URL(url).pathname === '/v2/sessions/read-batch') {
+                const input = SessionReadBatchRequestV1Schema.parse(JSON.parse(String(init?.body)));
+                if (input.sessionIds.includes(id)) batches.push(input.sessionIds);
+            }
+            return undefined;
+        }, runtimeRequest: path => path === `/v2/sessions/${id}`
+            ? jsonResponse({ session: publishedRow, observationCursor: observedCursor }) : undefined });
+        if (!syncRuntime || !account) throw new Error('Expected restored Sync');
+        const { storage } = await import('./domains/state/storage');
+        const runtime = syncRuntime as unknown as SyncAccountChangeCatchUpHarness & {
+            refreshListedSessionRows(serverId: string, sessionIds: readonly string[]): Promise<void>;
+        };
+        await runtime.refreshListedSessionRows(account.serverId, [id]);
+        const original = storage.getState().sessionListRowsByServerId[account.serverId]?.[id];
+        expect(original).toBeDefined();
+        expect(batches).toEqual([[id]]);
+
+        if (changeCursor > observedCursor) {
+            observedCursor = changeCursor;
+            publishedRow = { ...row, metadataVersion: row.metadataVersion + 1, updatedAt: row.updatedAt + 1 };
+        }
+        changesResponse.mockResolvedValueOnce({
+            changes: [{ cursor: changeCursor, changedAt: 1, kind: 'session', entityId: id, hint: { metadataVersion: publishedRow.metadataVersion } }],
+            nextCursor: changeCursor,
+        });
+        await expect(runtime.resumeViaChanges({ accountId: ACCOUNT_ID })).resolves.toMatchObject({ status: 'ok' });
+        expect(runtime.changesCursor).toBe(String(changeCursor));
+        const current = storage.getState().sessionListRowsByServerId[account.serverId]?.[id];
+        if (changeCursor === 1) {
+            expect(current).toBe(original);
+            expect(batches).toEqual([[id]]);
+        } else {
+            expect(current?.metadataVersion).toBe(publishedRow.metadataVersion);
+            expect(batches).toEqual([[id], [id]]);
+        }
+    });
+
     it('borrows current identity across 400 separate Session query and listed-row arrivals over 180 seconds', async () => {
         let currentnessReads = 0;
         let row = createPlainSessionCurrentProjectionRecordFixture({ id: 'busy-arrival' });
