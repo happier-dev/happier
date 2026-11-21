@@ -116,7 +116,7 @@ test('reports idle admitted jobs without flagging slow busy jobs or releasing sl
 });
 
 test('declaration comparison aborts on observed CPU inactivity or twice its learned maximum', { ...linux, timeout: 12_000 }, async t => {
-  for (const scenario of ['idle', 'learned-duration', 'progressing']) {
+  for (const scenario of ['idle', 'combined-idle', 'learned-duration', 'progressing']) {
     await t.test(scenario, async t => {
       let now = Date.now();
       t.mock.method(Date, 'now', () => now);
@@ -128,9 +128,11 @@ test('declaration comparison aborts on observed CPU inactivity or twice its lear
         return cpuUsec;
       };
       const { root } = await fixture(t, { readSlotCpuUsageUsec });
-      const identity = { className: scenario === 'idle' ? 'gate-package-typecheck' : 'gate-declaration-comparison',
+      const idle = scenario === 'idle' || scenario === 'combined-idle';
+      const identity = { className: scenario === 'combined-idle' ? 'gate-final-recheck'
+        : scenario === 'idle' ? 'gate-package-typecheck' : 'gate-declaration-comparison',
         component: '.', entry: 'node scripts/workspaces/commitGateTypecheck.mjs', projects: ['packages/protocol'] };
-      if (scenario !== 'idle') {
+      if (!idle) {
         const key = JSON.stringify([identity.className, identity.component, identity.entry, identity.projects]);
         await writeFile(join(root, 'identity-durations.json'), JSON.stringify({ [key]: [2_000, 550_000, 1_000] }));
       }
@@ -149,7 +151,7 @@ test('declaration comparison aborts on observed CPU inactivity or twice its lear
         cpuUsec = nextCpuUsec;
         return sampled.promise;
       };
-      if (scenario === 'idle') {
+      if (idle) {
         await observeCpuAt(300_000, 1000);
         const { error } = await task;
         assert.deepEqual(error.stall, {
@@ -234,7 +236,7 @@ test('real clients waiting across a broker succession re-register with their arr
 });
 
 test('a replayed commit retains its original arrival in each gate class', { ...linux, timeout: 6000 }, async t => {
-  for (const className of ['gate-entry-loads', 'gate-package-typecheck', 'gate-declaration-comparison']) {
+  for (const className of ['gate-entry-loads', 'gate-package-typecheck', 'gate-declaration-comparison', 'gate-final-recheck']) {
     await t.test(className, async t => {
       let availableMemoryKiB = 100;
       const { root, broker } = await fixture(t, { readMemory: () => ({ availableMemoryKiB, totalMemoryKiB: 100 }) });
@@ -707,6 +709,7 @@ test('commit-gate jobs use cold admission charges and learn under their own clas
     ['gate-entry-loads', 'validation', 'commitTreeEntryLoads.mjs', 3, 3],
     ['gate-package-typecheck', 'compilation', 'commitPackageTypecheck.mjs', 6, 17],
     ['gate-declaration-comparison', 'compilation', 'commitGateTypecheck.mjs', 6, 17],
+    ['gate-final-recheck', 'compilation', 'commitGateTypecheck.mjs', 6, 17],
   ]) {
     await t.test(className, async t => {
       const { root } = await fixture(t, {
@@ -722,6 +725,7 @@ test('commit-gate jobs use cold admission charges and learn under their own clas
       await writeFile(join(root, 'identity-kernel-peaks.json'), JSON.stringify({
         [key(diskClass)]: [12 * gib],
         [key('@cpu:' + diskClass)]: [9000],
+        ...(className === 'gate-final-recheck' ? { [key('gate-declaration-comparison')]: [2 * gib] } : {}),
       }));
       assert.equal(resolveAdmissionDiskClass(className), diskClass);
       assert.equal(resolveAdmissionCpuCost(className, ['--singleThreaded']), diskClass === 'compilation' ? 2 : 'host');

@@ -115,6 +115,8 @@ export const HEAVYWEIGHT_COMMAND_RESOURCES = Object.freeze({
   // Both gate compiler steps have the ordinary cold envelope and independent history.
   'gate-package-typecheck': { memoryKiB: COMPILATION_COLD_MEMORY_KIB, cpuCores: 'host', diskClass: 'compilation' },
   'gate-declaration-comparison': { memoryKiB: COMPILATION_COLD_MEMORY_KIB, cpuCores: 'host', diskClass: 'compilation' },
+  // Final replay runs entry loads and declaration comparison serially under one slot.
+  'gate-final-recheck': { memoryKiB: COMPILATION_COLD_MEMORY_KIB, cpuCores: 'host', diskClass: 'compilation' },
   'compilation-ui': { memoryKiB: 20 * 1024 * 1024, cpuCores: 'host', diskClass: 'compilation' },
   // Host memory: 2026-11-07, 51 live snapshots over 25 minutes, three tsrs UI
   // holders. Max live VmHWM sum 9,477,228 KiB + measured within-holder RSS
@@ -180,6 +182,7 @@ export const COLD_ADMISSION_CPU_CORES = Object.freeze({
   compilation: TYPESCRIPT_CPU_CORES,
   'gate-package-typecheck': TYPESCRIPT_CPU_CORES,
   'gate-declaration-comparison': TYPESCRIPT_CPU_CORES,
+  'gate-final-recheck': TYPESCRIPT_CPU_CORES,
   'compilation-ui': TYPESCRIPT_CPU_CORES,
   'compilation-ui-tsrs': 17,
   'compilation-cli': TYPESCRIPT_CPU_CORES,

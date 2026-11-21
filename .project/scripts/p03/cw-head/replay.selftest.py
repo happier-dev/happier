@@ -153,10 +153,14 @@ sleep 0.2
         launcher.write_text(f'''#!/bin/bash
 set -eu
 flock -n "$(git rev-parse --git-common-dir)/p03-commit-partial.lock" true
-if [[ "$*" = *--class=gate-declaration-comparison* ]]; then
-  [[ "$*" = *--projects=packages/protocol* && "$*" = *--no-wait* ]]
-  [ -z "${{HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT:-}}" ]
+if [[ "$*" = *--class=gate-final-recheck* ]]; then
+  [[ "$*" = *--projects=packages/protocol$'\\n'cli* ]]
   echo declaration-attempt >> '{d}/admission'
+  if [ -n "${{TEST_ENTRY_LEASE:-}}" ]; then
+    echo 'HSTACK_ADMISSION_INHERITANCE_REQUIRED: nested command must inherit its parent admission grant'
+    exit 1
+  fi
+  export TEST_ENTRY_LEASE=held
   [ '{kind}' != declaration-admission-refused ] || exit 96
   if [ '{kind}' = declaration-admission-stall ]; then
     set +e
@@ -217,7 +221,7 @@ exec "$@"
     print(f'{kind}: {elapsed:.3f}s rc={run.returncode} gates={gates} evidence={d}', flush=True)
     if admission_case:
         assert (d/'admission').exists(), 'no entry admission attempt occurred before taking the final lock'
-        expected_grants = ['grant-attempt', 'declaration-attempt'] if declaration_case else ['grant-attempt']
+        expected_grants = ['declaration-attempt'] if declaration_case else ['grant-attempt']
         assert (d/'admission').read_text().splitlines() == expected_grants, run.stdout
     if kind in ('declaration-admission-refused', 'declaration-admission-stall'):
         assert run.returncode == 11 and git('rev-parse','HEAD') == later, run.stdout

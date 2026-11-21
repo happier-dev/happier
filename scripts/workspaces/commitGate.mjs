@@ -162,10 +162,7 @@ async function judgeCommit({ repo, base, tree, prior, priorBase, cheapOnly = fal
     if (result.refuses) return refused('new type errors in a package the packet touches', result.lines);
   }
 
-  // The controller keeps distinct broker grants for declaration and entry work.
-  const entryEnv = env.P03_GATE_ENTRY_ADMISSION_SLOT
-    ? { ...env, HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT: env.P03_GATE_ENTRY_ADMISSION_SLOT } : env;
-  const loads = await judge('tree entry loads', () => commitTreeEntryLoads({ repo, base, tree, prior, priorBase, env: entryEnv, cheapOnly, finalEntryRecheck, compareAdmittedEntryLoads }));
+  const loads = await judge('tree entry loads', () => commitTreeEntryLoads({ repo, base, tree, prior, priorBase, env, cheapOnly, finalEntryRecheck, compareAdmittedEntryLoads }));
   if (loads.needsFull) return { verdict: 'needs-full', check: 'tree entry loads', findings: [], notes };
   if (loads.selected.length) notes.push(`tree entry loads: ${loads.selected.length} graph(s) judged, ${loads.findings.length} refused, ${loads.preexisting.length} also fail at the base`);
   if (loads.findings.length) return refused('entry loads of the commit\'s own tree', loads.findings);

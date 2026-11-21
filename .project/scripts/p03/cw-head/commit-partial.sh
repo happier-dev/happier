@@ -259,21 +259,22 @@ declaration_admission_incomplete() {
   return 11
 }
 run_final_declaration_phase() {
-  local launcher=$1 projects=$2
-  local no_wait=() status=()
+  local launcher=$1 projects=$2 entry_projects=$3 resource_class=gate-declaration-comparison
+  local status=()
   # Own the child's scratch outside the lease being watched. The admission
   # broker can terminate its whole process group before the child's EXIT trap.
   gateScratch=$(mktemp -d "${TMPDIR:-/tmp}/p03-gate-final.XXXXXX") || { declaration_admission_incomplete 75; return 11; }
-  # A second grant must be independent from entry admission. The broker must
-  # settle it immediately so no entry holder waits on a declaration holder.
-  if [ "$entry_phase" = 1 ]; then no_wait=(--no-wait); fi
   (
-    export P03_GATE_ENTRY_ADMISSION_SLOT=${HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT:-}
-    export TMPDIR=$gateScratch
-    unset HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN HAPPIER_HEAVYWEIGHT_ADMISSION_FLOOR_KIB
-    "$launcher" --heavyweight-admission --class=gate-declaration-comparison --machine=local "--projects=$projects" \
-      --identity-arg=node --identity-arg=scripts/workspaces/commitGateTypecheck.mjs "${no_wait[@]}" \
-      -- bash -c 'export P03_CP_DECLARATION_PHASE=1; exec bash "$@"' commit-declaration-phase "$SELF" "${ARGS[@]}"
+    export TMPDIR=$gateScratch P03_CP_DECLARATION_PHASE=1
+    # Serial checks share one grant and learn from the combined project set.
+    if [ -n "$entry_projects" ]; then
+      export P03_CP_ENTRY_PHASE=1
+      resource_class=gate-final-recheck
+      projects+=$'\n'$entry_projects
+    fi
+    "$launcher" --heavyweight-admission "--class=$resource_class" --machine=local "--projects=$projects" \
+      --identity-arg=node --identity-arg=scripts/workspaces/commitGateTypecheck.mjs \
+      -- bash "$SELF" "${ARGS[@]}"
   ) 9>&- | awk '
     /^HAPPIER_DECLARATION_COMPARISON_INCOMPLETE / {
       sub(/^[^ ]+ /, "")
@@ -295,18 +296,10 @@ run_final_declaration_phase() {
 # Reserve for the frozen packet's reachable set while the lock is free.
 # The gate narrows both comparisons to the actual new commits after locking.
 admit_final_phase() {
-  [ "$declaration_phase" = 0 ] && [ "$cas_losses" -ge 2 ] || return 0
+  [ "$entry_phase:$declaration_phase" = 0:0 ] && [ "$cas_losses" -ge 2 ] || return 0
   [ "$(git rev-parse HEAD)" != "$head" ] || return 0
   local entry_projects declaration_projects launcher=$tooling/apps/stack/bin/hstack-exec rc=0
   [ ! -x ./apps/stack/bin/hstack-exec ] || launcher=./apps/stack/bin/hstack-exec
-  if [ "$entry_phase" = 1 ]; then
-    [ -n "${P03_CP_DECLARATION_PROJECTS:-}" ] || return 0
-    P03_CP_FROZEN=$packet P03_CP_GATED="$gated $head" P03_CP_CAS_LOSSES=$cas_losses \
-      P03_CP_FINAL_PREPARED=$final_prepared P03_CP_ROUNDS=$rounds \
-      run_final_declaration_phase "$launcher" "$P03_CP_DECLARATION_PROJECTS" || rc=$?
-    packetDir=
-    exit "$rc"
-  fi
   entry_projects=$(node "${P03_COMMIT_ENTRY_LOADS:-$tooling/scripts/workspaces/commitTreeEntryLoads.mjs}" --select --base "$head" --tree "$gated") || entry_admission_incomplete "$?"
   declaration_projects=$(node "$tooling/scripts/workspaces/commitGate.mjs" --select-declarations "--base=$head" "--tree=$gated") || {
     declaration_admission_incomplete "$?"
@@ -316,16 +309,16 @@ admit_final_phase() {
   while [ "$(git rev-parse HEAD)" != "$head" ]; do
     rc=0
     export P03_CP_FROZEN=$packet P03_CP_GATED="$gated $head" P03_CP_CAS_LOSSES=$cas_losses
-    export P03_CP_FINAL_PREPARED=$final_prepared P03_CP_ROUNDS=$rounds P03_CP_DECLARATION_PROJECTS=$declaration_projects
-    if [ -n "$entry_projects" ]; then
+    export P03_CP_FINAL_PREPARED=$final_prepared P03_CP_ROUNDS=$rounds
+    if [ -n "$declaration_projects" ]; then
+      run_final_declaration_phase "$launcher" "$declaration_projects" "$entry_projects" || rc=$?
+    else
       "$launcher" --heavyweight-admission --class=gate-entry-loads --machine=local "--projects=$entry_projects" \
         --identity-arg=node --identity-arg=scripts/workspaces/commitTreeEntryLoads.mjs \
         -- bash -c 'export P03_CP_ENTRY_PHASE=1; exec bash "$@"' commit-entry-phase "$SELF" "${ARGS[@]}" 9>&- || rc=$?
-    else
-      run_final_declaration_phase "$launcher" "$declaration_projects" || rc=$?
     fi
     unset P03_CP_FROZEN P03_CP_GATED P03_CP_CAS_LOSSES
-    unset P03_CP_FINAL_PREPARED P03_CP_ROUNDS P03_CP_DECLARATION_PROJECTS
+    unset P03_CP_FINAL_PREPARED P03_CP_ROUNDS
     case $rc in
       0|11|130|143) exit "$rc";;
       10) exit 1;;
@@ -372,7 +365,7 @@ locked_recheck() {
     echo "recheck needs the full path (exit $rc); releasing the commit lock"
     if [ "$cas_losses" -lt 2 ]; then requeue_after_full_gate "$prior"; fi
     unlock
-    # Preparation must release both broker grants before it queues.
+    # Preparation must release the broker grant before it queues.
     if [ "$entry_phase:$declaration_phase" != 0:0 ]; then packetDir=; exit 3; fi
     if [ "$final_prepared" -eq 1 ]; then final_recheck_incomplete; fi
     final_prepared=1

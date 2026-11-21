@@ -56,6 +56,7 @@ const DECLARATION_IDLE_MS = 5 * 60 * 1000;
 const DECLARATION_COMPARISON_ENTRIES = new Set([
   DECLARATION_COMPARISON_ENTRY,
   'gate-declaration-comparison scripts/workspaces/commitGateTypecheck.mjs',
+  'gate-final-recheck scripts/workspaces/commitGateTypecheck.mjs',
   'gate-package-typecheck scripts/workspaces/commitGateTypecheck.mjs',
 ]);
 const HEAD_PRIORITY_RANKS = new Map([

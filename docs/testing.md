@@ -739,9 +739,10 @@ focused runs are served in arrival order and later focused runs cannot starve it
 (P03 ORCH, 2026-11-17). The commit gate admits selected tree entry loads,
 exact-worker package typechecks and the controller declaration comparison as
 `gate-entry-loads`, `gate-package-typecheck` and
-`gate-declaration-comparison`. The broker learns each class and selected-project
+`gate-declaration-comparison`. The serial final replay has a separate
+`gate-final-recheck` class. The broker learns each class and selected-project
 identity in the ordinary queue. A packet that has passed retains its original
-arrival for post-loss requests in all three classes. The broker uses that arrival
+arrival for post-loss requests. The broker uses that arrival
 in its existing queue order. Syntax, eager cycles, manifests and ordinary
 CAS need no admission slot. Each HEAD writer waits for every selected entry
 graph to return a verdict before moving the ref. Every nonempty candidate with
@@ -751,14 +752,15 @@ failure. A replay can reuse a passing verdict while the CLI's inputs on both
 sides are unchanged. An incomplete
 entry-load result leaves the ref unchanged. Standalone reports use the same
 admission owner.
-After two lost attempts, the final replay reserves its entry and declaration
-admission before taking the commit lock and retains the grants through the
-ref update. If both are needed, the second request must settle immediately.
-While locked, the gate loads only entry graphs and compares only Protocol
-and Plugin SDK declaration scopes whose inputs changed since the last
-unlocked pass. The final declaration comparison uses the preadmitted
-controller and its published install. If an admission or exact comparison
-is incomplete, the ref stays at the winning commit.
+After two lost attempts, the final replay takes admission before locking and
+retains it through the ref update. When both entry loads and declaration
+comparison are needed, they run serially within one `gate-final-recheck`
+grant. That class starts at the larger phase reservation and sizes subsequent
+runs from the combined scope's observed working set. Entry-only and
+declaration-only replays retain their own classes. While locked, the gate
+judges only changed entry graphs and Protocol or Plugin SDK declaration
+inputs. If admission or an exact comparison is incomplete, the ref stays at
+the winning commit.
 
 For Protocol and Plugin SDK declarations, the controller admits the original
 comparison, materializing one exact Git tree at a time. The dispatcher removes
