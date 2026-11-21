@@ -32,6 +32,7 @@
 // did not complete while its parent did, 2 for usage or runtime failure (fail closed).
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
+import { once } from 'node:events';
 import { appendFileSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
@@ -517,8 +518,7 @@ export function treeTypechecker({ repo, state, env, log, compile = compileScope,
     }
     return rows;
   };
-  /** Rows for several trees; with a worker, every tree's missing packages travel in one request (one dispatch, one
-   * admission: about 70 s of dispatch per request on nl1, 2026-11-18, against a 10-30 s Protocol compile). */
+  /** Rows for several trees. They share the worker dispatch while each tree has its own compile admission. */
   const rowsAtMany = async (requests, { cachedOnly = false } = {}) => {
     if (!remote && !cachedOnly) return requests.map(({ treeId, packages, side }) => rowsAt(treeId, packages, side));
     const cached = requests.map(({ treeId, packages, side }) => rowsAndMissing(treeId, packages, side));
@@ -1326,22 +1326,37 @@ async function workerRows(argv, entry) {
   mkdirSync(state, { recursive: true });
   // A lane's compile identity names its packages, so the broker sizes each from its own recorded compile peak.
   const projects = option('lane') ? request.packages.join('\n') : scope === 'packages' ? undefined : scope;
-  const workerEnv = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state, HAPPIER_COMMIT_TYPECHECK_WORKER_REQUEST: JSON.stringify(request) };
   return await withWorkspaceBundleLock(async () => {
-    // Dependencies are their own admitted step, once per dependency generation, so the compile's identity records and
-    // reserves only the compile (P03-GATE-TC 2026-11-18: a cold install inside it recorded 15.26 GiB).
     const prepare = treeDependencyPreparer({ repo: request.repo, state, env: process.env, worktreeRev: request.ref });
-    if (!prepare.prepared(request.trees[0])) {
-      const step = admittedCommand(state, [process.execPath, ...process.execArgv, workerEntry, '--prepare-dependencies'], false, undefined, 'dependency-install');
-      const prepared = spawnSync(step[0], step.slice(1), { env: workerEnv, stdio: 'inherit' });
-      if (prepared.error) throw prepared.error;
-      if (prepared.status !== 0) return prepared.status ?? 2;
+    const className = request.gate ? GATE_PACKAGE_CHECK_CLASS : 'compilation';
+    const rows = {};
+    for (const [index, tree] of request.trees.entries()) {
+      const job = { ...request, trees: [tree], sides: [request.sides[index]] };
+      const workerEnv = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state,
+        HAPPIER_COMMIT_TYPECHECK_WORKER_REQUEST: JSON.stringify(job) };
+      // Admission for the previous tree has ended before a new generation can install.
+      if (!prepare.prepared(tree)) {
+        const step = admittedCommand(state, [process.execPath, ...process.execArgv, workerEntry, '--prepare-dependencies'],
+          false, undefined, 'dependency-install');
+        const prepared = spawnSync(step[0], step.slice(1), { env: workerEnv, stdio: 'inherit' });
+        if (prepared.error) throw prepared.error;
+        if (prepared.status !== 0) return prepared.status ?? 2;
+      }
+      const command = admittedCommand(state, payload, false, projects, className, { trees: [tree], files: request.packages });
+      const child = spawn(command[0], command.slice(1), { env: workerEnv, stdio: ['inherit', 'pipe', 'inherit'] });
+      let output = '';
+      child.stdout.setEncoding('utf8').on('data', chunk => { output += chunk; });
+      const [status] = await once(child, 'close');
+      // Preserve the worker dispatch's one result envelope. Pass through
+      // broker diagnostics, including a declaration stall, on any exit.
+      for (const line of output.trimEnd().split('\n')) {
+        if (line.startsWith(WORKER_ROWS)) Object.assign(rows, JSON.parse(line.slice(WORKER_ROWS.length)));
+        else if (line) process.stdout.write(line + '\n');
+      }
+      if (status !== 0 || !Object.hasOwn(rows, tree)) return status || 2;
     }
-    const command = admittedCommand(state, payload, false, projects, request.gate ? GATE_PACKAGE_CHECK_CLASS : 'compilation',
-      { trees: request.trees, files: request.packages });
-    const result = spawnSync(command[0], command.slice(1), { env: workerEnv, stdio: 'inherit' });
-    if (result.error) throw result.error;
-    return result.status ?? 2;
+    process.stdout.write(`${WORKER_ROWS}${JSON.stringify(rows)}\n`);
+    return 0;
   }, { lockPath: join(state, 'worktree.lock'), timeoutMs: null, wait: option('lane') !== GATE_LANE }).catch(error => {
     if (error?.code !== WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE) throw error;
     console.error('[rolling-head-typecheck] exact-tree worker worktree busy');
@@ -1493,7 +1508,7 @@ export async function commitPackageTypecheckMain(argv, entry = fileURLToPath(imp
   for (const name of ['GIT_INDEX_FILE', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR']) delete process.env[name];
   if (argv.includes('--worker-rows')) return await workerRows(argv, entry);
   if (argv.includes('--prepare-dependencies') && process.env.HAPPIER_COMMIT_TYPECHECK_WORKER_REQUEST) {
-    // Admitted on the worker as a dependency-install step: the first requested tree's dependency generation.
+    // Admitted on the worker as a dependency-install step for the selected tree.
     const request = JSON.parse(process.env.HAPPIER_COMMIT_TYPECHECK_WORKER_REQUEST);
     treeDependencyPreparer({ repo: request.repo, state: process.env.HAPPIER_COMMIT_TYPECHECK_DIR, env: process.env,
       log: message => process.stderr.write(`${message}\n`), worktreeRev: request.ref ?? 'rolling' })(request.trees[0]);
@@ -1510,7 +1525,7 @@ export async function commitPackageTypecheckMain(argv, entry = fileURLToPath(imp
     return cancelled ? 2 : result;
   }
   if (argv.includes('--compiler-admitted') && process.env.HAPPIER_COMMIT_TYPECHECK_WORKER_REQUEST) {
-    // Admitted on the worker: rows for the shipped trees, compiled in turn in the worker's warm worktree.
+    // Admitted on the worker: rows for one tree in the worker's warm worktree.
     const state = process.env.HAPPIER_COMMIT_TYPECHECK_DIR;
     const request = JSON.parse(process.env.HAPPIER_COMMIT_TYPECHECK_WORKER_REQUEST);
     const { rowsAt } = treeTypechecker({ repo: request.repo ?? join(state, 'repo.git'), state, env: process.env,

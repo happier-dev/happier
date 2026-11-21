@@ -765,10 +765,12 @@ package has no parent diagnostics. The controller can reuse the published
 installation when its pnpm lockfile supplies the selected packages' external
 dependency closure. Workspace changes and unrelated importers can reuse that
 installation. When the external closure differs, the gate uses the exact-tree
-worker's dependency preparation. Workers receive the judged Git objects and
-committed tooling, prepare the selected tree's dependencies and load the
-TypeScript API from that installation. A busy worker yields to the next worker.
-If no worker can judge, the gate returns `declaration-comparison-incomplete`.
+worker's dependency preparation. One finite worker dispatch receives the
+judged Git objects and committed tooling. It prepares each tree's dependencies
+in the dependency-install class before taking that tree's compiler admission.
+The compiler grant ends with the tree's verdict. Only the on-disk worktree is
+kept between dispatches. A busy worker yields to the next worker. If no worker
+can judge, the gate returns `declaration-comparison-incomplete`.
 
 Once the declaration comparison is admitted on Linux, the broker stops it
 after five consecutive minutes without observed process-tree CPU progress or

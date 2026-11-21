@@ -711,6 +711,7 @@ test('an exact-tree worker reads the Git payload even when the source mirror can
   const bin = join(repo, 'bin');
   const config = join(repo, 'ssh.conf');
   const mirrorLog = join(repo, 'mirror.log');
+  const admissionLog = join(repo, 'worker-admission.log');
   const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
   await Promise.all([mkdir(workerHome), mkdir(state), mkdir(bin)]);
   const write = async (name, contents, mode) => {
@@ -761,6 +762,8 @@ if [ "$1" = --execution-workers=gate-package-typecheck ]; then
 fi
 if [ "$1" = --heavyweight-admission ]; then
   case "$2" in --class=dependency-install|--class=gate-package-typecheck) ;; *) exit 94;; esac
+  export FIXTURE_WORKER_CLASS="\${2#--class=}"
+  printf 'admit %s\\n' "$FIXTURE_WORKER_CLASS" >> ${JSON.stringify(admissionLog)}
   while [ "$1" != -- ]; do shift; done
   shift
   [ "$2" = scripts/workspaces/commitGateTypecheck.mjs ] || { printf 'unstable admission entry: %s\\n' "$2" >&2; exit 95; }
@@ -775,9 +778,10 @@ exit 98
 `, 0o755);
   await write('scripts/workspaces/commitGateTypecheck.mjs', readFileSync(join(source, 'scripts/workspaces/commitGateTypecheck.mjs')));
   await write('apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs', `
-import { mkdirSync, symlinkSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, symlinkSync } from 'node:fs';
+appendFileSync(${JSON.stringify(admissionLog)}, 'prepare ' + process.env.FIXTURE_WORKER_CLASS + '\\n');
 mkdirSync('node_modules', { recursive: true });
-symlinkSync(${JSON.stringify(dirname(createRequire(import.meta.url).resolve('typescript/package.json')))}, 'node_modules/typescript', 'dir');
+if (!existsSync('node_modules/typescript')) symlinkSync(${JSON.stringify(dirname(createRequire(import.meta.url).resolve('typescript/package.json')))}, 'node_modules/typescript', 'dir');
 `);
   // The compiler executable is the external boundary. Its declaration run
   // yields a diagnostic only when checking the committed source.
@@ -837,6 +841,34 @@ if (project !== 'tsconfig.json') {
   assert.ok(detail, stalled.stdout);
   assert.deepEqual(JSON.parse(detail[1]), { code: 'declaration-comparison-incomplete', packages: ['packages/protocol'],
     stall: { ...stall, worker: 'test-worker' } });
+
+  // Keep the authored sources fixed and change their dependency generation between two jobs.
+  await write('scripts/workspaces/commitGateTypecheck.mjs', readFileSync(join(source, 'scripts/workspaces/commitGateTypecheck.mjs')));
+  await write('packages/protocol/src/index.ts', 'export const value = 41;\n');
+  await write('packages/protocol/package.json', JSON.stringify({ name: '@x/protocol', version: '2.0.0', scripts: { typecheck: 'tsc' } }));
+  git('add', '--', 'packages/protocol');
+  git('commit', '--quiet', '-m', 'different dependency generation');
+  const nextTree = git('rev-parse', 'HEAD^{tree}');
+  await writeFile(admissionLog, '');
+  const multiScript = `
+    import { workerTreeRows } from ${JSON.stringify(new URL('./commitPackageTypecheck.mjs', import.meta.url).href)};
+    const rows = await workerTreeRows({ repo: process.cwd(), state: ${JSON.stringify(state)}, lane: 'gate',
+      entry: 'scripts/workspaces/commitGateTypecheck.mjs' })(${JSON.stringify([treeId, nextTree])},
+      ['packages/protocol'], ['base', 'head']);
+    console.log(JSON.stringify([...rows].map(([tree, byPackage]) => [tree, byPackage.get('packages/protocol')])));
+  `;
+  const multi = spawnSync(process.execPath, ['--input-type=module', '-e', multiScript], {
+    cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_SSH_VARIANT: 'ssh', PATH: `${bin}:${process.env.PATH}` },
+  });
+  assert.equal(multi.status, 0, multi.stderr);
+  assert.deepEqual(JSON.parse(multi.stdout).map(([tree, rows]) => [tree, rows?.map(row => row.code)]),
+    [[treeId, [9007]], [nextTree, [9007]]], multi.stderr);
+  assert.deepEqual(readFileSync(admissionLog, 'utf8').trim().split('\n'), [
+    'admit gate-package-typecheck',
+    'admit dependency-install',
+    'prepare dependency-install',
+    'admit gate-package-typecheck',
+  ]);
 });
 
 async function controllerDeclarationFixture(t, { lockfile } = {}) {
