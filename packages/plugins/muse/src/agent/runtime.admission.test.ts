@@ -6,8 +6,11 @@ import { buildWorkflowRunSystemRecordLocalId, SessionWorkflowRunSnapshotV1Schema
   SessionAgentActivityHeadlineV1Schema } from '@happier-dev/plugin-sdk/sessions/work-state';
 import { createApiSessionSocketStub, createSessionRuntimeActivityHomeStub, createSessionTranscriptHomeStub, resolveApiSessionSocketDefaultAck } from '@/testkit/backends/apiSessionSocketHarness';
 import { projectRuntimeTranscriptEvent } from '@/agent/runtime/session/transcripts/projectRuntimeTranscriptEvent';
+import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
+import { resolveSessionRuntimeIssueSignInRecovery, SessionRuntimeIssueV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { SessionTranscriptObservationInputSchema, SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 import { createAdmittedMuseSessionFixture, MUSE_SESSION_FIXTURE_MACHINE_ID } from './testkit/admittedSession.test-support.js';
+import { readMuseLoginRecording } from './testkit/mspProcess.js';
 import { readMuseRecord } from './events.js';
 import { createSocketTransportAdapter } from '@happier-dev/sync-client';
 
@@ -26,6 +29,54 @@ function createTranscriptSocket(onConnect: () => void) {
   socketObservations.sockets.push(socket);
   return socket;
 }
+
+it.each([
+  { message: 'generation failed upstream', code: 'PLUGIN_EXEC_FAILED', source: 'agent_session_error',
+    reason: 'unclassified_provider_error', recovery: null },
+  { message: 'your API key from META_API_KEY was rejected — update or unset it', code: 'provider_endpoint_auth_required',
+    source: 'auth_error', reason: 'authentication_required',
+    recovery: { kind: 'agent_sign_in', machineId: MUSE_SESSION_FIXTURE_MACHINE_ID, agentId: 'muse' } },
+])('settles a native Muse turn with $reason and its matching recovery', async ({ message, code, source, reason, recovery }) => {
+  const { rows } = readMuseRecord(await readMuseLoginRecording());
+  if (!Array.isArray(rows)) throw new Error('Expected the native Muse recording');
+  const recording = { rows: rows.flatMap(row => {
+    const frame = readMuseRecord(readMuseRecord(row).message);
+    if (frame.method === 'turn/completed') {
+      return [{ ...readMuseRecord(row), message: { ...frame, params: {
+        ...readMuseRecord(frame.params), terminal: 'failed', error: { message },
+      } } }];
+    }
+    if (typeof frame.method === 'string' && (frame.method.startsWith('item/') || frame.method === 'turn/foregroundCompleted')) return [];
+    return [row];
+  }) };
+  const fixture = await createAdmittedMuseSessionFixture({ native: { recording } });
+  const events = createAgentSessionRuntimeHarness();
+  const failures: unknown[] = [];
+  const lifecycle = createSessionTurnLifecycle({ agentId: 'muse', session: { sessionId: 'host-admitted-muse',
+    enqueueSessionTurnMutation(mutation) {
+      if (mutation.action === 'fail') failures.push(mutation.issue);
+    },
+  } });
+  try {
+    const session = await fixture.open({ kind: 'create', sessionId: 'host-admitted-muse', cwd: process.cwd() });
+    session.watch(event => {
+      lifecycle.observeRuntimeEvent(event);
+      events.recordRuntimeEvent(event);
+    });
+    await session.send({ inputIds: ['failure-input'], input: { text: 'Run the fixture turn.' },
+      delivery: { kind: 'newTurn', turnId: 'failure-turn' } });
+    await events.until('turn-failed');
+    await lifecycle.drainAcceptedLifecycle();
+    expect(failures).toHaveLength(1);
+    const issue = SessionRuntimeIssueV1Schema.parse(failures[0]);
+    expect(issue).toMatchObject({ code, source, failureCause: { failureReason: reason } });
+    expect(resolveSessionRuntimeIssueSignInRecovery(issue, MUSE_SESSION_FIXTURE_MACHINE_ID)).toEqual(recovery);
+  } finally {
+    lifecycle.dispose();
+    events.dispose();
+    await fixture.dispose();
+  }
+});
 
 it.each([undefined, 'default'])('admits Muse with model %s and streams one native owning turn', async selectedModel => {
   const agentId = 'muse';

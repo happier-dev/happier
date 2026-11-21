@@ -468,8 +468,16 @@ export function createMuseEventProjection<SessionId extends string | undefined =
         publish({ kind: 'turn-cancelled', ...owner, cause: admission.cancelCause ?? 'providerInterrupted' });
       } else if (params.terminal === 'failed') {
         const error = readMuseRecord(params.error);
-        publish({ kind: 'turn-failed', ...owner, diagnostic: { code: 'PLUGIN_EXEC_FAILED', severity: 'error',
-          ...(typeof error.message === 'string' ? { message: error.message } : {}) } });
+        // MSP reports this key refusal in the terminal message. The status from a
+        // separate connection check is not part of the turn's native evidence.
+        const rejectedApiKey = error.message === 'your API key from META_API_KEY was rejected — update or unset it';
+        publish({ kind: 'turn-failed', ...owner, diagnostic: {
+          code: rejectedApiKey ? 'provider_endpoint_auth_required' : 'PLUGIN_EXEC_FAILED', severity: 'error',
+          ...(typeof error.message === 'string' ? { message: error.message } : {}),
+          ...(rejectedApiKey ? { details: { failureCause: {
+            phase: 'authentication', failureReason: 'authentication_required',
+          } } } : {}),
+        } });
       } else if (params.terminal === 'completed') {
         const { startedAtMs, mcpCallCounts } = admission;
         if (startedAtMs !== undefined && mcpCallCounts?.size) {
