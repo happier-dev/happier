@@ -107,6 +107,12 @@ offerable. Each source remains owned by
 its existing registry, Machine, target, connected-account, or SCM plugin owner.
 The catalog is a snapshot held by the caller for the suggestion round.
 
+Saving a token alongside a Saved Secret publishes the connected Account profile
+after the credential and resource commit together. Configure waits for that
+exact connection before loading provider choices. If the profile is unavailable
+or doesn't contain the connection after a foreground read, Retry reads the
+profile again without saving a new token.
+
 The UI obtains forge descriptors from an own reachable Machine through the same
 Action with `{ projection: 'forges' }`. This projection reads only the activated
 SCM publishing-provider owner; the other catalog collections stay empty and no

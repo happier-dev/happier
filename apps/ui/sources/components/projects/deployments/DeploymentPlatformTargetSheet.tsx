@@ -330,7 +330,7 @@ export function DeploymentPlatformTargetEditor(
   });
   const needsConnect = target !== null && account === null && firstConnection.missing;
   const connectionPending = firstConnection.pending;
-  const connectionNeeded = needsConnect || connectionPending;
+  const connectionNeeded = needsConnect || connectionPending || firstConnection.unavailable;
   const sourceRead = useProjectSource(props.lifetime, props.environment.projectSourceId);
   const source = sourceRead.source?.source ?? null;
   const repository = React.useMemo(
@@ -353,7 +353,7 @@ export function DeploymentPlatformTargetEditor(
 
   const draft = React.useMemo(
     () =>
-      form && account && !connectionPending
+      form && account && !connectionNeeded
         ? buildPlatformTargetDraft({
             target: form,
             ownerAccountId: props.ownerAccountId,
@@ -368,7 +368,7 @@ export function DeploymentPlatformTargetEditor(
     [
       form,
       account,
-      connectionPending,
+      connectionNeeded,
       props.ownerAccountId,
       props.lifetime.scope.serverId,
       props.environment,
@@ -740,6 +740,11 @@ export function DeploymentPlatformTargetEditor(
               {connectionPending ? (
                 <SurfaceStateCard testID="project-deployments.platform.connectionPending" size="line" kind="loading"
                   title={t('common.loading')} />
+              ) : firstConnection.unavailable ? (
+                <SurfaceStateCard testID="project-deployments.platform.connectionUnavailable" size="line" kind="unavailable"
+                  title={t('projects.deployments.platformLink.connection')} reason={t('errors.connectedAccountsUnavailable')}
+                  action={{ label: t('common.retry'), onPress: firstConnection.retry,
+                    testID: 'project-deployments.platform.connectionRetry' }} />
               ) : needsConnect ? (
                 <SurfaceStateCard
                   testID="project-deployments.platform.connect"

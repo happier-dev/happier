@@ -636,7 +636,7 @@ it('opens on the platform the person already chose in the draft', async () => {
   }
 });
 
-it('welcomes an Account with no platform account to add a token in place, then continues with that account', async () => {
+it.each(['push', 'retry'] as const)('continues with an acknowledged platform token after profile %s', async delivery => {
   const pluginId = 'com.example.connect-deploy';
   const service = DEPLOYMENT_TARGETS_TEST_SERVICE;
   const authored = createDeploymentTargetsTestPlugin(pluginId);
@@ -647,10 +647,10 @@ it('welcomes an Account with no platform account to add a token in place, then c
   const { storage } = await import('@/sync/domains/state/storageStore');
   const { AccountProfileSchema } = await import('@happier-dev/protocol/account/profile');
   const { ConnectSheetContent } = await import('@/components/settings/connectedServices/setup/ConnectSheetContent');
-  const previous = storage.getState().profile;
+  const { profile: previous, profileScope: previousScope } = storage.getState();
   try {
     // The Account's own inventory has no account for this platform's service.
-    storage.setState({ profile: { ...previous, id: 'owner', connectedAccountsV4: [] } });
+    storage.setState({ profile: { ...previous, id: 'owner', connectedAccountsV4: [] }, profileScope: context.accountLifetime.scope });
     const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
     await act(async () => showDeploymentPlatformTargetSheet({ name: 'Site', environment: { id: 'environment', revision: 4, projectSourceId: '' },
       ownerAccountId: 'owner', lifetime: context.accountLifetime, actions: createDeploymentActions(context.accountLifetime, ''), onApproval: () => {},
@@ -671,14 +671,24 @@ it('welcomes an Account with no platform account to add a token in place, then c
     expect(sheet()!.props.request).toMatchObject({ service, intent: 'add' });
     const ref = { service, accountId: 'new-token' };
     await act(async () => sheet()!.props.onResult({ kind: 'connected', account: ref }));
-    expect(screen.findByTestId('project-deployments.platform.connectionPending')).not.toBeNull();
     expect(screen.findByTestId('project-deployments.platform.connect')).toBeNull();
     expect(screen.findByTestId('project-deployments.platform.check')).toBeNull();
-    await act(async () => storage.setState({ profile: AccountProfileSchema.parse({ id: 'owner', connectedAccountsV4: [{
+    const profile = AccountProfileSchema.parse({ id: 'owner', connectedAccountsV4: [{
       ref, status: 'connected', authenticationModeId: 'token', revisionSemantics: 'revisioned',
       credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa', configurationReady: true, configurationRevision: null,
       displayName: 'New cloud connection', scopes: [],
-    }] }) }));
+    }] });
+    if (delivery === 'push') {
+      await act(async () => storage.setState({ profile }));
+    } else {
+      await waitForHomeGovernance(async () => {
+        await act(async () => {});
+        expect(screen.findByTestId('project-deployments.platform.connectionPending')).toBeNull();
+        expect(screen.findByTestId('project-deployments.platform.connectionRetry')).not.toBeNull();
+      });
+      homes.answer(serverId, '/v1/account/profile', { body: profile });
+      await screen.pressByTestIdAsync('project-deployments.platform.connectionRetry');
+    }
     // The new account is chosen; the platform's own choices and its Check (the permission probe) follow.
     await waitForHomeGovernance(async () => {
       await act(async () => {});
@@ -688,7 +698,7 @@ it('welcomes an Account with no platform account to add a token in place, then c
     expect(screen.findByTestId('project-deployments.platform.connect')).toBeNull();
     expect(screen.findByTestId('project-deployments.platform.check')).not.toBeNull();
   } finally {
-    storage.setState({ profile: previous });
+    storage.setState({ profile: previous, profileScope: previousScope });
     await installed.dispose();
     context.dispose();
   }

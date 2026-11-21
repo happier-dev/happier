@@ -60,6 +60,7 @@ import { readConfiguredAgentCatalogRowInTx, mutateConfiguredAgentCatalogRowInTx,
 import { readProviderConnectionsRowInTx, mutateProviderConnectionsRowInTx } from '@/app/account/providers/connectionRows';
 import { readConnectedAccountCatalogRowInTx, mutateConnectedAccountCatalogRowInTx } from '@/app/account/connectedAccounts/configurationRows';
 import { listQualifiedConnectedAccountCredentialSavedSecretResourceIdsInTx, mutateQualifiedConnectedServiceCredentialInTx } from '@/app/api/routes/connect/qualifiedConnectedAccounts/credentialRepository';
+import { recordConnectedServiceAccountProfileChange } from '@/app/api/routes/connect/connectedServicesAccountProfileChange';
 import type { SharedSavedSecretPromoteInputV1 as SharedSavedSecretPromoteWireInputV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import type { AccountEncryptionMigrateSavedSecretResourcesDirectiveV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { readPromptLibraryRowInTx, mutatePromptLibraryRowInTx } from '@/app/account/prompts/promptLibraryRows';
@@ -2653,6 +2654,10 @@ async function promoteCatalogOnlySavedSecretResourcesInTx(tx: Tx, input: Promote
         // `saved_secret_held`: the credential writer keeps one record per key; the edit rolls back with its new resource.
         if (written.status !== 'written') throw new SavedSecretResourceTransactionAbort(written.status === 'superseded' || written.status === 'saved_secret_held'
             ? 'references_conflict' : 'references_invalid');
+        await recordConnectedServiceAccountProfileChange({
+            tx, accountId: input.accountId, service: credential.ref.service,
+            reason: credential.expectedCredentialRevision === null ? 'credential-create' : 'credential-replace',
+        });
         connectedAccountCredential = { credentialRevision: written.credentialRevision, configurationRevision: written.configurationRevision };
     }
     return { ok: true, value: { ...receiptValue(fence.account.settingsVersion),

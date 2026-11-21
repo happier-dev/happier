@@ -8,6 +8,7 @@ import {
     signAccountContentKeyBindingV1,
     verifyAccountContentKeyBindingV1,
 } from "@happier-dev/protocol";
+import { buildConnectedServicesAccountChangeV1 } from "@happier-dev/protocol/changes";
 import tweetnacl from "tweetnacl";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -640,6 +641,11 @@ describe("Saved Secret resource service (SQLite integration)", () => {
             credentialRevision: promoted.ok && promoted.value.connectedAccountCredential?.credentialRevision,
             createdSavedSecretResourceIds: ['anthropic-key-1'],
         } });
+        const { kind, entityId, hint } = buildConnectedServicesAccountChangeV1(ref.service);
+        await expect(db.accountChange.findUnique({
+            where: { accountId_kind_entityId: { accountId: owner.id, kind, entityId } },
+            select: { hint: true },
+        })).resolves.toEqual({ hint });
         const stored = await db.serviceAccountToken.findFirstOrThrow({ where: { accountId: owner.id }, select: { metadata: true, token: true } });
         expect(stored.metadata).toMatchObject({ savedSecretResourceIds: ['anthropic-key-1'] });
         // The Account's profile names the one record that holds this key (ids only, no material).

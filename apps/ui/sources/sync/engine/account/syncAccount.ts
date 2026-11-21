@@ -44,7 +44,8 @@ import {
 } from '@/sync/domains/state/accountSettingsPersistence';
 import { createAccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { parseToken } from '@/utils/auth/parseToken';
-import { createServerRequestForExplicitServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
+import { createServerRequestForExplicitServerScope, runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import { captureAccountEncryptionObservationForHome } from '@/sync/http/accountEncryptionObservationBinding';
 import { readAccountSettingsBaseline } from '@/sync/engine/settings/accountSettingsBaseline';
@@ -387,6 +388,25 @@ export async function fetchAndApplyProfile(params: {
 
     // Apply profile to storage
     applyProfile(parsedProfile);
+}
+
+/** Foreground recovery for a caller waiting on the Account profile, without Sync's background retries. */
+export async function refreshAccountProfileOnce(
+    lifetime: ServerAccountScopeLifetime,
+    signal: AbortSignal,
+    applyProfile: (profile: Profile) => void,
+): Promise<void> {
+    await runWithServerRequestAuthorityForServerAccountScope({ scope: lifetime.scope, signal, activeRequest: serverFetch },
+        async ({ context, request }) => {
+            await fetchAndApplyProfile({
+                credentials: context.credentials ?? { token: context.token },
+                request: (path, init) => request(path, { ...init, signal }, { retry: 'none', timeoutMs: context.timeoutMs }),
+                shouldContinue: () => lifetime.isCurrent() && !signal.aborted,
+                applyProfile: profile => {
+                    if (profile.id === lifetime.scope.accountId) applyProfile(profile);
+                },
+            });
+        });
 }
 
 /**

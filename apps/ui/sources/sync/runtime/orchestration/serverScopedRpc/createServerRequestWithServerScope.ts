@@ -24,7 +24,7 @@ type ScopedServerAccountRequestContext = Extract<
     { scope: 'scoped' }
 >;
 
-export type ServerAccountRequestOptions = Readonly<Pick<ServerFetchOptions, 'onIssued' | 'retry' | 'recoveryRead'>>;
+export type ServerAccountRequestOptions = Readonly<Pick<ServerFetchOptions, 'onIssued' | 'retry' | 'recoveryRead' | 'timeoutMs'>>;
 export type ServerAccountResponseRequest = ServerResponseRequest<ServerAccountRequestOptions>;
 type RawServerAccountRequest = (path: string, init?: RequestInit, options?: ServerAccountRequestOptions) => Promise<Response>;
 

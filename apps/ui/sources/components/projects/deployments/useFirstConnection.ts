@@ -3,7 +3,8 @@ import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 
 import { sameQualifiedConnectedAccountRef, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
 import { connectedAccountPurposeServiceTargets } from '@/sync/domains/connectedServices/connectedAccountPurposeTargetChoices';
-import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { storage } from '@/sync/domains/state/storageStore';
 
 const inventoryKeys = { profile: ['id', 'connectedAccountsV4'], profileScope: true } as const;
@@ -22,6 +23,8 @@ export function useFirstConnection(
   const [acknowledged, setAcknowledged] = React.useState<Readonly<{
     account: QualifiedConnectedAccountRef;
     lifetime: ServerAccountScopeLifetime | null;
+    scope: ServerAccountScopeLifetime | null;
+    status: 'checking' | 'unavailable';
   }> | null>(null);
   const awaiting = acknowledged && acknowledged.lifetime === lifetime && service
     && buildQualifiedPluginContributionKey(acknowledged.account.service) === buildQualifiedPluginContributionKey(service)
@@ -33,20 +36,64 @@ export function useFirstConnection(
     if (awaiting && !accounts.some(candidate => sameQualifiedConnectedAccountRef(candidate.ref, awaiting))) return 'settling';
     return accounts.length > 0 ? 'available' : 'missing';
   }, inventoryKeys);
-  // Acknowledgement precedes the inventory push. Once present, the inventory alone decides availability.
+  // The Account profile decides readiness. One foreground read settles a missed or delayed publication.
   React.useEffect(() => {
-    if (acknowledged && (!awaiting || inventory === 'available')) setAcknowledged(null);
+    if (!acknowledged) return;
+    if (!awaiting || inventory === 'available') {
+      setAcknowledged(null);
+      return;
+    }
+    if (acknowledged.status !== 'checking') return;
+    const scope = acknowledged.scope;
+    const controller = new AbortController();
+    const settleUnavailable = () => setAcknowledged(current =>
+      current === acknowledged ? { ...current, status: 'unavailable' } : current);
+    const retirement = scope?.onRetire(() => {
+      controller.abort();
+      settleUnavailable();
+    });
+    void (async () => {
+      try {
+        if (scope?.isCurrent()) {
+          const { refreshAccountProfileOnce } = await import('@/sync/engine/account/syncAccount');
+          await refreshAccountProfileOnce(scope, controller.signal, profile => {
+            if (!profile.connectedAccountsV4.some(account => sameQualifiedConnectedAccountRef(account.ref, awaiting))) return;
+            const state = storage.getState();
+            // A push that already settled this connection is newer than the pending read.
+            if (areServerAccountScopesEqual(state.profileScope, scope.scope)
+              && state.profile.connectedAccountsV4.some(account => sameQualifiedConnectedAccountRef(account.ref, awaiting))) return;
+            state.applyProfileForScope(scope.scope, profile);
+          });
+        }
+      } catch {
+        // The connection stays saved. The person can retry the profile read.
+      } finally {
+        if (!controller.signal.aborted) settleUnavailable();
+      }
+    })();
+    return () => {
+      retirement?.dispose();
+      controller.abort();
+    };
   }, [acknowledged, awaiting, inventory]);
+  const retry = () => setAcknowledged(current => current ? { ...current, status: 'checking' } : current);
   const connect = async () => {
     if (!service) return;
+    const scope = lifetime ?? captureActiveServerAccountScopeLifetime();
     const result = await presentConnectSheet({
       ...(lifetime ? { scope: lifetime.scope } : {}),
       service,
       intent: 'add',
     });
-    if (result.kind === 'dismissed' || lifetime && !lifetime.isCurrent()) return;
-    setAcknowledged({ account: result.account, lifetime });
+    if (result.kind === 'dismissed' || scope && !scope.isCurrent()) return;
+    setAcknowledged({ account: result.account, lifetime, scope, status: 'checking' });
     onConnected(result.account);
   };
-  return { missing: inventory === 'missing', pending: inventory === 'settling', connect };
+  return {
+    missing: inventory === 'missing',
+    pending: inventory === 'settling' && acknowledged?.status === 'checking',
+    unavailable: inventory === 'settling' && acknowledged?.status === 'unavailable',
+    connect,
+    retry,
+  };
 }
