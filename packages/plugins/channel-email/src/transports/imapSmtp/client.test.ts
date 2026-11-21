@@ -543,7 +543,7 @@ describe('IMAP/SMTP transport against real TLS protocol servers', () => {
     expect(imap.control.listMessages('INBOX').every((message) => !message.flags.includes('\\Seen'))).toBe(true);
   });
 
-  it.each([false, true])('preserves first-mail shaping across child creation and compacted replay, while stripping held replies (placement failure: %s)', async (placementFailure) => {
+  it.each([false, true])('preserves first-mail shaping across ingress write failures and replay, while stripping held replies (placement failure: %s)', async (placementFailure) => {
     const credentialRef = { service: { pluginId: emailPlugin.manifest.id, localId: IMAP_SMTP_CONNECTED_ACCOUNT_ID }, accountId: mailbox };
     const config = EMAIL_CONFIG_SCHEMA.parse({ mailbox, transport: { pluginId: emailPlugin.manifest.id, contributionId: 'imap-smtp' },
       transportConfig: {}, trustStrategy: { kind: 'authenticationResults', authservId: 'mx.example.com' } });
@@ -552,7 +552,7 @@ describe('IMAP/SMTP transport against real TLS protocol servers', () => {
     let journey: Awaited<ReturnType<typeof createChannelsJourneyFixture>>;
     let blockNextPoll = false;
     // Credential persistence and Session Actions are external host boundaries;
-    // the email plugin, TCP transport, routing, census and custody stay real.
+    // the email plugin, TCP transport, routing and ingress custody stay real.
     const connectedAccounts = { async materialize() {
       return { kind: 'environment', env: { HAPPIER_EMAIL_IMAP_SMTP_ACCOUNT: JSON.stringify(account) } };
     } } as unknown as PluginServices['connectedAccounts'];
@@ -708,14 +708,14 @@ describe('IMAP/SMTP transport against real TLS protocol servers', () => {
       const checkpoint = [...journey.state.rows.values()].find(row => row.value['record-kind'] === 'checkpoint');
       if (!checkpoint) throw new Error('Expected the IMAP baseline');
       const nativeBatch = journey.state.batch.bind(journey.state);
-      let failCensus = true;
+      let failObligation = true;
       let failCheckpoint = true;
       journey.state.batch = async operations => {
-        if (failCensus && operations.some(operation => operation.kind === 'put'
+        if (failObligation && operations.some(operation => operation.kind === 'put'
           && operation.value !== null && typeof operation.value === 'object'
-          && 'record-kind' in operation.value && operation.value['record-kind'] === 'ingress-census')) {
-          failCensus = false;
-          throw new Error('Lost first census commit after child creation');
+          && 'record-kind' in operation.value && operation.value['record-kind'] === 'ingress-obligation')) {
+          failObligation = false;
+          throw new Error('Lost ingress obligation commit after child creation');
         }
         if (failCheckpoint && operations.some(operation => operation.kind === 'put'
           && operation.value !== null && typeof operation.value === 'object'
@@ -727,27 +727,19 @@ describe('IMAP/SMTP transport against real TLS protocol servers', () => {
       };
       const receipt = new Date();
       imap.control.addMessage('INBOX', { raw: mime('first', 'FIRST'), internaldate: receipt });
-      await expect(journey.poll()).rejects.toThrow('Lost first census commit');
+      await expect(journey.poll()).rejects.toThrow('Lost ingress obligation commit');
       const first = polls.at(-1);
       expect(spawns).toBe(1);
       expect(admitted).toHaveLength(0);
-      expect([...journey.state.rows.values()].filter(row => row.value['record-kind'] === 'ingress-census')).toHaveLength(0);
+      expect(await journey.state.get(checkpoint.rowId)).toEqual(checkpoint);
       await expect(journey.poll()).rejects.toThrow('Lost checkpoint commit');
+      expect(await journey.state.get(checkpoint.rowId)).toEqual(checkpoint);
       expect(polls.at(-1)).toEqual(first);
       expect(admitted.map(message => message.text)).toEqual(['FIRST\nOn Monday, Alice wrote:\n> HISTORY']);
       await journey.poll();
       expect(polls.at(-1)).toEqual(first);
       expect(admitted).toHaveLength(1);
       expect(spawns).toBe(1);
-      const user = transcript[0]!;
-      if (user.kind !== 'userText') throw new Error('Expected first user input');
-      transcript.push({ kind: 'assistantText', sessionId, seq: 2, itemId: 'first-answer', turnId: 'first-turn', final: 'completed',
-        text: 'Answer', consumedInputs: [{ localId: user.localId, origin: user.origin }] });
-      await journey.outward();
-      await journey.retention();
-      const census = [...journey.state.rows.values()].find(row => row.value['record-kind'] === 'ingress-census');
-      expect(census?.value.payload).toMatchObject({ normalizedIngress: null,
-        compacted: { shell: { message: { id: '<first@example.com>' } } } });
       // Re-present the real mailbox UID after a host checkpoint recovery. The
       // current binding's birth-message exclusion keeps its full history.
       const restoreBaseline = async () => {
@@ -759,27 +751,15 @@ describe('IMAP/SMTP transport against real TLS protocol servers', () => {
       await journey.poll();
       expect(polls.at(-1)).toEqual(first);
       expect(admitted).toHaveLength(1);
-      if (!census) throw new Error('Missing compacted census');
-      const historicPayload = census.value.payload as Record<string, unknown>;
-      // A retained shaping fact may disagree; it must have no authority now.
-      await journey.state.put({ ...census.value, payload: { ...historicPayload, endpointWasRetainedAtPoll: true } },
-        { expectedRevision: census.revision });
-      await restoreBaseline();
-      await journey.poll();
-      expect(polls.at(-1)).toEqual(first);
-      expect(admitted).toHaveLength(1);
       imap.control.addMessage('INBOX', { raw: mime('followup', 'FOLLOWUP', true), internaldate: receipt });
       await journey.poll();
       expect(admitted.map(message => message.text)).toEqual(['FIRST\nOn Monday, Alice wrote:\n> HISTORY', 'FOLLOWUP']);
       expect(spawns).toBe(1);
-      // Once compacted, only native identity remains authoritative. Changed
-      // text for that processed mail cannot create a new conflict or admission.
+      // A changed body with the same native message identity must not be
+      // admitted again or prevent later mail from being delivered.
       imap.control.addMessage('INBOX', { raw: mime('first', 'CHANGED'), internaldate: receipt });
       expect(await journey.poll()).toMatchObject({ kind: 'committed' });
       expect(admitted).toHaveLength(2);
-      const conflicts = [...journey.state.rows.values()].filter(row => row.value['record-kind'] === 'ingress-census'
-        && row.value.attention === true);
-      expect(conflicts).toHaveLength(0);
       imap.control.addMessage('INBOX', { raw: mime('after-replay', 'STILL LIVE', true), internaldate: receipt });
       expect(await journey.poll()).toMatchObject({ kind: 'committed' });
       expect(admitted.map(message => message.text)).toEqual(['FIRST\nOn Monday, Alice wrote:\n> HISTORY', 'FOLLOWUP', 'STILL LIVE']);
