@@ -154,7 +154,7 @@ import { SessionMessageExplicitReplyV1Schema, SessionMessageReplyMutationResultV
 import { AutonomousExchangeControlRequestV1Schema } from '../sessions/messages/autonomousExchangeV1.js';
 import { AutonomousExchangeObservedRevisionV1Schema } from '../sessions/messages/autonomousExchangeV1.js';
 import { ActionResolvedSessionTargetsV1Schema, normalizeSessionTargetV1, type ActionSessionTargetDeclarationV1 } from './sessionTargetV1.js';
-import { TargetActionApprovalRequestV1Schema } from '../approvals/targetActionApprovalRequestV1.js';
+import { TargetActionApprovalRequestV1Schema, projectTargetActionApprovalInvocationV1 } from '../approvals/targetActionApprovalRequestV1.js';
 import { deriveDeploymentEnvironmentApprovalSubjectKeyV1, deriveManagedDeleteApprovalSubjectKeyV1 } from '../approvals/approvalArtifactHeaderV1.js';
 import { executeApprovalObservationAction } from './executor/approvalObservation.js';
 import { isApprovalArtifactKindV1 } from '../approvals/approvalArtifactKindV1.js';
@@ -6524,13 +6524,19 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             }
             ctx = { ...ctx, expectedContributedActionOccurrenceId: invocation.expectedContributorOccurrenceId };
           }
+          const qualifiedActionId = formatQualifiedPluginActionId(invocation.action);
+          // Sign the subject the target Ask records and its replay verifies: the
+          // contributed Action and its input. The contributor occurrence and
+          // delivery hints admit only this live call. The Ask records only a
+          // JSON input; without one it records no Ask (approval_input_unrepresentable).
+          const approvalSubject = invocation.input === undefined ? null
+            : projectTargetActionApprovalInvocationV1({ qualifiedActionId, input: invocation.input });
           const approvalExecutionOrigin = await prepareApprovalExecutionOrigin({
             actionId: 'action.invoke',
-            input: data,
+            input: approvalSubject?.actionArgs ?? data,
             context: ctx,
             targetSessionId: normalizeId(ctx.defaultSessionId) || null,
           });
-          const qualifiedActionId = formatQualifiedPluginActionId(invocation.action);
           const contributedDefinition = getContributedActionDefinition(qualifiedActionId, ctx);
           const runActionOperation = ctx.runActionOperation ?? deps.runActionOperation;
           const invoke = (executionContext: ActionExecutorContext) => deps.invokeContributedAction!({
