@@ -7,11 +7,11 @@ import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/act
 import { WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { AutomationV3RunListResponseSchema, buildAccountStoredContentCompatibilityHttpHeadersV1,
   CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol';
-import { applyTrustedLocalPluginFixture, reloadTrustedLocalPluginFixture } from '../../src/testkit/externalSessionLiveLifecycleFixture';
+import { applyTrustedLocalPluginFixture } from '../../src/testkit/externalSessionLiveLifecycleFixture';
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
+import { reviewRunHasChildSession } from '../../src/testkit/automationsEverywhereReviewRun';
 import { fetchJson } from '../../src/testkit/http';
 import { waitFor } from '../../src/testkit/timing';
-import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { ApprovalQueueListResultV1Schema, ApprovalRequestGetResultV1Schema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
 import { AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1 } from '../../../protocol/src/automations/automationActionOccurrenceV1';
 
@@ -22,7 +22,7 @@ describe('Automations everywhere: input-sensitive plugin effects', () => {
   it('AE.P02.F10-plugin-predicate offers effects and starts preview 0 / save 1 / read 0 / effect 1 Runs', async () => {
     const testDir = await mkdtemp(join(tmpdir(), 'ae-p02-plugin-predicate-'));
     let failTerminalCallback = false;
-    fixture = await startTeamSetupFFixture({ testDir, observeActionRequests: true,
+    fixture = await startTeamSetupFFixture({ testDir, observeActionRequests: true, advertiseRequestObservationEndpoint: true,
       beforeHttpRequest: request => {
         if (failTerminalCallback && request.path === AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1) {
           throw new Error('Fixture terminal observation transport failed');
@@ -41,6 +41,16 @@ describe('Automations everywhere: input-sensitive plugin effects', () => {
       });
       expect(response.status).toBe(200);
       return AutomationV3RunListResponseSchema.parse(response.data).runs;
+    };
+    const reviewStarted = async (automationId: string) => {
+      const observed = await runs(automationId);
+      expect(observed.length).toBeLessThanOrEqual(1);
+      const run = observed[0];
+      if (!run) return false;
+      expect(run.errorCode, `Review Run state: ${run.state}`).toBeNull();
+      return reviewRunHasChildSession(actor, run.id, {
+        parentSessionId: session.sessionId, machineId: machine.target.machineId, path: machine.workspaceDir,
+      });
     };
     // The Home-owned path works before any plugin is installed; raw HTTP remains D6's explicit bypass.
     const homeLinked = await actor.executeAsPerson('workflow.trigger.add', {
@@ -62,11 +72,8 @@ describe('Automations everywhere: input-sensitive plugin effects', () => {
     expect(homeOccurrences).toHaveLength(1);
     expect(homeOccurrences[0]).toMatchObject({ evidence: { phase: 'after', status: 'succeeded' } });
     expect(JSON.stringify(homeOccurrences)).not.toContain(privateHomeName);
-    await waitFor(async () => {
-      const observed = await runs(homeTrigger.set.automationId);
-      expect(observed.length).toBeLessThanOrEqual(1);
-      return observed.length === 1 && typeof observed[0]!.producedSessionId === 'string';
-    }, { failFast: true, context: 'Home effect starts one review Run before plugin installation' });
+    await waitFor(() => reviewStarted(homeTrigger.set.automationId),
+      { failFast: true, context: 'Home effect starts one review Run before plugin installation' });
     fixture.takeRequestObservations();
     failTerminalCallback = true;
     const retainedHomeName = 'native-home-result-survives-observer-failure';
@@ -84,7 +91,8 @@ describe('Automations everywhere: input-sensitive plugin effects', () => {
         properties: { mode: { type: 'string' } }, required: ['mode'], additionalProperties: false },
       run: (input: unknown) => input } as const;
     // Public authoring generates the manifest consumed by the installed loader.
-    const authored = definePlugin({ id: pluginId, version: '1.0.0', entrypoints: { daemon: './daemon.mjs' }, actions: {
+    const authored = definePlugin({ id: pluginId, version: '1.0.0',
+      entrypoints: { daemon: './daemon.mjs', development: './daemon.mjs' }, actions: {
       setup: { ...common, readOnly: { op: 'eq', path: 'mode', value: 'preview' } },
       read: { ...common, readOnly: true }, effect: { ...common, readOnly: false },
     } });
@@ -98,7 +106,6 @@ describe('Automations everywhere: input-sensitive plugin effects', () => {
     const plugin = { daemonPort: machine.daemon.state.httpPort, controlToken: machine.daemon.state.controlToken,
       pluginRoot, pluginId };
     await applyTrustedLocalPluginFixture({ ...plugin, interactionId: 'automation-predicate-install' });
-    await reloadTrustedLocalPluginFixture({ ...plugin, changedPaths: ['daemon.mjs'] });
     const actionId = (localId: string) => formatQualifiedPluginActionId({ pluginId, localId });
     const discover = async (localId: string) => {
       const result = await actor.execute('action.spec.get', { id: actionId(localId) }, context);
@@ -115,8 +122,8 @@ describe('Automations everywhere: input-sensitive plugin effects', () => {
           input: [], result: { kind: 'text' } }],
       } }, project: { machineId: machine.target.machineId, directory: machine.workspaceDir },
       trigger: { kind: 'action', phase: 'after', enabled: true, actionIds: [actionId(localId)] },
-    }, context);
-    // The trigger save owner is also the editor's hookability owner.
+    }, context, { action: { pluginId, localId }, machineId: machine.target.machineId });
+    // Present the selected Machine Action through AppShell before the editor reads its hookability.
     expect(await addTrigger('read')).toMatchObject({ ok: false, errorCode: 'invalid_input' });
     const linkedSetup = await addTrigger('setup');
     const linkedEffect = await addTrigger('effect');
@@ -132,25 +139,20 @@ describe('Automations everywhere: input-sensitive plugin effects', () => {
     await invoke('setup', 'preview');
     expect(await runs(setup.set.automationId)).toEqual([]);
     await invoke('setup', 'save');
-    await waitFor(async () => {
-      const observed = await runs(setup.set.automationId);
-      expect(observed.length).toBeLessThanOrEqual(1);
-      return observed.length === 1 && typeof observed[0]!.producedSessionId === 'string';
-    }, { failFast: true, context: 'Plugin save starts its one review Run' });
+    await waitFor(() => reviewStarted(setup.set.automationId),
+      { failFast: true, context: 'Plugin save starts its one review Run' });
     await invoke('read', 'save');
     expect(await runs(setup.set.automationId)).toHaveLength(1);
     expect(await runs(effect.set.automationId)).toEqual([]);
     await invoke('effect', 'save');
-    await waitFor(async () => {
-      const observed = await runs(effect.set.automationId);
-      expect(observed.length).toBeLessThanOrEqual(1);
-      return observed.length === 1 && typeof observed[0]!.producedSessionId === 'string';
-    }, { failFast: true, context: 'Ordinary plugin effect starts its one review Run' });
+    await waitFor(() => reviewStarted(effect.set.automationId),
+      { failFast: true, context: 'Ordinary plugin effect starts its one review Run' });
     expect(await runs(setup.set.automationId)).toHaveLength(1);
+    expect(fixture.readActionOccurrences().filter(event => event.evidence.actionId === actionId('effect'))).toHaveLength(1);
     fixture.takeRequestObservations();
     failTerminalCallback = true;
     // Only the observation HTTP boundary fails; the plugin's native effect/result remains real.
-    await invoke('effect', 'save');
+    await invoke('effect', 'save-during-callback-failure');
     expect(fixture.takeRequestObservations().filter(request => request.method === 'POST'
       && request.path === AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1)).toEqual([
       { method: 'POST', path: AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1, statusCode: 502 },
@@ -158,17 +160,17 @@ describe('Automations everywhere: input-sensitive plugin effects', () => {
     expect(await runs(effect.set.automationId)).toHaveLength(1);
   }, 0);
 
-  it('retains one safe contributed private settlement through deferred approval and approved replay', async () => {
+  it.each(['apply', 'live'] as const)('settles the %s plugin effect once after ordinary person approval', async (localId) => {
     const testDir = await mkdtemp(join(tmpdir(), 'ae-p02-plugin-private-replay-'));
-    fixture = await startTeamSetupFFixture({ testDir, observeActionRequests: true,
+    fixture = await startTeamSetupFFixture({ testDir, observeActionRequests: true, advertiseRequestObservationEndpoint: true,
       serverEnv: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } });
     const actor = await fixture.createAccount('actor');
     const machine = await fixture.enrollDaemon(actor, { env: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } });
     const session = await fixture.assertKnownGoodSessionControl(actor, machine);
     const pluginId = 'acme.automation-private-replay';
-    const localId = 'apply';
     const actionId = formatQualifiedPluginActionId({ pluginId, localId });
-    const authored = definePlugin({ id: pluginId, version: '1.0.0', entrypoints: { daemon: './daemon.mjs' }, actions: {
+    const authored = definePlugin({ id: pluginId, version: '1.0.0',
+      entrypoints: { daemon: './daemon.mjs', development: './daemon.mjs' }, actions: {
       apply: { title: 'Apply private fixture', dangerLevel: 'safe', readOnly: { op: 'eq', path: 'mode', value: 'preview' }, scopes: ['global'],
         surfaces: ['cli', 'ui'], inputSchema: { type: 'object', properties: { mode: { type: 'string' }, secret: { type: 'string' } },
           required: ['mode', 'secret'], additionalProperties: false },
@@ -204,77 +206,93 @@ describe('Automations everywhere: input-sensitive plugin effects', () => {
     const plugin = { daemonPort: machine.daemon.state.httpPort, controlToken: machine.daemon.state.controlToken,
       pluginRoot, pluginId };
     await applyTrustedLocalPluginFixture({ ...plugin, interactionId: 'automation-private-replay-install' });
-    await reloadTrustedLocalPluginFixture({ ...plugin, changedPaths: ['daemon.mjs'] });
     const context = { defaultSessionId: session.sessionId, externalActionTarget: { kind: 'machine' as const,
       machineId: machine.target.machineId, project: { machineId: machine.target.machineId, directory: machine.workspaceDir } } };
-    const linkEffect = (selectedActionId: string) => actor.executeAsPerson('workflow.trigger.add', {
+    const linkEffect = (selectedLocalId: string) => actor.executeAsPerson('workflow.trigger.add', {
       target: { kind: 'inline', definition: { version: 1,
         defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
         blocks: [{ kind: 'step', id: 'review', document: { text: 'Review the completed effect.', references: [], attachments: [] },
           input: [], result: { kind: 'text' } }],
       } }, project: { machineId: machine.target.machineId, directory: machine.workspaceDir },
-      trigger: { kind: 'action', phase: 'after', enabled: true, actionIds: [selectedActionId] },
-    }, context);
-    const linked = await linkEffect(actionId);
-    expect(linked.ok, JSON.stringify(linked)).toBe(true);
-    if (!linked.ok) throw new Error('Private plugin trigger refused');
-    const saved = WorkflowTriggerWriteResultV1Schema.parse(linked.result);
-    const requestId = 'private-plugin-original-request';
-    const sentinel = 'private-plugin-secret-not-for-evidence-or-history';
-    fixture.takeRequestObservations();
-    const requested = await actor.execute('action.invoke', { action: { pluginId, localId }, input: { mode: 'save', secret: sentinel } }, {
-      ...context, actionRequestId: requestId, authority: 'account_automation',
-      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
-        actions: { [actionId]: { approvalRequiredSurfaces: ['cli'] } } }),
-    });
-    expect(requested).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-    expect(fixture.readActionOccurrences()).toEqual([]);
-    expect(JSON.stringify(requested)).not.toContain(sentinel);
-    if (!requested.ok || !requested.result || typeof requested.result !== 'object'
-      || !('artifactId' in requested.result) || typeof requested.result.artifactId !== 'string') {
-      throw new Error('Private plugin did not retain ordinary approval');
-    }
-    const artifactId = requested.result.artifactId;
-    const approved = await actor.executeAsPerson('approval.request.decide', { artifactId, decision: 'approve' });
-    expect(approved).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
-    expect(JSON.stringify(approved)).not.toContain(sentinel);
-    expect(await actor.replayApprovedApprovalRequest(artifactId)).toMatchObject({ ok: true });
-    expect(await effectAudit()).toEqual([{ id: 'apply', readOnlyEvaluations: 1 }]);
-    const occurrences = fixture.readActionOccurrences().filter(value => value.evidence.actionId === actionId);
-    expect(occurrences).toHaveLength(1);
-    expect(occurrences[0]).toMatchObject({ evidence: { requestId, phase: 'after', status: 'succeeded' },
-      triggers: [{ automationId: saved.set.automationId, triggerId: saved.triggerId, triggerRevision: saved.triggerRevision }] });
-    expect(JSON.stringify(occurrences)).not.toContain(sentinel);
-    expect(fixture.takeRequestObservations().filter(request => request.method === 'POST'
-      && request.path === AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1)).toHaveLength(1);
-    await waitFor(async () => {
-      const response = await fetchJson<unknown>(`${fixture!.server.baseUrl}/v3/automations/${encodeURIComponent(saved.set.automationId)}/runs`, {
-        headers: { Authorization: `Bearer ${actor.credentials.token}`,
-          ...buildAccountStoredContentCompatibilityHttpHeadersV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION) },
+      trigger: { kind: 'action', phase: 'after', enabled: true,
+        actionIds: [formatQualifiedPluginActionId({ pluginId, localId: selectedLocalId })] },
+    }, context, { action: { pluginId, localId: selectedLocalId }, machineId: machine.target.machineId });
+    const requireCliApproval = async (selectedLocalId: string) => {
+      const action = { pluginId, localId: selectedLocalId };
+      expect(await actor.executeAsPerson('actions.policy.set', {
+        actionId: formatQualifiedPluginActionId(action), audience: 'cli', mode: 'ask_first',
+      }, context, { action, machineId: machine.target.machineId })).toMatchObject({ ok: true, result: { mode: 'ask_first' } });
+    };
+    if (localId === 'apply') {
+      const linked = await linkEffect(localId);
+      expect(linked.ok, JSON.stringify(linked)).toBe(true);
+      if (!linked.ok) throw new Error('Private plugin trigger refused');
+      const saved = WorkflowTriggerWriteResultV1Schema.parse(linked.result);
+      const requestId = 'private-plugin-original-request';
+      const sentinel = 'private-plugin-secret-not-for-evidence-or-history';
+      await requireCliApproval(localId);
+      fixture.takeRequestObservations();
+      const requested = await actor.execute('action.invoke', { action: { pluginId, localId }, input: { mode: 'save', secret: sentinel } }, {
+        ...context, actionRequestId: requestId, authority: 'account_automation',
       });
-      expect(response.status).toBe(200);
-      const runs = AutomationV3RunListResponseSchema.parse(response.data).runs;
-      expect(runs.length).toBeLessThanOrEqual(1);
-      expect(JSON.stringify(runs)).not.toContain(sentinel);
-      return runs.length === 1 && typeof runs[0]!.producedSessionId === 'string';
-    }, { failFast: true, context: 'Private plugin approved replay starts one safe review Run' });
+      expect(requested).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      expect(fixture.readActionOccurrences()).toEqual([]);
+      expect(JSON.stringify(requested)).not.toContain(sentinel);
+      if (!requested.ok || !requested.result || typeof requested.result !== 'object'
+        || !('artifactId' in requested.result) || typeof requested.result.artifactId !== 'string') {
+        throw new Error('Private plugin did not retain ordinary approval');
+      }
+      const artifactId = requested.result.artifactId;
+      const approved = await actor.executeAsPerson('approval.request.decide', { artifactId, decision: 'approve' });
+      expect(approved).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+      expect(JSON.stringify(approved)).not.toContain(sentinel);
+      // The ordinary Person decision replays the deferred effect on its origin Machine.
+      expect(await effectAudit()).toEqual([{ id: 'apply', readOnlyEvaluations: 1 }]);
+      const occurrences = fixture.readActionOccurrences().filter(value => value.evidence.actionId === actionId);
+      expect(occurrences).toHaveLength(1);
+      expect(occurrences[0]).toMatchObject({ evidence: { requestId, phase: 'after', status: 'succeeded' },
+        triggers: [{ automationId: saved.set.automationId, triggerId: saved.triggerId, triggerRevision: saved.triggerRevision }] });
+      expect(JSON.stringify(occurrences)).not.toContain(sentinel);
+      expect(fixture.takeRequestObservations().filter(request => request.method === 'POST'
+        && request.path === AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1)).toHaveLength(1);
+      let admittedRun: { id: string; state: string; workflowRunState?: string } | undefined;
+      await waitFor(async () => {
+        const response = await fetchJson<unknown>(`${fixture!.server.baseUrl}/v3/automations/${encodeURIComponent(saved.set.automationId)}/runs`, {
+          headers: { Authorization: `Bearer ${actor.credentials.token}`,
+            ...buildAccountStoredContentCompatibilityHttpHeadersV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION) },
+        });
+        expect(response.status).toBe(200);
+        const runs = AutomationV3RunListResponseSchema.parse(response.data).runs;
+        expect(runs.length).toBeLessThanOrEqual(1);
+        expect(JSON.stringify(runs)).not.toContain(sentinel);
+        const run = runs[0];
+        if (!run) return false;
+        admittedRun = { id: run.id, state: run.state, workflowRunState: run.workflowRunState };
+        expect(run.errorCode, `Review Run state: ${run.state}`).toBeNull();
+        return reviewRunHasChildSession(actor, run.id, {
+          parentSessionId: session.sessionId, machineId: machine.target.machineId, path: machine.workspaceDir,
+        });
+      }, { failFast: true, context: 'Private plugin approved replay starts one safe review Run' }).catch(error => {
+        throw new Error(`Admitted review Run: ${JSON.stringify(admittedRun ?? null)}`, { cause: error });
+      });
+      return;
+    }
 
     // This action explicitly requires the original live invocation. Its raw
     // secret never enters the persisted approval input or public history.
     const liveActionId = formatQualifiedPluginActionId({ pluginId, localId: 'live' });
-    const liveLinked = await linkEffect(liveActionId);
+    const liveLinked = await linkEffect('live');
     expect(liveLinked.ok, JSON.stringify(liveLinked)).toBe(true);
     if (!liveLinked.ok) throw new Error('Live plugin trigger refused');
     const liveSaved = WorkflowTriggerWriteResultV1Schema.parse(liveLinked.result);
     const liveRequestId = 'live-plugin-original-request';
     const liveSentinel = 'retained-live-secret-not-for-approval-history';
+    await requireCliApproval('live');
     fixture.takeRequestObservations();
     let completed = false;
     let failure: unknown;
     const pending = actor.execute('action.invoke', { action: { pluginId, localId: 'live' }, input: { mode: 'save', secret: liveSentinel } }, {
       ...context, actionRequestId: liveRequestId, authority: 'account_automation',
-      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
-        actions: { [liveActionId]: { approvalRequiredSurfaces: ['cli'] } } }),
     });
     void pending.then(() => { completed = true; }, error => { failure = error; });
     let liveArtifactId: string | undefined;
@@ -302,7 +320,7 @@ describe('Automations everywhere: input-sensitive plugin effects', () => {
     const liveDecision = await actor.executeAsPerson('approval.request.decide', { artifactId: liveArtifactId, decision: 'approve' });
     expect(liveDecision.ok, JSON.stringify(liveDecision)).toBe(true);
     expect(await pending).toMatchObject({ ok: true, result: { applied: true } });
-    expect(await effectAudit()).toEqual([{ id: 'apply', readOnlyEvaluations: 1 }, { id: 'live', readOnlyEvaluations: 1 }]);
+    expect(await effectAudit()).toEqual([{ id: 'live', readOnlyEvaluations: 1 }]);
     const liveOccurrences = fixture.readActionOccurrences();
     expect(liveOccurrences).toHaveLength(1);
     expect(liveOccurrences[0]).toMatchObject({ evidence: { actionId: liveActionId, requestId: liveRequestId, phase: 'after', status: 'succeeded' },
@@ -317,7 +335,12 @@ describe('Automations everywhere: input-sensitive plugin effects', () => {
       const observed = AutomationV3RunListResponseSchema.parse(response.data).runs;
       expect(observed.length).toBeLessThanOrEqual(1);
       expect(JSON.stringify(observed)).not.toContain(liveSentinel);
-      return observed.length === 1 && typeof observed[0]!.producedSessionId === 'string';
+      const run = observed[0];
+      if (!run) return false;
+      expect(run.errorCode, `Review Run state: ${run.state}`).toBeNull();
+      return reviewRunHasChildSession(actor, run.id, {
+        parentSessionId: session.sessionId, machineId: machine.target.machineId, path: machine.workspaceDir,
+      });
     }, { failFast: true, context: 'Retained live plugin starts one safe review Run' });
   }, 0);
 });
