@@ -14,6 +14,7 @@ import { BrandWordmark } from './BrandWordmark';
 import { WelcomeFooterLinks } from './WelcomeFooterLinks';
 import { STEP_ROW_BUTTON_PX, StepBackContext, StepRowBackButton, UNAUTH_BACK_TEST_ID, useStepBackSlot, WIDE_STEP_COLUMN_PX, WideStepColumnContext } from './stepBack';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
+import { Typography } from '@/constants/Typography';
 
 import { RelayRetentionDisclosure } from './RelayRetentionDisclosure';
 import { ShellCornerContext, ShellCornerNoteContext, ShellHeaderClearanceContext, ShellWelcomeOverflowContext, type ShellCornerDoor, type ShellCornerNote } from './shellCorner';
@@ -339,21 +340,21 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                             <View testID="unauth-shell-welcome-footer" style={styles.desktopFooterCorner}>
                                 <WelcomeFooterLinks
                                     variant="desktop"
-                                    trailing={cornerNote || props.footerAccessory ? (
+                                    trailing={(
                                         <View style={styles.cornerNote}>
-                                            {cornerNote ? (
-                                                // It stands over the planet's limb, so it reads on the corner pill's surface.
-                                                <View style={[styles.cornerNoteSurface, { borderColor: theme.colors.border.default }]}>
-                                                    {/* An Element over the planet: glass, its exact solid paint under Reduce Transparency. */}
-                                                    <GlassSurface surfaceGroup="card" nested finishRole={null} children={null}
-                                                        solidColor={theme.colors.surface.base} style={styles.cornerNoteGround} />
-                                                    <RelayRetentionDisclosure testID="welcome-retention"
-                                                        disclosure={{ ...cornerNote.disclosure, retry: cornerNote.onRetry }} />
-                                                </View>
-                                            ) : null}
+                                            <View style={styles.cornerNoteSlot}>
+                                                {cornerNote ? (
+                                                    <View style={[styles.cornerNoteSurface, { borderColor: theme.colors.border.default }]}>
+                                                        <GlassSurface surfaceGroup="card" nested finishRole={null} children={null}
+                                                            solidColor={theme.colors.surface.base} style={styles.cornerNoteGround} />
+                                                        <RelayRetentionDisclosure testID="welcome-retention"
+                                                            disclosure={{ ...cornerNote.disclosure, retry: cornerNote.onRetry }} />
+                                                    </View>
+                                                ) : null}
+                                            </View>
                                             {props.footerAccessory}
                                         </View>
-                                    ) : undefined}
+                                    )}
                                 />
                             </View>
                         </>
@@ -492,6 +493,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         maxWidth: 400,
         alignItems: 'flex-end',
         gap: theme.space.s8,
+    },
+    // Reserve the corner pill's two-line footprint so reading the disclosure does not recenter the doors.
+    cornerNoteSlot: {
+        minHeight: 2 * (Typography.variant('body').lineHeight ?? 0)
+            + 2 * (theme.space.s8 + StyleSheet.hairlineWidth),
+        justifyContent: 'flex-end',
     },
     cornerNoteSurface: {
         borderWidth: StyleSheet.hairlineWidth,

@@ -207,6 +207,7 @@ export function DirectHomePathPane(props: Readonly<{
                     <StepForm>
                         <StepFieldGroup>
                             <FieldTextInput
+                                size="step"
                                 testID="already-use-happier.home-address"
                                 value={address}
                                 onChangeText={(value) => {

@@ -17,6 +17,9 @@ import { FIELD_BOX_METRICS, resolveFieldBoxColors } from '@/components/ui/forms/
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
+/** The drawn focal field height used by the signed-out address step. */
+const STEP_FIELD_HEIGHT_PX = 48;
+
 export type FieldTextInputProps = Readonly<{
     value: string;
     onChangeText: (text: string) => void;
@@ -37,6 +40,8 @@ export type FieldTextInputProps = Readonly<{
      */
     invalid?: boolean;
     multiline?: boolean;
+    /** A focal, single-line field on a signed-out step uses the step's larger control size. */
+    size?: 'step';
     /** A multiline field's minimum height, in lines (default 3): a JSON document needs more room than a note. */
     minLines?: number;
     /** A multiline field grows with its text so the whole value stays visible (a decision, a title); `document` always does. */
@@ -97,7 +102,13 @@ export const FieldTextInput = React.memo(React.forwardRef<React.ElementRef<typeo
             minLines: props.minLines,
             presentation,
         });
-        const hitArea = useHappierHitArea({ restingStyle: () => inputMetrics });
+        const stepSize = props.size === 'step' && !props.multiline;
+        const stepMetrics = stepSize ? {
+            ...Typography.variant('label'),
+            minHeight: STEP_FIELD_HEIGHT_PX - 2 * FIELD_BOX_METRICS.borderWidthPx,
+            ...(props.monospace ? Typography.mono() : null),
+        } : null;
+        const hitArea = useHappierHitArea({ restingStyle: () => [inputMetrics, stepMetrics] });
         const colors = resolveFieldBoxColors(theme, invalid ? 'invalid' : 'idle', presentation);
         // A document grows with its text instead of scrolling inside a fixed box.
         const grows = (presentation === 'document' || props.growWithText === true) && props.multiline === true;
@@ -166,8 +177,9 @@ export const FieldTextInput = React.memo(React.forwardRef<React.ElementRef<typeo
                         // The input's text box inside the field box is the shared owner's.
                         inputMetrics,
                         // The mono face is for what is typed (a path, a command); an empty field's placeholder is
-                        // prose ("Whole repository") and keeps the field's own face.
-                        props.monospace && props.value ? styles.inputMono : null,
+                        // prose ("Whole repository") on an ordinary configuration field.
+                        props.monospace && props.value && !stepSize ? styles.inputMono : null,
+                        stepMetrics,
                         grows && contentHeight !== null ? { height: Math.max(contentHeight, 0) } : null,
                         props.textAlign ? { textAlign: props.textAlign, fontVariant: ['tabular-nums'] } : null,
                         // A right-aligned value keeps a word space before its trailing unit.

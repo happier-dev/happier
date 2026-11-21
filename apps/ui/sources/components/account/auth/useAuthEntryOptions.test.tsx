@@ -279,7 +279,7 @@ describe('useAuthEntryOptions', () => {
         expect(calls('/v1/features')).toHaveLength(1);
         expect(calls('/v1/auth/entry')).toHaveLength(1);
         expect(calls('/v2/retention-policy')).toHaveLength(0);
-        expect(hook.getCurrent().serverAvailability).toBe('loading');
+        expect(hook.getCurrent()).toMatchObject({ serverAvailability: 'unavailable', showAuthActions: false });
         pending.resolve(Response.json(createRootLayoutFeaturesResponse({ capabilities: { auth: {
             methods: [{ id: 'github', actions: [{ id: 'provision', enabled: true, mode: 'keyed' }] }],
         }, oauth: { providers: { github: { enabled: true, configured: true } } } } })));

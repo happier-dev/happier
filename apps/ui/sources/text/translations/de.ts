@@ -15892,6 +15892,8 @@ settingsSession: {
         signInServiceUnsupportedTitle: 'Anmeldedienst nicht unterstützt',
         signInServiceMethodlessTitle: 'Hier sind keine Anmeldemethoden verfügbar',
         signInServiceMethodlessBody: 'Dieser Dienst ist erreichbar, bietet derzeit aber keine Anmeldemethode. Versuche es erneut oder wähle einen anderen Dienst.',
+        signInOptionsLoadingTitle: "Anmeldeoptionen werden gesucht",
+        signInOptionsLoadingSource: ({ name }: { name: string }) => `Von ${name}.`,
         signInOptionsPartialTitle: 'Einige Anmeldeoptionen konnten nicht geladen werden',
         signInServiceUnsupportedBody: 'Diese Adresse ist ein Home oder bietet keine Kontoanmeldung an. Wähle einen anderen Dienst.',
         chooseAnotherSignInService: "Anderen Dienst wählen",

@@ -72,11 +72,6 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
         ? { disclosure: model.retention, onRetry: interaction?.onRetryRetention }
         : null);
     const hasWays = model.quietWays.length > 0 || waysLeading != null;
-    // A greeting says "Loading" as one quiet line in the reserved place under the trust line, where the retention
-    // summary later stands; only a notice that asks for something takes the slot above the doors.
-    const loadingInRetentionSlot = Boolean(model.trust);
-    const quietLoading = loadingInRetentionSlot ? model.notices.filter((notice) => notice.kind === 'loading') : [];
-    const slotNotices = loadingInRetentionSlot ? model.notices.filter((notice) => notice.kind !== 'loading') : model.notices;
     const noticeAction = interaction?.onNoticeAction;
     // Place a notice above the doors when the heading can make room. In a short viewport it belongs
     // after the controls, extending the scrollable column without changing the doors' position.
@@ -119,8 +114,8 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
             </View> : null}
             <WelcomeActionList admission={interaction?.admission ?? inertAdmission}>
                 <View style={styles.actionStack}>
-                    {!anchoredNotices && slotNotices.length > 0 ? (
-                        <WelcomeNotices layer="welcome-notices" notices={slotNotices} onAction={noticeAction} />
+                    {!anchoredNotices && model.notices.length > 0 ? (
+                        <WelcomeNotices layer="welcome-notices" notices={model.notices} onAction={noticeAction} />
                     ) : null}
                     <View style={styles.ways}>
                         <View testID="welcome-doors" style={styles.doors}>
@@ -142,9 +137,7 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
                         <View style={styles.trust}>
                             <Text testID="welcome-trust" style={styles.trustText}>{model.trust}</Text>
                             <View style={styles.retention}>
-                                {quietLoading.length > 0 ? (
-                                    <WelcomeNotices layer="welcome-loading" notices={quietLoading} onAction={noticeAction} />
-                                ) : model.retention && !retentionInCorner ? (
+                                {model.retention && !retentionInCorner ? (
                                     <RelayRetentionDisclosure testID="welcome-retention"
                                         disclosure={{ ...model.retention, retry: interaction?.onRetryRetention }} />
                                 ) : null}
@@ -158,7 +151,7 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
                         </View>
                     ) : null}
                     {anchoredNotices ? (
-                        <WelcomeNotices layer="welcome-notices" notices={slotNotices} onAction={noticeAction}
+                        <WelcomeNotices layer="welcome-notices" notices={model.notices} onAction={noticeAction}
                             above={above} onHeight={setNoticeHeight} />
                     ) : null}
                     {model.closingNotice ? (
@@ -170,11 +163,10 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
     );
 });
 
-/** Holds the primary door's box, unseen, so the doors below it never move when the catalog settles. */
+/** A disabled primary door holds the same box as the admitted action while the catalog is loading. */
 function PendingPrimaryDoor() {
     return (
-        <View testID="welcome-primary-door-pending" style={stylesheet.pendingDoor} pointerEvents="none"
-            aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+        <View testID="welcome-primary-door-pending">
             <WelcomeActionCard actionId="welcome-primary-door-pending" testID="welcome-primary-door-pending-card"
                 title={t('welcome.welcomePrimaryButton')} subtitle={t('welcome.welcomePrimarySubtitle')} primary disabled
                 onPress={noAction} />
@@ -328,9 +320,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     noticeLines: {
         gap: theme.space.s12,
-    },
-    pendingDoor: {
-        opacity: 0,
     },
     ways: {
         width: '100%',

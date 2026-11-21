@@ -15915,6 +15915,8 @@ settingsSession: {
     signInServiceUnsupportedTitle: "Serviço de início de sessão não suportado",
     signInServiceMethodlessTitle: "Não existem métodos de início de sessão disponíveis aqui",
     signInServiceMethodlessBody: "Este serviço está acessível mas não oferece agora nenhum método de início de sessão. Tente novamente ou escolha outro serviço.",
+    signInOptionsLoadingTitle: "A procurar opções de início de sessão",
+    signInOptionsLoadingSource: ({ name }: { name: string }) => `De ${name}.`,
     signInOptionsPartialTitle: "Não foi possível carregar algumas opções de início de sessão",
     signInServiceUnsupportedBody: "Este endereço é um Home ou não oferece início de sessão da conta. Escolha outro serviço.",
     chooseAnotherSignInService: "Escolher outro serviço",

@@ -16019,6 +16019,8 @@ settingsSession: {
     signInServiceUnsupportedTitle: "Servizio di accesso non supportato",
     signInServiceMethodlessTitle: "Qui non sono disponibili metodi di accesso",
     signInServiceMethodlessBody: "Questo servizio è raggiungibile ma al momento non offre alcun metodo di accesso. Riprova o scegli un altro servizio.",
+    signInOptionsLoadingTitle: "Ricerca delle opzioni di accesso",
+    signInOptionsLoadingSource: ({ name }: { name: string }) => `Da ${name}.`,
     signInOptionsPartialTitle: "Alcune opzioni di accesso non sono state caricate",
     signInServiceUnsupportedBody: "Questo indirizzo è un Home o non offre l’accesso all’account. Scegli un altro servizio.",
     chooseAnotherSignInService: "Scegli un altro servizio",

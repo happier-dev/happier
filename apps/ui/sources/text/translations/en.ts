@@ -18985,6 +18985,8 @@ const enWelcome = {
   signInServiceMethodlessTitle: 'No sign-in methods are available here',
   signInServiceMethodlessBody:
     'This service is reachable but offers no sign-in method right now. Retry, or choose another sign-in service.',
+  signInOptionsLoadingTitle: "Finding sign-in options",
+  signInOptionsLoadingSource: ({ name }: { name: string }) => `From ${name}.`,
   signInOptionsPartialTitle: 'Some sign-in options couldn’t be loaded',
   signInServiceUnsupportedBody:
     'This address is a Home, or it does not offer account sign-in. Choose another sign-in service.',

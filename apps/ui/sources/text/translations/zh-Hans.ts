@@ -15307,6 +15307,8 @@ settingsSession: {
     signInServiceUnsupportedTitle: "不支持此登录服务",
     signInServiceMethodlessTitle: "此处没有可用的登录方式",
     signInServiceMethodlessBody: "该服务可以连接，但目前未提供任何登录方式。请重试或选择其他服务。",
+    signInOptionsLoadingTitle: "正在查找登录方式",
+    signInOptionsLoadingSource: ({ name }: { name: string }) => `来自${name}。`,
     signInOptionsPartialTitle: "部分登录方式无法加载",
     signInServiceUnsupportedBody: "此地址是 Home，或不提供账户登录。请选择其他服务。",
     chooseAnotherSignInService: "选择其他服务",

@@ -259,6 +259,9 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
                 <StepFieldGroup>
                     <FieldTextInput
                         testID={`${params.testIDPrefix}-relay-url-input`}
+                        size="step"
+                        monospace
+                        textAlign="center"
                         placeholder={t('homesJourneys.homeAddressPlaceholder')}
                         autoCapitalize="none"
                         keyboardType="url"

@@ -15634,6 +15634,8 @@ settingsSession: {
     signInServiceUnsupportedTitle: "Nieobsługiwana usługa logowania",
     signInServiceMethodlessTitle: "Brak dostępnych metod logowania",
     signInServiceMethodlessBody: "Ta usługa jest dostępna, ale nie oferuje teraz żadnej metody logowania. Spróbuj ponownie lub wybierz inną usługę.",
+    signInOptionsLoadingTitle: "Wyszukiwanie opcji logowania",
+    signInOptionsLoadingSource: ({ name }: { name: string }) => `Z ${name}.`,
     signInOptionsPartialTitle: "Nie udało się wczytać niektórych opcji logowania",
     signInServiceUnsupportedBody: "Ten adres jest Home albo nie oferuje logowania do konta. Wybierz inną usługę.",
     chooseAnotherSignInService: "Wybierz inną usługę",

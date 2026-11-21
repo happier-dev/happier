@@ -14839,6 +14839,8 @@ settingsSession: {
         signInServiceUnsupportedTitle: 'Servei d’inici de sessió no compatible',
         signInServiceMethodlessTitle: 'Aquí no hi ha cap mètode d’inici de sessió disponible',
         signInServiceMethodlessBody: 'Aquest servei és accessible però ara mateix no ofereix cap mètode d’inici de sessió. Torna-ho a provar o tria un altre servei.',
+        signInOptionsLoadingTitle: "S’estan cercant opcions d’inici de sessió",
+        signInOptionsLoadingSource: ({ name }: { name: string }) => `De ${name}.`,
         signInOptionsPartialTitle: 'No s’han pogut carregar algunes opcions d’inici de sessió',
         signInServiceUnsupportedBody: 'Aquesta adreça és un Home o no ofereix inici de sessió de compte. Tria un altre servei.',
         chooseAnotherSignInService: "Tria un altre servei",

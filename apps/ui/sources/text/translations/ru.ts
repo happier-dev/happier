@@ -15628,6 +15628,8 @@ settingsSession: {
     signInServiceUnsupportedTitle: "Служба входа не поддерживается",
     signInServiceMethodlessTitle: "Здесь нет доступных способов входа",
     signInServiceMethodlessBody: "Служба доступна, но сейчас не предлагает ни одного способа входа. Повторите попытку или выберите другую службу.",
+    signInOptionsLoadingTitle: "Поиск способов входа",
+    signInOptionsLoadingSource: ({ name }: { name: string }) => `От ${name}.`,
     signInOptionsPartialTitle: "Не удалось загрузить некоторые способы входа",
     signInServiceUnsupportedBody: "Этот адрес относится к Home или не поддерживает вход в аккаунт. Выберите другую службу.",
     chooseAnotherSignInService: "Выбрать другой сервис",

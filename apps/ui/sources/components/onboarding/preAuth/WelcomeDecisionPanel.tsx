@@ -6,7 +6,7 @@ import type { AccountServiceEntryOptions } from '@/components/account/auth/useAc
 import type { AuthEntryOptions } from '@/components/account/auth/useAuthEntryOptions';
 import { readAccountServiceDisplayName } from '@/components/account/auth/accountServiceDisplayName';
 import { createVerifiedAccountServiceAuthority } from '@/auth/accountDirectory/accountDirectoryAuthClient';
-import { useHasCompletedAuthOnce, useLastSignInMethod } from '@/sync/domains/state/onboardingUiState';
+import { onboardingAuthHistoryState, useLastSignInMethod } from '@/sync/domains/state/onboardingUiState';
 import { formatAccountServiceHost } from '@/sync/domains/accountDirectory/accountDirectoryEndpoint';
 import { canonicalizeServerUrl, createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { t } from '@/text';
@@ -68,14 +68,8 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
     // welcome-1115 r2: the wide panel reads its intro at the reading size with a s24 step to the doors; a phone
     // column is tighter (40 px headline, body-size intro, s10 and s16 steps).
     const compactViewport = useViewportClass() === 'compact';
-    // Returning users (those who have authenticated on this device before) get
-    // a warmer copy variant — a randomly-rotating warm greeting + an inverted
-    // button hierarchy (Login becomes primary because that's the most likely
-    // intent for a returning visit). The flag is flipped in
-    // AuthContext.loginWithCredentials and preserved on logout, so it remains
-    // true across re-installs of the session — exactly like the brand-hero
-    // seen flag.
-    const hasCompletedAuth = useHasCompletedAuthOnce();
+    // The success of this visit belongs to the next Welcome. Keep this greeting through the Home hand-off.
+    const [hasCompletedAuth] = React.useState(() => onboardingAuthHistoryState.read('completed') === true);
     const lastSignInMethodId = useLastSignInMethod();
     // A terminal link hands off to sign-in here: the heading says what signing in is for, for as
     // long as that link can still be approved. The pairing's own expiry decides, not a second clock.

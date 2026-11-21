@@ -405,6 +405,14 @@ export function useAuthEntryOptions(): AuthEntryOptions {
                                 ...(activeHomeCarrier ? { homeCarrier: activeHomeCarrier } : {}),
                                 serverId: activeServerSnapshot.serverId,
                             }),
+                        }).then((entry) => {
+                            // A failed entry read can already ask for Retry while the feature catalog is still in flight.
+                            // Let that catalog finish so a usable released fallback can still take over.
+                            if (entry.kind === 'unavailable' && !retainedObservation && !verifiedFeatures
+                                && !controller.signal.aborted) {
+                                commitTerminalUnavailable('unavailable');
+                            }
+                            return entry;
                         }),
                 ]);
                 if (!mounted || controller.signal.aborted) return;
@@ -447,8 +455,7 @@ export function useAuthEntryOptions(): AuthEntryOptions {
                 // auth-entry route) never hides a Home the released feature
                 // contract already described: degrade to that catalog exactly
                 // like an older Home without auth entry and let Welcome show a
-                // notice with one retry. The `unavailable` availability is
-                // reserved for a failed feature probe.
+                // notice with one retry.
                 const authEntryUnavailable = authEntry.kind === 'unavailable';
                 if (authEntryUnavailable) {
                     // Retry the failed read on this exact transport, retaining the accepted feature observation.

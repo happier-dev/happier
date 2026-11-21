@@ -183,7 +183,11 @@ export function projectWelcomeEntryViewModel(
             title: t('welcome.useDifferentHome'), reason: t('common.unavailable') });
     }
     if (status === 'loading') {
-        notices.push({ slot: 'home', testID: 'welcome-auth-loading', kind: 'loading', title: t('common.loading') });
+        notices.push({
+            slot: 'home', testID: 'welcome-auth-loading', kind: 'loading',
+            title: t('welcome.signInOptionsLoadingTitle'),
+            reason: t('welcome.signInOptionsLoadingSource', { name: home }),
+        });
     } else if (status === 'unavailable' || status === 'incompatible') {
         const incompatible = status === 'incompatible';
         notices.push({
@@ -199,7 +203,8 @@ export function projectWelcomeEntryViewModel(
         if (status !== 'loading') notices.push({
             slot: 'service',
             testID: 'welcome-account-service-loading', kind: 'loading',
-            title: `${t('common.loading')}${notice.serviceName ? ` · ${notice.serviceName}` : ''}`,
+            title: t('welcome.signInOptionsLoadingTitle'),
+            reason: notice.serviceName ? t('welcome.signInOptionsLoadingSource', { name: notice.serviceName }) : undefined,
         });
     } else if (notice) {
         const unavailable = notice.kind === 'service_unavailable';

@@ -16083,6 +16083,8 @@ settingsSession: {
     signInServiceUnsupportedTitle: "サインインサービスはサポートされていません",
     signInServiceMethodlessTitle: "ここではサインイン方法を利用できません",
     signInServiceMethodlessBody: "このサービスには接続できますが、現在サインイン方法がありません。再試行するか、別のサービスを選択してください。",
+    signInOptionsLoadingTitle: "サインインの方法を検索中",
+    signInOptionsLoadingSource: ({ name }: { name: string }) => `${name} から。`,
     signInOptionsPartialTitle: "一部のサインイン方法を読み込めませんでした",
     signInServiceUnsupportedBody: "このアドレスは Home であるか、アカウントサインインを提供していません。別のサービスを選択してください。",
     chooseAnotherSignInService: "別のサービスを選ぶ",

@@ -15679,6 +15679,8 @@ settingsSession: {
     signInServiceUnsupportedTitle: "Service de connexion non pris en charge",
     signInServiceMethodlessTitle: "Aucune méthode de connexion n’est disponible ici",
     signInServiceMethodlessBody: "Ce service est joignable mais ne propose actuellement aucune méthode de connexion. Réessaie ou choisis un autre service.",
+    signInOptionsLoadingTitle: "Recherche des options de connexion",
+    signInOptionsLoadingSource: ({ name }: { name: string }) => `Depuis ${name}.`,
     signInOptionsPartialTitle: "Certaines options de connexion n’ont pas pu être chargées",
     signInServiceUnsupportedBody: "Cette adresse correspond à un Home ou ne propose pas de connexion au compte. Choisis un autre service.",
     chooseAnotherSignInService: "Choisir un autre service",

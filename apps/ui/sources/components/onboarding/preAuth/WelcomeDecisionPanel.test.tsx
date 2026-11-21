@@ -989,7 +989,11 @@ describe('WelcomeDecisionPanel', () => {
         const screen = await screenPromise;
 
         expect(screen.findByTestId('welcome-auth-loading')).toBeTruthy();
-        expect(screen.findByTestId('welcome-primary-door-pending')).toBeTruthy();
+        const pendingDoor = screen.findHostByTestId('welcome-primary-door-pending-card');
+        expect(pendingDoor).toBeTruthy();
+        expect(pendingDoor?.props.accessibilityState?.disabled).toBe(true);
+        expect(screen.findHostByTestId('welcome-notice-slot')?.findAll(node =>
+            node.props.testID === 'welcome-auth-loading')).not.toHaveLength(0);
         expect(screen.findByTestId('welcome-account-service-choose')).toBeNull();
         expect(screen.findByTestId('welcome-use-different-home')).toBeNull();
         expect(screen.findByTestId('welcome-primary-start')).toBeNull();
@@ -1083,6 +1087,17 @@ describe('WelcomeDecisionPanel', () => {
                 expect(callbacks.onOpenRestore).toHaveBeenCalledTimes(1);
                 await screen.unmount();
             }));
+        });
+
+        it('keeps the first-visit greeting when that visit finishes authentication', async () => {
+            await withHistory({ returning: false }, async () => {
+                const { screenPromise } = renderPanel({ authenticationActions: keyAndEmail });
+                const screen = await screenPromise;
+                await act(async () => onboardingAuthHistoryState.set('completed', true));
+                expect(screen.getTextContent()).toContain(t('welcome.brandSubTagline'));
+                expect(titles(screen)[0]).toBe(t('welcome.welcomePrimaryButton'));
+                await screen.unmount();
+            });
         });
 
         it('the Login door promises only what Login offers on this device', async () => {

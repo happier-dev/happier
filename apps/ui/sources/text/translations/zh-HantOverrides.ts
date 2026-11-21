@@ -12910,6 +12910,8 @@ settingsSession: {
         signInServiceUnsupportedTitle: '不支援此登入服務',
         signInServiceMethodlessTitle: '此處沒有可用的登入方式',
         signInServiceMethodlessBody: '此服務可以連線，但目前未提供任何登入方式。請重試或選擇其他服務。',
+        signInOptionsLoadingTitle: "正在尋找登入方式",
+        signInOptionsLoadingSource: ({ name }: { name: string }) => `來自${name}。`,
         signInOptionsPartialTitle: '部分登入方式無法載入',
         signInServiceUnsupportedBody: '此位址是 Home，或不提供帳戶登入。請選擇其他服務。',
         chooseAnotherSignInService: "選擇其他服務",

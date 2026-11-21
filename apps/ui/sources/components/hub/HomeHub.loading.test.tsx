@@ -12,6 +12,10 @@ import { createPlainSessionWithDisplayRecordFixture } from '@/dev/testkit/fixtur
 import { DEFAULT_HOME_ATMOSPHERE } from '@happier-dev/protocol/account/settings/accountSettings';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { InboxSummaryProvider } from '@/hooks/inbox/useInboxSummary';
+import { StepMotionStage } from '@/components/ui/motion/stepMotion/StepMotionStage';
+import { StepMotionLayer } from '@/components/ui/motion/stepMotion/StepMotionLayer';
+import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
+import { isShowcaseHomeLandingPending } from '@/onboarding/showcase/storage';
 
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -76,13 +80,14 @@ async function frames(ms: number, observe: () => void) {
 describe('Home Loading at the RN-web layout boundary', () => {
     it.each([
         { delay: 100, layoutAt: 0, placement: 'corner' as const, coldProfile: false, emptySessions: false },
+        { delay: 100, layoutAt: 0, placement: 'corner' as const, coldProfile: false, emptySessions: false, arrival: true },
         { delay: 600, layoutAt: 0, placement: 'corner' as const, coldProfile: false, emptySessions: false },
         { delay: 600, layoutAt: 400, placement: 'corner' as const, coldProfile: false, emptySessions: false },
         { delay: 600, layoutAt: 400, placement: 'side' as const, coldProfile: false, emptySessions: false },
         { delay: 600, layoutAt: 400, placement: 'side' as const, coldProfile: true, emptySessions: false },
         { delay: 600, layoutAt: 0, placement: 'corner' as const, coldProfile: false, emptySessions: true },
     ])(
-        'waits $delay ms for the $placement Home layout, receiving positive pane geometry at $layoutAt ms (cold Profile $coldProfile, empty Sessions $emptySessions)', async ({ delay, layoutAt, placement, coldProfile, emptySessions }) => {
+        'waits $delay ms for the $placement Home layout, receiving positive pane geometry at $layoutAt ms (cold Profile $coldProfile, empty Sessions $emptySessions, first arrival $arrival)', async ({ delay, layoutAt, placement, coldProfile, emptySessions, arrival }) => {
         const machine = createPlainMachineRowFixture({ id: 'loading-dom-machine', accountId: 'loading-dom-account' });
         // This layout test seeds a current list display, not metadata/display backfill.
         const session = createPlainSessionWithDisplayRecordFixture({ id: 'loading-dom-session' });
@@ -94,7 +99,7 @@ describe('Home Loading at the RN-web layout boundary', () => {
         releaseRead = () => { read.resolve(); profileRead.resolve(); };
         let layoutReads = 0;
         connection = await restoreServerAccountForTest({
-            serverUrl: `https://home-loading-dom-${placement}-${delay}-${coldProfile}-${emptySessions}.test`, accountId: 'loading-dom-account',
+            serverUrl: `https://home-loading-dom-${placement}-${delay}-${coldProfile}-${emptySessions}-${Boolean(arrival)}.test`, accountId: 'loading-dom-account',
             request: async (url, init) => {
                 const path = new URL(String(url)).pathname;
                 if (path === '/v1/account/profile') await profileRead.promise;
@@ -156,6 +161,7 @@ describe('Home Loading at the RN-web layout boundary', () => {
             if (kind !== '2d') return null;
             const image = (w: number, h: number) => ({ data: new Uint8ClampedArray(w * h * 4) });
             return {
+                canvas: this,
                 setTransform() {}, clearRect() {}, beginPath() {}, arc() {}, fill() {}, fillText() {}, fillRect() {},
                 save() {}, restore() {}, clip() {}, putImageData() {}, createPattern() { return null; },
                 getImageData: (_x: number, _y: number, w: number, h: number) => image(w, h), createImageData: image,
@@ -168,8 +174,18 @@ describe('Home Loading at the RN-web layout boundary', () => {
         root = createRoot(container);
         const find = (id: string) => container!.querySelector(`[data-testid="${id}"]`);
         const guidanceKinds: string[] = [];
+        const outgoingAnimations: Array<{ onfinish: null | (() => void) }> = [];
+        const originalAnimate = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'animate');
+        if (arrival) {
+            vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+            Object.defineProperty(HTMLElement.prototype, 'animate', { configurable: true, value: function (this: HTMLElement) {
+                const effect = { onfinish: null, cancel() {} };
+                outgoingAnimations.push(effect);
+                return effect;
+            } });
+        }
         const observeGuidance = (kind: string) => { guidanceKinds.push(kind); };
-        await act(async () => root!.render(
+        const home = (
             <InjectedAuthProvider credentials={connection!.credentials}>
                 <PersonalHomeBootstrapGate isDesktopHost={false} isDesktopMainWindow={false}>
                     <BootReadiness />
@@ -177,8 +193,37 @@ describe('Home Loading at the RN-web layout boundary', () => {
                     {/* The routed Home sits under the navigator's one Inbox summary (its status line reads it). */}
                     <PersonalHomeBootstrapContent><InboxSummaryProvider><HomeHub /></InboxSummaryProvider></PersonalHomeBootstrapContent>
                 </PersonalHomeBootstrapGate>
-            </InjectedAuthProvider>,
-        ));
+            </InjectedAuthProvider>
+        );
+        if (arrival) {
+            function Journey() {
+                const [signedIn, setSignedIn] = React.useState(false);
+                return <StepMotionStage>{signedIn ? home : (
+                    <StepMotionLayer layerKey="workflow">
+                        <button onClick={() => resolvePostAuthLanding({ replace: () => setSignedIn(true) })}>Approved</button>
+                    </StepMotionLayer>
+                )}</StepMotionStage>;
+            }
+            try {
+                await act(async () => root!.render(<Journey />));
+                await act(async () => container!.querySelector('button')!.click());
+                expect(find('home-hub.loading')).toBeTruthy();
+                expect(container!.textContent).not.toContain('Approved');
+                expect(outgoingAnimations).not.toHaveLength(0);
+                expect(isShowcaseHomeLandingPending()).toBe(true);
+                await act(async () => {
+                    for (const effect of outgoingAnimations) effect.onfinish?.();
+                });
+                expect(isShowcaseHomeLandingPending()).toBe(false);
+                expect(find('home-hub.loading')).toBeTruthy();
+            } finally {
+                await act(async () => root!.render(null));
+                if (originalAnimate) Object.defineProperty(HTMLElement.prototype, 'animate', originalAnimate);
+                else Reflect.deleteProperty(HTMLElement.prototype, 'animate');
+            }
+            return;
+        }
+        await act(async () => root!.render(home));
         if (coldProfile) {
             await act(async () => { profileRead.resolve(); });
             await vi.waitFor(sessionsReady);

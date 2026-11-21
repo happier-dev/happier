@@ -551,7 +551,8 @@ const HomeHubContent = React.memo(function HomeHubContent() {
     // Parked Home's glass sleeps through the backing of the tabs shown in its place.
     const framed = (content: React.ReactNode) => (
         <GlassEnvironmentHold presented={presented} carriesAtmosphere={heroActive && heroFrame.hero !== null}>
-            <StepMotionLayer layerKey="home" active={focused && !homeLoading && !homeCovered} retainContent warmOnMount={false} style={styles.pane}>
+            {/* The presented pane owns arrival even while its rows are still hydrating. */}
+            <StepMotionLayer layerKey="home" active={focused && !homeCovered} retainContent warmOnMount={false} style={styles.pane}>
                 <HomeHubFrame focused={focused} style={styles.pane} onLayout={onHubLayout} loadingLayer={loadingMoment.layer}>
                     {content}
                 </HomeHubFrame>
