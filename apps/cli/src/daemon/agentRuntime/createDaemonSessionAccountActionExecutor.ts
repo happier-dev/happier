@@ -268,6 +268,9 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
       ...(reviewCommentPrincipal ? { reviewCommentPrincipal } : {}),
       ...(params.machineId ? { defaultSessionMachineId: params.machineId } : {}),
       defaultSessionId: authority.sessionId, actionRequestId: operation.requestId,
+      // The same corpus the runner's Agent tool bridge declares for a credentialed
+      // Agent: its own led subtree. Its approval origin records it for replay.
+      ...(operationSurface === 'agent' ? { sessionListAccess: 'led_subtree' as const } : {}),
       ...admitted.approvalProfile,
       callerPermissionMode: witness.callerPermissionMode ?? null,
       causalPermissionAuthority: witness.causalPermissionAuthority ?? null,
