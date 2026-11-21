@@ -7,10 +7,7 @@ import {
   type AgentTerminalSessionStateUpdate,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
-import {
-  isNativeOpenCodeSessionId,
-  readOpenCodeProviderSessionIdFromMetadata,
-} from '../../../identity/session.js';
+import { isNativeOpenCodeSessionId } from '../../../identity/session.js';
 import {
   buildOpenCodeSessionEnvironmentVariables,
   readOpenCodeSessionAffinityFromMetadata,
@@ -152,14 +149,7 @@ export const openCodeHandoffSurface = {
       extractOpenCodeSessionHandoffAgentBundleRecords(bundle),
     exportBundle: async (params, context) => {
       const exec = context.services.exec;
-      const providerSessionId = readOpenCodeProviderSessionIdFromMetadata(params.metadata);
-      if (!providerSessionId) {
-        return {
-          ok: false,
-          code: 'bundle_invalid',
-          message: 'OpenCode handoff export requires a provider session id',
-        };
-      }
+      const providerSessionId = params.sessionId;
       if (!isNativeOpenCodeSessionId(providerSessionId)) {
         return {
           ok: false,

@@ -353,7 +353,7 @@ describe('openCodeHandoffSurface', () => {
     for (const optionShapedId of ['--sanitize', '--version', '-s']) {
       const exported = await openCodeHandoffSurface.exportBundle({
         sessionId: optionShapedId,
-        metadata: { opencodeSessionId: optionShapedId },
+        metadata: { path: '/repo' },
         directory: '/repo',
       }, context);
       expect(exported).toMatchObject({ ok: false, code: 'bundle_invalid' });
@@ -373,7 +373,7 @@ describe('openCodeHandoffSurface', () => {
     expect(execRun).not.toHaveBeenCalled();
   });
 
-  it('exports a native OpenCode session id as the exact positional operand', async () => {
+  it('exports the admitted native OpenCode id when projected metadata omits the legacy id', async () => {
     const vendorExport = buildVendorExport();
     const execRun = vi.fn(async () => processResult({
       exitCode: 0,
@@ -383,7 +383,7 @@ describe('openCodeHandoffSurface', () => {
 
     const result = await openCodeHandoffSurface.exportBundle({
       sessionId: 'ses_0199b7a4c3f0AbCdEfGhIjKlMn',
-      metadata: { opencodeSessionId: 'ses_0199b7a4c3f0AbCdEfGhIjKlMn' },
+      metadata: { path: '/repo' },
       directory: '/repo',
     }, context);
 
