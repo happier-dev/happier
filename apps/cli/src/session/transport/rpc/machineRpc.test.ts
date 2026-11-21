@@ -947,6 +947,47 @@ describe('callMachineRpc', () => {
       publicKey: source.publicKey })).toBe(true);
   });
 
+  it('signs an Agent Session spawn on another Machine with the Session source key and the destination installation tuple', async () => {
+    // REPLAY-135-CELL 1d: the source signed with its own installation tuple and Home refused machine_signature.
+    const source = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(29));
+    const receiver = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(30));
+    const target = { kind: 'machine' as const, machineId: 'machine-target' };
+    const actionId = 'session.spawn_new';
+    const origin = { v: 1 as const, requestId: 'spawn-root', sourceTurnId: 'turn',
+      caller: { kind: 'session' as const, sessionId: 'guest-session', starterDepth: 1, turnDepth: 2 },
+      callerPermissionMode: 'default' as const };
+    const authorization = { v: 1 as const, token: 'spawn-home-proof', binding: {
+      accountId: 'guest', authentication: { kind: 'account' as const, tokenEpoch: 0 }, serverIdentityId: 'srv_home',
+      machineId: target.machineId, custodianAccountId: 'owner', installationId: 'target-installation',
+      actionId, requestId: origin.requestId, requestEnvelopeDigest: 'a'.repeat(43), target,
+      sessionActionOrigin: origin, sessionActionSource: { machineId: 'machine-source', installationId: 'source-installation' },
+    } };
+    axiosGet.mockResolvedValue({ data: { machine: { storageMode: 'plain', id: target.machineId,
+      installationId: 'target-installation', dataEncryptionKey: encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: null }))),
+    } } });
+    socket.emit.mockImplementation((_event, payload, ack) => {
+      expect(payload.externalActionExecution).toMatchObject({ installationId: 'target-installation', authorization });
+      const signature = { authorizationToken: authorization.token, effectActionId: actionId, target,
+        installationId: 'target-installation', event: SOCKET_RPC_EVENTS.CALL, method: payload.method,
+        requestId: payload.requestId, params: payload.params, signature: payload.externalActionExecution.machineSignature };
+      expect(verifyExternalActionMachineRpcRequestV1({ ...signature, publicKey: source.publicKey })).toBe(true);
+      expect(verifyExternalActionMachineRpcRequestV1({ ...signature, publicKey: receiver.publicKey })).toBe(false);
+      ack({ ok: true, result: { type: 'success' } });
+    });
+    await expect(callExactMachineRpc({ credentials: { token: 'guest-token', encryption: null }, machineId: target.machineId,
+      method: 'session.spawnNew', request: { kind: 'targeted_action_rpc', v: 1, target, input: { directory: '/work' } },
+      requestId: origin.requestId,
+      externalAction: { context: { surface: 'agent', defaultSessionMachineId: 'machine-source',
+        externalActionExecutionAuthorization: authorization, externalActionTarget: target }, effectActionId: actionId,
+        installationId: 'source-installation', privateKey: source.secretKey },
+    })).resolves.toEqual({ type: 'success' });
+    const headers = axiosGet.mock.calls.at(-1)?.[1]?.headers;
+    expect(verifyExternalActionMachineRequestV1({ authorizationToken: authorization.token, effectActionId: actionId,
+      target, installationId: 'target-installation', requestId: origin.requestId, method: 'GET',
+      path: '/v1/machines/machine-target', signature: headers?.[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER],
+      publicKey: source.publicKey })).toBe(true);
+  });
+
   it('carries after-idle guest read and reversible drain through the original signed controller authority', async () => {
     const controllerKeys = tweetnacl.sign.keyPair();
     const controller = { machineId: 'controller', installationId: 'controller-installation' };

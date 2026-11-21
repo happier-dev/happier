@@ -1584,9 +1584,12 @@ export function createExternalActionMachineRpcExecution(input: Readonly<{
  * Original Session, exact handoff custody or the reviewed Move SOURCE may forward its Home-admitted request.
  * This uses the source key, while the signed bytes still name the actual
  * destination installation. It is never a destination-signature fallback.
+ * `signer` names the calling installation: the original Session host is the
+ * source of its own forwarded root even when the root also has a child forwarder.
  */
 export function readExternalActionSourceMachineRpcSigner(
   authorization: ExternalActionExecutionAuthorizationV1,
+  signer?: Readonly<{ machineId: string; installationId: string }>,
 ): Readonly<{ machineId: string; installationId: string }> | null {
   const parsed = ExternalActionExecutionAuthorizationV1Schema.safeParse(authorization);
   if (!parsed.success) return null;
@@ -1597,6 +1600,9 @@ export function readExternalActionSourceMachineRpcSigner(
       || binding.machineId === admission.targetMachineId && binding.installationId === admission.targetInstallationId)) return null;
     return { machineId: admission.sourceMachineId, installationId: admission.sourceInstallationId };
   }
+  const sessionSource = 'authentication' in binding && binding.sessionActionOrigin ? binding.sessionActionSource : undefined;
+  if (sessionSource && signer?.machineId === sessionSource.machineId
+    && signer.installationId === sessionSource.installationId) return sessionSource;
   if ((binding.actionId === 'session.spawn_new' || binding.actionId === 'projects.service.relocate' || binding.actionId === 'discussion.second_opinion.start'
     || binding.actionId === PROJECT_SETUP_SET_ACTION_ID_V1
     || isSessionStopChildRootV1(binding.actionId) || (binding.deploymentChildRoot === true)
@@ -1625,7 +1631,11 @@ export function createExternalActionSourceMachineRpcExecution(input: Readonly<{
   const parsed = ExternalActionExecutionAuthorizationV1Schema.safeParse(input.authorization);
   if (!parsed.success) return null;
   const binding = parsed.data.binding;
-  const source = readExternalActionSourceMachineRpcSigner(parsed.data);
+  const source = readExternalActionSourceMachineRpcSigner(parsed.data,
+    { machineId: input.sourceMachineId, installationId: input.sourceInstallationId });
+  // The original Session host delivers its own admitted spawn to the selected Machine.
+  const sessionSourceRoot = binding.sessionActionSource?.machineId === input.sourceMachineId
+    && binding.machineId !== input.sourceMachineId && input.effectActionId === binding.actionId;
   const stopChild = isSessionStopChildV1({ rootActionId: binding.actionId,
     effectActionId: input.effectActionId, method: input.method.slice(input.method.indexOf(':') + 1),
     target: input.target, params: input.params });
@@ -1651,7 +1661,7 @@ export function createExternalActionSourceMachineRpcExecution(input: Readonly<{
       { machineId: input.sourceMachineId, installationId: input.sourceInstallationId }, readinessProof) === readinessChild;
   if (!source || source.machineId !== input.sourceMachineId
     || source.installationId !== input.sourceInstallationId
-    || binding.actionId === 'session.spawn_new' && !nativeCredentialChild && !signedReadinessChild && !handoffResume
+    || binding.actionId === 'session.spawn_new' && !nativeCredentialChild && !signedReadinessChild && !handoffResume && !sessionSourceRoot
     || isSessionStopChildRootV1(binding.actionId) && !stopChild
     || setupPlanRoot && !setupPlanChild && (input.effectActionId !== binding.actionId
       || input.method !== `${binding.machineId}:${binding.actionId}`)

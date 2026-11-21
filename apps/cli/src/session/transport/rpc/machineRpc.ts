@@ -208,9 +208,15 @@ export class MachineRpcMachineKindMismatchError extends RpcError {
   }
 }
 
+/** The calling Session host's installation, when this context names it. */
+function readSessionHostSigner(externalAction: NonNullable<Parameters<typeof callExactMachineRpc>[0]['externalAction']>) {
+  const machineId = externalAction.context.defaultSessionMachineId;
+  return machineId === undefined ? undefined : { machineId, installationId: externalAction.installationId };
+}
+
 function isOriginalRequesterSource(externalAction: NonNullable<Parameters<typeof callExactMachineRpc>[0]['externalAction']>): boolean {
   const authorization = externalAction.context.externalActionExecutionAuthorization;
-  const source = authorization ? readExternalActionSourceMachineRpcSigner(authorization) : null;
+  const source = authorization ? readExternalActionSourceMachineRpcSigner(authorization, readSessionHostSigner(externalAction)) : null;
   return Boolean(source
     && (externalAction.context.defaultSessionMachineId === undefined
       || externalAction.context.defaultSessionMachineId === source.machineId)
@@ -519,7 +525,8 @@ export async function callExactMachineRpc(params: Readonly<{
       ? (request) => {
         const authorization = transportAuthorization;
         const target = stopChildTarget ?? externalAction.context.externalActionTarget;
-        const sourceMachineId = authorization ? readExternalActionSourceMachineRpcSigner(authorization)?.machineId : undefined;
+        const sourceMachineId = authorization
+          ? readExternalActionSourceMachineRpcSigner(authorization, readSessionHostSigner(externalAction))?.machineId : undefined;
         const execution = !deploymentArchive && !referenceServiceList && isOriginalRequesterSource(externalAction) && authorization && target && sourceMachineId
           ? createExternalActionSourceMachineRpcExecution({ authorization, target, sourceMachineId, context: externalAction.context,
             sourceInstallationId: externalAction.installationId, effectActionId: externalAction.effectActionId,
