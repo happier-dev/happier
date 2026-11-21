@@ -9268,7 +9268,7 @@ const machineDetailPageTranslations = { de: translated({
                     requiredFactUnavailable: `Eine für die Prüfung nötige Angabe fehlt.`,
                     needsAdminToCheck: `Die Prüfung braucht Administratorzugriff.`,
                     packageManagerBusy: `Der Paketmanager ist beschäftigt. Versuch es gleich noch einmal.`,
-                    foreignEffectConflict: `Im Paketmanager läuft gerade eine andere Änderung.`,
+                    foreignEffectConflict: `Eine bestehende Änderung auf dieser Maschine steht im Konflikt mit dieser Einrichtung.`,
                     planChanged: `Seit der Prüfung hat sich geändert, was wartet. Bereite es erneut vor.`,
                     adminAccessUnavailable: `Administratorzugriff ist nicht verfügbar.`,
                     checkFailed: `Die Prüfung des Paketmanagers wurde nicht abgeschlossen.`,

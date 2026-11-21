@@ -9152,7 +9152,7 @@ const machineDetailPageTranslations = { es: translated({
                     requiredFactUnavailable: `Falta un dato que la comprobación necesita.`,
                     needsAdminToCheck: `La comprobación necesita acceso de administrador.`,
                     packageManagerBusy: `El gestor de paquetes está ocupado. Vuelve a intentarlo en un momento.`,
-                    foreignEffectConflict: `Hay otro cambio en curso en el gestor de paquetes.`,
+                    foreignEffectConflict: `Un cambio existente en esta máquina entra en conflicto con esta configuración.`,
                     planChanged: `Lo pendiente cambió desde la revisión. Vuelve a prepararlo.`,
                     adminAccessUnavailable: `El acceso de administrador no está disponible.`,
                     checkFailed: `La comprobación del gestor de paquetes no terminó.`,

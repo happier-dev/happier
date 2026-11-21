@@ -9288,7 +9288,7 @@ const machineDetailPageTranslations = { ru: translated({
                     requiredFactUnavailable: `Нет данных, нужных для проверки.`,
                     needsAdminToCheck: `Для проверки нужен доступ администратора.`,
                     packageManagerBusy: `Менеджер пакетов занят. Попробуйте чуть позже.`,
-                    foreignEffectConflict: `В менеджере пакетов выполняется другое изменение.`,
+                    foreignEffectConflict: `Существующее изменение на этой машине конфликтует с этой настройкой.`,
                     planChanged: `С момента проверки ожидающие обновления изменились. Подготовьте заново.`,
                     adminAccessUnavailable: `Доступ администратора недоступен.`,
                     checkFailed: `Проверка менеджера пакетов не завершилась.`,

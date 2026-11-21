@@ -9151,7 +9151,7 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
                     requiredFactUnavailable: `缺少检查所需的信息。`,
                     needsAdminToCheck: `检查需要管理员权限。`,
                     packageManagerBusy: `软件包管理器正忙，请稍后再试。`,
-                    foreignEffectConflict: `软件包管理器上正在进行另一项更改。`,
+                    foreignEffectConflict: `此机器上的现有更改与此设置冲突。`,
                     planChanged: `自审查以来待安装内容已变化，请重新准备。`,
                     adminAccessUnavailable: `管理员权限不可用。`,
                     checkFailed: `软件包管理器检查未完成。`,

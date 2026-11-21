@@ -389,7 +389,7 @@ export const english = {
                 requiredFactUnavailable: `A fact the check needs isn’t available.`,
                 needsAdminToCheck: `Checking needs administrator access.`,
                 packageManagerBusy: `The package manager is busy. Try again in a moment.`,
-                foreignEffectConflict: `Another change is running on the package manager.`,
+                foreignEffectConflict: `An existing change on this machine conflicts with this setup.`,
                 planChanged: `What’s waiting changed since the review. Prepare it again.`,
                 adminAccessUnavailable: `Administrator access isn’t available.`,
                 checkFailed: `The package manager check didn’t finish.`,

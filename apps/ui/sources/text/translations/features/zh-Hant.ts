@@ -9151,7 +9151,7 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
                     requiredFactUnavailable: `缺少檢查所需的資訊。`,
                     needsAdminToCheck: `檢查需要管理員權限。`,
                     packageManagerBusy: `套件管理員正忙，請稍後再試。`,
-                    foreignEffectConflict: `套件管理員上正在進行另一項變更。`,
+                    foreignEffectConflict: `這部機器上的現有變更與此設定衝突。`,
                     planChanged: `自審查以來待安裝內容已變更，請重新準備。`,
                     adminAccessUnavailable: `管理員權限無法使用。`,
                     checkFailed: `套件管理員檢查未完成。`,

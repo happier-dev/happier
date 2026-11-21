@@ -9273,7 +9273,7 @@ const machineDetailPageTranslations = { fr: translated({
                     requiredFactUnavailable: `Une information nécessaire à la vérification manque.`,
                     needsAdminToCheck: `La vérification nécessite un accès administrateur.`,
                     packageManagerBusy: `Le gestionnaire de paquets est occupé. Réessayez dans un instant.`,
-                    foreignEffectConflict: `Une autre modification est en cours dans le gestionnaire de paquets.`,
+                    foreignEffectConflict: `Une modification existante sur cette machine est incompatible avec cette configuration.`,
                     planChanged: `Ce qui attend a changé depuis la vérification. Préparez-le à nouveau.`,
                     adminAccessUnavailable: `L’accès administrateur n’est pas disponible.`,
                     checkFailed: `La vérification du gestionnaire de paquets n’a pas abouti.`,

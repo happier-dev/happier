@@ -9251,7 +9251,7 @@ const machineDetailPageTranslations = { pt: translated({
                     requiredFactUnavailable: `Falta um dado de que a verificação precisa.`,
                     needsAdminToCheck: `A verificação precisa de acesso de administrador.`,
                     packageManagerBusy: `O gestor de pacotes está ocupado. Tente novamente daqui a pouco.`,
-                    foreignEffectConflict: `Outra alteração está em curso no gestor de pacotes.`,
+                    foreignEffectConflict: `Uma alteração existente nesta máquina entra em conflito com esta configuração.`,
                     planChanged: `O que está pendente mudou desde a revisão. Prepare novamente.`,
                     adminAccessUnavailable: `O acesso de administrador não está disponível.`,
                     checkFailed: `A verificação do gestor de pacotes não terminou.`,

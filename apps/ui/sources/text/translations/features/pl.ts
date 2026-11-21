@@ -9287,7 +9287,7 @@ const machineDetailPageTranslations = { pl: translated({
                     requiredFactUnavailable: `Brakuje informacji potrzebnej do sprawdzenia.`,
                     needsAdminToCheck: `Sprawdzenie wymaga dostępu administratora.`,
                     packageManagerBusy: `Menedżer pakietów jest zajęty. Spróbuj za chwilę.`,
-                    foreignEffectConflict: `W menedżerze pakietów trwa inna zmiana.`,
+                    foreignEffectConflict: `Istniejąca zmiana na tej maszynie koliduje z tą konfiguracją.`,
                     planChanged: `Od przeglądu zmieniło się to, co czeka. Przygotuj to ponownie.`,
                     adminAccessUnavailable: `Dostęp administratora jest niedostępny.`,
                     checkFailed: `Sprawdzanie menedżera pakietów nie zostało ukończone.`,

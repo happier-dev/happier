@@ -9257,7 +9257,7 @@ const machineDetailPageTranslations = { ca: translated({
                     requiredFactUnavailable: `No hi ha una dada que la comprovació necessita.`,
                     needsAdminToCheck: `La comprovació necessita accés d’administrador.`,
                     packageManagerBusy: `El gestor de paquets està ocupat. Torna-ho a provar d’aquí a una estona.`,
-                    foreignEffectConflict: `Hi ha un altre canvi en curs al gestor de paquets.`,
+                    foreignEffectConflict: `Un canvi existent en aquesta màquina entra en conflicte amb aquesta configuració.`,
                     planChanged: `El que hi ha pendent ha canviat des de la revisió. Torna-ho a preparar.`,
                     adminAccessUnavailable: `L’accés d’administrador no està disponible.`,
                     checkFailed: `La comprovació del gestor de paquets no s’ha acabat.`,

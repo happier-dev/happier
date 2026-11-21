@@ -9264,7 +9264,7 @@ const machineDetailPageTranslations = { it: translated({
                     requiredFactUnavailable: `Manca un dato necessario al controllo.`,
                     needsAdminToCheck: `Il controllo richiede l’accesso da amministratore.`,
                     packageManagerBusy: `Il gestore di pacchetti è occupato. Riprova tra poco.`,
-                    foreignEffectConflict: `Un’altra modifica è in corso nel gestore di pacchetti.`,
+                    foreignEffectConflict: `Una modifica già presente su questa macchina è in conflitto con questa configurazione.`,
                     planChanged: `Ciò che è in attesa è cambiato dalla revisione. Preparalo di nuovo.`,
                     adminAccessUnavailable: `L’accesso da amministratore non è disponibile.`,
                     checkFailed: `Il controllo del gestore di pacchetti non è terminato.`,

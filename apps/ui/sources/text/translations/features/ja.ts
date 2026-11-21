@@ -9211,7 +9211,7 @@ const machineDetailPageTranslations = { ja: translated({
                     requiredFactUnavailable: `確認に必要な情報がありません。`,
                     needsAdminToCheck: `確認には管理者アクセスが必要です。`,
                     packageManagerBusy: `パッケージマネージャーが使用中です。しばらくしてからもう一度お試しください。`,
-                    foreignEffectConflict: `パッケージマネージャーで別の変更が実行中です。`,
+                    foreignEffectConflict: `このマシンで行われた変更が、このセットアップと競合しています。`,
                     planChanged: `レビュー後に待機中の内容が変わりました。もう一度準備してください。`,
                     adminAccessUnavailable: `管理者アクセスを利用できません。`,
                     checkFailed: `パッケージマネージャーの確認が完了しませんでした。`,
