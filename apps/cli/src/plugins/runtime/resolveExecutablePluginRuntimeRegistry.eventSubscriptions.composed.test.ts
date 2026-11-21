@@ -5,11 +5,15 @@ import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/ad
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { executeAppliedDaemonPluginActionWithController } from '@/plugins/daemon/controlRoutes';
+import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { executeContributedAction } from './invocation/actions/executeContributedAction';
 import * as channels from '../../../../../packages/plugins/channels/src/index';
 import * as slack from '../../../../../packages/plugins/channel-slack/src/index';
 import * as discord from '../../../../../packages/plugins/channel-discord/src/index';
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import { CONVERSATION_MANAGEMENT_ACTION_IDS_V1 } from '@happier-dev/channels-protocol/v1';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { PluginCollectionPresenceRequestV1Schema } from '@happier-dev/protocol/plugins/data/collectionPresenceV1';
 import { publishPluginAccountCollectionWatchInvalidation } from './context/pluginAccountSettingsChangeBroker';
 
@@ -92,6 +96,52 @@ describe('Channels Event subscription startup', () => {
             expect(emissions[0]).toMatchObject({ status: 'admitted', subscriberCount: 1 });
             await vi.waitFor(() => expect(received).toEqual([{ value: 1 }]));
         } finally { await fixture.dispose(); }
+    });
+    it('settles configured startup before reading a Resource that joins daemon readiness', async () => {
+        const pluginId = 'acme.configured-resource';
+        const firstRead = Promise.withResolvers<void>();
+        const releaseReadiness = Promise.withResolvers<void>();
+        const plugin = definePlugin({ id: pluginId, version: '1.0.0', entrypoints: { daemon: './daemon.mjs' },
+            activation: { events: [], configuration: { accountCollections: [{ pluginId, collectionId: 'configuration' }] } },
+            resources: { status: {
+                source: 'dynamic', scope: 'global', kind: 'config', contentType: 'application/json',
+                runtime: {
+                    async read() {
+                        firstRead.resolve();
+                        // A nested Account Action joins this executable readiness boundary.
+                        const lease = await fixture.controller.acquireExecutableRuntimeRegistry();
+                        await lease?.release();
+                        return '{"ready":true}';
+                    },
+                    observe() { return { dispose() {} }; },
+                },
+            } },
+        });
+        const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ coldStart: true,
+            plugins: [await installedPlugin(plugin)],
+            runtimeOptions: { accountStorageDependencies: accountPresenceBoundary(() => true) },
+            async resolveContributes(happyHomeDir) {
+                return createResolvedContributionRegistry(projectLoadedPluginContributes({
+                    loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'first_party',
+                }));
+            },
+        });
+        const initialization = fixture.registry.startConfiguredActivation();
+        fixture.controller.setRuntimeInitialization(Promise.race([initialization, releaseReadiness.promise]));
+        try {
+            const first = await Promise.race([initialization.then(() => 'ready'), firstRead.promise.then(() => 'resource read')]);
+            expect(first).toBe('ready');
+            const occurrenceId = fixture.registry.readPluginOccurrenceId?.(pluginId);
+            expect(occurrenceId).toBeTruthy();
+            const resource = await fixture.registry.readUiResource?.({
+                callerPluginId: pluginId, expectedCallerOccurrenceId: occurrenceId!, resourceId: 'status',
+            });
+            expect(new TextDecoder().decode(resource?.bytes)).toBe('{"ready":true}');
+        } finally {
+            releaseReadiness.resolve();
+            await initialization;
+            await fixture.dispose();
+        }
     });
     it('defers configuration reads until the published registry admits configured startup', async () => {
         let reads = 0;
@@ -302,6 +352,58 @@ describe('Channels Event subscription startup', () => {
             })).resolves.toMatchObject({ matched: true, result: { ok: true, result: { ready: true } } });
         } finally {
             await fixture.dispose();
+        }
+    });
+
+    it('settles the qualified Channels binding list while configured startup publishes another plugin', async () => {
+        const action = { pluginId: channels.manifest.id, localId: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingList };
+        const pluginId = 'acme.configured-channel-reader';
+        const firstRead = Promise.withResolvers<void>();
+        const releaseReadiness = Promise.withResolvers<void>();
+        const plugin = definePlugin({ id: pluginId, version: '1.0.0', entrypoints: { daemon: './daemon.mjs' },
+            activation: { events: [], configuration: { accountCollections: [{ pluginId, collectionId: 'configuration' }] } },
+            resources: { status: {
+                source: 'dynamic', scope: 'global', kind: 'config', contentType: 'application/json',
+                runtime: {
+                    async read({ readAction, signal }) {
+                        firstRead.resolve();
+                        return JSON.stringify(await readAction(action, {}, { signal }));
+                    },
+                    observe() { return { dispose() {} }; },
+                },
+            } },
+        });
+        const account = accountPresenceBoundary(() => true);
+        const fixture = await createAuthoredAdmittedPluginRuntimeFixture({
+            coldStart: true,
+            plugins: [await installedPlugin(plugin), await installedPlugin(channels, new URL('channels/', pluginPackagesRoot))],
+            runtimeOptions: { accountStorageDependencies: {
+                ...account,
+                resolveAccountEncryptionCurrentness: async () => createAccountEncryptionCurrentnessFixture({ mode: 'plain' }),
+                http: { ...account.http, async post(url, body) {
+                    if (url.endsWith('/v1/plugins/data/query')) {
+                        return { status: 200, data: { rows: [], changeCursor: 0 } };
+                    }
+                    return account.http.post(url, body);
+                } },
+            } },
+            async resolveContributes(happyHomeDir) {
+                return createResolvedContributionRegistry(projectLoadedPluginContributes({
+                    loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'first_party',
+                }));
+            },
+        });
+        const startup = fixture.registry.startConfiguredActivation();
+        fixture.controller.setRuntimeInitialization(Promise.race([startup, releaseReadiness.promise]));
+        const listing = executeAppliedDaemonPluginActionWithController({
+            actionId: buildQualifiedPluginContributionKey(action), input: {}, surface: 'cli',
+        }, fixture.controller);
+        try {
+            const result = await Promise.race([listing, firstRead.promise.then(() => 'Resource read before Action dispatch')]);
+            expect(result).toMatchObject({ matched: true, result: { ok: true, result: { bindings: [] } } });
+        } finally {
+            releaseReadiness.resolve();
+            try { await Promise.allSettled([startup, listing]); } finally { await fixture.dispose(); }
         }
     });
 

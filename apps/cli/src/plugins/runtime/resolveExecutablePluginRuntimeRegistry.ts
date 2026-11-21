@@ -5219,12 +5219,17 @@ export async function resolveExecutablePluginRuntimeRegistry(
 
     async function activateContributionsOnDemand(
         demands: Parameters<typeof activatedRegistry.activateContributionsOnDemand>[0],
+        trigger: 'configuration' | 'consumer' = 'consumer',
     ): Promise<Awaited<ReturnType<typeof activatedRegistry.activateContributionsOnDemand>>> {
         const previousFacts = activatedRegistry.targetActivationFacts;
         const results = await activatedRegistry.activateContributionsOnDemand(demands);
         await refreshActivatedConsumersIfChanged(previousFacts);
-        for (const { pluginId } of results) {
-            if (activatedRegistry.activatedPluginIds.has(pluginId)) await resourcesOwner?.preparePlugin(pluginId);
+        // Configuration activation is awaited by daemon restoration. Resource
+        // producers can themselves invoke Actions that join that restoration.
+        if (trigger === 'consumer') {
+            for (const { pluginId } of results) {
+                if (activatedRegistry.activatedPluginIds.has(pluginId)) await resourcesOwner?.preparePlugin(pluginId);
+            }
         }
         // The External Sessions author service invokes each configured Agent's
         // `resolveSource` leaf while it is built, and that leaf needs this
@@ -8418,7 +8423,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     });
                     return () => { void subscription.dispose(); };
                 },
-                activate: activateContributionsOnDemand,
+                activate: demands => activateContributionsOnDemand(demands, 'configuration'),
                 isActivated: pluginId => activatedRegistry.activatedPluginIds.has(pluginId),
                 isTargetCurrent: pluginId => consumerAssembly.isPluginCurrent(pluginId),
                 readOccurrenceId: pluginId => candidateOccurrenceIdsByPluginId.get(pluginId) ?? null,
