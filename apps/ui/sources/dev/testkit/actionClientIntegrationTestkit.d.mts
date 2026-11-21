@@ -188,11 +188,16 @@ export function connectUiActionClient(params: Readonly<{
     close(): Promise<void>;
 }>>;
 
-export function connectUiPersonActionClient(params: Readonly<{
+type UiPersonSignIn = Readonly<{
     serverUrl: string;
     addressAnchorUrl?: string;
     accountSecret: Uint8Array;
     accountEncryptionMode?: AccountEncryptionModeResponse['mode'];
+}>;
+
+export function connectUiSignedInActionClient(params: UiPersonSignIn & Readonly<{ withAccountLifecycle?: boolean }>): ReturnType<typeof connectUiActionClient>;
+
+export function connectUiPersonActionClient(params: UiPersonSignIn & Readonly<{
     withAppShellActions?: boolean;
     withCurrentUiActionPort?: boolean;
     withClientActionReverseRuntime?: boolean;
@@ -263,3 +268,22 @@ export function createMachineClientEnrollmentOutputFixture(options: Readonly<{
     execute(actionId: ActionId, input: unknown): Promise<ActionExecuteResult>;
     close(): Promise<void>;
 }>>;
+
+type ProjectSetupLinkSelection = Readonly<{ sourceId: string; homeTarget: string }>;
+export function buildProjectSourceSetupUrl(input: ProjectSetupLinkSelection & Readonly<{applicationOrigin: string}>): string;
+export function parseProjectSourceSetupLink(raw: string): (ProjectSetupLinkSelection & Readonly<{path: `/projects/setup?${string}`}>) | null;
+type ProjectSetupScope = import('../../sync/domains/scope/serverAccountScope.js').ServerAccountScope;
+type ProjectSetupActionExecute = Awaited<ReturnType<typeof connectUiActionClient>>['execute'];
+type SharedSetupInput = import('@happier-dev/protocol/projects/projectSetupSetV1').ProjectSetupSetInputV1;
+type AcceptedSharedSetup = Extract<import('@happier-dev/protocol/projects/projectSetupSetV1').ProjectSetupSetOutputV1, {ok: true}>;
+export function decideProjectSharedSetupUpdate(input: Readonly<{
+    scope: ProjectSetupScope;
+    workspace: import('@happier-dev/protocol/workspaces/workspaceRefV1').WorkspaceAddressV1;
+    projectRef: SharedSetupInput['projectRef'];
+    expectedRevision: SharedSetupInput['expectedRevision'];
+    review: Extract<import('@happier-dev/protocol/projects/projectSetupChangeV1').ProjectSharedSetupChangeV1, {kind: 'changed'}>;
+    decision: 'keep' | 'thisTime' | 'untilChanged';
+    execute: ProjectSetupActionExecute;
+}>): Promise<Readonly<{kind: 'accepted'; setup: AcceptedSharedSetup;
+    preparation: import('@happier-dev/protocol/actions/projectActionFamily').ProjectPrepareResultV1}>
+    | Readonly<{kind: 'kept' | 'unavailable' | 'acceptedConsentUnavailable'}>>;

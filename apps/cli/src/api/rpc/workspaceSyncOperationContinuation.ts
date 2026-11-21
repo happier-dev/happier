@@ -10,12 +10,14 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/s
 const decision = z.strictObject({ reviewedEffectDigest: z.string().check(z.minLength(1)), skipForInvocation: z.boolean() });
 const request = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('describe') }),
+  z.strictObject({ kind: z.literal('retirePreparedCopy') }),
   z.strictObject({ kind: z.literal('progress'), update: ActionOperationProgressUpdateSchema }),
   z.strictObject({ kind: z.literal('ownerUpdate'), update: ActionOperationOwnerUpdateSchema }),
   z.strictObject({ kind: z.literal('waitForResume'), details: ProjectSetupConsentFailureDetailsV1Schema }),
 ]);
 const response = z.strictObject({ actionRequestId: z.optional(z.string()), operationId: z.string().check(z.minLength(1)),
-  actionId: z.optional(z.string()), actor: z.optional(z.nullable(ActionActorV1Schema)), reviewSupported: z.boolean() });
+  actionId: z.optional(z.string()), actor: z.optional(z.nullable(ActionActorV1Schema)), reviewSupported: z.boolean(),
+  retiresPreparedCopy: z.optional(z.literal(true)) });
 const reverse = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('review'), decision: z.optional(decision) }),
   z.strictObject({ kind: z.literal('stop') }),
@@ -27,6 +29,7 @@ function unavailable(): Error {
 /** The original runner remains the sole operation owner and terminal settler. */
 export function createWorkspaceSyncSourceOperationContinuation(context: RpcLocalActionContext): SocketRpcContinuationHandler {
   let unsubscribe: (() => void) | undefined;
+  let retirement: Promise<void> | undefined;
   const handler: SocketRpcContinuationHandler = async (value, call) => {
     const input = request.parse(value);
     if (!context.operationAcceptance || !context.operationProgress || !context.operationOwnerUpdate) throw unavailable();
@@ -37,7 +40,14 @@ export function createWorkspaceSyncSourceOperationContinuation(context: RpcLocal
       });
       return response.parse({ actionRequestId: context.actionRequestId,
         operationId: context.operationAcceptance.operationId, actionId: context.operationAcceptance.actionId,
-        actor: context.operationAcceptance.actor, reviewSupported: !!context.operationReview });
+        actor: context.operationAcceptance.actor, reviewSupported: !!context.operationReview,
+        ...(context.retirePreparedWorkspaceCopy ? { retiresPreparedCopy: true as const } : {}) });
+    }
+    if (input.kind === 'retirePreparedCopy') {
+      if (!context.retirePreparedWorkspaceCopy) throw unavailable();
+      retirement ??= context.retirePreparedWorkspaceCopy();
+      await retirement;
+      return null;
     }
     if (input.kind === 'progress') context.operationProgress.update(input.update);
     else if (input.kind === 'ownerUpdate') context.operationOwnerUpdate.update(input.update);
@@ -115,6 +125,10 @@ export async function openWorkspaceSyncTargetOperationContinuation(
       try { await flushOperationUpdates(); await channel.call({ kind: 'waitForResume', details }); }
       finally { review = undefined; }
     } } satisfies ActionOperationReviewContinuation } : {}),
+    ...(original.retiresPreparedCopy ? { retirePreparedWorkspaceCopy: async () => {
+      await flushOperationUpdates();
+      await channel.call({ kind: 'retirePreparedCopy' });
+    } } : {}),
     flushOperationUpdates,
   };
 }

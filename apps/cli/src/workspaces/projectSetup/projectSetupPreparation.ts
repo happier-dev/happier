@@ -15,7 +15,7 @@ import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actio
 import { normalizeActionsSettingsV1, type ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { SecretReferenceOverlayV1Schema, listSecretReferenceOverlayV1BindingNames, readSecretReferenceOverlayV1Reference, type SecretReferenceOverlayV1 } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
 
-import { LaunchSecretReferenceOverlayError, resolveProjectSecretReferenceEnvironment, type ProjectSecretReferenceEnvironmentInput } from '@/settings/secrets/secretReferenceOverlay';
+import { LaunchSecretReferenceOverlayError, listMissingProjectSecretRequirements, resolveProjectSecretReferenceEnvironment, type ProjectSecretReferenceEnvironmentInput } from '@/settings/secrets/secretReferenceOverlay';
 import type { ScmStatusSnapshotResponse } from '@happier-dev/protocol/scm';
 import type { ScmBackendRegistry } from '@/scm/registry';
 import { runWithScmBackendRegistryLease } from '@/scm/scmBackendCatalog';
@@ -64,6 +64,8 @@ export type ProjectSetupPreparationInput = Readonly<{
     nativeIo: ProjectNativeCommandIo;
     environmentBindings?: SecretReferenceOverlayV1;
     secretEnvironment?: Omit<ProjectSecretReferenceEnvironmentInput, 'requirements' | 'secretReferenceOverlay'>;
+    /** Selected values opened by the retained-copy controller, kept outside the reviewed effect. */
+    admittedTeardownEnvironment?: Readonly<Record<string, string>>;
     configEnvironment?: Readonly<Record<string, string>>;
     profileEnvironment?: Readonly<Record<string, string>>;
     invocationEnvironment?: ProcessEnvInput;
@@ -355,12 +357,20 @@ async function reviewProjectEffect(input: ProjectSetupPreparationInput,
         const overlay = input.environmentBindings === undefined ? undefined : SecretReferenceOverlayV1Schema.parse(input.environmentBindings);
         const requirements = manifest?.environmentVariables ?? [];
         const secretRequirements = requirements.filter(requirement => requirement.kind === 'secret');
-        if ((overlay || secretRequirements.some(requirement => requirement.required)) && !input.secretEnvironment) return refuse('project_environment_binding_unavailable');
+        const names = overlay ? listSecretReferenceOverlayV1BindingNames(overlay) : [];
+        const captured = input.admittedTeardownEnvironment;
+        if (captured) {
+            const available = new Set(Object.keys(captured));
+            if (input.purpose !== 'teardown' || available.size !== names.length || names.some(name => !available.has(name))
+                || listMissingProjectSecretRequirements(secretRequirements, available).length) return refuse('project_environment_binding_unavailable');
+        } else if ((overlay || secretRequirements.some(requirement => requirement.required)) && !input.secretEnvironment) {
+            return refuse('project_environment_binding_unavailable');
+        }
         // Validate real binding availability; only the final launch owner retains materialized values.
-        if (overlay || secretRequirements.length) resolveProjectSecretReferenceEnvironment({
+        if (!captured && (overlay || secretRequirements.length)) resolveProjectSecretReferenceEnvironment({
             ...(input.secretEnvironment ?? { accountSettings: {}, settingsSecretsReadKeys: [], savedSecretMaterializer: null }), requirements, ...(overlay ? { secretReferenceOverlay: overlay } : {}),
         });
-        const bindings = overlay ? listSecretReferenceOverlayV1BindingNames(overlay).map(name => ({ name, ...readSecretReferenceOverlayV1Reference(overlay, name)! })) : [];
+        const bindings = overlay ? names.map(name => ({ name, ...readSecretReferenceOverlayV1Reference(overlay, name)! })) : [];
         const displayBindings: ProjectSetupReviewPresentation['bindings'][number][] = [];
         if (bindings.length > 0 && input.secretEnvironment) {
             // The exact-reference owner above admitted every binding before presentation.

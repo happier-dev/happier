@@ -1,6 +1,4 @@
 import { PluginDiagnosticError } from '@/plugins/runtime/moduleFailure';
-import { subscribeWorktreePortRemoval } from '@/workspaces/execution/worktreePortRemoval';
-import { getHostWorktreePortsOwner } from '@/workspaces/execution/worktreePorts';
 import { realpath } from 'node:fs/promises';
 import { createDaemonArchivePluginChangePreparer } from '@/plugins/daemon/archiveChangePreparer';
 import type { PluginPendingChangeEntry } from './changeContract';
@@ -264,7 +262,6 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
       }
     : undefined;
   let stableEventsBroker: StablePluginEventsBroker | null = null;
-  let worktreePortRemoval: ReturnType<typeof subscribeWorktreePortRemoval> | undefined;
   let developmentRoots: DaemonPluginDevelopmentRootsOwner | null = null;
   let unsubscribeAccountAvailability: (() => void) | null = null;
   const resolveDevelopmentSourceAuthority: DaemonPluginDevelopmentRootsOwner['resolveDevelopmentSourceAuthority'] = (
@@ -725,8 +722,6 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
         : Object.freeze({ kind: 'projectTrustAccepted' as const, projectRoot: pending.projectRoot });
     },
     async shutdown() {
-      await worktreePortRemoval?.dispose();
-      worktreePortRemoval = undefined;
       unsubscribeAccountAvailability?.();
       unsubscribeAccountAvailability = null;
       await developmentRoots.stop();
@@ -1138,11 +1133,6 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
       try {
         stableEventsBroker = initialLease.registry
           .stableEventsBroker ?? null;
-        if (stableEventsBroker) worktreePortRemoval = subscribeWorktreePortRemoval({
-          broker: stableEventsBroker, portsOwner: getHostWorktreePortsOwner(),
-          resolveCurrentMachineId: () => params.resolveCurrentMachineId?.() ?? null,
-          isCurrent: () => params.signal?.aborted !== true,
-        });
       } finally {
         await initialLease.release();
       }

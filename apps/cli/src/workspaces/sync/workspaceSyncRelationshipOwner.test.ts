@@ -53,7 +53,7 @@ function status(id: string): WorkspaceSyncStatusV1 {
 }
 
 function createHarness(
-  retirement: Pick<WorkspaceSyncRelationshipOwnerOptions, 'inspectCommittedRelationshipTarget' | 'removeCommittedRelationshipTarget'> = {},
+  retirement: Pick<WorkspaceSyncRelationshipOwnerOptions, 'removeCommittedRelationshipTarget'> = {},
   initialSnapshot: Readonly<Record<string, unknown>> = { workspaceRefs: [], relationships: [] },
 ) {
   let settings: Readonly<Record<string, unknown>> = initialSnapshot;
@@ -214,7 +214,7 @@ describe('WorkspaceSyncRelationshipOwner', () => {
     expect(parseProjectAccountSnapshotV1(harness.read()).relationships).toEqual([]);
   });
 
-  it.each(['preserve', 'remove', 'replaced_before_stop', 'replaced_after_stop'] as const)('uses canonical stop with real target custody: %s', async (scenario) => {
+  it.each(['preserve', 'remove', 'teardown_failed', 'replaced_before_stop', 'replaced_after_stop'] as const)('uses canonical stop with real target custody: %s', async (scenario) => {
     const removeBytes = scenario !== 'preserve';
     const fixture = await realpath(await mkdtemp(join(tmpdir(), 'workspace-relationship-retirement-')));
     const source = join(fixture, 'source');
@@ -223,13 +223,13 @@ describe('WorkspaceSyncRelationshipOwner', () => {
     await mkdir(source);
     await mkdir(materializationDirectory);
     const harness = createHarness({
-      inspectCommittedRelationshipTarget: async (_expectedRelationship, _removal, _signal, approval) => {
-        if (!approval) throw new Error('Missing host receipt carrier');
-        await authority.inspectCommittedCopyHere(approval);
-      },
-      removeCommittedRelationshipTarget: async (_expectedRelationship, _removal, _signal, approval) => {
-        if (!approval) throw new Error('Missing host receipt carrier');
-        await authority.removeCommittedCopyHere(approval);
+      removeCommittedRelationshipTarget: async (_expectedRelationship, approval, retirePreparedWorkspaceCopy) => {
+        if (scenario === 'teardown_failed') {
+          // The target's native cleanup can refuse without moving physical bytes.
+          throw Object.assign(new Error('Native teardown failed'), { code: 'project_setup_step_failed' });
+        }
+        await authority.removeCommittedCopyHere(approval, { signal: new AbortController().signal,
+          localActionContext: { retirePreparedWorkspaceCopy } });
       },
     }, workerCopySnapshot(source, target, false));
     const authority = createWorkspaceSyncTargetAuthority({
@@ -285,6 +285,14 @@ describe('WorkspaceSyncRelationshipOwner', () => {
           workspace: { serverId: 'server_a', refId: 'source_ref' }, machineId: 'machine_source', expectedRelationship, removeTargetCopy,
         } } } : {}),
       });
+      if (scenario === 'teardown_failed') {
+        const failure = await stopped.catch((error: unknown) => error);
+        expect(failure).toMatchObject({ code: 'project_setup_step_failed' });
+        expect(failure).not.toHaveProperty('definitionRetired');
+        expect(harness.read().relationships).toEqual([expectedRelationship]);
+        await expect(readFile(join(target, 'copy.txt'), 'utf8')).resolves.toBe('committed copy');
+        return;
+      }
       if (scenario === 'replaced_before_stop' || scenario === 'replaced_after_stop') {
         const failure = await stopped.catch((error: unknown) => error);
         expect(failure).toMatchObject({ code: 'workspace_target_materialization_manual_recovery' });

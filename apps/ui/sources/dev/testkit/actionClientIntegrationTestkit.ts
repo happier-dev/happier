@@ -30,6 +30,8 @@ import { loadSyncSingletonForTests } from './harness/syncSingletonLoader';
 import { waitForTestEvent } from './hooks/waitForTestEvent';
 import { createPublishedHomeOutputFetch } from './machineClientEnrollmentOutputFixture';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+export { decideProjectSharedSetupUpdate } from '@/components/projects/projectSetup/projectSetupConsentDecision';
+export { buildProjectSourceSetupUrl, parseProjectSourceSetupLink } from '@/components/projects/sources/projectSourceNavigation';
 export { allowRealServerSocketBoundary as allowRealActionServerSocketBoundary } from './harness/serverAccountConnectionHarness';
 export { createMachineClientEnrollmentOutputFixture } from './machineClientEnrollmentOutputFixture';
 export { createAccountOutputFixture } from './machineAccountOutputContractFixture';
@@ -114,6 +116,28 @@ export async function readUiMachineProjection(params: Readonly<{
     return loadDaemonMergedProjectionCacheEntry({ ...params, accountLifetime });
 }
 
+async function joinMountedUiAccountLifecycle(credentials: AuthCredentials) {
+    const connection = await import('@/sync/runtime/orchestration/connectionManager');
+    // Join restore's authenticated discovery before reading the selected
+    // generation; it can still reflect only public discovery.
+    await refreshAuthenticatedServerFeaturesSnapshot({
+        credentials, serverId: getActiveServerSnapshot().serverId, force: true,
+    });
+    // The mounted provider owns restore reconciliation, including a Home
+    // descriptor learned before its subscription mounted.
+    await waitForTestEvent(notify => {
+        const releaseApplied = connection.subscribeAppliedActiveServer(notify);
+        const releaseAvailability = connection.subscribeAppliedActiveServerRuntimeAvailability(notify);
+        return () => { releaseApplied(); releaseAvailability(); };
+    }, () => {
+        const selected = getActiveServerSnapshot();
+        const applied = connection.getAppliedActiveServerSnapshot();
+        return connection.isAppliedActiveServerRuntimeAvailable()
+            && applied.serverId === selected.serverId && applied.generation === selected.generation;
+    }, Boolean);
+    await getSyncSingleton().awaitBootstrapForegroundAcquisition();
+}
+
 export async function createUiTeamSharedSecretReference(teamId: string,
     content: Extract<import('@happier-dev/protocol/account/settings/savedSecretResourceContentSchemaV1').SavedSecretResourceContentV1, { v: 2 }>) {
     const [{ createSavedSecretResource }, { runTeamAction }] = await Promise.all([
@@ -183,32 +207,14 @@ export async function connectUiActionClient(params: Readonly<{ serverUrl: string
             });
         });
         if (params.withAccountLifecycle !== false) {
-            const [{ renderHook }, { AuthProvider, useAuth }, { createElement }, connection] = await Promise.all([
+            const [{ renderHook }, { AuthProvider, useAuth }, { createElement }] = await Promise.all([
                 import('./hooks/renderHook'), import('@/auth/context/AuthContext'), import('react'),
-                import('@/sync/runtime/orchestration/connectionManager'),
             ]);
             const lifecycle = await renderHook(useAuth, {
                 wrapper: ({ children }) => createElement(AuthProvider, { initialCredentials: params.credentials, children }),
             });
             unmountAccountLifecycle = lifecycle.unmount;
-            // Join restore's authenticated discovery before reading the selected
-            // generation; it can still reflect only public discovery.
-            await refreshAuthenticatedServerFeaturesSnapshot({
-                credentials: params.credentials, serverId: getActiveServerSnapshot().serverId, force: true,
-            });
-            // The mounted provider owns restore reconciliation, including a Home
-            // descriptor learned before its subscription mounted.
-            await waitForTestEvent(notify => {
-                const releaseApplied = connection.subscribeAppliedActiveServer(notify);
-                const releaseAvailability = connection.subscribeAppliedActiveServerRuntimeAvailability(notify);
-                return () => { releaseApplied(); releaseAvailability(); };
-            }, () => {
-                const selected = getActiveServerSnapshot();
-                const applied = connection.getAppliedActiveServerSnapshot();
-                return connection.isAppliedActiveServerRuntimeAvailable()
-                    && applied.serverId === selected.serverId && applied.generation === selected.generation;
-            }, Boolean);
-            await getSyncSingleton().awaitBootstrapForegroundAcquisition();
+            await joinMountedUiAccountLifecycle(params.credentials);
         }
         await getSyncSingleton().refreshMachines();
         const serverId = getActiveServerSnapshot().serverId;
@@ -325,13 +331,35 @@ export async function connectUiActionClient(params: Readonly<{ serverUrl: string
     }
 }
 
-/** Sign in as the person through the UI's Account flow, never a terminal bearer. */
-export async function connectUiPersonActionClient(params: Readonly<{
+type UiPersonSignIn = Readonly<{
     serverUrl: string;
     addressAnchorUrl?: string;
     accountSecret: Uint8Array;
     /** Persisted fixture mode; signing in to a plain Account installs no Account encryption material. */
     accountEncryptionMode?: AccountEncryptionModeResponse['mode'];
+}>;
+
+async function signInUiPerson(params: UiPersonSignIn): Promise<AuthCredentials> {
+    const credentials = await authGetTokenAtEndpoint({
+        endpointUrl: params.serverUrl,
+        addressAnchorUrl: params.addressAnchorUrl,
+        secret: params.accountSecret,
+        requireKeyChallengeV2: true,
+        requireExistingAccount: true,
+    });
+    return params.accountEncryptionMode === 'plain'
+        ? { token: credentials.token } : { ...credentials, secret: encodeBase64(params.accountSecret) };
+}
+
+/** Drive core UI Actions through the signed-in Account and its real lifecycle. */
+export async function connectUiSignedInActionClient(params: UiPersonSignIn & Readonly<{ withAccountLifecycle?: boolean }>) {
+    const credentials = await signInUiPerson(params);
+    return await connectUiActionClient({ serverUrl: params.serverUrl, addressAnchorUrl: params.addressAnchorUrl, credentials,
+        withAccountLifecycle: params.withAccountLifecycle });
+}
+
+/** Mount the AppShell for journeys that exercise contributed or registry surfaces. */
+export async function connectUiPersonActionClient(params: UiPersonSignIn & Readonly<{
     /** Triage fixtures provide their own Account projection and executable port. */
     withAppShellActions?: boolean;
     withCurrentUiActionPort?: boolean;
@@ -341,15 +369,7 @@ export async function connectUiPersonActionClient(params: Readonly<{
     /** The contributed control the fixture presents before a Person presses it. */
     presentedMachineAction?: Readonly<{ action: PluginContributionIdentityV1; target: MachineAdministrationTargetV1 }>;
 }>) {
-    const credentials = await authGetTokenAtEndpoint({
-        endpointUrl: params.serverUrl,
-        addressAnchorUrl: params.addressAnchorUrl,
-        secret: params.accountSecret,
-        requireKeyChallengeV2: true,
-        requireExistingAccount: true,
-    });
-    const accountCredentials = params.accountEncryptionMode === 'plain'
-        ? { token: credentials.token } : { ...credentials, secret: encodeBase64(params.accountSecret) };
+    const accountCredentials = await signInUiPerson(params);
     const client = await connectUiActionClient({ serverUrl: params.serverUrl, addressAnchorUrl: params.addressAnchorUrl,
         withAccountLifecycle: false, credentials: accountCredentials });
     let unmount: (() => Promise<void>) | undefined;
@@ -397,6 +417,7 @@ export async function connectUiPersonActionClient(params: Readonly<{
                 }), reverseRuntime, children)),
         });
         unmount = shell.unmount;
+        if (params.withAccountLifecycle !== false) await joinMountedUiAccountLifecycle(accountCredentials);
         if (params.presentedMachineAction) {
             const { action, target } = params.presentedMachineAction;
             // Join the real projection reader before simulating the press. A

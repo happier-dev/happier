@@ -129,7 +129,9 @@ import { MachineInstallationPublicIdentityV1Schema, type MachineInstallationPubl
 import { ProjectWorkerDependencyV1Schema } from '@happier-dev/protocol/workspaces/projectWorkerExecutionV1';
 import { isWorkspaceSyncSourceWriterCleanupPhaseV1, WorkspaceSyncSeedCarrierV1Schema,
     type WorkspaceSyncSeedCarrierV1 } from '@happier-dev/protocol/socketRpc';
-import { WorkspaceSyncCommittedCopyPreviewResultV1Schema, WorkspaceSyncCommittedCopyTargetResultV1Schema, WorkspaceSyncCommittedCopyInspectV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
+import { WorkspaceSyncCommittedCopyPreviewResultV1Schema, WorkspaceSyncCommittedCopyTargetResultV1Schema, WorkspaceSyncCommittedCopyInspectV1Schema, WorkspaceSyncCommittedCopyTargetV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
+import { sealRetainedCheckoutTeardownV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { randomBytes } from 'node:crypto';
 import { USAGE_SOURCES_INVALIDATION_EVENT_V1, type UsageSourcesInvalidationV1 } from '@happier-dev/protocol/usage/usageSources';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { readRequesterAccountActionContext, type RequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
@@ -4630,6 +4632,7 @@ export class ApiMachineClient {
                         ? { workspaceSyncPrivateExecution: admitted.workspaceSyncPrivateExecution } : {}) },
                     rpcContext: { machineAdmission: admitted.machineAdmission,
                         verifyMachineAdmissionCurrent: input.context.verifyMachineAdmissionCurrent,
+                        ...(input.retainedCheckoutTeardown ? { retainedCheckoutTeardown: input.retainedCheckoutTeardown } : {}),
                         ...(admitted.callerInputAuthorization ? { callerInputAuthorization: admitted.callerInputAuthorization } : {}),
                         callerAuthority: input.context.authority ?? 'account_automation',
                         ...(input.context.callerInputConstraints ? { callerInputConstraints: input.context.callerInputConstraints } : {}),
@@ -4796,6 +4799,7 @@ export class ApiMachineClient {
         physicalEndpointInstallationId?: string;
         seedCarrier?: Readonly<{ publicKey: string; onGranted: (carrier: WorkspaceSyncSeedCarrierV1) => void }>;
         operationContext?: WorkspaceSyncTargetPhaseDescriptor['operationContext'];
+        retainedCheckoutTeardown?: WorkspaceSyncTargetPhaseDescriptor['retainedCheckoutTeardown'];
         routing: Readonly<{ workspaceSyncSourceRouting: WorkspaceSyncSourceRoutingV1 }>
             | Readonly<{ workspaceSyncSeedRouting: WorkspaceSyncSeedRoutingV1 }>
             | Readonly<{ workspaceSyncTargetRouting: WorkspaceSyncTargetRoutingV1 }>
@@ -4987,15 +4991,22 @@ export class ApiMachineClient {
                 || configuration.activeServerId !== this.machineRuntimeServerId || this.socket !== socket || !socket.connected
                 || readInstallationIdentityIfExistsSync()?.installationId !== installation.installationId) throw unavailable();
             const content = createWorkspaceSyncTargetContent({ destination, method: `${input.machineId}:${input.method}`, routing: writerTarget });
+            const teardown = input.retainedCheckoutTeardown;
+            if (teardown && (!signedAuthorization || !retainedWriterCopyPhase || writerTarget.target.phase !== 'remove')) throw unavailable();
+            const authorizationForTarget = teardown && signedAuthorization ? sealRetainedCheckoutTeardownV1({
+                authorization: signedAuthorization, routing: writerTarget, request: WorkspaceSyncCommittedCopyTargetV1Schema.parse(input.request),
+                machineId: destination.machineId, installationId: destination.installationId,
+                installationPublicKey: decodeBase64(destination.installationPublicKey, 'base64url'), randomBytes, data: teardown.data,
+            }) : signedAuthorization;
             const result = readMachineActionRpcResult(await callSocketRpc({ socket, target: { kind: 'machine', id: input.machineId }, method: input.method,
                 params: input.request, content, workspaceSyncSourceWriterTargetRouting: writerTarget,
                 ...removalContinuation,
                 ...(projectSourceExecution ? { workspaceSyncSourceExecution: projectSourceExecution } : {}),
                 ...(jointTarget ? { workspaceSyncTargetRouting: targetRouting } : {}), timeoutMs: null,
-                ...((forwardWork || retainedWriterCopyPhase) && signedAuthorization ? { createExternalActionExecution: wire => {
+                ...((forwardWork || retainedWriterCopyPhase) && authorizationForTarget ? { createExternalActionExecution: wire => {
                     const execution = createExternalActionMachineRpcExecution({ context: { ...input.context,
-                        externalActionExecutionAuthorization: signedAuthorization, externalActionTarget: signedAuthorization.binding.target },
-                        effectActionId: signedAuthorization.binding.actionId, installationId: installation.installationId,
+                        externalActionExecutionAuthorization: authorizationForTarget, externalActionTarget: authorizationForTarget.binding.target },
+                        effectActionId: authorizationForTarget.binding.actionId, installationId: installation.installationId,
                         method: wire.method, requestId: wire.requestId, params: wire.params,
                         workspaceSyncSourceWriterTargetRouting: writerTarget, privateKey: installation.privateKey });
                     if (!execution) throw unavailable();

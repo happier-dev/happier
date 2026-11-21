@@ -217,7 +217,6 @@ import type { HostActionOperationRuntime } from '@/daemon/actionOperations/creat
 import type { TerminalPtySessionManager } from '@/terminal/pty/sessions';
 import { createProjectFiniteActionExecutor, registerProjectFiniteRpcHandlers } from '@/rpc/handlers/projects/registerProjectFiniteRpcHandlers';
 import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
-import { registerSessionLifecycleRpcHandlers } from '@/rpc/handlers/sessionLifecycle';
 import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 
 const transferRelayV2DownloadResponderCleanupByManager = new WeakMap<RpcHandlerManager, () => void>();
@@ -798,7 +797,8 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
       const hostHomeServerIdentityId = resolveHome
         ? await resolveHome(ingress.signal) : await resolveServerProfileHomeIdentityId(runtime.serverId);
       return { ...runtime,
-        requesterIdentity: selectHostRequesterExecutionIdentity({ rpcContext: ingress, hostHomeServerIdentityId }),
+        requesterIdentity: runtime.requesterIdentity
+          ?? selectHostRequesterExecutionIdentity({ rpcContext: ingress, hostHomeServerIdentityId }),
         resolveHostHomeServerIdentityId: async () => hostHomeServerIdentityId,
         ...(params.deps?.nativeOperationRuntime ? { nativeOperationRuntime: params.deps.nativeOperationRuntime } : {}),
         isCurrent: async () => !projectFiniteIngressClosed

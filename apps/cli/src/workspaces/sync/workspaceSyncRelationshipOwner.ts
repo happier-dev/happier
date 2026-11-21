@@ -95,8 +95,8 @@ export type WorkspaceSyncRelationshipOwnerOptions = Readonly<{
   waitForProjectReconciliation(settingsVersion: number, signal?: AbortSignal): Promise<void>;
   readRelationshipDependencies?(relationship: WorkspaceSyncRelationshipV1, snapshot: ProjectAccountSnapshotV1,
     removal?: NonNullable<WorkspaceSyncRelationshipRetirement['removeTargetCopy']>): Promise<readonly ProjectWorkerDependency[]>;
-  inspectCommittedRelationshipTarget?(relationship: WorkspaceSyncRelationshipV1, removal: NonNullable<WorkspaceSyncRelationshipRetirement['removeTargetCopy']>, signal?: AbortSignal, approval?: WorkspaceSyncCommittedCopyTargetV1): Promise<void>;
-  removeCommittedRelationshipTarget?(relationship: WorkspaceSyncRelationshipV1, removal: NonNullable<WorkspaceSyncRelationshipRetirement['removeTargetCopy']>, signal?: AbortSignal, approval?: WorkspaceSyncCommittedCopyTargetV1): Promise<void>;
+  removeCommittedRelationshipTarget?(relationship: WorkspaceSyncRelationshipV1, approval: WorkspaceSyncCommittedCopyTargetV1,
+    retirePreparedCopy: () => Promise<void>, signal?: AbortSignal): Promise<void>;
   createId?: () => string;
   deriveRelationshipId?: (operationId: string) => string;
   nowMs?: () => number;
@@ -200,6 +200,15 @@ function resolveEndpointPair(
   const existing = matches[0];
   if (!existing) return null;
   throw ownerError('relationship_replacement_required', 'This workspace pair is owned by a different relationship');
+}
+
+function matchesReviewedRelationship(current: WorkspaceSyncRelationshipV1, expected: WorkspaceSyncRelationshipV1): boolean {
+  return current.relationshipId === expected.relationshipId
+    && areWorkspaceSyncRelationshipDefinitionsEqual(current, expected)
+    && areWorkspaceSyncWorkerCopyProvenancesEqual(current, expected)
+    && current.enabled === expected.enabled
+    && current.createdAtMs === expected.createdAtMs
+    && current.updatedAtMs === expected.updatedAtMs;
 }
 
 function mutationFailure(result: ProjectAccountSnapshotMutationResult): Error & { code: string } {
@@ -359,72 +368,85 @@ export function createWorkspaceSyncRelationshipOwner(
   };
 
   const stop: WorkspaceSyncRelationshipOwner['stop'] = async (relationshipId, signal, retirement) => {
-      let terminated!: WorkspaceSyncRelationshipV1;
-      const result = await mutateProjectSnapshot(async (settings) => {
-        const relationships = parseRelationships(settings);
-        const matches = relationships.filter((relationship) => relationship.relationshipId === relationshipId);
-        if (matches.length !== 1) throw ownerError('relationship_not_ready', 'Workspace relationship is unavailable');
-        terminated = matches[0]!;
-        if (retirement) {
-          const workerCopy = getWorkspaceSyncWorkerCopyV1(terminated);
-          if (!workerCopy) throw ownerError('workspace_copy_not_worker', 'Workspace relationship has no worker-copy creation provenance');
-          if (retirement.removeTargetCopy && retirement.removeTargetCopy.workspaceRefId !== workerCopy.targetWorkspaceRefId) {
-            throw ownerError('workspace_unavailable', 'Workspace removal is not the worker-copy target');
-          }
-        }
-        if (retirement && (terminated.relationshipId !== retirement.expectedRelationship.relationshipId
-          || !areWorkspaceSyncRelationshipDefinitionsEqual(terminated, retirement.expectedRelationship)
-          || !areWorkspaceSyncWorkerCopyProvenancesEqual(terminated, retirement.expectedRelationship)
-          || terminated.enabled !== retirement.expectedRelationship.enabled
-          || terminated.createdAtMs !== retirement.expectedRelationship.createdAtMs
-          || terminated.updatedAtMs !== retirement.expectedRelationship.updatedAtMs)) {
-          throw ownerError('relationship_definition_conflict', 'Workspace relationship changed since review');
-        }
-        if (retirement && !options.readRelationshipDependencies) {
-          throw ownerError('workspace_sync_dependencies_unavailable', 'Workspace relationship dependencies are unavailable');
-        }
-        const dependencies = await options.readRelationshipDependencies?.(terminated, settings, retirement?.removeTargetCopy) ?? [];
-        if (dependencies.length > 0) {
-          throw Object.assign(ownerError('workspace_sync_relationship_in_use', 'Workspace relationship has dependent work'), { dependencies });
-        }
-        if (retirement?.removeTargetCopy) {
-          if (!options.inspectCommittedRelationshipTarget || !options.removeCommittedRelationshipTarget) {
-            throw ownerError('workspace_copy_removal_unavailable', 'Committed copy removal is unavailable');
-          }
-          const approved = retirement.approval?.actionInput;
-          if (!approved) throw ownerError('approval_required', 'Committed copy removal has no Action receipt');
-          if (approved.expectedRelationship.relationshipId !== terminated.relationshipId
-            || !areWorkspaceSyncRelationshipDefinitionsEqual(approved.expectedRelationship, terminated)
-            || !areWorkspaceSyncWorkerCopyProvenancesEqual(approved.expectedRelationship, terminated)
-            || approved.expectedRelationship.enabled !== terminated.enabled
-            || approved.expectedRelationship.createdAtMs !== terminated.createdAtMs
-            || approved.expectedRelationship.updatedAtMs !== terminated.updatedAtMs
-            || approved.removeTargetCopy?.workspaceRefId !== retirement.removeTargetCopy.workspaceRefId
-            || approved.removeTargetCopy?.rootFingerprint !== retirement.removeTargetCopy.rootFingerprint) {
-            throw ownerError('approval_stale', 'Committed copy removal differs from the reviewed Action');
-          }
-          await options.inspectCommittedRelationshipTarget(terminated, retirement.removeTargetCopy, signal, retirement.approval);
-        }
+    const removal = retirement?.removeTargetCopy;
+    const currentRelationship = (snapshot: ProjectAccountSnapshotV1) => {
+      const relationships = parseRelationships(snapshot);
+      const matches = relationships.filter(relationship => relationship.relationshipId === relationshipId);
+      if (matches.length !== 1) throw ownerError('relationship_not_ready', 'Workspace relationship is unavailable');
+      const current = matches[0]!;
+      if (!retirement) return current;
+      const workerCopy = getWorkspaceSyncWorkerCopyV1(current);
+      if (!workerCopy) throw ownerError('workspace_copy_not_worker', 'Workspace relationship has no worker-copy creation provenance');
+      if (removal && removal.workspaceRefId !== workerCopy.targetWorkspaceRefId) {
+        throw ownerError('workspace_unavailable', 'Workspace removal is not the worker-copy target');
+      }
+      if (!matchesReviewedRelationship(current, retirement.expectedRelationship)) {
+        throw ownerError('relationship_definition_conflict', 'Workspace relationship changed since review');
+      }
+      return current;
+    };
+    const assertNoDependencies = async (relationship: WorkspaceSyncRelationshipV1, snapshot: ProjectAccountSnapshotV1) => {
+      if (retirement && !options.readRelationshipDependencies) {
+        throw ownerError('workspace_sync_dependencies_unavailable', 'Workspace relationship dependencies are unavailable');
+      }
+      const dependencies = await options.readRelationshipDependencies?.(relationship, snapshot, removal) ?? [];
+      if (dependencies.length > 0) {
+        throw Object.assign(ownerError('workspace_sync_relationship_in_use', 'Workspace relationship has dependent work'), { dependencies });
+      }
+    };
+    let definitionRetired = false;
+    const retire = async () => {
+      const result = await mutateProjectSnapshot(async settings => {
+        const current = currentRelationship(settings);
+        if (!removal) await assertNoDependencies(current, settings);
         return admitProjectSnapshotTransition(settings, { ...settings,
-          relationships: relationships.filter((relationship) => relationship.relationshipId !== relationshipId),
+          relationships: settings.relationships.filter(relationship => relationship.relationshipId !== relationshipId),
         });
       }, signal);
       if (!isSettledMutation(result)) throw mutationFailure(result);
-      try {
-        await options.waitForProjectReconciliation(result.version, signal);
-        if (retirement?.removeTargetCopy) {
-          await options.removeCommittedRelationshipTarget!(terminated, retirement.removeTargetCopy, signal, retirement.approval);
-        }
-      } catch (error) {
-        // A plain stop is committed once the graph mutation settles: while the sync agent restarts, runtime
-        // reconciliation refuses with a "not ready yet" code and converges by itself. Removing a worker-copy
-        // target needs that reconciliation to have finished, so that path keeps reporting the refusal.
-        if (!retirement?.removeTargetCopy && isReconcilingRefusal(error)) return;
-        const failure = typeof error === 'object' && error !== null
-          ? error
-          : new Error('Workspace relationship retirement settlement failed', { cause: error });
-        throw Object.assign(failure, { definitionRetired: true });
+      definitionRetired = true;
+      await options.waitForProjectReconciliation(result.version, signal);
+    };
+
+    let retirementRefusal: unknown;
+    try {
+      if (!removal) {
+        await retire();
+        return;
       }
+      const snapshot = parseProjectAccountSnapshotV1(await options.readProjectSnapshot());
+      const relationship = currentRelationship(snapshot);
+      const approval = retirement?.approval;
+      if (!options.removeCommittedRelationshipTarget) {
+        throw ownerError('workspace_copy_removal_unavailable', 'Committed copy removal is unavailable');
+      }
+      if (!approval) throw ownerError('approval_required', 'Committed copy removal has no Action receipt');
+      if (!matchesReviewedRelationship(relationship, approval.actionInput.expectedRelationship)
+        || approval.actionInput.removeTargetCopy?.workspaceRefId !== removal.workspaceRefId
+        || approval.actionInput.removeTargetCopy?.rootFingerprint !== removal.rootFingerprint) {
+        throw ownerError('approval_stale', 'Committed copy removal differs from the reviewed Action');
+      }
+      await assertNoDependencies(relationship, snapshot);
+      await options.removeCommittedRelationshipTarget(relationship, approval, async () => {
+        try {
+          await retire();
+        } catch (error) {
+          // A remote continuation reports only transport-safe errors. The
+          // controller can still return its own original graph refusal.
+          retirementRefusal = error;
+          throw error;
+        }
+      }, signal);
+      if (!definitionRetired) throw ownerError('workspace_copy_removal_unavailable', 'Target did not settle the reviewed retirement');
+    } catch (cause) {
+      const error = retirementRefusal ?? cause;
+      if (!definitionRetired) throw error;
+      // Plain stop has already committed, and a restarting Sync runtime will converge.
+      if (!removal && isReconcilingRefusal(error)) return;
+      const failure = typeof error === 'object' && error !== null
+        ? error : new Error('Workspace relationship retirement settlement failed', { cause: error });
+      throw Object.assign(failure, { definitionRetired: true });
+    }
   };
 
   const activeCreations = new Set<string>();

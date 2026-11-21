@@ -11,12 +11,17 @@ it('retains the source operation through remote cleanup progress, nested review 
   const progress: unknown[] = [];
   let remoteOperationId: string | undefined;
   let reviewCalls = 0;
+  let graphRetired = false;
   let stopSource: (() => void) | undefined;
   const source: RpcLocalActionContext = {
     actionRequestId: 'original-request',
     operationAcceptance: { operationId: 'original-operation', actionId: 'workspace.sync.relationship.remove', accept() { throw new Error('second acceptance'); } },
     operationProgress: { update: update => { progress.push(update); } },
     operationOwnerUpdate: { update: update => { progress.push(update); } },
+    retirePreparedWorkspaceCopy: async () => {
+      expect(graphRetired).toBe(false);
+      graphRetired = true;
+    },
     operationCancellation: { onRequest(listener) { stopSource = listener; return () => { stopSource = undefined; }; } },
     operationReview: { waitForResume: async (_details, producer) => {
       expect(await producer?.review({ reviewedEffectDigest: 'a'.repeat(64), skipForInvocation: false })).toBeNull();
@@ -58,6 +63,10 @@ it('retains the source operation through remote cleanup progress, nested review 
             operation.operationProgress?.update({ phase: 'teardown', label: 'Cleaning checkout' });
             operation.operationProgress?.update({ label: 'Cleanup output' });
             await operation.operationReview!.waitForResume(reviewDetails(), { review: async () => { reviewCalls += 1; return null; } });
+            expect(graphRetired).toBe(false);
+            await operation.retirePreparedWorkspaceCopy!();
+            await operation.retirePreparedWorkspaceCopy!();
+            expect(graphRetired).toBe(true);
             const stopped = new Promise<void>(resolve => controller.signal.addEventListener('abort', () => resolve(), { once: true }));
             operation.operationCancellation!.onRequest(() => controller.abort());
             stopSource!();

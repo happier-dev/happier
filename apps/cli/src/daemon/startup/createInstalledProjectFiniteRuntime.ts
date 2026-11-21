@@ -4,6 +4,7 @@ import type { ApiClient } from '@/api/api';
 import type { StoredCredentials } from '@/persistence';
 import { readStoredCredentialsForServerId, sameStoredCredentials } from '@/persistence';
 import { readInstallationIdentityIfExistsSync } from '../identity/store';
+import { selectHostRequesterExecutionIdentity } from '../agentIsolation/agentIsolationLaunchPolicy';
 import { readAdmittedRequesterAccountReadRuntime } from "../sessionEncryption/requesterAccountActionProjection";
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1 } from '@happier-dev/protocol/plugins/events/machineServiceObservationV1';
@@ -110,6 +111,19 @@ export function createInstalledProjectFiniteRuntime(params: Readonly<{
     };
     if (!await isCurrent()) return refuse('installed_not_current');
     const installationId = readInstallationIdentityIfExistsSync()?.installationId;
+    if (ingress.retainedCheckoutTeardown && ingress.callerInputAuthorization) {
+      // The signed target receiver already admitted the exact retirement. There
+      // are deliberately no Account readers or preference ports at this target.
+      const authorization = ingress.callerInputAuthorization;
+      const { accountId, serverIdentityId } = authorization.binding;
+      if (!installationId || !externalActionAccountId) return refuse('installed_account_unavailable');
+      const requesterIdentity = selectHostRequesterExecutionIdentity({ rpcContext: ingress,
+        hostHomeServerIdentityId: serverIdentityId, hostCustodianAccountId: externalActionAccountId,
+        hostExecutionTarget: { machineId: registeredMachineId, installationId } });
+      return { ...ports, ...nativeRuntime(async () => !ingress.signal.aborted, accountId, serverIdentityId),
+        accountAuthorization: authorization, requesterIdentity, accountId, serverId: finiteServerId, machineId: registeredMachineId,
+        serverHttpBaseUrl: finiteServerHttpBaseUrl, resolveWorkspaceExecutionConfig: async () => null };
+    }
     const session = !ingress.callerInputAuthorization ? ingress.requesterSessionBootstrap : undefined;
     if (session) {
       const runtimeCurrent = async () => {

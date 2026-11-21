@@ -62,6 +62,7 @@ import { sameHandoffTargetReplacementApproval } from '@happier-dev/protocol/sess
 import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncSourceWriterTargetRoutingV1Schema, isWorkspaceSyncSourceWriterCleanupPhaseV1, type WorkspaceSyncSourceContextV1 } from '@happier-dev/protocol/socketRpc';
 import type { MachineInstallationPublicIdentityV1 } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { resolveWorkspaceSyncEndpoint, resolveWorkspaceSyncTransferRoute, resolveWorkspaceSyncExecutionMachineIdV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
+import { captureRetainedCheckoutTeardown } from '@/workspaces/projectSetup/captureRetainedCheckoutTeardown';
 import { isManagedWorkspaceRefV2, type ManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { ManagedWorkspaceSyncTarget } from '@/machines/managed/acquire';
@@ -76,7 +77,7 @@ import type { TransferEndpointCandidate } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { captureServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { RpcError, readRpcErrorCode, isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
-import { WorkspaceSyncCommittedCopyTargetResultV1Schema, type WorkspaceSyncCommittedCopyTargetV1, type WorkspaceSyncCommittedCopyPreviewV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
+import { WorkspaceSyncCommittedCopyTargetResultV1Schema, WorkspaceSyncCommittedCopyTargetV1Schema, type WorkspaceSyncCommittedCopyTargetV1, type WorkspaceSyncCommittedCopyPreviewV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
 
 import type { MachineWorkspaceSyncRpcService } from '@/api/machine/rpcHandlers.workspaceSync';
 import type { RpcHandlerContext } from '@/api/rpc/types';
@@ -1689,33 +1690,44 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
   };
 
   const callRetainedCopyPhase = async (relationship: WorkspaceSyncRelationshipV1,
-    phase: 'inspect' | 'remove' | 'dependencies', request: unknown, signal?: AbortSignal,
+    phase: 'remove' | 'dependencies', request: unknown, signal?: AbortSignal,
     retirementContext?: RpcHandlerContext) => {
     const retained = runtime?.handoffAdapter.resolvePrivateExecution?.({ relationshipId: relationship.relationshipId });
     if (!retained?.execution.callTargetPhase) return null;
     const target = resolveRelationshipBootstrapTarget(retained.execution.getSnapshot?.() ?? null, relationship, semanticServerId);
     const workspace = resolveWorkspaceRefById(retained.execution.getSnapshot?.()?.workspaceRefs ?? [], target.workspaceRefId, semanticServerId);
     if (!workspace) throw compositionError('workspace_unavailable', 'The retained copy target is unavailable');
+    let retainedCheckoutTeardown: RpcHandlerContext['retainedCheckoutTeardown'];
+    if (phase === 'remove') {
+      const approval = WorkspaceSyncCommittedCopyTargetV1Schema.parse(request);
+      const projectRuntime = retirementContext && await input.resolveProjectRuntime?.(retirementContext);
+      if (!projectRuntime || !retirementContext) throw compositionError('project_setup_operation_unavailable', 'Requester Project cleanup is unavailable');
+      retainedCheckoutTeardown = { data: await captureRetainedCheckoutTeardown({ runtime: projectRuntime, workspace,
+        sourceRoot: retained.input.sourceRootPath, skipCleanup: approval.actionInput.removeTargetCopy?.skipCleanup === true,
+        signal: signal ?? retirementContext.signal }) };
+    }
     return { result: await retained.execution.callTargetPhase({ machineId: target.machineId,
       method: phase === 'dependencies' ? RPC_METHODS.DAEMON_PROJECT_WORKER_DEPENDENCIES
-        : phase === 'inspect' ? RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT : RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_REMOVE,
+        : RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_REMOVE,
       // Forward the current approved proof, not its in-process Account executor.
       // Native cleanup keeps the installed SOURCE's separate transport authority.
       request, ...(retirementContext?.callerInputAuthorization ? {
         callerInputAuthorization: ExternalActionExecutionAuthorizationV1Schema.parse(retirementContext.callerInputAuthorization),
       } : {}),
       ...(retirementContext?.localActionContext ? { operationContext: retirementContext.localActionContext } : {}),
+      ...(retainedCheckoutTeardown ? { retainedCheckoutTeardown } : {}),
       routing: { v: 1, phase, operationId: retained.input.operationId, accountServerId: semanticServerId,
         targetMachineId: target.machineId, targetRootPath: workspace.rootPath,
         ...(target.targetManaged ? { targetManaged: target.targetManaged } : {}) }, ...(signal ? { signal } : {}) }) };
   };
-  const committedCopyPhase = async (relationship: WorkspaceSyncRelationshipV1, phase: 'inspect' | 'remove',
-    approval: WorkspaceSyncCommittedCopyTargetV1 | undefined, signal?: AbortSignal, retirementContext?: RpcHandlerContext) => {
-    if (!approval) throw compositionError('approval_required', 'Committed-copy removal approval is required');
-    const retained = await callRetainedCopyPhase(relationship, phase, approval, signal, retirementContext);
+  const removeCommittedCopy = async (relationship: WorkspaceSyncRelationshipV1, approval: WorkspaceSyncCommittedCopyTargetV1,
+    retirePreparedWorkspaceCopy: () => Promise<void>, signal: AbortSignal | undefined, retirementContext?: RpcHandlerContext) => {
+    if (!retirementContext?.localActionContext) throw compositionError('project_setup_operation_unavailable', 'Retirement operation is unavailable');
+    const context = { ...retirementContext,
+      localActionContext: { ...retirementContext.localActionContext, retirePreparedWorkspaceCopy } };
+    const retained = await callRetainedCopyPhase(relationship, 'remove', approval, signal, context);
     if (!retained) {
-      await (phase === 'inspect' ? targetAuthority.inspectCommittedCopyAtTarget : targetAuthority.removeCommittedCopyAtTarget)({
-        ...approval, ...(signal ? { signal } : {}) }, retirementContext);
+      await targetAuthority.removeCommittedCopyAtTarget({ ...approval, ...(signal ? { signal } : {}) }, context);
       return;
     }
     readMachineActionRpcResult(retained.result);
@@ -1792,8 +1804,8 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         },
         readProjectSnapshot: readSnapshot,
         readRelationshipDependencies: relationshipDependencyReader(capture.credentials),
-        inspectCommittedRelationshipTarget: async (relationship, _removal, signal, approval) => committedCopyPhase(relationship, 'inspect', approval, signal, retirementContext),
-        removeCommittedRelationshipTarget: async (relationship, _removal, signal, approval) => committedCopyPhase(relationship, 'remove', approval, signal, retirementContext),
+        removeCommittedRelationshipTarget: (relationship, approval, retire, signal) =>
+          removeCommittedCopy(relationship, approval, retire, signal, retirementContext),
         ensureRelationship: async (relationship, signal, preparation) => {
           await runtime!.handoffAdapter.bindPrivateExecutionRelationship?.(retained.input.operationId, relationship.relationshipId);
           await readSnapshot(signal);
@@ -2497,8 +2509,8 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       });
     },
     readRelationshipDependencies: relationshipDependencyReader(input.credentials),
-    inspectCommittedRelationshipTarget: async (relationship, _removal, signal, approval) => committedCopyPhase(relationship, 'inspect', approval, signal, retirementContext),
-    removeCommittedRelationshipTarget: async (relationship, _removal, signal, approval) => committedCopyPhase(relationship, 'remove', approval, signal, retirementContext),
+    removeCommittedRelationshipTarget: (relationship, approval, retire, signal) =>
+      removeCommittedCopy(relationship, approval, retire, signal, retirementContext),
   });
   relationshipOwner = createInstalledRelationshipOwner();
 

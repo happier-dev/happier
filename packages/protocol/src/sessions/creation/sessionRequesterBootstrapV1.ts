@@ -31,6 +31,11 @@ import { CallerInputConstraintsV1Schema } from '../../auth/callerInputConstraint
 import { AgentPermissionIntentV1Schema, parseAgentPermissionIntentV1Alias } from '../../runtime/permissionIntentV1.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { WorkspaceSyncPrepareBetweenRequestV1Schema, SessionHandoffWorkspaceCaptureRequestV3Schema, type WorkspaceSyncPrepareBetweenRequestV1 } from '../control/handoff/workspaceSyncSchemas.js';
+import { doesWorkspaceSyncCopyRetirementRequestMatchV1, WorkspaceSyncCommittedCopyTargetV1Schema, type WorkspaceSyncCommittedCopyTargetV1 } from '../control/handoff/workspaceSyncCommittedCopyV1.js';
+import { WorkspaceSyncSourceWriterTargetRoutingV1Schema, type WorkspaceSyncSourceWriterTargetRoutingV1 } from '../../rpc/socket.js';
+import { ProjectAccountOrganizationKeyV1Schema, ProjectAccountOrganizationV1Schema } from '../../projects/projectAccountRowsV1.js';
+import { ProjectSetupContentV1Schema } from '../../projects/projectSetupV1.js';
+import { ProjectTrustValueV1Schema, QualifiedProjectTrustProjectV1Schema } from '../../workspaces/projectSetup/projectTrustRowV1.js';
 import { readSessionActionChildCreationRpcEffectV1 } from './sessionCreationActionIdsV1.js';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '../../actions/projectActionIdsV1.js';
 import { DeploymentChildRpcV1Schema, readDeploymentChildRpcV1 } from '../../deployments/deploymentChildRpcV1.js';
@@ -269,9 +274,85 @@ const ManagedCreationCodecPlaintextV1Schema = lazyZodSchema(() => z.strictObject
   }),
   codec: z.optional(z.strictObject({ machineKey: z.string().check(z.base64(), z.refine(value => decodeBase64(value).length === 32)) })),
 }));
+const RetainedCheckoutTeardownDataV1Schema = lazyZodSchema(() => z.strictObject({
+  project: QualifiedProjectTrustProjectV1Schema,
+  organization: z.nullable(z.strictObject({ key: ProjectAccountOrganizationKeyV1Schema, value: ProjectAccountOrganizationV1Schema })),
+  acceptedSetup: z.strictObject({ ...ProjectSetupContentV1Schema.shape, kind: z.literal('ready') }),
+  trust: z.nullable(ProjectTrustValueV1Schema),
+  selectedEnvironment: z.record(z.string(), z.string()),
+}));
+export type RetainedCheckoutTeardownDataV1 = z.infer<typeof RetainedCheckoutTeardownDataV1Schema>;
+
+const RetainedCheckoutTeardownPlaintextV1Schema = lazyZodSchema(() => z.strictObject({
+  ...installationContextRootShape(),
+  purpose: z.strictObject({ kind: z.literal('retained_checkout_teardown'),
+    recipient: z.strictObject({ machineId: z.string().check(z.minLength(1)), installationId: z.string().check(z.minLength(1)) }),
+    requestDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+  }),
+  data: z.nullable(RetainedCheckoutTeardownDataV1Schema),
+}));
 const InstallationContextPlaintextV1Schema = lazyZodSchema(() => z.union([
   RequesterAccountContextPlaintextV1Schema, ManagedControllerCodecPlaintextV1Schema, ManagedCreationCodecPlaintextV1Schema,
+  RetainedCheckoutTeardownPlaintextV1Schema,
 ]));
+
+type RetainedCheckoutTeardownRoute = Readonly<{
+  authorization: ExternalActionExecutionAuthorizationV1;
+  routing: WorkspaceSyncSourceWriterTargetRoutingV1;
+  request: WorkspaceSyncCommittedCopyTargetV1;
+  machineId: string;
+  installationId: string;
+}>;
+
+function retainedCheckoutTeardownPurpose(input: RetainedCheckoutTeardownRoute) {
+  const routing = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse(input.routing);
+  const request = WorkspaceSyncCommittedCopyTargetV1Schema.parse(input.request);
+  if (routing.target.phase !== 'remove' || routing.target.targetMachineId !== input.machineId
+    || !doesWorkspaceSyncCopyRetirementRequestMatchV1(input.authorization, routing, request)) return null;
+  return { kind: 'retained_checkout_teardown' as const, recipient: { machineId: input.machineId, installationId: input.installationId },
+    requestDigest: computeCanonicalDomainSeparatedDigest('happier-retained-checkout-teardown-v1', [
+      createCanonicalJsonSigningInput(routing), createCanonicalJsonSigningInput(request),
+    ]) };
+}
+
+/** The signed SOURCE RPC authenticates the exact operation; this box grants only its selected Project data. */
+export function sealRetainedCheckoutTeardownV1(input: RetainedCheckoutTeardownRoute & Readonly<{
+  data: RetainedCheckoutTeardownDataV1 | null;
+  installationPublicKey: Uint8Array;
+  randomBytes(length: number): Uint8Array;
+}>): ExternalActionExecutionAuthorizationV1 {
+  const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(input.authorization);
+  const purpose = retainedCheckoutTeardownPurpose({ ...input, authorization });
+  if (!purpose) throw new Error('retained_checkout_teardown_root_mismatch');
+  const plaintext = RetainedCheckoutTeardownPlaintextV1Schema.parse({ v: 1,
+    authorization: { v: authorization.v, token: authorization.token, binding: authorization.binding },
+    purpose, data: input.data });
+  return { ...authorization, requesterAccountContext: sealInstallationContext({ plaintext, installationId: input.installationId,
+    installationPublicKey: input.installationPublicKey, randomBytes: input.randomBytes }) };
+}
+
+/** Call only after admitting the SOURCE signature and exact writer target route. */
+export function openRetainedCheckoutTeardownV1(input: RetainedCheckoutTeardownRoute & Readonly<{
+  installationPrivateKey: Uint8Array;
+}>): Readonly<{ data: RetainedCheckoutTeardownDataV1 | null }> | null {
+  try {
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(input.authorization);
+    const sealed = authorization.requesterAccountContext;
+    const purpose = retainedCheckoutTeardownPurpose({ ...input, authorization });
+    if (!sealed || sealed.installationId !== input.installationId || !purpose) return null;
+    const plaintext = openInstallationSealedContext(sealed, input.installationPrivateKey);
+    if (!plaintext || !('data' in plaintext)
+      || createCanonicalJsonSigningInput(plaintext.authorization) !== createCanonicalJsonSigningInput({
+        v: authorization.v, token: authorization.token, binding: authorization.binding,
+      }) || createCanonicalJsonSigningInput(plaintext.purpose) !== createCanonicalJsonSigningInput(purpose)) return null;
+    const { data } = plaintext;
+    if (data && (data.project.serverId !== authorization.binding.serverIdentityId
+      || data.organization && (data.organization.key.serverId !== data.project.serverId
+        || data.organization.key.projectKey !== data.project.projectId)
+      || data.trust && (data.trust.project.serverId !== data.project.serverId || data.trust.project.projectId !== data.project.projectId))) return null;
+    return { data };
+  } catch { return null; }
+}
 
 /** Nested purpose discriminants select an already parsed closed context arm. */
 function hasManagedCodecPurpose<Kind extends 'managed_creation_codec' | 'managed_controller_codec'>(

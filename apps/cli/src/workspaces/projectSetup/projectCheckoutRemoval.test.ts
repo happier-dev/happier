@@ -1,14 +1,14 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, expect, it, vi } from 'vitest';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, type WorktreeRemovedEventV1 } from '@happier-dev/protocol/plugins/events/machineServiceObservationV1';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 import { createProjectWorkerAdmission } from '@/workspaces/execution/projectWorkerAdmission';
-import { createWorktreePortsOwner } from '@/workspaces/execution/worktreePorts';
-import { subscribeWorktreePortRemoval } from '@/workspaces/execution/worktreePortRemoval';
+import { getHostWorktreePortsOwner } from '@/workspaces/execution/worktreePorts';
+import { configuration } from '@/configuration';
 import { createTerminalPtySessionManager } from '@/terminal/pty/sessions';
 import { readDaemonTerminalPtyConfig } from '@/terminal/pty/config';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
@@ -21,23 +21,42 @@ import type { ProjectFiniteActionRuntime } from './projectFiniteAction';
 import { prepareProjectCheckoutRemoval } from './projectCheckoutRemoval';
 import { prepareProjectLaunchEnvironment } from './projectLaunchEnvironment';
 import { resolveCanonicalAbsolutePath } from '@/utils/path/expandHomeDirPath';
+import { logger } from '@/ui/logger';
 
+const isolated = vi.hoisted(() => {
+    const { mkdtempSync } = require('node:fs') as typeof import('node:fs');
+    const { tmpdir } = require('node:os') as typeof import('node:os');
+    const { join } = require('node:path') as typeof import('node:path');
+    const home = mkdtempSync(join(tmpdir(), 'project-removal-home-'));
+    const previousHome = process.env.HAPPIER_HOME_DIR;
+    process.env.HAPPIER_HOME_DIR = home;
+    return { home, previousHome };
+});
+afterAll(async () => {
+    await rm(isolated.home, { recursive: true, force: true });
+    if (isolated.previousHome === undefined) delete process.env.HAPPIER_HOME_DIR;
+    else process.env.HAPPIER_HOME_DIR = isolated.previousHome;
+});
 afterEach(() => { vi.restoreAllMocks(); withdrawActiveProjectAccountRowsSnapshot(); });
 
 it.each([
-    { associated: true, externallyRemoved: false },
-    { associated: false, externallyRemoved: false },
-    { associated: true, externallyRemoved: true },
-    { associated: false, externallyRemoved: true },
-])('releases only the captured physical assignment through an alias (Workspace $associated, externally removed $externallyRemoved)', async ({ associated, externallyRemoved }) => {
+    { associated: true, externallyRemoved: false, publisherFails: false, registeredRoot: 'physical' },
+    { associated: false, externallyRemoved: false, publisherFails: false, registeredRoot: 'alias' },
+    { associated: true, externallyRemoved: true, publisherFails: false, registeredRoot: 'alias' },
+    { associated: false, externallyRemoved: true, publisherFails: false, registeredRoot: 'alias' },
+    { associated: true, externallyRemoved: false, publisherFails: true, registeredRoot: 'alias' },
+])('releases only the captured physical assignment through an alias (Workspace $associated, externally removed $externallyRemoved, publisher unavailable $publisherFails)', async ({ associated, externallyRemoved, publisherFails, registeredRoot }) => {
+    const privatePublicationError = 'private-requester-publication-sentinel';
+    const warnings = vi.spyOn(logger, 'warn').mockImplementation(() => {});
     const directory = await mkdtemp(join(tmpdir(), 'project-removal-physical-'));
     const physical = join(directory, 'physical');
     const alias = join(directory, 'alias');
     const sibling = join(directory, 'sibling');
     await Promise.all([mkdir(physical), mkdir(sibling)]);
     await symlink(physical, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    const acceptedRoot = registeredRoot === 'physical' ? physical : alias;
     const post = mockProjectAccountRowsHttpBoundary(associated ? [createPlainProjectAccountRefRow({ id: 'workspace', serverId: 'home',
-        machineId: 'machine', rootPath: alias, projectKey: 'project', createdAtMs: 1 })] : []);
+        machineId: 'machine', rootPath: acceptedRoot, projectKey: 'project', createdAtMs: 1 })] : []);
     const plugin = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
         runtimeOptions: { pluginIds: [], contributes: createResolvedContributionRegistry({}) } });
     const services = plugin.registry.projectManagedServices;
@@ -57,8 +76,8 @@ it.each([
     });
     const broker = plugin.registry.stableEventsBroker;
     if (!broker) throw new Error('Missing real host event broker');
-    const statePath = join(directory, 'ports.json');
-    const ports = createWorktreePortsOwner({ statePath });
+    const statePath = join(configuration.happyHomeDir, 'worktree-ports.json');
+    const ports = getHostWorktreePortsOwner();
     const terminalSessions = createTerminalPtySessionManager({
         // No process may start during skipped cleanup; the native PTY is the OS boundary.
         ptyProvider: { spawn() { throw new Error('Unexpected cleanup process'); } },
@@ -68,13 +87,15 @@ it.each([
         supportsCoreCancellation: () => true });
     const environmentIo: ProjectNativeToolchainIoForHost = { resolveTool: async () => null,
         run: async () => { throw new Error('Unexpected toolchain process'); }, createInvocation: () => environmentIo };
-    const runtime: ProjectFiniteActionRuntime = { credentials: { token: 'requester', encryption: null }, serverId: 'home',
+    // Publication is an external output boundary; its error text can contain
+    // private requester data and cannot change the settled filesystem effect.
+    const runtime: ProjectFiniteActionRuntime = {
+        ...(publisherFails ? { publishMachineServiceObservation() { throw new Error(privatePublicationError); } } : {}),
+        credentials: { token: 'requester', encryption: null }, serverId: 'home',
         serverHttpBaseUrl: 'https://home.test', machineId: 'machine', accountId: 'account', operationRuntime,
         workerAdmission: createProjectWorkerAdmission({ machineId: 'machine', admissionDrain: createDaemonAdmissionDrain(),
             readPolicy: async () => ({ status: 'ready', policy: { accepting: true, runAtMost: 1 }, source: 'default', metadataVersion: 1 }) }),
         resolveWorkspaceExecutionConfig: async () => null, nativeIo: { resolveTool: async () => null }, environmentIo, terminalSessions };
-    const subscription = subscribeWorktreePortRemoval({ broker, portsOwner: ports,
-        resolveCurrentMachineId: () => 'machine', isCurrent: () => true });
     const removals: WorktreeRemovedEventV1[] = [];
     const observation = broker.subscribeHost({
         target: { eventId: MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, scope: { kind: 'account' } },
@@ -139,8 +160,14 @@ it.each([
             return { ok: true, result: {} };
         } });
         expect(result).toMatchObject({ ok: true });
-        await vi.waitFor(() => expect(removals).toEqual([expect.objectContaining({
-            workspace: associated ? expect.objectContaining({ workspaceId: 'workspace', rootPath: alias }) : null,
+        if (publisherFails) {
+            expect(removals).toEqual([]);
+            expect(JSON.stringify(warnings.mock.calls)).not.toContain(privatePublicationError);
+            expect(warnings).toHaveBeenCalledWith(expect.any(String), {
+                code: 'automation_event_host_evidence_unavailable',
+            });
+        } else await vi.waitFor(() => expect(removals).toEqual([expect.objectContaining({
+            workspace: associated ? expect.objectContaining({ workspaceId: 'workspace', rootPath: acceptedRoot }) : null,
             worktreePath: captured, originRunId: 'removal-workflow',
         })]));
         await vi.waitFor(async () => {
@@ -150,7 +177,6 @@ it.each([
         });
     } finally {
         await observation.dispose();
-        await subscription.dispose();
         await terminalSessions.dispose();
         await plugin.dispose();
         await rm(directory, { recursive: true, force: true });

@@ -55,6 +55,8 @@ export type RpcLocalActionContext = Readonly<Partial<Pick<
     operationOwnerUpdate?: ActionExecutorContext['operationOwnerUpdate'];
     operationCancellation?: ActionExecutorContext['operationCancellation'];
     operationReview?: import('@/daemon/actionOperations/actionOperationTypes').ActionOperationReviewContinuation;
+    /** The controller owns graph retirement. The target reaches this port after cleanup. */
+    retirePreparedWorkspaceCopy?: () => Promise<void>;
     requesterWorkAttributionV1?: RequesterWorkAttributionV1;
     /** Captured Account Environment read; never serialized or accepted from a Process DTO. */
     processEnvironmentRead?: (target: Readonly<{ serverId: string; environmentId: string }>) => Promise<boolean>;
@@ -69,6 +71,8 @@ export type RpcOperationDiagnostics = Readonly<{
 }>;
 
 export type RpcHandlerContext = Readonly<{
+    /** Private data opened after the signed retained-copy route was admitted. */
+    retainedCheckoutTeardown?: Readonly<{ data: import('@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1').RetainedCheckoutTeardownDataV1 | null }>;
     /** The installed ingress retained a claimed host Workflow's Account custody for this exact typed operation. */
     admittedHostWorkflowRequester?: true;
     /** Direct SCM workspace placement retained by receiving admission for this call. */

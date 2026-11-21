@@ -64,7 +64,8 @@ import { doesWorkspaceSyncSourceRootMatchRouting, doesWorkspaceSyncSourceWriterT
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { resolveExternalActionRootInvocationAuthority, isReviewedServiceMoveChild, isReviewedMachineSetupPlanChild, isReviewedProjectSetupSetChild, isReviewedSessionActionCreationChild, isReviewedSessionStopChild, isReviewedDeploymentChild, isReviewedSessionAgentReadinessChild, claimReviewedServiceMoveStart } from '@/api/externalActionExecutionAuthorization';
 import { readProjectSetupSetChildRpcEffectV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
-import { doesWorkspaceSyncCopyRetirementRootMatchV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
+import { doesWorkspaceSyncCopyRetirementRootMatchV1, WorkspaceSyncCommittedCopyTargetV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
+import { openRetainedCheckoutTeardownV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1, readDeploymentReferenceServiceListEnvironmentIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { readDeploymentChildRpcV1 } from '@happier-dev/protocol/deployments/deploymentChildRpcV1';
 import { projectDeploymentChildRoutingV1 } from '@happier-dev/protocol/deployments/deploymentChildRoutingV1';
@@ -1162,6 +1163,7 @@ export class RpcHandlerManager {
             }
 
             let callerInputAuthorization = parsedInputAuthorization?.success ? parsedInputAuthorization.data : undefined;
+            let retainedCheckoutTeardown: RpcHandlerContext['retainedCheckoutTeardown'];
             let requesterInvocation: import('@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1').ExternalActionRequesterInvocationV1 | undefined;
             const decryptedDeploymentChild = callerInputAuthorization && targetMethod === RPC_METHODS.DAEMON_DEPLOYMENT_CHILD
                 ? readDeploymentChildRpcV1({ deploymentChildRoot: callerInputAuthorization.binding.deploymentChildRoot, rootActionId: callerInputAuthorization.binding.actionId,
@@ -1191,7 +1193,18 @@ export class RpcHandlerManager {
                     return await respond(request, { error: RPC_ERROR_MESSAGES.FORBIDDEN, errorCode: RPC_ERROR_CODES.FORBIDDEN });
                 }
             }
-            if (callerInputAuthorization?.requesterAccountContext && !deploymentArchiveChild) {
+            if (callerInputAuthorization?.requesterAccountContext && targetMethod === RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_REMOVE
+                && writerTargetInputAuthorizationMatchesRequest && admittedWriterTarget?.target.phase === 'remove') {
+                const installation = readInstallationIdentityIfExistsSync();
+                const removal = WorkspaceSyncCommittedCopyTargetV1Schema.safeParse(decryptedParams);
+                const admitted = installation && removal.success && openRetainedCheckoutTeardownV1({
+                    authorization: callerInputAuthorization, routing: admittedWriterTarget, request: removal.data,
+                    machineId: this.scopePrefix, installationId: installation.installationId,
+                    installationPrivateKey: decodeBase64(installation.privateKey, 'base64url'),
+                });
+                if (!admitted || controller.signal.aborted) return await deny('requester_account_binding');
+                retainedCheckoutTeardown = admitted;
+            } else if (callerInputAuthorization?.requesterAccountContext && !deploymentArchiveChild) {
                 const finitePreparation = isFiniteSource && sourceInputAuthorizationMatchesRequest;
                 if ((!serviceMoveChild && !machineInputAuthorizationMatchesRequest && !sessionInputAuthorizationMatchesRequest && !finitePreparation) || !this.prepareRequesterAccountContext
                     || controller.signal.aborted) {
@@ -1293,6 +1306,7 @@ export class RpcHandlerManager {
             }
             const handlerContext: RpcHandlerContext = Object.freeze({
                 ...(localActionContext ? { localActionContext } : {}),
+                ...(retainedCheckoutTeardown ? { retainedCheckoutTeardown } : {}),
                 ...(workspaceSyncPrivateExecution ? { workspaceSyncPrivateExecution } : {}),
                 ...(directScmWorkspaceRequester ? { directScmWorkspaceRequester } : {}),
                 // The same codec choice as encodeResponse for this call, fixed at admission.

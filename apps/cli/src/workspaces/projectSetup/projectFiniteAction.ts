@@ -41,7 +41,8 @@ import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/re
 import { readAdmittedRequesterAccountReadRuntime, resolveAdmittedRequesterAccountReadRuntime } from "@/daemon/sessionEncryption/requesterAccountActionProjection";
 import { projectActionOperationFailure } from '@/daemon/actionOperations/actionOperationFailure';
 import { runTracedExternalActionStage, traceExternalActionStage } from '@/daemon/externalActions/externalActionPhase';
-import { resolveProjectRequesterSecretInputs } from './projectSetupRequesterInputs';
+import { resolveProjectRequesterSecretInputs, selectProjectRequesterSecretBindings } from './projectSetupRequesterInputs';
+import type { RetainedCheckoutTeardownDataV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { resolveProjectToolchainSelection, inspectProjectNativeCommand, resolveProjectNativeCommand, readProjectExecutionInputs } from './projectNativeResolution';
 import { inspectProjectDefinitionExecutionFacts } from './projectDefinitionInspection';
 import { selectProjectDefinitionRead } from './projectDefinitionRead';
@@ -61,6 +62,8 @@ export type ProjectFiniteActionRuntime = ProjectRuntimeAccountAccess & Readonly<
     serverHttpBaseUrl: string;
     /** Installed native Account sink consumes only the setup owner's settled safe fact. */
     publishSetupSettlement?: (settlement: ProjectSetupSettlement) => void;
+    /** Host-private sink retains the admitted requester's Account and physical operation. */
+    publishMachineServiceObservation?: (observation: import('@happier-dev/protocol/plugins/events/machineServiceObservationV1').MachineServiceObservationV1) => void;
     /** Installed receiving connection Home, never a profile label or workspace operand. */
     resolveHostHomeServerIdentityId?: (signal?: AbortSignal) => Promise<string | null>;
     /** Captured by the installed Project runtime owner, never an Action operand. */
@@ -186,6 +189,7 @@ type Review = Readonly<{ kind: 'reviewed'; invocation: Invocation }> | Readonly<
 export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, ingress: RpcHandlerContext,
     removal?: Readonly<{ operation: ProjectSetupOperationContext; association?: ProjectSetupAcceptedAssociation;
         checkoutTeardownConsent?: ProjectSetupPreparationInput['checkoutTeardownConsent'];
+        admittedTeardown?: RetainedCheckoutTeardownDataV1;
         requireRememberedConsent?: boolean }>): NonNullable<ActionExecutorDeps['projectAction']> {
     const authorityRuntime = runtime;
     return async args => {
@@ -195,14 +199,17 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
         // Requester custody retains its installed profile; Project refs use the
         // qualified Home admitted independently for this invocation.
         let runtime = authorityRuntime;
-        const ingressRefusal = readProjectFiniteIngressRefusal(ingress);
-        if (ingressRefusal) return ingressRefusal;
         if (args.actionId !== 'projects.prepare' && args.actionId !== 'projects.script.run' && args.actionId !== 'projects.compute.exec') {
             return failure('unsupported_action');
         }
         const parsed = PROJECT_ACTION_INPUT_SCHEMAS_V1[args.actionId].safeParse(args.input);
         if (!parsed.success) return failure('invalid_parameters');
         const request = { actionId: args.actionId, input: parsed.data } as FiniteRequest;
+        const admittedTeardown = removal?.admittedTeardown;
+        if (admittedTeardown && (request.actionId !== 'projects.prepare' || request.input.phase !== 'teardown'
+            || admittedTeardown !== ingress.retainedCheckoutTeardown?.data || !removal?.association)) return failure('target_mismatch');
+        const ingressRefusal = admittedTeardown ? null : readProjectFiniteIngressRefusal(ingress);
+        if (ingressRefusal) return ingressRefusal;
         const setupRequestedAtMs = request.actionId === 'projects.prepare' && request.input.phase === 'setup'
             ? Date.now() : undefined;
         // Remembered consent is an approving-Account effect. Native preparation
@@ -234,23 +241,30 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
         const nativeExecutionSignal = () => nativeOperation ? AbortSignal.any([signal, nativeOperation.signal]) : signal;
         const admission = ingress.machineAdmission;
         if (!admission || !ingress.verifyMachineAdmissionCurrent) return failure('machine_admission_required');
-        if (admission.machineId !== runtime.machineId
+        const retainedRequester = admittedTeardown && runtime.requesterIdentity?.kind !== 'unknown'
+            ? runtime.requesterIdentity?.requester : undefined;
+        // Retained ingress authenticates the SOURCE transport. Native attribution belongs
+        // to the physical receiver already bound by the sealed Project context.
+        if (admittedTeardown) {
+            if (!retainedRequester || retainedRequester.machineId !== runtime.machineId
+                || retainedRequester.serverId !== request.input.workspace.serverId) return failure('target_mismatch');
+        } else if (admission.machineId !== runtime.machineId
             || !await isServerProfileHomeIdentity(runtime.serverId, request.input.workspace.serverId)
             || args.context.serverId && args.context.serverId !== runtime.serverId
                 && args.context.serverId !== request.input.workspace.serverId) return failure('target_mismatch');
-        const requesterRefusal = readProjectRuntimeRequesterBindingRefusal(authorityRuntime, { ...ingress, signal });
+        const requesterRefusal = admittedTeardown ? null : readProjectRuntimeRequesterBindingRefusal(authorityRuntime, { ...ingress, signal });
         if (requesterRefusal) return requesterRefusal;
         if (runtime.serverId !== request.input.workspace.serverId) runtime = { ...runtime, serverId: request.input.workspace.serverId };
         // The installed profile/Home relation and Account projection were checked
         // above. Keep this host-selected identity through every native helper and
         // final launch; the shared Machine receiver is not the payload finalizer.
-        const hostHomeServerIdentityId = runtime.resolveHostHomeServerIdentityId
+        const hostHomeServerIdentityId = retainedRequester?.serverId ?? (runtime.resolveHostHomeServerIdentityId
             ? await runtime.resolveHostHomeServerIdentityId(signal)
-            : await resolveServerProfileHomeIdentityId(authorityRuntime.serverId);
+            : await resolveServerProfileHomeIdentityId(authorityRuntime.serverId));
         const requesterIdentity: HostRequesterExecutionIdentity = runtime.requesterIdentity
             ?? { kind: 'unknown', reason: 'requester_authority_unavailable' };
         if (runtime.agentIsolation) runtime = { ...runtime, agentIsolation: { ...runtime.agentIsolation, requesterIdentity } };
-        const requesterBaseline = Object.freeze(RequesterWorkAttributionV1Schema.parse({ serverId: runtime.serverId,
+        const requesterBaseline = retainedRequester ?? Object.freeze(RequesterWorkAttributionV1Schema.parse({ serverId: runtime.serverId,
             accountId: admission.actorAccountId, machineId: admission.machineId, installationId: admission.installationId }));
         const acceptedAttribution = (value: unknown) => {
             const parsed = RequesterWorkAttributionV1Schema.safeParse(value);
@@ -313,7 +327,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
         const readEffective = async (selected: typeof association) => {
             const read = await readProjectEffectiveDefinition({ root: selected.workspace.rootPath,
                 account: projectRuntimeAccountRowsInput(runtime), serverHttpBaseUrl: runtime.serverHttpBaseUrl,
-                project: selected.project, signal });
+                project: selected.project, signal, ...(admittedTeardown ? { acceptedSetup: admittedTeardown.acceptedSetup } : {}) });
             return { ...read.snapshot, effectiveDefinition: read.effectiveDefinition };
         };
         const selectedExecutionDeclaration = (definition: ProjectDefinitionInspectOutput['definition'] & Pick<ProjectDefinitionInspectOutput, 'effectiveDefinition'>) => {
@@ -502,6 +516,8 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
         const preparation = (): Parameters<typeof prepareProjectSetup>[0] => ({ workspace: association.workspace, projectAssociation: association,
             ...(removal?.requireRememberedConsent ? { requireRememberedConsent: true } : {}),
             ...(removal?.checkoutTeardownConsent ? { checkoutTeardownConsent: removal.checkoutTeardownConsent } : {}),
+            ...(admittedTeardown ? { acceptedSetup: admittedTeardown.acceptedSetup,
+                admittedTeardownEnvironment: admittedTeardown.selectedEnvironment } : {}),
             dotenvPreparation: dotenvPreparation(),
             originalEnvironment,
             runtimeEnvironment: runtimeEnvironments.get(association.workspace.rootPath),
@@ -628,7 +644,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
         let admittedSecretInputs: ReturnType<typeof resolveProjectRequesterSecretInputs> | undefined;
         const review = (sourceReview?: Awaited<ReturnType<typeof reviewSourcePlacement>>) => stage('project.command.review', async (): Promise<Review> => {
             const definition = sourceReview?.sourceDefinition ?? initialSourceDefinition;
-            ({ secretEnvironment, environmentBindings } = await (admittedSecretInputs ??= stage('project.secret_environment.resolve', () => resolveProjectRequesterSecretInputs(runtime, {
+            if (!admittedTeardown) ({ secretEnvironment, environmentBindings } = await (admittedSecretInputs ??= stage('project.secret_environment.resolve', () => resolveProjectRequesterSecretInputs(runtime, {
                 project: sourceAssociation.project,
                 requirements: definition.effectiveDefinition?.effectiveManifest?.environmentVariables
                     ?? (definition.document?.status === 'valid' ? definition.document.manifest.environmentVariables ?? [] : []),
@@ -637,7 +653,10 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             }, nativeExecutionSignal()))));
             const targetDefinition = await readProjectEffectiveDefinition({ root: association.workspace.rootPath,
                 account: projectRuntimeAccountRowsInput(runtime), serverHttpBaseUrl: runtime.serverHttpBaseUrl,
-                project: association.project, signal: nativeExecutionSignal() });
+                project: association.project, signal: nativeExecutionSignal(),
+                ...(admittedTeardown ? { acceptedSetup: admittedTeardown.acceptedSetup } : {}) });
+            if (admittedTeardown) environmentBindings = selectProjectRequesterSecretBindings(admittedTeardown.organization?.value.environmentBindings,
+                targetDefinition.effectiveDefinition.effectiveManifest?.environmentVariables ?? []);
             if (!runtimeEnvironments.has(association.workspace.rootPath)) {
                 const binding = await prepareProjectWorktreeRuntime({ workspace: association.workspace,
                     manifest: targetDefinition.effectiveDefinition.effectiveManifest, signal: nativeExecutionSignal() });
@@ -809,7 +828,10 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                 }
             });
             const executionInput = (): ProjectSetupExecutionInput => ({ preparation: { ...preparation(), signal: operationSignal }, operation,
-                ...(runtime.nativeOperationRuntime ? { produceProcessEnvironment: async (environment: Readonly<Record<string, string>>, processSignal: AbortSignal) => {
+                ...(admittedTeardown ? { produceProcessEnvironment: async (environment: Readonly<Record<string, string>>) => ({
+                    environment: { ...environment, ...admittedTeardown.selectedEnvironment },
+                    secretValues: Object.values(admittedTeardown.selectedEnvironment).filter(value => value.length > 0),
+                }) } : runtime.nativeOperationRuntime ? { produceProcessEnvironment: async (environment: Readonly<Record<string, string>>, processSignal: AbortSignal) => {
                     processCredentials ??= runtime.nativeOperationRuntime!.prepareConnectedAccountProcessEnvironment({
                         authorization: runtime.accountAuthorization, requesterAccountId: runtime.accountId,
                         ...(nativePreparation?.material ? { requesterMaterial: nativePreparation.material } : {}),
@@ -927,7 +949,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                         return { kind, result: kind === 'no_launch' && operationSignal.aborted ? failure('cancelled') : withRequestedConsentScope(result) };
                     };
                     try {
-                        const refusal = await readProjectRuntimeAdmissionRefusal(authorityRuntime, { ...ingress, signal: operationSignal });
+                        const refusal = admittedTeardown ? null : await readProjectRuntimeAdmissionRefusal(authorityRuntime, { ...ingress, signal: operationSignal });
                         if (refusal) return finish(refusal);
                         if (requesterIdentity.kind === 'isolated' && resolveHostRequesterAgentPlacementForHost({ identity: requesterIdentity,
                             snapshot: runtime.agentIsolation?.read() }) !== 'daemon') {

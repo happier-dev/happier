@@ -1,4 +1,4 @@
-import type { SecretReferenceOverlayV1 } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
+import { readSecretReferenceOverlayV1Reference, type SecretReferenceOverlayV1 } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
 import type { EnvVarRequirement } from '@happier-dev/protocol/profiles/environmentVariables';
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 import { readSavedSecretMaterializerForOperation } from "@/settings/secrets/savedSecretCatalogRead";
@@ -7,25 +7,31 @@ import type { ProjectFiniteActionRuntime } from './projectFiniteAction';
 import type { ProjectSetupAcceptedAssociation } from './projectSetupAcceptedWorkspace';
 import { mergeProjectLaunchLayers } from './projectLaunchEnvironment';
 
+export function selectProjectRequesterSecretBindings(saved: SecretReferenceOverlayV1 | undefined,
+    requirements: readonly EnvVarRequirement[], invocation?: SecretReferenceOverlayV1): SecretReferenceOverlayV1 | undefined {
+    const projectBindings = saved ? Object.fromEntries(requirements.flatMap(requirement => {
+        const ref = requirement.kind === 'secret' ? readSecretReferenceOverlayV1Reference(saved, requirement.name) : null;
+        return ref ? [[requirement.name, ref]] : [];
+    })) : {};
+    const bindings = mergeProjectLaunchLayers(projectBindings, undefined, invocation?.bindings);
+    return Object.keys(bindings).length ? { v: 1, bindings } : undefined;
+}
+
 /** Project defaults are references in the existing Account row; invocation refs override selected defaults. */
 export async function resolveProjectRequesterSecretBindings(account: ProjectAccountRowsInput, input: Readonly<{
     project: ProjectSetupAcceptedAssociation['project'];
     requirements: readonly EnvVarRequirement[];
     environmentBindings?: SecretReferenceOverlayV1;
 }>, signal?: AbortSignal): Promise<SecretReferenceOverlayV1 | undefined> {
-    const secretNames = input.requirements.filter(requirement => requirement.kind === 'secret').map(requirement => requirement.name);
-    let projectBindings: SecretReferenceOverlayV1['bindings'] = {};
-    if (secretNames.length) {
+    let saved: SecretReferenceOverlayV1 | undefined;
+    if (input.requirements.some(requirement => requirement.kind === 'secret')) {
         const rows = await readProjectAccountRows({ ...account,
             serverId: input.project.serverId,
             selection: { key: { kind: 'project-organization', serverId: input.project.serverId, projectKey: input.project.projectId } },
             ...(signal ? { signal } : {}) });
-        const saved = rows.organizations[0]?.value.environmentBindings?.bindings;
-        // Removed or renamed requirements do not acquire stale Project references.
-        projectBindings = Object.fromEntries(secretNames.flatMap(name => saved?.[name] ? [[name, saved[name]]] : []));
+        saved = rows.organizations[0]?.value.environmentBindings;
     }
-    const bindings = mergeProjectLaunchLayers(projectBindings, undefined, input.environmentBindings?.bindings);
-    return Object.keys(bindings).length ? { v: 1, bindings } : undefined;
+    return selectProjectRequesterSecretBindings(saved, input.requirements, input.environmentBindings);
 }
 
 export async function resolveProjectRequesterSecretInputs(runtime: ProjectFiniteActionRuntime,

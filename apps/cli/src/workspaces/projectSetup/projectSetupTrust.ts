@@ -36,8 +36,8 @@ type ProjectSetupRememberedConsent =
     | Readonly<{ kind: 'pendingApproval'; code: 'project_setup_consent_required'; reviewedEffectDigest: string }>;
 export type ProjectCheckoutTeardownConsent = (reviewedEffectDigest: string) => Promise<ProjectSetupRememberedConsent>;
 
-function resolveRememberedConsent(row: OpenedProjectTrustRead, reviewedEffectDigest: string): ProjectSetupRememberedConsent {
-    return row.status === 'present' && row.value.reviewedEffectDigest === reviewedEffectDigest
+export function resolveProjectTeardownConsent(trust: ProjectTrustValueV1 | null, reviewedEffectDigest: string): ProjectSetupRememberedConsent {
+    return trust?.reviewedEffectDigest === reviewedEffectDigest
         ? { kind: 'trusted', reviewedEffectDigest }
         : { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest };
 }
@@ -155,24 +155,30 @@ export function createProjectSetupTrustClient(input: ProjectSetupTrustClientInpu
         const row = parsed.data;
         return row.status === 'present' ? { status: 'present', revision: row.revision, value: open(project, row.content, context) } : row;
     }
+    async function readCheckoutTeardownTrust(project: QualifiedProjectTrustProjectV1): Promise<ProjectTrustValueV1 | null> {
+        const actionId = input.authorization?.binding.actionId;
+        const proof = actionId && isProjectCheckoutRemovalActionIdV1(actionId) ? {
+            actionId, role: PROJECT_CHECKOUT_TEARDOWN_TRUST_READ_ROLE_V1,
+            inputDigest: computeProjectCheckoutTeardownTrustReadDigestV1(project),
+        } : undefined;
+        const row = await read(project, proof);
+        return row.status === 'present' ? row.value : null;
+    }
     return {
         read: (project: QualifiedProjectTrustProjectV1) => read(project),
         async resolveConsent(project: QualifiedProjectTrustProjectV1, reviewedEffectDigest: string): Promise<ProjectSetupRememberedConsent> {
             if (!reviewedEffectDigest) return fail('project_setup_effect_unavailable');
-            return resolveRememberedConsent(await read(project), reviewedEffectDigest);
+            const row = await read(project);
+            return resolveProjectTeardownConsent(row.status === 'present' ? row.value : null, reviewedEffectDigest);
         },
+        readCheckoutTeardownTrust,
         /** The accepted checkout supplies the Project before teardown can retire its rows. */
         captureCheckoutTeardownConsent(project: QualifiedProjectTrustProjectV1): ProjectCheckoutTeardownConsent {
-            const actionId = input.authorization?.binding.actionId;
-            const proof = actionId && isProjectCheckoutRemovalActionIdV1(actionId) ? {
-                actionId, role: PROJECT_CHECKOUT_TEARDOWN_TRUST_READ_ROLE_V1,
-                inputDigest: computeProjectCheckoutTeardownTrustReadDigestV1(project),
-            } : undefined;
-            let trust: Promise<OpenedProjectTrustRead> | undefined;
+            let trust: Promise<ProjectTrustValueV1 | null> | undefined;
             return async reviewedEffectDigest => {
                 if (!reviewedEffectDigest) return fail('project_setup_effect_unavailable');
-                trust ??= read(project, proof);
-                return resolveRememberedConsent(await trust, reviewedEffectDigest);
+                trust ??= readCheckoutTeardownTrust(project);
+                return resolveProjectTeardownConsent(await trust, reviewedEffectDigest);
             };
         },
         async list(projectInput?: QualifiedProjectTrustProjectV1): Promise<Array<Readonly<{ project: QualifiedProjectTrustProjectV1; revision: number; value: ProjectTrustValueV1 }>>> {

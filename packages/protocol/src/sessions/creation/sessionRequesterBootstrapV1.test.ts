@@ -19,6 +19,9 @@ import { admitPresentUserConfirmationV1, recordPresentUserApprovalV1 } from '../
 import { createHostReviewedChildPortV1 } from '../../actions/executor/deploymentRoleChild.js';
 import { SessionPlacementSelectionV1Schema } from './sessionPlacementSelectionV1.js';
 import { deriveSessionCreationTagV1, SessionCreationKeyV1Schema } from './sessionCreationIdentityV1.js';
+import { WorkspaceSyncSourceWriterTargetRoutingV1Schema } from '../../rpc/socket.js';
+import { WorkspaceSyncCommittedCopyTargetV1Schema } from '../control/handoff/workspaceSyncCommittedCopyV1.js';
+import { computeWorkspaceSyncPolicyDigest } from '../control/handoff/workspaceSyncSchemas.js';
 
 const request = {
   kind: 'requester_session_bootstrap_v1',
@@ -33,6 +36,52 @@ const request = {
 } as const;
 
 describe('requester bootstrap installation confidentiality', () => {
+  it('opens teardown data only for the signed retained copy and recipient installation', () => {
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'signed-root', binding: {
+      accountId: 'requester', custodianAccountId: 'requester', authentication: { kind: 'account', tokenEpoch: 1 },
+      serverIdentityId: 'home', machineId: 'controller', installationId: 'controller-install',
+      accountEncryptionMode: 'e2ee', actionId: 'projects.worker.copy.retire', requestId: 'retire',
+      requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'controller' },
+    } });
+    const routing = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({ v: 1,
+      source: { v: 1, phase: 'prepare', operationId: 'sync', accountServerId: 'home',
+        sourceMachineId: 'controller', sourceRootPath: '/source', sourceContext: { callerAuthority: 'present_user',
+          machineAdmission: { actorAccountId: 'requester', custodianAccountId: 'requester', machineId: 'controller',
+            installationId: 'controller-install', role: 'manage', encryptionMode: 'e2ee' } } },
+      sourceWriter: { machineId: 'controller', installationId: 'controller-install' },
+      target: { v: 1, phase: 'remove', operationId: 'sync', accountServerId: 'home', targetMachineId: 'worker', targetRootPath: '/copy' },
+    });
+    const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+    const request = WorkspaceSyncCommittedCopyTargetV1Schema.parse({ actionReceiptId: 'retire', actionInput: {
+      workspace: { serverId: 'home', refId: 'source-ref' }, machineId: 'controller',
+      expectedRelationship: { v: 1, relationshipId: 'relationship', controllerMachineId: 'controller',
+        alphaWorkspaceRefId: 'source-ref', betaWorkspaceRefId: 'copy-ref', mode: 'keep_synced', enabled: true,
+        contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) }, createdAtMs: 1, updatedAtMs: 1 },
+      removeTargetCopy: { workspaceRefId: 'copy-ref', rootFingerprint: 'a'.repeat(64) },
+    } });
+    const receiver = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
+    const route = { routing, request, machineId: 'worker', installationId: 'worker-install' };
+    const project = { serverId: 'home', projectId: 'app' };
+    const data = { project, organization: null, acceptedSetup: { kind: 'ready' as const },
+      trust: { project, reviewedEffectDigest: 'effect', approvedAtMs: 1 },
+      selectedEnvironment: { SECRET: 'invocation-only' } };
+    const seal = (data: bootstrap.RetainedCheckoutTeardownDataV1) => bootstrap.sealRetainedCheckoutTeardownV1({
+      ...route, authorization, data, installationPublicKey: receiver.publicKey, randomBytes: tweetnacl.randomBytes,
+    });
+    const sealed = seal(data);
+    const read = { ...route, authorization: sealed, installationPrivateKey: receiver.secretKey };
+    expect(JSON.stringify(sealed)).not.toContain('invocation-only');
+    expect(bootstrap.openRetainedCheckoutTeardownV1(read)).toEqual({ data });
+    expect(bootstrap.openRetainedCheckoutTeardownV1({ ...read, installationId: 'replacement-install' })).toBeNull();
+    expect(bootstrap.openRetainedCheckoutTeardownV1({ ...read, authorization: { ...sealed, token: 'another-root' } })).toBeNull();
+    expect(bootstrap.openRetainedCheckoutTeardownV1({ ...read, routing: {
+      ...routing, target: { ...routing.target, targetRootPath: '/different-copy' },
+    } })).toBeNull();
+    expect(bootstrap.openRetainedCheckoutTeardownV1({ ...read, authorization: seal({
+      ...data, trust: { ...data.trust, project: { ...project, projectId: 'different-project' } },
+    }) })).toBeNull();
+  });
+
   it.each(['confirmed', 'unconfirmed', 'automation', 'other-person', 'unknown-person', 'different-child'] as const)(
     'carries exact native child confirmation only from its admitted present person (%s)', async scenario => {
     const parentActionId = 'ui.voice_global.history.clear';

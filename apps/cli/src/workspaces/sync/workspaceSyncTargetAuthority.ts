@@ -123,6 +123,7 @@ export type WorkspaceSyncTargetPhaseDescriptor = Readonly<{
   callerInputAuthorization?: RpcHandlerContext['callerInputAuthorization'];
   /** Live containing operation ports; transported only by the private request continuation. */
   operationContext?: RpcHandlerContext['localActionContext'];
+  retainedCheckoutTeardown?: RpcHandlerContext['retainedCheckoutTeardown'];
   signal?: AbortSignal;
 }>;
 /** Host-admitted personal retirement; approval and foreign requester ingress stay at their owners. */
@@ -2617,29 +2618,38 @@ export function createWorkspaceSyncTargetAuthority(
           targetWorkspaceRefId: request.actionInput.removeTargetCopy!.workspaceRefId,
           expectedRelationship: request.actionInput.expectedRelationship, sourceWorkspace: request.actionInput.workspace,
           sourceMachineId: request.actionInput.machineId }, context, 'remove') : null;
-      // Installed SOURCE sends removal only after the requester owner commits retirement.
-      // Its retained loan supplies the exact physical ref without reading the custodian's unrelated Account graph.
+      const retirePreparedCopy = context?.localActionContext?.retirePreparedWorkspaceCopy;
+      // The retained loan supplies the exact physical ref without opening the
+      // custodian's unrelated Account graph.
       const resolved = resolveCommittedCopy(request, native ? { workspaceRefs: [native.sourceWorkspace, native.workspace],
-        relationships: [] } : getSnapshot());
-      if (resolved.snapshot.relationships.some((relationship) => (
-        relationship.alphaWorkspaceRefId === resolved.workspace.id || relationship.betaWorkspaceRefId === resolved.workspace.id
-      ))) {
+        relationships: retirePreparedCopy ? [request.actionInput.expectedRelationship] : [] } : getSnapshot());
+      if (resolved.snapshot.relationships.some(relationship =>
+        relationship.relationshipId !== (retirePreparedCopy ? resolved.relationship.relationshipId : undefined)
+        && (relationship.alphaWorkspaceRefId === resolved.workspace.id || relationship.betaWorkspaceRefId === resolved.workspace.id))) {
         throw authorityError('workspace_root_in_use', 'Workspace copy still belongs to a relationship');
       }
-      // Capture native identity and finish cleanup while its admitted requester
-      // and retained target custody still exist. Rows may already be retired.
+      if (retirePreparedCopy) {
+        assertCommittedCopyRelationshipCurrent(resolved.snapshot, resolved.relationship);
+        await inspectWorkspaceSyncCommittedCopy(resolved.copy);
+      }
+      // Finish cleanup while the admitted requester and the target's retained custody still exist.
       const preparation = dependencies.resolveProjectRuntime ? await (async () => {
         if (!context) throw authorityError('project_setup_operation_unavailable', 'The original retirement operation is unavailable');
         const actionContext = buildActionExecutorContextForRpc(context);
         const operation = requireProjectCheckoutRemovalOperation(actionContext);
         const runtime = await dependencies.resolveProjectRuntime(context);
         if (!runtime) throw authorityError('project_setup_operation_unavailable', 'Requester Project cleanup is unavailable');
+        const admitted = native && context.retainedCheckoutTeardown;
+        const association = admitted ? { workspace: admitted.data
+          ? { ...resolved.workspace, projectKey: admitted.data.project.projectId } : resolved.workspace,
+          project: admitted.data?.project ?? null } : resolved.workspace.projectKey ? { workspace: resolved.workspace,
+          project: { serverId: resolved.workspace.serverId, projectId: resolved.workspace.projectKey } } : undefined;
         return await prepareProjectCheckoutRemoval({ runtime, ingress: context, context: actionContext, operation,
           worktreePath: resolved.workspace.rootPath,
-          ...(resolved.workspace.projectKey ? { association: { workspace: resolved.workspace,
-            project: { serverId: resolved.workspace.serverId, projectId: resolved.workspace.projectKey } } } : {}),
+          ...(association ? { association } : {}), ...(admitted && admitted.data ? { admittedTeardown: admitted.data } : {}),
           skipCleanup: request.actionInput.removeTargetCopy?.skipCleanup === true });
       })() : undefined;
+      await retirePreparedCopy?.();
       if (!native) await authority.reconcileRetainedBootstraps();
       await removeWorkspaceSyncCommittedCopy({ ...resolved.copy, rootOwnershipManager: resolved.bootstrap.rootOwnershipManager,
         ...(native ? { retainedOwnership: native.entry.handle } : {}) });

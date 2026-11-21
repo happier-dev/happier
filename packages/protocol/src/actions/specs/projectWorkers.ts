@@ -210,7 +210,8 @@ export const PROJECT_WORKER_ACTION_SPECS: ActionSpecArrayConcat<readonly [
     // Policy writes are Account-side key-holder operations; an offline guest is not their authority.
     executionPlacement: machine ? 'machine' : 'account', placements: [],
     ...(id === 'projects.worker.copy.retire' || isProjectWorkerCopyInspectActionIdV1(id) ? {
-      originalExecution: { accountRoot: 'allowed', requesterCredentials: 'none',
+      originalExecution: { accountRoot: 'allowed',
+        ...(isProjectWorkerCopyInspectActionIdV1(id) ? { requesterCredentials: 'none' as const } : {}),
         ...(id === 'projects.worker.copy.retire' ? { daemonIngressSurfaces: ['cli'] } : {}) },
     } : {}),
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true,
