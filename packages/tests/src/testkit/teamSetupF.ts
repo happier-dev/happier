@@ -125,10 +125,11 @@ export async function startTeamSetupFFixture(params: Readonly<{
       /** The real vendor process reaches its native MCP host; the test supplies no caller authority. */
       async executeSessionMcpAction(account: Awaited<ReturnType<typeof createAccount>>,
         session: Readonly<{ sessionId: string; logPath: string }>, actionId: ActionId, input: unknown,
-        options?: Readonly<{ actionRequestId: string }>) {
+        options?: Readonly<{ actionRequestId?: string; waitForTerminal?: boolean }>) {
         const requestId = options?.actionRequestId ?? randomUUID();
         const sent = await account.execute('session.message.send', { sessionId: session.sessionId,
-          message: `SESSION_MCP_ACTION_JSON:${JSON.stringify({ requestId, actionId, input, ...options })}`, reply: 'none' });
+          message: `SESSION_MCP_ACTION_JSON:${JSON.stringify({ requestId, actionId, input,
+            actionRequestId: options?.actionRequestId })}`, reply: 'none' });
         if (!sent.ok) throw createActionExecuteFailureError(sent);
         const admission = SessionMessageSendResultV1Schema.parse(sent.result);
         if (admission.status !== 'accepted' && admission.status !== 'alreadyAccepted') {
@@ -142,7 +143,7 @@ export async function startTeamSetupFFixture(params: Readonly<{
           return event !== undefined;
         }, { timeoutMs: FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS, context: 'Native Session MCP Action result' });
         const executed = ActionExecuteResultSchema.parse(outcome);
-        if (!executed.ok) return executed;
+        if (!executed.ok || options?.waitForTerminal === false) return executed;
         const receipt = ActionOperationAcceptedResultSchema.safeParse(executed.result);
         if (!receipt.success) return executed;
         // Native finite Actions return admission; their existing exact operation read owns completion.

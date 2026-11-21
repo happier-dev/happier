@@ -13,6 +13,8 @@ import { sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/proto
 import { projectQualifiedConnectedAccountCredentialPlaintextV1 } from '@happier-dev/protocol/connect/legacyConnectedServiceCompatibility';
 import { QualifiedConnectedAccountCredentialMutationV4Schema, QualifiedConnectedAccountCredentialMutationSuccessV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountCredentialMutationV4';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/protocol/connect/pluginConnectedAccountAuthenticationV2';
+import { derivePluginAccountExecutionArtifactSlots } from '@happier-dev/protocol/plugins/contributions/catalog';
+import { PLUGIN_CONTRIBUTION_FAMILY_V2 } from '@happier-dev/protocol/plugins/contributions/families';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { SessionMessageSendResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import type { ConnectedServiceBindingSelectionV2 } from '@happier-dev/protocol/connect/connectedServiceBindings';
@@ -128,8 +130,9 @@ describe('Team setup E: GitHub credential process admission', () => {
     await prepareAuthenticationInventory(packaged, { manifest: TRIAGE_MANIFEST,
       target: TRIAGE_DATA_ACTION_EXECUTION_V1.account, projectPath: 'packages/plugins/triage',
       entryPath: 'packages/plugins/triage/src/accountRuntime.ts', packageName: '@happier-dev/plugins-triage' });
-    const githubAuthentication = GITHUB_MANIFEST.contributes.connectedAccountDescriptors
-      .find(descriptor => descriptor.id === service.localId)?.authentication.account;
+    const githubAuthentication = derivePluginAccountExecutionArtifactSlots(GITHUB_MANIFEST.contributes)
+      .find(({ registrationRight }) => registrationRight.family === PLUGIN_CONTRIBUTION_FAMILY_V2.connectedAccountDescriptors
+        && registrationRight.localId === service.localId)?.registrationRight.target;
     if (!githubAuthentication) throw new Error('GitHub Account runtime declaration missing');
     await prepareAuthenticationInventory(packaged, { manifest: GITHUB_MANIFEST, target: githubAuthentication,
       projectPath: 'packages/plugins/scm-github', entryPath: 'packages/plugins/scm-github/src/accountRuntime.ts',
