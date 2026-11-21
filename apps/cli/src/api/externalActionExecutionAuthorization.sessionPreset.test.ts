@@ -14,8 +14,9 @@ import { dispatchOriginalAccountAction } from './externalActionExecutionAuthoriz
 afterEach(() => vi.restoreAllMocks());
 
 it.each([
-  ['plain', true], ['e2ee', true], ['plain', false], ['e2ee', false],
-] as const)('keeps %s hidden-controller Session admission scoped to its preset (%s)', async (mode, presetBacked) => {
+  ['plain', 'preset'], ['e2ee', 'preset'], ['plain', 'hidden'], ['e2ee', 'hidden'], ['plain', 'offline'],
+] as const)('dispatches %s Session spawn when the target is %s', async (mode, targetState) => {
+  const presetBacked = targetState === 'preset';
   const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(79));
   const controller = { machineId: 'hidden-controller', installationId: 'controller-installation' };
   const controllerAccess = { custodian: { accountId: 'company' }, installationPublicKey: encodeBase64(keys.publicKey, 'base64url') };
@@ -42,7 +43,15 @@ it.each([
     const path = new URL(String(url)).pathname;
     requests.push(path);
     if (path === '/v1/account/encryption') return { status: 200, data: { mode, updatedAt: 1 } };
-    if (!presetBacked && path === `/v1/machines/${controller.machineId}`) return { status: 404, data: { error: 'not_found' } };
+    if (path === `/v1/machines/${controller.machineId}`) {
+      // Home uses the same exact read response for missing and inaccessible Machines.
+      if (targetState === 'hidden') return { status: 404, data: { error: 'Machine not found' } };
+      if (targetState === 'offline') return { status: 200, data: { machine: {
+        id: controller.machineId, installationId: controller.installationId, kind: 'persistent', active: false,
+        revokedAt: null, replacedByMachineId: null,
+        access: { custodian: { accountId: 'company', displayName: 'Company' }, role: 'use', resourceMode: mode, accessState: 'ready' },
+      } } };
+    }
     throw new Error(`Unexpected Machine inventory or routing read: ${path}`);
   });
   vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
@@ -76,8 +85,11 @@ it.each([
     target, credentials, serverHttpBaseUrl: 'https://home.example', serverIdentityId: 'srv_home', invocation,
     onRequesterSessionCredentialDisclosure: disclosure => { disclosed = disclosure; return true; } });
   if (!presetBacked) {
-    expect(result).toMatchObject({ ok: false, errorCode: 'machine_offline' });
+    expect(result).toMatchObject({ ok: false, errorCode: targetState === 'hidden' ? 'admission_unavailable' : 'machine_offline' });
+    if (result.ok) throw new Error('Expected Machine refusal');
+    expect(result.details).toEqual(targetState === 'hidden' ? undefined : { machineId: controller.machineId });
     expect(disclosed).toBeUndefined();
+    expect(requests.some(path => path.endsWith('/execution-authorization'))).toBe(false);
     expect(requests).not.toContain('/v1/actions/session.spawn_new');
     return;
   }

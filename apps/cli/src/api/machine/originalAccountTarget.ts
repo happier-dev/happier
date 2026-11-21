@@ -26,7 +26,6 @@ export async function resolveOriginalAccountMachineTarget(input: Readonly<{
   });
   if (!input.machines) return refuse('machine_inventory_unavailable');
   const machine = input.machines.find(row => row.id === input.machineId);
-  if (!machine && input.actionId === 'session.spawn_new') return refuse('machine_offline', { machineId: input.machineId });
   if (!machine || machine.kind !== 'persistent' || machine.revokedAt !== null || machine.replacedByMachineId !== null
     || !machine.access || machine.access.accessState !== 'ready') return refuse('admission_unavailable');
   if (!await input.isCurrent()) return refuse('target_unavailable');
