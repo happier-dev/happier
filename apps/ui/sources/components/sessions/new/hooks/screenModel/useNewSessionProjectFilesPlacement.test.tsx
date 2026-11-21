@@ -73,6 +73,28 @@ describe('Project files authoring in the current placement', () => {
             source: projectFilesSource, choice: { kind: 'sync', mode: 'keep_both_in_sync' } });
         await hook.unmount();
     });
+    it('clears the restored Machine project source when the draft removes its folder', async () => {
+        const target = { serverId: 'home', machineId: 'host' };
+        const originalSource = { target, directory: '/original' };
+        const hydratedPlacement = { kind: 'machine' as const, target, projectFilesSource: originalSource };
+        let projectFilesSource: typeof originalSource | undefined = originalSource;
+        const hook = await renderHook(() => useNewSessionProjectFilesPlacement({
+            draftKey: 'draft', executionTarget: { kind: 'machine', target },
+            managedMachineSelection: null, hydratedPlacement, projectFilesSource,
+        }));
+        expect(hook.getCurrent().sessionPlacement).toEqual(hydratedPlacement);
+
+        projectFilesSource = undefined;
+        await hook.rerender();
+        expect(hook.getCurrent().sessionPlacement).toEqual({ kind: 'machine', target });
+        expect(hook.getCurrent().projectFilesOutcome).toEqual({ origin: 'default', placementKind: 'machine' });
+
+        projectFilesSource = { target, directory: '/replacement' };
+        await hook.rerender();
+        expect(hook.getCurrent().sessionPlacement).toEqual({ ...hydratedPlacement, projectFilesSource });
+        await hook.unmount();
+    });
+
     it('retains a matching reopened choice, supports restoring the default, and leaves another Machine independent', async () => {
         let machineId = 'host';
         const hydratedPlacement = { kind: 'machine' as const, target: { serverId: 'home', machineId: 'host' },

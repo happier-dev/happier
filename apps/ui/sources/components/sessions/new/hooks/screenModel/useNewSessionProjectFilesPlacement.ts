@@ -56,13 +56,13 @@ export function useNewSessionProjectFilesPlacement(input: Readonly<{
     const sessionPlacement = React.useMemo(() => {
         if (!placement || inPlace) return undefined;
         const source = input.projectFilesSource ?? (placement.kind === 'machine' ? undefined : matchingHydrated?.projectFilesSource);
-        const base = { ...(matchingHydrated ?? placement), ...(source ? { projectFilesSource: source } : {}) };
-        if (projectFilesOverride === undefined) {
-            if (!matchingHydrated && !source) return undefined;
-            const { projectFiles: _previous, ...rest } = base;
-            return rest;
-        }
-        return { ...base, projectFiles: projectFilesOverride };
+        if (!matchingHydrated && !source && projectFilesOverride === undefined) return undefined;
+        const { projectFiles: _previousChoice, projectFilesSource: _previousSource, ...base } = matchingHydrated ?? placement;
+        return {
+            ...base,
+            ...(source ? { projectFilesSource: source } : {}),
+            ...(projectFilesOverride ? { projectFiles: projectFilesOverride } : {}),
+        };
     }, [inPlace, input.projectFilesSource, matchingHydrated, placement, projectFilesOverride]);
     const projectFilesOutcome = React.useMemo<NewSessionProjectFilesOutcome>(() => ({
         placementKind: inPlace?.kind ?? placement?.kind ?? null,
