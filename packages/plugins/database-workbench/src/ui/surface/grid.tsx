@@ -6,11 +6,11 @@ import type { projectColumn } from '../projections.js';
 import { presentCell } from './cells.js';
 
 export type GridColumn = Pick<ReturnType<typeof projectColumn>, 'name' | 'typeLabel' | 'kind'>
-    & Partial<Pick<ReturnType<typeof projectColumn>, 'primaryKey' | 'foreignKey'>>;
+    & Partial<Pick<ReturnType<typeof projectColumn>, 'primaryKey' | 'foreignKey' | 'identifierLabel'>>;
 
 /** A key or reference column names rows rather than counting anything. */
 export function isIdentifierColumn(column: GridColumn | undefined): boolean {
-    return column?.primaryKey === true || column?.foreignKey !== undefined;
+    return column?.primaryKey === true || column?.foreignKey !== undefined || column?.identifierLabel === true;
 }
 export type GridRow = Readonly<{ rowKey: string; cells: readonly DatabaseCellV1[] }>;
 
@@ -58,9 +58,10 @@ export function useGridAnatomy<Row extends GridRow, Column extends GridColumn = 
             // under its lead (lab dbBrowse/gridp).
             byline: (row, layout) => layout?.fieldColumns ? null : rest
                 .map((column, index) => ({ column, cell: row.cells[index + 1] }))
-                .filter(({ column, cell }) => !isIdentifierColumn(column) && cell !== undefined && cell.type !== 'null')
+                .filter(({ column, cell }) => (column.primaryKey === undefined || !isIdentifierColumn(column))
+                    && cell !== undefined && cell.type !== 'null')
                 .slice(0, BYLINE_VALUES)
-                .map(({ cell }) => presentCell(cell, translate).text)
+                .map(({ column, cell }) => presentCell(cell, translate, { identifier: isIdentifierColumn(column) }).text)
                 .join(' · ') || null,
             titleIdentifier: true,
             fields,

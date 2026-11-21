@@ -51,6 +51,7 @@ export function postgresqlStatementRanges(sql: string): readonly DatabaseStateme
 
 const TIGHT_BEFORE = new Set(['.', ',', ')', ']', ';', ':']);
 const TIGHT_AFTER = new Set(['.', '(', '[', ':']);
+const COMPOUND_COMPARISONS = new Set(['>=', '<=', '<>', '!=']);
 /** Words a parenthesis keeps its space after ("in (?, ?)"); any other name before one is a call ("count(*)"). */
 const SPACED_BEFORE_PAREN = new Set(['and', 'as', 'by', 'exists', 'from', 'in', 'into', 'join', 'not', 'on', 'or', 'over',
     'select', 'set', 'then', 'using', 'values', 'when', 'where', 'with', 'else', 'union', 'all', 'any', 'some', 'returning']);
@@ -58,7 +59,7 @@ const SPACED_BEFORE_PAREN = new Set(['and', 'as', 'by', 'exists', 'from', 'in', 
 /**
  * The person-facing text of a statement shape. The shape joins every lexical token with one space and stays the
  * fingerprint key; this reads it as SQL: no space around `.`, `::` and inside brackets, none before `,`, and a call's
- * parenthesis against its name. Quoted names keep their own spaces.
+ * parenthesis against its name. Comparison operators stay together and quoted names keep their own spaces.
  */
 export function displayDatabaseStatementShape(shape: string): string {
     const tokens = shape.match(/"(?:[^"]|"")*"|`(?:[^`]|``)*`|\S+/g) ?? [];
@@ -66,6 +67,7 @@ export function displayDatabaseStatementShape(shape: string): string {
     tokens.forEach((token, index) => {
         const previous = tokens[index - 1];
         const tight = previous === undefined || TIGHT_BEFORE.has(token) || TIGHT_AFTER.has(previous)
+            || COMPOUND_COMPARISONS.has(previous + token)
             || (token === '(' && /^[A-Za-z_][\w$]*$/.test(previous) && !SPACED_BEFORE_PAREN.has(previous.toLowerCase()));
         text += (tight ? '' : ' ') + token;
     });

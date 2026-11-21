@@ -27,7 +27,7 @@ import type { WorkbenchLaunchInput } from './mount.js';
 import { projectColumn } from '../projections.js';
 import { CellText } from './cells.js';
 import { ConsoleParameters } from './ConsoleParameters.js';
-import { useGridAnatomy, type GridColumn, type GridRow } from './grid.js';
+import { isIdentifierColumn, useGridAnatomy, type GridColumn, type GridRow } from './grid.js';
 
 const EMPTY_SET: ReadonlySet<string> = new Set();
 const NO_PARAMETERS: readonly never[] = Object.freeze([]);
@@ -51,8 +51,8 @@ function ResultRows(
     [props.result.rows],
   );
   const renderCell = React.useCallback(
-    (row: GridRow, _column: GridColumn, index: number) => (
-      <CellText cell={row.cells[index]} translate={props.translate} />
+    (row: GridRow, column: GridColumn, index: number) => (
+      <CellText cell={row.cells[index]} translate={props.translate} identifier={isIdentifierColumn(column)} />
     ),
     [props.translate],
   );

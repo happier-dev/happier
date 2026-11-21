@@ -22,6 +22,13 @@ describe('Console statement boundaries', () => {
 });
 
 describe('Statement shape display', () => {
+    it('keeps PostgreSQL comparison operators together in a normalized shape', () => {
+        const { shape } = normalizePostgresqlStatement(
+            "SELECT a.pid FROM pg_stat_activity a WHERE a.pid >= 1000 AND a.state <> 'idle' AND a.pid <= 2000 AND a.pid != 1001");
+        expect(displayDatabaseStatementShape(shape))
+            .toBe('select a.pid from pg_stat_activity a where a.pid >= ? and a.state <> ? and a.pid <= ? and a.pid != ?');
+    });
+
     it('reads a fingerprint shape as SQL, while the spaced shape stays the key', () => {
         const { shape } = normalizePostgresqlStatement(
             "SELECT a.pid::text AS key, count(*) FROM pg_stat_activity a WHERE a.state IN ('active', 'idle') GROUP BY a.pid");

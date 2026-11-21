@@ -640,7 +640,7 @@ describe('Database workbench surfaces', () => {
     type Control = Parameters<NonNullable<PluginUiTestkitHostHandlers['actionControl']>>[0];
     let run: Control | undefined;
     let explain: Control | undefined;
-    const sql = 'SELECT 1';
+    const sql = 'SELECT id, customer_id, invoice_key, total FROM invoices';
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: 'console-run', mountNonce: 'console-run' },
       authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPage,
@@ -658,7 +658,12 @@ describe('Database workbench surfaces', () => {
           if (request.kind === 'bind' && request.presentation.title === 'Explain') explain = control;
           if (request.kind !== 'prepared' || request.requestId !== 'run-console') return;
           expect(request.preparation?.input).toMatchObject({ statement: { sql } });
-          return { ok: true, result: { ok: true, operation: 'statement.run', results: [] } };
+          return { ok: true, result: { ok: true, operation: 'statement.run', results: [{
+            columns: ['id', 'customer_id', 'invoice_key', 'total'].map(name => ({ name, nativeType: 'int8', semanticType: 'integer' })),
+            rows: [{ cells: ['1001', '2002', '3003', '4004'].map(value => ({ type: 'integer', value })) }],
+            command: 'SELECT',
+            completeness: { complete: true },
+          }] } };
         },
       },
     });
@@ -669,6 +674,8 @@ describe('Database workbench surfaces', () => {
       expect(explain?.request).toMatchObject({ action: databaseActionLocalIdV1(DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1) });
       await act(async () => { run?.publish({ kind: 'prepare', requestId: 'run-console' }); });
       await settle(20);
+      expect(await fixture.getByText('1001')).toBeTruthy();
+      expect(await fixture.getByText('2002 · 3003 · 4,004')).toBeTruthy();
       await fixture.press(await fixture.getByRole('button', { name: 'History' }));
       expect(await fixture.getByText(sql)).toBeTruthy();
     } finally { await fixture.dispose(); }

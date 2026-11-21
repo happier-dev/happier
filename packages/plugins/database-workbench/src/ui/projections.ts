@@ -9,8 +9,11 @@ const cellKinds = { text: 'text', boolean: 'bool', integer: 'number', decimal: '
 export function projectColumn(column: DatabaseColumnV1, structure?: DatabaseRelationStructureV1) {
     const foreign = structure?.foreignKeys.find(key => key.columns.includes(column.name));
     const foreignColumn = foreign?.targetColumns[foreign.columns.indexOf(column.name)];
+    // Arbitrary SELECTs expose labels, while Browse already has the relation's actual constraints.
+    const identifierLabel = structure === undefined && column.semanticType === 'integer'
+        && (/(?:^|_)(?:id|key)$/i.test(column.name) || /[a-z0-9](?:Id|ID|Key)$/.test(column.name));
     return { name: column.name, typeLabel: column.nativeType, kind: cellKinds[column.semanticType],
-        primaryKey: structure?.primaryKey.includes(column.name) ?? false,
+        primaryKey: structure?.primaryKey.includes(column.name), identifierLabel,
         ...(foreign && foreignColumn ? { foreignKey: { ...foreign, schema: foreign.target.schema, table: foreign.target.name, column: foreignColumn } } : {}) };
 }
 export function projectRelationPage(result: DatabaseRowsResultV1, structure: DatabaseRelationStructureV1) {
