@@ -1133,7 +1133,9 @@ describe('Environment draft Machine Home', () => {
     const pluginId = 'com.example.draft-platform-create';
     const { DeploymentTargetLinkCreateIntentInputV1Schema } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
     const notice = 'Beta: the source is final at creation.';
-    const authoredPlugin = createDeploymentTargetsTestPlugin(pluginId, undefined, { create: true, reviewNotice: notice, plans: true });
+    const pin = `sha256:3d27e5${'a'.repeat(58)}`;
+    const authoredPlugin = createDeploymentTargetsTestPlugin(pluginId, undefined, { create: true, reviewNotice: notice, plans: true,
+      buildRuntime: { name: 'Node.js', version: '24.21.0', pin, tool: 'Wrangler', toolVersion: '4.156.0' } });
     const installed = await installPortableAccountPluginReleaseForTest({ manifest: authoredPlugin.manifest,
       activate: api => authoredPlugin.activateAccount(api, DEPLOYMENT_TARGETS_TEST_EXECUTION.account),
       accountLifetime: account.accountLifetime, publishProjection: true });
@@ -1212,6 +1214,12 @@ describe('Environment draft Machine Home', () => {
       await waitForHomeGovernance(async () => { await act(async () => {});
         expect(screen.findHostByTestId('project-deployments.draft.reviewNotice'), screen.getTextContent()).not.toBeNull(); });
       expect(screen.getTextContent()).toContain(notice);
+      // The build runtime reads as a name and version on a named Machine, its pin short and labelled, never the raw
+      // digest (PAGE-ACCEPT-176 R9-D5).
+      await waitForHomeGovernance(async () => { await act(async () => {});
+        expect(screen.findHostByTestId('project-deployments.draft.reviewRuntime'), screen.getTextContent()).not.toBeNull(); });
+      expect(screen.getTextContent()).toContain('Node.js 24.21.0');
+      expect(screen.getTextContent()).not.toContain(pin);
       // Review prices the chosen platform from its declared plans, with where and when they were read (deploy auto-mode U3).
       const cost = screen.findHostByTestId('project-deployments.draft.cost');
       expect(cost, 'Review has a cost group for a platform that declares plans').not.toBeNull();

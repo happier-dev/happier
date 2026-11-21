@@ -48,7 +48,8 @@ export async function answerDeploymentTargetInspectForHome(params: Readonly<{
 
 /** A third-party plugin declaring two runtime platforms, Alpha and Beta, through the public deployment target contract. */
 export function createDeploymentTargetsTestPlugin(pluginId: string, runInspect: (name: string, input: JsonValue) => Promise<void> = async () => {},
-  options: Readonly<{ emptyChoices?: boolean; upload?: boolean; create?: boolean; teardown?: boolean; plans?: boolean; reviewNotice?: string }> = {}) {
+  options: Readonly<{ emptyChoices?: boolean; upload?: boolean; create?: boolean; teardown?: boolean; plans?: boolean; reviewNotice?: string;
+    buildRuntime?: Readonly<{ name: string; version: string; pin: string; tool: string; toolVersion: string }> }> = {}) {
   const service = DEPLOYMENT_TARGETS_TEST_SERVICE;
   const execution = DEPLOYMENT_TARGETS_TEST_EXECUTION;
   const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
@@ -68,7 +69,10 @@ export function createDeploymentTargetsTestPlugin(pluginId: string, runInspect: 
         repository: ScmHostingRepositoryIdentityV1ProtocolSchema.jsonSchema } },
     resultSchema: options.reviewNotice ? { anyOf: [DeploymentTargetLinkProviderContentV1ProtocolSchema.jsonSchema,
       { type: 'object', additionalProperties: false, required: ['preparedNative'], properties: { preparedNative: {
-        type: 'object', additionalProperties: false, required: ['reviewNotice'], properties: { reviewNotice: { type: 'string' } } } } }] }
+        type: 'object', additionalProperties: false, required: ['reviewNotice'], properties: { reviewNotice: { type: 'string' },
+          buildRuntime: { type: 'object', additionalProperties: false, required: ['name', 'version', 'pin', 'tool', 'toolVersion'],
+            properties: { name: { type: 'string' }, version: { type: 'string' }, pin: { type: 'string' }, tool: { type: 'string' },
+              toolVersion: { type: 'string' } } } } } } }] }
       : DeploymentTargetLinkProviderContentV1ProtocolSchema.jsonSchema,
     inputHints: { fields: [{ path: name, title: `${name} region`, widget: 'select', required: true,
       ...(options.emptyChoices ? { inputType: { pluginId, localId: 'region-choice' } }
@@ -82,7 +86,8 @@ export function createDeploymentTargetsTestPlugin(pluginId: string, runInspect: 
       if (credentialPrincipal === undefined) throw new Error('Expected admitted credential principal');
       await runInspect(name, input);
       // A draft before Create names no resource; the platform answers with what creating one will mean (U8 contract).
-      if (options.reviewNotice && admitted[name] === undefined) return { preparedNative: { reviewNotice: options.reviewNotice } };
+      if (options.reviewNotice && admitted[name] === undefined) return { preparedNative: { reviewNotice: options.reviewNotice,
+        ...(options.buildRuntime ? { buildRuntime: options.buildRuntime } : {}) } };
       return { credentialPrincipal,
         ...(options.reviewNotice ? { preparedNative: { projectName: String(admitted[name]), reviewNotice: options.reviewNotice } } : {}),
         providerIdentity: { providerAccountId: 'cloud', providerResourceId: String(admitted[name]), providerEnvironment: 'production' },

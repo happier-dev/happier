@@ -694,7 +694,18 @@ export const DeploymentEnvironmentDraft = React.memo(
     const platformNotice = prepared && onPlatform && platformProvider?.reviewNotice ? (
       <AttentionBanner testID="project-deployments.draft.reviewNotice" tone="neutral" title={platformProvider.reviewNotice} />
     ) : null;
-    const reviewBody = platformNotice ? <>{platformNotice}{reviewFacts}</> : reviewFacts;
+    // What a create upload builds with: the runtime as name and version, its pin short beside the build tool
+    // (PAGE-ACCEPT-176 R9-D5). The platform supplies it only for builds Happier runs, never Git integration.
+    const reviewRuntime = prepared && onPlatform && platformProvider?.kind === 'create' ? platformProvider.reviewRuntime ?? null : null;
+    const platformRuntime = reviewRuntime ? (
+      <ItemGroup testID="project-deployments.draft.reviewRuntime" header="none">
+        {/* How it deploys already names the Machine it builds on; this row says with what. */}
+        <Item mode="info" title={t('projects.deployments.platformLink.buildImage')}
+          detail={`${reviewRuntime.name} ${reviewRuntime.version}`}
+          subtitle={`${reviewRuntime.tool} ${reviewRuntime.toolVersion} · ${reviewRuntime.pin}`} />
+      </ItemGroup>
+    ) : null;
+    const reviewBody = platformNotice || platformRuntime ? <>{platformNotice}{platformRuntime}{reviewFacts}</> : reviewFacts;
     const projectChoiceGroups = props.projectChoice ? <DeploymentProjectChoiceGroups model={props.projectChoice}
             testIDPrefix="project-deployments.draft.project"
             description={t('capabilities.store.appPage.projectDescription')}
@@ -753,8 +764,10 @@ export const DeploymentEnvironmentDraft = React.memo(
             {stepped ? null : machineAwayNotice}
             {stepped ? null : retentionChoice}
           </ItemGroup>
-          {selectedPlatformUnavailable ? <SurfaceStateCard kind="unavailable" size="line"
-            title={t('common.unavailable')} /> : null}
+          {/* On the page column like every other section, not across the whole pane (PAGE-ACCEPT-176 round 14). */}
+          {selectedPlatformUnavailable ? <ItemGroup header="none" surface="none">
+            <SurfaceStateCard kind="unavailable" size="line" title={t('common.unavailable')} />
+          </ItemGroup> : null}
     </>;
     const machineAway = chosen !== null && !answers(chosen);
     // The Machine choice lives in the Machine card (whereM): its picker with the presence owner's line, and when that
