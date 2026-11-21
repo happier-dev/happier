@@ -112,7 +112,7 @@ const styles = StyleSheet.create((theme) => ({
     stateLine: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space.s6, paddingBottom: theme.space.s12 },
     stateWord: { color: theme.colors.state.warning.textForeground },
     /** Where the value came from, with its Copy and Expand, directly above it. */
-    valueHead: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8, paddingBottom: theme.space.s4, minHeight: theme.space.s32 },
+    valueHead: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8, minHeight: theme.space.s24 },
     valueSource: { flex: 1, minWidth: 0, color: theme.colors.text.secondary },
     headerActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4 },
     secondary: { color: theme.colors.text.secondary },
@@ -388,16 +388,20 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
         <Text variant="body" emphasis="semiBold" style={styles.stateWord}>{describeWorkflowInvocationLifecycle('waiting_for_review').label}</Text>
         <Text variant="body" style={styles.secondary}>{t('workflows.review.heldConsequence')}</Text>
     </View> : null;
-    const valueHead = heldReading ? <View style={styles.valueHead}>
-        <Text testID={`${prefix}-source`} variant="meta" numberOfLines={1} style={styles.valueSource}>{props.resultSourceLabel ?? ''}</Text>
-        {headerActions}
-    </View> : null;
+    // The value's own head row (lab 1105 R1): where it came from, with Copy and Expand, inside the sheet it heads.
+    const valueHead = heldReading && (props.resultSourceLabel || headerActions) ? <SectionContentRow testID={`${prefix}-value-head`}>
+        <View style={styles.valueHead}>
+            <Text testID={`${prefix}-source`} variant="meta" numberOfLines={1} style={styles.valueSource}>{props.resultSourceLabel ?? ''}</Text>
+            {headerActions}
+        </View>
+    </SectionContentRow> : null;
     // Contained: the sheet shares its edges with the state line and the decision above and below it.
-    const body = <ListPresentationProvider value="page" pageInsets="contained">{stateLine}{valueHead}<ItemGroup constrainToContentWidth={false} {...(title === undefined ? { header: 'none' as const } : { title })}
+    const body = <ListPresentationProvider value="page" pageInsets="contained">{stateLine}<ItemGroup constrainToContentWidth={false} {...(title === undefined ? { header: 'none' as const } : { title })}
             {...(heldReading ? {} : { action: headerActions })} description={props.waitForYou
             ? props.waitIdentity ? props.waitIdentity.title === undefined ? undefined
                 : props.waitIdentity.waitingLabel ?? [props.waitIdentity.subtitle, t('workflows.review.waitTitle')].filter(Boolean).join(' · ') : t('workflows.review.waitBody')
             : editing ? t('workflows.review.editsBody') : undefined}>
+            {valueHead}
             {props.waitForYou && props.waitIdentity ? <SectionContentRow>
                 {/* The card's head, as the lab's hold header reads: what is asked first, then what waiting means. */}
                 <View style={styles.head}>
@@ -479,7 +483,8 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
                             scrollProps={{ testID: `${prefix}-preview-scroll`, style: props.primaryActionPlacement === 'footer' ? undefined : styles.previewScroll,
                                 onLayout: previewFades.onViewportLayout, onContentSizeChange: previewFades.onContentSizeChange,
                                 onScroll: previewFades.onScroll, scrollEventThrottle: 16 }} />
-                        <ScrollEdgeFades color={held ? theme.colors.state.warning.background : theme.colors.surface.base}
+                        {/* The fades are the sheet's own fill: the sheet stays neutral while held (lab 1105 R1). */}
+                        <ScrollEdgeFades color={theme.colors.edge.cardFill}
                             edges={previewFades.visibility} />
                     </View>
                 </> : null}

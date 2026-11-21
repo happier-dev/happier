@@ -254,8 +254,11 @@ describe('WorkflowStepDataEditor field selects', () => {
             />,
         );
         expect(screen.findByTestId('editor-step-step-a-input-0-literal')).not.toBeNull();
+        // A typed value is the field itself; choosing a value from elsewhere is one quiet press beside it,
+        // never a second select that names the mode ("A fixed value", FIN-DESIGN-ACCEPT-2 F12).
         expect(selectTrigger(screen.root, 'editor-step-step-a-input-0-value').props.accessibilityLabel)
-            .toBe('workflows.input.valueKindGroup: workflows.condition.fixedValue');
+            .toBe('workflows.condition.chooseValue');
+        expect(screen.getTextContent()).not.toContain('workflows.condition.fixedValue');
         await act(async () => { chooseValue(screen.root, 'editor-step-step-a-input-0-value', 'Topic'); });
         expect(changes.at(-1)).toEqual([{ kind: 'input', name: 'topic' }]);
         await act(async () => { chooseValue(screen.root, 'editor-step-step-a-input-0-value', 'workflows.condition.fixedValue'); });

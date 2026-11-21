@@ -488,6 +488,27 @@ it('edits run when in Step options and preserves an independent only-when condit
     expect(first.findByTestId('workflow-editor-inspector-run-when:failure')).toBeNull();
 });
 
+it('reads a step\'s compound Only when line as one sentence with its values as tokens, not as raw arms', async () => {
+    const harness = await loadHarness();
+    const { WorkflowReferenceSentence } = await import('./WorkflowStepDataEditor');
+    const reference = { kind: 'result' as const, producer: { blockId: 'inspect', scope: { kind: 'current' as const } }, path: [] };
+    const draft = buildDraft(harness, [
+        { kind: 'step', id: 'inspect', name: 'Inspect build', document: { text: 'Inspect', references: [], attachments: [] },
+            input: [], result: { kind: 'text' } },
+        { kind: 'action', id: 'notify', actionId: 'notifications.notify_me', input: { message: reference },
+            onlyWhen: { kind: 'all', conditions: [{ kind: 'exists', value: { ...reference, path: ['verdict'] } },
+                { kind: 'compare', operator: 'neq', left: reference, right: { kind: 'literal', value: 'skip' } }] } },
+    ]);
+    const custody = harness.createWorkflowAuthoringComposerCustody(draft.draftId);
+    const screen = await renderScreen(<harness.WorkflowBlockListEditor draft={draft} blocks={draft.blocks} list={{ kind: 'root' }} depth={0}
+        composerScope={MACHINE_COMPOSER_SCOPE} composerCustody={custody} selectedBlockId={null}
+        validation={harness.validateWorkflowEditorDraft(draft)} onChange={() => {}} onSelect={() => {}} onCustomize={() => {}} />);
+    const line = screen.findByTestId('workflow-editor-action-notify-only-when')!;
+    expect(line.findAllByType(WorkflowReferenceSentence).length).toBe(1);
+    expect(line.props.accessibilityLabel).not.toContain('workflows.page.inspector.conditionAll');
+    await screen.unmount();
+});
+
 it('updates an unselected Action reference, condition and revealed issue when its producer changes', async () => {
     const harness = await loadHarness();
     const reference = { kind: 'result' as const, producer: { blockId: 'inspect', scope: { kind: 'current' as const } }, path: [] };

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { PaneHeaderScrollIsolation } from '@/components/appShell/panes/paneHeaderScroll';
 import { BackHandler, Keyboard, Platform, StyleSheet as RNStyleSheet, View, type StyleProp, type ViewProps, type ViewStyle } from 'react-native';
-import { usePopoverBoundaryRef } from './PopoverBoundary';
+import { usePopoverBoundary } from './PopoverBoundary';
 import { usePopoverScrollSourceRef } from './PopoverScrollSource';
 import { requireRadixDismissableLayer } from '@/utils/web/radixCjs';
 import { useLayerOverlayPortal, useOverlayPortal } from './OverlayPortal';
@@ -674,7 +674,11 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
     }, [resolvedAnchorMode, rectAnchorLeft, rectAnchorTop, rectAnchorWidth, rectAnchorHeight]);
     const resolvedFocusReturnRef = resolveFocusReturnRef(props);
 
-    const boundaryFromContext = usePopoverBoundaryRef();
+    const contextBoundary = usePopoverBoundary();
+    // A width-only boundary (a panel that keeps its menus inside its edges) leaves the vertical room to the window.
+    const boundaryFromContext = contextBoundary?.axis === 'both' ? contextBoundary.ref : null;
+    const horizontalBoundaryRef = props.horizontalBoundaryRef
+        ?? (contextBoundary?.axis === 'horizontal' ? contextBoundary.ref : undefined);
     const scrollSourceFromContext = usePopoverScrollSourceRef();
     // `boundaryRef` can be provided explicitly (including `null`) to override any boundary from context.
     // This is useful when a PopoverBoundaryProvider is present (e.g. inside an Expo Router modal) but a
@@ -1487,7 +1491,7 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
                 height: Math.max(0, boundaryRect.height - edgeInsets.top - edgeInsets.bottom),
             };
 
-            const horizontalBoundaryNode = props.horizontalBoundaryRef?.current ?? null;
+            const horizontalBoundaryNode = horizontalBoundaryRef?.current ?? null;
             if (horizontalBoundaryNode) {
                 // Same carry as the clearance below: window-space rects, moved into the anchor's space.
                 const [horizontalWindowRect, anchorWindowRect] = await Promise.all([
@@ -1663,7 +1667,7 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
         } else {
             scheduleFrame(() => { void measureWithRetries(0); });
         }
-    }, [anchorAlignVerticalOnPortal, anchorRef, anchorRectFromProp, bottomChromeClearance, boundaryRef, closeForHiddenAnchor, edgeInsets.horizontal, edgeInsets.top, edgeInsets.bottom, gap, keyboardBottomInsetProp, maxHeightCap, maxWidthCap, open, preferredRoom, placement, props.clearanceRef, props.horizontalBoundaryRef, props.fit, props.flip, spansPhone, safeAreaTop, props.placementMinSpace, publishPlacedBody, resolvedAnchorMode, shouldPortalNative, shouldPortalWeb, topBottomLayoutOnPortal, sizesToAnchorExplicitly, windowHeight, windowWidth, portalTarget]);
+    }, [anchorAlignVerticalOnPortal, anchorRef, anchorRectFromProp, bottomChromeClearance, boundaryRef, closeForHiddenAnchor, edgeInsets.horizontal, edgeInsets.top, edgeInsets.bottom, gap, keyboardBottomInsetProp, maxHeightCap, maxWidthCap, open, preferredRoom, placement, props.clearanceRef, horizontalBoundaryRef, props.fit, props.flip, spansPhone, safeAreaTop, props.placementMinSpace, publishPlacedBody, resolvedAnchorMode, shouldPortalNative, shouldPortalWeb, topBottomLayoutOnPortal, sizesToAnchorExplicitly, windowHeight, windowWidth, portalTarget]);
 
     React.useLayoutEffect(() => {
         if (!open) return;
@@ -1700,7 +1704,7 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
         // The clearance view sets the vertical extent, so its reflow (an ancestor settling after a
         // window resize moves it without resizing it) re-places the popover like the anchor's does.
         const clearanceEl = getDomElementFromNode(props.clearanceRef?.current ?? null);
-        const horizontalBoundaryEl = getDomElementFromNode(props.horizontalBoundaryRef?.current ?? null);
+        const horizontalBoundaryEl = getDomElementFromNode(horizontalBoundaryRef?.current ?? null);
         const anchorLayoutObserver = (anchorEl || clearanceEl || horizontalBoundaryEl) && typeof ResizeObserver === 'function'
             ? new ResizeObserver(schedule)
             : null;
@@ -1751,7 +1755,7 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
                 scrollSourceEl.removeEventListener('scroll', scheduleScrollFrame as any);
             }
         };
-    }, [anchorRef, getContentDomElement, getDomElementFromNode, getScrollSourceDomElement, open, props.clearanceRef, props.horizontalBoundaryRef, recompute, resolvedAnchorMode, shouldPortalWeb]);
+    }, [anchorRef, getContentDomElement, getDomElementFromNode, getScrollSourceDomElement, open, props.clearanceRef, horizontalBoundaryRef, recompute, resolvedAnchorMode, shouldPortalWeb]);
 
     React.useEffect(() => {
         if (!open) return;

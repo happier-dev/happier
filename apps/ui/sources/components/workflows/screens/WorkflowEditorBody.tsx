@@ -185,9 +185,6 @@ const styles = StyleSheet.create((theme) => ({
         gap: theme.space.s4,
     },
     /** The save line leading the wide actions stands apart from them, as the lab's title row does (lab 1116b). */
-    headerStatusLead: {
-        marginRight: theme.space.s16,
-    },
     keyHint: {
         ...({ ...Typography.variant('micro', 'regular'), ...Typography.mono(), ...Typography.tabular() }),
         color: theme.colors.button.primary.tint,
@@ -1493,7 +1490,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
     const nameEditable = props.showNameField !== false && documentEditable;
     // The save line (or, without one, what to fix). Run review opens below it, so it never covers it.
     const headerStatus = (saveStatusNode ?? validityNode) === null ? null : (
-        <View ref={props.runNowPlacementRef} collapsable={false} style={compactLayout ? undefined : styles.headerStatusLead}>
+        <View ref={props.runNowPlacementRef} collapsable={false}>
             {saveStatusNode ?? validityNode}
         </View>
     );
@@ -1518,12 +1515,12 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                 // A phone's Steps view hangs its numbers in a column on the page edge; the page's words start on
                 // the cards' edge after it (lab 1116b phone). Sentence and Flow keep the page edge, as their cards do.
                 ...(compactLayout && props.view === 'steps' ? { contentInsetPx: WORKFLOW_PHONE_NAME_EDGE_PX } : {}),
-                // Wide, the save line leads the actions on the title's row (lab 1116b: "Unsaved changes · Save", then
-                // Edit with an agent), so the header ends with its words and the view bar follows at the lab's
-                // rhythm (WF-ACCEPT-1119 item 3). The row is right-aligned: a changing status moves only its own
-                // start. On a phone the actions live in the navigation bar, so the line sits beside the name
+                // The save line is the header's status slot: wide, it sits under the actions at their width, its
+                // two lines reserved, so "Saved" against "Unsaved changes · Save" or a conflict sentence never
+                // changes the title's wrap or drops the controls off the title's line (FIN-DESIGN-ACCEPT-2 F5).
+                // On a phone the actions live in the navigation bar, so the line sits beside the name
                 // (owner 25). A page without a save line (a built-in's Duplicate) still says what to fix.
-                ...(!hasPageCommands || !compactLayout ? {} : { status: headerStatus }),
+                ...(!hasPageCommands ? {} : { status: headerStatus }),
                 alwaysShowTitle: true,
                 // Beside a companion the header is measured against the main column it shares (F5):
                 // the name keeps one line, as the chips keep one row.
@@ -1541,7 +1538,6 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                     <View style={styles.headerActionRow}>{menu}{phonePageControls}</View>
                 )) : (
                     <View style={styles.headerActionRow}>
-                        {headerStatus}
                         {/* Edit with an agent is the labelled secondary (lab editor-E1); beside an open pane it
                             keeps its place as its icon. */}
                         {props.onEditWithAgent === undefined ? null : headerCompact ? (

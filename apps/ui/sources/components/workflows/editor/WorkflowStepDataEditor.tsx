@@ -519,6 +519,12 @@ export function WorkflowValueReferenceEditor(props: Readonly<{
                 onChange={(next) => props.onChange(next.kind === 'input' && reference.kind === 'input' && next.path === undefined && reference.path !== undefined
                     ? { ...next, path: reference.path } : next)}
                 onChooseFixedValue={() => props.onChange({ kind: 'literal', value: '' })}
+                // A typed value is the field itself: choosing one from elsewhere is a quiet press beside it, as a
+                // condition's compared value is, never a second select naming the mode (FIN-DESIGN-ACCEPT-2 F12).
+                {...(reference.kind === 'literal' ? { renderTrigger: ({ toggle }: Readonly<{ toggle: () => void }>) => (
+                    <IconButton testID={`${rowId}-value-trigger`} variant="plain" iconName="link"
+                        accessibilityLabel={t('workflows.condition.chooseValue')} tooltip={t('workflows.condition.chooseValue')} onPress={toggle} />
+                ) } : {})}
                 testID={`${rowId}-value`}
                 pathTestID={`${rowId}-path`}
             />}

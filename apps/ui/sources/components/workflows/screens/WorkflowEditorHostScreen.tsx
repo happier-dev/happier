@@ -1110,6 +1110,8 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         rawTextValues: inputRawTextValues,
         onChangeRawTextValues: setInputRawTextValues,
         workflowName: runRetained?.input.metadata?.title ?? testSource?.metadata.title ?? runReviewDraft.name,
+        // Run now hangs under the editor's own header, which already names this workflow.
+        ...(testSource === null && !retainedTest ? { identityOnPage: true } : {}),
         preview: (runRetained !== null ? runRetained.input.metadata?.description ?? '' : testSource?.metadata.description ?? (testSource === null ? description : '')) || (retainedDefinition?.blocks ?? testSource?.definition.blocks ?? runReviewDraft.blocks).map((block) => workflowBlockReferenceLabel(block)).join('\n'),
         ...(planReview ? { preview: readWorkflowPlanResult(planReview.value)?.document, notice: t('workflows.review.planRunNotice') } : {}),
         ...(testSource === null && !retainedTest ? {} : { notice: t('workflows.testRun.savedNotice') }),

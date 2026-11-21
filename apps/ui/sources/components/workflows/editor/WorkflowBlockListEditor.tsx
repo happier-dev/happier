@@ -70,6 +70,7 @@ import type { WorkflowSessionDrop } from './WorkflowStepSessionDropZone';
 import {
   formatWorkflowConditionSentence,
   resolveWorkflowConditionHeadline,
+  resolveWorkflowConditionProse,
 } from '../presentation/workflowConditionPresentation';
 import {
   WorkflowContainerBody,
@@ -1518,19 +1519,23 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
             </View>
           ) : null}
 
-          {block.kind !== 'if' && block.onlyWhen !== undefined ? (
-            <Text
-              testID={`${testIDPrefix}-${block.kind}-${block.id}-only-when`}
-              style={workflowEditorStyles.groupSummary}
-            >
-              {onlyWhenHeadline?.unconditional === true ? onlyWhenHeadline.sentence : t('workflows.page.inspector.onlyWhenSentence', {
-                condition: row.actionPresentation?.condition ?? formatWorkflowConditionSentence(
-                  draft,
-                  block.onlyWhen,
-                ),
-              })}
-            </Text>
-          ) : null}
+          {block.kind !== 'if' && block.onlyWhen !== undefined ? (() => {
+            // The condition as the document reads it everywhere: one sentence, every arm in it, values as
+            // tokens (FIN-DESIGN-ACCEPT-2 F12), with the whole sentence as its accessible name.
+            const prose = onlyWhenHeadline?.unconditional === true ? null
+              : row.actionPresentation?.condition ?? resolveWorkflowConditionProse(draft, block.onlyWhen);
+            const spoken = prose === null ? onlyWhenHeadline!.sentence
+              : t('workflows.page.inspector.onlyWhenSentence', { condition: prose.sentence });
+            return (
+              <Text
+                testID={`${testIDPrefix}-${block.kind}-${block.id}-only-when`}
+                style={workflowEditorStyles.groupSummary}
+                accessibilityLabel={spoken}
+              >
+                {prose === null ? spoken : <WorkflowReferenceSentence draft={draft} sentence={spoken} references={prose.references} />}
+              </Text>
+            );
+          })() : null}
         </View>
         {row.highlighted ? (
           <WorkflowAgentChangeTint blockId={block.id} />

@@ -4,13 +4,14 @@ import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEdito
 import { workflowIssuesForBlock, type WorkflowDraftValidation } from '@/sync/domains/workflows/workflowAuthoring';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import { formatWorkflowValueReference } from '../presentation/workflowValuePresentation';
-import { formatWorkflowConditionSentence } from '../presentation/workflowConditionPresentation';
+import { resolveWorkflowConditionProse, type WorkflowConditionProse } from '../presentation/workflowConditionPresentation';
 import { collectWorkflowFieldIssueTexts } from './workflowIssueText';
 
 export type WorkflowActionRowPresentation = Readonly<{
     referenceLabels: Readonly<Record<string, readonly string[]>>;
     fieldIssues: Readonly<Record<string, string>>;
-    condition: string | null;
+    /** The Only when line's sentence and tokens: an unselected Action re-renders only when it changes. */
+    condition: WorkflowConditionProse | null;
 }>;
 
 /** Publish only the reference words and revealed issues this Action actually reads. */
@@ -26,6 +27,6 @@ export function projectWorkflowActionRowPresentation(
             reference.kind === 'origin_session_id' ? '' : formatWorkflowValueReference(draft, reference, field)),
     ]));
     const fieldIssues = collectWorkflowFieldIssueTexts(revealIssues ? workflowIssuesForBlock(validation, block.id, draft) : [], draft);
-    const condition = block.onlyWhen === undefined ? null : formatWorkflowConditionSentence(draft, block.onlyWhen);
+    const condition = block.onlyWhen === undefined ? null : resolveWorkflowConditionProse(draft, block.onlyWhen);
     return retainDeep(previous, { referenceLabels, fieldIssues, condition });
 }

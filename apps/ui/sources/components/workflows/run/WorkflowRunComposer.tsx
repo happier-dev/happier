@@ -246,6 +246,11 @@ export type WorkflowRunComposerProps = Readonly<{
   workflowName?: string;
   /** Host-owned placement facts beneath the shared workflow identity. */
   leadContent?: React.ReactNode;
+  /**
+   * The page the review hangs from already shows the workflow's mark, name and summary (Run now in the
+   * editor): the review draws no second identity lead (FIN-DESIGN-ACCEPT-2 F13).
+   */
+  identityOnPage?: boolean;
   preview?: string;
   includesUnsavedEdits?: boolean;
   notice?: string;
@@ -999,7 +1004,7 @@ export function WorkflowRunComposer(
           <View style={columnInnerStyle}>
             {/* Hosted, the workflow's chip is its identity and the chip's popover previews it (description,
                 steps, inputs); a second header above the composer would repeat it (owner 08). */}
-            {props.definition && props.workflowName && !composerHosted ? <WorkflowStartDetailsLead
+            {props.definition && props.workflowName && !composerHosted && props.identityOnPage !== true ? <WorkflowStartDetailsLead
               name={props.workflowName} description={main === null || props.preview === stepNamesPreview ? undefined : props.preview} summary={summary}
               source={workflowSource === 'artifact' ? t('workflows.start.library')
                 : workflowSource === 'builtin' ? t('workflows.start.builtin')

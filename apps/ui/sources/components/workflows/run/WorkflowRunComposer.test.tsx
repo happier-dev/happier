@@ -197,6 +197,17 @@ describe('workflow composer admission', () => {
         expect(screen.findByTestId('workflow-run-inputs-review-where')).not.toBeNull();
         await screen.unmount();
     });
+    it('draws no second identity under a page that already shows the workflow\'s mark and name (Run now in the editor)', async () => {
+        const screen = await renderScreen(<WorkflowRunComposer inputs={inputs} values={{}}
+            definition={createWorkflowDefinitionFixture({ defaults: STARTABLE_DEFAULTS })}
+            workflowName="Prepare the release" sourceArtifactId="release-workflow" identityOnPage
+            onChangeValues={() => {}} onRun={() => {}} onCancel={() => {}} />);
+        expect(screen.findByTestId('workflow-start-lead')).toBeNull();
+        expect(screen.getTextContent()).not.toContain('Prepare the release');
+        // What the run asks for is still asked: its fields stay.
+        expect(screen.findByTestId('workflow-run-inputs-review-where')).not.toBeNull();
+        await screen.unmount();
+    });
     it('says the route once: a description that is only the step names stays out of the lead', async () => {
         const definition = createWorkflowDefinitionFixture({ defaults: STARTABLE_DEFAULTS });
         const stepNames = definition.blocks.map((block) => workflowBlockReferenceLabel(block)).join('\n');

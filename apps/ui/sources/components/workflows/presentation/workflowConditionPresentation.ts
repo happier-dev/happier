@@ -141,10 +141,12 @@ export function resolveWorkflowConditionHeadline(draft: WorkflowValuePresentatio
  * Tokens used is at least Goal token budget or …"), with its references as tokens. A loop's stop
  * rule reads this way (owner 2026-11-15): it sits where the round ends, so nothing hides behind "+2 more".
  */
-export function resolveWorkflowConditionProse(draft: WorkflowValuePresentationContext, authored: WorkflowCondition): Readonly<{
+export type WorkflowConditionProse = Readonly<{
     sentence: string;
     references: readonly WorkflowValueReference[];
-}> {
+}>;
+
+export function resolveWorkflowConditionProse(draft: WorkflowValuePresentationContext, authored: WorkflowCondition): WorkflowConditionProse {
     const condition = foldWorkflowConditionGuards(authored);
     if (isWorkflowConditionUnset(condition)) return { sentence: t('workflows.condition.unsetSentence'), references: [] };
     if ((condition.kind !== 'all' && condition.kind !== 'any') || condition.conditions.length === 0) {

@@ -1543,13 +1543,15 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                                         icon={<Icon name="hand" size={ICON_SIZE.sm} color={theme.colors.state.warning.foreground} />}
                                         showChevron={false}
                                         selected={reviewing}
-                                        rightElement={
-                                            <ToolbarButton
+                                        rightElement={reviewing
+                                            // The open review is a state of the selected row, not a second button (lab 1105 R1).
+                                            ? <Text testID={`${testIDPrefix}-needs-you-${invocation.id}`} variant="body"
+                                                style={{ color: theme.colors.text.secondary }}>{t('workflows.run.reviewing')}</Text>
+                                            : <ToolbarButton
                                                 testID={`${testIDPrefix}-needs-you-${invocation.id}`}
                                                 onPress={(event) => selectInvocation(invocation.id, event)}
-                                                active={reviewing}
                                                 tone={invocation.id === primaryReviewId ? 'primary' : 'default'}
-                                                label={reviewing ? t('workflows.run.reviewing') : t('workflows.run.review')}
+                                                label={t('workflows.run.review')}
                                                 accessibilityLabel={`${t('workflows.run.review')}: ${step}`}
                                                 size="md"
                                             />

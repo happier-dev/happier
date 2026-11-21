@@ -593,6 +593,26 @@ describe('SessionAuthoringControls', () => {
     await chips.screen.unmount();
   });
 
+  it('keeps Roles as the first group of a changed engine picker, after its way back and ahead of the Agents', async () => {
+    const { buildAgentInputChipPickerSections } = await import('@/components/sessions/agentInput/components/AgentInputChipPickerTypes');
+    const { ROLES_RAIL_PICKER_OPTION_ID } = await import('@/components/roles/rail/buildRolesRailPickerOption');
+    const chips = await renderControls({
+      presentation: 'chips', fields: ['agentTarget', 'modelSelection'], values: baseValues(),
+      onChangeFields: () => {}, onChangeEngine: () => {}, workflowRoles: [],
+      facts: { agentTargets: [directCapableClaude()] },
+      // An unsectioned choice after Roles, as the Agents are.
+      engineLeadingOption: { option: { id: 'auto', label: 'Auto' }, selected: false, valueLabel: 'Auto' },
+      overriddenFields: new Set(['agentTarget']),
+      resetOverride: { label: 'Use workflow’s', onResetField: () => {} },
+    });
+    await act(async () => { chips.screen.pressByTestId('session-authoring-control-agentTarget'); });
+    const picker = chips.screen.findAllByType(AgentInputChipPickerPopover).find((node) => node.props.open);
+    const sections = buildAgentInputChipPickerSections(picker!.props.options);
+    expect(sections[0]?.options.map((option) => option.label)).toEqual(['Use workflow’s']);
+    expect(sections[1]?.options.map((option) => option.id)).toEqual([ROLES_RAIL_PICKER_OPTION_ID]);
+    await chips.screen.unmount();
+  });
+
   it('returns a changed Windows window name to inheritance rather than an explicit blank', async () => {
     const { SessionAuthoringControls } = await import('./SessionAuthoringControls');
     const { createWorkflowEditorDraft } = await import('@/sync/domains/workflows/workflowEditorDraft');

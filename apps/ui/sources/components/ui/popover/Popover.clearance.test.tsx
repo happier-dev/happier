@@ -41,9 +41,10 @@ const CHIP = { left: 300, top: 420, width: 100, height: 32 } as const;
 async function renderChipPicker(
   placement: 'top' | 'bottom',
   withClearance: boolean,
-  options: Readonly<{ chip?: Readonly<{ left: number; top: number; width: number; height: number }>; withinComposerWidth?: boolean }> = {},
+  options: Readonly<{ chip?: Readonly<{ left: number; top: number; width: number; height: number }>; withinComposerWidth?: boolean; composerWidthFromContext?: boolean }> = {},
 ) {
   const { Popover } = await import('./Popover');
+  const { PopoverBoundaryProvider } = await import('./PopoverBoundary');
   const { OverlayPortalProvider, OverlayPortalHost } =
     await import('./OverlayPortal');
   const { PopoverPortalTargetContextProvider } =
@@ -56,6 +57,9 @@ async function renderChipPicker(
     measureInWindow: (cb: any) =>
       cb(COMPOSER.x, COMPOSER.y, COMPOSER.width, COMPOSER.height),
   } as any;
+  const wrapInContextBoundary = (popover: React.ReactElement) => options.composerWidthFromContext
+    ? <PopoverBoundaryProvider boundaryRef={{ current: composerNode }} axis="horizontal">{popover}</PopoverBoundaryProvider>
+    : popover;
   const portalTarget = {
     rootRef: { current: portalRootNode },
     layout: { width: 1000, height: 800 },
@@ -63,7 +67,7 @@ async function renderChipPicker(
   const screen = await renderScreen(
     <PopoverPortalTargetContextProvider value={portalTarget}>
       <OverlayPortalProvider>
-        <Popover
+        {wrapInContextBoundary(<Popover
           open
           backdrop={false}
           anchor={{ kind: 'rect', rect: options.chip ?? CHIP }}
@@ -80,7 +84,7 @@ async function renderChipPicker(
           maxWidthCap={400}
         >
           {() => React.createElement('Picker')}
-        </Popover>
+        </Popover>)}
         <OverlayPortalHost />
       </OverlayPortalProvider>
     </PopoverPortalTargetContextProvider>,
@@ -95,6 +99,7 @@ async function renderChipPicker(
     left: Number(style.left),
     top: style.top === undefined ? null : Number(style.top),
     bottomEdge: style.bottom === undefined ? null : 800 - Number(style.bottom),
+    maxHeight: style.maxHeight === undefined ? null : Number(style.maxHeight),
   };
 }
 
@@ -127,6 +132,14 @@ describe('Popover: a horizontal boundary narrower than the window', () => {
         // From the chip's right edge instead of its left: the picker ends where the chip does.
         expect(unbounded.left - bounded.left).toBe(400 - RIGHT_END_CHIP.width);
         expect(bounded.bottomEdge).toBe(unbounded.bottomEdge);
+    });
+
+    it('takes a width-only boundary from context: a picker inside a short panel keeps the window\'s vertical room', async () => {
+        const unbounded = await renderChipPicker('top', false, { chip: RIGHT_END_CHIP });
+        const fromContext = await renderChipPicker('top', false, { chip: RIGHT_END_CHIP, composerWidthFromContext: true });
+        expect(unbounded.left - fromContext.left).toBe(400 - RIGHT_END_CHIP.width);
+        expect(fromContext.bottomEdge).toBe(unbounded.bottomEdge);
+        expect(fromContext.maxHeight).toBe(unbounded.maxHeight);
     });
 
     it('leaves a picker that already fits inside it where it hangs', async () => {

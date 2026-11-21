@@ -171,7 +171,9 @@ function SessionAuthoringOptionChip(props: Readonly<{
     const offered = props.pickerOptions ?? props.options;
     const reset = props.changed === true ? props.reset : undefined;
     const pickerOptions = React.useMemo(() => reset === undefined ? offered
-        : [{ id: RESET_OPTION_ID, label: reset.label }, ...offered], [offered, reset]);
+        // Its own group: the rail groups by first appearance, so an ungrouped way back would pull the Agents ahead of
+        // a grouped Roles row (lab round 1116b: Roles first, then the Agents).
+        : [{ id: RESET_OPTION_ID, sectionId: RESET_OPTION_ID, label: reset.label, onSelectImmediate: reset.onReset }, ...offered], [offered, reset]);
     const onSelect = props.onSelect;
     const select = React.useCallback((optionId: string) => {
         if (optionId === RESET_OPTION_ID) reset?.onReset();

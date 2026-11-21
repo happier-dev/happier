@@ -217,11 +217,12 @@ export function WorkflowSettingsFrame(props: Readonly<{
     // Each page opens at its top, so the header starts without its divider.
     const [shownPage, setShownPage] = React.useState(props.pageKey);
     if (shownPage !== props.pageKey) { setShownPage(props.pageKey); setScrolled(false); }
-    // The frame bounds every menu opened inside it (a select's choices, the Workspace picker), so they open
-    // within the panel instead of past its edges (WF-ACCEPT-1118 item 1).
+    // The frame keeps every menu opened inside it within its width (WF-ACCEPT-1118 item 1); the window
+    // sets their height, so a short page (When should this run?) never cramps its value list to nothing
+    // (FIN-DESIGN-ACCEPT-2 F7).
     const frameRef = React.useRef<View>(null);
     return (
-        <PopoverBoundaryProvider boundaryRef={frameRef}>
+        <PopoverBoundaryProvider boundaryRef={frameRef} axis="horizontal">
         <View ref={frameRef} collapsable={false} testID={`${testIDPrefix}-options`} style={styles.root}>
             <View style={[styles.subjectHeader, scrolled ? styles.subjectHeaderScrolled : null]}>
                 {props.onBack === undefined ? null : (
