@@ -7,6 +7,7 @@ import {
   TEAM_CREDENTIAL_ACTION_METHODS_V1,
   TEAM_CREDENTIAL_ACTION_OUTPUT_SCHEMAS_V1,
   TEAM_CREDENTIAL_ACTION_PATHS_V1,
+  TEAM_CREDENTIAL_ACTION_WIRE_INPUT_SCHEMAS_V1,
 } from '../teams/credentials/actionsV1.js';
 import { TEAM_CREDENTIAL_HOST_ACTION_IDS_V1 } from '../teams/credentials/actionIdsV1.js';
 import { TEAM_ACTION_IDS_V1 } from '../teams/actionsV1.js';
@@ -57,6 +58,7 @@ describe('Team credential Action contracts', () => {
       expect(spec.serverTransport).toEqual({
         method: 'POST',
         path: TEAM_CREDENTIAL_ACTION_PATHS_V1[id],
+        inputSchema: TEAM_CREDENTIAL_ACTION_WIRE_INPUT_SCHEMAS_V1[id],
       });
       expect(spec.requiredAuthority).toBe('account_automation');
       expect(spec.surfaces).toMatchObject({ ui: true, cli: true, agent: true,
@@ -70,6 +72,7 @@ describe('Team credential Action contracts', () => {
       expect(spec.serverTransport).toEqual({
         method: TEAM_CREDENTIAL_ACTION_METHODS_V1[id],
         path: TEAM_CREDENTIAL_ACTION_PATHS_V1[id],
+        inputSchema: TEAM_CREDENTIAL_ACTION_WIRE_INPUT_SCHEMAS_V1[id],
       });
       expect(spec.inputSchema).toBe(TEAM_CREDENTIAL_ACTION_INPUT_SCHEMAS_V1[id]);
       expect(spec.outputSchema).toBe(TEAM_CREDENTIAL_ACTION_OUTPUT_SCHEMAS_V1[id]);
@@ -201,6 +204,7 @@ describe('Team credential Action contracts', () => {
     expect(spec.serverTransport).toEqual({
       method: 'POST',
       path: '/v1/teams/credential-resources/test',
+      inputSchema: TEAM_CREDENTIAL_ACTION_WIRE_INPUT_SCHEMAS_V1['teams.credentials.test'],
     });
     expect(spec.safety).toBe('danger');
     expect(spec.sideEffectClass).toBe('external');

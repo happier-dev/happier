@@ -71,6 +71,10 @@ export function serverAccountScopedTeamKey(scope: ServerAccountScope, address: T
     return `${serverAccountScopeKeySuffix(scope)}${teamAddressKey(address)}`;
 }
 
+/** Home setup visibility uses the Account-qualified Team identity. */
+export function teamSetupStepId(scope: ServerAccountScope, address: TeamAddress): string {
+    return `team:${serverAccountScopedTeamKey(scope, { serverId: scope.serverId, teamId: address.teamId })}`;
+}
 
 /**
  * Collision-safe identity for a Team-owned projection below Team detail.

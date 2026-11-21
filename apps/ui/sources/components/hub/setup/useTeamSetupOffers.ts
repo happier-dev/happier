@@ -5,8 +5,7 @@ import { useTeamsDirectory } from '@/hooks/teams/useTeamsDirectory';
 import { resolveServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
-import { serverAccountScopedTeamKey, type TeamAddress } from '@/sync/domains/teams/teamAddress';
-import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { teamSetupStepId, type TeamAddress } from '@/sync/domains/teams/teamAddress';
 
 import { useHomeSetupDismissals } from '../layout/useHomeSetupDismissals';
 
@@ -17,30 +16,18 @@ export type TeamSetupOffer = Readonly<{
     logo: TeamSummaryV1['logo'];
 }>;
 
-/** The layout already belongs to an Account; the key also names the exact viewed Home/Account/Team. */
-export function teamSetupStepId(scope: ServerAccountScope, address: TeamAddress): string {
-    return `team:${serverAccountScopedTeamKey(scope, { serverId: scope.serverId, teamId: address.teamId })}`;
-}
-
-/** The selected setup page can retire its Home offer without observing the Teams directory. */
-export function useTeamSetupDismissal(): (address: TeamAddress) => Promise<void> {
-    const { dismiss } = useHomeSetupDismissals();
-    return React.useCallback(async (address: TeamAddress) => {
-        const account = await resolveServerCredentialAccountScope(address.serverId);
-        if (account.kind !== 'bound') throw Object.assign(new Error(account.kind), { code: account.kind });
-        await dismiss(teamSetupStepId(account.scope, address));
-    }, [dismiss]);
-}
-
 /** Home offers the latest known join per Home; selected setup owns resource and Machine reads. */
 export function useTeamSetupOffers(): Readonly<{
     offers: readonly TeamSetupOffer[];
     dismiss(address: TeamAddress): Promise<void>;
-    complete(address: TeamAddress): Promise<void>;
 }> {
     const directory = useTeamsDirectory();
-    const { hasSnapshot, hidden } = useHomeSetupDismissals();
-    const dismiss = useTeamSetupDismissal();
+    const { hasSnapshot, hidden, dismiss: dismissStep } = useHomeSetupDismissals();
+    const dismiss = React.useCallback(async (address: TeamAddress) => {
+        const account = await resolveServerCredentialAccountScope(address.serverId);
+        if (account.kind !== 'bound') throw Object.assign(new Error(account.kind), { code: account.kind });
+        await dismissStep(teamSetupStepId(account.scope, address));
+    }, [dismissStep]);
     const previous = React.useRef<readonly TeamSetupOffer[] | null>(null);
     const offers = React.useMemo(() => {
         const scopes = new Map(directory.scopes.map(scope => [scope.serverId, scope]));
@@ -66,5 +53,5 @@ export function useTeamSetupOffers(): Readonly<{
         previous.current = next;
         return next;
     }, [directory.rows, directory.scopes, hasSnapshot, hidden]);
-    return React.useMemo(() => ({ offers, dismiss, complete: dismiss }), [offers, dismiss]);
+    return React.useMemo(() => ({ offers, dismiss }), [offers, dismiss]);
 }

@@ -2,7 +2,8 @@ import * as React from 'react';
 import 'fake-indexeddb/auto';
 import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
-import { buildHomeHubArtifactIdV1 } from '@happier-dev/protocol/home';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createHomeHubArtifactPortV1 } from '@happier-dev/protocol/home';
 import { renderHook, standardCleanup, teamCapabilitiesFixture, teamSummaryFixture } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -17,6 +18,11 @@ installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { storage } = await import('@/sync/domains/state/storage');
+const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+const { bindPresentUserActionConfirmation } = await import('@/sync/ops/actions/presentUserConfirmation');
+const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+const { useTeamSetupPlan } = await import('@/components/teams/setup/useTeamSetupPlan');
 const { useTeamSetupOffers } = await import('./useTeamSetupOffers');
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 let restoreActions: (() => void) | undefined;
@@ -29,7 +35,7 @@ afterEach(async () => {
     await homes.reset();
 });
 
-it('offers the latest eligible join per Home from hasSetup without setup reads and never reveals older joins on dismissal', async () => {
+it('offers the latest eligible join per Home and retires it after an Action dismissal or completed setup', async () => {
     const serverUrl = 'https://team-home-offers.test';
     const serverId = await homes.addHome({ name: 'Studio', serverUrl, accountId: 'member', teamsEnabled: true, active: true });
     const otherHome = await homes.addHome({ name: 'Other', serverUrl: 'https://other-team-home.test', accountId: 'member', teamsEnabled: true });
@@ -63,11 +69,63 @@ it('offers the latest eligible join per Home from hasSetup without setup reads a
     expect(a.logo).toEqual(logo);
     expect(a.stepId).not.toBe(b.stepId);
     expect(homes.requests.filter(request => /setup|saved-secrets|credential-resources/.test(request.path))).toEqual([]);
+    const agent = createDefaultActionExecutor();
+    const agentContext = { surface: 'agent', authority: 'account_automation', serverId, expectedAccountId: 'member' } as const;
+    expect(await agent.execute('home.hub.layout.get', {}, agentContext)).toMatchObject({
+        ok: true, result: { hiddenSetupStepIds: [] },
+    });
     await act(async () => { await hook.getCurrent().dismiss(a.address); });
     await vi.waitFor(() => expect(hook.getCurrent().offers.map(row => row.stepId)).toEqual([b.stepId]));
-    expect(homes.artifacts(serverId).readPlainBody(buildHomeHubArtifactIdV1('member'))).toContain(a.stepId);
+    expect(await agent.execute('home.hub.layout.get', {}, agentContext)).toMatchObject({
+        ok: true, result: { hiddenSetupStepIds: [a.stepId] },
+    });
+    await act(async () => {
+        expect(await agent.execute('home.hub.layout.update', { intent: { kind: 'setup_visibility', stepId: b.stepId, hidden: true } }, agentContext))
+            .toMatchObject({ ok: true, result: { hiddenSetupStepIds: expect.arrayContaining([a.stepId, b.stepId]) } });
+        expect(await agent.execute('home.hub.layout.update', { intent: { kind: 'setup_visibility', stepId: a.stepId, hidden: false } }, agentContext))
+            .toMatchObject({ ok: true, result: { hiddenSetupStepIds: [b.stepId] } });
+    });
     await hook.unmount();
     hook = await renderHook(useTeamSetupOffers, { wrapper });
-    await vi.waitFor(() => expect(hook.getCurrent().offers.map(row => row.stepId)).toEqual([b.stepId]));
+    await vi.waitFor(() => expect(hook.getCurrent().offers.map(row => row.stepId)).toEqual([a.stepId]));
+
+    const account = await captureLazyActionAccountContext(serverId);
+    let setup: 'prepared' | 'notRequired' = 'prepared';
+    const workspace = { serverId, machineId: 'machine', workspaceId: 'workspace', rootPath: '/repo' };
+    const executor = createActionExecutor({
+        // The selected Machine returns its actual Open receipt shape at the RPC boundary.
+        projectsOpen: async () => ({ kind: 'opened', workspace, directory: '/repo', setup }),
+        homeHubArtifacts: createHomeHubArtifactPortV1(account.homeHubArtifactTransport, { accountId: 'member' }),
+    });
+    const execute = createFrontDoorActionExecute({ ...executor,
+        executeConfirmed: (id, input, context) => executor.execute(id, input, bindPresentUserActionConfirmation(id, input, context ?? {})),
+    });
+    const context = { serverId, surface: 'ui' as const, authority: 'present_user' as const, expectedAccountId: 'member' };
+    const plan = await renderHook(() => useTeamSetupPlan(execute, context));
+    const source = { id: 'repo', revision: 1, name: 'Repo' };
+    const prepared = await plan.getCurrent().prepare({ target: { serverId, homeId: 'home', machineId: 'machine' },
+        repositories: [{ id: source.id, input: { source: { kind: 'folder', path: '/repo' }, materialization: { kind: 'attach' } } }],
+        isCurrent: () => true });
+    try {
+        if (!prepared?.ok) throw new Error('Team setup did not prepare');
+        const run = { plan: prepared.plan, selection: { team: a.address, lifetime: account.accountLifetime, sources: [source] } };
+        await act(async () => {
+            const result = await plan.getCurrent().run(run);
+            expect(result.repositories).toMatchObject([{ result: { ok: true, result: { kind: 'opened', setup: 'prepared' } } }]);
+        });
+        expect(await agent.execute('home.hub.layout.get', {}, agentContext)).toMatchObject({ ok: true, result: { hiddenSetupStepIds: [b.stepId] } });
+        setup = 'notRequired';
+        await act(async () => {
+            const result = await plan.getCurrent().run(run);
+            expect(result.repositories).toMatchObject([{ result: { ok: true, result: { kind: 'opened', setup: 'notRequired' } } }]);
+        });
+        await expect.poll(() => agent.execute('home.hub.layout.get', {}, agentContext)).toMatchObject({
+            ok: true, result: { hiddenSetupStepIds: expect.arrayContaining([a.stepId, b.stepId]) },
+        });
+    } finally {
+        await plan.unmount();
+        account.dispose();
+    }
+    expect(homes.requests.filter(request => request.method !== 'GET' && /\/account\/settings$/.test(request.path))).toEqual([]);
     await hook.unmount();
 });

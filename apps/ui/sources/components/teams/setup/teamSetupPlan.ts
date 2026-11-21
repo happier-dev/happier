@@ -90,6 +90,7 @@ export async function runTeamSetupPlan(params: Readonly<{
     repositoryRequestIds?: ReadonlyMap<string, string>;
     onRepositoryOpening?: (id: string) => void;
     onRepositoryOpened?: (id: string, result: TeamSetupOwnerResult<OpenProjectResultV1>) => void;
+    onCompleted?: () => void;
 }>): Promise<TeamSetupRunResult> {
     let machine: TeamSetupRunResult['machine'] = null;
     let machineSettlement: ActionExecuteFailure | null = null;
@@ -125,6 +126,11 @@ export async function runTeamSetupPlan(params: Readonly<{
         ), value => OpenProjectResultV1Schema.parse(value));
         repositories.push({ id: repository.id, result });
         params.onRepositoryOpened?.(repository.id, result);
+    }
+    if (params.onCompleted && !params.context.signal?.aborted && (machine || repositories.length > 0)
+        && repositories.length === params.plan.repositories.length
+        && repositories.every(({ result }) => result.ok && result.result.kind === 'opened' && result.result.setup === 'notRequired')) {
+        params.onCompleted();
     }
     return { machine, machineSettlement, repositories };
 }
