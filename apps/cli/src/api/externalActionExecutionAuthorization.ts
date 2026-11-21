@@ -927,13 +927,52 @@ function createTelemetryCollectorKeyPinPorts(input: Readonly<{ homeUrl: string; 
   };
 }
 
+type OriginalAccountActionPreparation = ActionExecuteResult | Readonly<{
+  deliver: () => Promise<ActionExecuteResult>;
+}> | null;
+
 export function dispatchOriginalAccountAction(input: OriginalAccountActionInput & Readonly<{ foreignTargetOnly: true }>): Promise<ActionExecuteResult | null>;
 export function dispatchOriginalAccountAction(input: OriginalAccountActionInput): Promise<ActionExecuteResult>;
-/** Original Account/terminal delivery enters Home before a retained guest can accept it.
- * Session input names its existing publisher custody; Machine targets retain
- * the incumbent disclosure and signed-requester-context admission.
- */
+/** Original Account/terminal delivery enters Home before a retained guest can accept it. */
 export async function dispatchOriginalAccountAction(input: OriginalAccountActionInput & Readonly<{ foreignTargetOnly?: true }>): Promise<ActionExecuteResult | null> {
+  const prepared = await prepareOriginalAccountAction(input);
+  return prepared && 'deliver' in prepared ? await prepared.deliver() : prepared;
+}
+
+/**
+ * The owner of an existing requester Session can use its admitted installation
+ * to resume it, as in the app. The caller releases this request only after the
+ * exact Session's Account Pending ingress acknowledges the input and placement.
+ */
+export async function prepareOriginalAccountPendingSessionResume(input: Readonly<{
+  credentials: StoredCredentials;
+  serverHttpBaseUrl: string;
+  serverIdentityId?: string;
+  machineId: string;
+  sessionId: string;
+  requestId: string;
+  personStopHeld: boolean;
+  signal?: AbortSignal;
+  isCurrent?: () => boolean | Promise<boolean>;
+}>): Promise<OriginalAccountActionPreparation> {
+  return await prepareOriginalAccountAction({
+    actionId: 'session.open',
+    input: { serverId: input.serverIdentityId, sessionId: input.sessionId, intent: 'resume' },
+    requestId: input.requestId,
+    target: { kind: 'machine', machineId: input.machineId },
+    credentials: input.credentials,
+    serverHttpBaseUrl: input.serverHttpBaseUrl,
+    serverIdentityId: input.serverIdentityId,
+    foreignTargetOnly: true,
+    ...(input.signal ? { signal: input.signal } : {}),
+    ...(input.isCurrent ? { isCurrent: input.isCurrent } : {}),
+  }, { personStopHeld: input.personStopHeld });
+}
+
+async function prepareOriginalAccountAction(
+  input: OriginalAccountActionInput & Readonly<{ foreignTargetOnly?: true }>,
+  pendingSessionResume?: Readonly<{ personStopHeld: boolean }>,
+): Promise<OriginalAccountActionPreparation> {
   // Preparation cannot start the effect; delivery owns evidence after submission.
   const fail = (errorCode: string, issuerPhase?: string): ActionExecuteFailure => ({
     ok: false, errorCode, error: errorCode, effectAttempted: false,
@@ -1100,6 +1139,16 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     if (!await isCurrent()) return fail('target_unavailable', 'dispatch.machine_inventory.currentness');
     const own = machines.find(row => row.id === machineId);
     const ordinary = readAuthTokenProvenance(claims, { allowLegacyHome: true });
+    if (pendingSessionResume) {
+      if (!own?.access || !accountId) return fail('target_unavailable', 'dispatch.machine_inventory');
+      if (own.managedMachineRef || own.access.custodian.accountId === accountId) return null;
+      // A terminal's Home-issued root has the automation floor. It cannot
+      // clear a person's Stop on another installation.
+      if (!hasStoredSessionCredentialProvenance(input.credentials)
+        || ordinary?.provenance.kind !== 'terminal' || pendingSessionResume.personStopHeld) {
+        return fail('target_unavailable', 'dispatch.pending_session_resume');
+      }
+    }
     // A native approval has already committed consent in the CLI owner. Its
     // own paired terminal delivers the admitted replay, not a fresh reviewer
     // root. Exact RPC ingress retains the terminal's automation ceiling and
@@ -1340,7 +1389,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     }
   } else if (telemetryRead && input.target.kind === 'machine' || scopedController || machine && access && (foreign || requiresMachineProof)) {
     if (!input.serverIdentityId) return fail('admission_unavailable', 'dispatch.machine_home_identity');
-    if (foreign && !controllerCodec && !retainedRequester && !input.onRequesterSessionCredentialDisclosure) return fail('requester_credential_disclosure_required');
+    if (foreign && !controllerCodec && !retainedRequester && !pendingSessionResume && !input.onRequesterSessionCredentialDisclosure) return fail('requester_credential_disclosure_required');
     const readInstalledMachine = async (observed: CurrentAccountMachineInventoryItem) => {
       const isOriginalTarget = input.target.kind === 'machine' && observed.id === input.target.machineId && requiresMachineProof;
       if (isOriginalTarget && installedRead.status === 'rejected') throw installedRead.reason;
@@ -1413,7 +1462,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       return await isCurrent() ? null : fail(input.signal?.aborted ? 'cancelled' : 'target_unavailable', 'dispatch.requester_disclosure.currentness');
     };
     const { telemetryReadInstallationPublicKey, ...signedAuthorization } = minted.authorization;
-    const deliver = async (invocation = input.invocation, signal = input.signal): Promise<ActionExecuteResult> => {
+    const prepareDelivery = async (invocation = input.invocation, signal = input.signal): Promise<Exclude<OriginalAccountActionPreparation, null>> => {
       if (signal?.aborted) return fail('cancelled');
       let authorization = signedAuthorization;
       let admittedBody: ExternalActionExecutionAuthorizationRequestV1;
@@ -1439,7 +1488,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
           }
         } else if (foreign || input.invocation) {
           if (!installed?.installationPublicKey) return fail('admission_unavailable', 'dispatch.requester_installation_key');
-          if (foreign && !retainedRequester) {
+          if (foreign && !retainedRequester && !pendingSessionResume) {
             const refusal = await confirmDisclosure({ id: destinationId, custodian: machine?.access?.custodian });
             if (refusal) return refusal;
           }
@@ -1465,9 +1514,14 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
         admittedBody = ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1, machineId: destinationId, envelope,
           executionAuthorization: authorization });
       } catch { return fail('content_unavailable'); }
-      return await deliverExternalActionRequest({ actionId, serverHttpBaseUrl: homeUrl, body: admittedBody, envelope, headers,
+      return { deliver: () => deliverExternalActionRequest({ actionId, serverHttpBaseUrl: homeUrl, body: admittedBody, envelope, headers,
         ...(material ? { material } : {}), ...(binding ? { binding } : {}),
-        ...(signal ? { signal } : {}), isCurrent });
+        ...(signal ? { signal } : {}), isCurrent }) };
+    };
+    if (pendingSessionResume) return prepareDelivery();
+    const deliver = async (invocation = input.invocation, signal = input.signal): Promise<ActionExecuteResult> => {
+      const prepared = await prepareDelivery(invocation, signal);
+      return 'deliver' in prepared ? await prepared.deliver() : prepared;
     };
     if (managedAdmission?.actionId === MANAGED_EXEC_ACTION_ID_V1 && foreign && controllerCodec
       && !input.invocation?.presentUserConfirmation && input.reviewManagedExecOnRequester) {
@@ -1475,9 +1529,9 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     }
     return await deliver();
   }
-  return await deliverExternalActionRequest({ actionId, serverHttpBaseUrl: homeUrl, body, envelope, headers,
+  return { deliver: () => deliverExternalActionRequest({ actionId, serverHttpBaseUrl: homeUrl, body, envelope, headers,
     ...(material ? { material } : {}), ...(binding ? { binding } : {}),
-    ...(input.signal ? { signal: input.signal } : {}), isCurrent });
+    ...(input.signal ? { signal: input.signal } : {}), isCurrent }) };
 }
 
 /**

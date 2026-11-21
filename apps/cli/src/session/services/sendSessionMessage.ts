@@ -41,7 +41,7 @@ import {
 import { isFollowDeliveryMutedV1 } from '@happier-dev/protocol/sessions/follow/sessionDeliveryMuteV1';
 
 import { fetchEncryptedTranscriptPageAfterSeq } from '@/api/session/fetchEncryptedTranscriptWindow';
-import { readPublishedMachineRow } from '@/api/machine/readPublishedMachineRow';
+import type { prepareOriginalAccountPendingSessionResume } from '@/api/externalActionExecutionAuthorization';
 import { readSessionDeliveryMutedScopes } from '@/api/sessionDeliveryMuteTransport';
 import {
   enqueuePendingQueueV2MessageViaHttp,
@@ -1965,6 +1965,7 @@ export async function sendSessionMessage(
   let enqueueResult: Awaited<ReturnType<typeof enqueuePendingQueueV2MessageViaHttp>>;
   let admissionResult: SessionInputEnqueueResultV1 | undefined;
   let machineAdmissionInvoked = false;
+  let resumeOnRequesterMachine: Extract<Awaited<ReturnType<typeof prepareOriginalAccountPendingSessionResume>>, { deliver: unknown }> | null = null;
   try {
     if (requiresMachineAdmission || hostOnboarding) {
       const admissionTransport = params.machineAdmissionTransport;
@@ -2109,15 +2110,22 @@ export async function sendSessionMessage(
       if (!targetMachineId && params.targetMachineId) return { ok: false, code: 'admission_rejected',
         admissionResult: { status: 'rejected', code: 'session_input_target_unavailable' } };
       if (targetMachineId && usesAccountPending && shouldResumeInactiveSession && params.explicitMessageSend === true
-        && (crossesStopHold || decryptedMetadata?.lifecycleState === 'stopped')
         && !params.machineResumeTransport && !params.spawnSession) {
-        // A recorded physical Stop also needs requester Resume on an ordinary foreign Machine.
-        const machine = await readPublishedMachineRow(targetMachineId, params.credentials, { signal: params.signal }).catch(() => null);
+        const { prepareOriginalAccountPendingSessionResume } = await import('@/api/externalActionExecutionAuthorization');
+        const resume = await prepareOriginalAccountPendingSessionResume({
+          credentials: params.credentials,
+          sessionId, machineId: targetMachineId, requestId: localId,
+          serverHttpBaseUrl: resolveServerHttpBaseUrl(),
+          serverIdentityId: params.serverIdentityId ?? readServerIdentityIdFromFeaturesSnapshot(params.serverFeaturesSnapshot) ?? undefined,
+          personStopHeld: crossesStopHold,
+          ...(params.signal ? { signal: params.signal } : {}),
+        }).catch(() => ({ ok: false as const }));
         const cancelled = cancelledBeforeAdmission(params.signal, true);
         if (cancelled) return cancelled;
-        if (!machine || machine.managedMachineRef === null && machine.access
-          && machine.access.custodian.accountId !== readAccountIdFromToken(params.credentials.token)) {
-          return { ok: false, code: 'admission_rejected', admissionResult: rejectedProtectedInputBeforeAdmission('admission_rejected') };
+        if (resume) {
+          if (!('deliver' in resume)) return { ok: false, code: 'admission_rejected',
+            admissionResult: rejectedProtectedInputBeforeAdmission('admission_rejected', 'session.message.requester_resume') };
+          resumeOnRequesterMachine = resume;
         }
       }
       enqueueResult = await enqueuePendingQueueV2MessageViaHttp({
@@ -2261,26 +2269,30 @@ export async function sendSessionMessage(
 
   // Home owns an acknowledged managed wake. A person-Stop hold still needs explicit Resume authority.
   if (shouldResumeInactiveSession && (crossesStopHold || enqueueResult.managedActivationLocalId === undefined)) {
-    const resumeResult = await requestInactiveSessionResume({
-      credentials: params.credentials,
-      sessionId,
-      localId,
-      rawSession: sessionTarget.rawSession,
-      // Automatic admission unless this send crosses a stopped Session's hold.
-      executionAuthority: 'account_automation',
-      crossesStopHold,
-      ...(params.wait === true ? { waitForReady: true } : {}),
-      ...(params.incomingResumeOptions ? { incomingOptions: params.incomingResumeOptions } : {}),
-      metadata: decryptedMetadata && typeof decryptedMetadata === 'object' && !Array.isArray(decryptedMetadata)
-        ? decryptedMetadata as Record<string, unknown>
-        : {},
-      timeoutMs: params.timeoutMs,
-      ...(params.signal ? { signal: params.signal } : {}),
-      ...(params.machineResumeTransport
-        ? { machineRpcTransport: params.machineResumeTransport }
-        : {}),
-      ...(params.spawnSession ? { spawnSession: params.spawnSession } : {}),
-    });
+    const resumeResult: InactiveSessionResumeResult = resumeOnRequesterMachine
+      ? await resumeOnRequesterMachine.deliver().then(result => result.ok ? { ok: true } : {
+        ok: false, code: 'resume_failed', message: result.error,
+      })
+      : await requestInactiveSessionResume({
+        credentials: params.credentials,
+        sessionId,
+        localId,
+        rawSession: sessionTarget.rawSession,
+        // Automatic admission unless this send crosses a stopped Session's hold.
+        executionAuthority: 'account_automation',
+        crossesStopHold,
+        ...(params.wait === true ? { waitForReady: true } : {}),
+        ...(params.incomingResumeOptions ? { incomingOptions: params.incomingResumeOptions } : {}),
+        metadata: decryptedMetadata && typeof decryptedMetadata === 'object' && !Array.isArray(decryptedMetadata)
+          ? decryptedMetadata as Record<string, unknown>
+          : {},
+        timeoutMs: params.timeoutMs,
+        ...(params.signal ? { signal: params.signal } : {}),
+        ...(params.machineResumeTransport
+          ? { machineRpcTransport: params.machineResumeTransport }
+          : {}),
+        ...(params.spawnSession ? { spawnSession: params.spawnSession } : {}),
+      });
     if (!resumeResult.ok) {
       const refusedResume = !informationDelivery
         && (resumeResult.code === 'resume_failed' || resumeResult.code === 'SESSION_DIRECTORY_MISSING')
