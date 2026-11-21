@@ -626,8 +626,12 @@ describe('registered GitHub pending review parity', () => {
     { id: 'github/pull-request/review-dismiss', fields: { reviewId, message: 'Superseded' },
       mutation: 'dismissPullRequestReview', variables: { reviewId, message: 'Superseded' }, state: 'DISMISSED' },
   ] as const;
-  function reviewTransport(operation: typeof operations[number], options: Readonly<{ foreign?: boolean; lost?: boolean; forbidden?: boolean; advanced?: boolean }> = {}) {
-    return createStubGithubTransport({ respond: request => {
+  function reviewTransport(operation: typeof operations[number], options: Readonly<{
+    foreign?: boolean; lost?: boolean; forbidden?: boolean; advanced?: boolean;
+    signal?: AbortSignal;
+    holdWrite?: (response: StubHttpResponse, signal: AbortSignal | undefined) => Promise<StubHttpResponse>;
+  }> = {}) {
+    return createStubGithubTransport({ ...(options.signal === undefined ? {} : { signal: options.signal }), respond: (request, http) => {
       const path = new URL(request.url).pathname;
       if (request.method === 'GET' && path === REPOSITORY_PATH) return json(GITHUB_REPOSITORY_RESPONSE);
       if (request.method === 'GET' && path === PULL_REQUEST_PATH) return json(pullRequestBody());
@@ -640,7 +644,8 @@ describe('registered GitHub pending review parity', () => {
         } } });
         if (options.lost) throw new Error('response lost');
         if (options.forbidden) return json({ data: null, errors: [{ type: 'FORBIDDEN', message: 'Forbidden' }] });
-        return json({ data: { [operation.mutation]: { pullRequestReview: { id: reviewId, state: operation.state, body: 'Saved' } } } });
+        const response = json({ data: { [operation.mutation]: { pullRequestReview: { id: reviewId, state: operation.state, body: 'Saved' } } } });
+        return options.holdWrite?.(response, http?.signal) ?? response;
       }
       return undefined;
     } });
@@ -670,6 +675,39 @@ describe('registered GitHub pending review parity', () => {
       const stub = reviewTransport(operation, { lost: true });
       expect(await invokeRegisteredGithubMutation(operation.id, stateInput(operation.fields), stub)).toMatchObject({ kind: 'uncertain' });
       expect(sentMutations(stub)).toHaveLength(1);
+    });
+    it(`${operation.id} cancels a dispatched mutation without reading back or replaying it`, async () => {
+      const caller = new AbortController();
+      let reachedWrite!: (signal: AbortSignal | undefined) => void;
+      const writeStarted = new Promise<AbortSignal | undefined>(resolve => { reachedWrite = resolve; });
+      let releaseWrite = () => {};
+      const stub = reviewTransport(operation, { signal: caller.signal, holdWrite: (response, signal) => {
+        reachedWrite(signal);
+        return new Promise(resolve => { releaseWrite = () => resolve(response); });
+      } });
+      const kit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount } });
+      try {
+        // Observe the producer's typed settlement before an aborted host call discards it.
+        const handler = kit.registration('actions', operation.id);
+        if (!handler) throw new Error(`Missing registered Action ${operation.id}`);
+        const pending = handler(stateInput(operation.fields), stub.context);
+        const requestSignal = await Promise.race([writeStarted, pending.then(() => {
+          throw new Error('The registered Action settled before the provider received its write');
+        })]);
+        const dispatchedRequests = stub.requests.slice();
+        caller.abort(new DOMException('The caller left the review.', 'AbortError'));
+        expect(requestSignal?.aborted).toBe(true);
+        await expect(pending).resolves.toMatchObject({ kind: 'uncertain', failure: {
+          class: 'transient', code: 'github_request_cancelled',
+        } });
+        releaseWrite();
+        expect(stub.requests).toEqual(dispatchedRequests);
+        expect(sentMutations(stub)).toHaveLength(1);
+      } finally {
+        caller.abort();
+        releaseWrite();
+        await kit.dispose();
+      }
     });
     it(`${operation.id} reports GitHub GraphQL permission errors rather than HTTP-200 success`, async () => {
       const stub = reviewTransport(operation, { forbidden: true });
