@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ExecutionRunPublicState} from '@happier-dev/protocol/execution/runs/responseSchemas';
 import type { ScmDiffSummaryResult } from '@happier-dev/protocol/scm/diffSummaryResult';
-import { resolveScmDiffSummaryDiscussionTarget, selectScmDiffSummaryDiscussionSavedResult, selectScmDiffSummaryStopDiscussionContext } from './discussion';
+import { resolveScmDiffSummaryDiscussionTarget, selectScmDiffSummaryDiscussionReply, selectScmDiffSummaryDiscussionSavedResult, selectScmDiffSummaryStopDiscussionContext } from './discussion';
 import { createInitialScmDiffSummaryState, type ScmDiffSummaryEntry } from './state';
 
 const run = {
@@ -17,6 +17,18 @@ function target(overrides: Partial<Parameters<typeof resolveScmDiffSummaryDiscus
 }
 
 describe('SCM discussion target', () => {
+    it('projects the restored initial native input only as narration while keeping genuine replies, including JSON prose', () => {
+        // Captured Q07 shape: the native initial JSON is reported as a completed text turn.
+        const initial = { turnId: 'generation-turn', inputIds: ['generation-input'], state: 'completed' as const,
+            result: { kind: 'text' as const, value: '{"walkthrough":{"title":"Total calculation inverted"}}' } };
+        const restored = { inputId: 'generation-input', latestRun: { ...run,
+            inputTurns: { occurrenceId: 'native-occurrence', last: initial } } };
+        expect(selectScmDiffSummaryDiscussionReply(restored)).toBeNull();
+        const reply = { ...initial, turnId: 'discussion-turn', inputIds: ['discussion-input'] };
+        expect(selectScmDiffSummaryDiscussionReply({ ...restored, latestRun: { ...run,
+            inputTurns: { occurrenceId: 'native-occurrence', last: initial, current: reply } } })).toBe(reply.result.value);
+        expect(selectScmDiffSummaryDiscussionReply({ ...restored, inputId: null })).toBeNull();
+    });
     it('captures result-local stop context at the displayed revision and rejects unrelated stops', () => {
         const result = { resultId: 'result-1', revision: 3, canUndo: false, output: {
             success: true, sourceKey: 'comparison-1', metadata: { source: { kind: 'workingTree' }, sourceKey: 'comparison-1' },

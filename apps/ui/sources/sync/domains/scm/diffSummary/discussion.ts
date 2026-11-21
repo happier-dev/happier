@@ -3,7 +3,18 @@ import type { ExecutionRunPublicState } from '@happier-dev/protocol/execution/ru
 import type { ParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
 import type { ScmDiffSummaryResult } from '@happier-dev/protocol/scm/diffSummaryResult';
 import { buildSessionExecutionRunRouteHref } from '@/components/sessions/agents/navigation/buildSessionExecutionRunRouteHref';
-import type { ScmDiffSummaryState } from './state';
+import type { ScmDiffSummaryState, ScmDiffSummaryViewModel } from './state';
+
+/** The native generator's completed conversation reply, separate from its saved narration. */
+export function selectScmDiffSummaryDiscussionReply(viewModel: Pick<ScmDiffSummaryViewModel, 'inputId' | 'latestRun'> | null | undefined): string | null {
+    const turns = viewModel?.latestRun?.inputTurns;
+    const turn = turns?.current?.state === 'completed' ? turns.current
+        : turns?.last?.state === 'completed' ? turns.last : null;
+    // The saved generator's first input publishes narration. Its native text
+    // witness is not an additional conversational reply, including after reload.
+    if (!viewModel?.inputId || turn?.inputIds.includes(viewModel.inputId)) return null;
+    return turn?.result?.kind === 'text' ? turn.result.value : null;
+}
 
 export type ScmDiffSummaryDiscussionTarget =
     | Readonly<{ kind: 'unknown' }>

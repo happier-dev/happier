@@ -55,10 +55,12 @@ describe('saved SCM generator credential routing', () => {
     await withTempDir('happier-scm-route-', async cwd => {
       execFileSync('git', ['init', '-q'], { cwd });
       const captured = await captureScmComparison({ cwd, source: { kind: 'workingTree' } });
+      const sessionConfigOptionOverrides = { v: 1 as const, updatedAt: 1,
+        overrides: { reasoning_effort: { updatedAt: 1, value: 'minimal' } } };
       const request = {
         backendTarget: { kind: 'builtInAgent' as const, agentId: 'claude' }, intent: 'scm_diff_summary' as const,
         permissionMode: 'read_only', retentionPolicy: 'resumable' as const, runClass: 'long_lived' as const, ioMode: 'streaming' as const,
-        modelId: 'admitted-model', connectedServices,
+        modelId: 'admitted-model', connectedServices, sessionConfigOptionOverrides,
         intentInput: { cwd, source: captured.comparison.source, comparisonId: captured.comparison.id, outputs: ['summary'] },
       };
       const prepared = await ScmDiffSummaryProfile.prepareStartParams!({ cwd, sessionId: null, request });
@@ -71,7 +73,7 @@ describe('saved SCM generator credential routing', () => {
       }, rawText: '', finishedAtMs: 1 });
       const output = ScmDiffSummaryGenerateOutputSchema.parse(initial?.toolResultOutput);
       const saved = ScmDiffSummaryResultResponseSchema.parse(await scmDiffSummaryResultStore.read({ cwd, resultId: output.resultId! }));
-      expect(saved).toMatchObject({ success: true, result: { generator: { connectedServices } } });
+      expect(saved).toMatchObject({ success: true, result: { generator: { connectedServices, sessionConfigOptionOverrides } } });
     });
     });
   });

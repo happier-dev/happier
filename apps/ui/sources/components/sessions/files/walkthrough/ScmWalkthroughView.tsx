@@ -15,7 +15,7 @@ import { getPreferredLanguage, t } from '@/text';
 import { RunWorkNotifications } from '@/components/sessions/work/RunWorkNotifications';
 
 import type { SessionScmReviewComparison } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
-import { resolveScmDiffSummaryDiscussionTarget } from '@/sync/domains/scm/diffSummary/discussion';
+import { resolveScmDiffSummaryDiscussionTarget, selectScmDiffSummaryDiscussionReply } from '@/sync/domains/scm/diffSummary/discussion';
 import { useAskSessionReveal } from '@/components/ui/code/selection/useAskSessionReveal';
 import { getSessionComposerDraftSnapshot, writeExistingSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { LlmTaskRunnerPicker } from '@/components/settings/llmTasks/LlmTaskRunnerPicker';
@@ -134,10 +134,7 @@ export const ScmWalkthroughView = React.memo(function ScmWalkthroughView(props: 
     }, [bound.isCurrent, cwd, discussion, onOpenComposer, revealAsk, props.sessionId, props.onAskStop, scope?.serverId, scope?.accountId, viewModel?.savedResult]);
     const saved = viewModel?.savedResult;
     const updateWitnessed = useWitnessedUpdateNotice(saved, reading?.phase ?? 'none');
-    const nativeTurns = !sessionId ? viewModel?.latestRun?.inputTurns : null;
-    const nativeTerminalTurn = nativeTurns?.current?.state === 'completed' ? nativeTurns.current
-        : nativeTurns?.last?.state === 'completed' ? nativeTurns.last : null;
-    const nativeDiscussionReply = nativeTerminalTurn?.result?.kind === 'text' ? nativeTerminalTurn.result.value : null;
+    const nativeDiscussionReply = !sessionId ? selectScmDiffSummaryDiscussionReply(viewModel) : null;
     const [undoing, setUndoing] = React.useState(false);
     const undoPending = React.useRef(false);
     const onUndo = React.useMemo(() => saved?.canUndo && operations && cwd && key && canControl

@@ -130,7 +130,8 @@ it('generates saved Changes revisions with a selected Connected Account through 
       expect(detachedOutput).toMatchObject({ ok: true });
       const detachedSaved = await owner.execute('scm.diffSummary.result.read', { cwd, resultId: detached.resultId }, context);
       expect(detachedSaved).toMatchObject({ ok: true, result: { success: true,
-        result: { output: { outputs: { summary: { state: 'complete', value: { summaryMarkdown: 'Generated: Native captured change.' } } } } } } });
+        result: { generator: { sessionConfigOptionOverrides },
+          output: { outputs: { summary: { state: 'complete', value: { summaryMarkdown: 'Generated: Native captured change.' } } } } } } });
       expect((await nativeConfigurations()).at(-1)?.options.reasoning_effort?.value).toBe('low');
       if (!detachedSaved.ok) throw new Error('Detached saved output refused');
       const beforeRefine = ScmDiffSummaryResultResponseSchema.parse(detachedSaved.result);
@@ -204,6 +205,7 @@ it('generates saved Changes revisions with a selected Connected Account through 
     await waitForOutput(0);
     const saved = await readSaved();
     if (!saved.success) throw new Error('Generated saved result unavailable');
+    expect(saved.result.generator?.sessionConfigOptionOverrides).toEqual(sessionConfigOptionOverrides);
     const initialRun = await owner.execute('execution.run.get', { sessionId, runId: generated.runId, includeStructured: true }, context);
     expect(saved.result.output.outputs?.summary?.state,
       JSON.stringify({ saved: saved.result.output, run: initialRun, native: await observations() })).toBe('complete');

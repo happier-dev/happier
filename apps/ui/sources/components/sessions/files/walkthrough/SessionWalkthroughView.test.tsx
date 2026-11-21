@@ -932,11 +932,17 @@ describe('SessionWalkthroughView retained offline reading through real Account m
             output: { ...pending.output, revision: 1, outputs: { walkthrough: { state: 'complete', value: {
                 title: 'Native completion', intro: 'The exact producer finished.', stops: [], otherChangeRefs: [],
             } } } } });
+        const initialGeneration = JSON.stringify(boundary.savedResult.output.outputs?.walkthrough?.value);
         boundary.runResponse = ExecutionRunGetResponseSchema.parse({ ...boundary.runResponse,
+            run: { ...boundary.runResponse!.run, inputTurns: { occurrenceId: 'native-occurrence', last: {
+                turnId: 'generation-turn', inputIds: ['native-input'], state: 'completed',
+                result: { kind: 'text', value: initialGeneration },
+            } } },
             structuredMeta: { kind: 'scm_diff_summary.v1', payload: boundary.savedResult.output } });
         observed.resolve();
         await act(async () => { await pushSavedResult(home.id, machine.id); });
         await vi.waitFor(() => expect(screen.getTextContent()).toContain('Native completion'));
+        expect(screen.findByTestId('walkthrough-saved-discussion-reply')).toBeNull();
         const discussed = createDeferred<void>();
         boundary.nativeRunBarrier = () => discussed.promise;
         await chooseFromMenu(screen, 'walkthrough-saved-discuss');

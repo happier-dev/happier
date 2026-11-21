@@ -166,6 +166,7 @@ export const ScmDiffSummaryProfile: ExecutionRunIntentProfile = bindScmExecution
       ...(readNonEmptyString(request.profileId) ? { profileId: readNonEmptyString(request.profileId) } : {}),
       ...(modelSelection.success ? { modelSelection: modelSelection.data } : {}),
       ...(request.connectedServices !== undefined ? { connectedServices: request.connectedServices } : {}),
+      ...(request.sessionConfigOptionOverrides !== undefined ? { sessionConfigOptionOverrides: request.sessionConfigOptionOverrides } : {}),
     });
     const savedId = typeof input.resultId === 'string' ? input.resultId : undefined;
     const scope = { cwd: input.cwd || cwd, ...(sessionId ? { sessionId } : {}) };
