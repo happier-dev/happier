@@ -1552,6 +1552,28 @@ describe('the entry action controls on the mounted detail header', () => {
         ]);
     }, 60_000);
 
+    it.each([
+        ['empty', 'No eligible Sessions are available for this action.'],
+        ['unavailable', 'Could not read Sessions for this action.'],
+    ] as const)('shows a notice when Fix options has %s Session candidates', async (outcome, notice) => {
+        const harness = oneClickHarness();
+        const shell = await mountShell({
+            ...harness,
+            async executeAction(request) {
+                if (request.action !== 'session.list') return harness.executeAction(request);
+                if (outcome === 'unavailable') throw new Error('Home unavailable');
+                return { sessions: [], hasNext: false };
+            },
+        });
+        await openTheRow(shell);
+        await pressAction(shell, 'Direct fix options');
+        await pressMenuItem(shell, 'Send to a Session…');
+
+        await expect(shell.getByText(notice)).resolves.toBeDefined();
+        expect(sessionPicks).toBe(0);
+        expect(harness.configuredRequests).toHaveLength(0);
+    }, 60_000);
+
     it('starts nothing when the reader closes the Session picker', async () => {
         const harness = oneClickHarness();
         const shell = await mountShell(harness);

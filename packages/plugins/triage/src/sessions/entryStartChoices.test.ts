@@ -3,6 +3,7 @@ import type { TriageActionV1 } from '../settings/actions.js';
 import {
     readTriageEntrySessionStartTargetV1,
     readTriageRecentSessionsV1,
+    selectTriageSendRecipientV1,
     type TriageEntrySessionStartChoicesHostV1,
 } from './entryStartChoices.js';
 
@@ -30,7 +31,7 @@ function fixture(options: { preferred?: string; machineAvailable?: boolean } = {
                 presence: null, updatedAt: 20, locationLabel: 'Work laptop' },
             { id: 'same-id', serverId: 'home-a', title: 'Review parser', active: true,
                 presence: null, updatedAt: 10 },
-        ], nextCursor: 'more', hasNext: true };
+        ], nextCursor: 'more' as string | undefined, hasNext: true };
         throw new Error(`Unexpected host Action ${action}`);
     });
     const readMachineDisplayName = vi.fn(async () => options.machineAvailable === false
@@ -77,5 +78,21 @@ describe('the Start split consumes the existing Agent, placement and Session own
         executeAction.mockRejectedValueOnce(new Error('Home unavailable'));
         expect(await readTriageRecentSessionsV1(host, true)).toEqual({ status: 'unavailable' });
         expect(executeAction).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+        ['unavailable', new Error('Home unavailable'), 'sessionCandidatesUnavailable'],
+        ['empty', { sessions: [], nextCursor: undefined, hasNext: false }, 'sessionCandidatesEmpty'],
+    ] as const)('reports %s Send candidates without opening a picker', async (_label, result, reason) => {
+        const { host, executeAction } = fixture();
+        if (result instanceof Error) executeAction.mockRejectedValueOnce(result);
+        else executeAction.mockImplementationOnce(async () => result);
+        const readSession = vi.fn(async () => null);
+        const selectActionInput = vi.fn(async () => ({ kind: 'cancelled' as const }));
+
+        expect(await selectTriageSendRecipientV1(
+            { ...host, readSession, selectActionInput }, { action: ACTION },
+        )).toEqual({ kind: 'unavailable', reason });
+        expect(selectActionInput).not.toHaveBeenCalled();
     });
 });

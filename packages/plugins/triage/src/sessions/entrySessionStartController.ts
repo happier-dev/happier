@@ -75,7 +75,7 @@ import {
 import { triageActionDefaultSeedV1, requestTriageNewSessionAuthoringV1 } from './newSessionAuthoring.js';
 import { readTriageEntrySessionFactsV1, type TriageEntrySessionSourceFactsV1 } from './readEntrySessionFacts.js';
 import { buildTriageEntrySessionHandoffV1 } from './entrySessionHandoff.js';
-import { selectTriageSendRecipientV1 } from './entryStartChoices.js';
+import { selectTriageSendRecipientV1, type TriageSendRecipientUnavailableReasonV1 } from './entryStartChoices.js';
 import { projectTriageNewSessionFailureV1 } from '../ui/header/newSessionSeedCommand.js';
 import {
     submitTriageEntrySessionStart,
@@ -231,6 +231,7 @@ export type TriageEntrySessionStartUnavailableReasonV1 =
     | 'promptUnavailable'
     /** Nothing left this surface: the press failed before the start Action. */
     | 'dispatch'
+    | TriageSendRecipientUnavailableReasonV1
     /**
      * The start Action left, and what became of it is unknown.
      *
@@ -778,8 +779,11 @@ export function createTriageEntrySessionStartController(
                             { signal: selectionLifetime.signal },
                         );
                         if (retired.current) return;
-                        if (choice?.kind === 'cancelled') { setPhase(IDLE); return; }
-                        if (choice?.kind !== 'sessionAddress') { setPhase(unavailable('dispatch')); return; }
+                        if (choice.kind === 'cancelled') { setPhase(IDLE); return; }
+                        if (choice.kind !== 'sessionAddress') {
+                            setPhase(choice.kind === 'unavailable' ? unavailable(choice.reason, choice.failure) : unavailable('dispatch'));
+                            return;
+                        }
                         session = choice.session;
                     }
                     const handoff = buildTriageEntrySessionHandoffV1(request, session);
@@ -1220,8 +1224,12 @@ export function createTriageEntrySessionStartController(
                     action: request.action, ...(request.repository === undefined ? {} : { repository: request.repository }),
                 }, options);
                 if (options.signal.aborted || retired.current) { cancel(); return null; }
-                if (choice?.kind === 'cancelled') { cancel(); return null; }
-                if (choice?.kind !== 'sessionAddress') { inFlight.current = false; setPhase(unavailable('dispatch')); return null; }
+                if (choice.kind === 'cancelled') { cancel(); return null; }
+                if (choice.kind !== 'sessionAddress') {
+                    inFlight.current = false;
+                    setPhase(choice.kind === 'unavailable' ? unavailable(choice.reason, choice.failure) : unavailable('dispatch'));
+                    return null;
+                }
                 session = choice.session;
             }
             const handoff = buildTriageEntrySessionHandoffV1(request, session);

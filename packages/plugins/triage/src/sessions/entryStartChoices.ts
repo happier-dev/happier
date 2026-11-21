@@ -8,6 +8,7 @@ import { readTriageActionExecutionPlacementV1, type TriageActionExecutionPlaceme
 import { readTriageActionPlacementV1, readTriageActionProfileV1, type TriageActionResolutionHostV1 } from './actionResolution.js';
 import type { TriageForgeIdentityV1 } from './launchPlacement.js';
 import { evaluateTriageExistingSessionWorkspaceV1 } from './existingSessionEligibility.js';
+import { projectTriageNewSessionFailureV1, type TriageNewSessionFailureV1 } from '../ui/header/newSessionSeedCommand.js';
 
 export type TriageEntrySessionStartChoicesHostV1 = TriageActionResolutionHostV1
     & Pick<PluginUiHostApi, 'executeAction' | 'readMachineDisplayName'>;
@@ -65,8 +66,22 @@ export type TriageRecentSessionV1 = Readonly<{
     'path' | 'host' | 'machineId' | 'active' | 'latestTurnStatus' | 'runtimeActivityState' | 'lastRuntimeIssue' | 'pendingCount'
 >>>;
 export type TriageRecentSessionsV1 =
-    | Readonly<{ status: 'idle' | 'loading' | 'unavailable' }>
+    | Readonly<{ status: 'idle' | 'loading' }>
+    | Readonly<{ status: 'unavailable'; failure?: TriageNewSessionFailureV1 }>
     | Readonly<{ status: 'ready'; items: readonly TriageRecentSessionV1[]; hasMore: boolean }>;
+
+export type TriageSendRecipientUnavailableReasonV1 = 'sessionCandidatesUnavailable' | 'sessionCandidatesEmpty';
+
+type TriageSendRecipientV1 = SelectActionInputResult | Readonly<{
+    kind: 'unavailable';
+    reason: TriageSendRecipientUnavailableReasonV1;
+    failure?: TriageNewSessionFailureV1;
+}>;
+
+function unavailableSessions(error: unknown): Extract<TriageRecentSessionsV1, { status: 'unavailable' }> {
+    const failure = projectTriageNewSessionFailureV1(error);
+    return { status: 'unavailable', ...(failure === undefined ? {} : { failure }) };
+}
 
 function isSummary(result: PluginActionResultById['session.list']): result is SessionSummaryResult {
     return !('view' in result);
@@ -84,6 +99,7 @@ export async function readTriageRecentSessionsV1(
     if (!menuOpen) return { status: 'idle' };
     try {
         const items: TriageRecentSessionV1[] = [];
+        let unavailable: Extract<TriageRecentSessionsV1, { status: 'unavailable' }> | undefined;
         let cursor: string | undefined;
         let hasMore: boolean;
         do {
@@ -98,20 +114,23 @@ export async function readTriageRecentSessionsV1(
                 const action = eligibility.action;
                 const readSession = host.readSession?.bind(host);
                 if (action === null || !readSession) return { status: 'unavailable' };
-                const decisions = await Promise.all(result.sessions.map(async row => {
+                const decisions = await Promise.allSettled(result.sessions.map(async row => {
                     if (row.serverId === undefined) return null;
-                    const state = await readSession(row.id, options).catch(() => null);
+                    const state = await readSession(row.id, { signal: options?.signal, includeActivity: false });
                     return state?.sessionId === row.id && state.serverId === row.serverId
                         && evaluateTriageExistingSessionWorkspaceV1(action.workspaceMode,
                             eligibility.repository, state.acceptedWorkspace).kind !== 'unavailable' ? row : null;
                 }));
-                for (const row of decisions) if (row !== null) items.push(row);
+                for (const decision of decisions) {
+                    if (decision.status === 'rejected') unavailable ??= unavailableSessions(decision.reason);
+                    else if (decision.value !== null) items.push(decision.value);
+                }
             }
             cursor = result.nextCursor ?? undefined;
             hasMore = result.hasNext === true || cursor !== undefined;
         } while (options?.allPages && cursor !== undefined);
-        return { status: 'ready', items, hasMore };
-    } catch { return { status: 'unavailable' }; }
+        return items.length === 0 && unavailable !== undefined ? unavailable : { status: 'ready', items, hasMore };
+    } catch (error) { return unavailableSessions(error); }
 }
 
 /** Find uses the same candidate owner as the recent menu, across every host page. */
@@ -119,12 +138,18 @@ export async function selectTriageSendRecipientV1(
     host: Pick<PluginUiHostApi, 'executeAction' | 'selectActionInput'> & Partial<Pick<PluginUiHostApi, 'readSession'>>,
     eligibility: TriageEntrySessionStartChoiceInputV1,
     options?: PluginCancellationOptions,
-): Promise<SelectActionInputResult | null> {
+): Promise<TriageSendRecipientV1> {
     const candidates = await readTriageRecentSessionsV1(host, true, { ...options, eligibility, allPages: true });
-    if (candidates.status !== 'ready' || options?.signal?.aborted) return null;
+    if (options?.signal?.aborted) return { kind: 'cancelled' };
+    if (candidates.status !== 'ready') {
+        const failure = candidates.status === 'unavailable' ? candidates.failure : undefined;
+        return { kind: 'unavailable', reason: 'sessionCandidatesUnavailable', ...(failure === undefined ? {} : { failure }) };
+    }
+    const sessionCandidates = candidates.items.flatMap(row => row.serverId === undefined ? []
+        : [{ serverId: row.serverId, sessionId: row.id }]);
+    if (sessionCandidates.length === 0) return { kind: 'unavailable', reason: 'sessionCandidatesEmpty' };
     return await host.selectActionInput({
         hostAction: { action: 'session.transcript.get', projection: 'sessionAddress' },
-        sessionCandidates: candidates.items.flatMap(row => row.serverId === undefined ? []
-            : [{ serverId: row.serverId, sessionId: row.id }]),
+        sessionCandidates,
     }, options);
 }

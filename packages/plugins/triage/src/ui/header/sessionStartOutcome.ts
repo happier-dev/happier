@@ -336,6 +336,12 @@ export function describeTriageEntrySessionPhaseV1(
             'plugins.triage.surface.session.promptUnavailable',
             'Happier could not read this action\u2019s prompt, so nothing was started. Try again in a moment.',
           );
+        case 'sessionCandidatesUnavailable':
+          return notice('warning', 'plugins.triage.surface.session.sessionCandidatesUnavailable',
+            'Could not read Sessions for this action.');
+        case 'sessionCandidatesEmpty':
+          return notice('warning', 'plugins.triage.surface.session.sessionCandidatesEmpty',
+            'No eligible Sessions are available for this action.');
         case 'dispatch':
           return notice(
             'danger',
