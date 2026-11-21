@@ -37,7 +37,7 @@ import { createManagedMachineInstallationRespond } from './managedMachineInstall
 import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
-import { createPersonalHomeCreateAction } from '@/components/personalHome/bootstrap/personalHomeCreateAction';
+import { createPersonalHomeCreateAction, type PersonalHomeSshDraftSecrets } from '@/components/personalHome/bootstrap/personalHomeCreateAction';
 
 /** Mounted presentation and lifecycle custody, never Action operands or results. */
 export type UiHomePairingDelivery = Pick<Parameters<typeof startPairingForHome>[0],
@@ -46,9 +46,9 @@ export type UiHomePairingDelivery = Pick<Parameters<typeof startPairingForHome>[
 }>;
 
 export function createMachineConnectionActionDeps(options: Readonly<{ runner?: SystemTaskRunner; account?: LazyActionAccountContext;
-    homePairingDelivery?: UiHomePairingDelivery }> = {}): Pick<ActionExecutorDeps, 'homeConnect' | 'homeReconnect' | 'personalHomeCreate' | 'localDaemonServiceAction' | 'machineAddCommand' | 'machinePairingCreate' | 'machineTerminalAction' | 'machineAddSshTaskAction' | 'machineAddLocalStart' | 'machineAddLocalCancel' | 'machinePageAction' | 'machineManagedInstallationRespond'> {
+    homePairingDelivery?: UiHomePairingDelivery; personalHomeSshDraftSecrets?: PersonalHomeSshDraftSecrets }> = {}): Pick<ActionExecutorDeps, 'homeConnect' | 'homeReconnect' | 'personalHomeCreate' | 'localDaemonServiceAction' | 'machineAddCommand' | 'machinePairingCreate' | 'machineTerminalAction' | 'machineAddSshTaskAction' | 'machineAddLocalStart' | 'machineAddLocalCancel' | 'machinePageAction' | 'machineManagedInstallationRespond'> {
     return {
-        ...(options.account ? { personalHomeCreate: createPersonalHomeCreateAction(options.account, options.runner) } : {}),
+        ...(options.account ? { personalHomeCreate: createPersonalHomeCreateAction(options.account, options.runner, options.personalHomeSshDraftSecrets) } : {}),
         machinePageAction: async ({ actionId, input, context }) => {
             const serverId = input.serverId ?? context.serverId ?? getActiveServerId();
             if (actionId === MACHINE_RUN_MARKERS_LIST_ACTION_ID) {

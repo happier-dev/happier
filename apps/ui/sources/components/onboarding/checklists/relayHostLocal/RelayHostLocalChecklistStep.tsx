@@ -10,7 +10,7 @@ import { t } from '@/text';
 /** Local Home creation uses the complete Personal Home lifecycle, including identity and signup closure. */
 export function RelayHostLocalChecklistStep(props: Readonly<{
     testID?: string;
-    onStart?: () => void;
+    onStart?: (() => void | Promise<void>) | null;
     onWizardPrimaryChange?: (state: Readonly<{
         label: string;
         disabled: boolean;
@@ -18,7 +18,7 @@ export function RelayHostLocalChecklistStep(props: Readonly<{
     }> | null) => void;
 }>) {
     const bootstrap = useRequestPersonalHomeBootstrap();
-    const request = props.onStart ?? bootstrap;
+    const request = props.onStart === undefined ? bootstrap : props.onStart;
     const onWizardPrimaryChange = props.onWizardPrimaryChange;
     const label = t('setupOnboarding.setupNewRelayAction');
     React.useLayoutEffect(() => {
@@ -30,7 +30,7 @@ export function RelayHostLocalChecklistStep(props: Readonly<{
         <View testID={props.testID}>
             <OrganizationPolicyFieldNotice field="personalHome" />
             {!onWizardPrimaryChange ? (
-                <RoundButton title={label} disabled={!request} onPress={request ? () => request() : undefined} />
+                <RoundButton title={label} disabled={!request} action={request ? async () => request() : undefined} />
             ) : null}
         </View>
     );

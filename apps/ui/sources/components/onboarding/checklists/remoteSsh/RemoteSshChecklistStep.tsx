@@ -8,6 +8,9 @@ import { Modal } from '@/modal';
 import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import type { SshCredentialsDraft } from '@/components/ssh/SshCredentialsFields';
 import { useRemoteSshBootstrapTask, type RemoteSshBootstrapFormState } from '@/components/systemTasks/remoteSshBootstrap/useRemoteSshBootstrapTask';
+import type { input as SchemaInput } from 'zod';
+import type { PersonalHomeCreateInputSchema } from '@happier-dev/protocol/actions/specs/machineConnection';
+import type { PersonalHomeSshDraftSecrets } from '@/components/personalHome/bootstrap/personalHomeCreateAction';
 import type { SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
 import type { SystemTaskRunState, SystemTaskRunner } from '@/components/systemTasks/types';
 import type { PlanChecklistItem } from '@/components/systemTasks/planChecklist';
@@ -48,6 +51,8 @@ import { RemoteSshChecklistExecutionPhase } from './RemoteSshChecklistExecutionP
 import { RemoteSshChecklistCompletePhase } from './RemoteSshChecklistCompletePhase';
 import { resolveRemoteSshBootstrapFormState, buildRemoteSshBootstrapFormStateFromSshConfig } from './resolveRemoteSshBootstrapFormState';
 import { persistRemoteHostAfterRemoteSshCompletion } from './persistRemoteHostAfterRemoteSshCompletion';
+
+type PersonalHomeSshInput = Extract<SchemaInput<typeof PersonalHomeCreateInputSchema>, { method: 'ssh' }>;
 
 const SAVED_REMOTE_HOST_NEW_ID = '__new__';
 const EMPTY_REMOTE_HOSTS: readonly RemoteHost[] = [];
@@ -152,6 +157,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
     publicRelayUrl?: string;
     initialDraft?: Partial<SshCredentialsDraft>;
     initialInstallRelayRuntime?: boolean;
+    startPersonalHome?: (input: PersonalHomeSshInput, secrets: PersonalHomeSshDraftSecrets) => Promise<string>;
     runner?: SystemTaskRunner;
     onWizardPrimaryChange?: (state: Readonly<{ label: string; disabled: boolean; onPress: (() => void) | (() => Promise<void>) }> | null) => void;
     onWizardBackChange?: (state: Readonly<{ hidden?: boolean; label?: React.ReactNode; onPress?: () => void }> | null) => void;
@@ -309,6 +315,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
 
     const {
         activeTaskSnapshot,
+        adoptTask,
         answerPasswordPrompt,
         cancel,
         completedMachineId,
@@ -384,15 +391,40 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         installRelayRuntime: selectedIds.includes('install_relay_runtime'),
     }), []);
 
+    const { startPersonalHome } = props;
+    const startAdmittedPersonalHome = React.useCallback(async () => {
+        if (!startPersonalHome) throw new Error('action_account_scope_changed');
+        let input: PersonalHomeSshInput;
+        if (usingSavedHost) {
+            const revision = runContextRef.current?.expectedRevision;
+            if (typeof revision !== 'number') throw new Error('remote_host_catalog_unavailable');
+            input = { method: 'ssh', savedHostId: selectedSavedHost.id, expectedHostRevision: revision };
+        } else {
+            const username = draft.username.trim();
+            const port = parseSshPortNumber(draft.port.trim());
+            const identityFilePath = draft.identityFilePath.trim();
+            input = {
+                method: 'ssh', host: draft.host.trim(), authMode: draft.authMode,
+                ...(username ? { username } : {}), ...(port !== null ? { port } : {}),
+                ...(identityFilePath ? { identityFilePath } : {}),
+            };
+        }
+        return startPersonalHome(input, { password: draft.password, privateKey: privateKeyMaterialDraft });
+    }, [draft, privateKeyMaterialDraft, selectedSavedHost, startPersonalHome, usingSavedHost]);
+
     const runExecutionPlan = React.useCallback(async (
         plan: RemoteSshChecklistExecutionPlan,
         _publishSnapshot: (snapshot: SystemTaskRunState | null) => void,
     ) => {
+        if (startPersonalHome) {
+            adoptTask(await startAdmittedPersonalHome());
+            return;
+        }
         await runWithRemoteSshFormStateForExecution(plan.installRelayRuntime, async (formState, startSpec) => {
             completionRelayAccessTargetRef.current = buildRelayAccessTargetFromResolvedFormState({ ...formState, addressOnly: true });
             await start(formState, startSpec);
         });
-    }, [runWithRemoteSshFormStateForExecution, start]);
+    }, [adoptTask, runWithRemoteSshFormStateForExecution, start, startAdmittedPersonalHome, startPersonalHome]);
 
     const mapExecutionSnapshotToRowState = React.useCallback((
         snapshot: SystemTaskRunState | null,
@@ -559,7 +591,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
                     await answerPasswordPrompt(formState);
                     return;
                 }
-                await continueAfterPrompt(formState, startSpec);
+                await continueAfterPrompt(formState, startPersonalHome ? startAdmittedPersonalHome : startSpec);
             });
         } catch (error) {
             setStartErrorMessage(error instanceof Error ? error.message : t('setupOnboarding.remoteSshChecklist.continueFailed'));
@@ -570,6 +602,8 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         installRelayRuntimeSelected,
         prompt,
         runWithRemoteSshFormStateForExecution,
+        startAdmittedPersonalHome,
+        startPersonalHome,
     ]);
 
     const handleCopyDiagnostics = React.useCallback(async (itemId: string): Promise<boolean> => {

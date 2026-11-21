@@ -17,7 +17,11 @@ import { withRemoteHostSshConfig } from '@/sync/ops/remoteHosts/remoteHostOperat
 import { requestMountedPersonalHomeBootstrap } from './personalHomeBootstrapRequest';
 
 /** Delivers an approved request to the setup owners on the answering desktop. */
-export function createPersonalHomeCreateAction(account: LazyActionAccountContext, runnerOverride?: SystemTaskRunner): NonNullable<ActionExecutorDeps['personalHomeCreate']> {
+/** Transient credentials for the mounted SSH checklist, carried outside the Action input. */
+export type PersonalHomeSshDraftSecrets = Readonly<{ password: string; privateKey: string }>;
+
+export function createPersonalHomeCreateAction(account: LazyActionAccountContext, runnerOverride?: SystemTaskRunner,
+    sshDraftSecrets?: PersonalHomeSshDraftSecrets): NonNullable<ActionExecutorDeps['personalHomeCreate']> {
     return async (input, context) => {
         const fail = (errorCode: string) => ({ ok: false as const, errorCode, error: errorCode });
         const lifetime = captureActiveServerAccountScopeLifetime();
@@ -42,18 +46,22 @@ export function createPersonalHomeCreateAction(account: LazyActionAccountContext
             startSpec: async spec => (await startAdmittedRemoteHostSystemTask({ runner, assertCurrent: assertTargetCurrent, assertAccountCurrent: assertCurrent,
                 signal: context.signal, accountScope: lifetime.scope }, spec)).taskId,
         }, form);
+        const mountedChecklist = sshDraftSecrets !== undefined && context.surface === 'ui' && context.authority === 'present_user';
+        const secrets = mountedChecklist ? sshDraftSecrets : undefined;
         const taskId = 'savedHostId' in input
             ? await withRemoteHostSshConfig(account, { hostId: input.savedHostId, expectedRevision: input.expectedHostRevision },
                 ({ config, assertCurrent: assertHostCurrent }) => start(buildRemoteSshBootstrapFormStateFromSshConfig({
-                    config: config.value, draft: createDefaultSshCredentialsDraft(), installRelayRuntime: true,
+                    config: config.value, draft: { ...createDefaultSshCredentialsDraft(), password: secrets?.password ?? '' }, installRelayRuntime: true,
                 }), assertHostCurrent), context.signal)
             : await start(await resolveRemoteSshBootstrapFormState({
                 draft: { ...createDefaultSshCredentialsDraft(input.authMode), host: input.host, username: input.username ?? '',
-                    port: input.port?.toString() ?? '', identityFilePath: input.identityFilePath ?? '' },
-                usingSavedHost: false, selectedSavedHost: null, privateKeyMaterialDraft: '', saveSecretMaterial: false,
+                    port: input.port?.toString() ?? '', identityFilePath: input.identityFilePath ?? '', password: secrets?.password ?? '' },
+                usingSavedHost: false, selectedSavedHost: null, privateKeyMaterialDraft: secrets?.privateKey ?? '', saveSecretMaterial: false,
                 installRelayRuntime: true, remoteHostsSecretMaterialEnabled: false,
             }));
-        runner.registerPromptContinuation?.(taskId, createSshSystemTaskPromptContinuation(runner, taskId, lifetime.isCurrent));
+        if (!mountedChecklist) {
+            runner.registerPromptContinuation?.(taskId, createSshSystemTaskPromptContinuation(runner, taskId, lifetime.isCurrent));
+        }
         const settled = await settleClientSystemTaskAction(runner, { status: 'task_started', taskId }, context, assertCurrent);
         if (settled.status === 'unavailable') return fail(settled.reason);
         if (settled.status !== 'completed') return settled;

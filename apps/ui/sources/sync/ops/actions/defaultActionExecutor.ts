@@ -849,6 +849,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   npmRegistryProfileDelivery?: import('./npmRegistryProfileActionDeps').UiNpmRegistryProfileDelivery;
   /** Mounted QR lifecycle remains private while issuance uses ordinary Action admission. */
   homePairingDelivery?: import('./machineConnectionActionDeps').UiHomePairingDelivery;
+  personalHomeSshDraftSecrets?: import('@/components/personalHome/bootstrap/personalHomeCreateAction').PersonalHomeSshDraftSecrets;
   /** Original mounted Account administration intent retained by the incumbent approval waiter. */
   pluginAccountAdministrationIsCurrent?: () => boolean;
   /** Trusted raw projection already owned by the mounted administration surface. */
@@ -3741,7 +3742,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       return result;
     },
     ...createMachineConnectionActionDeps({ ...(accountContext ? { account: accountContext } : {}), runner: opts?.homeRuntimeRunner,
-      homePairingDelivery: opts?.homePairingDelivery }),
+      homePairingDelivery: opts?.homePairingDelivery, personalHomeSshDraftSecrets: opts?.personalHomeSshDraftSecrets }),
     serversList: async ({ limit }) => await listServersForVoiceTool({ limit }),
     readAccountAcpCatalog,
     updateAccountAcpCatalogSettings: async (input) => {

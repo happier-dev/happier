@@ -266,6 +266,7 @@ export function useRemoteSshBootstrapTask(options: Readonly<{
     return {
         activeTaskId,
         activeTaskSnapshot,
+        adoptTask: setActiveTaskId,
         cancel,
         declinePrompt,
         completedMachineId,

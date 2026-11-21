@@ -1,6 +1,9 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { PERSONAL_HOME_CREATE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
+import { PersonalHomeCreateOutputSchema } from '@happier-dev/protocol/actions/specs/machineConnection';
+import { useLocalRuntimeActionExecution } from '@/components/approvals/useLocalRuntimeActionExecution';
 
 import { OrganizationPolicyFieldNotice } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import { useRequestPersonalHomeBootstrap } from '@/components/personalHome/bootstrap/personalHomeBootstrapRequest';
@@ -21,7 +24,7 @@ type Where = 'thisComputer' | 'ssh';
 type PrimaryAction = Readonly<{
     label: string;
     disabled: boolean;
-    onPress: (() => void) | (() => Promise<void>);
+    onPress: () => void | Promise<void>;
 }>;
 
 /**
@@ -35,7 +38,25 @@ export function ServerHomePane(props: Readonly<{
 }>) {
     // Admission owns whether this computer can host one. When it can't, setup over SSH is the only
     // path left, so the choice between two places goes away rather than leading to a dead button.
-    const canCreateHere = useRequestPersonalHomeBootstrap() != null;
+    const bootstrap = useRequestPersonalHomeBootstrap();
+    const canCreateHere = bootstrap != null;
+    const { executeValue, ready, requiresAction, runSignedOutDraft } = useLocalRuntimeActionExecution();
+    const startLocal = React.useCallback(async () => {
+        if (!requiresAction && bootstrap) {
+            await runSignedOutDraft(async () => bootstrap());
+            return;
+        }
+        await executeValue(PERSONAL_HOME_CREATE_ACTION_ID_V1, { method: 'this_computer' }, { confirmed: true });
+    }, [bootstrap, executeValue, requiresAction, runSignedOutDraft]);
+    const startSsh = React.useCallback<NonNullable<React.ComponentProps<typeof RemoteSshChecklistStep>['startPersonalHome']>>(async (
+        input, personalHomeSshDraftSecrets,
+    ) => {
+        const outcome = PersonalHomeCreateOutputSchema.parse(await executeValue(PERSONAL_HOME_CREATE_ACTION_ID_V1, input, {
+            confirmed: true, executorOptions: { personalHomeSshDraftSecrets },
+        }));
+        if (outcome.status !== 'task_started') throw new Error('personal_home_setup_unavailable');
+        return outcome.taskId;
+    }, [executeValue]);
     const canCreateOverSsh = canSetUpPersonalHomeOverSsh();
     const [chosen, setWhere] = React.useState<Where>('thisComputer');
     const where: Where = canCreateHere && canCreateOverSsh ? chosen : canCreateHere ? 'thisComputer' : 'ssh';
@@ -67,6 +88,7 @@ export function ServerHomePane(props: Readonly<{
                 {where === 'thisComputer' ? (
                     <RelayHostLocalChecklistStep
                         testID={`${props.testID}.thisComputer`}
+                        onStart={ready ? startLocal : null}
                         onWizardPrimaryChange={setPrimary}
                     />
                 ) : canCreateOverSsh ? (
@@ -75,6 +97,7 @@ export function ServerHomePane(props: Readonly<{
                         mode="remoteRelayHost"
                         relayUrl={getActiveServerSnapshot().serverUrl ?? ''}
                         initialInstallRelayRuntime
+                        startPersonalHome={requiresAction ? startSsh : undefined}
                         onWizardPrimaryChange={setPrimary}
                         onCompleted={(payload) => {
                             if (payload.relayRuntimeUrl) onHomeReady(payload.relayRuntimeUrl);

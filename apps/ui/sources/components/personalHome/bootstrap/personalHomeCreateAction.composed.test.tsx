@@ -1,23 +1,21 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { PERSONAL_HOME_CREATE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
 import { REMOTE_HOST_ROWS_ROUTE_V1, RemoteHostCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/remoteHosts/remoteHostRecordV1';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { act, renderScreen } from '@/dev/testkit';
+import { ServerHomePane } from '@/components/homes/add/ServerHomePane';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveServerProfileScopeIdForIdentifier, setActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { storage } from '@/sync/domains/state/storageStore';
-import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { primeServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { createSystemTaskRunner } from '@/components/systemTasks/createSystemTaskRunner';
-import type { SystemTaskBridgeListenerSet } from '@/components/systemTasks/types';
 import type { SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
 import { PersonalHomeBootstrapAdmission } from './PersonalHomeBootstrapAdmission';
-import { createPersonalHomeCreateAction } from './personalHomeCreateAction';
 
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 const homes = createHomeGovernanceHarness();
@@ -45,21 +43,39 @@ describe('Personal Home creation on the answering desktop', () => {
         await homes.reset();
     });
 
+    it('routes the signed-in Add Home button through Action policy before opening local setup', async () => {
+        const actionId = PERSONAL_HOME_CREATE_ACTION_ID_V1;
+        await homes.setActionPolicy(serverId, actionId, 'ui', 'off');
+        const screen = await renderScreen(
+            <PersonalHomeBootstrapAdmission admission="offer" runtime={BootstrapView}>
+                <ServerHomePane testID="add-home" onHomeReady={() => {}} />
+            </PersonalHomeBootstrapAdmission>,
+        );
+        await screen.pressByTestIdAsync('add-home.primary');
+        expect(screen.findByTestId('local-setup')).toBeNull();
+
+        await homes.setActionPolicy(serverId, actionId, 'ui', 'allowed');
+        await screen.pressByTestIdAsync('add-home.primary');
+        expect(screen.findByTestId('local-setup')).not.toBeNull();
+    });
+
     it('enters the mounted bootstrap through its permitted local request', async () => {
         const screen = await renderScreen(<PersonalHomeBootstrapAdmission admission="off" runtime={BootstrapView}>{null}</PersonalHomeBootstrapAdmission>);
-        const account = await captureLazyActionAccountContext(serverId);
-        try {
-            const execute = createActionExecutor({ personalHomeCreate: createPersonalHomeCreateAction(account) });
-            const actionId = PERSONAL_HOME_CREATE_ACTION_ID_V1;
-            const context = { surface: 'agent', authority: 'account_automation', serverId, bypassApprovals: true } as const;
-            const input = { method: 'this_computer' };
-            await expect(execute.execute(actionId, input, context)).resolves.toMatchObject({ ok: false, errorCode: 'personal_home_setup_unavailable' });
-            await screen.update(<PersonalHomeBootstrapAdmission admission="offer" runtime={BootstrapView}>{null}</PersonalHomeBootstrapAdmission>);
-            await act(async () => {
-                await expect(execute.execute(actionId, input, context)).resolves.toEqual({ ok: true, result: { status: 'setup_started' } });
-            });
-            expect(screen.findByTestId('local-setup')).not.toBeNull();
-        } finally { account.dispose(); }
+        await homes.requireUiApproval(serverId, PERSONAL_HOME_CREATE_ACTION_ID_V1);
+        const confirm = vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true);
+        const executor = createDefaultActionExecutor({ presentUserActionConfirmation: confirm });
+        const actionId = PERSONAL_HOME_CREATE_ACTION_ID_V1;
+        const context = { surface: 'ui', authority: 'present_user', serverId } as const;
+        const input = { method: 'this_computer' };
+        await expect(executor.execute(actionId, input, context)).resolves.toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+        expect(screen.findByTestId('local-setup')).toBeNull();
+
+        await screen.update(<PersonalHomeBootstrapAdmission admission="offer" runtime={BootstrapView}>{null}</PersonalHomeBootstrapAdmission>);
+        await act(async () => {
+            await expect(executor.execute(actionId, input, context)).resolves.toMatchObject({ ok: true, result: { status: 'setup_started' } });
+        });
+        expect(confirm).toHaveBeenCalledTimes(2);
+        expect(screen.findByTestId('local-setup')).not.toBeNull();
     });
 
     it.each([
@@ -77,28 +93,25 @@ describe('Personal Home creation on the answering desktop', () => {
                 ssh: { target: 'owner@saved-box', port: 2223, authMode: 'agent' },
             }] } },
         }) });
+        await homes.requireUiApproval(serverId, PERSONAL_HOME_CREATE_ACTION_ID_V1);
         const starts: SystemTaskSpec[] = [];
-        let listener: SystemTaskBridgeListenerSet | undefined;
         const runner = createSystemTaskRunner({ mode: 'tauri', bridge: {
             start: async spec => { starts.push(spec); return 'personal-home'; },
-            subscribe: async (_taskId, receiver) => { listener = receiver; return () => { listener = undefined; }; },
+            subscribe: async () => () => {},
             cancel: async () => {}, respond: async () => {},
         } });
-        const account = await captureLazyActionAccountContext(serverId);
-        try {
-            const executor = createActionExecutor({ personalHomeCreate: createPersonalHomeCreateAction(account, runner) });
-            const result = executor.execute(PERSONAL_HOME_CREATE_ACTION_ID_V1, input,
-                { surface: 'agent', authority: 'account_automation', serverId, bypassApprovals: true });
-            await vi.waitFor(() => expect(listener).toBeDefined()).catch(async (error) => {
-                throw new Error('SSH installer did not subscribe', { cause: await Promise.race([result, Promise.resolve(error)]) });
-            });
-            expect(starts).toEqual([expect.objectContaining({ kind: 'remote.ssh.manageHost.v1', params: expect.objectContaining({
-                action: 'personalHome.create', ssh, pairDevice: true, enrollInvokingClient: true,
-            }) })]);
-            listener?.onResult({ protocolVersion: 1, taskId: 'personal-home', ok: true, data: {
-                relayRuntime: { relayUrl: 'https://box.example.test' }, privateTaskDetail: 'never returned',
-            } });
-            await expect(result).resolves.toEqual({ ok: true, result: { status: 'created', address: 'https://box.example.test' } });
-        } finally { account.dispose(); }
+        const confirm = vi.fn().mockImplementation(async () => {
+            expect(starts).toHaveLength(0);
+            return true;
+        });
+        const executor = createDefaultActionExecutor({ presentUserActionConfirmation: confirm, homeRuntimeRunner: runner });
+        const context = { surface: 'ui', authority: 'present_user', serverId } as const;
+        await expect(executor.execute(PERSONAL_HOME_CREATE_ACTION_ID_V1, input, context)).resolves.toMatchObject({
+            ok: true, result: { status: 'task_started', taskId: 'personal-home' },
+        });
+        expect(confirm).toHaveBeenCalledOnce();
+        expect(starts).toEqual([expect.objectContaining({ kind: 'remote.ssh.manageHost.v1', params: expect.objectContaining({
+            action: 'personalHome.create', ssh, pairDevice: true, enrollInvokingClient: true,
+        }) })]);
     });
 });
