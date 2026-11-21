@@ -20134,6 +20134,8 @@ settingsSession: {
         dashboardUnavailableTitle: "Дашборд, который вам недоступен",
         detach: "Отсоединить",
         checkoutsTitle: "Ваши checkout’ы",
+        setupSharedSourceTitle: "Откройте общий источник",
+        setupAddHomeToOpenLink: "Добавьте Дом, затем откройте ссылку снова.",
         checkoutWorktrees: ({ count }: { count: number }) => (count === 1 ? `1 worktree` : `worktree: ${count}`),
         open: "Открыть…",
         actions: "Действия с источником",

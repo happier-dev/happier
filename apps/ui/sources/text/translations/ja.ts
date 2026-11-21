@@ -20094,6 +20094,8 @@ settingsSession: {
         dashboardUnavailableTitle: "開けないダッシュボード",
         detach: "外す",
         checkoutsTitle: "自分のチェックアウト",
+        setupSharedSourceTitle: "共有ソースを開く",
+        setupAddHomeToOpenLink: "ホームを追加してから、リンクを開き直してください。",
         checkoutWorktrees: ({ count }: { count: number }) => (count === 1 ? `ワークツリー 1 個` : `ワークツリー ${count} 個`),
         open: "開く…",
         actions: "ソースの操作",

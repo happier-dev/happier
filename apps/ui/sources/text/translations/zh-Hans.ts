@@ -19800,6 +19800,8 @@ settingsSession: {
         dashboardUnavailableTitle: "你无法打开的仪表板",
         detach: "分离",
         checkoutsTitle: "你的检出",
+        setupSharedSourceTitle: "打开共享来源",
+        setupAddHomeToOpenLink: "添加主站，然后重新打开链接。",
         checkoutWorktrees: ({ count }: { count: number }) => (count === 1 ? `1 个工作树` : `${count} 个工作树`),
         open: "打开…",
         actions: "源操作",

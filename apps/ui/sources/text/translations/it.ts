@@ -20182,6 +20182,8 @@ settingsSession: {
         dashboardUnavailableTitle: "Una dashboard che non puoi aprire",
         detach: "Scollega",
         checkoutsTitle: "I tuoi checkout",
+        setupSharedSourceTitle: "Apri una sorgente condivisa",
+        setupAddHomeToOpenLink: "Aggiungi la Home, poi riapri il link.",
         checkoutWorktrees: ({ count }: { count: number }) => (count === 1 ? `1 worktree` : `${count} worktree`),
         open: "Apri…",
         actions: "Azioni della sorgente",

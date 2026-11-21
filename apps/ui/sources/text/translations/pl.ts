@@ -20005,6 +20005,8 @@ settingsSession: {
         dashboardUnavailableTitle: "Pulpit, którego nie możesz otworzyć",
         detach: "Odłącz",
         checkoutsTitle: "Twoje checkouty",
+        setupSharedSourceTitle: "Otwórz udostępnione źródło",
+        setupAddHomeToOpenLink: "Dodaj Home, a następnie otwórz link ponownie.",
         checkoutWorktrees: ({ count }: { count: number }) => (count === 1 ? `1 worktree` : `${count} worktree`),
         open: "Otwórz…",
         actions: "Działania źródła",

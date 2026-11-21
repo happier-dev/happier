@@ -20054,6 +20054,8 @@ settingsSession: {
         dashboardUnavailableTitle: "Un tableau de bord que tu ne peux pas ouvrir",
         detach: "Détacher",
         checkoutsTitle: "Tes checkouts",
+        setupSharedSourceTitle: "Ouvrir une source partagée",
+        setupAddHomeToOpenLink: "Ajoutez le Home, puis ouvrez de nouveau le lien.",
         checkoutWorktrees: ({ count }: { count: number }) => (count === 1 ? `1 worktree` : `${count} worktrees`),
         open: "Ouvrir…",
         actions: "Actions de la source",

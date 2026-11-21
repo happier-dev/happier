@@ -20293,6 +20293,8 @@ settingsSession: {
             dashboardUnavailableTitle: "Ein Dashboard, das du nicht öffnen kannst",
             detach: "Lösen",
             checkoutsTitle: "Deine Checkouts",
+            setupSharedSourceTitle: "Geteilte Quelle öffnen",
+            setupAddHomeToOpenLink: "Füge das Home hinzu und öffne den Link erneut.",
             checkoutWorktrees: ({ count }: { count: number }) => (count === 1 ? `1 Worktree` : `${count} Worktrees`),
             open: "Öffnen…",
             actions: "Quellenaktionen",

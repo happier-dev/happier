@@ -91,7 +91,7 @@ function ProjectSourceSetupEntry(props: Readonly<{
   const leave = () => router.replace('/');
   if (target.kind === 'unknown_home' || (target.kind === 'resolved' && resolution.kind === 'unknown_home')) {
     return <AuthRouteStepFrame testID="project-source-setup-unknown-home" status onBack={leave}
-      mark={<StepMark iconName="folder" />} title={t('teams.join.unknownHomeTitle')} subtitle={t('teams.join.unknownHomeBody')}
+      mark={<StepMark iconName="folder" />} title={t('teams.join.unknownHomeTitle')} subtitle={t('projects.sources.setupAddHomeToOpenLink')}
       primary={{ testID: 'project-source-setup-add-home', label: t('server.addServerTitle'), onPress: () => openAddHome(router) }}>{null}</AuthRouteStepFrame>;
   }
   if (target.kind === 'resolved' && resolution.kind === 'unavailable') {
@@ -103,13 +103,13 @@ function ProjectSourceSetupEntry(props: Readonly<{
   }
   if (target.kind === 'acquisition_failed') {
     return <AuthRouteStepFrame testID="project-source-setup-unreachable-home" status onBack={leave}
-      mark={<StepMark iconName="folder" />} title={t('teams.join.unknownHomeTitle')} subtitle={t('teams.join.unknownHomeBody')}
+      mark={<StepMark iconName="folder" />} title={t('welcome.serverUnavailableTitle')}
       primary={{ testID: 'project-source-setup-retry-home', label: t('common.retry'), onPress: target.retry, iconName: null }}
       secondary={{ testID: 'project-source-setup-add-home', label: t('server.addServerTitle'), onPress: () => openAddHome(router) }}>{null}</AuthRouteStepFrame>;
   }
   if (target.kind === 'acquiring' || (target.kind === 'resolved' && (resolution.kind === 'resolving' || recovery !== null))) {
     return <AuthRouteStepFrame testID="projects.sources.setup.target" onBack={leave} mark={<StepMark iconName="folder" />}
-      title={t('projects.sources.loading')}>
+      title={t('projects.sources.setupSharedSourceTitle')}>
       <SurfaceStateCard size="line" lineLayout="notice" kind="loading" title={t('projects.sources.loading')} />
     </AuthRouteStepFrame>;
   }

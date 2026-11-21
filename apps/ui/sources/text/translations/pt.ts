@@ -20286,6 +20286,8 @@ settingsSession: {
         dashboardUnavailableTitle: "Um painel que você não pode abrir",
         detach: "Desanexar",
         checkoutsTitle: "Seus checkouts",
+        setupSharedSourceTitle: "Abra uma fonte compartilhada",
+        setupAddHomeToOpenLink: "Adicione a Casa e abra o link novamente.",
         checkoutWorktrees: ({ count }: { count: number }) => (count === 1 ? `1 worktree` : `${count} worktrees`),
         open: "Abrir…",
         actions: "Ações da fonte",

@@ -14824,6 +14824,8 @@ settingsSession: {
             dashboardUnavailableTitle: "你無法開啟的儀表板",
             detach: "分離",
             checkoutsTitle: "你的簽出",
+            setupSharedSourceTitle: "開啟共享來源",
+            setupAddHomeToOpenLink: "新增主站，然後重新開啟連結。",
             checkoutWorktrees: ({ count }: { count: number }) => (count === 1 ? `1 個工作樹` : `${count} 個工作樹`),
             open: "開啟…",
             actions: "來源操作",

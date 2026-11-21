@@ -23589,6 +23589,8 @@ const enProjects = {
     dashboardUnavailableTitle: 'A dashboard you can’t open',
     detach: 'Detach',
     checkoutsTitle: 'Your checkouts',
+    setupSharedSourceTitle: "Open a shared source",
+    setupAddHomeToOpenLink: "Add the Home, then open the link again.",
     checkoutWorktrees: ({ count }: { count: number }) =>
       count === 1 ? '1 worktree' : `${count} worktrees`,
     open: 'Open…',
