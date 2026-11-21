@@ -269,7 +269,7 @@ import {
 } from '@/plugins/runtime/providerBindings/handoff';
 import { beginProviderBindingRuntimeDiagnosticRedaction } from '@/plugins/runtime/providerBindings/runtimeDiagnosticRedaction';
 import { logger } from '@/ui/logger';
-import { bindHostedSessionId, bindHostedSessionProjectFilesSource, bindHostedSessionWorkingDirectory, runInHostedSessionScope, sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { bindHostedSessionId, bindHostedSessionLiveWork, bindHostedSessionProjectFilesSource, bindHostedSessionWorkingDirectory, runInHostedSessionScope, sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { bindPlacedSessionWorkspaceSource } from '@/workspaces/source/placedSessionWorkspaceSource';
 import { bindHostedSessionStop } from '@/agent/runtime/lifecycle/runnerTerminationHandlers';
 import {
@@ -2689,6 +2689,8 @@ async function runHostedSessionRuntime(
     readSessionId: () => currentLifecycleSession.sessionId,
     onUnavailable: () => { logger.debug('[HOST RUNTIME] Session live work could not reach daemon'); },
   });
+  // A restarted daemon holds no earlier push; its host answers one read with the same facts.
+  bindHostedSessionLiveWork(() => inputConsumer.readLiveWork());
   let unsubscribeProviderInputReadiness: (() => void) | undefined;
   bindProviderInputReadiness = client => {
     unsubscribeProviderInputReadiness?.();

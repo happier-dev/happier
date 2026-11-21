@@ -13,6 +13,7 @@ import {
   handOverLocalSessionHost,
   holdLocalSessionHost,
   listLocalSessionHostPids,
+  readLocalSessionHostLiveWork,
   removeExitedSessionHostDescriptor,
   watchLocalSessionHostSession,
   type LocalSessionHostSession,
@@ -27,6 +28,8 @@ import { launchDetachedHappierProcess } from '../spawn/launchDetachedHappierProc
 import { buildChildExitBeforeWebhookFailure } from '../spawn/childStderrDiagnostic';
 import type { ChildExit } from '../sessions/onChildExited';
 import type { TrackedSession } from '../types';
+import { SessionInputLiveWorkSchema } from '@/agent/runtime/session/input/sessionProviderInputAdmissionRpc';
+import type { SessionInputLiveWork } from '@/agent/runtime/session/input/_types';
 
 const SESSION_HOST_COMMAND = 'session-host';
 
@@ -81,6 +84,8 @@ export type DaemonSessionHost = Readonly<{
       archivedAt: unknown;
     }>>;
     stopReattachedSession: (sessionId: string, tracked: TrackedSession) => Promise<void>;
+    /** The re-adopted Session's current live work, read once from its host (a restarted daemon holds no push). */
+    observeLiveWork?: (tracked: TrackedSession, liveWork: SessionInputLiveWork) => void;
     /**
      * Whether a live host runs the daemon's current runtime (by its process command). A host from
      * before a CLI update hands its Sessions over to a current host and exits (see the handover).
@@ -249,7 +254,7 @@ export function createDaemonSessionHost(params: Readonly<{
       const second = await addToHost(request);
       return second.status === 'closing' ? { status: 'failed' as const, result: second.result } : second;
     },
-    adoptReattachedSessions: ({ trackedSessions, observeExit, readPersistedLifecycle, stopReattachedSession, isCurrentRuntime }) => {
+    adoptReattachedSessions: ({ trackedSessions, observeExit, readPersistedLifecycle, stopReattachedSession, observeLiveWork, isCurrentRuntime }) => {
       type AdoptedHost = Readonly<{ host: RunningHost; markLost(): void; current: boolean; reconciled: Array<Promise<boolean>> }>;
       const adoptedHosts = new Map<number, AdoptedHost>();
       const adoptHost = (pid: number, processCommand: string): AdoptedHost => {
@@ -283,6 +288,11 @@ export function createDaemonSessionHost(params: Readonly<{
         const sessionId = tracked.happySessionId;
         reconciled.push(watched.admitted.then(async (admitted) => {
           if (!admitted || !sessionId) return admitted;
+          if (observeLiveWork) {
+            const liveWork = SessionInputLiveWorkSchema.safeParse(
+              await readLocalSessionHostLiveWork({ hostPid: host.pid, trackingKey: tracked.trackingKey }));
+            if (liveWork.success) observeLiveWork(tracked, liveWork.data);
+          }
           try {
             const state = await readPersistedLifecycle(sessionId, tracked);
             const admission = resolveSessionAutoResumeAdmissionV1({

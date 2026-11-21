@@ -5,6 +5,7 @@ import type { AgentRuntimeRunnerBootstrapV1 } from '@/agent/runtime/session/proc
 import { SessionRuntimeConfiguration } from '@/configuration/sessionRuntimeConfiguration';
 import type { TranscriptRecoveryCoordinator } from '@/api/session/recovery/TranscriptRecoveryCoordinator';
 import type { ScmCredentialFreeRepositorySelectorV1 } from '@happier-dev/protocol/scm/repositoryClone';
+import type { SessionInputLiveWork } from '@/agent/runtime/session/input/_types';
 
 /**
  * The Session a piece of runner work belongs to. One process can host several
@@ -45,6 +46,8 @@ export type HostedSessionScope = {
   readonly end?: (exitCode: number) => void;
   /** Work a planned host hand-over saves before it releases this Session's held Agents. */
   handoverSaves?: Set<() => Promise<void>>;
+  /** This Session's current live work: the same non-content facts its runner pushes to the daemon. */
+  readLiveWork?: () => Promise<SessionInputLiveWork>;
   /** The daemon-admitted runner bootstrap of the file this Session's environment names (session host). */
   readonly runnerBootstrap?: Readonly<{ path: string; bootstrap: AgentRuntimeRunnerBootstrapV1 }>;
 };
@@ -98,6 +101,12 @@ export function sessionProcessEnvironment(): NodeJS.ProcessEnv {
 export function bindHostedSessionId(sessionId: string): void {
   const scope = hostedSessionScope.getStore();
   if (scope) scope.sessionId = sessionId;
+}
+
+/** Let the session host answer its daemon's one live-work read for this Session (after a daemon restart). */
+export function bindHostedSessionLiveWork(read: () => Promise<SessionInputLiveWork>): void {
+  const scope = hostedSessionScope.getStore();
+  if (scope) scope.readLiveWork = read;
 }
 
 /** Bind the Session's working directory once the runtime has resolved it. */

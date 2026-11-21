@@ -12637,6 +12637,10 @@ export async function startDaemonSessionControlRuntime(
         logger.warn('[DAEMON RUN] Recorded Session Stop or Archive could not be applied', { sessionId, reason: result.reason });
       }
     }, tracked.requesterWorkAttributionV1, shutdownCancellationDomains.daemonWorkSignal),
+    // Revision 0: the runner's own next push (revision 1+) always supersedes this read.
+    observeLiveWork: (tracked, activity) => {
+      if (tracked.happySessionId) sessionLiveWorkProducer.notifySessionChanged(tracked.happySessionId, { runnerPid: tracked.pid, revision: 0, activity });
+    },
     isCurrentRuntime: processCommand =>
       resolveProcessCommandVersionState(processCommand, resolveCurrentSessionRunnerLaunchIdentity()) !== 'stale',
   });

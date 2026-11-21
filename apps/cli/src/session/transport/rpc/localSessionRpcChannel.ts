@@ -254,7 +254,7 @@ function admitLocalPacket(current: Ingress, body: unknown): Readonly<{ registere
 
 async function handleIngressRequest(current: Ingress, request: IncomingMessage, response: ServerResponse): Promise<void> {
   if (request.method === 'POST' && (request.url === HOST_ADD_PATH || request.url === HOST_END_PATH || request.url === HOST_WATCH_PATH
-    || request.url === HOST_HANDOVER_PATH || request.url === HOST_HOLD_PATH)) {
+    || request.url === HOST_HANDOVER_PATH || request.url === HOST_HOLD_PATH || request.url === HOST_LIVE_WORK_PATH)) {
     await handleSessionHostRequest(current, request, response);
     return;
   }
@@ -594,6 +594,8 @@ const HOST_WATCH_PATH = '/v1/session-host/watch';
 const HOST_HANDOVER_PATH = '/v1/session-host/handover';
 /** A Session is about to be created: the host stays (and loads the runner code) while this connection is open. */
 const HOST_HOLD_PATH = '/v1/session-host/hold';
+/** A re-attached daemon reads a running Session's current live work once (it holds no earlier report). */
+const HOST_LIVE_WORK_PATH = '/v1/session-host/live-work';
 const SESSION_HOST_CLOSING = 'session_host_closing';
 const SESSION_NOT_HOSTED = 'session_not_hosted';
 /**
@@ -679,6 +681,8 @@ export type LocalSessionHostAdmission = Readonly<{
   endSession(trackingKey: string, lifecycleStateReason?: SessionLifecycleStateReason): LocalSessionHostEndResult;
   /** This running Session's end (same result as its add), or null when this host does not run it. */
   watchSession(trackingKey: string): Promise<SessionHostCommandEnd> | null;
+  /** This running Session's current live work (unparsed), or null when it has none to report. */
+  readSessionLiveWork?(trackingKey: string): Promise<unknown> | null;
   /**
    * Stop admitting, leave every Session's Agent in its holder and exit with
    * `SESSION_HOST_HANDOVER_EXIT_CODE`; false when the host is already ending.
@@ -755,6 +759,12 @@ async function handleSessionHostRequest(current: Ingress, request: IncomingMessa
   }
   if (request.url === HOST_HANDOVER_PATH) {
     reply(response, 200, { handingOver: host.handOver() });
+    return;
+  }
+  if (request.url === HOST_LIVE_WORK_PATH) {
+    const liveWork = typeof trackingKey === 'string'
+      ? await (host.readSessionLiveWork?.(trackingKey) ?? Promise.resolve(null)).catch(() => null) : null;
+    reply(response, 200, { liveWork });
     return;
   }
   if (request.url === HOST_HOLD_PATH) {
@@ -977,6 +987,11 @@ export async function endLocalSessionHostSession(input: Readonly<{ hostPid: numb
   const status = result?.status;
   if (status === 'termination_requested' || status === 'not_hosted' || status === 'termination_unavailable') return { status };
   return { status: 'host_unavailable' };
+}
+
+/** One read of a hosted Session's current live work (unparsed); null when the host has none or is unreachable. */
+export async function readLocalSessionHostLiveWork(input: Readonly<{ hostPid: number; trackingKey: string }>): Promise<unknown> {
+  return (await callLocalSessionHost(input.hostPid, HOST_LIVE_WORK_PATH, { trackingKey: input.trackingKey }))?.liveWork ?? null;
 }
 
 /**

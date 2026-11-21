@@ -103,7 +103,7 @@ import { spawnRegularProcessAndWaitForWebhook } from '../spawn/spawnRegularProce
 import type { TrackedSession } from '../types';
 import type { ChildExit } from '../sessions/onChildExited';
 
-import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { bindHostedSessionLiveWork, sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { SessionHost } from '@/agent/runtime/lifecycle/sessionHost';
 import { SESSION_HOLDER_ADOPT_ENV_KEY } from '@/subprocess/supervision/sessionHolder';
 import { SESSION_HOST_HANDOVER_EXIT_CODE, type SessionHostLaunchRecordV1 } from '@/session/transport/rpc/localSessionRpcChannel';
@@ -186,6 +186,8 @@ async function createHarness(startupFailure?: Error,
           return;
         }
         const termination = registerRunnerTerminationHandlers({ process: hostProcess, exit: hostExit, onTerminate: () => undefined });
+        // The runner's input consumer answers its own live work; this runner is idle.
+        bindHostedSessionLiveWork(async () => ({ session: 'settled', input: 'settled', agents: 'settled', attention: 'settled', settledAt: 1 }));
         await Promise.race([new Promise<void>((resolve) => { releaseSessions.push(resolve); }), termination.whenTerminated]);
         termination.dispose();
       },
@@ -665,6 +667,29 @@ describe.skipIf(process.platform === 'win32')('daemon session host placement', (
     expect(census.hostLaunches - launchesBeforeUpdate).toBe(1);
     first.releaseAll();
     updated.releaseAll();
+  });
+
+  it('gives a restarted daemon each re-adopted Session\'s current live work once, without a runner push', { timeout: 120_000 }, async () => {
+    const first = await createHarness();
+    const a = await first.spawnSession('session-a');
+    for (const socket of hostSockets) socket.destroy();
+    const restarted = await createHarness();
+    const reattached = { trackingKey: a.record.trackingKey, pid: a.record.pid, happySessionId: a.record.happySessionId,
+      startedBy: 'daemon' as const, processStartTimeMs: 1_000, processCommand: HOST_COMMAND,
+      reattachedFromDiskMarker: true, spawnOptions: { directory: testHome } } as TrackedSession;
+    restarted.tracked.set(reattached.trackingKey, reattached);
+    const observed: Array<[string, unknown]> = [];
+    expect(restarted.sessionHost.adoptReattachedSessions({
+      trackedSessions: [reattached], observeExit: restarted.onChildExited,
+      readPersistedLifecycle: async () => ({ metadata: {}, archivedAt: null }),
+      stopReattachedSession: async () => { throw new Error('Nothing recorded offline'); },
+      observeLiveWork: (tracked, liveWork) => { observed.push([tracked.trackingKey, liveWork]); },
+    })).toBe(1);
+    await vi.waitFor(() => expect(observed).toEqual([[reattached.trackingKey,
+      { session: 'settled', input: 'settled', agents: 'settled', attention: 'settled', settledAt: 1 }]]));
+    first.releaseAll();
+    restarted.releaseAll();
+    await reattached.hostedSession!.observed;
   });
 
   it('applies offline Archive and Stop on re-adoption while reusing the host for other Sessions', { timeout: 120_000 }, async () => {

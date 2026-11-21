@@ -120,6 +120,7 @@ export async function startSessionHost(params: Readonly<{
       ? 'termination_requested' : 'termination_unavailable' };
   };
   const watchSession = (trackingKey: string) => sessions.get(trackingKey)?.ended ?? null;
+  const readSessionLiveWork = (trackingKey: string) => sessions.get(trackingKey)?.scope?.readLiveWork?.() ?? null;
   const hold = (preloadRunner = true): (() => void) => {
     if (closing) throw new SessionHostClosingError('The session host is ending');
     holds += 1;
@@ -159,7 +160,8 @@ export async function startSessionHost(params: Readonly<{
   };
 
   try {
-    retireEndpoint = await serveLocalSessionHost({ addSession, endSession, watchSession, handOver, hold, readTrustedCaller: params.readTrustedCaller });
+    retireEndpoint = await serveLocalSessionHost({ addSession, endSession, watchSession, readSessionLiveWork, handOver, hold,
+      readTrustedCaller: params.readTrustedCaller });
   } catch (error) {
     closing = true;
     termination.dispose();

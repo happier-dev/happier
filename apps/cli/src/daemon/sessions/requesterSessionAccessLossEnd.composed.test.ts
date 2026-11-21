@@ -183,6 +183,9 @@ function fixture() {
     finishTurn,
     startTurn,
     pushLiveWork,
+    /** A restarted daemon's one read of a re-adopted Session's live work from its host (as the runtime applies it). */
+    adoptionReport: (session: TrackedSession, work: SessionInputLiveWork) =>
+      producer.notifySessionChanged(session.happySessionId!, { runnerPid: session.pid, revision: 0, activity: work }),
     /** An ordinary Stop of that exact runner (no reason). */
     stop: (session: TrackedSession) => stopSession(session.happySessionId!, { expectedTrackedRunner: { tracked: session } }),
     /** An explicit confirmation (the owner's activity view or a natural-boundary read). */
@@ -303,6 +306,19 @@ describe('withdrawn guest Sessions end at their natural boundary', () => {
     for (let i = 0; i < 5; i += 1) await f.flush();
     expect(f.running()).toEqual(['guest-session']);
     f.pushLiveWork(guest, idle);
+    expect(await outcome).toEqual({ kind: 'settled' });
+    expect(f.events).toEqual(['end:guest-session']);
+  });
+
+  it('ends an idle Session withdrawn while the daemon was offline once its host reports the live work on re-adoption', async () => {
+    const f = (current = fixture());
+    // A restarted daemon: no report retained, and the guest's authority is already gone.
+    const guest = f.host('guest-session', 'guest');
+    f.authorityWithdrawn.add('guest');
+    const outcome = f.withdraw('guest');
+    for (let i = 0; i < 5; i += 1) await f.flush();
+    expect(f.running()).toEqual(['guest-session']);
+    f.adoptionReport(guest, idle);
     expect(await outcome).toEqual({ kind: 'settled' });
     expect(f.events).toEqual(['end:guest-session']);
   });
