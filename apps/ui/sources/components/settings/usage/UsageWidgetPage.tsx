@@ -581,7 +581,8 @@ function resolveUsagePageNotice(
   startSession: () => void,
 ): UsagePageNotice | null {
   const { pending, failure, newerServer, partial } = facts;
-  if (failure) {
+  // The page Retry also recovers Views. A refusal without a Retry yields to the Views recovery.
+  if (failure && (!layouts || (failure.retryable && retry))) {
     return { testID: 'usage-page.header.failed', reason: failure.reason, tone: failure.quiet ? 'neutral' : 'warning',
       // The page still shows what arrived: on a phone the line says "Partial" with Details beside its Retry (#9).
       short: t('usage.board.charts.coveragePartialShort'),

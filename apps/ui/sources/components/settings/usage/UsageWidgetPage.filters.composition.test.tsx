@@ -907,10 +907,13 @@ describe('mounted Usage page scope commands', () => {
         expect(reader!.readCurrentUiContext()!.commands.find(row => row.id === command!.id)).toBeUndefined();
     });
 
-    it.each(['quota', 'quota and accounting', 'ownership refusal'] as const)('owns the Plans read notice for %s', async (cause) => {
+    it.each(['quota', 'quota and accounting', 'ownership refusal', 'ownership refusal and saved Views failure'] as const)('owns the Plans read notice for %s', async (cause) => {
         let failed = true;
         const accountingFails = cause === 'quota and accounting';
-        const ownershipRefused = cause === 'ownership refusal';
+        const viewsFail = cause === 'ownership refusal and saved Views failure';
+        const ownershipRefused = cause === 'ownership refusal' || viewsFail;
+        let savedViewsFailed = viewsFail;
+        let savedViewsReads = 0;
         const nowMs = Date.now();
         const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'work' };
         const source = { bindingKind: 'account' as const, ref };
@@ -949,6 +952,10 @@ describe('mounted Usage page scope commands', () => {
                 if (request.path === '/v4/connect/qualified/provider-account-usage/day-summaries') return Response.json({ summaries: [], missingDays: [] });
                 if (request.path === '/v1/account/encryption/currentness') return Response.json({ mode: 'plain', version: 1,
                     signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
+                if (request.path === '/v1/artifacts' && request.method === 'GET' && request.url.searchParams.get('kind') === 'widget_area_layout') {
+                    savedViewsReads += 1;
+                    if (savedViewsFailed) return Response.json({ error: 'database_transaction_timeout' }, { status: 503 });
+                }
                 return artifacts.handle(request.url.toString(), { method: request.method })
                     ?? createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
             } });
@@ -964,6 +971,21 @@ describe('mounted Usage page scope commands', () => {
         </InjectedAuthProvider>);
         const retryControls = () => screen.findAll(node => typeof node.type === 'string' && node.props.accessibilityLabel === t('common.retry'));
         const noticeId = 'usage-page.header.failed';
+        if (viewsFail) {
+            await waitForHomeGovernance(() => {
+                expect(reader!.readCurrentUiContext()!.commands.map(command => command.title))
+                    .toContain(`${t('usage.board.page.viewsLabel')}: ${t('common.retry')}`);
+            });
+            expect(screen.findHostByTestId('usage-page.header.viewsFailed')).not.toBeNull();
+            expect(retryControls().map(node => node.props.testID)).toEqual(['usage-page.header.viewsRetry']);
+            const readsBeforeRetry = savedViewsReads;
+            savedViewsFailed = false;
+            await screen.pressByTestIdAsync('usage-page.header.viewsRetry');
+            await waitForHomeGovernance(() => {
+                expect(savedViewsReads).toBeGreaterThan(readsBeforeRetry);
+                expect(screen.findHostByTestId('usage-page.header.viewsFailed')).toBeNull();
+            });
+        }
         await waitForHomeGovernance(() => {
             const notice = screen.findHostByTestId(noticeId);
             expect(notice).not.toBeNull();
