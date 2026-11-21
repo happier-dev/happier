@@ -32,6 +32,7 @@ import { validateWorkflowDefinition, matchesWorkflowAcceptedDefinitionV1 } from 
 import { parseWorkflowDocumentJsonIngressV1 } from '../../workflows/workflowDocumentV1.js';
 import { ActionIdSchema, type ActionId, type WorkflowActionIdV1 } from '../actionIds.js';
 import { getActionSpec } from '../actionSpecs.js';
+import { isPresentUserHostInvocation } from '../invocationAuthority.js';
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
 import { isHostAdmittedReviewedChildPolicyV1, readHostAdmittedReviewedChildHttpProofV1, readHostReviewedChildOperationV1, readHostReviewedChildRootV1 } from './deploymentRoleChild.js';
 import { projectTargetActionApprovalInput } from '../actionApprovalPresentation.js';
@@ -707,11 +708,9 @@ export async function prepareWorkflowApprovedOperation(params: Readonly<{
   if (!accountId && nativeAccount
     && (parent.actionId === 'workflow.trigger.add' || parent.actionId === 'workflow.trigger.update'
       || parent.actionId === 'account.apiTokens.create' || parent.actionId === 'account.apiTokens.update' || actorConsentDecision)
-    && context.authority === 'present_user' && context.actionCaller?.kind === 'host'
-    && (context.surface === 'ui' || context.surface === 'cli' || context.surface === 'voice')
+    && isPresentUserHostInvocation(context)
     && typeof context.actionRequestId === 'string' && context.actionRequestId.length > 0
-    && !context.externalActionCredential && !context.externalActionExecutionAuthorization
-    && !context.sessionInputSource && !context.causalPermissionAuthority && !context.rpcSessionAuthorization
+    && !context.sessionInputSource && !context.causalPermissionAuthority
     && !context.presentUserApproval && !context.approvedActionReplay
     && savedBy?.kind === 'person' && savedBy.accountId === nativeAccount.accountId
     && context.runtimeAccountId === nativeAccount.accountId && context.serverId === nativeAccount.serverId

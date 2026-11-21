@@ -39,7 +39,12 @@ import { createActionAutomationHttpPortV1, createActionAutomationPortV1 } from '
 
 const defaultActionsSettings = ActionsSettingsV1Schema.parse({ v: 1 });
 
-it.each([undefined, 'native-allow-request'])('admits a native UI shared-check Allow (caller request id: %s)', async actionRequestId => {
+it.each([
+  { surface: 'ui', actionCaller: { kind: 'host' }, actionRequestId: undefined },
+  { surface: 'ui', actionCaller: { kind: 'host' }, actionRequestId: 'native-allow-request' },
+  { surface: 'cli', actionCaller: undefined, actionRequestId: undefined },
+] as const)('admits a native $surface shared-check Allow (caller request id: $actionRequestId)', async caller => {
+  const humanApprovalRequired = caller.surface === 'ui';
   const selected = { automationId: 'shared-check', triggerId: 'shared-trigger', triggerRevision: 1,
     workflowId: '11111111-1111-4111-8111-111111111111', workflowRevision: 1, ownerAccountId: 'author',
     actionIds: ['notifications.notify_me'], phase: 'before', mode: 'wait' };
@@ -50,11 +55,13 @@ it.each([undefined, 'native-allow-request'])('admits a native UI shared-check Al
       serverId: 'home', serverIdentityId: 'home', accountId: 'actor', machineId: 'machine',
       target: { kind: 'machine', machineId: 'machine', project: { machineId: 'machine', directory: '/repo' } },
       actionId: 'notifications.notify_me', requestId: 'original-request' },
-    automaticChecks: { phase: 'consent', humanApprovalRequired: true, selectionStatus: 'ready', subjects: [],
+    automaticChecks: { phase: 'consent', humanApprovalRequired, selectionStatus: 'ready', subjects: [],
       selected: [selected], consents: [{ automationId: selected.automationId, triggerId: selected.triggerId,
         decision: 'pending' }], runs: [], results: [], notices: [] },
   });
   const writes: AutomationDefinitionDetail[] = [];
+  const admissions: unknown[] = [];
+  const effects: unknown[] = [];
   const unused = async (): Promise<never> => { throw new Error('Unexpected consent boundary operation'); };
   const definition = WorkflowDefinitionV1Schema.parse({ version: 1,
     blocks: [{ kind: 'action', id: 'notice', actionId: 'notifications.notify_me',
@@ -69,6 +76,8 @@ it.each([undefined, 'native-allow-request'])('admits a native UI shared-check Al
       if (!source) throw new Error('Missing shared Workflow');
       return source;
     },
+    openSharedActionTrigger: async () => ({ kind: 'action', phase: 'before', actionIds: selected.actionIds,
+      mode: 'wait', filter: { v: 1, all: [{ field: '/requestId', op: 'eq', value: 'original-request' }] } }),
     newId: kind => `actor-${kind}`,
     openContext: async row => row.executionRecipe?.v === 2 && row.executionRecipe.workflow.t === 'plain'
       ? row.executionRecipe.workflow.v : null,
@@ -92,20 +101,41 @@ it.each([undefined, 'native-allow-request'])('admits a native UI shared-check Al
     resolveProject: async () => ({ machineId: 'machine', directory: '/repo' }) });
   const decisionInput = { artifactId: 'approval', decision: 'approve' as const,
     triggerConsent: { automationId: selected.automationId, triggerId: selected.triggerId, decision: 'allow' as const } };
-  const person = { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const },
-    serverId: 'home', runtimeAccountId: 'actor' };
-  const port = createActionAutomationHttpPortV1({ accountId: 'actor', request: unused });
-  const executor = createExecutor({ approvalsGet: async () => stored,
-    approvalsUpdate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { ok: true }; },
-    actionAutomations: { ...port, ...checks },
+  const port = createActionAutomationHttpPortV1({ accountId: 'actor', request: async (_path, request) => {
+    if (request.method !== 'POST' || humanApprovalRequired) return unused();
+    admissions.push(request.body);
+    return { results: [{ kind: 'admitted', automationId: 'actor-automation', triggerId: 'actor-trigger', runId: 'actor-run' }] };
+  } });
+  const executor = createExecutor({ approvalsGet: async () => stored, approvalsCreate: unused,
+    approvalsUpdate: async ({ request }) => {
+      const transition = decideApprovalRequestTransition(stored, request);
+      if (!transition.ok) return transition;
+      stored = ApprovalRequestV2Schema.parse(request);
+      return { ok: true };
+    },
+    actionAutomations: { ...port, ...checks, wait: async () => ({ state: 'succeeded' }) },
+    notificationsNotifyMe: async input => { effects.push(input); return { attemptedChannels: 1, deliveredChannels: 1 }; },
   });
-  // This is the actual Allow caller shape: the native UI supplies person authority,
-  // while the invocation owner supplies request identity.
+  // Native CLI and UI supply person authority; the invocation owner supplies a missing request ID.
   const result = await executor.execute('approval.request.decide', decisionInput,
-    { ...person, ...(actionRequestId ? { actionRequestId } : {}) });
+    { ...caller, authority: 'present_user', serverId: 'home', runtimeAccountId: 'actor' });
   expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
   expect(stored.automaticChecks?.consents).toMatchObject([{ decision: 'allow', actorConsent: { ownerAccountId: 'actor' } }]);
   expect(writes).toHaveLength(1);
+  if (humanApprovalRequired) {
+    expect(stored).toMatchObject({ status: 'open', automaticChecks: { phase: 'consent' } });
+    expect(admissions).toEqual([]);
+    expect(effects).toEqual([]);
+  } else {
+    expect(admissions).toEqual([expect.objectContaining({
+      evidence: expect.objectContaining({ requestId: 'original-request' }),
+      triggers: [{ automationId: 'actor-automation', triggerId: 'actor-trigger', triggerRevision: 0 }],
+    })]);
+    expect(stored).toMatchObject({ status: 'executed', execution: { ok: true }, automaticChecks: {
+      phase: 'passed', runs: [{ runId: 'actor-run' }], results: [{ runId: 'actor-run', outcome: 'passed' }],
+    } });
+    expect(effects).toEqual([{ message: 'Deploy ready' }]);
+  }
 });
 
 it('lets a person-selected Approval Profile delegate shared-check Skip without delegating Allow', async () => {
