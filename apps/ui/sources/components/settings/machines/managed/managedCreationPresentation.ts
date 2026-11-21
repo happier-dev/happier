@@ -312,6 +312,13 @@ export function currentManagedCreationOperation(machine: ManagedMachineReadSnaps
             && reference.managedId === machine.id && sameStrictJsonValue(reference.preset, machine.preset) ? operation : null;
     }
     if (!managedMachineOperationMatchesResource(machine, snapshot)) return null;
+    // A power receipt can settle after a newer native observation. Its Cancelled
+    // label belongs in Activity once this enrolled guest is observed running again.
+    if (snapshot.actionId === 'machines.managed.power.set' && snapshot.state === 'cancelled'
+        && operation.observation === 'available' && !operation.isUnavailableProjection
+        && machine.enrolledMachineId && machine.observation?.availability === 'present'
+        && machine.observation.power === 'running' && machine.observation.observedAt >= snapshot.createdAt
+        && !resolveManagedMachinePendingPowerIntentV1(machine)) return null;
     const guest = context.enrolledMachine;
     const healthyEnrollment = !isManagedMachineBootstrapIncomplete(machine) && machine.creationState === 'active' && machine.allocation === 'bound' && !machine.cleanup
         && machine.archivedAt === undefined && machine.desired !== 'delete'

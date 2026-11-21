@@ -53,6 +53,29 @@ const machine = {
 } satisfies ManagedMachineV1;
 
 describe('managed creation presentation', () => {
+  it('retires a cancelled power receipt after the enrolled guest wakes', () => {
+    const awake = {
+      ...machine,
+      enrolledMachineId: 'guest',
+      observation: { availability: 'present', power: 'running', storage: 'retained', observedAt: 30 },
+    } satisfies ManagedMachineV1;
+    const cancelled: ActionOperationProjection = {
+      serverId: machine.homeId, observation: 'available', isUnavailableProjection: false,
+      snapshot: {
+        version: 1, operationId: 'old-power', revision: 2, actionId: 'machines.managed.power.set',
+        scope: { accountId: 'owner', machineId: machine.controller.machineId },
+        title: 'Change power', state: 'cancelled', cancellation: 'supported',
+        createdAt: 10, startedAt: 10, settledAt: 40,
+        domainRef: { kind: 'managedMachine', id: machine.id, controller: machine.controller, resource: machine.resource },
+      },
+    };
+    expect(currentManagedCreationOperation(awake, cancelled)).toBeNull();
+    expect(managedCreationState(awake, { operation: cancelled })).toEqual({ kind: 'resourceReady' });
+    expect(currentManagedCreationOperation({
+      ...awake, observation: { ...awake.observation, observedAt: 5 },
+    }, cancelled)).toBe(cancelled);
+  });
+
   it('does not claim an unsubmitted allocation is waiting for active creation', () => {
     const unsubmitted = { ...machine, allocation: 'unsubmitted' as const, resource: undefined };
     expect(describeManagedCreation(unsubmitted).line).toBe(t('managedMachines.inspect.notCreated'));
