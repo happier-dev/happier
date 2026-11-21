@@ -6005,11 +6005,11 @@ describe('grid', () => {
       });
       view.measure(1440, 420);
       const row = view.queryAll('collection:skeleton-row')[0]!;
-      const parts = row.children.length;
+      const parts = Array.from(row.children).filter(part => getComputedStyle(part).position !== 'absolute').length;
       view.unmount();
       return parts;
     };
-    // A glyph column and the text lines; or the text lines alone, as the loaded skill rows will draw them.
+    // The absolutely positioned divider takes no column. Only the glyph and text contribute to the row grid.
     expect(rowParts(true)).toBe(2);
     expect(rowParts(false)).toBe(1);
   });
