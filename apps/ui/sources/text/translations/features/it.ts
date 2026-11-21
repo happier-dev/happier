@@ -16449,10 +16449,12 @@ const italian: TeamsTranslationRoot = {
             },
             keys: {
                 title: 'Chiavi',
-                description: ({ team }: { team: string }) => `Chiavi che ${team} condivide con i membri. Le sessioni le usano; nessuno vede il valore.`,
+                description: ({ team }: { team: string }) => `Ciò che serve alla configurazione dei repository e le chiavi che ${team} condivide. Solo nomi; nessun valore passa da questa pagina.`,
                 emptyTitle: 'Nessuna chiave condivisa',
                 emptyBody: ({ team }: { team: string }) => `Condividi una chiave con ${team} perché i membri la usino senza vederla.`,
                 share: 'Condividi una chiave',
+                usedBy: ({ sources }: { sources: string }) => `Usata da ${sources}`,
+                requirementsFailed: ({ sources }: { sources: string }) => `Impossibile leggere la configurazione di ${sources}`,
             },
         },
         tabs: {

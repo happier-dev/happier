@@ -16385,10 +16385,12 @@ const spanish: TeamsTranslationRoot = {
             },
             keys: {
                 title: 'Claves',
-                description: ({ team }: { team: string }) => `Claves que ${team} comparte con sus miembros. Las sesiones las usan; nadie ve el valor.`,
+                description: ({ team }: { team: string }) => `Lo que necesita la configuración de los repositorios y las claves que ${team} comparte. Solo nombres; ningún valor pasa por esta página.`,
                 emptyTitle: 'No hay claves compartidas',
                 emptyBody: ({ team }: { team: string }) => `Comparte una clave con ${team} para que los miembros la usen sin verla.`,
                 share: 'Compartir una clave',
+                usedBy: ({ sources }: { sources: string }) => `Usada por ${sources}`,
+                requirementsFailed: ({ sources }: { sources: string }) => `No se pudo leer la configuración de ${sources}`,
             },
         },
         tabs: {

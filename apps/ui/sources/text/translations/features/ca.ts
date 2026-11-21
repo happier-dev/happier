@@ -16463,10 +16463,12 @@ const catalan: TeamsTranslationRoot = {
             },
             keys: {
                 title: 'Claus',
-                description: ({ team }: { team: string }) => `Claus que ${team} comparteix amb els membres. Les sessions les fan servir; ningú no en veu el valor.`,
+                description: ({ team }: { team: string }) => `El que necessita la configuració dels repositoris i les claus que ${team} comparteix. Només noms; cap valor passa per aquesta pàgina.`,
                 emptyTitle: 'No hi ha claus compartides',
                 emptyBody: ({ team }: { team: string }) => `Comparteix una clau amb ${team} perquè els membres la facin servir sense veure-la.`,
                 share: 'Comparteix una clau',
+                usedBy: ({ sources }: { sources: string }) => `Usada per ${sources}`,
+                requirementsFailed: ({ sources }: { sources: string }) => `No s’ha pogut llegir la configuració de ${sources}`,
             },
         },
         tabs: {

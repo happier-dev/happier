@@ -16473,10 +16473,12 @@ const polish: TeamsTranslationRoot = {
             },
             keys: {
                 title: 'Klucze',
-                description: ({ team }: { team: string }) => `Klucze, które ${team} udostępnia członkom. Sesje ich używają; nikt nie widzi wartości.`,
+                description: ({ team }: { team: string }) => `Czego potrzebuje konfiguracja repozytoriów i jakie klucze udostępnia ${team}. Tylko nazwy; żadna wartość nie przechodzi przez tę stronę.`,
                 emptyTitle: 'Brak udostępnionych kluczy',
                 emptyBody: ({ team }: { team: string }) => `Udostępnij klucz zespołowi ${team}, aby członkowie mogli go używać bez wglądu.`,
                 share: 'Udostępnij klucz',
+                usedBy: ({ sources }: { sources: string }) => `Używany przez ${sources}`,
+                requirementsFailed: ({ sources }: { sources: string }) => `Nie udało się odczytać konfiguracji ${sources}`,
             },
         },
         tabs: {

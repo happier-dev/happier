@@ -277,10 +277,12 @@ export const english = {
             },
             keys: {
                 title: 'Keys',
-                description: ({ team }: { team: string }) => `Keys ${team} shares with members. Sessions use them; nobody sees the value.`,
+                description: ({ team }: { team: string }) => `What the repositories’ setup needs and the keys ${team} shares. Names only; a value never passes through this page.`,
                 emptyTitle: 'No shared keys',
                 emptyBody: ({ team }: { team: string }) => `Share a key with ${team} so members can use it without seeing it.`,
                 share: 'Share a key',
+                usedBy: ({ sources }: { sources: string }) => `Used by ${sources}`,
+                requirementsFailed: ({ sources }: { sources: string }) => `Couldn’t read the setup for ${sources}`,
             },
         },
         tabs: {

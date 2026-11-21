@@ -40,7 +40,10 @@ export const TeamNewMembersScreen = React.memo(function TeamNewMembersScreen(pro
                         access={memberDefaultsAccess(TEAM_DEFAULTS_SCOPE, context.team.capabilities)}
                         writable={context.canMutate}
                     />
-                    <TeamNewMembersSources context={context} keys={<TeamNewMembersKeys context={context} />} />
+                    <TeamNewMembersSources
+                        context={context}
+                        renderKeys={(sources) => <TeamNewMembersKeys context={context} sources={sources} />}
+                    />
                 </>
             )}
         </TeamSection>

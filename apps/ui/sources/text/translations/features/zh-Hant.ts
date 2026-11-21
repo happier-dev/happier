@@ -16324,10 +16324,12 @@ const traditionalChinese: TeamsTranslationRoot = {
             },
             keys: {
                 title: '金鑰',
-                description: ({ team }: { team: string }) => `${team} 與成員共享的金鑰。工作階段會使用它們；沒有人能看到值。`,
+                description: ({ team }: { team: string }) => `儲存庫設定需要的內容，以及 ${team} 共用的金鑰。僅顯示名稱；任何值都不會經過此頁面。`,
                 emptyTitle: '沒有共享的金鑰',
                 emptyBody: ({ team }: { team: string }) => `與 ${team} 共享金鑰，成員即可在看不到值的情況下使用。`,
                 share: '共享金鑰',
+                usedBy: ({ sources }: { sources: string }) => `由 ${sources} 使用`,
+                requirementsFailed: ({ sources }: { sources: string }) => `無法讀取 ${sources} 的設定`,
             },
         },
         tabs: {

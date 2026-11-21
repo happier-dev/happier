@@ -16324,10 +16324,12 @@ const simplifiedChinese: TeamsTranslationRoot = {
             },
             keys: {
                 title: '密钥',
-                description: ({ team }: { team: string }) => `${team} 与成员共享的密钥。会话会使用它们；没有人能看到值。`,
+                description: ({ team }: { team: string }) => `仓库设置需要的内容，以及 ${team} 共享的密钥。仅显示名称；任何值都不会经过此页面。`,
                 emptyTitle: '没有共享的密钥',
                 emptyBody: ({ team }: { team: string }) => `与 ${team} 共享一个密钥，成员即可在看不到值的情况下使用。`,
                 share: '共享密钥',
+                usedBy: ({ sources }: { sources: string }) => `由 ${sources} 使用`,
+                requirementsFailed: ({ sources }: { sources: string }) => `无法读取 ${sources} 的设置`,
             },
         },
         tabs: {

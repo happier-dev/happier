@@ -16264,10 +16264,12 @@ const german: TeamsTranslationRoot = {
             },
             keys: {
                 title: 'Schlüssel',
-                description: ({ team }: { team: string }) => `Schlüssel, die ${team} mit Mitgliedern teilt. Sitzungen nutzen sie; niemand sieht den Wert.`,
+                description: ({ team }: { team: string }) => `Was die Einrichtung der Repositorys braucht und welche Schlüssel ${team} teilt. Nur Namen; kein Wert läuft über diese Seite.`,
                 emptyTitle: 'Keine geteilten Schlüssel',
                 emptyBody: ({ team }: { team: string }) => `Teile einen Schlüssel mit ${team}, damit Mitglieder ihn nutzen, ohne ihn zu sehen.`,
                 share: 'Schlüssel teilen',
+                usedBy: ({ sources }: { sources: string }) => `Verwendet von ${sources}`,
+                requirementsFailed: ({ sources }: { sources: string }) => `Einrichtung von ${sources} konnte nicht gelesen werden`,
             },
         },
         tabs: {

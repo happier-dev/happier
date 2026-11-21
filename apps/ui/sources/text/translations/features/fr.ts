@@ -16506,10 +16506,12 @@ const french: TeamsTranslationRoot = {
             },
             keys: {
                 title: 'Clés',
-                description: ({ team }: { team: string }) => `Les clés que ${team} partage avec ses membres. Les sessions les utilisent ; personne ne voit la valeur.`,
+                description: ({ team }: { team: string }) => `Ce dont la configuration des dépôts a besoin et les clés que ${team} partage. Noms uniquement ; aucune valeur ne passe par cette page.`,
                 emptyTitle: 'Aucune clé partagée',
                 emptyBody: ({ team }: { team: string }) => `Partagez une clé avec ${team} pour que les membres l’utilisent sans la voir.`,
                 share: 'Partager une clé',
+                usedBy: ({ sources }: { sources: string }) => `Utilisée par ${sources}`,
+                requirementsFailed: ({ sources }: { sources: string }) => `Impossible de lire la configuration de ${sources}`,
             },
         },
         tabs: {

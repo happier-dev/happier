@@ -43,7 +43,11 @@ type SetSuggestedTask = ReturnType<typeof useTeamSetupAuthoringReferences>['setS
  * bodies are never read here, only the attached reference.
  */
 export function TeamNewMembersSources(
-  props: Readonly<{ context: TeamSectionContext; keys?: React.ReactNode }>,
+  props: Readonly<{
+    context: TeamSectionContext;
+    /** The Keys section, given the Sources listed here so it reads their setup requirements and no others. */
+    renderKeys?: (sources: readonly TeamNewMembersSourceRows[number]['source'][]) => React.ReactNode;
+  }>,
 ) {
   const { scope, team } = props.context;
   const { binding, resolution } = useServerCredentialAccountScopeBinding(
@@ -63,6 +67,7 @@ export function TeamNewMembersSources(
   const status = references.state.status;
   const retry = React.useCallback(() => controller.load(), [controller]);
   const settled = references.state.hasLoaded || rows.length > 0;
+  const keySources = React.useMemo(() => rows.map((row) => row.source), [rows]);
   const loading =
     !settled &&
     (resolution.kind === 'resolving' ||
@@ -80,7 +85,7 @@ export function TeamNewMembersSources(
       homeServerId={scope.serverId}
       onSetSuggestedTask={mayAuthorNewMembersSetup(props.context) ? setSuggestedTask : undefined}
       homeName={props.context.homeName}
-      keys={props.keys}
+      keys={props.renderKeys?.(keySources)}
     />
   );
 }

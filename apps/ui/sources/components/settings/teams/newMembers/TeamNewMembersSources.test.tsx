@@ -122,6 +122,7 @@ async function renderNewMembers(
   sources: readonly unknown[],
   manageSettings: boolean,
   credentials?: readonly unknown[],
+  answerHome?: (serverId: string) => void,
 ) {
   const { serverId } = await account.restore({
     accountId: 'admin',
@@ -159,6 +160,7 @@ async function renderNewMembers(
       body: { resources: credentials, viewer: teamCredentialViewerFixture({}) },
     });
   }
+  answerHome?.(serverId);
   const screen = await renderScreen(
     <ModalProvider>
       <TeamNewMembersScreen serverId={serverId} teamId="team-1" />
@@ -337,10 +339,50 @@ it('lists the keys the Team shares, each opening its own page', async () => {
   const row = 'team-new-members-keys';
   await waitForHomeGovernance(() => expect(screen.findByTestId(row), screen.getTextContent()).not.toBeNull());
   await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Acme OpenAI key'));
-  const keys = screen.findByTestId(row);
-  const pressable = keys?.findAll((node) => typeof node.props.onPress === 'function' && node.props.accessibilityLabel)[0];
+  const keyRow = screen.findByTestId('team-credentials-row:key-1');
+  const pressable = keyRow?.findAll((node) => typeof node.props.onPress === 'function' && node.props.accessibilityLabel)[0];
   expect(pressable).toBeDefined();
   await act(async () => { pressable!.props.onPress(); });
   expect(router.push).toHaveBeenCalledWith(
     `/settings/teams/${encodeURIComponent(serverId)}/team-1/credentials/key-1`);
+});
+
+it('names the keys each listed repository\'s published setup needs, reading each Source once and no value', async () => {
+  const { createPlainArtifactHttpFixture } = await import('@/dev/testkit/harness/artifactStoreBoundary');
+  const setup = (artifactId: string) => ({
+    purpose: 'setup' as const, ref: { kind: 'doc' as const, artifactId }, contentRevision: { headerVersion: 1, bodyVersion: 1 },
+  });
+  const published = ProjectSourceListItemV1Schema.parse({ ...web, attachments: [...(web.attachments ?? []), setup('setup-web')] });
+  const publishedInfra = ProjectSourceListItemV1Schema.parse({ ...infra, attachments: [setup('setup-infra')] });
+  const unpublished = ProjectSourceListItemV1Schema.parse({ ...infra, id: 'source-docs', name: 'Docs' });
+  const sourceReads: string[] = [];
+  const { screen } = await renderNewMembers([published, publishedInfra, unpublished], true, undefined, (serverId) => {
+  for (const source of [published, publishedInfra, unpublished]) {
+    account.home.answer(serverId, `GET /v1/projects/sources/${source.id}`, { select: () => {
+      sourceReads.push(source.id);
+      return { body: { ok: true, source, canManage: true } };
+    } });
+  }
+  const manifest = (names: readonly string[]) => JSON.stringify({ kind: 'project_setup.v1', manifest: {
+    version: 1, environmentVariables: names.map((name) => ({ name, kind: 'secret', required: true })),
+  } });
+  for (const [id, names] of [['setup-web', ['STRIPE_TEST_KEY', 'SENTRY_DSN']], ['setup-infra', ['STRIPE_TEST_KEY']]] as const) {
+    const header = { kind: 'project_setup.v1', title: 'Setup' };
+    account.home.answer(serverId, `GET /v1/artifacts/${id}`, { body: createPlainArtifactHttpFixture({
+      id, isDecrypted: true, title: 'Setup', header, rawHeader: header, body: manifest(names),
+      headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+    }, 'admin') });
+  }
+  });
+  const stripe = 'team-new-members-key-requirement:STRIPE_TEST_KEY';
+  await waitForHomeGovernance(() => expect(screen.findByTestId(stripe), screen.getTextContent()).not.toBeNull());
+  await waitForHomeGovernance(() =>
+    expect(screen.findByTestId('team-new-members-key-requirement:SENTRY_DSN')).not.toBeNull());
+  const rowText = (id: string) => JSON.stringify(screen.findByTestId(id)
+    ?.findAll((node) => typeof node.props.children === 'string').map((node) => node.props.children));
+  // One row per name, naming every listed repository that needs it.
+  expect(rowText(stripe)).toContain('Storefront, Infra');
+  expect(rowText('team-new-members-key-requirement:SENTRY_DSN')).not.toContain('Infra');
+  expect(screen.findByTestId('team-new-members-keys-empty')).toBeNull();
+  expect([...sourceReads].sort()).toEqual(['source-docs', 'source-infra', 'source-web']);
 });

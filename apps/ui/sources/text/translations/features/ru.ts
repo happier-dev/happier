@@ -16474,10 +16474,12 @@ const russian: TeamsTranslationRoot = {
             },
             keys: {
                 title: 'Ключи',
-                description: ({ team }: { team: string }) => `Ключи, которыми ${team} делится с участниками. Сессии их используют; значение не видит никто.`,
+                description: ({ team }: { team: string }) => `Что нужно для настройки репозиториев и какими ключами делится ${team}. Только имена; значения через эту страницу не проходят.`,
                 emptyTitle: 'Нет общих ключей',
                 emptyBody: ({ team }: { team: string }) => `Поделитесь ключом с ${team}, чтобы участники пользовались им, не видя его.`,
                 share: 'Поделиться ключом',
+                usedBy: ({ sources }: { sources: string }) => `Используется в ${sources}`,
+                requirementsFailed: ({ sources }: { sources: string }) => `Не удалось прочитать настройку ${sources}`,
             },
         },
         tabs: {

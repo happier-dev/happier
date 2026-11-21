@@ -16384,10 +16384,12 @@ const japanese: TeamsTranslationRoot = {
             },
             keys: {
                 title: 'キー',
-                description: ({ team }: { team: string }) => `${team} がメンバーと共有するキー。セッションが使用し、値は誰にも見えません。`,
+                description: ({ team }: { team: string }) => `リポジトリのセットアップに必要なものと、${team} が共有するキー。名前のみで、値はこのページを通りません。`,
                 emptyTitle: '共有キーはありません',
                 emptyBody: ({ team }: { team: string }) => `${team} とキーを共有すると、メンバーは値を見ずに使えます。`,
                 share: 'キーを共有',
+                usedBy: ({ sources }: { sources: string }) => `${sources} で使用`,
+                requirementsFailed: ({ sources }: { sources: string }) => `${sources} のセットアップを読み込めませんでした`,
             },
         },
         tabs: {
