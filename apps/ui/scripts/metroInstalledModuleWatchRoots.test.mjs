@@ -226,7 +226,7 @@ for (const race of [false, true]) test(`Metro excludes mutable package-manager s
   } finally { rmSync(fixture, { recursive: true, force: true }); }
 });
 
-test('a captured web bundle resolves import-only packages from the published generation', { skip: process.platform === 'win32' }, async () => {
+for (const source of ['checkout generation', 'pinned revision tree']) test(`a captured production bundle resolves import-only packages (${source})`, { skip: process.platform === 'win32' }, async () => {
   const fixture = realpathSync(mkdtempSync(path.join(tmpdir(), 'metro-captured-export-')));
   try {
     const sourceDir = path.join(fixture, 'source');
@@ -236,19 +236,32 @@ test('a captured web bundle resolves import-only packages from the published gen
     const { mountCapturedWorkspaceDependencies } =
       await import('../../../scripts/workspaces/buildInputConvergence.mjs');
     const genRoot = path.join(resolveDependencyGenerationContainer(sourceDir), 'g000000001-12345678');
-    const packageDir = path.join(genRoot, 'node_modules', 'capture-import-only');
-    mkdirSync(packageDir, { recursive: true });
-    writeFileSync(path.join(packageDir, 'package.json'), JSON.stringify({
-      name: 'capture-import-only',
-      type: 'module',
-      exports: { '.': { import: './implementation.js' } },
-    }));
-    writeFileSync(path.join(packageDir, 'implementation.js'), 'export default "captured-generation-esm";\n');
+    const packages = ['capture-import-only', '@fixture/scoped-import-only'];
+    for (const name of packages) {
+      const dependency = path.join(genRoot, 'node_modules', name);
+      const packageDir = name.startsWith('@') ? path.join(genRoot, 'apps/server/node_modules', name) : dependency;
+      mkdirSync(packageDir, { recursive: true });
+      if (packageDir !== dependency) {
+        const scope = path.dirname(dependency);
+        mkdirSync(scope, { recursive: true });
+        symlinkSync(path.relative(scope, packageDir), dependency, 'dir');
+      }
+      writeFileSync(path.join(packageDir, 'package.json'), JSON.stringify({
+        name,
+        type: 'module',
+        exports: { '.': { import: './implementation.js' } },
+      }));
+      writeFileSync(path.join(packageDir, 'implementation.js'), `export default "captured-esm:${name}";\n`);
+    }
     await flipDependencyGeneration(sourceDir, { genRoot, projects: [] });
-    await mountCapturedWorkspaceDependencies({ sourceDir, captureDir, workspaceDirs: [] });
+    const captureSource = source === 'pinned revision tree' ? path.join(fixture, 'revision-tree') : sourceDir;
+    if (captureSource !== sourceDir) {
+      await mountCapturedWorkspaceDependencies({ sourceDir, captureDir: captureSource, workspaceDirs: [] });
+    }
+    await mountCapturedWorkspaceDependencies({ sourceDir: captureSource, captureDir, workspaceDirs: [] });
 
     const entry = path.join(captureDir, 'entry.js');
-    writeFileSync(entry, 'import value from "capture-import-only"; export default value;\n');
+    writeFileSync(entry, packages.map(name => `import "${name}";\n`).join(''));
     const { default: Server } = require('metro/private/Server');
     const config = await require('metro-config').getDefaultConfig(captureDir);
     const installedRoots = resolveInstalledModuleWatchRoots([path.join(captureDir, 'node_modules')]);
@@ -268,7 +281,7 @@ test('a captured web bundle resolves import-only packages from the published gen
     try {
       const bundle = await server.build({ ...Server.DEFAULT_BUNDLE_OPTIONS,
         entryFile: entry, platform: 'web', dev: false, minify: false, lazy: false });
-      assert.match(bundle.code, /captured-generation-esm/);
+      for (const name of packages) assert.ok(bundle.code.includes(`captured-esm:${name}`));
     } finally { await server.end(); }
   } finally { rmSync(fixture, { recursive: true, force: true }); }
 });
