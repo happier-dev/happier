@@ -4,6 +4,7 @@ import { View } from 'react-native';
 import { HappierBreadcrumb } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { preparePluginWorkflowTemplateDraft } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
 
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { useInPlaceApprovalReview } from '@/components/approvals/ApprovalReviewInPlace';
@@ -98,6 +99,13 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
     const entry = state.discoverEntries.find((candidate) => (
         candidate.id === props.pluginId && candidate.sourceId === props.sourceId
     )) ?? null;
+    const catalogAccountLifetime = state.catalogAccountLifetime;
+    const adds = entry ? <PluginListingAddsSection entry={entry}
+        onOpenSuggestedAutomation={catalogAccountLifetime ? async automation => {
+            const route = await preparePluginWorkflowTemplateDraft({ source: automation, accountLifetime: catalogAccountLifetime });
+            if (route && catalogAccountLifetime.isCurrent()) router.push(route as never);
+        } : undefined}
+    /> : null;
     const installed = state.installedPluginById.has(props.pluginId);
     const title = entry?.title ?? props.pluginId;
     // Install's evaluated review opens here, where it was pressed; its outcome stays under the action.
@@ -234,7 +242,7 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
                     {install}
                     {outcome}
                     {installedSetup}
-                    <PluginListingAddsSection entry={entry} />
+                    {adds}
                     <PluginListingFacts entry={entry} />
                 </>
             ) : entry ? (
@@ -246,7 +254,7 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
                         {install}
                         {outcome}
                         {installedSetup}
-                        <PluginListingAddsSection entry={entry} />
+                        {adds}
                     </ItemGroupColumn>
                     <ItemGroupColumn span={1}>
                         <PluginListingFacts entry={entry} />

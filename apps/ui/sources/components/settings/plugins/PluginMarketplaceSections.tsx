@@ -27,6 +27,7 @@ import { SurfaceFreshnessLine, SurfaceFreshnessOnSheetProvider } from '@/compone
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { describePluginContentCounts } from './model/pluginInstallationReviewFacts';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
@@ -1373,7 +1374,9 @@ function useDiscoverListingAnatomy(props: DiscoverListingActionInputs & Readonly
         where: ({ entry }) => (!installedPluginById.has(entry.id) && entry.registrySelectionOrigin !== null
             ? t('settingsPlugins.discover.registrySelectionRequired', { origin: entry.registrySelectionOrigin })
             // Where it comes from first, then what it adds (lab ideas-1118-platform scene 1).
-            : [entry.sourceTitle, ...pluginListingAdds(entry.contributions).map((add) => add.title)].filter(Boolean).join(' · ')),
+            : [entry.sourceTitle, ...(entry.vendorPlugin?.contentCounts
+                ? describePluginContentCounts(entry.vendorPlugin.contentCounts)
+                : pluginListingAdds(entry.contributions).map((add) => add.title))].filter(Boolean).join(' · ')),
         description: ({ entry }) => entry.description || null,
         // Healthy is quiet: only a withdrawal or "Installed" speaks; a withdrawal outranks "Installed".
         reason: ({ entry }) => props.settlement?.pluginId === entry.id && props.settlement.sourceId === entry.sourceId

@@ -187,6 +187,8 @@ export type PluginSettingsScreenState = Readonly<{
     discoverEntries: readonly PluginMarketplaceCatalogEntry[];
     /** The browsing Account owns local drafts from catalog suggestions. */
     catalogAccountLifetime: ReturnType<typeof usePluginCatalog>['execution']['binding'];
+    /** The browsing Account owns local drafts from catalog suggestions. */
+    catalogAccountLifetime: ReturnType<typeof usePluginCatalog>['execution']['binding'];
     discoverNextCursor: string | null;
     /** Selectable source chips beside All: enabled configured sources plus community npm. */
     discoverSources: readonly Readonly<{ id: string; title: string; kind: PluginMarketplaceCatalogSourceKind }>[];
@@ -1060,6 +1062,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         executionMachineHomeDir,
         isDaemonSettingsTargetCurrent,
         ...catalog,
+        catalogAccountLifetime: catalog.execution.binding,
         catalogAccountLifetime: catalog.execution.binding,
         canRunDiscoverActions,
         discoverInstallDisabledReason,

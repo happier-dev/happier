@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
+import type { PluginWorkflowContributionV1 } from '@happier-dev/protocol/plugins/manifest';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Icon } from '@/components/ui/icons/Icon';
@@ -11,6 +12,7 @@ import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOp
 
 import { pluginListingAdds } from '../model/pluginContributionKindLabel';
 import { browseCategoryTitle } from '../model/pluginMarketplaceModel';
+import { describePluginContentCounts, describePluginContentOmissions } from '../model/pluginInstallationReviewFacts';
 import type { PluginMarketplaceCatalogEntry } from '../readPluginMarketplaceCatalog';
 import { BrowserExtensionListingFacts, type BrowserExtensionListingFactsProps } from './BrowserExtensionListingFacts';
 
@@ -56,26 +58,58 @@ export function PluginListingAddsSection(
     entry: PluginMarketplaceCatalogEntry;
     description?: string;
     testID?: string;
+    onOpenSuggestedAutomation?: (automation: PluginWorkflowContributionV1) => void;
   }>,
 ) {
-  const adds = pluginListingAdds(props.entry.contributions);
-  if (adds.length === 0) return null;
+  const vendor = props.entry.vendorPlugin;
+  // A vendor package says what it contains in counts and what Happier left out; a Happier listing names the kinds.
+  const contents = vendor?.contentCounts ? describePluginContentCounts(vendor.contentCounts) : null;
+  const omissions = describePluginContentOmissions(vendor?.notImported);
+  const adds = contents ? [] : pluginListingAdds(props.entry.contributions);
+  const automations = vendor?.suggestedAutomations ?? [];
+  const openSuggestion = props.onOpenSuggestedAutomation;
+  const hasAdds = (contents?.length ?? 0) > 0 || adds.length > 0 || omissions.length > 0;
   return (
-    <ItemGroup
-      title={t('settingsPlugins.catalog.adds')}
-      {...(props.description ? { description: props.description } : {})}
-    >
-      {adds.map((add, index) => (
-        <Item
-          key={add.key}
-          testID={index === 0 ? props.testID : undefined}
-          title={add.title}
-          subtitle={add.description}
-          mode="info"
-          showChevron={false}
-        />
-      ))}
-    </ItemGroup>
+    <>
+      {hasAdds ? (
+        <ItemGroup
+          title={t('settingsPlugins.catalog.adds')}
+          {...(props.description ? { description: props.description } : {})}
+        >
+          {(contents ?? []).map((content, index) => (
+            <Item key={content} testID={index === 0 ? props.testID : undefined} title={content}
+              mode="info" showChevron={false} />
+          ))}
+          {adds.map((add, index) => (
+            <Item
+              key={add.key}
+              testID={index === 0 ? props.testID : undefined}
+              title={add.title}
+              subtitle={add.description}
+              mode="info"
+              showChevron={false}
+            />
+          ))}
+          {omissions.length > 0 ? (
+            <Item testID="settings.plugins.listing.notImported" title={t('settingsPlugins.gitInstall.notImported')}
+              subtitle={omissions.join(', ')} mode="info" showChevron={false} />
+          ) : null}
+        </ItemGroup>
+      ) : null}
+      {openSuggestion && automations.length > 0 ? (
+        <ItemGroup title={t('settingsPlugins.surfaces.suggestedAutomationsTitle')}>
+          {automations.map((automation) => (
+            <Item
+              key={automation.id}
+              testID={`settings.plugins.listing.suggestedAutomation.${automation.id}`}
+              title={automation.title}
+              {...(automation.description ? { subtitle: automation.description } : {})}
+              onPress={() => openSuggestion(automation)}
+            />
+          ))}
+        </ItemGroup>
+      ) : null}
+    </>
   );
 }
 

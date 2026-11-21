@@ -37,7 +37,10 @@ the chosen machine. Discovery uses these sources.
   and, when needed, a directory within it. Browse reads the catalog. Install
   and Update read the selected catalog entry and follow its ref or commit.
   Relative entries use the catalog repository's ref. An entry with no ref uses
-  the default branch. The installed commit is shown as provenance.
+  the default branch. The installed commit is shown as provenance. Listings
+  can carry catalog-declared publishers, categories, component counts,
+  omissions, and suggested automation drafts. Package contents and actual
+  import results are available at installation review.
 - **User catalogs** — catalog documents you add with `hdev registries add`.
   You can add an npm index or a catalog in the vendor marketplace format.
   Source settings let you enable or disable each catalog for your Account.
@@ -62,6 +65,7 @@ function pluginPreview(summary: Summary) {
   return {
     title: summary.title,
     publisher: summary.pluginListing?.publisher.displayName ?? summary.publisher?.name,
+    categories: summary.pluginListing?.categories ?? summary.vendorPlugin?.categories,
     pointer: summary.version || summary.pluginGit ? {
       sourceId: summary.sourceId,
       itemId: summary.itemId,
@@ -75,6 +79,52 @@ Use the selected row's pointer with `registries.items.read { kind: 'plugin',
 ...pointer }` when its details are needed. Missing optional summary facts stay
 unknown until that read. Installation goes through the ordinary
 `plugins.install` Action.
+
+### Declare vendor listing facts
+
+In 0.3 development source, add these facts to the entry in `marketplace.json`.
+Happier reads the same entry in Browse and on the listing page. `author.name`
+is the publisher label. `extensions["dev.happier"]` can declare `categories`,
+`contentCounts`, `notImported`, and `suggestedAutomations`.
+
+```json
+{
+  "name": "review-kit",
+  "source": { "source": "github", "repo": "example/review-kit", "ref": "v1.2.0" },
+  "author": { "name": "Example" },
+  "extensions": {
+    "dev.happier": {
+      "categories": ["Review"],
+      "contentCounts": { "skills": 2, "commands": 1, "agents": 0, "mcpServers": 1 },
+      "notImported": { "hooks": 1, "other": ["lspServers"] },
+      "suggestedAutomations": [
+        {
+          "id": "review-changes",
+          "title": "Review changes",
+          "definition": {
+            "version": 1,
+            "inputs": [],
+            "defaults": {},
+            "blocks": [
+              {
+                "kind": "step",
+                "id": "review",
+                "document": { "text": "Review changes", "references": [], "attachments": [] },
+                "input": [],
+                "result": { "kind": "text" }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+Suggestions use the existing [Workflow contribution definition](/plugins/manifest/contributions#workflow-definitions).
+Listing counts and omissions describe what the catalog declares. The install
+review shows what Happier actually imports from the resolved commit.
 
 ## Curated catalog availability
 
@@ -154,6 +204,11 @@ authority shows what changed. An authority-neutral update follows the installed
 plugin's update policy. See [Install and trust](/plugins/packaging/install-trust).
 Installed plugins keep working and updating under their own policy when a
 publisher withdraws a curated listing. New installs of that listing stop.
+
+In 0.3 development source, open a plugin listing and select a suggested
+automation to start an unsaved draft in the Workflow Sentence editor. Review
+and edit the draft there. Saving and enabling an automation are separate
+choices in the Workflow editor.
 
 ## Private and custom registries
 

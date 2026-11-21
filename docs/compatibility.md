@@ -10161,6 +10161,14 @@ development readers need matching Protocol, SDK and UI source for Team results.
 There is no migration or wire epoch change. The inspected `../0.2` frontier at
 `24731ff73c` has no targeted Action selection result schema.
 
+Unreleased 0.3 vendor Registry list and item reads accept optional
+`vendorPlugin` presentation facts and use the existing publisher field.
+The new field carries categories, declared counts and omissions, and Workflow
+drafts. Readers still accept summaries without these facts. Matching strict
+development producers and consumers load together. The inspected 0.2 checkout
+at `f3ec856b1a` has no Registry summary contract. This changes no storage
+format, admission rule, or wire epoch.
+
 Unreleased 0.3 Triage attention results and notification requests accept optional
 `reviewAttention` presentation facts, using the Protocol-owned Review subject
 kind and requested-verdict boolean. The existing V1 envelopes and nested fact

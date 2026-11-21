@@ -48,10 +48,13 @@ describe('projectRegistryMarketplacePage', () => {
         const source = RegistrySourceDescriptorV1Schema.parse({ id: 'vendor', title: 'Vendor', format: 'claude-marketplace',
             kinds: ['plugin'], url: 'https://example.com/marketplace.json', enabled: true, addedAt: 0,
             origin: { kind: 'user' }, removable: true });
+        const vendorPlugin = { categories: ['Developer Tools'], contentCounts: { skills: 2 }, notImported: { hooks: 1 } };
         const page = projectRegistryMarketplacePage({ sources: [source], pages: [], items: [{ sourceId: source.id,
-            itemId: 'kit', title: 'Kit', kind: 'plugin', pluginGit: { locator: 'https://github.com/vendor/kit' } }] });
+            itemId: 'kit', title: 'Kit', kind: 'plugin', pluginGit: { locator: 'https://github.com/vendor/kit' },
+            publisher: { name: 'Example Labs' }, vendorPlugin }] });
         const entry = page.entries[0]!;
-        expect(entry).toMatchObject({ title: 'Kit', version: null, installable: true });
+        expect(entry).toMatchObject({ title: 'Kit', version: null, installable: true, categories: ['Developer Tools'],
+            publisher: { displayName: 'Example Labs' }, vendorPlugin });
         expect(buildPluginCatalogInstallInput(entry, 'home')).toEqual({ machineId: 'home',
             source: { kind: 'gitCatalog', sourceId: 'vendor', itemId: 'kit' } });
     });

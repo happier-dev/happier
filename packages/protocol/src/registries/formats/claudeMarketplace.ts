@@ -2,12 +2,68 @@ import { z } from '../../zodRuntimePolicy.js';
 import { githubRegistryAdapterV1, readGitHubRepositoryV1, registryRelativePathV1 } from './github.js';
 import type { RegistryFetchContextV1, RegistryFormatAdapterV1, RegistrySkillFormatAdapterV1 } from './registryFormatAdapterV1.js';
 import type { RegistrySourceV1 } from '../registrySourcesV1.js';
-import type { RegistryContentRefV1, RegistryItemSummaryV1, RegistryRemoteProvenanceV1, RegistrySkillItemV1 } from '../registryItemsV1.js';
+import { RegistryVendorPluginSummaryV1Schema } from '../registryItemsV1.js';
+import type { RegistryContentRefV1, RegistryItemSummaryV1, RegistryRemoteProvenanceV1, RegistrySkillItemV1, RegistryVendorPluginSummaryV1 } from '../registryItemsV1.js';
 import { RegistryFetchErrorV1 } from '../registryListV1.js';
 import { normalizePluginGitRepositoryUrl, PluginGitCatalogSourceV1Schema, PluginGitCommitV1Schema } from '../../plugins/sourceSpecV1.js';
+import { PluginWorkflowContributionV1Schema } from '../../plugins/contributions/workflowDeclarationV1.js';
 
 const pluginSchema=z.object({name:z.string().check(z.minLength(1)),description:z.optional(z.string()),source:z.union([z.string(),z.object({source:z.string(),repo:z.optional(z.string()),url:z.optional(z.string()),path:z.optional(z.string()),ref:z.optional(z.string()),sha:z.optional(PluginGitCommitV1Schema)})]),
-  hooks:z.optional(z.unknown()),commands:z.optional(z.unknown()),mcpServers:z.optional(z.unknown()),agents:z.optional(z.unknown())});
+  category: z.optional(z.unknown()), author: z.optional(z.unknown()), interface: z.optional(z.unknown()),
+  skills: z.optional(z.unknown()), hooks: z.optional(z.unknown()), commands: z.optional(z.unknown()),
+  mcpServers: z.optional(z.unknown()), agents: z.optional(z.unknown()), lspServers: z.optional(z.unknown()),
+  extensions: z.optional(z.unknown()),
+});
+function catalogRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function catalogLabel(value: unknown): string | undefined {
+  return typeof value === 'string' ? value.trim() || undefined : undefined;
+}
+
+function declaredCount(value: unknown): number | undefined {
+  if (Array.isArray(value)) return value.length;
+  const record = catalogRecord(value);
+  return record ? Object.keys(record).length : undefined;
+}
+
+function pluginPresentation(plugin: z.infer<typeof pluginSchema>): Pick<RegistryItemSummaryV1, 'publisher' | 'vendorPlugin'> {
+  const presentation = catalogRecord(plugin.interface);
+  const publisher = catalogLabel(catalogRecord(plugin.author)?.name) ?? catalogLabel(presentation?.developerName);
+  const category = catalogLabel(plugin.category) ?? catalogLabel(presentation?.category);
+  const extension = catalogRecord(catalogRecord(plugin.extensions)?.['dev.happier']);
+  const schema = RegistryVendorPluginSummaryV1Schema.shape;
+  const categories = schema.categories.safeParse(extension?.categories).data ?? (category ? [category] : undefined);
+  const explicitCounts = schema.contentCounts.safeParse(extension?.contentCounts).data;
+  const contentCounts: NonNullable<RegistryVendorPluginSummaryV1['contentCounts']> = {};
+  for (const family of ['skills', 'commands', 'agents', 'mcpServers'] as const) {
+    const count = explicitCounts?.[family] ?? declaredCount(plugin[family]);
+    if (count !== undefined) contentCounts[family] = count;
+  }
+  const declaredOmissions = schema.notImported.safeParse(extension?.notImported).data;
+  const hooks = declaredOmissions?.hooks ?? declaredCount(plugin.hooks);
+  const other = plugin.lspServers === undefined ? declaredOmissions?.other
+    : [...new Set([...(declaredOmissions?.other ?? []), 'lspServers'])];
+  const suggestions = extension?.suggestedAutomations;
+  const suggestedAutomations = Array.isArray(suggestions) ? suggestions.flatMap(raw => {
+    const result = PluginWorkflowContributionV1Schema.safeParse(raw);
+    return result.success ? [result.data] : [];
+  }) : undefined;
+
+  const vendorPlugin: RegistryVendorPluginSummaryV1 = {
+    ...(categories?.length ? { categories } : {}),
+    ...(Object.keys(contentCounts).length ? { contentCounts } : {}),
+    ...(declaredOmissions || hooks !== undefined || other ? { notImported: {
+      ...declaredOmissions, ...(hooks !== undefined ? { hooks } : {}), ...(other ? { other } : {}),
+    } } : {}),
+    ...(suggestedAutomations?.length ? { suggestedAutomations } : {}),
+  };
+  return {
+    ...(publisher ? { publisher: { name: publisher } } : {}),
+    ...(Object.keys(vendorPlugin).length ? { vendorPlugin } : {}),
+  };
+}
 async function plugins(ctx:RegistryFetchContextV1,source:RegistrySourceV1) {
   const raw=/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/(.*?)(?:\.claude-plugin|\.cursor-plugin|\.agents\/plugins)\/marketplace\.json$/.exec(source.url);
   const github=readGitHubRepositoryV1(source.url);
@@ -38,7 +94,7 @@ function pluginSource(source:RegistrySourceV1,plugin:z.infer<typeof pluginSchema
   if (!url || !PluginGitCatalogSourceV1Schema.safeParse({ locator: url, subdirectory: path || undefined, ref }).success) return null;
   return { ...source, format: 'git', url, path: path || undefined, ref };
 }
-function count(value:unknown):number {return Array.isArray(value)?value.length : value && typeof value === 'object'?Object.keys(value).length : value ? 1 : 0;}
+function count(value: unknown): number { return declaredCount(value) ?? (value ? 1 : 0); }
 type ClaudeMarketplaceAdapterV1 = RegistryFormatAdapterV1 & Readonly<{
   read(ctx: RegistryFetchContextV1, req: Parameters<RegistryFormatAdapterV1['read']>[1] & { kind: 'skill' }): Promise<RegistrySkillItemV1>;
 }>;
@@ -47,6 +103,7 @@ export function createClaudeMarketplaceRegistryAdapterV1(github: RegistrySkillFo
   function pluginSummary(source: RegistrySourceV1, plugin: z.infer<typeof pluginSchema>, target: RegistrySourceV1 | null): RegistryItemSummaryV1 {
     return { sourceId: source.id, kind: 'plugin', itemId: plugin.name, title: plugin.name,
       ...(plugin.description ? { description: plugin.description } : {}),
+      ...pluginPresentation(plugin),
       ...(target ? { pluginGit: { locator: target.url, ...(target.path ? { subdirectory: target.path } : {}),
           ...(target.ref ? { ref: target.ref } : {}) }, links: { repository: target.url } }
         : { problem: { code: 'unsupported_entry', reason: 'distribution' } }),

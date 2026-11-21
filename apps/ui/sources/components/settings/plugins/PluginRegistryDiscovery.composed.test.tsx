@@ -2,10 +2,10 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import { DEFAULT_CURATED_MARKETPLACE_SOURCE_URL, COMMUNITY_NPM_MARKETPLACE_SOURCE_ID_V1 } from '@happier-dev/protocol/marketplace';
-import { HAPPIER_PICKS_SOURCE_ID } from '@happier-dev/protocol/registries';
+import { BUILT_IN_REGISTRY_SOURCES_V1, HAPPIER_PICKS_SOURCE_ID } from '@happier-dev/protocol/registries';
 import { installTimerCensus, renderHook, standardCleanup } from '@/dev/testkit';
 import { createRegistryPluginCatalogFixture, createRegistryNpmPackageFixture } from '@/dev/testkit/fixtures/registryPluginCatalog';
-import { installPromptRegistriesCommonModuleMocks } from '@/components/settings/prompts/registries/promptRegistriesScreenTestHelpers';
+import { installPromptRegistriesCommonModuleMocks, promptRegistriesRouterPushSpy } from '@/components/settings/prompts/registries/promptRegistriesScreenTestHelpers';
 
 installPromptRegistriesCommonModuleMocks({ storage: original => original(), modal: async () =>
     (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module });
@@ -314,6 +314,9 @@ async function setupCatalog(suffix: string, options: Readonly<{
             if (response) return response;
             if (url === DEFAULT_CURATED_MARKETPLACE_SOURCE_URL) return Response.json(curated);
             if (url.startsWith('https://registry.npmjs.org/-/v1/search')) return Response.json({ total: 0, objects: [] });
+            if (BUILT_IN_REGISTRY_SOURCES_V1.some(source => source.format === 'claude-marketplace' && source.url === url)) {
+                return Response.json({ plugins: [] });
+            }
             return null;
         },
     });
@@ -496,6 +499,41 @@ it('reads a source-qualified listing page without installing or writing Account 
     expect(screen.getTextContent()).toContain('1.2.3');
     expect(fixture.mutations).toEqual([]);
     expect(fixture.requests.some(request => request.path.startsWith('/v1/machines'))).toBe(false);
+});
+
+it('opens a vendor Store suggestion as a private Sentence draft without installing or saving', async () => {
+    const source = BUILT_IN_REGISTRY_SOURCES_V1.find(source => source.id === 'builtin:claude-plugins');
+    if (!source || !('url' in source)) throw new Error('Missing vendor registry source');
+    const suggestion = { id: 'review', title: 'Review changes', description: 'Review the current branch before merging.', definition: {
+        version: 1, inputs: [], defaults: {}, blocks: [{ kind: 'step', id: 'review', input: [], result: { kind: 'text' }, document: {
+            text: 'Inspect the diff for unintended changes.', references: [], attachments: [],
+        } }],
+    } };
+    const { fixture } = await setupCatalog('store-workflow-draft', { handleExternalRequest: async url => url === source.url
+        ? Response.json({ plugins: [{ name: 'review-tools', source: './plugins/review-tools',
+            extensions: { 'dev.happier': { suggestedAutomations: [suggestion] } },
+        }] }) : null });
+    const { StoreListingBody } = await import('@/components/store/StoreListing');
+    const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const { readWorkflowDefinitionDraftSeed } = await import('@/sync/domains/workflows/workflowDefinitionDraftSeed');
+    const screen = await renderSettingsView(<AppPaneProvider><StoreListingBody reference={{
+        type: 'registryItem', kind: 'plugin', sourceId: source.id, itemId: 'review-tools',
+    }} presentation="pane" onClose={() => {}} /></AppPaneProvider>);
+    const suggestionId = 'settings.plugins.listing.suggestedAutomation.review';
+    await waitForHomeGovernance(() => expect(screen.findByTestId(suggestionId)).not.toBeNull());
+    expect(screen.getTextContent()).toContain(suggestion.title);
+    promptRegistriesRouterPushSpy.mockClear();
+    await screen.pressByTestIdAsync(suggestionId);
+    const route = promptRegistriesRouterPushSpy.mock.calls[0]?.[0];
+    expect(route).toEqual({ pathname: '/workflows/new', params: { serverId: fixture.home.id, definitionDraftSeedId: expect.any(String) } });
+    const seedId = route.params.definitionDraftSeedId;
+    expect(readWorkflowDefinitionDraftSeed(seedId, getActiveServerAccountScope())).toEqual({
+        name: suggestion.title, description: suggestion.description, definition: suggestion.definition, initialView: 'sentence',
+    });
+    expect(readWorkflowDefinitionDraftSeed(seedId, { serverId: fixture.home.id, accountId: 'another-account' })).toBeNull();
+    expect(fixture.boundary.list()).toEqual([]);
+    expect(fixture.mutations).toEqual([]);
+    expect(fixture.settingsWrites()).toBe(0);
 });
 
 it('announces the real pending catalog once and renders its source failure outside the live region', async () => {

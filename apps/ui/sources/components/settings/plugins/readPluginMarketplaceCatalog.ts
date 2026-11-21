@@ -14,6 +14,7 @@ export type PluginMarketplaceCatalogEntry = Readonly<{
     platforms: MarketplaceIndexEntryV1['compatibility']['platforms'];
     title: string; description: string | null; version: string | null; packageName: string;
     gitCatalogItemId?: string;
+    vendorPlugin?: RegistryItemSummaryV1['vendorPlugin'];
     /** Published review eligibility only. Chosen-machine install admission stays with the daemon. */
     installable: boolean; registrySelectionOrigin: string | null; warning?: 'withdrawn' | 'unreviewed';
 }>;
@@ -75,12 +76,15 @@ export function projectRegistryMarketplacePage(input: RegistryMarketplaceProject
             continue;
         }
         const listing = item.pluginListing;
+        const vendorPlugin = item.vendorPlugin;
         // Older readers can omit presentation facts. Keep a useful row, without
         // inventing a review decision or an executable installation coordinate.
         if (!listing) {
             entries.push({ id: item.itemId, itemId: item.itemId, sourceId: source.id, sourceKind: source.kind, sourceTitle: source.title,
                 title: item.title, description: item.description ?? null, version: item.version ?? null,
-                publisher: { id: '', displayName: item.publisher?.name ?? '' }, categories: [], contributions: [], links: {},
+                publisher: { id: '', displayName: item.publisher?.name ?? '' },
+                categories: vendorPlugin?.categories ?? [], contributions: [], links: {},
+                ...(vendorPlugin ? { vendorPlugin } : {}),
                 executableRealms: [], platforms: [], reviewStatus: null, updatePolicy: null, packageName: '',
                 installable: item.pluginGit !== undefined, registrySelectionOrigin: null,
                 ...(item.pluginGit ? { gitCatalogItemId: item.itemId, links: { repository: item.pluginGit.locator } } : {}) });

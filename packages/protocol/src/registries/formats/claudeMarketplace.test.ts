@@ -3,17 +3,25 @@ import {claudeMarketplaceRegistryAdapterV1} from './claudeMarketplace.js';
 import type {RegistryHttpV1} from './registryFormatAdapterV1.js';
 import type {RegistrySourceV1} from '../registrySourcesV1.js';
 import { RegistryItemV1Schema } from '../registryItemsV1.js';
+import { RegistryListPageV1Schema } from '../registryListV1.js';
 const source:RegistrySourceV1={id:'market',title:'Market',url:'https://github.com/owner/market',format:'claude-marketplace',kinds:['skill'],enabled:true,addedAt:0};
 
 it('lists vendor plugins and resolves an install pointer from the current catalog', async () => {
   const vendor = { ...source, kinds: ['plugin' as const], url: 'https://raw.githubusercontent.com/owner/market/main/collection/.agents/plugins/marketplace.json' };
+  const suggestion = { id: 'review', title: 'Review changes', definition: {
+    version: 1, inputs: [], defaults: {}, blocks: [{ kind: 'step', id: 'review', document: { text: 'Review changes', references: [], attachments: [] } }],
+  } };
   let repository = 'owner/initial';
   const requested: string[] = [];
   const http: RegistryHttpV1 = {
     getJson: async (url) => {
       requested.push(url);
       return { ok: true, fetchedAt: 1, value: { plugins: [
-        { name: 'relative', source: { source: 'local', path: './plugins/relative' } },
+        { name: 'relative', source: { source: 'local', path: './plugins/relative' }, category: 'Developer Tools',
+          author: { name: 'Example Labs' }, skills: ['./skills/review'], commands: ['./commands/review.md'],
+          agents: ['./agents/reviewer.md'], mcpServers: { review: {} }, hooks: { PostToolUse: [] },
+          extensions: { 'dev.happier': { suggestedAutomations: [suggestion, { id: 'invalid' }],
+            notImported: { agents: 1, other: ['lspServers'] } } } },
         { name: 'url', source: { source: 'url', url: 'https://github.com/owner/url.git', sha: 'a'.repeat(40) } },
         { name: 'subdir', source: { source: 'git-subdir', url: repository, path: 'tools/subdir', ref: 'stale' } },
         { name: 'github', source: { source: 'github', repo: 'owner/github', ref: 'refs/heads/next' } },
@@ -22,8 +30,19 @@ it('lists vendor plugins and resolves an install pointer from the current catalo
     getText: async () => ({ ok: false, status: { state: 'invalid_source' } }),
     getBytes: async () => ({ ok: false, status: { state: 'invalid_source' } }),
   };
-  expect((await claudeMarketplaceRegistryAdapterV1.list({ http }, { source: vendor, kind: 'plugin' })).items)
-    .toMatchObject([{ itemId: 'relative' }, { itemId: 'url' }, { itemId: 'subdir' }, { itemId: 'github' }]);
+  const page = RegistryListPageV1Schema.parse(await claudeMarketplaceRegistryAdapterV1.list({ http }, { source: vendor, kind: 'plugin' }));
+  const vendorFacts = {
+    categories: ['Developer Tools'],
+    contentCounts: { skills: 1, commands: 1, agents: 1, mcpServers: 1 },
+    notImported: { hooks: 1, agents: 1, other: ['lspServers'] },
+    suggestedAutomations: [suggestion],
+  };
+  expect(page.items).toMatchObject([
+    { itemId: 'relative', publisher: { name: 'Example Labs' }, vendorPlugin: vendorFacts },
+    { itemId: 'url' }, { itemId: 'subdir' }, { itemId: 'github' },
+  ]);
+  expect(page.items[0]?.vendorPlugin?.suggestedAutomations).toHaveLength(1);
+  expect(page.items[1]).not.toHaveProperty('vendorPlugin');
   expect(requested).toEqual([vendor.url]);
   repository = 'owner/current';
   for (const [itemId, locator, subdirectory, ref] of [
@@ -33,6 +52,7 @@ it('lists vendor plugins and resolves an install pointer from the current catalo
     ['github', 'https://github.com/owner/github', undefined, 'refs/heads/next'],
   ] as const) {
     const item = RegistryItemV1Schema.parse(await claudeMarketplaceRegistryAdapterV1.read({ http }, { source: vendor, kind: 'plugin', itemId }));
+    if (itemId === 'relative') expect(item.summary).toMatchObject({ vendorPlugin: vendorFacts });
     expect(item.payload).toEqual({ kind: 'plugin', catalog: { sourceId: vendor.id, itemId }, git: { locator, ref, ...(subdirectory ? { subdirectory } : {}) } });
   }
   expect(requested).toEqual(Array(5).fill(vendor.url));

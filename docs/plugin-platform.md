@@ -13333,7 +13333,14 @@ Manifest admission converts Claude, Codex, Cursor, and Agent Plugins packages
 to the normal Happier manifest. It retains skills, Markdown commands and agents
 as skills, and representable MCP declarations. The normal installation review
 reports omitted content. Discovery reads one catalog per admitted source and
-defers Git acquisition to the selected installation.
+defers Git acquisition to the selected installation. The vendor registry
+reader uses that response to expose publisher, categories, declared component
+counts and omissions, and suggested Workflow drafts in both Browse and exact
+listing reads. Catalog authors can supply explicit counts, omissions and
+`suggestedAutomations` under `extensions["dev.happier"]` on a catalog entry.
+The reader validates each suggestion against the existing plugin Workflow
+declaration. Missing component declarations remain unknown until
+acquisition.
 
 For a person's own first install from a Store or Settings listing, pressing
 **Install & Trust** supplies the host Action executor's existing confirmation

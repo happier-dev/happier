@@ -4,6 +4,7 @@ import type {
 } from '@happier-dev/protocol/marketplace/internal';
 import { presentMachineAuthorityV1, type MachineAuthorityPresentationV1 } from '@happier-dev/protocol/machines/machineAuthorityV1';
 import type { PluginContentNotImportedV1 } from '@happier-dev/protocol/plugins/source-spec';
+import type { RegistryVendorPluginSummaryV1 } from '@happier-dev/protocol/registries';
 import { t } from '@/text';
 
 export function describePluginContentOmissions(omissions: Partial<PluginContentNotImportedV1> | undefined): string[] {
@@ -14,6 +15,17 @@ export function describePluginContentOmissions(omissions: Partial<PluginContentN
     ...(omissions.agents ? [t('settingsPlugins.gitInstall.omittedAgents', { count: omissions.agents })] : []),
     ...(omissions.mcpServers ? [t('settingsPlugins.gitInstall.omittedMcp', { count: omissions.mcpServers })] : []),
     ...(omissions.other ?? []),
+  ];
+}
+
+/** What a vendor package contains ("8 skills", "1 MCP server"), in the catalog's own counts; absent counts stay unknown. */
+export function describePluginContentCounts(counts: RegistryVendorPluginSummaryV1['contentCounts']): string[] {
+  if (!counts) return [];
+  return [
+    ...(counts.skills ? [t('settingsPlugins.surfaces.countSkills', { count: counts.skills })] : []),
+    ...(counts.commands ? [t('settingsPlugins.surfaces.countCommands', { count: counts.commands })] : []),
+    ...(counts.agents ? [t('settingsPlugins.surfaces.countAgents', { count: counts.agents })] : []),
+    ...(counts.mcpServers ? [t('settingsPlugins.surfaces.countMcpServers', { count: counts.mcpServers })] : []),
   ];
 }
 
