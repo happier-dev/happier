@@ -10,7 +10,7 @@ import { sourceBuildNodeArgs } from '../../utils/proc/runSourceBuildCommand.mjs'
 import { prepareSourceRuntimeProducer, admitSourceRuntimeReload, normalizeSourceCapturedAfter, readLatestBuiltSourceRevision } from '../../build/build_source_runtime.mjs';
 import { canResolveSourceRevisions, parseSourceOverlayPaths, readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionIdentity, writeSourceRevisionDescriptor } from '../../build/source_revision.mjs';
 import { prepareSourceQaWebUi } from '../../build/build_source_web_ui.mjs';
-import { refuseWorkingLockfileDrift } from './reloadLockfilePreflight.mjs';
+import { preflightWorkingDependencyInputs } from './reloadLockfilePreflight.mjs';
 import { prepareSourceTreeRuntimeComponents, recordSourceTreeBases, resolveSourceTreeRevision, selectsSourceTreeReload, sourceRevisionTreesRoot } from '../../build/source_revision_tree.mjs';
 import { parseArgs } from '../../utils/cli/args.mjs';
 import { resolveSourceQaUiMode } from '../shared/borrowed_expo.mjs';
@@ -149,9 +149,24 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
       ? (await readSourceRevisionDescriptor(request.revisionDescriptorPath)).fullTree === true : false;
     const sourceTree = hostTreeDescriptor || (!request.revisionDescriptorPath && sourceCapturedAfter == null
       && canResolveSourceRevisions({ repoDir, env }) && selectsSourceTreeReload({ stackBaseDir, repoDir, env }));
-    // A committed-revision reload on this controller: refuse an uncommitted lockfile before any work (RU2 B.3).
+    // A committed revision can share the dependency install once the controller inputs match HEAD.
     if (!request.revisionDescriptorPath && sourceCapturedAfter == null && canResolveSourceRevisions({ repoDir, env })) {
-      await refuseWorkingLockfileDrift({ repoDir, overlay: request.overlay ?? parseSourceOverlayPaths(env.HAPPIER_STACK_SOURCE_OVERLAY ?? '') });
+      let waiting = false;
+      try {
+        await preflightWorkingDependencyInputs({ repoDir, overlay: request.overlay ?? parseSourceOverlayPaths(env.HAPPIER_STACK_SOURCE_OVERLAY ?? ''),
+          signal: pending.signal, onWait: async wait => {
+            waiting = true;
+            await pending.setPhase({ phase: 'queued' });
+            await log(`[reload] waiting (${wait.code}). ${wait.message} ${wait.nextAction}. Incumbent retained.`);
+          } });
+      } catch (error) {
+        if (waiting) await log(`[reload] shared dependency input wait ended: ${redactFailureDiagnostic(error.message, env)}`);
+        throw error;
+      }
+      if (waiting) {
+        await pending.setPhase({ phase: 'preparing' });
+        await log('[reload] shared dependency inputs match HEAD. Resuming preparation.');
+      }
     }
     let treeRevision = null;
     const green = await readReloadGreen({ request, repoDir, env });

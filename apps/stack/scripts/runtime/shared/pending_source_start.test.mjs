@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { beginPendingSourceStart, readPendingSourcePreparation, emitSourcePreparationPhase, parseSourcePreparationPhaseLine, SOURCE_START_SUPERSEDED_MARKER } from './pending_source_start.mjs';
+import { beginPendingSourceStart, releasePendingSourceSelection, readPendingSourcePreparation, emitSourcePreparationPhase, parseSourcePreparationPhaseLine, SOURCE_START_SUPERSEDED_MARKER } from './pending_source_start.mjs';
 import { prepareSourceComponent } from '../../utils/dev/devReloadCoordinator.mjs';
 import { prepareSourceRuntimeReload } from '../launch/prepareSourceRuntimeReload.mjs';
 import { prepareDependencyConsumersForRefresh } from '../../utils/proc/dependency_consumers.mjs';
@@ -520,4 +521,50 @@ test('publication checks the marker even before a supersession event is observed
   await first.dispose();
   await current.publish(async () => writeFile(fixture.path('selected'), 'current'));
   assert.equal(await readFile(fixture.path('selected'), 'utf8'), 'current');
+});
+
+
+test('source reload stays queued on dirty install inputs and selects after the cut is clean', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-reload-pnpm-wait-' });
+  const repoDir = fixture.path('repo');
+  const stackBaseDir = fixture.path('stack');
+  await mkdir(join(repoDir, 'apps/stack/scripts'), { recursive: true });
+  await writeFile(join(repoDir, 'apps/stack/scripts/stack.mjs'), 'export {};');
+  const lockfile = join(repoDir, 'pnpm-lock.yaml');
+  const basis = 'lockfileVersion: 9.0\n';
+  await writeFile(lockfile, basis);
+  await writeFile(join(repoDir, 'pnpm-workspace.yaml'), 'packages: []\n');
+  const git = (...args) => execFileSync('git', ['-C', repoDir, ...args], { stdio: 'pipe' });
+  git('init', '--quiet');
+  git('add', '-A');
+  git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '-m', 'cut');
+  await writeFile(lockfile, `${basis}importers: {}\n`);
+  const queued = Promise.withResolvers();
+  const phases = [];
+  const reloading = prepareSourceRuntimeReload({ stackName: 'waiting', stackBaseDir, repoDir,
+    args: ['--rev=HEAD', '--no-dev-targets', '--no-daemon', '--no-ui', '--server-url=http://127.0.0.1:1'],
+    env: { ...sanitizeStackTestRunnerEnv(process.env, { isolatedStackRoot: fixture.root }),
+      HAPPIER_STACK_SOURCE_TREES: '0', HAPPIER_STACK_SERVER_COMPONENT: 'happier-server-light' },
+    onPhase: phase => { phases.push(phase.phase); if (phase.phase === 'queued') queued.resolve(); },
+  });
+  try {
+    await Promise.race([queued.promise, reloading.then(() => assert.fail('reload selected while the lockfile was dirty'))]);
+    assert.equal(phases.includes('prepared'), false);
+    assert.equal((await readPendingSourcePreparation({ stackBaseDir })).phase, 'queued');
+  } finally { await writeFile(lockfile, basis); }
+  await reloading;
+  assert.equal(phases.includes('prepared'), true);
+  assert.equal(JSON.parse(await readFile(join(stackBaseDir, 'source-runtime/reload.json'), 'utf8')).status, 'ready');
+});
+
+
+test('terminal stop revokes a queued source reload through its pending request', async t => {
+  const fixture = await createTempFixture(t);
+  const start = await beginPendingSourceStart({ stackBaseDir: fixture.root, repoDir: fixture.root });
+  t.after(() => start.dispose());
+  await start.setPhase({ phase: 'queued' });
+  await releasePendingSourceSelection({ stackBaseDir: fixture.root });
+  assert.equal(await readPendingSourcePreparation({ stackBaseDir: fixture.root }), null);
+  if (!start.signal.aborted) await new Promise(resolve => start.signal.addEventListener('abort', resolve, { once: true }));
+  assert.equal(start.signal.reason.code, 'ESOURCESTARTSUPERSEDED');
 });

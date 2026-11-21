@@ -36,6 +36,7 @@ import {
 } from './sync_project.mjs';
 import { defaultSpawnProcess as spawnDevTargetProcess, inspectDevTargetSync, runDevTargetCommand, runDevTargetDependencyBootstrap } from './executor.mjs';
 import { startDevTargetRuntime } from './managed_runtime.mjs';
+import { repairRecoverableDevTargetSyncConflicts } from './sync_service.mjs';
 import { retireStackDevTarget } from './retirement.mjs';
 import { waitForExpoMetroRunning } from '../expo/expo.mjs';
 import { resolveServerReadyTimeoutMs, waitForServerReady as waitForHappierServerReady } from '../server/server.mjs';
@@ -91,9 +92,17 @@ export async function prepareStackDevTargetSourceReload({ stackName, stackBaseDi
     server: plan.services.server && serverRequested,
     daemon: plan.services.daemon && daemonRequested,
   } })).filter(plan => plan.services.server || plan.services.daemon);
-  await ensureDevTargetSyncProject({ stackBaseDir: placement.authority.producerStackBaseDir,
+  const producerStackBaseDir = placement.authority.producerStackBaseDir;
+  const sync = await ensureDevTargetSyncProject({ stackBaseDir: producerStackBaseDir,
     sourceDir: repoDir, targets: placement.config.targets, requiredTargets: plans.map(plan => plan.target),
     ownerId: process.pid, allowIndependentBorrow: true, borrowOnly: true, env }, { runProcess });
+  for (const { target } of plans) {
+    if (sync.unhealthyTargets.get(target.name) !== 'unhealthy') continue;
+    await repairRecoverableDevTargetSyncConflicts({ target, stackBaseDir: producerStackBaseDir,
+      sourceDir: repoDir, env: sync.env, signal,
+      onWait: () => onPhase?.(target.name, { phase: 'queued' }) },
+    { runControl: runProcess, runCommand: input => runDevTargetCommand(input, executorDependencies) });
+  }
   const workers = [];
   const cancellation = new AbortController();
   const cancel = () => cancellation.abort(signal.reason);

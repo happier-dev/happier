@@ -93,12 +93,15 @@ export function pendingSourceSelectionAwaitsActivation(marker) {
   return marker?.phase === 'selected';
 }
 
-/** Terminal stop: the Stack will not launch the unactivated selection. */
+/** A terminal stop revokes the request before cleanup. The pending owner
+ * observes the removal and aborts its preparation and waits. */
 export async function releasePendingSourceSelection({ stackBaseDir }) {
   const markerPath = join(stackBaseDir, 'source-runtime/start.pending.json');
-  if (!pendingSourceSelectionAwaitsActivation(await readJsonIfExists(markerPath))) return;
+  const observed = await readJsonIfExists(markerPath);
+  if (!observed) return;
   await withJsonOwnerFileLock(async () => {
-    if (pendingSourceSelectionAwaitsActivation(await readJsonIfExists(markerPath))) await unlink(markerPath);
+    const current = await readJsonIfExists(markerPath);
+    if (current && current.requestId === observed.requestId) await unlink(markerPath);
   }, { lockPath: `${markerPath}.lock` });
 }
 
@@ -108,8 +111,8 @@ function activationInProgressError(pid) {
   { code: 'ESOURCEACTIVATIONINPROGRESS', pid: pid ?? null });
 }
 
-export function supersededError() {
-  const error = new Error('Source Stack start superseded by a newer start for this stack');
+export function supersededError(message = 'Source Stack start superseded by a newer start for this stack') {
+  const error = new Error(message);
   error.name = 'AbortError';
   error.code = 'ESOURCESTARTSUPERSEDED';
   return error;
@@ -172,7 +175,9 @@ export async function beginPendingSourceStart({ stackBaseDir, onPhase, requestId
   const checkCurrent = async () => {
     if (closed || controller.signal.aborted) return;
     const current = await readJsonIfExists(markerPath);
-    if (!closed && current?.requestId !== requestId) controller.abort(supersededError());
+    if (!closed && current?.requestId !== requestId) {
+      controller.abort(supersededError(current ? undefined : 'Source Stack start cancelled because its request was released'));
+    }
     if (!closed && current?.requestId === requestId && onPhase) {
       const phase = readSourcePreparationPhase(current);
       const serialized = JSON.stringify(phase);

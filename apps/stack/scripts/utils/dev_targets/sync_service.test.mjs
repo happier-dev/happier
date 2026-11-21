@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -666,219 +666,82 @@ test('sync service repairs a deleted source root blocked only by ignored beta ar
   assert.deepEqual(result.statuses[0].status.repairedRoots, ['packages/plugins/retired-plugin']);
 });
 
-test('recoverable conflict repair deletes only the exact managed replica root after source absence is rechecked', async () => {
-  const calls = [];
-  const target = {
-    name: 'mac',
-    platform: 'posix',
-    repoDir: '/remote/repo',
-  };
-  const status = {
-    session: {
-      mode: 'one-way-replica',
-      conflicts: [{
-        root: 'packages/plugins/retired-plugin',
-        alphaChanges: [{
-          path: 'packages/plugins/retired-plugin',
-          old: { kind: 'directory' },
-          new: null,
-        }],
-        betaChanges: [{
-          path: 'packages/plugins/retired-plugin/node_modules',
-          old: null,
-          new: { kind: 'untracked' },
-        }],
-      }],
-    },
-  };
-  const result = await repairRecoverableDevTargetSyncConflicts({
-    target,
-    status,
-    sourceDir: '/source/repo',
-    stackBaseDir: '/stack',
-    env: { TEST_ENV: '1' },
-  }, {
-    pathExists: (path) => {
-      calls.push({ kind: 'exists', path });
-      return false;
-    },
-    runCommand: async (options) => {
-      calls.push({ kind: 'run', options });
-      return { code: 0 };
-    },
-    runControl: async (options) => {
-      calls.push({ kind: 'control', options });
-      return { code: 0 };
-    },
-  });
-
-  assert.deepEqual(result, {
-    repaired: true,
-    roots: ['packages/plugins/retired-plugin'],
-  });
-  assert.deepEqual(calls[0], {
-    kind: 'exists',
-    path: '/source/repo/packages/plugins/retired-plugin',
-  });
-  assert.equal(calls[1].options.syncAlreadyVerified, true);
-  assert.equal(calls[1].options.dependencyAdmission, 'skip');
-  assert.deepEqual(calls[1].options.commandArgs.slice(-9), [
-    'hstack-sync-repair',
-    '/remote/repo',
-    'packages/plugins/retired-plugin',
-    'node_modules',
-    'dist',
-    '.happier',
-    '.tsbuildinfo',
-    '.turbo',
-    '.example-builds',
-  ]);
-  assert.match(calls[1].options.commandArgs[2], /rm -rf -- "\$candidate"/);
-  assert.match(calls[1].options.commandArgs[2], /"\$candidate\/\$marker"/);
-  assert.match(calls[1].options.commandArgs[2], /"\$candidate_name" = "\$marker"/);
-  assert.deepEqual(calls.slice(2).map((call) => call.options.args.slice(0, 2)), [
-    ['sync', 'reset'],
-    ['sync', 'flush'],
-  ]);
-});
-
-test('recoverable conflict repair rescans an already absent replica root and preserves unrelated replacements', async (t) => {
-  const fixture = await createTempFixture(t, { prefix: 'hstack-sync-absent-root-' });
-  const repoDir = fixture.path('replica');
+async function createStrandedMirrorFixture(t) {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-sync-stranded-package-' });
   const sourceDir = fixture.path('source');
-  const relativeRoot = 'apps/ui/stale-repair';
-  const candidate = join(repoDir, relativeRoot);
-  await mkdir(dirname(candidate), { recursive: true });
-  const controls = [];
-  const repair = () => repairRecoverableDevTargetSyncConflicts({
-    target: { name: 'worker', platform: 'posix', repoDir },
-    status: { session: { mode: 'one-way-replica', conflicts: [{
-      root: relativeRoot,
-      alphaChanges: [{ path: relativeRoot, old: { kind: 'directory' }, new: null }],
-      betaChanges: [{ path: `${relativeRoot}/node_modules`, old: null, new: { kind: 'untracked' } }],
-    }] } },
-    sourceDir, stackBaseDir: fixture.path('stack'), env: envFor(fixture.root),
-  }, {
-    // Execute the actual remote repair shell against disposable fixture paths.
+  const repoDir = fixture.path('replica');
+  const root = 'packages/plugins/retired-plugin';
+  const candidate = join(repoDir, root);
+  const modules = join(candidate, 'node_modules');
+  await mkdir(sourceDir);
+  const git = (...args) => {
+    const result = spawnSync('git', ['-C', sourceDir, ...args], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  };
+  git('init', '--quiet');
+  git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty', '--quiet', '-m', 'cut');
+  await mkdir(modules, { recursive: true });
+  await writeFile(join(modules, 'marker'), 'ignored artifact');
+  const target = { name: 'worker', platform: 'posix', repoDir };
+  const conflict = { root, alphaChanges: [{ path: root, old: { kind: 'directory' }, new: null }],
+    betaChanges: [{ path: `${root}/node_modules`, old: null, new: { kind: 'untracked' } }] };
+  const session = { name: resolveMutagenSessionName(target.name, sourceDir), mode: 'one-way-replica', paused: false,
+    status: 'watching', successfulCycles: 1, alpha: { connected: true, scanned: true }, beta: { connected: true, scanned: true } };
+  const actions = [];
+  let conflicts = [conflict];
+  const repair = onWait => repairRecoverableDevTargetSyncConflicts({ target, sourceDir,
+    stackBaseDir: fixture.path('stack'), env: envFor(fixture.root), onWait }, {
+    // Only Mutagen and SSH transport are boundaries. The repair body is the
+    // production shell running against a disposable replica directory.
     runCommand: async ({ commandArgs }) => {
+      actions.push('repair');
       const result = spawnSync(commandArgs[0], commandArgs.slice(1), { encoding: 'utf8' });
       assert.ifError(result.error);
-      return { code: result.status };
+      return { code: result.status, out: result.stdout };
     },
-    runControl: async ({ args }) => { controls.push(args.slice(0, 2)); return { code: 0 }; },
+    runControl: async ({ args }) => {
+      actions.push(args[1]);
+      if (args[1] === 'flush') conflicts = [];
+      return { code: 0, out: JSON.stringify([{ ...session, conflicts }]) };
+    },
   });
-  assert.deepEqual(await repair(), { repaired: true, roots: [relativeRoot] });
-  assert.deepEqual(controls, [['sync', 'reset'], ['sync', 'flush']]);
-  controls.length = 0;
-  await writeFile(candidate, 'unrelated replacement');
-  await assert.rejects(repair(), /refused stale replica artifact repair/);
-  assert.equal(await readFile(candidate, 'utf8'), 'unrelated replacement');
-  assert.deepEqual(controls, [], 'refused repair must not reset or flush');
-  await rm(candidate);
-  await symlink(fixture.path('missing-destination'), candidate);
-  await assert.rejects(repair(), /refused stale replica artifact repair/);
-  assert.deepEqual(controls, [], 'a dangling symlink is not an absent root');
-  await rm(candidate);
-  await mkdir(candidate);
-  await assert.rejects(repair(), /refused stale replica artifact repair/);
-  assert.deepEqual(controls, [], 'an unmarked directory must be preserved');
-  await mkdir(join(candidate, 'node_modules'));
-  assert.deepEqual(await repair(), { repaired: true, roots: [relativeRoot] });
-  await assert.rejects(readFile(candidate), { code: 'ENOENT' });
-  assert.deepEqual(controls, [['sync', 'reset'], ['sync', 'flush']]);
+  return { sourceDir, root, candidate, modules, actions, git, repair };
+}
+
+test('concurrent reload preflights repair a stranded node_modules once and recheck synchronization', { skip: process.platform === 'win32' }, async t => {
+  const { repair, root, candidate, actions } = await createStrandedMirrorFixture(t);
+  const waits = [];
+  const results = await Promise.all([repair(wait => waits.push(wait)), repair(wait => waits.push(wait))]);
+  assert.equal(results.filter(result => result.repaired).length, 1);
+  assert.deepEqual(waits, [{ status: 'wait', code: 'stranded_replica_node_modules', target: 'worker', paths: [`${root}/node_modules`] }]);
+  assert.deepEqual(await readdir(candidate), []);
+  assert.deepEqual(actions, ['list', 'repair', 'flush', 'list', 'list']);
 });
 
-test('recoverable conflict repair refuses when the alpha source root exists again', async (t) => {
-  const { root } = await createTempFixture(t, { prefix: 'hstack-sync-service-' });
-  let ran = false;
-  const result = await repairRecoverableDevTargetSyncConflicts({
-    target: { name: 'mac', platform: 'posix', repoDir: '/remote/repo' },
-    status: {
-      session: {
-        mode: 'one-way-replica',
-        conflicts: [{
-          root: 'packages/plugins/retired-plugin',
-          alphaChanges: [{
-            path: 'packages/plugins/retired-plugin',
-            old: { kind: 'directory' },
-            new: null,
-          }],
-          betaChanges: [{
-            path: 'packages/plugins/retired-plugin/node_modules',
-            old: null,
-            new: { kind: 'untracked' },
-          }],
-        }],
-      },
-    },
-    sourceDir: '/source/repo',
-    stackBaseDir: '/stack',
-    env: envFor(root),
-  }, {
-    pathExists: () => true,
-    runCommand: async () => { ran = true; return { code: 0 }; },
-    runControl: async () => { ran = true; return { code: 0 }; },
+test('replica preflight leaves the worker untouched if the package reappears or HEAD names it', { skip: process.platform === 'win32' }, async t => {
+  const { repair, sourceDir, root, modules, actions, git } = await createStrandedMirrorFixture(t);
+  await repair(async wait => {
+    assert.equal(wait.status, 'wait');
+    const path = join(sourceDir, root, 'package.json');
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, '{}');
+    git('add', '--', root);
+    git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '-m', 'restore package');
+    // HEAD protects the package even if its working directory disappears again.
+    await rm(join(sourceDir, root), { recursive: true });
   });
-
-  assert.deepEqual(result, { repaired: false, roots: [] });
-  assert.equal(ran, false);
+  assert.equal(await readFile(join(modules, 'marker'), 'utf8'), 'ignored artifact');
+  assert.deepEqual(actions, ['list', 'flush', 'list']);
 });
 
-test('recoverable conflict repair skips a root that reappeared without blocking other safe roots', async (t) => {
-  const { root } = await createTempFixture(t, { prefix: 'hstack-sync-service-' });
-  const repairedRoots = [];
-  const result = await repairRecoverableDevTargetSyncConflicts({
-    target: { name: 'mac', platform: 'posix', repoDir: '/remote/repo' },
-    status: {
-      session: {
-        mode: 'one-way-replica',
-        conflicts: [
-          {
-            root: 'packages/plugins/reappeared-plugin',
-            alphaChanges: [{
-              path: 'packages/plugins/reappeared-plugin',
-              old: { kind: 'directory' },
-              new: null,
-            }],
-            betaChanges: [{
-              path: 'packages/plugins/reappeared-plugin/node_modules',
-              old: null,
-              new: { kind: 'untracked' },
-            }],
-          },
-          {
-            root: 'packages/plugins/retired-plugin',
-            alphaChanges: [{
-              path: 'packages/plugins/retired-plugin',
-              old: { kind: 'directory' },
-              new: null,
-            }],
-            betaChanges: [{
-              path: 'packages/plugins/retired-plugin/dist',
-              old: null,
-              new: { kind: 'untracked' },
-            }],
-          },
-        ],
-      },
-    },
-    sourceDir: '/source/repo',
-    stackBaseDir: '/stack',
-    env: envFor(root),
-  }, {
-    pathExists: (path) => path.endsWith('/reappeared-plugin'),
-    runCommand: async ({ commandArgs }) => {
-      repairedRoots.push(commandArgs[5]);
-      return { code: 0 };
-    },
-    runControl: async () => ({ code: 0 }),
-  });
-
-  assert.deepEqual(result, {
-    repaired: true,
-    roots: ['packages/plugins/retired-plugin'],
-  });
-  assert.deepEqual(repairedRoots, ['packages/plugins/retired-plugin']);
+test('mirror repair refuses any authored sibling and does not delete it or node_modules', { skip: process.platform === 'win32' }, async t => {
+  const { repair, candidate, modules, actions } = await createStrandedMirrorFixture(t);
+  const authored = join(candidate, 'local.ts');
+  await writeFile(authored, '// another lane owns these bytes');
+  await assert.rejects(repair(), /refused stale replica artifact repair.*retired-plugin/);
+  assert.equal(await readFile(authored, 'utf8'), '// another lane owns these bytes');
+  assert.equal(await readFile(join(modules, 'marker'), 'utf8'), 'ignored artifact');
+  assert.deepEqual(actions, ['list', 'repair']);
 });
 
 test('sibling command sync skips an unreachable worker and prepares the reachable ones', { skip: process.platform === 'win32' }, async (t) => {

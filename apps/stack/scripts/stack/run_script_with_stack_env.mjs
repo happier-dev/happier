@@ -67,6 +67,7 @@ import { resolveRuntimeRemoteServiceObservation } from '../utils/tui/runtime_pla
 import { loadDevTargetsConfig, resolveDevTargetExecutionPolicy } from '../utils/dev_targets/config.mjs';
 import { resolveControlledRuntimePlacement, resolveDevTargetServicePlans } from '../utils/dev_targets/service_placement.mjs';
 import { ensureDevTargetSyncProject, flushDevTargetSync, runDevTargetControlProcess } from '../utils/dev_targets/sync_project.mjs';
+import { repairRecoverableDevTargetSyncConflicts } from '../utils/dev_targets/sync_service.mjs';
 
 const DEFAULT_BACKGROUND_READY_TIMEOUT_MS = 600_000;
 
@@ -783,9 +784,13 @@ async function preflightRestartDevTargets({ rootDir, stackName, baseDir, scriptP
     const sync = await ensureDevTargetSyncProject({ stackBaseDir: baseDir, sourceDir,
       targets, requiredTargets, ownerId: process.pid,
       allowIndependentBorrow: true, borrowOnly: true, env }, { runProcess });
-    // This borrows the producer's project: no session/config creation or repair.
-    // Use the existing native flush admission, not a new readiness/retry policy.
     for (const target of requiredTargets) {
+      if (scriptPath === 'run.mjs' && runtimeMode?.mode === 'source-snapshot'
+        && sync.unhealthyTargets.get(target.name) === 'unhealthy') {
+        const recovery = await repairRecoverableDevTargetSyncConflicts({ target, stackBaseDir: baseDir,
+          sourceDir, env: sync.env }, { runControl: runProcess });
+        if (recovery.repaired) continue;
+      }
       await flushDevTargetSync({ target, env: sync.env }, { runProcess });
     }
   };

@@ -412,11 +412,17 @@ selection too. `stack info` reports `runtime.sourceReload`, including the failur
 and its `run.reload.*.log` path. Selection and loaded process identity remain
 separate facts.
 
-The cutover retires the incumbent only after every wait the replacement start
-would make has finished while the incumbent still serves: the checkout's
-dependency refresh and, for a Stack placed on dev targets, the sync flush of
-each placed target. Retirement is then followed only by the start and
-readiness of the prepared replacement. Activation records the selection it
+A committed-cut reload waits while an undeclared `pnpm-lock.yaml` or
+`pnpm-workspace.yaml` differs from HEAD in the controller checkout. The reload
+names the changed file and resumes when the inputs match HEAD. Ctrl-C or a
+terminal stop cancels the wait. If a dev-target mirror's only conflict is an
+ignored `node_modules` under a removed package, preflight removes that artifact
+and rechecks synchronization. It refuses repair when the replica directory
+holds authored content or the controller still names the package.
+
+The incumbent serves through dependency refresh and the sync flush of each
+placed target. The cutover then retires the incumbent, starts the prepared
+replacement, and waits for its readiness. Activation records the selection it
 replaces (`source-runtime/rollback.json`), and retirement keeps that
 revision's tree. If the replacement fails to start or become ready after
 retirement, the controller's restart owner selects the incumbent revision

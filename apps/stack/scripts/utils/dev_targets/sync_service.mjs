@@ -1,11 +1,9 @@
-import { existsSync } from 'node:fs';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
-import { killProcessTree, spawnProc } from '../proc/proc.mjs';
+import { killProcessTree, runCaptureResult, spawnProc } from '../proc/proc.mjs';
 import { inspectDevTargetSync, prepareDevTargetSourceCommand, runDevTargetCommand } from './executor.mjs';
 import {
-  DEV_TARGET_DISPOSABLE_REPLICA_ARTIFACT_ROOTS,
   hasCurrentMutagenProjectTarget,
   resolveMutagenProjectTargets,
   isMutagenProjectOwnedBy,
@@ -23,9 +21,11 @@ import {
   ensureDevTargetSyncProject,
   flushDevTargetSync,
   INDEPENDENT_DEV_TARGET_SYNC_OWNER,
+  readDevTargetSyncProjectSession,
   releaseIndependentDevTargetSyncProject,
   resumeDevTargetSync,
   runDevTargetControlProcess,
+  withDevTargetSyncProjectLifecycleLock,
 } from './sync_project.mjs';
 import { startDevTargetRuntime } from './managed_runtime.mjs';
 import { buildRemoteEnsureDirectoriesCommand } from './remote_commands.mjs';
@@ -101,73 +101,83 @@ async function defaultEnsureReplicaRoots({ targets, stackBaseDir, env, commandRe
   return results.filter(Boolean);
 }
 
+function recoverableNodeModulesRoots(session) {
+  const roots = new Set(resolveRecoverableReplicaArtifactConflictRoots(session));
+  if (!roots.size || session.excludedConflicts > 0 || !session.conflicts.every(conflict =>
+    roots.has(conflict.root) && conflict.betaChanges.every(change => change.path === `${conflict.root}/node_modules`))) return [];
+  return [...roots];
+}
+
+async function sourcePackageIsAbsent({ sourceDir, root, signal }) {
+  const tracked = await runCaptureResult('git', ['--literal-pathspecs', '-C', sourceDir, 'ls-tree', '--full-tree', '--name-only', 'HEAD', '--', root], { signal });
+  signal?.throwIfAborted();
+  if (!tracked.ok) throw new Error(`[dev-targets] could not verify ${root} is absent from HEAD`);
+  if (tracked.out.trim()) return false;
+  try { await lstat(join(sourceDir, root)); return false; }
+  catch (error) { if (error.code === 'ENOENT') return true; throw error; }
+}
+
+// This command runs on the replica after a fresh conflict read. Mutagen's
+// conflict list omits its previously synced files, so inspect the actual
+// directory before touching even an ignored child.
+const removeStrandedNodeModules = [
+  'repo=$1',
+  'relative=$2',
+  'cd -P -- "$repo"',
+  'base=$(pwd -P)',
+  'candidate="$base/$relative"',
+  'if [ ! -e "$candidate" ] && [ ! -L "$candidate" ]; then exit 0; fi',
+  'cd -P -- "$candidate"',
+  '[ "$(pwd -P)" = "$candidate" ]',
+  'for child in ./* ./.[!.]* ./..?*; do',
+  '  if [ -e "$child" ] || [ -L "$child" ]; then [ "$child" = ./node_modules ]; fi',
+  'done',
+  'if [ ! -e node_modules ] && [ ! -L node_modules ]; then exit 0; fi',
+  '[ -d node_modules ] && [ ! -L node_modules ]',
+  'rm -rf -- node_modules',
+  'printf "%s\n" removed',
+].join('\n');
+
 export async function repairRecoverableDevTargetSyncConflicts(
-  { target, status, sourceDir, stackBaseDir, env },
-  {
-    pathExists = existsSync,
-    runCommand = runDevTargetCommand,
-    runControl = runDevTargetControlProcess,
-  } = {},
+  { target, status, sourceDir, stackBaseDir, env, signal, onWait },
+  { runCommand = runDevTargetCommand, runControl = runDevTargetControlProcess } = {},
 ) {
-  if (target.platform !== 'posix') return { repaired: false, roots: [] };
-  const roots = resolveRecoverableReplicaArtifactConflictRoots(status?.session)
-    .filter((root) => !pathExists(join(sourceDir, root)));
-  if (roots.length === 0) return { repaired: false, roots: [] };
-  for (const root of roots) {
-    const result = await runCommand({
-      target,
-      stackBaseDir,
-      cwd: '.',
-      commandArgs: [
-        'sh',
-        '-ceu',
-        [
-          'repo=$1',
-          'relative=$2',
-          'shift 2',
-          'candidate="$repo/$relative"',
-          'if [ ! -e "$candidate" ] && [ ! -L "$candidate" ]; then exit 0; fi',
-          '[ -d "$candidate" ]',
-          'candidate_name=${candidate##*/}',
-          'found_marker=0',
-          'for marker in "$@"; do',
-          '  if [ "$candidate_name" = "$marker" ] || [ -e "$candidate/$marker" ] || [ -L "$candidate/$marker" ]; then',
-          '    found_marker=1',
-          '    break',
-          '  fi',
-          'done',
-          '[ "$found_marker" -eq 1 ]',
-          'rm -rf -- "$candidate"',
-        ].join('\n'),
-        'hstack-sync-repair',
-        target.repoDir,
-        root,
-        ...DEV_TARGET_DISPOSABLE_REPLICA_ARTIFACT_ROOTS,
-      ],
-      dependencyAdmission: 'skip',
-      syncAlreadyVerified: true,
-      env,
-    });
-    if (result?.code !== 0) {
-      throw new Error(
-        `[dev-targets] ${target.name} refused stale replica artifact repair for ${root}`,
-      );
-    }
+  if (target.platform !== 'posix' || (status && !recoverableNodeModulesRoots(status.session).length)) {
+    return { repaired: false, roots: [] };
   }
-  const runtime = resolveDevTargetMutagenRuntime({ stackBaseDir, sourceDir, env });
-  const sessionName = resolveMutagenSessionName(target.name, runtime.sourceDir);
-  for (const action of ['reset', 'flush']) {
-    const result = await runControl({
-      label: `sync:${target.name}`,
-      command: 'mutagen',
-      args: ['sync', action, sessionName],
-      env: runtime.env,
-    });
-    if (result?.code !== 0) {
-      throw new Error(`[dev-targets] ${target.name} synchronization ${action} failed after repair`);
+  return await withDevTargetSyncProjectLifecycleLock({ stackBaseDir, sourceDir, env, signal }, async () => {
+    const runtime = resolveDevTargetMutagenRuntime({ stackBaseDir, sourceDir, env });
+    const readSession = () => readDevTargetSyncProjectSession({ target, mutagenRuntime: runtime, signal }, { runProcess: runControl });
+    const current = await readSession();
+    const roots = current.conflictRoots?.length ? recoverableNodeModulesRoots(current.session) : [];
+    if (!roots.length) return { repaired: false, roots: [] };
+    const wait = { status: 'wait', code: 'stranded_replica_node_modules', target: target.name, paths: roots.map(root => `${root}/node_modules`) };
+    process.stderr.write(`[dev-targets] ${target.name} waiting for mirror repair: ${wait.paths.join(', ')}\n`);
+    try {
+      if (onWait) await onWait(wait);
+      const repaired = [];
+      for (const root of roots) {
+        if (!await sourcePackageIsAbsent({ sourceDir, root, signal })) continue;
+        const result = await runCommand({ target, stackBaseDir, sourceDir,
+          commandArgs: ['sh', '-ceu', removeStrandedNodeModules, 'hstack-sync-repair', target.repoDir, root],
+          syncAlreadyVerified: true, dependencyAdmission: 'skip', workspacePreparation: 'skip', provenance: 'skip',
+          silent: true, signal, env });
+        if (result?.code !== 0) throw new Error(`[dev-targets] ${target.name} refused stale replica artifact repair for ${root}`);
+        if (String(result.stdout ?? result.out ?? '').split(/\r?\n/).includes('removed')) {
+          process.stderr.write(`[dev-targets] ${target.name} removed ${root}/node_modules\n`);
+        }
+        repaired.push(root);
+      }
+      await flushDevTargetSync({ target, env: runtime.env, signal }, { runProcess: runControl });
+      const updated = await readSession();
+      assertUsableStatus(target, updated);
+      process.stderr.write(`[dev-targets] ${target.name} mirror repair wait ended after synchronization resumed\n`);
+      return { repaired: repaired.length > 0, roots: repaired };
+    } catch (error) {
+      process.stderr.write(`[dev-targets] ${target.name} mirror repair wait ended: ${error.message}\n`);
+      throw error;
     }
-  }
-  return { repaired: true, roots };
+  });
 }
 
 async function inspectAndRepairSync({

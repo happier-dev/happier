@@ -104,10 +104,10 @@ export function buildDevTargetControlLaunch({ command, args, syncFlushSession = 
 }
 
 export async function runDevTargetControlProcess(input, { capture = runCaptureResult } = {}) {
-  return await runDevTargetSshProcess(input, async ({ label, command, args, env, input: stdin, silent = false, syncFlushSession = null }) => {
+  return await runDevTargetSshProcess(input, async ({ label, command, args, env, input: stdin, silent = false, syncFlushSession = null, signal }) => {
     const launch = buildDevTargetControlLaunch({ command, args, syncFlushSession });
     const result = await capture(launch.command, launch.args, {
-      env, input: stdin, streamLabel: silent ? undefined : label, stdoutDiagnosticStream: process.stderr,
+      env, signal, input: stdin, streamLabel: silent ? undefined : label, stdoutDiagnosticStream: process.stderr,
     });
     return { ...result, code: result.exitCode };
   });
@@ -118,20 +118,29 @@ function requireSuccessful(result, description) {
   throw new Error(`[dev-targets] ${description} failed (code=${String(result?.code ?? 'unknown')})`);
 }
 
-async function withDevTargetSyncProjectLifecycleLock(
-  { stackBaseDir, sourceDir, env = process.env },
+export async function withDevTargetSyncProjectLifecycleLock(
+  { stackBaseDir, sourceDir, env = process.env, signal },
   fn,
 ) {
   const { mutagenDir } = resolveDevTargetMutagenRuntime({ stackBaseDir, sourceDir, env });
   return await withJsonOwnerFileLock(fn, {
     // The live lifecycle owner, not a competing acquisition deadline, decides
     // when the project may be mutated. Only ownerless stale locks are reclaimed.
-    lockPath: join(mutagenDir, 'hstack-lifecycle.lock'),
+    lockPath: join(mutagenDir, 'hstack-lifecycle.lock'), signal,
     timeoutMs: Infinity,
     pollIntervalMs: 125,
     staleAfterMs: DEV_TARGET_SYNC_PROJECT_LIFECYCLE_LOCK_STALE_AFTER_MS,
     errorLabel: 'dev-target synchronization project lifecycle lock',
   });
+}
+
+export async function readDevTargetSyncProjectSession({ target, mutagenRuntime, signal },
+  { runProcess = runDevTargetControlProcess } = {}) {
+  const sessionName = resolveMutagenSessionName(target.name, mutagenRuntime.sourceDir);
+  const result = await runProcess({ label: `sync:${target.name}`, command: 'mutagen',
+    args: ['sync', 'list', sessionName, '--template', MUTAGEN_SYNC_LIST_JSON_TEMPLATE], env: mutagenRuntime.env, signal });
+  signal?.throwIfAborted();
+  return result?.code === 0 ? parseMutagenSyncList(result.out, sessionName) : { state: 'unavailable' };
 }
 
 async function inspectBorrowedIndependentDevTargetSyncProject(
@@ -146,21 +155,8 @@ async function inspectBorrowedIndependentDevTargetSyncProject(
   }), 'independent Mutagen project status');
   const unhealthyTargets = new Map();
   for (const target of requiredTargets) {
-    const sessionName = resolveMutagenSessionName(target.name, mutagenRuntime.sourceDir);
-    const result = await runProcess({
-      label: `sync:${target.name}`,
-      command: 'mutagen',
-      args: ['sync', 'list', sessionName, '--template', MUTAGEN_SYNC_LIST_JSON_TEMPLATE],
-      env: mutagenRuntime.env,
-    });
-    // The borrowed project's owner keeps synchronizing while a target is
-    // unavailable. Let its consumer supervisor recover that target alongside
-    // healthy services instead of failing the entire project admission.
-    if (result?.code !== 0) {
-      unhealthyTargets.set(target.name, 'unavailable');
-      continue;
-    }
-    const status = parseMutagenSyncList(result.out, sessionName);
+    // Let consumers observe unhealthy targets independently of their peers.
+    const status = await readDevTargetSyncProjectSession({ target, mutagenRuntime }, { runProcess });
     if (status.state !== 'ready' && status.state !== 'synchronizing' && status.state !== 'needs-flush') {
       unhealthyTargets.set(target.name, status.state);
     }
@@ -182,7 +178,7 @@ export async function resumeDevTargetSync(
 }
 
 export async function flushDevTargetSync(
-  { target, env },
+  { target, env, signal },
   { runProcess = runDevTargetControlProcess } = {},
 ) {
   const result = await runProcess({
@@ -190,8 +186,9 @@ export async function flushDevTargetSync(
     command: 'mutagen',
     args: ['sync', 'flush', resolveMutagenSessionName(target.name, env?.HAPPIER_STACK_SYNC_SOURCE_DIR)],
     syncFlushSession: resolveMutagenSessionName(target.name, env?.HAPPIER_STACK_SYNC_SOURCE_DIR),
-    env,
+    env, signal,
   });
+  signal?.throwIfAborted();
   requireSuccessful(result, `${target.name} Mutagen initial flush`);
 }
 

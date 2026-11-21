@@ -86,9 +86,9 @@ export async function checkRevisionOnBed({ repoDir, stackName, revision, env = p
   // fail at sign-in, which says nothing about this revision.
   if (!existsSync(join(bedDir, 'qa-bed', 'seed.json'))) return { status: 'UNAVAILABLE', code: 'checker_bed_not_seeded' };
   // An uncommitted lockfile refuses every committed-revision reload; that says nothing about this revision.
-  const { refuseWorkingLockfileDrift } = await import('../runtime/launch/reloadLockfilePreflight.mjs');
-  try { await refuseWorkingLockfileDrift({ repoDir }); }
-  catch (error) { if (error.code === 'working_lockfile_differs_from_head') return { status: 'UNAVAILABLE', code: error.code }; throw error; }
+  const { preflightWorkingDependencyInputs } = await import('../runtime/launch/reloadLockfilePreflight.mjs');
+  try { await preflightWorkingDependencyInputs({ repoDir }); }
+  catch (error) { if (error.status === 'wait') return { status: 'UNAVAILABLE', code: error.code }; throw error; }
   // The bed's own env selects everything; a committer's stack selection (HAPPIER_STACK_*) must not leak in.
   const childEnv = Object.fromEntries(Object.entries(env).filter(([name]) => !/^(GIT_(INDEX_FILE|DIR|WORK_TREE|COMMON_DIR)|HAPPIER_STACK_)/.test(name)
     || name === 'HAPPIER_STACK_STORAGE_DIR'));
