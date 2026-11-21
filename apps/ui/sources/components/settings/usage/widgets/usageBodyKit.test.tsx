@@ -26,24 +26,31 @@ import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { usageSourceAgentId } from '@/sync/domains/usage/usageLabels';
 import { clearProjectedAgentUiBehaviorDescriptors, publishProjectedAgentUiBehaviorDescriptors } from '@/agents/registry/agentUiBehaviorProjection';
 import { isUsageObservationFromEarlierDay } from '@/sync/domains/usage/usageCalendarPresentation';
-import { describeUsagePageFailedSources, describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsagePageFreshness, readUsageCoverageGaps, isUsageReadOutstanding, UsageCoverageLine, usageCoverageDescription, usageCoverageLineMode, usageCoverageSummary, usagePeriodPhrase, usageDimensionLabel, usageAgentTitle, usageSourceTitle, useUsageAnalyticsView } from './usageBodyKit';
+import { describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsagePageFailure, readUsagePageFreshness, readUsageCoverageGaps, isUsageReadOutstanding, UsageCoverageLine, usageCoverageDescription, usageCoverageLineMode, usageCoverageSummary, usagePeriodPhrase, usageDimensionLabel, usageAgentTitle, usageSourceTitle, useUsageAnalyticsView } from './usageBodyKit';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 
 describe('the page failure fact', () => {
-  it('says a Work-only failure quietly and leaves other failures as failures', async () => {
-    const { describeUsagePageFailedSources, isUsagePageFailureOnlyWork } = await import('./usageBodyKit');
+  it('says a Work-only failure quietly and leaves other failures as failures', () => {
     const work = [{ sources: [{ source: 'work', status: 'error', errorCode: 'work_evidence_failed' }] }] as never;
-    expect(isUsagePageFailureOnlyWork(work)).toBe(true);
-    expect(describeUsagePageFailedSources(work)).toBe(t('usage.board.page.workNotRead'));
+    expect(readUsagePageFailure(work)).toMatchObject({ quiet: true, reason: t('usage.board.page.workNotRead') });
     const accounting = [{ sources: [{ source: 'accounting', status: 'error' }, { source: 'work', status: 'error' }] }] as never;
-    expect(isUsagePageFailureOnlyWork(accounting)).toBe(false);
+    expect(readUsagePageFailure(accounting)?.quiet).toBe(false);
   });
-  it('keeps a Work failure beside partially read activity quiet: every figure still stands (R135 item 12)', async () => {
-    const { isUsagePageFailureOnlyWork } = await import('./usageBodyKit');
+  it('keeps a Work failure beside partially read activity quiet: every figure still stands (R135 item 12)', () => {
     const both = [{ sources: [{ source: 'work', status: 'error' }, { source: 'how_you_work', status: 'partial' }] }] as never;
-    expect(isUsagePageFailureOnlyWork(both)).toBe(true);
+    expect(readUsagePageFailure(both)?.quiet).toBe(true);
+  });
+  it('states a quota ownership refusal once and only offers Retry for an independently recoverable failure', () => {
+    const refusal = { source: 'quota:work', status: 'error', errorCode: 'ownership_unproven' } as const;
+    const reason = t('connectedServices.errors.quotaOwnershipUnproven', {});
+    expect(readUsagePageFailure([{ sources: [refusal] }, { sources: [refusal] }])).toMatchObject({ reason, retryable: false });
+    const quota = { source: 'quota:other', status: 'stale', errorCode: 'provider_account_usage_read_failed', asOfMs: 100 } as const;
+    const failure = readUsagePageFailure([{ sources: [quota, refusal] }]);
+    expect(failure).toMatchObject({ retryable: true, retainedQuotaAsOfMs: 100 });
+    expect(failure?.reason).toContain(reason);
+    expect(failure?.reason).toContain(t('usage.board.page.coverageFailed', { sources: usageSourceTitle('quota') }));
   });
 });
 
@@ -434,12 +441,12 @@ describe('shared Usage identity and dependent coverage', () => {
             { source: 'how_you_work', status: 'error', errorCode: 'update_required', updateRequired: server }]);
         const newer = t('usage.board.page.coverageNeedsNewerServer', { sources: usageSourceTitle('how_you_work') });
         // The page header: the unsupported detail is named once as needing a newer server, never as a failed read.
-        expect.soft(describeUsagePageFailedSources([upgrade])).toBeNull();
+        expect.soft(readUsagePageFailure([upgrade])).toBeNull();
         expect.soft(describeUsagePageNewerServerSources([upgrade])).toBe(newer);
         // Another component's requirement keeps the ordinary failure wording (it is not relabelled as a server update).
         const clientSlice = slice([{ source: 'how_you_work', status: 'error', errorCode: 'update_required', updateRequired: client }]);
         expect.soft(describeUsagePageNewerServerSources([clientSlice])).toBeNull();
-        expect.soft(describeUsagePageFailedSources([clientSlice])).toBe(t('usage.board.page.coverageFailed', { sources: usageSourceTitle('how_you_work') }));
+        expect.soft(readUsagePageFailure([clientSlice])?.reason).toBe(t('usage.board.page.coverageFailed', { sources: usageSourceTitle('how_you_work') }));
         // A body's own line off the Usage page: the same sentence, and no Retry, because retrying cannot help.
         const onRetry = vi.fn();
         const screen = await renderScreen(<UsageCoverageLine slice={upgrade} sources={['how_you_work']} onRetry={onRetry} testID="upgrade-coverage" />);
@@ -482,11 +489,11 @@ describe('shared Usage identity and dependent coverage', () => {
     });
     it('names a failed page read once for the header, never a widget-own read', () => {
         const slice = (sources: readonly { source: string; status: string }[]) =>
-            ({ sources }) as unknown as Parameters<typeof describeUsagePageFailedSources>[0][number];
-        expect(describeUsagePageFailedSources([slice([{ source: 'work', status: 'error' }]), slice([{ source: 'work', status: 'error' }])]))
+            ({ sources }) as unknown as Parameters<typeof readUsagePageFailure>[0][number];
+        expect(readUsagePageFailure([slice([{ source: 'work', status: 'error' }]), slice([{ source: 'work', status: 'error' }])])?.reason)
             .toBe(t('usage.board.page.workNotRead'));
-        expect(describeUsagePageFailedSources([slice([{ source: 'comparison', status: 'error' }])])).toBeNull();
-        expect(describeUsagePageFailedSources([slice([{ source: 'work', status: 'pending' }])])).toBeNull();
+        expect(readUsagePageFailure([slice([{ source: 'comparison', status: 'error' }])])).toBeNull();
+        expect(readUsagePageFailure([slice([{ source: 'work', status: 'pending' }])])).toBeNull();
     });
     it('says a settled partial activity read once for the header, never while it is still reading', () => {
         const slice = (sources: readonly { source: string; status: string }[]) =>
@@ -507,7 +514,7 @@ describe('shared Usage identity and dependent coverage', () => {
         // Beside a failed read, the one "Couldn't read" fact names both and says "Showing what arrived" once.
         const both = [slice([{ source: 'work', status: 'error' }, { source: 'how_you_work', status: 'partial' }])];
         expect(describeUsagePagePartialSources(both)).toBeNull();
-        expect(describeUsagePageFailedSources(both)).toBe(t('usage.board.page.coverageFailedWitnessed', {
+        expect(readUsagePageFailure(both)?.reason).toBe(t('usage.board.page.coverageFailedWitnessed', {
             sources: usageSourceTitle('work'), witnessed: usageSourceTitle('how_you_work') }));
     });
     it('keeps admitted sources quiet during background refresh while naming an unanswered sibling', () => {

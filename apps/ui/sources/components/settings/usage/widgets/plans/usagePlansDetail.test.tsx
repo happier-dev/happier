@@ -1175,8 +1175,23 @@ it("lists a pool in the selector's own order and builds the why detail from its 
   await act(async () => { await comparisonEntry.refresh(); });
   expect.soft(screen.findHostByTestId(`${comparison}.candidate.work`), 'a failed replacement keeps the admitted comparison').toBeTruthy();
   expect.soft(screen.getTextContent()).toContain(t('usage.board.plans.usedFirstReadFailed'));
+  const { createCanonicalJsonSigningInput } = await import('@happier-dev/protocol/crypto/canonicalJson');
+  const failedQuotaSource = `quota:${createCanonicalJsonSigningInput(quota[0]!.source)}`;
+  const retryQuota = vi.fn(async () => {});
+  const failedQuotaSlice = { ...props.slice, sources: [...props.slice.sources.filter(source => source.source !== failedQuotaSource),
+    { source: failedQuotaSource, status: 'stale' as const, errorCode: 'provider_account_usage_read_failed', asOfMs: now }] };
+  await screen.update(<InjectedAuthProvider credentials={credentials}><UsageCapacityWidget {...props} slice={failedQuotaSlice}
+    model={{ ...props.model, refresh: retryQuota }} serverId={home.id} id="usage_capacity" testID="cap" /></InjectedAuthProvider>);
+  const retryControls = () => screen.findAll(node => typeof node.type === 'string' && node.props.accessibilityLabel === t('common.retry'));
+  expect(retryControls().map(node => node.props.testID).sort()).toEqual(['cap.state-action', `${comparison}.failed-action`]);
+  expect(screen.findAllByType(SurfaceFreshnessLine).find(node => node.props.testID === 'cap.state')?.props)
+    .toMatchObject({ tone: 'warning', asOf: now });
+  await screen.pressByTestIdAsync('cap.state-action');
+  expect(retryQuota).toHaveBeenCalledTimes(1);
   comparisonUnavailable = false;
-  await invokePlanCommand(t('common.retry'));
+  await screen.pressByTestIdAsync(`${comparison}.failed-action`);
+  expect(retryQuota).toHaveBeenCalledTimes(1);
+  expect(retryControls().map(node => node.props.testID)).toEqual(['cap.state-action']);
   expect(screen.findHostByTestId(`${comparison}.candidate.work`)).toBeTruthy();
   await invokePlanCommand(`${t('usage.board.plans.whyTitle')}: ${t('common.close')}`);
   expect(screen.findByTestId('cap.usedFirst.pool.why.detail')).toBeNull();
@@ -1344,6 +1359,7 @@ it.each([
     const line = screen.findAllByType(SurfaceFreshnessLine).find(node => node.props.testID === id);
     expect.soft(line?.props.reason).toMatch(/Vercel/);
     expect.soft(line?.props.reason).toMatch(/ownership/i);
+    expect.soft(line?.props.action).toBeUndefined();
   }
   expect.soft(screen.findByTestId('cap.none')).toBeFalsy();
   expect.soft(screen.findByTestId('fit.none')).toBeFalsy();

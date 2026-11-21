@@ -111,12 +111,15 @@ describe('readPlanAccountsStatement', () => {
 
 describe('planAccountStatesMode', () => {
   it('holds a body with nothing to draw on the first-load skeleton while the page header names the pending read', () => {
-    expect(planAccountStatesMode('pending', true, true)).toBe('reading');
+    const quota = [{ source: 'quota:work', status: 'pending' as const }];
+    expect(planAccountStatesMode('pending', true, true, quota)).toBe('reading');
     // Beside other content the header's mention is enough, and a host without the header keeps the line.
-    expect(planAccountStatesMode('pending', true, false)).toBe('hidden');
-    expect(planAccountStatesMode('pending', false, true)).toBe('line');
+    expect(planAccountStatesMode('pending', true, false, quota)).toBe('hidden');
+    expect(planAccountStatesMode('pending', false, true, quota)).toBe('line');
   });
-  it('keeps a failed read as its line with Retry, never a skeleton', () => {
-    expect(planAccountStatesMode('failed', true, true)).toBe('line');
+  it('lets the page carry a shared quota failure and keeps a standalone failure as a line', () => {
+    const quota = [{ source: 'quota:work', status: 'error' as const }];
+    expect(planAccountStatesMode('failed', true, true, quota)).toBe('hidden');
+    expect(planAccountStatesMode('failed', false, true, quota)).toBe('line');
   });
 });

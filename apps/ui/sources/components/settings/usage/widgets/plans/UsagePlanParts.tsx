@@ -24,10 +24,13 @@ import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { formatResetCountdown, formatResetCountdownPhrase } from '@/sync/domains/connectedServices/formatResetCountdown';
 import { t } from '@/text';
 import { connectedServicePoolExclusionText } from '@/components/sessions/connectedServices/diagnostics/poolExclusionPresentation';
-import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import type { UsageQueryResultSlice, UsageQuerySourceState } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import {
   UsageBodyInsufficient,
   UsageCoverageLine,
+  canRetryUsageCoverageFailure,
+  isUsageCoverageFailure,
+  isUsageQuotaOwnershipUnproven,
   readUsageCoverageGaps,
   usageCoverageLineMode,
   usagePartialHistoryLabel,
@@ -45,13 +48,13 @@ import { formatMoment } from '@/utils/datetime/formatMoment';
 type PlanAccountReadKind = 'failed' | 'pending' | 'partial';
 
 function isOwnershipUnproven(account: UsagePlanAccount): boolean {
-  return account.state.status === 'error' && account.state.errorCode === 'ownership_unproven';
+  return isUsageQuotaOwnershipUnproven(account.state);
 }
 
 /** One account's read; a current, complete read says nothing. */
 function planAccountReadKind(account: UsagePlanAccount): PlanAccountReadKind | null {
   const status = account.state.status;
-  if (status === 'error') return 'failed';
+  if (isUsageCoverageFailure(account.state)) return 'failed';
   if (status === 'pending') return 'pending';
   if (account.read?.current && account.observedAtMs !== null && status !== 'stale') return null;
   return 'partial';
@@ -70,7 +73,7 @@ export function readPendingPlanAccountCount(accounts: readonly UsagePlanAccount[
 export function readPlanAccountsStatement(
   accounts: readonly UsagePlanAccount[],
   nameOf: (account: UsagePlanAccount) => UsagePlanAccountName,
-): Readonly<{ kind: PlanAccountReadKind; reason: string; asOf: number | null; accounts: number }> | null {
+): Readonly<{ kind: PlanAccountReadKind; reason: string; asOf: number | null; accounts: number; canRetry: boolean }> | null {
   const ownershipNames: string[] = [];
   const affected: { account: UsagePlanAccount; kind: PlanAccountReadKind }[] = [];
   for (const account of accounts) {
@@ -105,20 +108,23 @@ export function readPlanAccountsStatement(
     reason: reasons.join(' · '),
     asOf: times.length ? Math.min(...times) : null,
     accounts: affected.length + ownershipNames.length,
+    canRetry: ownershipNames.length > 0 || kind === 'failed'
+      ? affected.some(({ account }) => canRetryUsageCoverageFailure(account.state))
+      : kind === 'partial',
   };
 }
 
 /**
- * The Usage page names partial and pending reads once in its header and Sources, so a body keeps only
- * failures. A pending read of a body with nothing else to draw holds the body's room with the first-load
- * skeleton instead: the header never sits over a blank card.
+ * The header states the page's shared read. A first read still in flight can use
+ * a skeleton to hold the body's room while the header says what it is waiting for.
  */
 export function planAccountStatesMode(
   kind: PlanAccountReadKind,
   pageHasDetail: boolean,
   replacesContent: boolean,
+  sources: readonly UsageQuerySourceState[],
 ): 'line' | 'reading' | 'hidden' {
-  if (usageCoverageLineMode([{ status: kind === 'failed' ? 'error' : kind }], pageHasDetail) !== 'hidden') return 'line';
+  if (!pageHasDetail || usageCoverageLineMode(sources, pageHasDetail) !== 'hidden') return 'line';
   return kind === 'pending' && replacesContent ? 'reading' : 'hidden';
 }
 
@@ -162,8 +168,9 @@ export function UsagePlanAccountStates(props: Readonly<{
 }>) {
   const pageHasDetail = useUsageWidgetPageHasCoverageDetail();
   const statement = readPlanAccountsStatement(props.accounts, props.nameOf);
-  const mode = statement ? planAccountStatesMode(statement.kind, pageHasDetail, props.replacesContent === true) : 'hidden';
-  const retry = useUsageRetryCommand(props.onRetry, !!statement && statement.kind !== 'pending' && mode !== 'hidden' && mode !== 'reading');
+  const mode = statement ? planAccountStatesMode(statement.kind, pageHasDetail, props.replacesContent === true,
+    props.accounts.map(account => account.state)) : 'hidden';
+  const retry = useUsageRetryCommand(props.onRetry, mode === 'line' && statement?.canRetry === true);
   if (statement?.kind === 'pending' && props.pendingInHeadline) {
     // Holds the room the settled coverage line takes. The Usage page names coverage once in its header and
     // draws no such line when settled, so it holds none (else the body would shrink by the line at settle).
@@ -177,7 +184,7 @@ export function UsagePlanAccountStates(props: Readonly<{
   const pending = statement.kind === 'pending';
   return <SurfaceFreshnessLine testID={props.testID} asOf={statement.asOf} reason={statement.reason} busy={pending}
     tone={statement.kind === 'failed' ? 'warning' : 'neutral'}
-    {...(!pending ? { action: { label: t('common.retry'), onPress: retry } } : {})} />;
+    {...(statement.canRetry ? { action: { label: t('common.retry'), onPress: retry } } : {})} />;
 }
 
 export function formatPlanPercent(fraction: number): string {

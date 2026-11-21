@@ -79,7 +79,7 @@ import {
 } from './widgets/usageWidgetBatch';
 import { useOpenNewSession } from '@/components/sessions/new/navigation/newSessionEntry';
 import type { UsagePageHistoryFact } from './useUsageWidgetPageContext';
-import { describeUsagePageFailedSources, isUsagePageFailureOnlyWork, describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsageCoverageGaps, readUsagePageFreshness, readUsagePageWorkOffline, usageSourceTitle } from './widgets/usageBodyKit';
+import { describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsageCoverageGaps, readUsagePageFailure, readUsagePageFreshness, readUsagePageWorkOffline, usageSourceTitle } from './widgets/usageBodyKit';
 
 const PRESET_ICON: Readonly<Record<UsageWidgetPresetId, IconName>> = {
   overview: 'squares-four',
@@ -399,7 +399,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
     costBasisOptions,
     filterCommands,
     selectLayout: selectAreaLayout,
-    retryRead: facts.failed && pageReadRetry ? pageReadRetry : undefined,
+    retryRead: facts.failure?.retryable && pageReadRetry ? pageReadRetry : undefined,
     retryLayouts: homeUnavailable ? undefined : bar.readFailure?.retry,
     history: historyRead,
   });
@@ -534,8 +534,7 @@ function readUsagePageFacts(slices: readonly UsageQueryResultSlice[], needsFilte
     filterFallback: needsFilterFallback ? slices : null,
     facts: {
       pending: describeUsagePagePendingSources(slices),
-      failed: describeUsagePageFailedSources(slices),
-      failedQuiet: isUsagePageFailureOnlyWork(slices),
+      failure: readUsagePageFailure(slices),
       newerServer: describeUsagePageNewerServerSources(slices),
       workOffline: readUsagePageWorkOffline(slices),
       partial: describeUsagePagePartialSources(slices),
@@ -581,14 +580,14 @@ function resolveUsagePageNotice(
   layouts: Readonly<{ retry: () => void }> | null | undefined,
   startSession: () => void,
 ): UsagePageNotice | null {
-  const { pending, failed, failedQuiet, newerServer, partial } = facts;
-  if (failed) {
-    return { testID: 'usage-page.header.failed', reason: failed, tone: failedQuiet ? 'neutral' : 'warning',
+  const { pending, failure, newerServer, partial } = facts;
+  if (failure) {
+    return { testID: 'usage-page.header.failed', reason: failure.reason, tone: failure.quiet ? 'neutral' : 'warning',
       // The page still shows what arrived: on a phone the line says "Partial" with Details beside its Retry (#9).
       short: t('usage.board.charts.coveragePartialShort'),
       // The one Retry, which also rereads the views and Sessions that failed: bodies with nothing to draw only
       // say they were not read (`UsageBodyReadFailed`).
-      ...(retry ? { action: { label: t('common.retry'), onPress: retry, testID: 'usage-page.header.retry' } } : {}) };
+      ...(failure.retryable && retry ? { action: { label: t('common.retry'), onPress: retry, testID: 'usage-page.header.retry' } } : {}) };
   }
   if (layouts) {
     return { testID: 'usage-page.header.viewsFailed', reason: t('usage.board.page.viewsReadFailed'), tone: 'warning',
@@ -684,7 +683,7 @@ function UsagePageHeader(
           presentation={shortened || expanded ? 'line' : 'inline'}
           {...(expanded ? { glyph: 'clock' as const } : {})}
           testID={testID}
-          asOf={props.facts.observedAtMs}
+          asOf={props.facts.failure?.retainedQuotaAsOfMs ?? props.facts.observedAtMs}
           reason={reason}
           tone={resolved?.tone}
           {...(resolved?.busy ? { busy: true } : {})}

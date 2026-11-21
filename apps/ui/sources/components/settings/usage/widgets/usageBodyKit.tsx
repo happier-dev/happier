@@ -777,10 +777,11 @@ export function readUsageCoverageGaps(
   return [...unique.values()];
 }
 
-type UsageCoverageStatus = Pick<UsageQuerySourceState, 'status' | 'errorCode'> & { source?: string };
+type UsageCoverageStatus = Pick<UsageQuerySourceState, 'source' | 'status' | 'errorCode'>;
 
-function isUsageCoverageFailure(source: UsageCoverageStatus): boolean {
-  return source.status === 'error' || source.source === 'work' && source.errorCode === 'work_evidence_failed';
+export function isUsageCoverageFailure(source: UsageCoverageStatus): boolean {
+  return source.status === 'error' || source.source === 'work' && source.errorCode === 'work_evidence_failed'
+    || source.status === 'stale' && source.errorCode !== undefined && usagePageReadFamily(source.source) === 'quota';
 }
 
 function isUsageWorkOffline(source: UsageQuerySourceState): boolean {
@@ -856,6 +857,14 @@ function needsNewerServer(gap: Pick<UsageQuerySourceState, 'status' | 'updateReq
   return gap.status === 'error' && gap.updateRequired?.component === 'server';
 }
 
+export function isUsageQuotaOwnershipUnproven(state: UsageQuerySourceState): boolean {
+  return usagePageReadFamily(state.source) === 'quota' && state.errorCode === 'ownership_unproven';
+}
+
+export function canRetryUsageCoverageFailure(state: UsageQuerySourceState): boolean {
+  return isUsageCoverageFailure(state) && !needsNewerServer(state) && !isUsageQuotaOwnershipUnproven(state);
+}
+
 /** One wording owner for the page's Sources chooser and the failed or pending line. */
 export function usageCoverageDescription(slice: UsageQueryResultSlice, sources: readonly string[]): string {
   const gaps = readUsageCoverageGaps(slice, sources);
@@ -863,11 +872,12 @@ export function usageCoverageDescription(slice: UsageQueryResultSlice, sources: 
   const nameGaps = (list: readonly UsageQuerySourceState[]) => [...new Set(list.map(gap => gap.status === 'unsupported'
     ? `${usageSourceTitle(gap.source)} (${t('usage.board.sources.unsupported')})` : usageSourceTitle(gap.source)))].join(', ');
   const newer = gaps.filter(needsNewerServer);
-  const rest = gaps.filter(gap => !needsNewerServer(gap) && !isUsageWorkOffline(gap));
+  const rest = gaps.filter(gap => !needsNewerServer(gap) && !isUsageWorkOffline(gap) && !isUsageQuotaOwnershipUnproven(gap));
   const reasons = sources.includes('accounting')
     ? [...new Set(slice.accounting?.coverage?.reasons ?? [])].map(reason => t(COVERAGE_REASON_KEYS[reason])) : [];
   return [
     ...(rest.length ? [formatUsageCoverageHeadline(rest, nameGaps(rest))] : []),
+    ...(gaps.some(isUsageQuotaOwnershipUnproven) ? [t('connectedServices.errors.quotaOwnershipUnproven', {})] : []),
     ...(gaps.some(isUsageWorkOffline) ? [t('usage.board.page.workMachinesOffline')] : []),
     ...(newer.length ? [t('usage.board.page.coverageNeedsNewerServer', { sources: nameGaps(newer) })] : []),
     ...reasons,
@@ -883,9 +893,9 @@ export type UsageCoverageLineMode = 'hidden' | 'failed' | 'detail';
  */
 export function usageCoverageLineMode(gaps: readonly UsageCoverageStatus[], pageHasDetail: boolean): UsageCoverageLineMode {
   if (gaps.length === 0) return 'hidden';
-  // A failed page read is said once by the page header (`describeUsagePageFailedSources`); only a
+  // A failed page read is said once by the page header; only a
   // widget's own failed read (a comparison, a pool selection) keeps its line beside the body.
-  const ownFailure = gaps.some(gap => isUsageCoverageFailure(gap) && !(gap.source !== undefined && isUsagePageReadSource(gap.source)));
+  const ownFailure = gaps.some(gap => isUsageCoverageFailure(gap) && !isUsagePageReadSource(gap.source));
   if (gaps.some(isUsageCoverageFailure)) return pageHasDetail ? ownFailure ? 'failed' : 'hidden' : 'detail';
   return pageHasDetail ? 'hidden' : 'detail';
 }
@@ -901,10 +911,8 @@ function isUsagePageReadSource(source: string): boolean {
   return USAGE_PAGE_READ_SOURCES.has(usagePageReadFamily(source));
 }
 
-function readUsagePageFailedNames(slices: readonly Pick<UsageQueryResultSlice, 'sources'>[], newerServer = false): string[] {
-  return [...new Set(slices.flatMap(slice => slice.sources
-    .filter(source => isUsageCoverageFailure(source) && isUsagePageReadSource(source.source) && needsNewerServer(source) === newerServer)
-    .map(source => usageSourceTitle(usagePageReadFamily(source.source)))))];
+function readUsagePageFailures(slices: readonly Pick<UsageQueryResultSlice, 'sources'>[]): UsageQuerySourceState[] {
+  return slices.flatMap(slice => slice.sources.filter(source => isUsageCoverageFailure(source) && isUsagePageReadSource(source.source)));
 }
 
 /** Whether this Home's server is too old to answer one page read (`how_you_work`, `work`): a figure that read fills says so, not "not measured yet". */
@@ -914,31 +922,30 @@ export function readUsageSourceNeedsNewerServer(slice: Pick<UsageQueryResultSlic
 
 /** The page header's one "Reading … needs a newer server" fact: shared reads this Home's server is too old for. */
 export function describeUsagePageNewerServerSources(slices: readonly Pick<UsageQueryResultSlice, 'sources'>[]): string | null {
-  const names = readUsagePageFailedNames(slices, true);
+  const names = [...new Set(readUsagePageFailures(slices).filter(needsNewerServer).map(source => usageSourceTitle(usagePageReadFamily(source.source))))];
   return names.length ? t('usage.board.page.coverageNeedsNewerServer', { sources: names.join(', ') }) : null;
 }
 
 /**
- * The page header's one "Couldn't read …" fact: every shared read that failed, named once for the page. A read
- * that settled with only some Sessions' evidence joins the same sentence, so "Showing what arrived" is said once.
+ * One notice for failed reads owned by the page. The same typed failures decide its
+ * wording, recovery, and the time of any retained quota reading.
  */
-/**
- * Only Work's linked pull requests and branches went unread: every figure still stands, so the page says it quietly,
- * with its Retry. Activity read from only some Sessions joins the same quiet line; it shows what arrived (R135 item 12).
- */
-export function isUsagePageFailureOnlyWork(slices: readonly Pick<UsageQueryResultSlice, 'sources' | 'howYouWork'>[]): boolean {
-  const failed = slices.flatMap(slice => slice.sources.filter(source => isUsageCoverageFailure(source) && isUsagePageReadSource(source.source)));
-  return failed.length > 0 && failed.every(source => source.source === 'work');
-}
-
-export function describeUsagePageFailedSources(slices: readonly Pick<UsageQueryResultSlice, 'sources' | 'howYouWork'>[]): string | null {
-  const names = readUsagePageFailedNames(slices);
-  if (!names.length) return null;
+export function readUsagePageFailure(slices: readonly Pick<UsageQueryResultSlice, 'sources' | 'howYouWork'>[]) {
+  const failures = readUsagePageFailures(slices);
+  const retryable = failures.filter(canRetryUsageCoverageFailure);
+  const ownershipUnproven = failures.some(isUsageQuotaOwnershipUnproven);
+  if (!retryable.length && !ownershipUnproven) return null;
+  const quiet = failures.every(source => source.source === 'work');
+  const names = [...new Set(retryable.map(source => usageSourceTitle(usagePageReadFamily(source.source))))].join(', ');
   const witnessed = readUsagePageWitnessedNames(slices);
-  if (isUsagePageFailureOnlyWork(slices) && witnessed.length === 0) return t('usage.board.page.workNotRead');
-  return witnessed.length
-    ? t('usage.board.page.coverageFailedWitnessed', { sources: names.join(', '), witnessed: witnessed.join(', ') })
-    : t('usage.board.page.coverageFailed', { sources: names.join(', ') });
+  const reason = [
+    ...(names ? [quiet && !witnessed.length ? t('usage.board.page.workNotRead') : witnessed.length
+      ? t('usage.board.page.coverageFailedWitnessed', { sources: names, witnessed: witnessed.join(', ') })
+      : t('usage.board.page.coverageFailed', { sources: names })] : []),
+    ...(ownershipUnproven ? [t('connectedServices.errors.quotaOwnershipUnproven', {})] : []),
+  ].join(' · ');
+  const quotaTimes = retryable.flatMap(source => usagePageReadFamily(source.source) === 'quota' && source.asOfMs !== undefined ? [source.asOfMs] : []);
+  return { reason, quiet, retryable: retryable.length > 0, retainedQuotaAsOfMs: quotaTimes.length ? Math.min(...quotaTimes) : null };
 }
 
 /**
@@ -959,7 +966,7 @@ function readUsagePageWitnessedNames(slices: readonly Pick<UsageQueryResultSlice
 /** Said alone only when no page read failed; otherwise the failed fact carries it. */
 export function describeUsagePagePartialSources(slices: readonly Pick<UsageQueryResultSlice, 'sources' | 'howYouWork'>[]): string | null {
   const names = readUsagePageWitnessedNames(slices);
-  if (!names.length || readUsagePageFailedNames(slices).length) return null;
+  if (!names.length || readUsagePageFailures(slices).some(state => !needsNewerServer(state))) return null;
   return t('usage.board.page.coverageWitnessed', { sources: names.join(', ') });
 }
 
@@ -1029,7 +1036,8 @@ export function UsageCoverageLine(
   const gaps = readUsageCoverageGaps(props.slice, props.sources);
   const mode = usageCoverageLineMode(gaps, pageHasDetail);
   const failed = mode === 'failed' || gaps.some(gap => isUsageCoverageFailure(gap) && !needsNewerServer(gap));
-  const retry = useUsageRetryCommand(callerContext => props.onRetry?.(callerContext), mode !== 'hidden' && failed && !!props.onRetry);
+  const canRetry = gaps.some(canRetryUsageCoverageFailure) && !!props.onRetry;
+  const retry = useUsageRetryCommand(callerContext => props.onRetry?.(callerContext), mode !== 'hidden' && canRetry);
   if (mode === 'hidden') return null;
   if (mode === 'failed') {
     // One short line: what failed, with its Retry; the detail is in Sources.
@@ -1039,7 +1047,7 @@ export function UsageCoverageLine(
         testID={props.testID}
         tone="warning"
         reason={t('usage.board.page.coverageFailed', { sources: names })}
-        {...(props.onRetry ? { action: { label: t('common.retry'), onPress: retry } } : {})}
+        {...(canRetry ? { action: { label: t('common.retry'), onPress: retry } } : {})}
       />
     );
   }
@@ -1061,7 +1069,7 @@ export function UsageCoverageLine(
       busy={pending}
       tone={failed ? 'warning' : 'neutral'}
       reason={[...(asOf === null ? [] : [t('usage.board.page.oldestSourceUpdate', { time: formatUsageObservedAt(asOf) })]), usageCoverageSummary(props.slice, props.sources)].join(' · ')}
-      {...(failed && props.onRetry
+      {...(canRetry
         ? { action: { label: t('common.retry'), onPress: retry } }
         : {})}
     />

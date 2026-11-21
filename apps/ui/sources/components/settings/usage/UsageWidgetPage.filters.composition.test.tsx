@@ -12,6 +12,8 @@ import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { getUsageQueryBatchKey, getUsageQueryKey, normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import { ProviderAccountUsagePageProjectionWriteV1Schema, QualifiedProviderAccountUsageHistoryRequestV4Schema } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
+import { parseQualifiedConnectedAccountV4StructuredQueryValue } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4QueryCodec';
 import { ArtifactReadBatchHttpInputV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { buildWidgetSurfaceArtifactHeaderV1, buildWidgetSurfaceArtifactIdV1, readBuiltinWidgetDescriptorV1, WidgetAreaLayoutV1Schema,
     WIDGET_SURFACE_ARTIFACT_KIND_V1, type WidgetAreaLayoutV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
@@ -37,6 +39,7 @@ import { SelectionListFilterChip } from '@/components/ui/selectionList/Selection
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { WidgetAreaLayoutBar } from '@/components/widgets/area/WidgetAreaLayoutBar';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
+import { usageSourceTitle } from '@/sync/domains/usage/usageLabels';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { WidgetSurface } from '@/components/widgets/surface/WidgetSurface';
@@ -902,6 +905,78 @@ describe('mounted Usage page scope commands', () => {
         await waitForHomeGovernance(() => expect(screen.findAllByType(UsageCostFactsWidget)[0]?.props.slice.accounting?.totals).toEqual(totals));
         expect(retryFact()).toBeNull();
         expect(reader!.readCurrentUiContext()!.commands.find(row => row.id === command!.id)).toBeUndefined();
+    });
+
+    it.each(['quota', 'quota and accounting', 'ownership refusal'] as const)('owns the Plans read notice for %s', async (cause) => {
+        let failed = true;
+        const accountingFails = cause === 'quota and accounting';
+        const ownershipRefused = cause === 'ownership refusal';
+        const nowMs = Date.now();
+        const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'work' };
+        const source = { bindingKind: 'account' as const, ref };
+        const recordKey = { providerId: 'codex', accountSubjectId: ref.accountId, subjectKind: 'account', quotaScope: 'account' } as const;
+        const record = ProviderAccountUsageSnapshotV1Schema.parse({ v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey,
+            providerId: 'codex', accountSubject: { kind: 'providerSubject', id: ref.accountId }, observedAtMs: nowMs, fetchedAtMs: nowMs,
+            staleAfterMs: 600_000, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_empty', meters: [] });
+        const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-plans-read-retry.test', accountId: 'account-a',
+            profile: { connectedAccountsV4: [{ ref, status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
+                credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [] }] } }],
+            route: request => {
+                if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse({
+                    features: { connectedServices: { enabled: true, quotas: { enabled: true } } },
+                }));
+                if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
+                if (request.path === '/v2/usage/query') return failed && accountingFails
+                    ? Response.json({ error: 'unavailable' }, { status: 503 }) : Response.json(accounting);
+                if (request.path === CONNECTED_PRESENTATION_ROWS_ROUTE_V1 || request.path === CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1)
+                    return Response.json({ status: 'deleted', revision: 1 });
+                if (request.path === '/v4/connect/qualified/provider-account-usage/sources/resolve') return ownershipRefused
+                    ? Response.json({ error: 'ownership_unproven' }, { status: 409 })
+                    : Response.json({ source, recordId: record.recordId, providerAccountId: ref.accountId, fetchedAt: nowMs, staleAfterMs: 600_000 });
+                if (request.path === '/v4/connect/qualified/provider-account-usage/record') return failed
+                    ? Response.json({ error: 'provider_account_usage_read_failed' }, { status: 503 })
+                    : Response.json({ content: { t: 'plain', v: record }, metadata: { fetchedAt: nowMs, staleAfterMs: 600_000, status: 'ok' }, sources: [source] });
+                if (request.path === '/v4/connect/qualified/provider-account-usage/history') {
+                    if (request.method === 'PUT') {
+                        ProviderAccountUsagePageProjectionWriteV1Schema.parse(request.body);
+                        return Response.json({ success: true });
+                    }
+                    const query = parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedProviderAccountUsageHistoryRequestV4Schema,
+                        request.url.searchParams.get('query'));
+                    return 'projection' in query ? Response.json({ projection: null, complete: false }) : Response.json({ entries: [], nextCursor: null });
+                }
+                if (request.path === '/v4/connect/qualified/provider-account-usage/day-summaries') return Response.json({ summaries: [], missingDays: [] });
+                if (request.path === '/v1/account/encryption/currentness') return Response.json({ mode: 'plain', version: 1,
+                    signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
+                return artifacts.handle(request.url.toString(), { method: request.method })
+                    ?? createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+            } });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        publishAppliedActiveServerRuntimeAvailability(true);
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+        const screen = await renderMeasuredPage(<InjectedAuthProvider credentials={credentials}>
+            <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
+                <CurrentContextPort /><UsageWidgetPage initialFilters={{ layoutId: 'plans', period: '7days', metric: 'tokens', costMode: 'auto', focus: null }} />
+            </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
+        </InjectedAuthProvider>);
+        const retryControls = () => screen.findAll(node => typeof node.type === 'string' && node.props.accessibilityLabel === t('common.retry'));
+        const noticeId = 'usage-page.header.failed';
+        await waitForHomeGovernance(() => {
+            const notice = screen.findHostByTestId(noticeId);
+            expect(notice).not.toBeNull();
+            const diagnosis = screen.findHostByTestId(`${noticeId}-text`)?.props.accessibilityLabel;
+            expect(diagnosis).toContain(ownershipRefused ? t('connectedServices.errors.quotaOwnershipUnproven', {}) : usageSourceTitle('quota'));
+            if (accountingFails) expect(diagnosis).toContain(usageSourceTitle('accounting'));
+        });
+        expect(retryControls().map(node => node.props.testID)).toEqual(ownershipRefused ? [] : ['usage-page.header.retry']);
+        if (ownershipRefused) return;
+        failed = false;
+        await screen.pressByTestIdAsync('usage-page.header.retry');
+        await waitForHomeGovernance(() => expect(screen.findHostByTestId(`${noticeId}-text`)?.props.accessibilityLabel).toBeUndefined());
+        expect(retryControls()).toHaveLength(0);
     });
 
     it('keeps populated Usage values through an offline refresh and warm return, then refreshes on recovery', async () => {
