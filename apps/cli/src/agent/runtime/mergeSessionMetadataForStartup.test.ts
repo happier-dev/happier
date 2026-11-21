@@ -9,6 +9,7 @@ import { SessionRunnerRuntimeStateV1Schema } from '@happier-dev/protocol/session
 import { readCapabilityLaunchRestartFromMetadataV1, resolveCapabilityApplyTimingV1 } from '@happier-dev/protocol/reach/capabilityApplyTimingV1';
 import { applyDisplayTitleSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 import { SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
+import { buildSessionCreationCorrespondence } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 
 describe('mergeSessionMetadataForStartup', () => {
     it.each(['native', 'account_provider_connection', 'team_resource'] as const)('starts with the exact typed %s model source', source => {
@@ -47,6 +48,30 @@ describe('mergeSessionMetadataForStartup', () => {
             expect(SessionOwnerMetadataV1Schema.parse(owner.ownerMetadata).work?.authoringOriginV1).toEqual(authoringOriginV1);
             expect(current.summary?.text).toBe(`Native title ${nowMs}`);
         }
+    });
+    it('keeps the committed Copy once origin when the attaching runner has its earlier launch recipe', () => {
+        const launch = buildSessionCreationCorrespondence({
+            identity: { callerCreationNamespace: 'session-birth', creationKey: 'copy-once' },
+            recipe: { execution: { machineId: 'controller', directory: { kind: 'path', path: '/original/project' } },
+                organization: { folderId: null, tagIds: [] },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+                projectFiles: { kind: 'copy_once' } },
+        });
+        const projectFilesOrigin = {
+            sourceWorkspace: { serverId: 'home', workspaceId: 'source', machineId: 'controller', rootPath: '/original/project' },
+            targetWorkspace: { v: 2 as const, kind: 'managed' as const, serverId: 'home', workspaceId: 'target',
+                managedId: 'guest', controller: { machineId: 'controller', installationId: 'installation' }, rootPath: '/guest/project' },
+        };
+        const committed = { ...launch, recipe: { ...launch.recipe, projectFilesOrigin } };
+        const merged = mergeSessionMetadataForStartup({
+            current: createTestMetadata({ sessionCreationCorrespondenceV1: committed }),
+            next: createTestMetadata({ sessionCreationCorrespondenceV1: launch }),
+            nowMs: 100, mode: 'attach', attachMetadataIdentityPolicy: 'replace_with_runtime_identity',
+        });
+        const owner = createSessionOwnerMetadataV1({ metadata: merged });
+        if (!owner.ok) throw new Error(owner.unsupportedFields.join(','));
+        expect(SessionOwnerMetadataV1Schema.parse(owner.ownerMetadata).system?.sessionCreationCorrespondenceV1?.recipe.projectFilesOrigin)
+            .toEqual(projectFilesOrigin);
     });
     it('retires old plain-runner absence evidence when a new runner starts without a terminal', () => {
         const merged = mergeSessionMetadataForStartup({ mode: 'attach', nowMs: 2,

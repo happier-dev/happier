@@ -423,6 +423,10 @@ export function mergeSessionMetadataForStartup(opts: {
     }
 
     if (mode === 'attach') {
+        // A committed recipe may contain realized Project files provenance that the launch lacks.
+        if (opts.current.sessionCreationCorrespondenceV1 !== undefined) {
+            merged.sessionCreationCorrespondenceV1 = opts.current.sessionCreationCorrespondenceV1;
+        }
         const preserveCurrentCheckout = shouldPreserveCurrentIdentityOnAttach(opts.attachMetadataIdentityPolicy)
             || hasSameSessionCheckout(opts.current, opts.next);
         // A fresh committed birth also uses replacement policy. Keep its actual observation
