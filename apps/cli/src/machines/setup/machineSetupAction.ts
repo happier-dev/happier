@@ -1,5 +1,6 @@
 import { prepareMachineSetupSecretEnvironment } from './secretEnvironment';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { observeMachineSetupInitialPresence } from './initialPresence';
 import { homedir } from 'node:os';
 import type { ActionExecuteResult, ActionExecutorDeps } from '@happier-dev/protocol';
@@ -292,7 +293,13 @@ export function createMachineSetupPlanAction(params: Readonly<{
         return fail(code);
       }
     }
-    let recipeLease: PluginRuntimeRegistryLease | undefined;
+    let registryLease: PluginRuntimeRegistryLease | undefined;
+    const readRegistry = async () => {
+      const acquire = params.acquirePluginRuntimeRegistryLease
+        ?? (await import('@/plugins/runtime/reload/runtimeLease')).acquireAuthoritativePluginRuntimeRegistryLease;
+      registryLease ??= await acquire();
+      return registryLease.registry;
+    };
     let result: Awaited<ReturnType<typeof prepareMachineSetupPlanV1>>;
     const administrator = params.apiMachine.captureMachineAdminAccess?.();
     const installationId = params.installation?.installationId;
@@ -309,13 +316,23 @@ export function createMachineSetupPlanAction(params: Readonly<{
         } } : {}),
         ...(lifetime ? { signal: lifetime } : {}),
         ...(params.runNative ? { runNative: params.runNative } : {}), readRecipes: async () => {
-        const acquire = params.acquirePluginRuntimeRegistryLease
-          ?? (await import('@/plugins/runtime/reload/runtimeLease')).acquireAuthoritativePluginRuntimeRegistryLease;
-        recipeLease = await acquire();
-        return Object.values(buildPluginProjectionFamilyV2({ registry: recipeLease.registry.contributes,
-          generation: recipeLease.registry.generation }, machineRecipesProjectionFamily).entriesById);
-      } });
-    } finally { await recipeLease?.release(); }
+          const registry = await readRegistry();
+          return Object.values(buildPluginProjectionFamilyV2({ registry: registry.contributes,
+            generation: registry.generation }, machineRecipesProjectionFamily).entriesById);
+        }, reviewAffectedServices: async serviceIds => {
+          try {
+            const registry = await readRegistry();
+            await registry.projectManagedServices.resolveSetupScriptServiceEffects({
+              serverId: input.homeId, machineId: input.machineId, serviceIds, signal: lifetime,
+            });
+          } catch (error) {
+            if (lifetime?.aborted) return fail('cancelled');
+            if (error instanceof PluginError && error.code === 'plugin_managed_service_unavailable') return fail(error.code);
+            throw error;
+          }
+        },
+      });
+    } finally { await registryLease?.release(); }
     if ((signal ?? context.signal)?.aborted) return fail('cancelled');
     if ('errorCode' in result) return result;
     if (params.installation && result.recipePlans) {

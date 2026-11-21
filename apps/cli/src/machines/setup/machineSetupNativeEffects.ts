@@ -17,11 +17,7 @@ export type MachineSetupNativeEffectsInput = Readonly<{
   resolveSetupScriptServiceEffects?: (serviceIds: readonly string[]) => Promise<readonly MachineNativeEffectKey[]>;
 }>;
 
-/** Resolve the complete reviewed program before native admission or caller effects. */
-export async function resolveMachineSetupNativeEffects(input: MachineSetupNativeEffectsInput): Promise<MachineNativeEffectScope> {
-  const keys: MachineNativeEffectKey[] = [{ kind: 'machineSetup' }];
-  const env = Object.fromEntries(Object.entries(input.hostEnvironment ?? process.env)
-    .filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+export function readMachineSetupNativeImpact(input: Pick<MachineSetupNativeEffectsInput, 'scripts' | 'plans' | 'includeDockerEngine'>) {
   const selected: NonNullable<MachineSetupScriptV1['affects']>[] = [];
   let localDocker = input.includeDockerEngine === true;
   // Omitted impact stays unknown; only an authored effect selects extra native keys.
@@ -31,14 +27,23 @@ export async function resolveMachineSetupNativeEffects(input: MachineSetupNative
     if (impact?.kind === 'localDocker') localDocker = true;
     else if (impact) selected.push(impact.affects);
   }
+  return { docker: localDocker || selected.includes('dockerEngine'),
+    serviceIds: [...new Set(selected.flatMap(impact => typeof impact === 'object' ? impact.services : []))] };
+}
+
+/** Resolve the complete reviewed program before native admission or caller effects. */
+export async function resolveMachineSetupNativeEffects(input: MachineSetupNativeEffectsInput): Promise<MachineNativeEffectScope> {
+  const keys: MachineNativeEffectKey[] = [{ kind: 'machineSetup' }];
+  const { docker, serviceIds } = readMachineSetupNativeImpact(input);
   let allNative: true | undefined;
-  if (localDocker || selected.includes('dockerEngine')) {
+  if (docker) {
+    const env = Object.fromEntries(Object.entries(input.hostEnvironment ?? process.env)
+      .filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
     const impact = await readNativeDockerEffectEngines({ io: input.environmentIo, command: 'docker', prefix: [],
       cwd: input.userHomeDirectory, env, signal: input.signal });
     allNative = impact.allNative;
     keys.push(...impact.dockerEngineIds.map(dockerEndpoint => ({ kind: 'dockerEngine' as const, dockerEndpoint })));
   }
-  const serviceIds = [...new Set(selected.flatMap(impact => typeof impact === 'object' ? impact.services : []))];
   if (serviceIds.length) {
     if (!input.resolveSetupScriptServiceEffects) throw new MachineNativeEffectAdmissionError('admission_unavailable');
     keys.push(...await input.resolveSetupScriptServiceEffects(serviceIds));

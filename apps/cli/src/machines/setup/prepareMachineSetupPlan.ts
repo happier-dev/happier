@@ -13,6 +13,7 @@ import type { MachineAdminAccessObservationV1 } from '@happier-dev/protocol/mach
 import { createMachineSetupNativeBackend, findMachineSetupBlockingObservationV1, machineSetupPlansRequireAdministratorV1,
   type MachineSetupNativeCommand, type MachineSetupNativeCommandResult } from '@happier-dev/cli-common/machineSetup';
 import { readMachineSetupStepImpact } from './machineSetupImpacts';
+import { readMachineSetupNativeImpact } from './machineSetupNativeEffects';
 import { resolveMachineSetupRecipeProgramV1 } from './prepareMachineSetupPreparation';
 import { prepareMachineRecipeProgramV1 } from './prepareMachineRecipeProgram';
 import { canInspectMachineSetupRemovalRecipeV1, prepareMachineSetupRemovalsV1 } from './prepareMachineSetupRemovals';
@@ -45,6 +46,7 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
   /** Receiving Apply reuses its prepared changed operands. */
   executionSources?: readonly MachineSetupV1[];
   readRecipes?: () => Promise<readonly PluginProjectedMachineRecipeEntryV1[] | undefined>;
+  reviewAffectedServices?: (serviceIds: readonly string[]) => Promise<ActionExecuteFailure | undefined>;
   readAdminAccessObservation?: () => Promise<MachineAdminAccessObservationV1>;
   firewallObservation?: Readonly<{ requestId: string; elevation: () => MachineElevationDependencies }>;
   signal?: AbortSignal;
@@ -182,6 +184,16 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
   }
   const selectedEntries = [...(removals?.ok ? removals.removalPlans : []), ...recipePlans];
   const selectedPlans = selectedEntries.map(entry => entry.plan);
+  const executingSetups = executionSources ?? sources.map(source => source.setup);
+  if (input.mode === 'effects' && params.reviewAffectedServices) {
+    const { serviceIds } = readMachineSetupNativeImpact({
+      scripts: executingSetups.flatMap(setup => setup.scripts ?? []), plans: selectedPlans,
+    });
+    if (serviceIds.length) {
+      const refusal = await params.reviewAffectedServices(serviceIds);
+      if (refusal) return refusal;
+    }
+  }
   const requiresSessionRefresh = input.mode
     ? await readMachineSetupSessionRefreshRequirement(selectedPlans, params.groupRefreshNative) : undefined;
   for (const { sourceIndex, itemIndex, plan } of recipePlans) {
@@ -208,7 +220,6 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
     }
   }
   const review = input.mode ? (() => {
-    const executingSetups = executionSources ?? sources.map(source => source.setup);
     const unsupportedScriptCheck = executingSetups.some(setup => setup.scripts?.some(script => script.body && script.check?.requiredFacts?.length));
     const incomplete = support.some(entry => entry.status === 'unsupported' || entry.status === 'unavailable' || entry.status === 'unverifiable')
       || support.length !== recipePlans.length || unsupportedScriptCheck;

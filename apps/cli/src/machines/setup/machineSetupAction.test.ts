@@ -23,6 +23,16 @@ describe('admitted Machine setup snapshot lifetime', () => {
     nativeTerminal.onLaunch = undefined;
     nativeTerminal.autoExit = false;
   });
+  it('refuses a Setup review that names a service outside Happier-managed custody', async () => {
+    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt', accountEncryptionMode: 'plain' });
+    const result = await fixture.createExecutor(fixture.credentials).execute('machines.setup.plan', {
+      homeId: 'srv_home', machineId: fixture.machine.id, mode: 'effects',
+      sources: [{ kind: 'direct', setup: { scripts: [{ body: 'echo never run', affects: { services: ['cron'] } }] } }],
+    }, fixture.context('machines.setup.plan'));
+    expect(result).toMatchObject({ ok: false, errorCode: 'plugin_managed_service_unavailable' });
+    expect(fixture.rootLaunches).toEqual([]);
+    expect(fixture.metadataWrites).toEqual([]);
+  });
   it.each([
     { status: 401, body: { error: 'invalid_token', authorizationRefusal: 'verification_purpose' }, code: 'invalid_token' },
     { status: 409, body: { code: 'preset_archived' }, code: 'preset_archived' },
