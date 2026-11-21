@@ -272,6 +272,25 @@ describe('AgentInputProviderUsageBadge', () => {
         act(() => screen.tree.unmount());
     });
 
+    it('draws an exhausted limit as a full danger bar instead of an empty track', async () => {
+        const base = viewModel();
+        const exhausted: ConnectedServiceQuotaGaugeViewModel = {
+            ...base,
+            remainingPct: 0,
+            usedPct: 100,
+            tone: 'critical',
+            allMeterRows: base.allMeterRows.map((row) => ({ ...row, remainingPct: 0, usedPct: 100, tone: 'critical' })),
+        };
+        const screen = await renderScreen(<AgentInputProviderUsageBadge viewModel={exhausted} />);
+
+        act(() => {
+            screen.findByTestId('agent-input-provider-usage-badge')?.props.onPress?.();
+        });
+
+        const meterFill = screen.findByTestId('agent-input-provider-usage-meter-bar:weekly:fill');
+        expect(flattenStyle(meterFill?.props.style).width).toBe('100%');
+    });
+
     it('shows recovery credits in the popover and applies them through the provided action', async () => {
         const onRecoveryCreditPress = vi.fn();
         const screen = await renderScreen(

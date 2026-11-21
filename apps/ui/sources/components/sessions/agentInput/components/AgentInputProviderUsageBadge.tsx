@@ -310,7 +310,9 @@ export const AgentInputProviderUsageBadge = React.memo(function AgentInputProvid
                                     // Remaining-first fill: the adjacent label says "% left" and the
                                     // tone derives from remaining — the fill must match that language
                                     // (battery model; user decision 2026-07-10, reverting 5ad4d06be).
-                                    fillFraction={row.remainingPct / 100}
+                                    // An exhausted limit draws a full bar in its danger tone, so it
+                                    // reads as "used up" rather than as a missing or empty meter.
+                                    fillFraction={row.remainingPct <= 0 ? 1 : row.remainingPct / 100}
                                     height={5}
                                 /> : null}
                                 {row.usedLimitLabel ? (
