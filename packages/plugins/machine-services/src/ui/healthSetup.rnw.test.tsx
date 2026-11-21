@@ -750,3 +750,22 @@ it.each([false, true])('saves and reopens Environment notification choices with 
   await expect(reopened.page.getByText(hasCheck ? 'Off' : 'saved-slack')).resolves.toBeDefined();
   expect(reopened.settled).toEqual([]);
 });
+
+// PAGE-ACCEPT-176 R10-D1: Add check offers one primary Save. With nothing new entered an Environment's alerts save as
+// changes; once a check is entered, the one button adds it.
+it('offers one primary Save on an Environment Add check: Save changes until a check is entered, then Add check', async () => {
+  const environment = { kind: 'environment', environmentId: 'production' } as const;
+  const { page, settled } = await mount({ initialInput: { v: 1, subject: environment } }, {}, async () => ({
+    mode: 'preview', sourceConfig: { v: 1, subject: environment, alerts: { channels: [], phases: ['open'] } },
+    destinationSelectionContext: { serverId: 'home', machineId: 'controller' },
+  }));
+  const names = async () => (await page.getAllByRole('button')).map(button => button.name);
+  await vi.waitFor(async () => expect(await names()).toContain('Save changes'));
+  expect(await names()).not.toContain('Add check');
+  await type('Endpoint', 'https://shop.example.test/health');
+  expect(await names()).toContain('Add check');
+  expect(await names()).not.toContain('Save changes');
+  await act(async () => { await page.press(await addButton(page)); });
+  expect(settled).toEqual([expect.objectContaining({ kind: 'completed', input: expect.objectContaining({
+    checks: [expect.objectContaining({ config: expect.objectContaining({ endpoint: 'https://shop.example.test/health' }) })] }) })]);
+});

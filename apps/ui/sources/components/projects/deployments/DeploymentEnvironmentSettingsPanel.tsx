@@ -32,9 +32,9 @@ import { StatusPill } from '@/components/ui/status/StatusPill';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { REVEAL_DELAY_MS, useSettingReveal } from '@/components/settings/shell/SettingRow';
-import { NewAccountTriggerPopover } from '@/components/workflows/triggers/AccountTriggersSection';
 import { useWorkflowTriggerSets } from '@/components/workflows/triggers/useWorkflowTriggerSets';
 import { subjectStarterEventSeed } from '@/components/workflows/triggers/subjectTriggerStarters';
+import { AddCheckSetup } from './AddCheckSetup';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
@@ -184,7 +184,6 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
       />
     ) : null;
     const checkLifetime = editing ? props.lifetime ?? null : null;
-    const checkAnchor = React.useRef<View>(null);
     const [openingCheckSetup, setOpeningCheckSetup] = React.useState(false);
 
     return (
@@ -467,15 +466,13 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
           title={t('projects.deployments.sectionChecks')}
           description={t('projects.deployments.sectionChecksDescription')}
           action={checkLifetime ? (
-            <View ref={checkAnchor} collapsable={false}>
-              <SectionActionButton
-                testID={`${section('checks-alerts')}.add`}
-                title={t('projects.deployments.settingsSections.addCheck')}
-                icon="plus"
-                expanded={openingCheckSetup}
-                onPress={() => setOpeningCheckSetup(true)}
-              />
-            </View>
+            <SectionActionButton
+              testID={`${section('checks-alerts')}.add`}
+              title={t('projects.deployments.settingsSections.addCheck')}
+              icon="plus"
+              expanded={openingCheckSetup}
+              onPress={() => setOpeningCheckSetup(true)}
+            />
           ) : undefined}
         >
           {/* Health is what deployed services report; where nothing runs there is nothing to read yet. */}
@@ -495,20 +492,20 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
               ? { showChevron: true, onPress: () => setOpeningCheckSetup(true) }
               : { mode: 'info' as const })}
           />
+          {openingCheckSetup && checkLifetime ? (
+            // One surface: the check's own form opens on the controller; its waits and refusals stand in this section (R10-D1).
+            <AddCheckSetup
+              testID={`${section('checks-alerts')}.setup`}
+              onClose={() => setOpeningCheckSetup(false)}
+              lifetime={checkLifetime}
+              seed={subjectStarterEventSeed('addCheck', {
+                subject: { kind: 'environment', environmentId: detail.environment.id,
+                  machineId: detail.environment.controllerMachineId },
+                controllerMachineId: detail.environment.controllerMachineId,
+              })}
+            />
+          ) : null}
         </ItemGroup>
-        {openingCheckSetup && checkLifetime ? (
-          <NewAccountTriggerPopover
-            anchorRef={checkAnchor}
-            onRequestClose={() => setOpeningCheckSetup(false)}
-            accountLifetime={checkLifetime}
-            initialProject={{ machineId: detail.environment.controllerMachineId, directory: '~' }}
-            eventSeed={subjectStarterEventSeed('addCheck', {
-              subject: { kind: 'environment', environmentId: detail.environment.id,
-                machineId: detail.environment.controllerMachineId },
-              controllerMachineId: detail.environment.controllerMachineId,
-            })}
-          />
-        ) : null}
         {/* Native backups copy a Machine's volumes and dumps; a platform Environment's data is its provider's (D14). */}
         {platformSource === null ? <View ref={revealHost('backups')} collapsable={false}>
           <BackupRows {...props} testID={section('backups')} />

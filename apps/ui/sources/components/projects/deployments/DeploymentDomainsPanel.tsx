@@ -27,8 +27,8 @@ import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
-import { NewAccountTriggerPopover } from '@/components/workflows/triggers/AccountTriggersSection';
 import { subjectStarterEventSeed } from '@/components/workflows/triggers/subjectTriggerStarters';
+import { AddCheckSetup } from './AddCheckSetup';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 import { useDeploymentChangePress } from './deploymentActionOutcome';
@@ -121,9 +121,7 @@ export function DeploymentDomainsPanel(
   const draftKey = `${props.controller.scope.serverId}:${props.environmentId}`;
   const [adding, setAdding] = useInlineAddDraftField(draftKey, INLINE_ADD_OPEN, false);
   const [dnsFor, setDnsFor] = React.useState<DomainItem | null>(null);
-  const [checkSetup, setCheckSetup] = React.useState<Readonly<{
-    item: DomainItem; anchorRef: React.RefObject<View | null>;
-  }> | null>(null);
+  const [checkSetup, setCheckSetup] = React.useState<Readonly<{ item: DomainItem }> | null>(null);
   const refresh = domains.refresh;
   const onSettled = React.useCallback(() => {
     editing?.onChanged();
@@ -220,7 +218,7 @@ export function DeploymentDomainsPanel(
         config: { ...config, controller: { ...controller, tunnel: { kind: 'adopt', tunnelId: recovery.tunnelId, name: tunnel.name } } } } } });
     });
   });
-  const configureChecks = useEventCallback((item: DomainItem, anchorRef: React.RefObject<View | null>) => setCheckSetup({ item, anchorRef }));
+  const configureChecks = useEventCallback((item: DomainItem) => setCheckSetup({ item }));
   const choose = useEventCallback((item: DomainItem, role: DomainCredentialRole) => { void chooseCredential(item, role); });
   const canBind = setBindings !== undefined && content !== null;
   const missingFor = React.useCallback((item: DomainItem) => missingCredentials(item, bound), [bound]);
@@ -343,12 +341,11 @@ export function DeploymentDomainsPanel(
           }}
         />
       ) : null}
-      {checkSetup && editing && props.healthSetup ? <NewAccountTriggerPopover
-        anchorRef={checkSetup.anchorRef}
-        onRequestClose={() => setCheckSetup(null)}
-        accountLifetime={props.healthSetup.lifetime}
-        initialProject={{ machineId: props.healthSetup.controllerMachineId, directory: '~' }}
-        eventSeed={subjectStarterEventSeed('addCheck', {
+      {checkSetup && editing && props.healthSetup ? <AddCheckSetup
+        testID="project-deployments.environment.domains.check-setup"
+        onClose={() => setCheckSetup(null)}
+        lifetime={props.healthSetup.lifetime}
+        seed={subjectStarterEventSeed('addCheck', {
           subject: { kind: 'environment', environmentId: props.environmentId, machineId: props.healthSetup.controllerMachineId },
           controllerMachineId: props.healthSetup.controllerMachineId,
           domain: { domainId: checkSetup.item.domain.id, targetLinkId: checkSetup.item.domain.targetLinkId },

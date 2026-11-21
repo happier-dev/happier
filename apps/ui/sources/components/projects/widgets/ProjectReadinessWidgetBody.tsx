@@ -17,7 +17,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { usePluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
-import { NewAccountTriggerPopover } from '@/components/workflows/triggers/AccountTriggersSection';
+import { AddCheckSetup } from '@/components/projects/deployments/AddCheckSetup';
 import { subjectStarterEventSeed } from '@/components/workflows/triggers/subjectTriggerStarters';
 import { WidgetGlanceRow } from '@/components/widgets/glance/WidgetGlanceRow';
 import { useWidgetFrameResourceActivity } from '@/components/widgets/frame/widgetFrameResourceActivity';
@@ -145,7 +145,6 @@ function ReadinessFact(props: Readonly<{ fact: ProjectReadinessFactV1; serverId:
   const { theme } = useUnistyles();
   const router = useRouter();
   const navigation = usePluginSurfaceDestinationNavigationBinding();
-  const anchor = React.useRef<View>(null);
   const [openingChecks, setOpeningChecks] = React.useState(false);
   const [setupFailure, setSetupFailure] = React.useState<string | null>(null);
   const subject = React.useMemo(() => ({ kind: 'deploymentEnvironment' as const, serverId: props.serverId,
@@ -173,7 +172,7 @@ function ReadinessFact(props: Readonly<{ fact: ProjectReadinessFactV1; serverId:
       ...(kind === 'backups' ? { section: 'backups' as const, setup: 'backups' as const } : {}) }));
   };
   const evidence = readinessEvidence(props.fact);
-  return <View ref={anchor} testID={props.testID} style={{ gap: theme.space.s4 }}>
+  return <View testID={props.testID} style={{ gap: theme.space.s4 }}>
     <WidgetGlanceRow title={t(`projects.readiness.${props.fact.kind}`)} variant="fact"
       fact={t(`projects.readiness.${props.fact.status}`)} factTone={props.fact.status === 'actionNeeded' ? 'attention' : 'quiet'} />
     <SurfaceStateCard size="line" kind={props.fact.status === 'ready' ? 'success' : props.fact.status === 'actionNeeded' ? 'warning' : 'unavailable'}
@@ -189,9 +188,9 @@ function ReadinessFact(props: Readonly<{ fact: ProjectReadinessFactV1; serverId:
       <SectionActionButton testID={`${props.testID}.ask`} title={t('projects.readiness.askAgent')} icon="sparkle"
         loading={investigation.pending} onPress={() => { void investigation.investigate(); }} />
     </View> : null}
-    {openingChecks ? <NewAccountTriggerPopover anchorRef={anchor} onRequestClose={() => setOpeningChecks(false)}
-      accountLifetime={props.lifetime} initialProject={{ machineId: props.machineId, directory: '~' }}
-      eventSeed={subjectStarterEventSeed('addCheck', { subject: { kind: 'environment', environmentId: props.environmentId,
+    {openingChecks ? <AddCheckSetup testID={`${props.testID}.checkSetup`} onClose={() => setOpeningChecks(false)}
+      lifetime={props.lifetime}
+      seed={subjectStarterEventSeed('addCheck', { subject: { kind: 'environment', environmentId: props.environmentId,
         machineId: props.machineId }, controllerMachineId: props.machineId })} /> : null}
     {investigation.showOutcome && investigation.outcome ? <InvestigationOutcomeBanner outcome={investigation.outcome}
       serverId={props.serverId} testID={`${props.testID}.handoff`} onChoosePlacement={investigation.investigateWithPlacement}

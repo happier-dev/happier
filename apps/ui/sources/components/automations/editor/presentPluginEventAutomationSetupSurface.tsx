@@ -272,12 +272,15 @@ export function presentPluginEventAutomationSetupSurface(params: Readonly<{
     signal?: AbortSignal;
     commandBridge?: BaseModalConfig['commandBridge'];
     launchInput?: PluginUiLaunchInputV1;
+    /** The host's own name for this setup (Add check), in place of the Event's trigger wording. */
+    heading?: Readonly<{ title: string; description?: string }>;
 }>): Promise<PluginEventAutomationSetupSurfaceSettlement> {
     const surface = params.eligibleEvent.setupSurface;
     if (!surface) return Promise.resolve({ kind: 'cancelled' });
+    const { heading, ...rest } = params;
     return presentPluginEphemeralInputSurface({
-        ...params, surface, title: params.eligibleEvent.event.title,
-        description: params.eligibleEvent.event.description ?? undefined,
+        ...rest, surface, title: heading?.title ?? params.eligibleEvent.event.title,
+        description: heading ? heading.description : params.eligibleEvent.event.description ?? undefined,
         presentation: 'setup',
     });
 }

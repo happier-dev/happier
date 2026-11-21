@@ -237,6 +237,8 @@ function resolveCurrentSetupSnapshot(params: Readonly<{
 export async function configurePluginEventAutomationSetup(params: Readonly<{
     initialSetupSeed?: PluginUiOpenAutomationEventRequestV1;
     requireNativeRenderer?: boolean;
+    /** The host's name for the native setup surface; the Event's own title otherwise. */
+    surfaceHeading?: Readonly<{ title: string; description?: string }>;
     /** A saved source edit passes these values only to its native renderer. */
     savedSourceRendererInput?: NonNullable<PluginUiOpenAutomationEventRequestV1['setupInput']>;
     /** The saved source is the initial draft when editing an existing Event. */
@@ -365,6 +367,7 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
                                 observerMachineId: initial.origin.machineTarget.target.machineId,
                                 ...(initialInput?.success ? { initialInput: initialInput.data } : {}),
                             },
+                            ...(params.surfaceHeading ? { heading: params.surfaceHeading } : {}),
                             ...(operationScope.signal ? { signal: operationScope.signal } : {}),
                         });
                         if (surfaceSettlement.kind === 'cancelled') {

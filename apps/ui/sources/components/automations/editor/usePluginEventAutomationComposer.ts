@@ -89,6 +89,8 @@ type NativeSourceConfigured = Readonly<{
 type NativeSourceCancelled = Readonly<{ kind: 'cancelled' }>;
 export type NewNativeSourceSetup = Readonly<{
     seed: PluginUiOpenAutomationEventRequestV1;
+    /** What the host calls this setup (Add check); the Event's trigger title otherwise. */
+    heading?: Readonly<{ title: string; description?: string }>;
     onSettled: (settlement: (NativeSourceConfigured & Readonly<{ observationOnly: Readonly<{ kind: 'observationOnly' }> }>)
         | NativeSourceCancelled) => void;
 }>;
@@ -891,6 +893,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             const configured = await configurePluginEventAutomationSetup({
                 commandBridge,
                 requireNativeRenderer: params.newSourceSetup !== undefined,
+                ...(params.newSourceSetup?.heading ? { surfaceHeading: params.newSourceSetup.heading } : {}),
                 savedSourceRendererInput: params.savedSourceSetup?.input,
                 eligibleEvent: currentEvent,
                 ...(configuredSetup && arePluginContributionIdentitiesEqual(configuredSetup.draft.eventRef, currentEvent.event.identity)

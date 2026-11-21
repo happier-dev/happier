@@ -162,10 +162,14 @@ export function PluginEventAutomationEditor(props: Readonly<{
     /** Open the native setup form for a saved source as soon as its exact editor restores it. */
     savedSourceSetup?: NonNullable<Parameters<typeof usePluginEventAutomationComposer>[0]['savedSourceSetup']> & Readonly<{
         renderUnavailable: (retry: () => void, machineName: string | null) => React.ReactNode;
+        /** What the wait is for, named with the setup Machine, so it never reads as a bare spinner. */
+        waitingTitle?: (machineName: string | null) => string;
     }>;
     /** Open the seeded native form directly and settle an observation without a workflow target. */
     newSourceSetup?: NewNativeSourceSetup & Readonly<{
         renderUnavailable: (retry: () => void, machineName: string | null) => React.ReactNode;
+        /** What the wait is for, named with the setup Machine, so it never reads as a bare spinner. */
+        waitingTitle?: (machineName: string | null) => string;
     }>;
     observationOnly?: PluginEventAutomationEditorIntent['observationOnly'];
     authoringMachineId: string | null;
@@ -272,7 +276,7 @@ export function PluginEventAutomationEditor(props: Readonly<{
         const waiting = model.eventCatalogStatus === 'loading' || model.sourceStatus === 'settingUp'
             || (newSetup ? readyToOpen && !nativeSetupStarted.current
                 : !chooseWatcher && model.eventCatalogStatus === 'ready' && model.sourceStatus === 'idle');
-        if (waiting) return <SurfaceStateCard size="line" kind="loading" title={t('common.loading')} />;
+        if (waiting) return <SurfaceStateCard size="line" kind="loading" title={setup.waitingTitle?.(setupMachineName) ?? t('common.loading')} />;
         if (model.sourceStatus === 'configured') return null;
         return setup.renderUnavailable(retrySetup, setupMachineName);
     }

@@ -33,8 +33,8 @@ import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
-import { NewAccountTriggerPopover } from '@/components/workflows/triggers/AccountTriggersSection';
 import { subjectStarterEventSeed } from '@/components/workflows/triggers/subjectTriggerStarters';
+import { AddCheckSetup } from './AddCheckSetup';
 import { Typography } from '@/constants/Typography';
 import { isMachineOnline } from '@/sync/domains/machines/reachability/machinePresence';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -236,7 +236,6 @@ function DeploymentTelemetryTabs(props: Readonly<{
     if (reads) setOpenTrace({ reads, request });
   }, [reads]);
   const [addingCheck, setAddingCheck] = React.useState<DatabaseCaptureEndpointV1 | null>(null);
-  const barRef = React.useRef<View>(null);
   const { state, more } = useTelemetryCaptureList(reads, tab, WINDOW_MS[windowId], attempt);
   const retry = React.useCallback(() => setAttempt(value => value + 1), []);
   const offline = collectorOnline === false;
@@ -294,7 +293,7 @@ function DeploymentTelemetryTabs(props: Readonly<{
           action={{ label: t('common.retry'), onPress: retry, testID: 'project-deployments.telemetry.retry' }}
         />
       ) : null}
-      <View ref={barRef} collapsable={false} style={styles.bar}>
+      <View style={styles.bar}>
         <View style={styles.tabs}>
           <SegmentedTabBar<TelemetryCaptureList>
             accessibilityLabel={t('deploymentTelemetry.tabs.label')}
@@ -330,19 +329,16 @@ function DeploymentTelemetryTabs(props: Readonly<{
       {/* The capture views are the shared public owners; a core page binds them through its Collection scope. */}
       <CoreCollectionScope>{body}</CoreCollectionScope>
       {addingCheck && lifetime ? (
-        <View testID="project-deployments.telemetry.add-check">
-        <NewAccountTriggerPopover
-          anchorRef={barRef}
-          onRequestClose={() => setAddingCheck(null)}
-          accountLifetime={lifetime}
-          initialProject={{ machineId: environment.controllerMachineId, directory: '~' }}
-          eventSeed={subjectStarterEventSeed('addCheck', {
+        <AddCheckSetup
+          testID="project-deployments.telemetry.add-check"
+          onClose={() => setAddingCheck(null)}
+          lifetime={lifetime}
+          seed={subjectStarterEventSeed('addCheck', {
             subject: { kind: 'environment', environmentId: environment.id, machineId: environment.controllerMachineId },
             // A Key flow is checked on the collector that keeps its requests (J5 "Check from").
             controllerMachineId: collectorId,
           })}
         />
-        </View>
       ) : null}
     </View>
     </PageContentColumn>

@@ -237,10 +237,13 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
     const [selectedCheckId, setSelectedCheckId] = useState<string | null>(props.selectedCheckId ?? null);
     const [editedDraft, setEditedDraft] = useState<Draft | null>(null);
     const domain = props.sourceOptions.domain;
+    // Add check (a launch that holds no checks) starts empty beside whatever the source already has; a source opened
+    // for editing restores its first check (PAGE-ACCEPT-176 R10-D1).
+    const addingNew = props.existing.length === 0 && props.selectedCheckId === undefined;
     const selectedCheck = existing.find(check => check.checkId === selectedCheckId) ?? (domain
         ? existing.find(({ binding }) => binding.kind === 'domain'
             && binding.domainId === domain.domainId && binding.targetLinkId === domain.targetLinkId)
-        : existing[0]);
+        : addingNew ? undefined : existing[0]);
     const [catalog, setCatalog] = useState<HealthCheckKindCatalogV1 | null>(null);
     const selectedKind = catalog?.find(kind =>
         kind.pluginId === selectedCheck?.kind.pluginId && kind.id === selectedCheck.kind.localId);
@@ -413,33 +416,50 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
             required: false, placeholder: 'All systems operational', testID: 'health-setup-keyword' })] : []),
     ];
 
+    // One primary Save (PAGE-ACCEPT-176 R10-D1): a saved check the person opened saves changes; Add check adds the check
+    // entered, or saves an Environment's alerts while nothing new is entered; a Domain's default checks are enabled. A
+    // source opened for editing with no check chosen still offers both, since it may edit its check or add another.
+    const editingSaved = props.selectedCheckId !== undefined || selectedCheckId !== null;
+    const savesChanges = !nativeDomain && (editingSaved
+        || (addingNew && editedDraft === null && props.subject.kind === 'environment'));
+    const offersBoth = !nativeDomain && !editingSaved && !addingNew;
+    const submit = async (input: HealthCheckSetupInputV1) => {
+        setSaving(true);
+        try {
+            await host.settleEphemeralInput({ kind: 'completed', input }, { signal: props.signal });
+        } catch {
+            setRefusedSave(true);
+        } finally {
+            setSaving(false);
+        }
+    };
+    const saveChanges = (variant: 'primary' | 'secondary') => h(Button, { title: t(`${K}.saveChanges`, 'Save changes'), variant,
+            disabled: alerts === undefined || !savedCandidate.success || !savedEditValid || saving,
+            busy: saving, testID: 'health-setup-save',
+            onPress: async () => { if (savedCandidate.success && savedEditValid) await submit(savedCandidate.data); } });
+    const primary = savesChanges ? saveChanges('primary')
+        : h(Button, { title: nativeDomain ? t(`${K}.enable`, 'Enable checks') : t(`${K}.add`, 'Add check'), variant: 'primary',
+            disabled: !canAdd, busy: saving, testID: 'health-setup-add',
+            onPress: async () => { if (candidate.success) await submit(candidate.data); } });
+
+    // What to check leads: the saved check being edited, its kind and that kind's fields; alerts, what happens when it
+    // needs attention and the one Save follow.
     return h(Stack, { gap: 'large', testID: 'health-setup-form' },
-        previewUnavailable ? h(Stack, {}, h(Text, { value: t(`${K}.previewUnavailable`, 'Alert defaults could not be loaded. Your entries are kept here.') }),
-            h(Button, { title: t(`${K}.previewRetry`, 'Retry alert defaults'), onPress: () => setPreviewAttempt(value => value + 1) })) : null,
-        h(SavedHealthAlertControls, { alerts, onChange: setAlerts, testContext: preparedSource, destinationSelectionContext }),
-        h(SavedHeartbeatControls, { subject: props.subject, checks: existing, signal: props.signal }),
         selectedCheck ? h(SavedHealthCheckControls, { subject: props.subject, checks: existing, check: selectedCheck,
             onSelect: selectSavedCheck, signal: props.signal }) : null,
-        ...existing.flatMap(check => {
-            if (!isMonitorCheck(check)) return [];
-            const kind = check.kind.localId;
-            const parsed = monitorDefinitions[kind].configSchema.safeParse(check.config);
-            if (!parsed.success || !parsed.data.webhookEndpointId) return [];
-            return [h(CapabilityEndpointAddressControls, { key: `${createHealthCheckSourceInstanceIdV1(props.subject)}:${check.checkId}:${parsed.data.webhookEndpointId}`,
-                webhookEndpointId: parsed.data.webhookEndpointId, signal: props.signal, title: `${monitorDefinitions[kind].title}: ${check.checkId}` })];
-        }),
+        // Two kinds a row at most, one on a phone: each tile's title and line read whole.
         h(SelectionTiles<SetupKind>, { accessibilityLabel: t(`${K}.kind`, 'Kind of check'), testID: 'health-setup-kind',
             value: draft.contributedKind ? null : draft.kind,
-            onChange: (kind: SetupKind) => set({ kind, contributedKind: undefined, contributedValidator: undefined }), maximumColumns: 3, minimumColumns: 2,
+            onChange: (kind: SetupKind) => set({ kind, contributedKind: undefined, contributedValidator: undefined }), maximumColumns: 2,
             options: KINDS.filter(kind => !props.sourceOptions.domain || kind.id === 'http' || isMonitorKind(kind.id))
                 .map(kind => ({ id: kind.id, icon: kind.icon, title: kind.id === 'http' && props.sourceOptions.domain ? 'HTTP and certificate' : kind.title,
                 ...(kind.id === 'http' && props.sourceOptions.domain ? {} : { titleKey: `${K}.kind.${kind.id}` }),
                 subtitle: kind.subtitle, subtitleKey: `${K}.kind.${kind.id}.subtitle` })) }),
-        h(Button, { title: t(`${K}.more`, 'More checks'), busy: loadingKinds, disabled: loadingKinds,
+        h(Row, { justify: 'flex-start' }, h(Button, { title: t(`${K}.more`, 'More checks'), variant: 'plain', busy: loadingKinds, disabled: loadingKinds,
             onPress: async () => {
                 const kinds = await readInstalledKinds();
                 if (kinds?.[0] && !savedContributedKind) selectContributed(kinds[0]);
-            } }),
+            } })),
         catalog && catalog.length > 0 ? h(Field, { label: t(`${K}.contributed`, 'Installed check') }, h(Select, {
             label: t(`${K}.contributed`, 'Installed check'), presentation: 'field',
             value: draft.contributedKind ? `${draft.contributedKind.pluginId}/${draft.contributedKind.id}` : undefined,
@@ -455,6 +475,18 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
                 if (condition) set({ domainCondition: condition.value }); },
         })) : null,
         ...fields,
+        h(SavedHeartbeatControls, { subject: props.subject, checks: existing, signal: props.signal }),
+        ...existing.flatMap(check => {
+            if (!isMonitorCheck(check)) return [];
+            const kind = check.kind.localId;
+            const parsed = monitorDefinitions[kind].configSchema.safeParse(check.config);
+            if (!parsed.success || !parsed.data.webhookEndpointId) return [];
+            return [h(CapabilityEndpointAddressControls, { key: `${createHealthCheckSourceInstanceIdV1(props.subject)}:${check.checkId}:${parsed.data.webhookEndpointId}`,
+                webhookEndpointId: parsed.data.webhookEndpointId, signal: props.signal, title: `${monitorDefinitions[kind].title}: ${check.checkId}` })];
+        }),
+        previewUnavailable ? h(Stack, {}, h(Text, { value: t(`${K}.previewUnavailable`, 'Alert defaults could not be loaded. Your entries are kept here.') }),
+            h(Button, { title: t(`${K}.previewRetry`, 'Retry alert defaults'), onPress: () => setPreviewAttempt(value => value + 1) })) : null,
+        h(SavedHealthAlertControls, { alerts, onChange: setAlerts, testContext: preparedSource, destinationSelectionContext }),
         h(SelectionTiles<'inbox' | 'auto_start'>, { accessibilityLabel: t(`${K}.investigation`, 'When a check needs attention'),
             value: investigationMode, onChange: mode => { setInvestigation({ mode, configuredActionId }); setRefusedSave(false); }, maximumColumns: 2,
             options: [
@@ -468,30 +500,8 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
                 description: t(`${K}.investigation.action.description`,
                     'Choose an existing investigate Action from PRs & Issues. Its saved Machine, workspace and Agent choices are used.') }) : null,
         refusedSave ? h(Text, { tone: 'danger', value: t(`${K}.saveRefused`, 'This check can’t be added right now. Your entries are kept here.') }) : null,
-        existing.length > 0 || props.subject.kind === 'environment' ? h(Button, { title: t(`${K}.saveChanges`, 'Save changes'), variant: 'secondary',
-            disabled: alerts === undefined || !savedCandidate.success || !savedEditValid || saving,
-            busy: saving, testID: 'health-setup-save',
-            onPress: async () => {
-                if (!savedCandidate.success || !savedEditValid) return;
-                setSaving(true);
-                try {
-                    await host.settleEphemeralInput({ kind: 'completed', input: savedCandidate.data }, { signal: props.signal });
-                } catch { setRefusedSave(true); }
-                finally { setSaving(false); }
-            } }) : null,
-        h(Row, { justify: 'flex-end' }, h(Button, { title: nativeDomain ? t(`${K}.enable`, 'Enable checks') : t(`${K}.add`, 'Add check'), variant: 'primary', disabled: !canAdd,
-            busy: saving, testID: 'health-setup-add',
-            onPress: async () => {
-                if (!candidate.success) return;
-                setSaving(true);
-                try {
-                    await host.settleEphemeralInput({ kind: 'completed', input: candidate.data }, { signal: props.signal });
-                } catch {
-                    setRefusedSave(true);
-                } finally {
-                    setSaving(false);
-                }
-            } })));
+        offersBoth ? saveChanges('secondary') : null,
+        h(Row, { justify: 'flex-end' }, primary));
 }
 
 function HealthCheckSetupSurface(context: RenderContext): ReactElement {

@@ -374,7 +374,7 @@ export function ServiceCheckDetail(
   const checkEditor = addressEdit ? <View testID="services.check.settings.editor">
     {submitted?.error ? showRecovery(submitted.error.message, {
       label: t('common.retry'), onPress: () => saveSource(submitted.trigger),
-    }) : submitted ? <SurfaceStateCard size="line" kind="loading" title={t('common.loading')} />
+    }) : submitted ? <SurfaceStateCard size="line" kind="loading" title={t(`${k}.checkSaving`)} />
       // Name the Machine and the way out, not the mechanism (PAGE-ACCEPT-176 R9-D3).
       : offlineObserver && editField !== 'from' ? showRecovery(t(`${k}.checkMachineOffline`, { machine: observer ?? t('approvals.machineNotKnown') }), {
         label: t('runs.openMachine'),
@@ -389,6 +389,8 @@ export function ServiceCheckDetail(
               input: { selectedCheckId: addressEdit.checkId },
               chooseWatcher: addressEdit.field === 'from' && seed.observation.kind !== 'durablePush',
               onSettled: finishAddressSetup,
+              // A wait names what it reads and where, never a bare spinner (saved Kuma/Gatus edits, live sweep #193).
+              waitingTitle: machineName => t(`${k}.checkEditOpening`, { machine: machineName ?? observer ?? t('machine.unnamedMachine') }),
               renderUnavailable: (retry, machineName) => showRecovery(
                 t(`${k}.checkEditUnavailableOnMachine`, { machine: machineName ?? t('machine.unnamedMachine') }),
                 { label: t('common.retry'), onPress: retry }),
@@ -397,7 +399,8 @@ export function ServiceCheckDetail(
             onCancel={() => setAddressEdit(null)} />
         ) : seedUnavailable || !canEditAddress ? showRecovery(t('projects.deployments.services.checkEditSourceUnreachable'), {
           label: t('common.retry'), onPress: retrySeed,
-        }) : <SurfaceStateCard size="line" kind="loading" title={t('common.loading')} />}
+        }) : <SurfaceStateCard size="line" kind="loading"
+          title={t(`${k}.checkEditOpening`, { machine: observer ?? t('machine.unnamedMachine') })} />}
   </View> : null;
 
   return (

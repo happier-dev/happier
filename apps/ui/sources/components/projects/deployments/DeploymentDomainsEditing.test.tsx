@@ -291,12 +291,13 @@ describe('Environment → Domains: add form (P6)', () => {
     expect(menu).toBeDefined();
     expect(menu!.props.items).toContainEqual(expect.objectContaining({ id: 'configure-checks' }));
     await act(async () => { menu!.props.onSelect('configure-checks'); });
-    const { NewAccountTriggerPopover } = await import('@/components/workflows/triggers/AccountTriggersSection');
-    const setup = screen.findAllByType(NewAccountTriggerPopover)[0]!;
-    expect(setup.props.eventSeed).toMatchObject({ sourceInstanceId: expect.stringMatching(/^health:/),
+    // The one Add check surface (R10-D1) opens the check's own form, not the workflow trigger editor.
+    const { AddCheckSetup } = await import('./AddCheckSetup');
+    const setup = screen.findAllByType(AddCheckSetup)[0]!;
+    expect(setup.props.seed).toMatchObject({ sourceInstanceId: expect.stringMatching(/^health:/),
       setupInput: { v: 1, subject: { kind: 'environment', environmentId: detail.environment.id },
         domain: { domainId: 'public-domain', targetLinkId: 'target-link' } } });
-    expect(setup.props.eventSeed.setupInput).not.toHaveProperty('checks');
+    expect(setup.props.seed?.setupInput).not.toHaveProperty('checks');
     expect(actions.addDomain).not.toHaveBeenCalled();
     await screen.unmount(); controller.retire();
   });
