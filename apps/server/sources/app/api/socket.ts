@@ -135,6 +135,7 @@ import { destroyUnclaimedHttpUpgrades } from './utils/httpUpgradeOwnership';
 import { registerEngineHeartbeatDiagnostics } from './socket/engineHeartbeatDiagnostics';
 import { registerClientDisconnectCleanup } from './socket/clientDisconnect';
 import { dispatchSocketPacket } from './socket/dispatchSocketPacket';
+import { trackRuntimeSocketHandlers } from '@/app/monitoring/metrics/runtimeMetrics';
 export { DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE, resolveSocketMaxHttpBufferSizeFromEnv } from './socket/transportBudget';
 // Socket.IO adds its event name, acknowledgement id, and packet framing around the
 // serialized command. Keep that reserve beside the one live transport ceiling.
@@ -887,6 +888,7 @@ export function startSocket(app: Fastify): () => Promise<void> {
             return;
         }
 
+        trackRuntimeSocketHandlers(socket);
         if (clientType === 'user-scoped') {
             registerUiFocusSocketEvent(socket, packetAdmission);
             registerSessionConsumptionSocketEvent(socket, packetAdmission);

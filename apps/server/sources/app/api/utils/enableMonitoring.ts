@@ -6,6 +6,8 @@ import {
     httpHotEndpointRequestsCounter,
     httpRequestDurationHistogram,
     httpRequestsCounter,
+    finishRuntimeHttpRequest,
+    trackRuntimeHttpRequest,
 } from "@/app/monitoring/metrics/index";
 import {
     createHealthyMonitoringResponse,
@@ -24,8 +26,9 @@ type EnableMonitoringOptions = Readonly<{
 
 export function enableMonitoring(app: Fastify, options: EnableMonitoringOptions = {}) {
     // Add metrics hooks
-    app.addHook('onRequest', (request, _reply, done) => {
+    app.addHook('onRequest', (request, reply, done) => {
         request.startTime = Date.now();
+        trackRuntimeHttpRequest(reply.raw, request.routeOptions?.url || 'unmatched', request.startTime);
         // Continue Fastify inside the diagnostic scope so authentication and DB
         // reads share it too. Caller headers and query values never supply ids.
         withWebLatencyTrace(request.id, done);
@@ -36,9 +39,9 @@ export function enableMonitoring(app: Fastify, options: EnableMonitoringOptions 
         const method = request.method;
         // Labels retain their values for the process lifetime. Unmatched paths
         // share one label rather than retaining caller-controlled URL identities.
-        const route = request.routeOptions?.url || 'unmatched';
+        const route = finishRuntimeHttpRequest(reply.raw) ?? (request.routeOptions?.url || 'unmatched');
         const status = reply.statusCode.toString();
-        recordWebLatencyPhase(`http.${method}.${request.routeOptions?.url ?? 'unmatched'}`, duration * 1000);
+        recordWebLatencyPhase(`http.${method}.${route}`, duration * 1000);
 
         // Increment request counter
         httpRequestsCounter.inc({ method, route, status });

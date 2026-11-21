@@ -1,4 +1,6 @@
-import { constants, monitorEventLoopDelay, PerformanceObserver } from "node:perf_hooks";
+import type { ServerResponse } from "node:http";
+import { constants, monitorEventLoopDelay, performance, PerformanceObserver } from "node:perf_hooks";
+import type { Socket } from "socket.io";
 
 import { Counter, Gauge } from "prom-client";
 import { trimProcessAllocator } from "@happier-dev/iroh-native/node";
@@ -19,15 +21,95 @@ const RUNTIME_GC_KINDS: readonly RuntimeGcKind[] = [
 
 const runtimeMetricsEnabled = readMetricsServerConfigFromEnv(process.env).enabled;
 
+const EVENT_LOOP_SAMPLE_MS = 20;
+const LONG_BLOCK_MS = 1000;
+const inFlightHttpRoutes = new Map<ServerResponse, { route: string; startedAtMs: number }>();
+const inFlightSocketEvents = new Set<{ event: string; startedAtMs: number }>();
+let lastSampleAt = performance.now();
+
+function reportLongBlock(now: number): void {
+    // Measuring from the last sample avoids missing a full second of blocking
+    // just after a tick. The estimate can include up to one sampling interval.
+    const durationMs = now - lastSampleAt;
+    if (durationMs < LONG_BLOCK_MS) return;
+    lastSampleAt = now;
+    log({
+        module: "runtime-metrics",
+        level: "warn",
+        durationMs: Math.round(durationMs),
+        httpRoutes: Array.from(inFlightHttpRoutes.values()),
+        socketEvents: Array.from(inFlightSocketEvents),
+    }, "Long event-loop block");
+}
+
+export function trackRuntimeHttpRequest(response: ServerResponse, route: string, startedAtMs: number): void {
+    inFlightHttpRoutes.set(response, { route, startedAtMs });
+    // A closed client may never produce a Fastify onResponse callback.
+    response.on("close", finishClosedHttpRequest);
+}
+
+function finishClosedHttpRequest(this: ServerResponse): void {
+    finishRuntimeHttpRequest(this);
+}
+
+export function finishRuntimeHttpRequest(response: ServerResponse): string | undefined {
+    const request = inFlightHttpRoutes.get(response);
+    if (!request) return;
+    // Recovery can finish the blocking request before the timer callback runs.
+    reportLongBlock(performance.now());
+    inFlightHttpRoutes.delete(response);
+    response.removeListener("close", finishClosedHttpRequest);
+    return request.route;
+}
+
+export function trackRuntimeSocketHandlers(socket: Socket): void {
+    const registerHandler = socket.on;
+    socket.on = function (event, handler) {
+        // The application's registration supplies the template. Lifecycle listeners
+        // such as disconnect retain their original registration and removal behavior.
+        if (typeof event !== "string" || event === "disconnect" || event === "disconnecting"
+            || event === "error" || event === "newListener" || event === "removeListener") {
+            return registerHandler.call(this, event, handler);
+        }
+        const trackedHandler = function (this: Socket, ...args: unknown[]) {
+            const work = { event, startedAtMs: Date.now() };
+            inFlightSocketEvents.add(work);
+            let result: unknown;
+            try {
+                result = Reflect.apply(handler, this, args);
+            } catch (error) {
+                finishRuntimeSocketEvent(work);
+                throw error;
+            }
+            if (result instanceof Promise) {
+                return result.finally(() => finishRuntimeSocketEvent(work));
+            }
+            finishRuntimeSocketEvent(work);
+            return result;
+        };
+        return registerHandler.call(this, event, Object.assign(trackedHandler, { listener: handler }));
+    };
+}
+
+function finishRuntimeSocketEvent(work: { event: string; startedAtMs: number }): void {
+    reportLongBlock(performance.now());
+    inFlightSocketEvents.delete(work);
+}
+
 export const runtimeEventLoopLagSecondsGauge = getOrCreateMetric("runtime_event_loop_lag_seconds", () => {
-    // The exporter is the only consumer; a disabled exporter needs no sampler.
-    const eventLoopDelayMonitor = runtimeMetricsEnabled ? monitorEventLoopDelay({ resolution: 20 }) : undefined;
-    if (eventLoopDelayMonitor) {
-        eventLoopDelayMonitor.enable();
-        onShutdown("runtime-metrics", async () => {
-            eventLoopDelayMonitor.disable();
-        });
-    }
+    const timer = setInterval(() => {
+        const now = performance.now();
+        reportLongBlock(now);
+        lastSampleAt = now;
+    }, EVENT_LOOP_SAMPLE_MS).unref();
+    const eventLoopDelayMonitor = runtimeMetricsEnabled
+        ? monitorEventLoopDelay({ resolution: EVENT_LOOP_SAMPLE_MS })
+        : undefined;
+    eventLoopDelayMonitor?.enable();
+    onShutdown("runtime-metrics", async () => {
+        clearInterval(timer);
+        eventLoopDelayMonitor?.disable();
+    });
     return new Gauge({
         name: "runtime_event_loop_lag_seconds",
         help: "Observed event loop lag in seconds",
