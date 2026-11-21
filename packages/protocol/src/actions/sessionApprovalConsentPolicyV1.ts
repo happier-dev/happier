@@ -21,11 +21,12 @@ const fail = (errorCode: string): Failure => ({ ok: false, errorCode, error: err
 /**
  * Whether the ladder answers this Action's Ask, so a Session row can change it. Actions the
  * policy owner decides elsewhere stay out: approval controls and decisions, approval-rule
- * changes (decided on Account settings, Q6) and the per-plugin capture waiver.
+ * changes (decided on Account settings, Q6) and the per-plugin capture waiver. The plugin
+ * carrier is not a policy identity: contributed Asks key on the qualified contributed id.
  */
 export function isSessionApprovalConsentEligibleV1(actionId: string): boolean {
   if (normalizeActionSettingsActionId(actionId) !== actionId) return false;
-  if (isApprovalRuleChangeActionId(actionId)) return false;
+  if (isApprovalRuleChangeActionId(actionId) || actionId === ACTION_INVOKE_ACTION_ID_V1) return false;
   const builtIn = ActionIdSchema.safeParse(actionId);
   if (!builtIn.success) return true;
   const policy = getActionSpec(builtIn.data).approvalPolicy;

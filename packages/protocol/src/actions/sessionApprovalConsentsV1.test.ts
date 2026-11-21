@@ -7,6 +7,7 @@ import {
   setScopedActionApprovalPreference,
 } from './actionSettings.js';
 import { getActionSpec } from './actionSpecs.js';
+import { ACTION_INVOKE_ACTION_ID_V1 } from './actionIds.js';
 import { getArtifactKindPolicyV1 } from '../artifacts/artifactSharingV1.js';
 import type { BoundApprovalProfileV1 } from './approvalProfiles.js';
 import { ApprovalRequestV2Schema } from '../approvals/approvalRequestV1.js';
@@ -232,6 +233,8 @@ describe('Session rungs on the approval-preference ladder', () => {
     expect(
       isSessionApprovalConsentEligibleV1('example.plugin/actions/deploy'),
     ).toBe(true);
+    // The plugin carrier answers nothing: plugin Asks key on the contributed Action's qualified id.
+    expect(isSessionApprovalConsentEligibleV1(ACTION_INVOKE_ACTION_ID_V1)).toBe(false);
   });
 });
 
@@ -412,6 +415,9 @@ describe('Session consent record', () => {
       ok: false,
       errorCode: 'session_approval_consent_unsupported',
     });
+    expect(await executeSessionApprovalConsentPolicyV1(store, 'actions.policy.set',
+      { actionId: ACTION_INVOKE_ACTION_ID_V1, audience: 'agent', session, mode: 'allowed' }))
+      .toMatchObject({ ok: false, errorCode: 'session_approval_consent_unsupported' });
     // Continue after a failed resume moves the record; the source then lists nothing.
     expect(
       await executeSessionApprovalConsentPolicyV1(store, 'actions.policy.set', {
