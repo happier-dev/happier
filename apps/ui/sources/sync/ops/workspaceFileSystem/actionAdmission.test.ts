@@ -212,19 +212,21 @@ describe('shared workspace filesystem Action admission', () => {
             payload: { workspace, rootPath: workspace.rootPath, path: workspace.rootPath } })]);
     });
 
-    it('recovers the demanded managed Files and Git sources on the controller reconnect push', async () => {
+    it.each(['restart', 'reconnect'] as const)('recovers demanded managed Files and Git after controller %s', async (scenario) => {
         const { clearMachineRequestReachabilityForMachine, recordMachineRequestFailed } =
             await import('@/sync/domains/machines/reachability/machineReachability');
         const { useWorkspaceRepositoryTreeBrowser } = await import('@/hooks/workspaces/files/useWorkspaceRepositoryTreeBrowser');
         const { ScmStatusSync } = await import('@/scm/scmStatusSync');
         const { rootPath } = target;
-        const workspace = { v: 2, kind: 'managed', serverId, workspaceId: 'reconnect-project', managedId: 'native-guest',
+        const workspace = { v: 2, kind: 'managed', serverId, workspaceId: `${scenario}-project`, managedId: 'native-guest',
             controller: { machineId: target.machineId, installationId: 'installed-controller' }, rootPath } as const;
         const scope = { ...target, workspace };
         const account = accountScope;
-        let epoch = 'before';
+        let epoch = scenario === 'restart' ? 'starting' : 'before';
         const methods: string[] = [];
         let disconnectWatch: () => void = () => {};
+        let completeStartup: () => void = () => {};
+        const controllerReady = new Promise<void>(resolve => { completeStartup = resolve; });
         filesystem.response = async (request: FilesystemBoundaryRequest) => {
             methods.push(request.method);
             if (request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT) {
@@ -239,6 +241,7 @@ describe('shared workspace filesystem Action admission', () => {
                 const observation = ScmWorkspaceWatchRequestSchema.parse(request.payload);
                 expect(observation.workspace).toEqual(scope.workspace);
                 if (!observation.observationOnly && observation.sinceRevision === undefined) {
+                    if (epoch === 'starting') await controllerReady;
                     return { status: 'ready', revision: epoch === 'before' ? 1 : 2 };
                 }
                 return await new Promise(resolve => {
@@ -251,10 +254,15 @@ describe('shared workspace filesystem Action admission', () => {
         await answerExternalActionAccountForHome(homes, serverId, {
             machineId: workspace.controller.machineId, tokenEpoch: 0,
             actionId: 'daemon.filesystem.listDirectory',
+            failure: result => {
+                const failure = ActionExecuteFailureSchema.safeParse(result);
+                return failure.success ? failure.data : null;
+            },
             execute: input => {
                 methods.push('daemon.filesystem.listDirectory');
                 const list = FilesystemListDirectoryInputSchema.parse(input);
                 expect(list.workspace).toEqual(scope.workspace);
+                if (epoch === 'starting') return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
                 return { success: true, entries: [{ name: `${epoch}.txt`, type: 'file' }] };
             },
         });
@@ -265,6 +273,20 @@ describe('shared workspace filesystem Action admission', () => {
         try {
             const readError = () => storage.getState().getWorkspaceScmSnapshotError(scope);
             const names = () => tree.getCurrent().nodes.map(node => node.name);
+            if (scenario === 'restart') {
+                await vi.waitFor(() => expect(tree.getCurrent().rootError).toBe('admission_unavailable'));
+                expect(readError()).toBeNull();
+                expect(methods.filter(method => method === 'daemon.filesystem.listDirectory')).toHaveLength(1);
+                epoch = 'after';
+                completeStartup();
+                await vi.waitFor(() => {
+                    expect(tree.getCurrent().rootError).toBeNull();
+                    expect(names()).toEqual(['after.txt']);
+                });
+                expect(methods.filter(method => method === 'daemon.filesystem.listDirectory')).toHaveLength(2);
+                expect(methods.filter(method => method === RPC_METHODS.SCM_WORKSPACE_WATCH)).toHaveLength(3);
+                return;
+            }
             await vi.waitFor(() => {
                 expect(tree.getCurrent().rootError, methods.join(', ')).toBeNull();
                 expect(names(), methods.join(', ')).toEqual(['before.txt']);
@@ -291,6 +313,7 @@ describe('shared workspace filesystem Action admission', () => {
             expect(methods.slice(offlineCallCount).filter(method => method === RPC_METHODS.SCM_STATUS_SNAPSHOT)).toHaveLength(1);
             expect(methods.slice(offlineCallCount).filter(method => method === RPC_METHODS.SCM_WORKSPACE_WATCH)).toHaveLength(3);
         } finally {
+            completeStartup();
             release();
             await tree.unmount();
         }

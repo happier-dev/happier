@@ -1834,8 +1834,11 @@ member's folder.
 
 A managed Project's presented Files and Git demand survives a controller disconnect.
 The authenticated Home reconnect signal reattaches the current watch and revalidates
-both sources through their existing admission paths. A Project without a usable
-Git watch still revalidates on the reconnect signal. Closed surfaces release demand.
+both sources through their existing admission paths. The first ready reply from a
+managed watch also refreshes Files. A retained Project can therefore recover a
+listing refused during controller startup even when Git is already current. A
+Project without a usable Git watch still revalidates on the reconnect signal.
+Closed surfaces release demand.
 
 Path policy stays in `filesystemPathAuthorization.ts`: it uses this Machine's link
 facts only for the local source; a target confines each operation to its root

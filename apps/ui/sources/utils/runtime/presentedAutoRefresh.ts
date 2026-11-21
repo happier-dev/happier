@@ -15,10 +15,10 @@ export type PresentedAutoRefreshWatchCallbacks<Unavailable> = Readonly<{
     onReady(): void;
     onUnavailable(reason: Unavailable): void;
 }>;
-type ReadSource = 'filesystem' | 'reconnected';
+export type PresentedAutoRefreshReadSource = 'filesystem' | 'watch_ready' | 'reconnected';
 type Target<Snapshot, Unavailable> = Readonly<{
     key: string;
-    read(source?: ReadSource): Promise<Snapshot>;
+    read(source?: PresentedAutoRefreshReadSource): Promise<Snapshot>;
     subscribeRecovery?(recover: () => void): () => void;
     watch?(callbacks: PresentedAutoRefreshWatchCallbacks<Unavailable>): () => void;
     onUnavailable?(reason: Unavailable): void;
@@ -148,14 +148,14 @@ export class PresentedAutoRefresh<Demand extends PresentedAutoRefreshDemand, Sna
         }) ?? null;
     }
 
-    private revalidate(target: Target<Snapshot, Unavailable>, source: ReadSource): void {
+    private revalidate(target: Target<Snapshot, Unavailable>, source: PresentedAutoRefreshReadSource): void {
         void target.read(source).catch(() => {
             // The status owner publishes the failure.
         });
     }
 
     private reconcileWatch(poll: Poll<Demand, Snapshot, Unavailable>, target: Target<Snapshot, Unavailable>,
-        readySource: ReadSource = 'filesystem'): boolean {
+        readySource: 'watch_ready' | 'reconnected' = 'watch_ready'): boolean {
         if (!this.isActive() || poll.consumers.size === 0 || poll.watchState.status !== 'idle' || !target.watch) return false;
         poll.watchState = { status: 'pending' };
         this.clearTimer(poll);
