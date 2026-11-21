@@ -374,6 +374,7 @@
 | `.` | `dockerEngineAccessModeInputSchema` | value | any |
 | `.` | `dockerEnginePresenceCheck` | value | any |
 | `.` | `getMachineFirewallExposureInputSchemaV1` | value | any |
+| `.` | `getMachineFirewallOpenPortsInputSchemaV1` | value | any |
 | `.` | `getPluginMachineExecutionOriginRef` | value | any |
 | `.` | `hasDeploymentTargetPreparationCoordinatesV1` | value | any |
 | `.` | `isBaseCredentialDiagnosticKey` | value | any |

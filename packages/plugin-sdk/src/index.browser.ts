@@ -332,7 +332,7 @@ export { defineUiSurfaceDefinition } from './ui/surface.js';
 export { deploymentTargetRoleWithNativeSelectorV1 } from './deploymentTargets.js';
 export { dockerEngineAccessModeInputSchema } from './machineSetup.js';
 export { dockerEnginePresenceCheck } from './machineSetup.js';
-export { getMachineFirewallExposureInputSchemaV1 } from './machineSetup.js';
+export { getMachineFirewallExposureInputSchemaV1, getMachineFirewallOpenPortsInputSchemaV1 } from './machineSetup.js';
 export { getPluginMachineExecutionOriginRef } from './executionOrigin.js';
 export { hasDeploymentTargetPreparationCoordinatesV1 } from './deploymentTargets.js';
 export { isBaseCredentialDiagnosticKey } from './diagnostics.js';

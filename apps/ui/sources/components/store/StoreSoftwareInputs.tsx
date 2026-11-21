@@ -5,6 +5,7 @@ import {
 } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { readHappierActionInputPath } from '@happier-dev/plugin-ui/presentation';
 import type { PluginJsonValueV2 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
+import { resolveMachineRecipeStepInputsV1, type MachineRecipeV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 
 import { ActionInputFields } from '@/components/sessions/actions/ActionInputFields';
 import { buildSessionActionFieldOptionsResolver } from '@/components/sessions/actions/sessionActionFieldOptions';
@@ -52,6 +53,25 @@ export function readSoftwareInputFields(
       omitBlankSoftwareInputs(readHappierActionInputPath(draft, field.path)) === undefined,
   );
   return { fields, missing: missing?.title ?? null };
+}
+
+/**
+ * The rules a recipe's firewall writes from the ports the person opened, through the one recipe resolver, so the page
+ * shows the exact table the review applies. Null while the values don't resolve, and for any other recipe.
+ */
+export function readSoftwareFirewallRules(
+  definition: Pick<MachineRecipeV1, 'steps'> | undefined,
+  inputs: unknown,
+): string | null {
+  const step = definition?.steps.find((candidate) => candidate.kind === 'firewall'
+    && typeof candidate.rules === 'object' && candidate.rules.kind === 'openPorts');
+  if (!step) return null;
+  try {
+    const resolved = resolveMachineRecipeStepInputsV1(step, inputs);
+    return resolved.kind === 'firewall' ? resolved.rules : null;
+  } catch {
+    return null;
+  }
 }
 
 /** The recipe's declared input form, drawn by the one Action input-field owner. */

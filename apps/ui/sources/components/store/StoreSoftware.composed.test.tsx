@@ -801,7 +801,7 @@ it('asks a package recipe for its declared fields and enables Install only for a
     expect(primary().props.accessibilityHint).toBe('Enter Package name first');
     await act(async () => { changeTextTestInstance(screen.findHostByTestId('store.software.listing.input.package.identity.name'), 'Bad Name'); });
     await flushHookEffects();
-    expect(primary().props.accessibilityHint).toBe('Check the package details');
+    expect(primary().props.accessibilityHint).toBe('Check the settings');
     await act(async () => { changeTextTestInstance(screen.findHostByTestId('store.software.listing.input.package.identity.name'), 'google-chrome-stable'); });
     await flushHookEffects();
     expect(primary().props.accessibilityHint).toBe('Turn on at least one Machine');

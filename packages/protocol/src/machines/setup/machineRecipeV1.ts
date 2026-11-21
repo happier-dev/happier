@@ -15,7 +15,7 @@ import { createInputHintsSchemasWithStaticOptionsOnly, InputOptionValueSchema } 
 import { resolveDeclaredInputLeaves } from '../../plugins/actions/inputSchemaTraversal.js';
 import { MachineRecipeReferenceV1Schema } from './machineRecipeReferenceV1.js';
 import { MachineFirewallExposureV1Schema as FirewallExposure } from './machineFirewallV1.js';
-import { MachineCaddyFirewallObservationInputV1Schema } from './machineFirewallV1.js';
+import { MachineCaddyFirewallObservationInputV1Schema, MachineFirewallOpenPortsV1Schema, renderMachineFirewallOpenPortsV1 } from './machineFirewallV1.js';
 import { AccessCredentialPurposeRefV1Schema, AccessProviderSelectionV1Schema } from '../../plugins/contributions/accessProviderSelection.js';
 export { MachineFirewallTransitionIntentV1Schema, type MachineFirewallTransitionIntentV1,
     MachineFirewallTransitionBindingsV1Schema, type MachineFirewallTransitionBindingsV1,
@@ -324,10 +324,13 @@ const FileDeclaration = z.object({ ...File.shape,
 }).strict().superRefine(refineFile);
 const ServiceDeclaration = z.object({ ...MachineRecipeServiceUnitStepV1Schema.shape,
     unit: bindable(MachineRecipeServiceUnitStepV1Schema.shape.unit) }).strict();
+/** Rules and exposures lowered from the guided open-ports input by the one firewall renderer. */
+const OpenPortsReference = z.object({ kind: z.literal('openPorts'), path: InputPathSchema }).strict();
 const FirewallDeclaration = z.object({ ...MachineRecipeFirewallStepV1Schema.omit({ caddyObservation: true }).shape,
-    rules: bindable(MachineRecipeFirewallStepV1Schema.shape.rules),
+    rules: z.union([bindable(MachineRecipeFirewallStepV1Schema.shape.rules), OpenPortsReference]),
     exposures: bindable(MachineRecipeFirewallStepV1Schema.shape.exposures.unwrap()).optional(),
-}).strict();
+}).strict().refine(step => !(typeof step.rules === 'object' && step.rules.kind === 'openPorts' && step.exposures !== undefined),
+    { message: 'Open-ports rules derive their exposures' });
 const Args = bindable(z.array(bindable(z.string().refine(value => !value.includes('\0')))));
 const KernelDeclaration = z.object({ ...KernelFact.shape, architectures: bindable(Architectures).optional() }).strict()
     .refine(fact => !['binfmt', 'binfmtPersistent'].includes(fact.capability) || fact.architectures !== undefined,
@@ -472,9 +475,18 @@ function bindMachineRecipeStepInputsV1(step: MachineRecipeStepDeclarationV1 | Ma
         case 'serviceUnit':
             resolved = { ...concreteStep, unit: bind(step.unit) };
             break;
-        case 'firewall':
-            resolved = { ...concreteStep, rules: bind(step.rules), ...(step.exposures !== undefined ? { exposures: bind(step.exposures) } : {}) };
+        case 'firewall': {
+            const rules = step.rules;
+            if (typeof rules === 'object' && rules.kind === 'openPorts') {
+                if (inspectTargetFact) break;
+                const open = readInputPath(inputs, rules.path);
+                if (!MachineFirewallOpenPortsV1Schema.safeParse(open).success) throw new TypeError('invalid_machine_recipe_inputs');
+                resolved = { ...concreteStep, ...renderMachineFirewallOpenPortsV1(open) };
+                break;
+            }
+            resolved = { ...concreteStep, rules: bind(rules), ...(step.exposures !== undefined ? { exposures: bind(step.exposures) } : {}) };
             break;
+        }
         case 'command':
             resolved = { ...concreteStep, args: boundArgs(step.args, inputs, targetFacts, inspectTargetFact),
                 check: 'kind' in step.check ? step.check.kind === 'kernel'

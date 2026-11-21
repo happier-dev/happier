@@ -41,33 +41,56 @@ it('publishes Caddy prerequisites with the reviewed seed and native daemon group
   expect(recipe.removeSteps).toBeUndefined();
 });
 
-it('publishes the reviewed firewall candidate without inventing a policy or public-port default', () => {
+it('asks the person for ports, never a written nftables candidate, and invents no open port', () => {
   const parsed = parsePluginManifest(PLUGIN_MANIFEST);
   if (!parsed.ok) throw new Error('First-party recipe declaration was refused');
   const recipe = parsed.manifest.contributes.machineRecipes?.find(entry => entry.id === 'firewall');
-  expect(recipe).toBeDefined();
   if (!recipe) throw new Error('Firewall declaration is absent');
+  expect(recipe.inputHints?.fields.map(field => [field.path, field.widget])).toEqual([
+    ['open.tcp', 'text_list'], ['open.udp', 'text_list'], ['open.from', 'text_list']]);
   const schema = compilePluginJsonSchema(recipe.inputSchema);
   expect(isValidPluginJsonSchemaValue(schema, {})).toBe(false);
-  const inputs = { rules: 'table inet happier\ndelete table inet happier\ntable inet happier { chain input { type filter hook input priority filter - 10; policy accept; } }', exposures: [] };
-  expect(isValidPluginJsonSchemaValue(schema, inputs)).toBe(true);
-  expect(recipe.steps.map(step => resolveMachineRecipeStepInputsV1(step, inputs))).toMatchObject([
-    { kind: 'firewall', rules: inputs.rules, exposures: [] },
-  ]);
-  expect(recipe.removeSteps).toBeUndefined();
+  expect(isValidPluginJsonSchemaValue(schema, { open: { tcp: [] } })).toBe(false);
+  expect(isValidPluginJsonSchemaValue(schema, { open: { tcp: ['70000'] } })).toBe(false);
+  expect(isValidPluginJsonSchemaValue(schema, { open: { tcp: ['22'], from: ['example.com'] } })).toBe(false);
+  expect(recipe.removeSteps).toHaveLength(1);
 });
 
-it('passes firewall candidates to the native owner which refuses a foreign-table escape before native effects', async () => {
+it('lowers opened ports to the exact owned table and the review\'s public ports', () => {
   const parsed = parsePluginManifest(PLUGIN_MANIFEST);
   if (!parsed.ok) throw new Error('First-party recipe declaration was refused');
   const recipe = parsed.manifest.contributes.machineRecipes?.find(entry => entry.id === 'firewall');
-  expect(recipe).toBeDefined();
   if (!recipe) throw new Error('Firewall declaration is absent');
-  const inputs = { rules: 'table inet happier\ndelete table inet happier\ntable inet happier {}\nflush ruleset', exposures: [] };
+  const inputs = { open: { tcp: ['443', '22', '443'], udp: ['51820'] } };
+  expect(isValidPluginJsonSchemaValue(compilePluginJsonSchema(recipe.inputSchema), inputs)).toBe(true);
   const step = resolveMachineRecipeStepInputsV1(recipe.steps[0]!, inputs);
+  if (step.kind !== 'firewall') throw new Error('Firewall step expected');
+  expect(step.rules.split('\n')).toEqual(expect.arrayContaining([
+    '    meta nfproto ipv4 tcp dport 22 accept', '    meta nfproto ipv6 tcp dport 443 accept',
+    '    meta nfproto ipv4 udp dport 51820 accept', '    ct state new drop',
+    '    meta l4proto tcp meta nfproto ipv4 ct original proto-dst 443 accept',
+    '    ct state new ct direction original ct status dnat drop']));
+  expect(step.rules.match(/tcp dport 443 accept/g)).toHaveLength(2);
+  expect(step.exposures?.map(exposure => [exposure.protocol, exposure.hostPort, exposure.exposure]))
+    .toEqual([['tcp', 22, 'public'], ['tcp', 443, 'public'], ['udp', 51820, 'public']]);
+  const sourced = resolveMachineRecipeStepInputsV1(recipe.steps[0]!, { open: { tcp: ['22'], from: ['203.0.113.4/32', '2001:db8::/32'] } });
+  if (sourced.kind !== 'firewall') throw new Error('Firewall step expected');
+  expect(sourced.rules).toContain('    ip saddr 203.0.113.4/32 tcp dport 22 accept\n    ip6 saddr 2001:db8::/32 tcp dport 22 accept\n');
+  expect(sourced.rules).not.toContain('meta nfproto ipv4 tcp dport 22');
+});
+
+it('hands only rendered tables to the native owner, which accepts them; typed text never becomes a rule', async () => {
+  const parsed = parsePluginManifest(PLUGIN_MANIFEST);
+  if (!parsed.ok) throw new Error('First-party recipe declaration was refused');
+  const recipe = parsed.manifest.contributes.machineRecipes?.find(entry => entry.id === 'firewall');
+  if (!recipe) throw new Error('Firewall declaration is absent');
+  expect(() => resolveMachineRecipeStepInputsV1(recipe.steps[0]!, { open: { tcp: ['22 } flush ruleset'] } }))
+    .toThrow('invalid_machine_recipe_inputs');
+  const step = resolveMachineRecipeStepInputsV1(recipe.steps[0]!, { open: { tcp: ['22'], from: ['10.0.0.0/8'] } });
   const backend = createMachineSetupNativeBackend({ platform: 'linux', readNativeInit: async () => 'systemd',
-    run: async () => { throw new Error('A refused firewall candidate must not execute a native command'); } });
-  expect(await backend.observe(step)).toMatchObject({ status: 'unavailable', reason: 'validation_failed' });
+    run: async () => ({ code: 0, stdout: '', stderr: '', errorCode: 'ENOENT' }) });
+  // Confinement passes; the host only lacks nft, so the owner reports that instead of a validation refusal.
+  expect(await backend.observe(step)).toMatchObject({ status: 'unsupported', facts: { requiredFact: 'systemNft' } });
 });
 
 it.each(['darwin', 'win32'] as const)('keeps Linux host prerequisites explicitly unsupported on %s without native effects', async platform => {
@@ -80,7 +103,7 @@ it.each(['darwin', 'win32'] as const)('keeps Linux host prerequisites explicitly
     expect(recipe).toBeDefined();
     if (!recipe) throw new Error('Host prerequisite declaration is absent');
     for (const declaration of recipe.steps) {
-      const step = resolveMachineRecipeStepInputsV1(declaration, { initialConfig: '{}', rules: 'table inet happier {}', exposures: [] },
+      const step = resolveMachineRecipeStepInputsV1(declaration, { initialConfig: '{}', open: { tcp: ['22'] } },
         { 'daemon.primaryGroup': 'native-daemon' });
       expect(await backend.observe(step)).toMatchObject({ status: 'unsupported', reason: expect.any(String) });
     }

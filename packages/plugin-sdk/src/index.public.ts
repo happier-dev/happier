@@ -55,7 +55,7 @@ export type { MachineRecipeV1, MachineRecipeStepV1, MachineRecipeSelectionV1, Ma
 export { createDockerMembershipStep } from './machineSetup.js';
 export { DOCKER_ENGINE_RECIPE_REF_V1 } from './machineSetup.js';
 export { createCaddyContainerSetupDeclarations, nativeCaddyProfile } from './machineSetup.js';
-export { getMachineFirewallExposureInputSchemaV1 } from './machineSetup.js';
+export { getMachineFirewallExposureInputSchemaV1, getMachineFirewallOpenPortsInputSchemaV1 } from './machineSetup.js';
 export { createDockerEngineSetupSteps, dockerEnginePresenceCheck, dockerEngineAccessModeInputSchema } from './machineSetup.js';
 export { createTailscaleJoinSteps, tailscaleMembershipPrograms } from './machineSetup.js';
 export { SharedSavedSecretReferenceSelectionV1Schema } from './accessProviders.js';

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { omitBlankSoftwareInputs, readSoftwareInputFields } from './StoreSoftwareInputs';
+import { omitBlankSoftwareInputs, readSoftwareFirewallRules, readSoftwareInputFields } from './StoreSoftwareInputs';
 
 // The shape a package-by-name recipe declares: one manager choice, then that manager's own fields.
 const hints = {
@@ -38,5 +38,21 @@ describe('Software recipe input drafts', () => {
         expect(omitBlankSoftwareInputs({ daemonConfig: {} })).toEqual({ daemonConfig: {} });
         expect(readSoftwareInputFields({ fields: [{ path: 'daemonConfig', title: 'Docker settings', widget: 'json', required: true }] },
             { daemonConfig: {} }).missing).toBeNull();
+    });
+});
+
+describe('readSoftwareFirewallRules', () => {
+    const guided = { steps: [{ id: 'owned-firewall', kind: 'firewall' as const, rules: { kind: 'openPorts' as const, path: 'open' } }] };
+
+    it('shows the exact table the review applies for the ports typed, and nothing until they resolve', () => {
+        expect(readSoftwareFirewallRules(guided, { open: { tcp: ['443'] } })).toContain('meta nfproto ipv4 tcp dport 443 accept');
+        expect(readSoftwareFirewallRules(guided, { open: { tcp: ['443x'] } })).toBeNull();
+        expect(readSoftwareFirewallRules(guided, {})).toBeNull();
+    });
+
+    it('has nothing to preview for a recipe whose rules are not computed from ports', () => {
+        const raw = { steps: [{ id: 'owned-firewall', kind: 'firewall' as const, rules: { kind: 'input' as const, path: 'rules' } }] };
+        expect(readSoftwareFirewallRules(raw, { rules: 'table inet happier {}' })).toBeNull();
+        expect(readSoftwareFirewallRules(undefined, {})).toBeNull();
     });
 });

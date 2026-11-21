@@ -108,3 +108,54 @@ export const MachineFirewallReviewFactsV1Schema = lazyZodSchema(() => z.union([
   z.object({ status: z.literal('readWhenApproved') }).strict(),
 ]));
 export type MachineFirewallReviewFactsV1 = z.infer<typeof MachineFirewallReviewFactsV1Schema>;
+
+const portPattern = '^(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$';
+/** The guided Firewall form: the ports a person opens, as typed, and who may reach them. */
+export const MachineFirewallOpenPortsV1Schema = lazyZodSchema(() => {
+  const ports = z.array(z.string().regex(new RegExp(portPattern)));
+  return z.object({ tcp: ports.min(1), udp: ports.optional(),
+    from: z.array(z.union([z.cidrv4(), z.cidrv6()])).optional() }).strict();
+});
+export type MachineFirewallOpenPortsV1 = z.infer<typeof MachineFirewallOpenPortsV1Schema>;
+type MachineFirewallExposureV1 = z.infer<typeof MachineFirewallExposureV1Schema>;
+
+/** The open-ports input schema a recipe declares; the same grammar the renderer parses. */
+export function getMachineFirewallOpenPortsInputSchemaV1(): PluginJsonSchemaV2 {
+  return PluginJsonSchemaV2Schema.parse(zodSchemaToJsonSchemaObject(MachineFirewallOpenPortsV1Schema, { target: 'draft-7' }));
+}
+
+/**
+ * The one lowering from opened ports to the owned table the native firewall owner stages verbatim. Rule shapes are
+ * the reachability transition's own (established/loopback first, one permit per port and source, then the one
+ * INPUT deny and the DNAT FORWARD deny that covers Docker-published ports), so nothing here is a second policy.
+ * Exposures are the review's facts: each opened port is reachable from outside, from the listed sources or anywhere.
+ */
+export function renderMachineFirewallOpenPortsV1(value: unknown): Readonly<{ rules: string; exposures: MachineFirewallExposureV1[] }> {
+  const open = MachineFirewallOpenPortsV1Schema.parse(value);
+  const sorted = (ports: readonly string[] | undefined) => [...new Set((ports ?? []).map(Number))].sort((a, b) => a - b);
+  const opened = [...sorted(open.tcp).map(port => ({ protocol: 'tcp' as const, port })),
+    ...sorted(open.udp).map(port => ({ protocol: 'udp' as const, port }))];
+  const sources = [...new Set(open.from ?? [])];
+  const host = ['ct state established,related accept', 'iifname "lo" accept'];
+  const forward = ['ct state established,related accept'];
+  for (const { protocol, port } of opened) {
+    if (sources.length === 0) for (const family of ['ipv4', 'ipv6']) {
+      host.push(`meta nfproto ${family} ${protocol} dport ${port} accept`);
+      forward.push(`meta l4proto ${protocol} meta nfproto ${family} ct original proto-dst ${port} accept`);
+    }
+    // The source expression already selects the family; nft drops a redundant nfproto selector.
+    for (const source of sources) {
+      const ip = source.includes(':') ? 'ip6' : 'ip';
+      host.push(`${ip} saddr ${source} ${protocol} dport ${port} accept`);
+      forward.push(`${ip} saddr ${source} meta l4proto ${protocol} ct original proto-dst ${port} accept`);
+    }
+  }
+  host.push('ct state new drop');
+  forward.push('ct state new ct direction original ct status dnat drop');
+  const chain = (name: string, rules: readonly string[]) => `  chain ${name} {\n    type filter hook ${name} priority filter - 10; policy accept;\n${rules.map(rule => `    ${rule}\n`).join('')}  }\n`;
+  return {
+    rules: `table inet happier\ndelete table inet happier\ntable inet happier {\n${chain('input', host)}${chain('forward', forward)}}\n`,
+    exposures: opened.map(({ protocol, port }) => ({ requirementId: `open-${protocol}-${port}`, hostAddress: '0.0.0.0',
+      hostPort: port, protocol, exposure: 'public' as const })),
+  };
+}

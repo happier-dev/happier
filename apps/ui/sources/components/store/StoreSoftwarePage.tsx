@@ -22,6 +22,7 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { BareSectionContent } from '@/components/ui/lists/BareSectionContent';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { StoreItemMark } from './catalog/StoreItemMark';
@@ -51,6 +52,7 @@ import {
 } from './StoreSoftwareEntry';
 import {
   omitBlankSoftwareInputs,
+  readSoftwareFirewallRules,
   readSoftwareInputFields,
   SoftwareInputFields,
   type SoftwareInputDraft,
@@ -330,6 +332,8 @@ function SoftwareListingBody(
   const packageInputs = omitBlankSoftwareInputs(draft) ?? {};
   const packageChecked =
     hasForm && form.missing === null ? state.configure(packageInputs) : null;
+  const firewallRules = hasForm && packageChecked?.ok
+    ? readSoftwareFirewallRules(state.machineRecipeDetails?.[0]?.definition, packageInputs) : null;
   const unsupported = item.disabled === true;
   // A reachability/roster refresh cannot change the exact set the person chose.
   const selectedTargets = [...chosen.values()];
@@ -465,6 +469,7 @@ function SoftwareListingBody(
             </SectionContentRow>
           </ItemGroup>
         ) : hasForm ? (
+          <>
           <ItemGroup title={t('capabilities.store.softwarePage.packageTitle')}>
             <SectionContentRow>
               <SoftwareInputFields
@@ -477,6 +482,23 @@ function SoftwareListingBody(
               />
             </SectionContentRow>
           </ItemGroup>
+          {firewallRules ? (
+            <ItemGroup
+              title={t('capabilities.store.softwarePage.rulesTitle')}
+              description={t('capabilities.store.softwarePage.rulesDescription')}
+            >
+              <SectionContentRow>
+                <CodeBlockView
+                  code={firewallRules}
+                  showHeaderRow={false}
+                  selectable
+                  showCopyButton
+                  scrollTestID="store.software.listing.firewallRules"
+                />
+              </SectionContentRow>
+            </ItemGroup>
+          ) : null}
+          </>
         ) : unaskable ? (
           <ItemGroup
             title={t('capabilities.store.softwarePage.needsPackagesTitle')}
