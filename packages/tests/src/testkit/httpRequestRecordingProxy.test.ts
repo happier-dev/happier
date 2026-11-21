@@ -6,6 +6,7 @@ import { connect, type Socket } from 'node:net';
 import { networkInterfaces } from 'node:os';
 import { brotliCompressSync, gzipSync } from 'node:zlib';
 
+import { SERVER_HTTP_KEEP_ALIVE_TIMEOUT_MS_V1 } from '@happier-dev/protocol/server/http/connectionLifetimeV1';
 import { describe, expect, it, vi } from 'vitest';
 
 import { RECORDED_HTTP_PROXY_REQUEST_BODY_MAX_BYTES, startHttpRequestRecordingProxy } from './httpRequestRecordingProxy';
@@ -85,6 +86,32 @@ describe('startHttpRequestRecordingProxy', () => {
       await proxy.stop();
       for (const socket of targetSockets) socket.destroy();
       await closeServer(target);
+    }
+  });
+
+  it.each([false, true])('advertises the client hop lifetime when rewrite is %s', async (rewrite) => {
+    const home = createServer({ keepAliveTimeout: SERVER_HTTP_KEEP_ALIVE_TIMEOUT_MS_V1 }, (_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ enabled: true }));
+    });
+    await listen(home);
+    const address = home.address();
+    if (!address || typeof address !== 'object') throw new Error('Home did not bind');
+    const homeUrl = `http://127.0.0.1:${address.port}`;
+    const proxy = await startHttpRequestRecordingProxy({
+      targetBaseUrl: homeUrl,
+      ...(rewrite ? { rewriteResponseBody: { when: () => true, rewrite: (_request, body) => body } } : {}),
+    });
+    try {
+      const direct = await fetch(`${homeUrl}/v1/features`);
+      const viaProxy = await fetch(`${proxy.baseUrl}/v1/features`);
+      expect(await direct.json()).toEqual({ enabled: true });
+      expect(await viaProxy.json()).toEqual({ enabled: true });
+      expect(direct.headers.get('keep-alive')).toBe(`timeout=${SERVER_HTTP_KEEP_ALIVE_TIMEOUT_MS_V1 / 1000}`);
+      expect(viaProxy.headers.get('keep-alive')).toBe(`timeout=${createServer().keepAliveTimeout / 1000}`);
+    } finally {
+      await proxy.stop();
+      await closeServer(home);
     }
   });
 

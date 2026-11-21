@@ -275,6 +275,7 @@ export async function startHttpRequestRecordingProxy(params: Readonly<{
   const forwardRewrittenResponse = (
     rewriter: NonNullable<typeof params.rewriteResponseBody>,
     upstreamRes: IncomingMessage,
+    clientHeaders: IncomingMessage['headers'],
     res: ServerResponse,
     entry: MutableRecordedHttpProxyRequest,
     statusCode: number,
@@ -320,7 +321,7 @@ export async function startHttpRequestRecordingProxy(params: Readonly<{
       }
       const forwardedBytes = Buffer.from(forwarded, 'utf8');
       const forwardedHeaders: Record<string, string | string[] | number> = {};
-      for (const [key, value] of Object.entries(upstreamRes.headers)) {
+      for (const [key, value] of Object.entries(clientHeaders)) {
         if (value === undefined) continue;
         const lowered = key.toLowerCase();
         if (lowered === 'content-length' || lowered === 'transfer-encoding') continue;
@@ -387,6 +388,12 @@ export async function startHttpRequestRecordingProxy(params: Readonly<{
     }, (upstreamRes) => {
       const statusCode = upstreamRes.statusCode ?? 502;
       entry.statusCode = statusCode;
+      const { connection, 'keep-alive': _upstreamKeepAlive, ...clientHeaders } = upstreamRes.headers;
+      // Node advertises the lifetime of this client socket. Home's headers
+      // describe the separate socket between the recorder and Home.
+      for (const name of connection?.split(',') ?? []) {
+        delete clientHeaders[name.trim().toLowerCase()];
+      }
       upstreamRes.pause();
       const encoding = upstreamRes.headers['content-encoding'];
       entry.responseContentEncoding = Array.isArray(encoding) ? encoding.join(', ') : encoding ?? null;
@@ -403,10 +410,10 @@ export async function startHttpRequestRecordingProxy(params: Readonly<{
             return;
           }
           if (rewriteResponseBody) {
-            forwardRewrittenResponse(rewriteResponseBody, upstreamRes, res, entry, statusCode);
+            forwardRewrittenResponse(rewriteResponseBody, upstreamRes, clientHeaders, res, entry, statusCode);
             return;
           }
-          res.writeHead(statusCode, upstreamRes.statusMessage, upstreamRes.headers);
+          res.writeHead(statusCode, upstreamRes.statusMessage, clientHeaders);
           if (params.captureResponseBody === true) observeResponseBody(upstreamRes, entry);
           upstreamRes.pipe(res);
           upstreamRes.once('end', () => finish(entry, { statusCode }));
