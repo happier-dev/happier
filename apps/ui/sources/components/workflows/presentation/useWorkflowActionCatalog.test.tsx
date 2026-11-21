@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { gunzipSync } from 'node:zlib';
+import { WorkflowEventsListOutputV1Schema, type WorkflowEventsListOutputV1 } from '@happier-dev/protocol/actions/specs/workflowEvents';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, Children, isValidElement, useState, type ComponentProps, type ReactElement, type ReactNode } from 'react';
 import type { WorkflowSentenceEditorIntent } from '../authoring/workflowSentenceAuthoring';
@@ -282,6 +285,36 @@ describe('useWorkflowActionCatalog', () => {
             expect(hook.getCurrent().events).toEqual(expect.arrayContaining([
                 expect.objectContaining({ eventRef: { pluginId: 'acme.deploy', localId: 'released' } }),
             ]));
+        } finally { await hook.unmount(); }
+    });
+
+    it('offers all 45 Event declarations from the READY247 watcher capture', async () => {
+        // Account A's headless workflow.events.list on daemon 39b4ed1b9936.
+        // Only Machine and plugin installation identities are anonymized. The
+        // declarations keep their original shapes and go through the real parser.
+        const capture = new URL('./fixtures/ready247WorkflowEvents.json.gz', import.meta.url);
+        const { machineId, events } = JSON.parse(gunzipSync(readFileSync(capture)).toString('utf8')) as WorkflowEventsListOutputV1;
+
+        const describe = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+            protocolVersion: 1, projection, projectionDigest: 'd'.repeat(64),
+        });
+        deferred = buildDeferredDaemonProjectionSections({ ...describe, automationEligibleEvents: events });
+        storage.getState().applySettingsForScope({ serverId, accountId: 'account-a' }, settingsParse({}), 2);
+        const hook = await renderHook(() => useWorkflowTriggerEventOptions({ machineId, serverId, enabled: true }));
+        try {
+            await vi.waitFor(() => expect(hook.getCurrent().status).not.toBe('loading'));
+            const { readCachedDaemonMergedProjectionCacheEntry } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+            const { PLUGIN_EVENT_AUTOMATION_SECTIONS } = await import('@/sync/domains/plugins/ui/projectionSections');
+            const entry = readCachedDaemonMergedProjectionCacheEntry({ machineId, serverId, sections: PLUGIN_EVENT_AUTOMATION_SECTIONS });
+            const parsed = WorkflowEventsListOutputV1Schema.safeParse({ machineId, events });
+            expect(hook.getCurrent().status, JSON.stringify({
+                projection: entry?.kind,
+                reason: entry?.kind === 'error' ? entry.reason : undefined,
+                hydration: entry?.deferredHydrationRejection,
+                invalidPaths: parsed.success ? undefined : parsed.error.issues.map(issue => issue.path),
+            })).toBe('ready');
+            expect(hook.getCurrent().events).toHaveLength(45);
+            expect(hook.getCurrent().events.map(({ eventRef }) => eventRef)).toEqual(events.map(({ event }) => event.identity));
         } finally { await hook.unmount(); }
     });
 
