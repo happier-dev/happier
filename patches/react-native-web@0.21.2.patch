@@ -1,5 +1,5 @@
 diff --git a/dist/cjs/modules/useElementLayout/index.js b/dist/cjs/modules/useElementLayout/index.js
-index f3028704292..421bed8999f 100644
+index f3028704292..fb4be309372 100644
 --- a/dist/cjs/modules/useElementLayout/index.js
 +++ b/dist/cjs/modules/useElementLayout/index.js
 @@ -4,7 +4,6 @@ var _interopRequireDefault = require("@babel/runtime/helpers/interopRequireDefau
@@ -10,7 +10,7 @@ index f3028704292..421bed8999f 100644
  var _canUseDom = _interopRequireDefault(require("../canUseDom"));
  /**
   * Copyright (c) Nicolas Gallagher.
-@@ -18,6 +17,81 @@ var _canUseDom = _interopRequireDefault(require("../canUseDom"));
+@@ -18,28 +17,119 @@ var _canUseDom = _interopRequireDefault(require("../canUseDom"));
  var DOM_LAYOUT_HANDLER_NAME = '__reactLayoutHandler';
  var didWarn = !_canUseDom.default;
  var resizeObserver = null;
@@ -92,12 +92,18 @@ index f3028704292..421bed8999f 100644
  function getResizeObserver() {
    if (_canUseDom.default && typeof window.ResizeObserver !== 'undefined') {
      if (resizeObserver == null) {
-@@ -28,18 +102,33 @@ function getResizeObserver() {
-           if (typeof onLayout === 'function') {
+       resizeObserver = new window.ResizeObserver(function (entries) {
+         entries.forEach(entry => {
+           var node = entry.target;
+-          var onLayout = node[DOM_LAYOUT_HANDLER_NAME];
+-          if (typeof onLayout === 'function') {
++          if (typeof node[DOM_LAYOUT_HANDLER_NAME] === 'function') {
              // We still need to measure the view because browsers don't yet provide
              // border-box dimensions in the entry
 -            _UIManager.default.measure(node, (x, y, width, height, left, top) => {
 +            measureInParent(node, (x, y, width, height) => {
++              var onLayout = node[DOM_LAYOUT_HANDLER_NAME];
++              if (typeof onLayout !== 'function') return;
 +              // A node that is not rendered (display: none on it or an ancestor, as in a
 +              // retained hidden pane) has no layout to report. React Native lays out no
 +              // descendant of a display: none view; publishing 0x0 here made every layout
@@ -135,7 +141,7 @@ index f3028704292..421bed8999f 100644
                  },
                  timeStamp: Date.now()
                };
-@@ -63,6 +152,7 @@ function getResizeObserver() {
+@@ -63,29 +153,23 @@ function getResizeObserver() {
  }
  function useElementLayout(ref, onLayout) {
    var observer = getResizeObserver();
@@ -143,7 +149,8 @@ index f3028704292..421bed8999f 100644
    (0, _useLayoutEffect.default)(() => {
      var node = ref.current;
      if (node != null) {
-@@ -70,22 +160,14 @@ function useElementLayout(ref, onLayout) {
+       node[DOM_LAYOUT_HANDLER_NAME] = onLayout;
++      if (!hasOnLayout) node.__reactLayoutLast = undefined;
      }
    }, [ref, onLayout]);
  
@@ -175,10 +182,10 @@ index f3028704292..421bed8999f 100644
 \ No newline at end of file
 +module.exports = exports.default;
 diff --git a/dist/modules/useElementLayout/index.js b/dist/modules/useElementLayout/index.js
-index cd75e40a824..1fe2f254520 100644
+index cd75e40a824..4c930c02322 100644
 --- a/dist/modules/useElementLayout/index.js
 +++ b/dist/modules/useElementLayout/index.js
-@@ -8,11 +8,85 @@
+@@ -8,33 +8,123 @@
   */
  
  import useLayoutEffect from '../useLayoutEffect';
@@ -265,12 +272,18 @@ index cd75e40a824..1fe2f254520 100644
  function getResizeObserver() {
    if (canUseDOM && typeof window.ResizeObserver !== 'undefined') {
      if (resizeObserver == null) {
-@@ -23,18 +97,33 @@ function getResizeObserver() {
-           if (typeof onLayout === 'function') {
+       resizeObserver = new window.ResizeObserver(function (entries) {
+         entries.forEach(entry => {
+           var node = entry.target;
+-          var onLayout = node[DOM_LAYOUT_HANDLER_NAME];
+-          if (typeof onLayout === 'function') {
++          if (typeof node[DOM_LAYOUT_HANDLER_NAME] === 'function') {
              // We still need to measure the view because browsers don't yet provide
              // border-box dimensions in the entry
 -            UIManager.measure(node, (x, y, width, height, left, top) => {
 +            measureInParent(node, (x, y, width, height) => {
++              var onLayout = node[DOM_LAYOUT_HANDLER_NAME];
++              if (typeof onLayout !== 'function') return;
 +              // A node that is not rendered (display: none on it or an ancestor, as in a
 +              // retained hidden pane) has no layout to report. React Native lays out no
 +              // descendant of a display: none view; publishing 0x0 here made every layout
@@ -308,7 +321,7 @@ index cd75e40a824..1fe2f254520 100644
                  },
                  timeStamp: Date.now()
                };
-@@ -58,6 +147,7 @@ function getResizeObserver() {
+@@ -58,28 +148,22 @@ function getResizeObserver() {
  }
  export default function useElementLayout(ref, onLayout) {
    var observer = getResizeObserver();
@@ -316,7 +329,8 @@ index cd75e40a824..1fe2f254520 100644
    useLayoutEffect(() => {
      var node = ref.current;
      if (node != null) {
-@@ -65,21 +155,13 @@ export default function useElementLayout(ref, onLayout) {
+       node[DOM_LAYOUT_HANDLER_NAME] = onLayout;
++      if (!hasOnLayout) node.__reactLayoutLast = undefined;
      }
    }, [ref, onLayout]);
  
@@ -347,7 +361,7 @@ index cd75e40a824..1fe2f254520 100644
 +  }, [ref, observer, hasOnLayout]);
 +}
 diff --git a/src/modules/useElementLayout/index.js b/src/modules/useElementLayout/index.js
-index 6099899ca68..5fb9a66fadb 100644
+index 6099899ca68..06f4d53e009 100644
 --- a/src/modules/useElementLayout/index.js
 +++ b/src/modules/useElementLayout/index.js
 @@ -11,7 +11,6 @@ import type { ElementRef } from 'react';
@@ -358,7 +372,7 @@ index 6099899ca68..5fb9a66fadb 100644
  import canUseDOM from '../canUseDom';
  
  const DOM_LAYOUT_HANDLER_NAME = '__reactLayoutHandler';
-@@ -19,6 +18,81 @@ const DOM_LAYOUT_HANDLER_NAME = '__reactLayoutHandler';
+@@ -19,21 +18,119 @@ const DOM_LAYOUT_HANDLER_NAME = '__reactLayoutHandler';
  let didWarn = !canUseDOM;
  let resizeObserver = null;
  
@@ -440,12 +454,18 @@ index 6099899ca68..5fb9a66fadb 100644
  function getResizeObserver(): ?ResizeObserver {
    if (canUseDOM && typeof window.ResizeObserver !== 'undefined') {
      if (resizeObserver == null) {
-@@ -29,11 +103,33 @@ function getResizeObserver(): ?ResizeObserver {
-           if (typeof onLayout === 'function') {
+       resizeObserver = new window.ResizeObserver(function (entries) {
+         entries.forEach((entry) => {
+           const node = entry.target;
+-          const onLayout = node[DOM_LAYOUT_HANDLER_NAME];
+-          if (typeof onLayout === 'function') {
++          if (typeof node[DOM_LAYOUT_HANDLER_NAME] === 'function') {
              // We still need to measure the view because browsers don't yet provide
              // border-box dimensions in the entry
 -            UIManager.measure(node, (x, y, width, height, left, top) => {
 +            measureInParent(node, (x, y, width, height) => {
++              const onLayout = node[DOM_LAYOUT_HANDLER_NAME];
++              if (typeof onLayout !== 'function') return;
 +              // A node that is not rendered (display: none on it or an ancestor, as in a
 +              // retained hidden pane) has no layout to report. React Native lays out no
 +              // descendant of a display: none view; publishing 0x0 here made every layout
@@ -476,7 +496,7 @@ index 6099899ca68..5fb9a66fadb 100644
                  },
                  timeStamp: Date.now()
                };
-@@ -67,6 +163,7 @@ export default function useElementLayout(
+@@ -67,29 +164,23 @@ export default function useElementLayout(
    onLayout?: ?(e: LayoutEvent) => void
  ) {
    const observer = getResizeObserver();
@@ -484,7 +504,9 @@ index 6099899ca68..5fb9a66fadb 100644
  
    useLayoutEffect(() => {
      const node = ref.current;
-@@ -75,21 +172,13 @@ export default function useElementLayout(
+     if (node != null) {
+       node[DOM_LAYOUT_HANDLER_NAME] = onLayout;
++      if (!hasOnLayout) node.__reactLayoutLast = undefined;
      }
    }, [ref, onLayout]);
  

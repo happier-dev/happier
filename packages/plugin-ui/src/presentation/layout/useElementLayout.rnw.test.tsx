@@ -62,8 +62,11 @@ async function flushLayout() {
 
 beforeAll(() => { vi.stubGlobal('ResizeObserver', BrowserResizeObserver); });
 beforeEach(() => { vi.useFakeTimers(); });
-afterEach(() => {
+afterEach(async () => {
   mounts.splice(0).forEach(value => value.unmount());
+  // Let RNW drain measurements queued during the last React commit before
+  // replacing the fake clock. Its queue outlives each mounted fixture.
+  await flushLayout();
   vi.useRealTimers();
 });
 afterAll(() => { vi.unstubAllGlobals(); });
@@ -123,12 +126,14 @@ describe('RNW layout handler presence', () => {
     expect(first).toHaveBeenLastCalledWith(expect.objectContaining({
       nativeEvent: expect.objectContaining({ layout: expect.objectContaining({ width: 240, height: 40 }) }),
     }));
+    size(target, 260, 40);
+    observer.resize(target);
     await view.render(<View testID="late" />);
     expect(observer.targets.has(target)).toBe(false);
     first.mockClear();
-    observer.resize(target);
     await flushLayout();
     expect(first).not.toHaveBeenCalled();
+    size(target, 240, 40);
     await view.render(<View testID="late" onLayout={latest} />);
     await flushLayout();
     expect(latest).toHaveBeenCalledOnce();
@@ -204,7 +209,7 @@ describe('RNW layout of a node that is not rendered', () => {
   });
   afterEach(() => { delete prototype.checkVisibility; });
 
-  it.each(['esm', 'cjs'] as const)('%s: publishes no layout while a retained pane hides it (display: none) and the real size once shown again', async distribution => {
+  it.each(['esm', 'cjs'] as const)('%s: publishes no layout while a retained pane hides it and publishes a changed size once shown again', async distribution => {
     const View = await loadView(distribution);
     const layouts: Array<readonly [number, number]> = [];
     const onLayout = (event: { nativeEvent: { layout: { width: number; height: number } } }) => {
@@ -230,12 +235,16 @@ describe('RNW layout of a node that is not rendered', () => {
     await flushLayout();
     expect(layouts).toEqual([[300, 50]]);
 
-    // Showing it again: the observer reports the real box, and that is published.
+    // Revealing the same geometry does not publish another layout.
     await view.render(pane(false));
     size(inner, 300, 50);
     observer.resize(inner);
     await flushLayout();
-    expect(layouts).toEqual([[300, 50], [300, 50]]);
+    expect(layouts).toEqual([[300, 50]]);
+    size(inner, 320, 60);
+    observer.resize(inner);
+    await flushLayout();
+    expect(layouts).toEqual([[300, 50], [320, 60]]);
   });
 
   it.each(['esm', 'cjs'] as const)('%s: still publishes a rendered box that is really 0×0', async distribution => {
