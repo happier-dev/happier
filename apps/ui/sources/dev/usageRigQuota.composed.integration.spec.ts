@@ -435,11 +435,12 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
         const planFit = resolveUsageWidgetQuery(year, {}, 'usage_plan_fit', false)!.query;
         const subscriptions: Array<() => void> = [];
         const quotaChanges: Array<{ source: HomeAccountChangeEvent['source']; recordIds?: readonly string[]; day?: number;
-            through?: number; accounting?: boolean }> = [];
+            through?: number; historyAfter?: number; accounting?: boolean }> = [];
         const observeChanges = subscribeHomeAccountChange(event => {
             if (event.usageQueryAffects !== false) quotaChanges.push({ source: event.source,
                 recordIds: event.providerAccountUsageRecordIds, day: event.providerAccountUsageDayChange?.dayStartAtMs,
-                through: event.providerAccountUsageDayChange?.throughCursor, accounting: event.usageAccountingAffects });
+                through: event.providerAccountUsageDayChange?.throughCursor,
+                historyAfter: event.providerAccountUsageDayChange?.history?.afterCursor, accounting: event.usageAccountingAffects });
         }, { serverIds: [serverId], reconnect: 'refresh' });
         const mount = (queries: readonly typeof capacity[]) => {
             const entry = store.getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries }) });
@@ -807,6 +808,153 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
                 });
                 expect(namedReads.exact.requests).toBe(1);
                 expect(namedReads.exact.observations).toBe(1);
+            });
+            await cell('Seven-day clock-only quota publication reads only its named current day', async () => {
+                subscriptions.splice(0).reverse().forEach(dispose => dispose());
+                const entry = mount([weekProjections, weekCapacity]);
+                const changed = records.find(({ provider }) => provider.id === 'gemini')!;
+                const recordId = changed.write.recordId;
+                const currentRow = (slice: Awaited<ReturnType<typeof read>>) => slice.quota?.find(row => row.current?.recordId === recordId);
+                const { sync } = await import('../sync/sync');
+                const cursor = async () => CurrentCursorResponseSchema.parse(await (await request('/v2/cursor')).json()).cursor;
+                const begin = await cursor();
+                await expect.poll(() => sync.readAppliedAccountChangesCursor(serverId, account.id)).toBe(begin);
+                const previous = currentRow(await read(entry, weekProjections));
+                expect(previous?.pageFacts?.historyStatus).toBe('complete');
+                expect(previous?.current).toBeDefined();
+                const clientQuotaReads = (mark: number) => traffic.slice(mark).filter(row =>
+                    row.method === 'GET' && row.path.startsWith('/v4/connect/qualified/provider-account-usage')
+                    && row.purpose !== 'connected-accounts:usage-persistence');
+                const seen = async () => {
+                    const record = currentRow(await read(entry, weekProjections));
+                    return { pending: entry.isAllowanceReadPending(), current: record?.current?.observedAtMs,
+                        history: record?.pageFacts?.dayQuotaHistory?.find(day => day.dayStartAtMs === today)?.lastSnapshot.observedAtMs };
+                };
+                const persistQuota = async (used: number) => {
+                    const acceptedAt = now += 1_000;
+                    const snapshot = quotaSnapshot(changed.provider, acceptedAt, today + WEEK, used);
+                    const written = await runWithServerHttpBaseUrl(origin, () => persistProviderAccountUsageWithDaySummaries({
+                        token, write: { ...changed.write, snapshot, fetchedAt: acceptedAt }, nowMs: acceptedAt,
+                    }));
+                    expect(written.dailySummary).toEqual({ status: 'written', days: 1 });
+                    return acceptedAt;
+                };
+                expect(quotaSnapshot(changed.provider, now, today + WEEK, 30).meters).toEqual(previous?.current?.meters);
+                const persistClock = () => persistQuota(30);
+                const coalesceChanges = async (persist: () => Promise<number>) => {
+                    const allowChanges = createDeferred<void>();
+                    heldChangesRead = allowChanges.promise;
+                    try {
+                        return await persist();
+                    } finally {
+                        heldChangesRead = undefined;
+                        allowChanges.resolve();
+                    }
+                };
+                const waitForPage = async (initialChange: number) => {
+                    const through = await cursor();
+                    await expect.poll(() => quotaChanges.slice(initialChange).some(change => change.through === through
+                        && change.day === today && change.recordIds?.length === 1 && change.recordIds[0] === recordId),
+                    { timeout: 20_000, message: 'Home delivered the named day' }).toBe(true);
+                    await expect.poll(() => sync.readAppliedAccountChangesCursor(serverId, account.id),
+                        { timeout: 20_000, message: 'Sync admitted the named change page' }).toBe(through);
+                    return quotaChanges.slice(initialChange).filter(change => change.recordIds?.includes(recordId));
+                };
+
+                const readCosts = [];
+                for (const delivery of ['paired', 'split'] as const) {
+                    const mark = traffic.length;
+                    const initialChange = quotaChanges.length;
+                    let acceptedAt: number;
+                    if (delivery === 'paired') {
+                        acceptedAt = await coalesceChanges(persistClock);
+                    } else {
+                        const summaryStarted = createDeferred<void>();
+                        const allowSummary = createDeferred<void>();
+                        beforeSummaryWrite = () => {
+                            summaryStarted.resolve();
+                            return allowSummary.promise;
+                        };
+                        const running = persistClock();
+                        try {
+                            await Promise.race([summaryStarted.promise, running]);
+                            expect(await waitForPage(initialChange)).toHaveLength(1);
+                            // The current record can advance before the persisted day summary does.
+                            await expect.poll(async () => {
+                                const { pending, current } = await seen();
+                                return { pending, current };
+                            }, { timeout: 20_000, message: 'The observation settles while its summary write is held' })
+                                .toEqual({ pending: false, current: now });
+                        } finally {
+                            beforeSummaryWrite = undefined;
+                            allowSummary.resolve();
+                            acceptedAt = await running;
+                        }
+                    }
+                    expect(await waitForPage(initialChange)).toHaveLength(delivery === 'paired' ? 1 : 2);
+                    await expect.poll(seen, { timeout: 20_000, message: `${delivery} current and history agree` })
+                        .toEqual({ pending: false, current: acceptedAt, history: acceptedAt });
+                    const reads = clientQuotaReads(mark);
+                    const named = summarizeTraffic(reads.filter(row => row.recordId === recordId));
+                    const unnamed = summarizeTraffic(reads.filter(row => row.recordId !== recordId));
+                    const otherDays = reads.filter(row => {
+                        if (row.kind !== 'summary' && row.kind !== 'exact') return false;
+                        const start = Math.max(row.afterAtMs ?? 0, row.range?.startAtMs ?? 0);
+                        return start < today || (row.range?.endAtMs ?? Infinity) > today + DAY
+                            || row.days?.some(day => day.dayStartAtMs !== today)
+                            || row.missingDays?.some(day => day.dayStartAtMs !== today);
+                    });
+                    console.info('quota-rig clock-only traffic', JSON.stringify({
+                        delivery, account: changed.provider.accountId, recordId, dayStartAtMs: today, named, unnamed, otherDays,
+                    }));
+                    readCosts.push({ delivery, named, unnamed, otherDays });
+                }
+
+                const beforeGap = await cursor();
+                const gapMark = traffic.length;
+                const beforeGapChanges = quotaChanges.length;
+                let skippedAt = 0;
+                let skippedThrough = 0;
+                const afterGap = await coalesceChanges(async () => {
+                    skippedAt = await persistQuota(31);
+                    skippedThrough = await cursor();
+                    return persistClock();
+                });
+                const gapPages = await waitForPage(beforeGapChanges);
+                expect(gapPages).toHaveLength(1);
+                expect(gapPages[0]?.historyAfter).toBe(skippedThrough);
+                expect(skippedThrough).toBeGreaterThan(beforeGap);
+                await expect.poll(seen, { timeout: 20_000, message: 'Current and history agree after the missed record update' })
+                    .toEqual({ pending: false, current: afterGap, history: afterGap });
+                const recoveryReads = clientQuotaReads(gapMark).filter(row => row.recordId === recordId && row.kind === 'exact');
+                console.info('quota-rig missed-record recovery', JSON.stringify({ account: changed.provider.accountId,
+                    skippedAt, skippedThrough, beforeGap, reads: recoveryReads.map(row => ({ range: row.range, history: row.history })) }));
+                expect(recoveryReads.some(row => (row.history?.observations ?? 0) >= 1
+                    && Math.max(row.afterAtMs ?? 0, row.range?.startAtMs ?? 0) <= skippedAt
+                    && (row.range?.endAtMs ?? Infinity) > skippedAt)).toBe(true);
+
+                subscriptions.splice(0).reverse().forEach(dispose => dispose());
+                const unmountedMark = traffic.length;
+                const beforeUnmountedChanges = quotaChanges.length;
+                await coalesceChanges(persistClock);
+                expect(await waitForPage(beforeUnmountedChanges)).toHaveLength(1);
+                const unmounted = traffic.slice(unmountedMark).filter(row => row.purpose !== 'connected-accounts:usage-persistence'
+                    && (row.method === 'GET' || row.path.startsWith('/v2/usage/') || row.path === RESET_START_READ_PATH));
+                const closedCost = { requests: unmounted.length, bytes: unmounted.reduce((total, row) => total + row.bytes, 0) };
+                console.info('quota-rig clock-only unmounted traffic', JSON.stringify({
+                    account: changed.provider.accountId, dayStartAtMs: today, ...closedCost,
+                }));
+                for (const { delivery, named, unnamed, otherDays } of readCosts) {
+                    expect(named.summary.requests, delivery).toBeLessThanOrEqual(2);
+                    // The split observation also sees the pending-day evidence (80 bytes).
+                    expect(named.summary.bytes, delivery).toBeLessThanOrEqual(delivery === 'split' ? 3_608 : 3_528);
+                    expect(named.exact.requests, delivery).toBeLessThanOrEqual(1);
+                    expect(named.exact.bytes, delivery).toBeLessThanOrEqual(delivery === 'split' ? 1_259 : 33);
+                    expect(named.projection, delivery).toEqual({ requests: 0, bodies: 0, bytes: 0 });
+                    expect(unnamed.httpReads, delivery).toBe(0);
+                    expect(otherDays, delivery).toEqual([]);
+                }
+                expect(closedCost).toEqual({ requests: 0, bytes: 0 });
             });
         } finally {
             observeChanges();
