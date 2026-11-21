@@ -1,4 +1,5 @@
 import type { NewSessionDraft } from '@/sync/domains/state/persistence';
+import type { NewSessionTargetFolderV1 } from '@/sync/domains/session/folders/newSessionTargetFolder';
 
 export type NewSessionDraftLocalState = Readonly<Pick<NewSessionDraft,
     | 'entryIntent'
@@ -8,10 +9,16 @@ export type NewSessionDraftLocalState = Readonly<Pick<NewSessionDraft,
     | 'sessionConfigOptionOverrides'
     | 'agentNewSessionOptionStateByAgentId'
     | 'windowsRemoteSessionLaunchModeOverride'
->>;
+> & {
+    /** Folder staged by 'New session in folder'; kept device-local with the draft. */
+    targetFolder?: NewSessionTargetFolderV1 | null;
+}>;
 
 /** Fields that remain device-local while the canonical authoring document is synchronized. */
-export function buildNewSessionDraftLocalState(draft: NewSessionDraft): NewSessionDraftLocalState {
+export function buildNewSessionDraftLocalState(
+    draft: NewSessionDraft,
+    extras?: Readonly<{ targetFolder?: NewSessionTargetFolderV1 | null }>,
+): NewSessionDraftLocalState {
     return {
         entryIntent: draft.entryIntent ?? null,
         selectedSecretId: draft.selectedSecretId ?? null,
@@ -20,5 +27,6 @@ export function buildNewSessionDraftLocalState(draft: NewSessionDraft): NewSessi
         sessionConfigOptionOverrides: draft.sessionConfigOptionOverrides ?? null,
         agentNewSessionOptionStateByAgentId: draft.agentNewSessionOptionStateByAgentId ?? null,
         windowsRemoteSessionLaunchModeOverride: draft.windowsRemoteSessionLaunchModeOverride ?? null,
+        ...(extras?.targetFolder ? { targetFolder: extras.targetFolder } : {}),
     };
 }

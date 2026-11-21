@@ -26,6 +26,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import type { MachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import { buildNewSessionDraftPatch } from './newSessionDraftRepositoryAdapter';
 import { buildNewSessionDraftLocalState } from '@/sync/ops/sessionDrafts/newSessionDraftLocalState';
+import type { NewSessionTargetFolderV1 } from '@/sync/domains/session/folders/newSessionTargetFolder';
 
 import type { NewSessionPromptStore } from './newSessionPromptStore';
 
@@ -43,6 +44,8 @@ export function useNewSessionAuthoringState(params: Readonly<{
     checkoutCreationDraft: NewSessionCheckoutCreationDraft | null;
     checkoutSelectionExplicit?: boolean;
     promptStore: NewSessionPromptStore;
+    /** Folder staged by 'New session in folder'; persisted with the draft so continuation keeps it. */
+    targetFolder?: NewSessionTargetFolderV1 | null;
     agentType: AgentId;
     backendTarget: BackendTargetRefV1 | null;
     transcriptStorage: BuildResolvedInputs['transcriptStorage'];
@@ -221,7 +224,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
         writeSessionDraftLocalSupplement({
             scope: params.draftScope,
             address,
-            patch: { newSessionLocalState: buildNewSessionDraftLocalState(draft) },
+            patch: { newSessionLocalState: buildNewSessionDraftLocalState(draft, { targetFolder: params.targetFolder }) },
         });
     }, [
         buildCurrentAuthoringDraft,
@@ -229,6 +232,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
         params.draftId,
         params.draftScope,
         params.selectedMachineId,
+        params.targetFolder,
         params.targetServerId,
         promptStore,
     ]);

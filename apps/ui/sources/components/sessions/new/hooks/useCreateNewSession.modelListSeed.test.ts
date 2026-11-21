@@ -11,6 +11,7 @@ import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/scr
 import type { PreflightModelList } from '@/sync/domains/models/modelOptions';
 import type { AgentId } from '@/agents/catalog/catalog';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
+import type { NewSessionTargetFolderV1 } from '@/sync/domains/session/folders/newSessionTargetFolder';
 
 vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
 
@@ -52,6 +53,16 @@ async function setupUseCreateNewSessionHarness(params: Readonly<{
         repositoryRootPath: '/tmp',
     }));
     const followUpSpawnedSessionWithServerScopeSpy = vi.fn(async (..._args: unknown[]) => {});
+    const getCredentialsForServerUrlSpy = vi.fn(async (..._args: unknown[]) => ({ token: 't' }));
+    const serverFetchSpy = vi.fn(async (path: unknown) => ({
+        ok: true,
+        status: 200,
+        json: async () => (
+            String(path).includes('/v2/session-organization/folder-assignments/')
+                ? { sessionId: 'sess_pi_1', folderId: 'folder_a' }
+                : { mode: 'e2ee', updatedAt: 1 }
+        ),
+    }));
 
     installNewSessionScreenModelCommonModuleMocks({
         text: () =>
@@ -102,11 +113,7 @@ async function setupUseCreateNewSessionHarness(params: Readonly<{
         useApplySettings: () => applySettingsSpy,
     }));
     vi.doMock('@/sync/http/client', () => ({
-        serverFetch: vi.fn(async () => ({
-            ok: true,
-            status: 200,
-            json: async () => ({ mode: 'e2ee', updatedAt: 1 }),
-        })),
+        serverFetch: (...args: unknown[]) => serverFetchSpy(...(args as [unknown])),
     }));
     vi.doMock('@/sync/domains/server/serverRuntime', () => ({
         getActiveServerSnapshot: vi.fn(() => ({
@@ -187,6 +194,25 @@ async function setupUseCreateNewSessionHarness(params: Readonly<{
     vi.doMock('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache', () => ({
         resolveServerIdForSessionIdFromLocalCache: vi.fn(() => 'server-a'),
     }));
+    vi.doMock('@/auth/storage/tokenStorage', async (importOriginal) => {
+        const actual = await importOriginal<typeof import('@/auth/storage/tokenStorage')>();
+        return {
+            ...actual,
+            TokenStorage: {
+                ...actual.TokenStorage,
+                getCredentialsForServerUrl: (...args: unknown[]) => getCredentialsForServerUrlSpy(...args),
+            },
+        };
+    });
+    vi.doMock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
+        const actual = await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>();
+        return {
+            ...actual,
+            getServerProfileById: (id: string) => ({ id, serverUrl: '', serverIdentityId: null }),
+            resolveServerProfileScopeId: (profile: { id: string; serverIdentityId?: string | null }) =>
+                profile.serverIdentityId ?? profile.id,
+        };
+    });
 
     const { useCreateNewSession } = await import('./useCreateNewSession');
     return {
@@ -195,6 +221,8 @@ async function setupUseCreateNewSessionHarness(params: Readonly<{
         captureExceptionSpy,
         machineSpawnNewSessionSpy,
         modalAlertSpy,
+        serverFetchSpy,
+        materializeNewSessionCheckoutSpy,
     };
 }
 
@@ -208,6 +236,7 @@ async function runCreateSession(
         preflightModels?: PreflightModelList | null;
         targetServerId?: string;
         backendTarget?: BackendTargetRefV1;
+        targetFolder?: NewSessionTargetFolderV1 | null;
     }>,
 ): Promise<void> {
     let handleCreateSession: null | (() => Promise<void>) = null;
@@ -250,6 +279,7 @@ async function runCreateSession(
             selectedMachineCapabilities: null,
             targetServerId: params.targetServerId ?? 'server-b',
             allowedTargetServerIds: [params.targetServerId ?? 'server-b'],
+            targetFolder: params.targetFolder ?? null,
             preflightModels: params.preflightModels,
         });
 
@@ -263,15 +293,16 @@ async function runCreateSession(
     });
 }
 
+// Every harness re-registers its mocks, so each test must import a fresh copy of the hook.
+beforeEach(() => {
+    vi.resetModules();
+});
+
+afterEach(() => {
+    vi.restoreAllMocks();
+});
+
 describe('useCreateNewSession model list seeding', () => {
-    beforeEach(() => {
-        vi.resetModules();
-    });
-
-    afterEach(() => {
-        vi.restoreAllMocks();
-    });
-
     it('seeds sessionModelsV1 from the wizard preflight probe for a dynamic agent without static models', async () => {
         const harness = await setupUseCreateNewSessionHarness();
 
@@ -366,5 +397,89 @@ describe('useCreateNewSession model list seeding', () => {
 
         expect(harness.machineSpawnNewSessionSpy).toHaveBeenCalledTimes(1);
         expect(harness.publishModelsSeedSpy).not.toHaveBeenCalled();
+    });
+});
+
+describe('useCreateNewSession folder assignment', () => {
+    const TARGET_FOLDER: NewSessionTargetFolderV1 = {
+        folderId: 'folder_a',
+        workspace: { serverId: 'server-b', machineId: 'm1', rootPath: '/tmp' },
+    };
+
+    it('files the created session into the folder the launch started from', async () => {
+        const harness = await setupUseCreateNewSessionHarness();
+
+        await runCreateSession(harness, {
+            agentType: 'claude',
+            targetFolder: TARGET_FOLDER,
+        });
+
+        await vi.waitFor(() => expect(harness.serverFetchSpy).toHaveBeenCalledWith(
+            expect.stringContaining('/v2/session-organization/folder-assignments/sess_pi_1'),
+            expect.objectContaining({
+                method: 'PUT',
+                body: JSON.stringify({ folderId: 'folder_a' }),
+            }),
+            expect.anything(),
+        ));
+    });
+
+    it('does not file a launch that moved outside the folder workspace', async () => {
+        const harness = await setupUseCreateNewSessionHarness();
+
+        await runCreateSession(harness, {
+            agentType: 'claude',
+            targetFolder: {
+                folderId: 'folder_a',
+                workspace: { serverId: 'server-b', machineId: 'm1', rootPath: '/somewhere-else' },
+            },
+        });
+
+        expect(harness.machineSpawnNewSessionSpy).toHaveBeenCalledTimes(1);
+        expect(harness.serverFetchSpy).not.toHaveBeenCalledWith(
+            expect.stringContaining('/v2/session-organization/folder-assignments/'),
+            expect.anything(),
+            expect.anything(),
+        );
+    });
+
+    it('does not file a worktree launch whose checkout moved the directory', async () => {
+        const harness = await setupUseCreateNewSessionHarness();
+        harness.materializeNewSessionCheckoutSpy.mockResolvedValueOnce({
+            success: true as const,
+            path: '/tmp-worktree',
+            sessionPath: '/tmp-worktree',
+            repositoryRootPath: '/tmp',
+        });
+
+        await runCreateSession(harness, {
+            agentType: 'claude',
+            targetFolder: TARGET_FOLDER,
+        });
+
+        expect(harness.machineSpawnNewSessionSpy).toHaveBeenCalledTimes(1);
+        expect(harness.serverFetchSpy).not.toHaveBeenCalledWith(
+            expect.stringContaining('/v2/session-organization/folder-assignments/'),
+            expect.anything(),
+            expect.anything(),
+        );
+    });
+
+    it('reports a failed assignment without failing session creation', async () => {
+        const harness = await setupUseCreateNewSessionHarness();
+        harness.serverFetchSpy.mockImplementation(async (path: unknown) => (
+            String(path).includes('/v2/session-organization/folder-assignments/')
+                ? { ok: false, status: 500, json: async () => ({ error: 'invalid-session-folder-assignment' }) }
+                : { ok: true, status: 200, json: async () => ({ mode: 'e2ee', updatedAt: 1 }) }
+        ));
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        await runCreateSession(harness, {
+            agentType: 'claude',
+            targetFolder: TARGET_FOLDER,
+        });
+
+        await vi.waitFor(() => expect(harness.captureExceptionSpy).toHaveBeenCalled());
+        expect(harness.modalAlertSpy).not.toHaveBeenCalled();
     });
 });
