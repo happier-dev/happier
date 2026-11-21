@@ -171,7 +171,8 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
     const reachability = useCheckoutReachability(workspaceScope);
     // A widget body is the folder itself (lab p-overview HOME): its tools live on the Code page.
     const widget = useIsWidgetFrameBody();
-    const workspaceScmController = useWorkspaceScmSnapshotController(props.scmSnapshot === undefined && machineRpcTargetAvailable ? workspaceScope : null);
+    const workspaceScmController = useWorkspaceScmSnapshotController(props.scmSnapshot === undefined && props.effectsEnabled !== false
+        && (workspaceScope.workspace || machineRpcTargetAvailable) ? workspaceScope : null);
     const effectiveScmSnapshot = props.scmSnapshot !== undefined ? props.scmSnapshot : workspaceScmController.snapshot ?? null;
     // The one changed-file count (the header's, Git's): unknown keeps the All | Changed control, a known
     // zero (or no repository) hides it and shows every file (lab FB1z).

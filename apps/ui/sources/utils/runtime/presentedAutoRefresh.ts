@@ -7,15 +7,19 @@ export type PresentedAutoRefreshDemand = Readonly<{
     maxIntervalMs?: number;
     /** The domain can own its initial read while retaining the shared observation and cadence. */
     refreshOnRetain?: boolean;
+    /** An offline reader can retain recovery demand before it can attach a watch. */
+    watchOnRetain?: boolean;
 }>;
 export type PresentedAutoRefreshWatchCallbacks<Unavailable> = Readonly<{
     onChange(): void;
     onReady(): void;
     onUnavailable(reason: Unavailable): void;
 }>;
+type ReadSource = 'filesystem' | 'reconnected';
 type Target<Snapshot, Unavailable> = Readonly<{
     key: string;
-    read(source?: 'filesystem'): Promise<Snapshot>;
+    read(source?: ReadSource): Promise<Snapshot>;
+    subscribeRecovery?(recover: () => void): () => void;
     watch?(callbacks: PresentedAutoRefreshWatchCallbacks<Unavailable>): () => void;
     onUnavailable?(reason: Unavailable): void;
 }>;
@@ -31,6 +35,7 @@ type Poll<Demand extends PresentedAutoRefreshDemand, Snapshot, Unavailable> = {
     snapshot: Snapshot | null;
     watchState: WatchState<Unavailable>;
     stopWatch: (() => void) | null;
+    stopRecovery: (() => void) | null;
 };
 
 /** Shared presented-demand scheduler; domain owners provide the read and optional push observation. */
@@ -76,8 +81,9 @@ export class PresentedAutoRefresh<Demand extends PresentedAutoRefreshDemand, Sna
         let poll = this.polls.get(target.key);
         if (!poll) {
             poll = { key: target.key, consumers: new Set(), timer: null, running: false,
-                delayMs: demand.intervalMs, snapshot: null, watchState: { status: 'idle' }, stopWatch: null };
+                delayMs: demand.intervalMs, snapshot: null, watchState: { status: 'idle' }, stopWatch: null, stopRecovery: null };
             this.polls.set(target.key, poll);
+            this.subscribeRecovery(poll, target);
         }
         const previousInterval = this.policy(poll)?.intervalMs;
         const consumer = { demand, poll };
@@ -99,7 +105,7 @@ export class PresentedAutoRefresh<Demand extends PresentedAutoRefreshDemand, Sna
                 }
             }, { includeWindowFocus: this.options.requireWindowFocus !== false });
         }
-        this.reconcileWatch(poll, target);
+        if (demand.watchOnRetain !== false) this.reconcileWatch(poll, target);
         if (previousInterval !== undefined && demand.intervalMs > 0 && demand.intervalMs < previousInterval) {
             poll.delayMs = demand.intervalMs;
             this.clearTimer(poll);
@@ -132,31 +138,45 @@ export class PresentedAutoRefresh<Demand extends PresentedAutoRefreshDemand, Sna
         return isRuntimeActive() && (this.options.requireWindowFocus === false || readHostWindowFocus() !== false);
     }
 
-    private reconcileWatch(poll: Poll<Demand, Snapshot, Unavailable>, target: Target<Snapshot, Unavailable>): void {
-        if (!this.isActive() || poll.consumers.size === 0 || poll.watchState.status !== 'idle' || !target.watch) return;
+    private subscribeRecovery(poll: Poll<Demand, Snapshot, Unavailable>, target: Target<Snapshot, Unavailable>): void {
+        poll.stopRecovery = target.subscribeRecovery?.(() => {
+            if (!this.isActive() || poll.consumers.size === 0) return;
+            const current = this.resolvePoll(poll);
+            if (!current) return;
+            this.releaseWatch(poll);
+            if (!this.reconcileWatch(poll, current, 'reconnected')) this.revalidate(current, 'reconnected');
+        }) ?? null;
+    }
+
+    private revalidate(target: Target<Snapshot, Unavailable>, source: ReadSource): void {
+        void target.read(source).catch(() => {
+            // The status owner publishes the failure.
+        });
+    }
+
+    private reconcileWatch(poll: Poll<Demand, Snapshot, Unavailable>, target: Target<Snapshot, Unavailable>,
+        readySource: ReadSource = 'filesystem'): boolean {
+        if (!this.isActive() || poll.consumers.size === 0 || poll.watchState.status !== 'idle' || !target.watch) return false;
         poll.watchState = { status: 'pending' };
         this.clearTimer(poll);
-        const revalidate = () => {
-            // The shared status queue preserves changes arriving after an in-flight read started.
-            void target.read('filesystem').catch(() => {
-                // The status owner presents failures; the incumbent fallback remains available.
-            });
-        };
         poll.stopWatch = target.watch({
-            onChange: revalidate,
+            onChange: () => this.revalidate(target, 'filesystem'),
             // A read after native enrollment closes the initial snapshot-to-attachment window.
             onReady: () => {
                 poll.watchState = { status: 'ready' };
                 this.clearTimer(poll);
-                revalidate();
+                this.revalidate(target, readySource);
             },
             onUnavailable: reason => {
+                const reconnectFailedBeforeReady = readySource === 'reconnected' && poll.watchState.status === 'pending';
                 poll.watchState = { status: 'unavailable', reason };
                 target.onUnavailable?.(reason);
-                // Settles until presentation ends: use the incumbent fallback without a watch retry.
+                if (reconnectFailedBeforeReady) this.revalidate(target, 'reconnected');
+                // The ordinary fallback remains available until a future presentation or recovery.
                 if (this.policy(poll)?.intervalMs) this.schedule(poll, poll.delayMs);
             },
         });
+        return true;
     }
 
     private releaseWatch(poll: Poll<Demand, Snapshot, Unavailable>): void {
@@ -183,6 +203,8 @@ export class PresentedAutoRefresh<Demand extends PresentedAutoRefreshDemand, Sna
     private remove(poll: Poll<Demand, Snapshot, Unavailable>): void {
         this.clearTimer(poll);
         this.releaseWatch(poll);
+        poll.stopRecovery?.();
+        poll.stopRecovery = null;
         if (this.polls.get(poll.key) === poll) this.polls.delete(poll.key);
     }
 
@@ -201,6 +223,8 @@ export class PresentedAutoRefresh<Demand extends PresentedAutoRefreshDemand, Sna
         if (target.key === poll.key) return target;
         this.polls.delete(poll.key);
         this.releaseWatch(poll);
+        poll.stopRecovery?.();
+        poll.stopRecovery = null;
         const existing = this.polls.get(target.key);
         if (existing) {
             const previous = this.policy(existing);
@@ -221,6 +245,7 @@ export class PresentedAutoRefresh<Demand extends PresentedAutoRefreshDemand, Sna
         }
         poll.key = target.key;
         this.polls.set(target.key, poll);
+        this.subscribeRecovery(poll, target);
         return target;
     }
 

@@ -33,7 +33,7 @@ export const ProjectFilesPaneSurface = React.memo((props: Readonly<{
         selectedPath: resolveOpenDetailsFilePath(scope ? buildDetailsWorkspaceStateView(scope.details) : null),
     }));
     const machine = useMachinePresenceSummary(props.scope.serverId, props.scope.machineId);
-    const scm = useWorkspaceScmSnapshotController(machine.reachability === 'reachable' ? props.scope : null);
+    const scm = useWorkspaceScmSnapshotController(props.scope.workspace || machine.reachability === 'reachable' ? props.scope : null);
     const checkoutReachability = useCheckoutReachability(props.scope);
     const chrome = useRepositoryTreePaneChrome({ rootPath: props.scope.rootPath, machineName: machine.sentenceName ?? null,
         scmSnapshot: scm.snapshot, changesReadable: !checkoutReachability.unreachable });

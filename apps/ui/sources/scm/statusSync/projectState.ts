@@ -13,11 +13,13 @@ import { tryBuildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domai
 
 import { isSessionPathWithinRepoRoot } from '../sync/paths';
 
-export type InvalidationSource = 'unknown' | 'mutation' | 'filesystem';
+export type InvalidationSource = 'unknown' | 'mutation' | 'filesystem' | 'reconnected';
 
 /** A pending content-change fact survives other invalidations until its refresh starts. */
 export function recordProjectInvalidationSource(sources: Map<string, InvalidationSource>, key: string, source: InvalidationSource): void {
-    if (sources.get(key) !== 'filesystem') sources.set(key, source);
+    const pending = sources.get(key);
+    if (pending === 'reconnected' || pending === 'filesystem' && source !== 'reconnected') return;
+    sources.set(key, source);
 }
 
 export type ScmStatusSyncStateMaps = {

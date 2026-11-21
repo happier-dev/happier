@@ -86,10 +86,14 @@ export function useWorkspaceScmSnapshotController(scope: WorkspaceScopeBase | nu
     const loadMore = React.useCallback(() => loadEntries(), [loadEntries]);
     const loadFile = React.useCallback((path: string) => loadEntries(path), [loadEntries]);
 
+    const retainedScope = normalizedScope?.workspace || !unreachable ? normalizedScope : null;
+    const watchOnRetain = React.useRef(!unreachable);
+    watchOnRetain.current = !unreachable;
     React.useEffect(() => {
-        if (!normalizedScope || !presented || unreachable || waitingForLayout) return;
-        return scmStatusSync.retainAutoRefresh({ scope: normalizedScope, intervalMs, refreshOnRetain: false });
-    }, [normalizedScope, presented, unreachable, intervalMs, waitingForLayout]);
+        if (!retainedScope || !presented || waitingForLayout) return;
+        return scmStatusSync.retainAutoRefresh({ scope: retainedScope, intervalMs, refreshOnRetain: false,
+            watchOnRetain: watchOnRetain.current });
+    }, [retainedScope, presented, intervalMs, waitingForLayout]);
 
     // Counts cannot reveal a rename or an edit with unchanged totals. Returning is the natural
     // revalidation boundary even when no push replaced the slot; held rows stay on screen meanwhile.
@@ -103,7 +107,7 @@ export function useWorkspaceScmSnapshotController(scope: WorkspaceScopeBase | nu
         wasPresented.current = presented;
         if (!presented || waitingForLayout) return;
         if (unreachable) {
-            didInitKeyRef.current = '';
+            if (!normalizedScope?.workspace) didInitKeyRef.current = '';
             return;
         }
         if (!normalizedScope) return;

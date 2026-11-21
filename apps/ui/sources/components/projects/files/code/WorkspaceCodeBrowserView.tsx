@@ -116,7 +116,7 @@ export const WorkspaceCodeBrowserView = React.memo(function WorkspaceCodeBrowser
     // The checkout's machine isn't answering: said once (here, unless the page above already does),
     // last-known rows stay, and history waits for the machine instead of failing on its own.
     const reachability = useCheckoutReachability(props.scope);
-    const scm = useWorkspaceScmSnapshotController(available && props.history === undefined ? props.scope : null);
+    const scm = useWorkspaceScmSnapshotController((props.scope.workspace || available) && props.history === undefined ? props.scope : null);
     const folder = location.kind === 'folder' ? location.path : location.path.slice(0, Math.max(0, location.path.lastIndexOf('/')));
     const demandedPaths = React.useMemo(() => [location.path, ...(location.kind === 'folder' && visibleDemand?.key === demandKey ? visibleDemand.paths : [])],
         [location.path, location.kind, visibleDemand, demandKey]);

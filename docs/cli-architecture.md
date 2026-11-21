@@ -1832,6 +1832,11 @@ classified the entry as a regular file. This matters where the daemon reads a
 folder another person can write, such as a Manage viewer browsing a Can use
 member's folder.
 
+A managed Project's presented Files and Git demand survives a controller disconnect.
+The authenticated Home reconnect signal reattaches the current watch and revalidates
+both sources through their existing admission paths. A Project without a usable
+Git watch still revalidates on the reconnect signal. Closed surfaces release demand.
+
 Path policy stays in `filesystemPathAuthorization.ts`: it uses this Machine's link
 facts only for the local source; a target confines each operation to its root
 with its own facts (`confineWorkspaceTargetPath`) and never falls back to this

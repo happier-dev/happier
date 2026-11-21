@@ -7,6 +7,8 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { renderHook, standardCleanup } from '@/dev/testkit';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { ScmWorkspaceWatchRequestSchema } from '@happier-dev/protocol/scm';
 import { act } from 'react-test-renderer';
 import { createElement } from 'react';
 import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -73,6 +75,7 @@ type FilesystemBoundaryRequest = { method: string; requestId?: string; serverId?
 async function receiveFilesystemRequest(request: FilesystemBoundaryRequest, invocation?: ExternalActionRequesterInvocationV1) {
         filesystem.calls.push(request);
         if (filesystem.error) throw filesystem.error;
+        if (typeof filesystem.response === 'function') return filesystem.response(request);
         if (request.method === 'daemon.filesystem.writeFile' || request.method === 'daemon.filesystem.createDirectory') await filesystem.mutationGate;
         if (filesystem.fileBytes) {
             const bytes = filesystem.fileBytes;
@@ -207,6 +210,94 @@ describe('shared workspace filesystem Action admission', () => {
         await expect(workspaceListDirectory({ kind: 'managed', workspace }, '.')).resolves.toEqual({ success: true, entries: [] });
         expect(filesystem.calls).toEqual([expect.objectContaining({ machineId: workspace.controller.machineId,
             payload: { workspace, rootPath: workspace.rootPath, path: workspace.rootPath } })]);
+    });
+
+    it('recovers the demanded managed Files and Git sources on the controller reconnect push', async () => {
+        const { clearMachineRequestReachabilityForMachine, recordMachineRequestFailed } =
+            await import('@/sync/domains/machines/reachability/machineReachability');
+        const { useWorkspaceRepositoryTreeBrowser } = await import('@/hooks/workspaces/files/useWorkspaceRepositoryTreeBrowser');
+        const { ScmStatusSync } = await import('@/scm/scmStatusSync');
+        const { rootPath } = target;
+        const workspace = { v: 2, kind: 'managed', serverId, workspaceId: 'reconnect-project', managedId: 'native-guest',
+            controller: { machineId: target.machineId, installationId: 'installed-controller' }, rootPath } as const;
+        const scope = { ...target, workspace };
+        const account = accountScope;
+        let epoch = 'before';
+        const methods: string[] = [];
+        let disconnectWatch: () => void = () => {};
+        filesystem.response = async (request: FilesystemBoundaryRequest) => {
+            methods.push(request.method);
+            if (request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT) {
+                if (epoch === 'offline') return { success: false, errorCode: 'BACKEND_UNAVAILABLE', actionErrorCode: 'admission_unavailable' };
+                return { success: true, snapshot: { projectKey: rootPath, fetchedAt: Date.now(),
+                    repo: { isRepo: true, rootPath }, branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
+                    stashCount: 0, hasConflicts: false, entries: [],
+                    totals: { includedFiles: 0, pendingFiles: 0, untrackedFiles: 0, includedAdded: 0,
+                        includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 } } };
+            }
+            if (request.method === RPC_METHODS.SCM_WORKSPACE_WATCH) {
+                const observation = ScmWorkspaceWatchRequestSchema.parse(request.payload);
+                expect(observation.workspace).toEqual(scope.workspace);
+                if (!observation.observationOnly && observation.sinceRevision === undefined) {
+                    return { status: 'ready', revision: epoch === 'before' ? 1 : 2 };
+                }
+                return await new Promise(resolve => {
+                    disconnectWatch = () => resolve({ status: 'unavailable', reason: { code: 'target_unavailable', message: 'offline' } });
+                    request.signal?.addEventListener('abort', () => resolve({ status: 'cancelled' }), { once: true });
+                });
+            }
+            throw new Error(`Unexpected RPC ${request.method}`);
+        };
+        await answerExternalActionAccountForHome(homes, serverId, {
+            machineId: workspace.controller.machineId, tokenEpoch: 0,
+            actionId: 'daemon.filesystem.listDirectory',
+            execute: input => {
+                methods.push('daemon.filesystem.listDirectory');
+                const list = FilesystemListDirectoryInputSchema.parse(input);
+                expect(list.workspace).toEqual(scope.workspace);
+                return { success: true, entries: [{ name: `${epoch}.txt`, type: 'file' }] };
+            },
+        });
+        const syncer = new ScmStatusSync();
+        await syncer.getWorkspaceSync(scope).invalidateAndAwait();
+        const release = syncer.retainAutoRefresh({ scope, intervalMs: 0, refreshOnRetain: false });
+        const tree = await renderHook(() => useWorkspaceRepositoryTreeBrowser({ scope, enabled: true }));
+        try {
+            const readError = () => storage.getState().getWorkspaceScmSnapshotError(scope);
+            const names = () => tree.getCurrent().nodes.map(node => node.name);
+            await vi.waitFor(() => {
+                expect(tree.getCurrent().rootError, methods.join(', ')).toBeNull();
+                expect(names(), methods.join(', ')).toEqual(['before.txt']);
+                expect(methods.filter(method => method === RPC_METHODS.SCM_WORKSPACE_WATCH)).toHaveLength(3);
+                expect(methods.filter(method => method === RPC_METHODS.SCM_STATUS_SNAPSHOT)).toHaveLength(2);
+            });
+            epoch = 'offline';
+            recordMachineRequestFailed({ ...account, machineId: scope.machineId });
+            disconnectWatch();
+            await vi.waitFor(() => expect(readError()).toMatchObject({ errorCode: 'target_unavailable' }));
+            expect(names()).toEqual(['before.txt']);
+            const offlineCallCount = methods.length;
+            clearMachineRequestReachabilityForMachine(account, 'different-controller');
+            await Promise.resolve();
+            expect(methods).toHaveLength(offlineCallCount);
+
+            epoch = 'after';
+            clearMachineRequestReachabilityForMachine(account, scope.machineId);
+            await vi.waitFor(() => {
+                expect(readError()).toBeNull();
+                expect(names()).toEqual(['after.txt']);
+                expect(storage.getState().getWorkspaceScmSnapshot(scope)?.branch.head).toBe('main');
+            });
+            expect(methods.slice(offlineCallCount).filter(method => method === RPC_METHODS.SCM_STATUS_SNAPSHOT)).toHaveLength(1);
+            expect(methods.slice(offlineCallCount).filter(method => method === RPC_METHODS.SCM_WORKSPACE_WATCH)).toHaveLength(3);
+        } finally {
+            release();
+            await tree.unmount();
+        }
+        const releasedCallCount = methods.length;
+        clearMachineRequestReachabilityForMachine(account, scope.machineId);
+        await Promise.resolve();
+        expect(methods).toHaveLength(releasedCallCount);
     });
 
     it('preserves a workspace list refusal through search without trying a second filesystem route', async () => {
