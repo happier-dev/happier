@@ -305,8 +305,10 @@ Stack. That derivation also writes each plugin package's ignored
 carries only the committed ones), so Plugin UI preparation finds every
 manifest; a change to the generator itself builds a new base. Each reload prepares a new tree beside the running one; `stack stop`
 (including a restart's stop) releases every tree except the selected one, and a
-base no Stack tree references is deleted (the newest base per host is kept). QA Stacks never build their own
-web export: they adopt the producer's shared export or use live Expo.
+base no Stack tree references is deleted (the newest base per host is kept).
+A default QA reload looks for a matching publication in the serving host's
+`source-bundles` store. A miss selects borrowed Expo and logs
+`reason=source_web_publication_missing`.
 
 Native runtime support (packaged Provider runtime binaries, process-custody
 helpers, the Iroh addon and Session holders) comes from the daemon support owner,
@@ -342,8 +344,9 @@ selected revision to each host's reload worker, which deletes it after use.
 
 App-only screen edits are served by borrowed Expo/Metro, which reads the live
 checkout; refresh the app or browser to replay them. A QA verdict on a revision
-uses that revision's shared web export (`--ui=export` builds it once; every Stack
-on the same revision and overlay adopts it). On a source tree the export reads the
+uses that revision's shared web export. The first taker designated for the cut
+uses `--ui=export`. Later Stacks on the serving host adopt the matching
+revision and overlay on a default reload. On a source tree the export reads the
 Stack's server tree, so commits and edits in the checkout while it waits for
 admission neither change nor refuse it; a base also keeps the UI's generated
 inputs (vendored `public/` assets).

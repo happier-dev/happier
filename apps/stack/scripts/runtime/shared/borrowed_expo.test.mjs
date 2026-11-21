@@ -10,6 +10,8 @@ import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { buildStackFixtureEnv } from '../../testkit/core/env_scope.mjs';
 import { resolveBestExpoWebappUrlForAuth, resolveStackWebappTargetForAuth, buildStackAuthLoginInvocation } from '../../utils/auth/stack_guided_login.mjs';
 import { prepareSourceRuntimeReload } from '../launch/prepareSourceRuntimeReload.mjs';
+import { prepareSourceQaWebUi } from '../../build/build_source_web_ui.mjs';
+import { beginPendingSourceStart } from './pending_source_start.mjs';
 import { getDaemonEnv } from '../../daemon.mjs';
 import { buildServerRuntimeEnv } from '../../utils/server/server_env.mjs';
 import test from 'node:test';
@@ -83,6 +85,21 @@ test('source restart admits runtime work while borrowed Expo is unavailable', as
     repoDir: process.cwd(), args: ['--no-dev-targets', '--no-server', '--server-url=http://127.0.0.1:3005', '--no-daemon'], env });
   assert.equal(prepared.ui, null);
   assert.equal(prepared.remote, false);
+});
+
+test('default source UI misses borrow locally and never contact an unrelated host', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-local-web-miss-' });
+  const stackBaseDir = fixture.path('stacks/qa');
+  const pending = await beginPendingSourceStart({ stackBaseDir });
+  t.after(async () => await pending.dispose());
+  const env = { ...process.env, HAPPIER_STACK_STORAGE_DIR: fixture.path('stacks'),
+    HAPPIER_STACK_STACK: 'qa', HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'producer' };
+  let remoteRequests = 0;
+  const ui = await prepareSourceQaWebUi({ mode: 'auto', repoDir: process.cwd(), stackBaseDir, pending,
+    revision: { revision: 'a'.repeat(40), overlayDigest: null }, env,
+    requestWebPublication: async () => { remoteRequests++; throw new Error('unrelated host unavailable'); } });
+  assert.equal(remoteRequests, 0);
+  assert.deepEqual(ui, { mode: 'borrowed', built: null, reason: 'source_web_publication_missing' });
 });
 
 test('borrowed Expo projects the consumer UI origin without replacing an explicit webapp URL', async t => {

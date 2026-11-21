@@ -50,8 +50,9 @@ export async function prepareSourceQaWebUi({ mode, retainsSelection = false, ...
     console.error(`[source-ui] ${unmatched}; keeping the selected export rev=${retained.sourceCapture?.revision ?? 'checkout'} capturedAt=${retained.sourceCapture?.capturedAt ?? 'unknown'} (${retained.uiDir})`);
     return { mode: 'export', built: null };
   }
-  console.error(`[source-ui] ${unmatched}; serving live (borrowed) Expo`);
-  return { mode: 'borrowed', built: null };
+  const reason = 'source_web_publication_missing';
+  console.error(`[source-ui] ${unmatched}; serving live (borrowed) Expo reason=${reason}`);
+  return { mode: 'borrowed', built: null, reason };
 }
 
 /** Stack starts reuse completed account-free exports through source publication.
@@ -301,10 +302,10 @@ async function exportSharedSourceWebUi({ repoDir, stackBaseDir, requestId, env, 
   await updatePendingSourcePreparationPhase({ stackBaseDir, requestId, phase: 'queued', component: 'ui', signal });
   const cached = await adopt();
   if (cached) return cached;
-  // A revision request adopts only its matching publication or a producer-proven
-  // alias. Auto mode leaves a miss to the caller. Explicit revision exports
-  // may ask the repository producer to build the requested revision.
-  if (reuseOnly || (context.consumerStackName !== context.producerStackName && !revision)) return null;
+  // A default reload ends its export lookup at this host's publication store.
+  if (reuseOnly) return null;
+  // An explicit revision export may ask the repository producer to build.
+  if (context.consumerStackName !== context.producerStackName && !revision) return null;
   if (requireLastGreen && !revision) throw sourceRuntimeProducerUnavailable(sourceRuntimeCaptureUnavailable(), context);
   const built = await runSharedSourceWebExport({ repoDir, context, signal, inputs: { repoDir,
     baseDir: join(context.producerStackBaseDir, 'source-runtime'), stackBaseDir: context.producerStackBaseDir,
