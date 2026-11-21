@@ -75,6 +75,8 @@ type PurposeTargetPickerRefresh = Readonly<{
   onRefresh: () => void;
 }>;
 
+type PurposeTargetPickerAddAccount = Readonly<{ label: string; onPress: () => void }>;
+
 function usePurposeTargetProfile(
   transport: ConnectedAccountPurposeTargetChoicesInput['sourceNegotiation'],
   accountsOnly?: boolean,
@@ -96,6 +98,7 @@ type ConnectedAccountPurposeTargetPickerModalContentProps = Readonly<{
   accessibilityLabel: string;
   onSelect: (target: QualifiedConnectedAccountPurposeBindingTargetV1 | null, teamResource: AgentConnectedAccountPurposeTeamResourceDefault | null) => void;
   refresh: PurposeTargetPickerRefresh | null;
+  addAccount?: PurposeTargetPickerAddAccount;
   testID: string;
   onClose: () => void;
 }>;
@@ -116,6 +119,7 @@ function ConnectedAccountPurposeTargetPickerModalContent(
     labelsByKey,
   }), [props.choiceInput, profile, labelsByKey]);
   const selected = choices.find(choice => choice.current);
+  const addAccount = choices.length > 0 && choices.every(signsInAgain) ? props.addAccount : undefined;
   const rootStep = React.useMemo<SelectionListStep>(() => ({
     id: 'connected-account-purpose-targets',
     ...(props.restriction ? { title: props.restriction.sentence } : {}),
@@ -159,6 +163,20 @@ function ConnectedAccountPurposeTargetPickerModalContent(
           }
         }}
       />
+      {addAccount ? (
+        <View style={styles.refresh}>
+          <RoundButton
+            testID={`${props.testID}:add-account`}
+            size="small"
+            display="inverted"
+            title={addAccount.label}
+            onPress={() => {
+              props.onClose();
+              addAccount.onPress();
+            }}
+          />
+        </View>
+      ) : null}
       {props.refresh ? (
         <View style={styles.refresh}>
           <Text style={styles.refreshStatus} numberOfLines={2}>{props.refresh.status ?? ''}</Text>
@@ -243,6 +261,8 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
   noneLabel?: string;
   /** Re-read the owner's targets, together with the followed descriptors. Offered once, inside the picker sheet, not as a page row. */
   onReload?: () => Promise<void> | void;
+  /** Start a fresh connection when all the listed accounts require reconnecting. */
+  addAccount?: PurposeTargetPickerAddAccount;
   /** The owner's current status (for example the Provider's), shown next to Refresh in the sheet. */
   reloadSubtitle?: string;
   /**
@@ -418,6 +438,9 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
   // Consumers pass inline handlers; the open sheet updates only when what it shows changes.
   const onChangeRef = React.useRef(props.onChange);
   onChangeRef.current = props.onChange;
+  const addAccountRef = React.useRef(props.addAccount?.onPress);
+  addAccountRef.current = props.addAccount?.onPress;
+  const addAccountLabel = props.addAccount?.label;
   // Inventory and label demand live in the mounted sheet; these props keep its
   // current declaration, selected value and owner-provided recovery in sync.
   const pickerProps = React.useMemo((): Omit<ConnectedAccountPurposeTargetPickerModalContentProps, 'onClose'> => ({
@@ -427,6 +450,7 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
     restriction: props.restriction,
     accessibilityLabel: purposeTitle,
     testID: props.testID,
+    ...(addAccountLabel ? { addAccount: { label: addAccountLabel, onPress: () => addAccountRef.current?.() } } : {}),
     refresh: canReload
       ? {
           ...(props.reloadSubtitle ? { status: props.reloadSubtitle } : {}),
@@ -439,7 +463,7 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
       selectionMade.current = true;
       onChangeRef.current(target, teamResource);
     },
-  }), [canReload, choiceInput, props.accountsOnly, props.teamResourcesOnly, props.restriction, props.reloadSubtitle, props.testID, purposeTitle, reload, reloading]);
+  }), [addAccountLabel, canReload, choiceInput, props.accountsOnly, props.teamResourcesOnly, props.restriction, props.reloadSubtitle, props.testID, purposeTitle, reload, reloading]);
   React.useEffect(() => {
     if (pickerModalIdRef.current) Modal.update(pickerModalIdRef.current, pickerProps);
   }, [pickerProps]);

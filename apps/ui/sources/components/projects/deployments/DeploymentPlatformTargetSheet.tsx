@@ -843,6 +843,7 @@ export function DeploymentPlatformTargetEditor(
                   ? 'projects.deployments.platformLink.connectionTeamNote'
                   : 'projects.deployments.platformLink.connectionPersonalNote') } : {})}
                 accountsOnly
+                addAccount={{ label: t('projects.deployments.platformLink.connectAction', { platform: target.title }), onPress: connect }}
                 disabled={busy !== null || reviewingCreate}
                 onChange={(next) => {
                   setAccount(next?.kind === 'account' ? next.account : null);

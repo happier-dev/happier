@@ -27,6 +27,7 @@ const connectedAccountState = vi.hoisted(() => ({
   additionalAccounts: [] as Array<Record<string, unknown>>,
   profileId: 'account-a' as string,
   serverId: 'server-a',
+  primaryStatus: 'connected' as 'connected' | 'needs_reauth',
 }));
 type ModalBoundaryConfig = Readonly<{
   component: React.ComponentType<Record<string, unknown>>;
@@ -105,7 +106,7 @@ function seedAccountProfile() {
           service: { pluginId: 'acme.managed.provider', localId: 'gateway' },
           accountId: '35f1d8ec-633c-4bda-9e0d-7055ac95b8af',
         },
-        status: 'connected',
+        status: connectedAccountState.primaryStatus,
         authenticationModeId: 'oauth',
         revisionSemantics: 'revisioned',
         credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
@@ -168,6 +169,7 @@ afterEach(async () => {
   featureRuntimeState.qualifiedAccounts = true;
   routeState.pathname = '/settings/providers/cpx-moving';
   connectedAccountState.additionalAccounts = [];
+  connectedAccountState.primaryStatus = 'connected';
   connectedAccountState.profileId = 'account-a';
   connectedAccountState.serverId = 'server-a';
   modalSpies.show.mockClear();
@@ -218,6 +220,36 @@ function findItemByTestId(screen: Awaited<ReturnType<typeof renderScreen>>, test
 
 // The sign-in-again case lives beside the owner's suite while that file carries another lane's unfinished harness edits.
 describe('ConnectedAccountPurposeTargetChooser signed-out rows', () => {
+  it.each(['needs_reauth', 'connected'] as const)('offers a new credential only if the retained sign-ins all need reconnect (%s)', async status => {
+    const { ConnectedAccountPurposeTargetChooser } = await import('./ConnectedAccountPurposeTargetChooser');
+    connectedAccountState.primaryStatus = status;
+    connectedAccountState.additionalAccounts = [{
+      ref: { service: { pluginId: 'acme.managed.provider', localId: 'gateway' }, accountId: '6b0f2c1e-8d1a-4c55-9a3e-2f7f0c9b1d42' },
+      status: 'needs_reauth', authenticationModeId: 'oauth', revisionSemantics: 'revisioned',
+      credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb', configurationReady: true, configurationRevision: null,
+      displayName: 'Work OpenAI', scopes: [],
+    }];
+    const testID = 'agent-connected-account-purpose:primary';
+    const onAddAccount = vi.fn();
+    const screen = await renderScreen(<ConnectedAccountPurposeTargetChooser
+      testID={testID}
+      localizedTextPluginId="acme.provider.author"
+      declaration={{ purpose: 'primary', service: { pluginId: 'acme.managed.provider', localId: 'gateway' }, required: true }}
+      value={null}
+      accountsOnly
+      onChange={vi.fn()}
+      addAccount={{ label: 'Add token', onPress: onAddAccount }}
+    />);
+    await act(async () => { findItemByTestId(screen, testID)?.props.onPress(); });
+    if (status === 'connected') {
+      expect(modalScreen.findByTestId(`${testID}:add-account`)).toBeNull();
+    } else {
+      await modalScreen.pressByTestIdAsync(`${testID}:add-account`);
+      expect(onAddAccount).toHaveBeenCalledOnce();
+      expect(modalBoundary.config).toBeNull();
+    }
+  });
+
   it('lets a signed-out account sign in again from the picker through the shared connect sheet (PAGE-ACCEPT-176 R8-D6)', async () => {
     const { ConnectedAccountPurposeTargetChooser } = await import('./ConnectedAccountPurposeTargetChooser');
     connectedAccountState.additionalAccounts = [{
