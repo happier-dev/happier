@@ -926,6 +926,52 @@ describe('GitHub triage scan', () => {
     });
   });
 
+  it('preserves valid siblings across clustered malformed rows and follows the next native page', async () => {
+    const lane = GITHUB_SCAN_LANE_ORDER_V1[0];
+    const validIssue = (number: number) => ({ ...GITHUB_SEARCH_ISSUE_ITEM, number });
+    const { pages, settled } = await runWalk({
+      limit: 5,
+      respond: (request) => {
+        if (laneOf(request) !== lane) return emptyPage();
+        const url = new URL(request.url);
+        if (url.searchParams.get('page') === '2') {
+          return { status: 200, body: githubSearchResponse({ items: [validIssue(16)], totalCount: 6 }) };
+        }
+        return {
+          status: 200,
+          headers: {
+            link: githubSearchLinkHeader({
+              laneQuery: buildGithubLaneQuery({ laneId: lane, repositoryKeys: [REPOSITORY_KEY] }),
+              perPage: Number(url.searchParams.get('per_page')),
+              nextPage: 2,
+            }),
+          },
+          body: githubSearchResponse({
+            totalCount: 6,
+            items: [
+              validIssue(11),
+              GITHUB_SEARCH_UNDECODABLE_ITEM,
+              { ...validIssue(13), title: null },
+              { ...validIssue(14), updated_at: 'invalid' },
+              validIssue(15),
+            ],
+          }),
+        };
+      },
+    });
+
+    expect(pages).toHaveLength(2);
+    const [first] = pages;
+    if (first?.kind !== 'page') throw new Error('Expected an open walk after the mixed page');
+    expect(first.observations.map(row => row.kind === 'present' && row.localRef.entryId)).toEqual(['11', '15']);
+    expect(first.laneFailures).toEqual([]);
+    expect(first.evidence).toEqual({ kind: 'partial', reason: 'undecodable-items', omittedItemCount: 3 });
+    if (settled.kind !== 'complete') throw new Error('Expected the native next page to settle the walk');
+    expect(settled.observations.map(row => row.kind === 'present' && row.localRef.entryId)).toEqual(['16']);
+    expect(settled.laneFailures).toEqual([]);
+    expect(settled.evidence).toEqual({ kind: 'partial', reason: 'undecodable-items' });
+  });
+
   it('reports a scan as partial when any lane exceeded the search result ceiling', async () => {
     const { result } = await runScan({
       respond: (request) => (laneOf(request) === 'mentioned'
