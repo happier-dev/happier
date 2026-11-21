@@ -1838,6 +1838,7 @@ export function useSessionComposerController({
                     managedWorkflowRuns={sessionManagedWorkflowRuns}
                     onOpenManagedWorkflowRun={openManagedWorkflowRun}
                     editableGoal={canEditSessionGoals}
+                    anchorNamesGoalStatus={presentation.namesGoalStatus === true}
                     goalActionCapabilityProfile={sessionGoalActionCapabilityProfile}
                     onRequestClose={onRequestClose}
                     onSetGoal={canEditSessionGoals ? setSessionGoalForView : undefined}

@@ -302,8 +302,11 @@ export type WorkflowEditorCommands = Readonly<{
  */
 const WORKFLOW_EDITOR_MAIN_MIN_WIDTH_PX = DEFAULT_MAIN_MIN_PX;
 
-/** Step options popover: the lab `E1o` card's width, capped by the space beside the anchor. */
-const STEP_OPTIONS_MAX_WIDTH_PX = 420;
+/**
+ * Step options popover: the owner-approved lab round 1116b A panel's width (460), capped by the space beside the
+ * anchor. At 420 the Session chips broke onto five short lines where the lab's flow reads in three (FIN-DESIGN-ACCEPT-3 R2).
+ */
+const STEP_OPTIONS_MAX_WIDTH_PX = 460;
 /** An If's options are its one rule: wide enough to read as a sentence on one line (lab round 1105 C1). */
 const IF_OPTIONS_MAX_WIDTH_PX = 520;
 const STEP_OPTIONS_MAX_HEIGHT_PX = 640;

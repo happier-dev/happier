@@ -32,13 +32,24 @@ export function formatSessionWorkStateBadgeLabel(item: SessionWorkDisplayItemV1 
         // been dismissed, so it yields no badge and the chrome disappears (mirrors happy showing only
         // active goals). Without this a `/goal clear` left a stale active-looking badge (QA-CHIP-4).
         if (item.status === 'cancelled') return null;
-        if (item.status === 'paused') return translate('session.workState.badge.goalPaused');
-        if (item.statusReason === 'budgetLimited') return translate('session.workState.badge.goalBudgetLimited');
-        if (item.status === 'blocked') return translate('session.workState.badge.goalBlocked');
-        if (item.status === 'complete') return translate('session.workState.badge.goalComplete');
-        return translate('session.workState.badge.goal', { title: item.title });
+        const statusKey = goalBadgeStatusKey(item);
+        return statusKey === null ? translate('session.workState.badge.goal', { title: item.title }) : translate(statusKey);
     }
     return translate('session.workState.badge.item', { title: item.title });
+}
+
+/** Whether the badge's label already says this goal's state ("Goal blocked"), so the card it opens need not repeat it. */
+export function namesGoalBadgeStatus(item: SessionWorkDisplayItemV1): boolean {
+    return item.kind === 'goal' && item.status !== 'cancelled' && goalBadgeStatusKey(item) !== null;
+}
+
+/** The badge's state word for a goal, or null when the badge names the goal's title instead. */
+function goalBadgeStatusKey(item: SessionWorkDisplayItemV1): WorkStateBadgeTranslationKey | null {
+    if (item.status === 'paused') return 'session.workState.badge.goalPaused';
+    if (item.statusReason === 'budgetLimited') return 'session.workState.badge.goalBudgetLimited';
+    if (item.status === 'blocked') return 'session.workState.badge.goalBlocked';
+    if (item.status === 'complete') return 'session.workState.badge.goalComplete';
+    return null;
 }
 
 export function resolveSessionWorkStateBadgeTone(item: SessionWorkDisplayItemV1 | null): 'neutral' | 'active' | 'paused' | 'warning' | 'complete' {

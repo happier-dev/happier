@@ -49,6 +49,8 @@ export function SessionGoalControlContent(props: Readonly<{
         agentLabel: string;
         keepGoing: SessionKeepGoingTrigger;
     }> | null;
+    /** The control that opened the card already names the goal's state ("Goal blocked"): the header says only "Goal". */
+    statusShownByAnchor?: boolean;
 }>) {
     const { theme } = useUnistyles();
     // Capability-driven action visibility (provider-agnostic). Goal-item capabilities win; otherwise
@@ -176,9 +178,11 @@ export function SessionGoalControlContent(props: Readonly<{
                         <Text style={[styles.title, { color: theme.colors.text.primary }]}>
                             {t('session.workState.goal.title')}
                         </Text>
-                        <Text style={[styles.statusText, { color: theme.colors.text.tertiary }]} numberOfLines={1}>
-                            {statusText}
-                        </Text>
+                        {props.statusShownByAnchor === true ? null : (
+                            <Text style={[styles.statusText, { color: theme.colors.text.tertiary }]} numberOfLines={1}>
+                                {statusText}
+                            </Text>
+                        )}
                     </View>
                     <View style={styles.headerActions}>
                         {editing ? (

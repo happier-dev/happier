@@ -345,5 +345,12 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.space.s16,
     paddingBottom: theme.space.s12,
   },
-  body: { paddingTop: theme.space.s8 },
+  // The run's turns hang from the fold on a thread rail under its glyph, so they read as the
+  // run's own and a following transcript row reads as outside it (the transcript's rail, as in SessionAskRecord).
+  body: {
+    marginTop: theme.space.s8,
+    marginLeft: theme.space.s10,
+    borderLeftWidth: 1,
+    borderLeftColor: theme.colors.border.subtle,
+  },
 }));

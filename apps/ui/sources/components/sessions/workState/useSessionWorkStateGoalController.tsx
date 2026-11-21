@@ -74,6 +74,8 @@ export function useSessionWorkStateGoalController(params: Readonly<{
      * goal signal. Only the composer's Goal control passes it; the trigger list is read while open.
      */
     continuation?: SessionGoalContinuationContext | null;
+    /** The opening control already names the goal's state (the work-state badge's `namesGoalStatus`). */
+    goalStatusShownByAnchor?: boolean;
     onRequestClose: () => void;
     onSetGoal?: (request: SessionWorkStateGoalSetRequest, signal?: AbortSignal) => Promise<SessionWorkStateGoalOperationResult>;
     onClearGoal?: (signal?: AbortSignal) => Promise<SessionWorkStateGoalOperationResult>;
@@ -303,6 +305,7 @@ export function useSessionWorkStateGoalController(params: Readonly<{
                     onClear={clearGoal}
                     onCancel={() => { void guardedRequestClose(); }}
                     busy={mutating}
+                    statusShownByAnchor={params.goalStatusShownByAnchor === true}
                     continuation={continuation ? {
                         nativeGoalOwner: continuation.nativeGoalOwner,
                         agentLabel: continuation.agentLabel,

@@ -103,7 +103,9 @@ export function WorkflowValueReferenceToken(props: Readonly<{
     // A reference reads as the lab's tinted chip (`.uwe-ref`): the accent's own tint behind accent words,
     // inline in a sentence or on a step's footer line, never a bare link-coloured run of text.
     return <Text testID={props.testID} style={{ color: theme.colors.state.active.textForeground, backgroundColor: theme.colors.state.active.background,
-        borderRadius: theme.borderRadius.sm, paddingHorizontal: theme.space.s4 }} selectable
+        borderRadius: theme.borderRadius.sm, paddingHorizontal: theme.space.s4,
+        // On one line it ends in an ellipsis at its field's edge rather than running past the card (FIN-DESIGN-ACCEPT-3 R5).
+        ...(props.numberOfLines === undefined ? {} : { maxWidth: '100%' as const }) }} selectable
         {...(props.numberOfLines === undefined ? {} : { numberOfLines: props.numberOfLines })}>
         {/* A chip wraps whole, never inside its words (owner 2026-11-06): its spaces do not break. */}
         {`↵ ${props.label ?? formatWorkflowValueReference(props.draft, props.reference)}`.replace(/ /g, '\u00A0')}</Text>;
@@ -253,7 +255,8 @@ export function WorkflowBindingRow(props: Readonly<{
                                     : <Text style={workflowEditorStyles.actionFieldText} selectable>
                                         {props.formatLiteral?.(reference.value) ?? formatWorkflowBindingLiteral(props.draft, reference, props.fieldName)}
                                     </Text>
-                                : <WorkflowValueReferenceToken draft={props.draft} reference={reference} label={props.referenceLabels?.[index]} />}
+                                // A value token stands alone in the row, so it stays on one line inside the field's width.
+                                : <WorkflowValueReferenceToken draft={props.draft} reference={reference} label={props.referenceLabels?.[index]} numberOfLines={1} />}
                     </React.Fragment>
                 ))}
             </View>

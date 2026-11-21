@@ -820,6 +820,19 @@ describe('SessionAuthoringControls', () => {
     await screen.unmount();
   });
 
+  it('names an empty allowed-tools list by its field in a set of chips, never by wire-syntax examples (R2)', async () => {
+    const chips = await renderControls({ presentation: 'chips', fields: ['allowedTools'], values: baseValues() });
+    const chipInput = chips.screen.findByTestId('session-authoring-control-allowedTools-input');
+    expect(chipInput?.props.placeholder).toBe('settingsSession.toolPolicy.allowedTitle');
+    await chips.screen.unmount();
+
+    // A form row names the field beside the input, so its placeholder shows how to type the list.
+    const form = await renderControls({ presentation: 'fields', fields: ['allowedTools'], values: baseValues() });
+    expect(form.screen.findByTestId('session-authoring-control-allowedTools-input')?.props.placeholder)
+      .toBe('settingsSession.toolPolicy.allowedPlaceholder');
+    await form.screen.unmount();
+  });
+
   it('reports the chosen permission mode without writing any preference', async () => {
     const { storage } = await import('@/sync/domains/state/storage');
     const before = storage.getState().settings;

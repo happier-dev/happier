@@ -516,6 +516,39 @@ describe('SessionWorkStatePopover', () => {
         act(() => tree?.unmount());
     });
 
+    it.each([true, false])('names the goal state once: the card drops it when the badge already says it (R4, badge says it: %s)', async anchorNamesGoalStatus => {
+        const anchorRef = { current: null } as React.RefObject<any>;
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        await act(async () => {
+            tree = renderer.create(<SessionWorkStatePopover
+                open
+                anchorRef={anchorRef}
+                anchorNamesGoalStatus={anchorNamesGoalStatus}
+                snapshot={{
+                    v: 1,
+                    backendId: 'codex',
+                    updatedAt: 10,
+                    primaryItemId: 'goal:codex',
+                    items: [
+                        { id: 'goal:codex', kind: 'goal', origin: 'vendor', status: 'blocked', title: 'Ship goals', updatedAt: 10 },
+                    ],
+                }}
+                editableGoal
+                onRequestClose={vi.fn()}
+                onSetGoal={vi.fn()}
+                onClearGoal={vi.fn()}
+            />);
+        });
+
+        const text = collectText(tree?.toJSON());
+        if (anchorNamesGoalStatus) expect(text).not.toContain('session.workState.goal.statusBlocked:');
+        else expect(text).toContain('session.workState.goal.statusBlocked:');
+        expect(text).toContain('session.workState.goal.title:');
+
+        act(() => tree?.unmount());
+    });
+
     it('shows complete goals as complete and hides pause controls', async () => {
         const anchorRef = { current: null } as React.RefObject<any>;
 

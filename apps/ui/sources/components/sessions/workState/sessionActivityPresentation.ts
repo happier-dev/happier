@@ -18,6 +18,7 @@ import {
 } from './sessionWorkflowActivityPresentation';
 import {
     formatSessionWorkStateBadgeLabel,
+    namesGoalBadgeStatus,
     resolveSessionWorkStateBadgeEmphasis,
     resolveSessionWorkStateBadgeTone,
     SESSION_WORK_STATE_STATUS_BADGE_KEY,
@@ -48,6 +49,8 @@ export type SessionActivityStatusBadgePresentation = Readonly<{
     emphasis: AgentInputStatusBadgeEmphasis;
     iconKind: SessionActivityBadgeIconKind;
     popoverKind: 'workState';
+    /** The label already says the goal's state ("Goal blocked"), so the goal card it opens does not say it again. */
+    namesGoalStatus?: true;
 }>;
 
 /**
@@ -326,6 +329,7 @@ export function resolveSessionActivityStatusBadgePresentation(
                 emphasis: resolveSessionWorkStateBadgeEmphasis(primaryItem),
                 iconKind: primaryItem.kind === 'goal' ? 'goal' : 'task',
                 popoverKind: 'workState',
+                ...(namesGoalBadgeStatus(primaryItem) ? { namesGoalStatus: true as const } : {}),
             };
         }
     }

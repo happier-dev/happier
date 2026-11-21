@@ -91,6 +91,16 @@ describe('resolveSessionActivityStatusBadgePresentation', () => {
         }
     });
 
+    it.each([
+        ['blocked', 'Goal blocked', true],
+        ['paused', 'Goal paused', true],
+        ['active', 'Goal: Ship', false],
+    ] as const)('says whether a %s goal badge already names the goal state the card would repeat (R4)', (status, label, names) => {
+        const result = resolve({ workStateSnapshot: workState([workStateItem({ id: 'g', kind: 'goal', status, title: 'Ship' })]) });
+        expect(result?.label).toBe(label);
+        expect(result?.namesGoalStatus === true).toBe(names);
+    });
+
     it('returns null when there is nothing to show', () => {
         expect(resolve({})).toBeNull();
     });

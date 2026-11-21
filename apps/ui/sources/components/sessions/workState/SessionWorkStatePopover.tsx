@@ -36,6 +36,8 @@ export function SessionWorkStatePopover(props: Readonly<{
     managedWorkflowRuns?: SessionManagedWorkflowRunsState;
     onOpenManagedWorkflowRun?: (runId: string) => void;
     editableGoal?: boolean;
+    /** The badge already names the goal's state (its presentation's `namesGoalStatus`). */
+    anchorNamesGoalStatus?: boolean;
     // Provider goal-action profile for the "Set goal" form (no goal item yet) so the Codex-only
     // budget editor stays hidden on providers that don't support it (e.g. Claude). QA-CHIP-2.
     goalActionCapabilityProfile?: GoalActionCapabilities | null;
@@ -67,6 +69,7 @@ export function SessionWorkStatePopover(props: Readonly<{
         goalActionCapabilityProfile: props.goalActionCapabilityProfile ?? null,
         workflowSection,
         showEmptyGoalControls: false,
+        goalStatusShownByAnchor: props.anchorNamesGoalStatus === true,
         onRequestClose: props.onRequestClose,
         onSetGoal: props.onSetGoal,
         onClearGoal: props.onClearGoal,

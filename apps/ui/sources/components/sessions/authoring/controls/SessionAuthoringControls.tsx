@@ -109,6 +109,12 @@ const styles = StyleSheet.create((theme) => ({
         minHeight: HAPPIER_PAGE_METRICS.controlHeightPx,
         minWidth: 160,
     },
+    /** The input already carries its own text inset inside the chip. */
+    toolListChip: {
+        paddingVertical: 0,
+        paddingRight: 0,
+        gap: 0,
+    },
 }));
 
 /** The incumbent Connected Services chip presentation, shared by non-composer authoring hosts. */
@@ -376,7 +382,10 @@ function SessionAuthoringFieldControl(props: Readonly<{
                     testID={`${testID}-input`}
                     title={control.title}
                     value={control.value}
-                    placeholder={control.placeholder}
+                    // In a set of chips nothing beside the input names it, so an empty list reads as its field, led by
+                    // its mark like every chip; wire-syntax examples belong to a labelled form row (FIN-DESIGN-ACCEPT-3 R2).
+                    placeholder={props.presentation === 'chips' ? control.title : control.placeholder}
+                    {...(props.presentation === 'chips' && chipMark !== undefined ? { leading: chipMark } : {})}
                     disabled={props.disabled === true}
                     onChange={(tools) => onChangeField('allowedTools', tools)}
                 />
@@ -551,6 +560,8 @@ function useResolvedSessionAuthoringControls(
 function SessionAuthoringToolListInput(props: Readonly<{
     /** `selects`: the bordered page field beside its row label. */
     boxed?: boolean;
+    /** A set of chips: the field's mark before the input. */
+    leading?: React.ReactNode;
     testID: string;
     title: string;
     value: readonly string[];
@@ -581,7 +592,7 @@ function SessionAuthoringToolListInput(props: Readonly<{
             onChangeText={change}
         />
     );
-    return (
+    const input = (
         <TextInput
             testID={props.testID}
             style={styles.textInput}
@@ -597,6 +608,9 @@ function SessionAuthoringToolListInput(props: Readonly<{
             }}
         />
     );
+    if (props.leading === undefined) return input;
+    // The chip's own inset and gap, so the mark and the words sit as a chip's do.
+    return <View style={[sessionAuthoringChipStyles.chip, styles.toolListChip]}>{props.leading}{input}</View>;
 }
 
 /** What an option chip says for its current selection: the one reading every presentation shares. */
