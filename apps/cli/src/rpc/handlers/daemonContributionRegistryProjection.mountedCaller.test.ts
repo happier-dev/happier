@@ -283,9 +283,10 @@ describe('mounted caller admission through the real contributed Action RPC', () 
             revokeAfterRead = false;
             expect(await run()).toMatchObject({ ok: true, result: { reads: 2 } });
             if (executionSurface === 'ui') {
-                // UI carries its own settled confirmation; it cannot borrow the CLI Artifact presenter.
+                // A relayed press without child consent asks through the originating UI.
                 expect(await run(clientActionBinding, {}, 'write'))
-                    .toMatchObject({ ok: false, code: 'plugin_action_current_intent_unavailable' });
+                    .toMatchObject({ ok: false, code: 'action_interactive_review_required',
+                        actionHandlerInvocation: 'notStarted' });
                 // Loop the network boundary into the real receiving ingress. A
                 // direct handler call misses the authority ceiling on this hop.
                 const transport = vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async params =>
@@ -309,8 +310,10 @@ describe('mounted caller admission through the real contributed Action RPC', () 
                                 qualifiedId: `${pluginId}/${contributionLocalId}` }, occurrenceId: clientActionBinding.occurrenceId,
                                 sourceCustody: clientActionBinding.sourceCustody, originSurface: 'ui' }, signal: lifetime.signal },
                     });
-                    expect(await relay(false)).toMatchObject({ status: 'failed', code: 'plugin_action_current_intent_unavailable',
+                    const unreviewed = await relay(false);
+                    expect(unreviewed).toMatchObject({ status: 'failed', code: 'action_interactive_review_required',
                         actionHandlerInvocation: 'notStarted' });
+                    expect(approvalRows.size).toBe(0);
                     const relayed = await relay(true);
                     expect(relayed, JSON.stringify(relayed)).toMatchObject({ status: 'executed', value: { writes: 1 } });
                 } finally { transport.mockRestore(); }

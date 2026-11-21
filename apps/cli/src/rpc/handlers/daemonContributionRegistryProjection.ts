@@ -3191,10 +3191,15 @@ export function registerDaemonContributionRegistryProjectionHandler(
                     });
                 }
             }
+            const accountClientAction = invocation.kind === 'clientPluginAction'
+                && mountedCaller.status === 'available' && mountedCaller.approvalInputCustody === 'live_only';
+            const relayedUiPress = accountClientAction && invocationSurface === 'ui';
+            const rpcApprovalContext = buildActionExecutorContextForRpc({ ...context, actionId: 'action.invoke',
+                ...(defaultSessionId ? { defaultSessionId } : {}) });
             const approvalContext: ActionExecutorContext = {
                 ...context?.localActionContext,
-                ...buildActionExecutorContextForRpc({ ...context, actionId: 'action.invoke',
-                    ...(defaultSessionId ? { defaultSessionId } : {}) }),
+                ...rpcApprovalContext,
+                ...(relayedUiPress && rpcApprovalContext.surface === 'rpc' ? { surface: 'ui' as const } : {}),
                 ...(context?.machineAdmission ? { runtimeAccountId: context.machineAdmission.actorAccountId } : {}),
                 ...(context && opts?.createFileDownloadPublisher ? { prepareFileDownload: opts.createFileDownloadPublisher(context) } : {}),
                 authority: context?.callerAuthority ?? context?.localActionContext?.authority ?? 'account_automation',
@@ -3210,6 +3215,10 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 ...(request.data.input === undefined ? {} : { input: request.data.input }),
                 expectedContributorOccurrenceId: request.data.expectedContributorOccurrenceId,
                 approvalContext,
+                // This internal press marker selects the child's UI policy only
+                // with verified person authority. Settled child consent still
+                // comes exclusively from the reviewed-child port below.
+                ...(relayedUiPress ? { presentUserIntent: 'confirmed' as const } : {}),
                 ...(request.data.presentUserIntent === 'confirmed' && resolvedAction
                     && (invocationSurface === 'ui' || invocationSurface === 'voice')
                     && (isPresentUserHostInvocation({ ...approvalContext, surface: invocationSurface })
@@ -3223,8 +3232,7 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 // A finite native Account caller cannot publish a live-only child
                 // approval to its caller while this RPC is awaiting that decision.
                 requestCurrentIntent: createPresentUserCurrentIntent(
-                    invocationSurface === 'cli' && invocation?.kind === 'clientPluginAction'
-                        && mountedCaller.status === 'available' && mountedCaller.approvalInputCustody === 'live_only'
+                    invocationSurface === 'cli' && accountClientAction
                         ? undefined : opts?.requestCurrentIntent),
                 context: {
                     ...(opts?.observePluginExecution ? { observePluginExecution: opts.observePluginExecution } : {}),
