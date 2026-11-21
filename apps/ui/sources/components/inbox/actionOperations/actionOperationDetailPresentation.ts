@@ -1,5 +1,5 @@
 import type { ActionOperationProjection, ActionOperationSudoPrompt } from '@/sync/domains/actionOperations/actionOperationSelectors';
-import { MachineSetupFailureDetailsV1Schema, type ProjectCommandAttachmentV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { FiniteCommandFailureDetailsV1Schema, MachineSetupFailureDetailsV1Schema, type FiniteCommandFailureDetailsV1, type ProjectCommandAttachmentV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { WorkspaceAddressV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { isWorkspacePathWithinRootV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
@@ -11,7 +11,7 @@ import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolve
 import type { TechnicalDetailsLine } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import type { QualifiedActionOperation } from '@/sync/domains/actionOperations/qualifiedActionOperation';
 import { t } from '@/text';
-import { describeMachineSetupFailureCause } from '@/components/machines/setup/machineSetupReasonText';
+import { describeMachineSetupFailureCause, describeMachineSetupStoppedCommand } from '@/components/machines/setup/machineSetupReasonText';
 import type { PlanChecklistExecutionState, PlanChecklistItem, PlanChecklistItemStatus } from '@/components/systemTasks/planChecklist';
 import type { MachineFirewallRecoveryV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 import { MACHINE_REACHABILITY_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
@@ -450,7 +450,7 @@ export function projectMachineSetupStepChecklist(
     question: ActionOperationSudoPrompt | null = null,
     observation: ActionOperationObservation = 'available',
     /** The stopped run's own typed failure ({@link readMachineSetupRunFailure}): it explains the step where the run stopped. */
-    runFailure: string | null = null,
+    runFailure: string | FiniteCommandFailureDetailsV1 | null = null,
 ): MachineSetupStepChecklist | null {
     const steps = attachment.steps;
     if (!steps || steps.length === 0) return null;
@@ -465,7 +465,10 @@ export function projectMachineSetupStepChecklist(
             ? t('machinePresets.setup.scriptNumbered', { index: step.label.params.index }) : localizeLabel(step.label);
         const stoppedHere = step.state === 'failed' ? stoppedStepFailure : null;
         if (stoppedHere) stoppedStepFailure = null;
-        const subtitle = step.state === 'failed' ? stoppedHere ?? describeMachineSetupFailureCause(step.failureCause)
+        const subtitle = step.state === 'failed'
+            ? typeof stoppedHere === 'object' && stoppedHere !== null
+                ? describeMachineSetupStoppedCommand(title, stoppedHere)
+                : stoppedHere ?? describeMachineSetupFailureCause(step.failureCause)
             : step.state === 'cancelled' ? t('inbox.actionOperations.status.cancelled') : undefined;
         const unobserved = observation !== 'available' && (step.state === 'running' || step.state === 'pending');
         if (unobserved && step.state === 'running') {
@@ -523,11 +526,12 @@ export function projectProjectCommandStepChecklist(
 }
 
 /**
- * A stopped setup run's own failure in words, when the setup owner settled it with a typed remedy ("Check the selected
- * packages…"): more exact than the step's coarse reason code, and the same sentence the operation's detail shows.
+ * A stopped setup run's typed command failure or native remedy. The checklist presents the command with its row title.
  */
-export function readMachineSetupRunFailure(snapshot: ActionOperationSnapshot | null | undefined): string | null {
+export function readMachineSetupRunFailure(snapshot: ActionOperationSnapshot | null | undefined): string | FiniteCommandFailureDetailsV1 | null {
     if (snapshot?.state !== 'failed' || !snapshot.error) return null;
+    const command = FiniteCommandFailureDetailsV1Schema.safeParse(snapshot.error.details);
+    if (command.success) return command.data;
     const details = MachineSetupFailureDetailsV1Schema.safeParse(snapshot.error.details);
     return details.success && 'remedy' in details.data.failure && details.data.failure.remedy ? presentFailure(snapshot)?.reason ?? null : null;
 }

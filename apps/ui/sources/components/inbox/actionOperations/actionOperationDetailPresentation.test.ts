@@ -227,6 +227,20 @@ describe('action operation detail presentation', () => {
         expect(readMachineSetupRunFailure(failed({ kind: 'machineSetup', failure: { kind: 'native_effect_failed' } }))).toBeNull();
     });
 
+    it('names the failed setup script and its exit code in the checklist reason', () => {
+        // The #190 setup run settled with the fourth script's finite-command failure.
+        const failure = readMachineSetupRunFailure(operation({ state: 'failed', settledAt: 2_000,
+            error: { errorCode: 'machine_setup_setup_failed', error: 'machine_setup_setup_failed',
+                details: { kind: 'finiteCommand', phase: 'setup', step: 3, exitCode: 23, signal: 0 } },
+        }));
+        const checklist = projectMachineSetupStepChecklist({ kind: 'machineSetup', serverId: 'home', machineId: 'web-2', steps: [
+            { planIndex: 0, stepId: 'script-4', label: { key: 'machinePresets.setup.scriptNumbered', params: { index: 4 }, fallback: 'Script 4' },
+                state: 'failed', failureCause: 'machine_setup_setup_failed' },
+        ] }, String, null, 'available', failure);
+        expect(checklist?.items[0]?.subtitle).toContain(checklist?.items[0]?.title);
+        expect(checklist?.items[0]?.subtitle).toContain('23');
+    });
+
     it('maps reviewed setup steps onto checklist rows keyed by plan and step, with failures in words', () => {
         const attachment = { kind: 'machineSetup' as const, serverId: 'home', machineId: 'web-2', steps: [
             { planIndex: 0, stepId: 'docker', label: { key: 'recipe.docker', fallback: 'Docker' }, state: 'succeeded' as const },

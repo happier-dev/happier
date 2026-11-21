@@ -658,6 +658,8 @@ export const managedMachines: ManagedMachinesTranslations = {
             applyFailed: ({ machine }: { machine: string }) => `无法在 ${machine} 上开始设置。`,
             toolchainPlaceholder: "[tools]\nnode = \"22\"",
             setupPlaceholder: "npm install -g pnpm",
+            commandStopped: ({ step }: { step: string }) => `${step}已停止。`,
+            commandStoppedWithExit: ({ step, code }: { step: string; code: number }) => `${step}已停止（退出代码 ${code}）。`,
             scriptNumbered: ({ index }: { index: number }) => `脚本 ${index}`,
             addScript: "再添加一个脚本",
             removeScript: ({ index }: { index: number }) => `移除脚本 ${index}`,

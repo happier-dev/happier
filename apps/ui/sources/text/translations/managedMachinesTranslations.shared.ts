@@ -664,6 +664,8 @@ export const managedMachinesEn = {
             applyFailed: ({ machine }: { machine: string }) => `Setup couldn’t start on ${machine}.`,
             toolchainPlaceholder: "[tools]\nnode = \"22\"",
             setupPlaceholder: "npm install -g pnpm",
+            commandStopped: ({ step }: { step: string }) => `${step} stopped.`,
+            commandStoppedWithExit: ({ step, code }: { step: string; code: number }) => `${step} stopped (exit ${code}).`,
             scriptNumbered: ({ index }: { index: number }) => `Script ${index}`,
             addScript: "Add another script",
             removeScript: ({ index }: { index: number }) => `Remove script ${index}`,

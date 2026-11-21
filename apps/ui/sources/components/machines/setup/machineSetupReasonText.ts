@@ -1,5 +1,6 @@
 import type { MachineSetupObservationReasonV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupObservationReasonV1';
 import type { z } from 'zod/mini';
+import type { FiniteCommandFailureDetailsV1 } from '@happier-dev/protocol/actions/operations/v1';
 
 import { t } from '@/text';
 
@@ -21,6 +22,12 @@ const REASON_KEYS = {
 /** The setup owner's typed reason, in words: one sentence for Security's updates rows and Setup's recipe rows. */
 export function describeMachineSetupReason(reason: MachineSetupObservationReason | null | undefined): string {
   return t(reason ? REASON_KEYS[reason] : 'machineDetailPage.security.reasons.checkFailed');
+}
+
+export function describeMachineSetupStoppedCommand(step: string, failure: FiniteCommandFailureDetailsV1): string {
+  return failure.exitCode === null
+    ? t('machinePresets.setup.commandStopped', { step })
+    : t('machinePresets.setup.commandStoppedWithExit', { step, code: failure.exitCode });
 }
 
 /** A native step's machine-readable cause, in words: the typed reasons keep their sentence, any other cause reads as a failed check. */
