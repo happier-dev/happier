@@ -1,6 +1,8 @@
 import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setFlagsFromString } from 'node:v8';
+import { runInNewContext } from 'node:vm';
 import axios from 'axios';
 import { describe, expect, it, vi } from 'vitest';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
@@ -22,6 +24,94 @@ import { createResolvedContributionRegistry } from '@/plugins/projection/registr
 import { resolveBuiltInContributions } from '@/plugins/projection/registry/resolveBuiltInContributions';
 
 describe('native usage daemon lifetime', () => {
+    it('releases parsed Codex records after publishing while the consented capture stays active', async () => {
+        // Match the observation memory checks: GC runs in the test worker only.
+        setFlagsFromString('--expose_gc');
+        const collect: unknown = runInNewContext('gc');
+        setFlagsFromString('--no-expose_gc');
+        if (typeof collect !== 'function') throw new Error('Retention check requires test-worker GC');
+        const collectAfterRead = async () => {
+            await new Promise<void>(resolve => setImmediate(resolve));
+            collect();
+            await new Promise<void>(resolve => setImmediate(resolve));
+            collect();
+        };
+        const directory = await mkdtemp(join(tmpdir(), 'happier-native-codex-retention-'));
+        vi.stubEnv('CODEX_HOME', directory);
+        const admitted = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+            runtimeOptions: { pluginIds: ['happier.agent.codex'] } });
+        const observation = createExternalSessionObservationDaemonProjection({
+            publishField: async () => {}, watchFile: () => () => {}, watchTopologyDirectory: () => () => {},
+        });
+        const profile = vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: AccountProfileResponseSchema.parse({ id: 'account' }) });
+        const features = vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json(FeaturesResponseSchema.parse({ features: {},
+            capabilities: { server: { usageAnalytics: { version: 1, eventsIngest: { path: '/v2/usage-events' }, query: { path: '/v2/usage/query' },
+                legacy: { usageReportsPath: '/v2/usage-reports', usageQueryPath: '/v1/usage/query' } } } } })));
+        const published: unknown[] = [];
+        const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+            if (new URL(url).pathname !== '/v2/usage-events') throw new Error('Unexpected capture HTTP request');
+            published.push(body);
+            return { status: 200, data: { ok: true } };
+        });
+        let runtime: ReturnType<typeof createNativeUsageDaemonRuntime> | undefined;
+        try {
+            const native = join(directory, 'sessions');
+            await mkdir(native);
+            const sessionId = 'qa-native-retention';
+            const timestamp = '2026-11-20T10:00:00.000Z';
+            const marker = 'qa-retention-observed-record';
+            const transcript = [
+                { type: 'session_meta', timestamp, payload: { id: sessionId } },
+                ...Array.from({ length: 5 }, () => ({ type: 'response_item', timestamp,
+                    payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'x'.repeat(900_000) }] }, marker })),
+                { type: 'token_usage_record', timestamp, marker, payload: { thread_id: sessionId, response_id: 'qa-one-inference',
+                    model: 'gpt-5.4', usage: { input_tokens: 12, output_tokens: 8, total_tokens: 20 } } },
+            ].map(record => JSON.stringify(record)).join('\n') + '\n';
+            await writeFile(join(native, 'rollout-retention.jsonl'), transcript);
+            const token = `header.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`;
+            runtime = createNativeUsageDaemonRuntime({ authority: { serverId: configuration.activeServerId, accountId: 'account', machineId: 'machine' },
+                installationId: 'installation', activeServerDir: directory, serverHttpBaseUrl: 'https://native-retention.test', token,
+                storage: await readOrCreateDeviceLocalSecretStorage({ path: join(directory, 'device.key') }), observation,
+                readCredentials: async () => ({ token, encryption: null }), budgetRegistry: new ExecutionBudgetRegistry() });
+            const source = (await runtime.owner.service.discover()).find(row => row.agent.pluginId === 'happier.agent.codex');
+            if (!source) throw new Error('Codex source must be discoverable');
+            const parsedRecords: WeakRef<object>[] = [];
+            const parsedPayloads: WeakRef<object>[] = [];
+            const positiveControl: object[] = [];
+            const parse = JSON.parse;
+            // Observe the real parser without a mock that records strong references to its return values.
+            JSON.parse = (text, reviver) => {
+                const value: unknown = parse(text, reviver);
+                if (value && typeof value === 'object' && 'marker' in value && value.marker === marker
+                    && 'payload' in value && value.payload && typeof value.payload === 'object') {
+                    parsedRecords.push(new WeakRef(value));
+                    parsedPayloads.push(new WeakRef(value.payload));
+                    if (positiveControl.length === 0) positiveControl.push(value);
+                }
+                return value;
+            };
+            try {
+                await runtime.owner.service.setConsent(source.sourceId, true);
+                await runtime.flushPending();
+            } finally {
+                JSON.parse = parse;
+            }
+            expect(published).toMatchObject([{ tokens: { total: 20 } }]);
+            expect((await runtime.owner.service.get(source.sourceId))[0]).toMatchObject({ status: 'ready', consent: 'enabled', pendingCount: 0 });
+            expect(parsedRecords).toHaveLength(6);
+            await collectAfterRead();
+            expect(parsedRecords[0]!.deref()).toBe(positiveControl[0]);
+            positiveControl.length = 0;
+            await collectAfterRead();
+            expect(parsedRecords.map(ref => ref.deref() === undefined)).toEqual(Array(6).fill(true));
+            expect(parsedPayloads.map(ref => ref.deref() === undefined)).toEqual(Array(6).fill(true));
+        } finally {
+            await runtime?.dispose(); await observation.dispose(); await admitted.dispose();
+            profile.mockRestore(); features.mockRestore(); post.mockRestore(); vi.unstubAllEnvs();
+            await rm(directory, { recursive: true, force: true });
+        }
+    });
+
     it('changes and resets an isolated OpenCode directory through the daemon source owner', async () => {
         const directory = await mkdtemp(join(tmpdir(), 'happier-native-opencode-root-'));
         const admitted = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
