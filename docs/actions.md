@@ -10964,7 +10964,7 @@ includes a failure before execution), they are replaced by the Action's own
 and the UI approval writer, and each commits with the revision it read. Only the winner of
 `approved -> executing` performs the effect.
 
-In 0.3 development, a replay refusal proven to precede the effect settles the
+In 0.3 development, a producer's definitive pre-dispatch refusal can settle the
 approved request as `failed`, preserving its typed reason and
 `execution.effectAttempted: false`. The refusing producer carries that proof as
 the strict Action failure's optional `effectAttempted: false`, including a
@@ -10990,6 +10990,11 @@ For a refused transition or revision CAS, the host writer also reports
 then another owner's claim, not proof that this invocation lost a successful
 claim acknowledgement. This fact is neither stored nor added to a public Action
 envelope; an absent fact retains the existing acknowledgement uncertainty.
+
+An exact-daemon replay restores the signed requester's private ports before
+claiming execution. If its Home is unavailable during preparation, the replay
+returns the typed failure with `effectAttempted: false` and leaves the consent
+unclaimed. The existing Artifact transition still selects a single executor.
 
 If the effect runs but its terminal Artifact write throws or is refused, including
 a CAS conflict, ordinary replay returns `approval_execution_outcome_unknown` and

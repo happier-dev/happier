@@ -1717,7 +1717,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       if (!current) reportStale('live_invocation_unavailable');
       return current;
     };
-    if (!deps.approvalsUpdate) {
+    const { approvalsUpdate } = deps;
+    if (!approvalsUpdate) {
       return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:approvals' };
     }
 
@@ -1783,7 +1784,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       };
       let updated: unknown;
       try {
-        updated = await deps.approvalsUpdate!({
+        updated = await approvalsUpdate({
           artifactId: args.artifactId,
           request: nextFailed,
           serverId: args.artifactServerId,
@@ -1879,6 +1880,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       if (!originIsCurrentBeforeClaim) {
         return await persistExecutionFailure(request, staleReason ? buildApprovalOriginFailure(staleReason) : approvalContextUnavailable());
       }
+    }
+    const claimExecution = async (): Promise<
+      Readonly<{ ok: true; request: ApprovalRequest; exec: ActionExecuteResult }> | ActionExecuteFailure | undefined
+    > => {
+      if (request.v !== 2) return;
       const executingRequest: ApprovalRequest = {
         ...request,
         status: 'executing',
@@ -1887,7 +1893,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       let claimed: unknown;
       let claimThrew = false;
       try {
-        claimed = await deps.approvalsUpdate({
+        claimed = await approvalsUpdate({
           artifactId: args.artifactId,
           request: executingRequest,
           serverId: args.artifactServerId,
@@ -1934,7 +1940,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         return claimThrew ? executionOutcomeUnknown() : claimFailure;
       }
       request = executingRequest;
-    }
+    };
     const replayActionId = ActionIdSchema.safeParse(request.actionId);
     const actionId = replayActionId.success ? replayActionId.data : null;
 
@@ -1959,7 +1965,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     // Origin verification above uses the original signed arguments, never the
     // person's choice. Only then admit the choice through the Action's owner.
     const admittedReplay = resolveApprovalRequestExecutionInput(request);
-    if (!admittedReplay.ok) return await persistExecutionFailure(request, admittedReplay);
+    if (!admittedReplay.ok) return await persistExecutionFailure(request, { ...admittedReplay, effectAttempted: false });
     const replayInput: unknown = actionId !== null
       && getActionSpec(actionId).approvalInputCustody === 'live_only' && !args.privateActionInputContinuation
       ? args.liveOnlyActionArgs
@@ -1986,7 +1992,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       && requestSurface === 'ui' && args.retainedPluginSettingsIntent?.() === true;
     if (requiresRetainedHostInvocation && !args.privateSecretContinuation && !args.privateActionInputContinuation && !retainedPluginContext
       && !retainsHostInvocation && !retainsHostOperation && !retainsUiFieldIntent) {
-      return await persistExecutionFailure(request, buildApprovalOriginFailure('live_invocation_unavailable'));
+      return await persistExecutionFailure(request, { ...buildApprovalOriginFailure('live_invocation_unavailable'), effectAttempted: false });
     }
     const persistedDirectoryApproval = request.actionId === 'session.spawn_new'
       ? SessionCreationDirectoryApprovalV1Schema.safeParse(
@@ -2177,7 +2183,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         && !(request.v === 2 && request.requesterConfirmation)
         && resolveHostStampedAuthority(args.ctx) === 'present_user'
         ? { authority: 'present_user' as const,
-            ...(request.v === 2 && request.status === 'executing' && request.decision?.kind === 'approve'
+            ...(request.v === 2 && request.status === 'approved' && request.decision?.kind === 'approve'
               && origin?.success && originIsCurrent ? { presentUserApproval: recordPresentUserApprovalV1({
                 artifactId: args.artifactId, actionId, requestId: origin.data.requestId, input: executionInput,
                 requestSurface: origin.data.surface,
@@ -2189,7 +2195,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       // current origin and deciding person's custody remain the proof owner.
       ...(actionId !== null && request.v === 2
         && !request.requesterConfirmation
-        && request.status === 'executing' && request.decision?.kind === 'approve'
+        && request.status === 'approved' && request.decision?.kind === 'approve'
         && request.decision.authority === 'present_user' && origin?.success && originIsCurrent
         && resolveHostStampedAuthority(args.ctx) === 'present_user'
         && origin.data.accountId ? { presentUserApproval: recordPresentUserApprovalV1({
@@ -2201,7 +2207,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             ? { reviewDigest: computeActionReviewDigestV1(actionId, { actionArgs: request.actionArgs, preview: request.preview }) } : {}),
         }) } : {}),
       ...(request.v === 2 && request.requesterConfirmation && origin?.success
-        && request.status === 'executing' && args.ctx.requesterApprovalDecision ? { presentUserApproval: {
+        && request.status === 'approved' && args.ctx.requesterApprovalDecision ? { presentUserApproval: {
           artifactId: args.artifactId, actionId: request.actionId, requestId: origin.data.requestId,
           inputDigest: request.requesterConfirmation.inputDigest,
           requestSurface: origin.data.surface,
@@ -2210,7 +2216,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         } } : {}),
       bypassApprovals: true,
       ...(origin?.success && originIsCurrent && request.v === 2
-        && request.status === 'executing' && isApprovalRequestExecutionApproved(request)
+        && request.status === 'approved' && isApprovalRequestExecutionApproved(request)
         ? { approvedActionReplay: { artifactId: args.artifactId,
           ...(approvedPluginInstallReview ? { pluginInstallReview: approvedPluginInstallReview } : {}), origin: {
             surface: origin.data.surface, caller: origin.data.caller,
@@ -2319,7 +2325,30 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           error, 'action.secret_fill.delivery');
       }
     };
+    const retainedTokenExecution = actionId === 'account.apiTokens.create' ? args.tokenExecution : undefined;
+    const staleTokenReplay = actionId === 'account.apiTokens.create' && origin?.success
+      && origin.data.externalActionExecutionAuthorization?.binding.sessionActionOrigin;
+    const authorization = executionContext.externalActionExecutionAuthorization;
+    let prepared: Awaited<ReturnType<NonNullable<ActionExecutorDeps['prepareApprovalExecutionAuthorization']>>> | undefined;
+    if (originIsCurrent && actionId && requestSurface && !args.privateSecretContinuation
+      && !retainedTokenExecution && !staleTokenReplay) {
+      // Reopen the requester's private ports before taking the execution claim.
+      // An unavailable Home can prevent both admission and receipt settlement.
+      try {
+        prepared = await prepareApprovalReplayAuthorization({ request, context: executionContext,
+          retainedLogs: retainedLogsContext !== undefined, prepare: deps.prepareApprovalExecutionAuthorization });
+      } catch (error) {
+        const failure = normalizeActionExecutorThrownError(error);
+        return { ok: false, ...failure, error: redactBugReportSensitiveText(failure.error), effectAttempted: false };
+      }
+    }
     let effectAttempted = false;
+    const claimOutcome = await claimExecution().finally(async () => {
+      if (request.status === 'executing') return;
+      try { await prepared?.dispose?.(); }
+      catch (error) { recordCaughtActionCause(error, 'approval.replay.dispose'); }
+    });
+    if (claimOutcome) return claimOutcome;
     const exec = await (async (): Promise<ActionExecuteResult> => {
       if (!originIsCurrent) {
         return staleReason
@@ -2331,28 +2360,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       }
       if (args.privateSecretContinuation) { effectAttempted = true; return await executeConfidential(); }
       if (!requestSurface) return { ok: false, errorCode: 'approval_execution_surface_invalid', error: 'approval_execution_surface_invalid' };
-      if (actionId === 'account.apiTokens.create' && args.tokenExecution) {
+      if (retainedTokenExecution) {
         // Retained human credentials select the native effect, while current
         // authority, surface and Action policy still belong to core admission.
         effectAttempted = true;
-        return await executeCoreTerminal(actionId, executionInput, executionContext, true, undefined, undefined, true, args.tokenExecution,
+        return await executeCoreTerminal(actionId, executionInput, executionContext, true, undefined, undefined, true, retainedTokenExecution,
           false, sameReplayHome);
       }
-      if (actionId === 'account.apiTokens.create' && origin?.success
-        && origin.data.externalActionExecutionAuthorization?.binding.sessionActionOrigin) {
-        return { ok: false, errorCode: 'approval_stale', error: 'approval_stale' };
-      }
-      const authorization = executionContext.externalActionExecutionAuthorization;
-      // Detached exact-daemon replay reacquires private ports. The same live
-      // logs invocation keeps them and rechecks the original signed root.
-      let prepared: Awaited<ReturnType<NonNullable<ActionExecutorDeps['prepareApprovalExecutionAuthorization']>>> | undefined;
-      try {
-        prepared = await prepareApprovalReplayAuthorization({ request, context: executionContext,
-          retainedLogs: retainedLogsContext !== undefined, prepare: deps.prepareApprovalExecutionAuthorization });
-      } catch (error) {
-        const failure = normalizeActionExecutorThrownError(error);
-        return { ok: false, ...failure, error: redactBugReportSensitiveText(failure.error) };
-      }
+      if (staleTokenReplay) return { ok: false, errorCode: 'approval_stale', error: 'approval_stale' };
       try {
         if (prepared === null || prepared && (!authorization
           || prepared.authorization.token !== authorization.token
@@ -2426,7 +2441,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     };
     let updated: unknown;
     try {
-      updated = await deps.approvalsUpdate({ artifactId: args.artifactId, request: nextExecuted, serverId: args.artifactServerId });
+      updated = await approvalsUpdate({ artifactId: args.artifactId, request: nextExecuted, serverId: args.artifactServerId });
     } catch (error) {
       return terminalPersistenceFailure({ ok: false, ...normalizeActionExecutorThrownError(error, 'approval.settlement') });
     }

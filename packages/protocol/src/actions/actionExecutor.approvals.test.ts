@@ -10,7 +10,7 @@ import { readLiveCliApprovalOriginScope } from '../approvals/liveCliOrigin.js';
 import { getActionSpec } from './actionSpecs.js';
 import { buildApprovalExecutionOriginV1, createActionExecutor, type ActionExecutorDeps, type ActionExecutorContext } from './actionExecutor.js';
 import { computeExternalActionRequestEnvelopeDigestV1 } from './externalActionExecutionAuthorization.js';
-import { ExternalActionExecutionAuthorizationV1Schema, type ExternalActionExecutionAuthorizationV1 } from './externalActionApi.js';
+import { ExternalActionExecutionAuthorizationV1Schema, projectDeploymentPreparationAdmissionV1, type ExternalActionExecutionAuthorizationV1 } from './externalActionApi.js';
 import { isApprovalRequiredByActionsSettings, requiresAgentEgressRedaction } from './actionApprovalPolicy.js';
 import { projectApprovalRequestForPublicRead, resolveApprovalRequestApproveAdmission } from './actionApprovalPresentation.js';
 import { readApprovalExecutionFailure } from '../approvals/approvalExecutionFailure.js';
@@ -5640,6 +5640,64 @@ describe('createActionExecutor (approvals)', () => {
   // surface-keyed approval floor (`AGENT_INITIATED_APPROVAL_REQUIRED_ACTION_IDS`, wired through the
   // real `isApprovalRequiredByActionsSettings`) — it is no longer short-circuited by `action_disabled`
   // (finding #31). User-initiated forms execute the runtime directly with no prompt.
+  it('keeps approved template Apply unclaimed when its requester Home goes down during preparation', async () => {
+    const actionId = 'deployments.templates.instantiate';
+    const target = { kind: 'machine' as const, machineId: 'controller' };
+    const input = getActionSpec(actionId).inputSchema.parse({ mode: 'apply', serverId: 'home',
+      machineId: target.machineId, projectSourceId: 'source',
+      templateRef: { sourceId: 'apps', itemId: 'postgresql', version: '1',
+        ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } },
+      environment: { kind: 'create', name: 'PostgreSQL', requestKey: 'create', protection: 'nonProduction',
+        purpose: 'standard', deployerMode: 'managers', controllerMachineId: target.machineId },
+      target: { kind: 'new', installationId: 'installation' }, destination: { kind: 'stored' },
+      bindings: [], deploy: { requestKey: 'deploy' } });
+    const requestId = 'template-apply';
+    const envelope = { v: 1 as const, requestId, target, input };
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture-Home-root',
+      binding: { accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'terminal', tokenEpoch: 0 },
+        accountEncryptionMode: 'plain', serverIdentityId: 'stable-home', machineId: target.machineId,
+        installationId: 'installation', actionId, requestId, target,
+        deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1(actionId, input),
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) } });
+    const keys = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(71));
+    const origin = buildApprovalExecutionOriginV1({ actionId, input, targetSessionId: null, context: {
+      surface: 'cli', actionCaller: { kind: 'host' }, authority: 'account_automation', runtimeAccountId: 'owner',
+      serverId: 'home', serverIdentityId: 'stable-home', actionRequestId: requestId,
+      externalActionExecutionAuthorization: authorization, externalActionTarget: target, originalActionEnvelope: envelope,
+      signExternalActionApprovalInput: proof => signExternalActionApprovalInputV1({ ...proof,
+        authorizationToken: authorization.token, privateKey: keys.secretKey }),
+    } });
+    let stored = ApprovalRequestV2Schema.parse({ v: 2, status: 'approved', createdAtMs: 1, updatedAtMs: 2,
+      createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId, actionArgs: input,
+      summary: 'Apply PostgreSQL', approval: { flow: 'deferred', result: 'required' },
+      decision: { kind: 'approve', authority: 'present_user', decidedAtMs: 2 }, executionOriginV1: origin });
+    let homeAvailable = true;
+    const homeFailure = createActionExecuteFailureError({ ok: false, errorCode: 'project_requester_home_unavailable',
+      error: 'project_requester_home_unavailable',
+      failureCause: { phase: 'requester.profile', errorClass: 'HttpStatusError', errorCode: null, httpStatus: 502 } });
+    const deploymentTemplateInstantiate = vi.fn(async () => { throw new Error('Unexpected native effect'); });
+    const executor = createExecutor({
+      // The signed requester Home port and Artifact persistence share the interrupted Home.
+      prepareApprovalExecutionAuthorization: async () => { homeAvailable = false; throw homeFailure; },
+      approvalsGet: async () => { if (!homeAvailable) throw homeFailure; return stored; },
+      approvalsUpdate: async ({ request, expectedStatus }) => {
+        if (!homeAvailable) throw homeFailure;
+        const transition = decideApprovalRequestTransition(stored, request, { expectedStatus });
+        if (!transition.ok) return { ...transition, writeCommitted: false };
+        stored = ApprovalRequestV2Schema.parse(request);
+        return { ok: true };
+      },
+      deploymentTemplateInstantiate,
+    });
+    const result = await executor.replayApprovedApprovalRequest({ artifactId: 'template-approval', callerAuthority: 'present_user' });
+    homeAvailable = true;
+    expect(await executor.execute('approval.request.get', { artifactId: 'template-approval' }))
+      .toMatchObject({ ok: true, result: { request: { status: 'approved' } } });
+    expect(result).toMatchObject({ ok: false, errorCode: 'project_requester_home_unavailable', effectAttempted: false,
+      failureCause: { phase: 'requester.profile', httpStatus: 502 } });
+    expect(deploymentTemplateInstantiate).not.toHaveBeenCalled();
+  });
+
   describe('§3.2 agent-approval activation (runtime families flipped on agent)', () => {
     // Runtime proposals use the same durable create/decide boundary as other Actions.
     const wireApprovalFloor = (
