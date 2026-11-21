@@ -15,11 +15,12 @@ import { runCompiledActionCliCommand } from '@/cli/actions/executeCommand';
 import { captureConsoleText } from '@/testkit/logger/captureOutput';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { registerDaemonLocalServicePreviewSnapshotHandler } from '@/rpc/handlers/daemonLocalServicePreviewSnapshot';
-import { createLocalServicePreviewRegistry, registerLocalServicePreview } from '@/daemon/local/services/preview/registry';
+import { createLocalServicePreviewRegistry, previewIdForInventoryEntry, registerLocalServicePreview } from '@/daemon/local/services/preview/registry';
 import { createLocalServicePreviewRoutes } from '@/daemon/local/services/preview/routes';
 import { DaemonLocalServicePreviewOpenOrCreateResponseV1Schema, DaemonLocalServicePreviewOpenOrCreateRequestV1Schema, DaemonLocalServicePreviewRevokeRequestV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
 import { DaemonLocalServicePublicPreviewCreateRequestV1Schema, DaemonLocalServicePublicPreviewRevokeRequestV1Schema } from '@happier-dev/protocol/local/services/public/v1';
 import { ExternalActionMachineBootstrapV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { registerDaemonLocalServicesMachineRpcHandlers } from '@/rpc/handlers/daemonLocalServices';
@@ -41,11 +42,20 @@ vi.mock('../../../../ui/sources/sync/runtime/orchestration/serverScopedRpc/serve
 function receivingMachineBoundary(response: unknown, actionId: ActionId = 'localServices.launcher.start', askFirst = false,
     surface: 'cli' | 'agent' | 'mcp' = 'cli', respond?: (payload: unknown) => Promise<unknown>) {
     const requests: Array<unknown> = [];
-    io.mockImplementation(() => createApiSessionSocketStub({ async emitWithAck(event, payload) {
+    io.mockImplementation(() => createApiSessionSocketStub({
+        // The relay acknowledges the live CLI approval origin before it can publish.
+        emit(event, args, socket) {
+            if (event === SOCKET_RPC_EVENTS.REGISTER) socket.trigger(SOCKET_RPC_EVENTS.REGISTERED, args[0]);
+        },
+        async emitWithAck(event, payload) {
         expect(event).toBe(SOCKET_RPC_EVENTS.CALL);
         requests.push(payload);
         return { ok: true, result: respond ? await respond(payload) : response };
     } }));
+    vi.spyOn(axios, 'request').mockImplementation(async request => {
+        expect(request.url).toBe(`https://selected-home.example${AUTOMATION_ACTION_INDEX_HTTP_PATH_V1}`);
+        return { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
+    });
     const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
         if (url === 'https://selected-home.example/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
         expect(url).toBe('https://selected-home.example/v1/machines/machine-a');
@@ -356,27 +366,39 @@ describe('credentialed CLI Local Services runtime dispatch', () => {
         expect(requests).toHaveLength(1);
     });
 
-    it('copies the canonical stable destination instead of treating daemon eligibility as the copied URL', async () => {
-        const permission = LocalServiceActionResultV1Schema.parse({ v: 1, requestId: 'client-effect', action: 'copy_url',
-            status: 'succeeded', auditEvents: [] });
-        const { executor, requests, context } = receivingMachineBoundary(permission, 'localServices.actions.copyUrl', false, 'cli', async payload => {
-            if (payload && typeof payload === 'object' && 'method' in payload
-                && payload.method === `machine-a:${RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT}`) return {
-                protocolVersion: 1, snapshot: { v: 1, machineId: 'machine-a', updatedAt: 1, targets: [{
-                    id: 'stable-web', source: 'managed_service', title: 'Web', machineId: 'machine-a', confidence: 'high',
-                    sourceClass: { kind: 'managed_service', managedServiceId: 'actual-instance' },
-                    state: 'available', actions: [],
-                    browserTarget: { kind: 'localServicePreview', machineId: 'machine-a', targetId: 'stable-web' },
-                }] },
-            };
-            return permission;
-        });
+    it('returns the Copy URL produced by the daemon in one Action response', async () => {
         const input = LocalServiceActionRequestV1Schema.parse({ requestId: 'client-effect', action: 'copy_url',
-            target: { kind: 'managed_service', managedServiceId: 'actual-instance', machineId: 'machine-a',
-                workspaceId: 'accepted', cwd: '/accepted/web' } });
-        expect(await executor.execute('localServices.actions.copyUrl', input, context)).toMatchObject({ ok: true,
-            result: { ...permission, destinationUrl: expect.stringContaining('/preview-service/machine-a/stable-web?serverId=home-a') } });
-        expect(requests).toHaveLength(2);
+            target: { kind: 'inventory_entry', inventoryEntryId: 'detected-preview', machineId: 'machine-a' } });
+        const inventoryRegistry = createLocalServiceInventoryRegistry();
+        inventoryRegistry.replaceSnapshot({ v: 1, machineId: 'machine-a', generatedAt: 1, refreshState: 'idle', entries: [{
+            id: 'detected-preview', machineId: 'machine-a',
+            address: { kind: 'loopback', host: '127.0.0.1', family: 'ipv4' }, port: 5173, protocol: 'tcp',
+            detectedAt: 1, lastSeenAt: 1, state: 'listening', source: 'detected', labels: [], confidence: 'high',
+            processOwnershipConfidence: 'high', workspaceAssociationConfidence: 'high', diagnostics: [],
+            classification: { kind: 'vite', displayName: 'Vite', confidence: 'high', lowSignal: false, signals: ['vite'] },
+        }], diagnostics: [] });
+        const previewRegistry = createLocalServicePreviewRegistry();
+        const browserTarget = { kind: 'localServicePreview' as const, machineId: 'machine-a', targetId: 'stable-web' };
+        const registered = registerLocalServicePreview(previewRegistry, {
+            previewId: previewIdForInventoryEntry('owner', 'machine-a', undefined, 'detected-preview'), machineId: 'machine-a',
+            browserTarget, owner: { kind: 'user', id: 'owner' }, target: { scheme: 'http', host: '127.0.0.1', port: 5173 },
+            initialPath: { pathname: '/', search: '' }, display: { title: 'Web', addressLabel: 'local fixture' }, originMode: 'host' });
+        if (!registered.ok) throw new Error(registered.reasonCode);
+        const actionRoutes = createLocalServiceActionRoutes({ machineId: 'machine-a', inventoryRegistry, previewRegistry, now: () => 1 });
+        const featureGate = createLocalServicesDaemonFeatureGate({ env: {}, resolveServerFeaturesSnapshot: () => ({
+            status: 'ready', features: FeaturesResponseSchema.parse({ features: { localServices: { enabled: true,
+                inventory: { enabled: true }, launcher: { enabled: true }, actions: { enabled: true } } }, capabilities: {} }),
+        }) });
+        await featureGate.refresh();
+        const daemon = createLocalServicesDaemonRuntimeActionExecutor({ featureGate, routes: { actionRoutes } });
+        const { executor, requests, context } = receivingMachineBoundary(null, 'localServices.actions.copyUrl', false, 'cli',
+            async () => daemon({ actionId: 'localServices.actions.copyUrl', input, context }));
+        const result = await executor.execute('localServices.actions.copyUrl', input, context);
+        expect(result, result.ok ? undefined : `${result.errorCode}: ${result.error}`).toMatchObject({ ok: true, result: {
+            status: 'succeeded', action: 'copy_url',
+            destinationUrl: expect.stringContaining('/preview-service/machine-a/stable-web?serverId=home-a'),
+        } });
+        expect(requests).toHaveLength(1);
     });
 
     it.each(['localServices.launcher.openPreview', 'localServices.actions.openPreview'] as const)('opens %s through the canonical CLI Action and OS browser boundary', async actionId => {

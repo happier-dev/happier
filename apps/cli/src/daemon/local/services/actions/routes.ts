@@ -3,6 +3,9 @@ import type {
     LocalServiceActionRequestV1,
     LocalServiceActionResultV1,
 } from '@happier-dev/protocol';
+import { LocalServiceCopyUrlResultV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
+import { buildLocalServiceDeclarationPreviewLandingUrlV1 } from '@happier-dev/protocol/local/services/preview/v1';
+import { configuration } from '@/configuration';
 
 import {
     executeLocalServiceAction,
@@ -16,6 +19,8 @@ import { resolveLocalServiceActionEligibility } from './policy';
 import { selectVisibleMachineProjectServices } from '../launch/machineServiceDisclosure';
 import type { TerminateDetectedService } from './terminate';
 import type { LocalServiceInventoryRegistry } from '../inventory/registry';
+import { buildLocalServicePreviewBrowserTarget, listLocalServicePreviewResources,
+    selectLocalServicePreviewForInventoryEntry, type LocalServicePreviewRegistry } from '../preview/registry';
 import type { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import type { LocalServiceLauncherHistoryStore } from '../launch/leaves';
 import type { HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/executor/types';
@@ -154,7 +159,9 @@ async function resolveActionTarget(input: Readonly<{
 
 export function createLocalServiceActionRoutes(input: Readonly<{
     machineId: string;
+    accountId?: string;
     inventoryRegistry: LocalServiceInventoryRegistry;
+    previewRegistry?: LocalServicePreviewRegistry;
     projectManagedServices?: Pick<ManagedServicesOwner, 'resolveProjectService'> & Partial<Pick<ManagedServicesOwner, 'restoreProjectServices'>>;
     launcherHistory?: LocalServiceLauncherHistoryStore;
     restartManagedService?: RestartProjectManagedService;
@@ -165,8 +172,11 @@ export function createLocalServiceActionRoutes(input: Readonly<{
     now?: () => number;
 }>): LocalServiceActionRoutes {
     const now = input.now ?? (() => Date.now());
-    async function admit(request: LocalServiceActionRequestV1, execution?: LocalServiceActionExecutionContext):
-        Promise<AdmittedLocalServiceAction | Readonly<{ result: LocalServiceActionResultV1 }>> {
+    async function admit(
+        request: LocalServiceActionRequestV1,
+        execution?: LocalServiceActionExecutionContext,
+        confirmation: 'transport' | 'action_review' = 'transport',
+    ): Promise<AdmittedLocalServiceAction | Readonly<{ result: LocalServiceActionResultV1 }>> {
         const requestedAt = now();
         const target = await resolveActionTarget({
             request,
@@ -203,14 +213,14 @@ export function createLocalServiceActionRoutes(input: Readonly<{
             }) };
         }
 
-        if (decision.requiresConfirmation && !request.confirmationNonce) {
+        if (decision.requiresConfirmation && !request.confirmationNonce && confirmation === 'transport') {
             return { result: deniedResult({
                 request,
                 requestedAt,
                 reasonCode: 'confirmation_required',
             }) };
         }
-        if (decision.requiresConfirmation && input.verifyConfirmationNonce?.(request) !== true) {
+        if (decision.requiresConfirmation && request.confirmationNonce && input.verifyConfirmationNonce?.(request) !== true) {
             return { result: deniedResult({
                 request,
                 requestedAt,
@@ -231,7 +241,7 @@ export function createLocalServiceActionRoutes(input: Readonly<{
             execution,
             now: requestedAt,
         });
-        return executionResult({
+        const receipt = executionResult({
             request,
             status: outcome.status,
             ...(outcome.status === 'succeeded' ? {} : { reasonCode: outcome.reasonCode, review: outcome }),
@@ -239,6 +249,27 @@ export function createLocalServiceActionRoutes(input: Readonly<{
             requestedAt,
             confirmed: admitted.requiresConfirmation,
         });
+        if (request.action !== 'copy_url' || outcome.status !== 'succeeded' || execution?.actionContext.surface !== 'cli') {
+            return receipt;
+        }
+        // The Action already admitted this exact occurrence. The launcher feed
+        // can hide or refresh rows independently of the stable declaration URL.
+        const context = execution.actionContext;
+        const destination = target.kind === 'managed_service' && target.handle.kind === 'workspace'
+            ? { serverId: target.handle.workspace.serverId, machineId: target.handle.workspace.machineId, targetId: target.handle.serviceId }
+            : null;
+        const previews = !destination && input.previewRegistry ? listLocalServicePreviewResources(input.previewRegistry) : [];
+        const preview = target.kind === 'inventory_entry'
+            ? target.entry.state === 'listening' ? selectLocalServicePreviewForInventoryEntry(previews, target.entry,
+                execution.ingress?.machineAdmission?.actorAccountId ?? context.runtimeAccountId ?? input.accountId) : undefined
+            : previews.findLast(resource => resource.machineId === input.machineId
+                && resource.serviceTarget?.managedServiceId === target.handle.instanceId);
+        const browserTarget = preview ? buildLocalServicePreviewBrowserTarget(preview) : undefined;
+        const locator = destination ?? (browserTarget ? { serverId: context.serverId ?? configuration.activeServerId,
+            machineId: browserTarget.machineId, targetId: browserTarget.targetId } : null);
+        const destinationUrl = locator && buildLocalServiceDeclarationPreviewLandingUrlV1(configuration.webappUrl, locator);
+        return destinationUrl ? LocalServiceCopyUrlResultV1Schema.parse({ ...receipt, destinationUrl })
+            : deniedResult({ request, requestedAt, reasonCode: 'local_service_destination_unavailable' });
     }
     return {
         async execute(request, execution) {
@@ -247,7 +278,9 @@ export function createLocalServiceActionRoutes(input: Readonly<{
         },
         async prepareRestart(request, execution) {
             const settled = (result: LocalServiceActionResultV1): ActionExecuteResult => ({ ok: true, result });
-            const admitted = await admit(request, execution);
+            // This only prepares the replacement. The Action executor owns consent
+            // before it invokes the admitted effect returned below.
+            const admitted = await admit(request, execution, 'action_review');
             if ('result' in admitted) return settled(admitted.result);
             if (request.action !== 'restart_managed' || admitted.target.kind !== 'managed_service'
                 || admitted.target.handle.kind !== 'workspace' || !input.prepareRestartManagedService)

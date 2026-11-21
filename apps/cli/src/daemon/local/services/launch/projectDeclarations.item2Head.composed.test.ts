@@ -2798,8 +2798,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
             expect(approvals).toEqual([]);
             await writeFile(join(h.root, '.happier/project.json'), JSON.stringify(h.manifest));
         }
-        const result = await executor.execute('localServices.actions.restartManaged',
-            { ...request, confirmationNonce: createLocalServiceActionConfirmationNonceV1(request) }, context);
+        const result = await executor.execute('localServices.actions.restartManaged', request, context);
         if (surface === 'agent' && policy !== 'waived-agent') {
             expect(result, JSON.stringify(result)).toMatchObject({ ok: true,
                 result: { kind: 'approval_request_created', actionId: 'localServices.actions.restartManaged' } });

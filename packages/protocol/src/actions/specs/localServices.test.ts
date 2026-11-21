@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { getActionSpec } from '../actionSpecs.js';
+import { getActionSpec, resolveActionExecutionPlacementForInput } from '../actionSpecs.js';
 import { getActionDefinitionForCatalogSurface } from '../actionCatalog.js';
 import { compileActionInputJsonSchema } from '../actionInputJsonSchemaValidation.js';
 import { zodSchemaToJsonSchemaObject } from '../actionInputJsonSchema.js';
@@ -31,6 +31,17 @@ describe('local-services runtime Action specs', () => {
     expect(restart.safety).toBe('danger');
     expect(restart.approval?.result).toBe('required');
   });
+  it('keeps CLI Copy on its Machine and UI Copy with its answering client', () => {
+    const copy = getActionSpec('localServices.actions.copyUrl');
+    const input = copy.inputSchema.parse({
+      requestId: 'copy_1',
+      action: 'copy_url',
+      target: { kind: 'inventory_entry', inventoryEntryId: 'inventory_1', machineId: 'machine_1' },
+    });
+    expect(resolveActionExecutionPlacementForInput(copy, input, undefined, 'cli')).toBe('machine');
+    expect(resolveActionExecutionPlacementForInput(copy, input, undefined, 'ui')).toBe('client');
+  });
+
   it('advertises managed-service private preview operands while preserving the inventory target alias', () => {
     const request = DaemonLocalServicePreviewOpenOrCreateRequestV1Schema.parse({
       machineId: 'machine_1', serviceTarget: {

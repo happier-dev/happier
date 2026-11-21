@@ -3095,7 +3095,9 @@ owners.
 The canonical CLI commands `services copy-url`, `services open` and
 `services launcher open` continue the admitted Machine Action on the present
 user's CLI. Copy prints its destination to stdout and preserves
-`data.destinationUrl` in JSON output. Declared-service destinations use the
+`data.destinationUrl` in JSON output. The daemon returns that same typed
+destination for direct CLI execution and for its recorded approval continuation.
+Declared-service destinations use the
 configured web app's stable Home/Machine/declaration landing URL. Open uses the
 existing OS browser opener and returns `browser_unavailable` when it cannot open
 the browser; a daemon eligibility receipt alone is not a completed client effect.

@@ -223,9 +223,9 @@ function createRuntimeActionSpecFor<
     ...(requiresAnsweringClient ? { executionPlacement: 'client' as const } : {}),
     ...(controlKind === 'copy_url' ? {
       executionPlacements: ['client', 'machine'] as const,
-      // The RPC returns Machine eligibility; the invoking client owns presentation.
+      // CLI Copy returns the Machine's URL as data. The UI still copies on its answering client.
       executionPlacementForInput: (_input: unknown, _caller: Readonly<{ kind: string }> | undefined, surface: keyof PreNormalizedActionSurfaces) =>
-        surface === 'rpc' ? 'machine' as const : 'client' as const,
+        surface === 'rpc' || surface === 'cli' ? 'machine' as const : 'client' as const,
     } : {}),
     ...(actionId === 'projects.service.relocate' ? {
       executionPlacement: 'machine' as const,

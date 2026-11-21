@@ -1,6 +1,5 @@
 import { clientActionUnavailable } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { isLocalServicePresentationActionIdV1 } from '@happier-dev/protocol/local/services/actionIdsV1';
-import { LocalServiceActionResultV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
 import { DaemonLocalServiceLauncherOpenPreviewResponseV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { buildLocalServiceDeclarationPreviewLandingUrlV1, DaemonLocalServicePreviewOpenOrCreateResponseV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
 import type { BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
@@ -121,26 +120,7 @@ export function createCliLocalServiceActionDeps(
       const countProjection = args.actionId === 'localServices.inventory.list' && 'projection' in request && request.projection === 'count';
       const result = countProjection ? LocalServiceInventoryCountResponseV1Schema.parse(response) : domainRpc && 'snapshotResponseSchema' in domainRpc
         ? domainRpc.snapshotResponseSchema.parse(response).snapshot : response;
-      if (presentation) {
-        if (controlKind === 'copy_url') {
-          const receipt = LocalServiceActionResultV1Schema.parse(result);
-          if (receipt.status !== 'succeeded') return receipt;
-          if (!('target' in request)) return executionRunActionFailure('invalid_parameters');
-          const snapshotResponse = await withProjectHome(() => callMachineAction({
-            machineId, serverId: projectHomeId, method: RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT,
-            request: { machineId, scope: 'machine' }, context: args.context, exactMachine: true,
-            ...(args.context.signal ? { signal: args.context.signal } : {}),
-          }));
-          const snapshotFailure = ActionExecuteFailureSchema.safeParse(snapshotResponse);
-          if (snapshotFailure.success) return snapshotFailure.data;
-          const snapshot = DaemonLocalServiceLauncherSnapshotResponseV1Schema.parse(snapshotResponse);
-          const selected = request.target;
-          const target = snapshot.snapshot.targets.find(candidate => selected.kind === 'managed_service'
-            ? candidate.sourceClass?.kind === 'managed_service' && candidate.sourceClass.managedServiceId === selected.managedServiceId
-            : candidate.sourceClass?.kind === 'inventory_entry' && candidate.sourceClass.inventoryEntryId === selected.inventoryEntryId);
-          const url = destinationUrl(target?.browserTarget, projectHomeId);
-          return url ? { ...receipt, destinationUrl: url } : executionRunActionFailure('local_service_destination_unavailable');
-        }
+      if (presentation && controlKind !== 'copy_url') {
         const launcher = controlKind === 'open_preview' ? null : DaemonLocalServiceLauncherOpenPreviewResponseV1Schema.parse(result);
         if (launcher?.status === 'unavailable') return launcher;
         const target = launcher ? launcher.browserTarget

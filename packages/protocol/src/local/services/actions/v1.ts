@@ -214,7 +214,7 @@ export const LocalServiceActionResultV1Schema = lazyZodSchema(() => z.strictObje
   })));
 export type LocalServiceActionResultV1 = z.infer<typeof LocalServiceActionResultV1Schema>;
 
-/** CLI Copy writes the destination to stdout; raw daemon receipts only establish eligibility. */
+/** An admitted CLI Copy retains its destination across direct execution and approval replay. */
 export const LocalServiceCopyUrlResultV1Schema = lazyZodSchema(() => z.extend(LocalServiceActionResultV1Schema, {
   destinationUrl: z.optional(BrowserHttpUrlV1Schema),
 }));

@@ -764,7 +764,9 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
     );
     const actionRoutes = createLocalServiceActionRoutes({
         get machineId() { return params.machineId; },
+        accountId: params.accountId,
         inventoryRegistry,
+        previewRegistry,
         projectManagedServices: params.projectManagedServices,
         launcherHistory,
         restartManagedService: declarationStarter?.restartManagedService,
