@@ -26,15 +26,16 @@ const STEP_ROW_WELL_STYLE = { width: STEP_ROW_BUTTON_PX, height: STEP_ROW_BUTTON
  */
 export function StepRowWayButton(
   props: Readonly<
-    Omit<React.ComponentProps<typeof IconButton>, 'size' | 'iconSize' | 'variant' | 'icon' | 'iconName'>
+    Omit<React.ComponentProps<typeof IconButton>, 'size' | 'iconSize' | 'variant' | 'surfaceRadius' | 'icon' | 'iconName'>
     & { iconName: IconName }
   >,
 ) {
   // The well stands on the welcome atmosphere as an Element: glass over the planet and field, its exact solid paint
   // under Reduce Transparency. The glass supplies the resting fill and edge.
   return (
-    <GlassSurface surfaceGroup="card" nested finishRole={null} style={STEP_ROW_WELL_STYLE}>
-      <IconButton {...props} size={STEP_ROW_BUTTON_PX} iconSize={STEP_ROW_GLYPH_PX} variant="plain" />
+    <GlassSurface surfaceGroup="card" controlEdge style={STEP_ROW_WELL_STYLE}>
+      <IconButton {...props} size={STEP_ROW_BUTTON_PX} iconSize={STEP_ROW_GLYPH_PX}
+        surfaceRadius={STEP_ROW_WELL_STYLE.borderRadius} variant="plain" />
     </GlassSurface>
   );
 }

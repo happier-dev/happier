@@ -18,13 +18,14 @@ export function copyRegion(root: HTMLElement, rect: StepFreeze['rect']) {
 }
 
 /** Mount copies above the app, inert and hidden from assistive technology; returns their removal. */
-export function mountPaintCopy(regions: readonly HTMLElement[]) {
+export function mountPaintCopy(regions: readonly HTMLElement[], backdrop?: string) {
   const capture = document.createElement('div');
   Object.assign(capture.style, {
     position: 'fixed',
     inset: '0',
     pointerEvents: 'none',
     zIndex: '1000',
+    ...(backdrop ? { backgroundColor: backdrop } : null),
   });
   capture.inert = true;
   capture.setAttribute('aria-hidden', 'true');
@@ -45,7 +46,7 @@ export function mountPaintCopy(regions: readonly HTMLElement[]) {
  * The cross-fade's outgoing step on web: the layer and its chrome as they stand at the press, so the
  * departing step stays painted until the next one has risen in. Native has no synchronous copy.
  */
-export function copyStepLayer(layer: StepMotionLayerHandle): StepFreeze | null {
+export function copyStepLayer(layer: StepMotionLayerHandle, backdrop?: string): StepFreeze | null {
   const root = layer.webElement();
   if (!root || typeof root.animate !== 'function') return null;
   const rect = captureElementFlightRect(root);
@@ -58,6 +59,6 @@ export function copyStepLayer(layer: StepMotionLayerHandle): StepFreeze | null {
     clone,
     rect,
     webChrome,
-    release: mountPaintCopy([clone, ...webChrome]),
+    release: mountPaintCopy([clone, ...webChrome], backdrop),
   };
 }

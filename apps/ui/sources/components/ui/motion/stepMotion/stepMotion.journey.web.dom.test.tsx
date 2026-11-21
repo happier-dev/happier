@@ -520,15 +520,18 @@ it('captures the approved step for one Home landing and holds the tour until the
     });
     observer.observe(document.body, { childList: true });
     const applyHome = vi.fn();
+    let presentHome: () => void;
     function Journey() {
+        const [signedIn, setSignedIn] = React.useState(false);
         const [home, setHome] = React.useState(false);
-        return <StepMotionStage>{home ? (
-            <StepMotionLayer key="home" layerKey="home" warmOnMount={false}><h1>Home</h1></StepMotionLayer>
+        presentHome = () => setHome(true);
+        return <StepMotionStage>{signedIn ? (
+            <main>{home ? <StepMotionLayer key="home" layerKey="home" warmOnMount={false}><h1>Home</h1></StepMotionLayer> : 'Loading Home'}</main>
         ) : (
             <StepMotionLayer key="workflow" layerKey="workflow"><button onClick={() => {
                 resolvePostAuthLanding({ replace: href => {
                     applyHome(href);
-                    setHome(true);
+                    setSignedIn(true);
                 } });
             }}>Approved</button></StepMotionLayer>
         )}</StepMotionStage>;
@@ -539,6 +542,7 @@ it('captures the approved step for one Home landing and holds the tour until the
         await act(async () => container.querySelector('button')!.click());
         const copy = document.body.querySelector<HTMLElement>('[aria-hidden="true"][style*="position: fixed"]');
         expect(copy?.isConnected).toBe(true);
+        expect(copy?.style.backgroundColor).toBeTruthy();
         expect(copies).toEqual([copy]);
         expect(applyHome).toHaveBeenCalledExactlyOnceWith('/');
         expect(isShowcaseHomeLandingPending()).toBe(true);
@@ -548,8 +552,13 @@ it('captures the approved step for one Home landing and holds the tour until the
         expect(dissolve.frames[0]?.opacity).toBe(1);
         expect(dissolve.frames.at(-1)?.opacity).toBe(0);
         expect(dissolve.duration).toBeLessThan(1_050);
-        dissolve.animation.onfinish?.();
+        await act(async () => {
+            if (stageMotion?.kind !== 'transition') throw new Error('Expected the outgoing dissolve before Home attaches');
+            stageMotion.onSettled?.();
+        });
         expect(copy?.isConnected).toBe(false);
+        await act(async () => presentHome());
+        expect(stageMotion?.kind).toBe('transition');
         expect(isShowcaseHomeLandingPending()).toBe(true);
         await act(async () => skipStepMotion());
         expect(isShowcaseHomeLandingPending()).toBe(false);

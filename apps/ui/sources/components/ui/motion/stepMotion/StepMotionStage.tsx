@@ -32,6 +32,7 @@ type PendingMove = {
     complete?: (outcome: StepBuildResult) => void;
     cancelled: boolean;
     layoutReady: boolean;
+    webDeparture?: 'playing' | 'cleared';
 };
 type StagePaint = Readonly<{
     animation: StepAnimation;
@@ -153,7 +154,7 @@ function createStepMotionStage(
 
     /** The cross-fade: the next step rises in while a web copy of the departing one fades over it. */
     function showIncoming(layer: StepMotionLayerHandle, rise: boolean, complete?: (outcome: StepBuildResult) => void,
-        outgoing?: StepFreeze) {
+        outgoing?: StepFreeze, duration?: number) {
         const leaving = outgoing?.clone ? outgoing : undefined;
         if (!leaving) outgoing?.release();
         let cancel: (() => void) | undefined;
@@ -173,7 +174,7 @@ function createStepMotionStage(
         const skip = () => finish('skipped');
         active = { layer: layer.key, stop: skip };
         syncPresentation();
-        cancel = layer.fadeIn(() => finish('settled'), rise);
+        cancel = layer.fadeIn(() => finish('settled'), rise, duration);
         for (const region of leaving ? [leaving.clone!, ...leaving.webChrome ?? []] : []) {
             leaves.push(region.animate([{ opacity: 1 }, { opacity: 0 }],
                 { duration: stepMotionTiming.noticeCrossFadeMs, easing: 'ease-out', fill: 'both' }));
@@ -190,19 +191,21 @@ function createStepMotionStage(
         endpoints?: StepEndpoints;
         complete?: (outcome: StepBuildResult) => void;
         interactiveOpening?: boolean;
+        departingHome?: boolean;
     }) {
-        const { layer, animation, grid, freeze, source, returnTo, complete } = input;
-        const incoming = layerRect(layer);
+        const { layer, animation, grid, freeze, source, returnTo, complete, departingHome } = input;
+        const incoming = departingHome ? freeze?.rect : layerRect(layer);
         const duration = presentation?.stepAnimationDuration(animation);
         if (!presentation || !incoming || incoming.width <= 0 || incoming.height <= 0 || !duration ||
             (animation.grammar !== 'opening' && !glyphReady)) {
-            showIncoming(layer, true, complete, freeze);
+            if (departingHome && freeze?.clone) fadeHomeDeparture(freeze, layer.key, complete);
+            else showIncoming(layer, true, complete, freeze);
             return;
         }
         const { createStepMotionScene, leavingEdge, radialDistance, readStepLeaves, readStepProgress, readWebFocalInk,
             revealRadius, stepLeavesIn, visualAt } = presentation;
         const reversing = animation.to === 0;
-        const focalTarget = layer.focal();
+        const focalTarget = departingHome ? undefined : layer.focal();
         const returnTarget = returnTo?.testID ? layer.focal(returnTo.testID) : undefined;
         const endpoints = input.endpoints ?? {
             source: reversing ? targetRect(returnTarget) ?? returnTo?.rect : source?.rect,
@@ -215,9 +218,9 @@ function createStepMotionStage(
                 endpoints.focalInk = readWebFocalInk(node, target);
             }
         };
-        const web = layer.webElement();
+        const web = departingHome ? freeze?.clone : layer.webElement();
         if (web && focalTarget instanceof HTMLElement) sampleFocalInk(focalTarget);
-        const leaves = web ? readStepLeaves(web, grid, animation.grammar !== 'home' && animation.grammar !== 'opening') : null;
+        const leaves = web && !departingHome ? readStepLeaves(web, grid, animation.grammar !== 'home' && animation.grammar !== 'opening') : null;
         const { tertiary, page } = colors();
         const cover = web ? undefined : reversing ? undefined : inkFor(page);
         const scene = createStepMotionScene({
@@ -324,12 +327,12 @@ function createStepMotionStage(
             }
             if (pressed && !building) animate(pressed, frames.map(frame => ({ opacity: frame.pressed })));
         };
-        if (web?.animate) {
+        if (!departingHome && web?.animate) {
             if (reversing) {
                 paintOutgoingWeb(web, incoming, leaves?.leaves ?? [], returnTarget instanceof HTMLElement ? returnTarget : undefined);
                 for (const chrome of layer.webChrome?.() ?? []) animate(chrome, frames.map(frame => ({ opacity: frame.chrome })));
             } else paintIncomingWeb(web, incoming, leaves?.leaves ?? [], focalTarget instanceof HTMLElement ? focalTarget : undefined, true);
-        } else if (!cover) {
+        } else if (!departingHome && !cover) {
             cleanups.push(layer.paintOpacity(frames.map(frame => reversing ? frame.leave : frame.arrive), durationMs, delayMs));
         }
         const freezeOpacity = frames.map(frame => reversing ? frame.arrive : frame.leave);
@@ -343,7 +346,7 @@ function createStepMotionStage(
             if (reversing) paintIncomingWeb(freeze.clone, freeze.rect, freeze.webLeaves ?? [], freeze.webFocal);
             else {
                 paintOutgoingWeb(freeze.clone, freeze.rect, freeze.webLeaves ?? [], freeze.control,
-                    animation.grammar === 'morph' ? undefined : releaseFreeze);
+                    animation.grammar === 'morph' || departingHome ? undefined : releaseFreeze);
                 for (const chrome of freeze.webChrome ?? []) animate(chrome, frames.map(frame => ({ opacity: frame.chrome })));
             }
         }
@@ -351,7 +354,7 @@ function createStepMotionStage(
         const releaseHomeArrival = () => {
             publishHomeArrival(current => current?.finish === releaseHomeArrival ? null : current);
         };
-        const homeArrival: HomeGlyphArrival | null = animation.grammar === 'home' ? {
+        const homeArrival: HomeGlyphArrival | null = animation.grammar === 'home' && !departingHome ? {
             settleEpoch: animation.epoch + durationMs,
             building: true,
             finish: releaseHomeArrival,
@@ -366,7 +369,7 @@ function createStepMotionStage(
                 else publishHomeArrival(current => current?.finish === releaseHomeArrival ? { ...homeArrival, building: false } : current);
             }
             releaseFreeze();
-            requestRenderer(false);
+            if (!pending) requestRenderer(false);
             syncPresentation();
             complete?.(outcome);
         };
@@ -398,20 +401,60 @@ function createStepMotionStage(
         publish({ animation, duration, freeze, freezeOpacity, scene, releaseFreeze, finish: () => finish('settled') });
     }
 
+    function fadeHomeDeparture(freeze: StepFreeze, layer: string, complete?: (outcome: StepBuildResult) => void) {
+        const regions = [freeze.clone!, ...freeze.webChrome ?? []];
+        const effects = regions.map(region => region.animate([{ opacity: 1 }, { opacity: 0 }],
+            { duration: stepMotionTiming.noticeCrossFadeMs / 2, easing: 'ease-out', fill: 'both' }));
+        const [departure] = effects;
+        const finish = (outcome: StepBuildResult) => {
+            if (active?.stop !== skip) return;
+            active = null;
+            departure.onfinish = null;
+            for (const effect of effects) effect.cancel();
+            freeze.release();
+            complete?.(outcome);
+            syncPresentation();
+        };
+        const skip = () => finish('skipped');
+        active = { layer, stop: skip };
+        departure.onfinish = () => finish('settled');
+    }
+
+    function departForHome(outgoing: StepMotionLayerHandle, move: PendingMove, freeze: StepFreeze) {
+        move.freeze = undefined;
+        move.webDeparture = 'playing';
+        const complete = () => {
+            if (pending !== move) return;
+            move.webDeparture = 'cleared';
+            const destination = move.layoutReady && findLayer(move.destination);
+            if (destination) enter(destination);
+        };
+        if (move.grammar === 'fade') {
+            fadeHomeDeparture(freeze, outgoing.key, complete);
+            return;
+        }
+        showAnimated({
+            layer: outgoing, grid: move.grid, freeze, departingHome: true, complete,
+            animation: { grammar: 'home', from: 0, to: stepMotionTiming.homeClear,
+                secondsPerProgress: stepMotionTiming.homeS, epoch: performance.now() },
+        });
+    }
+
     function enter(layer: StepMotionLayerHandle) {
         const move = pending;
-        if (!move || move.destination !== layer.key) return;
+        if (!move || move.destination !== layer.key || move.webDeparture === 'playing') return;
         pending = null;
         move.cancelled = true;
-        if (move.grammar === 'fade' || !move.freeze) {
-            showIncoming(layer, move.kind !== 'notice', move.complete, move.freeze);
+        if (move.grammar === 'fade' || (!move.freeze && !move.webDeparture)) {
+            showIncoming(layer, move.kind !== 'notice', move.complete, move.freeze,
+                move.webDeparture ? stepMotionTiming.noticeCrossFadeMs / 2 : undefined);
             return;
         }
         const back = move.kind === 'back';
         const grammar = move.grammar;
         const animation: StepAnimation = {
             grammar,
-            from: back ? move.reverse?.progress ?? 1 : 0,
+            from: back ? move.reverse?.progress ?? 1 : move.webDeparture ? stepMotionTiming.homeClear : 0,
             to: back ? 0 : 1,
             secondsPerProgress: grammar === 'home' ? stepMotionTiming.homeS : back ? stepMotionTiming.backS : stepMotionTiming.forwardS,
             epoch: performance.now(),
@@ -656,8 +699,11 @@ function createStepMotionStage(
             };
             pending = next;
             syncPresentation();
+            // The web capture has its own opaque page until the outgoing ink is gone. Home's
+            // real shell can attach behind it without ever lending its chrome to the old step.
+            const backdrop = move.kind === 'home' && Platform.OS === 'web' ? colors().page : undefined;
             if (presentation && grammar !== 'fade') {
-                const freeze = presentation.freezeStepLayer(outgoing, grid, move.kind === 'back' ? undefined : anchor, chrome);
+                const freeze = presentation.freezeStepLayer(outgoing, grid, move.kind === 'back' ? undefined : anchor, chrome, backdrop);
                 if (freeze instanceof Promise) {
                     void freeze.then(result => {
                         if (next.cancelled) result?.release();
@@ -666,12 +712,13 @@ function createStepMotionStage(
                 } else next.freeze = freeze ?? undefined;
             } else if (grammar === 'fade' && move.kind !== 'notice' && Platform.OS === 'web') {
                 // Without the renderer the move still never shows an empty column between the two steps.
-                next.freeze = copyStepLayer(outgoing) ?? undefined;
+                next.freeze = copyStepLayer(outgoing, backdrop) ?? undefined;
             }
+            if (backdrop && next.freeze?.clone) departForHome(outgoing, next, next.freeze);
             try {
                 return move.commit();
             } catch (error) {
-                cancelPending();
+                settle();
                 throw error;
             }
         },

@@ -73,8 +73,8 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
         : null);
     const hasWays = model.quietWays.length > 0 || waysLeading != null;
     const noticeAction = interaction?.onNoticeAction;
-    // Place a notice above the doors when the heading can make room. In a short viewport it belongs
-    // after the controls, extending the scrollable column without changing the doors' position.
+    // The notice always stands above the doors. Lift the heading when there is clearance, or
+    // give the notice room in the scrollable column when the header cannot move.
     const anchoredNotices = model.heading != null || model.policy != null;
     const [noticeHeight, setNoticeHeight] = React.useState(0);
     const headerClearance = React.useContext(ShellHeaderClearanceContext);
@@ -114,9 +114,8 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
             </View> : null}
             <WelcomeActionList admission={interaction?.admission ?? inertAdmission}>
                 <View style={styles.actionStack}>
-                    {!anchoredNotices && model.notices.length > 0 ? (
-                        <WelcomeNotices layer="welcome-notices" notices={model.notices} onAction={noticeAction} />
-                    ) : null}
+                    <WelcomeNotices notices={model.notices} onAction={noticeAction}
+                        above={above} onHeight={anchoredNotices ? setNoticeHeight : undefined} />
                     <View style={styles.ways}>
                         <View testID="welcome-doors" style={styles.doors}>
                             {model.primaryDoorPending ? <PendingPrimaryDoor /> : null}
@@ -150,13 +149,6 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
                                 onPress={interaction?.onSelfHosting ?? noAction} />
                         </View>
                     ) : null}
-                    {anchoredNotices ? (
-                        <WelcomeNotices layer="welcome-notices" notices={model.notices} onAction={noticeAction}
-                            above={above} onHeight={setNoticeHeight} />
-                    ) : null}
-                    {model.closingNotice ? (
-                        <WelcomeNotices layer="welcome-closing-notice" notices={[model.closingNotice]} onAction={noticeAction} />
-                    ) : null}
                 </View>
             </WelcomeActionList>
         </View>
@@ -174,8 +166,9 @@ function PendingPrimaryDoor() {
     );
 }
 
-function WelcomeNotices({ layer, notices, onAction, above, onHeight }: Readonly<{
-    layer: string;
+const WELCOME_NOTICE_LAYER = 'welcome-notices';
+
+function WelcomeNotices({ notices, onAction, above, onHeight }: Readonly<{
     notices: WelcomeEntryViewModel['notices'];
     onAction?: (testID: string) => void;
     above?: boolean;
@@ -188,8 +181,8 @@ function WelcomeNotices({ layer, notices, onAction, above, onHeight }: Readonly<
     const [shown, setShown] = React.useState(() => ({ key, notices }));
     React.useLayoutEffect(() => {
         if (!animate || shown.key === key) return;
-        runStepMove({ layer, kind: 'notice', commit: () => setShown({ key, notices }) });
-    }, [animate, key, layer, notices, shown.key]);
+        runStepMove({ layer: WELCOME_NOTICE_LAYER, kind: 'notice', commit: () => setShown({ key, notices }) });
+    }, [animate, key, notices, shown.key]);
     const visible = animate ? shown.notices : notices;
     const box = React.useRef<View>(null);
     const empty = visible.length === 0;
@@ -201,16 +194,15 @@ function WelcomeNotices({ layer, notices, onAction, above, onHeight }: Readonly<
     }, [report, shown.key, key]);
     const onLayout = React.useCallback((event: LayoutChangeEvent) => report(event.nativeEvent.layout.height), [report]);
     const layerElement = (
-        <StepMotionLayer layerKey={layer} stepKey={animate ? shown.key : undefined} active={animate}
+        <StepMotionLayer layerKey={WELCOME_NOTICE_LAYER} stepKey={animate ? shown.key : undefined} active={animate}
             warmOnMount={false} retainContent style={stylesheet.noticeLines}>
             {visible.map(notice => <WelcomeNotice key={notice.slot} notice={notice} onAction={onAction} />)}
         </StepMotionLayer>
     );
-    if (!onHeight) return layerElement;
     return (
         <View ref={box} testID="welcome-notice-slot" onLayout={onLayout}
             style={[
-                empty ? stylesheet.emptyNoticeSlot : above ? stylesheet.noticeAboveDoors : stylesheet.noticeAfterControls,
+                empty ? stylesheet.emptyNoticeSlot : above ? stylesheet.noticeAboveDoors : stylesheet.noticeInColumn,
             ]}>
             {layerElement}
         </View>
@@ -314,9 +306,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         right: 0,
         paddingBottom: theme.space.s12,
     },
-    noticeAfterControls: {
-        marginTop: -theme.space.s12,
-        paddingTop: theme.space.s12,
+    noticeInColumn: {
+        marginBottom: -theme.space.s12,
+        paddingBottom: theme.space.s12,
     },
     noticeLines: {
         gap: theme.space.s12,

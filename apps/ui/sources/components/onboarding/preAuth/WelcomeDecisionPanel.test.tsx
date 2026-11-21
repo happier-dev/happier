@@ -690,6 +690,8 @@ describe('WelcomeDecisionPanel', () => {
         expect(screen.findByTestId('welcome-primary-start')).toBeTruthy();
         expect(screen.findAllByTestId('welcome-auth-blocked')).toHaveLength(0);
         expect(screen.findByTestId('welcome-auth-entry-degraded')).toBeTruthy();
+        const notice = screen.findByTestId('welcome-notice-slot');
+        expect(notice?.findAll(node => node.props.testID === 'welcome-auth-entry-degraded-retry').length).toBeGreaterThan(0);
 
         await screen.pressByTestIdAsync('welcome-auth-entry-degraded-retry');
 

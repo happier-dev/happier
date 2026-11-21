@@ -50,5 +50,5 @@ export type StepMotionLayerHandle = Readonly<{
     focal: (returnTo?: string) => FocusReturnTarget;
     paintOpacity: (values: readonly number[], durationMs: number, delayMs: number) => () => void;
     focus: (returnTo?: string, allowLateFocal?: boolean) => void;
-    fadeIn: (onSettled: () => void, rise: boolean) => () => void;
+    fadeIn: (onSettled: () => void, rise: boolean, duration?: number) => () => void;
 }>;

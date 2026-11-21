@@ -42,6 +42,7 @@ it('lets the resting glass well show through while keeping the way operable', as
   );
   const buttonPaint = flattenTestStyle(screen.findByTestId('step-way-surface')!.props.style);
   expect(buttonPaint.width).toBe(44);
+  expect(buttonPaint.borderRadius).toBe(buttonPaint.width / 2);
   expect(buttonPaint.borderWidth).toBeUndefined();
   expect(buttonPaint.backgroundColor).toBeUndefined();
   await screen.pressByTestIdAsync('step-way');

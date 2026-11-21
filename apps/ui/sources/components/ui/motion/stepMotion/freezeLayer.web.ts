@@ -78,6 +78,7 @@ export function freezeStepLayer(
     grid: StepGrid,
     anchor?: StepAnchor | null,
     pressedChrome: readonly StepWebLeaf[] = [],
+    backdrop?: string,
 ): StepFreeze | Promise<StepFreeze | null> | null {
     const root = layer.webElement();
     if (!root || typeof root.animate !== 'function') return null;
@@ -100,6 +101,6 @@ export function freezeStepLayer(
     const cloneElements = clone.querySelectorAll<HTMLElement>('*');
     const webFocal = focal instanceof HTMLElement ? cloneElements[elements.indexOf(focal)] : undefined;
     const webLeaves = leaves.map(({ rect: leafRect, index }) => ({ element: cloneElements[index], rect: leafRect }));
-    const release = mountPaintCopy([clone, ...webChrome]);
+    const release = mountPaintCopy([clone, ...webChrome], backdrop);
     return { clone, rect, ink, control, webLeaves, webFocal, webChrome, release };
 }

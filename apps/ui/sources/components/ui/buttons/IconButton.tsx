@@ -159,6 +159,8 @@ export function IconButton(props: Readonly<{
      */
     interactiveTargetVerticalGapPx?: number;
     iconSize?: number;
+    /** Match the drawn chrome to a surrounding material's corner. */
+    surfaceRadius?: number;
     tone?: IconButtonTone;
     variant?: IconButtonVariant;
     /** Borderless resting fill; overrides `variant`. See {@link IconButtonFill}. */
@@ -372,6 +374,7 @@ export function IconButton(props: Readonly<{
                     testID={props.testID ? `${props.testID}-surface` : undefined}
                     style={[
                         chrome(state).surface,
+                        props.surfaceRadius == null ? null : { borderRadius: props.surfaceRadius },
                         themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'button', part: 'root', state: surfaceState } : undefined),
                     ]}
                 >

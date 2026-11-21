@@ -5,7 +5,9 @@ import { Platform, StyleSheet, View, type StyleProp, type ViewStyle, type ViewPr
 import { useUnistyles } from 'react-native-unistyles';
 import { HappierMaterialPlaneTransfer, HappierMaterialRoleProvider, HappierOpenedLayer, useContainingHappierMaterialPlane, HappierSurfaceGradientLayer, happierSurfaceGradientWebStyle, happierSurfaceFinishLift, resolveHappierSurfaceFinish, useContainingHappierMaterialRole, type HappierSurfaceGradient, type HappierSurfaceFinishRole, type HappierMaterialSurfaceRender } from '@happier-dev/plugin-ui/presentation';
 import { resolveAndroidTranslucentUnlift, resolveThemeSurfaceFinish } from '@/components/ui/surfaces/themeRaisedEdge';
+import { resolveThemeHairlineBorderStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
 import { readSurfaceStyleProperty } from '@/components/ui/surfaces/surfaceStyle';
+import { shadowLevelStyle } from '@/shadowElevation';
 
 import { createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
 import { useReduceTransparency } from '@/hooks/ui/useReduceTransparency';
@@ -128,6 +130,8 @@ export type GlassSurfaceProps = Pick<ViewProps, 'accessibilityRole' | 'accessibi
     atmosphereCoat?: AtmosphereContentCoat;
     /** Structural surfaces select a finish; chrome planes keep their existing flat material. */
     finishRole?: HappierSurfaceFinishRole | null;
+    /** Small glass controls carry a hairline and the lowest lift in light themes. */
+    controlEdge?: boolean;
     /**
      * A floating surface's job: `panel` (dialogs, sheets, large anchored panels) carries the page at a
      * heavy coat behind the blur; `menu` (the default: menus, tooltips, small popovers) keeps the hair of tint.
@@ -198,6 +202,8 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
         ? resolveThemeSurfaceFinish(theme, finishRole, undefined, inheritsFinish)
         : resolveHappierSurfaceFinish({ role: finishRole, gradients: { [finishRole]: props.gradient }, nested: inheritsFinish })) : null;
     const finishLift = finishRole ? happierSurfaceFinishLift(gradient, finishRole, theme.dark, Platform.OS === 'web') : null;
+    const controlEdge = props.controlEdge ? resolveThemeHairlineBorderStyle(theme.colors.border.default) : null;
+    const controlLift = props.controlEdge && !theme.dark ? shadowLevelStyle(theme.colors.shadowLevels[1]) : null;
     const authoredSolid = props.solidColor ?? (typeof styleBackground === 'string' ? styleBackground : undefined);
     const pagePaint = tokenThemePaint(theme, 'surface.base');
     const solidPaint = resolveGlassSurfaceSolidPaint(authoredSolid === undefined
@@ -341,7 +347,7 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
         // must stay under the same native parent when a preset or OS choice changes.
         // A surface that keeps its tint on Android (no blur behind it) is not lifted there; an opaque one keeps its lift.
         return <View {...viewProps} style={[props.style, props.noCoat ? null : { backgroundColor },
-            finishLift, props.noCoat ? null : resolveAndroidTranslucentUnlift(backgroundColor), surfaceStyle,
+            finishLift, controlLift, props.noCoat ? null : resolveAndroidTranslucentUnlift(backgroundColor), surfaceStyle,
             surfaceFill !== undefined ? { backgroundColor: 'transparent' } : null]}>
             {/* The material fills the border box, so the glass's own edge lies under the surface's border: one edge. */}
             <View pointerEvents="none" style={[
@@ -350,6 +356,7 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
             ]}>{nativeBackdrop}{surfaceFill !== undefined || layerPaint.coat !== undefined ? <View pointerEvents="none"
                 style={[StyleSheet.absoluteFillObject, { backgroundColor: surfaceFill ?? layerPaint.coat!.color }]} /> : null}
                 <HappierSurfaceGradientLayer gradient={surfaceFill === undefined ? gradient : null} borderRadius={typeof borderRadius === 'number' ? borderRadius : undefined} /></View>
+            {controlEdge ? <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, materialShape, controlEdge]} /> : null}
             <GlassSurfaceGroupContext.Provider value={plane}>
                 <HappierMaterialRoleProvider {...materialPlane}>
                     {withBackedInk(props.children)}
@@ -404,9 +411,10 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
     const clipWithoutScrolling = reachesPastEdges && readSurfaceStyleProperty(props.style, 'overflow') === 'hidden'
         ? { overflow: 'clip' } as unknown as ViewStyle : null;
     return (
-        <View {...viewProps} style={[props.style, clipWithoutScrolling, props.noCoat ? null : { backgroundColor: 'transparent' }, finishLift, backedInkStyle, innerPaint]}>
+        <View {...viewProps} style={[props.style, clipWithoutScrolling, props.noCoat ? null : { backgroundColor: 'transparent' }, finishLift, controlLift, backedInkStyle, innerPaint]}>
             {/* Native View types omit RN-web's dataSet; this branch is the web boundary. */}
             <View {...{ dataSet: { happyGlassBackdrop: 'true' } }} style={[StyleSheet.absoluteFillObject, webMaterialLayerShape(props.style, frosted, reachesPastEdges), paint, happierSurfaceGradientWebStyle(gradient, !theme.dark)]} />
+            {controlEdge ? <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, materialShape, controlEdge]} /> : null}
             <GlassSurfaceGroupContext.Provider value={plane}>
                 <HappierMaterialRoleProvider {...materialPlane}>
                     {withBackedInk(props.children)}

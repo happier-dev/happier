@@ -21,7 +21,7 @@ type Action = Readonly<{
 }>;
 
 type Notice = Readonly<{
-    slot: 'signup' | 'home' | 'service' | 'recovery' | 'home_change';
+    slot: 'signup' | 'home' | 'service' | 'home_change';
     testID: string;
     kind: 'loading' | 'unavailable' | 'warning';
     title: string;
@@ -51,7 +51,6 @@ export type WelcomeEntryViewModel = Readonly<{
     primaryDoorPending?: boolean;
     quietWays: readonly Readonly<{ index: number; display: Action }>[];
     notices: readonly Notice[];
-    closingNotice?: Notice;
     selfHosting?: Readonly<{ display: Action }>;
 }>;
 
@@ -197,6 +196,12 @@ export function projectWelcomeEntryViewModel(
             reason: t(incompatible ? 'welcome.serverIncompatibleBody' : 'welcome.serverUnavailableBody', { serverUrl: home }),
             action: retry('welcome-auth-blocked-retry'),
         });
+    } else if (status && options.authEntryUnavailable) {
+        notices.push({
+            slot: 'home',
+            testID: 'welcome-auth-entry-degraded', kind: 'warning', title: t('welcome.signInOptionsPartialTitle'),
+            action: retry('welcome-auth-entry-degraded-retry'),
+        });
     }
     const notice = model.notice;
     if (notice?.kind === 'service_loading') {
@@ -247,11 +252,6 @@ export function projectWelcomeEntryViewModel(
         ...(model.primaryDoorPending ? { primaryDoorPending: true } : {}),
         quietWays,
         notices,
-        closingNotice: status && options.authEntryUnavailable ? {
-            slot: 'recovery',
-            testID: 'welcome-auth-entry-degraded', kind: 'warning', title: t('welcome.signInOptionsPartialTitle'),
-            action: retry('welcome-auth-entry-degraded-retry'),
-        } : undefined,
         selfHosting: model.homeCorner ? {
             display: {
                 testID: 'welcome-self-hosting',

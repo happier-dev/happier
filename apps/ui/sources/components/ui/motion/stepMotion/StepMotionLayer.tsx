@@ -133,8 +133,7 @@ export function StepMotionLayer(props: StepMotionLayerProps) {
                 setSurfaceOpacity(fadeOpacity);
             };
         },
-        fadeIn(onSettled, rise) {
-            const duration = motionTokens.stepMotion.noticeCrossFadeMs;
+        fadeIn(onSettled, rise, duration = motionTokens.stepMotion.noticeCrossFadeMs) {
             const web = webElement();
             if (web?.animate) {
                 const frames = rise
