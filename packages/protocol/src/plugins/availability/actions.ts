@@ -1,4 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { PLUGIN_PROJECT_SCOPE_SET_ACTION_ID } from '../../actions/pluginAccountAdministrationActionIds.js';
 import { z } from '../../zodRuntimePolicy.js';
 import * as mini from '../../zodRuntimePolicy.js';
 import { ManagedResourceDispositionV1Schema } from '../../machines/managed/managedDependencyV1.js';
@@ -34,14 +35,13 @@ const Base64BytesSchema = lazyZodSchema(() => z.string().check(z.minLength(1)));
 const IntentRevisionSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(128)));
 
 /**
- * These are Account control-plane operation names, not plugin-contributed
- * Actions. They identify the one Availability API family without creating a
- * second generic Artifact transport or a release-allocation protocol.
+ * These names identify the Availability HTTP operations. The public Project
+ * scope Action shares the intent-set name but accepts only a Project scope edit.
  */
 export const PLUGIN_AVAILABILITY_ACTION_IDS_V1 = Object.freeze([
   'account.plugins.availability.intent.read',
   'account.plugins.availability.intents.list',
-  'account.plugins.availability.intent.set',
+  PLUGIN_PROJECT_SCOPE_SET_ACTION_ID,
   'account.plugins.availability.collectionWriters.claim',
   'account.plugins.availability.release.read',
   'account.plugins.availability.release.publish',
@@ -66,7 +66,7 @@ export type PluginAvailabilityActionIdV1 = z.infer<typeof PluginAvailabilityActi
 export const PluginAvailabilityActionHttpPathsV1 = Object.freeze({
   'account.plugins.availability.intent.read': '/v1/plugins/availability/intents/read',
   'account.plugins.availability.intents.list': '/v1/plugins/availability/intents/list',
-  'account.plugins.availability.intent.set': '/v1/plugins/availability/intents/set',
+  [PLUGIN_PROJECT_SCOPE_SET_ACTION_ID]: '/v1/plugins/availability/intents/set',
   'account.plugins.availability.collectionWriters.claim': '/v1/plugins/availability/collection-writers/claim',
   'account.plugins.availability.release.read': '/v1/plugins/availability/releases/read',
   'account.plugins.availability.release.publish': '/v1/plugins/availability/releases/publish',
@@ -419,7 +419,7 @@ export const PluginAvailabilityActionInputSchemasV1: Readonly<
 > = Object.freeze({
   'account.plugins.availability.intent.read': PluginAvailabilityIntentReadActionInputV1Schema,
   'account.plugins.availability.intents.list': PluginAvailabilityIntentsListActionInputV1Schema,
-  'account.plugins.availability.intent.set': PluginAvailabilityIntentSetActionInputV1Schema,
+  [PLUGIN_PROJECT_SCOPE_SET_ACTION_ID]: PluginAvailabilityIntentSetActionInputV1Schema,
   'account.plugins.availability.collectionWriters.claim': PluginAvailabilityCollectionWritersClaimActionInputV1Schema,
   'account.plugins.availability.release.read': PluginAvailabilityReleaseReadActionInputV1Schema,
   'account.plugins.availability.release.publish': PluginAvailabilityReleasePublishActionInputV1Schema,
@@ -439,7 +439,7 @@ export const PluginAvailabilityActionOutputSchemasV1: Readonly<
 > = Object.freeze({
   'account.plugins.availability.intent.read': PluginAvailabilityIntentReadActionOutputV1Schema,
   'account.plugins.availability.intents.list': PluginAvailabilityIntentsListActionOutputV1Schema,
-  'account.plugins.availability.intent.set': PluginAvailabilityIntentSetActionOutputV1Schema,
+  [PLUGIN_PROJECT_SCOPE_SET_ACTION_ID]: PluginAvailabilityIntentSetActionOutputV1Schema,
   'account.plugins.availability.collectionWriters.claim': PluginAvailabilityCollectionWritersClaimActionOutputV1Schema,
   'account.plugins.availability.release.read': PluginAvailabilityReleaseReadActionOutputV1Schema,
   'account.plugins.availability.release.publish': PluginAvailabilityReleasePublishActionOutputV1Schema,

@@ -280,6 +280,23 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `currentPassword` (json): Current Password
 - `proof` (json): Proof
 
+## `account.plugins.availability.intent.set`
+
+**Set the Projects that can use a plugin** — Set the plugin’s Project scope on your Account. Use null to allow every Project and supply the revision of the intent you are editing.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+- `pluginId` (text, required): Plugin
+- `projectScope` (json, required): Project scope (null for all Projects)
+- `expectedRevision` (json, required): Current intent revision (null when no intent exists)
+- `clientId` (text): Client Id
+
 ## `account.plugins.data.erase`
 
 **Erase Account plugin data** — Erase the current Account’s retained data for one plugin without uninstalling local plugin code.

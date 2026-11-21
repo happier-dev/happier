@@ -2,9 +2,9 @@ import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { PluginIdSchema } from '../plugins/pluginId.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
-import { PluginAccountPluginIntentV1Schema } from '../plugins/availability/accountIntentV1.js';
+import { PluginAccountPluginIntentV1Schema, PluginProjectScopeV1Schema } from '../plugins/availability/accountIntentV1.js';
 import { PluginReleaseRefV1Schema } from '../plugins/availability/releaseRefV1.js';
-import { PLUGIN_ACCOUNT_ADMINISTRATION_ACTION_IDS } from './pluginAccountAdministrationActionIds.js';
+import { PLUGIN_ACCOUNT_ADMINISTRATION_ACTION_IDS, PLUGIN_PROJECT_SCOPE_SET_ACTION_ID } from './pluginAccountAdministrationActionIds.js';
 export { PLUGIN_ACCOUNT_ADMINISTRATION_ACTION_IDS } from './pluginAccountAdministrationActionIds.js';
 export type { PluginAccountAdministrationActionId } from './pluginAccountAdministrationActionIds.js';
 
@@ -25,6 +25,10 @@ export const PluginAccountAdministrationActionInputSchemas = {
   'plugins.account.hosting.set': lazyZodSchema(() => z.strictObject({ pluginId, enabled: z.boolean() })),
   'plugins.account.hosting.remove': target,
   'plugins.account.cache.clear': target,
+  [PLUGIN_PROJECT_SCOPE_SET_ACTION_ID]: lazyZodSchema(() => z.strictObject({
+    pluginId, projectScope: z.nullable(PluginProjectScopeV1Schema),
+    expectedRevision: z.nullable(PluginAccountPluginIntentV1Schema.shape.revision),
+  })),
 } as const;
 
 const hostingResult = lazyZodSchema(() => z.strictObject({ kind: z.enum(['updated', 'conflict', 'unavailable']) }));
@@ -42,4 +46,7 @@ export const PluginAccountAdministrationActionOutputSchemas = {
   'plugins.account.hosting.set': hostingResult,
   'plugins.account.hosting.remove': hostingResult,
   'plugins.account.cache.clear': lazyZodSchema(() => z.strictObject({ kind: z.enum(['updated', 'unavailable']) })),
+  [PLUGIN_PROJECT_SCOPE_SET_ACTION_ID]: lazyZodSchema(() => z.strictObject({
+    kind: z.enum(['updated', 'conflict', 'unavailable', 'rejected']),
+  })),
 } as const;

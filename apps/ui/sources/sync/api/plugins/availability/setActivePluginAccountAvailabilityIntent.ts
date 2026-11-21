@@ -1,4 +1,5 @@
 import { normalizePluginProjectScopeV1 } from '@happier-dev/protocol/plugins/availability/v1';
+import { PLUGIN_PROJECT_SCOPE_SET_ACTION_ID } from '@happier-dev/protocol/actions/pluginAccountAdministrationActionIds';
 import {
     PluginAvailabilityActionHttpPathsV1,
     PluginAvailabilityIntentSetActionInputV1Schema,
@@ -114,7 +115,7 @@ function isWritableCollectionsPreparationRequiredResponse(value: unknown): boole
 }
 
 /**
- * The one direct-UI Account Availability intent-CAS transport. It captures the
+ * The Account Availability intent-CAS transport used by the Action handlers. It captures the
  * active Account lifetime and server generation, but deliberately accepts no
  * Account id from the caller and does not own candidate/data readiness.
  */
@@ -163,7 +164,7 @@ export function createActivePluginAccountAvailabilityIntentSetter(
                 let response: Response;
                 try {
                     response = await authority.request(
-                        PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.set'],
+                        PluginAvailabilityActionHttpPathsV1[PLUGIN_PROJECT_SCOPE_SET_ACTION_ID],
                         {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },

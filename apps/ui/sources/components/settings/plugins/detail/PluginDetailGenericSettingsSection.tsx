@@ -28,7 +28,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
 import { useMountedPluginSettingsActionAdapter } from '@/components/settings/plugins/model/useMountedPluginSettingsActionAdapter';
-import type { PluginSettingSetupObservation } from '../model/installedPluginSetup';
+import { requiresPluginSettingSetup, type PluginSettingSetupObservation, type PublishPluginSettingSetup } from '../model/pluginSettingSetupObservation';
 import { projectAccountDeclaredPluginSettingsGroups } from '@/sync/domains/plugins/settings/accountDeclaredPluginSettings';
 import {
     formatPluginSettingsAdministrationRevision,
@@ -389,14 +389,13 @@ function PluginSettingSecretBindingField(props: Readonly<{
 }
 
 function useRequiredSettingSetupObservation(
-    publish: ((observation: PluginSettingSetupObservation) => void) | undefined,
+    publish: PublishPluginSettingSetup | undefined,
     field: PluginProjectionEditableSettingField,
     status: PluginSettingSetupObservation['status'],
 ) {
-    React.useEffect(() => {
-        if (!publish || field.required !== true || field.defaultValue !== undefined || status === 'unknown') return;
-        publish({ field, status });
-        return () => publish({ field, status: 'unknown' });
+    React.useLayoutEffect(() => {
+        if (!publish || !requiresPluginSettingSetup(field)) return;
+        return publish([{ field, status }]);
     }, [publish, field, status]);
 }
 
@@ -415,7 +414,8 @@ function PluginSettingAccountSecretField(props: Readonly<{
     enabled: boolean;
     /** Current generation/declaration boundary for presentation-local bytes. */
     lifetimeIdentity: string;
-    onSetupObservation?: (observation: PluginSettingSetupObservation) => void;
+    onSetupObservation?: PublishPluginSettingSetup;
+    observeOnly?: boolean;
 }>) {
     const secretField = React.useMemo(() => projectScopedPluginSettingsField(props.field), [props.field]);
     const secretFields = React.useMemo(() => [secretField], [secretField]);
@@ -576,6 +576,7 @@ function PluginSettingAccountSecretField(props: Readonly<{
         });
     }, [accountScopeIsCurrent, commit, loading, props.accountLifetime, props.enabled, props.field.key, props.field.title, props.pluginId, revision, saving, writePending]);
 
+    if (props.observeOnly) return null;
     // The value is never typed here: Add key / Replace opens the Connect sheet (a new key or a saved one).
     return (
         <PluginSettingSecretBindingField
@@ -652,7 +653,8 @@ export function PluginSettingDaemonSecretField(props: Readonly<{
     isDaemonTargetCurrent?: (target: ScopedPluginSettingsDaemonTarget) => boolean;
     /** Current generation/declaration boundary for presentation-local bytes. */
     lifetimeIdentity: string;
-    onSetupObservation?: (observation: PluginSettingSetupObservation) => void;
+    onSetupObservation?: PublishPluginSettingSetup;
+    observeOnly?: boolean;
     renderField?: (state: Readonly<{
         value: string;
         dirty: boolean;
@@ -937,6 +939,7 @@ export function PluginSettingDaemonSecretField(props: Readonly<{
         setSaveFailed(false);
         setSaveOutcomeUnknown(false);
     };
+    if (props.observeOnly) return null;
     const onDelete = secretConfigured ? () => commit('delete') : undefined;
     if (props.renderField) {
         return props.renderField({
@@ -1011,10 +1014,10 @@ type PluginDetailGenericSettingsSectionProps = Readonly<{
      * (`sections`, the default). On a page about something else (an Agent) they are expert
      * detail: one titled section of disclosures, one per declared section, each summarised.
      */
-    presentation?: Readonly<{ kind: 'sections' }> | Readonly<{ kind: 'disclosures'; title: string }>;
+    presentation?: Readonly<{ kind: 'sections' | 'setupPresence' }> | Readonly<{ kind: 'disclosures'; title: string }>;
     renderAccountContent?: (projection: PluginSettingsAccountContentProjection) => React.ReactNode;
     /** Publish field presence from this mounted Settings owner without adding reads. Supply a stable callback. */
-    onSetupObservation?: (observation: PluginSettingSetupObservation) => void;
+    onSetupObservation?: PublishPluginSettingSetup;
 }>;
 
 function isSameSettingValue(value: unknown, fallback: unknown): boolean {
@@ -1086,11 +1089,17 @@ export function PluginDetailGenericSettingsSection(props: PluginDetailGenericSet
         projection: props.projection,
         accountSettingsDeclaration: props.accountSettingsDeclaration,
     });
-    const { accountGroups, daemonGroups } = React.useMemo(() => ({
-        accountGroups: groups
-            .filter((group) => group.scope.kind === 'account'),
-        daemonGroups: groups.filter((group) => group.scope.kind === 'daemon'),
-    }), [groups]);
+    const observeOnly = props.presentation?.kind === 'setupPresence';
+    const { accountGroups, daemonGroups } = React.useMemo(() => {
+        const accountGroups = groups.filter(group => group.scope.kind === 'account');
+        const daemonGroups = groups.filter(group => group.scope.kind === 'daemon');
+        const relevant = (scopedGroups: typeof groups) => !observeOnly || scopedGroups.some(group =>
+            group.fields.some(field => field.presentation?.hidden !== true && requiresPluginSettingSetup(field)));
+        return {
+            accountGroups: relevant(accountGroups) ? accountGroups : [],
+            daemonGroups: relevant(daemonGroups) ? daemonGroups : [],
+        };
+    }, [groups, observeOnly]);
     // Daemon storage authority stays exact-machine, but its mounted record,
     // LKG, and parked watch are UI Account-lifetime state. Capture the one
     // incumbent lifetime for either Settings scope so Account A cannot leak
@@ -1154,6 +1163,7 @@ function PluginDetailScopedSettingsSection(props: PluginDetailGenericSettingsSec
 }>) {
     const { theme } = useUnistyles();
     const router = useRouter();
+    const observeOnly = props.presentation?.kind === 'setupPresence';
     const groups = props.groups;
     const sortedGroups = React.useMemo(() => [...groups].sort(compareSettingsGroups), [groups]);
     // Secret raw bytes remain inside their dedicated presentation controls.
@@ -1245,19 +1255,37 @@ function PluginDetailScopedSettingsSection(props: PluginDetailGenericSettingsSec
             }),
         }));
     }), [props.policyContext, sortedGroups, values]);
+    const hasHydratedCurrentScope = scopedOperationsAvailable && props.target !== null && (
+        adapterFields.length === 0 || scopedSettings.state.ready
+    );
+    const unavailable = !props.target || (props.scope.kind === 'account' && !scopedOperationsAvailable);
+    const showsSectionStatus = !observeOnly && !hasAccountSavedSecretFields
+        && (unavailable || (!hasHydratedCurrentScope && (loading || loadError !== null)));
     const publishSetupObservation = props.onSetupObservation;
-    React.useEffect(() => {
-        if (!publishSetupObservation || !scopedOperationsAvailable || !accountContentProjection.ready) return;
-        const fields = new Map(visibleGroups.flatMap(group => group.fields.map(field => [field.key, field] as const)));
-        const observed = ordinaryFields.filter(field => field.required === true && field.defaultValue === undefined && fields.has(field.key));
-        for (const field of observed) {
-            const missing = isSameSettingValue(accountContentProjection.values[field.key], undefined);
-            publishSetupObservation({ field, status: missing ? 'missing' : 'configured' });
+    React.useLayoutEffect(() => {
+        if (!publishSetupObservation) return;
+        const ready = scopedOperationsAvailable && props.target !== null && accountContentProjection.ready;
+        const candidates = ready ? visibleGroups : sortedGroups;
+        const ordinaryKeys = new Set(ordinaryFields.map(field => field.key));
+        const observations: PluginSettingSetupObservation[] = [];
+        for (const group of candidates) {
+            for (const field of group.fields) {
+                if (field.presentation?.hidden === true || !requiresPluginSettingSetup(field)) continue;
+                if (ordinaryKeys.has(field.key)) {
+                    const missing = isSameSettingValue(accountContentProjection.values[field.key], undefined);
+                    observations.push({ field, status: ready ? (missing ? 'missing' : 'configured') : 'unknown' });
+                } else if (isAccountSavedSecretField(field) || isDaemonCustodiedSecretField(field)) {
+                    // The editor can show a load status instead of mounting the secret's presence control.
+                    // Until ordinary values load, conditional visibility can be unsettled too.
+                    if (showsSectionStatus || (!ready && adapterFields.length > 0 && field.availability !== undefined)) {
+                        observations.push({ field, status: 'unknown' });
+                    }
+                }
+            }
         }
-        return () => {
-            for (const field of observed) publishSetupObservation({ field, status: 'unknown' });
-        };
-    }, [publishSetupObservation, scopedOperationsAvailable, accountContentProjection, ordinaryFields, visibleGroups]);
+        if (observations.length > 0) return publishSetupObservation(observations);
+    }, [publishSetupObservation, scopedOperationsAvailable, props.target, accountContentProjection, adapterFields.length,
+        ordinaryFields, sortedGroups, visibleGroups, showsSectionStatus]);
     const commitOrdinaryField = React.useCallback((params: Readonly<{
         field: PluginProjectionEditableSettingField;
         model: ScopedPluginSettingsFieldModel;
@@ -1294,18 +1322,12 @@ function PluginDetailScopedSettingsSection(props: PluginDetailGenericSettingsSec
         props.scope.kind,
         props.target,
     ]);
-    const hasHydratedCurrentScope = scopedOperationsAvailable && props.target !== null && (
-        adapterFields.length === 0 || scopedSettings.state.ready
-    );
 
     if (sortedGroups.length === 0) {
         return null;
     }
 
-    if (
-        (!props.target || (props.scope.kind === 'account' && !scopedOperationsAvailable))
-        && !hasAccountSavedSecretFields
-    ) {
+    if (showsSectionStatus && unavailable) {
         return (
             <ItemGroup title={t('settingsPlugins.genericSettingsTitle')}>
                 <Item
@@ -1319,7 +1341,7 @@ function PluginDetailScopedSettingsSection(props: PluginDetailGenericSettingsSec
         );
     }
 
-    if (loading && !hasHydratedCurrentScope && !hasAccountSavedSecretFields) {
+    if (showsSectionStatus && loading) {
         return (
             <ItemGroup title={t('settingsPlugins.genericSettingsTitle')}>
                 <Item
@@ -1332,7 +1354,7 @@ function PluginDetailScopedSettingsSection(props: PluginDetailGenericSettingsSec
         );
     }
 
-    if (loadError && !hasHydratedCurrentScope && !hasAccountSavedSecretFields) {
+    if (showsSectionStatus && loadError) {
         return (
             <ItemGroup title={t('settingsPlugins.genericSettingsTitle')}>
                 <Item
@@ -1384,7 +1406,7 @@ function PluginDetailScopedSettingsSection(props: PluginDetailGenericSettingsSec
                     : 'settingsPlugins.genericSettingsFooter');
                 // An array, not a fragment: the section counts its rows for corners and dividers.
                 const rows = [
-                        groupIndex === 0 && loadError && !asDisclosures ? (
+                        !observeOnly && groupIndex === 0 && loadError && !asDisclosures ? (
                             <Item
                                 key="load-error"
                                 testID={`settings.plugins.detail.${props.pluginId}.settings.error`}
@@ -1397,6 +1419,8 @@ function PluginDetailScopedSettingsSection(props: PluginDetailGenericSettingsSec
                             />
                         ) : null,
                         ...fields.map((field) => {
+                            if (observeOnly && (!requiresPluginSettingSetup(field)
+                                || (!isAccountSavedSecretField(field) && !isDaemonCustodiedSecretField(field)))) return null;
                             const policy = evaluatePluginUiPolicy(
                                 { availability: field.availability },
                                 { ...props.policyContext, data: values },
@@ -1414,6 +1438,7 @@ function PluginDetailScopedSettingsSection(props: PluginDetailGenericSettingsSec
                                         enabled={policy.enabled}
                                         lifetimeIdentity={secretLifetimeIdentity}
                                         onSetupObservation={props.onSetupObservation}
+                                        observeOnly={observeOnly}
                                     />
                                 );
                             }
@@ -1434,6 +1459,7 @@ function PluginDetailScopedSettingsSection(props: PluginDetailGenericSettingsSec
                                             isDaemonTargetCurrent={props.isDaemonTargetCurrent}
                                             lifetimeIdentity={secretLifetimeIdentity}
                                             onSetupObservation={props.onSetupObservation}
+                                            observeOnly={observeOnly}
                                         />
                                     );
                                 }
@@ -1449,6 +1475,7 @@ function PluginDetailScopedSettingsSection(props: PluginDetailGenericSettingsSec
                                         isDaemonTargetCurrent={props.isDaemonTargetCurrent}
                                         lifetimeIdentity={secretLifetimeIdentity}
                                         onSetupObservation={props.onSetupObservation}
+                                        observeOnly={observeOnly}
                                     />
                                 );
                             }
@@ -1527,6 +1554,7 @@ function PluginDetailScopedSettingsSection(props: PluginDetailGenericSettingsSec
                             );
                         }),
                 ];
+                if (observeOnly) return <React.Fragment key={group.id}>{rows}</React.Fragment>;
                 if (asDisclosures) {
                     const changed = countChangedSettings(fields, values, props.perActiveServerIdentityId ?? null);
                     return (
@@ -1555,6 +1583,7 @@ function PluginDetailScopedSettingsSection(props: PluginDetailGenericSettingsSec
                     </ItemGroup>
                 );
             });
+    if (observeOnly) return <>{sectionElements}</>;
     return (
         <>
             {props.scope.kind === 'account' ? props.renderAccountContent?.(accountContentProjection) : null}

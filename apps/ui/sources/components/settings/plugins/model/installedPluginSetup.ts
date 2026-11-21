@@ -7,18 +7,11 @@ import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 
 import { readMcpPluginItemMetadataFromProjectionV1 } from '@happier-dev/protocol/mcp/servers/pluginItemsV1';
 import { mcpPluginItemIdV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
 
-import type { PluginProjectionEditableSettingField } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import { findMcpSignInGrant } from '@/components/settings/mcpServers/signIn/mcpSignInGrantView';
 import { connectedAccountPurposeServiceTargets } from '@/sync/domains/connectedServices/connectedAccountPurposeTargetChoices';
 import { isConnectedAccountSignedOut } from '@/sync/domains/connectedServices/parseDisplayableCredentialHealthStatus';
 
-type SettingsSetupField = Pick<PluginProjectionEditableSettingField, 'key' | 'secretCustody' | 'title' | 'defaultValue' | 'required'>;
-
-/** Presence-only facts from the Account or Machine settings record already open for this plugin. */
-export type PluginSettingSetupObservation = Readonly<{
-    field: SettingsSetupField;
-    status: 'missing' | 'configured' | 'unknown';
-}>;
+import { requiresPluginSettingSetup, type PluginSettingSetupObservation, type SettingsSetupField } from './pluginSettingSetupObservation';
 
 type SetupStepDetails =
     /** `title` is the plugin's projected display text (resolve with the plugin text resolver); null when undeclared. */
@@ -37,6 +30,7 @@ export type InstalledPluginSetup = Readonly<{
     rows: readonly InstalledPluginSetupRow[];
     steps: readonly InstalledPluginSetupStep[];
     progress: Readonly<{ done: number; total: number }>;
+    settingsPending: boolean;
 }>;
 
 /** Project settled observations only. Completed and skipped steps count toward progress. */
@@ -47,7 +41,7 @@ export function projectInstalledPluginSetup(input: Readonly<{
         profiles: readonly QualifiedConnectedAccountProfileV4[];
         groups: readonly QualifiedConnectedAccountGroupV4[];
     }> | null;
-    settings: readonly PluginSettingSetupObservation[];
+    settings: readonly PluginSettingSetupObservation[] | null;
     machineId: string | null;
     machineSetup: MachineSetupObservationV1 | null;
     skippedStepIds?: readonly string[];
@@ -91,8 +85,13 @@ export function projectInstalledPluginSetup(input: Readonly<{
         }
     }
 
-    for (const { field, status } of input.settings) {
-        if (field.required !== true || field.defaultValue !== undefined || status === 'unknown') continue;
+    let settingsPending = input.settings === null;
+    for (const { field, status } of input.settings ?? []) {
+        if (!requiresPluginSettingSetup(field)) continue;
+        if (status === 'unknown') {
+            settingsPending = true;
+            continue;
+        }
         const kind = field.secretCustody === null ? 'setting' : 'secret';
         addStep({ kind, fieldId: field.key, title: field.title },
             [kind, field.key, field.secretCustody, field.secretCustody === 'daemon' ? input.machineId : null],
@@ -115,5 +114,5 @@ export function projectInstalledPluginSetup(input: Readonly<{
             ['machineRecipe', input.machineId, ref.recipeId, ref.revision], satisfiedRecipes.get(ref.recipeId) === ref.revision);
     }
 
-    return { rows, steps, progress: { done: steps.length - rows.length, total: steps.length } };
+    return { rows, steps, progress: { done: steps.length - rows.length, total: steps.length }, settingsPending };
 }

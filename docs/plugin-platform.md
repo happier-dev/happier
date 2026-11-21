@@ -377,10 +377,11 @@ guard. This adds no plugin checkpoint API, native-window SDK or second destinati
 registry. See [SDK evolution](compatibility.md#sdk-protocol-evolution).
 
 Installed-plugin setup uses published facts from Connected Services, MCP,
-Plugin Settings and Machine Setup. A Settings field with `required: true`
-can appear when the owner's presence projection reports it missing. Defaults
-satisfy ordinary fields. The setup list uses presence only for secret fields
-and opens each setting's existing editor.
+Plugin Settings and Machine Setup. The installed listing and detail view use
+the same Settings presence projection. A required field appears when its
+owner reports it missing. Defaults satisfy ordinary fields. An unresolved
+Settings read cannot settle setup. The setup list uses presence only for
+secret fields and opens each setting's existing editor.
 
 ## Built-in plugin enablement (0.3 development source)
 
@@ -402,6 +403,12 @@ gets a restricted plugin only when its folder resolves to an accepted Project
 on that plugin's list at launch. New Session explains a restriction where
 the plugin is offered. Automatic Project assignment still happens at its
 existing boundary, and the Session keeps the decision made at launch.
+
+The Store picker and agents submit a Project scope edit through the Account
+administration Action `account.plugins.availability.intent.set`. The edit
+carries its original intent revision. The Action reads the remaining fields
+from that revision and forwards the edit to the existing Availability CAS.
+The Store picker shows refused edits inline.
 
 A failed Account enablement census withdraws new admission with
 `plugin_account_census_failed`, preserving the code-only failure cause, phase,

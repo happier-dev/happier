@@ -2,6 +2,7 @@
 export const autoApprovedNames: readonly string[] = Object.freeze([
   "account_api_tokens_list",
   "account_home_continuation_invoke",
+  "account_plugins_availability_intent_set",
   "account_security_get",
   "account_sign_out",
   "action_execute",

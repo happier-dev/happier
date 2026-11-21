@@ -20,10 +20,8 @@ import { StoreAddToPresetButton, type StorePresetChoice } from '@/components/sto
 import type { StorePresetDoorItem } from '@/components/store/presets/storePresetDoor';
 import { t } from '@/text';
 
-import type {
-  InstalledPluginSetupRow,
-  PluginSettingSetupObservation,
-} from '../model/installedPluginSetup';
+import type { InstalledPluginSetupRow } from '../model/installedPluginSetup';
+import type { PluginSettingSetupObservation } from '../model/pluginSettingSetupObservation';
 import type { PluginsSurfaceHost } from '../model/pluginsSurfaceRoutes';
 import { useInstalledPluginSetup } from '../model/useInstalledPluginSetup';
 
@@ -97,7 +95,7 @@ export function PluginSetupSection(
     projection: PluginProjectionV2 | null;
     machineId: string | null;
     serverId: string | null;
-    settings?: readonly PluginSettingSetupObservation[];
+    settings: readonly PluginSettingSetupObservation[] | null;
     /**
      * A recipe's second outcome (lab ideas-1118-platform round 4, "Use on a machine"): add it to a preset's Setup.
      * The host swaps in the one preset editor (`StorePresetEditorHandoff`), whose Save owns the write.
@@ -108,14 +106,14 @@ export function PluginSetupSection(
 ) {
   const { theme } = useUnistyles();
   const localizePluginText = useProjectedPluginLocalizedTextResolver();
-  const { rows, steps, progress, open, skip, recipeScope } = useInstalledPluginSetup({
+  const { rows, steps, progress, settingsPending, open, skip, recipeScope } = useInstalledPluginSetup({
     pluginId: props.pluginId,
     host: props.host,
     installed: true,
     projection: props.projection,
     machineId: props.machineId,
     serverId: props.serverId,
-    ...(props.settings ? { settings: props.settings } : {}),
+    settings: props.settings,
   });
   const localize = React.useCallback(
     (value: unknown) =>
@@ -140,6 +138,7 @@ export function PluginSetupSection(
   const testID = props.testID ?? `settings.plugins.detail.${props.pluginId}.setup`;
   const settled = steps.filter((step) => step.status !== 'pending');
   if (rows.length === 0) {
+    if (settingsPending) return null;
     return (
       <View testID={`${testID}.complete`} style={styles.complete}>
         <Icon name="check-circle" color={theme.colors.state.success.foreground} />

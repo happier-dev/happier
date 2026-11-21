@@ -13,6 +13,13 @@ Settings fields should be declared in the manifest through the single
 plugin-local settings or `{ kind: 'agent', agent: '<agent-ref>' }` for an
 Agent contribution.
 
+In unreleased 0.3 development, mark a field with `required: true` to list
+a missing value in **Finish setting up** on the installed plugin's listing
+and details. A declared default resolves an ordinary field. A required
+secret is complete when the existing secret owner reports that a value is
+present. The checklist receives presence only and waits for the declared
+Account or daemon scope to report it.
+
 ## Runtime access
 
 Plugin code can:

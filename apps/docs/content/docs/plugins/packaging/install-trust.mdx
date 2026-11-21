@@ -51,6 +51,12 @@ the exact listing, where **Install & Trust** starts the installation. Browse ope
 app-host discovery. Appearing in the
 Account's installed list does not mean a plugin is enabled, trusted or executable.
 
+In 0.3 development, installed plugin details include **Who can use it**.
+Set an Account plugin to all Projects or select specific Projects. A new
+Session in another Project shows the plugin as limited to other Projects.
+The Account admin Action `account.plugins.availability.intent.set` edits
+this choice against the current intent revision.
+
 Use **Add → Git repository** to install directly from an HTTPS Git URL and an
 optional folder within the repository. In 0.3 development source, Happier uses
 the latest stable release on GitHub or the

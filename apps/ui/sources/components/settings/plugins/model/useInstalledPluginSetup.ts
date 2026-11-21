@@ -10,11 +10,40 @@ import { usePersistentUiStateValue } from '@/sync/domains/state/persistentUiStat
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { useActiveServerAccountScopeLifetime, useMachineField, useProfile } from '@/sync/store/hooks';
 
-import { projectInstalledPluginSetup, type InstalledPluginSetupRow, type PluginSettingSetupObservation } from './installedPluginSetup';
+import type { PluginProjectionEntry } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
+import type { PluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/reader';
+
+import { projectInstalledPluginSetup, type InstalledPluginSetupRow } from './installedPluginSetup';
+import type { PluginSettingSetupObservation, PublishPluginSettingSetup } from './pluginSettingSetupObservation';
 import { installedPluginSetupDismissals, skipInstalledPluginSetupStep } from './installedPluginSetupDismissals';
 import { buildPluginDetailRoute, type PluginsSurfaceHost } from './pluginsSurfaceRoutes';
 
-const NO_SETTING_OBSERVATIONS: readonly PluginSettingSetupObservation[] = [];
+/** The daemon declaration wins; the Account declaration is the same fallback in listing and detail. */
+export function usePluginSetupSettingsDeclaration(pluginId: string, projection: PluginProjectionEntry | null,
+    reader: PluginAccountAvailabilityReader | null) {
+    return React.useMemo(() => {
+        if (projection || !pluginId || !reader) return null;
+        const admission = reader.readCurrentSettingsDeclaration({ pluginId });
+        return admission.kind === 'available' ? admission.declaration : null;
+    }, [pluginId, projection, reader]);
+}
+
+/** Collect presence-only publications for the mounted Settings sources. Cleanup withdraws retired facts. */
+export function usePluginSettingSetupObservations() {
+    const [publications, setPublications] = React.useState<readonly (readonly PluginSettingSetupObservation[])[]>([]);
+    const publish = React.useCallback<PublishPluginSettingSetup>((observations) => {
+        setPublications(current => [...current, observations]);
+        return () => setPublications(current => current.filter(entry => entry !== observations));
+    }, []);
+    const settings = React.useMemo(() => {
+        const fields = new Map<string, PluginSettingSetupObservation>();
+        for (const publication of publications) {
+            for (const observation of publication) fields.set(observation.field.key, observation);
+        }
+        return [...fields.values()];
+    }, [publications]);
+    return { settings, publish };
+}
 
 /** Shared view model for an installed listing and detail. Opening a row invokes its owning surface. */
 export function useInstalledPluginSetup(input: Readonly<{
@@ -24,9 +53,9 @@ export function useInstalledPluginSetup(input: Readonly<{
     projection: PluginProjectionV2 | null;
     machineId: string | null;
     serverId: string | null;
-    settings?: readonly PluginSettingSetupObservation[];
+    settings: readonly PluginSettingSetupObservation[] | null;
 }>) {
-    const { installed, pluginId, projection, machineId, serverId, host, settings = NO_SETTING_OBSERVATIONS } = input;
+    const { installed, pluginId, projection, machineId, serverId, host, settings } = input;
     const router = useRouter();
     const lifetime = useActiveServerAccountScopeLifetime();
     const canUseAccountFacts = installed && lifetime !== null && (serverId === null
@@ -43,7 +72,7 @@ export function useInstalledPluginSetup(input: Readonly<{
     const groups = profileCurrent ? profile.groups : null;
     const machineSetup = useMachineField(machineId ?? '', 'daemonState', 'setup', {
         enabled: installed && machineId !== null && serverId !== null, serverId,
-    });
+    }) ?? null;
     const dismissalKey = canUseAccountFacts ? serverAccountScopedResourceKey(lifetime.scope, pluginId) : null;
     const skippedStepIds = usePersistentUiStateValue(installedPluginSetupDismissals, dismissalKey);
     const setup = React.useMemo(() => installed ? projectInstalledPluginSetup({
@@ -54,7 +83,7 @@ export function useInstalledPluginSetup(input: Readonly<{
         machineId,
         machineSetup,
         skippedStepIds,
-    }) : { rows: [], steps: [], progress: { done: 0, total: 0 } }, [
+    }) : { rows: [], steps: [], progress: { done: 0, total: 0 }, settingsPending: false }, [
         installed, groups, profiles, pluginId, projection, settings, machineId, machineSetup, skippedStepIds,
     ]);
     const skip = React.useCallback((row: InstalledPluginSetupRow) => {

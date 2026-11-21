@@ -31,6 +31,16 @@ export type PluginAccountAdministrationActionInputById = {
     } & {
         clientId?: string | undefined;
     };
+    readonly "account.plugins.availability.intent.set": {
+        pluginId: string;
+        projectScope: null | {
+            kind: 'only';
+            projectKeys: string[];
+        };
+        expectedRevision: null | string;
+    } & {
+        clientId?: string | undefined;
+    };
 };
 export type PluginAccountAdministrationActionResultById = {
     readonly "plugins.account.release.select": {
@@ -72,5 +82,8 @@ export type PluginAccountAdministrationActionResultById = {
     };
     readonly "plugins.account.cache.clear": {
         kind: 'unavailable' | 'updated';
+    };
+    readonly "account.plugins.availability.intent.set": {
+        kind: 'conflict' | 'rejected' | 'unavailable' | 'updated';
     };
 };

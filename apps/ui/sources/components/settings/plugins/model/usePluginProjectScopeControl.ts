@@ -1,12 +1,17 @@
+import { PLUGIN_PROJECT_SCOPE_SET_ACTION_ID } from '@happier-dev/protocol/actions/pluginAccountAdministrationActionIds';
+import { PluginAccountAdministrationActionOutputSchemas } from '@happier-dev/protocol/actions/pluginAccountAdministrationActionFamily';
+import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { PluginProjectScopeV1 } from '@happier-dev/protocol/plugins/availability/v1';
+
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 
 import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
 import { useActivePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
-import { setActivePluginAccountAvailabilityIntent } from '@/sync/api/plugins/availability/setActivePluginAccountAvailabilityIntent';
 
 /** Account settings can render “All projects” or “Only in these projects” from this exact intent. */
 export function usePluginProjectScopeControl(pluginId: string) {
     const lifetime = useActiveServerAccountScopeLifetime();
+    const execution = useMountedActionExecution(lifetime?.scope);
     const reader = useActivePluginAccountAvailabilityReader(pluginId);
     const intent = reader?.readCurrentAccountIntent(pluginId);
     if (!lifetime || intent === undefined) return { kind: 'unavailable' } as const;
@@ -21,16 +26,17 @@ export function usePluginProjectScopeControl(pluginId: string) {
         projectScope,
         summary,
         async setProjectScope(projectScope: PluginProjectScopeV1 | null) {
-            if (!lifetime.isCurrent()) return { kind: 'unavailable', code: 'account_scope_changed' } as const;
-            return await setActivePluginAccountAvailabilityIntent({
-                pluginId,
-                projectScope,
-                enabled: intent?.enabled ?? true,
-                desiredVersion: intent?.desiredVersion ?? null,
-                offlineUiHosting: intent?.offlineUiHosting ?? 'disabled',
-                writableCollections: intent?.writableCollections ?? [],
-                expectedRevision: intent?.revision ?? null,
-            });
+            try {
+                const result = await execution.executeForPresentation(PLUGIN_PROJECT_SCOPE_SET_ACTION_ID, {
+                    pluginId, projectScope, expectedRevision: intent?.revision ?? null,
+                });
+                if (result === null) return null;
+                if (!result.ok) return isActionApprovalDeclinedErrorCode(result.errorCode)
+                    ? null : { kind: 'rejected' } as const;
+                return PluginAccountAdministrationActionOutputSchemas[PLUGIN_PROJECT_SCOPE_SET_ACTION_ID].parse(result.result);
+            } catch {
+                return { kind: 'unavailable' } as const;
+            }
         },
     } as const;
 }

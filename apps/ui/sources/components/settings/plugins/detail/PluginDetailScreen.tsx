@@ -48,7 +48,7 @@ import { PluginProjectScopeItem } from './PluginProjectScopeItem';
 import { PluginSetupSection } from './PluginSetupSection';
 import { StorePresetEditorHandoff, type StorePresetChoice } from '@/components/store/presets/StoreAddToPreset';
 import type { StorePresetDoorItem } from '@/components/store/presets/storePresetDoor';
-import type { PluginSettingSetupObservation } from '../model/installedPluginSetup';
+import { usePluginSettingSetupObservations, usePluginSetupSettingsDeclaration } from '../model/useInstalledPluginSetup';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { PluginUpdatePolicySection } from './PluginUpdatePolicySection';
 import { PluginRoutineOperationSettlementRow } from '../PluginMarketplaceSections';
@@ -82,13 +82,7 @@ function PluginDetailCurrentContent(props: Readonly<{
     });
     const { installed, state } = props;
     const host = usePluginsSurfaceHost();
-    // Required Settings presence, published by the mounted Settings owner below; "Finish setting up" reads it.
-    const [setupSettings, setSetupSettings] = React.useState<readonly PluginSettingSetupObservation[]>(NO_SETUP_SETTINGS);
-    const onSetupObservation = React.useCallback((observation: PluginSettingSetupObservation) => setSetupSettings((current) => {
-        const index = current.findIndex((entry) => entry.field.key === observation.field.key);
-        if (index >= 0 && current[index]!.status === observation.status) return current;
-        return index >= 0 ? current.map((entry, at) => at === index ? observation : entry) : [...current, observation];
-    }), []);
+    const setupSettings = usePluginSettingSetupObservations();
     // A recipe added to a preset's Setup opens the one preset editor here, where it was chosen; its Save writes.
     const [presetHandoff, setPresetHandoff] = React.useState<Readonly<{ choice: StorePresetChoice; item: StorePresetDoorItem }> | null>(null);
     const closePresetHandoff = React.useCallback(() => setPresetHandoff(null), []);
@@ -178,7 +172,7 @@ function PluginDetailCurrentContent(props: Readonly<{
                     projection={state.pluginProjectionV2}
                     machineId={state.executionMachineId}
                     serverId={state.executionServerId}
-                    settings={setupSettings}
+                    settings={props.projection || props.accountSettingsDeclaration ? setupSettings.settings : null}
                     onAddToPreset={(choice, item) => setPresetHandoff({ choice, item })}
                 />
             ) : null}
@@ -206,7 +200,7 @@ function PluginDetailCurrentContent(props: Readonly<{
                 perActiveServerIdentityId={state.selectedServerIdentityId}
                 daemonOperationsAvailable={state.daemonOperationsAvailable}
                 isDaemonTargetCurrent={state.isDaemonSettingsTargetCurrent}
-                onSetupObservation={onSetupObservation}
+                onSetupObservation={installed ? setupSettings.publish : undefined}
             />
             <PluginMachineExecutionOriginSelectorView
                 selection={selection}
@@ -281,8 +275,6 @@ function PluginDetailCurrentContent(props: Readonly<{
     );
 }
 
-const NO_SETUP_SETTINGS: readonly PluginSettingSetupObservation[] = Object.freeze([]);
-
 /** A plugin's own page (`page`), or its detail beside the Plugins page (`pane`). */
 export type PluginDetailPresentation = 'page' | 'pane';
 
@@ -317,11 +309,7 @@ export const PluginDetailView = React.memo(function PluginDetailView(props: Read
     const accountAvailability = useActivePluginAccountAvailabilityReader();
     const installed = state.installedPlugins.find(entry => entry.pluginId === props.pluginId) ?? null;
     const projection = props.pluginId ? (state.pluginProjectionById[props.pluginId] ?? null) : null;
-    const accountSettingsDeclaration = React.useMemo(() => {
-        if (projection || !props.pluginId || !accountAvailability) return null;
-        const admission = accountAvailability.readCurrentSettingsDeclaration({ pluginId: props.pluginId });
-        return admission.kind === 'available' ? admission.declaration : null;
-    }, [accountAvailability, projection, props.pluginId]);
+    const accountSettingsDeclaration = usePluginSetupSettingsDeclaration(props.pluginId, projection, accountAvailability);
     const accountRecoveryPluginId = React.useMemo(() => {
         if (installed || projection || !props.pluginId) return null;
         if (!accountAvailability) return null;

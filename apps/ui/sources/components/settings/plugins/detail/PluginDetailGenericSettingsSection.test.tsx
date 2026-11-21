@@ -130,6 +130,7 @@ async function publishSettingsDeclaration(projection: PluginProjectionEntry | nu
                     : field.defaultValue !== undefined || field.defaultBooleanValue !== undefined
                         ? { default: field.defaultValue ?? field.defaultBooleanValue } : {}),
                 ...(field.presentation ? { presentation: field.presentation } : {}),
+                ...(field.required ? { required: true } : {}),
                 ...(field.availability ? { availability: field.availability } : {}),
                 ...(field.analytics ? { analytics: field.analytics } : {}),
             })), ...group.fields.flatMap((field): PluginSettingFieldV2[] => {
@@ -846,6 +847,8 @@ function hasPressableTestIdAncestor(
 // Initialize the real screen after the declared platform boundaries during
 // collection, outside individual interaction-test deadlines.
 await import('./PluginDetailGenericSettingsSection');
+const { PluginListingView } = await import('../listing/PluginListingScreen');
+const { usePluginSettingsScreenState } = await import('../model/usePluginSettingsScreenState');
 
 describe('PluginDetailGenericSettingsSection', () => {
     beforeEach(async () => {
@@ -893,6 +896,40 @@ describe('PluginDetailGenericSettingsSection', () => {
         const { screen } = await renderSection(createProjection(1, []));
         expect(screen.findByTestId(`settings.plugins.detail.${PLUGIN_ID}.settings.${GROUP_ID}.empty`)).toBeNull();
         expect(screen.findAll((node) => node.props?.title === 'Acme hook settings')).toHaveLength(0);
+    });
+
+    it('shows an unmet required setting in an installed listing', async () => {
+        const projection = createProjection(1, [{ ...SETTINGS_FIELDS[0]!, required: true }]);
+        await publishSettingsDeclaration(projection, true);
+        machinePluginSettingsGetMock.mockResolvedValue(settingsResult({}, []));
+        const installed = {
+            pluginId: PLUGIN_ID, title: 'Acme hooks', description: null, version: '1.0.0', enabled: true,
+            source: { kind: 'localPath', locator: '/fixture/plugin' },
+            install: { mode: 'managed', manifestVersion: '2' }, compatibility: { status: 'ready', diagnostics: [] }, diagnostics: [],
+        };
+        function Listing() {
+            const state = usePluginSettingsScreenState({ focused: false });
+            return <PluginListingView sourceId="marketplace:curated" pluginId={PLUGIN_ID} presentation="pane" state={{
+                ...state,
+                accountServerIdentityId: 'srv_settings', selectedServerIdentityId: 'srv_settings',
+                executionServerIdentityId: 'srv_settings', executionServerId: account.serverId, executionMachineId: 'machine-1',
+                daemonOperationsAvailable: true, isDaemonSettingsTargetCurrent: () => true,
+                installedPluginById: new Map([[PLUGIN_ID, installed]]),
+                pluginProjectionV2: daemonProjection, pluginProjectionById: { [PLUGIN_ID]: projection },
+                discoverEntries: [{
+                    id: PLUGIN_ID, sourceId: 'marketplace:curated', sourceKind: 'curated', sourceTitle: 'Curated Marketplace',
+                    reviewStatus: 'approved', updatePolicy: 'allowed', publisher: { id: 'acme', displayName: 'Acme' },
+                    categories: [], contributions: ['settings'], links: {}, executableRealms: ['daemon'], platforms: [],
+                    title: installed.title, description: '', version: installed.version, packageName: '@acme/hooks',
+                    installable: true, registrySelectionOrigin: null,
+                }],
+            }} />;
+        }
+        const screen = await renderScreen(<Listing />);
+        expect(screen.findByTestId('settings.plugins.listing.manage')).not.toBeNull();
+        await vi.waitFor(() => expect(screen.findByTestId('settings.plugins.listing.setup.progress')).not.toBeNull());
+        expect(screen.findAll(node => node.props.title === 'Endpoint URL').length).toBeGreaterThan(0);
+        expect(screen.findByTestId('settings.plugins.listing.setup.complete')).toBeNull();
     });
 
     it('summarises each section as a closed disclosure on a page about something else, and opens it on a save failure', async () => {

@@ -118,7 +118,7 @@ describe('installed plugin setup', () => {
             ...input, connections: null, machineSetup: null,
             settings: settings.map(entry => ({ ...entry, status: 'unknown' })),
         });
-        expect(unresolved.progress).toEqual({ done: 0, total: 1 });
+        expect(unresolved).toMatchObject({ progress: { done: 0, total: 1 }, settingsPending: true });
         expect(unresolved.rows.map(row => row.kind)).toEqual(['machineRecipe']);
 
         const observeRecipe = (revision: string) => projectInstalledPluginSetup({

@@ -1,6 +1,8 @@
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { PLUGIN_PROJECT_SCOPE_SET_ACTION_ID } from '@happier-dev/protocol/actions/pluginAccountAdministrationActionIds';
 import { PluginAccountAdministrationActionInputSchemas as inputs } from '@happier-dev/protocol/actions/pluginAccountAdministrationActionFamily';
+import { createActivePluginAccountAvailabilityIntentSetter } from '@/sync/api/plugins/availability/setActivePluginAccountAvailabilityIntent';
 import { createPluginAccountReleaseAdministration } from '@/components/settings/plugins/pluginAccountReleaseSelectionController';
 import { loadDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
@@ -29,11 +31,29 @@ export function createPluginAccountAdministrationActionDeps(account: Pick<LazyAc
             : { kind: 'unavailable' as const };
         if (!scope || !current()) return unavailable();
         const lifetime = { ...account.accountLifetime, isCurrent: current };
+        const reader = readPluginAccountAvailability(scope);
+        if (actionId === PLUGIN_PROJECT_SCOPE_SET_ACTION_ID) {
+            const edit = inputs[actionId].parse(input);
+            const intent = reader.readCurrentAccountIntent(edit.pluginId);
+            // The unedited fields must come from the same revision as the submitted edit.
+            if (intent === undefined || (intent?.revision ?? null) !== edit.expectedRevision) {
+                return { kind: 'unavailable' as const };
+            }
+            const setter = createActivePluginAccountAvailabilityIntentSetter({ captureLifetime: () => lifetime });
+            // Preserve the unedited fields and forward the revision of the editor's original selection to the CAS.
+            const result = await setter.set({
+                ...edit,
+                enabled: intent?.enabled ?? true,
+                desiredVersion: intent?.desiredVersion ?? null,
+                offlineUiHosting: intent?.offlineUiHosting ?? 'disabled',
+                writableCollections: intent?.writableCollections ?? [],
+            });
+            return { kind: result.kind === 'preparationRequired' ? 'rejected' as const : result.kind };
+        }
         const controller = createPluginAccountReleaseAdministration({ captureLifetime: () => lifetime });
         const retire = () => controller.retire();
         context.signal?.addEventListener('abort', retire, { once: true });
         try {
-            const reader = readPluginAccountAvailability(scope);
             if (!current()) return unavailable();
             switch (actionId) {
                 case 'plugins.account.release.select': {

@@ -24,12 +24,13 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { useActivePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
 
 import { catalogReviewStatusLabel, formatCatalogEntryVersion } from '../model/pluginMarketplaceModel';
 import { usePluginSettingsScreenState, type PluginSettingsScreenState } from '../model/usePluginSettingsScreenState';
 import { buildPluginDetailRoute, buildPluginsHomeRoute } from '../model/pluginsSurfaceRoutes';
 import { usePluginsSurfaceHost } from '../model/usePluginsSurfaceHost';
-import type { PluginListingRouteParams } from '../model/pluginsSurfaceRoutes';
+import type { PluginListingRouteParams, PluginsSurfaceHost } from '../model/pluginsSurfaceRoutes';
 import { PluginMark } from '../PluginMark';
 import { PluginRoutineOperationSettlementRow } from '../PluginMarketplaceSections';
 import { PluginReadOnlySnapshotNotice } from '../PluginReadOnlySnapshotNotice';
@@ -40,6 +41,8 @@ import { PluginProjectScopeItem } from '../detail/PluginProjectScopeItem';
 import { PluginSetupSection } from '../detail/PluginSetupSection';
 import { StorePresetEditorHandoff, type StorePresetChoice } from '@/components/store/presets/StoreAddToPreset';
 import type { StorePresetDoorItem } from '@/components/store/presets/storePresetDoor';
+import { PluginDetailGenericSettingsSection } from '../detail/PluginDetailGenericSettingsSection';
+import { usePluginSettingSetupObservations, usePluginSetupSettingsDeclaration } from '../model/useInstalledPluginSetup';
 
 /**
  * A marketplace listing before install (lab PL4): identity, what it is for and what it adds; beside
@@ -159,16 +162,8 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
     // way into its full management.
     const installedSetup = entry && installed ? (
         <>
-            <PluginSetupSection
-                pluginId={props.pluginId}
-                title={title}
-                host={host}
-                projection={state.pluginProjectionV2}
-                machineId={state.executionMachineId}
-                serverId={state.executionServerId}
-                onAddToPreset={(choice, item) => setPresetHandoff({ choice, item })}
-                testID="settings.plugins.listing.setup"
-            />
+            <InstalledPluginListingSetup key={props.pluginId} pluginId={props.pluginId} title={title} host={host} state={state}
+                onAddToPreset={(choice, item) => setPresetHandoff({ choice, item })} />
             <ItemGroup>
                 <PluginProjectScopeItem pluginId={props.pluginId} testID="settings.plugins.listing.projectScope" />
                 <Item
@@ -296,6 +291,48 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
         </ItemList>
     );
 });
+
+function InstalledPluginListingSetup({ pluginId, title, host, state, onAddToPreset }: Readonly<{
+    pluginId: string;
+    title: string;
+    host: PluginsSurfaceHost;
+    state: PluginSettingsScreenState;
+    onAddToPreset: (choice: StorePresetChoice, item: StorePresetDoorItem) => void;
+}>) {
+    const projection = state.pluginProjectionById[pluginId] ?? null;
+    const reader = useActivePluginAccountAvailabilityReader(pluginId, { enabled: projection === null });
+    const declaration = usePluginSetupSettingsDeclaration(pluginId, projection, reader);
+    const setupSettings = usePluginSettingSetupObservations();
+    return (
+        <>
+            <PluginDetailGenericSettingsSection
+                pluginId={pluginId}
+                projection={projection}
+                accountSettingsDeclaration={declaration}
+                machineId={state.executionMachineId}
+                serverId={state.executionServerId}
+                accountServerIdentityId={state.accountServerIdentityId}
+                daemonServerIdentityId={state.executionServerIdentityId}
+                perActiveServerIdentityId={state.selectedServerIdentityId}
+                daemonOperationsAvailable={state.daemonOperationsAvailable}
+                isDaemonTargetCurrent={state.isDaemonSettingsTargetCurrent}
+                presentation={{ kind: 'setupPresence' }}
+                onSetupObservation={setupSettings.publish}
+            />
+            <PluginSetupSection
+                pluginId={pluginId}
+                title={title}
+                host={host}
+                projection={state.pluginProjectionV2}
+                machineId={state.executionMachineId}
+                serverId={state.executionServerId}
+                settings={projection || declaration ? setupSettings.settings : null}
+                onAddToPreset={onAddToPreset}
+                testID="settings.plugins.listing.setup"
+            />
+        </>
+    );
+}
 
 /**
  * Install, before the plugin is on the machine (lab ideas-1118-platform scene 2): one line saying where it goes and
