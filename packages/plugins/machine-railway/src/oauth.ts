@@ -9,8 +9,8 @@ import type {
   PluginConnectedAccountConfigurationFieldV2,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
-import { createRailwayProjectOperations } from './projectOperations.js';
-import { nativeFetch, RAILWAY_ORIGIN } from './railwayApi.js';
+import { createRailwayProjectOperations, RAILWAY_ORIGIN } from '@happier-dev/railway-api';
+import { nativeFetch } from './requestAuth.js';
 
 const tokenUrl = RAILWAY_ORIGIN + '/oauth/token';
 type Context = ConnectedAccountAuthenticationContext | ConnectedAccountReadContext;

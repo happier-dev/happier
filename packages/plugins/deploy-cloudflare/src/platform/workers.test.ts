@@ -8,7 +8,7 @@ const accountId = 'a'.repeat(32), workerTag = 'b'.repeat(32), triggerUuid = 'tri
 const selection = { accountId, workerTag, scriptName: 'app', triggerUuid,
   repository: { kind: 'github' as const, deployment: 'https://github.com', repository: 'example/app' } };
 const scope = { providerIdentity: { providerAccountId: accountId, providerResourceId: workerTag, providerEnvironment: 'script:app' },
-  providerEnvironment: { kind: 'script' as const, scriptName: 'app' } };
+  providerEnvironment: { kind: 'native' as const, selection: { kind: 'script' as const, scriptName: 'app' } } };
 const worker = { ...scope, triggerUuid, repositoryAccess: { status: 'ready' as const, repository: selection.repository } };
 const sourceIntent = { kind: 'repository' as const, projectSourceId: 'source', sourceRevision: 1, sha: 'f'.repeat(40),
   compose: { path: 'compose.yaml', profiles: [], services: [] } };
@@ -156,7 +156,7 @@ it('preserves canonical HTTP failures and distinguishes pre-send cancellation fr
 
 it('rejects native Preview scope and missing Git access before any production build request', async () => {
   const h = fixture([]);
-  expect(await entry.observeWorker({ ...observed, providerEnvironment: { kind: 'preview', scriptName: 'app', previewName: 'feature' } }, h.context))
+  expect(await entry.observeWorker({ ...observed, providerEnvironment: { kind: 'native', selection: { kind: 'preview', scriptName: 'app', previewName: 'feature' } } }, h.context))
     .toMatchObject({ code: 'unsupported_action' });
   expect(await entry.deployWorker({ sourceIntent }, { ...worker, repositoryAccess: { status: 'needsGitAccess', repository: selection.repository } }, h.context))
     .toMatchObject({ code: 'needsGitAccess' });

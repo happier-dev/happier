@@ -1,6 +1,7 @@
-import { definePlugin, DeploymentTargetPreparationBaseV1ProtocolSchema,
+import { definePlugin, deploymentTargetRoleWithNativeSelectorV1, DeploymentTargetPreparationBaseV1ProtocolSchema,
   DeploymentTargetRoleInputProtocolSchemasV1, DeploymentTargetRoleResultV1ProtocolSchema,
   type JsonValue } from '@happier-dev/plugin-sdk';
+import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { DeploymentTargetLinkProviderContentV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/v2';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
@@ -53,6 +54,10 @@ export function createDeploymentTargetsTestPlugin(pluginId: string, runInspect: 
   const service = DEPLOYMENT_TARGETS_TEST_SERVICE;
   const execution = DEPLOYMENT_TARGETS_TEST_EXECUTION;
   const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
+  const nativeSelectorSchema = { ...closed, properties: { kind: { type: 'string', const: 'production' } },
+    required: ['kind'] } satisfies PluginJsonSchemaV2;
+  const withSelector = (schema: PluginJsonSchemaV2) => deploymentTargetRoleWithNativeSelectorV1(schema, nativeSelectorSchema);
+  const linkResult = withSelector(DeploymentTargetLinkProviderContentV1ProtocolSchema.jsonSchema);
   // Dated display facts, as a platform plugin declares them (Protocol DeploymentTargetPlanV1); both platforms declare them.
   const declaredPlans = options.plans ? { description: 'Hosting for web apps', plans: [{ id: 'free', title: 'Free',
           price: { amount: '0', currency: 'USD', unit: 'month' }, facts: [{ label: 'Requests', value: '100,000 a day' }],
@@ -64,16 +69,16 @@ export function createDeploymentTargetsTestPlugin(pluginId: string, runInspect: 
     title: `Inspect ${name}`, execution, surfaces: ['ui', 'cli'], dangerLevel: 'safe', readOnly: true,
     hostAccess: [`${name}.manage`],
     connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: `${name}.manage` }],
-    inputSchema: { ...DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema,
+    inputSchema: withSelector({ ...DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema,
       properties: { ...DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema.properties, [name]: { type: 'string' },
-        repository: ScmHostingRepositoryIdentityV1ProtocolSchema.jsonSchema } },
-    resultSchema: options.reviewNotice ? { anyOf: [DeploymentTargetLinkProviderContentV1ProtocolSchema.jsonSchema,
+        repository: ScmHostingRepositoryIdentityV1ProtocolSchema.jsonSchema } }),
+    resultSchema: options.reviewNotice ? { anyOf: [linkResult,
       { type: 'object', additionalProperties: false, required: ['preparedNative'], properties: { preparedNative: {
         type: 'object', additionalProperties: false, required: ['reviewNotice'], properties: { reviewNotice: { type: 'string' },
           buildRuntime: { type: 'object', additionalProperties: false, required: ['name', 'version', 'pin', 'tool', 'toolVersion'],
             properties: { name: { type: 'string' }, version: { type: 'string' }, pin: { type: 'string' }, tool: { type: 'string' },
               toolVersion: { type: 'string' } } } } } } }] }
-      : DeploymentTargetLinkProviderContentV1ProtocolSchema.jsonSchema,
+      : linkResult,
     inputHints: { fields: [{ path: name, title: `${name} region`, widget: 'select', required: true,
       ...(options.emptyChoices ? { inputType: { pluginId, localId: 'region-choice' } }
         : { options: [{ value: `${name}-west`, label: `${name} West` }] }) },
@@ -91,7 +96,7 @@ export function createDeploymentTargetsTestPlugin(pluginId: string, runInspect: 
       return { credentialPrincipal,
         ...(options.reviewNotice ? { preparedNative: { projectName: String(admitted[name]), reviewNotice: options.reviewNotice } } : {}),
         providerIdentity: { providerAccountId: 'cloud', providerResourceId: String(admitted[name]), providerEnvironment: 'production' },
-        providerEnvironment: { kind: 'production' } };
+        providerEnvironment: { kind: 'native', selection: { kind: 'production' } } };
     },
   } as const);
   const lifecycle = { title: 'Deploy', execution, surfaces: ['plugin'], dangerLevel: 'writesLocal', readOnly: false,
@@ -107,12 +112,12 @@ export function createDeploymentTargetsTestPlugin(pluginId: string, runInspect: 
       scope: { serviceRefs: [service], operations: ['use'], materializationKinds: ['httpHeaders'] } } as const)), optional: [] },
     actions: { 'inspect-alpha': inspect('alpha'), 'inspect-beta': inspect('beta'),
       ...(options.create ? { 'create-beta': { ...inspect('beta'), title: 'Create Beta project', dangerLevel: 'writesRemote', readOnly: false,
-        confirmation: { title: 'Create this provider project?' }, inputSchema: DeploymentTargetRoleInputProtocolSchemasV1.create.jsonSchema,
-        resultSchema: DeploymentTargetLinkProviderContentV1ProtocolSchema.jsonSchema,
+        confirmation: { title: 'Create this provider project?' }, inputSchema: withSelector(DeploymentTargetRoleInputProtocolSchemasV1.create.jsonSchema),
+        resultSchema: linkResult,
         inputHints: { fields: [
           { path: 'providerAccountId', title: 'Account', widget: 'text', required: true },
           { path: 'resourceName', title: 'Project name', widget: 'text', required: true },
-          { path: 'providerEnvironment', title: 'Environment', widget: 'json', required: true, defaultValue: { kind: 'production' } },
+          { path: 'providerEnvironment', title: 'Environment', widget: 'json', required: true, defaultValue: { kind: 'native', selection: { kind: 'production' } } },
           { path: 'sourceMethod', title: 'Source method', widget: 'select', required: true, defaultValue: 'upload', options: [{ value: 'upload', label: 'Upload' }] },
         ] },
         run: async (input: JsonValue) => {
@@ -120,22 +125,22 @@ export function createDeploymentTargetsTestPlugin(pluginId: string, runInspect: 
             throw new Error('Expected admitted create input');
           return { credentialPrincipal: input.credentialPrincipal,
             providerIdentity: { providerAccountId: String(input.providerAccountId), providerResourceId: 'created-beta', providerEnvironment: 'production' },
-            providerEnvironment: { kind: 'production' } };
+            providerEnvironment: { kind: 'native', selection: { kind: 'production' } } };
         },
       } } as const : {}),
       link: { ...inspect('alpha'), title: 'Link', dangerLevel: 'writesLocal', readOnly: false, confirmation: { title: 'Link this target?' } },
-      deploy: { ...lifecycle, inputSchema: DeploymentTargetRoleInputProtocolSchemasV1.deploy.jsonSchema },
+      deploy: { ...lifecycle, inputSchema: withSelector(DeploymentTargetRoleInputProtocolSchemasV1.deploy.jsonSchema) },
       ...(options.upload ? { upload: { ...lifecycle, execution: { target: 'daemon' },
-        inputSchema: DeploymentTargetRoleInputProtocolSchemasV1.uploadDeploy.jsonSchema } } as const : {}),
-      observe: { ...lifecycle, dangerLevel: 'safe', readOnly: true, inputSchema: DeploymentTargetRoleInputProtocolSchemasV1.observe.jsonSchema },
+        inputSchema: withSelector(DeploymentTargetRoleInputProtocolSchemasV1.uploadDeploy.jsonSchema) } } as const : {}),
+      observe: { ...lifecycle, dangerLevel: 'safe', readOnly: true, inputSchema: withSelector(DeploymentTargetRoleInputProtocolSchemasV1.observe.jsonSchema) },
       ...(options.teardown ? { 'teardown-beta': { ...lifecycle, title: 'Delete the linked Beta project', dangerLevel: 'writesRemote',
         confirmation: { title: 'Delete this Beta project and its deployments?' },
-        inputSchema: DeploymentTargetRoleInputProtocolSchemasV1.teardown.jsonSchema } } as const : {}) },
+        inputSchema: withSelector(DeploymentTargetRoleInputProtocolSchemasV1.teardown.jsonSchema) } } as const : {}) },
     deploymentTargets: {
-      alpha: { role: 'runtime', title: 'Alpha runtime', targetKind: 'alpha', icon: 'server-outline', targetSchema: closed, linkSchema: closed,
+      alpha: { role: 'runtime', title: 'Alpha runtime', targetKind: 'alpha', icon: 'server-outline', targetSchema: closed, linkSchema: closed, nativeSelectorSchema,
         ...declaredPlans,
         actions: { inspect: 'inspect-alpha', link: 'link', deploy: 'deploy', observe: 'observe' } },
-      beta: { role: 'runtime', title: 'Beta runtime', targetKind: 'beta', icon: 'server-outline', targetSchema: closed, linkSchema: closed,
+      beta: { role: 'runtime', title: 'Beta runtime', targetKind: 'beta', icon: 'server-outline', targetSchema: closed, linkSchema: closed, nativeSelectorSchema,
         ...declaredPlans,
         actions: { inspect: 'inspect-beta', link: 'link', deploy: 'deploy', observe: 'observe',
           ...(options.create ? { create: 'create-beta' } : {}),

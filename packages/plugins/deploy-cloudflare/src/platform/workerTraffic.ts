@@ -6,6 +6,7 @@ import { request, failure, type DeploymentContext } from './deploymentHttp.js';
 import { uploadedWorkerReference, uploadedWorkerVersion, workerVersionHasBuild, withWorkerAddress } from './workers.js';
 import { isUploadedPreviewReference } from './previewDeploy.js';
 import { workersAddressCommon, workersIo, workersResult } from './workersActions.js';
+import { cloudflareRoleSchema, type CloudflareRoleInput, type WorkerSelection } from './targetSelection.js';
 
 type Outcome = DeploymentTargetRoleResultV1 | DeploymentTargetRoleFailureV1;
 
@@ -13,10 +14,10 @@ type Outcome = DeploymentTargetRoleResultV1 | DeploymentTargetRoleFailureV1;
  * Versions deployable=true ignores pagination; Builds' map keys are unspecified, so query each version separately.
  * Official Cloudflare versions.list, workers_builds.get_builds_by_version, deployments.create; inspected 2026-11-10.
  */
-async function changeTraffic(input: DeploymentTargetRollbackInputV1, context: DeploymentContext): Promise<Outcome> {
-  if (input.providerEnvironment.kind !== 'script') return failure('unsupported_action', 'admission');
+async function changeTraffic(input: CloudflareRoleInput<DeploymentTargetRollbackInputV1, WorkerSelection>, context: DeploymentContext): Promise<Outcome> {
+  if (input.providerEnvironment.selection.kind !== 'script') return failure('unsupported_action', 'admission');
   const accountId = input.providerIdentity.providerAccountId;
-  const scriptRoot = `/workers/scripts/${encodeURIComponent(input.providerEnvironment.scriptName)}`;
+  const scriptRoot = `/workers/scripts/${encodeURIComponent(input.providerEnvironment.selection.scriptName)}`;
   const priorId = input.priorDeployment.providerDeploymentId;
   if (isUploadedPreviewReference(priorId)) return failure('unsupported_action', 'admission');
   let versionId = uploadedWorkerVersion(priorId);
@@ -51,9 +52,9 @@ async function changeTraffic(input: DeploymentTargetRollbackInputV1, context: De
 
 export const workerTrafficActions = {
   'workers-promote': { ...workersAddressCommon, title: 'Promote the selected Cloudflare Worker version', dangerLevel: 'writesRemote', readOnly: false,
-    confirmation: { title: 'Send all traffic to this Cloudflare Worker version?' }, inputSchema: inputs.promote.jsonSchema, resultSchema: output.jsonSchema,
-    run: async (raw: JsonValue, context: PluginAccountActionContext) => workersResult(await changeTraffic(raw as unknown as DeploymentTargetRollbackInputV1, workersIo(context))) },
+    confirmation: { title: 'Send all traffic to this Cloudflare Worker version?' }, inputSchema: cloudflareRoleSchema(inputs.promote.jsonSchema, 'workers'), resultSchema: output.jsonSchema,
+    run: async (raw: JsonValue, context: PluginAccountActionContext) => workersResult(await changeTraffic(raw as unknown as CloudflareRoleInput<DeploymentTargetRollbackInputV1, WorkerSelection>, workersIo(context))) },
   'workers-rollback': { ...workersAddressCommon, title: 'Restore the selected Cloudflare Worker version', dangerLevel: 'writesRemote', readOnly: false,
-    confirmation: { title: 'Restore all traffic to this Cloudflare Worker version?' }, inputSchema: inputs.rollback.jsonSchema, resultSchema: output.jsonSchema,
-    run: async (raw: JsonValue, context: PluginAccountActionContext) => workersResult(await changeTraffic(raw as unknown as DeploymentTargetRollbackInputV1, workersIo(context))) },
+    confirmation: { title: 'Restore all traffic to this Cloudflare Worker version?' }, inputSchema: cloudflareRoleSchema(inputs.rollback.jsonSchema, 'workers'), resultSchema: output.jsonSchema,
+    run: async (raw: JsonValue, context: PluginAccountActionContext) => workersResult(await changeTraffic(raw as unknown as CloudflareRoleInput<DeploymentTargetRollbackInputV1, WorkerSelection>, workersIo(context))) },
 } as const;

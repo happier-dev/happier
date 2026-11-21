@@ -51,6 +51,13 @@ type ContentReference = Pick<ReturnType<typeof DeploymentDeployInputV1Schema.par
 type ScopeRequest = Readonly<{ environmentId: string; targetLinkId: string; context: ActionExecutorContext }>;
 type EnvironmentMetadata = Extract<DeploymentEnvironmentGetResultV1, { ok: true }>;
 type Role = Exclude<DeploymentTargetRuntimeRoleV1, 'create' | 'inspect' | 'link'>;
+type SourceScope = Readonly<{
+    common: Pick<ReturnType<typeof DeploymentTargetRoleCommonInputV1Schema.parse>, 'repositoryAccess'>;
+    credentials: StoredCredentials;
+    gitSource?: import('@happier-dev/deployments/contracts/v1').DeploymentRuntimeTargetV1['gitSource'];
+    gitProviders?: readonly string[];
+    assertCurrent(): Promise<void>;
+}>;
 type Host = Readonly<{
     credentials: StoredCredentials; serverId: string; serverHttpBaseUrl: string; machineId: string;
     resolveRequesterIdentity: import('../readDeploymentSourceIntentForHost').DeploymentSourceRequesterIdentityResolver;
@@ -102,13 +109,12 @@ export const deploymentTeardownDetachPreview = {
 
 export function createContributedDeploymentTargetForHost(host: Host) {
     async function withRole<T>(request: ScopeRequest, environment: DeploymentTargetRoleEnvironment, role: Role,
-        run: (scope: Readonly<{
+        run: (scope: SourceScope & Readonly<{
             common: ReturnType<typeof DeploymentTargetRoleCommonInputV1Schema.parse> & { targetLinkId: string; expectedTargetLinkRevision: number };
             action: Readonly<{ pluginId: string; localId: string }>;
+            generatedDomains: boolean;
             children: HostReviewedChildrenPlanV1['children'];
-            credentials: StoredCredentials;
             admit(input: unknown, phase: 'preparation' | 'execution', receipt?: DeploymentReceiptDetailV1): Promise<void>;
-            assertCurrent(): Promise<void>;
         }>) => Promise<T>): Promise<T> {
         if (!host.acquirePluginRuntimeRegistryLease) return refuse('unsupported_action');
         const lease = await host.acquirePluginRuntimeRegistryLease();
@@ -180,8 +186,23 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                 });
             };
             await assertCurrent();
-            return await run({ common, action, children, credentials, admit, assertCurrent });
+            return await run({ common, action, children, credentials, admit, assertCurrent,
+                generatedDomains: descriptor.generatedDomains === true,
+                gitSource: descriptor.gitSource, gitProviders: descriptor.sources?.gitIntegration });
         } finally { await lease.release(); }
+    }
+
+    function readSource(request: Parameters<typeof readDeploymentSourceIntentForHost>[0]['request'], scope: SourceScope,
+        sourceMethod: 'gitIntegration' | 'upload') {
+        const gitSource = sourceMethod === 'gitIntegration' ? scope.gitSource : undefined;
+        return readDeploymentSourceIntentForHost({ request: { ...request, requireWorkspace: sourceMethod === 'upload',
+            ...(gitSource ? { gitRepository: { access: scope.common.repositoryAccess } } : {}),
+            publishedGitProviders: gitSource?.guarantee === 'exactCommit' && gitSource.requiresPublishedCheckout
+                ? scope.gitProviders ?? [] : undefined },
+            host: { ...host, credentials: scope.credentials, assertAuthority: scope.assertCurrent,
+                resolveRepositoryRef: (repository, ref, context) => resolveScmHostingRefForHost({ repository, ref, context,
+                    acquireRuntimeRegistryLease: host.acquirePluginRuntimeRegistryLease,
+                    executeSourceReadAction: host.executeSourceReadAction }) } });
     }
 
     async function prepareCandidate(request: DaemonDeploymentCandidateRequest & { targetLinkId: string },
@@ -192,12 +213,8 @@ export function createContributedDeploymentTargetForHost(host: Host) {
         return withRole(request, environment, deployRole(sourceMethod), async scope => {
             await scope.admit(scope.common, 'preparation');
             const assertCurrent = scope.assertCurrent;
-            const source = await readDeploymentSourceIntentForHost({ request: { environment, context: request.context,
-                sourceIntent: request.sourceIntent, sha: request.sha, requireWorkspace: sourceMethod === 'upload' },
-                host: { ...host, credentials: scope.credentials, assertAuthority: assertCurrent,
-                    resolveRepositoryRef: (repository, ref, context) => resolveScmHostingRefForHost({ repository, ref, context,
-                        acquireRuntimeRegistryLease: host.acquirePluginRuntimeRegistryLease,
-                        executeSourceReadAction: host.executeSourceReadAction }) } });
+            const source = await readSource({ environment, context: request.context, sourceIntent: request.sourceIntent,
+                sha: request.sha }, scope, sourceMethod);
             const content = DeploymentPlatformContentV1Schema.parse({ sourceIntent: source.sourceIntent, sourceMethod,
                 machines: [], images: [], machineResults: [], steps: [], platform: {
                     targetLinkRevision: scope.common.expectedTargetLinkRevision,
@@ -218,7 +235,8 @@ export function createContributedDeploymentTargetForHost(host: Host) {
 
     async function prepareAction(request: Omit<DaemonDeploymentPreparationRequest, 'input'>
         & { input: Exclude<DeploymentReceiptDispatchV1, { actionId: 'deployments.teardown' }>['input'] },
-        candidate: DeploymentPlatformContentV1, environment: DeploymentEnvironmentDetailV1): Promise<DaemonDeploymentPreparationResult> {
+        candidate: DeploymentPlatformContentV1, environment: DeploymentEnvironmentDetailV1,
+        sourceAdmitted: boolean): Promise<DaemonDeploymentPreparationResult> {
         if ('onFailure' in request.input && request.input.onFailure !== undefined) return failure('unsupported_action');
         const role = request.actionId === 'deployments.deploy' ? deployRole(candidate.sourceMethod)
             : request.actionId === 'deployments.rollback' ? 'rollback' : 'promote';
@@ -230,16 +248,18 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                 || !sameStrictJsonValue(candidate.platform.repositoryAccess, scope.common.repositoryAccess)
                 || !sameStrictJsonValue(candidate.platform.preparedNative, scope.common.preparedNative)) return failure('deployment_conflict');
             await scope.admit(scope.common, 'preparation');
-            if (request.actionId === 'deployments.deploy') {
-                const source = await readDeploymentSourceIntentForHost({ request: { environment, context: request.context,
-                    sourceIntent: candidate.sourceIntent, actionId: request.actionId, requireWorkspace: candidate.sourceMethod === 'upload' },
-                    host: { ...host, credentials: scope.credentials, assertAuthority: scope.assertCurrent } });
+            if (request.actionId === 'deployments.deploy'
+                && !(candidate.sourceMethod === 'gitIntegration' && scope.gitSource && sourceAdmitted)) {
+                const source = await readSource({ environment, context: request.context, sourceIntent: candidate.sourceIntent,
+                    actionId: request.actionId }, scope, candidate.sourceMethod);
                 await source.assertSourceCurrent();
             }
-            const summary = [role === deployRole(candidate.sourceMethod) && candidate.sourceIntent.kind === 'repository'
+            const summary = [request.actionId === 'deployments.deploy' && candidate.sourceIntent.kind === 'repository'
                 && environment.content.definition.kind === 'repository'
-                ? `Deploy ${environment.content.definition.ref} at ${candidate.sourceIntent.sha.slice(0, 7)}.` : undefined,
-                candidate.platform.preparedNative?.reviewNotice].filter(Boolean).join(' ');
+                ? candidate.sourceMethod === 'gitIntegration' && scope.gitSource?.guarantee === 'branchHead'
+                    ? 'Deploy the latest commit on the linked branch when the deployment starts.'
+                    : `Deploy ${environment.content.definition.ref} at ${candidate.sourceIntent.sha.slice(0, 7)}.`
+                : undefined, candidate.platform.preparedNative?.reviewNotice].filter(Boolean).join(' ');
             return { input: request.input, hostReviewedChildren: { children: scope.children }, preview: normalizeStrictJsonValue({ sourceIntent: candidate.sourceIntent,
                 ...(summary ? { summary } : {}),
                 sourceMethod: candidate.sourceMethod, platform: { targetLinkRevision: candidate.platform.targetLinkRevision,

@@ -13,20 +13,21 @@ import { inspectPreviewIdentity, preparePreview } from './preview.js';
 import { teardownWorker } from './workersTeardown.js';
 import { deployPreview, observePreview, cancelPreview, observeUploadedPreview, isUploadedPreviewReference,
   uploadedPreviewSelection, type PreviewDeployment } from './previewDeploy.js';
+import { cloudflareRoleSchema, type CloudflareRoleInput, type WorkerSelection } from './targetSelection.js';
 
-const base = preparation.jsonSchema;
+const base = cloudflareRoleSchema(preparation.jsonSchema, 'workers');
+const scriptScope = cloudflareRoleSchema(preparation.jsonSchema, 'script').properties!.providerEnvironment!;
+const previewScope = cloudflareRoleSchema(preparation.jsonSchema, 'preview').properties!.providerEnvironment!;
 const prepareProperties = { ...base.properties, product: targetProductSchema, repository: ScmHostingRepositoryIdentityV1ProtocolSchema.jsonSchema,
   triggerUuid: { type: 'string', minLength: 1 } } satisfies NonNullable<PluginJsonSchema['properties']>;
 const prepareRequired = [...base.required ?? [], 'repository'];
 const prepareVariants: PluginJsonSchema[] = [
   { type: 'object', additionalProperties: false, required: [...prepareRequired, 'triggerUuid'], properties: { ...prepareProperties, sourceMethod: inputs.deploy.jsonSchema.properties!.sourceMethod!,
-      providerEnvironment: { type: 'object', additionalProperties: false, properties: { kind: { const: 'script' }, scriptName: { type: 'string', minLength: 1 } }, required: ['kind', 'scriptName'] } } },
+      providerEnvironment: scriptScope } },
   { type: 'object', additionalProperties: false, properties: { ...prepareProperties, sourceMethod: inputs.uploadDeploy.jsonSchema.properties!.sourceMethod!,
-    providerEnvironment: { type: 'object', additionalProperties: false, properties: { kind: { const: 'script' }, scriptName: { type: 'string', minLength: 1 } }, required: ['kind', 'scriptName'] } }, required: [...prepareRequired, 'sourceMethod'] },
+    providerEnvironment: scriptScope }, required: [...prepareRequired, 'sourceMethod'] },
   { type: 'object', additionalProperties: false, properties: { ...prepareProperties,
-    providerEnvironment: { type: 'object', additionalProperties: false,
-      properties: { kind: { const: 'preview' }, scriptName: { type: 'string', minLength: 1 }, previewName: { type: 'string', minLength: 1 } },
-      required: ['kind', 'scriptName', 'previewName'] } }, required: prepareRequired },
+    providerEnvironment: previewScope }, required: prepareRequired },
 ];
 export const workerPrepareInput = { type: 'object', additionalProperties: false,
   properties: prepareProperties, required: prepareRequired, oneOf: prepareVariants,
@@ -59,14 +60,14 @@ function result(outcome: DeploymentTargetRoleResultV1 | DeploymentTargetRoleFail
 export { common as workersCommon, io as workersIo, result as workersResult };
 
 /** Only the host-admitted link supplies lifecycle coordinates; Connect owns their discovery. */
-function previewDeployment(input: Pick<DeploymentTargetPreparationBaseV1,
+function previewDeployment(input: Pick<CloudflareRoleInput<DeploymentTargetPreparationBaseV1, WorkerSelection>,
   'providerIdentity' | 'providerEnvironment' | 'repositoryAccess' | 'preparedNative'>): PreviewDeployment | null {
-  if (input.providerEnvironment.kind !== 'preview' || !('scriptName' in input.providerEnvironment)) return null;
+  if (input.providerEnvironment.selection.kind !== 'preview') return null;
   const native = input.preparedNative;
   if (!input.providerIdentity || !input.repositoryAccess || !native?.previewId || !native.gitBranch || !native.workerTag || !native.scriptName) {
     throw new PluginError({ code: 'deployment_content_unavailable' });
   }
-  return { accountId: input.providerIdentity.providerAccountId, previewName: input.providerEnvironment.previewName,
+  return { accountId: input.providerIdentity.providerAccountId, previewName: input.providerEnvironment.selection.previewName,
     previewId: native.previewId, gitBranch: native.gitBranch, workerTag: native.workerTag, scriptName: native.scriptName,
     repositoryAccess: input.repositoryAccess };
 }
@@ -75,14 +76,11 @@ function previewDeployment(input: Pick<DeploymentTargetPreparationBaseV1,
 export const workersPrepare: PreparationAction = { ...common, title: 'Prepare the selected Cloudflare Worker', dangerLevel: 'safe', readOnly: true,
   inputSchema: workerPrepareInput, resultSchema: workerLinkSchema,
   async run(value: JsonValue, context: PluginAccountActionContext) {
-    const request = value as unknown as DeploymentTargetPreparationBaseV1 & {
+    const request = value as unknown as CloudflareRoleInput<DeploymentTargetPreparationBaseV1, WorkerSelection> & {
       repository: ReturnType<typeof ScmHostingRepositoryIdentityV1ProtocolSchema.parse>; triggerUuid: string;
     } & ({ providerIdentity: NonNullable<DeploymentTargetPreparationBaseV1['providerIdentity']> }
       | { providerIdentity?: never; providerAccountId: string });
-    const environment = request.providerEnvironment;
-    if (environment.kind !== 'script' && (environment.kind !== 'preview' || !('scriptName' in environment))) {
-      throw new PluginError({ code: 'unsupported_action', details: { phase: 'source' } });
-    }
+    const environment = request.providerEnvironment.selection;
     const accountId = request.providerIdentity ? request.providerIdentity.providerAccountId : request.providerAccountId;
     const workerTag = await resolveWorkerTag(accountId, environment.scriptName, io(context));
     if (typeof workerTag !== 'string') refuse(workerTag);
@@ -97,7 +95,7 @@ export const workersPrepare: PreparationAction = { ...common, title: 'Prepare th
         providerIdentity: { providerAccountId: accountId, providerResourceId: workerTag,
           providerEnvironment: workerEnvironmentKey(environment.scriptName, preview?.previewName) },
         sourceMethod: request.sourceMethod,
-        providerEnvironment: environment, preparedNative: { projectName: environment.scriptName,
+        providerEnvironment: request.providerEnvironment, preparedNative: { projectName: environment.scriptName,
           ...(preview ? { previewId: preview.previewId, scriptName: environment.scriptName } : {}),
           reviewNotice: cloudflareReviewNotice('workers', 'upload') } });
     }
@@ -110,7 +108,7 @@ export const workersPrepare: PreparationAction = { ...common, title: 'Prepare th
         providerIdentity: { providerAccountId: accountId, providerResourceId: workerTag,
           providerEnvironment: workerEnvironmentKey(environment.scriptName, prepared.previewName) },
         ...(request.sourceMethod !== undefined ? { sourceMethod: request.sourceMethod } : {}),
-        providerEnvironment: environment, repositoryAccess: prepared.repositoryAccess,
+        providerEnvironment: request.providerEnvironment, repositoryAccess: prepared.repositoryAccess,
         preparedNative: { projectName: environment.scriptName, previewId: prepared.previewId, gitBranch: prepared.gitBranch,
           workerTag, scriptName: environment.scriptName, reviewNotice: cloudflareReviewNotice('workers', 'gitIntegration') } });
     }
@@ -122,16 +120,16 @@ export const workersPrepare: PreparationAction = { ...common, title: 'Prepare th
       providerEnvironment: prepared.providerEnvironment, repositoryAccess: prepared.repositoryAccess,
       // The required human resource name is the actual script name, not a
       // fabricated Pages/Vercel project. Operational script scope remains above.
-      preparedNative: { projectName: prepared.providerEnvironment.scriptName, triggerUuid: prepared.triggerUuid, reviewNotice: cloudflareReviewNotice('workers', 'gitIntegration') } });
+      preparedNative: { projectName: prepared.providerEnvironment.selection.scriptName, triggerUuid: prepared.triggerUuid, reviewNotice: cloudflareReviewNotice('workers', 'gitIntegration') } });
   },
 };
 
 /** The host alone writes the association. This role consumes Connect's facts. */
 const link: PreparationAction = { ...common, title: 'Link the prepared Cloudflare Worker', dangerLevel: 'writesLocal', readOnly: false,
-  confirmation: { title: 'Link this Cloudflare Worker?' }, inputSchema: preparation.jsonSchema, resultSchema: workerLinkSchema,
+  confirmation: { title: 'Link this Cloudflare Worker?' }, inputSchema: base, resultSchema: workerLinkSchema,
   async run(value: JsonValue) {
-    const request = value as unknown as DeploymentTargetPreparationBaseV1;
-    if (request.providerEnvironment.kind === 'script') {
+    const request = value as unknown as CloudflareRoleInput<DeploymentTargetPreparationBaseV1, WorkerSelection>;
+    if (request.providerEnvironment.selection.kind === 'script') {
       if (!request.providerIdentity || !request.preparedNative?.projectName
         || (request.preparedNative.triggerUuid !== undefined && !request.repositoryAccess)) {
         throw new PluginError({ code: 'deployment_content_unavailable' });
@@ -145,26 +143,27 @@ const link: PreparationAction = { ...common, title: 'Link the prepared Cloudflar
   },
 };
 
-async function deploy(input: DeploymentTargetDeployInputV1, context: PluginAccountActionContext) {
+async function deploy(input: CloudflareRoleInput<DeploymentTargetDeployInputV1, WorkerSelection>, context: PluginAccountActionContext) {
   const contextIo = io(context);
   const preview = previewDeployment(input);
   if (preview) return result(await deployPreview(input, preview, contextIo));
   if (input.providerDeploymentId) return result(await observeWorker(input, contextIo));
-  if (input.providerEnvironment.kind !== 'script') throw new PluginError({ code: 'unsupported_action' });
+  if (input.providerEnvironment.selection.kind !== 'script') throw new PluginError({ code: 'unsupported_action' });
   if (!input.preparedNative?.triggerUuid || !input.repositoryAccess) throw new PluginError({ code: 'deployment_content_unavailable' });
   return result(await deployWorker({ sourceIntent: input.sourceIntent }, { providerIdentity: input.providerIdentity,
-    providerEnvironment: input.providerEnvironment, repositoryAccess: input.repositoryAccess, triggerUuid: input.preparedNative.triggerUuid }, contextIo));
+    providerEnvironment: { kind: 'native', selection: input.providerEnvironment.selection },
+    repositoryAccess: input.repositoryAccess, triggerUuid: input.preparedNative.triggerUuid }, contextIo));
 }
 
 export const workerActions = {
   'workers-link': link,
   'workers-deploy': { ...workersAddressCommon, title: 'Deploy the reviewed commit to Cloudflare Workers', dangerLevel: 'writesRemote', readOnly: false,
-    confirmation: { title: 'Deploy this reviewed commit to Cloudflare Workers?' }, inputSchema: inputs.deploy.jsonSchema, resultSchema: output.jsonSchema,
-    run: (value: JsonValue, context: PluginAccountActionContext) => deploy(value as unknown as DeploymentTargetDeployInputV1, context) },
+    confirmation: { title: 'Deploy this reviewed commit to Cloudflare Workers?' }, inputSchema: cloudflareRoleSchema(inputs.deploy.jsonSchema, 'workers'), resultSchema: output.jsonSchema,
+    run: (value: JsonValue, context: PluginAccountActionContext) => deploy(value as unknown as CloudflareRoleInput<DeploymentTargetDeployInputV1, WorkerSelection>, context) },
   'workers-observe': { ...workersAddressCommon, title: 'Observe the selected Cloudflare Worker deployment', dangerLevel: 'safe', readOnly: true,
-    inputSchema: inputs.observe.jsonSchema, resultSchema: output.jsonSchema,
+    inputSchema: cloudflareRoleSchema(inputs.observe.jsonSchema, 'workers'), resultSchema: output.jsonSchema,
     run: async (value: JsonValue, context: PluginAccountActionContext) => {
-      const input = value as unknown as DeploymentTargetObserveInputV1;
+      const input = value as unknown as CloudflareRoleInput<DeploymentTargetObserveInputV1, WorkerSelection>;
       const contextIo = io(context);
       if (input.operation === 'teardown') return teardownWorker(input, contextIo, true);
       if (isUploadedWorkerReference(input.providerDeploymentId)) return result(await observeUploadedWorker(input, contextIo));
@@ -177,12 +176,12 @@ export const workerActions = {
     } },
   'workers-teardown': { ...common, title: 'Delete the linked Cloudflare Worker or Preview', dangerLevel: 'writesRemote', readOnly: false,
     confirmation: { title: 'Delete this Cloudflare Worker or Preview and its associated resources?' },
-    inputSchema: inputs.teardown.jsonSchema, resultSchema: output.jsonSchema,
-    run: (value: JsonValue, context: PluginAccountActionContext) => teardownWorker(value as unknown as DeploymentTargetObserveInputV1, io(context)) },
+    inputSchema: cloudflareRoleSchema(inputs.teardown.jsonSchema, 'workers'), resultSchema: output.jsonSchema,
+    run: (value: JsonValue, context: PluginAccountActionContext) => teardownWorker(value as unknown as CloudflareRoleInput<DeploymentTargetObserveInputV1, WorkerSelection>, io(context)) },
   'workers-cancel': { ...workersAddressCommon, title: 'Cancel the selected Cloudflare Worker build', dangerLevel: 'writesRemote', readOnly: false,
-    confirmation: { title: 'Cancel this Cloudflare Worker build?' }, inputSchema: inputs.cancel.jsonSchema, resultSchema: output.jsonSchema,
+    confirmation: { title: 'Cancel this Cloudflare Worker build?' }, inputSchema: cloudflareRoleSchema(inputs.cancel.jsonSchema, 'workers'), resultSchema: output.jsonSchema,
     run: async (value: JsonValue, context: PluginAccountActionContext) => {
-      const input = value as unknown as DeploymentTargetCancelInputV1;
+      const input = value as unknown as CloudflareRoleInput<DeploymentTargetCancelInputV1, WorkerSelection>;
       if (isUploadedWorkerReference(input.providerDeploymentId) || isUploadedPreviewReference(input.providerDeploymentId)) {
         throw new PluginError({ code: 'unsupported_action', details: { phase: 'cancel' } });
       }

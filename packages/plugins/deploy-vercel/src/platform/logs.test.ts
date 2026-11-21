@@ -11,7 +11,7 @@ const input = { v: 1, serverId: 'home', environmentId: 'environment', expectedRe
   credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: {
     consumer: { pluginId: entry.manifest.id, localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' }, target: { kind: 'account', account } },
   providerIdentity: { providerAccountId: 'team_exact', providerResourceId: 'prj_exact', providerEnvironment: 'production' },
-  providerEnvironment: { kind: 'production' } };
+  providerEnvironment: { kind: 'native', selection: { kind: 'production' } } };
 
 it.each([
   { target: 'daemon-root', environment: 'production' }, { target: 'daemon-root', environment: 'preview' },
@@ -30,7 +30,7 @@ it.each([
   try {
     expect(await kit.invokeAction('build-logs-read', { ...input,
       providerIdentity: { ...input.providerIdentity, providerEnvironment: environment },
-      providerEnvironment: environment === 'preview' ? { kind: 'preview', gitBranch: 'feature/logs' } : { kind: 'production' },
+      providerEnvironment: { kind: 'native', selection: environment === 'preview' ? { kind: 'preview', gitBranch: 'feature/logs' } : { kind: 'production' } },
     })).toEqual({ kind: 'page', page: {
       sourceRevision: 'dpl_exact', text: 'pnpm build\nBuild complete\n', nextCursor: null, truncated: false } });
     expect(requests).toHaveLength(1); // One demanded finite read; no inspect, polling or retry.

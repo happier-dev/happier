@@ -13,7 +13,7 @@ const input = { v: 1, serverId: 'home', environmentId: 'environment', expectedRe
   credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: {
     consumer: { pluginId: entry.manifest.id, localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' }, target: { kind: 'account', account } },
   providerIdentity: { providerAccountId: 'team_exact', providerResourceId: 'prj_exact', providerEnvironment: 'production' },
-  providerEnvironment: { kind: 'production' } };
+  providerEnvironment: { kind: 'native', selection: { kind: 'production' } } };
 // Derived UTF-8/frame mutation of the recorded official example and typed schema.
 const normalizedRow = { ...openApiTypedRuntimeLog, message: 'héllo' };
 const row = { ...normalizedRow, privateVendorField: 'omitted' };

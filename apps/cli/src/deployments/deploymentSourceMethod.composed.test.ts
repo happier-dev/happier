@@ -26,6 +26,8 @@ import { createContributedDeploymentTargetForHost } from './targets/contributedD
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import * as vercel from '../../../../packages/plugins/deploy-vercel/src/index';
 import { PLUGIN_MANIFEST as machineVercel } from '../../../../packages/plugins/machine-vercel/src/manifest';
+import * as railway from '../../../../packages/plugins/deploy-railway/src/index';
+import { PLUGIN_MANIFEST as machineRailway } from '../../../../packages/plugins/machine-railway/src/manifest';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -48,7 +50,7 @@ it('retains a real Vercel Create choice through protected storage and omitted-me
         environmentId: environment.environment.id, expectedRevision: environment.environment.revision,
         requestKey: 'upload-create', targetId: 'runtime', targetKind: 'vercel', role: 'runtime', machines: [], source,
         providerCreate: { credentialRef: account, credentialPrincipal: principal, providerAccountId: 'team_exact',
-            providerEnvironment: { kind: 'production' }, resourceName: 'upload-app', sourceMethod: 'upload' } });
+            providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, resourceName: 'upload-app', sourceMethod: 'upload' } });
     const kit = await createPluginTestkit({ manifest: vercel.manifest, module: vercel, services: {
         http: createPluginHttpFixture({ async request() { return { status: 200, headers: {},
             body: new TextEncoder().encode(JSON.stringify({ id: 'prj_created', accountId: 'team_exact', name: 'upload-app' })) }; } }),
@@ -165,7 +167,7 @@ it('returns the retained Create branch outcome after the real host association s
         consumer: { pluginId: vercel.manifest.id, localId: 'project-create' }, purpose: 'deploy.manage' },
         target: { kind: 'account' as const, account } },
         providerIdentity: { providerAccountId: 'team_exact', providerResourceId: 'prj_created', providerEnvironment: 'production' },
-        providerEnvironment: { kind: 'production' as const }, sourceMethod: 'gitIntegration' as const,
+        providerEnvironment: { kind: 'native' as const, selection: { kind: 'production' as const } }, sourceMethod: 'gitIntegration' as const,
         preparedNative: { projectName: 'created-app', productionBranchOutcome } };
     const requests: string[] = [];
     vi.spyOn(axios, 'request').mockImplementation(async request => {
@@ -189,4 +191,37 @@ it('returns the retained Create branch outcome after the real host association s
     expect(result, JSON.stringify({ result, requests })).toMatchObject({ ok: true, targetLinkId: 'created-link', productionBranchOutcome });
     expect(requests.filter(path => path.endsWith('/targets'))).toHaveLength(1);
     expect(boundary.rows.size).toBe(1);
+});
+
+it('reviews Railway Create as branch HEAD through the admitted target catalog', async () => {
+    const source = { kind: 'plugin' as const, contribution: { pluginId: railway.manifest.id, localId: 'runtime' } };
+    const account = { service: { pluginId: machineRailway.id, localId: 'railway-account' }, accountId: 'profile' };
+    const credentialPrincipal = { kind: 'account' as const, accountId: 'owner', purpose: {
+        consumer: { pluginId: railway.manifest.id, localId: 'service-create' }, purpose: 'cloud-api' },
+        target: { kind: 'account' as const, account } };
+    const request = DeploymentTargetLinkCreateIntentInputV1Schema.parse({
+        serverId: 'home', environmentId: 'app-staging', expectedRevision: 1, requestKey: 'railway-create',
+        targetId: 'runtime', targetKind: 'railway', role: 'runtime', machines: [], source,
+        providerCreate: { credentialRef: account, credentialPrincipal, providerAccountId: 'project',
+            providerEnvironment: { kind: 'native', selection: { projectId: 'project', environmentId: 'staging' } },
+            resourceName: 'backend', productionBranch: 'release',
+            repository: { kind: 'github', deployment: 'https://github.com', repository: 'acme/backend' } },
+    });
+    const daemon = railway.manifest.entrypoints!.daemon!;
+    const mounted = await createAuthoredAdmittedPluginRuntimeFixture({
+        plugins: [
+            { manifest: machineRailway, files: { [machineRailway.entrypoints!.daemon!]: 'export function activate() {}' } },
+            { manifest: railway.manifest, files: { [daemon]: 'export function activate() {}' },
+                instantiateCommittedModule: () => ({ activate: railway.activate }) },
+        ],
+        resolveContributes: async happyHomeDir => createResolvedContributionRegistry(projectLoadedPluginContributes({
+            loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external' })),
+    });
+    try {
+        const target = readDeploymentTargetV1(source, mounted.registry.contributes.deploymentTargets);
+        const review = prepareRuntimeTargetCreateForHost(request, target);
+        expect(review.approvalPreview?.summary).toBe(
+            'Create service backend from acme/backend on branch release. Railway builds the latest commit on that branch and redeploys when it changes.',
+        );
+    } finally { await mounted.dispose(); }
 });

@@ -5,7 +5,7 @@ import { resolveVitestWorkers } from '../../../scripts/testing/vitestWorkers';
 import { createWorkspacePackageSourcesPlugin } from '../../../scripts/testing/vitestWorkspacePackageResolution.ts';
 const root = fileURLToPath(new URL('.', import.meta.url));
 export default defineConfig({
-  plugins: [createWorkspacePackageSourcesPlugin(['plugin-sdk', 'protocol', 'cli-common'].map(name => ({
+  plugins: [createWorkspacePackageSourcesPlugin(['plugin-sdk', 'protocol', 'cli-common', 'railway-api'].map(name => ({
     packageName: '@happier-dev/' + name, packageSourceRoot: resolve(root, '../../' + name + '/src'),
   })), 'happier-machine-railway-source')],
   test: { ...resolveVitestWorkers(), environment: 'node', include: ['src/**/*.test.ts'] },

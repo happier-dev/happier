@@ -112,7 +112,7 @@ it.each([
         purpose: { consumer: { pluginId: vercel.manifest.id, localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' },
         target: { kind: 'account', account: credentialRef } },
         providerIdentity: { providerAccountId, providerResourceId: projectId, providerEnvironment: 'production' },
-        providerEnvironment: { kind: 'production' }, repositoryAccess: { status: 'ready', repository },
+        providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, repositoryAccess: { status: 'ready', repository },
         preparedNative: { projectName: 'app', gitSource: { type: 'github', repoId: '123' } } };
     const seed = (id: string, kind: string, content: unknown) => authored.artifacts.seed(id,
         encodePlainArtifactStoredContent({ kind, title: 'Preview' }),

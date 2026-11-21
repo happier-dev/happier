@@ -84,6 +84,23 @@ describe('GitHub Overview default-branch target', () => {
     ]);
   });
 
+  it('resolves a qualified ref against the branch endpoint even when the name also resolves to a commit', async () => {
+    const ref = 'refs/heads/release/current';
+    const transport = createStubGithubTransport({
+      nativeMaterialization: { kind: 'httpHeaders', headers: { Authorization: 'Bearer test-only-placeholder' } },
+      respond(request) {
+        if (request.url === 'https://api.github.com/repos/octo-org/example-app') return { status: 200,
+          body: { full_name: 'octo-org/example-app', default_branch: 'main' } };
+        if (request.url.endsWith('/branches/release%2Fcurrent')) return { status: 200,
+          body: { name: 'release/current', commit: { sha: headSha } } };
+        return { status: 200, body: { sha: 'b'.repeat(40) } };
+      },
+    });
+    await expect(GITHUB_OVERVIEW_TARGET_ACTIONS_V1[GITHUB_OVERVIEW_TARGET_ACTION_ID].run(
+      { repository, ref }, transport.context,
+    )).resolves.toEqual({ kind: 'value', value: { repository, branch: ref, headSha } });
+  });
+
   it.each([
     { full_name: 'octo-org/other', default_branch: 'main' },
     { full_name: 'octo-org/example-app' },

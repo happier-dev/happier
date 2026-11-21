@@ -158,7 +158,7 @@ it('enrolls generic failure and success observers after a real Home-admitted Clo
                 target: { kind: 'account', account: { service: { pluginId: cloudflare.manifest.id, localId: 'cloudflare' },
                     accountId: 'linked-cloudflare-account' } } },
             providerIdentity: { providerAccountId: 'a'.repeat(32), providerResourceId: 'pages-observer', providerEnvironment: 'production' },
-            providerEnvironment: { kind: 'production' },
+            providerEnvironment: { kind: 'native', selection: { kind: 'production' } },
         } });
     const target = { kind: 'machine' as const, machineId: machine.id };
     const requestId = randomUUID();

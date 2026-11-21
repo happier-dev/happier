@@ -60,7 +60,7 @@ it.each(['complete-identity', 'native'] as const)('admits cli58 %s Inspect throu
       target: { kind: 'account', account } },
     ...(form === 'complete-identity' ? { providerIdentity }
       : { providerAccountId: providerIdentity.providerAccountId, projectId: providerIdentity.providerResourceId }),
-    providerEnvironment: { kind: 'production' },
+    providerEnvironment: { kind: 'native', selection: { kind: 'production' } },
     repository: { kind: 'github', deployment: 'https://github.com', repository: 'happier-dev/triage-qa-sandbox' } };
   const h = await host(request => {
     const url = new URL(request.url);
@@ -152,12 +152,12 @@ it('returns builtin and custom environment values for the exact selected project
     expect(h.requests).toHaveLength(0);
     const draft = { ...draftInput, providerAccountId: 'team_exact', projectId: 'prj_exact' };
     expect(await h.read('providerEnvironment', draft)).toEqual({ options: [
-      { value: { kind: 'production' }, label: 'Production' }, { value: { kind: 'preview' }, label: 'Preview' },
-      { value: { kind: 'custom', id: 'env_staging' }, label: 'staging' },
+      { value: { kind: 'native', selection: { kind: 'production' } }, label: 'Production' }, { value: { kind: 'native', selection: { kind: 'preview' } }, label: 'Preview' },
+      { value: { kind: 'native', selection: { kind: 'custom', id: 'env_staging' } }, label: 'staging' },
     ] });
     expect(h.requests).toHaveLength(1);
     expect(h.requests[0].url).toBe('https://api.vercel.com/v9/projects/prj_exact/custom-environments?teamId=team_exact');
-    expect(await h.read('providerEnvironment', draft, 'stag')).toEqual({ options: [{ value: { kind: 'custom', id: 'env_staging' }, label: 'staging' }] });
+    expect(await h.read('providerEnvironment', draft, 'stag')).toEqual({ options: [{ value: { kind: 'native', selection: { kind: 'custom', id: 'env_staging' } }, label: 'staging' }] });
     expect(h.requests).toHaveLength(2);
   } finally { await h.kit.dispose(); }
 });
@@ -167,9 +167,9 @@ it('retains an explicitly selected branch Preview without a repository or branch
   try {
     expect(await h.read('providerEnvironment', { ...draftInput,
       providerAccountId: 'team_exact', projectId: 'prj_exact',
-      providerEnvironment: { kind: 'preview', gitBranch: 'feature/preview' } }))
-      .toEqual({ options: [{ value: { kind: 'production' }, label: 'Production' }, { value: { kind: 'preview' }, label: 'Preview' },
-        { value: { kind: 'preview', gitBranch: 'feature/preview' }, label: 'Preview: feature/preview' }] });
+      providerEnvironment: { kind: 'native', selection: { kind: 'preview', gitBranch: 'feature/preview' } } }))
+      .toEqual({ options: [{ value: { kind: 'native', selection: { kind: 'production' } }, label: 'Production' }, { value: { kind: 'native', selection: { kind: 'preview' } }, label: 'Preview' },
+        { value: { kind: 'native', selection: { kind: 'preview', gitBranch: 'feature/preview' } }, label: 'Preview: feature/preview' }] });
     expect(h.requests).toHaveLength(1);
   } finally { await h.kit.dispose(); }
 });

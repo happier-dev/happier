@@ -2,16 +2,15 @@ import { DeploymentTargetRoleResultV1ProtocolSchema, type DeploymentTargetObserv
   type DeploymentTargetRoleResultV1, type DeploymentTargetRoleFailureV1 } from '@happier-dev/plugin-sdk';
 import { isObject } from '../connectedAccounts/probe.js';
 import { failure, request, type DeploymentContext } from './deploymentHttp.js';
+import type { CloudflareRoleInput, PagesSelection } from './targetSelection.js';
 
-type PagesObservation = Pick<DeploymentTargetObserveInputV1, 'providerIdentity' | 'providerEnvironment' | 'preparedNative' | 'providerDeploymentId'>;
+type PagesObservation = Pick<CloudflareRoleInput<DeploymentTargetObserveInputV1, PagesSelection>,
+  'providerIdentity' | 'providerEnvironment' | 'preparedNative' | 'providerDeploymentId'>;
 
 /** A finite retained-ID read. No native cancel, upload replay or project-config projection.
  * https://developers.cloudflare.com/api/resources/pages/subresources/projects/subresources/deployments/methods/get/
  */
 export async function observePagesDeployment(input: PagesObservation, context: DeploymentContext): Promise<DeploymentTargetRoleResultV1 | DeploymentTargetRoleFailureV1> {
-  const environment = input.providerEnvironment;
-  if (environment.kind !== 'production' && (environment.kind !== 'preview'
-    || 'scriptName' in environment)) return failure('unsupported_action', 'admission');
   if (!input.providerDeploymentId) return failure('outcome_unknown', 'observe');
   if (!input.preparedNative) return failure('deployment_content_unavailable', 'observe');
   const reply = await request(context, input.providerIdentity.providerAccountId,
@@ -22,7 +21,7 @@ export async function observePagesDeployment(input: PagesObservation, context: D
 
 export function pagesDeploymentResult(value: unknown, input: PagesObservation, context: DeploymentContext,
   phase: DeploymentTargetRoleFailureV1['phase']): DeploymentTargetRoleResultV1 | DeploymentTargetRoleFailureV1 {
-  const environment = input.providerEnvironment;
+  const environment = input.providerEnvironment.selection;
   if (!isObject(value) || value.id !== input.providerDeploymentId || value.environment !== environment.kind
     || !isObject(value.latest_stage)) return failure('provider_response_invalid', phase);
   if (environment.kind === 'preview' && 'gitBranch' in environment && environment.gitBranch

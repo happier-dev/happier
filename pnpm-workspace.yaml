@@ -25,6 +25,7 @@ packages:
   - packages/triage-protocol
   - packages/deployment-protocol
   - packages/deployments
+  - packages/railway-api
   - packages/database-protocol
   - packages/databases
   - packages/triage-sources

@@ -1682,7 +1682,7 @@ describe('Environment → Settings: checks, backups, previews', () => {
     } }, targetLinks: [...base.targetLinks, { targetLink: createDeploymentTargetLinkHeaderV1({ id: 'managed-data', role: 'data',
       targetKind: 'managed', machines: [], members: [], source: { kind: 'plugin', contribution: { pluginId: 'com.example.database', localId: 'database' } } }),
       content: { providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project', providerEnvironment: 'main' },
-        providerEnvironment: { kind: 'custom', id: 'main' }, credentialPrincipal: { kind: 'account', accountId: 'account-owner',
+        providerEnvironment: { kind: 'native', selection: { branchId: 'main' } }, credentialPrincipal: { kind: 'account', accountId: 'account-owner',
           purpose: { consumer: { pluginId: 'com.example.database', localId: 'link' }, purpose: 'database.manage' },
           target: { kind: 'account', account: { service: { pluginId: 'com.example.database', localId: 'database' }, accountId: 'token' } } } } }] });
     const actions = (await import('./deploymentActions')).createDeploymentActions(account.accountLifetime, detail.environment.projectSourceId);

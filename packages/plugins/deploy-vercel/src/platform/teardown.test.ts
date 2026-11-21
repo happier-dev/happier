@@ -11,7 +11,7 @@ const input = { v: 1, serverId: 'home', environmentId: 'environment', expectedRe
   credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: {
     consumer: { pluginId: entry.manifest.id, localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' }, target: { kind: 'account', account } },
   providerIdentity: { providerAccountId: 'team_exact', providerResourceId: 'prj_exact', providerEnvironment: 'production' },
-  providerEnvironment: { kind: 'production' }, operation: 'teardown', providerDeploymentId: 'dpl_retained' };
+  providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, operation: 'teardown', providerDeploymentId: 'dpl_retained' };
 const response = (status: number, body?: unknown) => ({ status, headers: {},
   body: body === undefined ? new Uint8Array() : new TextEncoder().encode(JSON.stringify(body)) });
 

@@ -45,7 +45,7 @@ describe('deployment demand read controller', () => {
                     purpose: { consumer: { pluginId: 'acme.deploy', localId: 'deploy' }, purpose: 'action-account' },
                     target: { kind: 'account', account: { service: { pluginId: 'acme.deploy', localId: 'account' }, accountId: 'provider' } } },
                 providerIdentity: { providerAccountId: 'provider', providerResourceId: 'project', providerEnvironment: 'production' },
-                providerEnvironment: { kind: 'production' }, observation: { v: 1, state: 'succeeded', observedAtMs: 2000,
+                providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, observation: { v: 1, state: 'succeeded', observedAtMs: 2000,
                     urls: ['https://app-exact.vercel.app'], builtInUrls: ['https://app.vercel.app'] },
             },
         } };
@@ -896,7 +896,7 @@ describe('deployment demand read controller', () => {
                         purpose: { consumer: { pluginId: 'acme.deploy', localId: 'deploy' }, purpose: 'action-account' },
                         target: { kind: 'account', account } },
                     providerIdentity: { providerAccountId: 'provider-owner', providerResourceId: 'project', providerEnvironment: 'production' },
-                    providerEnvironment: { kind: 'production' },
+                    providerEnvironment: { kind: 'native', selection: { kind: 'production' } },
                     observation: { v: 1, state: 'succeeded', observedAtMs: 2000, urls: ['https://app.example.test'] },
                 },
             } } });

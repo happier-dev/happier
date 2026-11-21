@@ -14050,6 +14050,10 @@ settingsSession: {
   projects: {
       title: "專案",
         deployments: {
+            providerDomainPending: "供應商指派的位址",
+            domainAddressKind: "位址類型",
+            domainAddressCustom: "自訂網域",
+            domainAddressAssigned: "由供應商指派",
             services: {
                 checkEditUnavailableOnMachine: ({ machine }: { machine: string }) => `目前無法在 ${machine} 上編輯這項檢查。上方顯示已儲存的值。`,
                 checkEditSourceUnreachable: "無法讀取此檢查已儲存的設定。",

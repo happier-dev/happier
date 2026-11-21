@@ -1,3 +1,4 @@
+import { deploymentTargetRoleWithNativeSelectorV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargets';
 import { DeploymentTargetLinkProviderContentV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 import { DeploymentTargetRoleInputProtocolSchemasV1, DeploymentReceiptDetailV1Schema, DeploymentTargetRoleResultV1ProtocolSchema } from '@happier-dev/deployments/contracts/v1';
 import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
@@ -17,15 +18,17 @@ import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/aut
 export function createPlatformFailureNoticeFixture(_withEnrollment = false, withCreate = false, statusIntervalMs?: number) {
     const pluginId = 'example.deploy';
     const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
+    const selector = { type: 'object', properties: { kind: { type: 'string', const: 'production' } },
+        required: ['kind'], additionalProperties: false } as const;
     const roles = [...(['inspect', 'link', 'deploy', 'observe'] as const), ...(withCreate ? ['create' as const] : [])];
     const manifest = normalizePluginManifestV2({ schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'External target',
         entrypoints: { daemon: './daemon.js' }, contributes: {
             actions: roles.map(id => ({ id, title: id, scopes: ['global'], surfaces: ['plugin'],
-                execution: { target: 'daemon' }, inputSchema: DeploymentTargetRoleInputProtocolSchemasV1[id].jsonSchema,
-                resultSchema: id === 'create' ? DeploymentTargetLinkProviderContentV1ProtocolSchema.jsonSchema : DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema,
+                execution: { target: 'daemon' }, inputSchema: deploymentTargetRoleWithNativeSelectorV1(DeploymentTargetRoleInputProtocolSchemasV1[id].jsonSchema, selector),
+                resultSchema: id === 'create' ? deploymentTargetRoleWithNativeSelectorV1(DeploymentTargetLinkProviderContentV1ProtocolSchema.jsonSchema, selector) : DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema,
                 dangerLevel: id === 'create' ? 'writesRemote' : id === 'inspect' || id === 'observe' ? 'safe' : 'writesLocal' })),
             deploymentTargets: [{ ...(statusIntervalMs === undefined ? {} : { statusIntervalMs }), id: 'platform', targetKind: 'example', title: 'External target', role: 'runtime', icon: 'server-outline',
-                targetSchema: closed, linkSchema: closed,
+                targetSchema: closed, linkSchema: closed, nativeSelectorSchema: selector,
                 actions: { inspect: 'inspect', link: 'link', deploy: 'deploy', observe: 'observe', ...(withCreate ? { create: 'create' } : {}) } }],
         } });
     const loaded: LoadedPlugin = { pluginId, pluginRootPath: '/plugins/example', manifestPath: '/plugins/example/plugin.json',
@@ -43,7 +46,7 @@ export function createPlatformFailureNoticeFixture(_withEnrollment = false, with
         targetLinks: [{ targetLink: createDeploymentTargetLinkHeaderV1({ role: 'runtime', source: { kind: 'plugin', contribution: { pluginId, localId: 'platform' } },
             state: 'provisioned', targetKind: 'example', machines: [], members: [] }),
             content: { credentialPrincipal, providerIdentity: { providerAccountId: 'native-owner', providerResourceId: 'native-project', providerEnvironment: 'production' },
-                providerEnvironment: { kind: 'production' } } }] });
+                providerEnvironment: { kind: 'native', selection: { kind: 'production' } } } }] });
     const caller = { pluginId: machineServices.pluginId, machineId: 'controller', materializationId: 'installed' };
     const definition = AutomationEventSourceDefinitionV1Schema.parse({ observationOnly: { kind: 'observationOnly' },
         automationId: '11111111-1111-4111-8111-111111111111', triggerId: 'failure', triggerRevision: 1,

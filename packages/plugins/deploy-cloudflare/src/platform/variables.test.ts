@@ -13,7 +13,7 @@ const common = { v: 1, serverId: 'home', environmentId: 'environment', expectedR
   credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: {
     consumer: { pluginId: entry.manifest.id, localId: 'pages-inspect' }, purpose: 'deploy.manage' }, target: { kind: 'account', account } },
   providerIdentity: { providerAccountId: 'a'.repeat(32), providerResourceId: 'project-exact', providerEnvironment: 'production' },
-  providerEnvironment: { kind: 'production' }, preparedNative: { projectName: 'my-project' } };
+  providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, preparedNative: { projectName: 'my-project' } };
 const owned = (key: string) => ({ key, providerId: key, desiredRevision: 1 });
 const binding = (name: string, value: string) => createDeploymentVariableBindingV1({ phase: 'runtime', name, source: { kind: 'value', value } });
 const sync = { ...common, desiredRevision: 2, owned: [], set: [], remove: [], useOurs: [], keepTheirs: [] };
@@ -86,7 +86,7 @@ it.each(['daemon-root', 'portable-account'] as const)('reads only exact native P
     module: target === 'daemon-root' ? entry : { ...entry, activateAccount }, services: { http } });
   try {
     await expect(kit.invokeAction('workers-variables-read', { ...common,
-      providerEnvironment: { kind: 'preview', scriptName: 'worker-exact', previewName: 'branch/name' },
+      providerEnvironment: { kind: 'native', selection: { kind: 'preview', scriptName: 'worker-exact', previewName: 'branch/name' } },
       preparedNative: { projectName: 'worker-exact', previewId }, owned: [owned('TOKEN')] })).resolves.toEqual({ v: 1, variables: [
       { key: 'MY_ENV_VAR', providerId: 'MY_ENV_VAR', present: true, secret: false, owned: false, drift: 'unknown' },
       { key: 'TOKEN', providerId: 'TOKEN', present: true, secret: true, owned: true, drift: 'unknown' },
@@ -101,7 +101,7 @@ it('returns a missing native Preview without reading production settings', async
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
   try {
     await expect(kit.invokeAction('workers-variables-read', { ...common,
-      providerEnvironment: { kind: 'preview', scriptName: 'worker-exact', previewName: 'branch/name' },
+      providerEnvironment: { kind: 'native', selection: { kind: 'preview', scriptName: 'worker-exact', previewName: 'branch/name' } },
       preparedNative: { projectName: 'worker-exact', previewId: '63bafce9179948688866bb22268eb1c6' }, owned: [] }))
       .rejects.toMatchObject({ code: 'deployment_unavailable' });
     expect(requests).toHaveLength(1);
@@ -110,9 +110,9 @@ it('returns a missing native Preview without reading production settings', async
 });
 
 it.each([
-  { action: 'pages-variables-read', providerEnvironment: { kind: 'production' }, key: 'foo',
+  { action: 'pages-variables-read', providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, key: 'foo',
     result: { id: 'project-exact', name: 'my-project', deployment_configs: { production: pagesDeploymentConfigExample } } },
-  { action: 'workers-variables-read', providerEnvironment: { kind: 'script', scriptName: 'worker-exact' },
+  { action: 'workers-variables-read', providerEnvironment: { kind: 'native', selection: { kind: 'script', scriptName: 'worker-exact' } },
     key: 'MY_ENV_VAR', result: workerSettingsExample },
 ])('projects recorded official response excerpts to metadata ($action)', async ({ action, providerEnvironment, key, result }) => {
   const http = createPluginHttpFixture({ async request() { return response(result); } });
@@ -177,7 +177,7 @@ it.each(['production', 'preview'] as const)('patches only owned keys in the sele
   } });
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
   try {
-    const result = await kit.invokeAction('pages-variables-sync', { ...sync, providerEnvironment: { kind: arm }, owned: [owned('OLD')],
+    const result = await kit.invokeAction('pages-variables-sync', { ...sync, providerEnvironment: { kind: 'native', selection: { kind: arm } }, owned: [owned('OLD')],
       set: [binding('NEW', 'new-value')], remove: ['OLD', 'FOREIGN'] });
     expect(result).toMatchObject({ owned: [{ key: 'NEW', providerId: 'NEW', desiredRevision: 2 }], failures: [] });
     expect(configs[arm]).toMatchObject({ env_vars: { FOREIGN: { type: 'secret_text' }, NEW: { type: 'plain_text', value: 'new-value' } } });
@@ -294,12 +294,12 @@ it('preserves every unrelated Worker binding by inheritance while changing plain
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
   try {
     const metadata = await kit.invokeAction('workers-variables-read', { ...common, owned: [owned('OLD')],
-      providerEnvironment: { kind: 'script', scriptName: 'worker-exact' } });
+      providerEnvironment: { kind: 'native', selection: { kind: 'script', scriptName: 'worker-exact' } } });
     expect(metadata).toEqual({ v: 1, variables: [
       { key: 'FOREIGN', providerId: 'FOREIGN', secret: true, present: true, owned: false, drift: 'unknown' },
       { key: 'OLD', providerId: 'OLD', secret: false, present: true, owned: true, drift: 'unknown' },
     ] });
-    const result = await kit.invokeAction('workers-variables-sync', { ...sync, providerEnvironment: { kind: 'script', scriptName: 'worker-exact' },
+    const result = await kit.invokeAction('workers-variables-sync', { ...sync, providerEnvironment: { kind: 'native', selection: { kind: 'script', scriptName: 'worker-exact' } },
       owned: [owned('OLD')], set: [binding('NEW', 'new')], remove: ['OLD', 'FOREIGN'] });
     expect(result).toMatchObject({ failures: [], owned: [{ key: 'NEW', providerId: 'NEW', desiredRevision: 2 }] });
     expect(bindings.map(binding => binding.name)).toEqual(['FOREIGN', 'DB', 'NEW']);
@@ -311,8 +311,8 @@ it('preserves every unrelated Worker binding by inheritance while changing plain
 });
 
 it.each([
-  { action: 'workers-variables-sync', providerEnvironment: { kind: 'preview', scriptName: 'worker-exact', previewName: 'candidate' } },
-  { action: 'pages-variables-read', providerEnvironment: { kind: 'preview', gitBranch: 'candidate' } },
+  { action: 'workers-variables-sync', providerEnvironment: { kind: 'native', selection: { kind: 'preview', scriptName: 'worker-exact', previewName: 'candidate' } } },
+  { action: 'pages-variables-read', providerEnvironment: { kind: 'native', selection: { kind: 'preview', gitBranch: 'candidate' } } },
 ])('refuses unsupported scope before touching production ($action)', async ({ action, providerEnvironment }) => {
   const http = createPluginHttpFixture({ async request() { throw new Error('Unsupported scope must never reach Cloudflare'); } });
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
@@ -356,7 +356,7 @@ it.each(['lost reply', '5xx envelope', 'response limit'])('stops Worker replacem
   } });
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
   try {
-    await expect(kit.invokeAction('workers-variables-sync', { ...sync, providerEnvironment: { kind: 'script', scriptName: 'worker-exact' },
+    await expect(kit.invokeAction('workers-variables-sync', { ...sync, providerEnvironment: { kind: 'native', selection: { kind: 'script', scriptName: 'worker-exact' } },
       set: [binding('FIRST', 'value'), binding('SECOND', 'value')] })).resolves.toMatchObject({ owned: [], failures: [
         { key: 'FIRST', code: 'outcome_unknown' }, { key: 'SECOND', code: 'deployment_content_unavailable' },
       ] });
@@ -377,7 +377,7 @@ it.each([
   } });
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
   try {
-    await expect(kit.invokeAction('workers-variables-sync', { ...sync, providerEnvironment: { kind: 'script', scriptName: 'worker-exact' },
+    await expect(kit.invokeAction('workers-variables-sync', { ...sync, providerEnvironment: { kind: 'native', selection: { kind: 'script', scriptName: 'worker-exact' } },
       set: [...phases.map(phase => ({ ...binding('BUILD_ONLY', conflict && phase === 'build' ? 'different' : 'value'), phase })),
         binding('RUNTIME_ONLY', 'runtime-value')] })).resolves.toMatchObject({
         owned: [{ key: 'RUNTIME_ONLY', providerId: 'RUNTIME_ONLY', desiredRevision: 2 }], failures: [
@@ -402,7 +402,7 @@ it('deletes an owned Worker secret through the explicit secret endpoint and pres
   } });
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
   try {
-    await expect(kit.invokeAction('workers-variables-sync', { ...sync, providerEnvironment: { kind: 'script', scriptName: 'worker-exact' },
+    await expect(kit.invokeAction('workers-variables-sync', { ...sync, providerEnvironment: { kind: 'native', selection: { kind: 'script', scriptName: 'worker-exact' } },
       owned: [owned('OWNED')], remove: ['OWNED', 'FOREIGN'] })).resolves.toMatchObject({ owned: [], failures: [] });
     expect(bindings).toEqual([{ name: 'FOREIGN', type: 'secret_text' }]);
     expect(requests.map(request => request.method)).toEqual(['GET', 'DELETE']);

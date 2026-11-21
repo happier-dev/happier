@@ -12,7 +12,7 @@ const input = { v: 1, serverId: 'home', environmentId: 'environment', expectedRe
   credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: {
     consumer: { pluginId: entry.manifest.id, localId: 'pages-inspect' }, purpose: 'deploy.manage' }, target: { kind: 'account', account } },
   providerIdentity: { providerAccountId: 'a'.repeat(32), providerResourceId: 'project-exact', providerEnvironment: 'production' },
-  providerEnvironment: { kind: 'production' }, preparedNative: { projectName: 'my-project', pages: { projectMode: 'gitIntegration', productionBranch: 'main' } } };
+  providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, preparedNative: { projectName: 'my-project', pages: { projectMode: 'gitIntegration', productionBranch: 'main' } } };
 
 it.each(['daemon-root', 'portable-account'] as const)('reads retained Pages build logs through %s', async target => {
   const requests: HttpRequest[] = [];
@@ -76,7 +76,7 @@ it('uses retained project coordinates without requiring unrelated deployment con
 
 const workerBuildId = 'e5a8c3d0-1234-4567-8901-234567890abc';
 const workerInput = { ...input, providerDeploymentId: workerBuildId,
-  providerEnvironment: { kind: 'script', scriptName: 'my-worker' },
+  providerEnvironment: { kind: 'native', selection: { kind: 'script', scriptName: 'my-worker' } },
   providerIdentity: { ...input.providerIdentity, providerResourceId: 'worker-tag', providerEnvironment: 'script:my-worker' } };
 
 it.each(['daemon-root', 'portable-account'] as const)('reads Workers Builds documented pages through %s', async target => {
@@ -139,7 +139,7 @@ it('uses the retained native Preview build UUID and never looks up a latest buil
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
   try {
     await expect(kit.invokeAction('workers-build-logs-read', { ...workerInput,
-      providerEnvironment: { kind: 'preview', scriptName: 'my-worker', previewName: 'review' } }))
+      providerEnvironment: { kind: 'native', selection: { kind: 'preview', scriptName: 'my-worker', previewName: 'review' } } }))
       .resolves.toMatchObject({ kind: 'page', page: { sourceRevision: workerBuildId, text: 'Preview build\n' } });
   } finally { await kit.dispose(); }
 });

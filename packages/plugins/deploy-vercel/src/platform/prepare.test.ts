@@ -29,7 +29,7 @@ it.each([
     module: sample.target === 'daemon-root' ? entry : { ...entry, activateAccount }, services: { http } });
   try {
     const account = { service: { pluginId: 'happier.machine.vercel', localId: 'vercel-account' }, accountId: 'personal-pat' };
-    const providerEnvironment = { kind: 'preview', ...(sample.gitBranch ? { gitBranch: sample.gitBranch } : {}) };
+    const providerEnvironment = { kind: 'native', selection: { kind: 'preview', ...(sample.gitBranch ? { gitBranch: sample.gitBranch } : {}) } };
     const inspection = await kit.invokeAction('targets-inspect-v1', { v: 1, serverId: 'home', environmentId: 'environment', expectedRevision: 1,
       credentialRef: account, credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: {
         consumer: { pluginId: entry.manifest.id, localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' }, target: { kind: 'account', account } },
@@ -37,7 +37,7 @@ it.each([
       providerEnvironment, ...(sample.target === 'portable-account' ? { sourceMethod: 'gitIntegration' } : {}),
       repository: { kind: 'github', deployment: 'https://github.com', repository: 'example/app' } });
     expect(inspection).toMatchObject({ repositoryAccess: { status: 'ready' },
-      providerEnvironment: sample.hasProduction ? providerEnvironment : { kind: 'production' },
+      providerEnvironment: sample.hasProduction ? providerEnvironment : { kind: 'native', selection: { kind: 'production' } },
       providerIdentity: { providerEnvironment: sample.hasProduction ? 'preview:"feature/qa"' : 'production' } });
     if (sample.target === 'portable-account') expect(inspection).toHaveProperty('sourceMethod', 'gitIntegration');
     else expect(inspection).not.toHaveProperty('sourceMethod');
@@ -74,7 +74,7 @@ it.each([
     module: sample.target === 'daemon-root' ? entry : { ...entry, activateAccount }, services: { http } });
   try {
     const account = { service: { pluginId: 'happier.machine.vercel', localId: 'vercel-account' }, accountId: 'personal-pat' };
-    const providerEnvironment = { kind: 'preview', gitBranch: sample.gitBranch };
+    const providerEnvironment = { kind: 'native', selection: { kind: 'preview', gitBranch: sample.gitBranch } };
     const inspection = kit.invokeAction('targets-inspect-v1', { v: 1, serverId: 'home', environmentId: 'environment', expectedRevision: 1,
       credentialRef: account, credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: {
         consumer: { pluginId: entry.manifest.id, localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' }, target: { kind: 'account', account } },
@@ -107,7 +107,7 @@ it.each(['daemon-root', 'portable-account'] as const)('explains a missing Source
       credentialRef: account, credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: {
         consumer: { pluginId: entry.manifest.id, localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' }, target: { kind: 'account', account } },
       providerIdentity: { providerAccountId: 'team_exact', providerResourceId: 'prj_exact', providerEnvironment: 'production' },
-      providerEnvironment: { kind: 'production' } }))
+      providerEnvironment: { kind: 'native', selection: { kind: 'production' } } }))
       .rejects.toMatchObject({ code: 'repository_required', retryable: false, details: { phase: 'link' } });
     // A local prerequisite settles before provider access, with no Git grant to acquire.
     expect(requests).toEqual([]);
@@ -131,7 +131,7 @@ it.each(['user_personal', 'team_IfWoDydKwqFwMDLSXA80FDAW'])(
       credentialRef: account, credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: {
         consumer: { pluginId: entry.manifest.id, localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' }, target: { kind: 'account', account } },
       providerIdentity: { providerAccountId: accountId, providerResourceId: projectId, providerEnvironment: 'production' },
-      providerEnvironment: { kind: 'production' }, repository: { kind: 'github', deployment: 'https://github.com', repository: 'happier-dev/triage-qa-sandbox' } }))
+      providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, repository: { kind: 'github', deployment: 'https://github.com', repository: 'happier-dev/triage-qa-sandbox' } }))
       .toMatchObject({ providerIdentity: { providerAccountId: accountId, providerResourceId: projectId },
         repositoryAccess: { status: 'needsGitAccess', grantUrl: 'https://github.com/apps/vercel/installations/new' },
         preparedNative: { projectName: 'happier-qa-deploy' } });
@@ -167,7 +167,7 @@ it('finds the exact linked sandbox repository when Vercel search accepts its slu
       credentialRef: account, credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: {
         consumer: { pluginId: entry.manifest.id, localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' }, target: { kind: 'account', account } },
       providerIdentity: { providerAccountId: project.accountId, providerResourceId: project.id, providerEnvironment: 'production' },
-      providerEnvironment: { kind: 'production' }, repository });
+      providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, repository });
     expect(result).toMatchObject({ repositoryAccess: { status: 'ready', repository },
       preparedNative: { projectName: project.name, gitSource: { type: 'github', repoId: '1424792902' } } });
     expect(requests.map(request => [request.method, new URL(request.url).searchParams.get('teamId')]))
@@ -199,7 +199,7 @@ it.each(['daemon-root', 'portable-account'] as const)('activates %s exact-projec
     const input = { v: 1, serverId: 'home', environmentId: 'environment', expectedRevision: 1,
       credentialRef: account, credentialPrincipal: principal,
       providerIdentity: { providerAccountId: 'team_exact', providerResourceId: 'prj_exact', providerEnvironment: 'production' },
-      providerEnvironment: { kind: 'production' },
+      providerEnvironment: { kind: 'native', selection: { kind: 'production' } },
       repository: { kind: 'github', deployment: 'https://github.com', repository: 'example/app' } };
     const result = await kit.invokeAction('targets-inspect-v1', input);
     expect(result).toMatchObject({ credentialPrincipal: principal, providerIdentity: { providerResourceId: 'prj_exact' },
@@ -232,7 +232,7 @@ it('contributes executable runtime roles consuming captured preparation without 
       credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: { consumer: { pluginId: entry.manifest.id,
         localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' }, target: { kind: 'account', account } },
       providerIdentity: { providerAccountId: 'team_exact', providerResourceId: 'prj_exact', providerEnvironment: 'production' },
-      providerEnvironment: { kind: 'production' }, repositoryAccess: { status: 'ready',
+      providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, repositoryAccess: { status: 'ready',
         repository: { kind: 'github', deployment: 'https://github.com', repository: 'example/app' } },
       preparedNative: { projectName: 'example', gitSource: { type: 'github', repoId: '123' } },
       targetLinkId: 'link', expectedTargetLinkRevision: 1, deploymentId: 'receipt', expectedDeploymentRevision: 1, actionOperationId: 'operation' };

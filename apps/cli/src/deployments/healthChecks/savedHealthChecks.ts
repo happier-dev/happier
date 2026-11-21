@@ -369,6 +369,7 @@ export function createSavedHealthChecksHost(input: Readonly<{
                             }
                             const current = await domain;
                             if (contributions.has(check.checkId)) return { kind: 'contributed' as const, check };
+                            if (!current.content.hostname) return unavailable('health_check_subject_unavailable');
                             const config = HealthCheckDomainHttpConfigV1Schema.safeParse(check.config);
                             if (!config.success) return unavailable('source_config_invalid');
                             return { kind: 'domain' as const, check, current, value: {

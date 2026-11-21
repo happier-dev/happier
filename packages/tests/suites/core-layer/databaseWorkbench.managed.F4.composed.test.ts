@@ -156,7 +156,7 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
       const inspected = await account.execute('action.invoke', { action: { pluginId, localId: 'projects-link' }, input: {
         v: 1, ...address, expectedRevision: environment.revision, credentialRef: connected.account, credentialPrincipal: principal,
         providerAccountId: provider === 'neon' ? boundary.neon.organizationId : boundary.supabase.organizationSlug,
-        providerEnvironment: { kind: 'custom', id: branchId },
+        providerEnvironment: { kind: 'native', selection: { branchId } },
         ...(provider === 'neon' ? { projectId: platformProjectId, branchId } : { projectRef: platformProjectId }) } },
         { externalActionTarget: { kind: 'machine', machineId: machine.target.machineId } });
       if (!inspected.ok) throw new Error(`F4 provider target inspection refused (${inspected.errorCode})`);

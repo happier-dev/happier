@@ -213,10 +213,10 @@ it('does not open persisted Link content when automatic failure enrollment is un
 });
 
 it.each([
-    { provider: 'vercel', activates: true, content: { providerEnvironment: { kind: 'production' }, sourceMethod: 'gitIntegration',
+    { provider: 'vercel', activates: true, content: { providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, sourceMethod: 'gitIntegration',
         repositoryAccess: { status: 'ready', repository: { kind: 'github', deployment: 'https://github.com', repository: 'happier-dev/triage-qa-sandbox' } },
         preparedNative: { projectName: 'cor4b-git-1115', gitSource: { type: 'github', repoId: '1424792902' } } } },
-    { provider: 'cloudflare-workers', activates: true, content: { providerEnvironment: { kind: 'production', scriptName: 'cor6-worker' },
+    { provider: 'cloudflare-workers', activates: true, content: { providerEnvironment: { kind: 'native', selection: { kind: 'script', scriptName: 'cor6-worker' } },
         sourceMethod: 'upload', preparedNative: { projectName: 'cor6-worker', scriptName: 'cor6-worker' } } },
     { provider: 'uninstalled receipt-Event plugin', activates: false, content: {} },
 ] as const)('enrolls the receipt observer for a $provider Link while the receipt-Event plugin is still cold', async ({ content, activates }) => {

@@ -86,7 +86,7 @@ it.each(['plain', 'e2ee'] as const)('prepares %s preview intent from the selecte
             consumer: { pluginId: 'happier.deploy.supabase', localId: 'branches-create' }, purpose: 'deploy-manage' },
             target: { kind: 'account', account: { service: { pluginId: 'happier.deploy.supabase', localId: 'supabase' }, accountId: 'connection' } } },
         providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project', providerEnvironment: 'parent' },
-        providerEnvironment: { kind: 'custom', id: 'parent' },
+        providerEnvironment: { kind: 'native', selection: { branchId: 'parent' } },
     });
     const sourceDataArtifact = await runWithServerHttpBaseUrl('https://home.test', () => createDeploymentArtifactForHost({
         artifacts: createCredentialedAccountArtifactStore(credentials), owner: { kind: 'account', accountId: 'owner' },
@@ -445,7 +445,7 @@ describe('authored Environment creation through protected preparation and the ex
             v: 1, serverId: 'home', providerAccountId: 'organization', credentialRef,
             credentialPrincipal: { kind: 'account', accountId: 'owner',
                 purpose: { consumer: { pluginId: 'example.data', localId: 'provision' }, purpose: 'manage' },
-                target: { kind: 'account', account: credentialRef } }, providerEnvironment: { kind: 'production' },
+                target: { kind: 'account', account: credentialRef } }, providerEnvironment: { kind: 'native', selection: { kind: 'production' } },
             name: 'private-project-name', password: { ref: 'secret:fresh-password', resourceRevision: 2 },
             regionSelection: { type: 'specific', code: 'eu-west-1' },
         } };

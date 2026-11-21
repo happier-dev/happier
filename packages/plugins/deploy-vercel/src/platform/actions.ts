@@ -1,3 +1,4 @@
+import { vercelRoleSchema, type VercelRoleInput } from './selection.js';
 import { projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs, DeploymentTargetRoleResultV1ProtocolSchema as output,
   PluginError, type DeploymentTargetDeployInputV1, type DeploymentTargetObserveInputV1, type DeploymentTargetCancelInputV1, type DeploymentTargetRollbackInputV1, type DeploymentTargetTeardownInputV1, type DeploymentTargetRoleResultV1,
@@ -21,11 +22,12 @@ function result(outcome: DeploymentTargetRoleResultV1 | DeploymentTargetRoleFail
     { phase: `deployment.vercel.${outcome.phase}`, causeKind: 'native_failure', error: outcome });
   return outcome;
 }
-async function deploy(input: DeploymentTargetDeployInputV1, ctx: PluginAccountActionContext) {
+type DeployInput = VercelRoleInput<DeploymentTargetDeployInputV1>;
+
+async function deploy(input: DeployInput, ctx: PluginAccountActionContext) {
   const io = context(ctx);
   if (input.providerDeploymentId) return result(await observeVercelDeployment(input, io));
   if (!input.preparedNative) throw new PluginError({ code: 'deployment_content_unavailable' });
-  if ('scriptName' in input.providerEnvironment) throw new PluginError({ code: 'unsupported_action' });
   // Repository access is the commit producer's decision: a link without it settles as needsGitAccess.
   return result(await deployVercelCommit({ providerIdentity: input.providerIdentity,
     providerEnvironment: input.providerEnvironment,
@@ -35,11 +37,11 @@ async function deploy(input: DeploymentTargetDeployInputV1, ctx: PluginAccountAc
 export const lifecycleActions = {
   deploy: { ...common, title: 'Deploy the reviewed Vercel commit', dangerLevel: 'writesRemote', readOnly: false,
     confirmation: { title: 'Deploy this reviewed commit to Vercel?' },
-    inputSchema: inputs.deploy.jsonSchema,
+    inputSchema: vercelRoleSchema(inputs.deploy.jsonSchema),
     // Ordinary Action admission already validated this exact canonical schema.
-    run: (input: JsonValue, ctx: PluginAccountActionContext) => deploy(input as unknown as DeploymentTargetDeployInputV1, ctx) },
+    run: (input: JsonValue, ctx: PluginAccountActionContext) => deploy(input as unknown as DeployInput, ctx) },
   observe: { ...common, title: 'Observe the selected Vercel deployment', dangerLevel: 'safe', readOnly: true,
-    inputSchema: inputs.observe.jsonSchema,
+    inputSchema: vercelRoleSchema(inputs.observe.jsonSchema),
     run: async (input: JsonValue, ctx: PluginAccountActionContext) => {
       const selection = input as unknown as DeploymentTargetObserveInputV1;
       if (selection.operation === 'teardown') return observeVercelTeardown(selection, context(ctx));
@@ -48,16 +50,16 @@ export const lifecycleActions = {
         : result(await observeVercelDeployment(selection, context(ctx)));
     } },
   promote: { ...common, title: 'Promote the selected Vercel deployment', dangerLevel: 'writesRemote', readOnly: false,
-    confirmation: { title: 'Send production traffic to this Vercel deployment?' }, inputSchema: inputs.promote.jsonSchema,
-    run: async (input: JsonValue, ctx: PluginAccountActionContext) => result(await changeVercelTraffic(input as unknown as DeploymentTargetRollbackInputV1, 'promote', context(ctx))) },
+    confirmation: { title: 'Send production traffic to this Vercel deployment?' }, inputSchema: vercelRoleSchema(inputs.promote.jsonSchema),
+    run: async (input: JsonValue, ctx: PluginAccountActionContext) => result(await changeVercelTraffic(input as unknown as VercelRoleInput<DeploymentTargetRollbackInputV1>, 'promote', context(ctx))) },
   rollback: { ...common, title: 'Restore the selected Vercel deployment', dangerLevel: 'writesRemote', readOnly: false,
-    confirmation: { title: 'Restore production traffic to this Vercel deployment?' }, inputSchema: inputs.rollback.jsonSchema,
-    run: async (input: JsonValue, ctx: PluginAccountActionContext) => result(await changeVercelTraffic(input as unknown as DeploymentTargetRollbackInputV1, 'rollback', context(ctx))) },
+    confirmation: { title: 'Restore production traffic to this Vercel deployment?' }, inputSchema: vercelRoleSchema(inputs.rollback.jsonSchema),
+    run: async (input: JsonValue, ctx: PluginAccountActionContext) => result(await changeVercelTraffic(input as unknown as VercelRoleInput<DeploymentTargetRollbackInputV1>, 'rollback', context(ctx))) },
   teardown: { ...common, title: 'Delete the selected Vercel project', dangerLevel: 'writesRemote', readOnly: false,
-    confirmation: { title: 'Delete this Vercel project and its deployments?' }, inputSchema: inputs.teardown.jsonSchema,
+    confirmation: { title: 'Delete this Vercel project and its deployments?' }, inputSchema: vercelRoleSchema(inputs.teardown.jsonSchema),
     run: (input: JsonValue, ctx: PluginAccountActionContext) => teardownVercelProject(input as unknown as DeploymentTargetTeardownInputV1, context(ctx)) },
   cancel: { ...common, title: 'Cancel the selected Vercel deployment', dangerLevel: 'writesRemote', readOnly: false,
     confirmation: { title: 'Cancel this Vercel deployment?' },
-    inputSchema: inputs.cancel.jsonSchema,
+    inputSchema: vercelRoleSchema(inputs.cancel.jsonSchema),
     run: async (input: JsonValue, ctx: PluginAccountActionContext) => result(await cancelVercelDeployment(input as unknown as DeploymentTargetCancelInputV1, context(ctx))) },
 } as const;

@@ -25,7 +25,8 @@ export async function openNeonReadOnlyTransport(input: DeploymentTargetPreparati
     throw error;
   }
   const project = input.providerIdentity!.providerResourceId;
-  const branch = input.providerEnvironment.kind === 'custom' ? input.providerEnvironment.id : input.providerIdentity!.providerEnvironment;
+  const branch = typeof input.providerEnvironment.selection.branchId === 'string'
+    ? input.providerEnvironment.selection.branchId : input.providerIdentity!.providerEnvironment;
   const path = `/projects/${encodeURIComponent(project)}/branches/${encodeURIComponent(branch)}`;
   const providerContext = { signal: context.signal, services: { http } };
   const [endpoints, databases] = await Promise.all([

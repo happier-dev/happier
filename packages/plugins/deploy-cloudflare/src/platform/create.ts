@@ -1,6 +1,6 @@
 import { withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs,
-  DeploymentTargetLinkProviderContentV1ProtocolSchema as output, type JsonValue } from '@happier-dev/plugin-sdk';
+  DeploymentTargetLinkProviderContentV1ProtocolSchema as output, type DeploymentTargetCreateInputV1, type JsonValue } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginAccountActionContext, PluginActionDeclaration } from '@happier-dev/plugin-sdk/actions';
@@ -9,8 +9,9 @@ import { isObject } from '../connectedAccounts/probe.js';
 import { workerEnvironmentKey } from './workers.js';
 import { pagesCreateSource, pagesRepositoryAccess } from './pagesSource.js';
 import { cloudflareReviewNotice } from './reviewNotice.js';
+import { cloudflareRoleSchema, type CloudflareRoleInput } from './targetSelection.js';
 
-type CreateInput = ReturnType<typeof inputs.create.parse>;
+type CreateInput = CloudflareRoleInput<DeploymentTargetCreateInputV1>;
 type AccountAction = Extract<PluginActionDeclaration, { execution: { target: 'account' } }> & {
   run(value: JsonValue, context: PluginAccountActionContext): Promise<JsonValue>;
 };
@@ -27,12 +28,12 @@ async function create(input: CreateInput, context: PluginAccountActionContext, p
     ? pagesCreateSource(input.repository, input.productionBranch) : null;
   if (input.sourceMethod !== 'upload' && !source) throw new PluginError({ code: 'unsupported_action',
     details: { phase: 'source', reason: 'native_create_requires_upload' } });
-  if (product === 'pages' && input.providerEnvironment.kind !== 'production') {
+  if (product === 'pages' && input.providerEnvironment.selection.kind !== 'production') {
     throw new PluginError({ code: 'unsupported_action', details: { phase: 'link', reason: 'pages_create_requires_production' } });
   }
   if (product === 'pages' && !input.productionBranch) throw new PluginError({ code: 'invalid_parameters',
     details: { phase: 'link', requiredDraftPath: 'productionBranch' } });
-  if (product === 'workers' && input.providerEnvironment.kind !== 'script') throw new PluginError({ code: 'unsupported_action',
+  if (product === 'workers' && input.providerEnvironment.selection.kind !== 'script') throw new PluginError({ code: 'unsupported_action',
     details: { phase: 'link', reason: 'worker_create_requires_script' } });
   const http = context.services.http;
   if (!http) throw new PluginError({ code: 'client_required' });
@@ -49,7 +50,7 @@ async function create(input: CreateInput, context: PluginAccountActionContext, p
   return projectNativeJsonValueForTransport({ credentialPrincipal: input.credentialPrincipal,
     providerIdentity: { providerAccountId: input.providerAccountId, providerResourceId: native.id,
       providerEnvironment: product === 'pages' ? 'production' : workerEnvironmentKey(native.name) },
-    providerEnvironment: environment, sourceMethod: input.sourceMethod,
+    providerEnvironment: { kind: 'native', selection: environment }, sourceMethod: input.sourceMethod,
     ...(source && input.repository ? { repositoryAccess: pagesRepositoryAccess(native.source, input.repository, input.providerAccountId) } : {}),
     ...(product === 'pages' ? { providerUrl: `https://dash.cloudflare.com?to=/${encodeURIComponent(input.providerAccountId)}/pages/view/${encodeURIComponent(native.name)}` } : {}),
     preparedNative: { projectName: native.name, reviewNotice: cloudflareReviewNotice(product, input.sourceMethod!),
@@ -61,25 +62,28 @@ const common = { execution: { target: 'account', account: { artifactId: 'account
   scopes: ['global'], surfaces: ['cli', 'plugin', 'ui', 'agent', 'mcp'], placementBindings: [],
   connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'deploy.manage' }],
   dangerLevel: 'writesRemote', readOnly: false,
-  inputSchema: inputs.create.jsonSchema, resultSchema: output.jsonSchema,
 } as const;
 const accountHint = { path: 'providerAccountId', title: 'Cloudflare Account', widget: 'select', required: true,
   inputType: { pluginId: 'happier.deploy.cloudflare', localId: 'target-choice' } } as const;
 export const pagesCreate: AccountAction = { ...common, title: 'Create a Cloudflare Pages project',
   hostAccess: ['cloudflare-pages', 'deploy.manage'],
+  inputSchema: cloudflareRoleSchema(inputs.create.jsonSchema, 'pages'), resultSchema: cloudflareRoleSchema(output.jsonSchema, 'pages'),
   confirmation: { title: 'Create this Cloudflare Pages project? Provider billing may apply.' },
   inputHints: { fields: [accountHint,
     { path: 'resourceName', title: 'Project name', widget: 'text', required: true },
     { path: 'productionBranch', title: 'Production branch', widget: 'text', required: true },
     { path: 'sourceMethod', title: 'Source method', widget: 'select', required: true, defaultValue: 'upload',
       options: [{ value: 'upload', label: 'Upload' }, { value: 'gitIntegration', label: 'Git integration' }] },
-    { path: 'providerEnvironment.kind', title: 'Environment', widget: 'select', required: true,
-      defaultValue: 'production', options: [{ value: 'production', label: 'Production' }] },
+    { path: 'providerEnvironment', title: 'Environment', widget: 'select', required: true,
+      inputType: { pluginId: 'happier.deploy.cloudflare', localId: 'new-pages-environment' },
+      defaultValue: { kind: 'native', selection: { kind: 'production' } },
+      options: [{ value: { kind: 'native', selection: { kind: 'production' } }, label: 'Production' }] },
   ] },
   run: (value, context) => create(value as unknown as CreateInput, context, 'pages'),
 };
 export const workersCreate: AccountAction = { ...common, title: 'Create a Cloudflare Worker',
   hostAccess: ['cloudflare-workers', 'deploy.manage'],
+  inputSchema: cloudflareRoleSchema(inputs.create.jsonSchema, 'workers'), resultSchema: cloudflareRoleSchema(output.jsonSchema, 'workers'),
   confirmation: { title: 'Create this Cloudflare Worker? Provider billing may apply.' },
   inputHints: { fields: [accountHint,
     { path: 'resourceName', title: 'Worker name', widget: 'text', required: true },

@@ -11,7 +11,7 @@ import { createActionExecutor, readHostAdmittedReviewedChildV1 } from '@happier-
 import { DeploymentPlatformContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { createDeploymentReceiptArtifactHeaderV1 } from '@happier-dev/deployments';
 import { DeploymentTargetLinkProviderContentV1Schema, DeploymentTargetRoleInputProtocolSchemasV1,
-    DeploymentTargetRoleResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/v2';
+    DeploymentTargetRoleResultV1ProtocolSchema, deploymentTargetRoleWithNativeSelectorV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargets';
 import type { QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol';
 import { bindExternalActionExecutionAuthorizationVerifyHttpPathV1, createDeploymentDomainContentArtifactIdV1,
     createDeploymentLinkContentArtifactIdV1, createDeploymentEnvironmentContentArtifactIdV1, EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1,
@@ -173,6 +173,7 @@ describe('public roots through real reviewed-child packet producers', () => {
             materializeAccount: unused, materializeNative: unused, projectTargetAccounts: unused,
             assertTargetAccountMaterializable: unused,
         });
+        const closed = { type: 'object' as const, properties: {}, additionalProperties: false };
         const roles = ['inspect', 'link', 'deploy', 'observe'] as const;
         const runtime = await createAuthoredAdmittedPluginRuntimeFixture({ runtimeOptions: {
             resolveCurrentMachineId: () => f.machine.id, connectedAccounts, actionFormConnectedAccounts: connectedAccounts }, plugins: [{
@@ -186,11 +187,10 @@ describe('public roots through real reviewed-child packet producers', () => {
                         execution: { target: 'daemon' }, hostAccess: ['manage'],
                         connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'manage' }],
                         dangerLevel: id === 'inspect' || id === 'observe' ? 'safe' : 'writesLocal',
-                        inputSchema: DeploymentTargetRoleInputProtocolSchemasV1[id].jsonSchema,
+                        inputSchema: deploymentTargetRoleWithNativeSelectorV1(DeploymentTargetRoleInputProtocolSchemasV1[id].jsonSchema, closed),
                         resultSchema: DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema })),
                     deploymentTargets: [{ id: 'runtime', title: 'Provider', icon: 'server-outline', role: 'runtime', targetKind: 'platform',
-                        targetSchema: { type: 'object', properties: {}, additionalProperties: false },
-                        linkSchema: { type: 'object', properties: {}, additionalProperties: false },
+                        targetSchema: closed, linkSchema: closed, nativeSelectorSchema: closed,
                         actions: { inspect: 'inspect', link: 'link', deploy: 'deploy', observe: 'observe' } }] } },
             files: { 'daemon.mjs': `export function activate(api) {
                 ${roles.map(role => `api.actions.register('${role}', async () => ({ v: 1, state: 'succeeded',
@@ -218,7 +218,7 @@ describe('public roots through real reviewed-child packet producers', () => {
                 purpose: { consumer: { pluginId, localId: 'link' }, purpose: 'manage' },
                 target: { kind: 'account', account: { service: { pluginId, localId: 'service' }, accountId: 'credential' } } },
                 providerIdentity: { providerAccountId: 'provider-account', providerResourceId: 'project', providerEnvironment: 'production' },
-                providerEnvironment: { kind: 'production' } });
+                providerEnvironment: { kind: 'native', selection: {} } });
             await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: { sourceKind: 'plugin', pluginId,
                 contributionLocalId: 'runtime', hostTargetId: null, targetKind: 'platform', machineId: f.machine.id,
                 installationId: f.machine.installationId, ...await f.artifact('deployment-target-link.v1', provider), machines: { deleteMany: {} } } });

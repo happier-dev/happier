@@ -322,7 +322,7 @@ describe('Environment → Domains: add form (P6)', () => {
     const detail = platformDetail('workers', { credentialPrincipal: { kind: 'account', accountId: 'account-owner',
       purpose: { consumer: { pluginId: 'happier.deploy.cloudflare', localId: 'workers-inspect' }, purpose: 'deploy.manage' },
       target: { kind: 'account', account } }, providerIdentity: { providerAccountId: 'cloudflare-account',
-        providerResourceId: 'worker-exact', providerEnvironment: 'production' }, providerEnvironment: { kind: 'script', scriptName: 'worker-exact' } });
+        providerResourceId: 'worker-exact', providerEnvironment: 'production' }, providerEnvironment: { kind: 'native', selection: { kind: 'script', scriptName: 'worker-exact' } } });
     const inspectPlatformTarget = vi.fn<DomainIngressInspection>(async () => ({ ok: true, value: { kind: 'ready',
       zones: [{ zoneId: 'zone-other', name: 'other.test' }, { zoneId: 'zone-exact', name: 'example.test' }], options: [],
       defaults: { connector: { imageRef: 'unused', version: 'unused' } }, connectorDiscovery: { kind: 'unavailable', reason: 'connector_discovery_unavailable' } } }));
@@ -1176,6 +1176,21 @@ describe('Environment → Domains: the platform\'s built-in address', () => {
     );
     return { screen, controller };
   }
+
+  it('shows the managed row when the serving receipt also lists its provider-assigned address', async () => {
+    const hostname = 'checkout-staging.up.railway.app';
+    const assigned = domain('assigned', hostname, { target: { kind: 'provider' } });
+    const item = { ...assigned, domain: { ...assigned.domain, provider: true } };
+    const { screen, controller } = await renderPanel([item], [`https://${hostname}`]);
+    try {
+      const managed = 'project-deployments.environment.domains.assigned';
+      await act(async () => { await waitForTestEvent(screen.subscribe, () => screen.findByTestId(managed), node => node !== null); });
+      expect(screen.findByTestId(managed)).not.toBeNull();
+      expect(screen.findByTestId(`project-deployments.environment.domains.builtIn.${hostname}`)).toBeNull();
+      const texts = screen.findAllByType('Text' as never).map(node => String(node.props.children));
+      expect(texts).toContain(t('projects.deployments.editors.domainsCount', { count: 1 }));
+    } finally { controller.retire(); }
+  });
 
   it('lists the built-in address first and says what it is', async () => {
     const { screen, controller } = await renderPanel([domain('custom', 'shop.example.com')], ['https://acme-site.vercel.app']);

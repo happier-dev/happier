@@ -3,20 +3,20 @@ import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
 import { projectDeploymentTargetHttpFailureV1, projectPluginFailureText } from '@happier-dev/plugin-sdk';
 import type {
   DeploymentTargetDeployInputV1, DeploymentTargetUploadDeployInputV1, DeploymentTargetProviderIdentityV1,
-  DeploymentTargetProviderEnvironmentV1, DeploymentTargetRepositoryAccessV1,
+  DeploymentTargetRepositoryAccessV1,
   DeploymentTargetRoleFailureV1, DeploymentTargetRoleResultV1,
 } from '@happier-dev/plugin-sdk';
 import type { HttpMethod, HttpResponse, HttpService } from '@happier-dev/plugin-sdk/http';
 import { projectVercelDeploymentAddresses } from './addresses.js';
+import type { VercelEnvironment, VercelSelection } from './selection.js';
 
 const origin = 'https://api.vercel.com';
 export const githubAppGrantUrl = 'https://github.com/apps/vercel/installations/new';
 type Repository = DeploymentTargetRepositoryAccessV1['repository'];
-type VercelEnvironment = Exclude<DeploymentTargetProviderEnvironmentV1, { scriptName: string }>;
 type ProjectCoordinates = Pick<DeploymentTargetProviderIdentityV1, 'providerAccountId' | 'providerResourceId'>;
 type Selection = Readonly<{
   providerIdentity: ProjectCoordinates;
-  providerEnvironment: DeploymentTargetProviderEnvironmentV1;
+  providerEnvironment: VercelEnvironment;
   repository: Repository;
   sourceMethod?: (DeploymentTargetDeployInputV1 | DeploymentTargetUploadDeployInputV1)['sourceMethod'];
 }>;
@@ -175,7 +175,7 @@ function rejected(response: HttpResponse, phase: Phase): DeploymentTargetRoleFai
     : response.status === 404 ? 'deployment_unavailable' : 'provider_request_failed', phase, { status: response.status });
 }
 
-function scope(environment: VercelEnvironment): string {
+function scope(environment: VercelSelection): string {
   switch (environment.kind) {
     case 'production': return 'production';
     case 'preview': return environment.gitBranch === undefined ? 'preview' : `preview:${JSON.stringify(environment.gitBranch)}`;
@@ -192,8 +192,7 @@ function scope(environment: VercelEnvironment): string {
 export async function prepareVercelProject(input: Selection, context: VercelPlatformContext)
   : Promise<VercelProjectPreparation | DeploymentTargetRoleFailureV1> {
   context.signal.throwIfAborted();
-  let environment = input.providerEnvironment;
-  if ('scriptName' in environment) return failure('unsupported_action', 'link');
+  let environment = input.providerEnvironment.selection;
   if (input.sourceMethod !== 'upload' && !supportsVercelGitRepository(input.repository)) {
     return failure('unsupported_action', 'link');
   }
@@ -257,7 +256,7 @@ export async function prepareVercelProject(input: Selection, context: VercelPlat
   if (input.sourceMethod === 'upload') {
     reviewNotice = [reviewNotice, 'Vercel builds uploaded source remotely; the controller only materializes and uploads the reviewed files.']
       .filter(Boolean).join(' ');
-    return { providerIdentity: identity, providerEnvironment: environment, projectName: project.name, reviewNotice };
+    return { providerIdentity: identity, providerEnvironment: { kind: 'native', selection: environment }, projectName: project.name, reviewNotice };
   }
   const linked = readVercelGitLink(link, input.repository);
   let ready = false;
@@ -285,7 +284,7 @@ export async function prepareVercelProject(input: Selection, context: VercelPlat
       && `${repo.namespace}/${repo.slug}`.toLowerCase() === input.repository.repository);
   }
   return { providerIdentity: identity,
-    providerEnvironment: environment, projectName: project.name,
+    providerEnvironment: { kind: 'native', selection: environment }, projectName: project.name,
     ...(reviewNotice ? { reviewNotice } : {}),
     // The provider owns its connection grant; a Vercel team id is not a forge scope.
     repositoryAccess: ready ? { status: 'ready', repository: input.repository }
@@ -358,8 +357,8 @@ export async function deployVercelCommit(input: VercelProjectPreparation & Pick<
   // the provider request itself decides current write permissions.
   if (input.repositoryAccess?.status !== 'ready' || !input.gitSource) return failure('needsGitAccess', 'source');
   return createVercelDeployment(input, { gitSource: { ...input.gitSource,
-    ref: input.providerEnvironment.kind === 'preview' && input.providerEnvironment.gitBranch
-      ? input.providerEnvironment.gitBranch : input.sourceIntent.sha, sha: input.sourceIntent.sha } }, context, input.gitSource.type);
+    ref: input.providerEnvironment.selection.kind === 'preview' && input.providerEnvironment.selection.gitBranch
+      ? input.providerEnvironment.selection.gitBranch : input.sourceIntent.sha, sha: input.sourceIntent.sha } }, context, input.gitSource.type);
 }
 
 export type VercelUploadedFile = Readonly<{ file: string; sha: string; size: number; mode: number }>;
@@ -386,14 +385,14 @@ export async function deployVercelFiles(input: UploadSelection & Readonly<{
 }>, context: VercelPlatformContext): Promise<Outcome> {
   // commitRef preserves Vercel's branch-specific Preview environment selection
   // for non-Git uploads; it never asks Vercel to fetch or move the reviewed SHA.
-  const branch = input.providerEnvironment.kind === 'preview' ? input.providerEnvironment.gitBranch : undefined;
+  const branch = input.providerEnvironment.selection.kind === 'preview' ? input.providerEnvironment.selection.gitBranch : undefined;
   return createVercelDeployment(input, { files: input.files,
     gitMetadata: { commitSha: input.sha, ...(branch ? { commitRef: branch } : {}) } }, context);
 }
 
 export async function createVercelDeployment(input: UploadSelection, source: Readonly<Record<string, unknown>>, context: VercelPlatformContext,
   repositoryKind?: Repository['kind']): Promise<Outcome> {
-  const environment = input.providerEnvironment;
+  const environment = input.providerEnvironment.selection;
   const target = environment.kind === 'production' ? { target: 'production' }
     : environment.kind === 'custom' ? { customEnvironmentSlugOrId: environment.id } : {};
   // A project's first deployment otherwise needs explicit projectSettings (400 missing_project_settings).

@@ -142,7 +142,7 @@ it('admits an opaque next-page cursor for branch reads while branch mutations st
       purpose: { consumer: { pluginId: 'com.example.database', localId: 'parents' }, purpose: 'database.manage' },
       target: { kind: 'account', account: credentialRef } },
     providerIdentity: { providerAccountId: 'team', providerResourceId: 'project', providerEnvironment: 'main' },
-    providerEnvironment: { kind: 'custom', id: 'main' } };
+    providerEnvironment: { kind: 'native', selection: { branchId: 'main' } } };
   expect(DeploymentTargetRoleInputSchemasV1['branches.list'].parse(input)).toEqual(input);
   const nextPage = { ...input, cursor: 'provider-next-page' };
   expect(DeploymentTargetRoleInputSchemasV1['branches.list'].parse(nextPage)).toEqual(nextPage);
@@ -672,7 +672,7 @@ describe('private provider link preparation intent', () => {
           purpose: { consumer: { pluginId: 'example.data', localId: 'link' }, purpose: 'manage' },
           target: { kind: 'account', account: { service: { pluginId: 'example.data', localId: 'service' }, accountId: 'credential' } } },
         providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project', providerEnvironment: 'branch' },
-        providerEnvironment: { kind: 'custom', id: 'branch' },
+        providerEnvironment: { kind: 'native', selection: { branchId: 'branch' } },
       } };
     expect(DeploymentTargetLinkProviderContentV1Schema.parse(input.provider)).toEqual(input.provider);
     // Both arms of the prior Action contract reject this valid private operand.
@@ -1312,7 +1312,7 @@ describe('recorded data teardown intent', () => {
     for (const untrusted of [
       { providerIdentity: { providerAccountId: 'account-B', providerResourceId: 'project-B', providerEnvironment: 'branch-B' } },
       { credentialRef: { service: { pluginId: 'foreign.plugin', localId: 'account' }, accountId: 'account-B' } },
-      { dataCreation: { ...input.dataCreation, providerEnvironment: { kind: 'custom', id: 'branch-B' } } },
+      { dataCreation: { ...input.dataCreation, providerEnvironment: { kind: 'native', selection: { branchId: 'branch-B' } } } },
       { dataCreation: { runId: input.dataCreation.runId } },
     ]) expect(schema.safeParse({ ...input, ...untrusted }).success).toBe(false);
     const { dataCreation: _creation, ...withoutCreation } = input;

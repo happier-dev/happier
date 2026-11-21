@@ -4,19 +4,20 @@ import { isObject } from '../connectedAccounts/probe.js';
 import { observeBuild } from './builds.js';
 import { failure, request, type DeploymentContext } from './deploymentHttp.js';
 import type { PreparedPreview } from './preview.js';
+import { type CloudflareRoleInput, type WorkerSelection } from './targetSelection.js';
 
 export type PreviewDeployment = PreparedPreview & Readonly<{ accountId: string; workerTag: string; scriptName: string }>;
 type Observation = Pick<DeploymentTargetDeployInputV1, 'providerDeploymentId'>;
 type Outcome = DeploymentTargetRoleResultV1 | DeploymentTargetRoleFailureV1;
 export type UploadedPreview = Pick<PreviewDeployment, 'accountId' | 'scriptName' | 'previewId'>;
 /** Only Connect's captured native identity selects Preview scope; never fall back to its parent script. */
-export function uploadedPreviewSelection(input: Pick<DeploymentTargetPreparationBaseV1,
+export function uploadedPreviewSelection(input: Pick<CloudflareRoleInput<DeploymentTargetPreparationBaseV1, WorkerSelection>,
   'providerIdentity' | 'providerEnvironment' | 'preparedNative'>): UploadedPreview | null {
-  if (input.providerEnvironment.kind !== 'preview' || !('scriptName' in input.providerEnvironment)) return null;
+  if (input.providerEnvironment.selection.kind !== 'preview') return null;
   if (!input.providerIdentity || !input.preparedNative?.previewId) {
     throw new PluginError({ code: 'deployment_content_unavailable', details: { phase: 'source' } });
   }
-  return { accountId: input.providerIdentity.providerAccountId, scriptName: input.providerEnvironment.scriptName,
+  return { accountId: input.providerIdentity.providerAccountId, scriptName: input.providerEnvironment.selection.scriptName,
     previewId: input.preparedNative.previewId };
 }
 export function uploadedPreviewReference(deploymentId: string): string { return `preview-deployment:${deploymentId}`; }

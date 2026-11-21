@@ -1,4 +1,4 @@
-import { DeploymentTargetPreparationBaseV1ProtocolSchema, DeploymentTargetRoleInputProtocolSchemasV1,
+import { deploymentTargetRoleWithNativeSelectorV1, DeploymentTargetPreparationBaseV1ProtocolSchema, DeploymentTargetRoleInputProtocolSchemasV1,
   type JsonValue, type DeploymentTargetPreparationBaseV1 } from '@happier-dev/plugin-sdk';
 import { defineProtocolArray as array, defineProtocolLiteral as literal, defineProtocolNumber as number,
   defineProtocolObject as object, defineProtocolString as string, defineProtocolUnion as union,
@@ -7,6 +7,9 @@ import { defineProtocolArray as array, defineProtocolLiteral as literal, defineP
 
 const closed = { policy: 'closed' } as const;
 export const identifier = string({ minLength: 1 });
+const linkedSelection = object({ branchId: identifier }, closed);
+export const nativeSelectorSchema = object({ branchId: identifier.optional() }, closed).jsonSchema;
+const linkedEnvironment = object({ kind: literal('native'), selection: linkedSelection }, closed);
 const flag = union([literal(true), literal(false)]);
 export const audienceSchema = object({ accountGrants: array(identifier).optional(), teamGrants: array(identifier).optional(),
   groupGrants: array(identifier).optional() }, closed);
@@ -43,7 +46,7 @@ export const optionsResult = object({ providerAccountId: identifier, plan: ident
   regions: array(object({ id: identifier, title: identifier }, closed)), price: literal('unknown') }, closed);
 export const linkInput = object({ projectId: identifier, branchId: identifier }, closed);
 export const linkResult = object({ status: literal('configured'),
-  providerProjectId: identifier, branchId: identifier, providerIdentity, providerEnvironment: object({ kind: literal('custom'), id: identifier }, closed),
+  providerProjectId: identifier, branchId: identifier, providerIdentity, providerEnvironment: linkedEnvironment,
   engine: literal('postgres'), engineVersion: number({ integer: true }).optional(),
   providerConsole: object({ url: identifier, label: identifier }, closed), ready: flag }, closed);
 export const branchListInput = object({ cursor: identifier.optional(), search: identifier.optional(), branchId: identifier.optional(),
@@ -61,7 +64,7 @@ export const deleteProjectInput = object({}, closed);
 export const observeProjectInput = object({}, closed);
 export const mutationResult = object({ status: union([literal('provisioned'), literal('configured'), literal('deleted'), literal('outcome_unknown')]),
   providerProjectId: identifier.optional(), branchId: identifier.optional(), endpointId: identifier.optional(), correlation: correlationSchema.optional(),
-  providerIdentity: providerIdentity.optional(), providerEnvironment: object({ kind: literal('custom'), id: identifier }, closed).optional(),
+  providerIdentity: providerIdentity.optional(), providerEnvironment: linkedEnvironment.optional(),
   providerResourceOrigin: literal('created').optional(),
   ready: flag.optional(), operationIds: array(identifier).optional(), recovered: flag.optional(),
   engine: literal('postgres').optional(), engineVersion: number({ integer: true }).optional(),
@@ -72,11 +75,11 @@ export const mutationResult = object({ status: union([literal('provisioned'), li
 
 /** Canonical custody fields retain their exact JSON Schema; this leaf adds only product operands. */
 export function inputSchema(product: ProtocolComposableSchema<unknown>, selected = false): PluginJsonSchema {
-  const base = (product === deleteProjectInput ? DeploymentTargetRoleInputProtocolSchemasV1['projects.delete']
+  const base = deploymentTargetRoleWithNativeSelectorV1((product === deleteProjectInput ? DeploymentTargetRoleInputProtocolSchemasV1['projects.delete']
     : product === observeProjectInput ? DeploymentTargetRoleInputProtocolSchemasV1['projects.observe']
     : product === branchListInput ? DeploymentTargetRoleInputProtocolSchemasV1['branches.list']
     : selected ? DeploymentTargetRoleInputProtocolSchemasV1['branches.create']
-      : DeploymentTargetPreparationBaseV1ProtocolSchema).jsonSchema;
+      : DeploymentTargetPreparationBaseV1ProtocolSchema).jsonSchema, nativeSelectorSchema);
   const variants = (product.jsonSchema.anyOf ?? [product.jsonSchema]).map(member => ({
     // Retain preparation operands (including providerAccountId) when a selected
     // role strengthens the required custody fields.

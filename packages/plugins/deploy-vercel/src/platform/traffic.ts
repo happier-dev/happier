@@ -1,3 +1,4 @@
+import { type VercelRoleInput } from './selection.js';
 import { projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { PluginError, isPluginError, type DeploymentTargetRoleFailureV1, type DeploymentTargetObserveInputV1, type DeploymentTargetRollbackInputV1,
   type DeploymentTargetRoleResultV1 } from '@happier-dev/plugin-sdk';
@@ -70,10 +71,10 @@ export async function observeVercelTraffic(input: Selection, operation: Operatio
     ...(state === 'succeeded' && currentProduction ? projectVercelDeploymentAddresses(currentProduction, true) : {}) };
 }
 
-export async function changeVercelTraffic(input: DeploymentTargetRollbackInputV1, operation: Operation, context: VercelPlatformContext)
+export async function changeVercelTraffic(input: VercelRoleInput<DeploymentTargetRollbackInputV1>, operation: Operation, context: VercelPlatformContext)
   : Promise<DeploymentTargetRoleResultV1 | DeploymentTargetRoleFailureV1> {
   context.signal.throwIfAborted();
-  if (input.providerEnvironment.kind !== 'production') return fail('unsupported_action', 'admission');
+  if (input.providerEnvironment.selection.kind !== 'production') return fail('unsupported_action', 'admission');
   if (input.providerDeploymentId) return observeVercelTraffic(input, operation, context);
   const providerDeploymentId = input.priorDeployment.providerDeploymentId;
   if (operation === 'promote') {

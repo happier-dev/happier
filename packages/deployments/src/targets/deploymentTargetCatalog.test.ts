@@ -8,7 +8,7 @@ it('preserves a contributed database engine while qualifying only executable ref
     const targets = listDeploymentTargetsV1([{
         pluginId: 'com.example.data', identity: { pluginId: 'com.example.data', localId: 'database' },
         definition: { id: 'database', role: 'data', title: 'Data', icon: 'server-outline', targetKind: 'example',
-            targetSchema: closed, linkSchema: closed,
+            targetSchema: closed, linkSchema: closed, nativeSelectorSchema: closed,
             dataV1: { database: { engineId: 'example-engine' }, projects: { list: 'projects' } } },
     }]);
     expect(targets.find(target => target.role === 'data')?.dataV1).toEqual({
@@ -29,7 +29,7 @@ it('carries a platform target\u2019s declared plans into the suggestion catalog 
     const catalog = projectDeploymentSuggestionTargetsV1(listDeploymentTargetsV1([{
         pluginId: 'com.example.host', identity: { pluginId: 'com.example.host', localId: 'pages' },
         definition: { id: 'pages', role: 'runtime', title: 'Pages', icon: 'server-outline', targetKind: 'example',
-            targetSchema: closed, linkSchema: closed, plans,
+            targetSchema: closed, linkSchema: closed, nativeSelectorSchema: closed, plans,
             actions: { inspect: 'inspect', link: 'link', deploy: 'deploy', observe: 'observe' } },
     }]));
     expect(catalog.targets.find(target => target.id === 'com.example.host/pages')?.plans).toEqual(plans);
@@ -41,11 +41,11 @@ it('offers each managed database target as a store choice the suggestion check a
     const catalog = projectDeploymentSuggestionTargetsV1(listDeploymentTargetsV1([{
         pluginId: 'com.example.data', identity: { pluginId: 'com.example.data', localId: 'database' },
         definition: { id: 'database', role: 'data', title: 'Managed Postgres', icon: 'server-outline', targetKind: 'example',
-            targetSchema: closed, linkSchema: closed, dataV1: { database: { engineId: 'postgresql' } } },
+            targetSchema: closed, linkSchema: closed, nativeSelectorSchema: closed, dataV1: { database: { engineId: 'postgresql' } } },
     }, {
         pluginId: 'com.example.files', identity: { pluginId: 'com.example.files', localId: 'bucket' },
         definition: { id: 'bucket', role: 'data', title: 'Files', icon: 'server-outline', targetKind: 'example',
-            targetSchema: closed, linkSchema: closed },
+            targetSchema: closed, linkSchema: closed, nativeSelectorSchema: closed },
     }]));
     // A data target that declares no database engine is not a store a recommendation can name.
     expect(catalog.stores).toEqual([{ id: 'com.example.data/database', engine: 'postgresql', title: 'Managed Postgres' }]);

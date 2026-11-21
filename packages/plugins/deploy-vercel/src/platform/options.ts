@@ -4,10 +4,11 @@ import type { DefinePluginInput, JsonValue } from '@happier-dev/plugin-sdk';
 import type { InputOption, PluginAccountActionContext, PluginActionDeclaration, PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
 import { createDeploymentTargetOptionsResource } from '@happier-dev/plugin-sdk/resources';
 import { readVercelProjectCoordinates, vercelEndpoint, vercelRequest } from './operations.js';
+import { vercelRoleSchema } from './selection.js';
 
 const pluginId = 'happier.deploy.vercel';
 const execution = { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } } as const;
-const base = DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema.properties!;
+const base = vercelRoleSchema(DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema).properties!;
 const paths = ['providerAccountId', 'projectId', 'providerEnvironment'] as const;
 type OptionsInput = Readonly<{ credentialRef: JsonValue; credentialPrincipal: JsonValue;
   fieldPath: typeof paths[number]; providerAccountId?: string; providerResourceId?: string; gitBranch?: string; query?: string; cursor?: string }>;
@@ -88,11 +89,11 @@ async function options(input: OptionsInput, context: PluginAccountActionContext)
   }
   const value = await read(new URL(vercelEndpoint(`/v9/projects/${encodeURIComponent(input.providerResourceId)}/custom-environments`, input.providerAccountId)), context);
   if (!record(value) || !Array.isArray(value.environments)) return invalid();
-  const result: InputOption[] = [{ value: { kind: 'production' }, label: 'Production' }, { value: { kind: 'preview' }, label: 'Preview' }];
-  if (input.gitBranch) result.push({ value: { kind: 'preview', gitBranch: input.gitBranch }, label: `Preview: ${input.gitBranch}` });
+  const result: InputOption[] = [{ value: { kind: 'native', selection: { kind: 'production' } }, label: 'Production' }, { value: { kind: 'native', selection: { kind: 'preview' } }, label: 'Preview' }];
+  if (input.gitBranch) result.push({ value: { kind: 'native', selection: { kind: 'preview', gitBranch: input.gitBranch } }, label: `Preview: ${input.gitBranch}` });
   for (const environment of value.environments) {
     if (!record(environment) || !text(environment.id) || !text(environment.slug)) return invalid();
-    result.push({ value: { kind: 'custom', id: environment.id }, label: environment.slug });
+    result.push({ value: { kind: 'native', selection: { kind: 'custom', id: environment.id } }, label: environment.slug });
   }
   return { options: result.filter(option => matches(option, input.query)) };
 }
@@ -113,7 +114,8 @@ export const targetOptionsAction: PluginActionDefinition<Extract<PluginActionDec
 };
 
 const runtime = createDeploymentTargetOptionsResource({ pluginId, localId: 'target-options-read' }, 'deployment.vercel.options', draft => {
-  const environment = record(draft.providerEnvironment) ? draft.providerEnvironment : {};
+  const carrier = draft.providerEnvironment;
+  const environment = record(carrier) && record(carrier.selection) ? carrier.selection : {};
   const coordinates = readVercelProjectCoordinates(draft);
   return {
     ...(text(coordinates.providerAccountId) ? { providerAccountId: coordinates.providerAccountId } : {}),
@@ -124,6 +126,7 @@ const runtime = createDeploymentTargetOptionsResource({ pluginId, localId: 'targ
 export const targetOptionsResources = { 'target-options': { source: 'dynamic', kind: 'config', scope: 'global', execution,
   contentType: 'application/json', runtime } } satisfies NonNullable<DefinePluginInput['resources']>;
 export const targetInputTypes = {
+  'new-project-environment': { title: 'Vercel project environment', semantic: 'vercelNewProjectEnvironment', valueSchema: base.providerEnvironment! },
   'provider-account': { title: 'Vercel account or Team', semantic: 'vercelAccount', valueSchema: { type: 'string', minLength: 1 }, options: { resource: 'target-options' } },
   'provider-project': { title: 'Vercel project', semantic: 'vercelProject', valueSchema: { type: 'string', minLength: 1 }, options: { resource: 'target-options' } },
   'provider-environment': { title: 'Vercel environment', semantic: 'vercelEnvironment', valueSchema: base.providerEnvironment!, options: { resource: 'target-options' } },
@@ -132,6 +135,6 @@ export const targetInputHints = { fields: [
   { path: paths[0], title: 'Vercel account or Team', widget: 'select', required: true, optionsDraftDependencies: [], inputType: { pluginId, localId: 'provider-account' } },
   { path: paths[1], title: 'Vercel project', widget: 'select', required: true, optionsDraftDependencies: [], inputType: { pluginId, localId: 'provider-project' } },
   { path: paths[2], title: 'Vercel environment', widget: 'select', required: true,
-    optionsDraftDependencies: ['projectId', 'providerIdentity.providerResourceId', 'providerEnvironment.kind', 'providerEnvironment.gitBranch'],
+    optionsDraftDependencies: ['projectId', 'providerIdentity.providerResourceId', 'providerEnvironment.selection.kind', 'providerEnvironment.selection.gitBranch'],
     inputType: { pluginId, localId: 'provider-environment' } },
 ] } as const;

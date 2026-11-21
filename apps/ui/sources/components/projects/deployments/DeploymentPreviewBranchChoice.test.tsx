@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { definePlugin, PluginError, DeploymentTargetRoleInputProtocolSchemasV1 } from '@happier-dev/plugin-sdk';
+import { definePlugin, deploymentTargetRoleWithNativeSelectorV1, PluginError, DeploymentTargetRoleInputProtocolSchemasV1 } from '@happier-dev/plugin-sdk';
 import { defineProtocolObject, defineProtocolString, defineProtocolArray } from '@happier-dev/plugin-sdk/protocol';
 import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
@@ -30,6 +30,9 @@ it('retains the provider branch refusal and distinguishes an exhausted branch li
   const pluginId = 'com.example.preview-database';
   const execution = { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activate' } } as const;
   const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
+  const nativeSelectorSchema = { ...closed, properties: { branchId: { type: 'string', minLength: 1 } } } as const;
+  const roleSchema = (role: 'branches.list' | 'branches.create' | 'branches.delete') =>
+    deploymentTargetRoleWithNativeSelectorV1(DeploymentTargetRoleInputProtocolSchemasV1[role].jsonSchema, nativeSelectorSchema);
   const str = defineProtocolString();
   const output = defineProtocolObject({ branches: defineProtocolArray(defineProtocolObject({ providerProjectId: str, branchId: str, name: str }, { policy: 'closed' })), nextCursor: str.optional() }, { policy: 'closed' });
   let reads = 0;
@@ -39,7 +42,7 @@ it('retains the provider branch refusal and distinguishes an exhausted branch li
   const failureCause = { errorClass: 'Error', phase: 'deployment.domain.native_execution',
     errorCode: 'deployment_conflict', httpStatus: 409 } as const;
   const read = { title: 'List database parents', execution, surfaces: ['ui'], dangerLevel: 'safe', readOnly: true,
-    inputSchema: DeploymentTargetRoleInputProtocolSchemasV1['branches.list'], resultSchema: output,
+    inputSchema: roleSchema('branches.list'), resultSchema: output,
     run: async () => { reads++; if (reads === 1) { await pending; throw new PluginError({ code: 'deployment_failed' }); }
       if (reads === 2) return { branches: [], nextCursor: 'next-parents' };
       if (reads === 3) return { branches: [] };
@@ -48,9 +51,10 @@ it('retains the provider branch refusal and distinguishes an exhausted branch li
     run: async () => { mutations++; return { branches: [] }; } } as const;
   // A real third-party data contribution exercises declaration discovery, Action dispatch and schema admission.
   const plugin = definePlugin({ id: pluginId, version: '1.0.0', displayName: 'Preview database',
-    actions: { parents: read, create: write, remove: { ...write, dangerLevel: 'destructive' } },
+    actions: { parents: read, create: { ...write, inputSchema: roleSchema('branches.create') },
+      remove: { ...write, inputSchema: roleSchema('branches.delete'), dangerLevel: 'destructive' } },
     deploymentTargets: { database: { role: 'data', title: 'Database', targetKind: 'database', icon: 'server-outline',
-      targetSchema: closed, linkSchema: closed, dataV1: { branches: { listAction: 'parents', create: 'create', delete: 'remove' } } } } });
+      targetSchema: closed, linkSchema: closed, nativeSelectorSchema, dataV1: { branches: { listAction: 'parents', create: 'create', delete: 'remove' } } } } });
   const serverId = await homes.addHome({ name: 'Preview database', serverUrl: 'https://preview-parent.test',
     serverIdentityId: 'srv_preview_database', accountId: 'owner', currentAccount: true });
   const account = await captureLazyActionAccountContext(serverId);
@@ -61,7 +65,7 @@ it('retains the provider branch refusal and distinguishes an exhausted branch li
   const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId: account.accountLifetime.scope.serverId }),
     targetLinks: [{ targetLink: link, content: {
       providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project', providerEnvironment: 'main' },
-      providerEnvironment: { kind: 'custom', id: 'main' }, credentialPrincipal: { kind: 'account', accountId: 'owner',
+      providerEnvironment: { kind: 'native', selection: { branchId: 'main' } }, credentialPrincipal: { kind: 'account', accountId: 'owner',
         purpose: { consumer: { pluginId, localId: 'link' }, purpose: 'database.manage' },
         target: { kind: 'account', account: { service: { pluginId, localId: 'database' }, accountId: 'token' } } },
     } }] });

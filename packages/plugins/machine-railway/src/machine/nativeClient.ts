@@ -3,9 +3,8 @@ import { decodeBase64, encodeBase64, defineProtocolArray, defineProtocolLiteral,
 import { projectMachineProvisionerActionFailure, buildMachineProvisionerDaemonStartScript, observeMachineProvisionerNativeRead, projectMachineProvisionerDeleteReadback, type MachineProvisionerAcquireResultV1, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerDestroyResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { BILLING, CONTRIBUTION, RailwayLaunchSchema, RailwayOperationSchema, RailwayResourceSchema, ROLE_SCHEMAS, reference, type RailwayLaunch, type RailwayOperation, type RailwayResource } from './schemas.js';
 import { readRailwayFile, writeRailwayFile } from './files.js';
-import { createRailwayGraphqlClient, NativeError, railwayErrorCode as code } from '../railwayApi.js';
+import { createRailwayGraphqlClient, RailwayNativeError as NativeError, railwayErrorCode as code } from '@happier-dev/railway-api';
 
-export { NativeError, RAILWAY_API } from '../railwayApi.js';
 const open = { policy: 'additive-open/drop' } as const;
 const text = defineProtocolString({ minLength: 1 });
 const boolean = defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]);

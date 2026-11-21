@@ -78,12 +78,15 @@
 | `.` | `DeploymentTargetCancelInputV1` | type | any |
 | `.` | `DeploymentTargetCommonV1` | type | any |
 | `.` | `DeploymentTargetContributionV1` | type | any |
+| `.` | `DeploymentTargetCreateInputV1` | type | any |
 | `.` | `DeploymentTargetCredentialPrincipalV1` | type | any |
 | `.` | `DeploymentTargetDatabaseRuntimeV1` | type | any |
 | `.` | `DeploymentTargetDeployInputV1` | type | any |
+| `.` | `DeploymentTargetDomainAddInputV1` | type | any |
 | `.` | `DeploymentTargetDomainInputV1` | type | any |
 | `.` | `DeploymentTargetDomainResultV1` | type | any |
 | `.` | `DeploymentTargetDomainResultV1ProtocolSchema` | value | any |
+| `.` | `DeploymentTargetGeneratedDomainAddInputV1ProtocolSchema` | value | any |
 | `.` | `DeploymentTargetInspectInputV1` | type | any |
 | `.` | `DeploymentTargetLifecycleInputV1` | type | any |
 | `.` | `DeploymentTargetLinkProviderContentV1ProtocolSchema` | value | any |
@@ -367,6 +370,7 @@
 | `.` | `defineComposerRegion` | value | any |
 | `.` | `definePlugin` | value | any |
 | `.` | `defineUiSurfaceDefinition` | value | any |
+| `.` | `deploymentTargetRoleWithNativeSelectorV1` | value | any |
 | `.` | `dockerEngineAccessModeInputSchema` | value | any |
 | `.` | `dockerEnginePresenceCheck` | value | any |
 | `.` | `getMachineFirewallExposureInputSchemaV1` | value | any |
@@ -392,6 +396,7 @@
 | `.` | `resolveUsageCalendarInstant` | value | any |
 | `.` | `selectCurrentTargetedContribution` | value | any |
 | `.` | `settleDeploymentTargetDomainRemovalV1` | value | any |
+| `.` | `settleDeploymentTargetResourceRemovalV1` | value | any |
 | `.` | `summarizeUsageRunLengthObservations` | value | any |
 | `.` | `tailscaleMembershipPrograms` | value | any |
 | `.` | `trimBugReportTextToMaxBytes` | value | any |

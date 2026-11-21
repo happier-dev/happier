@@ -2,10 +2,11 @@ import { createMachineProvisionerApiKeyAccount } from '@happier-dev/plugin-sdk/m
 import type { PluginAccountApi } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ConnectedAccountPortableRuntime, ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
-import { ACCOUNT_PURPOSE, ORIGINS, RAILWAY_API } from './railwayApi.js';
+import { RAILWAY_API, RAILWAY_PROJECT_KEY } from '@happier-dev/railway-api';
+import { ACCOUNT_PURPOSE, ORIGINS } from './requestAuth.js';
 import { railwayOAuthMode, railwayOAuthStatus, refreshRailwayOAuth, revokeRailwayOAuth } from './oauth.js';
 
-export { ACCOUNT_PURPOSE, ORIGINS, nativeFetch } from './railwayApi.js';
+export { ACCOUNT_PURPOSE, ORIGINS, nativeFetch } from './requestAuth.js';
 export const RAILWAY_ENVIRONMENT_KEY = 'RAILWAY_ENVIRONMENT_ID';
 
 export const ACCOUNT_ID = 'railway-account';
@@ -49,10 +50,17 @@ export const connectedAccountRuntime: ConnectedAccountRuntime = {
     if (request.kind !== 'environment') return account.runtime.materialize(request, context, options);
     context.signal.throwIfAborted();
     options?.signal?.throwIfAborted();
-    const { environmentId } = context.configuration.values;
-    if (context.configuration.target.modeId !== 'oauth' || typeof environmentId !== 'string' || !environmentId
-      || request.keys.some(key => key !== RAILWAY_ENVIRONMENT_KEY)) throw new PluginError({ code: 'credential_unavailable' });
-    return { kind: 'environment', env: Object.fromEntries(request.keys.map(key => [key, environmentId])) };
+    const { environmentId, projectId } = context.configuration.values;
+    const oauth = context.configuration.target.modeId === 'oauth';
+    const env: Record<string, string> = {};
+    for (const key of request.keys) {
+      if (key === RAILWAY_PROJECT_KEY) {
+        if (typeof projectId === 'string' && projectId) env[key] = projectId;
+      } else if (key === RAILWAY_ENVIRONMENT_KEY && oauth && typeof environmentId === 'string' && environmentId) {
+        env[key] = environmentId;
+      } else throw new PluginError({ code: 'credential_unavailable' });
+    }
+    return { kind: 'environment', env };
   },
 };
 export const connectedAccountPortableRuntime: ConnectedAccountPortableRuntime = {

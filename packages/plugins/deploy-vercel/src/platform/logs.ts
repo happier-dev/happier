@@ -1,3 +1,4 @@
+import { vercelRoleSchema } from './selection.js';
 import { projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs, DeploymentTargetLogsResultV1ProtocolSchema as output,
   PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
@@ -12,7 +13,7 @@ export const buildLogsAction = {
   execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
   scopes: ['global'], surfaces: ['cli', 'plugin'], placementBindings: [],
   hostAccess: ['vercel-api', 'deploy.manage'], connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'deploy.manage' }],
-  dangerLevel: 'safe', readOnly: true, inputSchema: inputs['logs.build'].jsonSchema, resultSchema: output.jsonSchema,
+  dangerLevel: 'safe', readOnly: true, inputSchema: vercelRoleSchema(inputs['logs.build'].jsonSchema), resultSchema: output.jsonSchema,
   async run(raw: JsonValue, context: PluginAccountActionContext): Promise<ReturnType<typeof output.parse>> {
     // The Action owner has admitted this exact schema, including receipt custody.
     const input = raw as unknown as ReturnType<typeof inputs['logs.build']['parse']>;

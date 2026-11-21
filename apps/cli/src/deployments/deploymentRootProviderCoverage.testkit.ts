@@ -102,7 +102,7 @@ export async function runDeploymentRootProviderCoverage(input: Readonly<{
         const prepared = DeploymentTargetLinkContentV1Schema.parse(await resultOf('action.invoke', { action,
             input: { v: 1, ...address, expectedRevision: created.revision, credentialRef, credentialPrincipal: principal,
                 providerIdentity: { providerAccountId, providerResourceId: projectId, providerEnvironment: 'production' },
-                providerEnvironment: { kind: 'production' },
+                providerEnvironment: { kind: 'native', selection: { kind: 'production' } },
                 repository: { kind: 'github', deployment: 'https://github.com', repository: 's0/app' } },
         }));
         const linked = DeploymentTargetLinkResultV1Schema.parse(await resultOf('deployments.targets.link', {

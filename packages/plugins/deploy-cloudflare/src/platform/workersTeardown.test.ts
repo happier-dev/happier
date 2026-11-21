@@ -13,8 +13,8 @@ function input(preview = false) {
     credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: { consumer: { pluginId: entry.manifest.id,
       localId: 'workers-inspect' }, purpose: 'deploy.manage' }, target: { kind: 'account', account: credentialRef } },
     providerIdentity: { providerAccountId: accountId, providerResourceId: workerId, providerEnvironment: 'selected' },
-    providerEnvironment: preview ? { kind: 'preview', scriptName: 'production-worker', previewName: 'feature/name' }
-      : { kind: 'script', scriptName: 'production-worker' },
+    providerEnvironment: { kind: 'native', selection: preview ? { kind: 'preview', scriptName: 'production-worker', previewName: 'feature/name' }
+      : { kind: 'script', scriptName: 'production-worker' } },
     preparedNative: { projectName: 'production-worker', ...(preview ? { previewId, scriptName: 'production-worker' } : {}) },
     targetLinkId: 'link', expectedTargetLinkRevision: 1, deploymentId: 'receipt', expectedDeploymentRevision: 1,
     actionOperationId: 'operation', operation: 'teardown' });
@@ -117,5 +117,15 @@ it('retains authorization refusal instead of treating it as resource absence', a
   try {
     await expect(kit.invokeAction('workers-teardown', input())).rejects.toMatchObject({ code: 'deployment_access_denied',
       data: { failureCause: { httpStatus: 403, nativeErrorCode: '10000' } } });
+  } finally { await kit.dispose(); }
+});
+
+it('reports unknown removal with the native cause when a confirming read is denied', async () => {
+  const { kit, requests } = await fixture(async request => request.method === 'DELETE'
+    ? response(200, { success: true }) : response(403, { success: false, errors: [{ code: 10000 }] }));
+  try {
+    await expect(kit.invokeAction('workers-teardown', input())).rejects.toMatchObject({ code: 'outcome_unknown',
+      data: { failureCause: { httpStatus: 403, nativeErrorCode: '10000' } } });
+    expect(requests.map(request => request.method)).toEqual(['DELETE', 'GET']);
   } finally { await kit.dispose(); }
 });

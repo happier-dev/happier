@@ -25,7 +25,7 @@ const credentialRef = { service: { pluginId: 'happier.machine.vercel', localId: 
 const base = { v: 1, serverId: 'home', environmentId: 'environment', expectedRevision: 1, credentialRef,
   credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: { consumer: { pluginId: entry.manifest.id,
     localId: 'project-create' }, purpose: 'deploy.manage' }, target: { kind: 'account', account: credentialRef } },
-  providerAccountId: 'team_exact', providerEnvironment: { kind: 'production' }, sourceMethod: 'gitIntegration' };
+  providerAccountId: 'team_exact', providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, sourceMethod: 'gitIntegration' };
 
 it.each(samples)('creates, inspects and deploys the documented $kind repository', async sample => {
   const requests: HttpRequest[] = [];

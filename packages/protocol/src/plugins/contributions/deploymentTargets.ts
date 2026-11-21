@@ -4,14 +4,14 @@ import { containsPriceTextV1, ProviderAmountV1Schema } from '../../common/provid
 import { deploymentTargetFitFieldsV1 } from '../../deployments/deployShapeV1.js';
 import { WorkflowActionFieldBindingV1Schema } from '../../workflows/workflowLeafV1.js';
 import { asProtocolZod, projectZodProtocolSchema } from '../actions/internalProtocolZodAdapter.js';
-import { normalizePluginJsonSchema, pluginJsonValuesEqual } from '../actions/protocolComposableSchema.js';
+import { embedProtocolJsonSchema, normalizePluginJsonSchema, pluginJsonValuesEqual } from '../actions/protocolComposableSchema.js';
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { PluginActionIconV2Schema, type PluginActionContributionV2 } from '../actions/v2.js';
-import { PluginJsonSchemaV2Schema, PluginLocalizedStringV2Schema } from './publicTypes.js';
+import { PluginJsonSchemaV2Schema, PluginLocalizedStringV2Schema, type PluginJsonSchemaV2 } from './publicTypes.js';
 import { isRecursivelyClosedPluginJsonSchemaV2 } from './jsonSchema.js';
 import type { PluginResourceContributionV2 } from './v2.js';
 import { DeploymentTargetRoleInputProtocolSchemasV1,
-    DeploymentTargetRoleResultV1ProtocolSchema, DeploymentTargetLinkProviderContentV1ProtocolSchema, DeploymentTargetLogsResultV1ProtocolSchema, DeploymentTargetDomainResultV1ProtocolSchema,
+    DeploymentTargetRoleResultV1ProtocolSchema, DeploymentTargetLinkProviderContentV1ProtocolSchema, DeploymentTargetLogsResultV1ProtocolSchema, DeploymentTargetDomainResultV1ProtocolSchema, DeploymentTargetGeneratedDomainAddInputV1ProtocolSchema,
     DeploymentTargetVariablesReadResultV1ProtocolSchema, DeploymentTargetVariablesSyncResultV1ProtocolSchema,
     DeploymentTargetPreparationBaseV1ProtocolSchema } from './deploymentTargetRolesV1.js';
 export * from './deploymentTargetRolesV1.js';
@@ -84,15 +84,47 @@ const descriptorFields = () => ({
     id: local(), title: PluginLocalizedStringV2Schema, description: z.optional(PluginLocalizedStringV2Schema),
     icon: PluginActionIconV2Schema, targetKind: local(),
     plans: z.optional(z.array(DeploymentTargetPlanV1Schema)),
-    targetSchema: closedSchema, linkSchema: closedSchema,
+    targetSchema: closedSchema, linkSchema: closedSchema, nativeSelectorSchema: DeploymentTargetNativeSelectorSchemaV1,
 });
 
 /** Provider-declared cadence for demanded, unsettled receipts; the receipt observer owns scheduling. */
 export const DeploymentTargetStatusIntervalMsV1Schema = lazyZodSchema(() => z.number().check(z.int(), z.positive(), z.maximum(Number.MAX_SAFE_INTEGER)));
 
+function isObjectSelector(schema: PluginJsonSchemaV2): boolean {
+    if (schema.type === 'object') return true;
+    const options = schema.anyOf ?? schema.oneOf;
+    return options !== undefined && options.length > 0 && options.every(isObjectSelector);
+}
+
+/** The target owns each closed selector shape. The host owns the enclosing role operands. */
+export const DeploymentTargetNativeSelectorSchemaV1 = lazyZodSchema(() => closedSchema.check(z.refine(isObjectSelector,
+    { message: 'Native deployment target selectors must describe closed objects.' })));
+
+export const DeploymentTargetGitSourceV1Schema = lazyZodSchema(() => z.discriminatedUnion('guarantee', [
+    z.strictObject({ guarantee: z.literal('exactCommit'), requiresPublishedCheckout: z.optional(z.literal(true)), create: z.optional(z.literal('branchHead')) }),
+    z.strictObject({ guarantee: z.literal('branchHead'), create: z.optional(z.literal('branchHead')) }),
+]));
+
+export function describeDeploymentTargetGitCreateV1(source: z.infer<typeof DeploymentTargetGitSourceV1Schema> | undefined,
+    platform: string, input: Readonly<{ resourceName?: string; repository?: string; productionBranch?: string }>): string | undefined {
+    if (source?.create !== 'branchHead' || !input.resourceName || !input.repository || !input.productionBranch) return;
+    return `Create service ${input.resourceName} from ${input.repository} on branch ${input.productionBranch}. ${platform} builds the latest commit on that branch and redeploys when it changes.`;
+}
+
+export function deploymentTargetRoleWithNativeSelectorV1(base: PluginJsonSchemaV2, selection: PluginJsonSchemaV2): PluginJsonSchemaV2 {
+    const { $schema: _dialect, ...operand } = normalizePluginJsonSchema(selection);
+    return { ...base, properties: { ...base.properties, providerEnvironment: {
+        type: 'object', properties: { kind: { const: 'native', type: 'string' },
+            selection: embedProtocolJsonSchema(operand, ['properties', 'providerEnvironment', 'properties', 'selection']) },
+        required: ['kind', 'selection'], additionalProperties: false,
+    } } };
+}
+
 /** Runtime and data are closed alternatives; association unlink stays with the host. */
 export const DeploymentTargetContributionV1Schema = lazyZodSchema(() => z.discriminatedUnion('role', [
-    z.strictObject({ ...descriptorFields(), role: z.literal('runtime'), statusIntervalMs: z.optional(DeploymentTargetStatusIntervalMsV1Schema), actions: createDeploymentTargetRuntimeActionsV1Schema(local()) }),
+    z.strictObject({ ...descriptorFields(), role: z.literal('runtime'), statusIntervalMs: z.optional(DeploymentTargetStatusIntervalMsV1Schema),
+        generatedDomains: z.optional(z.literal(true)), logFollow: z.optional(z.literal(false)), gitSource: z.optional(DeploymentTargetGitSourceV1Schema),
+        actions: createDeploymentTargetRuntimeActionsV1Schema(local()) }),
     z.strictObject({ ...descriptorFields(), role: z.literal('data'), dataV1: z.optional(createDeploymentTargetDataV1Schema(local(), local())) }),
 ]));
 export type DeploymentTargetContributionV1 = z.infer<typeof DeploymentTargetContributionV1Schema>;
@@ -162,21 +194,22 @@ export function validateDeploymentTargetContributionsV1(
         if (ids.has(descriptor.id)) context.addIssue({ code: 'custom', path: ['deploymentTargets', index, 'id'], message: 'Duplicate deployment target id.' });
         ids.add(descriptor.id);
         for (const binding of readDeploymentTargetReferenceRolesV1(descriptor)) {
+            // Zod prefixes issue paths in place, so each issue below owns a copy.
             const path = ['deploymentTargets', index, ...binding.path];
             if (binding.targetFamily === 'resources') {
                 const resource = value.resources.find(candidate => candidate.id === binding.reference);
                 if (!resource || resource.source !== 'dynamic') {
-                    context.addIssue({ code: 'custom', path, message: 'Deployment data reads require declared same-plugin dynamic Resources.' });
+                    context.addIssue({ code: 'custom', path: [...path], message: 'Deployment data reads require declared same-plugin dynamic Resources.' });
                 }
                 continue;
             }
             const action = value.actions.find(candidate => candidate.id === binding.reference);
             if (!action) {
-                context.addIssue({ code: 'custom', path, message: 'Deployment target roles require declared same-plugin Actions.' });
+                context.addIssue({ code: 'custom', path: [...path], message: 'Deployment target roles require declared same-plugin Actions.' });
                 continue;
             }
             if (action.execution.target === 'client' || binding.role === 'uploadDeploy' && action.execution.target !== 'daemon') {
-                context.addIssue({ code: 'custom', path, message: 'Deployment target roles require Account or daemon placement; uploadDeploy requires daemon placement.' });
+                context.addIssue({ code: 'custom', path: [...path], message: 'Deployment target roles require Account or daemon placement; uploadDeploy requires daemon placement.' });
             }
             let validInput = false;
             try {
@@ -184,56 +217,59 @@ export function validateDeploymentTargetContributionsV1(
             } catch { /* Invalid authored schemas receive the same typed declaration refusal below. */ }
             if (!validInput || !action.resultSchema
                 || !isRecursivelyClosedPluginJsonSchemaV2(action.resultSchema)) {
-                context.addIssue({ code: 'custom', path, message: 'Deployment target roles require explicit recursively closed input and result schemas.' });
+                context.addIssue({ code: 'custom', path: [...path], message: 'Deployment target roles require explicit recursively closed input and result schemas.' });
             }
             if ((binding.role === 'projects.delete' || binding.role === 'projects.observe') && (!action.resultSchema
                 || !pluginJsonValuesEqual(normalizePluginJsonSchema(action.resultSchema),
                     normalizePluginJsonSchema(DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema)))) {
-                context.addIssue({ code: 'custom', path, message: 'Data project deletion and recovery require the canonical absence observation.' });
+                context.addIssue({ code: 'custom', path: [...path], message: 'Data project deletion and recovery require the canonical absence observation.' });
             }
             if (descriptor.role === 'runtime' && binding.role !== 'inspect' && binding.role !== 'link'
                 && Object.hasOwn(DeploymentTargetRoleInputProtocolSchemasV1, binding.role)) {
                 const role = binding.role as keyof typeof DeploymentTargetRoleInputProtocolSchemasV1;
                 try {
+                    const input = (role === 'domains.add' && descriptor.generatedDomains
+                        ? DeploymentTargetGeneratedDomainAddInputV1ProtocolSchema
+                        : DeploymentTargetRoleInputProtocolSchemasV1[role]).jsonSchema;
+                    const result = (role === 'create' ? DeploymentTargetLinkProviderContentV1ProtocolSchema
+                        : binding.role.startsWith('domains.') ? DeploymentTargetDomainResultV1ProtocolSchema
+                        : binding.role.startsWith('logs.') ? DeploymentTargetLogsResultV1ProtocolSchema
+                        : role === 'variables.read' ? DeploymentTargetVariablesReadResultV1ProtocolSchema
+                        : role === 'variables.sync' ? DeploymentTargetVariablesSyncResultV1ProtocolSchema
+                        : DeploymentTargetRoleResultV1ProtocolSchema).jsonSchema;
                     if (!action.inputSchema || !action.resultSchema
                         || !pluginJsonValuesEqual(normalizePluginJsonSchema(action.inputSchema),
-                            normalizePluginJsonSchema(DeploymentTargetRoleInputProtocolSchemasV1[role].jsonSchema))
+                            normalizePluginJsonSchema(deploymentTargetRoleWithNativeSelectorV1(input, descriptor.nativeSelectorSchema)))
                         || !pluginJsonValuesEqual(normalizePluginJsonSchema(action.resultSchema),
-                            normalizePluginJsonSchema((binding.role === 'create' ? DeploymentTargetLinkProviderContentV1ProtocolSchema
-                                : binding.role.startsWith('domains.') ? DeploymentTargetDomainResultV1ProtocolSchema
-                                : binding.role.startsWith('logs.')
-                                ? DeploymentTargetLogsResultV1ProtocolSchema
-                                : role === 'variables.read' ? DeploymentTargetVariablesReadResultV1ProtocolSchema
-                                : role === 'variables.sync' ? DeploymentTargetVariablesSyncResultV1ProtocolSchema
-                                : DeploymentTargetRoleResultV1ProtocolSchema).jsonSchema))) {
-                        context.addIssue({ code: 'custom', path, message: 'Deployment lifecycle roles require their exact canonical input and observation schemas.' });
+                            normalizePluginJsonSchema(role === 'create' ? deploymentTargetRoleWithNativeSelectorV1(result, descriptor.nativeSelectorSchema) : result))) {
+                        context.addIssue({ code: 'custom', path: [...path], message: 'Deployment lifecycle roles require their exact canonical input and observation schemas.' });
                     }
                 } catch {
-                    context.addIssue({ code: 'custom', path, message: 'Deployment lifecycle roles require valid canonical schemas.' });
+                    context.addIssue({ code: 'custom', path: [...path], message: 'Deployment lifecycle roles require valid canonical schemas.' });
                 }
             }
             if (descriptor.role === 'data' || binding.role === 'inspect' || binding.role === 'link') {
                 try {
                     const declared = action.inputSchema && normalizePluginJsonSchema(action.inputSchema);
                     const role = binding.role as keyof typeof DeploymentTargetRoleInputProtocolSchemasV1;
-                    const base = normalizePluginJsonSchema(descriptor.role === 'data'
+                    const base = normalizePluginJsonSchema(deploymentTargetRoleWithNativeSelectorV1(descriptor.role === 'data'
                         ? DeploymentTargetRoleInputProtocolSchemasV1[role].jsonSchema
-                        : DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema);
+                        : DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema, descriptor.nativeSelectorSchema));
                     const valid = declared?.type === 'object' && (base.required ?? []).every(key =>
                         declared.required?.includes(key) && declared.properties?.[key] !== undefined
-                        && (key === 'providerEnvironment' || pluginJsonValuesEqual(declared.properties[key], base.properties?.[key])))
+                        && pluginJsonValuesEqual(declared.properties[key], base.properties?.[key]))
                         && Object.keys(base.properties ?? {}).every(key => declared.properties?.[key] === undefined
-                            || key === 'providerEnvironment' || pluginJsonValuesEqual(declared.properties[key], base.properties?.[key]));
-                    if (!valid) context.addIssue({ code: 'custom', path,
+                            || pluginJsonValuesEqual(declared.properties[key], base.properties?.[key]));
+                    if (!valid) context.addIssue({ code: 'custom', path: [...path],
                         message: 'Deployment preparation requires canonical shared custody fields; product scope and operands remain declared.' });
                 } catch {
-                    context.addIssue({ code: 'custom', path, message: 'Deployment preparation requires valid canonical custody schemas.' });
+                    context.addIssue({ code: 'custom', path: [...path], message: 'Deployment preparation requires valid canonical custody schemas.' });
                 }
             }
             if (binding.readOnly ? action.dangerLevel !== 'safe' || action.readOnly === false
                 || descriptor.role === 'data' && action.readOnly !== true
                 : action.dangerLevel === 'safe' || action.readOnly === true) {
-                context.addIssue({ code: 'custom', path, message: 'Deployment target role effect metadata must match its read or mutation contract.' });
+                context.addIssue({ code: 'custom', path: [...path], message: 'Deployment target role effect metadata must match its read or mutation contract.' });
             }
         }
     });

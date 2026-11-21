@@ -663,7 +663,7 @@ describe('reviewed create preparation authority', () => {
                 purpose: { consumer: { pluginId: 'fixture.deploy', localId: 'platform' }, purpose: 'manage' },
                 target: { kind: 'account', account: { service: { pluginId: 'fixture.deploy', localId: 'service' }, accountId: 'credential' } } },
                 providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project', providerEnvironment: 'production' },
-                providerEnvironment: { kind: 'production' } } };
+                providerEnvironment: { kind: 'native', selection: { kind: 'production' } } } };
         // VERCEL-JOURNEY #139: native creation keeps Link's signed scope when
         // the private providerCreate intent becomes a stored Link publication.
         const { provider, ...linkInput } = input;

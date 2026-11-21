@@ -34,13 +34,13 @@ it('binds object fields at admission and keeps native result fields deferred', (
     blocks: [{ kind: 'action', id: 'link', actionId: 'example.preview/actions/link', input: { provider: { kind: 'object', fields: {
       credentialPrincipal: { kind: 'input', name: 'principal' },
       providerIdentity: { kind: 'result', producer: { blockId: 'branch' }, path: ['providerIdentity'] },
-      providerEnvironment: { kind: 'literal', value: { kind: 'custom', id: 'preview' } },
+      providerEnvironment: { kind: 'literal', value: { kind: 'native', selection: { branchId: 'preview' } } },
     } } } }] });
   const leaf = parsed.blocks[0]!;
   if (leaf.kind !== 'action') throw new Error('Expected Action leaf');
   expect(bindWorkflowLeafInputsV1(parsed, leaf, { inputs: { principal: { kind: 'account', accountId: 'owner' } } }, 'run')).toEqual([
     { provider: { credentialPrincipal: { kind: 'account', accountId: 'owner' }, providerIdentity: { kind: 'unresolved' },
-      providerEnvironment: { kind: 'custom', id: 'preview' } } },
+      providerEnvironment: { kind: 'native', selection: { branchId: 'preview' } } } },
   ]);
 });
 // The authenticated Session lookup is a network boundary; selection and authority stay real.

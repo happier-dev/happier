@@ -9,7 +9,7 @@ import { buildQualifiedPluginContributionKey, qualifyPluginContributionReference
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DeploymentTargetLinkProviderIntentInputV1Schema, DeploymentTargetLinkInputV1Schema, DeploymentTargetLinkCreateIntentInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentTargetLinkProviderIntentInputV1Schema, DeploymentTargetLinkCreateIntentInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { createDeploymentTargetsTestPlugin, DEPLOYMENT_TARGETS_TEST_EXECUTION, DEPLOYMENT_TARGETS_TEST_SERVICE, answerDeploymentTargetInspectForHome } from './deploymentPlatformTargetPlugin.testFixture';
 import { act, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
@@ -120,9 +120,9 @@ it.each([false, true, 'git-grant', 'branch-set', 'branch-kept', 'branch-unconfir
           return { ok: false, error: 'deployment_link_incomplete', recovery: { ...intent, provisioned: true,
             provider: { credentialPrincipal: providerCreate.credentialPrincipal,
               providerIdentity: { providerAccountId: providerCreate.providerAccountId, providerResourceId: 'created-beta', providerEnvironment: 'production' },
-              providerEnvironment: { kind: 'production' }, providerUrl } } };
+              providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, providerUrl } } };
         }
-        const input = DeploymentTargetLinkInputV1Schema.parse(raw);
+        const input = DeploymentTargetLinkProviderIntentInputV1Schema.parse(raw);
         associations.push(input);
         if (associations.length === 1) return { ok: false, error: 'action_outcome_unknown' };
         return { ok: true, environmentId: environment.id, revision: 5, targetLinkId: 'created-link', targetLinkRevision: 1 };
@@ -146,7 +146,7 @@ it.each([false, true, 'git-grant', 'branch-set', 'branch-kept', 'branch-unconfir
     const patch = async (value: Record<string, unknown>) => act(async () => screen.root.findAllByType(ActionInputFields)[0]!.props.onPatch(value));
     await patch({ providerAccountId: 'organization' });
     await patch({ resourceName: 'new-project' });
-    await patch({ providerEnvironment: { kind: 'production' } });
+    await patch({ providerEnvironment: { kind: 'native', selection: { kind: 'production' } } });
     const disclosed = screen.findAllByType(Item);
     expect({ mode: mode()!.props.value, controller: disclosed.find(node => node.props.testID === 'project-deployments.platform.controller')?.props.detail,
       createAvailable: screen.findByTestId('project-deployments.platform.create') !== null }).toEqual({ mode: 'create', controller: environment.controllerMachineId, createAvailable: true });
@@ -232,15 +232,15 @@ it.each([false, true, 'git-grant', 'branch-set', 'branch-kept', 'branch-unconfir
     await act(async () => { await surfaceAction(recovery()).onPress(); });
     await waitForHomeGovernance(async () => { await act(async () => {}); expect(associations).toHaveLength(2); });
     expect(creates).toHaveLength(1);
-    expect(associations.map(value => DeploymentTargetLinkInputV1Schema.parse(value).requestKey)).toEqual([
+    expect(associations.map(value => DeploymentTargetLinkProviderIntentInputV1Schema.parse(value).requestKey)).toEqual([
       (creates[0] as { requestKey: string }).requestKey, (creates[0] as { requestKey: string }).requestKey,
     ]);
-    const associated = DeploymentTargetLinkInputV1Schema.parse(associations[1]);
-    expect(associated).toMatchObject({ provisioned: true,
-      requestKey: (creates[0] as { requestKey: string }).requestKey });
-    const artifact = await context.readArtifactContent(associated.contentArtifactId);
-    if (!artifact || typeof artifact.body !== 'string') throw new Error('Expected the associated target artifact as text');
-    expect(JSON.parse(artifact.body)).toMatchObject({ providerIdentity: { providerResourceId: 'created-beta' } });
+    const associated = DeploymentTargetLinkProviderIntentInputV1Schema.parse(associations[1]);
+    expect(associated).toMatchObject({
+      provisioned: true,
+      requestKey: (creates[0] as { requestKey: string }).requestKey,
+      provider: { providerIdentity: { providerResourceId: 'created-beta' } },
+    });
   } finally { await installed.dispose(); context.dispose(); }
 });
 
@@ -276,7 +276,7 @@ it.each(['provisioned', 'unknown', 'unavailable', 'missingPlugin', 'staleRevisio
         purpose: { consumer: { pluginId, localId: 'create-beta' }, purpose: 'beta.manage' },
         target: { kind: 'account', account: { service: DEPLOYMENT_TARGETS_TEST_SERVICE, accountId: 'cloud-account' } } },
       providerIdentity: { providerAccountId: 'organization', providerResourceId: 'cold-created-beta', providerEnvironment: 'production' },
-      providerEnvironment: { kind: 'production' } } };
+      providerEnvironment: { kind: 'native', selection: { kind: 'production' } } } };
     const result = branchResult ? { ok: true, environmentId: environment.id, revision: 5,
       targetLinkId: 'cold-link', targetLinkRevision: 1, productionBranchOutcome: { status: 'defaultKept', branch: 'main', requestedBranch: 'release',
         failureCause: { phase: 'deployment.provider.branch', errorClass: 'Error', errorCode: 'branch_missing', httpStatus: 400 } } }
@@ -306,7 +306,7 @@ it.each(['provisioned', 'unknown', 'unavailable', 'missingPlugin', 'staleRevisio
       machineId: 'current-controller', installationId: 'current-controller-installation', tokenEpoch: 0,
       execute: raw => {
         // A repeated create cannot satisfy this assertion or be silently treated as recovery.
-        const associated = DeploymentTargetLinkInputV1Schema.parse(raw);
+        const associated = DeploymentTargetLinkProviderIntentInputV1Schema.parse(raw);
         associations.push(associated);
         return { ok: true, environmentId: environment.id, revision: 5, targetLinkId: 'cold-link', targetLinkRevision: 1 };
       } });
@@ -503,7 +503,7 @@ it('selects independent third-party targets before resolving their account, fiel
     expect(field().props.resolveFieldOptions(field().props.fields[0])).toEqual([{ value: 'beta-west', label: 'beta West' }]);
     await act(async () => field().props.onPatch({ beta: 'beta-west' }));
     await act(async () => field().props.onPatch({ providerAccountId: 'cloud' }));
-    await act(async () => field().props.onPatch({ providerEnvironment: { kind: 'production' } }));
+    await act(async () => field().props.onPatch({ providerEnvironment: { kind: 'native', selection: { kind: 'production' } } }));
     await screen.pressByTestIdAsync('project-deployments.platform.check');
     await waitForHomeGovernance(async () => {
       await act(async () => {});
@@ -538,7 +538,7 @@ it('selects independent third-party targets before resolving their account, fiel
     await waitForHomeGovernance(async () => { await act(async () => {}); expect(field()).toBeDefined(); });
     await act(async () => field().props.onPatch({ beta: 'beta-west' }));
     await act(async () => field().props.onPatch({ providerAccountId: 'cloud' }));
-    await act(async () => field().props.onPatch({ providerEnvironment: { kind: 'production' } }));
+    await act(async () => field().props.onPatch({ providerEnvironment: { kind: 'native', selection: { kind: 'production' } } }));
     await screen.pressByTestIdAsync('project-deployments.platform.check');
     await waitForHomeGovernance(async () => { await act(async () => {});
       expect(screen.findByTestId('project-deployments.platform.link')).not.toBeNull(); });
@@ -603,7 +603,7 @@ it('shows the existing association when Check finds the same provider scope in a
       const field = () => screen.root.findAllByType(ActionInputFields)[0]!;
       await act(async () => field().props.onPatch({ beta: 'beta-west' }));
       await act(async () => field().props.onPatch({ providerAccountId: 'cloud' }));
-      await act(async () => field().props.onPatch({ providerEnvironment: { kind: 'production' } }));
+      await act(async () => field().props.onPatch({ providerEnvironment: { kind: 'native', selection: { kind: 'production' } } }));
       await screen.pressByTestIdAsync('project-deployments.platform.check');
       await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.platform.duplicate')
         ?? screen.findByTestId('project-deployments.platform.link')).not.toBeNull());
@@ -1036,7 +1036,7 @@ it('says a repository refusal with the shared remedy after another target was in
     const field = () => screen.root.findAllByType(ActionInputFields)[0]!;
     await act(async () => field().props.onPatch({ beta: 'beta-west' }));
     await act(async () => field().props.onPatch({ providerAccountId: 'cloud' }));
-    await act(async () => field().props.onPatch({ providerEnvironment: { kind: 'production' } }));
+    await act(async () => field().props.onPatch({ providerEnvironment: { kind: 'native', selection: { kind: 'production' } } }));
     await waitForHomeGovernance(async () => {
       await act(async () => {});
       expect(screen.findByTestId('project-deployments.platform.check')?.props.disabled).toBe(false);
@@ -1101,16 +1101,17 @@ it.each([
   const { resolveEffectiveActionInputFields } = await import('@happier-dev/protocol/actions/actionInputHintsRuntime');
   const { seedInputByFieldHints } = await import('@happier-dev/protocol/inputs/inputFieldRuntime');
   const release = PluginPortableReleaseManifestV1Schema.parse(manifest);
-  const create = readDeploymentPlatformTargets([{ manifest: release }]).find(entry => entry.targetKind === target)?.create;
+  const platform = readDeploymentPlatformTargets([{ manifest: release }]).find(entry => entry.targetKind === target);
+  const create = platform?.create;
   if (!create) throw new Error('Expected the provider Create Action');
   const action = { inputHints: { fields: [...create.fields] } };
   const input = seedInputByFieldHints(action, {});
   const fields = resolveEffectiveActionInputFields(action, input).filter(field =>
     field.path === 'providerEnvironment' || field.path.startsWith('providerEnvironment.'));
-  const requests = fields.map(field => ({ field, actionId: create.inspectActionId, draftInput: input }));
+  const requests = fields.map(field => ({ field, actionId: create.actionId, draftInput: input }));
   const observedOptions = vi.fn<(states: ReturnType<typeof useInputFieldOptions>['snapshot']) => void>();
   function ProductionField() {
-    const options = useInputFieldOptions({ requests, enabled: true });
+    const options = useInputFieldOptions({ requests, declaredInputTypes: platform?.declaredInputTypes, enabled: true });
     const drawn = drawPlatformFields(fields, input, options.state, () => false);
     observedOptions(options.snapshot);
     return <ActionInputFields fields={drawn.fields} input={input} editable busy={false}
@@ -1119,6 +1120,7 @@ it.each([
   const screen = await renderScreen(<ProductionField />);
   expect(observedOptions).toHaveBeenLastCalledWith([]);
   expect(screen.getTextContent()).toContain('Production');
-  expect(fields[0]?.options?.map(option => option.value)).toEqual(['production']);
-  expect(input.providerEnvironment).toEqual({ kind: 'production' });
+  const production = { kind: 'native', selection: { kind: 'production' } };
+  expect(fields[0]?.options?.map(option => option.value)).toEqual([production]);
+  expect(input.providerEnvironment).toEqual(production);
 });

@@ -255,7 +255,7 @@ async function renderDatabase(
       source: { kind: 'plugin', contribution: { pluginId: 'happier.deploy.neon', localId: 'database' } },
     }), content: { data: { engine: 'postgres' },
       providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project', providerEnvironment: 'main' },
-      providerEnvironment: { kind: 'custom', id: 'main' }, credentialPrincipal: { kind: 'account', accountId: 'account-owner',
+      providerEnvironment: { kind: 'native', selection: { branchId: 'main' } }, credentialPrincipal: { kind: 'account', accountId: 'account-owner',
         purpose: { consumer: { pluginId: 'happier.deploy.neon', localId: 'database' }, purpose: 'database.manage' },
         target: { kind: 'account', account: { service: { pluginId: 'happier.deploy.neon', localId: 'database' }, accountId: 'token' } } } } });
   }
@@ -280,7 +280,7 @@ async function renderDatabase(
       id: 'target-database-dedicated', environmentId: 'database-dedicated', role: 'data', targetKind: 'neon', machines: [], members: [],
       source: { kind: 'plugin', contribution: { pluginId: 'happier.deploy.neon', localId: 'database' } },
     }), content: { providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project', providerEnvironment: 'main' },
-      providerEnvironment: { kind: 'custom', id: 'main' }, credentialPrincipal: { kind: 'account', accountId: 'owner',
+      providerEnvironment: { kind: 'native', selection: { branchId: 'main' } }, credentialPrincipal: { kind: 'account', accountId: 'owner',
         purpose: { consumer: { pluginId: 'happier.deploy.neon', localId: 'database' }, purpose: 'database.manage' },
         target: { kind: 'account', account: { service: { pluginId: 'happier.deploy.neon', localId: 'database' }, accountId: 'token' } } } } }]
       : detail.targetLinks.filter(row => row.targetLink.role === 'runtime').map(row => ({ ...row, targetLink: { ...row.targetLink,
@@ -797,20 +797,21 @@ describe('Environment → Database → Workbench', () => {
     { origin: 'created' as const, starts: 'remove' },
     { origin: undefined, starts: 'detach' },
   ])('unlinks or deletes a managed database project through the one removal review (origin $origin)', async ({ origin, starts }) => {
-    const { definePlugin, DeploymentTargetRoleInputProtocolSchemasV1, DeploymentTargetRoleResultV1ProtocolSchema } = await import('@happier-dev/plugin-sdk');
+    const { definePlugin, deploymentTargetRoleWithNativeSelectorV1, DeploymentTargetRoleInputProtocolSchemasV1, DeploymentTargetRoleResultV1ProtocolSchema } = await import('@happier-dev/plugin-sdk');
     const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployments/testing/v1');
     const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
     const pluginId = 'com.example.removable-database';
     const execution = { target: 'account', account: { artifactId: 'removal-runtime', exportName: 'activate' } } as const;
     const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
+    const nativeSelectorSchema = { ...closed, properties: { branchId: { type: 'string', minLength: 1 } } } as const;
     const plugin = definePlugin({ id: pluginId, version: '1.0.0', displayName: 'Managed Postgres', actions: {
       'projects-delete': { title: 'Delete the recorded project', execution, surfaces: ['ui'], readOnly: false, dangerLevel: 'destructive',
         confirmation: { title: 'Delete this Postgres project and all of its data?' },
-        inputSchema: DeploymentTargetRoleInputProtocolSchemasV1['projects.delete'].jsonSchema,
+        inputSchema: deploymentTargetRoleWithNativeSelectorV1(DeploymentTargetRoleInputProtocolSchemasV1['projects.delete'].jsonSchema, nativeSelectorSchema),
         resultSchema: DeploymentTargetRoleResultV1ProtocolSchema,
         run: async () => ({ v: 1, state: 'succeeded', observedAtMs: 1, providerResourceAbsent: true } as const) },
     }, deploymentTargets: { database: { role: 'data', title: 'Managed Postgres', targetKind: 'database', icon: 'server-outline',
-      targetSchema: closed, linkSchema: closed, dataV1: { projects: { delete: 'projects-delete' } } } } });
+      targetSchema: closed, linkSchema: closed, nativeSelectorSchema, dataV1: { projects: { delete: 'projects-delete' } } } } });
     const serverId = await homes.addHome({ name: 'Managed removal', serverUrl: `https://managed-removal-${starts}.test`,
       serverIdentityId: `srv_managed_removal_${starts}`, accountId: 'owner', currentAccount: true });
     const account = await captureLazyActionAccountContext(serverId);
@@ -824,7 +825,7 @@ describe('Environment → Database → Workbench', () => {
     const detail = createDeploymentEnvironmentDetailV1({ environment: (({ runtimeTargetLinkId: _runtime, ...header }) => header)(createDeploymentEnvironmentHeaderV1({ serverId })),
       targetLinks: [{ targetLink, content: { ...(origin ? { providerResourceOrigin: origin } : {}), credentialPrincipal: principal,
         providerIdentity: { providerAccountId: 'organization', providerResourceId: 'shop-orders', providerEnvironment: 'main' },
-        providerEnvironment: { kind: 'custom', id: 'main' } } }] });
+        providerEnvironment: { kind: 'native', selection: { branchId: 'main' } } } }] });
     homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: { ok: true,
       environment: detail.environment, targetLinks: detail.targetLinks.map(row => row.targetLink) } });
     const removals: unknown[] = [];

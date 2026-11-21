@@ -12,14 +12,14 @@ function preparation(localId: string) {
   return DeploymentTargetPreparationBaseV1ProtocolSchema.parse({ v: 1, serverId: 'home', environmentId: 'environment', expectedRevision: 1,
     credentialRef, credentialPrincipal: { kind: 'account', accountId: 'owner',
       purpose: { consumer: { pluginId: service.pluginId, localId }, purpose: 'deploy-manage' }, target: { kind: 'account', account: credentialRef } },
-    providerAccountId: 'org-example', providerEnvironment: { kind: 'custom', id: 'br-main' } } satisfies DeploymentTargetPreparationBaseV1);
+    providerAccountId: 'org-example', providerEnvironment: { kind: 'native', selection: { branchId: 'br-main' } } } satisfies DeploymentTargetPreparationBaseV1);
 }
 const base = preparation('projects-provision');
 const linked = DeploymentTargetPreparationBaseV1ProtocolSchema.parse({ ...preparation('projects-link'), targetLinkId: 'data-link', expectedTargetLinkRevision: 1,
   providerIdentity: { providerAccountId: 'org-example', providerResourceId: 'project-example', providerEnvironment: 'br-main' } });
 const previewLink = DeploymentTargetPreparationBaseV1ProtocolSchema.parse({ ...linked,
   providerIdentity: { providerAccountId: 'org-example', providerResourceId: 'project-example', providerEnvironment: 'br-preview' },
-  providerEnvironment: { kind: 'custom', id: 'br-preview' } });
+  providerEnvironment: { kind: 'native', selection: { branchId: 'br-preview' } } });
 const pair = { id: 'database', purpose: 'data.connection', database: 'neondb', role: 'owner', endpointId: 'ep-main',
   labels: { DATABASE_URL: 'Application database', DIRECT_URL: 'Migration database' }, audience: { accountGrants: ['owner'] } };
 const { endpointId: _endpointId, ...createdSaveIntent } = pair;
@@ -148,7 +148,7 @@ describe('activated Neon managed data target', () => {
     // The organization is the admitted selected-account default or the person's override.
     const draft = (localId: string) => {
       const { environmentId: _environment, expectedRevision: _revision, ...input } = preparation(localId);
-      return { ...input, providerEnvironment: { kind: 'production' } };
+      return { ...input, providerEnvironment: { kind: 'native', selection: {} } };
     };
     try {
       expect(await h.kit.invokeAction('provision-options-read', draft('provision-options-read'), { surface }))

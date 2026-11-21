@@ -76,7 +76,7 @@ it('checks an existing Pages project from the sheet choices through the Pages in
     // plugin_action_input_schema_invalid because the sheet wrote a partial providerIdentity).
     const choices: Record<string, unknown> = {
       providerAccountId: 'cf-account',
-      providerEnvironment: { kind: 'production' },
+      providerEnvironment: { kind: 'native', selection: { kind: 'production' } },
       'preparedNative.projectName': project.name,
     };
     let values: Record<string, unknown> = {};
@@ -154,7 +154,7 @@ it('checks an existing Worker from its sheet choices and returns the selected sc
       // These fields were emitted by the old product hints, reproducing the partial identity.
       'providerIdentity.providerAccountId': 'cf-account',
       'providerIdentity.providerResourceId': selected.tag,
-      providerEnvironment: { kind: 'script', scriptName: selected.id },
+      providerEnvironment: { kind: 'native', selection: { kind: 'script', scriptName: selected.id } },
     };
     let values: Record<string, unknown> = {};
     for (const field of platform.fields) {
@@ -210,7 +210,7 @@ it('reads the Pages upload runtime as versioned facts through the Pages inspect 
       environment: {},
       account,
       repository: null,
-      values: { providerEnvironment: { kind: 'production' } },
+      values: { providerEnvironment: { kind: 'native', selection: { kind: 'production' } } },
       sourceMethod: 'upload',
     });
     const result = await kit.invokeAction(

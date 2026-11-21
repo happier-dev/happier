@@ -278,6 +278,7 @@ export async function prepareOwnServerDomainReviewedChildren(
     const { accountId, zoneId, tunnel } = selected.controller;
     const prepared = content.cloudflarePreparation;
     if (isDeploymentDomainRemoveActionIdV1(actionId) && !prepared) {
+        if (!content.hostname) return failure('deployment_content_unavailable');
         if (!domain) return failure('deployment_content_unavailable');
         const environment = await readEnvironment(domain.targetLinkId);
         const link = environment.targetLinks.find(item => item.targetLink.id === domain.targetLinkId)?.targetLink;
@@ -606,7 +607,7 @@ export function createOwnServerDomainActions(host: Readonly<{
                     const opened = readDeploymentDomainArtifactV1(domain, await host.open(domain.contentArtifactId, context));
                     if (!opened.ok) result = failure(opened.error, undefined, opened.failureCause);
                     else {
-                        hostname = opened.content.hostname;
+                        hostname = opened.content.hostname ?? undefined;
                         result = domain.provider ? host.retireProviderDomain
                             ? await host.retireProviderDomain({ domain, content: opened.content, context }) : failure('unsupported_action')
                             : await execute('deployments.domains.remove', { serverId: host.serverId,

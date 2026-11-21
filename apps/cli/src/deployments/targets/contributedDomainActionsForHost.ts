@@ -8,6 +8,7 @@ import { DeploymentDomainTransitionInputV1Schema, DeploymentDomainProviderObserv
 import { DeploymentTargetDomainResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 import { normalizeStrictJsonValue, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import { readDeploymentDomainHostnameV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
 import { type DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { readDeploymentDomainArtifactV1 } from '@happier-dev/deployments';
 import type { HostReviewedChildInvocationV1 } from '@happier-dev/protocol/actions/executor/types';
@@ -34,17 +35,21 @@ export function createContributedDomainActionsForHost(host: NativeHost & Readonl
         const result = await context.hostReviewedChild.invoke(child);
         if (!result.ok) return result;
         const observation = DeploymentTargetDomainResultV1ProtocolSchema.parse(result.result);
-        if (observation.hostname !== content.hostname) return refuse('target_mismatch');
+        const reviewed = isRecord(child.input) && isRecord(child.input.domain) && child.input.domain.providerAssigned === true
+            && typeof child.input.domain.hostname === 'string' ? child.input.domain.hostname : undefined;
+        const hostname = content.hostname ?? reviewed ?? readDeploymentDomainHostnameV1(observation.hostname);
+        if (!hostname || hostname !== observation.hostname || (content.hostname === null && observation.state === 'removed'))
+            return refuse(content.hostname === null ? 'outcome_unknown' : 'target_mismatch');
         const identity = readInstallationIdentityIfExistsSync();
         if (!identity || domain.providerPlacement.controller.machineId !== host.machineId
             || domain.providerPlacement.controller.installationId !== identity.installationId) return refuse('installation_mismatch');
-        const changed = !sameStrictJsonValue(normalizeStrictJsonValue(content.providerObservation ?? null), normalizeStrictJsonValue(observation));
+        const changed = content.hostname === null || !sameStrictJsonValue(normalizeStrictJsonValue(content.providerObservation ?? null), normalizeStrictJsonValue(observation));
         const authorizationHeaders: ArtifactRequestAuthorizationHeaders = async request => ({ ...await host.headers(context, actionId, request) });
         const resource = changed ? await host.artifacts.readForUpdate(domain.contentArtifactId, {
             signal: context.signal, prepareRecipients: false, includeSharedAudience: false, authorizationHeaders }) : null;
         if (changed && !resource) return refuse('deployment_content_unavailable');
         const prepared = resource ? await resource.prepareJsonUpdate({ header: resource.artifact.header,
-            body: JSON.stringify({ ...content, providerObservation: observation }), beforeWrite: () => context.signal?.throwIfAborted() }) : null;
+            body: JSON.stringify({ ...content, hostname, providerObservation: observation }), beforeWrite: () => context.signal?.throwIfAborted() }) : null;
         if (prepared && !prepared.ok) return refuse(prepared.errorCode);
         const body = DeploymentDomainProviderObservationBodyV1Schema.parse({ placement: domain.providerPlacement,
             state: observation.state === 'pending' ? 'warning' : observation.state,
@@ -90,6 +95,7 @@ export function createContributedDomainActionsForHost(host: NativeHost & Readonl
         const input = DeploymentActionInputSchemasV1[actionId].parse(request.input);
         if ('mode' in input) return null;
         const add = 'targetLinkId' in input ? input : undefined;
+        const assignedHostname = 'assignedHostname' in input ? input.assignedHostname : undefined;
         let retained: DeploymentDomainHeaderV1 | undefined;
         if (!add) {
             const read = await host.storage('deployments.domains.get', { serverId: input.serverId,
@@ -103,7 +109,10 @@ export function createContributedDomainActionsForHost(host: NativeHost & Readonl
         const environment = await host.readEnvironment({ environmentId: input.environmentId, targetLinkId, context: request.context });
         const link = environment.targetLinks.find(row => row.targetLink.id === targetLinkId)?.targetLink;
         if (!link) return refuse('target_mismatch');
-        if (link.source.kind !== 'plugin') return prepareNative?.({ input, environment, ...(retained ? { domain: retained } : {}) }) ?? null;
+        if (link.source.kind !== 'plugin') {
+            if (assignedHostname !== undefined) return refuse('target_mismatch');
+            return prepareNative?.({ input, environment, ...(retained ? { domain: retained } : {}) }) ?? null;
+        }
         const opened = add && 'content' in add ? { ok: true as const, content: add.content }
             : readDeploymentDomainArtifactV1(add && 'contentArtifactId' in add ? add : retained!,
                 await host.open(add && 'contentArtifactId' in add ? add.contentArtifactId : retained!.contentArtifactId, request.context));
@@ -112,8 +121,13 @@ export function createContributedDomainActionsForHost(host: NativeHost & Readonl
         if (content.target.kind !== 'provider') return refuse('target_mismatch');
         const target = content.target;
         return host.target.withTargetRole({ environmentId: input.environmentId, targetLinkId, context: request.context }, environment, role, async scope => {
-            const childInput = { ...scope.common, domainId: input.domainId, domain: { hostname: content.hostname,
-                ...(target.zone ? { zone: target.zone } : {}) } };
+            const recoveryHostname = assignedHostname === undefined ? undefined : readDeploymentDomainHostnameV1(assignedHostname);
+            if (recoveryHostname !== undefined && (recoveryHostname === null || content.hostname !== null || !scope.generatedDomains))
+                return refuse('target_mismatch');
+            if (content.hostname === null && !recoveryHostname && (role !== 'domains.add' || !scope.generatedDomains || !add || !('content' in add)))
+                return refuse('deployment_unavailable');
+            const childInput = { ...scope.common, domainId: input.domainId, domain: { hostname: recoveryHostname ?? content.hostname,
+                ...(recoveryHostname ? { providerAssigned: true } : {}), ...(target.zone ? { zone: target.zone } : {}) } };
             await scope.admit(childInput, 'execution');
             return { children: [{ action: scope.action, role, input: normalizeStrictJsonValue(childInput) }] };
         });

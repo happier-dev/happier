@@ -10,7 +10,7 @@ const input = { v: 1, serverId: 'home', environmentId: 'environment', expectedRe
   credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: {
     consumer: { pluginId: entry.manifest.id, localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' }, target: { kind: 'account', account } },
   providerIdentity: { providerAccountId: 'team_exact', providerResourceId: 'prj_exact', providerEnvironment: 'preview:main' },
-  providerEnvironment: { kind: 'preview', gitBranch: 'main' }, domainId: 'domain', domain: { hostname: 'app.example.test' } };
+  providerEnvironment: { kind: 'native', selection: { kind: 'preview', gitBranch: 'main' } }, domainId: 'domain', domain: { hostname: 'app.example.test' } };
 
 it('adds, checks and removes only the exact preview Domain without changing DNS configuration', async () => {
   const requests: HttpRequest[] = [];

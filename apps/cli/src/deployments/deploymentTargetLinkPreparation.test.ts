@@ -33,7 +33,7 @@ it.each(['provider', 'artifact'] as const)('records a claimed created origin fro
     const environment = await fixture.host.readEnvironment();
     const provider = { providerResourceOrigin: 'created' as const, credentialPrincipal: fixture.credentialPrincipal,
         providerIdentity: { providerAccountId: 'native-owner', providerResourceId: 'existing-native-id', providerEnvironment: 'production' },
-        providerEnvironment: { kind: 'production' as const } };
+        providerEnvironment: { kind: 'native' as const, selection: { kind: 'production' as const } } };
     const artifacts = createCredentialedAccountArtifactStore(fixture.host.credentials);
     const intent = { serverId: 'home', environmentId: environment.environment.id,
         expectedRevision: environment.environment.revision, requestKey: `claimed-origin-${form}`,
@@ -79,12 +79,12 @@ it.each(['upload', 'gitIntegration'] as const)('completes titled native Create (
         requestKey: 'create-and-associate', targetId: 'platform', targetKind: 'example', role: 'runtime', machines: [], source,
         title: 'Reviewed destination',
         providerCreate: { credentialRef: fixture.credentialPrincipal.target.account, credentialPrincipal: fixture.credentialPrincipal,
-            providerAccountId: 'native-owner', providerEnvironment: { kind: 'production' }, resourceName: 'reviewed-name', sourceMethod,
+            providerAccountId: 'native-owner', providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, resourceName: 'reviewed-name', sourceMethod,
             ...(sourceMethod === 'gitIntegration' ? { repository: { kind: 'github', deployment: 'https://github.com',
                 repository: 'example/site' }, productionBranch: 'production' } : {}) } });
     const provider = { credentialPrincipal: fixture.credentialPrincipal, providerIdentity: {
         providerAccountId: 'native-owner', providerResourceId: 'created-native-id', providerEnvironment: 'production' },
-        providerEnvironment: { kind: 'production' }, preparedNative: { projectName: 'created-name' } };
+        providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, preparedNative: { projectName: 'created-name' } };
     let associations = 0;
     vi.spyOn(axios, 'request').mockImplementation(async request => {
         const path = new URL(request.url!).pathname;
@@ -195,7 +195,7 @@ describe('provider link preparation through the installed Action host', () => {
                 role: 'runtime', machines: [], provider: { credentialPrincipal: { kind: 'account', accountId: recipient,
                     purpose: { consumer: { pluginId: 'example.deploy', localId: 'platform' }, purpose: 'manage' },
                     target: { kind: 'account', account: { service: { pluginId: 'example.deploy', localId: 'service' }, accountId: 'credential' } } },
-                    providerIdentity, providerEnvironment: { kind: 'production' } } }, {});
+                    providerIdentity, providerEnvironment: { kind: 'native', selection: { kind: 'production' } } } }, {});
             if (comparison === 'match') expect(result).toEqual({ ok: false, error: 'provider_scope_already_linked', environment: {
                 serverId: 'home', projectSourceId: existing.projectSourceId, environmentId: existing.id }, targetLinkId: link.id });
             else {
@@ -227,7 +227,7 @@ it('refuses a runtime create before native effect when the admitted operation ow
         serverId: 'home', environmentId: 'environment', expectedRevision: 1, requestKey: 'create-once',
         targetId: 'runtime', role: 'runtime', targetKind: 'platform', machines: [],
         source: { kind: 'plugin', contribution: { pluginId: 'example.deploy', localId: 'runtime' } },
-        providerCreate: { resourceName: 'reviewed-name', providerAccountId: 'native-account', providerEnvironment: { kind: 'production' },
+        providerCreate: { resourceName: 'reviewed-name', providerAccountId: 'native-account', providerEnvironment: { kind: 'native', selection: { kind: 'production' } },
             credentialRef: { service: { pluginId: 'example.deploy', localId: 'service' }, accountId: 'credential' },
             credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: {
                 consumer: { pluginId: 'example.deploy', localId: 'create' }, purpose: 'manage' }, target: { kind: 'account', account: {
@@ -244,10 +244,10 @@ it.each([false, true])('retains a native create acknowledgment before a failed H
     const request = DeploymentTargetLinkCreateIntentInputV1Schema.parse({ serverId: 'home', environmentId: 'environment',
         expectedRevision: 1, requestKey: 'create-once', targetId: 'platform', targetKind: 'example', role: 'runtime', machines: [], source,
         providerCreate: { credentialRef: fixture.credentialPrincipal.target.account, credentialPrincipal: fixture.credentialPrincipal,
-            providerAccountId: 'native-owner', providerEnvironment: { kind: 'production' }, resourceName: 'reviewed-name' } });
+            providerAccountId: 'native-owner', providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, resourceName: 'reviewed-name' } });
     const provider = { credentialPrincipal: fixture.credentialPrincipal, providerIdentity: {
         providerAccountId: 'native-owner', providerResourceId: 'returned-native-id', providerEnvironment: 'production' },
-        providerEnvironment: { kind: 'production' }, preparedNative: { projectName: 'returned-name' } };
+        providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, preparedNative: { projectName: 'returned-name' } };
     const timeline: string[] = [];
     const directory = await mkdtemp(join(tmpdir(), 'native-link-custody-'));
     const open = () => prepareProjectOpenReceiptPersistence({ directory: join(directory, 'receipts'),

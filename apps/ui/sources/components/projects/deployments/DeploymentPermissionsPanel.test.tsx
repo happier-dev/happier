@@ -295,7 +295,7 @@ describe('Environment → Permissions: recorded platform access', () => {
       { targetLink: data, content: { providerIdentity: { providerAccountId: 'wrong-provider', providerResourceId: 'wrong-project', providerEnvironment: 'wrong-scope' } } },
       { targetLink: link, content: { credentialPrincipal: principal, providerIdentity: {
           providerAccountId: 'release-org', providerResourceId: 'website', providerEnvironment: 'branch:release' },
-          providerEnvironment: { kind: 'preview' as const, gitBranch: 'release' } } },
+          providerEnvironment: { kind: 'native' as const, selection: { kind: 'preview', gitBranch: 'release' } } } },
     ] };
     const screen = await renderScreen(<DeploymentPermissionsPanel detail={detail as never}
       machineName={() => 'vps-1'} />);
@@ -319,7 +319,7 @@ describe('Environment → Permissions: recorded platform access', () => {
         credentialPrincipal: { kind: 'account' as const, accountId: 'data-owner',
           purpose: { consumer: { pluginId: 'com.example.database', localId: 'inspect' }, purpose: 'database' },
           target: { kind: 'account' as const, account: { service: { pluginId: 'com.example.database', localId: 'database' }, accountId: 'data-connection' } } },
-        providerEnvironment: { kind: 'custom' as const, id: 'main' },
+        providerEnvironment: { kind: 'native' as const, selection: { branchId: 'main' } },
         providerIdentity: { providerAccountId: 'data-org', providerResourceId: 'database', providerEnvironment: 'main' },
       } }] };
     const screen = await renderScreen(<DeploymentPermissionsPanel detail={detail as never}

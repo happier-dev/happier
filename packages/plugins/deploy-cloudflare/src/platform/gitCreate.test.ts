@@ -17,7 +17,7 @@ it.each([
 ])('inspects the $product $sourceMethod notice before Create without resource discovery', async ({ product, sourceMethod, notices }) => {
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry });
   try {
-    const providerEnvironment: JsonValue = product === 'workers' ? { kind: 'script', scriptName: 'reviewed-app' } : { kind: 'production' };
+    const providerEnvironment: JsonValue = { kind: 'native', selection: product === 'workers' ? { kind: 'script', scriptName: 'reviewed-app' } : { kind: 'production' } };
     const draft = { v: 1, serverId: 'home', credentialRef, providerEnvironment,
       credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: { consumer: { pluginId: entry.manifest.id,
         localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' }, target: { kind: 'account', account: credentialRef } },
@@ -38,7 +38,7 @@ function input(kind: string) {
   return { v: 1, serverId: 'home', environmentId: 'environment', expectedRevision: 1, credentialRef,
     credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: { consumer: { pluginId: entry.manifest.id,
       localId: 'pages-create' }, purpose: 'deploy.manage' }, target: { kind: 'account', account: credentialRef } },
-    providerAccountId: 'account', providerEnvironment: { kind: 'production' }, requestKey: 'persisted-request',
+    providerAccountId: 'account', providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, requestKey: 'persisted-request',
     resourceName: 'my-project', sourceMethod: 'gitIntegration', productionBranch: 'main',
     repository: { kind, deployment: `https://${kind}.com`, repository: 'my-org/my-repo' } };
 }
@@ -92,7 +92,7 @@ it('builds the Pages Git branch and reports the observed SHA through the receipt
       targetLinkId: 'link', expectedTargetLinkRevision: 1, deploymentId: 'receipt', expectedDeploymentRevision: 1, actionOperationId: 'operation',
       credentialPrincipal: input('github').credentialPrincipal, sourceMethod: 'gitIntegration', sourceIntent,
       providerIdentity: { providerAccountId: 'account', providerResourceId: 'project-id', providerEnvironment: 'production' },
-      providerEnvironment: { kind: 'production' }, preparedNative: { projectName: 'my-project',
+      providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, preparedNative: { projectName: 'my-project',
         pages: { projectMode: 'gitIntegration', productionBranch: 'main' } } });
     expect(result).toMatchObject({ state: 'succeeded', providerDeploymentId: 'deployment', builtSha });
     const contentType = requests[0].headers?.['content-type'];

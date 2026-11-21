@@ -22,7 +22,7 @@ export function DeploymentEnvironmentDomainSelect(props: Readonly<{
   const read = useDeploymentEnvironmentDomains(props.controller, props.environmentId, props.demand);
   const [open, setOpen] = React.useState(false);
   const items = [...(props.allowNone ? [{ id: '', title: t('common.none') }] : []),
-    ...read.result.items.map(row => ({ id: row.domain.id, title: row.content.hostname }))];
+    ...read.result.items.flatMap(row => row.content.hostname ? [{ id: row.domain.id, title: row.content.hostname }] : [])];
   return <>
     <DropdownMenu testID={props.testID} open={open} onOpenChange={setOpen}
       items={items} selectedId={props.selectedId ?? ''}

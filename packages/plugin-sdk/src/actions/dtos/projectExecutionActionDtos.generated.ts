@@ -1722,20 +1722,8 @@ export type ProjectExecutionActionResultById = {
                                     providerEnvironment: string;
                                 };
                                 providerEnvironment: {
-                                    kind: 'custom';
-                                    id: string;
-                                } | {
-                                    kind: 'preview';
-                                    gitBranch?: string | undefined;
-                                } | {
-                                    kind: 'preview';
-                                    scriptName: string;
-                                    previewName: string;
-                                } | {
-                                    kind: 'production';
-                                } | {
-                                    kind: 'script';
-                                    scriptName: string;
+                                    kind: 'native';
+                                    selection: Record<string, JsonValue>;
                                 };
                                 providerResourceOrigin?: 'created' | undefined;
                                 sourceMethod?: 'gitIntegration' | 'upload' | undefined;
@@ -4552,20 +4540,8 @@ export type ProjectExecutionActionResultById = {
                                     providerEnvironment: string;
                                 };
                                 providerEnvironment: {
-                                    kind: 'custom';
-                                    id: string;
-                                } | {
-                                    kind: 'preview';
-                                    gitBranch?: string | undefined;
-                                } | {
-                                    kind: 'preview';
-                                    scriptName: string;
-                                    previewName: string;
-                                } | {
-                                    kind: 'production';
-                                } | {
-                                    kind: 'script';
-                                    scriptName: string;
+                                    kind: 'native';
+                                    selection: Record<string, JsonValue>;
                                 };
                                 providerResourceOrigin?: 'created' | undefined;
                                 sourceMethod?: 'gitIntegration' | 'upload' | undefined;
@@ -7382,20 +7358,8 @@ export type ProjectExecutionActionResultById = {
                                     providerEnvironment: string;
                                 };
                                 providerEnvironment: {
-                                    kind: 'custom';
-                                    id: string;
-                                } | {
-                                    kind: 'preview';
-                                    gitBranch?: string | undefined;
-                                } | {
-                                    kind: 'preview';
-                                    scriptName: string;
-                                    previewName: string;
-                                } | {
-                                    kind: 'production';
-                                } | {
-                                    kind: 'script';
-                                    scriptName: string;
+                                    kind: 'native';
+                                    selection: Record<string, JsonValue>;
                                 };
                                 providerResourceOrigin?: 'created' | undefined;
                                 sourceMethod?: 'gitIntegration' | 'upload' | undefined;

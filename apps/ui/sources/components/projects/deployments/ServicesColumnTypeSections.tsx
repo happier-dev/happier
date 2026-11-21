@@ -138,9 +138,9 @@ function TypeSectionsBody(props: TypeSectionsProps) {
         attached,
       );
       return {
-        key: `${item.environment.id}/${item.content.hostname}`,
+        key: `${item.environment.id}/${item.domain.id}`,
         kind: 'domain' as const,
-        title: item.content.hostname,
+        title: item.content.hostname ?? t('projects.deployments.providerDomainPending'),
         fact: null,
         state: attention
           ? { tone: attention.variant, text: attention.label }

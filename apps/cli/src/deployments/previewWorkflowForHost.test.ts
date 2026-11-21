@@ -20,6 +20,8 @@ import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import { resolveWorkflowActionFieldBinding } from '@/daemon/workflows/input';
 import { readDeploymentTargetV1 } from './targets/deploymentTargetCatalog';
 import { resolvePreviewWorkflowForHost, type PreviewLifecycleEventForHost } from './previewWorkflowForHost';
+import { preparePreviewDomainForHost } from './previewDomainForHost';
+import { DeploymentDomainContentV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
 import { DeploymentBackupRestoreInputV1Schema } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
 import { createRegistryHostV1, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, type RegistrySourceDescriptorV1 } from '@happier-dev/protocol/registries';
 import { PromptLibraryCatalogKeyV1Schema, PromptLibraryRowsListResponseV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
@@ -87,7 +89,7 @@ function fixture(manifest: typeof neon | typeof supabase) {
         credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: { consumer: { pluginId: parsed.id, localId: 'database' }, purpose: 'deploy-manage' },
             target: { kind: 'account', account: { service: { pluginId: parsed.id, localId: parsed.id === neon.id ? 'neon' : 'supabase' }, accountId: 'selected-account' } } },
         providerIdentity: { providerAccountId: 'org-1', providerResourceId: 'project-1', providerEnvironment: 'parent-1' },
-        providerEnvironment: { kind: 'custom', id: 'parent-1' },
+        providerEnvironment: { kind: 'native', selection: { branchId: 'parent-1' } },
         repositoryAccess: { status: 'ready', repository }, preparedNative: { projectName: 'widgets' },
     });
     const content = DeploymentEnvironmentContentV1Schema.parse({ name: 'Staging', bindings: [], retainPreviousDeployments: 1,
@@ -114,6 +116,13 @@ async function bindings(input: Readonly<Record<string, WorkflowActionFieldBindin
 }
 
 describe('saved deployment preview Workflow composition', () => {
+    it('refuses a provider Domain awaiting an assigned hostname as a preview route', () => {
+        const domain = DeploymentDomainContentV1Schema.parse({ hostname: null, target: { kind: 'provider' } });
+
+        expect(() => preparePreviewDomainForHost({ domain, pullRequestNumber: 12,
+            selection: { domainId: 'template-domain', templateSlug: 'app', hostnamePattern: 'pr-{number}-{template-slug}' },
+        })).toThrow(expect.objectContaining({ errorCode: 'target_mismatch' }));
+    });
     it.each([undefined, 7])('activates the planned preview Domain after Deploy using the selected fresh runtime Link (retained revision: %s)', async domainRevision => {
         const current = fixture(neon);
         current.detail.content = DeploymentEnvironmentContentV1Schema.parse({ ...current.detail.content,
@@ -291,7 +300,7 @@ describe('saved deployment preview Workflow composition', () => {
         expect(branch).toMatchObject(manifest.id === neon.id ? { initialization: 'parent-schema', correlation: { repository, pullRequestId: '77' } }
             : { gitBranch: 'feature/preview', withData: false });
         const createdProvider = { ...current.provider, providerIdentity: { ...current.provider.providerIdentity, providerEnvironment: 'branch-new' },
-            providerEnvironment: { kind: 'custom', id: 'branch-new' } };
+            providerEnvironment: { kind: 'native', selection: { branchId: 'branch-new' } } };
         const link = DeploymentTargetLinkActionInputV1Schema.parse(await bindings(actions[2]!.input, { 'preview-create': child,
             'preview-data-0': { providerIdentity: createdProvider.providerIdentity, providerEnvironment: createdProvider.providerEnvironment } }));
         expect(link).toMatchObject({ environmentId: 'child', replacesLinkId: 'child-database', provider: createdProvider });

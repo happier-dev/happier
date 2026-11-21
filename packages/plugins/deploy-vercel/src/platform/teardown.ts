@@ -1,5 +1,5 @@
 import { isPluginError, PluginError, projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
-import type { DeploymentTargetTeardownInputV1, DeploymentTargetRoleResultV1 } from '@happier-dev/plugin-sdk';
+import { settleDeploymentTargetResourceRemovalV1, type DeploymentTargetTeardownInputV1, type DeploymentTargetRoleResultV1 } from '@happier-dev/plugin-sdk';
 import type { HttpResponse } from '@happier-dev/plugin-sdk/http';
 import { vercelEndpoint, vercelRequest, type VercelPlatformContext } from './operations.js';
 
@@ -39,15 +39,18 @@ async function requestProject(input: Selection, operation: Operation, context: V
   return unknownOutcome(response, operation);
 }
 
-function absent(input: Selection, context: VercelPlatformContext): DeploymentTargetRoleResultV1 {
-  return { v: 1, state: 'succeeded', providerResourceAbsent: true, observedAtMs: context.now(),
-    ...(input.providerDeploymentId ? { providerDeploymentId: input.providerDeploymentId } : {}) };
+function removal(input: Selection, context: VercelPlatformContext, observeOnly: boolean): Promise<DeploymentTargetRoleResultV1> {
+  return settleDeploymentTargetResourceRemovalV1({
+    ...(observeOnly ? {} : { remove: async () => await requestProject(input, ['write', 'DELETE'], context) === undefined }),
+    observeAbsent: async () => await requestProject(input, ['read', 'GET'], context) === undefined,
+    now: context.now,
+    providerDeploymentId: input.providerDeploymentId,
+  });
 }
 
 /** One exact project read; the host owns recovery and when to observe again. */
 export async function observeVercelTeardown(input: Selection, context: VercelPlatformContext): Promise<DeploymentTargetRoleResultV1> {
-  const response = await requestProject(input, ['read', 'GET'], context);
-  return response === undefined ? absent(input, context) : unknownOutcome(response, ['read', 'GET']);
+  return removal(input, context, true);
 }
 
 /**
@@ -57,6 +60,5 @@ export async function observeVercelTeardown(input: Selection, context: VercelPla
  */
 export async function teardownVercelProject(input: Selection, context: VercelPlatformContext): Promise<DeploymentTargetRoleResultV1> {
   context.signal.throwIfAborted();
-  return await requestProject(input, ['write', 'DELETE'], context) === undefined
-    ? absent(input, context) : observeVercelTeardown(input, context);
+  return removal(input, context, false);
 }

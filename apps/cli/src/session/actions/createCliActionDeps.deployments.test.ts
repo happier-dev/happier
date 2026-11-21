@@ -460,7 +460,7 @@ describe('Deployment Actions through the default CLI Account front door', () => 
           purpose: { consumer: { pluginId: 'example.deploy', localId: 'platform' }, purpose: 'manage' },
           target: { kind: 'account' as const, account: { service: { pluginId: 'example.deploy', localId: 'service' }, accountId: 'credential' } } },
           providerIdentity: { providerAccountId: 'native-account', providerResourceId: 'native-resource', providerEnvironment: 'production' },
-          providerEnvironment: { kind: 'production' as const } } }
+          providerEnvironment: { kind: 'native' as const, selection: { kind: 'production' } } } }
         : actionId === 'deployments.bindings.set' ? { serverId: 'deployment-home', environmentId: 'staging',
           expectedRevision: 1, set: [{ purpose: 'dataRole' as const, service: 'database', role: 'readOnlyPassword' as const,
             source: { kind: 'secret' as const, ref: formatSharedSavedSecretRefV1('read-role'), resourceRevision: 1 } }], remove: [] }

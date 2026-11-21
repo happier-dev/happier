@@ -11,7 +11,7 @@ const input = { v: 1, serverId: 'home', environmentId: 'environment', expectedRe
   credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: {
     consumer: { pluginId: entry.manifest.id, localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' }, target: { kind: 'account', account } },
   providerIdentity: { providerAccountId: 'team_exact', providerResourceId: 'prj_exact', providerEnvironment: 'production' },
-  providerEnvironment: { kind: 'production' },
+  providerEnvironment: { kind: 'native', selection: { kind: 'production' } },
   priorDeployment: { environmentId: 'environment', deploymentId: 'prior-receipt', expectedRevision: 1, providerDeploymentId: 'dpl_prior' } };
 
 const nativeDeployment = (target: 'production' | null, readyState = 'READY') => ({

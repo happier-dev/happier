@@ -1,19 +1,20 @@
 import { isPluginError, type DeploymentTargetDeployInputV1, type DeploymentTargetObserveInputV1,
-  type DeploymentTargetProviderIdentityV1, type DeploymentTargetProviderEnvironmentV1,
+  type DeploymentTargetProviderIdentityV1,
   type DeploymentTargetRepositoryAccessV1, type DeploymentTargetRoleFailureV1,
   type DeploymentTargetRoleResultV1 } from '@happier-dev/plugin-sdk';
 import { isObject } from '../connectedAccounts/probe.js';
 import { request, failure, type DeploymentContext } from './deploymentHttp.js';
 import { observeBuild } from './builds.js';
+import { type CloudflareRoleInput, type WorkerSelection as WorkerTargetSelection } from './targetSelection.js';
 
 export const workersAddressAccessId = 'cloudflare-workers-address';
 export type WorkerContext = DeploymentContext;
 export type WorkerSelection = Readonly<{ accountId: string; workerTag: string; scriptName: string; triggerUuid: string;
   repository: DeploymentTargetRepositoryAccessV1['repository'] }>;
 export type PreparedWorker = Readonly<{ providerIdentity: DeploymentTargetProviderIdentityV1;
-  providerEnvironment: Extract<DeploymentTargetProviderEnvironmentV1, { kind: 'script' }>;
+  providerEnvironment: { kind: 'native'; selection: Extract<WorkerTargetSelection, { kind: 'script' }> };
   repositoryAccess: DeploymentTargetRepositoryAccessV1; triggerUuid: string }>;
-type WorkerObservation = Pick<DeploymentTargetObserveInputV1, 'providerIdentity' | 'providerEnvironment' | 'providerDeploymentId' | 'operation'>;
+type WorkerObservation = Pick<CloudflareRoleInput<DeploymentTargetObserveInputV1, WorkerTargetSelection>, 'providerIdentity' | 'providerEnvironment' | 'providerDeploymentId' | 'operation'>;
 type Outcome = DeploymentTargetRoleResultV1 | DeploymentTargetRoleFailureV1;
 type Phase = DeploymentTargetRoleFailureV1['phase'];
 function text(value: unknown): value is string { return typeof value === 'string' && value.trim().length > 0; }
@@ -65,7 +66,7 @@ export async function prepareWorker(input: WorkerSelection, context: WorkerConte
       && `${repository.provider_account_name}/${repository.repo_name}`.toLowerCase() === input.repository.repository.toLowerCase();
   }
   return { providerIdentity: { providerAccountId: input.accountId, providerResourceId: input.workerTag, providerEnvironment: workerEnvironmentKey(input.scriptName) },
-    providerEnvironment: { kind: 'script', scriptName: input.scriptName }, triggerUuid: input.triggerUuid,
+    providerEnvironment: { kind: 'native', selection: { kind: 'script', scriptName: input.scriptName } }, triggerUuid: input.triggerUuid,
     repositoryAccess: { status: ready ? 'ready' : 'needsGitAccess', repository: input.repository } };
 }
 
@@ -105,10 +106,10 @@ async function observation(value: unknown, input: WorkerObservation, context: Wo
  * https://developers.cloudflare.com/api/resources/workers/subresources/subdomains/
  */
 export async function withWorkerAddress(result: DeploymentTargetRoleResultV1, input: WorkerObservation, context: WorkerContext): Promise<DeploymentTargetRoleResultV1> {
-  if (input.providerEnvironment.kind !== 'script') return result;
+  if (input.providerEnvironment.selection.kind !== 'script') return result;
   try {
     const accountId = input.providerIdentity.providerAccountId;
-    const scriptName = input.providerEnvironment.scriptName;
+    const scriptName = input.providerEnvironment.selection.scriptName;
     const route = await request(context, accountId, `/workers/scripts/${encodeURIComponent(scriptName)}/subdomain`, 'observe');
     // A failed address read must not turn proven activation into a failed deployment or claim no address exists.
     if ('code' in route || !isObject(route.value) || typeof route.value.enabled !== 'boolean') return result;
@@ -129,7 +130,7 @@ export async function withWorkerAddress(result: DeploymentTargetRoleResultV1, in
 /** One finite read; the existing operation/demand owner decides when to observe. */
 export async function observeWorker(input: WorkerObservation, context: WorkerContext): Promise<Outcome> {
   context.signal.throwIfAborted();
-  if (input.providerEnvironment.kind !== 'script') return failure('unsupported_action', 'admission');
+  if (input.providerEnvironment.selection.kind !== 'script') return failure('unsupported_action', 'admission');
   if (!input.providerDeploymentId) return failure('outcome_unknown', 'observe');
   const reply = await request(context, input.providerIdentity.providerAccountId,
     `/builds/builds/${encodeURIComponent(input.providerDeploymentId)}`, 'observe');
@@ -156,7 +157,7 @@ export async function deployWorker(input: Pick<DeploymentTargetDeployInputV1, 's
  */
 export async function cancelWorker(input: WorkerObservation, context: WorkerContext): Promise<Outcome> {
   context.signal.throwIfAborted();
-  if (input.providerEnvironment.kind !== 'script') return failure('unsupported_action', 'admission');
+  if (input.providerEnvironment.selection.kind !== 'script') return failure('unsupported_action', 'admission');
   if (!input.providerDeploymentId) return failure('outcome_unknown', 'cancel');
   const reply = await request(context, input.providerIdentity.providerAccountId,
     `/builds/builds/${encodeURIComponent(input.providerDeploymentId)}/cancel`, 'cancel', ['write', 'PUT']);
@@ -167,9 +168,9 @@ export async function cancelWorker(input: WorkerObservation, context: WorkerCont
 
 async function servingWorkerVersions(input: WorkerObservation, context: WorkerContext)
   : Promise<readonly Readonly<{ versionId: string; percentage: number }>[] | DeploymentTargetRoleFailureV1> {
-  if (input.providerEnvironment.kind !== 'script') return failure('unsupported_action', 'admission');
+  if (input.providerEnvironment.selection.kind !== 'script') return failure('unsupported_action', 'admission');
   const reply = await request(context, input.providerIdentity.providerAccountId,
-    `/workers/scripts/${encodeURIComponent(input.providerEnvironment.scriptName)}/deployments`, 'observe');
+    `/workers/scripts/${encodeURIComponent(input.providerEnvironment.selection.scriptName)}/deployments`, 'observe');
   if ('code' in reply) return reply;
   if (!isObject(reply.value) || !Array.isArray(reply.value.deployments)) return failure('provider_response_invalid', 'observe');
   const latest: unknown = reply.value.deployments[0];
@@ -205,7 +206,7 @@ export function isUploadedWorkerReference(reference: string | undefined): boolea
  * status owner, never an upload retry. Acceptance alone is not success.
  */
 export async function observeUploadedWorker(input: WorkerObservation, context: WorkerContext): Promise<Outcome> {
-  if (input.providerEnvironment.kind !== 'script') return failure('unsupported_action', 'admission');
+  if (input.providerEnvironment.selection.kind !== 'script') return failure('unsupported_action', 'admission');
   const versionId = uploadedWorkerVersion(input.providerDeploymentId);
   if (!input.providerDeploymentId || versionId === null) return failure('outcome_unknown', 'observe');
   const versions = await servingWorkerVersions(input, context);

@@ -35,7 +35,7 @@ it('activates prepare/link and exact-SHA lifecycle roles using the captured cano
     credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: { consumer: { pluginId: entry.manifest.id,
       localId: 'workers-inspect' }, purpose: 'deploy.manage' }, target: { kind: 'account', account: credentialRef } },
     providerIdentity: { providerAccountId: accountId, providerResourceId: workerTag, providerEnvironment: 'script:app' },
-    providerEnvironment: { kind: 'script', scriptName: 'app' } };
+    providerEnvironment: { kind: 'native', selection: { kind: 'script', scriptName: 'app' } } };
   try {
     const input = { ...preparation, triggerUuid, repository: { kind: 'github', deployment: 'https://github.com', repository: 'example/app' } };
     await expect(kit.invokeAction('workers-inspect', { ...preparation, repository: input.repository })).rejects.toThrow();
@@ -90,7 +90,7 @@ it('activates native Preview preparation and lifecycle on the existing Worker ta
     credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: { consumer: { pluginId: entry.manifest.id,
       localId: 'workers-inspect' }, purpose: 'deploy.manage' }, target: { kind: 'account', account: credentialRef } },
     providerIdentity: { providerAccountId: accountId, providerResourceId: workerTag, providerEnvironment: 'selected' },
-    providerEnvironment: { kind: 'preview', scriptName, previewName } };
+    providerEnvironment: { kind: 'native', selection: { kind: 'preview', scriptName, previewName } } };
   const input = { ...preparation, repository: { kind: 'github', deployment: 'https://github.com', repository: 'example/app' } };
   try {
     const prepared = await invoke('workers-inspect', input);

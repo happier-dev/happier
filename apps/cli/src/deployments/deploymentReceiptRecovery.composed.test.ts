@@ -46,7 +46,7 @@ it.each(cases)(
                 purpose: { consumer: { pluginId: 'example.platform', localId: 'link' }, purpose: 'manage' },
                 target: { kind: 'account', account: { service: { pluginId: 'example.platform', localId: 'service' }, accountId: 'connected' } } },
             providerIdentity: { providerAccountId: 'team', providerResourceId: 'project', providerEnvironment: 'production' },
-            providerEnvironment: { kind: 'production' }, targetLinkRevision: 1,
+            providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, targetLinkRevision: 1,
             observation: { v: 1, state: 'running', observedAtMs: 1, providerDeploymentId: 'provider-deployment' },
         } });
     if (existingFailure) receipt.content.failure = { code: 'deployment_build_failed', phase: 'build' };

@@ -37,8 +37,9 @@ function account(input: Scope): string {
   return id ?? failure('deployment_invalid');
 }
 export function resource(input: Scope) {
-  if (!input.providerIdentity || input.providerEnvironment.kind !== 'custom') return failure('deployment_invalid');
-  return { projectRef: input.providerIdentity.providerResourceId, branchRef: input.providerEnvironment.id };
+  const { branchId } = input.providerEnvironment.selection;
+  if (!input.providerIdentity || typeof branchId !== 'string') return failure('deployment_invalid');
+  return { projectRef: input.providerIdentity.providerResourceId, branchRef: branchId };
 }
 async function readPassword(reference: Operands<'projects-provision'>['password'], context: Context) {
   if (!context.services.secrets) return failure('secret_use_client_required');
@@ -92,7 +93,7 @@ function facts(value: ReturnType<typeof project>, branchRef = value.ref) {
   return { state: 'provisioned' as const, ready: value.status === 'ACTIVE_HEALTHY', engine: 'postgres', status: value.status,
     ...(value.version ? { version: value.version } : {}),
     providerIdentity: { providerAccountId: value.organizationSlug, providerResourceId: value.ref, providerEnvironment: branchRef },
-    providerEnvironment: { kind: 'custom' as const, id: branchRef },
+    providerEnvironment: { kind: 'native' as const, selection: { branchId: branchRef } },
     providerConsole: { url: `https://supabase.com/dashboard/project/${encode(branchRef)}`, label: 'Open in Supabase' } };
 }
 function branch(value: unknown, parent: string) {
@@ -269,7 +270,8 @@ export async function run<K extends Operation>(operation: K, value: JsonValue, c
     case 'projects-link': {
       const { projectRef } = input as Scope & Operands<'projects-link'>;
       const observed = project(await request(context, `/v1/projects/${encode(projectRef)}`), account(input), projectRef);
-      const branchRef = input.providerEnvironment.kind === 'custom' ? input.providerEnvironment.id : projectRef;
+      const branchRef = typeof input.providerEnvironment.selection.branchId === 'string'
+        ? input.providerEnvironment.selection.branchId : projectRef;
       if (branchRef !== projectRef) {
         const response = await request(context, `/v1/projects/${encode(projectRef)}/branches`);
         if (!Array.isArray(response)) return failure('provider_response_invalid');
@@ -293,7 +295,7 @@ export async function run<K extends Operation>(operation: K, value: JsonValue, c
         const created = branch(response, selected.projectRef);
         return { ...created, status: 'provisioned', providerStatus: created.status ?? 'unknown', ready: created.status === 'ACTIVE_HEALTHY',
           providerIdentity: { providerAccountId: account(input), providerResourceId: selected.projectRef, providerEnvironment: created.projectRef },
-          providerEnvironment: { kind: 'custom', id: created.projectRef } };
+          providerEnvironment: { kind: 'native', selection: { branchId: created.projectRef } } };
       } catch (error) {
         if (uncertainMutation(error)) return { status: 'outcome_unknown', parentProjectRef: selected.projectRef, ...unknownCause(error),
           ...(object(response) && response.parent_project_ref === selected.projectRef && text(response.project_ref) ? { projectRef: response.project_ref } : {}),

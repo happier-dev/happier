@@ -147,7 +147,8 @@ export const DeploymentReceiptDetail = React.memo(
     const runtime = environmentValue?.runtimeTargetLink;
     const platformRef = runtime?.source.kind === 'plugin' && value?.deployment.targetLinkId === runtime.id
       ? runtime.source.contribution : null;
-    const platforms = useDeploymentPlatformTargets(platformRef && (props.promote || props.rollback)
+    const running = value?.deployment.state === 'running' || value?.deployment.state === 'queued';
+    const platforms = useDeploymentPlatformTargets(platformRef && (running || props.promote || props.rollback)
       && props.demand.mounted && props.demand.visible ? props.lifetime ?? null : null);
     const platformTarget = platforms.state.status === 'ready' && platformRef
       ? platforms.state.targets.find(target => target.pluginId === platformRef.pluginId
@@ -248,7 +249,7 @@ export const DeploymentReceiptDetail = React.memo(
       : t('workflows.recovery.causeNotRecorded');
     const { deploy, teardown, promote, environmentId, phone } = props;
     const mayDeploy = environmentValue?.environment.capabilities.deploy === true;
-    const providerEnvironment = content.platform?.providerEnvironment.kind;
+    const providerEnvironment = content.platform?.providerEnvironment.selection.kind;
     const rollback = mayDeploy && (!platform || (platformTarget?.rollback
       && (providerEnvironment === 'production' || providerEnvironment === 'script'))) ? props.rollback : null;
     const mayPromote = platform ? mayDeploy && platformTarget?.promote === true
@@ -491,7 +492,8 @@ export const DeploymentReceiptDetail = React.memo(
     // Each step's own masked log (DEP-43); receipts whose steps carry no refs keep the tail above.
     const stepLogs = {
       facts,
-      running: deployment.state === 'running' || deployment.state === 'queued',
+      running,
+      followLog: !platform || platformTarget !== undefined && platformTarget.logFollow !== false,
       serverId: props.serverId,
       readLogs: props.readLogs,
       fileStem: `deploy-${deployment.id}`,

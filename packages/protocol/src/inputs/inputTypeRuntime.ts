@@ -77,7 +77,9 @@ export function readInputFieldOptionsSourceId(field: Pick<InputFieldHint, 'input
 }
 
 /** Schema-only types and exact native refs do not invent a discovery prerequisite. */
-export function readInputFieldOptionsConstraint(field: InputFieldHint, type?: ResolvedInputTypeV1 | null,
+export function readInputFieldOptionsConstraint(
+  field: Pick<InputFieldHint, 'allowCustomValue' | 'options' | 'optionsSourceId' | 'connectedAccountOptions'> & Partial<Pick<InputFieldHint, 'widget'>>,
+  type?: Pick<ResolvedInputTypeV1, 'definition'> | null,
   viewerPurpose = false, selection: Readonly<{ contextBound?: boolean; value?: JsonValue }> = {}): Readonly<{ kind: 'none' }> | Readonly<{ kind: 'static'; options: readonly InputOption[] }> | Readonly<{ kind: 'dynamic' }> {
   // The binder owns followed values. Choices constrain own selections, and an empty
   // collection selects nothing (Usage's All), so neither needs a choice inventory.

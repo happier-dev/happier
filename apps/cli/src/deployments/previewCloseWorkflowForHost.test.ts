@@ -139,7 +139,7 @@ it('closes a PR using its saved creation Run and exact native capture before rem
             purpose: { consumer: { pluginId: source.pluginId, localId: 'projects-link' }, purpose: 'deploy-manage' },
             target: { kind: 'account', account: credentialRef } },
         providerIdentity: { providerAccountId: 'organization-A', providerResourceId: 'parent', providerEnvironment: 'parent' },
-        providerEnvironment: { kind: 'custom', id: 'parent' }, name: 'pr-17', withData: false };
+        providerEnvironment: { kind: 'native', selection: { branchId: 'parent' } }, name: 'pr-17', withData: false };
     const index = { id: 'branch-invocation', runId: 'creation-run', sequence: '0', parentRecordId: null,
         memberOrdinal: '0', attempt: '0', contentRevision: '0', lifecycle: 'completed',
         createdAt: '2026-11-10T00:00:00.000Z', updatedAt: '2026-11-10T00:00:01.000Z' };
@@ -150,7 +150,7 @@ it('closes a PR using its saved creation Run and exact native capture before rem
                 localInputId: 'local', input, output: { kind: 'deployment_data_created', v: 1, source,
                     deleteAction: { pluginId: source.pluginId, localId: 'branches-delete' }, operands: {},
                     providerIdentity: { ...input.providerIdentity, providerEnvironment: 'child' },
-                    providerEnvironment: { kind: 'custom', id: 'child' } } } } }] });
+                    providerEnvironment: { kind: 'native', selection: { branchId: 'child' } } } } } }] });
     const reads: string[] = [];
     const definition = await readPreviewCloseWorkflowForHost({ readEnvironments: async () => [child.environment],
         readEnvironment: async () => child,

@@ -6,10 +6,9 @@ import {
   defineProtocolUnion,
   type ProtocolSchemaOutput,
 } from '@happier-dev/plugin-sdk/protocol';
-import { createRailwayGraphqlClient, NativeError } from './railwayApi.js';
+import { createRailwayGraphqlClient, NativeError } from './transport.js';
 
-export { ACCOUNT_PURPOSE, RAILWAY_ORIGIN, nativeFetch, createRailwayGraphqlClient,
-  NativeError as RailwayNativeError, RAILWAY_API } from './railwayApi.js';
+export const RAILWAY_PROJECT_KEY = 'RAILWAY_PROJECT_ID';
 
 const open = { policy: 'additive-open/drop' } as const;
 const text = defineProtocolString({ minLength: 1 });
@@ -32,6 +31,10 @@ const grantedProjectWorkspaces = defineProtocolArray(defineProtocolObject({
   id: text, name: text, projects: defineProtocolArray(choice),
 }, open));
 const connectionFields = 'edges { node { id name } } pageInfo { hasNextPage endCursor }';
+
+const deleteService = `mutation DeleteServiceInstance($id: String!, $environmentId: String!) {
+  serviceDelete(id: $id, environmentId: $environmentId)
+}`;
 
 type Choice = ProtocolSchemaOutput<typeof choice>;
 type Page = Readonly<{ choices: Choice[]; nextCursor: string | null }>;
@@ -76,11 +79,11 @@ export function createRailwayProjectOperations(request: typeof fetch, signal?: A
     }
   }
 
-  function listProjects(workspaceId?: string) {
-    return listPages(async after => readChoicePage((await graphql(
+  async function readProjectsPage(after: string | null, workspaceId?: string) {
+    return readChoicePage((await graphql(
       `query($workspaceId: String, $after: String) { projects(workspaceId: $workspaceId, after: $after) { ${connectionFields} } }`,
       { workspaceId, after },
-    )).projects, after));
+    )).projects, after);
   }
 
   async function listGrantedWorkspaces() {
@@ -129,8 +132,19 @@ export function createRailwayProjectOperations(request: typeof fetch, signal?: A
     if (data.variableCollectionUpsert !== true) throw new NativeError('railway_invalid_response');
   }
 
+  async function deleteServiceInstance({ serviceId, environmentId }: Readonly<{
+    serviceId: string;
+    environmentId: string;
+  }>): Promise<boolean> {
+    const { serviceDelete } = await graphql(deleteService, { id: serviceId, environmentId });
+    if (typeof serviceDelete !== 'boolean') throw new NativeError('railway_invalid_response');
+    return serviceDelete;
+  }
+
   return {
-    listProjects,
+    deleteServiceInstance,
+    listProjects: (workspaceId?: string) => listPages(after => readProjectsPage(after, workspaceId)),
+    readProjectsPage,
     listGrantedWorkspaces,
     listGrantedProjectWorkspaces,
     listGrantedProjects: async () => (await listGrantedProjectWorkspaces()).flatMap(workspace => workspace.projects),

@@ -1044,7 +1044,7 @@ describe('Environment draft Machine Home', () => {
       const patch = async (value: Record<string, unknown>) => act(async () => screen.findAllByType(ActionInputFields)[0]!.props.onPatch(value));
       await patch({ beta: 'beta-west' });
       await patch({ providerAccountId: 'cloud' });
-      await patch({ providerEnvironment: { kind: 'production' } });
+      await patch({ providerEnvironment: { kind: 'native', selection: { kind: 'production' } } });
       await screen.pressByTestIdAsync('project-deployments.platform.check');
       await waitForHomeGovernance(async () => {
         await act(async () => {});
@@ -1093,7 +1093,7 @@ describe('Environment draft Machine Home', () => {
             purpose: { consumer: { pluginId, localId: 'inspect-beta' }, purpose: 'beta.manage' },
             target: { kind: 'account', account: { service: { pluginId: 'com.example.cloud', localId: 'cloud-account' }, accountId: 'cloud-account' } } },
           providerIdentity: { providerAccountId: 'cloud', providerResourceId: 'beta-west', providerEnvironment: 'production' },
-          providerEnvironment: { kind: 'production' },
+          providerEnvironment: { kind: 'native', selection: { kind: 'production' } },
       });
       // Save never re-runs inspection or substitutes the association: the retained provider result is the content.
       expect(inspections).toHaveLength(1);
@@ -1227,7 +1227,7 @@ describe('Environment draft Machine Home', () => {
       const patch = async (value: Record<string, unknown>) => act(async () => screen.findAllByType(ActionInputFields)[0]!.props.onPatch(value));
       await patch({ providerAccountId: 'organization' });
       await patch({ resourceName: 'new-project' });
-      await patch({ providerEnvironment: { kind: 'production' } });
+      await patch({ providerEnvironment: { kind: 'native', selection: { kind: 'production' } } });
       // Nothing is made while the person is still choosing; Create makes the Environment, then the provider project.
       expect(creates).toEqual([]);
       expect(screen.findHostByTestId('project-deployments.platform.create')).toBeNull();
@@ -1339,7 +1339,7 @@ describe('Environment draft Machine Home', () => {
       const patch = async (value: Record<string, unknown>) => act(async () => screen.findAllByType(ActionInputFields)[0]!.props.onPatch(value));
       await patch({ providerAccountId: 'organization' });
       await patch({ resourceName: 'taken-project' });
-      await patch({ providerEnvironment: { kind: 'production' } });
+      await patch({ providerEnvironment: { kind: 'native', selection: { kind: 'production' } } });
       await settle(() => expect(frame().primary.disabled, screen.getTextContent()).toBe(false));
       await act(async () => frame().press());
       await settle(() => expect(frame().step).toBe('review'));

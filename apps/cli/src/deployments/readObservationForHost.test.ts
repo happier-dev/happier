@@ -6,8 +6,9 @@ import { DeploymentPlatformContentV1Schema } from '@happier-dev/deployments/cont
 import { type DeploymentArtifactDocumentV1 } from '@happier-dev/deployments';
 import { readDeploymentObservationForHost } from './readObservationForHost';
 
-function fixture() {
-    const environment = createDeploymentEnvironmentHeaderV1();
+function fixture(read = true) {
+    const baseEnvironment = createDeploymentEnvironmentHeaderV1();
+    const environment = { ...baseEnvironment, capabilities: { ...baseEnvironment.capabilities, read } };
     const targetLink = createDeploymentTargetLinkHeaderV1({ source: { kind: 'plugin',
         contribution: { pluginId: 'happier.deploy.cloudflare', localId: 'workers' } },
         targetKind: 'cloudflare-workers', machines: [], members: [], state: 'provisioned' });
@@ -16,7 +17,7 @@ function fixture() {
         target: { kind: 'account' as const, account: { service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' }, accountId: 'provider' } } };
     const native = { credentialPrincipal: principal, providerIdentity: { providerAccountId: 'a'.repeat(32),
         providerResourceId: 'worker', providerEnvironment: 'script:app' },
-        providerEnvironment: { kind: 'script' as const, scriptName: 'app' } };
+        providerEnvironment: { kind: 'native' as const, selection: { kind: 'script', scriptName: 'app' } } };
     const baseline = createDeploymentReceiptDetailV1();
     const detail = createDeploymentReceiptDetailV1({ content: DeploymentPlatformContentV1Schema.parse({
         sourceIntent: baseline.content.sourceIntent, sourceMethod: 'gitIntegration', machines: [], images: [], machineResults: [], steps: [],
@@ -74,10 +75,11 @@ it.each([false, true])('identifies unsupported own-server observations and the w
 });
 
 it('refuses unreadable or mismatched addresses before opening any private content', async () => {
+    const unreadable = fixture(false);
+    expect(await readDeploymentObservationForHost(unreadable.input, {}, unreadable.host))
+        .toEqual({ ok: false, error: 'deployment_access_denied' });
+    expect(unreadable.opened).toEqual([]);
     const h = fixture();
-    h.environment.capabilities.read = false;
-    expect(await readDeploymentObservationForHost(h.input, {}, h.host)).toEqual({ ok: false, error: 'deployment_access_denied' });
-    h.environment.capabilities.read = true;
     await expect(readDeploymentObservationForHost({ ...h.input, environmentId: 'another-environment' }, {}, h.host))
         .rejects.toMatchObject({ code: 'target_mismatch' });
     await expect(readDeploymentObservationForHost({ ...h.input, targetLinkId: 'another-link' }, {}, h.host))

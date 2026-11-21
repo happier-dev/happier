@@ -13,7 +13,7 @@ const preparation = { v: 1, serverId: 'home', environmentId: 'environment', expe
   credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: { consumer: { pluginId: entry.manifest.id,
     localId: 'workers-upload' }, purpose: 'deploy.manage' }, target: { kind: 'account', account: credentialRef } },
   providerIdentity: { providerAccountId: 'account', providerResourceId: 'worker-tag', providerEnvironment: 'script:app' },
-  providerEnvironment: { kind: 'script', scriptName: 'app' }, preparedNative: { projectName: 'app' } };
+  providerEnvironment: { kind: 'native', selection: { kind: 'script', scriptName: 'app' } }, preparedNative: { projectName: 'app' } };
 const input = { ...preparation, targetLinkId: 'link', expectedTargetLinkRevision: 1, deploymentId: 'receipt',
   expectedDeploymentRevision: 1, actionOperationId: 'operation', sourceMethod: 'upload',
   sourceIntent: { kind: 'repository', projectSourceId: 'source', sourceRevision: 1, sha: 'f'.repeat(40),
@@ -164,7 +164,7 @@ it.each(['buildFailure', 'cancel', 'uncompiled'] as const)('settles %s before an
 it('refuses native Preview upload without its captured identity before any provider effect', async () => {
   const h = await fixture();
   try {
-    await expect(h.invoke({ providerEnvironment: { kind: 'preview', scriptName: 'app', previewName: 'pr-1' } }))
+    await expect(h.invoke({ providerEnvironment: { kind: 'native', selection: { kind: 'preview', scriptName: 'app', previewName: 'pr-1' } } }))
       .rejects.toMatchObject({ code: 'deployment_content_unavailable', details: { phase: 'source' } });
     expect(h.materialize).not.toHaveBeenCalled();
     expect(h.requests).toEqual([]);
@@ -253,7 +253,7 @@ it('refuses a provider asset bucket outside the prepared manifest before publish
 
 it('uploads executable modules and Static Assets only to the captured native Preview and observes its exact deployment', async () => {
   const h = await fixture('preview');
-  const preview = { providerEnvironment: { kind: 'preview', scriptName: 'app', previewName: 'pr-1' },
+  const preview = { providerEnvironment: { kind: 'native', selection: { kind: 'preview', scriptName: 'app', previewName: 'pr-1' } },
     preparedNative: { projectName: 'app', previewId, scriptName: 'app' } };
   try {
     const prepared = await h.kit.invokeAction('workers-inspect', { ...preparation, product: 'workers', sourceMethod: 'upload',

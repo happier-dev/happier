@@ -19,7 +19,7 @@ describe('receipt structural integrity', () => {
                 consumer: { pluginId: 'happier.deployment-vercel', localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' },
                 target: { kind: 'account', account: { service: { pluginId: 'happier.machine-vercel', localId: 'vercel' }, accountId: 'connected' } } },
                 providerIdentity: { providerAccountId: 'team', providerResourceId: 'project', providerEnvironment: 'production' },
-                providerEnvironment: { kind: 'production' }, targetLinkRevision: 1,
+                providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, targetLinkRevision: 1,
                 observation: { v: 1, state: 'queued', observedAtMs: 1000 } } };
         expect(DeploymentPlatformContentV1Schema.safeParse(platform).success).toBe(true);
         expect(DeploymentContentV1Schema.safeParse({ ...content, sourceIntent }).success).toBe(false);
@@ -31,7 +31,7 @@ describe('receipt structural integrity', () => {
                 consumer: { pluginId: 'example.deploy', localId: 'link' }, purpose: 'manage' },
                 target: { kind: 'account', account: { service: { pluginId: 'example.deploy', localId: 'service' }, accountId: 'connected' } } },
                 providerIdentity: { providerAccountId: 'team', providerResourceId: 'project', providerEnvironment: 'production' },
-                providerEnvironment: { kind: 'production' }, targetLinkRevision: 1,
+                providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, targetLinkRevision: 1,
                 observation: { v: 1, state: 'queued', observedAtMs: 1000 } } };
         expect(DeploymentContentV1Schema.parse(JSON.parse(JSON.stringify(data)))).toEqual(data);
         expect(DeploymentContentV1Schema.safeParse({ ...data, teardown: undefined }).success).toBe(false);
@@ -55,7 +55,7 @@ describe('receipt structural integrity', () => {
                 consumer: { pluginId: 'happier.deployment-supabase', localId: 'projects-link' }, purpose: 'deploy-manage' },
                 target: { kind: 'account', account: credentialRef } },
             providerIdentity: { providerAccountId: 'organization-A', providerResourceId: 'parent-A', providerEnvironment: 'child-A' },
-            providerEnvironment: { kind: 'custom', id: 'child-A' }, targetLinkRevision: 2,
+            providerEnvironment: { kind: 'native', selection: { branchId: 'child-A' } }, targetLinkRevision: 2,
             observation: { v: 1, state: 'queued', observedAtMs: 1000 }, dataCreation: { retainedProviderResource: true, reference: { runId: 'run-A', invocationId: 'invocation-A' },
                 deleteAction: { pluginId: 'happier.deployment-supabase', localId: 'branches-delete' }, operands: {} } } };
         expect(DeploymentContentV1Schema.parse(content)).toEqual(content);

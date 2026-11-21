@@ -1,6 +1,7 @@
 import { decodeBase64, encodeBase64, defineProtocolObject, defineProtocolString, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
 import { isMachineProvisionerCreateRefusal, quoteMachineProvisionerShellArgument as quote, buildMachineProvisionerPreparationInstallScript, createManagedMachinePresetPreparationBuildInputV1Schema, defineMachineProvisionerPreparationSchemas, projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { createRailwayNativeClient, NativeError } from './nativeClient.js';
+import { RailwayNativeError as NativeError } from '@happier-dev/railway-api';
+import { createRailwayNativeClient } from './nativeClient.js';
 import { RailwayLaunchSchema, RailwayResourceSchema, reference, type RailwayLaunch, type RailwayResource } from './schemas.js';
 
 const closed = { policy: 'closed' } as const;

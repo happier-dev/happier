@@ -132,7 +132,7 @@ it.each(['compact repository', 'compact repository build running', 'compact repo
             purpose: { consumer: { pluginId: authored.pluginId, localId: 'link' }, purpose: 'deploy-manage' },
             target: { kind: 'account', account: { service, accountId: 'recorded-linker' } } },
             providerIdentity: { providerAccountId: 'provider-account', providerResourceId: 'project', providerEnvironment: 'production' },
-            providerEnvironment: { kind: 'production' } };
+            providerEnvironment: { kind: 'native', selection: { kind: 'production' } } };
         environment.content.definition = { kind: 'stored', document: 'services: {}', contentRevision: 1,
             composeDigest: `sha256:${'a'.repeat(64)}`, profiles: [], services: [] };
         const sourceRef = 'release/current';

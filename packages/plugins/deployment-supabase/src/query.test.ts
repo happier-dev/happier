@@ -17,7 +17,7 @@ const preparation = DeploymentTargetPreparationBaseV1ProtocolSchema.parse({ v: 1
   targetLinkId: 'data-link', expectedTargetLinkRevision: 1, credentialRef,
   credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: { consumer: { pluginId: credentialRef.service.pluginId, localId: 'database' }, purpose: 'deploy-manage' }, target: { kind: 'account', account: credentialRef } },
   providerIdentity: { providerAccountId: 'org', providerResourceId: 'parent-ref', providerEnvironment: 'preview-ref' },
-  providerEnvironment: { kind: 'custom', id: 'preview-ref' } });
+  providerEnvironment: { kind: 'native', selection: { branchId: 'preview-ref' } } });
 
 async function host(body: unknown = [{ value: 'hello', nullable: null }], status = 201, error?: Error, onRequest?: () => void, errorAtRequest = 1, database = 'postgres') {
   const requests: HttpRequest[] = [];

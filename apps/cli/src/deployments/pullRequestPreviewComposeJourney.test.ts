@@ -176,7 +176,7 @@ describe('accepted preview Workflow data-create composition', () => {
         expect(fixture.invocation.progress.execution).toMatchObject({ kind: 'action', actionId: fixture.qualified, input: fixture.input,
             output: { kind: 'deployment_data_created', source: { pluginId: supabase.manifest.id, localId: 'database' },
                 deleteAction: { pluginId: supabase.manifest.id, localId: 'branches-delete' },
-                providerEnvironment: { kind: 'custom', id: 'child-project-A' } } });
+                providerEnvironment: { kind: 'native', selection: { branchId: 'child-project-A' } } } });
         expect(WorkflowDataCreationResultSchema.parse(fixture.captured).providerIdentity).toEqual({
             providerAccountId: 'organization-A', providerResourceId: 'parent-project-A', providerEnvironment: 'child-project-A' });
         expect(JSON.stringify(fixture.invocation.progress)).not.toMatch(/provider-private-echo|db_pass/);

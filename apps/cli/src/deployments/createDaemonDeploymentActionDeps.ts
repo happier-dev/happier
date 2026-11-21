@@ -1145,7 +1145,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 assertCurrent: async () => { context.signal?.throwIfAborted(); },
                 content: { artifactId: createDeploymentDomainContentArtifactIdV1({ ...binding, deploymentNativeAdmission: native,
                     ...(reviewedChild ? { reviewedChild } : {}) }),
-                    header: { kind: DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1, title: content.hostname }, body: JSON.stringify(content),
+                    header: { kind: DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1, ...(content.hostname ? { title: content.hostname } : {}) }, body: JSON.stringify(content),
                     signal: context.signal, beforeWrite: async () => { context.signal?.throwIfAborted(); },
                     authorizationHeaders: artifactAuthorization(context, native.actionId) } }));
             return { contentArtifactId: created.artifactId, contentHeaderVersion: created.revision.headerVersion,
@@ -1718,7 +1718,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 const enrollment = await failureEnrollment.prepare(input.data, request.context);
                 if (!('providerCreate' in input.data)) return enrollment;
                 const creation = prepareRuntimeTargetCreateForHost(input.data, await readRuntimeCreateTarget(input.data));
-                return { children: [...creation.children, ...(enrollment?.children ?? [])] };
+                return { ...creation, children: [...creation.children, ...(enrollment?.children ?? [])] };
             }
             if (request.actionId === 'deployments.environments.update') {
                 const input = DeploymentActionInputSchemasV1[request.actionId].safeParse(request.input);
@@ -2366,7 +2366,8 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                         return failure('unsupported_action');
                     const platform = DeploymentPlatformContentV1Schema.safeParse(candidate.content);
                     if (!platform.success) return failure('invalid_parameters');
-                    return await contributedTarget.prepareAction(request, platform.data, environment);
+                    return await contributedTarget.prepareAction(request, platform.data, environment,
+                        preparedCandidate !== undefined || Boolean(reviewedReentry));
                 }
                 const nativeCandidate = DeploymentOwnServerContentV1Schema.parse(candidate.content);
                 if (reviewedReentry && !nativeCandidate.ownServer) return failure('approval_stale');

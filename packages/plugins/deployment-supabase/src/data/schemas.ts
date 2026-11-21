@@ -1,4 +1,4 @@
-import { DeploymentTargetPreparationBaseV1ProtocolSchema, DeploymentTargetRoleInputProtocolSchemasV1, DeploymentTargetRoleResultV1ProtocolSchema } from '@happier-dev/plugin-sdk';
+import { deploymentTargetRoleWithNativeSelectorV1, DeploymentTargetPreparationBaseV1ProtocolSchema, DeploymentTargetRoleInputProtocolSchemasV1, DeploymentTargetRoleResultV1ProtocolSchema } from '@happier-dev/plugin-sdk';
 import type { DeploymentTargetPreparationBaseV1, JsonValue } from '@happier-dev/plugin-sdk';
 import { defineProtocolArray, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion,
   DeploymentDataParentBranchRefV1ProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
@@ -6,6 +6,7 @@ import type { PluginJsonSchema, ProtocolSchemaOutput } from '@happier-dev/plugin
 
 const string = defineProtocolString({ minLength: 1 });
 const closed = { policy: 'closed' } as const;
+export const nativeSelectorSchema = defineProtocolObject({ branchId: string.optional() }, closed).jsonSchema;
 export const passwordSchema = defineProtocolObject({ ref: string, resourceRevision: defineProtocolNumber() }, closed);
 const secretLabel = defineProtocolObject({ label: string }, closed);
 const connectionRef = passwordSchema;
@@ -44,11 +45,11 @@ export function actionSchema(operation: Operation): PluginJsonSchema {
     : selected.has(operation) ? DeploymentTargetRoleInputProtocolSchemasV1['branches.create']
       : DeploymentTargetPreparationBaseV1ProtocolSchema;
   const product = operands[operation];
-  return { ...base.jsonSchema,
+  return deploymentTargetRoleWithNativeSelectorV1({ ...base.jsonSchema,
     // Selected roles strengthen custody without dropping preparation operands.
     properties: { ...product.jsonSchema.properties,
       ...DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema.properties, ...base.jsonSchema.properties },
-    required: [...new Set([...(base.jsonSchema.required ?? []), ...(product.jsonSchema.required ?? [])])], additionalProperties: false };
+    required: [...new Set([...(base.jsonSchema.required ?? []), ...(product.jsonSchema.required ?? [])])], additionalProperties: false }, nativeSelectorSchema);
 }
 
 export function parseInput<K extends Operation>(operation: K, value: JsonValue): Scope & Operands<K> {
@@ -73,7 +74,8 @@ const resultObject = (properties: Record<string, PluginJsonSchema>, optional: st
 const projectResult = resultObject({ ref: s, organizationSlug: s, name: s, status: s, region: s, version: s }, ['region', 'version']);
 const branchResult = resultObject({ branchId: s, projectRef: s, parentProjectRef: s, name: s, persistent: b, gitBranch: s, status: s }, ['gitBranch', 'status']);
 const identityResult = resultObject({ providerAccountId: s, providerResourceId: s, providerEnvironment: s });
-const environmentResult = resultObject({ kind: literal('custom'), id: s });
+const environmentResult = defineProtocolObject({ kind: defineProtocolLiteral('native'),
+  selection: defineProtocolObject({ branchId: string }, closed) }, closed).jsonSchema;
 const nativeResult = resultObject({ state: literal('provisioned'), ready: b, engine: literal('postgres'), status: s, version: s,
   providerResourceOrigin: literal('created'),
   providerIdentity: identityResult, providerEnvironment: environmentResult, providerConsole: resultObject({ url: s, label: s }) }, ['version', 'providerResourceOrigin']);

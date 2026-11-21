@@ -16,8 +16,9 @@ type Selection = NonNullable<DeploymentPreviewTemplateV1['domain']>;
 /** The reviewed route and pre-deployment variables use the same planned address. */
 export function preparePreviewDomainForHost(input: Readonly<{
     selection: Selection; pullRequestNumber: number; domain: DeploymentDomainContentV1;
-}>): Readonly<{ content: DeploymentDomainContentV1; url: string }> {
-    const suffix = input.domain.hostname.startsWith('*.') ? input.domain.hostname.slice(1) : refuse('target_mismatch');
+}>): Readonly<{ content: DeploymentDomainContentV1 & { hostname: string }; url: string }> {
+    const { hostname } = input.domain;
+    const suffix = hostname?.startsWith('*.') ? hostname.slice(1) : refuse('target_mismatch');
     const label = input.selection.hostnamePattern.replaceAll('{number}', String(input.pullRequestNumber))
         .replaceAll('{template-slug}', input.selection.templateSlug);
     // Captured provider observations and native custody belong to the template route.

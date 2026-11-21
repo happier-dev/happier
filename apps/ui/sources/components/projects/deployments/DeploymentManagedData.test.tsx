@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { definePlugin, DeploymentTargetRoleInputProtocolSchemasV1, DeploymentTargetPreparationBaseV1ProtocolSchema } from '@happier-dev/plugin-sdk';
+import { definePlugin, deploymentTargetRoleWithNativeSelectorV1, DeploymentTargetRoleInputProtocolSchemasV1, DeploymentTargetPreparationBaseV1ProtocolSchema } from '@happier-dev/plugin-sdk';
 import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -14,6 +14,12 @@ import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/extern
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/jsonSchemaValidation';
 import { plugin as neonPlugin } from '../../../../../../packages/plugins/deployment-neon/src/manifest';
 import { plugin as supabasePlugin } from '../../../../../../packages/plugins/deployment-supabase/src/manifest';
+
+const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
+const nativeSelectorSchema = { ...closed, properties: { branchId: { type: 'string', minLength: 1 } } } as const;
+const roleSchema = (role: keyof typeof DeploymentTargetRoleInputProtocolSchemasV1) =>
+  deploymentTargetRoleWithNativeSelectorV1(DeploymentTargetRoleInputProtocolSchemasV1[role].jsonSchema, nativeSelectorSchema);
+const preparation = deploymentTargetRoleWithNativeSelectorV1(DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema, nativeSelectorSchema).properties!;
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -140,19 +146,18 @@ it.each([false, true])('defaults the saved organization, retains recovery and re
   const directRef = formatSharedSavedSecretRefV1('direct');
   const pluginId = 'com.example.managed-database';
   const execution = { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activate' } } as const;
-  const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
   const reference: PluginJsonSchemaV2 = { type: 'object', properties: { ref: { type: 'string' }, resourceRevision: { type: 'number' } },
     required: ['ref', 'resourceRevision'], additionalProperties: false };
   const previous: PluginJsonSchemaV2 = { type: 'object', properties: { status: { type: 'string' },
     connections: { type: 'object', properties: { DATABASE_URL: reference, DIRECT_URL: reference }, additionalProperties: false },
     incomplete: { type: 'array', items: { type: 'string' } } }, required: ['status', 'connections', 'incomplete'], additionalProperties: false };
-  const common = DeploymentTargetRoleInputProtocolSchemasV1['connectionSecret.save'].jsonSchema;
+  const common = roleSchema('connectionSecret.save');
   const plugin = definePlugin({ id: pluginId, version: '1.0.0', displayName: 'Managed database',
     actions: { save: { title: 'Save connections', execution, surfaces: ['ui'], dangerLevel: 'writesLocal', readOnly: false,
       confirmation: { title: 'Save connections?' }, inputSchema: { ...common,
         properties: { ...common.properties, previous } }, resultSchema: previous, run: async () => ({}) } },
     deploymentTargets: { database: { role: 'data', title: 'Managed database', targetKind: 'database', icon: 'server-outline',
-      targetSchema: closed, linkSchema: closed, dataV1: { connectionSecret: { save: 'save' } } } } });
+      targetSchema: closed, linkSchema: closed, nativeSelectorSchema, dataV1: { connectionSecret: { save: 'save' } } } } });
   const serverId = await homes.addHome({ name: 'Managed database', serverUrl: 'https://managed-data.test',
     serverIdentityId: 'srv_managed_data', accountId: 'owner', currentAccount: true });
   const account = await captureLazyActionAccountContext(serverId);
@@ -161,7 +166,7 @@ it.each([false, true])('defaults the saved organization, retains recovery and re
   const targetLink = createDeploymentTargetLinkHeaderV1({ id: 'database', role: 'data', targetKind: 'database', machines: [], members: [],
     source: { kind: 'plugin', contribution: { pluginId, localId: 'database' } } });
   const linked = { targetLink, content: { providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project', providerEnvironment: 'main' },
-    providerEnvironment: { kind: 'custom' as const, id: 'main' }, credentialPrincipal: { kind: 'account' as const, accountId: 'original-owner',
+    providerEnvironment: { kind: 'native' as const, selection: { branchId: 'main' } }, credentialPrincipal: { kind: 'account' as const, accountId: 'original-owner',
       purpose: { consumer: { pluginId, localId: 'link' }, purpose: 'database.manage' },
       target: { kind: 'account' as const, account: { service: { pluginId, localId: 'database' }, accountId: 'original-token' } } } } };
   const base = createDeploymentEnvironmentDetailV1();
@@ -238,8 +243,6 @@ it('reviews native creation options, retains an ambiguous create and continues t
   const pluginId = 'com.example.managed-create';
   const service = { pluginId: 'com.example.managed-account', localId: 'account' };
   const execution = { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activate' } } as const;
-  const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
-  const preparation = DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema.properties!;
   const common = { execution, surfaces: ['ui'] as const, hostAccess: ['manage'],
     inputHints: { fields: [{ path: 'providerAccountId', title: 'Organization', widget: 'text', required: true }] } as const,
     resultSchema: { type: 'object', additionalProperties: false, properties: {
@@ -252,15 +255,15 @@ it('reviews native creation options, retains an ambiguous create and continues t
       scope: { serviceRefs: [service], operations: ['use'], materializationKinds: ['httpHeaders'] } }], optional: [] },
     actions: {
       list: { ...common, title: 'List projects', dangerLevel: 'safe', readOnly: true,
-        inputSchema: DeploymentTargetRoleInputProtocolSchemasV1['projects.list'].jsonSchema, run: async () => ({}) },
+        inputSchema: roleSchema('projects.list'), run: async () => ({}) },
       options: { ...common, title: 'Options', dangerLevel: 'safe', readOnly: true,
-        inputSchema: DeploymentTargetRoleInputProtocolSchemasV1['projects.provisionOptions'].jsonSchema, run: async () => ({}) },
+        inputSchema: roleSchema('projects.provisionOptions'), run: async () => ({}) },
       create: { ...common, title: 'Create', dangerLevel: 'writesRemote', readOnly: false, confirmation: { title: 'Create database?' },
-        inputSchema: DeploymentTargetRoleInputProtocolSchemasV1['projects.provision'].jsonSchema, run: async () => ({}) },
+        inputSchema: roleSchema('projects.provision'), run: async () => ({}) },
       link: { ...common, title: 'Inspect project', dangerLevel: 'safe', readOnly: true,
-        inputSchema: DeploymentTargetRoleInputProtocolSchemasV1['projects.link'].jsonSchema, run: async () => ({}) },
+        inputSchema: roleSchema('projects.link'), run: async () => ({}) },
     }, deploymentTargets: { database: { role: 'data', title: 'Database', targetKind: 'database', icon: 'server-outline',
-      targetSchema: closed, linkSchema: closed, dataV1: { projects: { listAction: 'list', provisionOptionsAction: 'options', provision: 'create', link: 'link' } } } } });
+      targetSchema: closed, linkSchema: closed, nativeSelectorSchema, dataV1: { projects: { listAction: 'list', provisionOptionsAction: 'options', provision: 'create', link: 'link' } } } } });
   const serverId = await homes.addHome({ name: 'Create managed', serverUrl: 'https://managed-create.test',
     serverIdentityId: 'srv_managed_create', accountId: 'owner', currentAccount: true });
   const account = await captureLazyActionAccountContext(serverId);
@@ -278,7 +281,7 @@ it('reviews native creation options, retains an ambiguous create and continues t
       return input.action.localId === 'options' ? { plan: 'standard', price: 'unknown' }
         : input.action.localId === 'create' ? { status: 'outcome_unknown', recovery: 'Inspect the exact native project' }
         : { state: 'provisioned', providerIdentity: { providerAccountId: 'organization', providerResourceId: 'exact-project', providerEnvironment: 'main' },
-          providerEnvironment: { kind: 'custom', id: 'main' } };
+          providerEnvironment: { kind: 'native', selection: { branchId: 'main' } } };
     } });
   const screen = await renderScreen(<DeploymentManagedDataSheet detail={readDetail(detail)} lifetime={account.accountLifetime}
     actions={createDeploymentActions(account.accountLifetime, detail.environment.projectSourceId)} onApproval={() => {}} onClose={() => {}} />);
@@ -326,8 +329,8 @@ it('reviews native creation options, retains an ambiguous create and continues t
 it('pages native branches and creates from a linked target with recorded custody and host request identity', async () => {
   const pluginId = 'com.example.managed-branches';
   const execution = { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activate' } } as const;
-  const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
-  const input = DeploymentTargetRoleInputProtocolSchemasV1['branches.list'].jsonSchema;
+  const input = roleSchema('branches.list');
+  const createInput = roleSchema('branches.create');
   const plugin = definePlugin({ id: pluginId, version: '1.0.0', displayName: 'Database branches',
     actions: { branches: { title: 'Read branches', execution, surfaces: ['ui'], dangerLevel: 'safe', readOnly: true,
       inputSchema: input,
@@ -337,14 +340,14 @@ it('pages native branches and creates from a linked target with recorded custody
         required: ['branches'], additionalProperties: false }, run: async () => ({}) },
       create: { title: 'Create branch', execution, surfaces: ['ui'], dangerLevel: 'writesRemote', readOnly: false,
         confirmation: { title: 'Create this branch?' },
-        inputSchema: { ...input, properties: { ...input.properties, requestKey: { type: 'string', minLength: 1 } },
-          required: [...input.required ?? [], 'requestKey'], additionalProperties: false },
+        inputSchema: { ...createInput, properties: { ...createInput.properties, requestKey: { type: 'string', minLength: 1 } },
+          required: [...createInput.required ?? [], 'requestKey'], additionalProperties: false },
         resultSchema: { type: 'object', properties: { status: { type: 'string' },
-          providerIdentity: DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema.properties!.providerIdentity!,
-          providerEnvironment: DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema.properties!.providerEnvironment! },
+          providerIdentity: preparation.providerIdentity!,
+          providerEnvironment: preparation.providerEnvironment! },
           required: ['status', 'providerIdentity', 'providerEnvironment'], additionalProperties: false }, run: async () => ({}) } },
     deploymentTargets: { database: { role: 'data', title: 'Database', targetKind: 'database', icon: 'server-outline',
-      targetSchema: closed, linkSchema: closed, dataV1: { branches: { listAction: 'branches', create: 'create' } } } } });
+      targetSchema: closed, linkSchema: closed, nativeSelectorSchema, dataV1: { branches: { listAction: 'branches', create: 'create' } } } } });
   const serverId = await homes.addHome({ name: 'Branches', serverUrl: 'https://managed-branches.test',
     serverIdentityId: 'srv_managed_branches', accountId: 'owner', currentAccount: true });
   const account = await captureLazyActionAccountContext(serverId);
@@ -357,7 +360,7 @@ it('pages native branches and creates from a linked target with recorded custody
     target: { kind: 'account' as const, account: { service: { pluginId, localId: 'database' }, accountId: 'original-token' } } };
   const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }),
     targetLinks: [{ targetLink, content: { providerIdentity: { providerAccountId: 'organization',
-      providerResourceId: 'project', providerEnvironment: 'main' }, providerEnvironment: { kind: 'custom', id: 'main' }, credentialPrincipal: principal } }] });
+      providerResourceId: 'project', providerEnvironment: 'main' }, providerEnvironment: { kind: 'native', selection: { branchId: 'main' } }, credentialPrincipal: principal } }] });
   const inputs: Record<string, unknown>[] = [];
   await answerExternalActionAccountForHome(homes, serverId, { machineId: detail.environment.controllerMachineId,
     actionId: 'action.invoke', tokenEpoch: 0, requesterInvocation: 'required', execute: raw => {
@@ -369,7 +372,7 @@ it('pages native branches and creates from a linked target with recorded custody
       if (invocation.action.localId === 'create') {
         expect(value.requestKey).toEqual(expect.any(String));
         return { status: 'provisioned', providerIdentity: { providerAccountId: 'organization',
-          providerResourceId: 'project', providerEnvironment: 'created-branch' }, providerEnvironment: { kind: 'custom', id: 'created-branch' } };
+          providerResourceId: 'project', providerEnvironment: 'created-branch' }, providerEnvironment: { kind: 'native', selection: { branchId: 'created-branch' } } };
       }
       return value.cursor ? { branches: [{ branchId: 'branch-2', name: 'Second branch', status: 'ready' }] }
         : { branches: [{ branchId: 'branch-1', name: 'First branch', status: 'ready' }], nextCursor: 'native-page-2' };
@@ -402,11 +405,10 @@ it('pages native branches and creates from a linked target with recorded custody
 });
 
 it('authors duplicate provisioning with an editable saved organization without executing a provider mutation', async () => {
+  const provision = roleSchema('projects.provision');
   const pluginId = 'com.example.managed-create';
   const service = { pluginId: 'com.example.managed-account', localId: 'account' };
   const execution = { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activate' } } as const;
-  const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
-  const preparation = DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema.properties!;
   const common = { execution, surfaces: ['ui'] as const, hostAccess: ['manage'],
     inputHints: { fields: [{ path: 'providerAccountId', title: 'Organization', widget: 'text', required: true }] } as const,
     resultSchema: { type: 'object', additionalProperties: false, properties: {
@@ -419,15 +421,15 @@ it('authors duplicate provisioning with an editable saved organization without e
       scope: { serviceRefs: [service], operations: ['use'], materializationKinds: ['httpHeaders'] } }], optional: [] },
     actions: {
       options: { ...common, title: 'Options', dangerLevel: 'safe', readOnly: true,
-        inputSchema: DeploymentTargetRoleInputProtocolSchemasV1['projects.provisionOptions'].jsonSchema, run: async () => ({}) },
+        inputSchema: roleSchema('projects.provisionOptions'), run: async () => ({}) },
       create: { ...common, title: 'Create', dangerLevel: 'writesRemote', readOnly: false, confirmation: { title: 'Create database?' },
-        inputSchema: { ...DeploymentTargetRoleInputProtocolSchemasV1['projects.provision'].jsonSchema,
-          properties: { ...DeploymentTargetRoleInputProtocolSchemasV1['projects.provision'].jsonSchema.properties, requestKey: { type: 'string', minLength: 1 } },
-          required: [...DeploymentTargetRoleInputProtocolSchemasV1['projects.provision'].jsonSchema.required ?? [], 'requestKey'] }, run: async () => ({}) },
+        inputSchema: { ...provision,
+          properties: { ...provision.properties, requestKey: { type: 'string', minLength: 1 } },
+          required: [...provision.required ?? [], 'requestKey'] }, run: async () => ({}) },
       link: { ...common, title: 'Inspect project', dangerLevel: 'safe', readOnly: true,
-        inputSchema: DeploymentTargetRoleInputProtocolSchemasV1['projects.link'].jsonSchema, run: async () => ({}) },
+        inputSchema: roleSchema('projects.link'), run: async () => ({}) },
     }, deploymentTargets: { database: { role: 'data', title: 'Database', targetKind: 'database', icon: 'server-outline',
-      targetSchema: closed, linkSchema: closed, dataV1: { projects: { provisionOptionsAction: 'options', provision: 'create', link: 'link' } } } } });
+      targetSchema: closed, linkSchema: closed, nativeSelectorSchema, dataV1: { projects: { provisionOptionsAction: 'options', provision: 'create', link: 'link' } } } } });
   const serverId = await homes.addHome({ name: 'Create managed', serverUrl: 'https://managed-create.test',
     serverIdentityId: 'srv_managed_create', accountId: 'owner', currentAccount: true });
   const account = await captureLazyActionAccountContext(serverId);

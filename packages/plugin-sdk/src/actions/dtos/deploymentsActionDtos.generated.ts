@@ -8,7 +8,7 @@ import type { PluginActionWorkflowBlockV1 } from './pluginActionDtoSupport.gener
 export type DeploymentsActionInputById = {
     readonly "deployments.domains.add": {
         content: {
-            hostname: string;
+            hostname: null | string;
             target: {
                 kind: 'provider';
                 zone?: undefined | {
@@ -213,6 +213,7 @@ export type DeploymentsActionInputById = {
         domainId: string;
         serverId: string;
         environmentId: string;
+        assignedHostname?: string | undefined;
     } | {
         mode: 'preview';
         targetLinkId: string;
@@ -220,7 +221,7 @@ export type DeploymentsActionInputById = {
         expectedTargetLinkRevision: number;
         requestKey: string;
         content: {
-            hostname: string;
+            hostname: null | string;
             target: {
                 kind: 'provider';
                 zone?: undefined | {
@@ -4451,20 +4452,8 @@ export type DeploymentsActionInputById = {
                 };
             };
             providerEnvironment: {
-                kind: 'custom';
-                id: string;
-            } | {
-                kind: 'preview';
-                gitBranch?: string | undefined;
-            } | {
-                kind: 'preview';
-                scriptName: string;
-                previewName: string;
-            } | {
-                kind: 'production';
-            } | {
-                kind: 'script';
-                scriptName: string;
+                kind: 'native';
+                selection: Record<string, JsonValue>;
             };
             resourceName: string;
             repository?: undefined | {
@@ -4681,20 +4670,8 @@ export type DeploymentsActionInputById = {
                 providerEnvironment: string;
             };
             providerEnvironment: {
-                kind: 'custom';
-                id: string;
-            } | {
-                kind: 'preview';
-                gitBranch?: string | undefined;
-            } | {
-                kind: 'preview';
-                scriptName: string;
-                previewName: string;
-            } | {
-                kind: 'production';
-            } | {
-                kind: 'script';
-                scriptName: string;
+                kind: 'native';
+                selection: Record<string, JsonValue>;
             };
             providerResourceOrigin?: 'created' | undefined;
             sourceMethod?: 'gitIntegration' | 'upload' | undefined;
@@ -8902,20 +8879,8 @@ export type DeploymentsActionResultById = {
                         providerEnvironment: string;
                     };
                     providerEnvironment: {
-                        kind: 'custom';
-                        id: string;
-                    } | {
-                        kind: 'preview';
-                        gitBranch?: string | undefined;
-                    } | {
-                        kind: 'preview';
-                        scriptName: string;
-                        previewName: string;
-                    } | {
-                        kind: 'production';
-                    } | {
-                        kind: 'script';
-                        scriptName: string;
+                        kind: 'native';
+                        selection: Record<string, JsonValue>;
                     };
                     providerResourceOrigin?: 'created' | undefined;
                     sourceMethod?: 'gitIntegration' | 'upload' | undefined;
@@ -12301,20 +12266,8 @@ export type DeploymentsActionResultById = {
                     providerEnvironment: string;
                 };
                 providerEnvironment: {
-                    kind: 'custom';
-                    id: string;
-                } | {
-                    kind: 'preview';
-                    gitBranch?: string | undefined;
-                } | {
-                    kind: 'preview';
-                    scriptName: string;
-                    previewName: string;
-                } | {
-                    kind: 'production';
-                } | {
-                    kind: 'script';
-                    scriptName: string;
+                    kind: 'native';
+                    selection: Record<string, JsonValue>;
                 };
                 providerResourceOrigin?: 'created' | undefined;
                 sourceMethod?: 'gitIntegration' | 'upload' | undefined;

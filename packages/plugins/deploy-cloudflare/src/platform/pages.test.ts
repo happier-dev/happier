@@ -5,7 +5,7 @@ import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 import { observePagesDeployment } from './pages.js';
 
 const scope = { providerIdentity: { providerAccountId: 'account', providerResourceId: 'project-id', providerEnvironment: 'production' },
-  providerEnvironment: { kind: 'production' as const }, preparedNative: { projectName: 'existing-pages' }, providerDeploymentId: 'retained-deployment' };
+  providerEnvironment: { kind: 'native' as const, selection: { kind: 'production' as const } }, preparedNative: { projectName: 'existing-pages' }, providerDeploymentId: 'retained-deployment' };
 // Constructed current official Pages GET response vectors; only HTTP is replaced.
 function fixture(result: unknown, status = 200) {
   const controller = new AbortController();
@@ -43,12 +43,10 @@ it('does not certify a skipped deployment from a retained successful stage', asy
   expect(h.request).toHaveBeenCalledTimes(1);
 });
 
-it('does not accept production observations for a Pages preview link or a named Workers Preview', async () => {
+it('does not accept a production observation for a Pages preview link', async () => {
   const h = fixture(deployment);
-  expect(await observePagesDeployment({ ...scope, providerEnvironment: { kind: 'preview' } }, h.context))
+  expect(await observePagesDeployment({ ...scope, providerEnvironment: { kind: 'native', selection: { kind: 'preview' } } }, h.context))
     .toMatchObject({ code: 'provider_response_invalid', phase: 'observe' });
-  expect(await observePagesDeployment({ ...scope, providerEnvironment: { kind: 'preview', scriptName: 'worker', previewName: 'branch' } }, h.context))
-    .toMatchObject({ code: 'unsupported_action', phase: 'admission' });
   expect(h.request).toHaveBeenCalledTimes(1);
 });
 

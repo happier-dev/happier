@@ -21,7 +21,7 @@ it('requires reviewed create coordinates without fabricating a provider resource
         credentialRef, credentialPrincipal: { kind: 'account', accountId: 'owner',
             purpose: { consumer: { pluginId: 'example.provider', localId: 'create' }, purpose: 'deploy' },
             target: { kind: 'account', account: credentialRef } },
-        providerAccountId: 'native-account', providerEnvironment: { kind: 'production' },
+        providerAccountId: 'native-account', providerEnvironment: { kind: 'native', selection: { kind: 'production' } },
         requestKey: 'reviewed-request', resourceName: 'application', productionBranch: 'trunk', sourceMethod: 'upload' };
     const schema = Reflect.get(inputs, 'create');
     expect(schema.parse(input)).toEqual(input);

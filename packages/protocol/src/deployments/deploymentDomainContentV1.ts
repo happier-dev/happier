@@ -11,7 +11,7 @@ const path = z.string().check(z.startsWith('/'));
 
 /** Private desired routing input; native custody remains on the Domain owner. */
 export const DeploymentDomainContentV1Schema = lazyZodSchema(() => z.strictObject({
-    hostname: text,
+    hostname: z.nullable(text),
     target: z.union([z.strictObject({ service: text, kind: z.optional(z.literal('native')),
         containerPort: z.number().check(z.int(), z.minimum(1), z.maximum(65535)),
         path: z.optional(path), redirectTo: z.optional(text) }),
@@ -35,7 +35,10 @@ export const DeploymentDomainContentV1Schema = lazyZodSchema(() => z.strictObjec
         z.strictObject({ kind: z.literal('custom') }),
     ])),
     basicAuth: z.optional(z.strictObject({ username: text })),
-}));
+}).check(z.refine(content => content.hostname !== null || (
+    content.target.kind === 'provider' && !content.target.zone && !content.providerObservation
+    && !content.healthCheck && !content.ingress && !content.cloudflarePreparation && !content.tls && !content.basicAuth
+), { message: 'Only a provider-assigned Domain can await its hostname.' })));
 export type DeploymentDomainContentV1 = z.infer<typeof DeploymentDomainContentV1Schema>;
 
 /** Syntax only: DNS resolution and native routing retain their own observations. */

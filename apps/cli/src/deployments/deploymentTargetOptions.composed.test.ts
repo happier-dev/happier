@@ -23,6 +23,8 @@ import { createResolvedContributionRegistry } from '@/plugins/projection/registr
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import * as vercel from '../../../../packages/plugins/deploy-vercel/src/index';
 import * as cloudflare from '../../../../packages/plugins/deploy-cloudflare/src/index';
+import * as railway from '../../../../packages/plugins/deploy-railway/src/index';
+import { PLUGIN_MANIFEST as railwayAccountManifest } from '../../../../packages/plugins/machine-railway/src/manifest';
 import { PLUGIN_MANIFEST as accountManifest } from '../../../../packages/plugins/machine-vercel/src/manifest';
 
 // Genuine HTTP boundary: Node's plugin adapter uses Undici's Fetch entry point.
@@ -34,10 +36,11 @@ vi.mock('undici', async importOriginal => ({
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); resetActiveAccountSettingsSnapshotForTests(); });
 
-it.each(['vercel', 'cloudflare', 'cloudflare-denied'] as const)('resolves the initial UI %s platform draft through the authored Account Resource after runtime activation', async platform => {
-    const selectedPlugin = platform === 'vercel' ? vercel : cloudflare;
-    const selectedAccountManifest = platform === 'vercel' ? accountManifest : cloudflare.manifest;
-    const packageName = platform === 'vercel' ? 'deploy-vercel' : 'deploy-cloudflare';
+it.each(['vercel', 'cloudflare', 'cloudflare-denied', 'railway'] as const)('resolves the initial UI %s platform draft through the authored Account Resource after runtime activation', async platform => {
+    const railwayTarget = platform === 'railway';
+    const selectedPlugin = railwayTarget ? railway : platform === 'vercel' ? vercel : cloudflare;
+    const selectedAccountManifest = railwayTarget ? railwayAccountManifest : platform === 'vercel' ? accountManifest : cloudflare.manifest;
+    const packageName = railwayTarget ? 'deploy-railway' : platform === 'vercel' ? 'deploy-vercel' : 'deploy-cloudflare';
     const accountId = 'options-owner', serverId = 'srv_ui_options_home', origin = 'https://options-home.test';
     const app = fastify();
     const features = registerAccountHomeHttp(app, { accountId, serverId });
@@ -61,6 +64,7 @@ it.each(['vercel', 'cloudflare', 'cloudflare-denied'] as const)('resolves the in
         resolveCredentialRevision: async () => revision, materializeAccount: async ({ credentialRevisionBasis, observeMaterializationPublicValues, request }) => {
             acquisitions++; credentialRevisionBasis?.captureCredentialRevision(revision);
             if (request.kind === 'environment') {
+                if (railwayTarget) return { kind: 'environment', env: {} };
                 observeMaterializationPublicValues?.(['team-selected']);
                 return { kind: 'environment', env: { VERCEL_TEAM_ID: 'team-selected' } };
             }
@@ -70,9 +74,25 @@ it.each(['vercel', 'cloudflare', 'cloudflare-denied'] as const)('resolves the in
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
         const parsed = new URL(String(url));
         if (parsed.origin === origin) return Response.json(features);
-        expect(parsed.origin).toBe(platform === 'vercel' ? 'https://api.vercel.com' : 'https://api.cloudflare.com');
+        expect(parsed.origin).toBe(railwayTarget ? 'https://backboard.railway.com' : platform === 'vercel' ? 'https://api.vercel.com' : 'https://api.cloudflare.com');
         expect(new Headers(init?.headers).get('authorization') === 'Bearer options-fixture-secret').toBe(true);
         requests.push(`${parsed.pathname}${parsed.search}`);
+        if (railwayTarget && parsed.pathname === '/graphql/v2') {
+            const { query, variables } = JSON.parse(new TextDecoder().decode(init?.body as Uint8Array));
+            const pageInfo = { endCursor: null, hasNextPage: false };
+            if (query.includes('serviceInstances')) {
+                expect(variables).toMatchObject({ projectId: 'project-selected', environmentId: 'environment-selected' });
+                return Response.json({ data: { environment: { id: 'environment-selected', projectId: 'project-selected',
+                    serviceInstances: { pageInfo, edges: [{ node: { serviceId: 'service-selected', serviceName: 'Backend', deletedAt: null } }] } } } });
+            }
+            if (query.includes('environments')) {
+                expect(variables).toMatchObject({ projectId: 'project-selected' });
+                return Response.json({ data: { project: { environments: { pageInfo,
+                    edges: [{ node: { id: 'environment-selected', name: 'Production' } }] } } } });
+            }
+            if (query.includes('projects')) return Response.json({ data: { projects: { pageInfo,
+                edges: [{ node: { id: 'project-selected', name: 'Selected project' } }] } } });
+        }
         if (parsed.pathname === '/client/v4/accounts') return Response.json(platform === 'cloudflare-denied'
             ? { success: false, errors: [{ code: 10000, message: 'provider-private-detail' }], result: null }
             : { success: true, result: [{ id: 'account-selected', name: 'Selected Account' }] },
@@ -88,7 +108,8 @@ it.each(['vercel', 'cloudflare', 'cloudflare-denied'] as const)('resolves the in
         runtimeOptions: { connectedAccounts: custody, actionFormConnectedAccounts: custody,
             accountExecution: { credentials, serverUrl: origin, serverId, serverIdentityId: serverId,
                 machineId: 'machine-options', isCurrent: async () => true }, resolveCurrentMachineId: () => 'machine-options' },
-        plugins: (platform === 'vercel' ? [vercel.manifest, accountManifest] : [cloudflare.manifest]).map(manifest => ({ manifest,
+        plugins: (selectedAccountManifest.id === selectedPlugin.manifest.id ? [selectedPlugin.manifest]
+            : [selectedPlugin.manifest, selectedAccountManifest]).map(manifest => ({ manifest,
             files: { [manifest.entrypoints.daemon]: 'export function activate() {}' },
             ...(manifest.id === selectedPlugin.manifest.id ? { instantiateCommittedModule: () => ({ activate: selectedPlugin.activate }) } : {}) })),
         resolveContributes: async happyHomeDir => createResolvedContributionRegistry(projectLoadedPluginContributes({
@@ -100,15 +121,36 @@ it.each(['vercel', 'cloudflare', 'cloudflare-denied'] as const)('resolves the in
             listContributedActionDefinitions: list, readContributedActionSchemas: createCommittedContributedActionSchemaReader(list) });
         const localId = 'targets-inspect-v1';
         const actionId = `${selectedPlugin.manifest.id}/actions/${localId}`;
+        const purpose = selectedPlugin.manifest.contributes.actions?.find(action => action.id === localId)
+            ?.connectedAccountPurposeBindings?.find(binding => binding.path === 'credentialRef')?.purpose;
+        if (!purpose) throw new Error('Expected the Inspect Action to declare its Connected Account purpose');
         const draftInput = projectInputOptionsDependencies({ v: 1, serverId, environmentId: 'environment-options', expectedRevision: 1,
             credentialRef: account, credentialPrincipal: { kind: 'account', accountId,
-                purpose: { consumer: { pluginId: selectedPlugin.manifest.id, localId }, purpose: 'deploy.manage' },
+                purpose: { consumer: { pluginId: selectedPlugin.manifest.id, localId }, purpose },
                 target: { kind: 'account', account } },
             repository: { kind: 'github', deployment: 'https://github.com', repository: 'example/project' },
             machineId: 'machine-options' }, undefined, actionId);
         const context = { surface: 'ui' as const, serverId, serverIdentityId: serverId, runtimeAccountId: accountId, signal: lifetime.signal };
-        const request = { actionId, fieldPath: platform === 'vercel' ? 'providerAccountId' : 'providerIdentity.providerAccountId', draftInput };
+        const request = { actionId, fieldPath: platform === 'vercel' || railwayTarget ? 'providerAccountId' : 'providerIdentity.providerAccountId', draftInput };
         const result = await executor.execute('action.options.resolve', request, context);
+        if (railwayTarget) {
+            expect(result, JSON.stringify(result)).toMatchObject({ ok: true,
+                result: { options: [{ value: 'project-selected', label: 'Selected project' }] } });
+            const project = { ...draftInput, providerAccountId: 'project-selected' };
+            const environments = await executor.execute('action.options.resolve', {
+                ...request, fieldPath: 'railwayEnvironmentId', draftInput: project,
+            }, context);
+            expect(environments, JSON.stringify(environments)).toMatchObject({ ok: true,
+                result: { options: [{ value: 'environment-selected', label: 'Production' }] } });
+            const services = await executor.execute('action.options.resolve', {
+                ...request, fieldPath: 'providerEnvironment', draftInput: { ...project, railwayEnvironmentId: 'environment-selected' },
+            }, context);
+            expect(services, JSON.stringify(services)).toMatchObject({ ok: true,
+                result: { options: [{ value: { kind: 'native', selection: { projectId: 'project-selected',
+                    environmentId: 'environment-selected', serviceId: 'service-selected' } }, label: 'Backend' }] } });
+            expect(requests).toEqual(['/graphql/v2', '/graphql/v2', '/graphql/v2']);
+            return;
+        }
         if (platform !== 'vercel') {
             expect(result, JSON.stringify(result)).toMatchObject(platform === 'cloudflare-denied'
                 ? { ok: false, errorCode: 'deployment_access_denied' }

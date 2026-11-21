@@ -10,8 +10,9 @@ import { request, requestPagesAssets } from './deploymentHttp.js';
 import { observePagesDeployment } from './pages.js';
 import { createPagesDeployment, pagesBranch, pagesResult } from './pagesDeploy.js';
 import { preparePagesBuild } from './pagesBuild.js';
+import { cloudflareRoleSchema, type CloudflareRoleInput, type PagesSelection } from './targetSelection.js';
 
-async function upload(input: DeploymentTargetUploadDeployInputV1, context: PluginInvocationContext): Promise<DeploymentTargetRoleResultV1> {
+async function upload(input: CloudflareRoleInput<DeploymentTargetUploadDeployInputV1, PagesSelection>, context: PluginInvocationContext): Promise<DeploymentTargetRoleResultV1> {
   const io = { http: context.services.http, signal: context.signal, now: () => Date.now() };
   if (input.providerDeploymentId) return pagesResult(await observePagesDeployment(input, io));
   if (input.sourceIntent.kind !== 'repository' || !pagesBranch(input)) throw new PluginError({ code: 'unsupported_action', details: { phase: 'source' } });
@@ -79,6 +80,6 @@ export const pagesUpload: Extract<PluginActionDeclaration, { execution?: { targe
   hostAccess: ['cloudflare-pages', 'deploy.manage'], connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'deploy.manage' }],
   title: 'Upload the reviewed prepared Cloudflare Pages output', dangerLevel: 'writesRemote', readOnly: false,
   confirmation: { title: 'Build and upload this reviewed commit to Cloudflare Pages?' },
-  inputSchema: inputs.uploadDeploy.jsonSchema, resultSchema: output.jsonSchema,
-  run: (value: JsonValue, context: PluginInvocationContext) => upload(value as unknown as DeploymentTargetUploadDeployInputV1, context),
+  inputSchema: cloudflareRoleSchema(inputs.uploadDeploy.jsonSchema, 'pages'), resultSchema: output.jsonSchema,
+  run: (value: JsonValue, context: PluginInvocationContext) => upload(value as unknown as CloudflareRoleInput<DeploymentTargetUploadDeployInputV1, PagesSelection>, context),
 };

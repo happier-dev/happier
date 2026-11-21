@@ -71,6 +71,7 @@ import {
   readPlatformInspectOutcome,
   platformTargetAssociation,
   readPlatformReviewNotice,
+  readPlatformGitCreateReview,
   readPlatformReviewRuntime,
   type PlatformInspectOutcome,
   applyPlatformFieldPatch,
@@ -405,6 +406,7 @@ export function DeploymentPlatformTargetEditor(
   );
   const options = useInputFieldOptions({
     requests,
+    declaredInputTypes: form?.declaredInputTypes,
     enabled: draft !== null,
     serverId: props.lifetime.scope.serverId,
     accountLifetime: props.lifetime,
@@ -619,7 +621,9 @@ export function DeploymentPlatformTargetEditor(
   const draftMethod = DeploymentSourceMethodV1Schema.safeParse(draft?.sourceMethod);
   const createSourceMethod = draftMethod.success ? draftMethod.data : sourceMethod;
   const providerEnvironment = draft?.providerEnvironment;
-  const noticeKey = onPrepared && create && createIntentReady && target && account
+  const gitCreateReview = create && target && draft ? readPlatformGitCreateReview(target, draft) : null;
+  const hasDeclaredCreateReview = target?.gitSource?.create === 'branchHead';
+  const noticeKey = !hasDeclaredCreateReview && onPrepared && create && createIntentReady && target && account
     ? JSON.stringify([target.key, account, createSourceMethod ?? null, providerEnvironment ?? null]) : null;
   const [createNotice, setCreateNotice] = React.useState<Readonly<{
     key: string;
@@ -649,15 +653,16 @@ export function DeploymentPlatformTargetEditor(
     return () => { current = false; };
   }, [noticeKey, readCreateNotice]);
   const currentNotice = createNotice?.key === noticeKey ? createNotice : null;
+  const reviewNotice = gitCreateReview ?? currentNotice?.notice ?? null;
   React.useEffect(() => {
     if (!onPrepared || !create) return;
     if (!createIntentReady || !draft) { onPrepared(null); return; }
     preparedCreateKey.current ??= randomUUID();
     onPrepared({ kind: 'create', requestKey: preparedCreateKey.current, providerCreate: readProviderCreate(draft),
-      reviewNotice: currentNotice?.notice ?? null,
+      reviewNotice,
       ...(currentNotice?.runtime && controllerLabel ? { reviewRuntime: { ...currentNotice.runtime, machineName: controllerLabel } } : {}),
     });
-  }, [onPrepared, create, createIntentReady, draft, currentNotice, controllerLabel]);
+  }, [onPrepared, create, createIntentReady, draft, reviewNotice, currentNotice, controllerLabel]);
   // Before Connect there is nothing to check or link: no disabled Check anywhere, the connection leads (DESIGN-ACCEPT C1).
   const primary = createdBranchOutcome || provisioned || outcomeUnknown || duplicate || pendingLink || unresolvedLink
     || (create && props.onPrepared) || connectionNeeded ? null : {
@@ -775,7 +780,7 @@ export function DeploymentPlatformTargetEditor(
                   resetFrom();
                 }}
               /> : null}
-              {create && !reviewingCreate && !embedded ? <Item title={t('projects.deployments.platformLink.createConsequences')} showChevron={false} /> : null}
+              {create && !reviewingCreate && !embedded ? <Item title={reviewNotice ?? t('projects.deployments.platformLink.createConsequences')} showChevron={false} /> : null}
               {props.onPrepared ? null : <DropdownMenu
                 testID="project-deployments.platform.choice"
                 open={platformMenuOpen}

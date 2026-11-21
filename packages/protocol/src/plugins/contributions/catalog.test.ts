@@ -5,7 +5,7 @@ import { PluginManifestV2Schema } from '../manifest/v2.js';
 import { defineProtocolObject, defineProtocolString } from '../actions/protocolComposableSchema.js';
 import * as provisioners from './machineProvisioners.js';
 import { defineAccessProviderSchemas } from './accessProviders.js';
-import { DeploymentTargetPreparationBaseV1ProtocolSchema, readDeploymentTargetReferenceRolesV1 } from './deploymentTargets.js';
+import { DeploymentTargetPreparationBaseV1ProtocolSchema, deploymentTargetRoleWithNativeSelectorV1, readDeploymentTargetReferenceRolesV1 } from './deploymentTargets.js';
 import { defineMachineProvisionerSchemas, MachineProvisionerCheckResultProtocolV1Schema, MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerObservationV1Schema, MachineProvisionerPowerResultV1Schema, MachineProvisionerNativeExecResultV1Schema, MachineProvisionerPutFileResultV1Schema } from './machineProvisioners.js';
 
 import {
@@ -60,10 +60,11 @@ describe('plugin contribution catalog', () => {
   });
   it('admits data read Resources with explicit backing Actions and product operands under canonical custody', () => {
     const closed = { type: 'object', properties: {}, additionalProperties: false };
-    const inputSchema = { ...DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema,
-      properties: { ...DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema.properties, region: { type: 'string' } } };
+    const base = DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema;
+    const inputSchema = deploymentTargetRoleWithNativeSelectorV1({ ...base,
+      properties: { ...base.properties, region: { type: 'string' } } }, closed);
     const target = { id: 'database', role: 'data' as const, targetKind: 'database', title: 'Database', icon: 'server-outline',
-      targetSchema: closed, linkSchema: closed, dataV1: { projects: { list: 'projects', listAction: 'list-projects', link: 'link' } } };
+      targetSchema: closed, linkSchema: closed, nativeSelectorSchema: closed, dataV1: { projects: { list: 'projects', listAction: 'list-projects', link: 'link' } } };
     const actions = ['list-projects', 'link'].map(id => ({ id, title: id, scopes: ['global'], surfaces: ['plugin'],
       execution: { target: 'daemon' }, dangerLevel: 'safe', readOnly: true, inputSchema, resultSchema: closed }));
     const resources = [{ id: 'projects', source: 'dynamic', scope: 'surface', kind: 'config', contentType: 'application/json' }];

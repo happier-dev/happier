@@ -27,7 +27,7 @@ import { EnvironmentSecretBindingInputV1Schema } from '@happier-dev/protocol/dep
 import { HappyError } from '@/utils/errors/errors';
 import { randomUUID } from '@/platform/randomUUID';
 import { DeploymentDomainContentV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
-import { DeploymentDomainDnsPreviewResultV1Schema, type DeploymentDomainAddInputV1, type DeploymentDomainPreviewInputV1, type DeploymentDomainRemoveInputV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import { DeploymentDomainDnsPreviewResultV1Schema, type DeploymentDomainAddInputV1, type DeploymentDomainAttachedVerifyInputV1, type DeploymentDomainPreviewInputV1, type DeploymentDomainRemoveInputV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentBackupConfigureInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
 import { isDeploymentTelemetrySetRefusalV1, type DeploymentEnvironmentTelemetrySetInputV1, type DeploymentEnvironmentTelemetrySetSuccessV1,
@@ -299,8 +299,9 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
             if (!result.ok) throw new HappyError(result.error, false, { code: result.error, details: result });
             return DeploymentDomainDnsPreviewResultV1Schema.parse(result);
         },
-        /** Check again: the controller re-observes the address; no content changes. */
-        async verifyDomain(input: DeploymentUiDomainInput, operation?: UiActionOperation) {
+        /** The controller re-observes the address or verifies the reviewed provider assignment. */
+        async verifyDomain(input: Omit<DeploymentDomainAttachedVerifyInputV1, 'serverId' | 'requestKey'> & Readonly<{ requestKey?: string }>,
+            operation?: UiActionOperation) {
             assertCurrent();
             return DeploymentDomainMutationResultV1Schema.parse(await invoke('deployments.domains.verify', {
                 ...input, requestKey: input.requestKey ?? randomUUID(), serverId: lifetime.scope.serverId }, operation));

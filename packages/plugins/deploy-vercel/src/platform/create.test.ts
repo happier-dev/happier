@@ -10,7 +10,7 @@ const credentialRef = { service: { pluginId: 'happier.machine.vercel', localId: 
 const input = { v: 1, serverId: 'home', environmentId: 'environment', expectedRevision: 1, credentialRef,
   credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: { consumer: { pluginId: entry.manifest.id,
     localId: 'project-create' }, purpose: 'deploy.manage' }, target: { kind: 'account', account: credentialRef } },
-  providerAccountId: 'team_exact', providerEnvironment: { kind: 'production' },
+  providerAccountId: 'team_exact', providerEnvironment: { kind: 'native', selection: { kind: 'production' } },
   requestKey: 'persisted-request', resourceName: 'reviewed-app', sourceMethod: 'upload' };
 
 it('returns the native identity after one create without a follow-up read or deployment', async () => {
@@ -25,7 +25,7 @@ it('returns the native identity after one create without a follow-up read or dep
   try {
     expect(await kit.invokeAction('project-create', input)).toEqual({ credentialPrincipal: input.credentialPrincipal,
       providerIdentity: { providerAccountId: 'team_exact', providerResourceId: 'prj_created', providerEnvironment: 'production' },
-      sourceMethod: 'upload', providerEnvironment: { kind: 'production' }, preparedNative: { projectName: 'reviewed-app' } });
+      sourceMethod: 'upload', providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, preparedNative: { projectName: 'reviewed-app' } });
     expect(requests.map(request => [request.method, request.url])).toEqual([
       ['POST', 'https://api.vercel.com/v11/projects?teamId=team_exact'],
     ]);

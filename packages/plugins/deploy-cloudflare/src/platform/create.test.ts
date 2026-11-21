@@ -8,7 +8,7 @@ function input(actionId: string) {
   return { v: 1, serverId: 'home', environmentId: 'environment', expectedRevision: 1, credentialRef,
     credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: { consumer: { pluginId: entry.manifest.id,
       localId: actionId }, purpose: 'deploy.manage' }, target: { kind: 'account', account: credentialRef } },
-    providerAccountId: 'account', providerEnvironment: actionId === 'workers-create' ? { kind: 'script', scriptName: 'reviewed-app' } : { kind: 'production' },
+    providerAccountId: 'account', providerEnvironment: { kind: 'native', selection: actionId === 'workers-create' ? { kind: 'script', scriptName: 'reviewed-app' } : { kind: 'production' } },
     requestKey: 'persisted-request', resourceName: 'reviewed-app', sourceMethod: 'upload', productionBranch: 'trunk' };
 }
 
@@ -74,7 +74,7 @@ it('offers the reviewed new Worker environment without reading an existing resou
     const draft = input('workers-create');
     expect(await kit.invokeAction('target-options-read', { credentialRef, credentialPrincipal: draft.credentialPrincipal,
       fieldPath: 'providerEnvironment', providerAccountId: 'account', product: 'workers', resourceName: 'reviewed-app' }))
-      .toEqual({ options: [{ value: { kind: 'script', scriptName: 'reviewed-app' }, label: 'reviewed-app' }] });
+      .toEqual({ options: [{ value: { kind: 'native', selection: { kind: 'script', scriptName: 'reviewed-app' } }, label: 'reviewed-app' }] });
     expect(requests).toBe(0);
   } finally { await kit.dispose(); }
 });

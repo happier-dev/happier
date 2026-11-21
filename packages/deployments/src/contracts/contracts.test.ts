@@ -39,7 +39,7 @@ describe('S0 deployment wire contracts', () => {
             credentialRef, credentialPrincipal: { kind: 'account', accountId: 'owner', purpose,
                 target: { kind: 'account', account: credentialRef } },
             providerIdentity: { providerAccountId: 'provider-account', providerResourceId: 'project', providerEnvironment: 'production' },
-            providerEnvironment: { kind: 'production' } };
+            providerEnvironment: { kind: 'native', selection: { kind: 'production' } } };
         const custody = { ...common, targetLinkId: 'link', expectedTargetLinkRevision: 1,
             deploymentId: 'deployment', expectedDeploymentRevision: 1, actionOperationId: 'operation' };
         const receipt = createDeploymentV1();
@@ -91,7 +91,7 @@ describe('S0 deployment wire contracts', () => {
             purpose: { consumer: { pluginId: 'example.deploy', localId: 'runtime' }, purpose: 'deployment' },
             target: { kind: 'account', account: { service: { pluginId: 'example.accounts', localId: 'platform' }, accountId: 'work' } },
         };
-        const providerEnvironment = { kind: 'preview', scriptName: 'worker', previewName: 'pr-1' };
+        const providerEnvironment = { kind: 'native', selection: { kind: 'preview', scriptName: 'worker', previewName: 'pr-1' } };
         const preparedNative = { projectName: 'captured-project', gitSource: { type: 'github', repoId: '123' },
             triggerUuid: 'captured-trigger-uuid', previewId: 'captured-preview-id', gitBranch: 'feature/x',
             workerTag: 'captured-worker-tag', scriptName: 'captured-script-name',
@@ -114,7 +114,7 @@ describe('S0 deployment wire contracts', () => {
         expect(DeploymentTargetLinkContentV1Schema.safeParse({ ...linkContent,
             preparedNative: { ...preparedNative, pages: { ...preparedNative.pages, environment: { TOKEN: 'not-native-metadata' } } } }).success).toBe(false);
         expect(DeploymentTargetLinkContentV1Schema.safeParse({ ...linkContent,
-            providerEnvironment: { kind: 'preview', previewName: 'pr-1' } }).success).toBe(false);
+            providerEnvironment: providerEnvironment.selection }).success).toBe(false);
         expect(DeploymentTargetLinkContentV1Schema.safeParse({ ...linkContent,
             repositoryAccess: { ...linkContent.repositoryAccess, status: 'ready' } }).success).toBe(false);
         const receipt = createDeploymentV1();

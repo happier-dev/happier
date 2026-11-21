@@ -425,7 +425,7 @@ describe('Receipt → upload provenance', () => {
         purpose: { consumer: { pluginId: 'acme.platform', localId: 'inspect' }, purpose: 'deploy' },
         target: { kind: 'account', account: { service: { pluginId: 'acme.platform', localId: 'account' }, accountId: 'profile' } } },
         providerIdentity: { providerAccountId: 'account', providerResourceId: 'project', providerEnvironment: 'production' },
-        providerEnvironment: { kind: 'production' }, observation: { v: 1, state: 'succeeded', observedAtMs: 1,
+        providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, observation: { v: 1, state: 'succeeded', observedAtMs: 1,
           providerDeploymentId: 'native-deployment', urls: [], uploadProvenance: provenance } } } });
     const baseEnvironment = createDeploymentEnvironmentDetailV1();
     const detail = createDeploymentEnvironmentDetailV1({ targetLinks: baseEnvironment.targetLinks.map(row => ({ ...row,

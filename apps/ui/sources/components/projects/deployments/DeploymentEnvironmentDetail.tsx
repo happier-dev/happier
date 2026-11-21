@@ -1311,6 +1311,7 @@ export const DeploymentEnvironmentDetail = React.memo(
               editing={props.domainActions ? {
                 actions: props.domainActions,
                 environmentRevision: detail.environment.revision,
+                generatedDomains: platform?.generatedDomains === true,
                 deployedServices: services.map((service) => service.name),
                 content: detail.content,
                 targetLink: runtime ? { id: runtime.id, revision: runtime.revision,
@@ -1379,6 +1380,7 @@ export const DeploymentEnvironmentDetail = React.memo(
           demand={props.demand}
           readLogs={props.readLogs ?? null}
           platformRuntime={platformRuntime}
+          platformLogFollow={platform?.logFollow}
         />
         {props.phone && deployButton ? (
           <KeyboardStickyFooter>

@@ -313,14 +313,14 @@ export async function readDomainCaddyStartFirstLegs(input: Readonly<{
             if (placement.machineId !== input.machineId) continue;
             const opened = await readContent(capture.content);
             if (!opened.ok) return { kind: 'unavailable', reason: opened.error, domainIds: [domain.id] };
-            const service = opened.content.target.service;
-            if (service === undefined || !affected.has(service)) continue;
+            const { hostname, target: { service } } = opened.content;
+            if (hostname === null || service === undefined || !affected.has(service)) continue;
             if (!capture.desired || domain.state === 'removing' || placement.targetLinkId !== input.targetLinkId
                 || placement.installationId !== input.installationId || capture.dockerEngineId !== input.dockerEngineId) {
                 return { kind: 'unavailable', reason: 'native_route_unavailable', domainIds: [domain.id] };
             }
             const observed = await input.routes.readStartFirstLeg({ placement,
-                route: { domainId: domain.id, domain: opened.content, listener: capture.listener,
+                route: { domainId: domain.id, domain: { ...opened.content, hostname }, listener: capture.listener,
                     ...(opened.content.basicAuth ? { basicAuth: [{ username: opened.content.basicAuth.username }] } : {}),
                     ...(capture.listener === 'public' ? { publicTls: opened.content.tls ?? { kind: 'managed' as const } } : {}) },
                 ...(input.signal ? { signal: input.signal } : {}) });

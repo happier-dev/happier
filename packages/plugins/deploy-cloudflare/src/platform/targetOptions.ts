@@ -7,6 +7,7 @@ import { isObject } from '../connectedAccounts/probe.js';
 import { request, requestAccounts, type DeploymentContext } from './deploymentHttp.js';
 import { cloudflareHasNextPage, CloudflareProviderRefusal } from './cloudflareRoutes.js';
 import { readWorkerScripts, resolveWorkerTag } from './workers.js';
+import { cloudflareRoleSchema } from './targetSelection.js';
 
 const pluginId = 'happier.deploy.cloudflare';
 const text = { type: 'string', minLength: 1 } as const;
@@ -57,7 +58,7 @@ async function read(input: Input, context: DeploymentContext) {
   } else if (input.product === 'pages' && input.fieldPath === 'providerEnvironment') {
     // Pages environments are fixed; a pre-Create draft names one before any Account is chosen.
     return { options: options([
-      { value: { kind: 'production' }, label: 'Production' }, { value: { kind: 'preview' }, label: 'Preview' },
+      { value: { kind: 'native', selection: { kind: 'production' } }, label: 'Production' }, { value: { kind: 'native', selection: { kind: 'preview' } }, label: 'Preview' },
     ], input.query) };
   } else {
     const accountId = input.providerIdentity?.providerAccountId ?? input.providerAccountId;
@@ -73,14 +74,14 @@ async function read(input: Input, context: DeploymentContext) {
       path = `/pages/projects${params.size ? `?${params}` : ''}`;
     } else if (input.product === 'workers') {
       if (input.fieldPath === 'providerEnvironment' && input.resourceName) return { options: options([
-        { value: { kind: 'script', scriptName: input.resourceName }, label: input.resourceName },
+        { value: { kind: 'native', selection: { kind: 'script', scriptName: input.resourceName } }, label: input.resourceName },
       ], input.query) };
       selectedScript = input.fieldPath === 'providerEnvironment' ? input.scriptName : undefined;
       if (!selectedScript) {
         const scripts = await readWorkerScripts(accountId, context);
         if ('code' in scripts) refuse(scripts);
         return { options: options(scripts.map(({ scriptName, workerTag }) => ({ label: scriptName,
-          value: input.fieldPath === 'providerEnvironment' ? { kind: 'script', scriptName } : workerTag })), input.query) };
+          value: input.fieldPath === 'providerEnvironment' ? { kind: 'native', selection: { kind: 'script', scriptName } } : workerTag })), input.query) };
       }
       if (input.query) params.set('name', input.query);
       path = `/workers/workers/${encodeURIComponent(selectedScript)}/previews${params.size ? `?${params}` : ''}`;
@@ -101,7 +102,7 @@ async function read(input: Input, context: DeploymentContext) {
     }
     if (selectedScript) {
       if (!name(row.id) || !name(row.name)) return invalid();
-      return { value: { kind: 'preview', scriptName: selectedScript, previewName: row.name }, label: row.name };
+      return { value: { kind: 'native', selection: { kind: 'preview', scriptName: selectedScript, previewName: row.name } }, label: row.name };
     }
     if (input.product === 'pages') {
       if (!name(row.id) || !name(row.name)) return invalid();
@@ -122,7 +123,7 @@ async function read(input: Input, context: DeploymentContext) {
       throw error;
     }
   }
-  if (selectedScript) rows.unshift({ value: { kind: 'script', scriptName: selectedScript }, label: selectedScript });
+  if (selectedScript) rows.unshift({ value: { kind: 'native', selection: { kind: 'script', scriptName: selectedScript } }, label: selectedScript });
   return { options: options(rows, input.query), ...(nextCursor ? { nextCursor } : {}) };
 }
 
@@ -139,8 +140,9 @@ export const targetOptionsRead = {
 
 function draftProduct(draft: Readonly<Record<string, JsonValue>>): JsonValue | undefined {
   if (draft.product !== undefined) return draft.product;
-  const environment = draft.providerEnvironment;
-  if (!isObject(environment)) return undefined;
+  const carrier = draft.providerEnvironment;
+  if (!isObject(carrier) || !isObject(carrier.selection)) return undefined;
+  const environment = carrier.selection;
   if (typeof environment.scriptName === 'string') return 'workers';
   if (environment.kind === 'production' || environment.kind === 'preview') return 'pages';
   return undefined;
@@ -154,8 +156,9 @@ function targetOptionsFor(product?: 'workers' | 'pages') {
     }
     const selectedProduct = product ?? draftProduct(draft);
     if (selectedProduct !== undefined) input.product = selectedProduct;
-    if (isObject(draft.providerEnvironment) && draft.providerEnvironment.scriptName !== undefined) {
-      input.scriptName = draft.providerEnvironment.scriptName as JsonValue;
+    const carrier = draft.providerEnvironment;
+    if (isObject(carrier) && isObject(carrier.selection) && typeof carrier.selection.scriptName === 'string') {
+      input.scriptName = carrier.selection.scriptName;
     }
     return input;
   });
@@ -172,6 +175,8 @@ export const targetOptionResources = {
 
 const choiceSchema: PluginJsonSchema = { anyOf: [{ type: 'string' }, { type: 'object' }] };
 export const targetOptionInputTypes = {
+  'new-pages-environment': { title: 'Cloudflare Pages environment', semantic: 'cloudflare-new-pages-environment',
+    valueSchema: cloudflareRoleSchema(base, 'pages').properties!.providerEnvironment! },
   'target-choice': { title: 'Cloudflare target choice', semantic: 'cloudflare-target-choice',
     valueSchema: choiceSchema, options: { resource: 'target-options' } },
   'workers-target-choice': { title: 'Cloudflare Workers choice', semantic: 'cloudflare-workers-choice',
@@ -182,24 +187,24 @@ export const targetOptionInputTypes = {
 const accountField = { path: 'providerIdentity.providerAccountId', title: 'Cloudflare Account', optionsDraftDependencies: [],
   required: true, widget: 'select', inputType: { pluginId, localId: 'target-choice' } } as const;
 const environmentField = { path: 'providerEnvironment', title: 'Environment',
-  optionsDraftDependencies: ['product', 'resourceName', 'providerEnvironment.kind', 'providerEnvironment.scriptName'],
+  optionsDraftDependencies: ['product', 'resourceName', 'providerEnvironment.selection.kind', 'providerEnvironment.selection.scriptName'],
   required: true, widget: 'select', inputType: { pluginId, localId: 'target-choice' } } as const;
 const projectField = { path: 'preparedNative.projectName', title: 'Pages project name', widget: 'select',
-  optionsDraftDependencies: ['product', 'providerEnvironment.kind', 'providerEnvironment.scriptName'],
+  optionsDraftDependencies: ['product', 'providerEnvironment.selection.kind', 'providerEnvironment.selection.scriptName'],
   inputType: { pluginId, localId: 'target-choice' } } as const;
 const workerTriggerField = { path: 'triggerUuid', title: 'Worker build trigger', widget: 'select',
-  optionsDraftDependencies: ['providerIdentity.providerResourceId', 'providerEnvironment.scriptName'], inputType: { pluginId, localId: 'target-choice' },
-  requiredWhen: { op: 'and', all: [{ op: 'eq', path: 'providerEnvironment.kind', value: 'script' },
+  optionsDraftDependencies: ['providerIdentity.providerResourceId', 'providerEnvironment.selection.scriptName'], inputType: { pluginId, localId: 'target-choice' },
+  requiredWhen: { op: 'and', all: [{ op: 'eq', path: 'providerEnvironment.selection.kind', value: 'script' },
     { op: 'not', predicate: { op: 'eq', path: 'sourceMethod', value: 'upload' } }] },
-  visibleWhen: { op: 'and', all: [{ op: 'eq', path: 'providerEnvironment.kind', value: 'script' },
+  visibleWhen: { op: 'and', all: [{ op: 'eq', path: 'providerEnvironment.selection.kind', value: 'script' },
     { op: 'not', predicate: { op: 'eq', path: 'sourceMethod', value: 'upload' } }] } } as const;
 export const targetOptionInputHints = { fields: [
   accountField,
   { path: 'providerIdentity.providerResourceId', title: 'Project or Worker', required: true, widget: 'select',
-    optionsDraftDependencies: ['product', 'providerEnvironment.kind', 'providerEnvironment.scriptName'],
+    optionsDraftDependencies: ['product', 'providerEnvironment.selection.kind', 'providerEnvironment.selection.scriptName'],
     inputType: { pluginId, localId: 'target-choice' } },
   environmentField,
-  { ...projectField, requiredWhen: { op: 'not', predicate: { op: 'truthy', path: 'providerEnvironment.scriptName' } } },
+  { ...projectField, requiredWhen: { op: 'not', predicate: { op: 'truthy', path: 'providerEnvironment.selection.scriptName' } } },
   workerTriggerField,
 ] } as const;
 export const targetProductSchema = product;

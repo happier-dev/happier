@@ -703,7 +703,7 @@ describe('private installed Environment secret launch transport', () => {
                     consumer: { pluginId, localId: 'database' }, purpose: 'deploy-manage' as const,
                 }, target: { kind: 'account' as const, account: credentialRef } };
                 const providerIdentity = { providerAccountId: 'org', providerResourceId: 'project', providerEnvironment: 'br-main' };
-                const providerEnvironment = { kind: 'custom' as const, id: 'br-main' };
+                const providerEnvironment = { kind: 'native' as const, selection: { branchId: 'br-main' } };
                 const targetContent = await f.artifact('deployment-target-link.v1', {
                     credentialPrincipal, providerIdentity, providerEnvironment });
                 const data = await inTx(tx => linkDeploymentTargetInTx(tx, f.owner.id, { serverId,
@@ -1125,7 +1125,7 @@ describe('private installed Environment secret launch transport', () => {
             const actionInput = { action: { pluginId: 'happier.deploy.neon', localId: 'projects-list-read' }, input: { v: 1, serverId,
                 credentialRef, credentialPrincipal: { kind: 'account', accountId, purpose: { consumer: { pluginId: 'happier.deploy.neon',
                     localId: 'projects-list-read' }, purpose: 'deploy-manage' }, target: { kind: 'account', account: credentialRef } },
-                providerEnvironment: { kind: 'production' }, environmentId: row.id, expectedRevision: row.revision,
+                providerEnvironment: { kind: 'native', selection: {} }, environmentId: row.id, expectedRevision: row.revision,
                 providerAccountId: 'org-fixture' } };
             const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input: actionInput };
             expect(projectDeploymentReadAdmissionV1(actionId, actionInput)).toBeUndefined();

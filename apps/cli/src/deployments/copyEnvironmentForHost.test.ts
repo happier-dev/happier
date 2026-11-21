@@ -76,7 +76,7 @@ describe('Copy acknowledged step result', () => {
             target: { kind: 'account', account: { service: { pluginId: 'com.example.data', localId: 'account' }, accountId: 'new-account' } } };
         const provision = { action: { pluginId: 'com.example.data', localId: 'provision' }, input: {
             v: 1, serverId: 'home', credentialRef: principal.target.account, credentialPrincipal: principal,
-            providerAccountId: 'new-provider-account', providerEnvironment: { kind: 'custom', id: 'new' }, name: 'empty-copy',
+            providerAccountId: 'new-provider-account', providerEnvironment: { kind: 'native', selection: { branchId: 'new' } }, name: 'empty-copy',
         } };
         const data = ['source-data', ...(outcome === 'pending' ? ['later-data'] : [])].map(targetLinkId => ({
             targetLinkId, targetId: 'database', targetKind: 'database',
@@ -93,7 +93,7 @@ describe('Copy acknowledged step result', () => {
                     kind: 'createEmpty', provision: row.provision })) } }, copyPlan: { bindings: [], data } });
         const invoked: { action: unknown; input: unknown }[] = [];
         const identity = { providerAccountId: 'new-provider-account', providerResourceId: 'created', providerEnvironment: 'new' };
-        const environment = { kind: 'custom', id: 'new' };
+        const environment = { kind: 'native', selection: { branchId: 'new' } };
         const refusal = { ok: false as const, errorCode: 'action_forbidden', error: 'action_forbidden',
             requestId: 'copy-data-refusal', details: { requiredFact: 'verification_purpose', remedy: 'Retry the admitted link Action' },
             failureCause: { phase: 'deployments.targets.link', errorClass: 'Error' as const, errorCode: 'action_forbidden', httpStatus: 403 } };

@@ -28,7 +28,7 @@ export function projectDeploymentConnections(detail: DeploymentEnvironmentDetail
   for (const volume of detail.content.template?.volumes ?? []) items.push({ kind: 'volume', id: volume.id,
     service: volume.service, resource: volume.target, source: { kind: 'service', id: volume.service },
     configure: deploymentEnvironmentRoute({ ...address, tab: 'settings' }) });
-  for (const domain of domains.items) items.push({ kind: 'domain', id: domain.domain.id,
+  for (const domain of domains.items) if (domain.content.hostname) items.push({ kind: 'domain', id: domain.domain.id,
     service: domain.content.target.service ?? null, resource: domain.content.hostname,
     source: domain.content.target.service ? { kind: 'service', id: domain.content.target.service } : source,
     configure: deploymentEnvironmentRoute({ ...address, tab: 'domains' }) });

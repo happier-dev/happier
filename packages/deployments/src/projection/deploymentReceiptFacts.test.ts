@@ -57,7 +57,7 @@ describe('receipt facts', () => {
                 purpose: { consumer: { pluginId: 'acme.alpha', localId: 'inspect' }, purpose: 'deploy' },
                 target: { kind: 'account', account: { service: { pluginId: 'acme.alpha', localId: 'account' }, accountId: 'provider' } } },
             providerIdentity: { providerAccountId: 'provider', providerResourceId: 'project', providerEnvironment: 'production' },
-            providerEnvironment: { kind: 'production' }, observation: { v: 1, state: 'succeeded', observedAtMs: 1,
+            providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, observation: { v: 1, state: 'succeeded', observedAtMs: 1,
                 providerDeploymentId: 'dpl_exact', urls: ['https://app-exact.vercel.app'],
                 builtInUrls: ['https://app.vercel.app'] } };
         receipt.deployment.acceptedExecution = undefined;
@@ -78,7 +78,7 @@ describe('receipt facts', () => {
         receipt.deployment.state = 'failed';
         receipt.content = DeploymentContentV1Schema.parse({ sourceIntent: receipt.content.sourceIntent, sourceMethod: 'upload',
             machines: [], images: [], machineResults: [], steps: [], failure: { code: 'deployment_failed', phase: 'build' },
-            platform: { targetLinkRevision: 1, providerEnvironment: { kind: 'production' },
+            platform: { targetLinkRevision: 1, providerEnvironment: { kind: 'native', selection: { kind: 'production' } },
                 credentialPrincipal: { kind: 'account', accountId: 'actor',
                     purpose: { consumer: { pluginId: 'acme.alpha', localId: 'upload' }, purpose: 'deploy' },
                     target: { kind: 'account', account: { service: { pluginId: 'acme.alpha', localId: 'account' }, accountId: 'provider' } } },
@@ -105,7 +105,7 @@ describe('receipt facts', () => {
                 purpose: { consumer: { pluginId: 'acme.alpha', localId: 'inspect' }, purpose: 'deploy' },
                 target: { kind: 'account', account: { service: { pluginId: 'acme.alpha', localId: 'account' }, accountId: 'provider' } } },
             providerIdentity: { providerAccountId: 'provider', providerResourceId: 'project', providerEnvironment: 'production' },
-            providerEnvironment: { kind: 'production' }, observation: { v: 1, state: 'succeeded', observedAtMs: 1, providerDeploymentId: 'dpl_exact' } };
+            providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, observation: { v: 1, state: 'succeeded', observedAtMs: 1, providerDeploymentId: 'dpl_exact' } };
         // The same history and retention setting: a platform release is not "kept on a Machine", so nothing reads "Off".
         expect(projectDeploymentReceiptFactsV1(platform, { ...retainedHistory, receipt: platform.deployment }))
             .toMatchObject({ placement: 'platform', retainedPreviousCount: null });
@@ -192,7 +192,7 @@ describe('receipt facts', () => {
                 purpose: { consumer: { pluginId: 'acme.alpha', localId: 'branch' }, purpose: 'account' },
                 target: { kind: 'account', account: { service: { pluginId: 'acme.alpha', localId: 'account' }, accountId: 'provider' } } },
                 providerIdentity: { providerAccountId: 'provider', providerResourceId: 'project', providerEnvironment: 'branch:A' },
-                providerEnvironment: { kind: 'custom', id: 'A' }, targetLinkRevision: 1,
+                providerEnvironment: { kind: 'native', selection: { branchId: 'A' } }, targetLinkRevision: 1,
                 observation: { v: 1, state: 'failed', observedAtMs: 1000 },
                 dataCreation: { reference: { runId: 'run:one', invocationId: 'inv:one' }, retainedProviderResource: true,
                     deleteAction: { pluginId: 'acme.alpha', localId: 'delete' }, operands: { branchId: 'A' } } } });

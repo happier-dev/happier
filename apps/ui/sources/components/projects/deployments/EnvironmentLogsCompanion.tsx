@@ -40,6 +40,7 @@ export function EnvironmentLogsCompanion(
     deploymentId: string | null;
     demand: DeploymentReadDemandV1;
     readLogs: DeploymentReadLogs | null;
+    platformLogFollow?: false;
     platformRuntime?: Extract<PluginUiHostReadReferenceV1, { hostRead: 'deployments.logs' }>;
   }>,
 ) {
@@ -95,7 +96,7 @@ export function EnvironmentLogsCompanion(
     >
       {!props.open ? null : shown === 'runtime' && props.platformRuntime ? (
         <ItemList testID="environment-logs.runtime">
-          <DeploymentRuntimeLogs serverId={props.serverId} reference={props.platformRuntime}
+          <DeploymentRuntimeLogs serverId={props.serverId} reference={props.platformRuntime} followable={props.platformLogFollow !== false}
             active={props.demand.mounted && props.demand.visible && props.demand.focused} />
         </ItemList>
       ) : shown === 'runtime' && props.machineId && serviceName ? (
@@ -120,6 +121,7 @@ export function EnvironmentLogsCompanion(
             steps={value.content.steps.length > 0 ? value.content.steps : (value.content.machineResults[0]?.steps ?? [])}
             facts={value.facts}
             running={value.deployment.state === 'running' || value.deployment.state === 'queued'}
+            followLog={props.platformLogFollow !== false}
             serverId={props.serverId}
             readLogs={props.readLogs}
             fileStem={`deploy-${value.deployment.id}`}

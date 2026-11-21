@@ -8,6 +8,7 @@ import { createActionExecutor, type ActionExecutorContext } from '@happier-dev/p
 import { DeploymentEnvironmentCreateStorageInputV1Schema, DeploymentEnvironmentCreateIntentInputV1Schema, DeploymentEnvironmentCreateResultV1Schema,
     DeploymentEnvironmentGetResultV1Schema, DeploymentTargetLinkInputV1Schema, DeploymentTargetLinkResultV1Schema,
     DeploymentTargetLinksListResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { deploymentTargetRoleWithNativeSelectorV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargets';
 import { DeploymentTargetPreparationBaseV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import { DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployments/contracts/v1';
@@ -29,7 +30,7 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import { normalizeStoredComposeDefinitionInput } from '@/workspaces/projectSetup/nativeComposeSource';
 import { createDeploymentArtifactForHost } from './createArtifactForHost';
 import { createDaemonDeploymentActionDeps } from './createDaemonDeploymentActionDeps';
-import { resultSchema as supabaseDataResultSchema } from '../../../../packages/plugins/deployment-supabase/src/data/schemas';
+import { nativeSelectorSchema, resultSchema as supabaseDataResultSchema } from '../../../../packages/plugins/deployment-supabase/src/data/schemas';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -66,12 +67,12 @@ it('copies through the installed data declaration and reviewed children without 
                     execution: { target: 'daemon' }, hostAccess: ['manage'], dangerLevel: 'writesRemote',
                     confirmation: { title: 'Create the selected database?' },
                     connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'manage' }],
-                    inputSchema: DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema,
+                    inputSchema: deploymentTargetRoleWithNativeSelectorV1(DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema, nativeSelectorSchema),
                     resultSchema: supabaseDataResultSchema('projects-provision'),
                 }],
                 deploymentTargets: [{ id: 'database', role: 'data', title: 'Database', icon: 'database', targetKind: 'postgres',
                     targetSchema: { type: 'object', properties: {}, additionalProperties: false },
-                    linkSchema: { type: 'object', properties: {}, additionalProperties: false }, dataV1: { projects: { provision: 'provision' } },
+                    linkSchema: { type: 'object', properties: {}, additionalProperties: false }, nativeSelectorSchema, dataV1: { projects: { provision: 'provision' } },
                 }],
             },
         }, files: { 'daemon.mjs': `export function activate(api) {
@@ -185,7 +186,7 @@ it('copies through the installed data declaration and reviewed children without 
             return new Response(JSON.stringify({ state: 'provisioned', status: 'ACTIVE', ready: true, engine: 'postgres', providerResourceOrigin: 'created',
                 providerConsole: { url: 'https://copy-provider.test/projects/resource-1', label: 'Database' },
                 providerIdentity: { providerAccountId: 'fresh-provider', providerResourceId: `resource-${providerRequests.length}`,
-                    providerEnvironment: 'main' }, providerEnvironment: { kind: 'custom', id: 'main' } }),
+                    providerEnvironment: 'main' }, providerEnvironment: { kind: 'native', selection: { branchId: 'main' } } }),
             { status: 201, headers: { 'content-type': 'application/json' } });
         });
         const savedSecretOperationContext = runWithServerHttpBaseUrl(serverHttpBaseUrl, () => createInvocationSavedSecretOperationContextV1({
@@ -221,7 +222,7 @@ it('copies through the installed data declaration and reviewed children without 
             protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', copyFrom: { environmentId: source.environment.id,
                 expectedRevision: source.environment.revision, choices: { secrets: [], values: [], data: [{ targetLinkId: sourceData.id,
                     kind: 'createEmpty', provision: { action, input: { v: 1, serverId: 'home', credentialRef: account,
-                        credentialPrincipal: principal, providerAccountId: 'fresh-provider', providerEnvironment: { kind: 'custom', id: 'main' } } } }] } },
+                        credentialPrincipal: principal, providerAccountId: 'fresh-provider', providerEnvironment: { kind: 'native', selection: { branchId: 'main' } } } } }] } },
         });
         const prepared = await deps.prepareDeploymentEnvironmentCreate!({ context, input: authoredIntent });
         expect(prepared, JSON.stringify({ prepared, homeRequests })).not.toHaveProperty('errorCode');

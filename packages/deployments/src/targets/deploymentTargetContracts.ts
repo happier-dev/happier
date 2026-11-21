@@ -8,7 +8,8 @@ import { PluginLocalizedStringV2Schema } from '@happier-dev/protocol/plugins/con
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { DeploymentTargetPlanV1Schema, DeploymentTargetStatusIntervalMsV1Schema, createDeploymentTargetRuntimeActionsV1Schema, createDeploymentTargetDataV1Schema,
+import { DeploymentTargetPlanV1Schema, DeploymentTargetStatusIntervalMsV1Schema, DeploymentTargetNativeSelectorSchemaV1, DeploymentTargetGitSourceV1Schema,
+    createDeploymentTargetRuntimeActionsV1Schema, createDeploymentTargetDataV1Schema,
     type DeploymentTargetContributionV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 export { DeploymentDataParentBranchRefV1Schema, type DeploymentDataParentBranchRefV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 export { DeploymentTargetCredentialPrincipalV1Schema, DeploymentTargetProviderIdentityV1Schema,
@@ -60,7 +61,8 @@ type NormalizedTargetBase = {
     v: 1;
     source: z.infer<typeof DeploymentTargetSourceV1Schema>;
 };
-export type DeploymentRuntimeTargetV1 = Omit<Extract<DeploymentTargetContributionV1, { role: 'runtime' }>, 'actions'> & NormalizedTargetBase & {
+export type DeploymentRuntimeTargetV1 = Omit<Extract<DeploymentTargetContributionV1, { role: 'runtime' }>, 'actions' | 'nativeSelectorSchema'> & NormalizedTargetBase & {
+    nativeSelectorSchema?: z.infer<typeof DeploymentTargetNativeSelectorSchemaV1> | undefined;
     actions: z.infer<ReturnType<typeof createDeploymentTargetRuntimeActionsV1Schema<typeof DeploymentActionRefV1Schema>>>;
 };
 export type DeploymentDataTargetV1 = Omit<Extract<DeploymentTargetContributionV1, { role: 'data' }>, 'dataV1'> & NormalizedTargetBase & {
@@ -79,10 +81,16 @@ const normalizedFields = () => ({
 /** Both normalized roles consume the declaration owner's closed role grammar. */
 export const DeploymentTargetV1Schema: z.ZodMiniType<DeploymentTargetV1> = z.discriminatedUnion('role', [
     z.strictObject({ ...normalizedFields(), role: z.literal('runtime'), statusIntervalMs: z.optional(DeploymentTargetStatusIntervalMsV1Schema),
+        generatedDomains: z.optional(z.literal(true)),
+        logFollow: z.optional(z.literal(false)),
+        nativeSelectorSchema: z.optional(DeploymentTargetNativeSelectorSchemaV1),
+        gitSource: z.optional(DeploymentTargetGitSourceV1Schema),
         actions: createDeploymentTargetRuntimeActionsV1Schema(DeploymentActionRefV1Schema) }),
     z.strictObject({ ...normalizedFields(), role: z.literal('data'),
+        nativeSelectorSchema: DeploymentTargetNativeSelectorSchemaV1,
         dataV1: z.optional(createDeploymentTargetDataV1Schema(DeploymentActionRefV1Schema, DeploymentResourceRefV1Schema)) }),
-]).check(z.refine(target => {
+]).check(z.refine(target => target.source.kind !== 'plugin' || target.nativeSelectorSchema !== undefined,
+    { message: 'Contributed targets must declare a native selector.' }), z.refine(target => {
     if (target.role === 'data') {
         if (target.source.kind !== 'plugin') return true;
         const pluginId = target.source.contribution.pluginId;

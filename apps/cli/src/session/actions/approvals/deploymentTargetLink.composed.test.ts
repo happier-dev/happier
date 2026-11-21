@@ -74,7 +74,7 @@ it.each(['ready', 'cloudflare-existing-content', 'partial-inventory', 'invalid-i
             purpose: { consumer: { pluginId, localId: pages ? 'targets-inspect-v1' : 'runtime' }, purpose: pages ? 'deploy.manage' : 'manage' },
             target: { kind: 'account', account: { service: { pluginId, localId: pages ? 'cloudflare' : 'service' }, accountId: 'credential' } } },
             providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project', providerEnvironment: 'production' },
-            providerEnvironment: { kind: 'production' } };
+            providerEnvironment: { kind: 'native', selection: { kind: 'production' } } };
         const input = { serverId: homeId, environmentId: environment.environment.id,
             expectedRevision: environment.environment.revision, requestKey: 'link-provider', role: 'runtime',
             targetId: 'runtime', targetKind: pages ? 'cloudflare-pages' : 'platform', machines: [],

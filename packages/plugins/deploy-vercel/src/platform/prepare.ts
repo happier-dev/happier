@@ -5,8 +5,9 @@ import { DeploymentTargetPreparationBaseV1ProtocolSchema, ScmHostingRepositoryId
 import type { PluginAccountActionContext, PluginActionDeclaration } from '@happier-dev/plugin-sdk/actions';
 import { prepareVercelProject, readVercelProjectCoordinates } from './operations.js';
 import { targetInputHints } from './options.js';
+import { vercelRoleSchema, type VercelRoleInput } from './selection.js';
 
-const base = DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema;
+const base = vercelRoleSchema(DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema);
 const repositorySchema = ScmHostingRepositoryIdentityV1ProtocolSchema.jsonSchema;
 export const projectPrepareInputSchema: PluginJsonSchema = { type: 'object', additionalProperties: false,
   properties: { ...base.properties, repository: repositorySchema, projectId: { type: 'string', minLength: 1 } },
@@ -36,7 +37,7 @@ export const projectPrepareAction: ProjectAccountAction = {
   inputHints: targetInputHints,
   async run(input: JsonValue, context: PluginAccountActionContext) {
     // Canonical shared custody and product input were validated by Action admission.
-    const request = input as unknown as Omit<DeploymentTargetPreparationBaseV1, 'providerIdentity' | 'providerAccountId'> & {
+    const request = input as unknown as VercelRoleInput<Omit<DeploymentTargetPreparationBaseV1, 'providerIdentity' | 'providerAccountId'>> & {
       repository?: ReturnType<typeof ScmHostingRepositoryIdentityV1ProtocolSchema.parse>;
     } & ({ providerIdentity: NonNullable<DeploymentTargetPreparationBaseV1['providerIdentity']> }
       | { providerAccountId: string; projectId: string });
@@ -66,7 +67,7 @@ const { inputHints: _inspectHints, ...preparedLinkBase } = projectPrepareAction;
 export const projectLinkAction: ProjectAccountAction = {
   ...preparedLinkBase, surfaces: ['cli', 'plugin'], title: 'Link the prepared Vercel project', dangerLevel: 'writesLocal', readOnly: false,
   confirmation: { title: 'Link this Vercel project?' },
-  inputSchema: DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema,
+  inputSchema: base,
   async run(input: JsonValue) {
     // Ordinary Action admission validated the shared custody input once.
     const request = input as unknown as DeploymentTargetPreparationBaseV1;

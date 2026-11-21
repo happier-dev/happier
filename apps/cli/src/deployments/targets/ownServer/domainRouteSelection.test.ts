@@ -42,7 +42,6 @@ import { createDaemonDeploymentActionDeps } from '@/deployments/createDaemonDepl
 import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
 import type { ClientToServerEvents } from '@/api/types';
 import type { StoredCredentials } from '@/persistence';
-import type { DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import type { DeploymentArtifactDocumentV1 } from '@happier-dev/deployments';
 import { createNativeCaddyRoutes, createNativeCaddyAdminExchange } from '@/machines/reachability/nativeCaddyRoutes';
 import { materializeCaddyDomainRouteV1, type CaddyDomainRouteInput } from './caddyRouteMaterialization';
@@ -395,12 +394,12 @@ it.skipIf(process.platform === 'win32')('selects the persisted edge over every a
 });
 
 it.skipIf(process.platform === 'win32')('reads the complete Domain inventory into all affected local replica legs, never an edge proxy or a partial list', async () => {
-    const content = (id: string, service: string): DeploymentDomainContentV1 => ({ hostname: `${id}.example.test`,
+    const content = (id: string, service: string) => ({ hostname: `${id}.example.test`,
         target: { service, containerPort: service === 'api' ? 4000 : 3000 }, healthCheck: { path: '/healthz', expectStatus: 200 },
         basicAuth: { username: 'reader' } });
     const web = content('web', 'web'), api = content('api', 'api');
     const alias = { ...content('alias', 'web'), tls: { kind: 'custom' as const } };
-    const route = (domainId: string, domain: DeploymentDomainContentV1): CaddyDomainRouteInput => ({ domainId, domain,
+    const route = (domainId: string, domain: ReturnType<typeof content>): CaddyDomainRouteInput => ({ domainId, domain,
         listener: 'privateOrigin', upstreams: { kind: 'replicas', containerNames: [`old-${domain.target.service}-1`, `old-${domain.target.service}-2`] },
         privateSourceRanges: ['100.64.0.0/10'], peerOrigins: ['100.70.0.3:9481'],
         basicAuth: [{ username: 'reader', bcryptHash: 'native-only-hash' }] });

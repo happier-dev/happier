@@ -1,3 +1,4 @@
+import { vercelRoleSchema } from './selection.js';
 import { withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs, DeploymentTargetLogsResultV1ProtocolSchema as output,
   PluginError, isPluginError, type JsonValue } from '@happier-dev/plugin-sdk';
@@ -90,7 +91,7 @@ export const runtimeLogsAction: PluginActionDefinition<Extract<PluginActionDecla
   execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
   scopes: ['global'], surfaces: ['cli', 'plugin'], placementBindings: [],
   hostAccess: ['vercel-api', 'deploy.manage'], connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'deploy.manage' }],
-  dangerLevel: 'safe', readOnly: true, inputSchema: inputs['logs.runtime'].jsonSchema, resultSchema: output.jsonSchema,
+  dangerLevel: 'safe', readOnly: true, inputSchema: vercelRoleSchema(inputs['logs.runtime'].jsonSchema), resultSchema: output.jsonSchema,
   // Vercel keeps no runtime-log history: this endpoint is a live tail only. A one-shot read answers at once
   // and names Follow (observeRead) instead of holding the request open for Vercel's 5-minute window.
   async run(): Promise<ReturnType<typeof output.parse>> {

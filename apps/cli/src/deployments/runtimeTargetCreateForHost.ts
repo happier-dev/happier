@@ -4,6 +4,8 @@ import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { DeploymentTargetLinkProviderIntentInputV1Schema,
     DeploymentTargetLinkProvisionedResultV1Schema, type DeploymentTargetLinkCreateIntentInputV1, type DeploymentTargetLinkProviderIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTargetCreateInputV1Schema, DeploymentTargetLinkProviderContentV1Schema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
+import { describeDeploymentTargetGitCreateV1 } from '@happier-dev/protocol/plugins/contributions/v2';
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
@@ -21,7 +23,14 @@ export function prepareRuntimeTargetCreateForHost(input: DeploymentTargetLinkCre
     if (!action) throw createActionExecuteFailureError({ ok: false, errorCode: 'source_unavailable', error: 'source_unavailable' });
     const operand = DeploymentTargetCreateInputV1Schema.parse({ ...input.providerCreate, v: 1,
         serverId: input.serverId, environmentId: input.environmentId, expectedRevision: input.expectedRevision, requestKey: input.requestKey });
-    return { children: [{ action, role: 'create', input: normalizeStrictJsonValue(operand) }] };
+    const summary = describeDeploymentTargetGitCreateV1(target.gitSource, resolvePluginLocalizedStringV2Text(target.title), {
+        resourceName: operand.resourceName,
+        ...(operand.repository ? { repository: operand.repository.repository } : {}),
+        ...(operand.productionBranch ? { productionBranch: operand.productionBranch } : {}),
+    });
+    return { children: [{ action, role: 'create', input: normalizeStrictJsonValue(operand) }],
+        ...(summary ? { approvalPreview: { summary } } : {}) };
+
 }
 
 /** Native acknowledgment is checkpointed by the existing encrypted operation owner before any follow-up. */

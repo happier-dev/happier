@@ -23,6 +23,7 @@ export function DeploymentRuntimeLogs(props: Readonly<{
   serverId: string;
   reference: Extract<PluginUiHostReadReferenceV1, { hostRead: 'deployments.logs' }>;
   active: boolean;
+  followable?: boolean;
 }>) {
   const { theme } = useUnistyles();
   const { binding: lifetime } = useServerCredentialAccountScopeBinding(props.serverId);
@@ -37,7 +38,7 @@ export function DeploymentRuntimeLogs(props: Readonly<{
   const isInputFocused = React.useCallback(() => inputFocused.current, []);
   const sourceKey = JSON.stringify([lifetime?.scope.accountId ?? null, props.reference]);
   const logs = useNativeLogViewer({ first: FIRST, read: readFirst, accountLifetime: lifetime,
-    reference: props.reference, sourceKey, active: props.active, fileName: 'runtime.log', view,
+    reference: props.reference, sourceKey, active: props.active, followable: props.followable, fileName: 'runtime.log', view,
     surfaceId: `deployment-runtime-log:${sourceKey}`, containsFocus, isInputFocused });
   const { viewer, projection } = logs;
   const shared = viewer?.findRegistration ?? null;
@@ -57,7 +58,8 @@ export function DeploymentRuntimeLogs(props: Readonly<{
       <NativeLogToolbar testID="deployment-runtime-logs-toolbar" viewer={viewer}
         findOpen={viewer?.findSnapshot.isOpen === true && props.active}
         partTestID={(part) => `deployment-runtime-logs-${part}`} inputFocused={inputFocused}
-        follow={{ on: logs.follow, toggle: () => logs.setFollow(value => !value) }} navigation={logs.navigation}
+        follow={props.followable === false ? undefined : { on: logs.follow, toggle: () => logs.setFollow(value => !value) }}
+        navigation={logs.navigation}
         copyDisabled={!logs.index} saveDisabled={!logs.index}
         onCopy={() => { void logs.copyLoaded(); }} onSave={() => { void logs.exportLoaded(); }} />
       {logs.stale && logs.index ? (

@@ -1,8 +1,9 @@
-import { isPluginError, PluginError, type DeploymentTargetObserveInputV1, type DeploymentTargetRoleResultV1 } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError, settleDeploymentTargetResourceRemovalV1, type DeploymentTargetObserveInputV1, type DeploymentTargetRoleResultV1 } from '@happier-dev/plugin-sdk';
 import { projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 import { request, type DeploymentContext } from './deploymentHttp.js';
+import { type CloudflareRoleInput, type WorkerSelection } from './targetSelection.js';
 
-type Selection = Pick<DeploymentTargetObserveInputV1, 'providerIdentity' | 'providerEnvironment' | 'preparedNative'>;
+type Selection = Pick<CloudflareRoleInput<DeploymentTargetObserveInputV1, WorkerSelection>, 'providerIdentity' | 'providerEnvironment' | 'preparedNative'>;
 
 /** Native Worker IDs survive renames. A Preview has its own identity and never
  * selects the parent Worker or its shared routes/domains for removal.
@@ -14,10 +15,7 @@ type Selection = Pick<DeploymentTargetObserveInputV1, 'providerIdentity' | 'prov
  */
 function resourcePath(input: Selection): string {
   const root = `/workers/workers/${encodeURIComponent(input.providerIdentity.providerResourceId)}`;
-  if (input.providerEnvironment.kind === 'script') return root;
-  if (input.providerEnvironment.kind !== 'preview' || !('scriptName' in input.providerEnvironment)) {
-    throw new PluginError({ code: 'unsupported_action', details: { phase: 'teardown' } });
-  }
+  if (input.providerEnvironment.selection.kind === 'script') return root;
   const previewId = input.preparedNative?.previewId;
   if (!previewId) throw new PluginError({ code: 'deployment_content_unavailable', details: { phase: 'teardown' } });
   return `${root}/previews/${encodeURIComponent(previewId)}`;
@@ -40,9 +38,9 @@ async function absentAfterRequest(input: Selection, context: DeploymentContext, 
  */
 export async function teardownWorker(input: Selection, context: DeploymentContext, observeOnly = false): Promise<DeploymentTargetRoleResultV1> {
   const path = resourcePath(input);
-  let absent = false;
-  if (!observeOnly) absent = await absentAfterRequest(input, context, path, ['write', 'DELETE']);
-  if (!absent) absent = await absentAfterRequest(input, context, path, ['read', 'GET']);
-  if (!absent) throw new PluginError({ code: 'outcome_unknown', retryable: false, details: { phase: 'teardown' } });
-  return { v: 1, state: 'succeeded', providerResourceAbsent: true, observedAtMs: context.now() };
+  return settleDeploymentTargetResourceRemovalV1({
+    ...(observeOnly ? {} : { remove: () => absentAfterRequest(input, context, path, ['write', 'DELETE']) }),
+    observeAbsent: () => absentAfterRequest(input, context, path, ['read', 'GET']),
+    now: context.now,
+  });
 }

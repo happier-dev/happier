@@ -125,14 +125,14 @@ async function prepareProviderEnvironment(fixture: TeamSetupFFixture, provider: 
   const target = provider === 'vercel' ? { targetId: `${pluginId}/runtime`, targetKind: 'vercel',
     source: { kind: 'plugin', contribution: { pluginId, localId: 'runtime' } },
     providerCreate: { credentialRef, credentialPrincipal: principal, providerAccountId: boundary.vercel.teamId,
-      providerEnvironment: { kind: 'production' }, resourceName: boundary.vercel.name, sourceMethod: 'gitIntegration',
+      providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, resourceName: boundary.vercel.name, sourceMethod: 'gitIntegration',
       repository, productionBranch: 'main' } }
     : { targetId: `${pluginId}/workers`, targetKind: 'cloudflare-workers',
       source: { kind: 'plugin', contribution: { pluginId, localId: 'workers' } },
       provider: DeploymentTargetLinkContentV1Schema.parse(await invoke('action.invoke', { action: { pluginId, localId }, input: {
         v: 1, ...address, expectedRevision: environment.revision, credentialRef, credentialPrincipal: principal,
         providerIdentity: { providerAccountId: boundary.cloudflare.accountId, providerResourceId: boundary.cloudflare.projectId,
-          providerEnvironment: `script:${boundary.cloudflare.name}` }, providerEnvironment: { kind: 'script', scriptName: boundary.cloudflare.name },
+          providerEnvironment: `script:${boundary.cloudflare.name}` }, providerEnvironment: { kind: 'native', selection: { kind: 'script', scriptName: boundary.cloudflare.name } },
         triggerUuid: boundary.cloudflare.triggerUuid, repository, sourceMethod: 'gitIntegration',
       } }, { presentUserConfirmation: undefined })) };
   const link = DeploymentTargetLinkResultV1Schema.parse(await invoke('deployments.targets.link', { ...address,
@@ -199,7 +199,7 @@ export async function runNeonDeploymentDataJourney(fixture: TeamSetupFFixture, b
     purpose: { consumer: { pluginId, localId }, purpose: 'deploy-manage' }, target: { kind: 'account' as const, account: credentialRef } });
   const project = NeonProjectResultSchema.parse(await invoke('action.invoke', { action: { pluginId, localId: 'projects-provision' }, input: {
     v: 1, ...address, expectedRevision: environment.revision, credentialRef, credentialPrincipal: principal('projects-provision'),
-    providerAccountId: boundary.neon.organizationId, providerEnvironment: { kind: 'custom', id: boundary.neon.branchId },
+    providerAccountId: boundary.neon.organizationId, providerEnvironment: { kind: 'native', selection: { branchId: boundary.neon.branchId } },
     id: 'database', purpose: 'data.connection', database: 'neondb', role: 'owner',
     labels: { DATABASE_URL: 'Application database', DIRECT_URL: 'Migration database' }, audience: { accountGrants: [accountId] },
     rolePasswordLabel: 'Generated Neon password', name: 'Journey Neon project', regionId: 'aws-eu-central-1', requestKey: randomUUID(),

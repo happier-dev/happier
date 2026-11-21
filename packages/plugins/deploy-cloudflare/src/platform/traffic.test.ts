@@ -10,7 +10,7 @@ const input = { v: 1, serverId: 'home', environmentId: 'environment', expectedRe
   credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: { consumer: { pluginId: entry.manifest.id,
     localId: 'pages-inspect' }, purpose: 'deploy.manage' }, target: { kind: 'account', account: credentialRef } },
   providerIdentity: { providerAccountId: 'account', providerResourceId: 'project-id', providerEnvironment: 'production' },
-  providerEnvironment: { kind: 'production' }, preparedNative: { projectName: 'existing-pages' },
+  providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, preparedNative: { projectName: 'existing-pages' },
   priorDeployment: { environmentId: 'environment', deploymentId: 'prior-receipt', expectedRevision: 1, providerDeploymentId: 'prior-native' } };
 
 // Constructed vectors from Cloudflare's Pages deployment rollback REST schema,
@@ -38,7 +38,7 @@ it('does not send a Pages rollback for a Preview link', async () => {
   const http = createPluginHttpFixture({ async request(request) { requests.push(request); throw new Error('No Preview rollback'); } });
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
   try {
-    await expect(kit.invokeAction('pages-rollback', { ...input, providerEnvironment: { kind: 'preview', gitBranch: 'feature' } }))
+    await expect(kit.invokeAction('pages-rollback', { ...input, providerEnvironment: { kind: 'native', selection: { kind: 'preview', gitBranch: 'feature' } } }))
       .rejects.toMatchObject({ code: 'unsupported_action' });
     expect(requests).toHaveLength(0);
   } finally { await kit.dispose(); }
@@ -72,7 +72,7 @@ it.each(['promote', 'rollback'] as const)('changes Worker traffic for %s to the 
   } });
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: { ...entry, activateAccount }, services: { http } });
   try {
-    await expect(kit.invokeAction(`workers-${operation}`, { ...input, providerEnvironment: { kind: 'script', scriptName: 'selected-worker' } }))
+    await expect(kit.invokeAction(`workers-${operation}`, { ...input, providerEnvironment: { kind: 'native', selection: { kind: 'script', scriptName: 'selected-worker' } } }))
       .resolves.toMatchObject({ state: 'succeeded', providerDeploymentId: 'version:native-version',
         builtInUrls: ['https://selected-worker.account-name.workers.dev'] });
     expect(requests.map(request => [request.method, new URL(request.url).pathname])).toEqual([
@@ -98,7 +98,7 @@ it('refuses a Worker build associated with several versions instead of guessing 
   } });
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
   try {
-    await expect(kit.invokeAction('workers-rollback', { ...input, providerEnvironment: { kind: 'script', scriptName: 'selected-worker' } }))
+    await expect(kit.invokeAction('workers-rollback', { ...input, providerEnvironment: { kind: 'native', selection: { kind: 'script', scriptName: 'selected-worker' } } }))
       .rejects.toMatchObject({ code: 'deployment_conflict' });
     expect(requests.every(request => request.method === 'GET')).toBe(true);
   } finally { await kit.dispose(); }
@@ -113,7 +113,7 @@ it('uses an uploaded Worker version reference directly and retains an unconfirme
   } });
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
   try {
-    await expect(kit.invokeAction('workers-promote', { ...input, providerEnvironment: { kind: 'script', scriptName: 'selected-worker' },
+    await expect(kit.invokeAction('workers-promote', { ...input, providerEnvironment: { kind: 'native', selection: { kind: 'script', scriptName: 'selected-worker' } },
       priorDeployment: { ...input.priorDeployment, providerDeploymentId: 'version:native-version' } }))
       .resolves.toMatchObject({ state: 'outcome_unknown', providerDeploymentId: 'version:native-version' });
     expect(requests.map(request => request.method)).toEqual(['POST']);
@@ -128,7 +128,7 @@ it('refuses a native Preview deployment as a production traffic version before s
   } });
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
   try {
-    await expect(kit.invokeAction('workers-promote', { ...input, providerEnvironment: { kind: 'script', scriptName: 'selected-worker' },
+    await expect(kit.invokeAction('workers-promote', { ...input, providerEnvironment: { kind: 'native', selection: { kind: 'script', scriptName: 'selected-worker' } },
       priorDeployment: { ...input.priorDeployment, providerDeploymentId: 'preview-deployment:native-preview' } }))
       .rejects.toMatchObject({ code: 'unsupported_action' });
     expect(requests).toHaveLength(0);
@@ -149,7 +149,7 @@ it.each([
   try {
     const { priorDeployment: _prior, ...retained } = input;
     await expect(kit.invokeAction('workers-observe', { ...retained, operation,
-      providerEnvironment: { kind: 'script', scriptName: 'selected-worker' }, providerDeploymentId: 'version:native-version' }))
+      providerEnvironment: { kind: 'native', selection: { kind: 'script', scriptName: 'selected-worker' } }, providerDeploymentId: 'version:native-version' }))
       .resolves.toMatchObject({ state, providerDeploymentId: 'version:native-version' });
   } finally { await kit.dispose(); }
 });

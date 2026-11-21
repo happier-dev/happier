@@ -3,7 +3,7 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 import { useShallow } from 'zustand/react/shallow';
 import type { InputFieldHint  as ActionInputFieldHint} from '@happier-dev/protocol/inputs/inputFields';
 import { inputTypeOptionsSourceId, projectInputOptionsDependencies } from '@happier-dev/protocol/inputs';
-import { readInputFieldOptionsSourceId } from '@happier-dev/protocol/inputs/runtime';
+import { readInputFieldOptionsConstraint, readInputFieldOptionsSourceId } from '@happier-dev/protocol/inputs/runtime';
 
 import { getStorage, useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { resolveMachineTargetForSessionFromState } from '@/sync/domains/session/resolveMachineTargetForSessionFromState';
@@ -12,6 +12,7 @@ import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/u
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { readInputTypeOptionsProducer } from '@/sync/domains/plugins/ui/inputTypeOptionsProducer';
+import type { PluginInputTypeContributionV1 } from '@happier-dev/protocol/plugins/contributions/inputTypes';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { ResolveSessionActionFieldOptions, InputFieldOptionsContext } from './sessionActionFieldOptions';
 import type { InputTypePickerHostContext } from './InputTypePickerHostProvider';
@@ -21,7 +22,7 @@ import {
 } from './inputFieldOptionsStore';
 
 export type InputFieldOptionsRequest = InputFieldOptionsContext & Readonly<{
-    field: Pick<ActionInputFieldHint, 'path' | 'optionsSourceId' | 'options' | 'inputType' | 'connectedAccountOptions' | 'optionsDraftDependencies'>;
+    field: Pick<ActionInputFieldHint, 'path' | 'optionsSourceId' | 'options' | 'inputType' | 'connectedAccountOptions' | 'optionsDraftDependencies' | 'allowCustomValue'>;
 }>;
 const NO_REQUESTS: readonly InputFieldOptionsRequest[] = Object.freeze([]);
 
@@ -30,7 +31,14 @@ function hasLocalStaticOptions(field: InputFieldOptionsRequest['field']): boolea
     return field.options !== undefined && (!field.inputType || 'hostType' in field.inputType);
 }
 
-function needsOptionsRead(field: InputFieldOptionsRequest['field']): boolean {
+type DeclaredInputTypes = Readonly<{ pluginId: string; definitions: readonly PluginInputTypeContributionV1[] }>;
+
+function needsOptionsRead(field: InputFieldOptionsRequest['field'], declared?: DeclaredInputTypes | null): boolean {
+    const reference = field.inputType;
+    if (field.options !== undefined && declared && reference && 'pluginId' in reference && reference.pluginId === declared.pluginId) {
+        const definition = declared.definitions.find(entry => entry.id === reference.localId);
+        if (definition && readInputFieldOptionsConstraint(field, { definition }).kind === 'static') return false;
+    }
     return !hasLocalStaticOptions(field) && (readInputFieldOptionsSourceId(field) !== undefined || !!field.connectedAccountOptions);
 }
 
@@ -78,6 +86,8 @@ export function useInputFieldOptions(params: Readonly<{
     serverId?: string | null;
     /** Admitted type producers; a union has no single machine to lend to every field. */
     pluginUiProjection?: PluginUiProjectionModel | null;
+    /** Portable definitions supply choice constraints before a Machine is selected. */
+    declaredInputTypes?: DeclaredInputTypes | null;
     /** A single-machine projection's owner, absent for an Account union. */
     pluginUiMachineId?: string | null;
     /** Inventory facts invalidate choices; they never implement a source locally. */
@@ -136,7 +146,7 @@ export function useInputFieldOptions(params: Readonly<{
                 ...(serverId ? { serverId } : {}),
                 ...(!params.machineId && !sessionMachines[index] ? { unavailable: true } : {}),
             };
-            if (!needsOptionsRead(request.field)) continue;
+            if (!needsOptionsRead(request.field, params.declaredInputTypes)) continue;
             const producer = producerRoutes[index];
             const requestMachineId = params.machineId ?? producer?.machineId;
             const optionsSourceId = request.field.optionsSourceId ?? (!requestMachineId && request.field.inputType
@@ -169,7 +179,7 @@ export function useInputFieldOptions(params: Readonly<{
             defaultContexts.set(JSON.stringify([request.field.path, request.field.optionsSourceId, request.field.inputType]), request);
         }
         return { reads: [...reads.values()], keys, defaultContexts, fieldTargets };
-    }, [signature, params.accountLifetime, params.retentionOwner, params.refreshKey, params.initialCallerContext]);
+    }, [signature, params.accountLifetime, params.retentionOwner, params.refreshKey, params.initialCallerContext, params.declaredInputTypes]);
     const accountReads = useInputOptionsReadGroup(activeReads.filter(read => !read.context.externalActionTarget), params.refreshKey, params.accountLifetime, params.retentionOwner);
     const machineReads = useInputOptionsReadGroup(activeReads.filter(read => read.context.externalActionTarget), params.refreshKey, params.accountLifetime, params.retentionOwner);
     const snapshot = React.useMemo(() => {
@@ -180,13 +190,13 @@ export function useInputFieldOptions(params: Readonly<{
         return activeReads.map(read => states.get(read.key) ?? INPUT_OPTIONS_LOADING);
     }, [activeReads, accountReads.reads, accountReads.snapshot, machineReads.reads, machineReads.snapshot]);
     const state = React.useCallback((field: InputFieldOptionsRequest['field'], context?: InputFieldOptionsContext): InputFieldOptionsState => {
-        if (!needsOptionsRead(field)) return { options: field.options ?? EMPTY_INPUT_OPTIONS, status: 'ready' };
+        if (!needsOptionsRead(field, params.declaredInputTypes)) return { options: field.options ?? EMPTY_INPUT_OPTIONS, status: 'ready' };
         if (activeReads.length === 0) return INPUT_OPTIONS_LOADING;
         const effectiveContext = context ?? defaultContexts.get(JSON.stringify([field.path, field.optionsSourceId, field.inputType]));
         const key = keys.get(fieldKey(field, effectiveContext));
         const index = activeReads.findIndex((read) => read.key === key);
         return index === -1 ? INPUT_OPTIONS_LOADING : snapshot[index] ?? INPUT_OPTIONS_LOADING;
-    }, [activeReads, keys, defaultContexts, snapshot]);
+    }, [activeReads, keys, defaultContexts, snapshot, params.declaredInputTypes]);
     const retry = React.useCallback((callerContext?: ActionExecutorContext) => activeReads.forEach(read => retryInputFieldOptions(read, callerContext)), [activeReads]);
     const pickerMachineId = params.pluginUiProjection === undefined ? machineId ?? pickerRelays.find(id => id !== null) ?? null
         : params.machineId ?? params.pluginUiMachineId ?? null;

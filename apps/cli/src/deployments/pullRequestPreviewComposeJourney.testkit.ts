@@ -78,7 +78,7 @@ export async function createPullRequestPreviewDataCreationJourneyFixture(options
         credentialRef, credentialPrincipal: { kind: 'account', accountId,
             purpose: { consumer: action, purpose: 'deploy-manage' }, target: { kind: 'account', account: credentialRef } },
         providerIdentity: { providerAccountId: 'organization-A', providerResourceId: 'parent-project-A', providerEnvironment: 'parent-project-A' },
-        providerEnvironment: { kind: 'custom', id: 'parent-project-A' } });
+        providerEnvironment: { kind: 'native', selection: { branchId: 'parent-project-A' } } });
     const input = WorkflowApprovedOperationV1Schema.shape.parent.shape.input.parse({ ...custody,
         name: pullRequest.branchName, gitBranch: pullRequest.headSha, withData: false });
     const parent = { actionId: 'deployments.environments.create' as const,

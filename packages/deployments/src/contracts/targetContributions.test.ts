@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest/ingest';
+import { deploymentTargetRoleWithNativeSelectorV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargets';
 import { PluginContributesV2Schema } from '@happier-dev/protocol';
+import { DeploymentTargetLinkContentV1Schema } from './v1.js';
 import { DeploymentTargetV1Schema } from '../targets/deploymentTargetContracts.js';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { DeploymentTargetRoleInputProtocolSchemasV1,
@@ -9,11 +11,11 @@ import { DeploymentTargetRoleInputProtocolSchemasV1,
 const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
 const target = {
     id: 'runtime', title: 'Example runtime', icon: 'server-outline', role: 'runtime', targetKind: 'example',
-    targetSchema: closed, linkSchema: closed,
+    targetSchema: closed, linkSchema: closed, nativeSelectorSchema: closed,
     actions: { inspect: 'inspect', link: 'link', deploy: 'deploy', observe: 'observe' },
 };
 
-function manifest(targets: readonly unknown[] = [target]) {
+function manifest(targets: readonly unknown[] = [target], selection: Parameters<typeof deploymentTargetRoleWithNativeSelectorV1>[1] = closed) {
     return {
         schemaVersion: 2, id: 'example.deploy', version: '0.0.0', displayName: 'Example deployment target',
         entrypoints: { daemon: './daemon.js' }, activation: { events: [] },
@@ -22,7 +24,10 @@ function manifest(targets: readonly unknown[] = [target]) {
             deploymentTargets: targets,
             actions: ['inspect', 'link', 'deploy', 'observe', 'upload'].map(id => ({
                 id, title: id, scopes: ['global'], surfaces: ['plugin'], execution: { target: 'daemon' },
-                inputSchema: DeploymentTargetRoleInputProtocolSchemasV1[id === 'upload' ? 'uploadDeploy' : id as 'inspect' | 'link' | 'deploy' | 'observe'].jsonSchema,
+                inputSchema: deploymentTargetRoleWithNativeSelectorV1(
+                    DeploymentTargetRoleInputProtocolSchemasV1[id === 'upload' ? 'uploadDeploy' : id as 'inspect' | 'link' | 'deploy' | 'observe'].jsonSchema,
+                    selection,
+                ),
                 resultSchema: id === 'deploy' || id === 'observe' || id === 'upload'
                     ? DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema : closed,
                 dangerLevel: id === 'inspect' || id === 'observe' ? 'safe' : 'writesLocal',
@@ -39,7 +44,7 @@ function admittedTargets(value: unknown) {
 
 const dataTarget = {
     id: 'database', title: 'Managed database', icon: 'server-outline', role: 'data', targetKind: 'database',
-    targetSchema: closed, linkSchema: closed,
+    targetSchema: closed, linkSchema: closed, nativeSelectorSchema: closed,
     dataV1: {
         database: { engineId: 'example-engine' },
         projects: { list: 'projects/list', observe: 'projects/observe', provisionOptions: 'provision/options', provision: 'projects/provision' },
@@ -57,10 +62,10 @@ function dataManifest() {
         actions: [...value.contributes.actions,
             ...['projects/provision', 'branches/create', 'branches/delete', 'projects/observe', 'connection-secret/save'].map(id => ({
                 id, title: id, scopes: ['global'], surfaces: ['plugin'], execution: { target: 'daemon' },
-                inputSchema: DeploymentTargetRoleInputProtocolSchemasV1[
+                inputSchema: deploymentTargetRoleWithNativeSelectorV1(DeploymentTargetRoleInputProtocolSchemasV1[
                     id === 'projects/provision' ? 'projects.provision' : id === 'branches/create' ? 'branches.create'
                         : id === 'branches/delete' ? 'branches.delete' : id === 'projects/observe' ? 'projects.observe'
-                            : 'connectionSecret.save'].jsonSchema, resultSchema: id === 'projects/observe' ? DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema : closed,
+                            : 'connectionSecret.save'].jsonSchema, dataTarget.nativeSelectorSchema), resultSchema: id === 'projects/observe' ? DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema : closed,
                 dangerLevel: id === 'projects/observe' ? 'safe' : 'writesLocal', readOnly: id === 'projects/observe',
             })),
         ],
@@ -68,8 +73,51 @@ function dataManifest() {
 }
 
 describe('deployment target manifest admission', () => {
+    it('withdraws a runtime target that does not declare its selector', () => {
+        const { nativeSelectorSchema: _selector, ...undeclared } = target;
+        expect(admittedTargets(manifest([undeclared])).targets).toEqual([]);
+    });
+
+    it('reads protected scope through the native carrier and refuses the previous closed provider variants', () => {
+        const credentialPrincipal = {
+            kind: 'account', accountId: 'owner',
+            purpose: { consumer: { pluginId: 'example.deploy', localId: 'runtime' }, purpose: 'action-account' },
+            target: { kind: 'account', account: { service: { pluginId: 'example.deploy', localId: 'account' }, accountId: 'connection' } },
+        };
+        const providerIdentity = { providerAccountId: 'provider-account', providerResourceId: 'project', providerEnvironment: 'production' };
+        const link = { credentialPrincipal, providerIdentity };
+        expect(DeploymentTargetLinkContentV1Schema.safeParse({
+            ...link, providerEnvironment: { kind: 'native', selection: { kind: 'production' } },
+        }).success).toBe(true);
+        expect(DeploymentTargetLinkContentV1Schema.safeParse({
+            ...link, providerEnvironment: { kind: 'production' },
+        }).success).toBe(false);
+    });
+
+    it('admits runtime roles with a closed selector owned by the target declaration', () => {
+        const selection = { type: 'object', properties: {
+            projectId: { type: 'string' }, environmentId: { type: 'string' }, serviceId: { type: 'string' },
+        }, required: ['projectId', 'environmentId', 'serviceId'], additionalProperties: false } as const;
+        const descriptor = { ...target, nativeSelectorSchema: selection };
+        const authored = manifest([descriptor], selection);
+        const [declared] = admittedTargets(authored).targets;
+        expect(declared).toEqual(descriptor);
+        const action = { kind: 'plugin', actionId: formatQualifiedPluginActionId({ pluginId: 'example.deploy', localId: 'deploy' }) };
+        expect(DeploymentTargetV1Schema.parse({ ...declared, v: 1,
+            source: { kind: 'plugin', contribution: { pluginId: 'example.deploy', localId: 'runtime' } },
+            actions: { inspect: action, link: action, deploy: action, observe: action },
+        })).toHaveProperty('nativeSelectorSchema', selection);
+        const wrongSchema = manifest().contributes.actions;
+        for (const id of ['deploy', 'inspect', 'link']) {
+            const actions = authored.contributes.actions.map(action => action.id === id
+                ? { ...action, inputSchema: wrongSchema.find(entry => entry.id === id)!.inputSchema } : action);
+            expect(admittedTargets({ ...authored, contributes: { ...authored.contributes, actions } }).targets).toEqual([]);
+        }
+    });
+
     it('carries admitted plan facts into the normalized target without dropping provenance', () => {
-        const plans = [{ id: 'free', title: 'Free', facts: [{ label: 'Price', value: '$0' }], included: ['Custom domains'],
+        const plans = [{ id: 'free', title: 'Free', price: { amount: '0', currency: 'USD', unit: 'month' },
+            facts: [], included: ['Custom domains'],
             source: { url: 'https://example.com/pricing', checkedAt: '2026-11-16' } }];
         const [declared] = admittedTargets(manifest([{ ...target, plans }])).targets;
         const action = { kind: 'plugin', actionId: formatQualifiedPluginActionId({ pluginId: 'example.deploy', localId: 'deploy' }) };
@@ -99,7 +147,7 @@ describe('deployment target manifest admission', () => {
             const value = manifest([]);
             const descriptor = { ...dataTarget, dataV1: { projects: { observe: 'projects/observe' } } };
             const action = { id: 'projects/observe', title: 'Observe project', scopes: ['global'], surfaces: ['plugin'], execution,
-                inputSchema: DeploymentTargetRoleInputProtocolSchemasV1['projects.observe'].jsonSchema,
+                inputSchema: deploymentTargetRoleWithNativeSelectorV1(DeploymentTargetRoleInputProtocolSchemasV1['projects.observe'].jsonSchema, dataTarget.nativeSelectorSchema),
                 resultSchema: DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema, dangerLevel: 'safe', readOnly: true };
             const authored = { ...value, contributes: { ...value.contributes,
                 deploymentTargets: [descriptor], actions: [action] } };
@@ -117,7 +165,7 @@ describe('deployment target manifest admission', () => {
             const descriptor = { ...dataTarget, dataV1: { projects: { delete: 'projects/delete' } } };
             // The selected data input carries recorded custody; no name operand exists.
             const action = { id: 'projects/delete', title: 'Delete project', scopes: ['global'], surfaces: ['plugin'], execution,
-                inputSchema: DeploymentTargetRoleInputProtocolSchemasV1['projects.delete'].jsonSchema,
+                inputSchema: deploymentTargetRoleWithNativeSelectorV1(DeploymentTargetRoleInputProtocolSchemasV1['projects.delete'].jsonSchema, dataTarget.nativeSelectorSchema),
                 resultSchema: DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema, dangerLevel: 'destructive', readOnly: false };
             expect(admittedTargets({ ...value, contributes: { ...value.contributes,
                 deploymentTargets: [descriptor], actions: [action] } }).targets).toEqual([descriptor]);
@@ -136,11 +184,10 @@ describe('deployment target manifest admission', () => {
     });
     it('requires preparation custody while admitting closed product operands and native scope narrowing', () => {
         const value = manifest();
-        const canonical = DeploymentTargetRoleInputProtocolSchemasV1.inspect.jsonSchema;
+        const canonical = deploymentTargetRoleWithNativeSelectorV1(
+            DeploymentTargetRoleInputProtocolSchemasV1.inspect.jsonSchema, target.nativeSelectorSchema);
         const product = { ...canonical, properties: { ...canonical.properties,
-            product: { type: 'string', enum: ['worker'] },
-            providerEnvironment: { type: 'object', properties: { kind: { type: 'string', const: 'production' } },
-                required: ['kind'], additionalProperties: false } },
+            product: { type: 'string', enum: ['worker'] } },
             required: [...canonical.required ?? [], 'product'] };
         const actions = value.contributes.actions.map(action => action.id === 'inspect' ? { ...action, inputSchema: product } : action);
         expect(admittedTargets({ ...value, contributes: { ...value.contributes, actions } }).targets).toEqual([target]);

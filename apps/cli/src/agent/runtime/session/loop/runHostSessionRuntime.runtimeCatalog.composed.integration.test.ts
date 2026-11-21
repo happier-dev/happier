@@ -1259,7 +1259,7 @@ describe('runHostSessionRuntime', () => {
           purpose: { consumer: { pluginId: authored.pluginId, localId: 'inspect' }, purpose: 'deploy-manage' },
           target: { kind: 'account', account: credentialRef } },
         providerIdentity: { providerAccountId: 'provider-account', providerResourceId: 'project', providerEnvironment: 'production' },
-        providerEnvironment: { kind: 'production' } };
+        providerEnvironment: { kind: 'native', selection: { kind: 'production' } } };
       harness.deps.runPermissionModePromptLoopFn = async (params: Parameters<typeof runPermissionModePromptLoop>[0]) => {
         await params.onAfterStart?.();
         await native.sendTurnPrompt('Inspect this deployment', { localId: 'inspect-input', turnId: 'inspect-turn', userMessageSeq: 1,

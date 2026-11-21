@@ -45,8 +45,8 @@ export const neonDatabaseRuntime: DeploymentTargetDatabaseRuntimeV1 = {
   async listTargets({ preparation, target, placement }, context) {
     if (!context.services.http) throw new PluginError({ code: 'client_required' });
     const project = preparation.providerIdentity!.providerResourceId;
-    const branch = preparation.providerEnvironment.kind === 'custom'
-      ? preparation.providerEnvironment.id : preparation.providerIdentity!.providerEnvironment;
+    const branch = typeof preparation.providerEnvironment.selection.branchId === 'string'
+      ? preparation.providerEnvironment.selection.branchId : preparation.providerIdentity!.providerEnvironment;
     const response = await request({ signal: context.signal, services: { http: context.services.http } },
       `/projects/${encodeURIComponent(project)}/branches/${encodeURIComponent(branch)}/databases`);
     if (!Array.isArray(response.databases)) throw new PluginError({ code: 'provider_response_invalid' });

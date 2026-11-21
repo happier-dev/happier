@@ -7,6 +7,8 @@ import { suggestProjectOpenCloneDestinationV1 } from '@happier-dev/protocol/proj
 import type { ProjectSourceRepositorySelectorV1, ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm';
+import { normalizeScmHostingRepositoryIdentity, sameScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
+import type { DeploymentTargetRepositoryAccessV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 import type { DeploymentEnvironmentDetailV1, DeploymentSourceIntentV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentSourceAdmissionFailureV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { createActionExecuteFailureError, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -20,6 +22,7 @@ import { resolveHomeDirFromEnvironment } from '@/utils/path/expandHomeDirPath';
 import { createCliProjectSourceActionDeps } from '@/session/actions/projectSourceActionDeps';
 import { readProjectAccountRowsObservation } from '@/workspaces/projectAccountRows';
 import { fetchWorkspaceCommitRef, resolveWorkspaceCommitRef } from '@/scm/workspace/workspaceCommitExport';
+import { runScmCommand } from '@/scm/runtime';
 import { admitDeploymentSourceIntent } from './deploymentSourceAdmission';
 import { canExecuteRequesterWorkspaceOnDaemonForHost, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 
@@ -37,6 +40,10 @@ type DeploymentSourceRequest = Readonly<{
     retainedSourceIntent?: DeploymentSourceIntentV1;
     /** Native materialization needs a checkout; provider Git integration does not. */
     requireWorkspace?: boolean;
+    /** The selected target's retained repository observation. */
+    gitRepository?: Readonly<{ access?: DeploymentTargetRepositoryAccessV1 }>;
+    /** The selected Git target requires a clean checkout and a published commit on a declared forge. */
+    publishedGitProviders?: readonly string[];
 }>;
 export type DeploymentSourceIntentForHost = Readonly<{
     sourceIntent: DeploymentSourceIntentV1;
@@ -66,7 +73,9 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
     let intent = selected ? structuredClone(selected) : undefined;
     if (intent && request.actionId !== DEPLOYMENT_ROLLBACK_ACTION_ID_V1 && !request.retainedSourceIntent) admitDeploymentSourceIntent(environment, intent);
     const repository = (intent ?? environment.content.definition).kind === 'repository';
-    const needsWorkspace = repository && request.requireWorkspace !== false;
+    const publishedGitProviders = request.publishedGitProviders;
+    if (publishedGitProviders && !repository) return refuse('repository_required');
+    const needsWorkspace = repository && (publishedGitProviders !== undefined || request.requireWorkspace !== false);
     if (needsWorkspace) {
         const requester = await host.resolveRequesterIdentity(request.context);
         if (!(requester.canExecuteWorkspaceOnDaemon ?? canExecuteRequesterWorkspaceOnDaemonForHost(requester))) {
@@ -123,6 +132,19 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
         sourceDefaults = { ...(defaultRef === undefined ? {} : { defaultRef }), ...(subdir === undefined ? {} : { subdir }) };
     };
     await readSource();
+    if (publishedGitProviders && sourceRepository && !publishedGitProviders.includes(sourceRepository.provider.kind)) {
+        return refuse('deployment_source_forge_unsupported');
+    }
+    if (request.gitRepository && repository) {
+        const access = request.gitRepository.access;
+        const identity = sourceRepository && normalizeScmHostingRepositoryIdentity({
+            kind: sourceRepository.provider.kind, deployment: sourceRepository.provider.baseUrl,
+            repository: sourceRepository.repository.nameWithOwner,
+        });
+        if (access?.status !== 'ready' || !sameScmHostingRepositoryIdentity(identity, access.repository)) {
+            return refuse('needsGitAccess');
+        }
+    }
     const rows = needsWorkspace ? await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => readProjectAccountRowsObservation({
         ...(authorization ? { authorization, effectActionId: readHostAdmittedReviewedChildV1(request.context)?.actionId
             ?? childActionId ?? authorization.binding.actionId } : { credentials: host.credentials }),
@@ -145,6 +167,13 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
             materialization: { kind: 'clone', ...destination } }) };
         throw Object.assign(createActionExecuteFailureError(failure), { cause: failure });
     }
+    if (publishedGitProviders && workspace) {
+        const status = await runScmCommand({ bin: 'git', cwd: workspace.rootPath, signal,
+            args: ['--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=normal', '--ignore-submodules=none'] });
+        signal?.throwIfAborted();
+        if (!status.success) return refuse('deployment_source_unavailable');
+        if (status.stdout.length > 0) return refuse('deployment_source_dirty');
+    }
     if (!intent) {
         const definition = environment.content.definition;
         if (definition.kind === 'stored') intent = structuredClone(definition);
@@ -156,7 +185,7 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
                     try {
                         sha = await resolveWorkspaceCommitRef({ sourcePath: workspace.rootPath, ref: definition.ref, signal });
                     } catch (error) {
-                        if (!(error instanceof Error && 'code' in error && error.code === SCM_OPERATION_ERROR_CODES.NOT_FOUND)
+                        if (publishedGitProviders || !(error instanceof Error && 'code' in error && error.code === SCM_OPERATION_ERROR_CODES.NOT_FOUND)
                             || !sourceRepository || !host.resolveRepositoryRef) return rethrowDeploymentSourceAcquisitionFailure(error);
                         sha = await host.resolveRepositoryRef(sourceRepository, definition.ref, request.context);
                         const cloneUrl = sourceRepository.protocol === 'ssh'
@@ -173,6 +202,40 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
             }
             intent = { kind: 'repository', projectSourceId: sourceId, sourceRevision,
                 ...(definition.compose === undefined ? {} : { compose: definition.compose }), sha };
+        }
+    }
+    if (publishedGitProviders) {
+        const definition = environment.content.definition;
+        if (intent.kind !== 'repository' || definition.kind !== 'repository' || !workspace
+            || !sourceRepository || !host.resolveRepositoryRef) return refuse('deployment_source_unavailable');
+        const reviewedSha = intent.sha;
+        if (definition.ref.startsWith('refs/') && !definition.ref.startsWith('refs/heads/')) {
+            return refuse('deployment_source_unpushed');
+        }
+        const branch = definition.ref.startsWith('refs/heads/') ? definition.ref : `refs/heads/${definition.ref}`;
+        const publishedSha = await host.resolveRepositoryRef(sourceRepository, branch, request.context).catch(error => {
+            if (error instanceof Error && 'code' in error && error.code === 'github_not_found') {
+                return refuse('deployment_source_unpushed');
+            }
+            throw error;
+        });
+        signal?.throwIfAborted();
+        if (publishedSha !== reviewedSha) {
+            // A repository's commit endpoint can resolve objects outside the selected branch.
+            const compare = () => runScmCommand({ bin: 'git', cwd: workspace.rootPath, signal,
+                args: ['--no-replace-objects', 'merge-base', '--is-ancestor', reviewedSha, publishedSha] });
+            let ancestry = await compare();
+            signal?.throwIfAborted();
+            if (!ancestry.success && ancestry.exitCode !== 1) {
+                const cloneUrl = sourceRepository.protocol === 'ssh' ? sourceRepository.repository.sshUrl : sourceRepository.repository.cloneUrl;
+                if (!cloneUrl) return refuse('deployment_source_unavailable');
+                await fetchWorkspaceCommitRef({ sourcePath: workspace.rootPath, cloneUrl,
+                    ref: branch,
+                    expectedCommitSha: publishedSha, signal }).catch(rethrowDeploymentSourceAcquisitionFailure);
+                ancestry = await compare();
+                signal?.throwIfAborted();
+            }
+            if (!ancestry.success) return refuse(ancestry.exitCode === 1 ? 'deployment_source_unpushed' : 'deployment_source_unavailable');
         }
     }
     const assertSourceCurrent = async () => {

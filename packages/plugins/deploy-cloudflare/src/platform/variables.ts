@@ -12,15 +12,16 @@ import { request } from './deploymentHttp.js';
 import { pagesCommon, pagesIo } from './pagesPrepare.js';
 import { createDeploymentTargetVariableSyncV1, projectDeploymentTargetVariablesV1,
   type DeploymentTargetObservedVariableV1 } from '@happier-dev/deployment-protocol/v1';
+import { cloudflareRoleSchema, type CloudflareRoleInput } from './targetSelection.js';
 
 type Product = 'pages' | 'workers';
-type Read = DeploymentTargetVariablesReadInputV1;
-type Sync = DeploymentTargetVariablesSyncInputV1;
+type Read = CloudflareRoleInput<DeploymentTargetVariablesReadInputV1>;
+type Sync = CloudflareRoleInput<DeploymentTargetVariablesSyncInputV1>;
 type SyncResult = DeploymentTargetVariablesSyncResultV1;
 function refuse(code: string): never { throw new PluginError({ code }); }
 
 function scope(product: Product, input: Read) {
-  const environment = input.providerEnvironment;
+  const environment = input.providerEnvironment.selection;
   if (product === 'workers') {
     if (environment.kind === 'preview' && 'scriptName' in environment) {
       // Use the captured immutable Preview identity; a missing Preview must never
@@ -94,7 +95,7 @@ async function sync(product: Product, input: Sync, context: PluginAccountActionC
   // contract forbids automatic deployments, so only its metadata read is supported.
   // https://raw.githubusercontent.com/cloudflare/api-schemas/main/openapi.json
   // /workers/workers/{worker_id}/previews/{preview_id}/deployments/latest
-  if (product === 'workers' && input.providerEnvironment.kind !== 'script') refuse('unsupported_action');
+  if (product === 'workers' && input.providerEnvironment.selection.kind !== 'script') refuse('unsupported_action');
   const observed = await snapshot(product, input, context);
   // Worker Builds uses a separate trigger-scoped API. Runtime settings cannot
   // satisfy any build row, even when a same-name runtime row follows it.
@@ -170,7 +171,7 @@ function action(product: Product, operation: 'read' | 'sync') {
     title: `${write ? 'Synchronize' : 'List'} Cloudflare ${product} variables`,
     dangerLevel: write ? 'writesRemote' as const : 'safe' as const, readOnly: !write,
     ...(write ? { confirmation: { title: 'Synchronize these Cloudflare variables?' } } : {}),
-    inputSchema: inputs[`variables.${operation}`].jsonSchema,
+    inputSchema: cloudflareRoleSchema(inputs[`variables.${operation}`].jsonSchema, product),
     resultSchema: (write ? syncOutput : readOutput).jsonSchema,
     async run(raw: JsonValue, context: PluginAccountActionContext): Promise<JsonValue> {
       if (operation === 'sync') return sync(product, raw as unknown as Sync, context);

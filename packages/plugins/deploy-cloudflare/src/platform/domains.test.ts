@@ -11,7 +11,7 @@ const input = { v: 1, serverId: 'home', environmentId: 'environment', expectedRe
   credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: {
     consumer: { pluginId: entry.manifest.id, localId: 'pages-inspect' }, purpose: 'deploy.manage' }, target: { kind: 'account', account } },
   providerIdentity: { providerAccountId: 'a'.repeat(32), providerResourceId: 'project-exact', providerEnvironment: 'production' },
-  providerEnvironment: { kind: 'production' }, preparedNative: { projectName: 'my-project' },
+  providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, preparedNative: { projectName: 'my-project' },
   domainId: 'domain', domain: { hostname: 'app.example.test' } };
 
 it.each(['daemon-root', 'portable-account'] as const)('keeps Pages pending DNS and verifies without a provider mutation through %s', async target => {
@@ -61,7 +61,7 @@ it('attaches and removes only the Worker and explicit selected zone', async () =
       result: request.method === 'GET' ? exists ? [row] : [] : row })) };
   } });
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: { ...entry, activateAccount }, services: { http } });
-  const selected = { ...input, providerEnvironment: { kind: 'script', scriptName: 'worker-exact' },
+  const selected = { ...input, providerEnvironment: { kind: 'native', selection: { kind: 'script', scriptName: 'worker-exact' } },
     domain: { ...input.domain, zone: { zoneId: 'zone-exact', name: 'example.test' } } };
   try {
     await expect(kit.invokeAction('workers-domains-add', selected)).resolves.toMatchObject({ state: 'active' });
@@ -91,7 +91,7 @@ it.each(['workers', 'pages'] as const)('settles Domain removal from observed abs
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: { ...entry, activateAccount }, services: { http } });
   try {
     await expect(kit.invokeAction(`${product}-domains-remove`, { ...input,
-      ...(product === 'workers' ? { providerEnvironment: { kind: 'script', scriptName: 'worker-exact' },
+      ...(product === 'workers' ? { providerEnvironment: { kind: 'native', selection: { kind: 'script', scriptName: 'worker-exact' } },
         domain: { ...input.domain, zone: { zoneId: 'zone-exact', name: 'example.test' } } } : {}) }))
       .resolves.toMatchObject({ state: 'removed' });
   } finally { await kit.dispose(); }
@@ -110,7 +110,7 @@ it.each(['workers', 'pages'] as const)('keeps Domain removal uncertain when %s a
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: { ...entry, activateAccount }, services: { http } });
   try {
     await expect(kit.invokeAction(`${product}-domains-remove`, { ...input,
-      ...(product === 'workers' ? { providerEnvironment: { kind: 'script', scriptName: 'worker-exact' },
+      ...(product === 'workers' ? { providerEnvironment: { kind: 'native', selection: { kind: 'script', scriptName: 'worker-exact' } },
         domain: { ...input.domain, zone: { zoneId: 'zone-exact', name: 'example.test' } } } : {}) }))
       .rejects.toMatchObject({ code: 'outcome_unknown' });
   } finally { await kit.dispose(); }
@@ -121,7 +121,7 @@ it.each([undefined, { zoneId: '', name: 'example.test' }])('requires an explicit
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
   try {
     await expect(kit.invokeAction('workers-domains-add', { ...input,
-      providerEnvironment: { kind: 'script', scriptName: 'worker-exact' },
+      providerEnvironment: { kind: 'native', selection: { kind: 'script', scriptName: 'worker-exact' } },
       domain: { ...input.domain, ...(zone === undefined ? {} : { zone }) } })).rejects.toMatchObject({
         code: expect.stringMatching(/^(deployment_invalid|plugin_action_input_schema_invalid)$/),
       });
@@ -129,8 +129,8 @@ it.each([undefined, { zoneId: '', name: 'example.test' }])('requires an explicit
 });
 
 it.each<{ action: string; providerEnvironment: JsonValue }>([
-  { action: 'pages-domains-add', providerEnvironment: { kind: 'preview', gitBranch: 'main' } },
-  { action: 'workers-domains-add', providerEnvironment: { kind: 'preview', scriptName: 'worker-exact', previewName: 'candidate' } },
+  { action: 'pages-domains-add', providerEnvironment: { kind: 'native', selection: { kind: 'preview', gitBranch: 'main' } } },
+  { action: 'workers-domains-add', providerEnvironment: { kind: 'native', selection: { kind: 'preview', scriptName: 'worker-exact', previewName: 'candidate' } } },
 ])('refuses Preview Domains before touching production ($action)', async ({ action, providerEnvironment }) => {
   const http = createPluginHttpFixture({ async request() { throw new Error('Preview must not mutate project-wide Domains'); } });
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });

@@ -13,6 +13,7 @@ import { ActionFailureCauseV1Schema } from '../../actions/actionExecutionResult.
 import { ScmBranchSourceRefSchema } from '../../scm/remoteNormalization.js';
 import { ScmCommitOidSchema } from '../../scm/commitPublication.js';
 import { asProtocolZod, projectZodProtocolSchema } from '../actions/internalProtocolZodAdapter.js';
+import { defineProtocolJsonValue } from '../actions/protocolComposableSchema.js';
 import { ManagedServiceNativeLogCursorV1Schema, ManagedServiceNativeLogResultV1Schema } from '../../local/services/nativeLogsV1.js';
 import { MachineDeploymentServiceIdentityV1Schema } from '../../local/services/serviceIdentityV1.js';
 import { DeploymentDomainProviderResultV1Schema, DeploymentDomainProviderZoneV1Schema } from '../../deployments/deploymentDomainProviderResultV1.js';
@@ -32,15 +33,13 @@ export const DeploymentTargetProviderIdentityV1Schema = lazyZodSchema(() => z.st
 }));
 export type DeploymentTargetProviderIdentityV1 = z.infer<typeof DeploymentTargetProviderIdentityV1Schema>;
 
-/** Native Preview and generic Git Preview share their wire kind but are closed alternatives. */
-export const DeploymentTargetProviderEnvironmentV1Schema = lazyZodSchema(() => z.union([
-    z.strictObject({ kind: z.literal('production') }),
-    z.strictObject({ kind: z.literal('preview'), gitBranch: z.optional(id) }),
-    z.strictObject({ kind: z.literal('custom'), id }),
-    z.strictObject({ kind: z.literal('script'), scriptName: id }),
-    z.strictObject({ kind: z.literal('preview'), scriptName: id, previewName: id }),
-]));
-export type DeploymentTargetProviderEnvironmentV1 = z.infer<typeof DeploymentTargetProviderEnvironmentV1Schema>;
+/** The selection is opaque to storage. The selected target's Action schema owns its native fields. */
+export const DeploymentTargetNativeProviderEnvironmentV1Schema = lazyZodSchema(() => z.strictObject({
+    kind: z.literal('native'), selection: z.record(z.string(), asProtocolZod(defineProtocolJsonValue())),
+}));
+export type DeploymentTargetNativeProviderEnvironmentV1 = z.infer<typeof DeploymentTargetNativeProviderEnvironmentV1Schema>;
+export const DeploymentTargetProviderEnvironmentV1Schema = DeploymentTargetNativeProviderEnvironmentV1Schema;
+export type DeploymentTargetProviderEnvironmentV1 = DeploymentTargetNativeProviderEnvironmentV1;
 
 const publicUrl = lazyZodSchema(() => z.string().check(z.url(), z.refine(value => {
     try {
@@ -240,12 +239,17 @@ export type DeploymentTargetPromoteInputV1 = z.infer<typeof DeploymentTargetProm
 export type DeploymentTargetTeardownInputV1 = z.infer<typeof DeploymentTargetTeardownInputV1Schema>;
 
 export const DeploymentTargetDomainInputV1Schema = lazyZodSchema(() => z.extend(DeploymentTargetDataInputV1Schema, {
-    domainId: id, domain: z.strictObject({ hostname: id, zone: z.optional(DeploymentDomainProviderZoneV1Schema) }),
-}).check(z.refine(value => {
-    if (value.providerEnvironment.kind !== 'script') return true;
-    return value.domain.zone !== undefined;
-}, { message: 'Workers Domains require an explicitly selected zone.' })));
+    domainId: id, domain: z.strictObject({ hostname: id, zone: z.optional(DeploymentDomainProviderZoneV1Schema),
+        providerAssigned: z.optional(z.literal(true)) }),
+}));
 export type DeploymentTargetDomainInputV1 = z.infer<typeof DeploymentTargetDomainInputV1Schema>;
+const deploymentTargetDomainAddInput = lazyZodSchema(() => z.extend(DeploymentTargetDataInputV1Schema, {
+    domainId: id, domain: z.strictObject({ hostname: z.nullable(id), zone: z.optional(DeploymentDomainProviderZoneV1Schema) }),
+}).check(z.refine(value => value.domain.hostname !== null || value.domain.zone === undefined,
+    { message: 'Provider-assigned Domains have no DNS zone.' })));
+export type DeploymentTargetDomainAddInputV1 = z.infer<typeof deploymentTargetDomainAddInput>;
+export const DeploymentTargetGeneratedDomainAddInputV1ProtocolSchema =
+    projectZodProtocolSchema(deploymentTargetDomainAddInput);
 export const DeploymentTargetDomainResultV1Schema = lazyZodSchema(() => DeploymentDomainProviderResultV1Schema);
 export type DeploymentTargetDomainResultV1 = z.infer<typeof DeploymentTargetDomainResultV1Schema>;
 export const DeploymentTargetDomainResultV1ProtocolSchema = projectZodProtocolSchema(DeploymentTargetDomainResultV1Schema);
@@ -258,7 +262,7 @@ export const DeploymentTargetRuntimeRoleInputSchemasV1 = {
     rollback: DeploymentTargetRollbackInputV1Schema, promote: DeploymentTargetPromoteInputV1Schema,
     teardown: DeploymentTargetTeardownInputV1Schema,
     'logs.build': logsInput, 'logs.runtime': runtimeLogsInput,
-    'domains.read': DeploymentTargetDomainInputV1Schema, 'domains.add': DeploymentTargetDomainInputV1Schema,
+    'domains.read': DeploymentTargetDomainInputV1Schema, 'domains.add': deploymentTargetDomainAddInput,
     'domains.verify': DeploymentTargetDomainInputV1Schema, 'domains.remove': DeploymentTargetDomainInputV1Schema,
     'variables.read': DeploymentTargetVariablesReadInputV1Schema,
     'variables.sync': DeploymentTargetVariablesSyncInputV1Schema,

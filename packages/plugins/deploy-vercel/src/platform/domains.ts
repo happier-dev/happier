@@ -1,7 +1,8 @@
+import { vercelRoleSchema, type VercelRoleInput } from './selection.js';
 import { withActionFailureDiagnostic, isPluginError, projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs, DeploymentTargetDomainResultV1ProtocolSchema as output,
   PluginError, settleDeploymentTargetDomainRemovalV1,
-  type DeploymentTargetDomainInputV1 as Input, type DeploymentTargetDomainResultV1 as Result,
+  type DeploymentTargetDomainInputV1, type DeploymentTargetDomainResultV1 as Result,
   type JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionContext, PluginActionDeclaration, PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
 import { vercelEndpoint, vercelRequest } from './operations.js';
@@ -17,8 +18,7 @@ const fail = (code: string): never => {
  */
 async function run(input: Input, ctx: PluginAccountActionContext, operation: 'add' | 'read' | 'verify' | 'remove'): Promise<Result> {
   if (!ctx.services.http) return fail('client_required');
-  const environment = input.providerEnvironment;
-  if (environment.kind === 'script' || 'scriptName' in environment) return fail('unsupported_action');
+  const environment = input.providerEnvironment.selection;
   const gitBranch = environment.kind === 'preview' ? environment.gitBranch : undefined;
   const hostname = input.domain.hostname;
   const project = input.providerIdentity.providerResourceId;
@@ -129,16 +129,17 @@ async function run(input: Input, ctx: PluginAccountActionContext, operation: 'ad
 const common = { execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
   scopes: ['global'], surfaces: ['cli', 'plugin'], placementBindings: [], hostAccess: ['vercel-api', 'deploy.manage'],
   connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'deploy.manage' }], resultSchema: output.jsonSchema } as const;
+type Input = VercelRoleInput<DeploymentTargetDomainInputV1>;
 type DomainAction = PluginActionDefinition<Extract<PluginActionDeclaration, { execution: { target: 'account' } }>>;
 export const domainActions: Readonly<Record<`domains-${'add' | 'read' | 'verify' | 'remove'}`, DomainAction>> = {
   'domains-add': { ...common, title: 'Add the reviewed Vercel Domain', dangerLevel: 'writesRemote', readOnly: false,
-    confirmation: { title: 'Add this Domain to Vercel?' }, inputSchema: inputs['domains.add'].jsonSchema,
+    confirmation: { title: 'Add this Domain to Vercel?' }, inputSchema: vercelRoleSchema(inputs['domains.add'].jsonSchema),
     run: (input: JsonValue, ctx: PluginAccountActionContext) => run(input as unknown as Input, ctx, 'add') },
   'domains-read': { ...common, title: 'Read the selected Vercel Domain', dangerLevel: 'safe', readOnly: true,
-    inputSchema: inputs['domains.read'].jsonSchema, run: (input: JsonValue, ctx: PluginAccountActionContext) => run(input as unknown as Input, ctx, 'read') },
+    inputSchema: vercelRoleSchema(inputs['domains.read'].jsonSchema), run: (input: JsonValue, ctx: PluginAccountActionContext) => run(input as unknown as Input, ctx, 'read') },
   'domains-verify': { ...common, title: 'Verify the selected Vercel Domain', dangerLevel: 'safe', readOnly: true,
-    inputSchema: inputs['domains.verify'].jsonSchema, run: (input: JsonValue, ctx: PluginAccountActionContext) => run(input as unknown as Input, ctx, 'verify') },
+    inputSchema: vercelRoleSchema(inputs['domains.verify'].jsonSchema), run: (input: JsonValue, ctx: PluginAccountActionContext) => run(input as unknown as Input, ctx, 'verify') },
   'domains-remove': { ...common, title: 'Remove the selected Vercel Domain', dangerLevel: 'writesRemote', readOnly: false,
-    confirmation: { title: 'Remove this Domain from Vercel?' }, inputSchema: inputs['domains.remove'].jsonSchema,
+    confirmation: { title: 'Remove this Domain from Vercel?' }, inputSchema: vercelRoleSchema(inputs['domains.remove'].jsonSchema),
     run: (input: JsonValue, ctx: PluginAccountActionContext) => run(input as unknown as Input, ctx, 'remove') },
 } as const;

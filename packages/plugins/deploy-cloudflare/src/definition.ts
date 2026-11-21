@@ -9,6 +9,7 @@ import { tunnelActions } from './platform/tunnel.js';
 import { zoneActions } from './platform/zone.js';
 import { selectionActions } from './platform/selections.js';
 import { workerActions, workerLinkSchema } from './platform/workersActions.js';
+import { pagesSelectorSchema, workersSelectorSchema } from './platform/targetSelection.js';
 import { pagesCreate, workersCreate } from './platform/create.js';
 import { pagesLink, pagesLinkSchema } from './platform/pagesPrepare.js';
 import { pagesLifecycleActions } from './platform/pagesDeploy.js';
@@ -139,12 +140,14 @@ const deploymentTargets = { workers: { statusIntervalMs: 1000, role: 'runtime', 
     ],
     accepts: ['workers'], needs: ['repository', 'stateless'], sources: { gitIntegration: [], upload: true },
     targetSchema: { type: 'object', properties: {}, additionalProperties: false }, linkSchema: workerLinkSchema,
+    nativeSelectorSchema: workersSelectorSchema,
     actions: { inspect: 'workers-inspect', link: 'workers-link', create: 'workers-create', deploy: 'workers-deploy', observe: 'workers-observe', cancel: 'workers-cancel', teardown: 'workers-teardown', promote: 'workers-promote', rollback: 'workers-rollback',
       logs: { build: 'workers-build-logs-read' },
       variables: { read: 'workers-variables-read', sync: 'workers-variables-sync' },
       domains: { read: 'workers-domains-read', add: 'workers-domains-add', verify: 'workers-domains-verify', remove: 'workers-domains-remove' } } },
     pages: { statusIntervalMs: 1000, role: 'runtime', title: 'Cloudflare Pages', targetKind: 'cloudflare-pages', icon: 'server-outline',
       accepts: ['static'], needs: ['repository', 'stateless'], sources: { gitIntegration: ['github', 'gitlab'], upload: true },
+      nativeSelectorSchema: pagesSelectorSchema, gitSource: { guarantee: 'branchHead' },
       description: 'Static and server-rendered sites',
       plans: [
         {

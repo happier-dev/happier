@@ -58,7 +58,8 @@ function selection(input: Input) {
   // The canonical role admission has already established these selected-link coordinates.
   const identity = input.providerIdentity!;
   return { providerProjectId: identity.providerResourceId,
-    branchId: input.providerEnvironment.kind === 'custom' ? input.providerEnvironment.id : identity.providerEnvironment };
+    branchId: typeof input.providerEnvironment.selection.branchId === 'string'
+      ? input.providerEnvironment.selection.branchId : identity.providerEnvironment };
 }
 export async function request(context: Context, path: string, method: HttpMethod = 'GET', body?: unknown): Promise<RecordValue> {
   context.signal.throwIfAborted();
@@ -149,7 +150,7 @@ export async function link(input: Input & { projectId: string; branchId: string 
   if (foundProject.providerProjectId !== input.projectId || foundBranch.branchId !== input.branchId) throw new PluginError({ code: 'deployment_conflict' });
   return { status: 'configured' as const, providerProjectId: input.projectId, branchId: input.branchId,
     providerIdentity: { providerAccountId: account(input), providerResourceId: input.projectId, providerEnvironment: input.branchId },
-    providerEnvironment: { kind: 'custom' as const, id: input.branchId }, engine: foundProject.engine,
+    providerEnvironment: { kind: 'native' as const, selection: { branchId: input.branchId } }, engine: foundProject.engine,
     ...(foundProject.engineVersion === undefined ? {} : { engineVersion: foundProject.engineVersion }),
     providerConsole: foundProject.providerConsole, ready: foundBranch.ready };
 }
@@ -297,7 +298,7 @@ function configured(input: Input, projectId: string, branchId: string, body: Rec
   return { status: 'provisioned' as const, providerProjectId: projectId, branchId, ready: found.ready,
     operationIds: observedOperations.map(item => item.id), recovered, engine: 'postgres' as const,
     providerIdentity: { providerAccountId: account(input), providerResourceId: projectId, providerEnvironment: branchId },
-    providerEnvironment: { kind: 'custom' as const, id: branchId } };
+    providerEnvironment: { kind: 'native' as const, selection: { branchId } } };
 }
 /** A successful write with unusable metadata is not proof that nothing changed. */
 function mutationResponse<T>(project: () => T): T {

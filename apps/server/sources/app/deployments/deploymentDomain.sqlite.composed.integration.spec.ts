@@ -292,7 +292,7 @@ describe('public Domain storage and native custody', () => {
                         consumer: { pluginId: vercelDomainPlugin.manifest.id, localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' },
                         target: { kind: 'account', account } },
                     providerIdentity: { providerAccountId: 'team_exact', providerResourceId: 'prj_exact', providerEnvironment: 'production' },
-                    providerEnvironment: { kind: 'production' }, domainId: input.domainId, domain: { hostname },
+                    providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, domainId: input.domainId, domain: { hostname },
                 }));
                 expect(providerObservation.state).toBe('active');
                 // Use the actual host Artifact preparation against the Home routes, not invented mutation bytes.

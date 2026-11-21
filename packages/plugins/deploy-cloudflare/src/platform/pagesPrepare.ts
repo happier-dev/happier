@@ -8,8 +8,9 @@ import { targetProductSchema } from './targetOptions.js';
 import { request } from './deploymentHttp.js';
 import { pagesRepositoryAccess } from './pagesSource.js';
 import { cloudflareReviewNotice } from './reviewNotice.js';
+import { cloudflareRoleSchema, type CloudflareRoleInput, type PagesSelection } from './targetSelection.js';
 
-const base = preparation.jsonSchema;
+const base = cloudflareRoleSchema(preparation.jsonSchema, 'pages');
 export const pagesLinkSchema: PluginJsonSchema = { type: 'object', additionalProperties: false,
   properties: { credentialPrincipal: base.properties!.credentialPrincipal!, providerIdentity: base.properties!.providerIdentity!,
     sourceMethod: base.properties!.sourceMethod!,
@@ -46,12 +47,11 @@ export const pagesPrepare: PreparationAction = { ...pagesCommon, title: 'Adopt t
   inputSchema: pagesPrepareInput,
   resultSchema: pagesLinkSchema,
   async run(value: JsonValue, context: PluginAccountActionContext) {
-    const input = value as unknown as DeploymentTargetPreparationBaseV1 & {
+    const input = value as unknown as CloudflareRoleInput<DeploymentTargetPreparationBaseV1, PagesSelection> & {
       repository: ReturnType<typeof ScmHostingRepositoryIdentityV1ProtocolSchema.parse>;
     };
     const accountId = input.providerIdentity?.providerAccountId ?? input.providerAccountId;
-    if (!accountId || !input.preparedNative || (input.providerEnvironment.kind !== 'production'
-      && (input.providerEnvironment.kind !== 'preview' || 'scriptName' in input.providerEnvironment))) {
+    if (!accountId || !input.preparedNative) {
       throw new PluginError({ code: 'unsupported_action' });
     }
     const reply = await request(pagesIo(context), accountId,
@@ -73,8 +73,8 @@ export const pagesPrepare: PreparationAction = { ...pagesCommon, title: 'Adopt t
     const projectMode = source ? 'gitIntegration' : 'directUpload';
     return projectNativeJsonValueForTransport({ credentialPrincipal: input.credentialPrincipal,
       providerIdentity: { providerAccountId: accountId, providerResourceId: project.id,
-        providerEnvironment: input.providerEnvironment.kind === 'production' ? 'production'
-        : input.providerEnvironment.gitBranch ? `preview:${input.providerEnvironment.gitBranch}` : 'preview' },
+        providerEnvironment: input.providerEnvironment.selection.kind === 'production' ? 'production'
+        : input.providerEnvironment.selection.gitBranch ? `preview:${input.providerEnvironment.selection.gitBranch}` : 'preview' },
       providerEnvironment: input.providerEnvironment,
       ...(input.sourceMethod !== undefined ? { sourceMethod: input.sourceMethod } : {}),
       ...(input.sourceMethod === 'upload' ? {} : { repositoryAccess: pagesRepositoryAccess(source, input.repository, accountId) }),
@@ -88,9 +88,9 @@ export const pagesPrepare: PreparationAction = { ...pagesCommon, title: 'Adopt t
 
 export const pagesLink: PreparationAction = { ...pagesPrepare, title: 'Link the prepared Cloudflare Pages project',
   dangerLevel: 'writesLocal', readOnly: false, confirmation: { title: 'Link this existing Cloudflare Pages project?' },
-  inputSchema: preparation.jsonSchema,
+  inputSchema: base,
   async run(value: JsonValue) {
-    const input = value as unknown as DeploymentTargetPreparationBaseV1;
+    const input = value as unknown as CloudflareRoleInput<DeploymentTargetPreparationBaseV1, PagesSelection>;
     if (!input.providerIdentity || !input.preparedNative?.pages) {
       throw new PluginError({ code: 'deployment_content_unavailable' });
     }

@@ -6,6 +6,7 @@ import { accountExecution, dataActions } from './data/actions.js';
 import { actionResource } from './data/resources.js';
 import { dataInputResources, dataInputTypes } from './data/inputs.js';
 import { supabaseDatabaseRuntime } from './data/database.js';
+import { nativeSelectorSchema } from './data/schemas.js';
 
 const empty = { type: 'object', properties: {}, additionalProperties: false } as const;
 const resource = (actionId: string) => ({ source: 'dynamic' as const, kind: 'config' as const, contentType: 'application/json', scope: 'surface' as const,
@@ -56,7 +57,7 @@ export const plugin = definePlugin({
   // Supabase's mark beside its name: Simple Icons 13.21.0 (CC0-1.0), brand green #3FCF8E.
   brand: { iconResourceId: 'brand-icon' },
   resources: { 'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' }, ...dataInputResources, 'projects-list-resource': resource('projects-list'), 'provision-options-resource': resource('provision-options'), 'branches-list-resource': resource('branches-list') },
-  deploymentTargets: { database: { role: 'data', title: 'Supabase', icon: 'server-outline', targetKind: 'supabase', targetSchema: empty, linkSchema: empty,
+  deploymentTargets: { database: { role: 'data', title: 'Supabase', icon: 'server-outline', targetKind: 'supabase', targetSchema: empty, linkSchema: empty, nativeSelectorSchema,
     dataV1: { database: { engineId: 'postgresql', runtime: supabaseDatabaseRuntime }, projects: { list: 'projects-list-resource', listAction: 'projects-list', provisionOptions: 'provision-options-resource', provisionOptionsAction: 'provision-options', provision: 'projects-provision', link: 'projects-link', delete: 'projects-delete', observe: 'projects-observe' },
       branches: { list: 'branches-list-resource', listAction: 'branches-list', create: 'branches-create', delete: 'branches-delete',
         previewInput: { name: { kind: 'input', name: 'preview', path: ['name'] },

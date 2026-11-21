@@ -76,7 +76,7 @@ describe('retained stored deployment source', () => {
               purpose: { consumer: { pluginId: 'acme.alpha', localId: 'deploy' }, purpose: 'deploy' },
               target: { kind: 'account', account: { service: { pluginId: 'acme.alpha', localId: 'account' }, accountId: 'provider' } } },
             providerIdentity: { providerAccountId: 'provider', providerResourceId: 'project', providerEnvironment: 'production' },
-            providerEnvironment: { kind: 'production' }, observation: { v: 1, state: 'succeeded', observedAtMs: 1,
+            providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, observation: { v: 1, state: 'succeeded', observedAtMs: 1,
               urls: ['https://platform.example.test/'] } },
         }) : base.content });
       const listDomains = vi.fn(async () => ({ ok: true as const, value: { items: [{
@@ -272,7 +272,7 @@ describe('retained stored deployment source', () => {
           purpose: { consumer: { pluginId: 'acme.alpha', localId: 'deploy' }, purpose: 'deploy' },
           target: { kind: 'account', account: { service: { pluginId: 'acme.alpha', localId: 'account' }, accountId: 'provider' } } },
         providerIdentity: { providerAccountId: 'provider', providerResourceId: 'project', providerEnvironment: 'production' },
-        providerEnvironment: { kind: 'production' },
+        providerEnvironment: { kind: 'native', selection: { kind: 'production' } },
         observation: { v: 1, state: 'succeeded', observedAtMs: 1, builtSha: builtSha ?? requested } },
     }) });
     const controller = createDeploymentReadControllerV1({ scope: { serverId, accountId: 'account-owner', projectSourceId: environment.environment.projectSourceId }, transport: {

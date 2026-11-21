@@ -58,6 +58,7 @@ export async function prepareCloudflareDomainForHost(input: Readonly<{
     const { host, domain, content, topology, context } = input;
     const selected = readCloudflareNamedControllerSelection(content.ingress);
     if (!selected) return { domain, content };
+    if (!content.hostname) return refuse('deployment_content_unavailable');
     const origin = topology.tunnelOrigin;
     const identity = readInstallationIdentityIfExistsSync();
     const child = context.hostReviewedChild;

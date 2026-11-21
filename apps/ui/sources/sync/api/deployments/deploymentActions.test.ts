@@ -104,7 +104,10 @@ it.each(['current', 'validation refused'] as const)('handles the r20 repository-
             "providerEnvironment": "production"
         },
         "providerEnvironment": {
-            "kind": "production"
+            "kind": "native",
+            "selection": {
+                "kind": "production"
+            }
         },
         "repositoryAccess": {
             "status": "ready",
@@ -360,7 +363,7 @@ it('routes reviewed resource creation to the controller without authoring a gues
         providerCreate: { credentialRef, credentialPrincipal: { kind: 'account', accountId: 'owner',
             purpose: { consumer: { pluginId: 'example.deploy', localId: 'create' }, purpose: 'manage' },
             target: { kind: 'account', account: credentialRef } },
-            providerAccountId: 'organization', providerEnvironment: { kind: 'production' }, resourceName: 'new-project' },
+            providerAccountId: 'organization', providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, resourceName: 'new-project' },
     });
     homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: {
         ok: true, environment: detail.environment, targetLinks: [] } });
@@ -386,7 +389,7 @@ it.each([false, true])('retains controller failure-observer enrollment after UI 
         purpose: { consumer: source.contribution, purpose: 'manage' }, target: { kind: 'account', account: {
             service: { pluginId: source.contribution.pluginId, localId: 'account' }, accountId: 'credential' } } },
         providerIdentity: { providerAccountId: 'organization', providerResourceId: 'pages-project', providerEnvironment: 'production' },
-        providerEnvironment: { kind: 'production' } });
+        providerEnvironment: { kind: 'native', selection: { kind: 'production' } } });
     const input = { serverId, environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
         requestKey: 'ui-observed-link', role: 'runtime', targetId: 'cloudflare', targetKind: 'cloudflare', machines: [],
         source, ...(preparedInput ? content : { provider }) };
@@ -642,7 +645,7 @@ describe('deployment record Actions retain receiving-daemon preparation', () => 
             purpose: { consumer: { pluginId: 'example.data', localId: 'link' }, purpose: 'manage' },
             target: { kind: 'account', account: { service: { pluginId: 'example.data', localId: 'service' }, accountId: 'credential' } } },
             providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project', providerEnvironment: 'branch' },
-            providerEnvironment: { kind: 'custom', id: 'branch' } });
+            providerEnvironment: { kind: 'native', selection: { branchId: 'branch' } } });
         const input = { serverId, environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
             requestKey: 'parent-first-link', role: 'runtime', targetId: 'own-server',
             machines: [{ machineId: 'runtime', installationId: 'installation-runtime' }], ...(managed ? {

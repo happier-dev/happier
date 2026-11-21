@@ -39,21 +39,21 @@ it.each(['workers-inspect', 'pages-inspect', 'targets-inspect-v1'])('resolves re
   expect(fields({}).filter(field => field.required).map(field => field.path)).toEqual(expect.arrayContaining(actionId === 'targets-inspect-v1'
     ? ['providerIdentity.providerAccountId', 'providerIdentity.providerResourceId', 'providerEnvironment'] : ['providerAccountId', 'providerEnvironment']));
   if (actionId !== 'pages-inspect') {
-    expect(fields({ providerEnvironment: { kind: 'script', scriptName: 'worker' } })
+    expect(fields({ providerEnvironment: { kind: 'native', selection: { kind: 'script', scriptName: 'worker' } } })
       .find(field => field.path === 'triggerUuid')).toMatchObject({ required: true });
-    const script = { kind: 'script', scriptName: 'worker' };
+    const script = { kind: 'native', selection: { kind: 'script', scriptName: 'worker' } };
     expect(fields({ providerEnvironment: script, sourceMethod: 'upload' })
       .some(field => field.path === 'triggerUuid')).toBe(false);
     expect(fields({ providerEnvironment: script, sourceMethod: 'gitIntegration' })
       .find(field => field.path === 'triggerUuid')).toMatchObject({ required: true });
-    expect(fields({ providerEnvironment: { kind: 'preview', scriptName: 'worker', previewName: 'feature' } })
+    expect(fields({ providerEnvironment: { kind: 'native', selection: { kind: 'preview', scriptName: 'worker', previewName: 'feature' } } })
       .some(field => field.path === 'triggerUuid')).toBe(false);
-    expect(fields({ providerEnvironment: { kind: 'script', scriptName: 'worker' } })
+    expect(fields({ providerEnvironment: { kind: 'native', selection: { kind: 'script', scriptName: 'worker' } } })
       .some(field => field.path === 'preparedNative.projectName' && field.required)).toBe(false);
   }
   if (actionId !== 'workers-inspect') {
     for (const kind of ['production', 'preview']) {
-      expect(fields({ providerEnvironment: { kind } })
+      expect(fields({ providerEnvironment: { kind: 'native', selection: { kind } } })
         .find(field => field.path === 'preparedNative.projectName')).toMatchObject({ required: true });
     }
   }
@@ -61,7 +61,7 @@ it.each(['workers-inspect', 'pages-inspect', 'targets-inspect-v1'])('resolves re
 
 it.each([
   { targetKind: 'cloudflare-workers', row: { id: 'selected-worker', tag: 'worker-tag' },
-    expected: { value: { kind: 'script', scriptName: 'selected-worker' }, label: 'selected-worker' }, endpoint: '/workers/scripts',
+    expected: { value: { kind: 'native', selection: { kind: 'script', scriptName: 'selected-worker' } }, label: 'selected-worker' }, endpoint: '/workers/scripts',
     projectPath: 'providerEnvironment', account: { providerAccountId: 'account' } },
   { targetKind: 'cloudflare-pages', row: { id: 'pages-id', name: 'selected-pages' },
     expected: { value: 'selected-pages', label: 'selected-pages' }, endpoint: '/pages/projects',
@@ -146,7 +146,7 @@ it('keeps Worker names and immutable tags distinct, filters scripts by search an
     expect(await kit.invokeAction('target-options-read', { ...selected, fieldPath: 'providerIdentity.providerResourceId', query: 'hello' }))
       .toEqual({ options: [{ value: 'immutable-tag', label: 'hello-worker' }] });
     expect(await kit.invokeAction('target-options-read', { ...selected, fieldPath: 'providerEnvironment', query: 'hello' }))
-      .toEqual({ options: [{ value: { kind: 'script', scriptName: 'hello-worker' }, label: 'hello-worker' }] });
+      .toEqual({ options: [{ value: { kind: 'native', selection: { kind: 'script', scriptName: 'hello-worker' } }, label: 'hello-worker' }] });
     expect(await kit.invokeAction('target-options-read', { ...selected, providerIdentity: { providerAccountId: 'account', providerResourceId: 'immutable-tag' }, fieldPath: 'triggerUuid' }))
       .toEqual({ options: [{ value: 'trigger-id', label: 'trigger-id' }] });
     expect(await kit.invokeAction('target-options-read', { credentialRef, credentialPrincipal, product: 'workers',
@@ -207,7 +207,7 @@ it('discovers Accounts with provider paging and filters product and Pages enviro
     expect(await kit.invokeAction('target-options-read', { credentialRef, credentialPrincipal, fieldPath: 'product', query: 'Pages' }))
       .toEqual({ options: [{ value: 'pages', label: 'Pages' }] });
     expect(await kit.invokeAction('target-options-read', { ...draft, fieldPath: 'providerEnvironment', query: 'Preview' }))
-      .toEqual({ options: [{ value: { kind: 'preview' }, label: 'Preview' }] });
+      .toEqual({ options: [{ value: { kind: 'native', selection: { kind: 'preview' } }, label: 'Preview' }] });
     expect(requests).toHaveLength(1);
   } finally { await kit.dispose(); }
 });
@@ -220,7 +220,7 @@ it('answers Pages environment choices for a draft that names no Account yet', as
   try {
     await expect(kit.invokeAction('target-options-read', { credentialRef, credentialPrincipal, product: 'pages',
       fieldPath: 'providerEnvironment' })).resolves.toEqual({ options: [
-      { value: { kind: 'production' }, label: 'Production' }, { value: { kind: 'preview' }, label: 'Preview' }] });
+      { value: { kind: 'native', selection: { kind: 'production' } }, label: 'Production' }, { value: { kind: 'native', selection: { kind: 'preview' } }, label: 'Preview' }] });
   } finally { await kit.dispose(); }
 });
 
@@ -254,7 +254,7 @@ it('offers existing native Previews only for the selected Worker, without creati
   try {
     expect(await kit.invokeAction('target-options-read', { ...draft, product: 'workers',
       scriptName: 'chosen-worker', fieldPath: 'providerEnvironment', query: 'feature', cursor: '2' }))
-      .toEqual({ options: [{ value: { kind: 'preview', scriptName: 'chosen-worker', previewName: 'feature/one' }, label: 'feature/one' }], nextCursor: '3' });
+      .toEqual({ options: [{ value: { kind: 'native', selection: { kind: 'preview', scriptName: 'chosen-worker', previewName: 'feature/one' } }, label: 'feature/one' }], nextCursor: '3' });
     expect(requests.map(value => [value.method, value.url])).toEqual([
       ['GET', 'https://api.cloudflare.com/client/v4/accounts/account/workers/workers/chosen-worker/previews?page=2&name=feature'],
     ]);
@@ -274,7 +274,7 @@ it.each([
     if (!resource) throw new Error('Missing target-options Resource');
     const bytes = await resource.read(createTestResourceInvocationContext({
       query: { draftInput: { credentialRef, credentialPrincipal, providerIdentity: { providerAccountId: 'account', providerResourceId: 'native-tag' },
-        providerEnvironment: environment }, fieldPath: 'providerIdentity.providerResourceId' },
+        providerEnvironment: { kind: 'native', selection: environment } }, fieldPath: 'providerIdentity.providerResourceId' },
       readAction: async (ref, input) => ({ ok: true, result: await kit.invokeAction(ref.localId, input) }) }));
     expect(JSON.parse(typeof bytes === 'string' ? bytes : new TextDecoder().decode(bytes)))
       .toEqual({ options: [expected], ...(environment.kind === 'production' ? { nextCursor: '2' } : {}) });
@@ -323,7 +323,7 @@ it('binds a draft Worker tag to the native script before producing Link content'
       purpose: { ...credentialPrincipal.purpose, consumer: { pluginId: entry.manifest.id, localId: 'workers-inspect' } } },
     product: 'workers', sourceMethod: 'upload',
     providerIdentity: { providerAccountId: 'account', providerResourceId, providerEnvironment: 'script:worker-b' },
-    providerEnvironment: { kind: 'script', scriptName: 'worker-b' },
+    providerEnvironment: { kind: 'native', selection: { kind: 'script', scriptName: 'worker-b' } },
     repository: { kind: 'github', deployment: 'https://github.com', repository: 'example/app' },
   });
   try {

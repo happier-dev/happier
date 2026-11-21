@@ -13,7 +13,7 @@ const input = { v: 1, serverId: 'home', environmentId: 'environment', expectedRe
   credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: { consumer: { pluginId: entry.manifest.id,
     localId: 'pages-upload' }, purpose: 'deploy.manage' }, target: { kind: 'account', account: credentialRef } },
   providerIdentity: { providerAccountId: 'account', providerResourceId: 'project-id', providerEnvironment: 'production' },
-  providerEnvironment: { kind: 'production' }, repositoryAccess: { status: 'needsGitAccess',
+  providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, repositoryAccess: { status: 'needsGitAccess',
     repository: { kind: 'gitlab', deployment: 'https://gitlab.com', repository: 'example/app' } },
   preparedNative: { projectName: 'existing-pages', pages: { projectMode: 'directUpload', productionBranch: 'main',
     buildCommand: 'npm run build', buildOutputDirectory: 'public' } },

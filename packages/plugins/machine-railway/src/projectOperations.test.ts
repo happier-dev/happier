@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { HttpService } from '@happier-dev/plugin-sdk/http';
-import * as projectOperations from './projectOperations.js';
+import * as projectOperations from '@happier-dev/railway-api';
+import { nativeFetch } from './requestAuth.js';
 
 const project = { id: 'project-one', name: 'Example' };
 const environment = { id: 'environment-one', name: 'Production' };
@@ -27,7 +28,7 @@ function boundary(...responses: readonly unknown[]) {
       return { status: 200, finalUrl: request.url, headers: {}, body: new TextEncoder().encode(JSON.stringify(response)) };
     },
   };
-  const request = projectOperations.nativeFetch({ signal, services: { http } });
+  const request = nativeFetch({ signal, services: { http } });
   const documents = () => calls.map(call => JSON.parse(new TextDecoder().decode(call.body)));
   return { request, signal, documents };
 }

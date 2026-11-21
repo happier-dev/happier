@@ -74,15 +74,20 @@ const keyOf = (row: DomainItem | BuiltInAddressRow) => isBuiltInAddress(row) ? `
  * read-only, with no checks, routing or ⋯ of ours.
  */
 type BuiltInAddressRow = Readonly<{ builtIn: true; url: string; hostname: string }>;
-const NO_BUILT_IN: readonly string[] = Object.freeze([]);
+const NO_BUILT_IN: readonly BuiltInAddressRow[] = Object.freeze([]);
 
 function isBuiltInAddress(row: DomainItem | BuiltInAddressRow): row is BuiltInAddressRow {
   return 'builtIn' in row;
 }
 
-function builtInAddressRows(urls: readonly string[]): readonly BuiltInAddressRow[] {
+export function projectDeploymentBuiltInAddresses(items: readonly DomainItem[], urls?: readonly string[]): readonly BuiltInAddressRow[] {
+  if (!urls?.length) return NO_BUILT_IN;
+  const managedHostnames = new Set(items.filter(item => item.content.target.kind === 'provider').map(item => item.content.hostname));
   return urls.flatMap(url => {
-    try { return [{ builtIn: true as const, url, hostname: new URL(url).host }]; }
+    try {
+      const hostname = new URL(url).host;
+      return managedHostnames.has(hostname) ? [] : [{ builtIn: true as const, url, hostname }];
+    }
     catch { return []; }
   });
 }
@@ -107,16 +112,14 @@ export function DeploymentDomainsList<Item extends DomainRowItem>(props: Readonl
   machineName?: string | null;
   actions?: DeploymentDomainRowActions | null;
   /** The platform's own stable addresses (the selected runtime's serving receipt), listed first and read-only. */
-  builtInUrls?: readonly string[];
+  builtInAddresses?: readonly BuiltInAddressRow[];
   testID: string;
 }>) {
   const { theme } = useUnistyles();
   const notFound = useDomainOperationReads(props.items, props.accountId, props.demand);
-  const builtInUrls = props.builtInUrls ?? NO_BUILT_IN;
-  const rows = React.useMemo<readonly (Item | BuiltInAddressRow)[]>(() => {
-    const builtIn = builtInAddressRows(builtInUrls);
-    return builtIn.length > 0 ? [...builtIn, ...props.items] : props.items;
-  }, [builtInUrls, props.items]);
+  const builtIn = props.builtInAddresses ?? NO_BUILT_IN;
+  const rows = React.useMemo<readonly (Item | BuiltInAddressRow)[]>(() =>
+    builtIn.length > 0 ? [...builtIn, ...props.items] : props.items, [builtIn, props.items]);
   const sourceGroups = props.groups;
   // A built-in address belongs to the Environment's own list; a banded list (Services → Domains) carries none, and
   // one would join the first band.
@@ -137,7 +140,7 @@ export function DeploymentDomainsList<Item extends DomainRowItem>(props: Readonl
   const anatomy = React.useMemo<CollectionAnatomy<Item | BuiltInAddressRow>>(() => ({
     glyph: () => <Icon name="globe" size={ICON_SIZE.md} color={theme.colors.text.secondary} />,
     // The host is an identifier (lab envDom): one mono line ending in an ellipsis; the label keeps it whole.
-    title: (item) => isBuiltInAddress(item) ? item.hostname : item.content.hostname,
+    title: (item) => isBuiltInAddress(item) ? item.hostname : item.content.hostname ?? t('projects.deployments.providerDomainPending'),
     titleIdentifier: true,
     byline: (item, layout) => isBuiltInAddress(item) ? <BuiltInAddressByline />
       : domainBylineShown(item, context, layout?.fieldColumns === true)
@@ -164,7 +167,7 @@ export function DeploymentDomainsList<Item extends DomainRowItem>(props: Readonl
           : <DomainRowEnd item={item} context={context} /> },
     ],
     accessibilityLabel: (item) => isBuiltInAddress(item) ? `${item.hostname}, ${t('projects.deployments.editors.domainBuiltIn')}`
-      : [item.content.hostname, domainRoute(item.content)].filter(Boolean).join(', '),
+      : [item.content.hostname ?? t('projects.deployments.providerDomainPending'), domainRoute(item.content)].filter(Boolean).join(', '),
     testID: (item) => isBuiltInAddress(item) ? `project-deployments.environment.domains.builtIn.${item.hostname}`
       : `project-deployments.environment.domains.${item.domain.id}`,
     columnTitles: {
@@ -497,7 +500,7 @@ function DomainRowMenu(props: Readonly<{ item: DomainRowItem; context: DomainRow
     ],
     [chooseCredential, configureChecks, id, missing, removing, theme.colors.text.secondary],
   );
-  if (!actions || !rowMenusShown(context)) return null;
+  if (!actions || !item.content.hostname || !rowMenusShown(context)) return null;
   if (removing && !retryRemoval) return <View style={styles.menuSlot} />;
   return (
     <DropdownMenu

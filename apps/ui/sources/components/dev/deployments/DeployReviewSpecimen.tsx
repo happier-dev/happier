@@ -6,6 +6,7 @@ import {
 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { buildApprovalExecutionOriginV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import type { DeploymentApprovalReviewV1, DeploymentMachineReviewV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
+import { describeDeploymentTargetGitCreateV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 
 import { ApprovalDetailScreen } from '@/components/approvals/ApprovalDetailScreen';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
@@ -17,7 +18,8 @@ import { useArtifact } from '@/sync/domains/state/storage';
  * Dev-only specimen of the deploy approval page (lab d3 `review`) drawn by the real ApprovalDetailScreen over a
  * stored approval whose `preview.deploymentReview` has the shape the installed host returns. `?variant=` picks
  * `review` (default), `multi` (two Machines), `promotion`, `desktop` (Docker Desktop), `steps` (the review plus the
- * child steps the host folded into the approval), `steps-plain` (those steps with no review) or `plain` (a deploy with no structured review). `?machine=` names a Machine this Home knows. It proves composition only; the loaded
+ * child steps the host folded into the approval), `steps-plain` (those steps with no review), `plain` (an unstructured deploy)
+ * or `railway-create` (the branch-following service review). `?machine=` names a Machine this Home knows. It proves composition only; the loaded
  * page is judged on a real deploy approval.
  */
 const ARTIFACT_ID = 'deploy-review-specimen';
@@ -25,6 +27,16 @@ const ACTION_ARGS = {
   serverId: 'specimen', environmentId: 'env-production-api', expectedRevision: 3, requestKey: 'deploy-specimen',
   targetLinkId: 'link-production-api', expectedTargetLinkRevision: 2, contentArtifactId: 'content-specimen',
   contentHeaderVersion: 1, contentBodyVersion: 1,
+};
+const RAILWAY_CREATE_ARGS = {
+  serverId: 'specimen', environmentId: 'env-production-api', expectedRevision: 3, requestKey: 'railway-create-specimen',
+  targetId: 'runtime', targetKind: 'railway', role: 'runtime', machines: [],
+  source: { kind: 'plugin', contribution: { pluginId: 'happier.deploy.railway', localId: 'runtime' } },
+  providerCreate: { resourceName: 'checkout-api', productionBranch: 'release',
+    repository: { kind: 'github', deployment: 'https://github.com', repository: 'acme/checkout' },
+    providerAccountId: 'project-checkout', providerEnvironment: { kind: 'native', selection: {
+      projectId: 'project-checkout', environmentId: 'railway-production',
+    } } },
 };
 
 function machineReview(overrides: Partial<DeploymentMachineReviewV1> = {}): DeploymentMachineReviewV1 {
@@ -81,23 +93,29 @@ function buildIncludedSteps(serverId: string, machineId: string) {
 
 export function DeployReviewSpecimen(props: Readonly<{ variant: string; machineId: string }>) {
   const scope = useActiveServerAccountScope();
-  const present = useArtifact(ARTIFACT_ID) !== null;
+  const railwayCreate = props.variant === 'railway-create';
+  const artifactId = railwayCreate ? `${ARTIFACT_ID}-railway-create` : ARTIFACT_ID;
+  const present = useArtifact(artifactId) !== null;
   // The Home's artifact sync can replace the store's rows, so the stored approval is seeded again whenever it is missing.
   React.useEffect(() => {
     if (!scope || present) return;
-    const summary = props.variant === 'promotion' ? 'Promote Staging to Production API' : 'Deploy 7f3e2b1 to Production API';
-    const actionId = props.variant === 'promotion' ? 'deployments.promote' : 'deployments.deploy';
-    const review = buildReview(props.variant, props.machineId);
-    const executionOriginV1 = buildApprovalExecutionOriginV1({ actionId, input: ACTION_ARGS, targetSessionId: null,
+    const summary = railwayCreate ? describeDeploymentTargetGitCreateV1({ guarantee: 'exactCommit', create: 'branchHead' }, 'Railway', {
+      resourceName: RAILWAY_CREATE_ARGS.providerCreate.resourceName, productionBranch: RAILWAY_CREATE_ARGS.providerCreate.productionBranch,
+      repository: RAILWAY_CREATE_ARGS.providerCreate.repository.repository,
+    })! : props.variant === 'promotion' ? 'Promote Staging to Production API' : 'Deploy 7f3e2b1 to Production API';
+    const actionId = railwayCreate ? 'deployments.targets.link' : props.variant === 'promotion' ? 'deployments.promote' : 'deployments.deploy';
+    const args = railwayCreate ? RAILWAY_CREATE_ARGS : ACTION_ARGS;
+    const review = railwayCreate ? null : buildReview(props.variant, props.machineId);
+    const executionOriginV1 = buildApprovalExecutionOriginV1({ actionId, input: args, targetSessionId: null,
       context: { surface: 'agent', authority: 'account_automation', serverId: scope.serverId, runtimeAccountId: scope.accountId,
-        actionRequestId: ARTIFACT_ID, actionCaller: { kind: 'host' } } });
+        actionRequestId: artifactId, actionCaller: { kind: 'host' } } });
     const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: Date.now() - 240_000, updatedAtMs: Date.now() - 240_000,
-      createdBy: { surface: 'agent' }, requestedSurface: 'agent', actionId, actionArgs: ACTION_ARGS, executionOriginV1, summary,
-      preview: { actionId, actionArgs: ACTION_ARGS, summary, ...(review ? { deploymentReview: review } : {}),
+      createdBy: { surface: 'agent' }, requestedSurface: 'agent', actionId, actionArgs: args, executionOriginV1, summary,
+      preview: { actionId, actionArgs: args, summary, ...(review ? { deploymentReview: review } : {}),
         ...(props.variant === 'steps' || props.variant === 'steps-plain' ? { hostReviewedChildren: buildIncludedSteps(scope.serverId, props.machineId) } : {}) } });
-    storage.getState().updateArtifact({ id: ARTIFACT_ID, header: buildApprovalRequestArtifactHeaderV1(request),
+    storage.getState().updateArtifact({ id: artifactId, header: buildApprovalRequestArtifactHeaderV1(request),
       title: summary, body: JSON.stringify(request), headerVersion: 1, bodyVersion: 1,
       seq: 1, createdAt: 1, updatedAt: Date.now(), isDecrypted: true } satisfies DecryptedArtifact);
-  }, [scope, present, props.variant, props.machineId]);
-  return present ? <ApprovalDetailScreen key={`${props.variant}:${props.machineId}`} artifactId={ARTIFACT_ID} /> : null;
+  }, [scope, present, props.variant, props.machineId, railwayCreate, artifactId]);
+  return present ? <ApprovalDetailScreen key={`${props.variant}:${props.machineId}`} artifactId={artifactId} /> : null;
 }

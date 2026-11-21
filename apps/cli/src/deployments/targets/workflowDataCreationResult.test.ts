@@ -26,7 +26,7 @@ describe('Workflow data creation result projection', () => {
         const output = mutationResult.parse({ status: 'provisioned', ready: false,
             providerProjectId: 'project-A', branchId: 'branch-A', endpointId: 'endpoint-A',
             providerIdentity: { providerAccountId: 'organization-A', providerResourceId: 'project-A', providerEnvironment: 'branch-A' },
-            providerEnvironment: { kind: 'custom', id: 'branch-A' },
+            providerEnvironment: { kind: 'native', selection: { branchId: 'branch-A' } },
             connectionSave: { providerProjectId: 'project-A', branchId: 'branch-A', endpointId: 'endpoint-A',
                 database: 'app', role: 'owner', secretId: 'database', audience: { accountGrants: ['account-A'] },
                 status: 'partial', connections: {}, incomplete: ['DATABASE_URL', 'DIRECT_URL'],
@@ -73,7 +73,7 @@ describe('Workflow data creation result projection', () => {
                 purpose: { consumer: { pluginId: neon.manifest.id, localId: 'projects-link' }, purpose: 'deploy-manage' },
                 target: { kind: 'account', account: credentialRef } },
             providerIdentity: { providerAccountId: 'organization-A', providerResourceId: 'project-A', providerEnvironment: 'branch-main' },
-            providerEnvironment: { kind: 'custom', id: 'branch-main' } });
+            providerEnvironment: { kind: 'native', selection: { branchId: 'branch-main' } } });
         try {
             const output = await kit.invokeAction('branches-create', { ...input, name: branch.name, correlation, initialization: 'parent-schema',
                 ...(mode === 'reviewed-save' ? { id: 'database', purpose: 'data.connection', database: 'app', role: 'owner', audience: { accountGrants: ['account-A'] },
@@ -110,7 +110,7 @@ describe('Workflow data creation result projection', () => {
                     purpose: { consumer: { pluginId: supabase.manifest.id, localId: 'projects-link' }, purpose: 'deploy-manage' },
                     target: { kind: 'account', account: credentialRef } },
                 providerIdentity: { providerAccountId: 'organization-A', providerResourceId: 'parent-project-A', providerEnvironment: 'parent-project-A' },
-                providerEnvironment: { kind: 'custom', id: 'parent-project-A' }, name: 'Preview', withData: false,
+                providerEnvironment: { kind: 'native', selection: { branchId: 'parent-project-A' } }, name: 'Preview', withData: false,
             });
             expect(output).toMatchObject({ status: 'provisioned', ready: false, branchId: 'e242cf8e-9562-4e0b-9082-a10ae56879c6' });
             expect(WorkflowDataCreationResultSchema.parse(prepare(supabase.manifest.id)(output))).toEqual({
@@ -118,7 +118,7 @@ describe('Workflow data creation result projection', () => {
                 source: { pluginId: supabase.manifest.id, localId: 'database' },
                 deleteAction: { pluginId: supabase.manifest.id, localId: 'branches-delete' },
                 providerIdentity: { providerAccountId: 'organization-A', providerResourceId: 'parent-project-A', providerEnvironment: 'child-project-A' },
-                providerEnvironment: { kind: 'custom', id: 'child-project-A' }, operands: {},
+                providerEnvironment: { kind: 'native', selection: { branchId: 'child-project-A' } }, operands: {},
             });
             expect(requests).toEqual(['POST /v1/projects/parent-project-A/branches']);
         } finally { await kit.dispose(); }
@@ -132,11 +132,11 @@ describe('Workflow data creation result projection', () => {
                 purpose: { consumer: { pluginId: supabase.manifest.id, localId: 'projects-link' }, purpose: 'deploy-manage' },
                 target: { kind: 'account', account: credentialRef } },
             providerIdentity: { providerAccountId: 'organization-A', providerResourceId: 'parent-A', providerEnvironment: 'parent-A' },
-            providerEnvironment: { kind: 'custom', id: 'parent-A' }, name: 'Preview', withData: false };
+            providerEnvironment: { kind: 'native', selection: { branchId: 'parent-A' } }, name: 'Preview', withData: false };
         const output = { kind: 'deployment_data_created', v: 1, source: { pluginId: supabase.manifest.id, localId: 'database' },
             deleteAction: { pluginId: supabase.manifest.id, localId: 'branches-delete' }, operands: {},
             providerIdentity: { providerAccountId: 'organization-A', providerResourceId: 'parent-A', providerEnvironment: 'child-A' },
-            providerEnvironment: { kind: 'custom', id: 'child-A' } };
+            providerEnvironment: { kind: 'native', selection: { branchId: 'child-A' } } };
         const opened = { invocation: { index: { id: 'invocation-A', runId: 'run-A', sequence: '0', parentRecordId: null,
             memberOrdinal: '0', attempt: '0', contentRevision: '0', lifecycle: 'completed',
             createdAt: '2026-09-08T00:00:00.000Z', updatedAt: '2026-09-08T00:00:01.000Z' },
@@ -146,7 +146,7 @@ describe('Workflow data creation result projection', () => {
                     input: { action: { pluginId: supabase.manifest.id, localId: 'branches-create' }, input }, output } }, parentRevision: 1 } };
         const reference = { runId: 'run-A', invocationId: 'invocation-A' };
         expect(readWorkflowDataCreationResult(opened, reference)).toMatchObject({
-            input: { credentialRef, credentialPrincipal: input.credentialPrincipal }, result: { providerEnvironment: { kind: 'custom', id: 'child-A' } } });
+            input: { credentialRef, credentialPrincipal: input.credentialPrincipal }, result: { providerEnvironment: { kind: 'native', selection: { branchId: 'child-A' } } } });
         expect(() => readWorkflowDataCreationResult(opened, { ...reference, invocationId: 'invocation-B' })).toThrow();
         expect(() => readWorkflowDataCreationResult({ ...opened, invocation: { ...opened.invocation,
             progress: { ...opened.invocation.progress, execution: { ...opened.invocation.progress.execution,
@@ -158,7 +158,7 @@ describe('Workflow data creation result projection', () => {
         const unknown = mutationResult.parse({ status: 'outcome_unknown', providerProjectId: 'project-A', branchId: 'branch-A',
             correlation: { repository: { kind: 'gitlab', deployment: 'https://gitlab.example', repository: 'group/repo' }, pullRequestId: '17' },
             providerIdentity: { providerAccountId: 'organization-A', providerResourceId: 'project-A', providerEnvironment: 'branch-A' },
-            providerEnvironment: { kind: 'custom', id: 'branch-A' } });
+            providerEnvironment: { kind: 'native', selection: { branchId: 'branch-A' } } });
         expect(capture(unknown)).toBeUndefined();
         expect(capture(mutationResult.parse({ status: 'provisioned', branchId: 'branch-A' }))).toBeUndefined();
         expect(prepareWorkflowDataCreationResultCapture(`${neon.manifest.id}/actions/projects-provision`, mounted.registry.contributes)).toBeUndefined();

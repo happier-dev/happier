@@ -71,6 +71,8 @@ const manifest = {
         icon: 'server-outline',
         targetSchema: { type: 'object', properties: {}, additionalProperties: false },
         linkSchema: { type: 'object', properties: {}, additionalProperties: false },
+        nativeSelectorSchema: { type: 'object', properties: { kind: { type: 'string', const: 'production' } },
+          required: ['kind'], additionalProperties: false },
         actions: {
           inspect: 'targets-inspect-v1',
           link: 'project-link',
@@ -86,6 +88,8 @@ const manifest = {
         icon: 'server-outline',
         targetSchema: { type: 'object', properties: {}, additionalProperties: false },
         linkSchema: { type: 'object', properties: {}, additionalProperties: false },
+        nativeSelectorSchema: { type: 'object', properties: { kind: { type: 'string', const: 'production' } },
+          required: ['kind'], additionalProperties: false },
       },
     ],
   },
@@ -252,7 +256,7 @@ describe('platform target link model', () => {
         providerResourceId: 'prj-1',
         providerEnvironment: 'production',
       },
-      providerEnvironment: { kind: 'production' as const },
+      providerEnvironment: { kind: 'native' as const, selection: { kind: 'production' } },
       repositoryAccess: { status: 'ready' as const, repository },
       preparedNative: { projectName: 'site' },
     };
@@ -295,7 +299,7 @@ describe('platform target link model', () => {
         providerResourceId: 'prj-1',
         providerEnvironment: 'production',
       },
-      providerEnvironment: { kind: 'production' },
+      providerEnvironment: { kind: 'native', selection: { kind: 'production' } },
       preparedNative: { projectName: 'site' },
     };
     expect(
@@ -389,7 +393,7 @@ describe('deployment platforms from bundled declarations', () => {
         purpose: { consumer: { pluginId: pages.pluginId, localId: pages.inspectLocalId }, purpose: pages.purpose },
         target: { kind: 'account', account } },
         providerIdentity: { providerAccountId: 'account', providerResourceId: 'site', providerEnvironment: 'production' },
-        providerEnvironment: { kind: 'production' } } })).toMatchObject({
+        providerEnvironment: { kind: 'native', selection: { kind: 'production' } } } })).toMatchObject({
       targetId: 'pages', targetKind: 'cloudflare-pages', source: { contribution: { localId: 'pages' } },
     });
   });
@@ -441,14 +445,14 @@ describe('platform choice disclosure', () => {
   it('seeds declared defaults for reset downstream fields while keeping the edited value authoritative', () => {
     const createFields: EffectiveActionInputField[] = [field('account'), field('project'),
       { ...field('sourceMethod'), defaultValue: 'upload' },
-      { ...field('providerEnvironment'), widget: 'json', defaultValue: { kind: 'production' } }];
+      { ...field('providerEnvironment'), widget: 'json', defaultValue: { kind: 'native', selection: { kind: 'production' } } }];
     const original = { account: 'team-1', project: 'old', sourceMethod: 'upload',
-      providerEnvironment: { kind: 'preview' } };
+      providerEnvironment: { kind: 'native', selection: { kind: 'preview' } } };
     expect(applyPlatformFieldPatch(createFields, original, { account: 'team-2' }).values).toEqual({
-      account: 'team-2', sourceMethod: 'upload', providerEnvironment: { kind: 'production' },
+      account: 'team-2', sourceMethod: 'upload', providerEnvironment: { kind: 'native', selection: { kind: 'production' } },
     });
     expect(applyPlatformFieldPatch(createFields, original, { sourceMethod: undefined }).values).toEqual({
-      account: 'team-1', project: 'old', providerEnvironment: { kind: 'production' },
+      account: 'team-1', project: 'old', providerEnvironment: { kind: 'native', selection: { kind: 'production' } },
     });
   });
 

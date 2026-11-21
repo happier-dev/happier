@@ -1,3 +1,5 @@
+import { deploymentTargetRoleWithNativeSelectorV1, DeploymentTargetGeneratedDomainAddInputV1ProtocolSchema }
+    from '@happier-dev/protocol/plugins/contributions/deploymentTargets';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { readHomeRequestArtifactReference } from './homeRequestBody.testkit';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
@@ -1156,7 +1158,7 @@ describe('installed deployment storage and target composition', () => {
             purpose: { consumer: { pluginId: 'example.data', localId: 'link' }, purpose: 'manage' },
             target: { kind: 'account', account: { service: { pluginId: 'example.data', localId: 'service' }, accountId: 'credential' } } },
             providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project', providerEnvironment: 'branch' },
-            providerEnvironment: { kind: 'custom', id: 'branch' } });
+            providerEnvironment: { kind: 'native', selection: { branchId: 'branch' } } });
         const input = DeploymentActionInputSchemasV1['deployments.targets.link'].parse({ serverId: 'home',
             environmentId: environment.environment.id, expectedRevision: environment.environment.revision, requestKey: 'link-data',
             ...(managed ? { role: 'data', targetId: 'managed-data', targetKind: 'database', title: 'Customer database',
@@ -1458,7 +1460,7 @@ describe('installed deployment storage and target composition', () => {
             expect(childLookups, JSON.stringify(dispatchTrace)).toEqual([{ machineId: kind === 'build' ? 'captured-builder' : 'machine-a', receiptReads: 1 }]);
         } finally { await requester.dispose(); }
     });
-    it.each(['controller build failure', 'controller build success', 'controller build log write failure', 'provider teardown Cloudflare absence', 'provider teardown Vercel absence', 'provider teardown changed identity', 'provider teardown preview', 'provider teardown linked default', 'provider teardown created default', 'provider teardown explicit unlink', 'provider teardown', 'provider teardown wrong controller', 'provider teardown wrong key', 'provider teardown stale receipt', 'provider teardown ambiguous', 'provider teardown ambiguous unverified', 'provider teardown recovery', 'provider teardown queued observation', 'provider teardown review', 'provider teardown confirm re-entry', 'provider teardown denied', 'promote retained platform', 'rollback retained platform', 'provider Domain add', 'provider Domain Vercel active add', 'provider Domain verify', 'provider Domain remove', 'provider Domain retained native teardown', 'variable telemetry remote endpoint', 'variable telemetry managed header cleanup', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'variable sync storage rollback', 'variable sync transport failure', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'settlement observation refused', 'uncertain receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'confirmed repository upload', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
+    it.each(['controller build failure', 'controller build success', 'controller build log write failure', 'provider teardown Cloudflare absence', 'provider teardown Vercel absence', 'provider teardown changed identity', 'provider teardown preview', 'provider teardown linked default', 'provider teardown created default', 'provider teardown explicit unlink', 'provider teardown', 'provider teardown wrong controller', 'provider teardown wrong key', 'provider teardown stale receipt', 'provider teardown ambiguous', 'provider teardown ambiguous unverified', 'provider teardown recovery', 'provider teardown queued observation', 'provider teardown review', 'provider teardown confirm re-entry', 'provider teardown denied', 'promote retained platform', 'rollback retained platform', 'provider Domain add', 'provider Domain Vercel active add', 'provider Domain verify', 'provider Domain remove', 'provider Domain assigned add', 'provider Domain assigned verify', 'provider Domain retained native teardown', 'variable telemetry remote endpoint', 'variable telemetry managed header cleanup', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'variable sync storage rollback', 'variable sync transport failure', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'settlement observation refused', 'uncertain receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'confirmed repository upload', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
     'admits the declared platform target without native history, a builder or an app-host Machine (%s)', async scenario => {
         const pluginId = 'example.platform';
         const receiptId = `platform-receipt-${scenario.replaceAll(' ', '-')}`;
@@ -1481,8 +1483,14 @@ describe('installed deployment storage and target composition', () => {
         const domainTeardown = scenario === 'provider Domain retained native teardown';
         const domainRemove = scenario === 'provider Domain remove';
         const vercelActiveDomainAdd = scenario === 'provider Domain Vercel active add';
-        const domainAdd = scenario === 'provider Domain add' || vercelActiveDomainAdd;
-        const domainState = vercelActiveDomainAdd ? 'active' as const : 'warning' as const;
+        const assignedDomainAdd = scenario === 'provider Domain assigned add';
+        const assignedDomainVerify = scenario === 'provider Domain assigned verify';
+        const assignedDomain = assignedDomainAdd || assignedDomainVerify;
+        const domainAdd = scenario === 'provider Domain add' || vercelActiveDomainAdd || assignedDomainAdd;
+        const domainState = vercelActiveDomainAdd || assignedDomain ? 'active' as const : 'warning' as const;
+        const selector = assignedDomain ? { type: 'object', properties: {}, additionalProperties: false } as const
+            : { type: 'object', properties: { kind: { type: 'string', const: 'production' } },
+                required: ['kind'], additionalProperties: false } as const;
         const nativeDomainRequests: { method: string; path: string }[] = [];
         const domainRole = domainTeardown || domainRemove ? 'domains.remove' as const : domainAdd ? 'domains.add' as const : 'domains.verify' as const;
         const confirmedUpload = scenario === 'confirmed repository upload';
@@ -1641,7 +1649,10 @@ describe('installed deployment storage and target composition', () => {
                     connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'manage' }],
                     dangerLevel: id === 'inspect' || id === 'observe' || id === 'logs.build' || id === 'logs.runtime' || id === 'variables.read' || id === 'domains.verify' ? 'safe' : 'writesLocal',
                     ...(id === 'logs.runtime' ? { readOnly: true } : {}),
-                    inputSchema: DeploymentTargetRoleInputProtocolSchemasV1[id].jsonSchema,
+                    inputSchema: deploymentTargetRoleWithNativeSelectorV1(
+                        (assignedDomain && id === 'domains.add'
+                            ? DeploymentTargetGeneratedDomainAddInputV1ProtocolSchema : DeploymentTargetRoleInputProtocolSchemasV1[id]).jsonSchema,
+                        selector),
                     resultSchema: id === 'domains.verify' || id === 'domains.remove' || id === 'domains.add' ? DeploymentTargetDomainResultV1ProtocolSchema.jsonSchema : id === 'variables.read' ? DeploymentTargetVariablesReadResultV1ProtocolSchema.jsonSchema
                         : id === 'variables.sync' ? DeploymentTargetVariablesSyncResultV1ProtocolSchema.jsonSchema
                         : id === 'logs.build' || id === 'logs.runtime' ? DeploymentTargetLogsResultV1ProtocolSchema.jsonSchema : DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema,
@@ -1650,8 +1661,9 @@ describe('installed deployment storage and target composition', () => {
                     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
                     resultSchema: { type: 'object', properties: { checked: { type: 'boolean' } }, required: ['checked'], additionalProperties: false } }] : [])], deploymentTargets: [{ id: 'runtime', title: 'Platform', icon: 'server-outline', targetKind: 'platform',
                     targetSchema: { type: 'object', properties: {}, additionalProperties: false },
-                    linkSchema: { type: 'object', properties: {}, additionalProperties: false },
+                    linkSchema: { type: 'object', properties: {}, additionalProperties: false }, nativeSelectorSchema: selector,
                     ...(scenario === 'teardown with data target' ? { role: 'data' } : { role: 'runtime',
+                        ...(assignedDomain ? { generatedDomains: true } : {}),
                         actions: { inspect: 'inspect', link: 'link', deploy: 'deploy', observe: 'observe', uploadDeploy: 'upload-deploy',
                             ...(retainedTraffic ? { promote: 'promote', rollback: 'rollback' } : {}),
                             ...(scenario === 'build logs' ? { logs: { build: 'build-logs-read' } } : runtimeLogs ? { logs: { runtime: 'runtime-logs-read' } } : {}),
@@ -1687,7 +1699,9 @@ describe('installed deployment storage and target composition', () => {
                     ${providerTeardown && (role === 'teardown' || role === 'observe') ? `if (input.providerIdentity.providerResourceId !== 'project' || input.providerIdentity.providerAccountId !== 'provider-account' || input.providerIdentity.providerEnvironment !== 'production' || input.operation !== 'teardown') throw new Error('Wrong exact resource');
                     observationCount++; return { v: 1, ${scenario === 'provider teardown Vercel absence' ? "providerDeploymentId: 'dpl_retained'," : ''} state: '${scenario === 'provider teardown ambiguous unverified' ? 'running_unverified' : 'succeeded'}', observedAtMs: 1, ${scenario.startsWith('provider teardown ambiguous') ? '' : 'providerResourceAbsent: true'} };` : ''}
                     ${role === 'domains.remove' ? `return { v: 1, hostname: input.domain.hostname, state: 'removed', dns: [] };` : ''}
-                    ${role === 'domains.verify' || role === 'domains.add' ? `return { v: 1, hostname: input.domain.hostname, state: 'pending', dns: [{ type: 'TXT', name: '_verification.example.test', value: 'private-dns-token' }] };` : ''}
+                    ${assignedDomainAdd && role === 'domains.add' ? `if (input.domain.hostname !== null) throw new Error('Expected an unnamed domain'); return { v: 1, hostname: 'assigned.up.railway.app', state: 'active', dns: [] };`
+                    : assignedDomainVerify && role === 'domains.verify' ? `if (input.domain.hostname !== 'assigned.up.railway.app' || input.domain.providerAssigned !== true) throw new Error('Expected the exact assigned hostname'); return { v: 1, hostname: input.domain.hostname, state: 'active', dns: [] };`
+                    : role === 'domains.verify' || role === 'domains.add' ? `return { v: 1, hostname: input.domain.hostname, state: 'pending', dns: [{ type: 'TXT', name: '_verification.example.test', value: 'private-dns-token' }] };` : ''}
                     ${role === 'variables.read' ? `observationCount++; return { v: 1, variables: [{ key: 'MODE', providerId: 'provider-mode', present: true, secret: false, owned: true, drift: 'current', providerRevision: '10' }] };` : ''}
                     ${role === 'variables.sync' ? `if (input.set[0]?.name !== 'MODE' || input.set[0]?.source.value !== 'release' || input.owned.length !== 0) throw new Error('Wrong reviewed variables');
                     return { v: 1, owned: [{ key: 'MODE', providerId: 'provider-mode', desiredRevision: input.desiredRevision, providerRevision: '10' }],
@@ -1781,7 +1795,7 @@ describe('installed deployment storage and target composition', () => {
                 purpose: { consumer: { pluginId, localId: 'link' }, purpose: 'manage' },
                 target: { kind: 'account', account: { service: { pluginId, localId: 'service' }, accountId: 'credential' } } },
                 providerIdentity: { providerAccountId: 'provider-account', providerResourceId: 'project', providerEnvironment: 'production' },
-                providerEnvironment: { kind: 'production' }, ...capturedPreparation };
+                providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, ...capturedPreparation };
             environment.content.definition = await normalizeStoredComposeDefinitionInput({ from: 'compose',
                 document: 'services: {}', profiles: [], services: [] });
             const sourceIntent = environment.content.definition;
@@ -2141,7 +2155,12 @@ describe('installed deployment storage and target composition', () => {
             }
             if (domainScenario) {
                 Object.assign(row.targetLink, { machineId: 'machine-a', installationId: 'installation-a' });
-                const content = { hostname: 'app.example.test', target: { kind: 'provider' } };
+                if (assignedDomain) {
+                    row.content = DeploymentTargetLinkProviderContentV1Schema.parse({ ...row.content,
+                        providerEnvironment: { kind: 'native', selection: {} } });
+                    put(row.targetLink.contentArtifactId, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, row.content);
+                }
+                const content = { hostname: assignedDomain ? null : 'app.example.test', target: { kind: 'provider' } };
                 const domain = DeploymentDomainHeaderV1Schema.parse({ v: 1, id: 'platform-domain', environmentId: environment.environment.id,
                     targetLinkId: row.targetLink.id, revision: 1, state: 'pending', provider: true,
                     providerPlacement: { serverId: 'home', accountId: 'owner', environmentId: environment.environment.id,
@@ -2174,7 +2193,8 @@ describe('installed deployment storage and target composition', () => {
                         expect(wire).toMatchObject({ observations: [], providerObservation: { placement: domain.providerPlacement,
                             state: domainRemove || domainTeardown ? 'removed' : domainState, proof: expect.any(Object), contentUpdate: { expectedBodyVersion: 1 } } });
                         const privateBody = decodePlainArtifactStoredContent(String(wire.providerObservation!.contentUpdate!.body));
-                        expect(privateBody).toMatchObject({ body: domainRemove || domainTeardown ? expect.stringContaining('\"state\":\"removed\"') : expect.stringContaining(vercelActiveDomainAdd ? '\"state\":\"active\"' : 'private-dns-token') });
+                        expect(privateBody).toMatchObject({ body: domainRemove || domainTeardown ? expect.stringContaining('\"state\":\"removed\"') : expect.stringContaining(assignedDomain ? '\"hostname\":\"assigned.up.railway.app\"'
+                            : vercelActiveDomainAdd ? '\"state\":\"active\"' : 'private-dns-token') });
                         retiredProviderDomain = true;
                         return { status: 200, data: { ok: true, environmentId: environment.environment.id,
                             revision: environment.environment.revision, domain: DeploymentDomainHeaderV1Schema.parse({ ...domain,
@@ -2250,7 +2270,8 @@ describe('installed deployment storage and target composition', () => {
                 const rootInput = { serverId: 'home', environmentId: environment.environment.id,
                     domainId: domain.id, expectedRevision: environment.environment.revision,
                     ...(domainAdd ? { targetLinkId: row.targetLink.id, expectedTargetLinkRevision: row.targetLink.revision, content }
-                        : { expectedDomainRevision: domain.revision }), requestKey: 'check-domain' };
+                        : { expectedDomainRevision: domain.revision,
+                            ...(assignedDomainVerify ? { assignedHostname: 'assigned.up.railway.app' } : {}) }), requestKey: 'check-domain' };
                 let context: ActionExecutorContext = { ...ownerContext, surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home',
                         serverIdentityId: 'home', runtimeAccountId: 'owner', actionRequestId: 'domain-request',
                         actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'deployments.domains.add': ['cli'], 'deployments.domains.remove': ['cli'] } }) };

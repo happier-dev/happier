@@ -416,7 +416,7 @@ it.each(['cli', 'ui'] as const)('enrolls real failure observers after admitted L
       encodePlainArtifactStoredContent({ kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, title: 'Runtime' }),
       encodePlainArtifactStoredContent({ body: JSON.stringify({ credentialPrincipal: principal,
         providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project', providerEnvironment: 'production' },
-        providerEnvironment: { kind: 'production' } }) }));
+        providerEnvironment: { kind: 'native', selection: { kind: 'production' } } }) }));
     app.get(`/v1/deployments/environments/${environment.environment.id}`, async () => ({
       ok: true, environment: environment.environment, targetLinks: [link] }));
     const input = { environmentId: environment.environment.id, role: 'runtime' as const, source: link.source };

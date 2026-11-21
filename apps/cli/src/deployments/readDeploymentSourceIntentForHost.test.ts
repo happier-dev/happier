@@ -29,6 +29,52 @@ import { pathToFileURL } from 'node:url';
 
 afterEach(() => { withdrawActiveProjectAccountRowsSnapshot(); vi.restoreAllMocks(); });
 
+it.each(['dirty', 'unpushed', 'raw-commit-ref', 'published', 'published-with-newer-remote-head'] as const)('admits the exact reviewed Git-only deployment source when it is %s', async state => {
+    await withTempDir('deployment-published-source-', async checkout => {
+        const git = (args: string[]) => execFileSync('git', args, { cwd: checkout, encoding: 'utf8' }).trim();
+        git(['init', '--quiet', '--initial-branch=main']);
+        git(['config', 'user.name', 'Source Fixture']);
+        git(['config', 'user.email', 'source@example.test']);
+        await writeFile(join(checkout, 'index.html'), 'reviewed');
+        git(['add', '.']);
+        git(['commit', '--quiet', '-m', 'Reviewed source']);
+        const first = git(['rev-parse', 'HEAD']);
+        await writeFile(join(checkout, 'index.html'), 'next revision');
+        git(['commit', '--quiet', '-am', 'Next source']);
+        const second = git(['rev-parse', 'HEAD']);
+        const sha = state === 'published-with-newer-remote-head' ? first : second;
+        if (state === 'dirty') await writeFile(join(checkout, 'index.html'), 'unsaved in Git');
+        const environment = createDeploymentEnvironmentDetailV1();
+        environment.content.definition = { kind: 'repository', ref: state === 'raw-commit-ref' ? sha : 'main' };
+        const sourceId = environment.environment.projectSourceId;
+        mockProjectAccountRowsHttpBoundary([createPlainProjectAccountRefRow({ id: 'workspace', serverId: 'home',
+            machineId: 'controller', rootPath: checkout, createdAtMs: 1, source: { sourceId, revision: 1 } })]);
+        vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: ProjectSourcesReadOutputV1Schema.parse({
+            ok: true, canManage: true, source: { id: sourceId, revision: 1, name: 'App', audience: [],
+                createdByAccountId: 'owner', repository: { protocol: 'https', provider: { id: 'github', kind: 'github',
+                    displayName: 'GitHub', baseUrl: 'https://github.com' }, repository: {
+                    nameWithOwner: 'example/app', cloneUrl: 'https://github.com/example/app.git' } } },
+        }) });
+        const resolveRepositoryRef = vi.fn(async (_repository: unknown, ref: string) => {
+            if (ref === `refs/heads/${sha}`) throw Object.assign(new Error('Branch not found'), { code: 'github_not_found' });
+            return ref === 'refs/heads/main' ? state === 'unpushed' ? first : second : sha;
+        });
+        const source = readDeploymentSourceIntentForHost({ request: { environment, sha, context: {}, publishedGitProviders: ['github'] },
+            host: { credentials: { token: 'fixture', encryption: null }, serverId: 'home', serverHttpBaseUrl: 'https://home.test',
+                machineId: 'controller', async assertAuthority() {}, resolveRepositoryRef, async resolveRequesterIdentity() {
+                    return { kind: 'owner_person' as const, requester: { serverId: 'home', accountId: 'owner',
+                        machineId: 'controller', installationId: 'installation' } };
+                } } });
+        if (state === 'published' || state === 'published-with-newer-remote-head') {
+            await expect(source).resolves.toMatchObject({ sourceIntent: { kind: 'repository', sha } });
+        }
+        else await expect(source).rejects.toMatchObject({ code: state === 'dirty' ? 'deployment_source_dirty' : 'deployment_source_unpushed' });
+        expect(resolveRepositoryRef).toHaveBeenCalledTimes(state === 'dirty' ? 0 : 1);
+        if (state !== 'dirty') expect(resolveRepositoryRef).toHaveBeenCalledWith(expect.any(Object),
+            state === 'raw-commit-ref' ? `refs/heads/${sha}` : 'refs/heads/main', {});
+    });
+});
+
 it.each(['remote preview', 'local-only'] as const)('pins and acquires the selected %s branch without moving the checkout', async kind => {
     const runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
         runtimeOptions: { pluginIds: ['happier.scm.backend.git'] } });

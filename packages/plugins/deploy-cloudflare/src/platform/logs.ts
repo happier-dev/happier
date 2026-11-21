@@ -7,6 +7,7 @@ import { pagesCommon, pagesIo } from './pagesPrepare.js';
 import { workersCommon, workersIo } from './workersActions.js';
 import { isUploadedWorkerReference } from './workers.js';
 import { isUploadedPreviewReference } from './previewDeploy.js';
+import { cloudflareRoleSchema } from './targetSelection.js';
 
 /** Finite provider snapshot, with no invented history cursor or polling.
  * https://developers.cloudflare.com/api/resources/pages/subresources/projects/subresources/deployments/subresources/history/subresources/logs/methods/get/
@@ -14,7 +15,7 @@ import { isUploadedPreviewReference } from './previewDeploy.js';
  */
 export const pagesLogsActions = {
   'pages-build-logs-read': { ...pagesCommon, title: 'Read the selected Cloudflare Pages build logs', dangerLevel: 'safe', readOnly: true,
-    inputSchema: inputs['logs.build'].jsonSchema, resultSchema: output.jsonSchema,
+    inputSchema: cloudflareRoleSchema(inputs['logs.build'].jsonSchema, 'pages'), resultSchema: output.jsonSchema,
     async run(raw: JsonValue, context: PluginAccountActionContext): Promise<ReturnType<typeof output.parse>> {
       // The role owner already admitted the retained receipt and provider scope.
       const input = raw as unknown as ReturnType<typeof inputs['logs.build']['parse']>;
@@ -46,7 +47,7 @@ export const pagesLogsActions = {
  */
 export const workersLogsActions = {
   'workers-build-logs-read': { ...workersCommon, title: 'Read the selected Cloudflare Worker build logs', dangerLevel: 'safe', readOnly: true,
-    inputSchema: inputs['logs.build'].jsonSchema, resultSchema: output.jsonSchema,
+    inputSchema: cloudflareRoleSchema(inputs['logs.build'].jsonSchema, 'workers'), resultSchema: output.jsonSchema,
     async run(raw: JsonValue, context: PluginAccountActionContext): Promise<ReturnType<typeof output.parse>> {
       const input = raw as unknown as ReturnType<typeof inputs['logs.build']['parse']>;
       const fail = (code: string): never => { throw new PluginError({ code, retryable: false, details: { phase: 'build' } }); };

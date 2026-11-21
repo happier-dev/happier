@@ -13,7 +13,7 @@ const input = { v: 1, serverId: 'home', environmentId: 'environment', expectedRe
   credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: { consumer: { pluginId: 'happier.deploy.vercel',
     localId: 'deploy-upload-v1' }, purpose: 'deploy.manage' }, target: { kind: 'account', account } },
   providerIdentity: { providerAccountId: 'team_exact', providerResourceId: 'prj_exact', providerEnvironment: 'production' },
-  providerEnvironment: { kind: 'production' }, repositoryAccess: { status: 'needsGitAccess',
+  providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, repositoryAccess: { status: 'needsGitAccess',
     repository: { kind: 'gitlab', deployment: 'https://gitlab.com', repository: 'example/app' } },
   preparedNative: { projectName: 'example' }, targetLinkId: 'link', expectedTargetLinkRevision: 1,
   deploymentId: 'receipt', expectedDeploymentRevision: 1, actionOperationId: 'operation', sourceMethod: 'upload',
@@ -148,7 +148,7 @@ describe('Vercel activated controller upload', () => {
     const h = await fixture();
     try {
       await h.invoke({ providerIdentity: { ...input.providerIdentity, providerEnvironment: 'preview:feature/exact' },
-        providerEnvironment: { kind: 'preview', gitBranch: 'feature/exact' } });
+        providerEnvironment: { kind: 'native', selection: { kind: 'preview', gitBranch: 'feature/exact' } } });
       const creation = h.requests.find(request => new URL(request.url).pathname === '/v13/deployments');
       const payload = JSON.parse(new TextDecoder().decode(creation?.body));
       expect(payload.gitMetadata).toEqual({ commitSha: input.sourceIntent.sha, commitRef: 'feature/exact' });

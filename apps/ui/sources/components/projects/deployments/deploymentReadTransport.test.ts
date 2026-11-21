@@ -309,7 +309,7 @@ describe('deployment scoped read transport', () => {
                     consumer: { pluginId: 'happier.deployment-vercel', localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' },
                     target: { kind: 'account', account: { service: { pluginId: 'happier.machine-vercel', localId: 'vercel' }, accountId: 'connected' } } },
                     providerIdentity: { providerAccountId: 'team', providerResourceId: 'project', providerEnvironment: 'production' },
-                    providerEnvironment: { kind: 'production' }, targetLinkRevision: 1,
+                    providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, targetLinkRevision: 1,
                     observation: { v: 1, state: 'succeeded', observedAtMs: 1000, urls: ['https://platform.example.test/'] } } }) });
         const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
         const writer = await captureLazyActionAccountContext(serverId);
@@ -559,7 +559,7 @@ describe('deployment scoped read transport', () => {
         const targetLink = createDeploymentTargetLinkHeaderV1({ role: 'data', targetKind: 'database', machines: [], members: [],
             source: { kind: 'plugin', contribution: { pluginId: 'com.example.database', localId: 'database' } } });
         const content = { providerIdentity: { providerAccountId: 'team', providerResourceId: 'internal-project-id', providerEnvironment: 'main' },
-            providerEnvironment: { kind: 'custom' as const, id: 'main' },
+            providerEnvironment: { kind: 'native' as const, selection: { branchId: 'main' } },
             credentialPrincipal: { kind: 'account' as const, accountId: 'alice',
                 purpose: { consumer: { pluginId: 'com.example.database', localId: 'projects-link' }, purpose: 'database' },
                 target: { kind: 'account' as const, account: { service: { pluginId: 'com.example.database', localId: 'database' },

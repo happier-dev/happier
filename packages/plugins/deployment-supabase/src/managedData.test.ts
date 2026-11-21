@@ -13,7 +13,7 @@ const credentialRef = { service: { pluginId: 'happier.deploy.supabase', localId:
 function preparation(actionId: string) { return DeploymentTargetPreparationBaseV1ProtocolSchema.parse({ v: 1, serverId: 'home', environmentId: 'environment', expectedRevision: 1,
   credentialRef, credentialPrincipal: { kind: 'account', accountId: 'owner',
     purpose: { consumer: { pluginId: credentialRef.service.pluginId, localId: actionId }, purpose: 'deploy-manage' }, target: { kind: 'account', account: credentialRef } },
-  providerAccountId: 'org-example', providerEnvironment: { kind: 'custom', id: 'parent-ref' } }); }
+  providerAccountId: 'org-example', providerEnvironment: { kind: 'native', selection: { branchId: 'parent-ref' } } }); }
 const base = preparation('projects-link');
 const linked = DeploymentTargetPreparationBaseV1ProtocolSchema.parse({ ...base, targetLinkId: 'data-link', expectedTargetLinkRevision: 1,
   providerIdentity: { providerAccountId: 'org-example', providerResourceId: 'parent-ref', providerEnvironment: 'parent-ref' } });
@@ -128,7 +128,7 @@ describe('activated Supabase managed data target', () => {
     // The organization is the admitted selected-account default or the person's override.
     const draft = (localId: string) => {
       const { environmentId: _environment, expectedRevision: _revision, ...input } = preparation(localId);
-      return { ...input, providerEnvironment: { kind: 'production' } };
+      return { ...input, providerEnvironment: { kind: 'native', selection: {} } };
     };
     try {
       expect(await h.kit.invokeAction('provision-options', draft('provision-options'), { surface }))
@@ -227,7 +227,7 @@ describe('activated Supabase managed data target', () => {
       : request.url.includes('available-regions') ? availableRegions
         : request.url.includes('entitlements') ? { entitlements: [] } : [{ id: 'org-id', slug: 'org-example', name: 'Example' }]);
     try {
-      const result = await h.kit.invokeAction('projects-provision', { ...preparation('projects-provision'), providerEnvironment: { kind: 'production' }, name: 'Example', password: pair.password, regionSelection: { type: 'specific', code: 'eu-central-1' } });
+      const result = await h.kit.invokeAction('projects-provision', { ...preparation('projects-provision'), providerEnvironment: { kind: 'native', selection: {} }, name: 'Example', password: pair.password, regionSelection: { type: 'specific', code: 'eu-central-1' } });
       expect(result).toMatchObject({ state: 'provisioned', providerResourceOrigin: 'created', ready: false, providerIdentity: { providerResourceId: 'parent-ref' } });
       const request = h.requests.find(item => item.method === 'POST');
       expect(JSON.parse(new TextDecoder().decode(request?.body))).toEqual({ organization_slug: 'org-example', name: 'Example', db_pass: 'private:p@ss/word', region_selection: { type: 'specific', code: 'eu-central-1' } });
@@ -262,7 +262,7 @@ describe('activated Supabase managed data target', () => {
     });
     try {
       const result = await h.kit.invokeAction('projects-provision', { ...preparation('projects-provision'),
-        providerEnvironment: { kind: 'production' }, name: 'Example', password: pair.password,
+        providerEnvironment: { kind: 'native', selection: {} }, name: 'Example', password: pair.password,
         regionSelection: { type: 'specific', code: 'eu-central-1' } }, { signal: controller.signal });
       expect(result).toMatchObject({ state: 'provisioned', ready: false,
         providerIdentity: { providerAccountId: 'org-example', providerResourceId: 'parent-ref', providerEnvironment: 'parent-ref' } });
@@ -286,7 +286,7 @@ describe('activated Supabase managed data target', () => {
       const result = await h.kit.invokeAction('connections-save', { ...linked, ...pair, previous });
       expect(result).toMatchObject({ status: 'complete' });
       expect(h.saved.map(item => item.value.includes('session.example'))).toEqual([true]);
-      await expect(h.kit.invokeAction('connections-save', { ...linked, providerEnvironment: { kind: 'custom', id: 'foreign' }, ...pair, previous })).rejects.toMatchObject({ code: 'deployment_conflict' });
+      await expect(h.kit.invokeAction('connections-save', { ...linked, providerEnvironment: { kind: 'native', selection: { branchId: 'foreign' } }, ...pair, previous })).rejects.toMatchObject({ code: 'deployment_conflict' });
     } finally { await h.kit.dispose(); }
   });
 
@@ -389,8 +389,8 @@ describe('activated Supabase managed data target', () => {
     const h = await host(request => request.method === 'POST' ? metadata : request.method === 'DELETE' ? { message: 'ok' } : [metadata]);
     try {
       expect(await h.kit.invokeAction('branches-create', { ...linked, name: 'Preview', gitBranch: 'feature', withData: false }))
-        .toMatchObject({ status: 'provisioned', projectRef: 'preview-ref', branchId: 'branch-uuid', providerEnvironment: { kind: 'custom', id: 'preview-ref' } });
-      const input = { ...linked, providerEnvironment: { kind: 'custom', id: 'preview-ref' }, providerIdentity: { ...linked.providerIdentity, providerEnvironment: 'preview-ref' } };
+        .toMatchObject({ status: 'provisioned', projectRef: 'preview-ref', branchId: 'branch-uuid', providerEnvironment: { kind: 'native', selection: { branchId: 'preview-ref' } } });
+      const input = { ...linked, providerEnvironment: { kind: 'native', selection: { branchId: 'preview-ref' } }, providerIdentity: { ...linked.providerIdentity, providerEnvironment: 'preview-ref' } };
       expect(await h.kit.invokeAction('branches-delete', input)).toMatchObject({ status: 'deleted', branchProjectRef: 'preview-ref' });
       expect(h.requests.find(request => request.method === 'DELETE')?.url).toBe('https://api.supabase.com/v1/branches/preview-ref');
       expect(JSON.parse(new TextDecoder().decode(h.requests.find(request => request.method === 'POST')?.body))).toMatchObject({ persistent: false, with_data: false });
@@ -403,7 +403,7 @@ describe('activated Supabase managed data target', () => {
       parent_project_ref: parentBranchRef.providerProjectId, persistent: false, preview_project_status: 'ACTIVE_HEALTHY' }));
     try {
       const result = await h.kit.invokeAction('branches-create', { ...linked,
-        providerEnvironment: { kind: 'custom', id: 'current-parent-project' },
+        providerEnvironment: { kind: 'native', selection: { branchId: 'current-parent-project' } },
         providerIdentity: { ...linked.providerIdentity, providerResourceId: 'root-project', providerEnvironment: 'current-parent-project' },
         name: 'Preview', withData: false, parentBranchRef });
       expect(result).toMatchObject({ status: 'provisioned', projectRef: 'created-ref', parentProjectRef: 'saved-parent-project',
@@ -416,7 +416,7 @@ describe('activated Supabase managed data target', () => {
   it('refuses a persistent/default resource and never substitutes project deletion', async () => {
     const h = await host(() => [{ id: 'branch-id', name: 'Production', project_ref: 'persistent-ref', parent_project_ref: 'parent-ref', persistent: true }]);
     try {
-      await expect(h.kit.invokeAction('branches-delete', { ...linked, providerEnvironment: { kind: 'custom', id: 'persistent-ref' } })).rejects.toMatchObject({ code: 'deployment_conflict' });
+      await expect(h.kit.invokeAction('branches-delete', { ...linked, providerEnvironment: { kind: 'native', selection: { branchId: 'persistent-ref' } } })).rejects.toMatchObject({ code: 'deployment_conflict' });
       await expect(h.kit.invokeAction('branches-delete', linked)).rejects.toMatchObject({ code: 'deployment_conflict' });
       expect(h.requests.every(request => request.method === 'GET')).toBe(true);
     } finally { await h.kit.dispose(); }
@@ -429,7 +429,7 @@ describe('activated Supabase managed data target', () => {
       return removed ? [] : [{ id: 'branch-id', name: 'Preview', project_ref: 'preview-ref', parent_project_ref: 'parent-ref', persistent: false }];
     });
     try {
-      expect(await h.kit.invokeAction('branches-delete', { ...linked, providerEnvironment: { kind: 'custom', id: 'preview-ref' } }))
+      expect(await h.kit.invokeAction('branches-delete', { ...linked, providerEnvironment: { kind: 'native', selection: { branchId: 'preview-ref' } } }))
         .toMatchObject({ status: 'deleted', branchProjectRef: 'preview-ref' });
       expect(h.requests.filter(request => request.method === 'DELETE')).toHaveLength(1);
       expect(h.requests.filter(request => request.method === 'GET').map(request => request.url)).toEqual([
@@ -444,7 +444,7 @@ describe('activated Supabase managed data target', () => {
       return deleteSent ? { message: 'private-password' } : [{ id: 'branch-id', name: 'Preview', project_ref: 'preview-ref', parent_project_ref: 'parent-ref', persistent: false }];
     }, undefined, () => deleteSent ? 403 : 200);
     try {
-      expect(await h.kit.invokeAction('branches-delete', { ...linked, providerEnvironment: { kind: 'custom', id: 'preview-ref' } }))
+      expect(await h.kit.invokeAction('branches-delete', { ...linked, providerEnvironment: { kind: 'native', selection: { branchId: 'preview-ref' } } }))
         .toMatchObject({ status: 'outcome_unknown', branchProjectRef: 'preview-ref', code: 'deployment_access_denied' });
       expect(h.requests.filter(request => request.method === 'DELETE')).toHaveLength(1);
     } finally { await h.kit.dispose(); }
@@ -457,7 +457,7 @@ describe('activated Supabase managed data target', () => {
       : { ref: 'preview-ref', status: 'ACTIVE_HEALTHY', db_host: 'db.preview-ref.supabase.co', db_port: 5432 });
     try {
       const { password: _password, ...saveOperands } = pair;
-      expect(await h.kit.invokeAction('connections-save', { ...linked, providerEnvironment: { kind: 'custom', id: 'preview-ref' }, ...saveOperands }))
+      expect(await h.kit.invokeAction('connections-save', { ...linked, providerEnvironment: { kind: 'native', selection: { branchId: 'preview-ref' } }, ...saveOperands }))
         .toMatchObject({ status: 'unavailable', code: 'database_password_required', resource: { projectRef: 'parent-ref', branchRef: 'preview-ref' } });
       expect(h.requests.every(request => request.method === 'GET')).toBe(true);
       expect(h.saved).toHaveLength(0);

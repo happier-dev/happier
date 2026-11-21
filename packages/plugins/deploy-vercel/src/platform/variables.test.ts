@@ -11,7 +11,7 @@ const common = { v: 1, serverId: 'home', environmentId: 'environment', expectedR
   credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: {
     consumer: { pluginId: entry.manifest.id, localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' }, target: { kind: 'account', account } },
   providerIdentity: { providerAccountId: 'team_exact', providerResourceId: 'prj_exact', providerEnvironment: 'production' },
-  providerEnvironment: { kind: 'production' } };
+  providerEnvironment: { kind: 'native', selection: { kind: 'production' } } };
 
 it('writes a telemetry Saved Secret as sensitive OTLP headers and discards the provider echo', async () => {
   const rawToken = 'telemetry-fixture-token';
@@ -107,7 +107,7 @@ it.each([
   } });
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
   try {
-    const result = await kit.invokeAction('variables-sync', { ...common, providerEnvironment: sample.environment,
+    const result = await kit.invokeAction('variables-sync', { ...common, providerEnvironment: { kind: 'native', selection: sample.environment },
       desiredRevision: 2, owned: [{ key: 'TOKEN', providerId: 'shared-row', desiredRevision: 1, providerRevision: '20' }],
       set: [], remove: ['TOKEN'], useOurs: [], keepTheirs: [] });
     expect(result).toMatchObject({ owned: [], variables: [], failures: [] });

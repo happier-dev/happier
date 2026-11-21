@@ -24,7 +24,7 @@ const recovery = { serverId: 'home', environmentId: 'environment', expectedRevis
     pluginId: 'example.platform', localId: 'create' }, purpose: 'deploy.manage' },
     target: { kind: 'account', account: credential } },
     providerIdentity: { providerAccountId: 'native-account', providerResourceId: 'returned-id', providerEnvironment: 'production' },
-    providerEnvironment: { kind: 'production' }, preparedNative: { projectName: 'reviewed-name' } } };
+    providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, preparedNative: { projectName: 'reviewed-name' } } };
 const provisionedResult = { ok: false, error: 'deployment_link_incomplete', recovery };
 
 function runnerFor(store: ReturnType<typeof createActionOperationStore>) {
@@ -84,7 +84,7 @@ describe('deployment target link operation retention', () => {
         credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: { consumer: {
           pluginId: 'example.platform', localId: 'create' }, purpose: 'deploy.manage' },
           target: { kind: 'account', account: credential } },
-        providerAccountId: 'native-account', providerEnvironment: { kind: 'production' }, resourceName: 'reviewed-name',
+        providerAccountId: 'native-account', providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, resourceName: 'reviewed-name',
         sourceMethod: 'upload' } };
     const directory = await mkdtemp(join(tmpdir(), 'link-operation-'));
     try {

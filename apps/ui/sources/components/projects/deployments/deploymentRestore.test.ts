@@ -24,7 +24,7 @@ describe('database copy restore operands', () => {
       machines: [], members: [], source: { kind: 'plugin', contribution: { pluginId: `happier.deploy.${provider}`, localId: 'database' } } });
     const destination = { ...base, runtimeTargetLink: null,
       targetLinks: [{ targetLink, content: { providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project',
-        providerEnvironment: 'main' }, providerEnvironment: { kind: 'custom' as const, id: 'main' } } }] };
+        providerEnvironment: 'main' }, providerEnvironment: { kind: 'native' as const, selection: { branchId: 'main' } } } }] };
     expect(deploymentDatabaseMoveDestination(destination)).toEqual({ kind: 'unavailable', reason: 'unsupported' });
     // A verified source capture cannot turn an undeclared provider import into native restore operands.
     expect(deploymentRestoreOperands({ ...base, runtimeTargetLink: base.targetLinks[0]!.targetLink },

@@ -39,7 +39,7 @@ describe('data cleanup receipt presentation', () => {
                 purpose: { consumer: { pluginId: 'acme.alpha', localId: 'branch' }, purpose: 'account' },
                 target: { kind: 'account', account: { service: { pluginId: 'acme.alpha', localId: 'account' }, accountId: 'provider' } } },
                 providerIdentity: { providerAccountId: 'provider', providerResourceId: 'project', providerEnvironment: 'branch:A' },
-                providerEnvironment: { kind: 'custom', id: 'A' }, targetLinkRevision: 1,
+                providerEnvironment: { kind: 'native', selection: { branchId: 'A' } }, targetLinkRevision: 1,
                 observation: { v: 1, state: 'failed', observedAtMs: 1000 },
                 dataCreation: { reference: { runId: 'run:one', invocationId: 'inv:one' }, retainedProviderResource: true,
                     deleteAction: { pluginId: 'acme.alpha', localId: 'delete' }, operands: { branchId: 'A' } } } });

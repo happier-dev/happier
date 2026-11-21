@@ -31,6 +31,16 @@ import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/use
  * on the QA Account's real Environments.
  */
 const ACCOUNT = 'account-owner';
+const RAILWAY_TARGET = { pluginId: 'happier.deploy.railway', localId: 'runtime' };
+const RAILWAY_LINK = {
+  providerEnvironment: { kind: 'native', selection: { projectId: 'shop-project', environmentId: 'shop-staging', serviceId: 'store-api' } },
+  providerIdentity: { providerAccountId: 'shop-project', providerEnvironment: 'shop-staging', providerResourceId: 'store-api' },
+  credentialPrincipal: { kind: 'account', accountId: ACCOUNT,
+    purpose: { consumer: { pluginId: RAILWAY_TARGET.pluginId, localId: 'service-link' }, purpose: 'cloud-api' },
+    target: { kind: 'account', account: { service: { pluginId: 'happier.machine.railway', localId: 'railway-account' }, accountId: 'railway' } },
+  },
+  sourceMethod: 'gitIntegration',
+} as const;
 const SPECIMEN_COLLECTOR_ID = 'machine-collector';
 const HOUR = 3_600_000;
 const SPECIMEN_NOW = Date.now();
@@ -60,6 +70,12 @@ const LOG_TAIL: Partial<Record<ReceiptState, string>> = {
  * long enough to page; the reader below serves them the way `deployments.logs.read` does (tail or cursor pages).
  */
 const STEP_LOGS: Record<string, readonly string[]> = {
+  railwayBuild: [
+    '10:08:10 Checkout release at 7f3e2b1',
+    '10:08:13 Installing dependencies with pnpm',
+    '10:08:35 Building checkout-api',
+    '10:09:02 Published the build image',
+  ],
   sync: [
     '10:08:11.07 Release 39 · 7f3e2b1 "fix(checkout): keep the cart after sign-in"',
     '10:08:11.14 Source github.com/happier-dev/happier at 7f3e2b1 (PR #142)',
@@ -250,6 +266,20 @@ function receiptFor(
   });
 }
 
+function railwayReceipt(receipt: ReturnType<typeof createDeploymentReceiptDetailV1>) {
+  const { sourceIntent, commitSubject } = receipt.content;
+  const { sourceMethod, ...link } = RAILWAY_LINK;
+  const recorded = receipt.deployment.state;
+  const state = recorded === 'running_unverified' || recorded === 'outcome_unknown' ? 'running' : recorded;
+  const { rollbackOfDeploymentId: _rollback, ...deployment } = receipt.deployment;
+  return createDeploymentReceiptDetailV1({ deployment: { ...deployment, operation: 'deploy' }, content: {
+    sourceIntent: sourceIntent!, commitSubject, machines: [], steps: [], machineResults: [], images: [], sourceMethod,
+    platform: { ...link, targetLinkRevision: 1, observation: { v: 1, state, observedAtMs: SPECIMEN_NOW,
+      providerDeploymentId: `railway-${receipt.deployment.id}`, urls: ['https://store-staging.up.railway.app'],
+      builtInUrls: ['https://store-staging.up.railway.app'] } },
+  } });
+}
+
 const digest = (c: string) => `sha256:${c.repeat(64)}`;
 /** The lab's Compose cast: two services this deploy built, one pulled by reference. */
 const SPECIMEN_IMAGES = [
@@ -301,7 +331,7 @@ const SPECIMEN_DOMAINS = [
 /**
  * `?tabs=` decides what the Domains, Checks & alerts, Backups and Previews reads answer: `populated` (default),
  * `empty`, `loading`, `error`, `denied`, `paged` (Domains continue to a second page), `notNeeded` (backups) and
- * `team` (a Team Environment: the Variables secret line names who can read linked secrets).
+ * `team` (a Team Environment) or `railway-domains` (Railway staging with its addresses, receipt and variables).
  */
 function tabFixtures(tabs: string, environmentId: string) {
   const never = new Promise<never>(() => {});
@@ -318,6 +348,22 @@ function tabFixtures(tabs: string, environmentId: string) {
     if (tabs === 'error') return { ok: false, failure: { code: 'deployment_unavailable', retryable: true } };
     if (tabs === 'denied') return { ok: false, failure: { code: 'deployment_access_denied', retryable: false } };
     if (tabs === 'empty') return { ok: true, value: { items: [], nextCursor: null } };
+    if (tabs === 'railway-domains') {
+      const fixture = domainItem(SPECIMEN_DOMAINS[0]!);
+      return { ok: true, value: { items: [
+        { ...fixture, title: 'store-staging.up.railway.app', domain: { ...fixture.domain, provider: true },
+          content: { hostname: 'store-staging.up.railway.app', target: { kind: 'provider' } } },
+        { ...fixture, title: 'Provider-assigned address',
+          domain: { ...fixture.domain, id: 'domain-assigned-pending', provider: true, state: 'pending' },
+          content: { hostname: null, target: { kind: 'provider' } } },
+        { ...fixture, title: 'staging.shop.example',
+          domain: { ...fixture.domain, id: 'domain-custom-staging', provider: true, state: 'warning' },
+          content: { hostname: 'staging.shop.example', target: { kind: 'provider' },
+            providerObservation: { v: 1, hostname: 'staging.shop.example', state: 'pending',
+              dns: [{ type: 'CNAME', name: 'staging.shop.example', value: 'store-staging.up.railway.app' }] } },
+        },
+      ], nextCursor: null } };
+    }
     if (tabs === 'paged') {
       return query.cursor
         ? { ok: true, value: { items: SPECIMEN_DOMAINS.slice(3).map(domainItem), nextCursor: null } }
@@ -381,7 +427,7 @@ function withSpecimenPreview<T extends ReturnType<typeof createDeploymentEnviron
     content: { ...detail.content, previewTemplate: preview.template },
     targetLinks: [...detail.targetLinks, { targetLink: neon, content: {
       providerIdentity: { providerAccountId: 'org-acme', providerResourceId: NEON_PARENT.providerProjectId, providerEnvironment: NEON_PARENT.branchId },
-      providerEnvironment: { kind: 'custom', id: NEON_PARENT.branchId }, credentialPrincipal: { kind: 'account', accountId: ACCOUNT,
+      providerEnvironment: { kind: 'native', selection: { branchId: NEON_PARENT.branchId } }, credentialPrincipal: { kind: 'account', accountId: ACCOUNT,
         purpose: { consumer: { pluginId, localId: 'link' }, purpose: 'database.manage' },
         target: { kind: 'account', account: { service: { pluginId, localId: 'database' }, accountId: 'token' } } } } }] } as T;
 }
@@ -415,6 +461,7 @@ function transportFor(
   telemetry?: string,
 ): DeploymentReadTransportV1 {
   const base = createDeploymentEnvironmentDetailV1();
+  const railway = tabs === 'railway-domains';
   const baseHeader = createDeploymentEnvironmentHeaderV1({
     updatedAtMs: SPECIMEN_NOW - 0.4 * HOUR,
   });
@@ -438,7 +485,10 @@ function transportFor(
     // While a deploy runs, the incumbent it replaces still serves.
     ...(receiptState === 'running' || receiptState === 'queued' ? { targetLinks: base.targetLinks.map((link) => ({
       ...link, targetLink: { ...link.targetLink, activeDeploymentId: 'deployment-b' } })) } : {}),
-    ...(state === 'plugin' ? { targetLinks: base.targetLinks.map((link) => ({ ...link, targetLink: {
+    ...(railway ? { targetLinks: base.targetLinks.map((link) => ({ targetLink: {
+      ...link.targetLink, source: { kind: 'plugin' as const, contribution: RAILWAY_TARGET }, targetKind: 'railway', machines: [], members: [],
+      activeDeploymentId: receiptState === 'running' || receiptState === 'queued' ? 'deployment-b' : 'deployment-a',
+    }, content: RAILWAY_LINK })) } : state === 'plugin' ? { targetLinks: base.targetLinks.map((link) => ({ ...link, targetLink: {
       ...link.targetLink, source: { kind: 'plugin' as const, contribution: { pluginId: 'vercel', localId: 'project' } },
       targetKind: 'vercel', machines: [], members: [], machineId: 'machine-a', installationId: 'installation-a',
     } })) } : {}),
@@ -458,12 +508,13 @@ function transportFor(
       },
     })),
   });
-  const receipts = onMachine([
+  const receiptFixtures = [
     receiptFor('deployment-a', receiptState, 0.4, 'deploy', 'deployment-b', RECEIPT_TITLES[0]),
     receiptFor('deployment-b', 'succeeded', 26, 'deploy', 'deployment-d', RECEIPT_TITLES[1]),
     receiptFor('deployment-c', 'failed', 30, 'deploy', 'deployment-d', RECEIPT_TITLES[2]),
     receiptFor('deployment-d', 'succeeded', 52, 'rollback', null, undefined),
-  ], machineId);
+  ];
+  const receipts = onMachine(railway ? receiptFixtures.map(railwayReceipt) : receiptFixtures, machineId);
   const never = new Promise<never>(() => {});
   return {
     listDomains: fixtures.listDomains,
@@ -581,7 +632,7 @@ function specimenRestore(restore: string) {
  * `offline`, `started` (accepted, the rail shows it) or `conflict`. A held review is not drawn here: it opens
  * the real approval page, which only a real request has.
  */
-function specimenActions(deploy: string, restore: string | undefined) {
+function specimenActions(deploy: string, restore: string | undefined, railway: boolean) {
   const refusal = (error: string) => ({ ok: false as const, error } as never);
   const unsupported = async () => {
     await pause();
@@ -609,7 +660,7 @@ function specimenActions(deploy: string, restore: string | undefined) {
     // The step's masked pages, as `deployments.logs.read` serves them by ref.
     readLogs: async (input: Readonly<{ ref?: string; tail?: true; cursor?: { sourceRevision: string; token: string } }>) => {
       await pause();
-      return readStepLog(input) as never;
+      return readStepLog(railway && !input.ref ? { ...input, ref: 'railwayBuild' } : input) as never;
     },
     deploy: async () => {
       await pause();
@@ -661,6 +712,10 @@ const SPECIMEN_REMOVALS: Readonly<Record<string, Omit<DeploymentDispositionSheet
   nodelete: { subject: { kind: 'target', targetLinkId: 'link-pages' }, name: 'Docs', machine: null, provider: 'Cloudflare Pages',
     running: true, hasRetainedAssociations: true, canRemove: false,
     providerResource: { name: 'acme-docs', consequence: null, defaultChoice: 'unlink' } },
+  railway: { subject: { kind: 'target', targetLinkId: 'link-railway' }, name: 'Staging', machine: null, provider: 'Railway',
+    running: true, hasRetainedAssociations: true, canRemove: true,
+    providerResource: { name: 'backend', consequence: 'Delete this Railway service from the selected environment?',
+      defaultChoice: 'unlink' } },
   // A managed database project, from the Database page: the provider's own delete words, Environment kept.
   'data-created': { subject: { kind: 'target', targetLinkId: 'link-neon' }, name: 'Production', machine: null, provider: 'Neon',
     running: false, hasRetainedAssociations: true, canRemove: true,
@@ -702,10 +757,11 @@ export function DeploymentsSpecimen(
     return (match ?? [...named].sort((a, b) => b.name.length - a.name.length)[0])?.id ?? null;
   });
   const preview = React.useMemo(() => createSpecimenPreview(props.preview), [props.preview]);
-  const actions = React.useMemo(() => ({ ...specimenActions(props.deploy ?? 'unsupported', props.restore),
-    ...(preview ? specimenPreviewActions(preview) : {}) }), [props.deploy, props.restore, preview]);
-  // `?preview=` needs the signed-in Account's real deployment-target declarations (the Neon plugin's branch reader).
-  const { binding } = useServerCredentialAccountScopeBinding(preview ? getActiveServerId() : null);
+  const railway = props.tabs === 'railway-domains';
+  const actions = React.useMemo(() => ({ ...specimenActions(props.deploy ?? 'unsupported', props.restore, railway),
+    ...(preview ? specimenPreviewActions(preview) : {}) }), [props.deploy, props.restore, preview, railway]);
+  // Preview and platform specimens use the signed-in Account's installed deployment-target declarations.
+  const { binding } = useServerCredentialAccountScopeBinding(preview || railway ? getActiveServerId() : null);
   const cancellable = props.cancellable === 'true' ? true : props.cancellable === 'false' ? false : undefined;
   const receiptState = (
     [
@@ -753,7 +809,7 @@ export function DeploymentsSpecimen(
       demand={SHOWN}
       accountId={ACCOUNT}
       serverId="home"
-      lifetime={props.state === 'reader' ? null : preview ? binding : SPECIMEN_LIFETIME as never}
+      lifetime={props.state === 'reader' ? null : preview || railway ? binding : SPECIMEN_LIFETIME as never}
       sourceId="source-app"
     />
   );

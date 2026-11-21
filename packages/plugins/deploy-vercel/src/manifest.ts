@@ -4,6 +4,7 @@ import { accountActions, pluginIdentity } from './platform/accountActions.js';
 import { uploadAction } from './platform/upload.js';
 import { targetInputTypes, targetOptionsResources } from './platform/options.js';
 import { vercelGitIntegrations } from './platform/operations.js';
+import { vercelSelectorSchema } from './platform/selection.js';
 
 export const plugin = definePlugin({
   ...pluginIdentity,
@@ -114,6 +115,7 @@ export const plugin = definePlugin({
     ],
     accepts: ['static', 'server'], needs: ['repository', 'stateless'],
     sources: { gitIntegration: vercelGitIntegrations.map(provider => provider.kind), upload: true },
+    nativeSelectorSchema: vercelSelectorSchema, gitSource: { guarantee: 'exactCommit' },
     targetSchema: { type: 'object', properties: {}, additionalProperties: false }, linkSchema: projectPrepareResultSchema,
     actions: { inspect: 'targets-inspect-v1', link: 'project-link', create: 'project-create', deploy: 'deploy', uploadDeploy: 'deploy-upload-v1', observe: 'observe', cancel: 'cancel', promote: 'promote', rollback: 'rollback', teardown: 'teardown',
       logs: { build: 'build-logs-read', runtime: 'runtime-logs-read' }, variables: { read: 'variables-read', sync: 'variables-sync' },

@@ -18,8 +18,8 @@ export function createDeploymentTargetRoleAdmissionFixture(role: DeploymentTarge
         : dataRole ? role.toLowerCase().replaceAll('.', '-') : role;
     const providerIdentity = { providerAccountId: 'provider-owner', providerResourceId: 'provider-project',
         providerEnvironment: dataRole ? 'branch:branch-main' : 'preview:main' };
-    const providerEnvironment = dataRole ? { kind: 'custom' as const, id: 'branch-main' }
-        : { kind: 'preview' as const, gitBranch: 'main' };
+    const providerEnvironment = { kind: 'native' as const, selection: dataRole ? { branchId: 'branch-main' }
+        : { kind: 'preview', gitBranch: 'main' } };
     const targetLinkId = dataRole ? 'data-link' : 'target-link';
     const baseline = createDeploymentEnvironmentDetailV1();
     const environment = createDeploymentEnvironmentDetailV1({

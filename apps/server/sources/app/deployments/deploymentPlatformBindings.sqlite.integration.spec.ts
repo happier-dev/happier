@@ -67,7 +67,7 @@ it.each(['plain', 'e2ee'] as const)('commits %s platform bindings and exact same
         consumer: { pluginId: 'happier.deploy.vercel', localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' },
         target: { kind: 'account', account: { service: { pluginId: 'happier.machine.vercel', localId: 'vercel-account' }, accountId: 'selected' } } },
         providerIdentity: { providerAccountId: 'team_selected', providerResourceId: 'prj_selected', providerEnvironment: 'production' },
-        providerEnvironment: { kind: 'production' } };
+        providerEnvironment: { kind: 'native', selection: { kind: 'production' } } };
     const linkArtifact = await artifact('deployment-target-link.v1', linkContent);
     const linked = await inTx(tx => linkDeploymentTargetInTx(tx, owner.id, {
         serverId, environmentId: created.environmentId, expectedRevision: 1, requestKey: crypto.randomUUID(),

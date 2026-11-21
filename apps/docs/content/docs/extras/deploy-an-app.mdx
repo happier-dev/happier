@@ -54,6 +54,22 @@ connected or the provider's plan cannot be matched, the dated declared facts sta
 visible without a personal plan line. These are reference facts for choosing a
 setup, not a live quote.
 
+In unreleased 0.3, choose Railway in **Where it runs** to create a service from a
+GitHub repository and branch or link an existing Railway service. When you create
+a service, Railway builds the latest commit on the selected branch and
+automatically deploys later pushes to that branch. On a linked service,
+**Deploy** sends the exact commit you review. Push that commit to the configured
+branch first and make sure Railway's GitHub connection can read the repository.
+You can add a Railway-assigned address or a custom domain, manage variables, and
+read build and runtime log snapshots. Railway creates the service in each
+non-fork environment when you select a non-fork environment. Selecting a fork
+keeps the service in that fork.
+
+If a Railway-assigned address stays pending after you add it, copy the assigned
+hostname from the linked service and environment in Railway. Open **Domains**,
+choose **Check again** on the pending address, and enter that hostname. Happier
+checks the address and saves it when it finds a match.
+
 ## What you need
 
 - A signed-in Happier app and an online Machine connected to the same Home.

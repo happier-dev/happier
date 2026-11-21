@@ -11,7 +11,7 @@ const project = { id: 'prj_exact', accountId: 'team_exact', name: 'example-app',
   link: { type: 'github', org: 'example', repo: 'app', repoId: 123 }, additiveVendorField: true };
 const gitAccess = { gitAccount: { provider: 'github', namespaceId: 456 },
   repos: [{ id: 123, provider: 'github', namespace: 'example', slug: 'app', defaultBranch: 'main' }] };
-const environment = { kind: 'production' as const };
+const environment = { kind: 'native', selection: { kind: 'production' } } as const;
 const identity = { providerAccountId: project.accountId, providerResourceId: project.id, providerEnvironment: 'production' };
 const selection = { providerIdentity: identity, providerEnvironment: environment, repository };
 const preparation = { providerIdentity: identity, providerEnvironment: environment,
@@ -75,7 +75,7 @@ describe('Vercel internal platform producer', () => {
     const h = boundary([{ body: { id: 'dpl_exact', readyState: 'READY', target: null, url: 'app-exact.vercel.app',
       aliasAssigned: true, alias: ['app-branch.vercel.app'] } }]);
     const result = await provider.observeVercelDeployment({ providerDeploymentId: 'dpl_exact',
-      providerIdentity: { ...identity, providerEnvironment: 'preview' }, providerEnvironment: { kind: 'preview', gitBranch: 'feature/qa' } }, h.context);
+      providerIdentity: { ...identity, providerEnvironment: 'preview' }, providerEnvironment: { kind: 'native', selection: { kind: 'preview', gitBranch: 'feature/qa' } } }, h.context);
     expect(result).toMatchObject({ urls: ['https://app-exact.vercel.app'] });
   });
 
@@ -85,7 +85,7 @@ describe('Vercel internal platform producer', () => {
   ])('does not infer first Production from an unreadable production list ($code)', async sample => {
     const h = boundary([{ body: project }, sample]);
     expect(await provider.prepareVercelProject({ ...selection,
-      providerEnvironment: { kind: 'preview', gitBranch: 'feature/qa' } }, h.context))
+      providerEnvironment: { kind: 'native', selection: { kind: 'preview', gitBranch: 'feature/qa' } } }, h.context))
       .toMatchObject({ code: sample.code, phase: 'link' });
     expect(h.requests.every(request => request.method === 'GET')).toBe(true);
   });
@@ -179,15 +179,15 @@ describe('Vercel internal platform producer', () => {
 
   it('keeps production, branch preview and custom payloads isolated', async () => {
     const cases = [
-      { providerEnvironment: { kind: 'preview' as const, gitBranch: 'feature/exact' }, fields: {} },
-      { providerEnvironment: { kind: 'custom' as const, id: 'env_exact' }, fields: { customEnvironmentSlugOrId: 'env_exact' } },
+      { providerEnvironment: { kind: 'native' as const, selection: { kind: 'preview' as const, gitBranch: 'feature/exact' } }, fields: {} },
+      { providerEnvironment: { kind: 'native' as const, selection: { kind: 'custom' as const, id: 'env_exact' } }, fields: { customEnvironmentSlugOrId: 'env_exact' } },
     ];
     for (const sample of cases) {
       const h = boundary([{ body: { id: 'dpl_exact', readyState: 'BUILDING' } }]);
       await provider.deployVercelCommit({ ...preparation, providerEnvironment: sample.providerEnvironment, sourceIntent: source }, h.context);
       const sent = JSON.parse(new TextDecoder().decode(h.requests[0].body));
       expect(sent).toEqual({ name: project.name, project: project.id, ...sample.fields,
-        gitSource: { type: 'github', repoId: '123', ref: sample.providerEnvironment.kind === 'preview' ? 'feature/exact' : source.sha, sha: source.sha } });
+        gitSource: { type: 'github', repoId: '123', ref: sample.providerEnvironment.selection.kind === 'preview' ? 'feature/exact' : source.sha, sha: source.sha } });
       expect(sent).not.toHaveProperty('target');
     }
   });

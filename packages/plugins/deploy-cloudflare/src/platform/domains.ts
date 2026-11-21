@@ -6,6 +6,7 @@ import type { PluginAccountActionContext, PluginActionDeclaration, PluginActionD
 import { isObject } from '../connectedAccounts/probe.js';
 import { request } from './deploymentHttp.js';
 import { pagesCommon, pagesIo } from './pagesPrepare.js';
+import { cloudflareRoleSchema, type CloudflareRoleInput } from './targetSelection.js';
 
 type Operation = 'read' | 'add' | 'verify' | 'remove';
 type DomainAction = PluginActionDefinition<Extract<PluginActionDeclaration, { execution: { target: 'account' } }>>;
@@ -14,7 +15,7 @@ function refuse(code: string): never {
     ? { failureCause: projectActionFailureCauseV1({ code }, 'deployment.cloudflare.domain') } : {}) });
   throw code === 'deployment_unavailable' ? withActionFailureDiagnostic(error, { phase: 'deployment.cloudflare.domain', causeKind: 'not_found' }) : error;
 }
-async function native(context: PluginAccountActionContext, input: DeploymentTargetDomainInputV1,
+async function native(context: PluginAccountActionContext, input: CloudflareRoleInput<DeploymentTargetDomainInputV1>,
   path: string, operation: NonNullable<Parameters<typeof request>[4]> = ['read', 'GET'], body?: unknown) {
   const reply = await request(pagesIo(context), input.providerIdentity.providerAccountId, path,
     operation[0] === 'read' ? 'observe' : 'send', operation, body);
@@ -23,7 +24,7 @@ async function native(context: PluginAccountActionContext, input: DeploymentTarg
     { phase: `deployment.cloudflare.${reply.phase}`, causeKind: 'native_failure', error: reply });
   return reply.value;
 }
-function removed(input: DeploymentTargetDomainInputV1): DeploymentTargetDomainResultV1 {
+function removed(input: CloudflareRoleInput<DeploymentTargetDomainInputV1>): DeploymentTargetDomainResultV1 {
   return { v: 1, hostname: input.domain.hostname, state: 'removed', dns: [] };
 }
 function isAbsent(error: unknown): boolean { return isPluginError(error) && error.code === 'deployment_unavailable'; }
@@ -32,8 +33,8 @@ function isAbsent(error: unknown): boolean { return isPluginError(error) && erro
  * https://developers.cloudflare.com/api/resources/pages/subresources/projects/subresources/domains/
  * https://developers.cloudflare.com/api/resources/workers/subresources/domains/ (checked 2026-11-10).
  */
-async function pages(input: DeploymentTargetDomainInputV1, context: PluginAccountActionContext, operation: Operation): Promise<DeploymentTargetDomainResultV1> {
-  if (input.providerEnvironment.kind !== 'production') refuse('unsupported_action');
+async function pages(input: CloudflareRoleInput<DeploymentTargetDomainInputV1>, context: PluginAccountActionContext, operation: Operation): Promise<DeploymentTargetDomainResultV1> {
+  if (input.providerEnvironment.selection.kind !== 'production') refuse('unsupported_action');
   const projectName = input.preparedNative?.projectName;
   if (!projectName) refuse('deployment_content_unavailable');
   const root = `/pages/projects/${encodeURIComponent(projectName)}`;
@@ -70,8 +71,8 @@ async function pages(input: DeploymentTargetDomainInputV1, context: PluginAccoun
   return { v: 1, hostname: input.domain.hostname, state, dns };
 }
 
-async function workers(input: DeploymentTargetDomainInputV1, context: PluginAccountActionContext, operation: Operation): Promise<DeploymentTargetDomainResultV1> {
-  const environment = input.providerEnvironment;
+async function workers(input: CloudflareRoleInput<DeploymentTargetDomainInputV1>, context: PluginAccountActionContext, operation: Operation): Promise<DeploymentTargetDomainResultV1> {
+  const environment = input.providerEnvironment.selection;
   if (environment.kind !== 'script') refuse('unsupported_action');
   const zone = input.domain.zone;
   if (!zone) refuse('deployment_invalid');
@@ -113,9 +114,9 @@ function action(product: 'pages' | 'workers', operation: Operation): DomainActio
   return { ...pagesCommon, hostAccess: [`cloudflare-${product}`, 'deploy.manage'],
     title: `${operation} Cloudflare ${product} Domain`, dangerLevel: write ? 'writesRemote' as const : 'safe' as const,
     readOnly: !write, ...(write ? { confirmation: { title: `${operation} this Cloudflare Domain?` } } : {}),
-    inputSchema: inputs[`domains.${operation}`].jsonSchema, resultSchema: output.jsonSchema,
+    inputSchema: cloudflareRoleSchema(inputs[`domains.${operation}`].jsonSchema, product), resultSchema: output.jsonSchema,
     async run(raw: JsonValue, context: PluginAccountActionContext): Promise<JsonValue> {
-      const input = raw as unknown as DeploymentTargetDomainInputV1;
+      const input = raw as unknown as CloudflareRoleInput<DeploymentTargetDomainInputV1>;
       return product === 'pages' ? pages(input, context, operation) : workers(input, context, operation);
     } };
 }

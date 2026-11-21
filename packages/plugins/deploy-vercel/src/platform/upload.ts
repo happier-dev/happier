@@ -1,3 +1,4 @@
+import { vercelRoleSchema, type VercelRoleInput } from './selection.js';
 import { projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { createHash } from 'node:crypto';
 import { lstat, readdir, readFile, readlink } from 'node:fs/promises';
@@ -7,6 +8,9 @@ import { DeploymentTargetRoleInputProtocolSchemasV1, DeploymentTargetRoleResultV
 import type { PluginActionDeclaration } from '@happier-dev/plugin-sdk/actions';
 import { deployVercelFiles, observeVercelDeployment, uploadVercelSourceFile, type VercelUploadedFile } from './operations.js';
 
+const uploadInputSchema = DeploymentTargetRoleInputProtocolSchemasV1.uploadDeploy;
+type UploadInput = VercelRoleInput<DeploymentTargetUploadDeployInputV1>;
+
 /**
  * Vercel REST v2/files + v13/deployments, characterized 2026-10-31.
  * Binary bytes/SHA1 use the documented upload API. Modes and symlink link-text
@@ -14,10 +18,10 @@ import { deployVercelFiles, observeVercelDeployment, uploadVercelSourceFile, typ
  * packages/client/src/utils/{hashes,index}.ts (the OpenAPI omits mode).
  * Only the invocation's admitted source root is read. Project builds run remotely.
  */
-async function upload(input: DeploymentTargetUploadDeployInputV1, context: PluginInvocationContext) {
+async function upload(input: UploadInput, context: PluginInvocationContext) {
   const io = { http: context.services.http, signal: context.signal, now: () => Date.now() };
   if (input.providerDeploymentId) return observeVercelDeployment(input, io);
-  if (input.sourceIntent.kind !== 'repository' || 'scriptName' in input.providerEnvironment) {
+  if (input.sourceIntent.kind !== 'repository') {
     throw new PluginError({ code: 'unsupported_action', details: { phase: 'source' } });
   }
   if (!input.preparedNative) throw new PluginError({ code: 'deployment_content_unavailable' });
@@ -69,10 +73,10 @@ export const uploadAction: Extract<PluginActionDeclaration, { execution?: { targ
   hostAccess: ['vercel-api', 'deploy.manage'], connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'deploy.manage' }],
   title: 'Upload the reviewed Vercel source', dangerLevel: 'writesRemote', readOnly: false,
   confirmation: { title: 'Upload this reviewed commit to Vercel?' },
-  inputSchema: DeploymentTargetRoleInputProtocolSchemasV1.uploadDeploy.jsonSchema,
+  inputSchema: vercelRoleSchema(uploadInputSchema.jsonSchema),
   resultSchema: DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema,
   async run(input: JsonValue, context: PluginInvocationContext) {
-    const result = await upload(input as unknown as DeploymentTargetUploadDeployInputV1, context);
+    const result = await upload(input as unknown as UploadInput, context);
     if ('code' in result) throw withActionFailureDiagnostic(new PluginError({ code: result.code, retryable: result.retryable, details: { phase: result.phase },
       failureCause: projectActionFailureCauseV1(result, `deployment.vercel.${result.phase}`) }),
       { phase: `deployment.vercel.${result.phase}`, causeKind: 'native_failure', error: result });

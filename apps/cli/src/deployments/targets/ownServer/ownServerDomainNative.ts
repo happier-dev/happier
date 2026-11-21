@@ -177,6 +177,8 @@ export function createOwnServerDomainNative(host: Readonly<{
             return readDeploymentDomainArtifactV1(reference, await host.open(reference.contentArtifactId, context));
         })();
         if (!opened.ok) return refuse(opened.error, undefined, opened.failureCause);
+        if (opened.content.hostname === null) return refuse('target_mismatch');
+        const domain = { ...opened.content, hostname: opened.content.hostname };
         const removing = job.kind === 'domain' ? !job.capture.desired : isDeploymentDomainRemoveActionIdV1(job.actionId);
         const observing = job.kind === 'domain' && job.actionId === 'deployments.domains.verify';
         const withoutWorkload = removing || observing || job.kind === 'domainDns';
@@ -190,7 +192,7 @@ export function createOwnServerDomainNative(host: Readonly<{
             const link = environment.targetLinks.find(item => item.targetLink.id === job.input.targetLinkId)?.targetLink;
             if (!link || link.targetKind !== 'ownServer') return refuse('target_mismatch');
             environmentContent = environment.content;
-            if (opened.content.target.kind === 'telemetry') {
+            if (domain.target.kind === 'telemetry') {
                 if (!job.input.telemetryMachineId || job.input.telemetryMachineId !== environment.environment.telemetryMachineId) return refuse('target_mismatch');
                 members = telemetryApp || job.input.telemetryMachineId === host.machineId
                     ? [{ machineId: host.machineId, installationId: identity.installationId, state: 'active' }] : [];
@@ -210,14 +212,14 @@ export function createOwnServerDomainNative(host: Readonly<{
             members = job.topology.members.map(member => ({ ...member, state: 'active' }));
         }
         if (environmentContent) {
-            const resolved = resolveDomainIngress(opened.content, environmentContent.ingress);
+            const resolved = resolveDomainIngress(domain, environmentContent.ingress);
             if (resolved.status === 'unavailable') return refuse(resolved.reason, resolved.details);
             environmentContent = { ...environmentContent, ingress: resolved.ingress };
         }
         const member = members.find(member => member.machineId === host.machineId && member.installationId === identity.installationId);
-        const telemetry = opened.content.target.kind === 'telemetry';
+        const telemetry = domain.target.kind === 'telemetry';
         const nativeService = member && (!telemetry || telemetryApp);
-        const serviceName = telemetryApp?.serviceName ?? opened.content.target.service;
+        const serviceName = telemetryApp?.serviceName ?? domain.target.service;
         const serviceEnvironmentId = telemetryApp?.environmentId ?? job.input.environmentId;
         if (!withoutWorkload && nativeService) await host.ensureServiceObservations?.({
             environmentId: serviceEnvironmentId, composeService: serviceName,
@@ -281,7 +283,7 @@ export function createOwnServerDomainNative(host: Readonly<{
                 const daemonGroupId = process.getgid?.();
                 if (!admin.daemonPrimaryGroup || daemonGroupId === undefined) return refuse('required_fact_unavailable',
                     { requiredFact: admin.daemonPrimaryGroup ? 'daemonPrimaryGroupId' : 'daemonPrimaryGroup' });
-                const prepared = host.runtime?.prepareDomainCaddy?.({ domain: opened.content, environment: environmentContent,
+                const prepared = host.runtime?.prepareDomainCaddy?.({ domain: domain, environment: environmentContent,
                     replicas, retainedCaddy, privateNetworks, daemonGroup: admin.daemonPrimaryGroup, daemonGroupId });
                 if (!prepared) return refuse('native_route_unavailable');
                 if (prepared.status !== 'ready') return refuse(prepared.reason, 'details' in prepared ? prepared.details : undefined);
@@ -306,7 +308,7 @@ export function createOwnServerDomainNative(host: Readonly<{
                 if (!networkId || !acquireEndpoint) return serviceUnavailable(job, 'route_upstreams');
                 telemetryBridge = await acquireEndpoint({ docker, engine: { id: docker.engineId, kind: docker.engineKind ?? 'unknown' }, networkId });
             }
-            return { identity, signal, environmentContent, members, domain: opened.content, docker, run, caddy,
+            return { identity, signal, environmentContent, members, domain, docker, run, caddy,
                 get topology() { return DeploymentDomainMachineTopologyV1Schema.parse({ machineId: host.machineId,
                     installationId: identity.installationId, dockerEngineId: docker.engineId, privateNetworks, caddy, replicas,
                     ...(telemetryBridge ? { telemetryBridge } : {}), ...(telemetryApp ? { telemetryApp } : {}) }); },

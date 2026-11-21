@@ -74,6 +74,7 @@ export function DeploymentStepLogs(
     facts: DeploymentReceiptFactsV1;
     /** The receipt is still running: a running step's log can grow and be followed. */
     running: boolean;
+    followLog?: boolean;
     serverId: string;
     readLogs: DeploymentReadLogs | null;
     fileStem: string;
@@ -133,7 +134,7 @@ export function DeploymentStepLogs(
     filter === 'failed' && hasFailed
       ? rows.filter((row) => row.step && isFailedStep(row.step))
       : rows;
-  const followable = props.running && open !== null && (open.step === null || open.step.state === 'running');
+  const followable = props.running && props.followLog !== false && open !== null && (open.step === null || open.step.state === 'running');
 
   const view = React.useMemo(() => createNativeLogView(), [openId]);
   const root = React.useRef<View>(null);

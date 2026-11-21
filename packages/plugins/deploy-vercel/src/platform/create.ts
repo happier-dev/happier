@@ -1,6 +1,7 @@
+import { vercelRoleSchema, type VercelRoleInput } from './selection.js';
 import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs,
   DeploymentTargetLinkProviderContentV1ProtocolSchema as output,
-  type JsonValue } from '@happier-dev/plugin-sdk';
+  type DeploymentTargetCreateInputV1, type JsonValue } from '@happier-dev/plugin-sdk';
 import { PluginError, isPluginError, projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 import { normalizeScmBranchSourceRef } from '@happier-dev/plugin-sdk/scm';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
@@ -9,7 +10,7 @@ import type { HttpResponse } from '@happier-dev/plugin-sdk/http';
 import { vercelGitGrantUrl, supportsVercelGitRepository, readVercelGitLink, vercelEndpoint, vercelRequest } from './operations.js';
 import { targetInputHints } from './options.js';
 
-type CreateInput = ReturnType<typeof inputs.create.parse>;
+type CreateInput = VercelRoleInput<DeploymentTargetCreateInputV1>;
 type ProductionBranchOutcome = NonNullable<NonNullable<ReturnType<typeof output.parse>['preparedNative']>['productionBranchOutcome']>;
 type AccountAction = Extract<PluginActionDeclaration, { execution: { target: 'account' } }> & {
   run(input: JsonValue, context: PluginAccountActionContext): Promise<JsonValue>;
@@ -34,15 +35,17 @@ export const projectCreateAction: AccountAction = {
   connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'deploy.manage' }],
   dangerLevel: 'writesRemote', readOnly: false,
   confirmation: { title: 'Create this Vercel project? Provider billing may apply.' },
-  inputSchema: inputs.create.jsonSchema, resultSchema: output.jsonSchema,
+  inputSchema: vercelRoleSchema(inputs.create.jsonSchema), resultSchema: vercelRoleSchema(output.jsonSchema),
   inputHints: { fields: [targetInputHints.fields[0],
     { path: 'resourceName', title: 'Project name', widget: 'text', required: true },
     { path: 'sourceMethod', title: 'Source method', widget: 'select', required: true, defaultValue: 'upload',
       options: [{ value: 'upload', label: 'Upload' }, { value: 'gitIntegration', label: 'Git integration' }] },
     { path: 'productionBranch', title: 'Production branch', widget: 'text',
       visibleWhen: { op: 'eq', path: 'sourceMethod', value: 'gitIntegration' } },
-    { path: 'providerEnvironment.kind', title: 'Environment', widget: 'select', required: true,
-      defaultValue: 'production', options: [{ value: 'production', label: 'Production' }] },
+    { path: 'providerEnvironment', title: 'Environment', widget: 'select', required: true,
+      inputType: { pluginId: 'happier.deploy.vercel', localId: 'new-project-environment' },
+      defaultValue: { kind: 'native', selection: { kind: 'production' } },
+      options: [{ value: { kind: 'native', selection: { kind: 'production' } }, label: 'Production' }] },
   ] },
   async run(value, context) {
     const input = value as unknown as CreateInput;
@@ -53,7 +56,7 @@ export const projectCreateAction: AccountAction = {
       }
     } else if (input.sourceMethod !== 'upload') throw new PluginError({ code: 'unsupported_action',
       details: { phase: 'source', reason: 'unsupported_source_method' } });
-    if (input.providerEnvironment.kind !== 'production') throw new PluginError({ code: 'unsupported_action',
+    if (input.providerEnvironment.selection.kind !== 'production') throw new PluginError({ code: 'unsupported_action',
       details: { phase: 'link', reason: 'new_project_requires_production' } });
     const http = context.services.http;
     if (!http) throw new PluginError({ code: 'client_required' });
@@ -104,7 +107,7 @@ export const projectCreateAction: AccountAction = {
     const gitLink = input.sourceMethod === 'gitIntegration' ? readVercelGitLink(body.link, input.repository!) : null;
     return projectNativeJsonValueForTransport({ credentialPrincipal: input.credentialPrincipal,
       providerIdentity: { providerAccountId: body.accountId, providerResourceId: body.id, providerEnvironment: 'production' },
-      providerEnvironment: { kind: 'production' }, sourceMethod: input.sourceMethod,
+      providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, sourceMethod: input.sourceMethod,
       ...(input.sourceMethod === 'gitIntegration' ? { repositoryAccess: gitLink
         ? { status: 'ready', repository: input.repository! }
         : { status: 'needsGitAccess', repository: input.repository!, grantUrl: vercelGitGrantUrl(input.repository!.kind) } } : {}),

@@ -57,7 +57,7 @@ export function useNativeLogViewer(input: LogViewerControlsV1 & Readonly<{
     first: MachineServiceFirstLogRead; read: () => Promise<void>;
     accountLifetime: ServerAccountScopeLifetime | null; reference: LogsReference | null;
     sourceKey: string; active: boolean; fileName: string;
-    /** False for a log that can no longer grow: it is read once and never followed. */
+    /** False when the source supplies a finite page without Follow. */
     followable?: boolean;
 }>) {
     const followable = input.followable !== false;
@@ -67,7 +67,7 @@ export function useNativeLogViewer(input: LogViewerControlsV1 & Readonly<{
     const resourceFirst = reference?.hostRead === 'deployments.logs' && reference.input.kind === 'runtime';
     // The Resource hook must accept absent admission without creating a store or acquiring transport demand.
     const followed = useMachineServiceLogsResource({ accountLifetime, reference,
-        active: input.active && followable, follow: follow && followable });
+        active: input.active && (resourceFirst || followable), follow: follow && followable });
     const baseline = React.useRef<Readonly<{
         lifetime: NonNullable<typeof accountLifetime>; index: LogIndexV1; truncated: boolean; secretMasking: boolean;
     }> | null>(null);
@@ -173,7 +173,7 @@ export function useNativeLogViewer(input: LogViewerControlsV1 & Readonly<{
     const selection = viewer?.viewState?.selection;
     const contextWindow = sameSource && selection?.kind === 'excerpt'
         ? { startLine: selection.startLine, endLine: selection.endLine } : null;
-    const navigation = { atLatest, following: atLatest && follow,
+    const navigation = { atLatest, following: atLatest && follow && followable,
         newLineCount: atLatest ? 0 : Math.max(0, (index?.lines.length ?? 0) - viewport.seenLines),
         jumpTarget: index?.lines.at(-1) ?? null, contextTarget, contextWindow,
         setAtLatest, jumpToLatest, showContext };
@@ -209,9 +209,9 @@ export function useNativeLogViewer(input: LogViewerControlsV1 & Readonly<{
     const refresh = followed?.refresh;
     const readAgain = React.useCallback(async () => {
         if (!resourceFirst) return read();
-        setFollow(true);
+        if (followable) setFollow(true);
         await refresh?.();
-    }, [resourceFirst, read, refresh]);
+    }, [resourceFirst, read, refresh, followable]);
     const firstRead = authorityWithdrawal && firstState.kind === 'read'
         ? { ...firstState, value: authorityWithdrawal } : firstState;
     const followedRead = authorityWithdrawal && followed ? { ...followed, lastGoodPage: undefined } : followed;

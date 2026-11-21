@@ -90,7 +90,7 @@ describe('deployment current-health read admission', () => {
             credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: { consumer: action, purpose: 'deploy-manage' },
                 target: { kind: 'account', account: credentialRef } },
             providerIdentity: { providerAccountId: 'org', providerResourceId: 'project', providerEnvironment: 'branch' },
-            providerEnvironment: { kind: 'custom', id: 'branch' }, database: 'neondb', sql: 'select 1', params: {} };
+            providerEnvironment: { kind: 'native', selection: { branchId: 'branch' } }, database: 'neondb', sql: 'select 1', params: {} };
         expect(projectDeploymentReadAdmissionV1('action.invoke', { action, input })).toBeUndefined();
         expect(DeploymentReadAdmissionV1Schema.safeParse({ actionId: 'action.invoke', action,
             environmentId: native.environmentId, targetLinkId: input.targetLinkId, expectedRevision: 4,

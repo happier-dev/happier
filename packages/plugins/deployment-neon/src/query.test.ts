@@ -16,7 +16,7 @@ const credentialRef = { service: { pluginId: 'happier.deploy.neon', localId: 'ne
 const input = { ...DeploymentTargetPreparationBaseV1ProtocolSchema.parse({ v: 1, serverId: 'home', environmentId: 'environment', expectedRevision: 1,
     targetLinkId: 'data-link', expectedTargetLinkRevision: 1, credentialRef,
     credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: { consumer: { pluginId: credentialRef.service.pluginId, localId: 'database' }, purpose: 'deploy-manage' }, target: { kind: 'account', account: credentialRef } },
-    providerIdentity: { providerAccountId: 'org', providerResourceId: 'project', providerEnvironment: 'br-main' }, providerEnvironment: { kind: 'custom', id: 'br-main' } }),
+    providerIdentity: { providerAccountId: 'org', providerResourceId: 'project', providerEnvironment: 'br-main' }, providerEnvironment: { kind: 'native', selection: { branchId: 'br-main' } } }),
     database: 'neondb', sql: 'select $1::text as value', params: { '1': 'hello' } };
 
 // Public driver response example and Neon v2 schema vectors, recorded 2026-11-12.

@@ -10,7 +10,7 @@ const create = { serverId: 'home', environmentId: 'environment', expectedRevisio
     credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: { consumer: {
       pluginId: 'example.platform', localId: 'create' }, purpose: 'deploy.manage' },
       target: { kind: 'account', account: credential } },
-    providerAccountId: 'native-account', providerEnvironment: { kind: 'production' }, resourceName: 'reviewed-name',
+    providerAccountId: 'native-account', providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, resourceName: 'reviewed-name',
     sourceMethod: 'upload' } };
 
 it('admits reviewed runtime creation without fabricating an existing provider resource', () => {
@@ -55,6 +55,6 @@ it('binds native-create replay to its request key while exact association recove
   const { providerCreate, ...base } = create;
   const recovery = { ...base, provisioned: true, provider: { credentialPrincipal: providerCreate.credentialPrincipal,
     providerIdentity: { providerAccountId: 'native-account', providerResourceId: 'returned-id', providerEnvironment: 'production' },
-    providerEnvironment: { kind: 'production' } } };
+    providerEnvironment: { kind: 'native', selection: { kind: 'production' } } } };
   expect(readDeploymentActionOperationRequestIdV1('deployments.targets.link', recovery)).toBeUndefined();
 });

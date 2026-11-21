@@ -19,7 +19,7 @@ const roleInput = DeploymentTargetRoleInputSchemasV1.deploy.parse({ v: 1 as cons
     purpose: { consumer: { pluginId: 'acme.fixture', localId: 'target' }, purpose: 'deploy' },
     target: { kind: 'account' as const, account: credentialRef } },
   providerIdentity: { providerAccountId: 'provider-account', providerResourceId: 'resource', providerEnvironment: 'production' },
-  providerEnvironment: { kind: 'production' as const }, sourceMethod: 'gitIntegration' as const,
+  providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, sourceMethod: 'gitIntegration' as const,
   sourceIntent: { kind: 'repository' as const, projectSourceId: 'source', sourceRevision: 1, sha: 'a'.repeat(40),
     compose: { path: 'compose.yaml', profiles: [], services: [] } } });
 const request = { action: { pluginId: 'acme.fixture', localId: 'deploy' }, role: 'deploy' as const, input: roleInput };

@@ -204,7 +204,11 @@ export const DeploymentDomainGetInputV1Schema = lazyZodSchema(() => z.strictObje
 export const DeploymentDomainListInputV1Schema = lazyZodSchema(() => z.strictObject({ ...environment,
     cursor: z.optional(id), limit: z.optional(z.number().check(z.int(), z.positive())),
 }));
-export const DeploymentDomainAttachedVerifyInputV1Schema = DeploymentDomainRemoveInputV1Schema;
+export const DeploymentDomainAttachedVerifyInputV1Schema = lazyZodSchema(() => z.extend(DeploymentDomainRemoveInputV1Schema, {
+    /** The reviewed provider hostname used to recover a missing assignment observation. */
+    assignedHostname: z.optional(id),
+}));
+export type DeploymentDomainAttachedVerifyInputV1 = z.infer<typeof DeploymentDomainAttachedVerifyInputV1Schema>;
 /** Private finite draft inspection; no Domain or Artifact is allocated. */
 export const DeploymentDomainPreviewInputV1Schema = lazyZodSchema(() => z.strictObject({
     ...environment, mode: z.literal('preview'), targetLinkId: id, expectedRevision: revision,

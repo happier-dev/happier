@@ -364,5 +364,5 @@ function buildManagedDataActionDraft(input: Readonly<{
   return buildPlatformTargetDraft({ target: { pluginId: input.target.pluginId, inspectLocalId: input.operation.action,
     purpose: input.operation.credential.purpose }, ownerAccountId: input.lifetime.scope.accountId,
     serverId: input.lifetime.scope.serverId, environment: input.environment, account: input.account, repository: null,
-    values: { ...managedDataOperationOperands(input.operation, input.values, input.requestKey), providerEnvironment: { kind: 'production' } } });
+    values: { ...managedDataOperationOperands(input.operation, input.values, input.requestKey), providerEnvironment: { kind: 'native', selection: {} } } });
 }

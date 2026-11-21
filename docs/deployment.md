@@ -585,6 +585,28 @@ direct execution and retained operation reads preserve the typed failure cause
 and the provisioned `deployments.targets.link` recovery input; replay does not
 create another provider project.
 
+In unreleased 0.3, you can create a Railway service from a selected GitHub
+repository and branch or link an existing service. Railway builds the latest
+commit on the connected branch at creation and redeploys when commits are
+pushed. For an explicit Deploy, Check confirms the service repository and
+Railway's access to it. The reviewed checkout must be clean and the commit must
+be on the published branch. Deploy submits that exact SHA. [Railway Manage
+Services](https://docs.railway.com/integrations/api/manage-services) · [Railway
+GitHub autodeploys](https://docs.railway.com/deployments/github-autodeploys)
+
+The protected Link and receipt carry provider coordinates as
+`providerEnvironment: { kind: 'native', selection }`. Each deployment target
+declares its closed `nativeSelectorSchema`. Protocol composes that schema into
+the target's role inputs and checks those declarations at manifest admission.
+The Link and receipts keep a separate `providerIdentity` tuple for comparison.
+
+If a Railway-assigned address remains pending without a hostname, the existing
+Domain Verify action accepts the exact hostname the person found on the linked
+service. Railway checks the project's service and environment for that
+provider-assigned address before the shared Domain owner records it. A check
+reads the address inventory and never creates another address.
+[Railway Manage Domains](https://docs.railway.com/integrations/api/manage-domains)
+
 The existing `DeploymentTargetRoleResultV1` carries optional `uploadProvenance`: the exact source manifest and a provider build location, or the controller container image, toolchain name/version and prepared-output manifest fingerprint. This evidence lives in the existing receipt's platform observation, displayed by the receipt and its Build logs through one shared presenter. The canonical observation writer preserves the original evidence when subsequent status reads return lifecycle state alone; it creates no upload store or additional receipt. Provider preparation's existing `reviewNotice` discloses the upload build location and Cloudflare pins before execution.
 
 This document records the server implementation behind deployment. Operator recipes and configuration are owned by the published [self-hosting guide](../apps/docs/content/docs/self-hosting/index.mdx), including [Docker and Kubernetes](../apps/docs/content/docs/self-hosting/docker.mdx#kubernetes).

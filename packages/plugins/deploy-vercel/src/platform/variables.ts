@@ -1,3 +1,4 @@
+import { vercelRoleSchema, type VercelRoleInput } from './selection.js';
 import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs,
   DeploymentTargetVariablesReadResultV1ProtocolSchema as readOutput,
   DeploymentTargetVariablesSyncResultV1ProtocolSchema as syncOutput, PluginError,
@@ -13,8 +14,8 @@ import { vercelEndpoint, vercelRequest } from './operations.js';
 import { createDeploymentTargetVariableSyncV1, projectDeploymentTargetVariablesV1,
   type DeploymentTargetObservedVariableV1 } from '@happier-dev/deployment-protocol/v1';
 
-type Read = DeploymentTargetVariablesReadInputV1;
-type Sync = DeploymentTargetVariablesSyncInputV1;
+type Read = VercelRoleInput<DeploymentTargetVariablesReadInputV1>;
+type Sync = VercelRoleInput<DeploymentTargetVariablesSyncInputV1>;
 type FailureCode = DeploymentTargetVariablesSyncResultV1['failures'][number]['code'];
 function writeFailureCode(error: unknown): FailureCode {
   if (!isPluginError(error)) return 'outcome_unknown';
@@ -30,9 +31,7 @@ function io(ctx: PluginAccountActionContext) {
   return { http: ctx.services.http, signal: ctx.signal, now: () => Date.now() };
 }
 function scope(input: Read) {
-  const environment = input.providerEnvironment;
-  if (environment.kind === 'script' || 'scriptName' in environment) throw new PluginError({ code: 'unsupported_action' });
-  return environment;
+  return input.providerEnvironment.selection;
 }
 function selected(row: Record<string, unknown>, input: Read): boolean {
   const environment = scope(input);
@@ -123,10 +122,10 @@ const common = { execution: { target: 'account', account: { artifactId: 'account
   connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'deploy.manage' }] } as const;
 export const variableActions = {
   'variables-read': { ...common, title: 'Read Vercel variable metadata', dangerLevel: 'safe', readOnly: true,
-    inputSchema: inputs['variables.read'].jsonSchema, resultSchema: readOutput.jsonSchema,
+    inputSchema: vercelRoleSchema(inputs['variables.read'].jsonSchema), resultSchema: readOutput.jsonSchema,
     run: (input: JsonValue, ctx: PluginAccountActionContext) => read(input as unknown as Read, ctx) },
   'variables-sync': { ...common, title: 'Synchronize the reviewed Vercel variables', dangerLevel: 'writesRemote', readOnly: false,
     confirmation: { title: 'Save these variables to Vercel?' },
-    inputSchema: inputs['variables.sync'].jsonSchema, resultSchema: syncOutput.jsonSchema,
+    inputSchema: vercelRoleSchema(inputs['variables.sync'].jsonSchema), resultSchema: syncOutput.jsonSchema,
     run: (input: JsonValue, ctx: PluginAccountActionContext) => sync(input as unknown as Sync, ctx) },
 } as const;

@@ -14,7 +14,7 @@ export type {
     DeploymentTargetCredentialPrincipalV1,
     DeploymentTargetProviderIdentityV1, DeploymentTargetProviderEnvironmentV1,
     DeploymentTargetRepositoryAccessV1, DeploymentTargetRoleCommonInputV1,
-    DeploymentTargetPreparationBaseV1, DeploymentTargetInspectInputV1,
+    DeploymentTargetPreparationBaseV1, DeploymentTargetCreateInputV1, DeploymentTargetInspectInputV1,
     DeploymentTargetLinkRoleInputV1, DeploymentTargetLifecycleInputV1,
     DeploymentTargetDeployInputV1, DeploymentTargetUploadDeployInputV1,
     DeploymentTargetObserveInputV1, DeploymentTargetCancelInputV1,
@@ -22,17 +22,17 @@ export type {
     DeploymentTargetPromoteInputV1, DeploymentTargetTeardownInputV1,
     DeploymentTargetRuntimeRoleV1, DeploymentTargetRoleInputV1,
     DeploymentTargetRoleResultV1, DeploymentTargetRoleFailureV1,
-    DeploymentTargetDomainInputV1, DeploymentTargetDomainResultV1,
+    DeploymentTargetDomainAddInputV1, DeploymentTargetDomainInputV1, DeploymentTargetDomainResultV1,
     DeploymentDomainTunnelOwnershipV1, DeploymentDomainTunnelDispositionV1,
     DeploymentTargetVariablesReadInputV1, DeploymentTargetVariablesReadResultV1,
 } from './deploymentTargets.js';
 export { DeploymentDomainTunnelOwnershipV1ProtocolSchema, DeploymentDomainTunnelDispositionV1ProtocolSchema,
-    DeploymentTargetDomainResultV1ProtocolSchema, DeploymentTargetRoleInputProtocolSchemasV1, DeploymentTargetLogsResultV1ProtocolSchema,
+    DeploymentTargetGeneratedDomainAddInputV1ProtocolSchema, DeploymentTargetDomainResultV1ProtocolSchema, DeploymentTargetRoleInputProtocolSchemasV1, DeploymentTargetLogsResultV1ProtocolSchema,
     DeploymentTargetLinkProviderContentV1ProtocolSchema,
     DeploymentTargetVariablesReadResultV1ProtocolSchema, DeploymentTargetVariablesSyncResultV1ProtocolSchema,
     DeploymentTargetRoleResultV1ProtocolSchema, DeploymentTargetPreparationBaseV1ProtocolSchema,
-    hasDeploymentTargetPreparationCoordinatesV1, projectDeploymentTargetHttpFailureV1,
-    settleDeploymentTargetDomainRemovalV1 } from './deploymentTargets.js';
+    hasDeploymentTargetPreparationCoordinatesV1, projectDeploymentTargetHttpFailureV1, settleDeploymentTargetDomainRemovalV1,
+    settleDeploymentTargetResourceRemovalV1, deploymentTargetRoleWithNativeSelectorV1 } from './deploymentTargets.js';
 export type { HealthChecksService, HealthCheckKindContributionV1, HealthCheckKindV1, HealthCheckStatusV1, HealthCheckSubjectV1, HealthCheckResultV1, HealthCheckSourceConfigV1, SavedHealthCheckSelectorV1 } from './healthCheckKinds.js';
 export type { HealthCheckKindCatalogV1 } from './healthCheckKinds.js';
 export { HealthCheckKindCatalogV1ProtocolSchema } from './healthCheckKinds.js';

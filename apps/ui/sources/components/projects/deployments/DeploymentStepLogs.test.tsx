@@ -53,7 +53,7 @@ describe('Deployment step logs on a platform receipt (TYPES-ODEPLOY TS18047)', (
         providerResourceId: 'project',
         providerEnvironment: 'production',
       },
-      providerEnvironment: { kind: 'production' },
+      providerEnvironment: { kind: 'native', selection: { kind: 'production' } },
       observation: {
         v: 1,
         state: 'succeeded',
@@ -92,7 +92,8 @@ describe('Deployment step logs on a platform receipt (TYPES-ODEPLOY TS18047)', (
         machineId={undefined}
         steps={receipt.content.steps}
         facts={currentFacts}
-        running={false}
+        running={single}
+        followLog={false}
         serverId="home-a"
         readLogs={readLogs}
         fileStem="deploy"
@@ -107,6 +108,7 @@ describe('Deployment step logs on a platform receipt (TYPES-ODEPLOY TS18047)', (
       if (!single) expect(screen.getTextContent()).toContain('Build');
       expect(screen.findByTestId('logs.toolbar')).not.toBeNull();
       expect(screen.findByTestId('logs.log.offline')).toBeNull();
+      expect(screen.findByTestId('logs.follow')).toBeNull();
       if (single) {
         expect(screen.findByTestId('logs.log.reading')).not.toBeNull();
         expect(screen.getTextContent()).not.toContain('projects.deployments.logWhole');

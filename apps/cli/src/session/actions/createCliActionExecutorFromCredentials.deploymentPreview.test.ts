@@ -175,7 +175,7 @@ it.each([
                 purpose: { consumer: { pluginId: 'example.deploy', localId: 'platform' }, purpose: 'manage' },
                 target: { kind: 'account', account: { service: { pluginId: 'example.deploy', localId: 'service' }, accountId: 'credential' } } },
                 providerIdentity: { providerAccountId: 'native-account', providerResourceId: 'native-resource', providerEnvironment: 'production' },
-                providerEnvironment: { kind: 'production' } },
+                providerEnvironment: { kind: 'native', selection: { kind: 'production' } } },
         } : preparedPreview ? { serverId: 'srv_home', projectSourceId: 'source', requestKey: 'create-preview',
             protection: 'nonProduction', purpose: 'preview', deployerMode: 'managers', controllerMachineId: originMachine.id,
             buildMachineId: originMachine.id, contentArtifactId: 'prepared-preview', contentHeaderVersion: 1, contentBodyVersion: 1,

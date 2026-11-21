@@ -211,7 +211,7 @@ it('follows real Vercel Account runtime frames through the canonical deployment 
         purpose: { consumer: { pluginId: vercelManifest.id, localId: 'project-link' }, purpose: 'deploy.manage' },
         target: { kind: 'account', account } },
         providerIdentity: { providerAccountId: 'team_selected', providerResourceId: 'project_selected', providerEnvironment: 'production' },
-        providerEnvironment: { kind: 'production' }, preparedNative: { projectName: 'selected-project' } };
+        providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, preparedNative: { projectName: 'selected-project' } };
     const receipt = createDeploymentReceiptHeaderV1({ requestedByAccountId: accountId, state: 'running',
         acceptedExecution: { v: 1, controller: { machineId: 'machine-a', installationId: 'installation-a' } } });
     const receiptContent = DeploymentPlatformContentV1Schema.parse({ sourceIntent: { kind: 'repository',

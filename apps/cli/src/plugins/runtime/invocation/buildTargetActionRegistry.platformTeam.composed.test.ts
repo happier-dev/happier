@@ -113,7 +113,7 @@ describe('Team platform Home operation binding', () => {
             const repositoryAccess = { status: 'ready', repository: { kind: 'github', deployment: 'https://github.com', repository: 'example/app' } };
             selected.content = { credentialPrincipal: principal,
                 providerIdentity: { providerAccountId: 'team-provider', providerResourceId: 'prj-team', providerEnvironment: 'production' },
-                providerEnvironment: { kind: 'production' }, preparedNative, repositoryAccess };
+                providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, preparedNative, repositoryAccess };
             // Home's real execution issuer reads the same Environment/Source authority.
             expect(await createArtifact({ actorUserId: actorAccountId, artifactId: environment.environment.contentArtifactId,
                 header: decodeBase64(encodePlainArtifactStoredContent({ kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'Team deploy' })),

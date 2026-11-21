@@ -91,7 +91,7 @@ import { TargetActionApprovalRequestV1Schema, type TargetActionApprovalRequestV1
 import { resolveApprovalRequestApproveAdmission } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
 import { createProductionPluginInvocationServiceOwners } from './services/production';
-import { isDynamicPluginResourceContributionV2, DeploymentTargetRoleInputSchemasV1, DeploymentTargetRoleInputProtocolSchemasV1, DeploymentTargetRoleResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/v2';
+import { isDynamicPluginResourceContributionV2, deploymentTargetRoleWithNativeSelectorV1, DeploymentTargetRoleInputSchemasV1, DeploymentTargetRoleInputProtocolSchemasV1, DeploymentTargetRoleResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/v2';
 import { createDeploymentTargetRoleAdmissionFixture } from '@/deployments/targets/deploymentTargetRoleAdmission.testkit';
 import type { PluginInvocationLogRecord } from './services/logger';
 import { createStablePluginHttpHost } from '../fetch/service';
@@ -135,6 +135,10 @@ import type { WorkspaceSyncSourceExecutionV1 } from '@happier-dev/protocol/socke
 import { ExternalActionExecutionAuthorizationV1Schema, EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
     EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_REVIEWED_CHILD_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+
+const deploymentRoleFixtureSelector = { type: 'object', properties: {
+    kind: { type: 'string', const: 'production' }, scope: { type: 'string' },
+}, required: ['kind'], additionalProperties: false } as const;
 
 type BuildRegistryParams = Omit<
     Parameters<typeof buildTargetActionInvocationRegistry>[0],
@@ -1744,7 +1748,7 @@ describe('buildTargetActionInvocationRegistry', () => {
         selectedLink.machineId = 'controller'; selectedLink.installationId = 'installation-controller';
         if (variant === 'principal') stored.input.credentialPrincipal.accountId = 'other';
         if (variant === 'target-machine') selectedLink.machineId = 'other';
-        if (variant === 'scope') stored.input.providerEnvironment = { kind: 'preview', gitBranch: 'other' };
+        if (variant === 'scope') stored.input.providerEnvironment = { kind: 'native', selection: { kind: 'production', scope: 'other' } };
         if (variant === 'group-mismatch') stored.input.credentialRef.accountId = 'not-the-selected-member';
         const base = connectedAccountActionManifest();
         const action = base.contributes.actions[0]!;
@@ -1756,10 +1760,10 @@ describe('buildTargetActionInvocationRegistry', () => {
                     id: role === 'inspect' ? 'run' : role, surfaces: ['plugin'],
                     dangerLevel: role === 'inspect' || role === 'observe' ? 'safe' : 'writesLocal',
                     readOnly: role === 'inspect' || role === 'observe',
-                    inputSchema: DeploymentTargetRoleInputProtocolSchemasV1[role].jsonSchema,
+                    inputSchema: deploymentTargetRoleWithNativeSelectorV1(DeploymentTargetRoleInputProtocolSchemasV1[role].jsonSchema, deploymentRoleFixtureSelector),
                     resultSchema: DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema,
                 })),
-                deploymentTargets: [{ id: 'platform', title: 'Platform', icon: 'server-outline', targetKind: 'platform', role: 'runtime',
+                deploymentTargets: [{ id: 'platform', title: 'Platform', icon: 'server-outline', targetKind: 'platform', role: 'runtime', nativeSelectorSchema: deploymentRoleFixtureSelector,
                     targetSchema: { type: 'object', additionalProperties: false }, linkSchema: { type: 'object', additionalProperties: false },
                     actions: { inspect: 'run', link: 'link', deploy: 'deploy', observe: 'observe' } }],
             },
@@ -3812,10 +3816,10 @@ describe('buildTargetActionInvocationRegistry', () => {
             actions: (['inspect', 'link', 'deploy', 'observe'] as const).map(role => ({ ...action,
                 id: role, surfaces: ['plugin'], dangerLevel: role === 'inspect' || role === 'observe' ? 'safe' : 'writesLocal',
                 readOnly: role === 'inspect' || role === 'observe',
-                inputSchema: DeploymentTargetRoleInputProtocolSchemasV1[role].jsonSchema,
+                inputSchema: deploymentTargetRoleWithNativeSelectorV1(DeploymentTargetRoleInputProtocolSchemasV1[role].jsonSchema, deploymentRoleFixtureSelector),
                 resultSchema: DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema,
             })),
-            deploymentTargets: [{ id: 'platform', title: 'Runtime', icon: 'server-outline', targetKind: 'platform', role: 'runtime',
+            deploymentTargets: [{ id: 'platform', title: 'Runtime', icon: 'server-outline', targetKind: 'platform', role: 'runtime', nativeSelectorSchema: deploymentRoleFixtureSelector,
                 targetSchema: { type: 'object', additionalProperties: false }, linkSchema: { type: 'object', additionalProperties: false },
                 actions: { inspect: 'inspect', link: 'link', deploy: 'deploy', observe: 'observe' } }],
         } });

@@ -1104,8 +1104,9 @@ describe('Project deployments page', () => {
     const { accountLifetime: lifetime } = await captureLazyActionAccountContext(scope.serverId);
     const installed = await installPortableAccountPluginReleaseForTest({ manifest, activate: activateAccount,
       accountLifetime: lifetime, publishProjection: true });
-    const providerEnvironment = target.endsWith('preview')
-      ? { kind: 'preview' as const, gitBranch: 'main' } : { kind: 'production' as const };
+    const selection: Record<string, string> = target.endsWith('preview')
+      ? { kind: 'preview', gitBranch: 'main' } : { kind: 'production' };
+    const providerEnvironment = { kind: 'native' as const, selection };
     const source = { kind: 'plugin' as const, contribution: { pluginId: manifest.id, localId: vercel ? 'runtime' : 'pages' } };
     const base = environmentDetailForHome();
     const native = createDeploymentReceiptDetailV1();
@@ -1115,7 +1116,7 @@ describe('Project deployments page', () => {
       purpose: { consumer: { pluginId: manifest.id, localId: 'inspect' }, purpose: 'deploy.manage' },
       target: { kind: 'account' as const, account: { service: { pluginId: manifest.id, localId: 'account' }, accountId: 'connected' } } };
     const providerIdentity = { providerAccountId: 'account', providerResourceId: 'project',
-      providerEnvironment: providerEnvironment.kind === 'production' ? 'production' : 'preview:main' };
+      providerEnvironment: selection.kind === 'production' ? 'production' : 'preview:main' };
     const makeReceipt = (id: string, sha: string) => createDeploymentReceiptDetailV1({
       deployment: createDeploymentReceiptHeaderV1({ id, state: 'succeeded' }),
       content: { machines: [], images: [], machineResults: [], steps: [], sourceMethod: 'upload',
@@ -1162,7 +1163,7 @@ describe('Project deployments page', () => {
         consumer: { pluginId: 'happier.deployment-vercel', localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' },
         target: { kind: 'account', account: { service: { pluginId: 'happier.machine-vercel', localId: 'vercel' }, accountId: 'connected' } } },
         providerIdentity: { providerAccountId: 'team', providerResourceId: 'project', providerEnvironment: 'production' },
-        providerEnvironment: { kind: 'production' }, targetLinkRevision: 1, observation: { v: 1, state: 'queued', observedAtMs: 1000 } },
+        providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, targetLinkRevision: 1, observation: { v: 1, state: 'queued', observedAtMs: 1000 } },
     } }) : baseReceipt;
     const { controller, receipt } = controllerFor({ detail, receipt: sourceReceipt });
     const { createDeploymentActions } = await import('./deploymentActions');
@@ -1301,7 +1302,7 @@ describe('Project deployments page', () => {
           purpose: { consumer: { pluginId: authored.manifest.id, localId: 'inspect-beta' }, purpose: 'beta.manage' },
           target: { kind: 'account' as const, account: { service: { pluginId: 'com.example.cloud', localId: 'cloud-account' }, accountId: 'selected' } } },
         providerIdentity: { providerAccountId: 'cloud', providerResourceId: 'prj_7Hq2', providerEnvironment: 'production' },
-        providerEnvironment: { kind: 'production' as const }, preparedNative: { projectName: 'acme-web' } },
+        providerEnvironment: { kind: 'native' as const, selection: { kind: 'production' } }, preparedNative: { projectName: 'acme-web' } },
     })) };
     await context.createArtifactDocument({ artifactId: detail.environment.contentArtifactId,
       header: { kind: 'deployment-environment.v1', title: detail.content.name }, body: JSON.stringify(detail.content) });
@@ -2598,7 +2599,7 @@ describe('Project deployments page', () => {
         purpose: { consumer: { pluginId: authored.manifest.id, localId: 'inspect-beta' }, purpose: 'beta.manage' },
         target: { kind: 'account' as const, account: { service: { pluginId: 'com.example.cloud', localId: 'cloud-account' }, accountId: 'selected' } } },
         providerIdentity: { providerAccountId: 'cloud', providerResourceId: 'site', providerEnvironment: 'production' },
-        providerEnvironment: { kind: 'production' as const }, ...(recorded ? { sourceMethod: recorded } : {}) },
+        providerEnvironment: { kind: 'native' as const, selection: { kind: 'production' } }, ...(recorded ? { sourceMethod: recorded } : {}) },
     })) };
     let releaseSource = () => {};
     const sourceResponse = new Promise<void>(resolve => { releaseSource = resolve; });

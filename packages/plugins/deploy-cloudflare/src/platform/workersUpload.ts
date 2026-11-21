@@ -10,15 +10,15 @@ import { CLOUDFLARE_BUILD_IMAGE, CLOUDFLARE_WRANGLER_VERSION } from './cloudflar
 import { prepareWorkerBuild } from './workersBuild.js';
 import { observeUploadedWorker, uploadedWorkerReference, workersAddressAccessId } from './workers.js';
 import { isUploadedPreviewReference, observeUploadedPreview, uploadedPreviewReference, uploadedPreviewSelection } from './previewDeploy.js';
+import { cloudflareRoleSchema, type CloudflareRoleInput, type WorkerSelection } from './targetSelection.js';
 
 async function encode(form: FormData) {
   const response = new Response(form);
   return { body: new Uint8Array(await response.arrayBuffer()), contentType: response.headers.get('content-type')! };
 }
 
-async function upload(input: DeploymentTargetUploadDeployInputV1, context: PluginInvocationContext): Promise<DeploymentTargetRoleResultV1> {
-  if (input.sourceIntent.kind !== 'repository' || input.providerEnvironment.kind !== 'script'
-    && (input.providerEnvironment.kind !== 'preview' || !('scriptName' in input.providerEnvironment))) {
+async function upload(input: CloudflareRoleInput<DeploymentTargetUploadDeployInputV1, WorkerSelection>, context: PluginInvocationContext): Promise<DeploymentTargetRoleResultV1> {
+  if (input.sourceIntent.kind !== 'repository') {
     throw new PluginError({ code: 'unsupported_action', details: { phase: 'source' } });
   }
   const io = { http: context.services.http, signal: context.signal, now: () => Date.now() };
@@ -34,9 +34,9 @@ async function upload(input: DeploymentTargetUploadDeployInputV1, context: Plugi
   const source = await context.services.deploymentSource.materialize({ environmentId: input.environmentId,
     deploymentId: input.deploymentId }, { signal: context.signal });
   const prepared = await prepareWorkerBuild({ rootPath: source.rootPath, actionOperationId: input.actionOperationId,
-    scriptName: input.providerEnvironment.scriptName, preview: preview !== null }, { exec: context.services.exec, signal: context.signal });
+    scriptName: input.providerEnvironment.selection.scriptName, preview: preview !== null }, { exec: context.services.exec, signal: context.signal });
   const accountId = input.providerIdentity.providerAccountId;
-  const scriptName = input.providerEnvironment.scriptName;
+  const scriptName = input.providerEnvironment.selection.scriptName;
   const previewRoot = preview ? `/workers/workers/${encodeURIComponent(scriptName)}/previews/${encodeURIComponent(preview.previewId)}` : null;
   let metadata: Record<string, unknown> = { ...prepared.metadata };
   if (previewRoot) {
@@ -126,6 +126,6 @@ export const workersUpload: Extract<PluginActionDeclaration, { execution?: { tar
   hostAccess: ['cloudflare-workers', 'deploy.manage', workersAddressAccessId], connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'deploy.manage' }],
   title: 'Upload the reviewed compiled Cloudflare Worker', dangerLevel: 'writesRemote', readOnly: false,
   confirmation: { title: 'Build and upload this reviewed commit to Cloudflare Workers?' },
-  inputSchema: inputs.uploadDeploy.jsonSchema, resultSchema: output.jsonSchema,
-  run: (value: JsonValue, context: PluginInvocationContext) => upload(value as unknown as DeploymentTargetUploadDeployInputV1, context),
+  inputSchema: cloudflareRoleSchema(inputs.uploadDeploy.jsonSchema, 'workers'), resultSchema: output.jsonSchema,
+  run: (value: JsonValue, context: PluginInvocationContext) => upload(value as unknown as CloudflareRoleInput<DeploymentTargetUploadDeployInputV1, WorkerSelection>, context),
 };

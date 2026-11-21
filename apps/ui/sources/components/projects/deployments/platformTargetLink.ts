@@ -6,6 +6,7 @@ import { patchHappierActionInputPath, readHappierActionInputPath } from '@happie
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import {
   DeploymentTargetLinkProviderContentV1Schema,
+  describeDeploymentTargetGitCreateV1,
   type DeploymentTargetLinkProviderContentV1,
 } from '@happier-dev/protocol/plugins/contributions/v2';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
@@ -37,11 +38,18 @@ export type DeploymentPlatformTarget = Readonly<{
   service: Readonly<{ pluginId: string; localId: string }>;
   fields: readonly EffectiveActionInputField[];
   sourceMethods: readonly DeploymentSourceMethodV1[];
+  declaredInputTypes?: Readonly<{
+    pluginId: string;
+    definitions: NonNullable<PluginPortableReleaseManifestV1['contributes']['inputTypes']>;
+  }>;
   accepts?: DeploySuggestionCatalogV1['targets'][number]['accepts'];
   needs?: DeploySuggestionCatalogV1['targets'][number]['needs'];
   /** The plugin's dated plan facts, printed as declared (Protocol DeploymentTargetPlanV1). */
   plans?: DeploymentRuntimeTargetV1['plans'];
   runtimeLogs?: true;
+  logFollow?: false;
+  generatedDomains?: true;
+  gitSource?: DeploymentRuntimeTargetV1['gitSource'];
   teardown?: true;
   promote?: true;
   rollback?: true;
@@ -76,10 +84,10 @@ export function readTeardownConsequence(actions: readonly unknown[], localId: st
  * project or Worker name captured at preparation, else the provider's resource id.
  */
 export function readPlatformResourceName(content: Partial<DeploymentTargetLinkProviderContentV1> | undefined): string | null {
-  const environment = content?.providerEnvironment;
-  if (environment?.kind === 'preview' && 'previewName' in environment) return environment.previewName;
+  const environment = content?.providerEnvironment?.selection;
+  if (environment?.kind === 'preview' && typeof environment.previewName === 'string') return environment.previewName;
   return content?.preparedNative?.projectName
-    ?? (environment?.kind === 'script' ? environment.scriptName : null)
+    ?? (environment?.kind === 'script' && typeof environment.scriptName === 'string' ? environment.scriptName : null)
     ?? content?.providerIdentity?.providerResourceId ?? null;
 }
 
@@ -89,6 +97,8 @@ export function readDeploymentPlatformTargets(
   return declarations.flatMap(({ manifest }) => {
     const contributes = manifest.contributes as unknown as UnknownRecord;
     const normalizedTargets = listDeploymentTargetsFromManifestsV1([{ manifest }]);
+    const declaredInputTypes = manifest.contributes.inputTypes?.length
+      ? { pluginId: manifest.id, definitions: manifest.contributes.inputTypes } : undefined;
     const targets = normalizedTargets.flatMap(target => {
       if (target.source.kind !== 'plugin' || target.role !== 'runtime') return [];
       const localId = target.source.contribution.localId;
@@ -153,6 +163,7 @@ export function readDeploymentPlatformTargets(
           service: { pluginId: service.pluginId, localId: service.localId },
           fields: hints as EffectiveActionInputField[],
           sourceMethods,
+          ...(declaredInputTypes ? { declaredInputTypes } : {}),
           ...(() => {
             const normalized = normalizedTargets.find(candidate => candidate.source.kind === 'plugin'
               && candidate.source.contribution.localId === target.id);
@@ -161,6 +172,9 @@ export function readDeploymentPlatformTargets(
               ...(normalized.needs === undefined ? {} : { needs: normalized.needs }),
               ...(normalized.plans?.length ? { plans: normalized.plans } : {}),
               ...(normalized.actions.promote ? { promote: true as const } : {}),
+              ...(normalized.gitSource ? { gitSource: normalized.gitSource } : {}),
+              ...(normalized.generatedDomains ? { generatedDomains: true as const } : {}),
+              ...(normalized.logFollow === false ? { logFollow: false as const } : {}),
               ...(normalized.actions.rollback ? { rollback: true as const } : {}),
             } : {};
           })(),
@@ -240,6 +254,16 @@ export function readPlatformReviewNotice(value: unknown): string | null {
   const prepared = value.preparedNative;
   return typeof prepared === 'object' && prepared !== null && 'reviewNotice' in prepared
     && typeof prepared.reviewNotice === 'string' ? prepared.reviewNotice : null;
+}
+
+/** The declaration owns Git creation semantics; the draft supplies the user-reviewed operands. */
+export function readPlatformGitCreateReview(target: DeploymentPlatformTarget, draft: PlatformTargetProviderCreate): string | null {
+  const { resourceName, repository, productionBranch } = draft;
+  return describeDeploymentTargetGitCreateV1(target.gitSource, target.title, {
+    ...(text(resourceName) ? { resourceName } : {}),
+    ...(record(repository) && text(repository.repository) ? { repository: repository.repository } : {}),
+    ...(text(productionBranch) ? { productionBranch } : {}),
+  }) ?? null;
 }
 
 type PlatformTargetReviewRuntime = Readonly<{

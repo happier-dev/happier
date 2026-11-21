@@ -127,7 +127,7 @@ const dataLinkContinuation = { actionId: 'deployments.targets.link', input: { se
   environmentId: copyDetails.environmentId, expectedRevision: copyDetails.revision, requestKey: 'duplicate-data-source-data',
   targetId: 'database', source: { kind: 'plugin', contribution: dataContribution }, targetKind: 'database', role: 'data', machines: [],
   provider: { credentialPrincipal: dataPrincipal, providerIdentity: { providerAccountId: 'selected', providerResourceId: 'created',
-    providerEnvironment: 'new' }, providerEnvironment: { kind: 'custom', id: 'new' } } } };
+    providerEnvironment: 'new' }, providerEnvironment: { kind: 'native', selection: { branchId: 'new' } } } } };
 
 describe('duplicate managed-data partial failure custody', () => {
   it.each([

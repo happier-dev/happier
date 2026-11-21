@@ -222,7 +222,7 @@ function DeploymentDispositionSheet(
   React.useEffect(() => () => setChrome?.(null), [setChrome]);
 
   // A removal says what stops in one line: its services, then the addresses that go with them.
-  const domainNames = domains.result.items.map(item => item.content.hostname);
+  const domainNames = domains.result.items.flatMap(item => item.content.hostname ? [item.content.hostname] : []);
   const stopsValue = joinHappierFacts(
     props.services?.length ? props.services.join(', ') : null,
     domainNames.length > 0 ? t('projects.deployments.factStopsDomains', { domains: domainNames.join(', ') }) : null,

@@ -83,7 +83,7 @@ export function readCaddyTelemetryCollectorBridges(configuration: unknown): read
 type CaddyReplicaUpstreams = { kind: 'replicas'; containerNames: readonly string[]; containerPort?: number };
 export type CaddyDomainRouteInput = {
     domainId: string;
-    domain: Pick<DeploymentDomainContentV1, 'hostname' | 'healthCheck' | 'target'>;
+    domain: Pick<DeploymentDomainContentV1, 'healthCheck' | 'target'> & { hostname: string };
     listener: 'privateOrigin' | 'public';
     upstreams:
         | (CaddyReplicaUpstreams & { containerNames: readonly [string, ...string[]] })

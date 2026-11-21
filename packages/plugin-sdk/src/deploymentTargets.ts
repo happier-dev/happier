@@ -6,7 +6,7 @@ import type {
     DatabaseOperationClassV1, DatabaseOperationInputV1, DatabaseOperationResultV1,
     DatabaseTargetsListResultV1,
 } from './database/index.js';
-import { isPluginError, PluginError, projectActionFailureCauseV1 } from './errors.js';
+import { isPluginError, PluginError, projectActionFailureCauseV1, withActionFailureDiagnostic } from './errors.js';
 import type { ProtocolComposableSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import type { DeploymentTargetContributionV1 as CanonicalDeploymentTargetContributionV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargets';
 import { DeploymentDataParentBranchRefV1ProtocolSchema as canonicalParentBranch,
@@ -23,7 +23,7 @@ export type {
     DeploymentTargetCredentialPrincipalV1,
     DeploymentTargetProviderIdentityV1, DeploymentTargetProviderEnvironmentV1,
     DeploymentTargetRepositoryAccessV1, DeploymentTargetRoleCommonInputV1,
-    DeploymentTargetPreparationBaseV1, DeploymentTargetInspectInputV1,
+    DeploymentTargetPreparationBaseV1, DeploymentTargetCreateInputV1, DeploymentTargetInspectInputV1,
     DeploymentTargetLinkRoleInputV1, DeploymentTargetLifecycleInputV1,
     DeploymentTargetDeployInputV1, DeploymentTargetUploadDeployInputV1,
     DeploymentTargetObserveInputV1, DeploymentTargetCancelInputV1,
@@ -35,6 +35,7 @@ export type {
     DeploymentTargetVariablesReadResultV1, DeploymentTargetVariablesSyncResultV1,
     DeploymentTargetOwnedVariableV1, DeploymentTargetVariableMetadataV1,
 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
+export { deploymentTargetRoleWithNativeSelectorV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargets';
 export { hasDeploymentTargetPreparationCoordinatesV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 export { DeploymentDomainTunnelOwnershipV1ProtocolSchema, DeploymentDomainTunnelDispositionV1ProtocolSchema,
     type DeploymentDomainTunnelOwnershipV1, type DeploymentDomainTunnelDispositionV1 }
@@ -58,6 +59,29 @@ export async function settleDeploymentTargetDomainRemovalV1(input: Readonly<{
     if (failure) throw failure.error;
     throw new PluginError({ code: 'outcome_unknown', retryable: false });
 }
+
+/** Acknowledgement and observed provider absence are distinct. The host owns recovery from uncertainty. */
+export async function settleDeploymentTargetResourceRemovalV1(input: Readonly<{
+    remove?: () => Promise<boolean>;
+    observeAbsent: () => Promise<boolean>;
+    now: () => number;
+    providerDeploymentId?: string;
+}>): Promise<DeploymentTargetRoleResultV1> {
+    let absent = await input.remove?.();
+    if (!absent) {
+        const phase = 'deployment.target.teardown.observe';
+        try {
+            absent = await input.observeAbsent();
+        } catch (error) {
+            throw withActionFailureDiagnostic(new PluginError({ code: 'outcome_unknown', retryable: false,
+                details: { phase: 'teardown' }, failureCause: projectActionFailureCauseV1(error, phase) }),
+            { phase, causeKind: 'native_failure', error });
+        }
+    }
+    if (!absent) throw new PluginError({ code: 'outcome_unknown', retryable: false, details: { phase: 'teardown' } });
+    return { v: 1, state: 'succeeded', providerResourceAbsent: true, observedAtMs: input.now(),
+        ...(input.providerDeploymentId ? { providerDeploymentId: input.providerDeploymentId } : {}) };
+}
 export const DeploymentTargetRoleInputProtocolSchemasV1: Readonly<{
     [TRole in keyof typeof canonicalRoleInputs]: ProtocolComposableSchema<
         ReturnType<(typeof canonicalRoleInputs)[TRole]['parse']>
@@ -66,11 +90,12 @@ export const DeploymentTargetRoleInputProtocolSchemasV1: Readonly<{
 export { DeploymentTargetLogsResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 export { DeploymentTargetLinkProviderContentV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 export { DeploymentTargetDomainResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
-export type { DeploymentTargetDomainInputV1, DeploymentTargetDomainResultV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
+export { DeploymentTargetGeneratedDomainAddInputV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
+export type { DeploymentTargetDomainAddInputV1, DeploymentTargetDomainInputV1, DeploymentTargetDomainResultV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 export { DeploymentTargetVariablesReadResultV1ProtocolSchema,
     DeploymentTargetVariablesSyncResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 export const DeploymentTargetRoleResultV1ProtocolSchema: ProtocolComposableSchema<DeploymentTargetRoleResultV1> = canonicalRoleResult;
-export const DeploymentTargetPreparationBaseV1ProtocolSchema: ProtocolComposableSchema<DeploymentTargetPreparationBaseV1> = canonicalPreparationBase;
+export const DeploymentTargetPreparationBaseV1ProtocolSchema = canonicalPreparationBase;
 export const DeploymentDataParentBranchRefV1ProtocolSchema: ProtocolComposableSchema<DeploymentDataParentBranchRefV1> = canonicalParentBranch;
 
 /** Development-only declarations; admission does not grant invocation authority. */

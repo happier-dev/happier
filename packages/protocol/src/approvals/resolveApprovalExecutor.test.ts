@@ -140,7 +140,7 @@ describe('resolveApprovalExecutor', () => {
         purpose: { consumer: { pluginId: 'example.deploy', localId: 'platform' }, purpose: 'manage' },
         target: { kind: 'account', account: { service: { pluginId: 'example.deploy', localId: 'service' }, accountId: 'credential' } } },
         providerIdentity: { providerAccountId: 'native-account', providerResourceId: 'native-resource', providerEnvironment: 'production' },
-        providerEnvironment: { kind: 'production' } } };
+        providerEnvironment: { kind: 'native', selection: { kind: 'production' } } } };
     const request = requestFor(actionId, input);
     const targeted = ApprovalRequestV2Schema.parse({ ...request, executionOriginV1: {
       ...request.executionOriginV1, machineId: 'retained-controller',

@@ -12,7 +12,7 @@ function linked(pluginId: string, project: string, environment: string) {
   return { targetLink: createDeploymentTargetLinkHeaderV1({ role: 'data', targetKind: 'managed', machines: [], members: [], source: { kind: 'plugin',
     contribution: { pluginId, localId: 'database' } } }), content: {
     providerIdentity: { providerAccountId: 'organization', providerResourceId: project, providerEnvironment: environment },
-    providerEnvironment: { kind: 'custom' as const, id: environment },
+    providerEnvironment: { kind: 'native' as const, selection: { branchId: environment } },
     credentialPrincipal: { kind: 'account' as const, accountId: 'owner',
       purpose: { consumer: { pluginId, localId: 'projects-link' }, purpose: 'deploy-manage' },
       target: { kind: 'account' as const, account: { service: { pluginId, localId: 'database' }, accountId: 'token' } } },

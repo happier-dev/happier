@@ -42,8 +42,9 @@ import { DeploymentTabState } from './DeploymentTabState';
 import { readDeploymentComposeServiceFacts } from './deploymentPreflightWarnings';
 import { useDeploymentEnvironmentDomains } from './useDeploymentReads';
 import { isDeploymentDomainAttachedV1, projectDeploymentDomainDnsReadinessV1, projectDeploymentDomainDraftCheckV1, type DeploymentDomainDnsReadinessV1 } from '@happier-dev/deployments';
-import { DeploymentDomainsList, type DeploymentDomainRowActions, type DomainCredentialRole, type DomainItem } from './DeploymentDomainRow';
+import { DeploymentDomainsList, projectDeploymentBuiltInAddresses, type DeploymentDomainRowActions, type DomainCredentialRole, type DomainItem } from './DeploymentDomainRow';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
+import { Modal } from '@/modal';
 import { INLINE_ADD_OPEN, useInlineAddDraftField } from './inlineAddDraft';
 
 type DomainActions = Pick<
@@ -68,6 +69,7 @@ const credentialKey = (domainId: string, role: DomainCredentialRole) => JSON.str
 export type DeploymentDomainEditing = Readonly<{
   actions: DomainActions;
   environmentRevision: number;
+  generatedDomains?: boolean;
   content: DeploymentEnvironmentContentV1;
   /** The Compose services the serving receipt runs, by name: what Service starts on when the definition lists none. */
   deployedServices?: readonly string[];
@@ -108,7 +110,8 @@ export function DeploymentDomainsPanel(
     props.demand,
   );
   const { items } = domains.result;
-  const addressCount = items.length + (props.builtInUrls?.length ?? 0);
+  const addresses = React.useMemo(() => projectDeploymentBuiltInAddresses(items, props.builtInUrls), [items, props.builtInUrls]);
+  const addressCount = items.length + addresses.length;
   const rowItems = React.useMemo(() => items.map(item => ({ ...item,
     attached: isDeploymentDomainAttachedV1(item.domain, props.environment) })), [items, props.environment]);
   const unavailableDockerDesktop = props.runtimeProjections?.some(projection =>
@@ -177,8 +180,18 @@ export function DeploymentDomainsPanel(
     } finally { account.dispose(); }
   }, [editing, press, props.environmentId, serverId, setBindings]);
   // Row actions keep one identity across renders, so the list's rows re-render only for their own facts.
-  const verify = useEventCallback((item: DomainItem) => {
-    if (editing) void press(() => editing.actions.verifyDomain(domainOperands(props.environmentId, editing, item)));
+  const verify = useEventCallback(async (item: DomainItem) => {
+    if (!editing) return;
+    const input = domainOperands(props.environmentId, editing, item);
+    if (item.content.hostname !== null) {
+      await press(() => editing.actions.verifyDomain(input));
+      return;
+    }
+    const assignedHostname = (await Modal.prompt(t('projects.deployments.domainAddressAssigned'), undefined, {
+      placeholder: t('projects.deployments.domainFieldHost'),
+      confirmText: t('common.done'),
+    }))?.trim();
+    if (assignedHostname) await press(() => editing.actions.verifyDomain({ ...input, assignedHostname }));
   });
   const remove = useEventCallback((item: DomainItem) => {
     if (editing) void press(() => editing.actions.removeDomain(domainOperands(props.environmentId, editing, item)));
@@ -237,10 +250,10 @@ export function DeploymentDomainsPanel(
   // + Add domain opens the form inline in this section and an empty list is one plain line (pfc-redesign dDomains KEEP).
   // The built-in address already fills the list; "no domains yet" would contradict the row above it.
   const tabStateShown = !(unavailableDockerDesktop && domains.result.status === 'empty' || adding && items.length === 0
-    || domains.result.status === 'empty' && (props.builtInUrls?.length ?? 0) > 0);
+    || domains.result.status === 'empty' && addresses.length > 0);
   // The list draws its own sheet; with no list, the section's sheet holds its one line (dDomains KEEP: a bordered
   // "No domains yet" row).
-  const listShown = items.length > 0 || (props.builtInUrls?.length ?? 0) > 0;
+  const listShown = items.length > 0 || addresses.length > 0;
   return (
     <ItemGroup
       testID="project-deployments.environment.domains"
@@ -266,7 +279,8 @@ export function DeploymentDomainsPanel(
           draftKey={draftKey}
           phone={props.phone === true}
           busy={running}
-          taken={items.map((item) => item.content.hostname)}
+          taken={items.flatMap(item => item.content.hostname ? [item.content.hostname] : [])}
+          generatedDomains={editing.generatedDomains === true}
           recordedIngress={content?.ingress}
           provider={editing.targetLink.provider}
           inspect={editing.actions.inspectPlatformTarget}
@@ -299,7 +313,7 @@ export function DeploymentDomainsPanel(
           }}
         />
       ) : null}
-      {items.length > 0 || (props.builtInUrls?.length ?? 0) > 0 ? <DeploymentDomainsList
+      {items.length > 0 || addresses.length > 0 ? <DeploymentDomainsList
         testID="project-deployments.environment.domains.list"
         items={rowItems}
         accountId={props.controller.scope.accountId}
@@ -309,9 +323,9 @@ export function DeploymentDomainsPanel(
         machineName={editing?.machine ?? null}
         disabled={running}
         actions={rowActions}
-        {...(props.builtInUrls ? { builtInUrls: props.builtInUrls } : {})}
+        builtInAddresses={addresses}
       /> : null}
-      {dnsFor && editing?.actions.createDomainDns && editing.actions.inspectPlatformTarget ? (
+      {dnsFor?.content.hostname && editing?.actions.createDomainDns && editing.actions.inspectPlatformTarget ? (
         <DomainDnsRecordsForm
           key={dnsFor.domain.id}
           hostname={dnsFor.content.hostname}
@@ -422,6 +436,7 @@ function DomainAddForm(
     phone: boolean;
     busy: boolean;
     taken: readonly string[];
+    generatedDomains: boolean;
     recordedIngress?: DeploymentEnvironmentContentV1['ingress'];
     provider?: DeploymentTargetLinkContentV1 | null;
     inspect?: DomainIngressInspection;
@@ -443,6 +458,8 @@ function DomainAddForm(
     onAdd: (content: DeploymentDomainContentV1) => void | Promise<void>;
   }>,
 ) {
+  const [addressKind, setAddressKind] = useInlineAddDraftField<'custom' | 'assigned'>(props.draftKey, 'addressKind', 'custom');
+  const assigned = props.generatedDomains && addressKind === 'assigned';
   const [hostname, setHostname] = useInlineAddDraftField(props.draftKey, 'hostname', '');
   const host = hostname.trim().toLowerCase();
   const [committedHostname, setCommittedHostname] = React.useState(host);
@@ -478,7 +495,7 @@ function DomainAddForm(
     : servicePorts.length === 1 ? String(servicePorts[0]) : '';
   const [ingressMode, setIngressMode] = useInlineAddDraftField<IngressMode>(props.draftKey, 'ingressMode', props.recordedIngress?.kind === 'cloudflareTunnel' ? 'cloudflare' : 'environment');
   const provider = props.provider !== undefined;
-  const needsZone = props.provider?.providerEnvironment?.kind === 'script';
+  const needsZone = props.provider?.providerEnvironment?.selection.kind === 'script';
   const principal = props.provider?.credentialPrincipal;
   const linkedZone = needsZone ? principal?.kind === 'account' && principal.target.kind === 'account'
     && props.provider?.providerIdentity ? { credentialRef: principal.target.account, accountId: props.provider.providerIdentity.providerAccountId } : null : undefined;
@@ -499,10 +516,10 @@ function DomainAddForm(
   const pathValid = routePath === '' || routePath.startsWith('/');
   const redirect = redirectTo.trim();
   const user = basicAuthUser.trim();
-  const ready = host.length > 0 && !duplicate && !props.busy && (provider ? !needsZone || !!zone
-    : service.trim().length > 0 && portValid && pathValid && checkValid && (!needsSelection || !!ingress));
+  const ready = !props.busy && (assigned || host.length > 0 && !duplicate && (provider ? !needsZone || !!zone
+    : service.trim().length > 0 && portValid && pathValid && checkValid && (!needsSelection || !!ingress)));
   // A disabled Add domain names the first field it still needs (zone and tunnel choices say so in their own rows).
-  const missingField = props.busy || duplicate ? null : host.length === 0 ? t('projects.deployments.domainFieldHost')
+  const missingField = assigned || props.busy || duplicate ? null : host.length === 0 ? t('projects.deployments.domainFieldHost')
     : provider ? null
     : service.trim().length === 0 ? t('projects.deployments.domainFieldService')
     : !portValid ? t('projects.deployments.domainFieldPort')
@@ -511,6 +528,7 @@ function DomainAddForm(
     : null;
   // The one content this form adds, and the one the DNS check inspects.
   const draft = (): DeploymentDomainContentV1 | null => {
+    if (assigned) return { hostname: null, target: { kind: 'provider' } };
     if (host.length === 0 || duplicate) return null;
     if (provider) return needsZone && !zone ? null : { hostname: host, target: { kind: 'provider', ...(zone ? { zone } : {}) } };
     if (!checkValid || !(service.trim().length > 0 && portValid && pathValid && (!needsSelection || !!ingress))) return null;
@@ -553,7 +571,24 @@ function DomainAddForm(
       cancelTestID="project-deployments.environment.domains.add.cancel"
     >
       <View style={styles.form}>
-        <FieldItem label={t('projects.deployments.domainFieldHost')}>
+        {props.generatedDomains ? (
+          <FieldItem label={t('projects.deployments.domainAddressKind')}>
+            <SegmentedTabBar<'custom' | 'assigned'>
+              testIDPrefix="project-deployments.environment.domains.add.address-kind"
+              accessibilityLabel={t('projects.deployments.domainAddressKind')}
+              compact
+              segmentSizing="content"
+              role="radiogroup"
+              activeTabId={addressKind}
+              onSelectTab={setAddressKind}
+              tabs={[
+                { id: 'custom', label: t('projects.deployments.domainAddressCustom') },
+                { id: 'assigned', label: t('projects.deployments.domainAddressAssigned') },
+              ]}
+            />
+          </FieldItem>
+        ) : null}
+        {!assigned ? <FieldItem label={t('projects.deployments.domainFieldHost')}>
           <FieldTextInput
             testID="project-deployments.environment.domains.add.host"
             value={hostname}
@@ -565,7 +600,7 @@ function DomainAddForm(
             placeholder="docs.example.com"
             error={duplicate ? t('projects.deployments.domainExists') : null}
           />
-        </FieldItem>
+        </FieldItem> : null}
         {!provider && !props.recordedIngress ? (
           <>
             <FieldItem label={t('projects.deployments.editors.reachThrough')}>

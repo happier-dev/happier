@@ -68,7 +68,7 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 // Home persistence and Cloudflare HTTP are the boundaries. The actual portable
 // Account artifact, role admission, reviewed child and receipt writer stay real.
-it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-response', 'missing-preview', 'settled-preview', 'settled-worker', 'settled-pages', 'watched-non-production',
+it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-response', 'missing-preview', 'settled-preview', 'settled-worker', 'settled-pages', 'pages branch review', 'pages repository grant', 'watched-non-production',
     'settled authored replay', 'same authored retry after no effect', 'changed authored sha after no effect'] as const)('deploys the reviewed Cloudflare source through the plugin target and retains its %s outcome', async scenario => {
     const watched = scenario === 'watched-non-production';
     const retryAfterNoEffect = scenario === 'same authored retry after no effect' || scenario === 'changed authored sha after no effect';
@@ -123,21 +123,23 @@ it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-
         target: { kind: 'account', account: credentialRef } },
         providerIdentity: { providerAccountId, providerResourceId: workerTag,
             providerEnvironment: `preview:${JSON.stringify(['app', previewName])}` },
-        providerEnvironment: { kind: 'preview', scriptName: 'app', previewName },
+        providerEnvironment: { kind: 'native', selection: { kind: 'preview', scriptName: 'app', previewName } },
         repositoryAccess: { status: 'ready', repository },
         preparedNative: { projectName: 'app', previewId, gitBranch, workerTag, scriptName: 'app' } };
     if (worker) {
         row.content.providerIdentity.providerEnvironment = 'script:app';
-        row.content.providerEnvironment = { kind: 'script', scriptName: 'app' };
+        row.content.providerEnvironment = { kind: 'native', selection: { kind: 'script', scriptName: 'app' } };
         row.content.preparedNative = { projectName: 'app', triggerUuid: 'production-trigger' };
     }
-    if (scenario === 'settled-pages') {
+    if (scenario === 'settled-pages' || scenario === 'pages branch review' || scenario === 'pages repository grant') {
         row.targetLink.source = { kind: 'plugin', contribution: { pluginId: cloudflare.manifest.id, localId: 'pages' } };
         row.targetLink.targetKind = 'cloudflare-pages';
         row.content.credentialPrincipal.purpose.consumer.localId = 'pages-link';
         row.content.providerIdentity.providerEnvironment = 'production';
-        row.content.providerEnvironment = { kind: 'production' };
-        row.content.preparedNative = { projectName: 'app', pages: { projectMode: 'directUpload', productionBranch: 'main' } };
+        row.content.providerEnvironment = { kind: 'native', selection: { kind: 'production' } };
+        row.content.preparedNative = { projectName: 'app', pages: {
+            projectMode: scenario === 'settled-pages' ? 'directUpload' : 'gitIntegration', productionBranch: 'main' } };
+        if (scenario === 'pages repository grant') row.content.repositoryAccess = { status: 'needsGitAccess', repository };
     }
     const seed = (id: string, kind: string, content: unknown) => authored.artifacts.seed(id,
         encodePlainArtifactStoredContent({ kind, title: 'Preview' }),
@@ -208,11 +210,15 @@ it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-
     let deployAdmissions = 0;
     let time = Date.now();
     const admissions: unknown[] = [];
-    app.get('/v1/projects/sources/:sourceId', async () => ProjectSourcesReadOutputV1Schema.parse({ ok: true, canManage: true,
-        source: { id: sourceIntent.projectSourceId, revision: 1, name: 'App', owner: { kind: 'account', accountId },
-            audience: [], createdByAccountId: accountId, repository: { protocol: 'https',
-                provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: repository.deployment },
-                repository: { nameWithOwner: repository.repository, cloneUrl: 'https://github.com/example/app.git' } } } }));
+    let sourceReads = 0;
+    app.get('/v1/projects/sources/:sourceId', async () => {
+        sourceReads++;
+        return ProjectSourcesReadOutputV1Schema.parse({ ok: true, canManage: true,
+            source: { id: sourceIntent.projectSourceId, revision: 1, name: 'App', owner: { kind: 'account', accountId },
+                audience: [], createdByAccountId: accountId, repository: { protocol: 'https',
+                    provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: repository.deployment },
+                    repository: { nameWithOwner: repository.repository, cloneUrl: 'https://github.com/example/app.git' } } } });
+    });
     app.get('/v1/deployments/environments/:environmentId', async () => ({ ok: true,
         environment: environment.environment, secretScope: environment.secretScope, targetLinks: [row.targetLink] }));
     app.get('/v1/deployments/receipts/:deploymentId', async (request, reply) => {
@@ -288,6 +294,18 @@ it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-
                 installationId: 'installation-a', role: 'manage', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true,
             actionsSettings: normalizeActionsSettingsV1(undefined), presentUserConfirmation: { actionId: 'deployments.deploy' },
             operationAcceptance: { operationId: 'preview-operation', accept() {} } };
+        if (scenario === 'pages branch review' || scenario === 'pages repository grant') {
+            const result = await deps.prepareDeploymentAction({ actionId: 'deployments.deploy', input: {
+                serverId, environmentId: environment.environment.id, targetLinkId: row.targetLink.id,
+                requestKey: 'pages-git-review', sha }, context });
+            if (scenario === 'pages repository grant') expect(result).toMatchObject({ ok: false, errorCode: 'needsGitAccess' });
+            else {
+                expect(result).toMatchObject({ preview: { summary: 'Deploy the latest commit on the linked branch when the deployment starts.' } });
+                expect(sourceReads).toBe(2); // Admit the retained Source and check its revision before candidate publication.
+            }
+            expect(providerRequests).toEqual([]);
+            return;
+        }
         const candidate = await deps.prepareDeployCandidate({ environmentId: environment.environment.id,
             requestKey: 'reviewed-preview', sourceIntent, sourceMethod: 'gitIntegration', context });
         expect(candidate, JSON.stringify(candidate)).toMatchObject({ ok: true,
@@ -348,7 +366,7 @@ it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-
         if (scenario === 'settled-pages') {
             // Home persistence is the boundary: this is the accepted upload
             // receipt tested separately through the real Pages upload Action.
-            receipt.contentArtifactId = candidate.input.contentArtifactId;
+            receipt = { ...receipt, contentArtifactId: candidate.input.contentArtifactId };
             seed(receipt.contentArtifactId, 'deployment-receipt.v1', { ...candidate.content, sourceMethod: 'upload',
                 platform: { ...candidate.content.platform, observation: { v: 1, state: 'queued',
                     providerDeploymentId: 'reviewed-preview-build', observedAtMs: 1 } } });

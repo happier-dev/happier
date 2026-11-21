@@ -3,6 +3,7 @@ import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginAccountActionContext, PluginActionDeclaration, PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
 import { workersPrepare, workerPrepareInput, workerLinkSchema } from './workersActions.js';
 import { pagesPrepare, pagesPrepareInput, pagesLinkSchema } from './pagesPrepare.js';
+import { cloudflareRoleSchema } from './targetSelection.js';
 
 import { targetOptionInputHints, targetProductInputHints } from './targetOptions.js';
 import { cloudflareReviewNotice } from './reviewNotice.js';
@@ -23,6 +24,7 @@ const noticeResult: PluginJsonSchema = { type: 'object', additionalProperties: f
 function withPreCreateNotice(action: typeof workersPrepare & { inputSchema: PluginJsonSchema; resultSchema: PluginJsonSchema }, product?: 'workers' | 'pages') {
   const draft: PluginJsonSchema = { type: 'object', additionalProperties: false, properties: {
     ...Object.fromEntries((base.required ?? []).map(key => [key, base.properties![key]!])),
+    providerEnvironment: cloudflareRoleSchema(base, product ?? 'both').properties!.providerEnvironment!,
     sourceMethod: base.properties!.sourceMethod!,
     product: product ? { const: product } : { type: 'string', enum: ['workers', 'pages'] },
   }, required: [...base.required ?? [], 'sourceMethod', ...(product ? [] : ['product'])] };
@@ -59,16 +61,17 @@ export const inspect = withPreCreateNotice({
   hostAccess: ['cloudflare-workers', 'cloudflare-pages', 'deploy.manage'],
   inputSchema: {
     type: 'object', additionalProperties: false,
-    properties: { ...pagesPrepareInput.properties, ...workerPrepareInput.properties },
+    properties: { ...pagesPrepareInput.properties, ...workerPrepareInput.properties,
+      providerEnvironment: cloudflareRoleSchema(base, 'both').properties!.providerEnvironment! },
     required: workerPrepareInput.required,
     anyOf: [workerPrepareInput, pagesPrepareInput],
   },
-  resultSchema: workerLinkSchema,
+  resultSchema: cloudflareRoleSchema(workerLinkSchema, 'both'),
   inputHints: targetOptionInputHints,
   async run(input: JsonValue, context: PluginAccountActionContext) {
     // Action admission validated the selected product's closed input schema.
     const request = input as unknown as DeploymentTargetPreparationBaseV1;
-    return 'scriptName' in request.providerEnvironment
+    return 'scriptName' in request.providerEnvironment.selection
       ? workersPrepare.run(input, context) : pagesPrepare.run(input, context);
   },
 } satisfies typeof workersPrepare);

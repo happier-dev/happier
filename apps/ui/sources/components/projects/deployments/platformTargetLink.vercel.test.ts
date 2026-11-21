@@ -23,7 +23,7 @@ it.each(['daemon-root', 'portable-account'] as const)('admits pre-Save sheet cho
     // The UI consumes this same plugin declaration through its portable projection.
     const [platform] = readDeploymentPlatformTargets([{ manifest: entry.manifest as unknown as PluginPortableReleaseManifestV1 }]);
     if (!platform) throw new Error('Missing Vercel platform');
-    const choices = [project.accountId, project.id, { kind: 'production' }];
+    const choices = [project.accountId, project.id, { kind: 'native', selection: { kind: 'production' } }];
     let values: Record<string, unknown> = {};
     platform.fields.forEach((field, index) => {
       values = applyPlatformFieldPatch(platform.fields, values,

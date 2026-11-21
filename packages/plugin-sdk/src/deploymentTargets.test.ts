@@ -10,6 +10,10 @@ import { DeploymentTargetRoleInputProtocolSchemasV1,
 import { HEALTH_CHECK_KINDS_V1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { createPluginTestkit } from './testing/host.js';
 
+const selector = { type: 'object', properties: {}, additionalProperties: false } as const;
+const roleSchema = (schema: Parameters<typeof publicAuthoring.deploymentTargetRoleWithNativeSelectorV1>[0]) =>
+    publicAuthoring.deploymentTargetRoleWithNativeSelectorV1(schema, selector);
+
 it('publishes the canonical finite health kinds without a second schema owner', () => {
     expect(Reflect.get(publicAuthoring, 'HEALTH_CHECK_KINDS_V1')).toBe(HEALTH_CHECK_KINDS_V1);
 });
@@ -30,7 +34,7 @@ it('preserves an external data capability without authoring runtime Actions', ()
         async open() { throw new Error('Unexpected connection acquisition'); },
     };
     const definition = { role: 'data', title: 'External database', targetKind: 'external', icon: 'server-outline',
-        targetSchema: closed, linkSchema: closed, dataV1: { database: { engineId: 'postgresql', runtime } } } as const satisfies publicAuthoring.DeploymentTargetAuthorDefinitionV1;
+        targetSchema: closed, linkSchema: closed, nativeSelectorSchema: selector, dataV1: { database: { engineId: 'postgresql', runtime } } } as const satisfies publicAuthoring.DeploymentTargetAuthorDefinitionV1;
     const plugin = definePlugin({
         id: 'com.example.data-target', version: '1.0.0', displayName: 'External database',
         deploymentTargets: { database: definition },
@@ -53,7 +57,7 @@ it('keeps managed database callbacks private and binds them to the declared targ
         id: 'com.example.database-transport', version: '1.0.0',
         deploymentTargets: { database: {
             role: 'data', title: 'Database', targetKind: 'external', icon: 'server-outline',
-            targetSchema: closed, linkSchema: closed,
+            targetSchema: closed, linkSchema: closed, nativeSelectorSchema: selector,
             dataV1: { database: { engineId: 'postgresql', runtime } },
         } },
     });
@@ -79,17 +83,17 @@ it('preserves an external author runtime target through SDK projection and canon
         facts: [{ label: 'Builds', value: '500 a month' }], included: ['Custom domains'],
         source: { url: 'https://example.com/pricing', checkedAt: '2026-11-16' } }];
     const definition = { role: 'runtime', title: 'External runtime', targetKind: 'external', icon: 'server-outline', plans,
-        targetSchema: closed, linkSchema: closed,
+        targetSchema: closed, linkSchema: closed, nativeSelectorSchema: selector,
         actions: { inspect: 'inspect', link: 'link', deploy: 'deploy', observe: 'observe', create: 'create' } } as const satisfies publicAuthoring.DeploymentTargetAuthorDefinitionV1;
     const plugin = definePlugin({
         id: 'com.example.runtime-target', version: '1.0.0', displayName: 'External runtime',
         actions: {
-            create: { ...write, inputSchema: Reflect.get(publicAuthoring.DeploymentTargetRoleInputProtocolSchemasV1, 'create').jsonSchema,
-                resultSchema: Reflect.get(publicAuthoring, 'DeploymentTargetLinkProviderContentV1ProtocolSchema').jsonSchema },
-            inspect: { ...read, inputSchema: publicAuthoring.DeploymentTargetRoleInputProtocolSchemasV1.inspect.jsonSchema },
-            link: { ...write, inputSchema: publicAuthoring.DeploymentTargetRoleInputProtocolSchemasV1.link.jsonSchema },
-            deploy: { ...write, inputSchema: publicAuthoring.DeploymentTargetRoleInputProtocolSchemasV1.deploy.jsonSchema },
-            observe: { ...read, inputSchema: publicAuthoring.DeploymentTargetRoleInputProtocolSchemasV1.observe.jsonSchema },
+            create: { ...write, inputSchema: roleSchema(publicAuthoring.DeploymentTargetRoleInputProtocolSchemasV1.create.jsonSchema),
+                resultSchema: roleSchema(publicAuthoring.DeploymentTargetLinkProviderContentV1ProtocolSchema.jsonSchema) },
+            inspect: { ...read, inputSchema: roleSchema(publicAuthoring.DeploymentTargetRoleInputProtocolSchemasV1.inspect.jsonSchema) },
+            link: { ...write, inputSchema: roleSchema(publicAuthoring.DeploymentTargetRoleInputProtocolSchemasV1.link.jsonSchema) },
+            deploy: { ...write, inputSchema: roleSchema(publicAuthoring.DeploymentTargetRoleInputProtocolSchemasV1.deploy.jsonSchema) },
+            observe: { ...read, inputSchema: roleSchema(publicAuthoring.DeploymentTargetRoleInputProtocolSchemasV1.observe.jsonSchema) },
         },
         deploymentTargets: { runtime: definition },
     });

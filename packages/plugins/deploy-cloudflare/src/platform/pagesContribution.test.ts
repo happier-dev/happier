@@ -8,7 +8,7 @@ const preparation = { v: 1, serverId: 'home', environmentId: 'environment', expe
   credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: { consumer: { pluginId: entry.manifest.id,
     localId: 'pages-inspect' }, purpose: 'deploy.manage' }, target: { kind: 'account', account: credentialRef } },
   providerIdentity: { providerAccountId: 'account', providerResourceId: 'project-id', providerEnvironment: 'production' },
-  providerEnvironment: { kind: 'production' }, preparedNative: { projectName: 'existing-pages' } };
+  providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, preparedNative: { projectName: 'existing-pages' } };
 const repository = { kind: 'gitlab', deployment: 'https://gitlab.com', repository: 'example/app' };
 
 it('prepares and links a direct upload without requiring provider Git access', async () => {
@@ -84,5 +84,25 @@ it.each(['../../outside', '/outside', 'C:\\outside'])('refuses provider build ro
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
   try {
     await expect(kit.invokeAction('pages-inspect', { ...preparation, repository })).rejects.toMatchObject({ code: 'provider_response_invalid' });
+  } finally { await kit.dispose(); }
+});
+
+it('rejects a Workers Preview selector at Pages Action admission before a native read', async () => {
+  const requests: HttpRequest[] = [];
+  const http = createPluginHttpFixture({ async request(request) {
+    requests.push(request);
+    return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({ success: true,
+      result: { id: 'retained', environment: 'production', latest_stage: { name: 'deploy', status: 'success' } } })) };
+  } });
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
+  try {
+    const input = { ...preparation, targetLinkId: 'link', expectedTargetLinkRevision: 1,
+      deploymentId: 'receipt', expectedDeploymentRevision: 1, actionOperationId: 'operation',
+      operation: 'deploy', providerDeploymentId: 'retained' };
+    await expect(kit.invokeAction('pages-observe', input)).resolves.toMatchObject({ state: 'succeeded' });
+    await expect(kit.invokeAction('pages-observe', { ...input,
+      providerEnvironment: { kind: 'native', selection: { kind: 'preview', scriptName: 'worker', previewName: 'branch' } },
+    })).rejects.toMatchObject({ code: 'plugin_action_input_schema_invalid' });
+    expect(requests).toHaveLength(1);
   } finally { await kit.dispose(); }
 });

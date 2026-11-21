@@ -184,6 +184,7 @@
     "@happier-dev/plugins-cursor": "0.0.0",
     "@happier-dev/plugins-database-workbench": "0.0.0",
     "@happier-dev/plugins-deploy-cloudflare": "0.0.0",
+    "@happier-dev/plugins-deploy-railway": "0.0.0",
     "@happier-dev/plugins-deploy-vercel": "0.0.0",
     "@happier-dev/plugins-deployment-neon": "0.0.0",
     "@happier-dev/plugins-deployment-supabase": "0.0.0",

@@ -103,7 +103,7 @@ describe('deployment role host admission', () => {
     it('admits a Workers Preview Domain request so the provider can report its platform limitation', async () => {
         const fixture = createDeploymentTargetRoleAdmissionFixture('inspect');
         const role = 'domains.add' as const;
-        const providerEnvironment = { kind: 'preview' as const, scriptName: 'worker', previewName: 'branch' };
+        const providerEnvironment = { kind: 'native' as const, selection: { kind: 'preview', scriptName: 'worker', previewName: 'branch' } };
         fixture.state.environment.targetLinks[0]!.content!.providerEnvironment = providerEnvironment;
         const input = { ...fixture.input, providerEnvironment, domainId: 'domain', domain: { hostname: 'app.example.test' } };
         await expect(admitDeploymentTargetRoleForHost({ ...fixture.request, role, input,
@@ -408,7 +408,7 @@ describe('deployment role host admission', () => {
                 purpose: { ...fixture.input.credentialPrincipal.purpose, purpose: 'private-substituted-purpose' } };
             if (family === 'provider_identity') content.providerIdentity = { ...fixture.input.providerIdentity,
                 providerResourceId: 'private-substituted-resource' };
-            if (family === 'provider_environment') content.providerEnvironment = { kind: 'custom', id: 'private-substituted-environment' };
+            if (family === 'provider_environment') content.providerEnvironment = { kind: 'native', selection: { branchId: 'private-substituted-environment' } };
             if (family === 'repository_access') content.repositoryAccess = { status: 'ready',
                 repository: { kind: 'github', deployment: 'https://github.com', repository: 'private/substitution' } };
             if (family === 'prepared_native') content.preparedNative = { projectName: 'private-substituted-project' };
@@ -522,7 +522,7 @@ describe('deployment role host admission', () => {
         const context = { ...fixture.request.context, surface };
         const action = { pluginId: 'acme.alpha', localId: role.replace('.', '-') };
         const input = normalizeStrictJsonValue(fixture.input);
-        fixture.state.environment.targetLinks[0]!.content!.providerEnvironment = { kind: 'custom', id: 'branch-B' };
+        fixture.state.environment.targetLinks[0]!.content!.providerEnvironment = { kind: 'native', selection: { branchId: 'branch-B' } };
         const port = createHostReviewedChildPortV1({ actionId: 'deployments.teardown', input: {
             serverId: 'home', environmentId: fixture.input.environmentId, targetLinkId: fixture.input.targetLinkId },
             context, reviewAdmitted: true,
@@ -608,7 +608,7 @@ describe('deployment role host admission', () => {
         if (change === 'foreign native resource') fixture.state.environment.targetLinks[0]!.content!.providerIdentity = {
             ...fixture.input.providerIdentity, providerResourceId: 'foreign',
         };
-        if (change === 'foreign branch') fixture.state.environment.targetLinks[0]!.content!.providerEnvironment = { kind: 'custom', id: 'foreign' };
+        if (change === 'foreign branch') fixture.state.environment.targetLinks[0]!.content!.providerEnvironment = { kind: 'native', selection: { branchId: 'foreign' } };
         if (change === 'foreign principal') fixture.request = { ...fixture.request, input: {
             ...fixture.input, credentialPrincipal: { ...fixture.input.credentialPrincipal, accountId: 'foreign' },
         } };

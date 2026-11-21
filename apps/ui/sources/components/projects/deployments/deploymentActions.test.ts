@@ -1213,7 +1213,7 @@ describe('deployment UI Action callbacks', () => {
                         purpose: { consumer: { pluginId: 'fixture.platform', localId: 'link' }, purpose: 'manage' },
                         target: { kind: 'account' as const, account: { service: { pluginId: 'fixture.platform', localId: 'vercel' }, accountId: 'credential' } } },
                     providerIdentity: { providerAccountId: 'team', providerResourceId: 'existing-project', providerEnvironment: 'production' },
-                    providerEnvironment: { kind: 'production' as const },
+                    providerEnvironment: { kind: 'native' as const, selection: { kind: 'production' } },
                 },
             } : { targetId: 'own-server', machines: [{ machineId: environment.controllerMachineId, installationId: 'installation-a' }] }),
         };
@@ -1276,7 +1276,7 @@ describe('deployment UI Action callbacks', () => {
             purpose: { consumer: { pluginId: 'example.data', localId: 'link' }, purpose: 'manage' },
             target: { kind: 'account', account: { service: { pluginId: 'example.data', localId: 'service' }, accountId: 'credential' } } },
             providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project', providerEnvironment: 'branch' },
-            providerEnvironment: { kind: 'custom', id: 'branch' } });
+            providerEnvironment: { kind: 'native', selection: { branchId: 'branch' } } });
         const selection = managed ? { role: 'data' as const, targetId: 'managed-data', targetKind: 'database', machines: [], provider,
             title: 'Customer database',
             source: { kind: 'plugin' as const, contribution: { pluginId: 'example.data', localId: 'database' } } }

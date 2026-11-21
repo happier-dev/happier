@@ -3,7 +3,7 @@ import { DeploymentTargetContributionV1Schema } from './deploymentTargets.js';
 
 const closed = { type: 'object', properties: {}, additionalProperties: false };
 const target = { id: 'example', role: 'runtime', title: 'Example', icon: 'server-outline', targetKind: 'example',
-    targetSchema: closed, linkSchema: closed, actions: { inspect: 'inspect', link: 'link', deploy: 'deploy', observe: 'observe' } };
+    targetSchema: closed, linkSchema: closed, nativeSelectorSchema: closed, actions: { inspect: 'inspect', link: 'link', deploy: 'deploy', observe: 'observe' } };
 const plan = { id: 'free', title: 'Free', price: { amount: '0', currency: 'USD', unit: 'month' },
     facts: [{ label: 'Builds', value: '500 a month' }], included: ['Custom domains'],
     source: { url: 'https://example.com/pricing', checkedAt: '2026-11-16' } };

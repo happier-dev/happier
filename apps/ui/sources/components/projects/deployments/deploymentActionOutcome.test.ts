@@ -38,7 +38,7 @@ describe('deployment press outcome', () => {
             purpose: { consumer: { pluginId: 'example.data', localId: 'provision' }, purpose: 'manage' },
             target: { kind: 'account', account: { service: { pluginId: 'example.data', localId: 'account' }, accountId: 'selected' } } },
           providerIdentity: { providerAccountId: 'selected', providerResourceId: 'created', providerEnvironment: 'new' },
-          providerEnvironment: { kind: 'custom', id: 'new' },
+          providerEnvironment: { kind: 'native', selection: { branchId: 'new' } },
         },
       } },
     });

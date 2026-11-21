@@ -251,7 +251,7 @@ describe('ordinary preview data teardown composition', () => {
                     credentialPrincipal: { ...created.input.credentialPrincipal, target: { kind: 'account', account: {
                         ...created.input.credentialRef, accountId: 'connected-B' } } },
                     providerIdentity: { providerAccountId: 'organization-B', providerResourceId: 'parent-project-B', providerEnvironment: 'child-project-B' },
-                    providerEnvironment: { kind: 'custom', id: 'child-project-B' } }),
+                    providerEnvironment: { kind: 'native', selection: { branchId: 'child-project-B' } } }),
                 });
                 const list: NonNullable<import('@happier-dev/protocol').ActionExecutorDeps['listContributedActionDefinitions']> =
                     selection => listRuntimeContributedActionDefinitions(mounted.registry, selection);

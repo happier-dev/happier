@@ -1,3 +1,4 @@
+import { deploymentTargetRoleWithNativeSelectorV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargets';
 import { describe, expect, it } from 'vitest';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { DeploymentTargetRoleInputProtocolSchemasV1,
@@ -9,6 +10,7 @@ import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 import { listDeploymentTargetsV1, OWN_SERVER_DEPLOYMENT_TARGET_V1, readDeploymentTargetV1 } from './deploymentTargetCatalog';
 import { admitOwnServerDeploymentTargetLink } from './ownServer/ownServerTargetAdmission';
 import { manifest as vercelManifest } from '../../../../../packages/plugins/deploy-vercel/src/manifest';
@@ -24,10 +26,10 @@ function admittedRegistry(role: 'runtime' | 'data' = 'runtime', previewInput = f
         contributes: {
             actions: (['inspect', 'link', 'deploy', 'observe', 'cancel', 'read'] as const).map(id => ({
                 id, title: id, scopes: ['global'], surfaces: ['plugin'], execution: { target: 'daemon' },
-                inputSchema: id === 'read' ? role === 'data'
+                inputSchema: deploymentTargetRoleWithNativeSelectorV1(id === 'read' ? role === 'data'
                     ? DeploymentTargetRoleInputProtocolSchemasV1['projects.observe'].jsonSchema
                     : DeploymentTargetRoleInputProtocolSchemasV1['variables.read'].jsonSchema
-                    : DeploymentTargetRoleInputProtocolSchemasV1[id].jsonSchema,
+                    : DeploymentTargetRoleInputProtocolSchemasV1[id].jsonSchema, closed),
                 resultSchema: id === 'read' ? role === 'data' ? DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema : DeploymentTargetVariablesReadResultV1ProtocolSchema.jsonSchema
                     : DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema,
                 dangerLevel: ['inspect', 'observe', 'read'].includes(id) ? 'safe' : 'writesLocal',
@@ -35,10 +37,10 @@ function admittedRegistry(role: 'runtime' | 'data' = 'runtime', previewInput = f
             })),
             resources: [{ id: 'projects/list', source: 'dynamic', kind: 'config', contentType: 'application/json', execution: { target: 'daemon' } }],
             deploymentTargets: role === 'data' ? [{ id: 'database', targetKind: 'example', title: 'External data',
-                role: 'data', icon: 'server-outline', targetSchema: closed, linkSchema: closed,
+                role: 'data', icon: 'server-outline', targetSchema: closed, linkSchema: closed, nativeSelectorSchema: closed,
                 dataV1: { database: { engineId: 'example-engine' }, projects: { list: 'projects/list', observe: 'read' },
                     ...(previewInput ? { branches: { previewInput: { name: { kind: 'input', name: 'preview', path: ['name'] } } } } : {}) } }] : [{ id: 'own-server', targetKind: 'example', title: 'External target',
-                role: 'runtime', icon: 'server-outline', targetSchema: closed, linkSchema: closed,
+                role: 'runtime', icon: 'server-outline', targetSchema: closed, linkSchema: closed, nativeSelectorSchema: closed,
                 actions: { inspect: 'inspect', link: 'link', deploy: 'deploy', observe: 'observe',
                     cancel: 'cancel', variables: { read: 'read' } } }],
         },
@@ -57,6 +59,25 @@ function registryFromManifest(manifest: LoadedPlugin['manifest']) {
 }
 
 describe('deployment target catalog at the admitted registry boundary', () => {
+    it('admits the bundled Railway link-only target with exact Git review and finite logs', () => {
+        const pluginId = 'happier.deploy.railway';
+        const declarations = getResolvedContributionRegistry().deploymentTargets ?? [];
+        const target = readDeploymentTargetV1({ kind: 'plugin', contribution: { pluginId, localId: 'runtime' } }, declarations);
+        expect(target).toMatchObject({
+            targetKind: 'railway',
+            gitSource: { guarantee: 'exactCommit', requiresPublishedCheckout: true },
+            nativeSelectorSchema: { type: 'object', additionalProperties: false },
+            logFollow: false,
+            actions: {
+                inspect: { kind: 'plugin' },
+                link: { kind: 'plugin' },
+                deploy: { kind: 'plugin' },
+                logs: { build: { kind: 'plugin' }, runtime: { kind: 'plugin' } },
+            },
+        });
+        expect(target).not.toHaveProperty('actions.create');
+    });
+
     it('preserves supported output and prerequisite facts from real target manifests through admission and normalization', () => {
         const declarations = [vercelManifest, cloudflareManifest].flatMap(manifest =>
             registryFromManifest(normalizePluginManifestV2(manifest)).deploymentTargets ?? []);
