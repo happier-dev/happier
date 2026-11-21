@@ -79,6 +79,20 @@ describe('workflow trigger starts (the "When it runs" card)', () => {
     ]);
   });
 
+  it('keeps an Event selectable when its plugin display name is unavailable', () => {
+    const unresolved = { pluginId: 'qa.plugin', localId: 'published' };
+    const options = buildWorkflowTriggerStartOptions([
+      { eventRef: { pluginId: 'happier.sentry', localId: 'issue' }, title: 'A new issue appears', pluginName: 'Sentry' },
+      { eventRef: unresolved, title: 'An item publishes', pluginName: null },
+    ]).filter(option => option.section === 'plugins');
+
+    expect(options.map(({ group, title }) => ({ group, title }))).toEqual([
+      { group: 'Sentry', title: 'A new issue appears' },
+      { group: '', title: 'An item publishes' },
+    ]);
+    expect(start(options[1]!.id)).toEqual({ kind: 'pluginEvent', value: null, eventRef: unresolved });
+  });
+
   it('leads with the resource\'s own group in a resource host, then everything else in the usual groups', () => {
     const options = buildWorkflowTriggerStartOptions([
       { eventRef: { pluginId: 'happier.github', localId: 'pr-opened' }, title: 'A pull request opens', pluginName: 'GitHub' },
