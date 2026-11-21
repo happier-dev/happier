@@ -16,6 +16,7 @@ import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/se
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema, ExternalActionResponseEnvelopeV1Schema,
   projectDeploymentReadAdmissionV1, projectDeploymentNativeAdmissionV1, createDeploymentCandidatePublicationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { isDeploymentChildRootActionIdV1, isDeploymentPromoteActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { createCliActionDeps } from './createCliActionDeps';
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
 import { projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
@@ -506,6 +507,11 @@ describe('Deployment Actions through the default CLI Account front door', () => 
             installationId: controller.installationId, actionId, requestId: 'relay-request', target: prepared.envelope.target,
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(prepared.envelope),
             ...(isRead ? { deploymentReadAdmission: projectDeploymentReadAdmissionV1(actionId, input) } : {}),
+            ...(isDeploymentChildRootActionIdV1(actionId) ? { deploymentChildRoot: true } : {}),
+            ...(isDeploymentPromoteActionIdV1(actionId) ? {
+              environmentId: environment.id,
+              deploymentNativeAdmission: projectDeploymentNativeAdmissionV1(actionId, input),
+            } : {}),
             ...(actionId === 'deployments.teardown' || actionId === 'deployments.bindings.set' ? { environmentId: environment.id } : isRead || actionId === 'deployments.targets.link' || actionId === 'deployments.bindings.set' ? {}
               : { deploymentCandidatePublication: createDeploymentCandidatePublicationV1({ accountId: 'deployment-account',
                 serverIdentityId: 'srv_deployment_home', actionId, requestId: 'relay-request',
@@ -516,6 +522,13 @@ describe('Deployment Actions through the default CLI Account front door', () => 
         expect(url).toBe(`https://deployment-home.test/v1/actions/${actionId}`);
         expect(prepared.executionAuthorization?.binding).toMatchObject({ actionId, machineId: controller.id, installationId: controller.installationId });
         expect(prepared.executionAuthorization?.requesterAccountContext).toBeDefined();
+        if (isDeploymentPromoteActionIdV1(actionId)) {
+          expect(prepared.executionAuthorization?.binding).toMatchObject({
+            deploymentChildRoot: true,
+            environmentId: environment.id,
+            deploymentCandidatePublication: { environmentId: environment.id },
+          });
+        }
         events.push('dispatch');
         return { status: 200, data: { v: 1, actionId, requestId: 'relay-request', execution: { ok: true, result } } };
         } catch (error) { boundaryErrors.push(error); throw error; }
