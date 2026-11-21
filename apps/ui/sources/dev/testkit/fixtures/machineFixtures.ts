@@ -132,7 +132,9 @@ export function createPlainMachineRowFixture(input: Readonly<{ id: string; accou
         ...(machine.operationProtocolCapabilities ? { operationProtocolCapabilities: machine.operationProtocolCapabilities } : {}),
         ...(machine.operationProtocolCapabilitiesRevision !== undefined
             ? { operationProtocolCapabilitiesRevision: machine.operationProtocolCapabilitiesRevision } : {}),
-        revokedAt: null, replacedByMachineId: null, installationId: 'test-installation',
+        revokedAt: null, replacedByMachineId: null,
+        installationId: machine.installationId === undefined ? 'test-installation' : machine.installationId,
+        ...(machine.installationPublicKey === undefined ? {} : { installationPublicKey: machine.installationPublicKey }),
         access: AccessibleMachineAccessV1Schema.parse(machine.access ?? { custodian: { accountId: input.accountId, displayName: 'Test Account' },
             role: 'manage', resourceMode: 'plain', accessState: 'ready' }),
     };
@@ -148,7 +150,7 @@ export function createHydratedPlainMachineFixture(input: Readonly<{ id: string; 
     const machine = createMachineFixture({ ...input.machine, id: input.id });
     const row = createPlainMachineRowFixture({ id: input.id, accountId: input.accountId, machine });
     return { ...machine, storageMode: 'plain', dataEncryptionKey: row.dataEncryptionKey, access: row.access,
-        installationId: row.installationId };
+        installationId: row.installationId, installationPublicKey: row.installationPublicKey };
 }
 
 /** Ready Plain recipient wire: no opening key; the custodian's write basis stays explicit. */

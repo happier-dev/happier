@@ -170,11 +170,11 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
 )>) {
     await sodium.ready;
     const installation = readFixtureInstallationKeyPair();
-    const projection = createMachineFixture({ id: params.machineId, activeAt: Date.now() });
+    const projection = createMachineFixture({ id: params.machineId, activeAt: Date.now(),
+        installationId: params.installationId, installationPublicKey: encodeBase64(installation.publicKey, 'base64') });
     const codec = params.encryption ? await params.encryption.openEncryption(null) : null;
     const machine = {
         ...createPlainMachineRowFixture({ id: params.machineId, accountId: params.accountId, machine: projection }),
-        ...(params.installationId ? { installationId: params.installationId } : {}),
         ...(codec ? {
             metadata: encodeBase64((await codec.encrypt([projection.metadata]))[0]!, 'base64'),
             dataEncryptionKey: null,
@@ -183,7 +183,6 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
         } : {}),
         ...(params.custodian ? { access: { custodian: params.custodian, role: params.sharedMachineRole ?? 'use',
             resourceMode: codec ? 'e2ee' as const : 'plain' as const, accessState: 'ready' as const } } : {}),
-        installationPublicKey: encodeBase64(installation.publicKey, 'base64'),
     };
     const roots = new Map<string, ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse>>();
     return {

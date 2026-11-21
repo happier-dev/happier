@@ -745,6 +745,36 @@ function createClientActionActivation(input: Readonly<{
     });
 }
 
+async function installDispatcherAccountActionRelay(
+    machineId: string,
+    receive: (request: import('@happier-dev/protocol/actions/actionInvokeInput').ActionInvokeInput, machineId: string) =>
+        ReturnType<typeof dispatchPluginSurfaceAction>,
+) {
+    const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+    const { ACTION_INVOKE_ACTION_ID_V1 } = await import('@happier-dev/protocol/actions/actionIds');
+    const { ActionInvokeInputSchema } = await import('@happier-dev/protocol/actions/actionInvokeInput');
+    const home = rpcHomes.get('server-client-action')!;
+    const targets: string[] = [];
+    const relay = await createExternalActionAccountHttpBoundary({
+        serverUrl: home.serverUrl, serverIdentityId: 'srv_client_action', accountId: home.accountId,
+        machineId, actionId: ACTION_INVOKE_ACTION_ID_V1, tokenEpoch: 0,
+        execute: async (value, { target, invocation }) => {
+            expect(invocation.surface).toBe('ui');
+            targets.push(target.machineId);
+            // The HTTP receiver stands in for the installed daemon's Account handler.
+            // The handler still enters the real dispatcher for its nested Action.
+            const result = await receive(ActionInvokeInputSchema.parse(value), target.machineId);
+            if (!result.ok) throw new Error(`Receiver fixture could not dispatch the Account Action: ${result.reason}`);
+            return result.result;
+        },
+    });
+    network.setHttpResponder(async (url, init) => {
+        const endpoint = new URL(String(url));
+        return await relay.handle(endpoint, init) ?? createEmptyAccountBootstrapHttpResponse(endpoint.pathname, init);
+    });
+    return targets;
+}
+
 function resolveExactClientAction(action: PluginProjectedActionV2) {
     return (identity: PluginContributionIdentityV1): PluginProjectedActionV2 | null => (
         identity.pluginId === action.pluginId && identity.localId === action.id
@@ -3871,12 +3901,14 @@ describe('Account Action placement through the executable dispatcher', () => {
     it.each(['mounted', 'host', 'host Session', 'host Run', 'host cold', 'Session operand', 'Session unavailable', 'Session outer unavailable', 'Session projection unavailable'] as const)('routes or refuses a nested Account Action using the selected Machine and UI origin (%s)', async placement => {
         const accountLifetime = clientAccountLifetime();
         const sessionOperand = placement.startsWith('Session ');
+        const explicitTarget = placement === 'host' || placement === 'host cold';
+        const providerMachineId = 'provider-machine';
         const sourceId = 'acme.provider-source';
         const provider = PluginProjectedActionV2Schema.parse({ ...resolveDaemonTargetAction({ pluginId: sourceId, localId: 'list' }), surfaces: ['plugin'],
             ...(sessionOperand ? { sessionTarget: { field: 'sessionId', cardinality: 'one' } } : {}) });
         clientActionSchemasByQualifiedId.set(`${sourceId}/list`, { inputSchema: {} });
         const origin = clientActionExecutionOrigin(sourceId);
-        const executionOrigin = { ...origin, materializationRef: { ...origin.materializationRef, machineId: 'provider-machine' } };
+        const executionOrigin = { ...origin, materializationRef: { ...origin.materializationRef, machineId: providerMachineId } };
         const published = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
             installedPackagesById: { [sourceId]: { id: sourceId, displayName: 'Source', version: '1.2.3', enabled: true,
                 source: { kind: 'local', locator: '/plugins/source' }, occurrenceId: provider.occurrenceId,
@@ -3913,11 +3945,25 @@ describe('Account Action placement through the executable dispatcher', () => {
         if (sessionOperand) {
             const { createSessionFixture, createPlainSessionByIdResponseFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
             const session = createSessionFixture({ id: 'source-session', encryptionMode: 'plain',
-                metadata: { ...(placement === 'Session unavailable' || placement === 'Session outer unavailable' ? {} : { machineId: 'provider-machine' }), path: '/source-project' } });
+                metadata: { ...(placement === 'Session unavailable' || placement === 'Session outer unavailable' ? {} : { machineId: providerMachineId }), path: '/source-project' } });
             network.setHttpResponder(async (url, init) => new URL(String(url)).pathname === '/v2/sessions/source-session'
                 ? Response.json(createPlainSessionByIdResponseFixture(session))
                 : createEmptyAccountBootstrapHttpResponse(new URL(String(url)).pathname, init));
         }
+        const selectedAction = { pluginId: CALLER_PLUGIN_ID, localId: activation.action.id };
+        const hostContext = { serverId: accountLifetime.scope.serverId, runtimeAccountId: accountLifetime.scope.accountId };
+        const resolveContributedAction = (identity: PluginContributionIdentityV1) => identity.pluginId === sourceId && placement !== 'host cold'
+            ? (sessionOperand ? { ...provider, occurrenceId: 'ambient-source-occurrence' } : provider)
+            : resolveExactClientAction(activation.action)(identity);
+        const relayedTargets = explicitTarget ? await installDispatcherAccountActionRelay(providerMachineId, (request, machineId) => {
+            expect(request.action).toEqual(selectedAction);
+            expect(requests).toHaveLength(0);
+            return dispatchPluginSurfaceAction({
+                action: request.action, input: request.input, invocationSurface: 'ui',
+                clientAction: {}, pluginUiProjection: activation.projection, resolveContributedAction,
+                hostAction: { execute: executor.execute, context: { ...hostContext, defaultSessionMachineId: machineId } },
+            });
+        }) : [];
         await activation.composition.unload();
         try {
             await activation.composition.reconcile([activation.activation]);
@@ -3925,23 +3971,21 @@ describe('Account Action placement through the executable dispatcher', () => {
                 ? { ok: false, code: 'unavailable', reason: 'plugin_surface_contributed_action_unavailable' }
                 : { ok: true, binding: undefined };
             const outcome = await dispatchPluginSurfaceAction({
-                action: { pluginId: CALLER_PLUGIN_ID, localId: activation.action.id },
+                action: selectedAction,
                 input: placement === 'Session outer unavailable' ? { sessionId: 'source-session' } : {},
                 ...(placement === 'Session outer unavailable' ? { settleContributedAction } : {}),
                 invocationSurface: 'ui', clientAction: {},
                 ...(placement === 'mounted' ? {
-                    contributedAction: { machineId: 'provider-machine', serverId: 'server-client-action', execute: machine },
+                    contributedAction: { machineId: providerMachineId, serverId: 'server-client-action', execute: machine },
                 } : { hostAction: { execute: executor.execute, context: {
-                    serverId: accountLifetime.scope.serverId, runtimeAccountId: accountLifetime.scope.accountId,
-                    ...(placement === 'host' || placement === 'host cold' ? { externalActionTarget: { kind: 'machine' as const, machineId: 'provider-machine' } }
-                        : placement === 'host Session' ? { defaultSessionMachineId: 'provider-machine' }
-                            : placement === 'host Run' ? { executionRunTargetMachineId: 'provider-machine' }
+                    ...hostContext,
+                    ...(explicitTarget ? { externalActionTarget: { kind: 'machine' as const, machineId: providerMachineId } }
+                        : placement === 'host Session' ? { defaultSessionMachineId: providerMachineId }
+                            : placement === 'host Run' ? { executionRunTargetMachineId: providerMachineId }
                                 : { defaultSessionMachineId: 'other-machine' }),
                 } } }),
                 pluginUiProjection: activation.projection,
-                resolveContributedAction: identity => identity.pluginId === sourceId && placement !== 'host cold'
-                    ? (sessionOperand ? { ...provider, occurrenceId: 'ambient-source-occurrence' } : provider)
-                    : resolveExactClientAction(activation.action)(identity),
+                resolveContributedAction,
             });
             if (placement === 'Session unavailable' || placement === 'Session outer unavailable' || placement === 'Session projection unavailable') {
                 expect(outcome).toMatchObject({ ok: false, reason: placement !== 'Session projection unavailable'
@@ -3950,8 +3994,9 @@ describe('Account Action placement through the executable dispatcher', () => {
                 return;
             }
             expect(outcome).toEqual({ ok: true, result: { rows: ['provider'] } });
+            expect(relayedTargets).toEqual(explicitTarget ? [providerMachineId] : []);
             expect(requests).toHaveLength(1);
-            expect(requests[0]).toMatchObject({ machineId: 'provider-machine', expectedContributorOccurrenceId: provider.occurrenceId,
+            expect(requests[0]).toMatchObject({ machineId: providerMachineId, expectedContributorOccurrenceId: provider.occurrenceId,
                 executionSurface: 'ui', invocation: { kind: 'clientPluginAction' } });
         } finally { await activation.composition.unload(); accountLifetime.retire(); }
     });
@@ -3980,6 +4025,7 @@ describe('Account Action placement through the executable dispatcher', () => {
         });
         const result = { status: operation === 'link' || operation === 'attach' ? 'linked' : 'unlinked' };
         const accountLifetime = clientAccountLifetime();
+        const machineId = 'provider-machine';
         let confirmations = 0;
         let writes = 0;
         nestedActionConfirmation.onShow = (_approve, reject) => { confirmations += 1; reject(); };
@@ -3997,23 +4043,36 @@ describe('Account Action placement through the executable dispatcher', () => {
         };
         const activation = createClientActionActivation({ accountPlacement: true, accountLifetime,
             accountHandler: async (_value, context) => context.services.actions.execute({ pluginId: manifest.id, localId: id }, value) });
+        const action = { pluginId: CALLER_PLUGIN_ID, localId: activation.action.id };
+        const resolveContributedAction = (identity: PluginContributionIdentityV1) =>
+            identity.pluginId === manifest.id ? provider : resolveExactClientAction(activation.action)(identity);
+        const relayedTargets = await installDispatcherAccountActionRelay(machineId, (request, receiverMachineId) => {
+            expect(request.action).toEqual(action);
+            expect(writes).toBe(0);
+            return dispatchPluginSurfaceAction({
+                action: request.action, input: request.input, invocationSurface: 'ui',
+                clientAction: {}, pluginUiProjection: activation.projection, resolveContributedAction,
+                contributedAction: { machineId: receiverMachineId, serverId: accountLifetime.scope.serverId, execute: machine },
+            });
+        });
         await activation.composition.unload();
         let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
         let outcome: unknown;
         try {
             await activation.composition.reconcile([activation.activation]);
             const api = createPluginSurfaceActionHostApi({ surfaceContext: surfaceContext(),
-                callerBinding: mountedCallerBinding({ machineId: 'provider-machine' }), callerSourceCustody: TARGET_SOURCE_CUSTODY,
-                clientAction: {}, contributedAction: { machineId: 'provider-machine', serverId: 'server-client-action', execute: machine },
+                callerBinding: mountedCallerBinding({ machineId }), callerSourceCustody: TARGET_SOURCE_CUSTODY,
+                clientAction: {}, contributedAction: { machineId, serverId: accountLifetime.scope.serverId, execute: machine },
                 pluginUiProjection: activation.projection,
-                resolveContributedAction: identity => identity.pluginId === manifest.id ? provider : resolveExactClientAction(activation.action)(identity),
+                resolveContributedAction,
             });
             screen = await renderScreen(React.createElement('button', { testID: 'link-direct', onPress: async () => {
-                outcome = await api.handleRequest(executeActionRequest({ action: { pluginId: CALLER_PLUGIN_ID, localId: activation.action.id }, input: {} }));
+                outcome = await api.handleRequest(executeActionRequest({ action, input: {} }));
             } }));
             await screen.pressByTestIdAsync('link-direct');
             expect(confirmations).toBe(0);
             expect(outcome).toEqual(result);
+            expect(relayedTargets).toEqual([machineId]);
             expect(writes).toBe(1);
         } finally {
             screen?.unmount();
