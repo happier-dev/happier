@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
 import { ArtifactActionOutputSchemasV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
 import { teamGroupLabelBinding } from '@happier-dev/protocol/teams/groupLabel';
@@ -56,14 +57,19 @@ describe('Team setup F: Artifact resource discovery', () => {
   afterAll(async () => { await fixture?.stop(); });
 
   async function prepareResources() {
-    return owner.withPersonActionClient(async execute => {
+    const ownerAccountId = readAccountIdFromToken(owner.credentials.token);
+    if (!ownerAccountId) throw new Error('Artifact fixture owner identity unavailable');
+    const ui = await connectUiPersonActionClient({ serverUrl: fixture.actionServerApiUrl,
+      addressAnchorUrl: fixture.server.baseUrl, accountSecret: owner.auth.accountSigningSeed, withAppShellActions: false });
+    try {
       const seed = async (actionId: ActionId, input: unknown) => {
-        const result = await execute(actionId, input);
+        const result = await ui.executeConfirmed(actionId, input, { surface: 'ui', authority: 'present_user',
+          actionCaller: { kind: 'host' }, serverId: ui.serverId, serverIdentityId: fixture.serverId, actionRequestId: randomUUID() });
         if (!result.ok) throw new Error(`Artifact fixture ${actionId} refused (${result.errorCode})`);
         return result.result;
       };
       teamId = TeamSummaryV1Schema.parse(await seed('teams.create', {
-        v: 1, name: 'Artifact discovery', requestKey: randomUUID(), initialOwnerAccountId: readAccountIdFromToken(owner.credentials.token),
+        v: 1, name: 'Artifact discovery', requestKey: randomUUID(), initialOwnerAccountId: ownerAccountId,
       })).id;
       for (const [account, role] of [[member, 'member'], [admin, 'admin']] as const) {
         await seed('teams.members.add', { v: 1, teamId, role,
@@ -71,7 +77,7 @@ describe('Team setup F: Artifact resource discovery', () => {
       }
       groupId = randomUUID();
       const name = await prepareCliPrivateLabel({ endpoint: fixture.server.baseUrl, token: owner.credentials.token,
-        accountId: readAccountIdFromToken(owner.credentials.token), accountMode: 'e2ee',
+        accountId: ownerAccountId, accountMode: 'e2ee',
         recipientCensusPath: PRIVATE_LABEL_RECIPIENT_CENSUS_PATH, owner: { kind: 'team', teamId },
         binding: teamGroupLabelBinding(groupId, 'name'), value: 'Project readers' });
       await seed('teams.groups.create', { v: 1, teamId, groupId, name, requestKey: randomUUID() });
@@ -125,7 +131,7 @@ describe('Team setup F: Artifact resource discovery', () => {
         header: selectedDocument.header,
         body: JSON.stringify({ v: 1, markdown: 'Edited shared document context', createdAtMs: 1, updatedAtMs: 2 }),
       });
-    }, { surface: 'coreAction' });
+    } finally { await ui.close(); }
   }
 
   async function list(account: typeof owner, kind: string, limit = 50, cursor?: string) {

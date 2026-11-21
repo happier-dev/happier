@@ -110,6 +110,15 @@ export async function startTeamSetupFFixture(params: Readonly<{
 
     return { ...core,
       createAccount, enrollDaemon, assertKnownGoodMachineControl, assertSessionAgentOutput,
+      prepareSessionControl(account: Awaited<ReturnType<typeof createAccount>>,
+        options: Parameters<typeof enrollDaemon>[1]) {
+        let prepared: ReturnType<typeof enrollDaemon> | undefined;
+        return () => prepared ??= (async () => {
+          const machine = await enrollDaemon(account, options);
+          await core.assertKnownGoodSessionControl(account, machine);
+          return machine;
+        })();
+      },
       /** The real vendor process reaches its native MCP host; the test supplies no caller authority. */
       async executeSessionMcpAction(account: Awaited<ReturnType<typeof createAccount>>,
         session: Readonly<{ sessionId: string; logPath: string }>, actionId: ActionId, input: unknown) {
