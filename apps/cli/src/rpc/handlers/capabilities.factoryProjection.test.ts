@@ -82,9 +82,7 @@ it('removes native sign-in identity from Use capability replies without mutating
     expect(response.results[`cli.${agentId}`].data.authStatus.accountLabel).toBe('owner@example.invalid');
     expect(await detect({ requests: [request.requests[0]!] }, { ...requester,
         machineAdmission: { ...requester.machineAdmission!, role: 'manage' },
-    })).toMatchObject({ results: { [`cli.${agentId}`]: { ok: true, data: {
-        signIn: { status: 'unknown', required: false }, authStatus: null,
-    } } } });
+    })).toEqual(response);
 });
 
 it.each([

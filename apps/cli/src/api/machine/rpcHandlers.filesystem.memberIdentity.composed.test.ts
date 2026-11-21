@@ -1,15 +1,18 @@
 import { createNativeFilesystemMemberFixture as fixture, nativeFilesystemMemberBoundary, assertNativeInvocation, resetNativeFilesystemMemberBoundary } from './filesystemMemberReceiver.testkit';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { z } from 'zod/mini';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createEncryptedTransferChunkEnvelope } from '@happier-dev/transfers/node';
+import { resolveAgentCliManagedCommandPathForRuntime } from '@happier-dev/cli-common/agents/resolution';
+import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
 import { createInstalledFilesystemMachineFixture } from '@/daemon/testkit/installedFilesystemMachineFixture';
 import { readAgentIsolationMemberBindingForAccount } from '@/daemon/agentIsolation/memberBindings';
 import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { configuration } from '@/configuration';
+import { resolveAgentCliRuntimeSpecForLookupId } from '@/packagedRuntime/managedTools/requireAgentCliCommand';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { logger } from '@/ui/logger';
 
@@ -40,18 +43,32 @@ async function installCliProbe(f: Awaited<ReturnType<typeof fixture>>, agent: 'c
   const bin = join(f.directory, 'cli-bin');
   const ownerMarker = join(f.directory, 'owner-cli-probe');
   const memberMarker = join(f.directory, 'member-cli-probe');
-  await mkdir(bin);
-  await writeFile(join(bin, agent), `#!${process.execPath}\n`
-    + `const { appendFileSync } = require('node:fs');\n`
-    + `const member = [${JSON.stringify(f.member)}, ${JSON.stringify(f.identity.home)}].includes(process.env.HOME);\n`
-    + `appendFileSync(member ? ${JSON.stringify(memberMarker)} : ${JSON.stringify(ownerMarker)}, 'probe\\n');\n`
-    + `console.log(member ? '2.3.4' : '1.2.3');\n`, { mode: 0o700 });
+  const install = async (path: string) => {
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, '#!/bin/sh\n'
+      + `if [ "$HOME" = ${safeBashSingleQuote(f.identity.home)} ]; then\n`
+      + `  printf 'probe\\n' >> ${safeBashSingleQuote(memberMarker)}\n  echo '2.3.4'\n`
+      + `else\n  printf 'probe\\n' >> ${safeBashSingleQuote(ownerMarker)}\n  echo '1.2.3'\nfi\n`, { mode: 0o700 });
+  };
+  await install(join(bin, agent));
   const environment = createEnvKeyScope(['PATH', 'HAPPIER_CLAUDE_PATH', 'HAPPIER_CODEX_PATH']);
   environment.patch({ PATH: `${bin}:${process.env.PATH ?? ''}`, HAPPIER_CLAUDE_PATH: undefined, HAPPIER_CODEX_PATH: undefined });
   onTestFinished(() => environment.restore());
-  return { ownerMarker, memberMarker, request: {
+  return { ownerMarker, memberMarker, install, request: {
     requests: [{ id: `cli.${agent}`, params: { bypassCache: true, verifyVersion: true } }],
   } };
+}
+
+async function installSharedCodexProbe(f: Awaited<ReturnType<typeof fixture>>) {
+  const probe = await installCliProbe(f, 'codex');
+  const environment = createEnvKeyScope(['HAPPIER_FIRST_PARTY_INSTALL_HOME', 'HAPPIER_MANAGED_TOOLS_ROOT']);
+  const installEnvironment = { HAPPIER_FIRST_PARTY_INSTALL_HOME: join(f.directory, 'public-install'), HAPPIER_MANAGED_TOOLS_ROOT: undefined };
+  environment.patch(installEnvironment);
+  onTestFinished(() => environment.restore());
+  await probe.install(resolveAgentCliManagedCommandPathForRuntime(resolveAgentCliRuntimeSpecForLookupId('codex'), {
+    processEnv: installEnvironment,
+  }));
+  return probe;
 }
 
 describe.skipIf(process.platform !== 'linux')('installed Machine filesystem native member receiver (simulated UIDs and RunAs)', () => {
@@ -120,14 +137,7 @@ describe.skipIf(process.platform !== 'linux')('installed Machine filesystem nati
   }, 120_000);
   it('detects managed Codex from the public install home as a Use member without borrowing daemon home', async () => {
     const f = await fixture();
-    const probe = await installCliProbe(f, 'codex');
-    const installHome = join(f.directory, 'public-install');
-    const bin = join(installHome, 'tools', 'providers', 'codex', 'current', 'bin');
-    await mkdir(bin, { recursive: true });
-    await writeFile(join(bin, 'codex'), await readFile(join(f.directory, 'cli-bin', 'codex')), { mode: 0o755 });
-    const environment = createEnvKeyScope(['PATH', 'HAPPIER_FIRST_PARTY_INSTALL_HOME']);
-    environment.patch({ PATH: '', HAPPIER_FIRST_PARTY_INSTALL_HOME: installHome });
-    onTestFinished(() => environment.restore());
+    const probe = await installSharedCodexProbe(f);
     await expect(f.invoke(RPC_METHODS.CAPABILITIES_DETECT, probe.request, 'member-a', 'use'))
       .resolves.toMatchObject({ results: { 'cli.codex': { ok: true, data: { available: true, version: '2.3.4' } } } });
     expect(await readFile(probe.ownerMarker, 'utf8').catch(() => '')).toBe('');
@@ -163,7 +173,7 @@ describe.skipIf(process.platform !== 'linux')('installed Machine filesystem nati
     assertNativeInvocation(f);
   }, 120_000);
 
-  it.each(['managed', 'legacy'] as const)('prepares first-use Codex for a Use grantee only with reviewed member consent (%s)', async policy => {
+  it.each(['managed', 'legacy'] as const)('keeps first-use Codex detection read-only for a Use grantee (%s)', async policy => {
     const f = await fixture({ coldPolicy: policy });
     const probe = await installCliProbe(f, 'codex');
     const scope = { activeServerDir: configuration.activeServerDir, homeServerIdentityId: f.homeServerIdentityId,
@@ -172,24 +182,16 @@ describe.skipIf(process.platform !== 'linux')('installed Machine filesystem nati
     const result = await f.invoke(RPC_METHODS.CAPABILITIES_DETECT, probe.request, 'member-a', 'use');
     if (policy === 'legacy') {
       expect(result).toMatchObject({ code: 'agent_isolation_unavailable' });
-      expect(f.preparation.mutations).toEqual([]);
-      expect(nativeOs.readinessProbes).toBe(0);
-      expect(f.runAsUsers).toEqual([]);
-      expect(await readAgentIsolationMemberBindingForAccount(scope, 'member-a')).toBeNull();
-      expect(await readFile(probe.memberMarker, 'utf8').catch(() => '')).toBe('');
     } else {
       expect(result).toMatchObject({ protocolVersion: 1, results: { 'cli.codex': {
-        ok: true, data: { available: true, version: '2.3.4' },
+        ok: true, data: { available: false, version: null, preparation: 'member_not_prepared', install: { executionScope: 'member' } },
       } } });
-      expect(f.preparation.mutations).toContain('agent-account');
-      // One member qualification for the whole capability operation, never
-      // another Home admission or one native probe per discovery sub-step.
-      expect(nativeOs.readinessProbes).toBe(1);
-      expect(await readAgentIsolationMemberBindingForAccount(scope, 'member-a'))
-        .toMatchObject({ username: f.identity.username, uid: 2401 });
-      expect(await readFile(probe.memberMarker, 'utf8')).not.toBe('');
-      assertNativeInvocation(f);
     }
+    expect(f.preparation.mutations).toEqual([]);
+    expect(nativeOs.readinessProbes).toBe(0);
+    expect(f.runAsUsers).toEqual([]);
+    expect(await readAgentIsolationMemberBindingForAccount(scope, 'member-a')).toBeNull();
+    expect(await readFile(probe.memberMarker, 'utf8').catch(() => '')).toBe('');
     expect(await readFile(probe.ownerMarker, 'utf8').catch(() => '')).toBe('');
   }, 120_000);
 
@@ -224,8 +226,8 @@ describe.skipIf(process.platform !== 'linux')('installed Machine filesystem nati
   it('settles successful member Codex discovery through EOF without signalling the run-as launcher', async () => {
     // Procfs reports the native run-as principal, not the daemon's. Keep the
     // real census/refusal owner rather than replacing its decision or signals.
-    const f = await fixture({ coldPolicy: 'managed', foreignLauncher: true });
-    const probe = await installCliProbe(f, 'codex');
+    const f = await fixture({ foreignLauncher: true });
+    const probe = await installSharedCodexProbe(f);
     await expect(f.invoke(RPC_METHODS.CAPABILITIES_DETECT, probe.request, 'member-a', 'use'))
       .resolves.toMatchObject({ protocolVersion: 1, results: { 'cli.codex': {
         ok: true, data: { available: true, version: '2.3.4' },
@@ -239,36 +241,33 @@ describe.skipIf(process.platform !== 'linux')('installed Machine filesystem nati
 
   it('refuses the Codex payload when the prepared member fails its native readiness probe', async () => {
     const f = await fixture({ coldPolicy: 'managed' });
-    const probe = await installCliProbe(f, 'codex');
     nativeOs.readinessFailure = true;
-    expect(await f.invoke(RPC_METHODS.CAPABILITIES_DETECT, probe.request, 'member-a', 'use'))
-      .toMatchObject({ errorCode: 'agent_isolation_unavailable',
-        failureCause: { errorCode: 'agent_isolation_unavailable', phase: 'rpc.handler' } });
+    expect(await f.invoke(RPC_METHODS.CAPABILITIES_INVOKE,
+      { id: 'cli.codex', method: 'probeModels', params: {} }, 'member-a', 'use'))
+      .toMatchObject({ ok: false, error: { code: 'agent_isolation_unavailable' } });
     expect(f.preparation.mutations).toContain('agent-account');
     expect(f.runAsUsers).toEqual([]);
-    expect(await readFile(probe.memberMarker, 'utf8').catch(() => '')).toBe('');
-    expect(await readFile(probe.ownerMarker, 'utf8').catch(() => '')).toBe('');
   }, 120_000);
 
-  it.each(['owner', 'member'] as const)('detects the normal CLI usefully as the admitted %s without a daemon deputy', async placement => {
-    const f = await fixture();
+  it.each(['owner', 'member'] as const)('detects the admitted %s CLI in its Agent home without probing the daemon PATH', async placement => {
+    const accountId = placement === 'owner' ? 'requester' : 'member-a';
+    const f = await fixture({ accountId });
     const probe = await installCliProbe(f);
+    await probe.install(join(f.member, '.local', 'bin', 'claude'));
     // The production cli.claude definition owns private_read + process. This
     // drives its real snapshot/version probe, not a test capability or service.
-    const result = await f.invoke(RPC_METHODS.CAPABILITIES_DETECT, probe.request,
-      placement === 'owner' ? 'requester' : 'member-a');
+    const result = await f.invoke(RPC_METHODS.CAPABILITIES_DETECT, probe.request, accountId,
+      placement === 'owner' ? 'manage' : 'use');
     const detection = z.object({ results: z.object({ 'cli.claude': z.object({
       error: z.optional(z.object({ code: z.optional(z.string()), message: z.string() })),
     }) }) }).parse(result).results['cli.claude'];
     expect(detection.error).toBeUndefined();
     expect(result).toMatchObject({ protocolVersion: 1, results: { 'cli.claude': {
-      ok: true, data: { available: true, version: placement === 'owner' ? '1.2.3' : '2.3.4' },
+      ok: true, data: { available: true, version: '2.3.4' },
     } } });
-    const observed = async (path: string) => readFile(path, 'utf8').catch(() => '');
-    expect(await observed(placement === 'owner' ? probe.ownerMarker : probe.memberMarker)).not.toBe('');
-    expect(await observed(placement === 'owner' ? probe.memberMarker : probe.ownerMarker)).toBe('');
-    if (placement === 'member') assertNativeInvocation(f);
-    else expect(f.runAsUsers).toHaveLength(0);
+    expect(await readFile(probe.memberMarker, 'utf8')).not.toBe('');
+    expect(await readFile(probe.ownerMarker, 'utf8').catch(() => '')).toBe('');
+    assertNativeInvocation(f);
   }, 120_000);
 
   it.each(['unknown', 'foreign'] as const)('refuses %s Machine custody before a capability probe payload', async custody => {

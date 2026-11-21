@@ -81,6 +81,7 @@ vi.mock('@happier-dev/cli-common/process', async original => {
 // this proves installed source wiring, NOT kernel cross-UID isolation. No
 // serialized identity, policy, executable, arguments or pointers are rewritten.
 const nativeWorker = String.raw`
+const childProcess = require('node:child_process');
 const fs = require('node:fs/promises');
 const fsSync = require('node:fs');
 const { syncBuiltinESMExports } = require('node:module');
@@ -118,12 +119,13 @@ async function receive(chunk) {
     const original = fs[name];
     fs[name] = async (source, destination, ...args) => original(nativePath(source), nativePath(destination), ...args);
   }
-  // Configuration resolves and creates the daemon-independent member HOME
-  // synchronously when the native owner imports.
-  for (const name of ['existsSync', 'mkdirSync', 'chmodSync']) {
+  // Configuration and executable discovery use the same virtual native home.
+  for (const name of ['existsSync', 'mkdirSync', 'chmodSync', 'accessSync', 'openSync']) {
     const original = fsSync[name];
     fsSync[name] = (path, ...args) => original(nativePath(path), ...args);
   }
+  const execFile = childProcess.execFile;
+  childProcess.execFile = (file, ...args) => execFile(nativePath(file), ...args);
   syncBuiltinESMExports();
   Object.assign(process.env, payload.environment);
   // The real shim supplies the frame environment, not the source launcher's
