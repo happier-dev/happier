@@ -9,7 +9,7 @@ vi.mock('@/text', async () => {
     return createTextModuleMock();
 });
 
-const { projectAccountTriggerRows, accountTriggerRemoval } = await import('./accountTriggerRows');
+const { projectAccountTriggerRows, projectAlsoRunsHereRows, accountTriggerRemoval } = await import('./accountTriggerRows');
 const { formatClockTime } = await import('./triggerSchedule');
 
 function daily(id: string, scheduleExpr: string, enabled = true) {
@@ -180,6 +180,43 @@ describe('projectAccountTriggerRows', () => {
         const settled = project(false, 'Pre-deploy checks')[0];
         expect(settled).toMatchObject({ subtitle: 'Pre-deploy checks', glyph: 'sign-in' });
         expect(settled?.subtitlePending).toBeUndefined();
+    });
+});
+
+describe('projectAlsoRunsHereRows', () => {
+    const habit = '00000000-0000-4000-8000-0000000000a1';
+    const nightly = '00000000-0000-4000-8000-0000000000a2';
+    const attached = (automationId: string, triggerId: string, workflowDefinitionId: string, enabled: boolean, cron: string, accountId = 'viewer') => ({
+        automationId, triggerId, workflowDefinitionId, relation: 'context' as const, enabled, revision: 1,
+        summary: { kind: 'schedule' as const, enabled, schedule: daily(triggerId, cron).schedule }, setUpBy: { accountId, displayName: null } });
+    const project = (rows: ReturnType<typeof attached>[]) => projectAlsoRunsHereRows(projectAccountTriggerRows({ sets: [],
+        attachedPage: WorkflowAttachedTriggerPageV1Schema.parse({ attached: rows, nextCursor: null, skippedNotSharedCount: 0 }),
+        accountId: 'viewer', resolveWorkflowTitle: ref => ref === habit ? 'Review my changes' : 'Nightly sweep' }));
+
+    it('lists one workflow once when two of its triggers also run here (U8-R2 SH1), on while either trigger is on', () => {
+        const rows = project([
+            attached('habit-set', 'finished', habit, false, '0 7 * * *'),
+            attached('habit-set', 'current', habit, true, '0 7 * * *'),
+            attached('nightly-set', 'n1', nightly, true, '0 3 * * *'),
+        ]);
+        expect(rows.map(row => row.subtitle)).toEqual(['Review my changes', 'Nightly sweep']);
+        expect(rows[0]).toMatchObject({ off: false, triggerId: 'current' });
+        expect(rows[0]?.title).toBe(project([attached('habit-set', 'current', habit, true, '0 7 * * *')])[0]?.title);
+    });
+    it('says each distinct when of the one workflow on its row, and keeps different authors apart', () => {
+        const [row, ...rest] = project([
+            attached('habit-set', 'morning', habit, true, '0 7 * * *'),
+            attached('habit-set', 'night', habit, true, '0 3 * * *'),
+        ]);
+        expect(rest).toHaveLength(0);
+        const morning = project([attached('habit-set', 'morning', habit, true, '0 7 * * *')])[0]!.title;
+        const night = project([attached('habit-set', 'night', habit, true, '0 3 * * *')])[0]!.title;
+        expect(row?.title).toContain(morning);
+        expect(row?.title).toContain(night);
+        expect(project([
+            attached('mine', 't1', habit, true, '0 7 * * *'),
+            attached('theirs', 't2', habit, true, '0 7 * * *', 'other'),
+        ])).toHaveLength(2);
     });
 });
 

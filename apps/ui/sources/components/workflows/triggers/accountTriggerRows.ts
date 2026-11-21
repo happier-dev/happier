@@ -3,6 +3,8 @@ import type { WorkflowAttachedTriggerPageV1, WorkflowAttachedTriggerV1, Workflow
 
 import type { IconName } from '@/components/ui/icons/Icon';
 
+import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
+
 import { formatTriggerSetSummary } from './formatTriggerSummary';
 import { describeLegacyTriggerSet, describeTriggerTarget, isWorkflowTriggerSourceGone } from './sessionTriggerGroups';
 import { resolveTriggerEventGroup } from './triggerEventGroups';
@@ -115,6 +117,28 @@ export function projectAccountTriggerRows(params: Readonly<{
             ...(legacy ? { legacy } : {}),
         };
         });
+    });
+}
+
+/**
+ * "Also runs here" names what runs and opens its workflow, so one workflow is one row however many of its triggers
+ * match here (U8-R2 SH1): each distinct "when" joins its line, it reads on while any trigger is on, and different
+ * authors stay apart because the row says who set it up. Rows without a saved workflow group by their set.
+ */
+export function projectAlsoRunsHereRows(rows: readonly AccountTriggerRow[]): readonly AccountTriggerRow[] {
+    const groups = new Map<string, AccountTriggerRow[]>();
+    for (const row of rows) {
+        const key = `${row.attachment?.workflowDefinitionId ?? `set:${row.automationId}`}\u0000${row.setUpBy?.accountId ?? ''}`;
+        const group = groups.get(key);
+        if (group) group.push(row);
+        else groups.set(key, [row]);
+    }
+    if (groups.size === rows.length) return rows;
+    return [...groups.values()].map((group) => {
+        if (group.length === 1) return group[0]!;
+        const lead = group.find(row => !row.off) ?? group[0]!;
+        const title = joinHappierFacts(...new Set(group.map(row => row.title)));
+        return { ...lead, title, off: group.every(row => row.off) };
     });
 }
 

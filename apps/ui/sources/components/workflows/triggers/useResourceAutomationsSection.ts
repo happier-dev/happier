@@ -19,7 +19,7 @@ import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/use
 import { useMachinePresenceSummaries } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 
 import { useAccountWorkflowEditor } from './AccountTriggersSection';
-import { projectAccountTriggerRows, type AccountTriggerRow, type TriggerSubject } from './accountTriggerRows';
+import { projectAccountTriggerRows, projectAlsoRunsHereRows, type AccountTriggerRow, type TriggerSubject } from './accountTriggerRows';
 import { useWorkflowTriggerSets } from './useWorkflowTriggerSets';
 import { useSessionWorkflowContext, type SessionWorkflowContextRead } from './useSessionWorkflowContext';
 import { createSessionWorkflowSentenceIntent, type SessionWorkflowSentenceOptions, type WorkflowSentenceEditorIntent } from '../authoring/workflowSentenceAuthoring';
@@ -108,7 +108,7 @@ function useSelectedAutomationsProjection(read: ReturnType<typeof useWorkflowTri
         resolveWorkflowTitle: editor.resolveWorkflowTitle, isWorkflowTitlePending: editor.isWorkflowTitlePending,
     }) : EMPTY_ROWS, [read.sets, read.attachedPage, accountLifetime?.scope.accountId, editor.resolveWorkflowTitle, editor.isWorkflowTitlePending]);
     const rows = React.useMemo(() => projected.filter(row => row.attachment?.relation === 'direct'), [projected]);
-    const also = React.useMemo(() => projected.filter(row => row.attachment?.relation === 'context'), [projected]);
+    const also = React.useMemo(() => projectAlsoRunsHereRows(projected.filter(row => row.attachment?.relation === 'context')), [projected]);
     return { accountLifetime, read, editor, rows, also, skippedNotSharedCount: read.attachedPage?.skippedNotSharedCount ?? 0 };
 }
 
