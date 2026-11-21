@@ -1,6 +1,6 @@
 import { act } from 'react-test-renderer';
 import { afterEach, expect, it } from 'vitest';
-import { renderHook, standardCleanup } from '@/dev/testkit';
+import { createDeferred, renderHook, standardCleanup } from '@/dev/testkit';
 import { useBulkSessionComposer } from './useBulkSessionComposer';
 
 afterEach(standardCleanup);
@@ -74,7 +74,7 @@ it('settles the unchanged peer while an empty-draft Agent switch is still runnin
         { address: switching, agentId: 'happier.agent.muse/muse', machineId: 'machine' },
         { address: unchanged, agentId: 'happier.agent.codex/codex', machineId: 'machine' },
     ];
-    const transition = Promise.withResolvers<void>();
+    const transition = createDeferred<void>();
     const hook = await renderHook(() => useBulkSessionComposer({
         targets,
         executeConfirmed: async (_id, input) => {

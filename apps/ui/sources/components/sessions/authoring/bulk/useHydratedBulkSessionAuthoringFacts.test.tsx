@@ -5,6 +5,7 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { SESSION_MESSAGE_SEND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { SESSION_AGENT_TRANSITION_ACTION_ID_V1 } from '@happier-dev/protocol/actions/sessionAgentTransitionActionIdsV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { SessionPermissionMode } from '@happier-dev/protocol/sessions/metadata/sessionPermissionModes';
 import '@/sync/syncEngine';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { installRealActionExecutorModuleLoader, serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
@@ -25,7 +26,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
 }));
 
 it('hydrates exact Homes, ignores streaming publications, and refreshes changed authoring metadata', async () => {
-    let permissionMode = 'default';
+    let permissionMode: SessionPermissionMode = 'default';
     const record = (home: string) => createPlainSessionCurrentProjectionRecordFixture({ id: 'same', active: true,
         metadata: { path: '/repo', host: 'host', flavor: 'codex', machineId: `machine-${home}`, permissionMode } });
     record('a');
@@ -134,7 +135,7 @@ it('delivers Retry only to the failed Sessions, including the inactive Session o
     } });
     onTestFinished(() => homes.dispose());
     onTestFinished(await installRealActionExecutorModuleLoader());
-    onTestFinished(() => machineTransport.mockReset());
+    onTestFinished(() => { machineTransport.mockReset(); });
     const serverId = homes.homes.target!.id;
     primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
     machineTransport.mockImplementation(async request => {

@@ -19,6 +19,9 @@ const routerMock = await vi.hoisted(async () => {
 });
 vi.mock('expo-router', () => routerMock.module);
 
+const { push, replace, back } = routerMock.module.router;
+const destinationNavigation = { push, replace, back };
+
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 const { ProjectDeploymentsView } = await import('./ProjectDeploymentsBody');
@@ -69,7 +72,7 @@ describe('Source availability at Environment creation', () => {
       const body = (newDefinition: string | null) => (
         <DestinationInstanceContext.Provider value={{
           tabId: 'project-tab', focused: true, visible: true, isFocused: () => true,
-          pathname: '/deployments/source-app', navigation: routerMock.module.router,
+          pathname: '/deployments/source-app', navigation: destinationNavigation,
           ref: { kind: 'deployments', params: { serverId, projectSourceId: 'source-app',
             workspacePathname: '/deployments/source-app', ...(newDefinition ? { newDefinition } : {}) } },
         }}>
@@ -146,7 +149,7 @@ describe('a Home that is not answering', () => {
       const screen = await renderScreen(
         <DestinationInstanceContext.Provider value={{
           tabId: 'project-tab', focused: true, visible: true, isFocused: () => true,
-          pathname: '/deployments/source-app', navigation: routerMock.module.router,
+          pathname: '/deployments/source-app', navigation: destinationNavigation,
           ref: { kind: 'deployments', params: { serverId, projectSourceId: 'source-app',
             workspacePathname: '/deployments/source-app', ...(selected ? { deploymentEnvironment: 'environment-staging' } : {}) } },
         }}>

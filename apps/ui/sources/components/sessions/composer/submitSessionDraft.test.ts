@@ -25,6 +25,7 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createHydratedPlainMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
+import { settingsParse } from '@/sync/domains/settings/settings';
 import { createDesktopSecureStorageBoundary } from '@/dev/testkit/mocks/desktopSecureStorage';
 import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 
@@ -150,9 +151,9 @@ describe('submitSessionDraft', () => {
         publishMachineActivity(machine, { active: false, activeAt: machine.activeAt }, []);
         storage.setState({ machines: { ...storage.getState().machines, [machine.id]: machine },
             machineListByServerId: { ...storage.getState().machineListByServerId, [serverId]: [machine] } });
-        if (entry === 'composer-settings') storage.setState({ settings: {
+        if (entry === 'composer-settings') storage.setState({ settings: settingsParse({
             ...storage.getState().settings, claudeRemoteMaxThinkingTokens: 8192,
-        } });
+        }) });
         const session = installSessionActionFixture({ homes, storage, serverId, session: {
             id: sessionId, active: direct, pendingVersion: 2,
             metadata: { machineId: 'machine_1', path: '/repo', host: 'qa-host', flavor: 'claude',

@@ -24,7 +24,7 @@ const agentTargets = [
 
 function controls(): SessionAuthoringControls {
     return {
-        modelOptions: [{ value: 'default', label: 'Default' }, { value: 'model-a', label: 'Model A' }],
+        modelOptions: [{ value: 'default', label: 'Default', description: '' }, { value: 'model-a', label: 'Model A', description: '' }],
         permissionModeOptions: [
             { value: 'default', label: 'Default', description: '', icon: 'shield' },
             { value: 'read-only', label: 'Read only', description: '', icon: 'eye' },
@@ -150,7 +150,7 @@ describe('Session-specific field intersection', () => {
             .toMatchObject({ kind: 'connectedServices', unavailableNativeSignInServiceIds: [] });
     });
     it('keeps distinct catalogs for two Sessions with the same effective Agent, including a pending switch', () => {
-        const targets = [target(), { ...target(), controls: { ...controls(), modelOptions: [{ value: 'model-a', label: 'Model A' }] } }];
+        const targets = [target(), { ...target(), controls: { ...controls(), modelOptions: [{ value: 'model-a', label: 'Model A', description: '' }] } }];
         expect(resolveCrossSessionAuthoringFieldControl({ ...base, targets, field: 'modelSelection' })).toMatchObject({ kind: 'options', options: [{ id: 'model-a' }] });
         expect(resolveCrossSessionAuthoringFieldControl({ ...base, targets, field: 'modelSelection', selection: { agentTarget: claude } })).toMatchObject({ kind: 'options', options: [{ id: 'model-a' }] });
     });
@@ -199,7 +199,7 @@ describe('Session-specific field intersection', () => {
     it('preserves owner refusals and refuses new-session fields and empty intersections', () => {
         expect(resolveCrossSessionAuthoringFieldControl({ ...base, field: 'profileId' })).toMatchObject({ kind: 'unavailable', reason: 'not_supported_on_target' });
         expect(resolveCrossSessionAuthoringFieldControl({ ...base, field: 'permissionMode', targets: [{ ...target(), controls: { ...controls(), permissionModeOptions: [] } }] })).toMatchObject({ kind: 'unavailable', reason: 'agent_has_no_options' });
-        expect(resolveCrossSessionAuthoringFieldControl({ ...base, field: 'modelSelection', targets: [target(), { ...target(), controls: { ...controls(), modelOptions: [{ value: 'other', label: 'Other' }] } }] })).toMatchObject({ kind: 'unavailable', reason: 'not_supported_on_target' });
+        expect(resolveCrossSessionAuthoringFieldControl({ ...base, field: 'modelSelection', targets: [target(), { ...target(), controls: { ...controls(), modelOptions: [{ value: 'other', label: 'Other', description: '' }] } }] })).toMatchObject({ kind: 'unavailable', reason: 'not_supported_on_target' });
     });
 });
 

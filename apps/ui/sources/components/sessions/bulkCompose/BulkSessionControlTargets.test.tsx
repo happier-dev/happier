@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react';
 import { expect, it, onTestFinished } from 'vitest';
 import { HappierComposerChip } from '@happier-dev/plugin-ui/presentation';
+import type { SessionPermissionMode } from '@happier-dev/protocol/sessions/metadata/sessionPermissionModes';
 
 import '@/sync/syncEngine';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
@@ -17,7 +18,7 @@ import { useBulkSessionControlTargets } from './BulkSessionControlTargets';
 import { useBulkSessionTargetNames } from './useBulkSessionTargetIdentities';
 
 it('keeps probes and chips quiet on unrelated target publications and intersects once on an authoring change', async () => {
-    let permissionMode = 'default';
+    let permissionMode: SessionPermissionMode = 'default';
     let metadataVersion = 1;
     let catalogRevision = 1;
     let title = 'First target';
