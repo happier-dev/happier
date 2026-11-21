@@ -2,7 +2,7 @@ import { isReviewedMachineSetupCodecV1 } from '@happier-dev/protocol/sessions/cr
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { MachineSetupApplyInputV1Schema, MachineSetupCombinedPlanInputV1Schema, MachineSetupCombinedPlanResultV1Schema, MachineSetupPlanResultV1Schema, buildMachineSetupTargetApplyInput, machineSetupPlanInputFromApplyTargetV1, type MachineSetupApplyInputV1, type MachineSetupApplyTargetV1, type MachineSetupCombinedPlanResultV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { admitCombinedActionWorkflowHostV1, resolveCombinedActionWorkflowHostV1, prepareWorkflowRunStartV1 } from '@happier-dev/protocol/workflows/workflowStartPreparationV1';
+import { resolveCombinedActionWorkflowHostV1, prepareWorkflowRunStartV1 } from '@happier-dev/protocol/workflows/workflowStartPreparationV1';
 import { deriveMachineSetupCombinedRunIdV1 } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
 import type { ActionExecutorContext, ActionExecutorDeps, WorkflowActionExecuteArgs } from '@happier-dev/protocol/actions/executor/types';
 import { selectMachineSetupRecipeItemsV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
@@ -20,7 +20,7 @@ import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/e
 import { isBackupReceiverSelection } from './backupReceiverResult';
 
 type Preparation = NonNullable<ActionExecutorDeps['prepareMachineSetupApply']>;
-type HostFacts = Exclude<Awaited<ReturnType<Preparation>>, ActionExecuteFailure>['host'];
+type HostFacts = Pick<Parameters<typeof resolveCombinedActionWorkflowHostV1>[0], 'machines' | 'createdMachineIds' | 'agentMachineId'>;
 type AppReview = NonNullable<MachineSetupPlanResultV1['appReviews']>[number];
 type AppObservation = NonNullable<MachineSetupPlanReviewV1['apps']>[number];
 const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
@@ -140,8 +140,7 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
       target: { homeId: request.input.homeId, machineId: request.input.machineId },
     } };
   };
-  const prepare: Preparation = async ({ input: raw, context }) => {
-    const input = MachineSetupApplyInputV1Schema.parse(raw);
+  const prepare = (async ({ input, context }) => {
     if (input.targets.some(target => target.homeId !== input.homeId)) return failure('server_scope_mismatch');
     const nativeLeaf = await isNativeMachineSetupApply(input, context, host.readDeps);
     const appReviews: (AppReview & Readonly<{ targetIndex: number; homeId: string; machineId: string }>)[] = [];
@@ -212,11 +211,11 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
     const selected = resolveCombinedActionWorkflowHostV1({ actionId: 'machines.setup.apply', ...facts,
       targetMachineIds: input.targets.map(target => target.machineId), selectedMachineId: input.machineId });
     if (selected.kind !== 'ready') return failure('machine_unavailable');
-    return { input, host: facts, preview: { kind: 'machineSetup', host: projectNativeJsonValueForTransport(selected.review),
+    return { input, host: selected, preview: { kind: 'machineSetup', host: projectNativeJsonValueForTransport(selected.review),
       targets: projectNativeJsonValueForTransport(input.targets), appReviews: projectNativeJsonValueForTransport(appReviews),
       appDeployments: projectNativeJsonValueForTransport(appDeployments),
       childCount: buildMachineSetupWorkflow(input).blocks.length } };
-  };
+  }) satisfies Preparation;
   return {
     prepareMachineSetupApply: prepare,
     machineSetupPlan: async request => {
@@ -276,8 +275,7 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
       const prepared = await prepare({ input, context });
       if ('errorCode' in prepared) return prepared;
       const reviewed = prepared.input;
-      if (admitCombinedActionWorkflowHostV1({ machineId: reviewed.machineId, ...prepared.host }).kind !== 'ready')
-        return failure('machine_unavailable');
+      const { machineId } = prepared.host;
       const acceptance = context.operationAcceptance;
       if (!acceptance || acceptance.actionId !== 'machines.setup.apply' || !context.runtimeAccountId || !context.actionRequestId)
         return failure('admission_unavailable');
@@ -290,9 +288,9 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
       const target = context.externalActionTarget;
       // A nested Run keeps its existing exact same-host project binding. The
       // Run owner still rejects a different Machine or incompatible target.
-      const orchestrationTarget = target?.kind === 'machine' && target.machineId === reviewed.machineId
-        && target.project?.machineId === reviewed.machineId ? target.project
-        : { machineId: reviewed.machineId, directory: host.orchestrationDirectory };
+      const orchestrationTarget = target?.kind === 'machine' && target.machineId === machineId
+        && target.project?.machineId === machineId ? target.project
+        : { machineId, directory: host.orchestrationDirectory };
       const request: WorkflowCombinedRunStartV1 = { parent: { actionId: 'machines.setup.apply', input: reviewed },
         start: { runId, executionTarget: { kind: 'session' },
           source: prepareWorkflowRunStartV1({ definition: buildMachineSetupWorkflow(reviewed) }).source },

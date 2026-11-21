@@ -3695,8 +3695,6 @@ export type ActionExecutorDeps = Readonly<{
   }>) => Promise<Readonly<{
     input: import('../../machines/managed/actionsV1.js').MachineSetupApplyInputV1;
     preview: import('../../json/strictJsonValue.js').JsonValue;
-    host: Readonly<{ machines: readonly import('../../workflows/workflowStartPreparationV1.js').WorkflowCombinedActionHostMachineV1[];
-      createdMachineIds?: readonly string[]; agentMachineId?: string }>;
   }> | ActionExecuteFailure>;
   /** Scalar target reads and combined exact-target preparation share one Action entry. */
   machineSetupPlan?: (args: Readonly<{

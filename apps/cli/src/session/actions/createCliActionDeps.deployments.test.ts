@@ -361,7 +361,7 @@ describe('Deployment Actions through the default CLI Account front door', () => 
     const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId: 'deployment-home',
       runtimeAccountId: 'deployment-account', actionCaller: { kind: 'host' as const } };
     expect(await deps.prepareMachineSetupApply!({ input, context })).toMatchObject({ input,
-      host: { machines: expect.arrayContaining([{ machineId: 'parent-host', online: true }]) } });
+      preview: { host: { machineId: 'parent-host', machines: expect.arrayContaining([{ machineId: 'parent-host', online: true }]) } } });
     expect(opens).not.toHaveBeenCalled();
     selected = { ...selected, access: { ...access, accessState: 'key_pending' } };
     expect(await deps.prepareMachineSetupApply!({ input, context })).toMatchObject({ ok: false, errorCode: 'machine_unavailable' });
@@ -370,7 +370,7 @@ describe('Deployment Actions through the default CLI Account front door', () => 
     // A fresh last-seen still belongs to the canonical presence grace even when active is false.
     selected = { ...selected, access, revokedAt: null, active: false, activeAt: Date.now() };
     expect(await deps.prepareMachineSetupApply!({ input, context })).toMatchObject({ input,
-      host: { machines: expect.arrayContaining([{ machineId: 'parent-host', online: true }]) } });
+      preview: { host: { machineId: 'parent-host', machines: expect.arrayContaining([{ machineId: 'parent-host', online: true }]) } } });
     selected = { ...selected, activeAt: 0 };
     expect(await deps.prepareMachineSetupApply!({ input, context })).toMatchObject({ ok: false, errorCode: 'machine_unavailable' });
     expect(opens).not.toHaveBeenCalled();

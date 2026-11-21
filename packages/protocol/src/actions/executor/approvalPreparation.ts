@@ -34,7 +34,6 @@ import { projectPublicProfilePreparedReview } from '../specs/accountProfile.js';
 import { ProjectPrepareInputV1Schema, readProjectSetupTrustRequestOperationV1 } from '../projectActionFamily.js';
 import { ProjectDefinitionInspectOutputSchema } from '../projectDefinitionActionFamily.js';
 import { TeamInvitationAcceptApprovalPrepareResultV1Schema, TeamInvitationAcceptInputV1Schema } from '../../teams/invitation.js';
-import { resolveCombinedActionWorkflowHostV1 } from '../../workflows/workflowStartPreparationV1.js';
 import { MachineSetupApplyInputV1Schema } from '../../machines/managed/actionsV1.js';
 import { parseProviderActionRequestV1, PROVIDER_ACTION_INPUT_SCHEMAS_V1 } from '../../providers/providerActionsV1.js';
 import { DaemonProviderConnectionsDescribeResponseV1Schema } from '../../rpc/providers.js';
@@ -203,9 +202,6 @@ export async function readDeploymentPreparation(deps: ActionExecutorDeps, action
     const prepared = await deps.prepareMachineSetupApply({ input: parsed.data, context });
     if ('errorCode' in prepared) return prepared;
     if (!sameStrictJsonValue(parsed.data, prepared.input)) return { ok: false as const, errorCode: 'approval_stale', error: 'approval_stale' };
-    const host = resolveCombinedActionWorkflowHostV1({ actionId, ...prepared.host,
-      targetMachineIds: prepared.input.targets.map(target => target.machineId), selectedMachineId: prepared.input.machineId });
-    if (host.kind !== 'ready') return { ok: false as const, errorCode: 'machine_unavailable', error: 'machine_unavailable' };
     return { input: prepared.input, preview: prepared.preview };
   }
   if (actionId === 'deployments.templates.instantiate' && deps.prepareDeploymentTemplateInstantiation) {
