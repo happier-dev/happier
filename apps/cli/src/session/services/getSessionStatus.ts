@@ -2,7 +2,7 @@ import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessi
 import type { SessionAwarenessProjectionV1, SessionStatusResult } from '@happier-dev/protocol';
 import { AgentStateSchema } from '@happier-dev/session-core/state';
 import { listPendingRequests, projectSessionStatusPendingRequestsV1, readSharedMetadataActionConfirmationState } from '@happier-dev/session-core/pending';
-import { projectCliSessionAwarenessV1 } from '@/cli/output/session/sessionAwareness';
+import { projectCliSessionAwarenessFromPresentationV1 } from '@/cli/output/session/sessionAwareness';
 import type { StoredCredentials } from '@/persistence';
 import { summarizeSessionRecord, type SessionSummary } from '@/cli/output/session/sessionSummary';
 import { decryptSessionPayload, readSessionPresentationContent, tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
@@ -180,6 +180,11 @@ export async function getSessionStatus(params: Readonly<{
     && readSessionAccessProjectionRoleV1(sessionTarget.rawSession) === 'owner'
     ? await params.readAcceptedWorkspace?.(ownerMetadata) : undefined;
   params.signal?.throwIfAborted();
+  const awareness = projectCliSessionAwarenessFromPresentationV1({
+    row: sessionTarget.rawSession,
+    nowMs: Date.now(),
+    ...(agentStateEvidence ? { agentState: agentStateEvidence } : {}),
+  }, presentation);
 
   return {
     ok: true,
@@ -196,15 +201,9 @@ export async function getSessionStatus(params: Readonly<{
     }),
     agentState: agentStateSummary,
     pendingRequests,
-    awareness: projectCliSessionAwarenessV1({
-      credentials: params.credentials,
-      accountEncryption: sessionTarget.accountEncryptionCurrentness,
-      row: sessionTarget.rawSession,
-      nowMs: Date.now(),
-      ...(agentStateEvidence ? { agentState: agentStateEvidence } : {}),
-    }),
+    awareness,
     ...(params.readiness === true ? { readiness: await readSessionReadiness({
-      credentials: params.credentials, target: sessionTarget,
+      credentials: params.credentials, session: sessionTarget.rawSession, metadata: ownerMetadata, awareness,
       ...(params.operation ? { operation: params.operation } : {}), ...(params.credentialPurpose ? { credentialPurpose: params.credentialPurpose } : {}),
       ...(params.credentialTeamSelection ? { credentialTeamSelection: params.credentialTeamSelection } : {}),
       ...(params.readReadinessInventory ? { readInventory: params.readReadinessInventory } : {}),

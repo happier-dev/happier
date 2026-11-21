@@ -1,4 +1,5 @@
 import { composeSessionReadinessV1, isSessionReadinessNativeSelectionV1, type SessionCredentialReadinessV1, type SessionReadinessAgentV1, type SessionReadinessV1 } from '@happier-dev/protocol/sessions/control/sessionReadinessV1';
+import type { SessionAwarenessProjectionV1 } from '@happier-dev/protocol';
 import { resolveMachineSpawnReadinessV1 } from '@happier-dev/protocol/machines/machineSpawnReadinessV1';
 import { isMachineReachableV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
 import { MachinesAgentsListOutputSchema, buildMachineAgentInventoryKey, resolveMachineAgentExecutionStateV1 } from '@happier-dev/protocol/capabilities/machineAgentInventory';
@@ -12,7 +13,7 @@ import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol
 import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
-import { tryDecryptSessionOwnerMetadataView, readSessionOwnerLocality } from '@/session/transport/encryption/sessionEncryptionContext';
+import { readSessionOwnerLocality, type tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { listCurrentAccountMachines } from '@/api/machine/resolveCurrentAccountMachineTarget';
 import type { StoredCredentials } from '@/persistence';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -34,10 +35,12 @@ export type SessionReadinessCredentialReader = (input: Readonly<{
   teamSelection?: QualifiedConnectedAccountPurposeTeamResourceSelectionV1;
 }>) => Promise<SessionCredentialReadinessV1>;
 
-/** Explicitly demanded status diagnostic; all network/Agent work uses the existing inventory owners. */
+/** Read the admitted conversation through Session evidence and consult inventory for launch readiness. */
 export async function readSessionReadiness(input: Readonly<{
   credentials: StoredCredentials;
-  target: Extract<ResolveSessionTransportContextResult, { ok: true }>;
+  session: Extract<ResolveSessionTransportContextResult, { ok: true }>['rawSession'];
+  metadata: ReturnType<typeof tryDecryptSessionOwnerMetadataView>;
+  awareness: SessionAwarenessProjectionV1;
   readInventory?: SessionReadinessInventoryReader;
   readCredential?: SessionReadinessCredentialReader;
   readTeamProviderResources?: SessionReadinessTeamProviderResourcesReader;
@@ -48,16 +51,15 @@ export async function readSessionReadiness(input: Readonly<{
   signal?: AbortSignal;
   authorization?: ExternalActionExecutionAuthorizationV1;
 }>): Promise<SessionReadinessV1> {
-  const metadata = tryDecryptSessionOwnerMetadataView({ credentials: input.credentials,
-    accountEncryptionMode: input.target.accountEncryptionCurrentness.mode, rawSession: input.target.rawSession });
-  const locality = readSessionOwnerLocality({ metadata, rawSession: input.target.rawSession });
+  const { session, metadata, awareness } = input;
+  const locality = readSessionOwnerLocality({ metadata, rawSession: session });
   const machineId = locality?.machineId;
   let machine: SessionReadinessV1['machine'] = machineId ? { status: 'unknown', machineId } : null;
   let agent: SessionReadinessAgentV1 | null = null;
   let machineUnknownReason: SessionReadinessV1['reason'];
   let agentUnknownReason: SessionReadinessV1['reason'];
-  const invocation = input.target.rawSession.effectiveAccess ?? null;
-  const model = invocation?.capabilities.submitAgentInput && input.operation !== 'credential' && !input.target.rawSession.active
+  const invocation = session.effectiveAccess ?? null;
+  const model = invocation?.capabilities.submitAgentInput && input.operation !== 'credential' && !session.active
     ? readSessionModelSelectionV2FromMetadata(metadata)?.ref : null;
   const teamModel = model?.source === 'team_resource' ? model : null;
   let credential: SessionCredentialReadinessV1 = teamModel
@@ -65,10 +67,19 @@ export async function readSessionReadiness(input: Readonly<{
     : { kind: input.operation === 'credential' ? 'unknown' : 'not_required' };
   let canReadCredential = false;
   let credentialMachineAccess: AccessibleMachineAccessV1 | null = null;
-  if (machineId && !invocation) machineUnknownReason = 'invocation_access_unknown';
-  else if (machineId && !input.readInventory) machineUnknownReason = 'agent_inventory_reader_unavailable';
-  // A denied invocation needs no Machine census, credentials or Agent probe.
-  if (machineId && input.readInventory && invocation?.capabilities.submitAgentInput === true) {
+  const agentId = resolveAgentIdFromSessionMetadata(metadata);
+  const definitionId = readAcpConfiguredBackendV1FromMetadata(metadata)?.backendId;
+  const liveConversation = input.operation !== 'credential' && awareness.freshness === 'live'
+    && (awareness.runtime === 'working' || (awareness.runtime === 'idle' && awareness.operational.primary === 'ready'));
+  if (machineId && agentId && invocation?.capabilities.submitAgentInput === true && liveConversation) {
+    machine = { status: 'ready', machineId };
+    agent = { agentId, ...(definitionId ? { definitionId } : {}), current: true,
+      observedAtMs: session.activeAt, state: 'ready', repair: null };
+  } else if (machineId && !invocation) {
+    machineUnknownReason = 'invocation_access_unknown';
+  } else if (machineId && !input.readInventory) {
+    machineUnknownReason = 'agent_inventory_reader_unavailable';
+  } else if (machineId && input.readInventory && invocation?.capabilities.submitAgentInput === true) {
     machineUnknownReason = 'machine_host_facts_unavailable';
     try {
       // Readiness consumes this one Machine's identity, access and presence, never the
@@ -88,9 +99,7 @@ export async function readSessionReadiness(input: Readonly<{
         credentialMachineAccess = target.access ?? null;
         machine = resolveMachineSpawnReadinessV1({ selectedMachineId: machineId, machine: target,
           machineReachable: reachable, requireExactSpawnReadiness: true, keyAvailable, rpcAvailable: 'unknown' });
-        const agentId = resolveAgentIdFromSessionMetadata(metadata);
         if (!agentId) machineUnknownReason = 'session_agent_unknown';
-        const definitionId = readAcpConfiguredBackendV1FromMetadata(metadata)?.backendId;
         if (reachable && !target.revokedAt && !target.replacedByMachineId && keyAvailable !== false && agentId) {
           machineUnknownReason = 'agent_inventory_unavailable';
           let suppressConnectedServiceIds: readonly string[] = [];
@@ -112,13 +121,13 @@ export async function readSessionReadiness(input: Readonly<{
             // An unread owner/selection or connected route cannot borrow native login or the reader's defaults.
             const backendTarget = resolveBackendTargetFromSessionMetadata(metadata);
             const ambientProvider = backendTarget ? resolveAmbientProviderConnectionForModelIntent({ metadata,
-              agentTargetKey: buildBackendTargetKeyV2(backendTarget), sessionActive: input.target.rawSession.active }) : null;
+              agentTargetKey: buildBackendTargetKeyV2(backendTarget), sessionActive: session.active }) : null;
             const native = isSessionReadinessNativeSelectionV1({ metadata,
               providerConnectionId: ambientProvider?.status === 'resolved' ? ambientProvider.providerConnectionId : undefined });
             let teamProviderAuthReady = false;
             if (teamModel && canReadCredential && input.readTeamProviderResources
               && backendTarget && buildBackendTargetKeyV2(backendTarget) === teamModel.agentTargetKey) {
-              const binding = input.target.rawSession.acceptedTeamCredentialBinding;
+              const binding = session.acceptedTeamCredentialBinding;
               const revision = binding?.slot.kind === 'provider_model' && binding.resourceId !== null
                 ? resolveRetainedTeamProviderBindingRevisionV1(teamModel, binding) : null;
               if (revision !== null) {

@@ -16,6 +16,7 @@ import { createHappierMcpServer } from '@/mcp/createHappierMcpServer';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { resolveCliAgentStartContextV1 } from '@/session/actions/resolveCliAgentStartContextV1';
 import { createAccountEncryptionCurrentnessFixture, createSessionNotificationContextFixture, createCompactSessionListRowFixture, createSessionReadBatchResponseFixture } from '@/testkit/backends/sessionFixtures';
+import { artifactListResponse } from '@/testkit/http/artifactHome';
 import { createSessionDaemonAuthorityFixture } from './sessionDaemonAuthority.testkit';
 
 // Only OS inspection and network transports are substituted. MCP, Session
@@ -51,11 +52,16 @@ it.each(['session.status.get', 'session.messages.recent.get', 'session.transcrip
   const connectedServices = { v: 2 as const, bindingsByServiceId: {
     'acme.auth/subscription': { source: 'connected' as const, selection: 'profile' as const, profileId: 'self-non-default' },
   } };
+  const activeAt = Date.now();
+  const liveStatus = (id: string) => actionId === 'session.status.get' && id === sessionId;
   const row = (id: string) => ({ ...createSessionNotificationContextFixture(id), encryptionMode: 'plain' as const,
-    metadata: JSON.stringify({ machineId: 'read-machine', path: '/workspace', ...(id === sessionId ? { connectedServices } : {}) }), active: read || actionId === 'session.open',
-    ...(actionId === 'session.stop' || id === sessionId && actionId === 'session.status.get' ? { metadataLayoutVersion: 1,
+    metadata: JSON.stringify({ machineId: 'read-machine', path: '/workspace', ...(id === sessionId ? { connectedServices } : {}) }),
+    active: liveStatus(id) || (read && actionId !== 'session.status.get') || actionId === 'session.open',
+    ...(liveStatus(id) ? { activeAt, latestTurnStatus: 'in_progress' as const, latestTurnStatusObservedAt: activeAt } : {}),
+    ...(actionId === 'session.stop' || liveStatus(id) ? { metadataLayoutVersion: 1,
       metadata: JSON.stringify({ v: 1 }), ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1({ v: 1,
         workspace: { machineId: 'read-machine', path: '/workspace' }, connectedServices: { connectedServices },
+        ...(liveStatus(id) ? { nativeSession: { runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: {} } } } : {}),
       }) } : {}),
     manager: { sessionId: managerOf.get(id) ?? sessionId } });
   const httpReads: string[] = [];
@@ -89,6 +95,7 @@ it.each(['session.status.get', 'session.messages.recent.get', 'session.transcrip
     httpReads.push(pathname);
     if (pathname === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
     if (pathname === '/v2/account/settings') return { status: 200, data: { version: 1, content: { t: 'plain', v: {} } } };
+    if (pathname === '/v1/artifacts') return { status: 200, data: artifactListResponse(url, []) };
     if (pathname === '/v1/machines/read-machine' && actionId === 'session.status.get') return { status: 200, data: { machine: {
       id: 'read-machine', kind: 'persistent', active: false, revokedAt: null, replacedByMachineId: null,
     } } };
@@ -203,7 +210,8 @@ it.each(['session.status.get', 'session.messages.recent.get', 'session.transcrip
       expect(value).toMatchObject(actionId === 'session.status.get'
         ? { ok: true, session: { id: child }, awareness: { sessionId: child },
           ...(child === sessionId ? { connectedServices } : {}),
-          readiness: { configured: true, status: 'unavailable', cause: 'machine', machine: { status: 'offline' } } }
+          readiness: liveStatus(child) ? { status: 'ready', agent: { state: 'ready', observedAtMs: activeAt } }
+            : { status: 'unavailable', cause: 'machine', machine: { status: 'offline' } } }
         : exactSource ? { ok: true, sessionId: child, items: [{ id: sourceMessageId, text: `Ready ${child}` }] }
         : actionId === 'session.messages.recent.get'
           ? { ok: true, sessionId: child, items: [{ kind: 'user_message', text: `Ready ${child}` }] }
@@ -215,6 +223,9 @@ it.each(['session.status.get', 'session.messages.recent.get', 'session.transcrip
           : { ok: true, sessionId: child, archivedAt: null });
     }
     expect(forwarded).toEqual(targets.map(() => actionId));
+    if (actionId === 'session.status.get') {
+      expect(httpReads.filter(path => path === '/v1/machines/read-machine')).toHaveLength(children.length);
+    }
     if (exactSource) {
       const page = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute',
         arguments: { actionId, input: { sessionId: children[0], limit: 20 } } }));

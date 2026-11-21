@@ -2926,8 +2926,11 @@ Provider selections do. When that binding replaces native authentication, native
 sign-in is not a launch prerequisite; installation and worker compatibility
 remain required.
 
-In 0.3 development, CLI `session.status.get` with readiness reads the selected
-Machine's Agent inventory on demand, including for stopped Sessions. For an
+In 0.3 development, `session.status.get` uses fresh Session runtime evidence
+for conversation readiness when the caller can submit Agent input and the
+Session is working or ready for input. CLI and Agent Actions use that same
+evidence. For stopped Sessions or when live evidence is incomplete, the reader
+consults the selected Machine's Agent inventory on demand. For an
 accepted, available Team model, the CLI uses that Machine's Agent declaration
 to apply the same Connected Account suppression as Provider launch. Retained
 bindings that the Provider suppresses do not require native sign-in. A

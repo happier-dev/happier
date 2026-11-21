@@ -150,6 +150,49 @@ it.each(['profile', 'pool', 'native', 'malformed'] as const)('projects the Sessi
   if (result.ok) expect(SessionStatusResultSchema.parse(result)).toEqual(result);
 });
 
+it.each(['in_progress', 'completed'] as const)('reports the same connected conversation readiness to the CLI and a signed Session caller: %s', async latestTurnStatus => {
+  const sessionId = 'c123456789012345678901234';
+  const activeAt = Date.now();
+  const row = createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain', active: true, activeAt,
+    latestTurnStatus, latestTurnStatusObservedAt: activeAt,
+    metadata: JSON.stringify({ machineId: 'machine-1', flavor: 'codex', path: '/workspace', connectedServices: {
+      v: 2, bindingsByServiceId: { 'acme.auth/subscription': { source: 'connected', selection: 'profile', profileId: 'selected' } },
+    } }),
+    effectiveAccess: { v: 1, level: 'owner', sources: [],
+      capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) } });
+  const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-root', binding: {
+    accountId: 'requester', authentication: { kind: 'account', tokenEpoch: 1 }, serverIdentityId: 'home',
+    machineId: 'machine-1', custodianAccountId: 'host', installationId: 'installed',
+    actionId: 'session.status.get', requestId: 'status', requestEnvelopeDigest: 'a'.repeat(43),
+    target: { kind: 'session', sessionId },
+  } });
+  const http = vi.spyOn(axios, 'get').mockImplementation(async url => {
+    const path = new URL(String(url)).pathname;
+    if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+    if (path === `/v2/sessions/${sessionId}`) return { status: 200, data: { session: row } };
+    if (path === '/v1/machines/machine-1') return { status: 200, data: { machine: { id: 'machine-1', active: true,
+      revokedAt: null, replacedByMachineId: null, access: { custodian: { accountId: 'host', displayName: 'Host' },
+        role: 'manage', resourceMode: 'plain', accessState: 'ready' } } } };
+    throw new Error(`Unexpected HTTP read ${path}`);
+  });
+  const inventory = vi.fn(async () => MachinesAgentsListOutputSchema.parse({ items: [{ agentId: 'codex', title: 'Codex',
+    installed: true, version: null, latestVersion: null, update: { supported: false, command: null },
+    signIn: { status: 'signedIn', loginSupport: 'login_terminal' }, platform: { supported: true }, dependencies: [],
+    install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null } }] }));
+  const input = { credentials: { token: 'host-token', encryption: null }, idOrPrefix: sessionId,
+    live: false, readiness: true, readReadinessInventory: inventory };
+  const cli = await getSessionStatus(input);
+  const agent = await getSessionStatus({ ...input, authorization,
+    resolveAuthorizationHeaders: () => ({ Authorization: 'Bearer requester-bound-read' }) });
+  const runtime = latestTurnStatus === 'in_progress' ? 'working' : 'idle';
+  for (const result of [cli, agent]) expect(result).toMatchObject({ ok: true, awareness: { freshness: 'live', runtime },
+    readiness: { status: 'ready', machine: { status: 'ready', machineId: 'machine-1' },
+      agent: { state: 'ready', current: true, observedAtMs: activeAt } } });
+  if (cli.ok && agent.ok) expect(cli.readiness).toEqual(agent.readiness);
+  expect(http.mock.calls.some(([url]) => new URL(String(url)).pathname.startsWith('/v1/machines'))).toBe(false);
+  expect(inventory).not.toHaveBeenCalled();
+});
+
 it('never widens a protected status read to a live socket using the host token', async () => {
   const sessionId = 'c123456789012345678901234';
   const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-root', binding: {
