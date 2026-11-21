@@ -21,6 +21,7 @@ import { acquireRequesterAccountEncryptionCurrentness, sameRequesterAccountEncry
 import { runWithServerHttpBaseUrl } from '../../../../../apps/cli/src/api/client/serverHttpBaseUrl';
 import { bootstrapAccountSettingsContext } from '../../../../../apps/cli/src/settings/accountSettings/bootstrapAccountSettingsContext';
 import { createRequesterAccountSettingsPublication } from '../../../../../apps/cli/src/settings/accountSettings/requesterAccountSettingsPublication';
+import { createRequesterApprovalProfilePublication } from '../../../../../apps/cli/src/settings/profiles/hydrateProfileCatalog';
 import { createInvocationSavedSecretOperationContextV1 } from '../../../../../apps/cli/src/settings/secrets/savedSecretOperationContext';
 import { createSnapshotActionSettingsProvider } from '../../../../../apps/cli/src/settings/actionsSettingsProvider';
 import { createTestAuth, createTestTerminalAuth } from '../auth';
@@ -143,6 +144,10 @@ export async function startProjectDaemonFixture(params: Readonly<{
         const settingsPublication = createRequesterAccountSettingsPublication({ observation, currentness,
           operationContext: savedSecretOperationContext });
         disposals.push(() => settingsPublication.dispose());
+        const approvalProfilesLifetime = new AbortController();
+        const approvalProfiles = createRequesterApprovalProfilePublication({ observation,
+          operationContext: savedSecretOperationContext, signal: approvalProfilesLifetime.signal });
+        disposals.push(() => { approvalProfilesLifetime.abort(); approvalProfiles.dispose(); });
         const actionsSettingsProvider = createSnapshotActionSettingsProvider(() => {
           const current = savedSecretOperationContext.readSnapshot();
           if (!current) throw new Error('Project Account settings lifetime retired');
@@ -150,6 +155,7 @@ export async function startProjectDaemonFixture(params: Readonly<{
         }, savedSecretOperationContext);
         const ensureSettingsCurrent = async (signal?: AbortSignal) => {
           if (!await settingsPublication.ensureCurrent(signal)) throw new Error('Project Account settings unavailable');
+          if (!await approvalProfiles.ensureCurrent(signal)) throw new Error('Project Account approval profiles unavailable');
         };
         // The held Account publication above and this Automation observer consume
         // real pushes independently of whichever person UI is currently focused.
