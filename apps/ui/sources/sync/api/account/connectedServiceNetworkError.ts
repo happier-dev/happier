@@ -16,6 +16,17 @@ export type ConnectedServiceNetworkFailureCategory = 'unreachable' | 'timeout';
  * The request never produced an HTTP response. Whether the server saw it is unknown, so this
  * says nothing about the credentials or authorization code that were being sent.
  */
+/**
+ * The wrapper replaces the cause's class, so the stop decisions the shared `backoff` reads from
+ * the cause (`retryable`, `canTryAgain`, and the connectivity gate's `endpoint_offline`) are
+ * carried over; otherwise callers would start retrying what used to stop immediately.
+ */
+function isNonRetryableCause(cause: unknown): boolean {
+  if (!cause || typeof cause !== 'object') return false;
+  const { retryable, canTryAgain, code } = cause as { retryable?: unknown; canTryAgain?: unknown; code?: unknown };
+  return retryable === false || canTryAgain === false || code === 'endpoint_offline';
+}
+
 export class ConnectedServiceNetworkError extends HappyError {
   readonly operation: string;
   readonly endpoint: string;
@@ -30,7 +41,7 @@ export class ConnectedServiceNetworkError extends HappyError {
     cause: unknown;
   }>) {
     const code = params.category === 'timeout' ? 'connect_network_timeout' : 'connect_network_unreachable';
-    const nonRetryable = (params.cause as { retryable?: unknown } | null)?.retryable === false;
+    const nonRetryable = isNonRetryableCause(params.cause);
     super(code, !nonRetryable, { kind: 'network', code });
     this.name = 'ConnectedServiceNetworkError';
     this.operation = params.operation;
@@ -99,7 +110,8 @@ async function readServerErrorCode(response: Response): Promise<string | null> {
 /**
  * Canonical transport for every Connected Services request. A dropped connection or timeout is
  * reported as a {@link ConnectedServiceNetworkError}, and each failed attempt is logged with its
- * operation, endpoint, failure category and the server's error code — never request bodies,
+ * operation, endpoint, failure category and the server's error code (off the caller's path, so a
+ * stalled body never delays the response) — never request bodies,
  * headers, query parameters or response details beyond that code.
  */
 export async function connectedServiceFetch(
@@ -120,8 +132,12 @@ export async function connectedServiceFetch(
     throw new ConnectedServiceNetworkError({ operation, endpoint, category, cause: error });
   }
   if (!response.ok) {
-    const serverCode = await readServerErrorCode(response);
-    log.log(`[connectedServices] ${operation} rejected: status=${response.status} request=${method} ${endpoint}${serverCode ? ` code=${serverCode}` : ''}`);
+    const rejected = `[connectedServices] ${operation} rejected: status=${response.status} request=${method} ${endpoint}`;
+    log.log(rejected);
+    // Diagnostic only: the caller gets the response now, and the code is logged if the body arrives.
+    void readServerErrorCode(response).then((serverCode) => {
+      if (serverCode) log.log(`${rejected} code=${serverCode}`);
+    });
   }
   return response;
 }

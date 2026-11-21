@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { log } from '@/log';
 import { ServerFetchConnectivityTimeoutError, ServerFetchWriteTimeoutError } from '@/sync/http/client';
-import { SupersededOperationError } from '@/utils/timing/time';
+import { HappyError } from '@/utils/errors/errors';
+import { backoff, SupersededOperationError } from '@/utils/timing/time';
 
 import {
   classifyConnectedServiceTransportFailure,
@@ -77,9 +78,32 @@ describe('connectedServiceFetch', () => {
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({ error: 'connect_oauth_invalid_grant' });
+    // The code is read off the caller's path, so it is logged once the body has arrived.
+    await vi.waitFor(() => expect(logSpy.mock.calls.map((call) => String(call[0])).join('\n')).toContain('connect_oauth_invalid_grant'));
     const logged = logSpy.mock.calls.map((call) => String(call[0])).join('\n');
     expect(logged).toContain('400');
-    expect(logged).toContain('connect_oauth_invalid_grant');
     expect(logged).not.toContain('SECRET');
+  });
+
+  it('returns a rejected response without waiting for its body and logs the status immediately', async () => {
+    // Headers arrive but the body never completes.
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(new ReadableStream({ start: () => {} }), { status: 404 })));
+    const logSpy = vi.spyOn(log, 'log').mockImplementation(() => {});
+
+    const response = await connectedServiceFetch('quota-refresh', '/v2/connect/gemini/quotas/refresh', { method: 'POST' }, { includeAuth: false, retry: 'none' });
+
+    expect(response.status).toBe(404);
+    expect(logSpy.mock.calls.map((call) => String(call[0])).join('\n')).toContain('404');
+  });
+
+  it('keeps the shared backoff from retrying a connectivity gate that already reported the endpoint offline', async () => {
+    let attempts = 0;
+    const offline = new HappyError('Server is currently unreachable', true, { kind: 'network', code: 'endpoint_offline' });
+
+    await expect(backoff(async () => {
+      attempts += 1;
+      throw new ConnectedServiceNetworkError({ operation: 'listGroups', endpoint: '/v3/connect/gemini/groups', category: 'unreachable', cause: offline });
+    })).rejects.toBeInstanceOf(ConnectedServiceNetworkError);
+    expect(attempts).toBe(1);
   });
 });
