@@ -6,6 +6,7 @@ import { resolveEffectiveActionInputFields, type EffectiveActionInputField } fro
 import { listDeploymentTargetsFromManifestsV1, projectDeploymentSuggestionTargetsV1 } from '@happier-dev/deployments';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { DeploySuggestionCatalogV1Schema } from '@happier-dev/protocol/deployments/suggestions/deploySuggestionsV1';
+import { holdsConnectedAccountForService } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 
 import {
   buildPlatformTargetDraft,
@@ -119,7 +120,7 @@ describe('platform target link model', () => {
       id: target.key, title: target.title, accepts: target.accepts, needs: target.needs,
     })));
   });
-  it('marks a platform the Account has no working connection for as needing one, never as unavailable (PLAN connection state)', async () => {
+  it('marks a platform the Account has no account for as needing a connection, never as unavailable (PLAN connection state)', async () => {
     const declarations = [{ manifest }];
     const connected = (health: 'healthy' | 'error') => ({ account: { ref: { service, accountId: 'owner' }, status: 'connected',
       authenticationModeId: 'manual', revisionSemantics: 'revisioned', credentialRevision: 'csr_abcdefghijklmnopqrstuv',
@@ -138,7 +139,10 @@ describe('platform target link model', () => {
       return Object.fromEntries(DeploySuggestionCatalogV1Schema.parse(read.result).targets.map(target => [target.id, target.availability]));
     };
     expect(await availability([])).toEqual({ 'own-server': 'available', 'happier.deploy.vercel/runtime': 'needs_connection' });
-    expect(await availability([connected('error')])).toEqual({ 'own-server': 'available', 'happier.deploy.vercel/runtime': 'needs_connection' });
+    // A broken account needs a reconnect, not a second connection: the catalog and Where's Connect decide it by the
+    // same rule (REVIEW-DELTA6 F1).
+    expect(holdsConnectedAccountForService([connected('error').account], service)).toBe(true);
+    expect(await availability([connected('error')])).toEqual({ 'own-server': 'available', 'happier.deploy.vercel/runtime': 'available' });
     expect(await availability([connected('healthy')])).toEqual({ 'own-server': 'available', 'happier.deploy.vercel/runtime': 'available' });
     // An Account read that failed says nothing about the connection.
     expect(await availability('refused')).toEqual({ 'own-server': 'available', 'happier.deploy.vercel/runtime': 'unknown' });

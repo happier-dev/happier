@@ -872,6 +872,17 @@ it('F2: canonical answers and adjustment notes each start one checked run with z
     await waitForHomeGovernance(() => expect(calls('execution.run.start')).toHaveLength(1));
     await waitForHomeGovernance(() => expect(current.view.kind).toBe('recommendations'));
     expect(calls('deployments.suggestions.catalog'), 'no connect since the rebuilt snapshot').toHaveLength(0);
+    // The same account breaking and then being reconnected keeps its identity but changes its state; each change
+    // rebuilds the snapshot once, so the catalog's account health is never stale (REVIEW-DELTA6 F1).
+    for (const status of ['needs_reauth', 'connected'] as const) {
+      await act(async () => storage.setState((state) => ({ profile: { ...state.profile, connectedAccountsV4:
+        (state.profile.connectedAccountsV4 ?? []).map(row => ({ ...row, status })) } })));
+      execute.mockClear();
+      await act(async () => current.suggestAgain('Keep it small'));
+      await waitForHomeGovernance(() => expect(calls('execution.run.start')).toHaveLength(1));
+      await waitForHomeGovernance(() => expect(current.view.kind).toBe('recommendations'));
+      expect(calls('deployments.suggestions.catalog'), `after the account became ${status}`).toHaveLength(1);
+    }
   } finally { await screen.unmount(); await fixture.dispose(); }
 });
 

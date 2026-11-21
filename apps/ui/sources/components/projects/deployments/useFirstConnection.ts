@@ -1,8 +1,11 @@
 import * as React from 'react';
 import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
-import { sameQualifiedConnectedAccountRef, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
+import {
+  holdsConnectedAccountForService,
+  sameQualifiedConnectedAccountRef,
+  type QualifiedConnectedAccountRef,
+} from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
-import { connectedAccountPurposeServiceTargets } from '@/sync/domains/connectedServices/connectedAccountPurposeTargetChoices';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -10,8 +13,8 @@ import { storage } from '@/sync/domains/state/storageStore';
 const inventoryKeys = { profile: ['id', 'connectedAccountsV4'], profileScope: true } as const;
 
 /**
- * A credential choice the Account cannot make yet: it has no account at all for `service` (unknown until that
- * Account's profile is loaded). `connect` runs the one shared Connect flow and hands the new account to `onConnected`.
+ * A credential choice the Account cannot make yet: it has no account at all for `service`, by the same rule as the
+ * deploy suggestion catalog (unknown until that Account's profile is loaded). `connect` runs the one shared Connect flow and hands the new account to `onConnected`.
  * A form on the shown Account's page with no lifetime of its own passes null: the shown profile decides, and the
  * Connect sheet opens for the active Account (it retires itself if that Account changes).
  */
@@ -32,9 +35,9 @@ export function useFirstConnection(
   const inventory = storage((state) => {
     const accountId = lifetime?.scope.accountId ?? state.profileScope?.accountId ?? null;
     if (!service || accountId === null || state.profile.id !== accountId) return awaiting ? 'settling' : 'unknown';
-    const { accounts } = connectedAccountPurposeServiceTargets(state.profile.connectedAccountsV4 ?? [], [], service);
+    const accounts = state.profile.connectedAccountsV4 ?? [];
     if (awaiting && !accounts.some(candidate => sameQualifiedConnectedAccountRef(candidate.ref, awaiting))) return 'settling';
-    return accounts.length > 0 ? 'available' : 'missing';
+    return holdsConnectedAccountForService(accounts, service) ? 'available' : 'missing';
   }, inventoryKeys);
   // The Account profile decides readiness. One foreground read settles a missed or delayed publication.
   React.useEffect(() => {

@@ -87,6 +87,18 @@ export function isQualifiedConnectedAccountLocalSubjectId(subjectId: string): bo
   }
 }
 
+/**
+ * Whether the Account holds any account for `service`, whatever its health. This alone decides whether a purpose that
+ * draws on the service needs a connection: a broken account needs a reconnect (its own attention state), never a
+ * second connection.
+ */
+export function holdsConnectedAccountForService(
+  accounts: readonly Readonly<{ ref: QualifiedConnectedAccountRef }>[],
+  service: Readonly<{ pluginId: string; localId: string }>,
+): boolean {
+  return accounts.some(({ ref }) => ref.service.pluginId === service.pluginId && ref.service.localId === service.localId);
+}
+
 /** Exact identity for personal references and Team credential carriers. */
 export function sameQualifiedConnectedAccountRef(
   left: ConnectedAccountActionFormSelectionV1,

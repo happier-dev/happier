@@ -4,6 +4,7 @@ import type { RegistryListPageV1 } from '../../registries/registryListV1.js';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 } from '../../connect/configurationActionsV1.js';
 import { MachineSetupCombinedPlanResultV1Schema } from '../../machines/managed/actionsV1.js';
 import { readDeployHostReadiness } from '../../deployments/deployHostReadiness.js';
+import { holdsConnectedAccountForService } from '../../connect/qualifiedConnectedAccountPersistence.js';
 import type { DeploySuggestionCatalogV1 } from '../../deployments/suggestions/deploySuggestionsV1.js';
 import type { ActionId } from '../actionIds.js';
 import type { AdmittedActionInputById } from '../actionSpecs.js';
@@ -51,12 +52,12 @@ export async function readDeploySuggestionCatalogV1(context: ActionExecutorConte
     const accountRows = accounts === null ? null : CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1['connectedServices.accounts.list']
         .parse(accounts).accounts;
     if (targetRead) {
-        // A target that needs a connected service is offerable either way: without a working account it needs a connection
-        // (never `unavailable`, which hides it); when the Account read failed nothing is known about it.
+        // A target that needs a connected service is offerable either way: with no account for it it needs a connection
+        // (never `unavailable`, which hides it); when the Account read failed nothing is known about it. The rule is
+        // the one Where's Connect uses: a broken account needs a reconnect, not a second connection.
+        const held = accountRows?.map(row => row.account);
         catalog.targets = targetRead.targets.map(({ connectedService, ...target }) => !connectedService ? target : { ...target,
-            availability: accountRows === null ? 'unknown'
-                : accountRows.some(row => row.health !== 'error' && row.account.ref.service.pluginId === connectedService.pluginId
-                    && row.account.ref.service.localId === connectedService.localId) ? 'available' : 'needs_connection' });
+            availability: !held ? 'unknown' : holdsConnectedAccountForService(held, connectedService) ? 'available' : 'needs_connection' });
         catalog.stores = targetRead.stores;
     }
     if (forgeRead) catalog.forges = forgeRead;

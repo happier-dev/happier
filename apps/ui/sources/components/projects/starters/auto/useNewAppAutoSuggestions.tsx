@@ -78,7 +78,7 @@ export function useNewAppAutoSuggestions(
     serverId: string;
     catalog: DeploySuggestionCatalogV1;
     answers: Readonly<Record<string, InteractionTransientQuestionAnswerV1>>;
-    /** The Account's connections when this snapshot was read; a connect since then makes it stale (PLAN §3). */
+    /** The Account's connections when this snapshot was read; a connect or reconnect since then makes it stale (PLAN §3). */
     connections: string;
   }> | null>(null);
   const connections = storage((state) => connectionsKey(state.profile.connectedAccountsV4), connectionKeys);
@@ -324,9 +324,12 @@ function runnerAgentTitle(runner: Runner): string {
 const cardId = deploySuggestionCardId;
 
 const connectionKeys = { profile: ['connectedAccountsV4'] } as const;
-/** Which accounts the Account has connected, as one comparable value (a connect or removal changes it). */
-function connectionsKey(rows: readonly Readonly<{ ref: Parameters<typeof buildQualifiedConnectedAccountLocalSubjectId>[0] }>[] | undefined): string {
-  return (rows ?? []).map(row => buildQualifiedConnectedAccountLocalSubjectId(row.ref)).sort().join('\n');
+/**
+ * Which accounts the Account has connected and their state, as one comparable value: a connect, a removal, or an
+ * account breaking or being reconnected (same identity, new state) changes it.
+ */
+function connectionsKey(rows: readonly Readonly<{ ref: Parameters<typeof buildQualifiedConnectedAccountLocalSubjectId>[0]; status: string }>[] | undefined): string {
+  return (rows ?? []).map(row => `${buildQualifiedConnectedAccountLocalSubjectId(row.ref)}\t${row.status}`).sort().join('\n');
 }
 
 function runsOnLine(runner: Runner): string {
