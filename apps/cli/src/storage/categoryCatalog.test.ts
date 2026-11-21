@@ -641,14 +641,26 @@ describe('Happier storage category catalog', () => {
                 selection.backend.statusSnapshot({ context, request: { cwd } }) });
         expect(snapshot.success, JSON.stringify(snapshot)).toBe(true);
         expect(snapshot.snapshot?.repo.worktrees.some(entry => entry.path === worktree)).toBe(true);
+        let projectRoots = [worktree];
         const catalog = createStorageCategoryCatalog({ ...f, readTrackedSessions: () => [{ sessionId: 'git-session', cwd, running: false }],
+            readProjects: () => ({ status: 'ready', projects: projectRoots.map(repositoryRoot => ({ repositoryRoot })) }),
             readWorktrees: () => readStorageWorktrees({ cwds: [cwd], registry }) });
         const uploads = await f.add(join(worktree, '.happier', 'uploads', 'messages', 'historic-session'));
         const items = await catalog.discover();
         expect(items.find(item => item.path === repo)).toMatchObject({ categoryId: 'worktrees', kind: 'worktree', verdict: 'keep',
             reason: { code: 'unsupported', detail: { cause: 'checkout_reference_owner_unavailable' } } });
-        expect(items.find(item => item.path === worktree)).toMatchObject({ categoryId: 'worktrees',
+        const linked = items.find(item => item.path === worktree);
+        expect(linked).toMatchObject({ categoryId: 'worktrees',
             kind: 'worktree', verdict: 'keep', reason: { code: 'changed_files' }, collectable: true });
+        if (!linked) throw new Error('Registered linked Worktree did not reach the Storage catalog');
+        await expect(catalog.cleanupLimitation(worktree, [])).resolves.toMatchObject({ code: 'unsupported' });
+        await expect(catalog.cleanupLimitation(worktree, [linked])).resolves.toBeNull();
+        await expect(catalog.cleanupLimitation(repo, [linked])).resolves.toMatchObject({ code: 'unsupported' });
+        const embedded = await f.add(join(worktree, 'embedded-repository'));
+        projectRoots = [worktree, embedded];
+        await expect(catalog.cleanupLimitation(worktree, [linked])).resolves.toMatchObject({
+            code: 'unsupported', detail: { path: embedded },
+        });
         expect(items.find(item => item.path === uploads)).toMatchObject({ categoryId: 'sessionFolders', verdict: 'check', collectable: false });
         const logs = join(f.happyHomeDir, 'logs'); await mkdir(logs);
         const log = join(logs, 'retained.log'); await writeFile(log, 'retained');

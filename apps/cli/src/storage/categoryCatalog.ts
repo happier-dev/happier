@@ -195,8 +195,18 @@ export function createStorageCategoryCatalog(deps: StorageCategoryCatalogDeps) {
             const managedInstall = await managedAcpCacheCleanupLimitation(path, deps);
             if (managedInstall) return managedInstall;
             const projects = await deps.readProjects?.();
-            const roots = [...new Set([...(projects?.projects ?? []).map(project => project.repositoryRoot),
-                ...items.flatMap(item => item.repositoryRoot ? [item.repositoryRoot] : [])])];
+            // Project Open also records linked checkout paths as Project roots. Only
+            // the exact catalog-bound Git item can distinguish one from a main root.
+            const linkedCheckoutKeys = new Set(items.flatMap(item => {
+                if (item.categoryId !== 'worktrees' || item.retirementKind !== undefined || !item.repositoryRoot || !item.fingerprint) return [];
+                const key = resolveCanonicalAbsolutePath(item.path)?.comparisonKey;
+                return key === undefined ? [] : [key];
+            }));
+            const projectRoots = (projects?.projects ?? []).map(project => project.repositoryRoot).filter(root => {
+                const key = resolveCanonicalAbsolutePath(root)?.comparisonKey;
+                return key === undefined || !linkedCheckoutKeys.has(key);
+            });
+            const roots = [...new Set([...projectRoots, ...items.flatMap(item => item.repositoryRoot ? [item.repositoryRoot] : [])])];
             const main = (await Promise.all(roots.map(physicalStoragePathWithoutFollowingLeaf)))
                 .find(repositoryRoot => contains(path, repositoryRoot));
             // Never give an unbound container a filesystem bypass around SCM retirement.
