@@ -13,15 +13,16 @@ export async function readPluginSkills(
   signal: AbortSignal | undefined,
   skillIds: readonly string[] | undefined,
   registry: Pick<ResolvedContributionRegistry, 'skills' | 'occurrenceIdsByPluginId'>,
+  options?: Readonly<{ availableOnly: boolean }>,
 ): Promise<readonly PluginLibrarySkill[]> {
   if (skillIds && !skillIds.some(isPluginSkillIdV1)) return [];
   const skills: PluginLibrarySkill[] = [];
   for (const declaration of registry.skills ?? []) {
     if (skillIds && !skillIds.includes(pluginSkillIdV1(declaration.identity))) continue;
     signal?.throwIfAborted();
-    const occurrenceId = registry.occurrenceIdsByPluginId?.[declaration.pluginId];
-    if (!occurrenceId) throw Object.assign(new Error('Plugin skill occurrence unavailable'), { code: 'skill_content_unavailable' });
     try {
+      const occurrenceId = registry.occurrenceIdsByPluginId?.[declaration.pluginId];
+      if (!occurrenceId) throw new Error('Plugin skill occurrence unavailable');
       const root = await realpath(declaration.pluginRootPath);
       const directory = await realpath(resolve(root, declaration.definition.directory));
       if (!isCanonicalAbsolutePathInsideRoot(root, directory)) {
@@ -38,6 +39,7 @@ export async function readPluginSkills(
       skills.push(skill);
     } catch (error) {
       signal?.throwIfAborted();
+      if (options?.availableOnly) continue;
       throw Object.assign(error instanceof Error ? error : new Error('Plugin skill content unavailable'), { code: 'skill_content_unavailable' });
     }
   }

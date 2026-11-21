@@ -1826,10 +1826,12 @@ async function describeProjection(
                 opts, registry, lease.runtimeRegistry);
             // Package bytes remain a fresh filesystem read, separate from the
             // immutable registry-shaped responses retained by the cache owner.
+            // Keep declarations for unavailable bundles so the Account reader
+            // can distinguish a missing supply from a retired Skill.
             return {
                 protocolVersion: 1,
                 pluginSkills: PluginSkillLibraryContentV1Schema.parse(
-                    await readPluginSkills(signal, request.skillIds, registry)),
+                    await readPluginSkills(signal, request.skillIds, registry, { availableOnly: true })),
                 projection: {
                     v: 2,
                     generation,
