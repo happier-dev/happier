@@ -1298,7 +1298,7 @@ const Domain_connectedAccountCallbackTranslations = (() => {
 const connectedAccountCallbackTranslations = {
   "de": Shared_connectedAccountCallbackTranslations.callbackCopy('de', {
         connectedBody: 'Zurück zu deinen verbundenen Konten…',
-        pasteBody: 'Füge ihn auf der Verbindungsseite ein, auf der du die Anmeldung gestartet hast. Er funktioniert nur dort, einmal.',
+        pasteBody: 'Füge diesen Code auf der Verbindungsseite in Happier ein, während du mit demselben Konto angemeldet bist.',
         invalidBody: 'Starte die Anmeldung erneut auf der Verbindungsseite.',
         unfinishedBody: 'Kehre zur Verbindungsseite zurück, um die Anmeldung fortzusetzen, oder füge dort diesen Code ein.',
         openConnections: 'Verbundene Konten öffnen',

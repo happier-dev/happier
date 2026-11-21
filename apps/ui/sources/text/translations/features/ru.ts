@@ -1281,7 +1281,7 @@ const Domain_connectedAccountCallbackTranslations = (() => {
 const connectedAccountCallbackTranslations = {
   "ru": Shared_connectedAccountCallbackTranslations.callbackCopy('ru', {
         connectedBody: 'Возвращаемся к подключённым аккаунтам…',
-        pasteBody: 'Вставьте его на экране подключения, где вы начали вход. Он работает только там и только один раз.',
+        pasteBody: 'Войдите в тот же аккаунт Happier и вставьте этот код на экране подключения.',
         invalidBody: 'Начните вход заново на экране подключения.',
         unfinishedBody: 'Вернитесь на экран подключения, чтобы продолжить вход, или вставьте там этот код.',
         openConnections: 'Открыть подключённые аккаунты',

@@ -1282,7 +1282,7 @@ const Domain_connectedAccountCallbackTranslations = (() => {
 const connectedAccountCallbackTranslations = {
   "pl": Shared_connectedAccountCallbackTranslations.callbackCopy('pl', {
         connectedBody: 'Powrót do połączonych kont…',
-        pasteBody: 'Wklej go na ekranie połączenia, na którym rozpoczęto logowanie. Działa tylko tam, jeden raz.',
+        pasteBody: 'Zaloguj się w Happier na to samo konto i wklej ten kod na ekranie połączenia.',
         invalidBody: 'Rozpocznij logowanie ponownie na ekranie połączenia.',
         unfinishedBody: 'Wróć do ekranu połączenia, aby kontynuować logowanie, lub wklej tam ten kod.',
         openConnections: 'Otwórz połączone konta',

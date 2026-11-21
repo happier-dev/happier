@@ -1298,7 +1298,7 @@ const Domain_connectedAccountCallbackTranslations = (() => {
 const connectedAccountCallbackTranslations = {
   "pt": Shared_connectedAccountCallbackTranslations.callbackCopy('pt', {
         connectedBody: 'A voltar às suas contas ligadas…',
-        pasteBody: 'Cole-o no ecrã de ligação onde iniciou a sessão. Só funciona ali, uma vez.',
+        pasteBody: 'Cole este código no ecrã de ligação do Happier com a sessão iniciada na mesma conta.',
         invalidBody: 'Inicie a sessão novamente a partir do ecrã de ligação.',
         unfinishedBody: 'Volte ao ecrã de ligação para continuar a iniciar a sessão ou cole este código ali.',
         openConnections: 'Abrir contas ligadas',

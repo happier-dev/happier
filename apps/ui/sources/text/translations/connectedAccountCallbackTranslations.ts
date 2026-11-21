@@ -12,7 +12,7 @@ export function callbackCopy(locale: Locale, overrides: Overrides): CallbackCopy
 export const connectedAccountCallbackTranslations = {
     en: callbackCopy('en', {
         connectedBody: 'Taking you back to your connected accounts…',
-        pasteBody: 'Paste it on the connection screen where you started signing in. It only works there, once.',
+        pasteBody: 'To finish connecting, paste this code on the connection screen for the same Happier account.',
         invalidBody: 'Start signing in again from the connection screen.',
         unfinishedBody: 'Return to the connection screen to continue signing in, or paste this code there.',
         openConnections: 'Open connected accounts',

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { CONNECTED_ACCOUNT_OAUTH_CALLBACK_URL_V1 } from '@happier-dev/protocol/connect/oauthAuthorizationResponse';
 
 import { HubUsageCardGrid } from '@/components/hub/usage/HubUsageCardGrid';
 import { ConnectedAccountDeviceForm } from '@/components/settings/connectedServices/account/ConnectedAccountDeviceForm';
@@ -73,7 +74,7 @@ export function renderSetupFrame(frame: string): React.ReactNode | null {
         case 'H2c': return <HomeFrame stage="open" />;
         case 'H2b': return <HomeFrame stage="after" />;
         case 'CB1': return <CallbackFrame view={{ kind: 'paste', answer: `${CALLBACK_CODE}#${CALLBACK_STATE}` }} />;
-        case 'CB2': return <CallbackFrame view={{ kind: 'paste', answer: `${CALLBACK_URL}?code=${CALLBACK_CODE}&state=${CALLBACK_STATE}&iss=https%3A%2F%2Fvercel.com` }} />;
+        case 'CB2': return <CallbackFrame view={{ kind: 'paste', answer: `${CONNECTED_ACCOUNT_OAUTH_CALLBACK_URL_V1}?code=${CALLBACK_CODE}&state=${CALLBACK_STATE}&iss=https%3A%2F%2Fvercel.com` }} />;
         case 'CB3': return <CallbackFrame view={{ kind: 'unfinished', answer: `${CALLBACK_CODE}#${CALLBACK_STATE}`,
             response: { status: 'rejected', attemptId: CALLBACK_ATTEMPT, code: 'attempt_expired' } }} />;
         default: return null;
@@ -253,9 +254,8 @@ function SetupStatesFrame() {
 const CALLBACK_ATTEMPT = '8f3c2a91-4b7e-4d2a-9c1f-6e5b3a7d0c42';
 const CALLBACK_CODE = 'Ab9xQ7mK2pLs4V8nT3wR';
 const CALLBACK_STATE = `${CALLBACK_ATTEMPT}.kq3V9xLm2pR7sT1wY4zA8bC6dE0fG5hJ1kN3mP9qS2u`;
-const CALLBACK_URL = 'https://app.happier.dev/oauth/connected-account/callback';
 
-/** CB1–CB3: the OAuth callback page when the answer goes back by hand (code#state, the whole callback, unfinished). */
+/** CB1–CB3: the OAuth callback page when sign-in continues on the connection screen for the same Happier account. */
 function CallbackFrame(props: Readonly<{ view: ConnectedAccountOAuthCallbackView }>) {
     const [copied, setCopied] = React.useState(false);
     return (

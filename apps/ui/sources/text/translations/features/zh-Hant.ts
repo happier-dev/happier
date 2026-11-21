@@ -1260,7 +1260,7 @@ const Domain_connectedAccountCallbackTranslations = (() => {
 const connectedAccountCallbackTranslations = {
   "zhHant": Shared_connectedAccountCallbackTranslations.callbackCopy('zhHant', {
         connectedBody: '正在返回已連接的帳戶…',
-        pasteBody: '請貼到開始登入的連接頁面。只能在那裡使用一次。',
+        pasteBody: '登入同一個 Happier 帳號後，將此代碼貼到連線畫面。',
         invalidBody: '請從連接頁面重新開始登入。',
         unfinishedBody: '返回連接頁面繼續登入，或在那裡貼上此代碼。',
         openConnections: '開啟已連接的帳戶',

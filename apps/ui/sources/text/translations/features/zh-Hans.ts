@@ -1259,7 +1259,7 @@ const Domain_connectedAccountCallbackTranslations = (() => {
 const connectedAccountCallbackTranslations = {
   "zhHans": Shared_connectedAccountCallbackTranslations.callbackCopy('zhHans', {
         connectedBody: '正在返回已连接的账户…',
-        pasteBody: '请粘贴到开始登录的连接页面。只能在那里使用一次。',
+        pasteBody: '登录同一个 Happier 账号后，将此代码粘贴到连接页面。',
         invalidBody: '请从连接页面重新开始登录。',
         unfinishedBody: '返回连接页面继续登录，或在那里粘贴此代码。',
         openConnections: '打开已连接的账户',
