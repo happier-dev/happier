@@ -34,7 +34,7 @@ export function readDeploymentReceiptFailureCodeV1(
 
 /** Private parser diagnostics contain schema facts, never rejected values or prose. */
 export const DeploymentOutputValidationV1Schema = lazyZodSchema(() => z.strictObject({
-  source: id, httpStatus: z.number().check(z.int()), issues: z.array(ActionInputIssueSchema),
+  source: id, httpStatus: z.optional(z.number().check(z.int())), issues: z.array(ActionInputIssueSchema),
 }));
 
 /** Content-free source authority diagnostics shared by Action, receipt and approval. */

@@ -154,8 +154,10 @@ describe('Receipt → failed', () => {
   ] as const)('shows the projected restoration consequence for $phase / $health', async ({ phase, health, consequence }) => {
     const base = createDeploymentReceiptDetailV1();
     const revision = { kind: 'repository' as const, sha: 'b'.repeat(40) };
+    const validation = consequence === 'unverified'
+      ? { source: 'deployment.failure', issues: [{ path: ['kind'], code: 'invalid_union' }] } : undefined;
     const content = DeploymentOwnServerContentV1Schema.parse({ ...base.content,
-      failure: { code: 'deployment_failed_unclassified', phase },
+      failure: { code: validation ? 'invalid_action_output' : 'deployment_failed_unclassified', phase, validation },
       machineResults: base.content.machines.map(machineId => ({ machineId, installationId: 'installation-a',
         steps: [], activation: 'failed', restoration: 'succeeded', health })),
       ownServer: { approvedInputBasis: {
@@ -189,6 +191,10 @@ describe('Receipt → failed', () => {
       const banner = screen.findAll(node => node.props.testID === 'project-deployments.receipt.outcome.failed'
         && node.props.description !== undefined)[0]!;
       const description = String(banner.props.description);
+      if (validation) {
+        expect(description).toContain('kind');
+        expect(description).toContain('invalid_union');
+      }
       if (consequence === 'failed') expect(description).toContain(t('projects.deployments.failureRestoreFailed', { sha: 'bbbbbbb' }));
       else if (consequence === 'unverified') {
         // The unverified restoration is a fragment without a full stop: it stands on its own line, never run into the next

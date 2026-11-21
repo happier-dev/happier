@@ -1,6 +1,5 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isDeepStrictEqual } from 'node:util';
-import { readDeploymentOutputValidation } from '../../outputValidation';
 import { projectDeploymentFailure, projectDeploymentReceiptFailure } from '../../deploymentFailure';
 import { configuration } from '@/configuration';
 import { DeploymentOwnServerContentV1Schema, type DeploymentEnvironmentDetailV1, type DeploymentOwnServerContentV1, type DeploymentImageV1, type OwnServerDeploymentDetailsV1 } from '@happier-dev/deployments/contracts/v1';
@@ -263,12 +262,11 @@ export async function buildOwnServerDeploymentReceipt(host: OwnServerDeploymentT
         } catch (error) {
             const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'deployment_failed';
             const captured = captureOwnServerDeploymentStageLog(initial.content, stageOutput);
-            const validation = readDeploymentOutputValidation(error);
             const written = await host.writeTransition({ environmentId: initial.receipt.deployment.environmentId,
                 deploymentId: initial.receipt.deployment.id, receiptHeader: initial.deployment,
                 expectedRevision: initial.receipt.deployment.revision, state: 'running',
-                content: { ...captured, failure: { ...projectDeploymentReceiptFailure(projectDeploymentFailure(code, error), 'build'),
-                    ...(validation ? { validation } : {}) } }, context: request.context });
+                content: { ...captured, failure: projectDeploymentReceiptFailure(projectDeploymentFailure(code, error), 'build') },
+                context: request.context });
             if (!written.ok) return written;
             throw error;
         } finally {

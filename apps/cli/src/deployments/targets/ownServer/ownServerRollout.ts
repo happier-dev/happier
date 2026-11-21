@@ -2,8 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { configuration } from '@/configuration';
 import { resolveOwnServerDeploymentIdentityForHost } from './paths';
 import { createOwnServerExpectedDownPublisher } from './expectedDown';
-import { readDeploymentOutputValidation } from '../../outputValidation';
-import { projectDeploymentFailure } from '../../deploymentFailure';
+import { projectDeploymentFailure, projectDeploymentReceiptFailure } from '../../deploymentFailure';
 import { DeploymentExecutionFailureDetailsV1Schema, DeploymentReceiptFailureV1Schema, type DeploymentReceiptFailureV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { isDeploymentSettledV1, type DeploymentEnvironmentDetailV1, type DeploymentMachineResultV1, type DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/contracts/v1';
@@ -61,12 +60,10 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
         deploymentId: receipt.deployment.id, receiptHeader: receipt.deployment, expectedRevision: receipt.deployment.revision, state, content, context, ...telemetry });
     const member = (machineId: string) => receipt.content.machineResults.find(row => row.machineId === machineId);
     const projectFailure = (phase: DeploymentReceiptFailureV1['phase'], code: string, error?: unknown): DeploymentReceiptFailureV1 => {
-        const projected = error === undefined ? undefined : projectDeploymentFailure(code, error);
+        const projected = error === undefined ? undefined : projectDeploymentReceiptFailure(projectDeploymentFailure(code, error), phase);
         const previous = receipt.content.failure;
-        const authored = previous && (previous.code !== code || previous.phase !== phase) ? previous : { ...previous, code, phase,
-            ...(!previous?.failureCause && projected?.failureCause ? { failureCause: projected.failureCause } : {}),
-            ...(typeof previous?.effectAttempted !== 'boolean' && typeof projected?.effectAttempted === 'boolean'
-                ? { effectAttempted: projected.effectAttempted } : {}) };
+        const authored = previous && (previous.code !== code || previous.phase !== phase) ? previous
+            : { ...projected, ...previous, code, phase };
         return DeploymentReceiptFailureV1Schema.parse(projectDeploymentFailureRecoveryV1(authored));
     };
     const preserveFailure = async (machineId: string, installationId: string, phase: 'activate' | 'restore' | 'cleanup', dispatched: ActionExecuteFailure) => {
@@ -316,11 +313,9 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
             if (!current()) return finishChild(built);
             const complete = isOwnServerBuildReceiptComplete(receipt.content)
                 && receipt.deployment.actionOperationId === buildOperationId && receipt.deployment.revision > beforeBuildRevision;
-            const validation = !built.ok ? readDeploymentOutputValidation(built) : undefined;
             if (!complete) return await write(!built.ok && built.errorCode === 'outcome_unknown' ? 'outcome_unknown' : 'failed',
-                { ...receipt.content, failure: {
-                    ...projectFailure('build', built.ok ? 'deployment_image_unavailable' : built.errorCode, built.ok ? undefined : built),
-                    ...(!receipt.content.failure && validation ? { validation } : {}) } });
+                { ...receipt.content, failure: projectFailure('build', built.ok ? 'deployment_image_unavailable' : built.errorCode,
+                    built.ok ? undefined : built) });
         }
         const attempted: DeploymentTargetLinkHeaderV1['members'][number][] = [];
         for (const target of initial.link.members) {

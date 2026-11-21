@@ -39,6 +39,7 @@ import { createActionOperationRunner } from '@/daemon/actionOperations/actionOpe
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
+import { MachineServicesListResultV1Schema } from '@happier-dev/protocol/actions/specs/machine/services';
 import { readDeploymentChildResult } from '../../deploymentChild';
 import { prepareRollbackForHost } from '../../prepareRollbackForHost';
 import { readOwnServerDeploymentStageLogs } from './stageLog';
@@ -54,6 +55,7 @@ it.each([
     { autoRestore: false, members: 1, baseline: true, rollback: true, thrownFailure: 'rpc', failure: 'RPC_FORBIDDEN', restores: 0, state: 'failed' },
     { autoRestore: false, members: 1, baseline: true, rollback: true, thrownFailure: 'rpc-carrier', failure: 'RPC_FORBIDDEN', restores: 0, state: 'failed' },
     { autoRestore: false, members: 1, baseline: true, rollback: true, thrownFailure: 'untyped', failure: 'deployment_failed', restores: 0, state: 'failed' },
+    { autoRestore: false, members: 2, baseline: true, thrownFailure: 'invalid output kind', failure: 'deployment_failed', restores: 0, state: 'failed' },
     { autoRestore: false, members: 1, baseline: true, failure: 'machine_unavailable', restores: 0, state: 'failed' },
     { autoRestore: true, members: 1, baseline: true, failure: 'machine_unavailable', restores: 1, state: 'failed' },
     { autoRestore: false, members: 2, baseline: true, failure: 'machine_unavailable', restores: 2, state: 'failed' },
@@ -168,12 +170,15 @@ it.each([
             if ('serverCancellation' in scenario && phase === scenario.serverCancellation) {
                 return cancelledChild();
             }
-            if (phase === 'observe' && 'thrownFailure' in scenario) {
+            if (phase === 'observe' && 'thrownFailure' in scenario && scenario.thrownFailure !== 'invalid output kind') {
                 if (scenario.thrownFailure === 'rpc') throw new RpcError('private-native-error-sentinel', scenario.failure);
                 if (scenario.thrownFailure === 'rpc-carrier') throw { rpcErrorCode: scenario.failure };
                 throw new Error('private-native-error-sentinel');
             }
             if (phase === 'activate') {
+                if ('thrownFailure' in scenario && scenario.thrownFailure === 'invalid output kind') {
+                    MachineServicesListResultV1Schema.parse({ kind: 'private-native-error-sentinel' });
+                }
                 if (migrationPolicy) {
                     receipt.content.steps.push({ id: 'own-server-migration', label: 'Run candidate migration', state: 'succeeded' });
                     receipt.deployment.revision++;
@@ -290,6 +295,11 @@ it.each([
     if ('serverCancellation' in scenario) expect(receipt.content.failure).toBeUndefined();
     else {
         expect(receipt.content.failure).toMatchObject({ code: failure });
+        if ('thrownFailure' in scenario && scenario.thrownFailure === 'invalid output kind') {
+            expect(receipt.content.failure).toMatchObject({ phase: 'activate', validation: {
+                source: 'deployment.failure', issues: [{ path: ['kind'], code: 'invalid_union' }],
+            } });
+        }
         expect(JSON.stringify(receipt.content.failure)).not.toContain('private-native-error-sentinel');
     }
     expect(receipt.content.ownServer?.rollbackTarget).toEqual('serverCancellation' in scenario && scenario.serverCancellation === 'initial' ? undefined : baseline

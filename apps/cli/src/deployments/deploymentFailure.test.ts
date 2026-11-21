@@ -98,6 +98,18 @@ describe('deployment failure diagnostics', () => {
             details: { issues: expect.arrayContaining([expect.objectContaining({ path: ['buildMachineId'], code: 'invalid_type' })]) },
             failureCause: { phase: 'deployment.prepare.receipt', errorClass: expect.stringMatching(/ZodError/) } });
         expect(JSON.stringify(failure)).not.toContain('private-provider-deployment');
+        expect(projectDeploymentReceiptFailure(failure, 'activate')).toMatchObject({ code: 'invalid_action_output', phase: 'activate',
+            validation: { source: 'deployment.prepare.receipt', issues: expect.arrayContaining([
+                expect.objectContaining({ path: ['buildMachineId'], code: 'invalid_type' }),
+            ]) } });
+    });
+    it('preserves the actual HTTP status when an Action carries output validation', () => {
+        const validation = { source: 'deployments.home', httpStatus: 502, issues: [{ path: ['kind'], code: 'invalid_union' }] };
+        const wrapped = new Error('private-response', { cause: {
+            ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output', details: { validation },
+        } });
+        const failure = projectDeploymentFailure('invalid_action_output', wrapped, 'deployment.prepare.receipt');
+        expect(projectDeploymentReceiptFailure(failure, 'activate').validation).toEqual(validation);
     });
     it('retains an authored cause for a generic PluginError without exposing its private details', () => {
         const failureCause = projectActionFailureCauseV1({ code: 'invalid_request' }, 'deployment.build.secret_build_argument');

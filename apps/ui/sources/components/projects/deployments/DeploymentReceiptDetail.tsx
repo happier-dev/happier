@@ -542,7 +542,9 @@ export const DeploymentReceiptDetail = React.memo(
                 title={deploymentFailureTitle(facts.failure, deployment.operation)}
                 // Cause, consequence and remedy each stand on their own line: a consequence can be a fragment without a
                 // full stop ("… · Running, not verified"), which ran into the next sentence when joined by a space.
-                description={[recordedCause, failureConsequence(facts, firstMachine), recovery?.remedy]
+                description={[recordedCause, ...(facts.failure?.validation?.issues.map(issue =>
+                  issue.path.length ? `${issue.path.join('.')} · ${issue.code}` : issue.code) ?? []),
+                  failureConsequence(facts, firstMachine), recovery?.remedy]
                   .filter((line, index, lines) => Boolean(line) && lines.indexOf(line) === index).join('\n')}
                 // The row's place is settled from first paint: the banner's own buttons are known then, beside the agent control.
                 actionPlacement={rollbackTarget || retryRollbackTo || bannerAgain || (recovery && props.onOpenRecoveryDestination) ? 'below' : undefined}

@@ -7,7 +7,7 @@ import { logger } from '@/ui/logger';
 import { readDeploymentAuthorizationFailure } from './deploymentAuthorizationFailure';
 import { readDeploymentSystemToolFailure } from './deploymentSystemToolFailure';
 import { readDeploymentNativeResticFailure } from '@/daemon/local/services/launch/nativeResticFailure';
-import { readDeploymentOutputValidationFailure } from './outputValidation';
+import { readDeploymentOutputValidation, readDeploymentOutputValidationFailure } from './outputValidation';
 import { MachineNativeEffectAdmissionError } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { readPluginActionError, readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
 import { DeploymentSourceAdmissionFailureV1Schema, DeploymentReceiptFailureV1Schema,
@@ -59,8 +59,10 @@ export function projectDeploymentReceiptFailure(result: ActionExecuteFailure,
     const phase = DeploymentReceiptFailureV1Schema.shape.phase.safeParse(
         authorDetails && typeof authorDetails === 'object' && 'phase' in authorDetails ? authorDetails.phase : undefined);
     const sourceAdmission = DeploymentSourceAdmissionFailureV1Schema.safeParse(authorDetails);
+    const validation = readDeploymentOutputValidation(result);
     return DeploymentReceiptFailureV1Schema.parse(projectDeploymentFailureRecoveryV1({ code: result.errorCode,
         phase: phase.success ? phase.data : fallbackPhase,
+        ...(validation ? { validation } : {}),
         ...(sourceAdmission.success ? { sourceAdmission: sourceAdmission.data } : {}),
         failureCause: result.failureCause ?? normalizeActionExecutorThrownError(result, `deployment.${fallbackPhase}`).failureCause,
         ...(typeof result.effectAttempted === 'boolean' ? { effectAttempted: result.effectAttempted } : {}) }));

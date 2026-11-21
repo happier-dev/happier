@@ -1,5 +1,5 @@
 import { ActionFailureCauseV1Schema, createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
+import { projectDeploymentFailure, projectDeploymentReceiptFailure } from '@/deployments/deploymentFailure';
 import { isDeepStrictEqual } from 'node:util';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import type { DeploymentRestoreActivationReferenceV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -1503,15 +1503,17 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                     prepared.stageOutput.appendRedacted('stderr', Buffer.from(`\nCandidate cleanup failed (${reason}).\n`));
                 }
                 const projected = failure(uncertain ? 'outcome_unknown' : code, error);
-                const written = await stage(failed, { code, phase: input.phase === 'restore' ? 'restore' : 'activate',
-                    ...(projected.failureCause ? { failureCause: projected.failureCause } : {}),
-                    ...(typeof projected.effectAttempted === 'boolean' ? { effectAttempted: projected.effectAttempted } : {}) });
+                const receiptFailure = projectDeploymentReceiptFailure(projected, input.phase === 'restore' ? 'restore' : 'activate');
+                const written = await stage(failed, { ...receiptFailure, code });
                 if (!written.ok) return written;
                 if (!cleanupFailure) return projected;
-                return { ...projected, details: { cleanupFailure: {
-                    code: cleanupFailure.errorCode, phase: 'cleanup',
-                    ...(cleanupFailure.failureCause ? { failureCause: cleanupFailure.failureCause } : {}),
-                } } };
+                return { ...projected, details: {
+                    ...(projected.details && typeof projected.details === 'object' ? projected.details : {}),
+                    cleanupFailure: {
+                        code: cleanupFailure.errorCode, phase: 'cleanup',
+                        ...(cleanupFailure.failureCause ? { failureCause: cleanupFailure.failureCause } : {}),
+                    },
+                } };
             } finally {
                 try {
                     try { await incumbent?.dispose(); }

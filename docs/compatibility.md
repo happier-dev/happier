@@ -3001,7 +3001,7 @@ signed carriers retain the existing authorization phase in both the HTTP refusal
 and the redacted server warning; no proof or credential bytes are logged.
 
 Private deployment receipt failures may retain optional `validation` with the
-parser source, HTTP status and structural schema issues. Existing failures
+parser source, structural schema issues and HTTP status when present. Existing failures
 without it remain valid. Rejected response values, unknown-key lists and custom
 error messages are excluded using the existing Action validation projector.
 The HTTP response acceptance and authorization rules do not change. Server,
