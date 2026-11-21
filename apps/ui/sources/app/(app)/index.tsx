@@ -4,6 +4,8 @@ import * as React from 'react';
 import { StyleSheet } from 'react-native-unistyles';
 import { useRouter, useLocalSearchParams, useIsFocused } from '@/components/appShell/workspace/destinationRoute';
 import { MainView } from '@/components/navigation/shell/MainView';
+import { useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { WorkspaceShellWillHostRoutesContext } from '@/components/appShell/workspace/WorkspaceRouteHostingContext';
 import { clearPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
 import { getPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
 import { PreAuthOnboardingWizardEntry } from '@/components/onboarding/preAuth/PreAuthOnboardingWizardEntry';
@@ -38,6 +40,8 @@ export function Home() {
     const { isAuthenticated } = useAuth();
     const router = useRouter();
     const focused = useIsFocused();
+    const destinationInstance = useDestinationInstanceKey();
+    const workspaceWillHostHome = React.useContext(WorkspaceShellWillHostRoutesContext);
     const params = useLocalSearchParams<{
         id?: string | string[];
         messageId?: string | string[];
@@ -144,6 +148,8 @@ export function Home() {
     if (!keepBootstrapShell && (!isAuthenticated || !homeVisible)) {
         return !isAuthenticated || interactive.current ? <PreAuthOnboardingWizardEntry /> : null;
     }
+    // Expo keeps the public step long enough to capture it. The retained workspace owns the next Home.
+    if (!keepBootstrapShell && workspaceWillHostHome && destinationInstance === null) return null;
     return (
         <View style={stylesheet.root}>
             <PersonalHomeBootstrapContent>

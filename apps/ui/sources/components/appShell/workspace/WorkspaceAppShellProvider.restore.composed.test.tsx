@@ -32,6 +32,7 @@ const { AuthProvider, InjectedAuthProvider, useAuth } = await import('@/auth/con
 const { AppShellPluginUiProjectionProvider } = await import('../plugins/AppShellPluginUiProjection');
 const { WorkspaceAppShellProvider } = await import('./WorkspaceAppShellProvider');
 const { WorkspaceRouteEntry } = await import('./createWorkspaceRouteEntry');
+const { WorkspaceShellWillHostRoutesContext } = await import('./WorkspaceRouteHostingContext');
 const { useOptionalWorkspaceNavigation } = await import('./WorkspaceNavigationContext');
 const { storage } = await import('@/sync/domains/state/storage');
 const { profileDefaults } = await import('@/sync/domains/profiles/profile');
@@ -39,13 +40,16 @@ const { sync } = await import('@/sync/sync');
 const { publishAppliedActiveServerRuntimeAvailability } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
 afterAll(() => vi.unstubAllGlobals());
 
-it('lets the live signed-out route commit its landing before the workspace takes over Home', async () => {
+it('lets the live signed-out route commit its landing before the workspace takes over Home without presenting a temporary Home', async () => {
     const events: string[] = [];
     function Route() {
         const { isAuthenticated } = useAuth();
+        const workspaceWillHostHome = React.useContext(WorkspaceShellWillHostRoutesContext);
         React.useLayoutEffect(() => {
-            if (isAuthenticated) events.push('first arrival');
-        }, [isAuthenticated]);
+            if (!isAuthenticated) return;
+            events.push('first arrival');
+            if (!workspaceWillHostHome) events.push('temporary Home presented');
+        }, [isAuthenticated, workspaceWillHostHome]);
         React.useLayoutEffect(() => () => { events.push('route removed'); }, []);
         return React.createElement('PublicRoute');
     }

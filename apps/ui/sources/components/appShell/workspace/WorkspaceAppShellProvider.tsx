@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Platform } from 'react-native';
 import { useCompactAppDestinationCatalog } from '../destinations/compactAppDestinationCatalog';
 import { WorkspaceProvider } from './WorkspaceProvider';
+import { WorkspaceShellWillHostRoutesContext } from './WorkspaceRouteHostingContext';
 import { useWorkspacePresentation } from './useWorkspaceShellEnabled';
 import { useActiveServerAccountScope, useIsDataReady } from '@/sync/domains/state/storage';
 import { resolveDesktopWindowContext } from '@/desktop/window/isDesktopAuxiliaryWindowContext';
@@ -52,6 +53,8 @@ export function WorkspaceAppShellProvider(props: Readonly<{ children: React.Reac
         entry={presentation === 'entry'} deferred={pendingFirstAccount} catalog={catalog}>
         {restoring
             ? <HomeReachabilityGate variant="pane"><AppLaunchState testID="workspace-account-restoring" /></HomeReachabilityGate>
-            : props.children}
+            : <WorkspaceShellWillHostRoutesContext.Provider value={Platform.OS === 'web' && requestedPresentation === 'shell'}>
+                {props.children}
+            </WorkspaceShellWillHostRoutesContext.Provider>}
     </WorkspaceProvider>;
 }
