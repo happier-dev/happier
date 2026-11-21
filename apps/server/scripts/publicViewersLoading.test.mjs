@@ -24,8 +24,6 @@ test('API startup excludes both generated viewers and public profiles render on 
       'sources/app/api/routes/account/registerPublicProfileReadRoutes.ts'],
     bundle: true, splitting: true, format: 'esm', platform: 'node', target: 'node20',
     packages: 'external', outdir, outExtension: { '.js': '.mjs' },
-    // Bun supplies require in ESM; preserve that runtime boundary in this Node-hosted bundle.
-    banner: { js: "import { createRequire as __viewerCreateRequire } from 'node:module'; const require = __viewerCreateRequire(import.meta.url);" },
     tsconfig: join(projectDir, 'tsconfig.json'), metafile: true, logLevel: 'silent',
   });
   const outputs = result.metafile.outputs;

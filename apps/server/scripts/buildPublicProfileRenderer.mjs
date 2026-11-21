@@ -20,6 +20,8 @@ export async function buildPublicProfileRenderer({ projectDir = defaultProjectDi
         bundle: true, write: false, minify: true, platform: 'node', format: 'esm', target: ['node20'], jsx: 'automatic',
         tsconfig: resolve(projectDir, 'tsconfig.json'), conditions: ['happier-source'],
         external: ['react', 'react-dom/server', 'react/jsx-runtime'],
+        // Bundled CommonJS dependencies can require Node built-ins on first import.
+        banner: { js: "import { createRequire as __publicProfileCreateRequire } from 'node:module'; const require = __publicProfileCreateRequire(import.meta.url);" },
         alias: {
             'react-native': reactNativeWeb,
             'react-native-web': reactNativeWeb,
