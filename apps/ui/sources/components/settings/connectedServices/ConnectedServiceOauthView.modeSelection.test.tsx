@@ -8,6 +8,7 @@ import { installConnectedServicesCommonModuleMocks } from './connectedServicesTe
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const shared = vi.hoisted(() => ({
+    exchangeError: null as Error | null,
     searchParams: { serviceId: 'anthropic', profileId: 'work' } as ExpoRouterParams,
     routerPushSpy: vi.fn(),
     routerBackSpy: vi.fn(),
@@ -74,7 +75,10 @@ vi.mock('@/sync/domains/connectedServices/oauth/connectedServiceOauthAdapters', 
         serviceId,
         defaultRedirectUri: 'http://localhost/cb',
         buildAuthorizationUrl: () => 'https://example.com/oauth',
-        exchangeAuthorizationCodeForRecord: async () => ({}),
+        exchangeAuthorizationCodeForRecord: async () => {
+            if (shared.exchangeError) throw shared.exchangeError;
+            return {};
+        },
     }),
 }));
 
@@ -150,5 +154,22 @@ describe('ConnectedServiceOauthView mode selection', () => {
 
         expect(shared.embeddedSpy).toHaveBeenCalledTimes(1);
         expect(shared.deviceAuthSpy).not.toHaveBeenCalled();
+    });
+
+    it('hands the embedded view a connectivity message instead of a machine code when the exchange cannot reach the server', async () => {
+        shared.searchParams = { serviceId: 'claude-subscription', profileId: 'work', method: 'browser' };
+        vi.clearAllMocks();
+        shared.exchangeError = new TypeError('Failed to fetch');
+        const { ConnectedServiceOauthView } = await import('./ConnectedServiceOauthView');
+
+        await renderScreen(<ConnectedServiceOauthView />);
+        const props = shared.embeddedSpy.mock.calls[0]?.[0] as
+            | { config: { tokenExchange: (code: string, verifier: string, state: string) => Promise<unknown> } }
+            | undefined;
+
+        // The shared `@/text` test double renders translation keys.
+        await expect(props?.config.tokenExchange('code', 'verifier', 'state'))
+            .rejects.toThrow('connectedServices.requestErrors.unreachable');
+        shared.exchangeError = null;
     });
 });

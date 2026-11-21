@@ -1,6 +1,6 @@
 import { ConnectedServiceQuotaReadMetadataSchema, type ConnectedServiceQuotaReadMetadata } from './connectedServiceQuotaReadMetadata';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { serverFetch } from '@/sync/http/client';
+import { connectedServiceFetch } from './connectedServiceNetworkError';
 import { HappyError } from '@/utils/errors/errors';
 import { backoff } from '@/utils/timing/time';
 
@@ -27,7 +27,8 @@ export async function getConnectedServiceQuotaSnapshotSealed(
   metadata: ConnectedServiceQuotaReadMetadata;
 } | null>> {
   return await backoff(async () => {
-    const response = await serverFetch(
+    const response = await connectedServiceFetch(
+      'getConnectedServiceQuotaSnapshotSealed',
       `/v2/connect/${encodeURIComponent(params.serviceId)}/profiles/${encodeURIComponent(params.profileId)}/quotas`,
       {
         method: 'GET',
@@ -70,7 +71,8 @@ export async function requestConnectedServiceQuotaSnapshotRefresh(
   params: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>,
 ): Promise<boolean> {
   return await backoff(async () => {
-    const response = await serverFetch(
+    const response = await connectedServiceFetch(
+      'requestConnectedServiceQuotaSnapshotRefresh',
       `/v2/connect/${encodeURIComponent(params.serviceId)}/profiles/${encodeURIComponent(params.profileId)}/quotas/refresh`,
       {
         method: 'POST',

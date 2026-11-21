@@ -3178,6 +3178,11 @@ localTailscale: {
         confirmCta: "リセットを使用",
       },
     },
+    requestErrors: {
+      unreachable: "Happier サーバーに接続できません。ネットワークまたは VPN 接続を確認して、もう一度お試しください。",
+      timeout: "Happier サーバーが時間内に応答しませんでした。",
+      serverHttp: ({ status }: { status: string }) => `Happier サーバーがエラー (${status}) を返しました。しばらくしてからもう一度お試しください。`,
+    },
     oauthPaste: {
       invalidConfig: "接続済みサービスの設定が無効です。",
       connectWebGroupTitle: "接続（Web）",
@@ -3221,7 +3226,10 @@ localTailscale: {
       },
       errors: {
         missingState: "リダイレクト URL に OAuth state がありません。",
-        stateMismatch: "OAuth state が一致しません。",
+        stateMismatch: "この認可レスポンスは現在の試行と一致しません。新しい認可を開始してください。",
+        rejected: ({ reason }: { reason: string }) => `プロバイダーが認可を拒否しました: ${reason}`,
+        rejectedGeneric: "プロバイダーが認可を拒否しました。",
+        responseKept: "貼り付けたレスポンスは保持されています。「続行」を押して再試行してください。プロバイダーがコードを無効または使用済みと報告した場合は、新しい認可を開始してください。",
       },
     },
     oauthEmbedded: {

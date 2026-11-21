@@ -2894,6 +2894,11 @@ export const pt: TranslationStructure = {
         confirmCta: "Usar redefinição",
       },
     },
+    requestErrors: {
+      unreachable: "Não foi possível conectar ao servidor do Happier. Verifique sua rede ou conexão VPN e tente novamente.",
+      timeout: "O servidor do Happier não respondeu a tempo.",
+      serverHttp: ({ status }: { status: string }) => `O servidor do Happier retornou um erro (${status}). Tente novamente em instantes.`,
+    },
     oauthPaste: {
       invalidConfig: "Configuração de serviço conectado inválida.",
       connectWebGroupTitle: "Conectar (web)",
@@ -2937,7 +2942,10 @@ export const pt: TranslationStructure = {
       },
       errors: {
         missingState: "Falta o estado OAuth na URL de redirecionamento.",
-        stateMismatch: "O estado OAuth não corresponde.",
+        stateMismatch: "Esta resposta de autorização não corresponde à tentativa atual. Inicie uma nova autorização.",
+        rejected: ({ reason }: { reason: string }) => `O provedor rejeitou a autorização: ${reason}`,
+        rejectedGeneric: "O provedor rejeitou a autorização.",
+        responseKept: "A resposta colada foi mantida. Toque em Continuar para tentar de novo; se o provedor informar um código inválido ou já usado, inicie uma nova autorização.",
       },
     },
     oauthEmbedded: {

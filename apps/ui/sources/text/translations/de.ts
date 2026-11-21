@@ -2638,6 +2638,11 @@ export const de: TranslationStructure = {
                 confirmCta: 'Reset nutzen',
             },
         },
+        requestErrors: {
+            unreachable: 'Verbindung zum Happier-Server nicht möglich. Prüfe dein Netzwerk oder deine VPN-Verbindung und versuche es erneut.',
+            timeout: 'Der Happier-Server hat nicht rechtzeitig geantwortet.',
+            serverHttp: ({ status }: { status: string }) => `Der Happier-Server hat einen Fehler gemeldet (${status}). Versuche es gleich noch einmal.`,
+        },
         oauthPaste: {
             invalidConfig: 'Ungültige Konfiguration des verbundenen Dienstes.',
             connectWebGroupTitle: 'Verbinden (Web)',
@@ -2680,7 +2685,10 @@ export const de: TranslationStructure = {
             },
             errors: {
                 missingState: 'In der Redirect-URL fehlt der OAuth-State.',
-                stateMismatch: 'OAuth-State stimmt nicht überein.',
+                stateMismatch: 'Diese Autorisierungsantwort passt nicht zum aktuellen Versuch. Starte eine neue Autorisierung.',
+                rejected: ({ reason }: { reason: string }) => `Der Anbieter hat die Autorisierung abgelehnt: ${reason}`,
+                rejectedGeneric: 'Der Anbieter hat die Autorisierung abgelehnt.',
+                responseKept: 'Deine eingefügte Antwort wurde beibehalten. Tippe auf Weiter, um es erneut zu versuchen; meldet der Anbieter einen ungültigen oder bereits verwendeten Code, starte eine neue Autorisierung.',
             },
         },
         oauthEmbedded: {

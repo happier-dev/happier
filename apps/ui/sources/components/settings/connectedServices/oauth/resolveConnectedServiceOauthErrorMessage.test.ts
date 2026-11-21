@@ -6,7 +6,7 @@ import { resolveConnectedServiceOauthErrorMessage } from './resolveConnectedServ
 describe('resolveConnectedServiceOauthErrorMessage', () => {
   it('maps oauth state mismatch to a friendly message', () => {
     const message = resolveConnectedServiceOauthErrorMessage(new Error('connect_oauth_state_mismatch'), 'fallback');
-    expect(message).toBe('Security validation failed. Please try again');
+    expect(message).toBe('This authorization response does not match the current attempt. Start a new authorization.');
   });
 
   it('maps oauth timeout to a friendly message', () => {

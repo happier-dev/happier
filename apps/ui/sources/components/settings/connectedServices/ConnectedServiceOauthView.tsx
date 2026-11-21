@@ -174,15 +174,20 @@ export const ConnectedServiceOauthView = React.memo(function ConnectedServiceOau
     tokenExchange: async (code: string, verifier: string, state: string) => {
       const now = Date.now();
       const credentials = ensureCredentials();
-      return await adapter.exchangeAuthorizationCodeForRecord({
-        credentials,
-        profileId,
-        code,
-        verifier,
-        redirectUri,
-        state,
-        now,
-      });
+      try {
+        return await adapter.exchangeAuthorizationCodeForRecord({
+          credentials,
+          profileId,
+          code,
+          verifier,
+          redirectUri,
+          state,
+          now,
+        });
+      } catch (error) {
+        // The shared OAuth view displays error.message verbatim, so hand it the resolved text.
+        throw new Error(resolveConnectedServiceOauthErrorMessage(error, t('errors.tokenExchangeFailed')));
+      }
     },
     onSuccess: (record: unknown) => {
       fireAndForget((async () => {

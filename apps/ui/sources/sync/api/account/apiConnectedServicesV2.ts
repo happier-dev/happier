@@ -1,5 +1,5 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { serverFetch } from '@/sync/http/client';
+import { connectedServiceFetch } from './connectedServiceNetworkError';
 import { HappyError } from '@/utils/errors/errors';
 import { backoff } from '@/utils/timing/time';
 import { createConnectedServiceApiError } from './connectedServiceApiError';
@@ -55,7 +55,8 @@ export async function registerConnectedServiceCredentialSealed(
   }>,
 ): Promise<ConnectedServiceCredentialRevisionBoundaryV1> {
     await assertConnectedServiceOperationSupported(params.serviceId);
-    const response = await serverFetch(
+    const response = await connectedServiceFetch(
+      'registerConnectedServiceCredentialSealed',
       `/v2/connect/${encodeURIComponent(params.serviceId)}/profiles/${encodeURIComponent(params.profileId)}/credential`,
       {
         method: 'POST',
@@ -105,7 +106,8 @@ export async function deleteConnectedServiceCredential(
     if (params.cleanupGroupReferences) query.set('cleanupGroupReferences', 'true');
     query.set('expectedCredentialRevision', params.expectedCredentialRevision);
     const path = `/v2/connect/${encodeURIComponent(params.serviceId)}/profiles/${encodeURIComponent(params.profileId)}/credential?${query.toString()}`;
-    const response = await serverFetch(
+    const response = await connectedServiceFetch(
+      'deleteConnectedServiceCredential',
       path,
       {
         method: 'DELETE',
@@ -147,7 +149,8 @@ export async function getConnectedServiceCredentialSealed(
   metadata: ConnectedServiceCredentialMetadataInput;
 }> & ConnectedServiceCredentialRevisionBoundaryV1> {
   return await backoff(async () => {
-    const response = await serverFetch(
+    const response = await connectedServiceFetch(
+      'getConnectedServiceCredentialSealed',
       `/v2/connect/${encodeURIComponent(params.serviceId)}/profiles/${encodeURIComponent(params.profileId)}/credential`,
       {
         method: 'GET',
@@ -202,7 +205,8 @@ export async function exchangeConnectedServiceOauthViaProxy(
 ): Promise<Readonly<{ bundle: string }>> {
   await assertConnectedServiceOperationSupported(params.serviceId);
   // A one-use code may already have been consumed after an inconclusive failure.
-  const response = await serverFetch(
+  const response = await connectedServiceFetch(
+    'exchangeConnectedServiceOauthViaProxy',
     `/v2/connect/${encodeURIComponent(params.serviceId)}/oauth/exchange`,
     {
       method: 'POST',
@@ -222,14 +226,12 @@ export async function exchangeConnectedServiceOauthViaProxy(
   );
 
   if (!response.ok) {
-    if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
-      const json = await response.json().catch(() => null);
-      throw createConnectedServiceApiError(json, {
-        status: response.status,
-        fallbackCode: 'connect_oauth_exchange_failed',
-      });
-    }
-    throw new Error(`Failed to exchange ${params.serviceId}: ${response.status}`);
+    // Keep the status on every failure so the caller can tell a server error from a rejected code.
+    const json = await response.json().catch(() => null);
+    throw createConnectedServiceApiError(json, {
+      status: response.status,
+      fallbackCode: 'connect_oauth_exchange_failed',
+    });
   }
 
   const json = await response.json().catch(() => null);
@@ -282,7 +284,8 @@ export async function startOpenAiCodexDeviceAuthViaProxy(
   params: Readonly<{ publicKey: string }>,
 ): Promise<OpenAiCodexDeviceAuthStartResponse> {
   return await backoff(async () => {
-    const response = await serverFetch(
+    const response = await connectedServiceFetch(
+      'startOpenAiCodexDeviceAuthViaProxy',
       `/v2/connect/openai-codex/oauth/device/start`,
       {
         method: 'POST',
@@ -340,7 +343,8 @@ export async function pollOpenAiCodexDeviceAuthViaProxy(
   }>,
 ): Promise<OpenAiCodexDeviceAuthPollResponse> {
   return await backoff(async () => {
-    const response = await serverFetch(
+    const response = await connectedServiceFetch(
+      'pollOpenAiCodexDeviceAuthViaProxy',
       `/v2/connect/openai-codex/oauth/device/poll`,
       {
         method: 'POST',

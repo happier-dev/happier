@@ -1,5 +1,5 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { serverFetch } from '@/sync/http/client';
+import { connectedServiceFetch } from './connectedServiceNetworkError';
 import { HappyError } from '@/utils/errors/errors';
 import { backoff } from '@/utils/timing/time';
 import { createConnectedServiceApiError } from './connectedServiceApiError';
@@ -39,7 +39,8 @@ async function fetchAuthGroupEnvelope(
     }>,
 ): Promise<ConnectedServiceAuthGroupV1> {
     return await backoff(async () => {
-        const response = await serverFetch(
+        const response = await connectedServiceFetch(
+            'fetchAuthGroupEnvelope',
             appendConnectedServiceAuthGroupReaderCapabilities(path),
             {
                 method: init.method,
@@ -103,7 +104,8 @@ export async function listConnectedServiceAuthGroupsV3(
     params: Readonly<{ serviceId: ConnectedServiceId }>,
 ): Promise<ReadonlyArray<ConnectedServiceAuthGroupV1>> {
     return await backoff(async () => {
-        const response = await serverFetch(
+        const response = await connectedServiceFetch(
+            'listConnectedServiceAuthGroupsV3',
             appendConnectedServiceAuthGroupReaderCapabilities(`/v3/connect/${encodeURIComponent(params.serviceId)}/groups`),
             {
                 method: 'GET',
@@ -152,7 +154,8 @@ export async function deleteConnectedServiceAuthGroupV3(
     params: Readonly<{ serviceId: ConnectedServiceId; groupId: string }>,
 ): Promise<boolean> {
     return await backoff(async () => {
-        const response = await serverFetch(
+        const response = await connectedServiceFetch(
+            'deleteConnectedServiceAuthGroupV3',
             `/v3/connect/${encodeURIComponent(params.serviceId)}/groups/${encodeURIComponent(params.groupId)}`,
             {
                 method: 'DELETE',

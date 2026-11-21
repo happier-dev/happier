@@ -1444,6 +1444,11 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 confirmCta: '使用重設',
             },
         },
+        requestErrors: {
+            unreachable: '無法連線到 Happier 伺服器。請檢查網路或 VPN 連線後再試一次。',
+            timeout: 'Happier 伺服器未能及時回應。',
+            serverHttp: ({ status }: { status: string }) => `Happier 伺服器回傳了錯誤（${status}）。請稍後再試。`,
+        },
         oauthPaste: {
             invalidConfig: '已連線服務設定無效。',
             connectWebGroupTitle: '連線（網頁）',
@@ -1486,7 +1491,10 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             },
             errors: {
                 missingState: '重新導向 URL 中缺少 OAuth state。',
-                stateMismatch: 'OAuth state 不相符。',
+                stateMismatch: '此授權回應與目前的嘗試不相符。請重新開始授權。',
+                rejected: ({ reason }: { reason: string }) => `提供者拒絕了授權：${reason}`,
+                rejectedGeneric: '提供者拒絕了授權。',
+                responseKept: '已保留你貼上的回應。按「繼續」重試；若提供者回報代碼無效或已被使用，請重新開始授權。',
             },
         },
         oauthEmbedded: {

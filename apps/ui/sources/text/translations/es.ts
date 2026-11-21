@@ -2869,6 +2869,11 @@ export const es: TranslationStructure = {
         confirmCta: "Usar reinicio",
       },
     },
+    requestErrors: {
+      unreachable: "No se puede conectar con el servidor de Happier. Revisa tu red o tu conexión VPN e inténtalo de nuevo.",
+      timeout: "El servidor de Happier no respondió a tiempo.",
+      serverHttp: ({ status }: { status: string }) => `El servidor de Happier devolvió un error (${status}). Inténtalo de nuevo en un momento.`,
+    },
     oauthPaste: {
       invalidConfig: "Configuración de servicio conectado no válida.",
       connectWebGroupTitle: "Conectar (web)",
@@ -2912,7 +2917,10 @@ export const es: TranslationStructure = {
       },
       errors: {
         missingState: "Falta el estado OAuth en la URL de redirección.",
-        stateMismatch: "El estado OAuth no coincide.",
+        stateMismatch: "Esta respuesta de autorización no coincide con el intento actual. Inicia una autorización nueva.",
+        rejected: ({ reason }: { reason: string }) => `El proveedor rechazó la autorización: ${reason}`,
+        rejectedGeneric: "El proveedor rechazó la autorización.",
+        responseKept: "Se conservó la respuesta pegada. Pulsa Continuar para reintentar; si el proveedor indica que el código no es válido o ya se usó, inicia una autorización nueva.",
       },
     },
     oauthEmbedded: {

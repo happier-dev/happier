@@ -23,6 +23,7 @@ let exchanges: HttpExchange[];
 let storedRecords: unknown[];
 let returnedService: string;
 let exchangeFailure: boolean;
+let networkDown: boolean;
 
 describe('Connected Service OAuth paste HTTP composition', () => {
   beforeEach(async () => {
@@ -31,6 +32,7 @@ describe('Connected Service OAuth paste HTTP composition', () => {
     storedRecords = [];
     returnedService = 'antigravity';
     exchangeFailure = false;
+    networkDown = false;
     const { resetServerFeaturesClientForTests, getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
     resetServerFeaturesClientForTests();
     const features = createRootLayoutFeaturesResponse({ capabilities: { connectedServices: {
@@ -44,6 +46,7 @@ describe('Connected Service OAuth paste HTTP composition', () => {
       if (path === '/v1/features') return json(features);
       if (path.endsWith('/oauth/exchange')) {
         const request = JSON.parse(String(init?.body)) as HttpExchange;
+        if (networkDown) throw new TypeError('Failed to fetch');
         exchanges.push(request);
         if (exchangeFailure) return json({ error: 'connect_oauth_invalid_grant' }, 400);
         const bundle = sealBoxBundle({
@@ -121,6 +124,34 @@ describe('Connected Service OAuth paste HTTP composition', () => {
     expect(screen.findByTestId('connectedServices.oauthPaste.validateRedirectButton')?.props.disabled).toBe(true);
     expect(exchanges).toHaveLength(1);
     expect(storedRecords).toEqual([]);
+  });
+
+  it('keeps the pasted response and attempt after a dropped connection and lets the user retry manually', async () => {
+    networkDown = true;
+    const { url, screen } = await paste('antigravity', () => 'one-use-code');
+
+    // The shared `@/text` test double renders translation keys, so assert on the key.
+    expect(alerts).toHaveBeenCalledWith('common.error', expect.stringContaining('connectedServices.requestErrors.unreachable'));
+    expect(alerts).toHaveBeenCalledWith('common.error', expect.stringContaining('connectedServices.oauthPaste.errors.responseKept'));
+    expect(alerts).not.toHaveBeenCalledWith('common.error', expect.stringContaining('Failed to fetch'));
+    const authorization = screen.tree.find((node) => typeof node.props.children === 'string' && node.props.children.startsWith('https://accounts.google.com/o/oauth2/') && node.props.selectable === true);
+    expect(new URL(authorization.props.children).searchParams.get('state')).toBe(url.searchParams.get('state'));
+    expect(screen.findByTestId('connectedServices.oauthPaste.redirectUrlInput')?.props.value).toBe('one-use-code');
+    // Never retried on its own: the owner decides whether to submit the code again.
+    expect(exchanges).toEqual([]);
+
+    networkDown = false;
+    alerts.mockClear();
+    await screen.pressByTestIdAsync('connectedServices.oauthPaste.validateRedirectButton');
+    await vi.waitFor(() => expect(alerts).toHaveBeenCalled());
+    expect(exchanges).toHaveLength(1);
+    expect(exchanges[0]).toMatchObject({ code: 'one-use-code', state: url.searchParams.get('state') });
+    expect(storedRecords).toHaveLength(1);
+  });
+
+  it('explains a stale authorization response instead of a bare state mismatch', async () => {
+    await paste('antigravity', (_state, callback) => `${callback}?code=synthetic-code&state=foreign-state`);
+    expect(alerts).toHaveBeenCalledWith('common.error', 'connectedServices.oauthPaste.errors.stateMismatch');
   });
 
   it('retains the returned state when AGY supplies a matching callback URL', async () => {
