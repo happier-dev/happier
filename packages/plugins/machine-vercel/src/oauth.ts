@@ -1,4 +1,10 @@
 import {
+  buildOAuthAuthorizationCodeForm,
+  buildOAuthAuthorizationCodeUrl,
+  publicOAuthClientUnavailable,
+  requestOAuthEndpoint,
+} from '@happier-dev/plugin-sdk/connected-accounts';
+import {
   isPluginError,
   projectActionFailureCauseV1,
   withActionFailureDiagnostic,
@@ -95,45 +101,12 @@ async function retainedClientId(
   return retained;
 }
 
-async function request(
-  context: Context,
-  url: string,
-  signal: AbortSignal,
-  options: { token: string } | { form: URLSearchParams },
-) {
-  signal.throwIfAborted();
-  const response = await context.services.http.request(
-    {
-      url,
-      redirect: 'error',
-      ...('token' in options
-        ? {
-            method: 'GET' as const,
-            headers: { authorization: `Bearer ${options.token}` },
-          }
-        : {
-            method: 'POST' as const,
-            headers: { 'content-type': 'application/x-www-form-urlencoded' },
-            body: new TextEncoder().encode(options.form.toString()),
-          }),
-    },
-    { signal },
-  );
-  signal.throwIfAborted();
-  if (
-    response.finalUrl !== url ||
-    (response.status >= 300 && response.status < 400)
-  )
-    throw new Error('Unexpected OAuth redirect');
-  return response;
-}
-
 async function identify(
   context: Context,
   token: string,
   signal: AbortSignal,
 ): Promise<Identity> {
-  const response = await request(context, userinfoUrl, signal, { token });
+  const response = await requestOAuthEndpoint(context.services.http, userinfoUrl, signal, { token });
   if (response.status === 401 || response.status === 403)
     throw new OAuthFailure(reconnect());
   if (response.status !== 200) throw new OAuthFailure(unavailable());
@@ -155,7 +128,7 @@ async function exchange(
 ) {
   let response: HttpResponse;
   try {
-    response = await request(context, tokenUrl, signal, { form });
+    response = await requestOAuthEndpoint(context.services.http, tokenUrl, signal, { form });
   } catch (error) {
     signal.throwIfAborted();
     // A rotated refresh grant may be spent before a reply is lost.
@@ -409,38 +382,20 @@ export const vercelOAuthMode: Extract<
       const selected = await context.configuration.getPublicOAuthClient?.({ signal });
       signal.throwIfAborted();
       if (!selected || !validToken(selected.clientId)) {
-        return {
-          status: 'unavailable',
-          diagnostic: diagnostic(
-            'vercel_oauth_public_client_unavailable',
-            'This Home does not offer Sign in with Vercel. Connect with an access token instead.',
-          ),
-        };
+        return publicOAuthClientUnavailable('Vercel', 'vercel_oauth_public_client_unavailable');
       }
-      if (input.pkce.method !== 'S256' || !validToken(input.pkce.challenge))
+      // Owner ruling 2026-11-18: ask for consent only when reconnecting.
+      const authorizationUrl = buildOAuthAuthorizationCodeUrl(
+        `${VERCEL_OAUTH_ISSUER}/oauth/authorize`,
+        input,
+        selected,
+        context.attempt.kind === 'reconnect' ? 'consent' : undefined,
+      );
+      if (authorizationUrl === null)
         return reconnect('Restart the connection with its PKCE challenge.');
-      await context.attemptCredentials.set('oauthClientId', selected.clientId, {
-        signal,
-      });
+      await context.attemptCredentials.set('oauthClientId', selected.clientId, { signal });
       signal.throwIfAborted();
-      const url = new URL(`${VERCEL_OAUTH_ISSUER}/oauth/authorize`);
-      // The host owns the redirect URI (the Home's relay) and checks completions against it.
-      url.search = new URLSearchParams({
-        client_id: selected.clientId,
-        redirect_uri: input.callbackUrl,
-        response_type: 'code',
-        scope: selected.scopes.join(' '),
-        state: input.state,
-        code_challenge: input.pkce.challenge,
-        code_challenge_method: 'S256',
-        // Owner ruling 2026-11-18: force consent only when reconnecting, never on first connect.
-        ...(context.attempt.kind === 'reconnect' ? { prompt: 'consent' } : {}),
-      }).toString();
-      return {
-        status: 'awaitingOAuthRedirect',
-        authorizationUrl: url.href,
-        issuer: VERCEL_OAUTH_ISSUER,
-      };
+      return { status: 'awaitingOAuthRedirect', authorizationUrl, issuer: VERCEL_OAUTH_ISSUER };
     } catch (error) {
       return failure(error, signal);
     }
@@ -458,13 +413,7 @@ export const vercelOAuthMode: Extract<
         return reconnect('Restart the connection with its PKCE verifier.');
       const grant = await exchange(
         context,
-        new URLSearchParams({
-          grant_type: 'authorization_code',
-          client_id: clientId,
-          code: input.code,
-          redirect_uri: input.callbackUrl,
-          code_verifier: input.pkceVerifier,
-        }),
+        buildOAuthAuthorizationCodeForm(input, clientId),
         signal,
       );
       const identity = await identify(context, grant.token, signal);
@@ -659,7 +608,7 @@ export async function revokeVercelOAuth(
     const clientId = await retainedClientId(context, context.credentials, signal);
     const token = await context.credentials.get('refreshToken', { signal });
     if (!validToken(token)) return manual;
-    const response = await request(context, revokeUrl, signal, {
+    const response = await requestOAuthEndpoint(context.services.http, revokeUrl, signal, {
       form: new URLSearchParams({
         token,
         token_type_hint: 'refresh_token',

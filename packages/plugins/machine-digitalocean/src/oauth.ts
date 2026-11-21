@@ -1,3 +1,9 @@
+import {
+  buildOAuthAuthorizationCodeForm,
+  buildOAuthAuthorizationCodeUrl,
+  publicOAuthClientUnavailable,
+  requestOAuthEndpoint,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 import type {
   ConnectedAccountAuthCompletionResult,
   ConnectedAccountAuthenticationContext,
@@ -7,7 +13,6 @@ import type {
   ConnectedAccountReadContext,
   ConnectedAccountRuntime,
 } from '@happier-dev/plugin-sdk/connected-accounts';
-import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 import { z } from 'zod';
 
 const issuer = 'https://cloud.digitalocean.com';
@@ -47,23 +52,10 @@ function failure(error: unknown, signal: AbortSignal): Failure {
   return error instanceof GrantFailure ? error.result : unavailable;
 }
 
-async function post(context: Context, url: string, form: URLSearchParams, signal: AbortSignal, bearer?: string) {
-  signal.throwIfAborted();
-  const request: HttpRequest = {
-    url, method: 'POST', redirect: 'error',
-    headers: { 'content-type': 'application/x-www-form-urlencoded', ...(bearer ? { authorization: 'Bearer ' + bearer } : {}) },
-    body: new TextEncoder().encode(form.toString()),
-  };
-  const response = await context.services.http.request(request, { signal });
-  signal.throwIfAborted();
-  if (response.finalUrl !== url || response.status >= 300 && response.status < 400) throw new Error('Unexpected OAuth redirect');
-  return response;
-}
-
 async function exchange(context: Context, form: URLSearchParams, signal: AbortSignal) {
   let response;
   try {
-    response = await post(context, tokenUrl, form, signal);
+    response = await requestOAuthEndpoint(context.services.http, tokenUrl, signal, { form });
   } catch {
     signal.throwIfAborted();
     // The code or the single-use refresh token may have been spent.
@@ -107,19 +99,14 @@ export const digitalOceanOAuthMode: Extract<ConnectedAccountAuthenticationModeRu
     try {
       const client = await context.configuration.getPublicOAuthClient?.({ signal });
       signal.throwIfAborted();
-      if (!client) return { status: 'unavailable', diagnostic: diagnostic('public_client_unavailable',
-        'This Home does not offer Sign in with DigitalOcean. Connect with an access token instead.') };
-      if (input.pkce.method !== 'S256' || !input.pkce.challenge) return reconnect;
+      if (!client) return publicOAuthClientUnavailable('DigitalOcean', 'digitalocean_oauth_public_client_unavailable');
+      const authorizationUrl = buildOAuthAuthorizationCodeUrl(issuer + '/v1/oauth/authorize', input, client);
+      if (authorizationUrl === null) return reconnect;
       await context.attemptCredentials.set('oauthClientId', client.clientId, { signal });
       // Keep the scope vector in the same form as Cloudflare so the host does not
       // redact a matching space-delimited scope returned by the token endpoint.
       await context.attemptCredentials.set('requestedScopes', JSON.stringify(client.scopes), { signal });
-      const url = new URL(issuer + '/v1/oauth/authorize');
-      url.search = new URLSearchParams({
-        client_id: client.clientId, redirect_uri: input.callbackUrl, response_type: 'code', scope: client.scopes.join(' '),
-        state: input.state, code_challenge: input.pkce.challenge, code_challenge_method: 'S256',
-      }).toString();
-      return { status: 'awaitingOAuthRedirect', authorizationUrl: url.href, issuer };
+      return { status: 'awaitingOAuthRedirect', authorizationUrl, issuer };
     } catch (error) { return failure(error, signal); }
   },
   async complete(input, context, options) {
@@ -131,10 +118,7 @@ export const digitalOceanOAuthMode: Extract<ConnectedAccountAuthenticationModeRu
       if (!clientId || !retainedScopes || !input.pkceVerifier) return reconnect;
       const requestedScopes = z.array(text).min(1).safeParse(JSON.parse(retainedScopes));
       if (!requestedScopes.success) return reconnect;
-      const grant = await exchange(context, new URLSearchParams({
-        grant_type: 'authorization_code', client_id: clientId, code: input.code,
-        redirect_uri: input.callbackUrl, code_verifier: input.pkceVerifier,
-      }), signal);
+      const grant = await exchange(context, buildOAuthAuthorizationCodeForm(input, clientId), signal);
       const scopes = (grant.scope ?? '').split(/\s+/u).filter(Boolean);
       const granted = new Set(scopes);
       if (requestedScopes.data.some(scope => !granted.has(scope))) return {
@@ -190,7 +174,7 @@ export const revokeDigitalOceanOAuth: ConnectedAccountRuntime['revoke'] = async 
   try {
     const token = await context.credentials.get('token', { signal });
     if (!token) return manual;
-    const response = await post(context, issuer + '/v1/oauth/revoke', new URLSearchParams({ token }), signal, token);
+    const response = await requestOAuthEndpoint(context.services.http, issuer + '/v1/oauth/revoke', signal, { form: new URLSearchParams({ token }), token });
     if (response.status === 200) return { status: 'remoteRevoked' };
     if ([400, 401, 403, 404].includes(response.status)) return manual;
   } catch { signal.throwIfAborted(); }

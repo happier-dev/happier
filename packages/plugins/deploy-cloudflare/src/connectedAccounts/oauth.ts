@@ -1,3 +1,9 @@
+import {
+  buildOAuthAuthorizationCodeForm,
+  buildOAuthAuthorizationCodeUrl,
+  publicOAuthClientUnavailable,
+  requestOAuthEndpoint,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 import { isPluginError, projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import type { ConnectedAccountAuthCompletionResult, ConnectedAccountAuthenticationContext, ConnectedAccountAuthenticationModeRuntime, ConnectedAccountCredentialStore, ConnectedAccountHealthResult, ConnectedAccountMutationContext, ConnectedAccountReadContext, ConnectedAccountRuntime, PluginConnectedAccountConfigurationFieldV2 } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { HttpResponse } from '@happier-dev/plugin-sdk/http';
@@ -5,7 +11,7 @@ import { cloudflareEnabledFeatures, cloudflarePermissionNames, cloudflarePermiss
 import { CLOUDFLARE_API_ORIGIN, cloudflareRefused, diagnostic, isCloudflareId, isObject, validToken } from './probe.js';
 
 export const CLOUDFLARE_OAUTH_ORIGIN = 'https://dash.cloudflare.com';
-export const CLOUDFLARE_IDENTITY_SCOPES = ['openid', 'offline_access'] as const;
+const CLOUDFLARE_IDENTITY_SCOPES = ['openid', 'offline_access'] as const;
 type Context = ConnectedAccountAuthenticationContext | ConnectedAccountReadContext;
 type Connected = Extract<ConnectedAccountAuthCompletionResult, { status: 'connected' }>;
 type VerifiedIdentity = Connected & Readonly<{ providerIdentity: Readonly<{ accountId: string; organizationId: string }> }>;
@@ -56,7 +62,7 @@ async function configuration(context: Context, store: Pick<ConnectedAccountCrede
     } else if (allowPublicDefault) {
       const selected = await context.configuration.getPublicOAuthClient?.({ signal });
       signal.throwIfAborted();
-      if (!selected) throw new OAuthFailure({ status: 'unavailable', diagnostic: diagnostic('cloudflare_oauth_public_client_unavailable', 'Enter your registered Cloudflare OAuth client ID and API scope IDs to sign in, or connect with an API token.') });
+      if (!selected) throw new OAuthFailure(publicOAuthClientUnavailable('Cloudflare', 'cloudflare_oauth_public_client_unavailable', 'Enter your registered Cloudflare OAuth client ID and API scope IDs to sign in, or connect with an API token.'));
       clientId = selected.clientId;
       registeredScopes = selected.scopes.join(' ');
     } else {
@@ -72,19 +78,8 @@ type OAuthConfiguration = Awaited<ReturnType<typeof configuration>>;
 function bodyOf(response: HttpResponse): unknown {
   try { return JSON.parse(new TextDecoder().decode(response.body)); } catch { return null; }
 }
-async function request(context: Context, path: string, signal: AbortSignal, options: { token: string } | { form: URLSearchParams }) {
-  signal.throwIfAborted();
-  const url = 'token' in options ? path : `${CLOUDFLARE_OAUTH_ORIGIN}/oauth2/${path}`;
-  const response = await context.services.http.request({ url, redirect: 'error',
-    ...('token' in options ? { method: 'GET' as const, headers: { authorization: `Bearer ${options.token}` } }
-      : { method: 'POST' as const, headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new TextEncoder().encode(options.form.toString()) }),
-  }, { signal });
-  signal.throwIfAborted();
-  if (response.finalUrl !== url || (response.status >= 300 && response.status < 400)) throw new Error('Unexpected OAuth redirect');
-  return response;
-}
 async function read(context: Context, url: string, token: string, signal: AbortSignal, envelope: boolean) {
-  const response = await request(context, url, signal, { token });
+  const response = await requestOAuthEndpoint(context.services.http, url, signal, { token });
   if (response.status === 401) throw new OAuthFailure(rejected('cloudflare_oauth_reconnect_required', 'Cloudflare access has expired or been revoked. Reconnect this account.'));
   if (cloudflareRefused(response) || response.status === 404) throw new OAuthFailure(missingPermissions());
   if (response.status !== 200) throw new OAuthFailure(unavailable());
@@ -172,7 +167,7 @@ async function authorizedAccounts(token: string, context: Context, signal: Abort
 
 async function exchange(context: Context, form: URLSearchParams, signal: AbortSignal, config: OAuthConfiguration, previousRefresh?: string, previousScopes?: readonly string[], discover = false) {
   let response: HttpResponse;
-  try { response = await request(context, 'token', signal, { form }); }
+  try { response = await requestOAuthEndpoint(context.services.http, `${CLOUDFLARE_OAUTH_ORIGIN}/oauth2/token`, signal, { form }); }
   catch (error) {
     signal.throwIfAborted();
     // A public-client refresh may rotate its grant before a reply is lost.
@@ -232,17 +227,14 @@ export const cloudflareOAuthMode: Extract<ConnectedAccountAuthenticationModeRunt
     const signal = signalOf(context, options?.signal); signal.throwIfAborted();
     try {
       const config = await configuration(context, context.attemptCredentials, signal, true);
-      // The host owns the redirect URI (the Home's relay) and checks completions against it.
-      if (input.pkce.method !== 'S256' || !validToken(input.pkce.challenge)) return rejected('cloudflare_invalid_configuration', 'Restart the connection with its PKCE challenge.');
+      const authorizationUrl = buildOAuthAuthorizationCodeUrl(`${CLOUDFLARE_OAUTH_ORIGIN}/oauth2/auth`, input, config);
+      if (authorizationUrl === null) return rejected('cloudflare_invalid_configuration', 'Restart the connection with its PKCE challenge.');
       if (config.publicClient) {
         await context.attemptCredentials.set('oauthClientId', config.clientId, { signal });
         await context.attemptCredentials.set('oauthRegisteredScopes', JSON.stringify(config.apiScopes), { signal });
         signal.throwIfAborted();
       }
-      const url = new URL(`${CLOUDFLARE_OAUTH_ORIGIN}/oauth2/auth`);
-      url.search = new URLSearchParams({ client_id: config.clientId, redirect_uri: input.callbackUrl, response_type: 'code', scope: config.scopes.join(' '),
-        state: input.state, code_challenge: input.pkce.challenge, code_challenge_method: 'S256' }).toString();
-      return { status: 'awaitingOAuthRedirect', authorizationUrl: url.href, issuer: CLOUDFLARE_OAUTH_ORIGIN };
+      return { status: 'awaitingOAuthRedirect', authorizationUrl, issuer: CLOUDFLARE_OAUTH_ORIGIN };
     } catch (error) { return failure(error, signal); }
   },
   async complete(input, context, options) {
@@ -250,8 +242,7 @@ export const cloudflareOAuthMode: Extract<ConnectedAccountAuthenticationModeRunt
     try {
       const config = await configuration(context, context.attemptCredentials, signal);
       if (!validToken(input.pkceVerifier)) return rejected('cloudflare_invalid_configuration', 'Restart the connection with its PKCE verifier.');
-      const result = await exchange(context, new URLSearchParams({ grant_type: 'authorization_code', client_id: config.clientId,
-        code: input.code, redirect_uri: input.callbackUrl, code_verifier: input.pkceVerifier }), signal, config, undefined, undefined, true);
+      const result = await exchange(context, buildOAuthAuthorizationCodeForm(input, config.clientId), signal, config, undefined, undefined, true);
       if (result.identity.status === 'selectionRequired') {
         await stage(context.attemptCredentials, result, config, signal);
         return { status: 'configurationRequired', fields: [accountField(result.identity.accounts)] };
@@ -327,7 +318,7 @@ export async function revokeCloudflareOAuth(context: ConnectedAccountReadContext
     const config = await configuration(context, context.credentials, signal);
     const token = await context.credentials.get('refreshToken', { signal });
     if (!validToken(token)) return { status: 'remoteUnsupported', diagnostic: diagnostic('cloudflare_oauth_reconnect_required', 'Open your Cloudflare profile to manage this authorization at https://dash.cloudflare.com.') };
-    const response = await request(context, 'revoke', signal, { form: new URLSearchParams({ client_id: config.clientId, token, token_type_hint: 'refresh_token' }) });
+    const response = await requestOAuthEndpoint(context.services.http, `${CLOUDFLARE_OAUTH_ORIGIN}/oauth2/revoke`, signal, { form: new URLSearchParams({ client_id: config.clientId, token, token_type_hint: 'refresh_token' }) });
     if (response.status === 200) return { status: 'remoteRevoked' };
     if (response.status === 403) return { status: 'remoteUnsupported', diagnostic: missingPermissions().diagnostic };
   } catch { signal.throwIfAborted(); }

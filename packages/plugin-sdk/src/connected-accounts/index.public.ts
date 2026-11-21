@@ -1,5 +1,11 @@
 export type { AuthCallbackCreateInput } from '../connectedAccounts.js';
 export { requestDeviceGrantStep, type DeviceGrantStepInput } from './deviceGrantStep.js';
+export {
+    buildOAuthAuthorizationCodeForm,
+    buildOAuthAuthorizationCodeUrl,
+    publicOAuthClientUnavailable,
+    requestOAuthEndpoint,
+} from './oauthAuthorizationCode.js';
 export { classifyConnectedAccountTokenEndpointFailure, parseConnectedAccountTokenEndpointFailure } from './projections.js';
 export {
     PROVIDER_LIMIT_EVIDENCE_CLASSIFIER_PROJECTION_V1,

@@ -253,10 +253,10 @@ describe('Cloudflare OAuth through real plugin activation', () => {
   it.each(['workers', 'pages'] as const)('connects %s with exact registered scopes and host PKCE, without claiming effective write rights', async product => {
     const h = await harness(product);
     const descriptor = entry.manifest.contributes?.connectedAccountDescriptors?.[0] as PluginConnectedAccountDescriptorContributionV2;
-    expect(descriptor.authentication.modes.find(mode => mode.id === 'oauth')).toMatchObject({
-      kind: 'oauthAuthorizationCode', pkce: 'required', scopes: ['openid', 'offline_access'],
-    });
-    expect(descriptor.authentication.modes.find(mode => mode.id === 'oauth')).not.toHaveProperty('callbackUrl');
+    const mode = descriptor.authentication.modes.find(mode => mode.id === 'oauth');
+    expect(mode).toMatchObject({ kind: 'oauthAuthorizationCode', pkce: 'required' });
+    expect(mode).not.toHaveProperty('scopes');
+    expect(mode).not.toHaveProperty('callbackUrl');
     const begun = await h.mode.begin({ callbackUrl, state: completion.state, pkce: { challenge: 'host-challenge', method: 'S256' } }, h.context);
     expect(begun).toMatchObject({ status: 'awaitingOAuthRedirect', issuer: 'https://dash.cloudflare.com' });
     if (begun.status !== 'awaitingOAuthRedirect') throw new Error('Expected OAuth redirect');

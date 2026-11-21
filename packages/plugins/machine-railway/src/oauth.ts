@@ -1,3 +1,9 @@
+import {
+  buildOAuthAuthorizationCodeForm,
+  buildOAuthAuthorizationCodeUrl,
+  publicOAuthClientUnavailable,
+  requestOAuthEndpoint,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 import type {
   ConnectedAccountAuthCompletionResult,
   ConnectedAccountAuthenticationContext,
@@ -8,7 +14,6 @@ import type {
   ConnectedAccountRuntime,
   PluginConnectedAccountConfigurationFieldV2,
 } from '@happier-dev/plugin-sdk/connected-accounts';
-import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 import { createRailwayProjectOperations, RAILWAY_ORIGIN } from '@happier-dev/railway-api';
 import { nativeFetch } from './requestAuth.js';
 
@@ -44,14 +49,6 @@ function text(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.trim() === value && !/\p{Cc}/u.test(value);
 }
 
-async function request(context: Context, input: HttpRequest, signal: AbortSignal) {
-  signal.throwIfAborted();
-  const response = await context.services.http.request(input, { signal });
-  signal.throwIfAborted();
-  if (response.finalUrl !== input.url || response.status >= 300 && response.status < 400) throw new Error('Unexpected OAuth redirect');
-  return response;
-}
-
 function bodyOf(body: Uint8Array): Record<string, unknown> | null {
   try {
     const value: unknown = JSON.parse(new TextDecoder().decode(body));
@@ -60,9 +57,7 @@ function bodyOf(body: Uint8Array): Record<string, unknown> | null {
 }
 
 async function identify(context: Context, token: string, signal: AbortSignal): Promise<Identity> {
-  const response = await request(context, {
-    url: RAILWAY_ORIGIN + '/oauth/me', method: 'GET', redirect: 'error', headers: { authorization: 'Bearer ' + token },
-  }, signal);
+  const response = await requestOAuthEndpoint(context.services.http, RAILWAY_ORIGIN + '/oauth/me', signal, { token });
   if (response.status === 401 || response.status === 403) throw new GrantFailure(reconnect);
   const body = response.status === 200 ? bodyOf(response.body) : null;
   if (!body || !text(body.sub)) throw new GrantFailure(unavailable);
@@ -73,10 +68,7 @@ async function identify(context: Context, token: string, signal: AbortSignal): P
 async function exchange(context: Context, form: URLSearchParams, signal: AbortSignal, previousRefresh?: string) {
   let response;
   try {
-    response = await request(context, {
-      url: tokenUrl, method: 'POST', redirect: 'error', headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new TextEncoder().encode(form.toString()),
-    }, signal);
+    response = await requestOAuthEndpoint(context.services.http, tokenUrl, signal, { form });
   } catch {
     signal.throwIfAborted();
     // Railway may have spent the code or rotated the refresh grant before a reply was lost.
@@ -162,18 +154,12 @@ export const railwayOAuthMode: Extract<ConnectedAccountAuthenticationModeRuntime
     try {
       const client = await context.configuration.getPublicOAuthClient?.({ signal });
       signal.throwIfAborted();
-      if (!client) return { status: 'unavailable', diagnostic: diagnostic('public_client_unavailable',
-        'This Home does not offer Sign in with Railway. Connect with an access token instead.') };
-      if (input.pkce.method !== 'S256' || !input.pkce.challenge) return reconnect;
+      if (!client) return publicOAuthClientUnavailable('Railway', 'railway_oauth_public_client_unavailable');
+      // Railway requires consent on every authorization for offline access.
+      const authorizationUrl = buildOAuthAuthorizationCodeUrl(RAILWAY_ORIGIN + '/oauth/auth', input, client, 'consent');
+      if (authorizationUrl === null) return reconnect;
       await context.attemptCredentials.set('oauthClientId', client.clientId, { signal });
-      const url = new URL(RAILWAY_ORIGIN + '/oauth/auth');
-      url.search = new URLSearchParams({
-        client_id: client.clientId, redirect_uri: input.callbackUrl, response_type: 'code', scope: client.scopes.join(' '),
-        state: input.state, code_challenge: input.pkce.challenge, code_challenge_method: 'S256',
-        // Railway requires consent on every authorization for offline access.
-        prompt: 'consent',
-      }).toString();
-      return { status: 'awaitingOAuthRedirect', authorizationUrl: url.href, issuer: RAILWAY_ORIGIN };
+      return { status: 'awaitingOAuthRedirect', authorizationUrl, issuer: RAILWAY_ORIGIN };
     } catch (error) { return failure(error, signal); }
   },
   async complete(input, context, options) {
@@ -182,10 +168,7 @@ export const railwayOAuthMode: Extract<ConnectedAccountAuthenticationModeRuntime
       const store = context.attemptCredentials;
       const clientId = await store.get('oauthClientId', { signal });
       if (!text(clientId) || !input.pkceVerifier) return reconnect;
-      const grant = await exchange(context, new URLSearchParams({
-        grant_type: 'authorization_code', client_id: clientId, code: input.code,
-        redirect_uri: input.callbackUrl, code_verifier: input.pkceVerifier,
-      }), signal);
+      const grant = await exchange(context, buildOAuthAuthorizationCodeForm(input, clientId), signal);
       const identity = await identify(context, grant.token, signal);
       const selection = await selectConfiguration(context, grant.token, signal);
       await stage(store, grant, signal);

@@ -8,7 +8,7 @@ import { connectedAccountRuntime } from './account.js';
 const callbackUrl = 'https://home.test/oauth/connected-account/callback';
 const clientId = 'home-public-client';
 
-function fixture() {
+function fixture(publicClient = false) {
   const requests: HttpRequest[] = [];
   const data = new Map(Object.entries({
     token: 'access-one', refreshToken: 'refresh-one', expiresAtMs: String(Date.now() - 1),
@@ -21,20 +21,21 @@ function fixture() {
     async delete(key) { values.delete(key); },
   });
   let status = 200;
+  let finalUrl: string | undefined;
   let body: unknown = { token_type: 'Bearer', access_token: 'access-two', refresh_token: 'refresh-two', expires_in: 3600 };
   const context = {
     signal: new AbortController().signal,
     configuration: {
       target: { modeId: 'oauth' },
       values: { workspaceId: 'workspace', projectId: 'project', environmentId: 'environment' },
-      getPublicOAuthClient: async () => null,
+      getPublicOAuthClient: async () => publicClient ? { clientId, scopes: ['openid', 'offline_access'] } : null,
     },
     credentials: credentials(data),
     stagedCredentials: credentials(staged),
     attemptCredentials: credentials(new Map()),
     services: { http: { async request(request: HttpRequest) {
       requests.push(request);
-      return { status, finalUrl: request.url, headers: {}, body: new TextEncoder().encode(JSON.stringify(body)) };
+      return { status, finalUrl: finalUrl ?? request.url, headers: {}, body: new TextEncoder().encode(JSON.stringify(body)) };
     } } },
   };
   return {
@@ -42,7 +43,7 @@ function fixture() {
     // Only credential-store and HTTP boundaries are required by these runtime calls.
     context: context as unknown as ConnectedAccountMutationContext,
     attempt: context as unknown as ConnectedAccountAuthenticationContext,
-    reply(nextStatus: number, nextBody: unknown) { status = nextStatus; body = nextBody; },
+    reply(nextStatus: number, nextBody: unknown, nextFinalUrl?: string) { status = nextStatus; body = nextBody; finalUrl = nextFinalUrl; },
   };
 }
 
@@ -60,6 +61,41 @@ describe('Railway public OAuth lifecycle', () => {
       .toMatchObject({ status: 'unavailable', diagnostic: { code: 'railway_oauth_public_client_unavailable' } });
     expect(probe.requests).toHaveLength(0);
   });
+
+  it('rejects a whitespace PKCE challenge before offering a Railway authorization URL', async () => {
+    const probe = fixture(true);
+    const mode = connectedAccountRuntime.authentication.modes.oauth;
+    if (mode?.kind !== 'oauthAuthorizationCode') throw new Error('OAuth mode missing');
+    expect(await mode.begin({ callbackUrl, state: 'state', pkce: { method: 'S256', challenge: ' ' } }, probe.attempt))
+      .toMatchObject({ status: 'rejected', diagnostic: { code: 'railway_oauth_reconnect_required' } });
+    expect(probe.requests).toHaveLength(0);
+  });
+
+  it('sends the Home callback, scopes and PKCE with Railway offline consent', async () => {
+    const probe = fixture(true);
+    const mode = connectedAccountRuntime.authentication.modes.oauth;
+    if (mode?.kind !== 'oauthAuthorizationCode') throw new Error('OAuth mode missing');
+    const result = await mode.begin({ callbackUrl, state: 'state', pkce: { method: 'S256', challenge: 'challenge' } }, probe.attempt);
+    if (result.status !== 'awaitingOAuthRedirect') throw new Error(result.status);
+    const url = new URL(result.authorizationUrl);
+    expect(url.origin + url.pathname).toBe('https://backboard.railway.com/oauth/auth');
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      client_id: clientId, redirect_uri: callbackUrl, response_type: 'code', scope: 'openid offline_access',
+      state: 'state', code_challenge: 'challenge', code_challenge_method: 'S256', prompt: 'consent',
+    });
+  });
+
+  it.each([[302, undefined], [200, 'https://other.test/token']] as const)(
+    'leaves the old grant in place when the credential endpoint response is not from the exact URL (%s)',
+    async (status, finalUrl) => {
+      const probe = fixture();
+      probe.reply(status, { token_type: 'Bearer', access_token: 'access-two', refresh_token: 'refresh-two', expires_in: 3600 }, finalUrl);
+      expect(await connectedAccountRuntime.refresh(probe.context)).toMatchObject({ status: 'outcomeUnknown' });
+      expect(probe.data.get('refreshToken')).toBe('refresh-one');
+      expect(probe.staged.size).toBe(0);
+      expect(probe.requests).toHaveLength(1);
+    },
+  );
 
   it('stages the rotated pair for the refresh coordinator to settle', async () => {
     const probe = fixture();
