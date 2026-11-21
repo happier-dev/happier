@@ -10,7 +10,7 @@ export const PROJECT_STARTER_ACTION_SPECS_V1 = lazyActionSpecArray(() => [{
   title: 'Create a Project from a starter or scratch',
   description: 'Create an empty repository or resolve the current starter release or default branch, publish on the selected forge, save its Source and open the Project. Return the description for a new Session.',
   safety: 'danger', sideEffectClass: 'external', workspaceWrite: true, placements: [],
-  surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: true },
+  surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
   bindings: { mcpToolName: 'projects_starters_create' },
   inputSchema: ProjectStarterCreateInputV1Schema, outputSchema: ProjectStarterCreateOutputV1Schema,
   invocationServerIdForInput: actionInputServerId(ProjectStarterCreateInputV1Schema, input => input.serverId),
