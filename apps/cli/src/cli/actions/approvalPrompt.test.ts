@@ -1,4 +1,5 @@
 import { PassThrough } from 'node:stream';
+import { stripVTControlCharacters } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 // test-policy-boundary: the controlling terminal is an OS device; a CLI child with
@@ -27,6 +28,64 @@ afterEach(() => {
 });
 
 describe('CLI Action approval presenter', () => {
+  it.each([
+    {
+      review: { platformRollback: {
+        environment: { id: 'env', name: 'Production' },
+        revision: { kind: 'repository', sha: 'a'.repeat(40) },
+        replaces: { deploymentId: 'serving', revision: { kind: 'repository', sha: 'b'.repeat(40) } },
+        platformName: 'Vercel', providerResourceId: 'project', providerEnvironment: 'production', data: 'keep',
+      }, providerReview: {} },
+      target: /Vercel.*project.*production/s, data: 'Keep current data',
+    },
+    {
+      review: {
+        inspection: 'complete', services: [], risks: [],
+        machineId: 'own-machine', environment: { id: 'env', name: 'Production' },
+        revision: { kind: 'repository', sha: 'a'.repeat(40) },
+        replaces: { deploymentId: 'serving', revision: { kind: 'repository', sha: 'b'.repeat(40) } },
+        target: { engine: 'native', requiresAwakeComputerAndDockerDesktop: false, domains: 'notDetermined' },
+        rollbackData: 'restoreBackup',
+      },
+      target: /own-machine/, data: 'Replace current data with the selected backup',
+    },
+  ])('shows Rollback versions, target and $data before asking', async ({ review, target, data }) => {
+    const input = Object.assign(new PassThrough(), { isTTY: true });
+    const output = Object.assign(new PassThrough(), { isTTY: true });
+    vi.spyOn(process, 'stdin', 'get').mockReturnValue(input as NodeJS.ReadStream);
+    vi.spyOn(process, 'stdout', 'get').mockReturnValue(output as NodeJS.WriteStream);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    let written = '';
+    output.on('data', (chunk: Buffer) => { written += chunk.toString(); });
+    const controller = new AbortController();
+    const decide = vi.fn(async () => ({ ok: true as const, result: {} }));
+    const present = createCliActionApprovalPresenter({
+      actionId: 'deployments.rollback', json: false, envelopeKind: 'actions_invoke',
+    });
+    try {
+      const prompted = new Promise<'prompt'>(resolve => {
+        output.on('data', () => {
+          if (written.includes('[y/N]')) resolve('prompt');
+        });
+      });
+      const pending = present('approval_rollback', controller.signal, decide, async () => ({ deploymentReview: review }));
+      const observed = await Promise.race([prompted, Promise.resolve(pending).then(() => 'settled')]);
+      const displayed = stripVTControlCharacters(written);
+      const decisionsBeforeAnswer = decide.mock.calls.length;
+      if (observed === 'prompt') input.write('y\r');
+      await expect(pending).resolves.toMatchObject({ ok: true });
+      expect(displayed).toMatch(/Production.*aaaaaaa.*bbbbbbb/s);
+      expect(displayed).toMatch(target);
+      expect(displayed).toContain(data);
+      expect(decisionsBeforeAnswer).toBe(0);
+      expect(decide).toHaveBeenCalledWith('approve');
+    } finally {
+      controller.abort();
+      input.destroy();
+      output.destroy();
+    }
+  });
+
   it('cancels the originating wait on terminal Ctrl+C without deciding the durable approval', async () => {
     // Exercise the real readline/confirmation path over the stdio boundary.
     const input = Object.assign(new PassThrough(), { isTTY: true });

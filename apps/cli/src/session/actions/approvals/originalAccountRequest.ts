@@ -54,7 +54,8 @@ export async function executeOriginalAccountCliApprovalRequest(options: Readonly
             // while HTTP waits: a blocking flow, or a target's live-only operands.
             if ('kind' in request ? request.approvalInputCustody === 'live_only'
               : 'approval' in request && request.approval?.flow === 'blocking') {
-              notify({ kind: 'approval_request_created', artifactId, actionId: options.actionId });
+              notify({ kind: 'approval_request_created', artifactId, actionId: options.actionId },
+                'preview' in request ? request.preview : undefined);
             }
             await observation.dispose();
             return;

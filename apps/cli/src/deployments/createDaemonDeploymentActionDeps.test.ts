@@ -2551,9 +2551,21 @@ describe('installed deployment storage and target composition', () => {
                         providerDeploymentId: 'existing-provider-deployment', observedAtMs: 1 } },
                 }));
                 const readHttp = vi.mocked(axios.request).getMockImplementation()!;
-                vi.mocked(axios.request).mockImplementation(async request => new URL(request.url!).pathname.endsWith(`/receipts/${receipt.id}`)
-                    ? { status: 200, data: DeploymentReceiptGetResultV1Schema.parse({ ok: true, deployment: receipt }) }
-                    : readHttp(request));
+                const servingSource = { ...rootSourceIntent, sha: 'b'.repeat(40) };
+                const serving = { ...receipt, id: 'serving-deployment', contentArtifactId: 'serving-content' };
+                let servingReceiptReads = 0;
+                if (scenario === 'rollback retained platform') {
+                    row.targetLink.activeDeploymentId = serving.id;
+                    put(serving.contentArtifactId, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, DeploymentPlatformContentV1Schema.parse({
+                        ...platformCandidate, sourceIntent: servingSource,
+                    }));
+                }
+                vi.mocked(axios.request).mockImplementation(async request => {
+                    const path = new URL(request.url!).pathname;
+                    const header = [receipt, serving].find(item => path.endsWith(`/receipts/${item.id}`));
+                    if (header === serving) servingReceiptReads++;
+                    return header ? { status: 200, data: DeploymentReceiptGetResultV1Schema.parse({ ok: true, deployment: header }) } : readHttp(request);
+                });
                 // Activation advances the Link while the protected receipt keeps
                 // the revision and exact provider deployment it originally captured.
                 if (scenario === 'rollback retained platform') row.targetLink.revision++;
@@ -2580,6 +2592,17 @@ describe('installed deployment storage and target composition', () => {
                 expect(content).not.toHaveProperty('buildMachineId');
                 expect(nativeReads).toBe(0);
                 if (scenario === 'rollback retained platform') {
+                    expect(servingReceiptReads).toBe(1);
+                    expect(prepared.preview).toMatchObject({ platformRollback: {
+                        environment: { id: environment.environment.id, name: environment.content.name },
+                        revision: { kind: 'repository', sha: rootSourceIntent.sha },
+                        replaces: { deploymentId: serving.id, revision: { kind: 'repository', sha: servingSource.sha } },
+                        providerResourceId: row.content.providerIdentity?.providerResourceId,
+                        data: 'keep',
+                    } });
+                    await expect(deps.prepareDeploymentAction({ actionId: 'deployments.rollback',
+                        input: { ...intent, deploymentId: receipt.id, restoreBackupId: 'own-server-backup' }, context: ownerContext }))
+                        .resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action' });
                     // A new Link revision permits fresh review, not substituting
                     // the provider resource that owns the retained deployment.
                     const linkedProvider = DeploymentTargetLinkProviderContentV1Schema.parse(row.content);

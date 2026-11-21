@@ -10839,6 +10839,14 @@ Native Deploy, Rollback, Promote, Teardown, Domain add/remove/verify and unprepa
 target Link roots return to their retained controller Machine. Domain add/remove replay uses
 that host's operation acceptance; a missing acceptance or request identity keeps
 `operation_unavailable` and names the missing fact in the stored execution error.
+
+In 0.3 development, Rollback follows the same interactive review policy as
+Promote. The controller shows the retained version, the version currently on
+the target, and the effect on data. On an own-server rollback with a selected
+pre-migration backup, confirmation authorizes replacing data from that backup.
+The receiver reopens the reviewed candidate and compares the full review digest
+before admitting the effect. Agent requests follow the Account's approval policy.
+
 Failed approval executions also retain a validated, code-only cause and any
 producer-authored `effectAttempted` value through settlement, public reads and CLI JSON.
 An older execution without those diagnostics remains readable; a bare transport

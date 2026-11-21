@@ -19,7 +19,8 @@ import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invoca
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { DeploymentDeployInputV1Schema, DeploymentPromoteInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import * as deploymentActionIds from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DeploymentDeployInputV1Schema, DeploymentPromoteInputV1Schema, DeploymentRollbackInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { createApprovalArtifact } from '@/sync/ops/actions/approvalArtifactWriter';
 import { resolveActionsSettingsV1FromState } from '@/sync/domains/settings/actionsSettings';
@@ -168,7 +169,7 @@ describe('deployment UI Action callbacks', () => {
     it('configures backup policy through the controller Action before a runtime target exists', async () => {
         const serverId = await homes.addHome({ name: 'Backup setup', serverUrl: 'https://backup-setup.test',
             serverIdentityId: `srv_${'5'.repeat(32)}`, accountId: 'owner', currentAccount: true });
-        const environment = createDeploymentEnvironmentHeaderV1({ serverId, runtimeTargetLinkId: undefined });
+        const { runtimeTargetLinkId: _runtimeTargetLinkId, ...environment } = createDeploymentEnvironmentHeaderV1({ serverId });
         const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'owner' },
             isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
         homes.answer(serverId, `GET /v1/deployments/environments/${environment.id}`, {
@@ -750,7 +751,12 @@ describe('deployment UI Action callbacks', () => {
         const enrollment = createPreviewEnrollmentForHost({ serverId: homeId,
             machineId: header.controllerMachineId,
             readEnvironment: async () => createDeploymentEnvironmentDetailV1({ environment: header }) });
+        homes.answer(serverId, `GET ${AUTOMATION_ACTION_INDEX_HTTP_PATH_V1}`, {
+            body: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }),
+        });
+        const { createUiActionAutomationPortV1 } = await import('@/sync/ops/actions/actionAutomations');
         const receiver = createActionExecutor(createActionExecutorBoundaryFixture({
+            actionAutomations: createUiActionAutomationPortV1(account),
             resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId: header.id } }),
             ...(reviewOrigin === 'controller enrollment' ? {
                 prepareHostReviewedChildren: async ({ actionId, input, context }) => actionId === 'deployments.environments.update'
@@ -917,15 +923,15 @@ describe('deployment UI Action callbacks', () => {
         finally { account.dispose(); }
     });
 
+    const rolloutReviewCases = (['deploy', 'image', 'rebuild', 'rollback'] as const).flatMap(action =>
+        (['own-server', 'platform'] as const).flatMap(target => (['confirms', 'changes'] as const).map(choice =>
+            ({ action, target, choice, mode: 'plain' as const }))));
     it.each([
-        { action: 'deploy', mode: 'plain', choice: 'confirms' },
-        { action: 'deploy', mode: 'e2ee', choice: 'confirms' },
-        { action: 'deploy', mode: 'plain', choice: 'cancels' },
-        { action: 'platform deploy', mode: 'plain', choice: 'confirms' },
-        { action: 'redeploy PostgreSQL', mode: 'plain', choice: 'confirms' },
-        { action: 'image', mode: 'plain', choice: 'confirms' },
-        { action: 'rebuild', mode: 'plain', choice: 'confirms' },
-    ] as const)('$choice the controller-owned $action review from a $mode Account without a self-approval Artifact', async ({ action, mode, choice }) => {
+        ...rolloutReviewCases,
+        { action: 'deploy', target: 'own-server', mode: 'e2ee', choice: 'confirms' },
+        { action: 'deploy', target: 'own-server', mode: 'plain', choice: 'cancels' },
+        { action: 'redeploy PostgreSQL', target: 'own-server', mode: 'plain', choice: 'confirms' },
+    ] as const)('$choice the controller-owned $action review for $target from a $mode Account', async ({ action, target, mode, choice }) => {
         const homeId = `srv_${'d'.repeat(32)}`;
         const secret = new Uint8Array(32).fill(29);
         const serverId = await homes.addHome({ name: 'Deploy intent', serverUrl: 'https://deploy-intent.test',
@@ -943,14 +949,20 @@ describe('deployment UI Action callbacks', () => {
             environment, targetLinks: detail.targetLinks.map(item => item.targetLink) } });
         const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
         const account = await captureLazyActionAccountContext(serverId);
-        const platform = action === 'platform deploy';
-        const deploy = action === 'deploy' || action === 'redeploy PostgreSQL' || platform;
-        const actionId = deploy ? 'deployments.deploy' : 'deployments.promote';
+        const platform = target === 'platform';
+        const deploy = action === 'deploy' || action === 'redeploy PostgreSQL';
+        const rollback = action === 'rollback';
+        const actionId = deploy ? deploymentActionIds.DEPLOYMENT_DEPLOY_ACTION_ID_V1
+            : rollback ? deploymentActionIds.DEPLOYMENT_ROLLBACK_ACTION_ID_V1
+            : deploymentActionIds.DEPLOYMENT_PROMOTE_ACTION_ID_V1;
+        const rollbackInput = { deploymentId: 'tested-release',
+            ...(!platform ? { restoreBackupId: 'retained-pre-migration' } : {}) };
         const pins = { serverId: homeId, environmentId: environment.id, expectedRevision: environment.revision,
             targetLinkId: 'target-link', expectedTargetLinkRevision: 1, requestKey: 'controller-prepared-request',
             contentArtifactId: environment.contentArtifactId, contentHeaderVersion: environment.contentHeaderVersion,
             contentBodyVersion: environment.contentBodyVersion };
         let prepared = deploy ? DeploymentDeployInputV1Schema.parse(pins)
+            : rollback ? DeploymentRollbackInputV1Schema.parse({ ...pins, ...rollbackInput })
             : DeploymentPromoteInputV1Schema.parse({ ...pins, sourceEnvironmentId: 'staging',
                 sourceDeploymentId: 'tested-release', artifact: action, destinationContent: {
                     contentArtifactId: environment.contentArtifactId, contentHeaderVersion: environment.contentHeaderVersion,
@@ -963,7 +975,8 @@ describe('deployment UI Action callbacks', () => {
         let effects = 0;
         let receiptAdmissions = 0;
         let preparations = 0;
-        const providerAction = { pluginId: 'fixture.platform', localId: 'deploy' };
+        const providerRole = deploy ? 'deploy' : rollback ? 'rollback' : 'promote';
+        const providerAction = { pluginId: 'fixture.platform', localId: providerRole };
         const controllerReview = { summary: action === 'redeploy PostgreSQL'
             ? 'Redeploy PostgreSQL from its live revision, keeping the data volume'
             : 'Deploy the reviewed Compose services', sourceMethod: 'storedCompose',
@@ -980,23 +993,23 @@ describe('deployment UI Action callbacks', () => {
             actionAutomations: createUiActionAutomationPortV1(account),
             resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId: environment.id } }),
             prepareDeploymentAction: async ({ input }) => {
-                // The installed controller authors a new candidate for raw intent. Reviewed refs retain that candidate.
-                if (platform) {
-                    if (!('contentArtifactId' in input)) preparations += 1;
-                    return { input: 'contentArtifactId' in input ? input : prepared, preview: controllerReview,
-                        hostReviewedChildren: { children: [{ action: providerAction, role: 'deploy' }] } };
-                }
-                if ('contentArtifactId' in input) return { input, preview: controllerReview };
-                preparations += 1;
-                return { input: preparations === 1 ? prepared : { ...prepared,
-                    requestKey: `controller-prepared-request-${preparations}`,
-                    contentArtifactId: `artifact-candidate-${preparations}` }, preview: controllerReview };
+                // A raw dispatch would allocate a fresh candidate. A reviewed replay must still
+                // reject a source change reported by the Controller after the person's review.
+                const retained = 'contentArtifactId' in input;
+                if (!retained) preparations += 1;
+                const currentReview = choice === 'changes' && receivedInputs.length > 1
+                    ? { ...controllerReview, source: { label: 'Compose file, revision 2' } } : controllerReview;
+                return { input: retained ? input : preparations === 1 ? prepared : { ...prepared,
+                    requestKey: `controller-prepared-request-${preparations}`, contentArtifactId: `artifact-candidate-${preparations}` },
+                    preview: currentReview, ...(platform ? {
+                        hostReviewedChildren: { children: [{ action: providerAction, role: providerRole }] },
+                    } : {}) };
             },
             deploymentAction: async (_actionId, effectInput, context) => {
                 expect(effectInput).toEqual(prepared);
                 receiptAdmissions += 1;
                 if (platform) {
-                    const provider = await context.hostReviewedChild!.invoke({ action: providerAction, role: 'deploy',
+                    const provider = await context.hostReviewedChild!.invoke({ action: providerAction, role: providerRole,
                         input: { deploymentId: 'reviewed-deployment' } });
                     if (!provider.ok) return provider;
                 } else effects += 1;
@@ -1052,11 +1065,12 @@ describe('deployment UI Action callbacks', () => {
         });
         const { Modal } = await import('@/modal');
         vi.mocked(Modal.confirm).mockClear();
-        nativeReview.answer = choice === 'confirms';
+        nativeReview.answer = choice !== 'cancels';
         try {
             const actions = createDeploymentActions(lifetime, environment.projectSourceId);
             const run = deploy ? actions.deploy({ environmentId: environment.id, targetLinkId: 'target-link',
                 ...(action === 'redeploy PostgreSQL' ? { sha: 'b'.repeat(40), requestKey: 'redeploy-live-postgres' } : {}) })
+                : rollback ? actions.rollback({ environmentId: environment.id, ...rollbackInput })
                 : actions.promote({ environmentId: environment.id, sourceEnvironmentId: 'staging',
                     sourceDeploymentId: 'tested-release', artifact: action });
             if (choice === 'confirms') {
@@ -1071,6 +1085,13 @@ describe('deployment UI Action callbacks', () => {
                 expect(preparations).toBe(1);
                 expect(receivedRequestIds[0]).toEqual(expect.any(String));
                 expect(receivedRequestIds[1]).not.toBe(receivedRequestIds[0]);
+            } else if (choice === 'changes') {
+                await expect(run).rejects.toMatchObject({ code: 'action_interactive_review_required' });
+                expect(outcomes).toEqual(Array.from({ length: 2 }, () => ({ ok: false, errorCode: 'action_interactive_review_required' })));
+                expect(effects).toBe(0);
+                expect(receiptAdmissions).toBe(0);
+                expect(receivedReviewedInputs).toEqual([undefined, prepared]);
+                expect(preparations).toBe(1);
             } else {
                 await expect(run).rejects.toMatchObject({ code: 'approval_canceled' });
                 expect(outcomes).toEqual([{ ok: false, errorCode: 'action_interactive_review_required' }]);

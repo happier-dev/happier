@@ -16,12 +16,13 @@ vi.mock('react-native-unistyles', async () => {
 });
 vi.mock('@/text', async () => {
   const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-  return createTextModuleMock({ translate: (key) => key });
+  return createTextModuleMock({ translate: (key, params) => key === 'projects.deployments.review.replacesNote'
+    ? `${key} ${String(params?.revision)}` : key });
 });
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
-const { DeploymentReviewApprovalFacts } = await import('./DeploymentReviewApprovalFacts');
+const { DeploymentReviewApprovalFacts, readDeploymentReviewApproval } = await import('./DeploymentReviewApprovalFacts');
 
 const initialState = storage.getState();
 afterEach(() => {
@@ -40,6 +41,28 @@ const machineReview = {
 };
 
 describe('DeploymentReviewApprovalFacts', () => {
+  it.each(['own-server', 'platform'] as const)('renders the version, replaced version, target and data effect for %s rollback', async target => {
+    const facts = {
+      environment: { id: 'env', name: 'Production' },
+      revision: { kind: 'repository', sha: 'a'.repeat(40) },
+      replaces: { deploymentId: 'serving', revision: { kind: 'repository', sha: 'b'.repeat(40) } },
+    };
+    const deploymentReview = target === 'own-server'
+      ? { ...machineReview, ...facts, rollbackData: 'restoreBackup' }
+      : { platformRollback: { ...facts, platformName: 'Vercel', providerResourceId: 'production-project', providerEnvironment: 'production',
+          data: 'keep' }, providerReview: { sourceMethod: 'gitIntegration' } };
+    const approval = readDeploymentReviewApproval({ preview: { deploymentReview } });
+    if (!approval) throw new Error('Expected a typed Rollback review');
+    const screen = await renderScreen(
+      <DeploymentReviewApprovalFacts approval={approval} serverId={null} testID="rollback-facts" />,
+    );
+    const displayed = screen.getTextContent();
+    expect(displayed).toContain('aaaaaaa');
+    expect(displayed).toContain('projects.deployments.review.replacesNote bbbbbbb');
+    expect(displayed).toContain(target === 'own-server' ? 'projects.deployments.review.engineNative' : 'production-project');
+    expect(displayed).toContain(target === 'own-server'
+      ? 'projects.deployments.review.rollbackDataRestored' : 'projects.deployments.review.rollbackDataKept');
+  });
   it.each([false, true])('shows required build platforms and the emulation cost without claiming an observed execution mode (controller: %s)', async controller => {
     const review = { ...machineReview,
       buildSupport: { status: 'notObserved' as const, requestedPlatforms: ['linux/amd64', 'linux/arm64'] } };

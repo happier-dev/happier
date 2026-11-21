@@ -10,7 +10,7 @@ import { readRecord } from '../../inputs/inputRecords.js';
 import { actionInputServerId } from './definition.js';
 import { redactObservationInputPaths } from './observationRedaction.js';
 import { readApprovalSavedSecretReference } from '../actionApprovalValueReferences.js';
-import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, isDeploymentTargetLinkActionIdV1, isDeploymentBackupActionIdV1, isDeploymentBackupReadActionIdV1, isDeploymentDomainChildActionIdV1, isDeploymentDomainRemoveActionIdV1, isDeploymentPromoteActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
+import { isDeploymentTargetLinkActionIdV1, isDeploymentBackupActionIdV1, isDeploymentBackupReadActionIdV1, isDeploymentDomainChildActionIdV1, isDeploymentDomainRemoveActionIdV1, isDeploymentPromoteActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
 import { isDeploymentNativeReadActionIdV1 } from '../../deployments/deploymentReadAdmissionV1.js';
 import { DEPLOYMENT_BACKUP_CONFIGURE_INTENT_OPTIONS_V1 } from '../../deployments/deploymentBackupConfigureV1.js';
 import { isDeploymentAccountPageActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
@@ -20,7 +20,7 @@ import { createDeploymentReadScopeV1, DEPLOYMENT_DATA_ROLE_CHILD_METADATA_READS_
 
 const deploymentDeployActionCompletionV1 = createDeploymentDeployActionCompletionV1(DeploymentActionOutputSchemasV1[deploymentActionIds.DEPLOYMENT_DEPLOY_ACTION_ID_V1]);
 const deploymentDeployDescription = 'Deploy an existing saved Environment to a linked target. Discover the named Environment with deployments.environments.list, then use deployments.environments.get to choose its linked target. To deploy that saved definition, supply only serverId, environmentId and targetLinkId from those results. The Action prepares the exact deployment candidate, revisions and hashes for review. The contentArtifactId/contentHeaderVersion/contentBodyVersion input branch accepts an already prepared deployment candidate; Environment and target content Artifacts are not deployment candidates. No caller-authored candidate or shell hash calculation is needed.';
-const deploymentRollbackDescription = 'Roll back to a historical deployment. Discover the saved Environment with deployments.environments.list or deployments.environments.get, then select deploymentId from deployments.receipts.list. Supply serverId, environmentId and deploymentId; requestKey and restoreBackupId are optional. Preparation resolves the current target, revisions and exact content for review. The prepared contentArtifactId/contentHeaderVersion/contentBodyVersion branch is also accepted.';
+const deploymentRollbackDescription = 'Roll back to a historical deployment. Discover the saved Environment with deployments.environments.list or deployments.environments.get, then select deploymentId from deployments.receipts.list. Supply serverId, environmentId and deploymentId; requestKey and restoreBackupId are optional. Review shows the return version, the serving version it will replace, the target and whether restoring a backup will replace data. The prepared contentArtifactId/contentHeaderVersion/contentBodyVersion branch is also accepted.';
 const deploymentTeardownDescription = 'Stop and remove a deployment from a saved Environment. Supply serverId, environmentId and reason: "manual" for an explicit request; the controller resolves the current target and exact runtime inventory. Set mode: "preview" to inspect the teardown first, and removeEnvironment: true to remove the saved Environment after teardown. targetLinkId, requestKey, volumes and machines are optional selections. Prepared content and revision fields are only needed when continuing an already prepared operation.';
 const deploymentBackupConfigureDescription = 'Configure backups for a saved Environment, including before its first deployment. Test proves the selected repository without saving configuration; initializeAndSave explicitly creates a missing repository. Retain returned destinationSetup and setupOperation when continuing receiver setup. After kind: "configured", a captured nonnull review.creationDefaults.values.backupSchedule is a separate follow-up: resolve the Nightly backups starter through workflow.starters.list and workflow.starters.resolve, then call workflow.trigger.add with that exact schedule, backupEnvironment: { serverId, environmentId }, and backupPolicy containing the returned configuration except configRevision. Include verificationLevel: "manifestReadBack". The standing approval binds the Environment and destination policy; each occurrence resolves its current deployment. A null schedule means no schedule Action. If schedule authoring fails, retry only workflow.trigger.add; do not repeat Configure. Stopping after Configure leaves the backup configured with no schedule.';
 
@@ -38,7 +38,6 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
   const dataSize = deploymentActionIds.isDeploymentDataSizeActionIdV1(id);
   const telemetrySet = id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1;
   const backupConfigure = id === deploymentActionIds.DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1;
-  const rolloutReview = id === DEPLOYMENT_DEPLOY_ACTION_ID_V1 || isDeploymentPromoteActionIdV1(id);
   const rollout = deploymentActionIds.isDeploymentRolloutActionIdV1(id);
   const irreversible = id === deploymentActionIds.DEPLOYMENT_BACKUP_PRUNE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_TEARDOWN_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_DOMAINS_REMOVE_ACTION_ID_V1;
   const preparedContentRequired = id !== deploymentActionIds.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 && id !== deploymentActionIds.DEPLOYMENT_TARGET_LINK_ACTION_ID_V1
@@ -289,7 +288,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       return patch !== undefined && [patch.deployerMode, patch.deployerPrincipals, patch.dataEditorMode, patch.dataEditors,
         patch.dataAgentAccess].some(value => value !== undefined);
     } } : {}),
-    approval: { result: 'required' }, approvalPolicy: { uiConfirmation: irreversible || rolloutReview ? 'policy' : 'direct',
+    approval: { result: 'required' }, approvalPolicy: { uiConfirmation: irreversible || rollout ? 'policy' : 'direct',
       ...(id === deploymentActionIds.DEPLOYMENT_TEARDOWN_ACTION_ID_V1 && previewForInput
         ? { uiConfirmationForInput: (input: unknown): boolean => !previewForInput(input) } : {}) },
     ...(irreversible ? { irreversible: true as const } : {}),
@@ -360,8 +359,9 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
     ...(id === deploymentActionIds.DEPLOYMENT_DEPLOY_ACTION_ID_V1 ? { completion: deploymentDeployActionCompletionV1 } : {}),
     // The retry key, target link and prepared-content pins say which request and bytes, not what it does; the
     // request's summary and the host's deploy review say that. Approval reads them under Technical details.
-    ...(id === deploymentActionIds.DEPLOYMENT_DEPLOY_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_PROMOTE_ACTION_ID_V1 ? { approvalPresentation: { summary: () => null,
+    ...(rollout ? { approvalPresentation: { summary: () => null,
       technicalInputPaths: ['requestKey', 'targetLinkId', 'contentArtifactId', 'contentHeaderVersion', 'contentBodyVersion',
+        ...(id === deploymentActionIds.DEPLOYMENT_ROLLBACK_ACTION_ID_V1 ? ['deploymentId', 'restoreBackupId'] : []),
         ...(id === deploymentActionIds.DEPLOYMENT_PROMOTE_ACTION_ID_V1 ? ['destinationContent'] : [])] } } : {}),
     // A restore is approved by its consequence; every id only correlates the request with the Environment, the
     // capture receipt and the prepared operation, so they read under Technical details. The Machine stays named.

@@ -1,14 +1,154 @@
-import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { createActionExecutor, createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { createActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
+import { bindPresentUserActionConfirmationV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions';
+import { DeploymentDeployInputV1Schema, DeploymentRollbackInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { createDeploymentCandidatePublicationV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
+import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { isRecord } from '@happier-dev/protocol/common/records';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { DeploymentTargetRoleInputSchemasV1 } from '@happier-dev/protocol/plugins/contributions/v2';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { admitDeploymentTargetRoleForHost } from './admitDeploymentTargetRoleForHost';
 import { createDeploymentTargetRoleAdmissionFixture } from './deploymentTargetRoleAdmission.testkit';
 import { adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { request as requestCloudflareDeployment } from '../../../../../packages/plugins/deploy-cloudflare/src/platform/deploymentHttp';
 
 describe('deployment role host admission', () => {
+    it.each([
+        ['deploy', 'manager', false],
+        ['rollback', 'manager', false],
+        ['deploy', 'reader', false],
+        ['rollback', 'reader', false],
+        ['rollback', 'manager', true],
+    ] as const)('applies Production admission to page %s for a %s (retained receipt changed: %s)', async (role, requesterRole, changedReceipt) => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture(role);
+        const rollback = role === 'rollback';
+        const actionId = rollback ? DEPLOYMENT_ROLLBACK_ACTION_ID_V1 : DEPLOYMENT_DEPLOY_ACTION_ID_V1;
+        const { environment } = fixture.state.environment;
+        const { serverId, environmentId, targetLinkId, expectedRevision, expectedTargetLinkRevision } = fixture.input;
+        const requester = requesterRole === 'manager' ? fixture.host.credentialOwnerAccountId : 'project-reader';
+        const production = { providerIdentity: { ...fixture.input.providerIdentity, providerEnvironment: 'production' },
+            providerEnvironment: { kind: 'production' as const } };
+        Object.assign(fixture.state.environment.targetLinks[0]!.content!, production);
+        Object.assign(fixture.state.receipt.content.platform!, production);
+        const request = { ...fixture.request, input: { ...fixture.input, ...production } };
+        const retained = structuredClone(fixture.state.receipt);
+        retained.deployment.id = 'retained-receipt';
+        retained.deployment.state = 'succeeded';
+        retained.deployment.requestedByAccountId = 'previous-deployer';
+        retained.content.platform!.observation.providerDeploymentId = 'retained-provider-deployment';
+        const accepted = fixture.state.receipt.deployment;
+        accepted.operation = role;
+        accepted.requestedByAccountId = requester;
+        if (rollback) accepted.rollbackOfDeploymentId = retained.deployment.id;
+        // Receipt detail sends the selected receipt only. Preparation fills in the current Link.
+        const intent = { serverId, environmentId, ...(rollback ? { deploymentId: retained.deployment.id } : { targetLinkId }) };
+        const target = { kind: 'machine' as const, machineId: fixture.host.machineId };
+        const firstRequestId = 'page-action';
+        const envelopeFor = (requestId: string) => ({ v: 1 as const, requestId, target, input: intent });
+        const publication = createDeploymentCandidatePublicationV1({ accountId: requester, serverIdentityId: serverId,
+            actionId, requestId: firstRequestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelopeFor(firstRequestId)),
+            environmentId, source: { id: environment.projectSourceId, revision: 1 } });
+        accepted.contentArtifactId = publication.contentArtifactId;
+        const pins = { serverId, environmentId, targetLinkId, expectedRevision, expectedTargetLinkRevision,
+            contentArtifactId: accepted.contentArtifactId, contentHeaderVersion: accepted.contentHeaderVersion,
+            contentBodyVersion: accepted.contentBodyVersion, requestKey: accepted.requestKey };
+        const prepared = rollback ? DeploymentRollbackInputV1Schema.parse({ ...pins, ...intent }) : DeploymentDeployInputV1Schema.parse(pins);
+        const roleInput = normalizeStrictJsonValue({ ...request.input, operation: role, ...(rollback ? { priorDeployment: {
+            environmentId, deploymentId: retained.deployment.id, expectedRevision: retained.deployment.revision,
+            providerDeploymentId: retained.content.platform!.observation.providerDeploymentId,
+        } } : {}) });
+        const action = { pluginId: fixture.request.pluginId, localId: fixture.request.localId };
+        const reads: { account: string | undefined; role: string; environmentId: string }[] = [];
+        let reserved = false;
+        let effects = 0;
+        const host: typeof fixture.host = { ...fixture.host,
+            async readEnvironment(request) {
+                const account = request.context.externalActionExecutionAuthorization?.binding.accountId;
+                // Home preserves requester identity but projects accepted-work reads with custody only.
+                const manager = !reserved && account === fixture.host.credentialOwnerAccountId;
+                const capabilities = { ...environment.capabilities, role: manager ? 'manager' as const : 'reader' as const,
+                    deploy: manager, manage: manager, manageTargets: manager, manageBindings: manager, delete: manager };
+                reads.push({ account, role: capabilities.role, environmentId: request.environmentId });
+                return { ...fixture.state.environment, environment: { ...environment, protection: 'production', capabilities } };
+            },
+            readReceipt: request => request.deploymentId === retained.deployment.id ? Promise.resolve(retained) : fixture.host.readReceipt(request),
+        };
+        const actionAutomations = createActionAutomationPortV1({ accountId: requester,
+            seed: async () => ({ v: 1, rows: [] }), settle: async () => {} });
+        onTestFinished(() => actionAutomations.dispose());
+        const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), actionAutomations,
+            resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId } }),
+            async prepareDeploymentAction({ context }) {
+                try {
+                    await admitDeploymentTargetRoleForHost({ ...request, phase: 'preparation', context }, host);
+                } catch (error) { return { ...normalizeActionExecutorThrownError(error), ok: false }; }
+                return { input: prepared, preview: { summary: 'Production traffic change' },
+                    hostReviewedChildren: { children: [{ action, role }] } };
+            },
+            async deploymentAction(_actionId, _input, context) {
+                reserved = true;
+                try {
+                    await admitDeploymentTargetRoleForHost({ ...request, phase: 'execution', input: roleInput, context }, host);
+                } catch (error) { return { ...normalizeActionExecutorThrownError(error), ok: false, effectAttempted: false }; }
+                effects++;
+                return { ok: true, environmentId, revision: expectedRevision, deploymentId: accepted.id,
+                    deploymentRevision: accepted.revision, state: 'succeeded' };
+            },
+        });
+        const execute = (requestId: string, reviewDigest?: string) => {
+            const envelope = envelopeFor(requestId);
+            const requestEnvelopeDigest = computeExternalActionRequestEnvelopeDigestV1(envelope);
+            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'page-action-authorization', binding: {
+                accountId: requester, authentication: { kind: 'account', tokenEpoch: 1 }, admittedMachineRole: 'manage',
+                custodianAccountId: fixture.host.credentialOwnerAccountId, machineId: fixture.host.machineId,
+                installationId: fixture.host.installationId, serverIdentityId: serverId, environmentId, deploymentChildRoot: true,
+                actionId, requestId, target, requestEnvelopeDigest, accountEncryptionMode: 'plain',
+                deploymentCandidatePublication: { ...publication, ...(reviewDigest ? { reviewed: {
+                    contentArtifactId: pins.contentArtifactId, contentHeaderVersion: pins.contentHeaderVersion,
+                    contentBodyVersion: pins.contentBodyVersion,
+                } } : {}) },
+            } });
+            const context = { ...fixture.request.context, surface: 'ui' as const, authority: 'present_user' as const,
+                actionCaller: { kind: 'host' as const }, interactivePresentation: 'unavailable' as const,
+                runtimeAccountId: requester, serverId, serverIdentityId: serverId, actionRequestId: requestId,
+                externalActionTarget: target, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }),
+                operationAcceptance: { actionId, operationId: accepted.actionOperationId, accept() {} } };
+            const confirmed = reviewDigest ? bindPresentUserActionConfirmationV1(actionId, intent, context, reviewDigest, prepared) : context;
+            return executor.execute(actionId, intent, { ...confirmed, originalActionEnvelope: envelope,
+                externalActionExecutionAuthorization: authorization });
+        };
+        const first = await execute(firstRequestId);
+        const evidence = () => JSON.stringify({ first, reads, reserved, effects });
+        if (requesterRole === 'reader') {
+            expect(first, evidence()).toMatchObject({ ok: false, errorCode: 'deployment_access_denied', failureCause: {
+                phase: 'deployment.target.admission.role_capability' } });
+            expect(reads).toEqual([{ account: requester, role: 'reader', environmentId }]);
+            expect(reserved).toBe(false);
+            expect(effects).toBe(0);
+            return;
+        }
+        expect(first, evidence()).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+        if (first.ok || !isRecord(first.details) || typeof first.details.reviewDigest !== 'string') throw new Error('Expected the Controller review');
+        expect(effects).toBe(0);
+        if (changedReceipt) accepted.rollbackOfDeploymentId = 'unapproved-receipt';
+        const confirmed = await execute('page-confirm', first.details.reviewDigest);
+        if (changedReceipt) {
+            expect(confirmed).toMatchObject({ ok: false, errorCode: 'target_mismatch', effectAttempted: false });
+            expect(effects).toBe(0);
+            return;
+        }
+        expect(confirmed, JSON.stringify({ confirmed, reads })).toMatchObject({ ok: true, result: { deploymentId: accepted.id } });
+        expect(reads).toEqual([{ account: requester, role: 'manager', environmentId },
+            { account: requester, role: 'manager', environmentId }, { account: requester, role: 'reader', environmentId }]);
+        expect(effects).toBe(1);
+    });
+
     it('admits resource creation only as the exact reviewed link child with manager custody', async () => {
         const fixture = createDeploymentTargetRoleAdmissionFixture('inspect');
         const { providerIdentity, targetLinkId, expectedTargetLinkRevision, ...base } = fixture.input;
@@ -282,48 +422,6 @@ describe('deployment role host admission', () => {
         await expect(admitDeploymentTargetRoleForHost({ ...fixture.request,
             context: { ...fixture.request.context, hostReviewedChild: port } }, fixture.host))
             .rejects.toMatchObject({ code: 'deployment_access_denied' });
-    });
-
-    it('continues an admitted compact Rollback for the exact retained release from a custody-only read', async () => {
-        const fixture = createDeploymentTargetRoleAdmissionFixture('rollback');
-        fixture.state.environment.environment.capabilities.deploy = false;
-        const prior = structuredClone(fixture.state.receipt);
-        prior.deployment.id = 'retained-receipt';
-        prior.deployment.state = 'succeeded';
-        prior.content.platform!.observation.providerDeploymentId = 'retained-provider-deployment';
-        fixture.state.receipt.deployment.operation = 'rollback';
-        fixture.state.receipt.deployment.rollbackOfDeploymentId = prior.deployment.id;
-        const input = normalizeStrictJsonValue({ ...fixture.input, priorDeployment: {
-            environmentId: fixture.input.environmentId, deploymentId: prior.deployment.id,
-            expectedRevision: prior.deployment.revision, providerDeploymentId: 'retained-provider-deployment',
-        } });
-        const request = { ...fixture.request, input };
-        const host = { ...fixture.host, readReceipt: async (params: Parameters<typeof fixture.host.readReceipt>[0]) =>
-            params.deploymentId === prior.deployment.id ? prior : fixture.host.readReceipt(params) };
-        const action = { pluginId: request.pluginId, localId: request.localId };
-        const portFor = (deploymentId: string, admitted: boolean, environmentId = fixture.input.environmentId) => createHostReviewedChildPortV1({
-            actionId: 'deployments.rollback', input: { serverId: fixture.input.serverId, environmentId, deploymentId, requestKey: 'rollback' },
-            context: request.context, ...(admitted ? { reviewAdmitted: true } : {}),
-            plan: { children: [{ action, role: 'rollback', input }] }, policies: [{ action, role: 'rollback', surface: 'cli' }],
-            async execute(_envelope, context) {
-                const result = await admitDeploymentTargetRoleForHost({ ...request, context }, host);
-                return { ok: true, result: normalizeStrictJsonValue({ role: result.role }) };
-            },
-        });
-        const denied = { code: 'deployment_access_denied', data: { failureCause: {
-            phase: 'deployment.target.admission.role_capability' } } };
-        await expect(admitDeploymentTargetRoleForHost(request, host)).rejects.toMatchObject(denied);
-        for (const port of [portFor(prior.deployment.id, false), portFor('foreign-receipt', true),
-            portFor(prior.deployment.id, true, 'foreign-environment')]) {
-            await expect(admitDeploymentTargetRoleForHost({ ...request,
-                context: { ...request.context, hostReviewedChild: port } }, host)).rejects.toMatchObject(denied);
-        }
-        const port = portFor(prior.deployment.id, true);
-        await expect(admitDeploymentTargetRoleForHost({ ...request,
-            context: { ...request.context, hostReviewedChild: port } }, host)).resolves.toMatchObject({ role: 'rollback' });
-        await expect(port.invoke({ action, role: 'rollback', input })).resolves.toMatchObject({ ok: true, result: { role: 'rollback' } });
-        fixture.state.receipt.deployment.rollbackOfDeploymentId = 'unapproved-receipt';
-        await expect(port.invoke({ action, role: 'rollback', input })).rejects.toMatchObject({ code: 'target_mismatch' });
     });
 
     it('continues the admitted Promote without re-admitting the prior Environment', async () => {

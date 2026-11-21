@@ -5,6 +5,8 @@ import type { HostReviewedChildrenPlanV1, HostReviewedChildrenPreparationV1 } fr
 import { createActionExecuteFailureError, ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1,
     type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { deploymentInProgressStates, DeploymentProviderTeardownContentV1Schema, type DeploymentProviderTeardownContentV1, DeploymentPlatformContentV1Schema, resolveDeploymentSourceMethodV1, type DeploymentPlatformContentV1, type DeploymentContentV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1, type DeploymentReceiptFailureV1 } from '@happier-dev/deployments/contracts/v1';
+import { DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { projectDeploymentReviewRevisionV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { DEPLOYMENT_TEARDOWN_STEPS_V1 } from '@happier-dev/protocol/deployments/deploymentTeardownContentV1';
 import { selectDeploymentTargetRemovalChoicesV1 } from '@happier-dev/deployments';
 import type { DeploymentTeardownRequestInputV1 } from '@happier-dev/protocol/deployments/deploymentTeardownRequestV1';
@@ -13,7 +15,7 @@ import { DeploymentTargetRoleCommonInputV1Schema, DeploymentTargetRoleInputSchem
     DeploymentTargetRoleResultV1Schema, type DeploymentTargetRuntimeRoleV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 import { normalizeStrictJsonValue, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
-import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/publicTypes';
+import { resolvePluginLocalizedStringV2Text, type PluginLocalizedStringV2 } from '@happier-dev/protocol/plugins/contributions/publicTypes';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readResolvedActionContribution } from '@/plugins/projection/registry/actions';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
@@ -114,6 +116,8 @@ export function createContributedDeploymentTargetForHost(host: Host) {
             action: Readonly<{ pluginId: string; localId: string }>;
             generatedDomains: boolean;
             children: HostReviewedChildrenPlanV1['children'];
+            activeDeploymentId: string | undefined;
+            targetTitle: PluginLocalizedStringV2;
             admit(input: unknown, phase: 'preparation' | 'execution', receipt?: DeploymentReceiptDetailV1): Promise<void>;
         }>) => Promise<T>): Promise<T> {
         if (!host.acquirePluginRuntimeRegistryLease) return refuse('unsupported_action');
@@ -187,6 +191,7 @@ export function createContributedDeploymentTargetForHost(host: Host) {
             };
             await assertCurrent();
             return await run({ common, action, children, credentials, admit, assertCurrent,
+                activeDeploymentId: link.activeDeploymentId, targetTitle: descriptor.title,
                 generatedDomains: descriptor.generatedDomains === true,
                 gitSource: descriptor.gitSource, gitProviders: descriptor.sources?.gitIntegration });
         } finally { await lease.release(); }
@@ -238,6 +243,8 @@ export function createContributedDeploymentTargetForHost(host: Host) {
         candidate: DeploymentPlatformContentV1, environment: DeploymentEnvironmentDetailV1,
         sourceAdmitted: boolean): Promise<DaemonDeploymentPreparationResult> {
         if ('onFailure' in request.input && request.input.onFailure !== undefined) return failure('unsupported_action');
+        if (request.actionId === DEPLOYMENT_ROLLBACK_ACTION_ID_V1 && 'restoreBackupId' in request.input
+            && request.input.restoreBackupId !== undefined) return failure('unsupported_action');
         const role = request.actionId === 'deployments.deploy' ? deployRole(candidate.sourceMethod)
             : request.actionId === 'deployments.rollback' ? 'rollback' : 'promote';
         return withRole({ ...request.input, context: request.context }, environment, role, async scope => {
@@ -260,14 +267,31 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                     ? 'Deploy the latest commit on the linked branch when the deployment starts.'
                     : `Deploy ${environment.content.definition.ref} at ${candidate.sourceIntent.sha.slice(0, 7)}.`
                 : undefined, candidate.platform.preparedNative?.reviewNotice].filter(Boolean).join(' ');
-            return { input: request.input, hostReviewedChildren: { children: scope.children }, preview: normalizeStrictJsonValue({ sourceIntent: candidate.sourceIntent,
-                ...(summary ? { summary } : {}),
+            const providerReview = { sourceIntent: candidate.sourceIntent,
                 sourceMethod: candidate.sourceMethod, platform: { targetLinkRevision: candidate.platform.targetLinkRevision,
                     credentialPrincipal: candidate.platform.credentialPrincipal, providerIdentity: candidate.platform.providerIdentity,
                     providerEnvironment: candidate.platform.providerEnvironment,
                     ...(candidate.platform.repositoryAccess ? { repositoryAccess: candidate.platform.repositoryAccess } : {}),
                     ...(candidate.platform.preparedNative ? { preparedNative: candidate.platform.preparedNative } : {}) },
-                    controllerMachineId: environment.environment.controllerMachineId }) };
+                controllerMachineId: environment.environment.controllerMachineId };
+            const reviewTitle = summary ? { summary } : {};
+            if (request.actionId === DEPLOYMENT_ROLLBACK_ACTION_ID_V1) {
+                const serving = scope.activeDeploymentId ? await host.readReceipt({ environmentId: request.input.environmentId,
+                    deploymentId: scope.activeDeploymentId, context: request.context }) : null;
+                const servingSource = serving?.content.sourceIntent;
+                if (serving && !servingSource) return failure('deployment_conflict');
+                const preview = normalizeStrictJsonValue({ ...reviewTitle, providerReview, platformRollback: {
+                    environment: { id: environment.environment.id, name: environment.content.name },
+                    revision: projectDeploymentReviewRevisionV1(candidate.sourceIntent, candidate.commitSubject),
+                    replaces: serving && servingSource ? { deploymentId: serving.deployment.id,
+                        revision: projectDeploymentReviewRevisionV1(servingSource, serving.content.commitSubject) } : null,
+                    platformName: resolvePluginLocalizedStringV2Text(scope.targetTitle), providerResourceId: scope.common.providerIdentity.providerResourceId,
+                    providerEnvironment: scope.common.providerIdentity.providerEnvironment, data: 'keep',
+                } });
+                return { input: request.input, hostReviewedChildren: { children: scope.children }, preview };
+            }
+            return { input: request.input, hostReviewedChildren: { children: scope.children },
+                preview: normalizeStrictJsonValue({ ...reviewTitle, ...providerReview }) };
         });
     }
 

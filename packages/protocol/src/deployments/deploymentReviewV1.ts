@@ -1,4 +1,5 @@
 import { z } from '../zodRuntimePolicy.js';
+import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { DeploymentTemplateV1Schema } from '../plugins/contributions/deploymentTemplates.js';
 import { ScmCommitOidSchema } from '../scm/commitPublication.js';
 import { DeploymentReviewServiceV1Schema } from '../local/services/nativeRuntimeFactsV1.js';
@@ -70,13 +71,15 @@ export type DeploymentReviewRiskKindV1 = z.infer<
  * native Compose model with its secrets already redacted; this is the reader's contract
  * for that DTO. It carries names and structural facts only, never secret values.
  */
+const environmentReview = z.strictObject({ id, name: z.string(), ingress: z.optional(DeploymentIngressV1Schema) });
+const replacedDeployment = z.nullable(z.strictObject({ deploymentId: id, revision: DeploymentReviewRevisionV1Schema }));
 const machineReview = {
   health: DeploymentTemplateV1Schema.shape.health,
   machineId: z.optional(id),
-  environment: z.optional(z.strictObject({ id, name: z.string(), ingress: z.optional(DeploymentIngressV1Schema) })),
+  environment: z.optional(environmentReview),
   revision: z.optional(DeploymentReviewRevisionV1Schema),
   /** Null means the selected link has no serving receipt; absent means an older review did not report it. */
-  replaces: z.optional(z.nullable(z.strictObject({ deploymentId: id, revision: DeploymentReviewRevisionV1Schema }))),
+  replaces: z.optional(replacedDeployment),
   secretBindingNames: z.optional(z.array(z.string())),
   buildSupport: z.optional(DeploymentBuildSupportV1Schema),
   /** Syntactic use in the native Compose source; no inferred effective values or secret contents. Nonblocking. */
@@ -124,6 +127,7 @@ export type DeploymentMachineReviewV1 = z.infer<
 >;
 export const DeploymentReviewV1Schema = z.strictObject({
   ...machineReview,
+  rollbackData: z.optional(z.enum(['keep', 'restoreBackup'])),
   runtimeMachines: z.optional(
     z.array(
       z.strictObject({
@@ -146,6 +150,19 @@ export const DeploymentApprovalReviewV1Schema = z.union([
   z.strictObject({
     deployment: DeploymentReviewV1Schema,
     promotion: DeploymentPromotionReviewV1Schema,
+  }),
+  z.strictObject({
+    summary: z.optional(z.string()),
+    platformRollback: z.strictObject({
+      environment: environmentReview,
+      revision: DeploymentReviewRevisionV1Schema,
+      replaces: replacedDeployment,
+      platformName: z.string(),
+      providerResourceId: id,
+      providerEnvironment: id,
+      data: z.literal('keep'),
+    }),
+    providerReview: StrictJsonValueSchema,
   }),
 ]);
 export type DeploymentApprovalReviewV1 = z.infer<

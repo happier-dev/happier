@@ -9,24 +9,40 @@ import { observeAccountChanges } from '@/api/observeAccountChanges';
 
 /** For a deferred receipt, returning without a decision hands approval off to the app. */
 export type CliApprovalRequestedHandler = (artifactId: string, signal: AbortSignal,
-  decide: (decision: 'approve' | 'reject') => Promise<ActionExecuteResult>) => void | ActionExecuteResult | Promise<void | ActionExecuteResult>;
+  decide: (decision: 'approve' | 'reject') => Promise<ActionExecuteResult>,
+  readPreview?: () => Promise<unknown>) => void | ActionExecuteResult | Promise<void | ActionExecuteResult>;
+
+async function readCliApprovalReceipt(execute: ReturnType<typeof createActionExecutor>['execute'], artifactId: string,
+  context: ActionExecutorContext | undefined, signal: AbortSignal) {
+  const observed = await execute('approval.request.get', { artifactId }, { ...context, signal, actionRequestId: randomUUID() });
+  if (!observed.ok) return observed;
+  const receipt = ApprovalRequestGetResultV1Schema.safeParse(observed.result);
+  return receipt.success ? { ok: true as const, request: receipt.data.request }
+    : { ok: false as const, errorCode: 'invalid_action_transport_output', error: 'invalid_action_transport_output' };
+}
+
+function previewFromReceipt(receipt: Awaited<ReturnType<typeof readCliApprovalReceipt>>) {
+  return receipt.ok && 'preview' in receipt.request ? receipt.request.preview : undefined;
+}
 
 /** Progress can prompt for Ask while the original transport retains private output. */
 export async function executeLiveCliApprovalRequest<T extends ActionExecuteResult | null = ActionExecuteResult>(options: Readonly<{
   onApprovalRequested: CliApprovalRequestedHandler;
   execute: ReturnType<typeof createActionExecutor>['execute'];
   context: ActionExecutorContext;
-  run(signal: AbortSignal, onApprovalRequested: (approval: ActionApprovalRequestCreatedResult) => void): Promise<T>;
+  run(signal: AbortSignal, onApprovalRequested: (approval: ActionApprovalRequestCreatedResult, preview?: unknown) => void): Promise<T>;
 }>): Promise<T | ActionExecuteResult> {
   const lifetime = new AbortController();
   const signal = options.context.signal ? AbortSignal.any([options.context.signal, lifetime.signal]) : lifetime.signal;
   let notification: Promise<void | ActionExecuteResult> | undefined;
   const notificationState: { failure?: { error: unknown } | { result: ActionExecuteResult } } = {};
   try {
-    const result = await options.run(signal, approval => {
+    const result = await options.run(signal, (approval, preview) => {
       notification ??= Promise.resolve().then(() => options.onApprovalRequested(approval.artifactId, signal,
         decision => options.execute('approval.request.decide', { artifactId: approval.artifactId, decision },
-          { ...options.context, signal, actionRequestId: randomUUID() }))).then(result => {
+          { ...options.context, signal, actionRequestId: randomUUID() }),
+        async () => preview ?? previewFromReceipt(await readCliApprovalReceipt(options.execute, approval.artifactId, options.context, signal)),
+      )).then(result => {
         if (result && !result.ok) {
           notificationState.failure = { result };
           lifetime.abort();
@@ -76,13 +92,12 @@ export async function consumeDeferredCliApprovalResult(result: ActionExecuteResu
   if (!pending.success) return result;
   const lifetime = new AbortController();
   const signal = options.context?.signal ? AbortSignal.any([options.context.signal, lifetime.signal]) : lifetime.signal;
-  const readReceipt = async () => {
-    const observed = await options.execute('approval.request.get', { artifactId: pending.data.artifactId },
-      { ...options.context, signal, actionRequestId: randomUUID() });
-    if (!observed.ok) return observed;
-    const receipt = ApprovalRequestGetResultV1Schema.safeParse(observed.result);
-    return receipt.success ? { ok: true as const, request: receipt.data.request }
-      : { ok: false as const, errorCode: 'invalid_action_transport_output', error: 'invalid_action_transport_output' };
+  let receiptRead: ReturnType<typeof readCliApprovalReceipt> | undefined;
+  const readReceipt = () => {
+    receiptRead ??= readCliApprovalReceipt(options.execute, pending.data.artifactId, options.context, signal).finally(() => {
+      receiptRead = undefined;
+    });
+    return receiptRead;
   };
   let subscription: ReturnType<ReturnType<typeof subscribeCliApprovalChanges>> | undefined;
   let stopped = false;
@@ -96,7 +111,7 @@ export async function consumeDeferredCliApprovalResult(result: ActionExecuteResu
       localDecision = options.execute('approval.request.decide', { artifactId: pending.data.artifactId, decision },
         { ...options.context, signal, actionRequestId: randomUUID() });
       return localDecision;
-    }));
+    }, async () => previewFromReceipt(await readReceipt())));
     const observation = new Promise<ActionExecuteResult>((resolve, reject) => {
       let reading = false;
       let invalidated = false;

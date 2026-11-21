@@ -6108,7 +6108,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.rollback`
 
-**Roll back deployment** — No additional description is published.
+**Roll back deployment** — Roll back to a historical deployment. Discover the saved Environment with deployments.environments.list or deployments.environments.get, then select deploymentId from deployments.receipts.list. Supply serverId, environmentId and deploymentId; requestKey and restoreBackupId are optional. Review shows the return version, the serving version it will replace, the target and whether restoring a backup will replace data. The prepared contentArtifactId/contentHeaderVersion/contentBodyVersion branch is also accepted.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.

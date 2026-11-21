@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
-import { DeploymentApprovalReviewV1Schema, type DeploymentMachineReviewV1, type DeploymentReviewRevisionV1, type DeploymentReviewRiskKindV1, type DeploymentReviewServiceV1, type DeploymentReviewV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
+import { DeploymentApprovalReviewV1Schema, type DeploymentApprovalReviewV1, type DeploymentMachineReviewV1, type DeploymentReviewRevisionV1, type DeploymentReviewRiskKindV1, type DeploymentReviewServiceV1, type DeploymentReviewV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { isLiteralLoopbackHostname} from '@happier-dev/protocol/server/urls/loopbackHostname';
 import { type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
@@ -12,8 +12,10 @@ import { ActionApprovalFieldsCard, type ApprovalFieldExtras, type ApprovalFields
 import { t } from '@/text';
 import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 
+type PlatformRollbackReview = Extract<DeploymentApprovalReviewV1, { platformRollback: unknown }>['platformRollback'];
+
 export type DeploymentReviewApproval = Readonly<{
-  review: DeploymentReviewV1;
+  review: DeploymentReviewV1 | PlatformRollbackReview;
   /** A promotion wraps the destination's deploy review with the Compose document change it applies. */
   promotion: Readonly<{ composeChanges: boolean }> | null;
 }>;
@@ -37,6 +39,7 @@ export function readDeploymentReviewApproval(
     preview.deploymentReview,
   );
   if (!parsed.success) return null;
+  if ('platformRollback' in parsed.data) return { review: parsed.data.platformRollback, promotion: null };
   return 'deployment' in parsed.data
     ? {
         review: parsed.data.deployment,
@@ -99,11 +102,12 @@ type ReviewMachine = Readonly<{
 }>;
 
 /** Every Machine the reviewed deploy runs on, by id (a controller's runtime Machines, else the review's own). */
-export function readDeploymentReviewMachineIds(review: DeploymentReviewV1): readonly string[] {
+export function readDeploymentReviewMachineIds(review: DeploymentReviewApproval['review']): readonly string[] {
   return readMachines(review).flatMap((machine) => (machine.id ? [machine.id] : []));
 }
 
-function readMachines(review: DeploymentReviewV1): readonly ReviewMachine[] {
+function readMachines(review: DeploymentReviewApproval['review']): readonly ReviewMachine[] {
+  if ('platformName' in review) return [];
   return review.runtimeMachines?.length
     ? review.runtimeMachines.map((machine) => ({
         id: machine.machineId,
@@ -199,8 +203,11 @@ function describeReviewFields(
   names: MachineNames,
 ): ApprovalFieldsPresentation {
   const { review, promotion } = approval;
-  const { environment, revision, replaces, secretBindingNames } = review;
-  const ownServer = review.ownServer;
+  const { environment, revision, replaces } = review;
+  const native = 'platformName' in review ? undefined : review;
+  const platform = 'platformName' in review ? review : undefined;
+  const { secretBindingNames, ownServer, onFailure } = native ?? {};
+  const rollbackData = platform?.data ?? native?.rollbackData;
   const ingress = environment?.ingress;
   const nameOf = (id: string | null) => (id ? names[id] ?? null : null);
   const valueNameOf = (id: string | null) => (id ? names[id] ?? t('approvals.machineNotKnown') : null);
@@ -226,6 +233,8 @@ function describeReviewFields(
     ...field('buildPlatforms', t('projects.deployments.review.buildPlatforms'), buildPlatforms.join(', '), {
       note: t('projects.deployments.review.emulationCost'),
     }),
+    ...(platform ? field('where.platform', t('projects.deployments.review.whereTitle'),
+      joinHappierFacts(platform.platformName, platform.providerResourceId, platform.providerEnvironment)) : []),
     ...machines.flatMap((machine, index) => [
       ...(() => {
         const where = describeMachine(valueNameOf(machine.id), machine.review);
@@ -237,6 +246,9 @@ function describeReviewFields(
           : t('projects.deployments.review.servicesTitle'),
         machine.review.services.map((service) => joinHappierFacts(service.name, describeService(service) || null)).join('\n')),
     ]),
+    ...(rollbackData ? field('rollbackData', t('projects.deployments.review.rollbackData'),
+      rollbackData === 'restoreBackup' ? t('projects.deployments.review.rollbackDataRestored')
+        : t('projects.deployments.review.rollbackDataKept')) : []),
     // How it is reached follows where it runs, as the lab places Domain; the version leads the facts.
     ...field('ingress', t('projects.deployments.review.reachedThrough'), ingress
       ? ingress.kind === 'cloudflareTunnel' ? t('projects.deployments.review.ingressTunnel') : valueNameOf(ingress.edgeMachineId)
@@ -258,8 +270,8 @@ function describeReviewFields(
         ? t('projects.deployments.review.restoresPrevious') : t('projects.deployments.review.staysDown')),
     ] : []),
     // The rollout choice the person made before requesting; reviewed as captured, changed only by asking again.
-    ...field('onFailure', t('projects.deployments.receipt.policy'), review.onFailure
-      ? t(`projects.deployments.receipt.${review.onFailure}`) : null),
+    ...field('onFailure', t('projects.deployments.receipt.policy'), onFailure
+      ? t(`projects.deployments.receipt.${onFailure}`) : null),
   ];
   return { rows, unrepresentable: null };
 }
@@ -404,7 +416,8 @@ const ReviewFields = React.memo(function ReviewFields(props: Readonly<{
   return (
     <>
       <ActionApprovalFieldsCard presentation={presentation} anatomy="page" serverId={props.serverId}
-        title={t('projects.deployments.review.whatTitle')} testID={`${props.testID}.fields`} />
+        title={t('platformName' in props.approval.review || props.approval.review.rollbackData
+          ? 'projects.deployments.review.rollbackWhatChanges' : 'projects.deployments.review.whatTitle')} testID={`${props.testID}.fields`} />
       {props.machines.map((machine, index) => (
         <MachineRisks key={machine.id ?? 'host'} machine={machine} multiple={multiple} decided={props.decided}
           name={machine.id ? props.names[machine.id] ?? null : null}

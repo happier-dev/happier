@@ -111,7 +111,8 @@ import { preparePromotionForHost } from './preparePromotionForHost';
 import { isDeploymentPromoteActionIdV1, isDeploymentMembershipActionIdV1,
     DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1,
     DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1,
-    DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_TARGET_LINK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+    DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ROLLBACK_ACTION_ID_V1, DEPLOYMENT_TARGET_LINK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { admitStoredComposeDefinition } from '@/workspaces/projectSetup/nativeComposeSource';
 import { createPrepareDeploymentBindingsForHost } from './secrets/prepareDeploymentBindingsForHost';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
@@ -2445,7 +2446,11 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 }
                 const reviewed = await target.review({ ...request, input: effectInput, content, environment,
                     ...(candidateEnvironmentContent ? { candidateEnvironmentContent } : {}) });
-                const preview = promotionReview ? { deployment: reviewed.reviewedEffect, promotion: promotionReview } : reviewed.reviewedEffect;
+                const preview = promotionReview ? { deployment: reviewed.reviewedEffect, promotion: promotionReview }
+                    : request.actionId === DEPLOYMENT_ROLLBACK_ACTION_ID_V1
+                        ? normalizeStrictJsonValue({ ...readRecord(reviewed.reviewedEffect),
+                            rollbackData: 'restoreBackupId' in request.input && request.input.restoreBackupId ? 'restoreBackup' : 'keep' })
+                        : reviewed.reviewedEffect;
                 if (nativeCandidate.ownServer) {
                     return { input: effectInput, preview };
                 }
