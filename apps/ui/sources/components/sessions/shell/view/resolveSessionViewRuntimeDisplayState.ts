@@ -1,4 +1,5 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { SessionLifecycleStateReasonSchema } from '@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1';
 import { deriveTranscriptInteractionFromSession } from '@/utils/sessions/deriveTranscriptInteraction';
 import { getInactiveSessionUiState } from '@/components/sessions/model/inactiveSessionUi';
 import { getSessionLocalControlState } from '@/sync/domains/session/control/sessionLocalControl';
@@ -48,7 +49,8 @@ function buildCacheKey(input: Input): string {
         input.session.access ?? null,
         input.session.active ? 1 : 0,
         input.session.archivedAt != null ? 1 : 0,
-        input.session.lifecycleStateReason ?? input.session.metadata?.lifecycleStateReason ?? null,
+        input.session.lifecycleStateReason ?? null,
+        input.session.metadata?.lifecycleStateReason ?? null,
         input.session.presence ?? '',
         input.session.agentState?.controlledByUser === true ? 1 : 0,
         input.session.agentState?.localControl ?? null,
@@ -76,8 +78,10 @@ export function resolveSessionViewRuntimeDisplayState(input: Input): SessionView
         active: input.session.active,
         presence: input.session.presence,
     });
+    const legacyReason = input.session.metadata?.lifecycleStateReason;
     const inactiveUi = getInactiveSessionUiState({
-        lifecycleStateReason: input.session.lifecycleStateReason ?? input.session.metadata?.lifecycleStateReason,
+        lifecycleStateReason: input.session.lifecycleStateReason
+            ?? (legacyReason === undefined ? undefined : SessionLifecycleStateReasonSchema.safeParse(legacyReason).data),
         isSessionActive: input.isSessionActive,
         isResumable: input.isResumable,
         isMachineOnline: input.machineReachability === 'unknown' ? null : input.isMachineReachable,

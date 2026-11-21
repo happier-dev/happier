@@ -64,6 +64,17 @@ describe('resolveSessionViewRuntimeDisplayState not-resumable notice', () => {
             .toEqual(expect.objectContaining({ title: 'Machine deleted' }));
     });
 
+    it('reads the deletion reason only from the Home lifecycle projection', () => {
+        const session = createSessionFixture({ active: false,
+            metadata: { path: '/repo', host: 'host', lifecycleState: 'stopped', lifecycleStateReason: 'machine_deleted' },
+        });
+        expect(resolveNotice({ session })).toEqual(expect.objectContaining({
+            title: t('session.inactiveNotResumableNoticeTitle'),
+        }));
+        expect(resolveNotice({ session: { ...session, metadata: null, lifecycleStateReason: 'machine_deleted' } }))
+            .toEqual(expect.objectContaining({ title: t('session.machineDeleted') }));
+    });
+
     it('yields to the external control row whenever that row speaks the way forward', () => {
         expect(importingFooter).not.toBeNull();
         expect(resolveNotice({ externalControlFooter: importingFooter })).toBeNull();
