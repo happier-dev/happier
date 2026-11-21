@@ -2,13 +2,13 @@ import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { Server as SocketIoServer } from 'socket.io';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import axios from 'axios';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ApprovalRequestSchema, accountSettingsParse, decodePlainArtifactStoredContent } from '@happier-dev/protocol';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { createDaemonExternalActionTargetResolver } from './externalActions/daemonExternalActionTargetResolver';
 import { createDaemonControlApp } from './controlServer';
+import { requestDaemonSignedRootActionExecution } from './controlClient';
 import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
@@ -20,8 +20,8 @@ vi.mock('@/configuration', async importOriginal => {
 
 afterEach(() => vi.unstubAllEnvs());
 
-it('returns a deferred live-result approval from the daemon root endpoint', async () => {
-    const actionId = 'connectedServices.authentication.beginConnect';
+it('returns a terminal approval receipt without prompting the CLI through live progress', async () => {
+    const actionId = 'connectedServices.accounts.credentials.save';
     let storedApproval: unknown;
     let storedArtifact: Readonly<Record<string, unknown>> | undefined;
     const upstream = createServer(async (request, response) => {
@@ -71,8 +71,8 @@ it('returns a deferred live-result approval from the daemon root endpoint', asyn
       token: credentials.token, credentials, serverId: 'server-local', serverIdentityId: 'srv_home', serverHttpBaseUrl,
       sessionId: '', mode: 'plain', ctx: null,
       actionsSettingsProvider: createActionSettingsProvider({
-        scopeKey: 'root-deferred-live-result', accountSettings: accountSettingsParse({ actionsSettingsV1: { v: 1,
-          actions: { 'connectedServices.authentication.beginConnect': { approvalRequiredSurfaces: ['cli'] } },
+        scopeKey: 'root-terminal-approval-receipt', accountSettings: accountSettingsParse({ actionsSettingsV1: { v: 1,
+          actions: { [actionId]: { approvalRequiredSurfaces: ['cli'] } },
         } }),
       }),
     });
@@ -100,19 +100,26 @@ it('returns a deferred live-result approval from the daemon root endpoint', asyn
     const rootAddress = app.server.address();
     if (!rootAddress || typeof rootAddress === 'string') throw new Error('Missing daemon address');
     const controller = new AbortController();
-    const response = runWithServerHttpBaseUrl(serverHttpBaseUrl, async () => {
-      const reply = await axios.post(`http://127.0.0.1:${rootAddress.port}/actions/root/execute`, { actionId, actionRequestId: 'pool-approval-request', input: { machineId: 'machine-local', service: { pluginId: 'happier.channel.email', localId: 'email-imap-smtp' }, modeId: 'password' } }, { signal: controller.signal, headers: { 'x-happier-daemon-token': 'private-control-token' } });
-      return { json: () => reply.data };
-    });
+    const onApprovalRequested = vi.fn();
+    const response = runWithServerHttpBaseUrl(serverHttpBaseUrl, () => requestDaemonSignedRootActionExecution({
+      actionId, actionRequestId: 'credential-approval-request',
+      input: { account: { service: { pluginId: 'happier.agent.claude', localId: 'anthropic' }, accountId: 'work' },
+        modeId: 'api-key', fields: { token: 'private-fixture-token' } },
+    }, {
+      signal: controller.signal, target: { pid: process.pid, httpPort: rootAddress.port, controlToken: 'private-control-token' },
+      onApprovalRequested,
+    },
+    ));
     let artifactId: string | undefined;
     try {
       artifactId = await Promise.race([created, response.then((reply) => {
-        throw new Error(`Root request ended before approval persistence: ${JSON.stringify(reply.json())}`);
+        throw new Error(`Root request ended before approval persistence: ${JSON.stringify(reply)}`);
       })]);
-      expect((await response).json()).toEqual({ ok: true, result: { kind: 'approval_request_created', artifactId, actionId } });
+      expect(await response).toEqual({ ok: true, result: { kind: 'approval_request_created', artifactId, actionId } });
       expect(storedApproval).toMatchObject({ status: 'open', approval: {
-        flow: 'deferred', result: 'required' },
+        flow: 'blocking', result: 'required' },
         actionId, requestedSurface: 'cli' });
+      expect(onApprovalRequested).not.toHaveBeenCalled();
     } finally {
       if (artifactId) coordinator.cancelApproval(artifactId, 'test cleanup');
       subscription.dispose();

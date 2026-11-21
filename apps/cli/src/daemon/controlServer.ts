@@ -1316,7 +1316,8 @@ export function createDaemonControlApp({
         reply.raw.write(`${JSON.stringify(result)}\n`);
       };
       const settle = (result: ActionExecuteResult) => {
-        if (!streamsApproval) return result;
+        // Keep a terminal approval receipt in the JSON response unless progress already opened the stream.
+        if (!reply.sent) return result;
         writeFrame(result);
         reply.raw.end();
         return reply;
