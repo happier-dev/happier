@@ -22,6 +22,13 @@ const { renderSettingsView } = await import('@/dev/testkit/harness/settingsViewH
 const { PluginSettingsHomeScreen } = await import('./PluginSettingsHomeScreen');
 const { PluginListingScreen } = await import('./listing/PluginListingScreen');
 const { PluginAddModal } = await import('./add/openPluginAddModal');
+const { CorePluginUiPresentationScope } = await import('@/components/plugins/surfaces/CorePluginUiPresentationScope');
+function renderAddDialog(params: React.ComponentProps<typeof PluginAddModal>['params']) {
+    return renderSettingsView(<CorePluginUiPresentationScope>
+        <PluginAddModal onClose={() => {}} params={params} />
+    </CorePluginUiPresentationScope>);
+}
+
 const { CapabilityAddModalBody } = await import('@/components/capabilities/add/CapabilityAddModal');
 const actionFrontDoor = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
 const { usePluginCatalog } = await import('./model/usePluginCatalog');
@@ -131,9 +138,9 @@ it('shares one Plugin Add source acquisition across selector, catalog and select
     const accountCatalog = await renderHook(() => usePromptLibraryCatalogValue('registry-sources'));
     await waitForHomeGovernance(() => expect(accountCatalog.getCurrent().status).toBe('ready'));
     const reads = observeRegistryReads(true);
-    const screen = await renderSettingsView(<PluginAddModal onClose={() => {}} params={{ initialSelection: {
+    const screen = await renderAddDialog({ initialSelection: {
         sourceId, itemId: 'sample.plugin', version: '1.2.3',
-    } }} />);
+    } });
     const config = () => screen.findAll(node => node.type === CapabilityAddModalBody)[0]!.props.config;
     await waitForHomeGovernance(() => expect(config().catalog.items).toHaveLength(1));
     expect(reads.filter(read => read.action === 'registries.sources.list')).toHaveLength(1);
@@ -204,10 +211,10 @@ it('opens a cold npm native pointer without any list-for-location and refuses mi
 it.each(['available', 'unavailable pin', 'withdrawn source'] as const)('opens an exact Add seed without browsing or substituting a different item: %s', async state => {
     const { sourceId } = await setup(`add-seed-${state.replaceAll(' ', '-')}`);
     const reads = observeRegistryReads();
-    const screen = await renderSettingsView(<PluginAddModal onClose={() => {}} params={{ initialSelection: {
+    const screen = await renderAddDialog({ initialSelection: {
         sourceId: state === 'withdrawn source' ? 'removed-source' : sourceId,
         itemId: 'sample.plugin', version: state === 'unavailable pin' ? '9.9.9' : '1.2.3',
-    } }} />);
+    } });
     const catalog = () => screen.findAll(node => node.type === CapabilityAddModalBody)[0]?.props.config.catalog;
     await waitForHomeGovernance(() => expect(catalog()?.loading).toBe(false));
     expect(catalog().items).toHaveLength(state === 'available' ? 1 : 0);
@@ -228,9 +235,9 @@ it.each([false, true])('withdraws Plugin Add catalog reads during registry admin
     const reads = observeRegistryReads();
     const { useRegistrySourceMutations } = await import('@/registries/useRegistrySourceMutations');
     const mutation = await renderHook(() => useRegistrySourceMutations());
-    const screen = await renderSettingsView(<PluginAddModal onClose={() => {}} params={seeded ? { initialSelection: {
+    const screen = await renderAddDialog(seeded ? { initialSelection: {
         sourceId, itemId: 'sample.plugin', version: '1.2.3',
-    } } : {}} />);
+    } } : {});
     const config = () => screen.findAll(node => node.type === CapabilityAddModalBody)[0]!.props.config;
     await waitForHomeGovernance(() => expect(config().catalog.items).toHaveLength(1));
     const select = screen.findAll(node => node.props.filter?.testID === 'plugins.add.registries.select')[0]!;
@@ -506,4 +513,37 @@ it('announces the real pending catalog once and renders its source failure outsi
     await act(async () => { release(); });
     await waitForHomeGovernance(() => expect(screen.findByTestId('settings.plugins.marketplace.discover.sources')).not.toBeNull());
     expect(screen.getTextContent()).not.toContain('HTTP 503');
+});
+
+it('previews a Git link before Review and installs only from Review (Add from GitHub)', async () => {
+    await setupCatalog('git-preview');
+    const preview = {
+        ok: true as const, source: { locator: 'https://github.com/acme/tools' }, resolvedCommit: 'a'.repeat(40),
+        release: { kind: 'stableRelease' as const, tag: 'v1.4.0' },
+        summary: { sourceId: 'git-preview', kind: 'plugin' as const, itemId: 'acme.tools', title: 'Acme tools',
+            vendorPlugin: { contentCounts: { skills: 8, mcpServers: 1 }, notImported: { commands: 3 } } },
+    };
+    // The host's preview and install capabilities are the dialog's contract; their Actions are covered by their owners.
+    const onPreviewGit = vi.fn(async () => ({ kind: 'preview' as const, preview }));
+    const onInstallGit = vi.fn(() => true);
+    const screen = await renderAddDialog({ onInstallGit, onPreviewGit });
+    const gitTab = screen.findAll(node => typeof node.props.testID === 'string' && node.props.testID.endsWith(':mode:git'))[0];
+    await screen.pressByTestIdAsync(gitTab!.props.testID);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('plugins.add.git.url')).not.toBeNull());
+    await act(async () => { screen.changeTextByTestId('plugins.add.git.url', 'https://github.com/acme/tools'); });
+    expect(screen.findByTestId('plugins.add.git.review')?.props.disabled).toBe(true);
+    await screen.pressByTestIdAsync('plugins.add.git.preview');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('plugins.add.git.previewSummary')).not.toBeNull());
+    expect(onPreviewGit).toHaveBeenCalledExactlyOnceWith({ locator: 'https://github.com/acme/tools' });
+    expect(onInstallGit).not.toHaveBeenCalled();
+    const text = screen.getTextContent();
+    expect(text).toContain('Acme tools');
+    // Where it resolves: the repository, then its release and the short commit it would install.
+    const header = screen.findAll(node => node.props.testID === 'plugins.add.git.previewHeader' && node.props.facts !== undefined)[0];
+    expect(header?.props.facts).toMatchObject({ source: { label: 'https://github.com/acme/tools' } });
+    expect(header?.props.facts.extra).toHaveLength(2);
+    expect(screen.findByTestId('plugins.add.git.notImported')).not.toBeNull();
+    await screen.pressByTestIdAsync('plugins.add.git.review');
+    expect(onInstallGit).toHaveBeenCalledExactlyOnceWith({ locator: 'https://github.com/acme/tools' });
+    await screen.unmount();
 });

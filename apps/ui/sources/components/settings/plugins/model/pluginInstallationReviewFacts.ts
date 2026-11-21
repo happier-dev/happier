@@ -6,7 +6,7 @@ import { presentMachineAuthorityV1, type MachineAuthorityPresentationV1 } from '
 import type { PluginContentNotImportedV1 } from '@happier-dev/protocol/plugins/source-spec';
 import { t } from '@/text';
 
-export function describePluginContentOmissions(omissions: PluginContentNotImportedV1 | undefined): string[] {
+export function describePluginContentOmissions(omissions: Partial<PluginContentNotImportedV1> | undefined): string[] {
   if (!omissions) return [];
   return [
     ...(omissions.hooks ? [t('settingsPlugins.gitInstall.omittedHooks', { count: omissions.hooks })] : []),

@@ -1080,8 +1080,12 @@ export function DiscoverStatusSummary(props: Readonly<{
               * qualifier. It is the pane's only live region; the rows below it
               * stay outside so each one can be traversed on its own.
               */}
-            {noMatch || waitingForQuery || sourceFailureWithoutResults || (message === null && qualifiers.length === 0)
-                || (pageNoticeActive && props.entryCount === 0 && !props.loading) ? null : (<View
+            {noMatch || waitingForQuery || sourceFailureWithoutResults
+                || (pageNoticeActive && props.entryCount === 0 && !props.loading) ? null
+                // Healthy results say nothing (Store fix 6), but the live region stays mounted, empty and unseen, so
+                // the next status is announced.
+                : message === null && qualifiers.length === 0 ? <View accessibilityLiveRegion="polite" />
+                : (<View
                 style={[styles.statusLine, maxWidthStyle]}
                 accessible
                 accessibilityRole={props.error === null ? 'text' : 'alert'}

@@ -32,6 +32,8 @@ import { usePluginCatalog } from './usePluginCatalog';
 import { usePluginInstallReviewSet } from './usePluginInstallReviewSet';
 import { buildPluginCatalogInstallInput } from './buildPluginCatalogInstallInput';
 import type { PluginGitSourceV1 } from '@happier-dev/protocol/plugins/source-spec';
+import { PluginGitPreviewActionOutputSchema } from '@happier-dev/protocol/actions/specs/pluginDevelopment';
+import type { z } from 'zod/mini';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import type { PluginListingRouteParams } from './pluginsSurfaceRoutes';
 import { type PluginProjectionV2} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -249,6 +251,8 @@ export type PluginSettingsScreenState = Readonly<{
     resolveDevelopmentEditTarget: (pluginId: string) => Promise<DevelopmentEditTargetSettlement>;
     runDevelopmentSourceInstall: (sourceRootPath: string) => void;
     runGitSourceInstall: (source: PluginGitSourceV1) => boolean;
+    /** What a Git link resolves to on the selected Machine (`plugins.git.preview`), before Review; nothing installs. */
+    previewGitSource: (source: PluginGitSourceV1) => Promise<PluginGitSourcePreviewResult | null>;
     runDevelopmentAction: (action: 'test' | 'pack' | 'unregister', sourceRootPath: string) => void;
     runInstalledPluginAction: (action: InstalledPluginActionId, pluginId: string, scope?: 'account' | 'machine') => void;
     setInstalledPluginUpdatePolicy: (pluginId: string, policy: PluginUpdatePolicyV1) => void;
@@ -262,6 +266,11 @@ export type PluginSettingsScreenState = Readonly<{
     openDiscoverListing: (listing: PluginListingRouteParams) => void;
     loadMoreDiscover: () => void;
 }>;
+
+/** A Git link's preview, or why it could not be read (the Action's own error words). */
+export type PluginGitSourcePreviewResult =
+    | Readonly<{ kind: 'preview'; preview: z.infer<typeof PluginGitPreviewActionOutputSchema> }>
+    | Readonly<{ kind: 'failed'; message: string }>;
 
 export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolean; management?: boolean; initialView?: PluginSettingsViewId; listing?: PluginListingRouteParams; initialCatalogSourceId?: string }> = {}): PluginSettingsScreenState {
     const layoutPresented = useLayoutPresentationActive();
@@ -1027,6 +1036,17 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         return true;
     }, [captureMutationPublication, executionTarget, invokeDevelopmentAction, isPluginActionInFlight, markPluginActionFinished,
         markPluginActionStarted, refreshPluginTruth, resolveCurrentExecutionTarget, selectedMachineScopeKey]);
+    const previewGitSource = React.useCallback(async (source: PluginGitSourceV1): Promise<PluginGitSourcePreviewResult | null> => {
+        const target = resolveCurrentExecutionTarget(executionTarget);
+        const isAuthorityCurrent = captureMutationPublication();
+        if (!target || !isAuthorityCurrent()) return null;
+        const response = await installedExecution.execute('plugins.git.preview', { machineId: target.machine.id, source },
+            { executionRunTargetMachineId: target.machine.id });
+        if (!isAuthorityCurrent()) return null;
+        if (!response.ok) return { kind: 'failed', message: response.error };
+        const parsed = PluginGitPreviewActionOutputSchema.safeParse(response.result);
+        return parsed.success ? { kind: 'preview', preview: parsed.data } : { kind: 'failed', message: t('common.unavailable') };
+    }, [captureMutationPublication, executionTarget, installedExecution.execute, resolveCurrentExecutionTarget]);
     return {
         activeView,
         administrationTargetSelection,
@@ -1070,6 +1090,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         resolveDevelopmentEditTarget,
         runDevelopmentSourceInstall,
         runGitSourceInstall,
+        previewGitSource,
         runDevelopmentAction,
         runInstalledPluginAction,
         setInstalledPluginUpdatePolicy,

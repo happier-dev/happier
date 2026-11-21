@@ -293,7 +293,7 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
                 {/* Adding installs on the chosen Machine: until one is chosen the chip is the page's one ask. */}
                 {noTarget ? null : <RoundButton testID="settings.plugins.add" title={t('common.add')}
                     leading={<AddGlyph />}
-                    onPress={() => openPluginAddModal({ host, onInstallGit: state.runGitSourceInstall })} />}
+                    onPress={() => openPluginAddModal({ host, onInstallGit: state.runGitSourceInstall, onPreviewGit: state.previewGitSource })} />}
                 </>
             )}
         />
@@ -454,7 +454,7 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
                         serverId={state.executionServerId}
                         machineCoverageByPluginId={machineCoverageByPluginId}
                         onClearSearch={clearInstalledFilters}
-                        onDiscover={() => settingsHost ? openPluginAddModal({ host, onInstallGit: state.runGitSourceInstall }) : state.setActiveView('discover')}
+                        onDiscover={() => settingsHost ? openPluginAddModal({ host, onInstallGit: state.runGitSourceInstall, onPreviewGit: state.previewGitSource }) : state.setActiveView('discover')}
                         onRetry={state.refreshPluginTruth}
                         canRunActions={state.canRefreshInstalledPlugins}
                         isPluginActionInFlight={state.isPluginActionInFlight}
