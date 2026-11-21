@@ -5,6 +5,7 @@ import { readExecutionRunWorkflowObservationSink, type ExecutionRunWorkflowObser
 import { deriveExecutionRunIdFromActionRequestId } from '@/agent/runtime/bridges/executionRun/startExecutionRun';
 import { ProjectSessionDefaultsContextSelectionV1Schema } from '@happier-dev/protocol/projects/projectSessionDefaultsSelectionV1';
 import { ExecutionRunStartActionRequestSchema } from '@happier-dev/protocol/actions/specs/executionRuns';
+import * as permissionPrivilege from '@happier-dev/protocol/actions/permissionPrivilege';
 
 import {
   projectWorkflowRetainedRuntimeSelectionV1,
@@ -752,9 +753,14 @@ describe('workflow detached Execution Run step executor', () => {
       invocation: { ...baseParams().invocation, execution: { kind: 'detached_run', runId: 'exact-native', localInputId: 'exact-input' } },
       execution: { ...baseParams().execution, conversation: { kind: 'fresh' }, terminal: { mode: 'integrated' } },
     });
-    // Coordinator preparation is also on the rejoin path, before execution.
-    await expect(prepareWorkflowDetachedExecutionRunStep(deps, params)).resolves.toMatchObject({ kind: 'workflow_detached_execution_run' });
-    await expect(execute(params)).resolves.toMatchObject({ kind: 'completed', result: 'original-result' });
+    const evaluatePermission = vi.spyOn(permissionPrivilege, 'assertNonEscalatingPermissionMode');
+    try {
+      const preparedStep = await prepareWorkflowDetachedExecutionRunStep(deps, params);
+      await expect(execute({ ...params, preparedStep })).resolves.toMatchObject({ kind: 'completed', result: 'original-result' });
+      expect(evaluatePermission).toHaveBeenCalledTimes(0);
+    } finally {
+      evaluatePermission.mockRestore();
+    }
     expect(actions).toEqual(['execution.run.get']);
   });
 
@@ -793,7 +799,7 @@ describe('workflow detached Execution Run step executor', () => {
     expect(actionExecutor.execute).not.toHaveBeenCalled();
   });
 
-  it('uses the contextual default rather than widening an omitted step to the Run ceiling', async () => {
+  it.each(['prepared', 'unprepared'] as const)('evaluates the Workflow permission ceiling once for a fresh %s step', async (path) => {
     let localInputId = '';
     const actionExecutor = {
       execute: vi.fn(async (actionId: string, value: unknown) => {
@@ -808,18 +814,28 @@ describe('workflow detached Execution Run step executor', () => {
         throw new Error(`unexpected action ${actionId}`);
       }),
     };
-    const execute = createWorkflowDetachedExecutionRunStepExecutor({
+    const deps = {
       actionExecutor,
       workDepth: 0, buildActionContext,
       resolveSharedRunConversation: async () => null,
       resolveProducerConversation: async () => null,
-    });
-
-    await expect(execute(baseParams({
+    } satisfies Parameters<typeof createWorkflowDetachedExecutionRunStepExecutor>[0];
+    const execute = createWorkflowDetachedExecutionRunStepExecutor(deps);
+    const params = baseParams({
       execution: { ...baseParams().execution, permissionMode: undefined },
       authorization: { admittedPermissionCeiling: 'safe-yolo', principal: { kind: 'host' } },
-    }) as never)).resolves.toMatchObject({ kind: 'completed' });
-    expect(actionExecutor.execute.mock.calls[0]?.[1]).toMatchObject({ permissionMode: 'default' });
+    });
+    const evaluatePermission = vi.spyOn(permissionPrivilege, 'assertNonEscalatingPermissionMode');
+    try {
+      const preparedStep = path === 'prepared'
+        ? await prepareWorkflowDetachedExecutionRunStep(deps, params)
+        : undefined;
+      await expect(execute({ ...params, preparedStep })).resolves.toMatchObject({ kind: 'completed' });
+      expect(actionExecutor.execute.mock.calls[0]?.[1]).toMatchObject({ permissionMode: 'default' });
+      expect(evaluatePermission).toHaveBeenCalledTimes(1);
+    } finally {
+      evaluatePermission.mockRestore();
+    }
   });
 
   it.each(['shared_run', 'fresh'] as const)('starts a resumable %s native Agent Run with exact selections and commits correspondence before observation', async (conversation) => {

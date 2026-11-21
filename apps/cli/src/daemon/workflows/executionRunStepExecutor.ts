@@ -456,16 +456,6 @@ function workflowExecutionRunStartContext(
   };
 }
 
-function resolveWorkflowExecutionPermissionMode(
-  params: Pick<Parameters<WorkflowStepExecutor>[0], 'execution' | 'authorization'>,
-): string | null {
-  const decision = assertNonEscalatingPermissionMode({
-    requestedMode: params.execution.permissionMode ?? 'default',
-    callerMode: params.authorization.admittedPermissionCeiling,
-  });
-  return decision.ok ? decision.normalizedMode : null;
-}
-
 type DetachedRunPreparationParams = Omit<Parameters<WorkflowStepPreparer>[0], 'producerBinding'>
   & Pick<Parameters<WorkflowStepExecutor>[0], 'producerBinding'>;
 
@@ -556,13 +546,16 @@ export async function prepareWorkflowDetachedExecutionRunStep(
     };
   }
   assertDetachedRunAuthoringSupported(params);
-  const permissionMode = resolveWorkflowExecutionPermissionMode(params);
-  if (permissionMode === null) {
+  const permission = assertNonEscalatingPermissionMode({
+    requestedMode: params.execution.permissionMode ?? 'default',
+    callerMode: params.authorization.admittedPermissionCeiling,
+  });
+  if (!permission.ok) {
     throw new WorkflowExecutionRunCompositionError('workflow_permission_escalation_denied');
   }
   const runtimeSelection = projectWorkflowRetainedRuntimeSelectionV1({
     ...params.execution,
-    permissionMode,
+    permissionMode: permission.normalizedMode,
   });
   return {
     kind: 'workflow_detached_execution_run',
@@ -659,10 +652,6 @@ export function createWorkflowDetachedExecutionRunStepExecutor(
         }), deadline,
       });
     }
-    const permissionMode = resolveWorkflowExecutionPermissionMode(params);
-    if (permissionMode === null) {
-      return { kind: 'failed', code: 'workflow_permission_escalation_denied' };
-    }
     let prepared: PreparedWorkflowDetachedExecutionRun;
     try {
       prepared = isPreparedWorkflowDetachedExecutionRun(params.preparedStep)
@@ -677,8 +666,11 @@ export function createWorkflowDetachedExecutionRunStepExecutor(
       }
       throw error;
     }
-    const runtimeSelection = prepared.runtimeSelection;
-    const retainedConversation = prepared.retainedConversation;
+    const { runtimeSelection, retainedConversation } = prepared;
+    // Fresh preparation carries the normalized mode. Legacy retained selections
+    // may omit it and are only usable on the exact-input observation path above.
+    const permissionMode = runtimeSelection.permissionMode;
+    if (permissionMode == null) return { kind: 'needs_attention', code: 'continuation_unavailable' };
     try {
       // The coordinator holds the owner gate before preparation. Workspace
       // selection and input dispatch must consume that same exact identity.
