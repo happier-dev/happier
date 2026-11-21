@@ -56,8 +56,11 @@ function classifyUrl(url: string, context: string): { kind: 'auth' | 'generic'; 
 }
 
 function retainIncompleteTail(input: string): string {
-  const match = input.match(/[^\s<>"'`]*$/);
-  return match?.[0] ?? '';
+  const separator = /[\s<>"'`]/;
+  // Only the unfinished token can carry into the next chunk.
+  let start = input.length;
+  while (start > 0 && !separator.test(input[start - 1]!)) start--;
+  return input.slice(start);
 }
 
 export type TerminalUrlDetector = Readonly<{

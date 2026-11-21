@@ -28,6 +28,24 @@ describe('TerminalUrlDetector', () => {
     ]);
   });
 
+  it('keeps scanning cost bounded for ordinary terminal output before a split URL', () => {
+    const detector = createTerminalUrlDetector({ bufferLimit: 32_768 });
+    const lines = (`${'x'.repeat(63)}\r\n`).repeat(4_033);
+    const started = process.cpuUsage();
+    for (let stream = 0; stream < 16; stream++) {
+      for (let offset = 0; offset < lines.length; offset += 8192) {
+        const detected = detector.ingest(lines.slice(offset, offset + 8192));
+        if (detected.length > 0) throw new Error('Unexpected URL in plain terminal output');
+      }
+    }
+    const cpu = process.cpuUsage(started);
+    // Allow substantial headroom and exclude time spent waiting for CPU on shared test hosts.
+    expect(cpu.user + cpu.system).toBeLessThan(120_000);
+
+    expect(detector.ingest('Open https://exam')).toEqual([]);
+    expect(detector.ingest('ple.com\r\n')).toEqual([{ url: 'https://example.com/', kind: 'generic' }]);
+  });
+
   it('flushes a URL that ends at the stream boundary', () => {
     const detector = createTerminalUrlDetector({ bufferLimit: 2048 });
     expect(detector.ingest('Open https://example.com/final')).toEqual([]);
