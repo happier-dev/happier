@@ -1,8 +1,10 @@
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import * as React from 'react';
-import { ScrollView, StyleSheet as RNStyleSheet, View } from 'react-native';
+import { Platform, ScrollView, StyleSheet as RNStyleSheet, View } from 'react-native';
 
 import { PopoverBoundaryProvider } from '@/components/ui/popover/PopoverBoundary';
+import { resolveVerticalScrollEdgeMaskStyle } from '@/components/ui/scroll/resolveScrollEdgeMaskStyle';
+import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 
@@ -95,6 +97,8 @@ import { readWorkflowEngineChoiceV1 } from '@happier-dev/protocol/workflows/work
  */
 
 type OptionsPage = 'main' | 'result' | 'condition';
+
+const BOTTOM_EDGE = { bottom: true } as const;
 
 const styles = StyleSheet.create((theme) => ({
     /** The host bounds the surface's height; the header stays put and only the page scrolls. */
@@ -221,6 +225,10 @@ export function WorkflowSettingsFrame(props: Readonly<{
     // sets their height, so a short page (When should this run?) never cramps its value list to nothing
     // (FIN-DESIGN-ACCEPT-2 F7).
     const frameRef = React.useRef<View>(null);
+    // The panel often ends at the window's edge, so its page fades out there while more lies below
+    // (FIN-DESIGN-ACCEPT-3 F3), with the floating surface's own edge mask (it reads on glass).
+    const fades = useScrollEdgeFades({ enabledEdges: BOTTOM_EDGE });
+    const edgeMask = Platform.OS === 'web' ? resolveVerticalScrollEdgeMaskStyle(fades.visibility) : null;
     return (
         <PopoverBoundaryProvider boundaryRef={frameRef} axis="horizontal">
         <View ref={frameRef} collapsable={false} testID={`${testIDPrefix}-options`} style={styles.root}>
@@ -241,11 +249,14 @@ export function WorkflowSettingsFrame(props: Readonly<{
             <ScrollView
                 key={props.pageKey}
                 testID={`${testIDPrefix}-options-page`}
-                style={styles.page}
+                style={[styles.page, edgeMask]}
                 keyboardShouldPersistTaps="handled"
                 // A bounded panel (an anchored popover held inside the editor pane) shows that more lies below.
                 scrollEventThrottle={64}
-                onScroll={(event) => setScrolled(event.nativeEvent.contentOffset.y > 0)}
+                onLayout={fades.onViewportLayout}
+                onContentSizeChange={fades.onContentSizeChange}
+                onScroll={(event) => { setScrolled(event.nativeEvent.contentOffset.y > 0); fades.onScroll(event); }}
+                onMomentumScrollEnd={fades.onMomentumScrollEnd}
             >
                 {props.children}
             </ScrollView>

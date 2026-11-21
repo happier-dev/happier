@@ -34,7 +34,7 @@ import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import type { WorkflowProblemPresentation } from '../presentation/workflowProblemPresentation';
 import { useWorkflowCardModal } from './useWorkflowCardModal';
-import { readWorkflowResultRows } from '../presentation/workflowResultReading';
+import { readWorkflowResultRows, readWorkflowValueText } from '../presentation/workflowResultReading';
 import { describeWorkflowInvocationLifecycle } from '../presentation/workflowLifecyclePresentation';
 
 import type { WorkflowReviewDraft, WorkflowReviewReading } from '@/sync/store/domains/workflowRuns';
@@ -193,7 +193,8 @@ export function WorkflowReviewValue({ value, contract, blockKind, testIDPrefix: 
     return rows ? <VirtualizedList data={rows} keyExtractor={row => row.key} {...scrollProps}
         renderItem={({ item: row }) => <Item key={row.key} title={row.label} showChevron={false} accessoryLayout="stacked"
             rightElement={<Text selectable variant="reading" style={styles.primary} testID={`${prefix}-value-${row.key}`}>{row.text}</Text>} />} />
-        : reading(<SectionContentRow><Text selectable variant="reading" style={styles.primary} testID={`${prefix}-value`}>{serializeWorkflowReviewValue(value, contract)}</Text></SectionContentRow>);
+        // Without rows (a scalar, an empty list or page) it reads as its one line: an empty list says "None".
+        : reading(<SectionContentRow><Text selectable variant="reading" style={styles.primary} testID={`${prefix}-value`}>{readWorkflowValueText(value)}</Text></SectionContentRow>);
 }
 
 function WorkflowReviewFullValue(props: ReviewValueProps): React.ReactElement {

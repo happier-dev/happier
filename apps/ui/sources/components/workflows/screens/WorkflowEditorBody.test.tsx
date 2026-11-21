@@ -30,7 +30,7 @@ import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { AgentInput } from '@/components/sessions/agentInput';
 import { createDeferred, invokeTestInstanceHandler, withPopoverWebGlobals } from '@/dev/testkit';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
-import { reportPopoverContentLayout } from '@/dev/testkit/harness/popoverHarness';
+import { flattenTestStyle, reportPopoverContentLayout } from '@/dev/testkit/harness/popoverHarness';
 import { KeyboardShortcutProvider, useKeyboardCommand, type KeyboardCommandId } from '@/keyboard';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { getVitestNodeBuiltin } from '@/dev/vitestNodeBuiltins';
@@ -1547,6 +1547,21 @@ describe('workflow editor body', () => {
         expect(idsIn(page!)).not.toContain('workflow-editor-inspector-done');
         expect(idsIn(page!)).toContain('workflow-editor-inspector-review');
         expect(screen.findByTestId('workflow-editor-inspector-done')).not.toBeNull();
+    });
+
+    it('shows that Step options continue below the panel edge, and stops once the end is in view', async () => {
+        const harness = await loadHarness();
+        const screen = await renderBody(harness, { selectedBlockId: 'analyze' });
+        await screen.pressByTestIdAsync('workflow-editor-step-analyze-customize');
+        const page = () => screen.findByTestId('workflow-editor-inspector-options-page')!;
+        const masked = () => Boolean(flattenTestStyle(page().props.style).maskImage);
+        // FIN-DESIGN-ACCEPT-3 F3: the panel ended at the window edge with nothing saying more lies below.
+        await act(async () => { page().props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 420, height: 400 } } }); });
+        await act(async () => { page().props.onContentSizeChange(420, 1200); });
+        expect(masked()).toBe(true);
+        await act(async () => { page().props.onScroll({ nativeEvent: {
+            contentOffset: { x: 0, y: 800 }, contentSize: { width: 420, height: 1200 }, layoutMeasurement: { width: 420, height: 400 } } }); });
+        expect(masked()).toBe(false);
     });
 
     it('opens the sessions\' checkout picker at step scope from the card\'s Workspace chip, not Step options', async () => {

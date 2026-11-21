@@ -50,8 +50,23 @@ function readContainerEntry(
   return null;
 }
 
+/** The keys a paged list carries beside its items: where the next page starts, never something to show. */
+const PAGE_CURSOR_KEYS: ReadonlySet<string> = new Set(['cursor', 'nextCursor']);
+
+/**
+ * A paged list (`{ items, cursor }`, as list Actions answer) reads as its items: an empty page reads as an
+ * empty list, and the cursor is pagination plumbing. Anything else reads as itself.
+ */
+function readListPage(value: JsonValue): JsonValue {
+  if (!isObject(value) || !Array.isArray(value.items)) return value;
+  return Object.keys(value).every((key) => key === 'items' || PAGE_CURSOR_KEYS.has(key))
+    ? value.items
+    : value;
+}
+
 /** A value as one line of words: names for keys, "Yes"/"No", items joined; never a serialization. */
-export function readWorkflowValueText(value: JsonValue): string {
+export function readWorkflowValueText(input: JsonValue): string {
+  const value = readListPage(input);
   if (typeof value === 'string') return value;
   if (typeof value === 'number') return String(value);
   if (typeof value === 'boolean') return t(value ? 'common.yes' : 'common.no');
@@ -105,10 +120,11 @@ function readReviewResultRows(review: ReviewListItemV1): readonly WorkflowResult
  * from the contract's titles first; the raw value stays available behind Copy.
  */
 export function readWorkflowResultRows(
-  value: JsonValue,
+  input: JsonValue,
   fieldTitles?: Readonly<Record<string, string | undefined>>,
   blockKind?: WorkflowProgressEnvelopeV1['blockKind'],
 ): readonly WorkflowResultReadingRow[] | null {
+  const value = readListPage(input);
   if (Array.isArray(value)) {
     if (value.length === 0) return null;
     return value.map((item, position) => {

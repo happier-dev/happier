@@ -7,6 +7,7 @@ import type { WorkflowProgressEnvelopeV1} from '@happier-dev/protocol/workflows/
 import type { WorkflowResultContract } from '@happier-dev/protocol/workflows/workflowV1';
 import { installBrowserClipboardBoundary, renderScreen, standardCleanup } from '@/dev/testkit';
 import { ModalProvider } from '@/modal';
+import { t } from '@/text';
 import { WorkflowReviewCard, WorkflowReviewValue, type WorkflowReviewCardProps, type WorkflowReviewDraft } from './WorkflowReviewCard';
 import { VirtualizedList } from '@/components/ui/lists/virtualized';
 
@@ -136,6 +137,16 @@ describe('WorkflowReviewCard', () => {
         expect(read.includes('Release')).toBe(true);
         expect(read.includes('Fixed: 491')).toBe(true);
         expect(read.includes('{')).toBe(false);
+    });
+    it('reads an empty list as None, bare or paged, never as its serialization or its cursor', async () => {
+        for (const value of [[], { items: [], cursor: null }]) {
+            const screen = await renderScreen(<WorkflowReviewValue value={value} contract={undefined}
+                testIDPrefix="result" />);
+            const read = screen.getTextContent();
+            expect(read).toContain(t('workflows.page.inspector.none'));
+            expect(read.includes('[]')).toBe(false);
+            expect(read.toLowerCase().includes('cursor')).toBe(false);
+        }
     });
     it('reads authored input without disclosing provider rendering or resolved context values', async () => {
         const authored = { document: { text: 'Authored objective @source today', displayText: 'Authored objective @source today',

@@ -47,4 +47,16 @@ describe('authored Workflow result JSON', () => {
         const nested = readWorkflowResultRows([{ index: 0, status: 'completed', results: { check: { index: 2, status: 'x', results: { a: 1 } } } }], undefined, 'loop');
         expect(nested?.[0]?.text).toContain('x');
     });
+
+    it('reads an empty list one way whether it arrives bare or as a page, and never shows the page cursor', () => {
+        // FIN-DESIGN-ACCEPT-3 R3: `[]` in one place, "Items None / Cursor None" in another.
+        const none = t('workflows.page.inspector.none');
+        expect(readWorkflowResultRows([])).toBeNull();
+        expect(readWorkflowValueText([])).toBe(none);
+        expect(readWorkflowResultRows({ items: [], cursor: null })).toBeNull();
+        expect(readWorkflowValueText({ items: [], cursor: null })).toBe(none);
+        const page = readWorkflowResultRows({ items: ['First', 'Second'], cursor: 'page-2' });
+        expect(page?.map(row => row.text)).toEqual(['First', 'Second']);
+        expect(page?.map(row => row.label).join(' ')).not.toMatch(/cursor/i);
+    });
 });
