@@ -629,7 +629,11 @@ describe('Session placement on a managed target (driver)', () => {
         const lifetime = new AbortController();
         onTestFinished(() => lifetime.abort());
         const row = ManagedMachineV1Schema.parse({ ...machine, bootstrapInstalled: true });
+        const posts = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { observed: true } });
+        onTestFinished(() => posts.mockRestore());
+        const keys = nacl.sign.keyPair();
         const driver = createManagedMachineAcquisitionDriver({ ...h.input,
+            externalActionMachineRequestPrivateKey: keys.secretKey,
             readTargetCurrent: async (_id, request) => ({ machine: row, admitted: request.requesterAccountId === 'owner' }) });
         const workspace = workspaceAddressFromRefV2(syncWorkspace);
         if (workspace.kind !== 'managed') throw new Error('Expected a managed workspace');
@@ -678,6 +682,11 @@ describe('Session placement on a managed target (driver)', () => {
             watch: { status: 'unavailable', reason: { code: 'managed_power_required' } },
         });
         expect(h.calls.filter(role => role === 'stream')).toHaveLength(3);
+        expect(posts).toHaveBeenCalledWith(
+            expect.stringContaining('/v1/machines/managed/controller/observe-stopped'),
+            expect.objectContaining({ managedId: row.id, homeId: row.homeId, expectedIntentRevision: row.intentRevision }),
+            expect.anything(),
+        );
     });
 
     it('refuses the other requester at Workflow admission before a guest bootstrap or file effect', async () => {

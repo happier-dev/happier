@@ -43,6 +43,7 @@ function captureDirectoryReadDepartures(serverId: string | null | undefined): nu
 export function clearCachedWorkspaceRepositoryDirectoryEntries(input: Readonly<{
     workspaceCacheKey: string;
     directoryPath?: string | null;
+    reason?: 'recovery';
 }>): void {
     const workspacePrefix = `${input.workspaceCacheKey}:`;
     const directoryPath = typeof input.directoryPath === 'string' ? input.directoryPath : null;
@@ -59,7 +60,7 @@ export function clearCachedWorkspaceRepositoryDirectoryEntries(input: Readonly<{
             workspaceRepositoryDirectoryWarmInFlight.delete(key);
         }
     }
-    markWorkspaceRepositoryDirectoryChanged(input.workspaceCacheKey);
+    markWorkspaceRepositoryDirectoryChanged(input.workspaceCacheKey, input.reason);
 }
 
 /**

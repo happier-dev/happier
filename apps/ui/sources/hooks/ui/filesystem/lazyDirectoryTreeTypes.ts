@@ -9,7 +9,7 @@ export type LazyDirectoryTreeEntry = Readonly<{
 
 export type LazyDirectoryTreeLoadResult =
     | { ok: true; entries: LazyDirectoryTreeEntry[]; truncated?: boolean }
-    | { ok: false; error: string };
+    | { ok: false; error: string; errorCode?: string };
 
 export type LazyDirectoryTreeNode = Readonly<{
     path: string;

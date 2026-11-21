@@ -100,7 +100,7 @@ export interface MachineInstallationProofPayloadV1 {
     managedPolicy?: {
         homeId: string; managedId: string; expectedIntentRevision: number;
         controller: { machineId: string; installationId: string };
-        requestId: string; purpose: 'retention' | 'accepted-input-start' | 'creation-cleanup';
+        requestId: string; purpose: 'retention' | 'accepted-input-start' | 'creation-cleanup' | 'target-power-observation';
         resourceDigest: string; purposeDigest: string; method: 'POST'; path: string; bodyDigest: string;
     };
     managedPolicyCensus?: { homeId: string };
@@ -249,7 +249,7 @@ export const MachineInstallationProofPayloadV1Schema: z.ZodMiniType<MachineInsta
     managedPolicy: z.optional(z.strictObject({
         homeId: z.string().check(z.minLength(1)), managedId: z.string().check(z.minLength(1)), expectedIntentRevision: z.number().check(z.int(), z.nonnegative()),
         controller: z.strictObject({ machineId: z.string().check(z.minLength(1)), installationId: z.string().check(z.minLength(1)) }),
-        requestId: z.string().check(z.minLength(1)), purpose: z.enum(['retention', 'accepted-input-start', 'creation-cleanup']),
+        requestId: z.string().check(z.minLength(1)), purpose: z.enum(['retention', 'accepted-input-start', 'creation-cleanup', 'target-power-observation']),
         resourceDigest: z.string().check(z.minLength(1)), purposeDigest: z.string().check(z.minLength(1)),
         method: z.literal('POST'), path: z.string().check(z.minLength(1)), bodyDigest: z.string().check(z.minLength(1)),
     })),

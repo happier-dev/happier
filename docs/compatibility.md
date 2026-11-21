@@ -10130,6 +10130,17 @@ schema. No predecessor data or published SDK epoch changes.
 
 ## SDK protocol evolution
 
+In unreleased 0.3, a Project native read that confirms a stopped guest can
+publish that power fact through the Home's private managed-controller route.
+The current controller installation signs the exact row, intent revision and
+request body. Home verifies the native identity for an ordinary row and the
+retained controller for an opaque preset. The proof purpose is specific to
+observation and cannot authorize policy admission or native effects. The
+existing observation, desired intent and stored formats keep their shapes.
+An older Home does not serve this route. The daemon still returns the typed
+source refusal when publication fails.
+
+
 The unreleased managed-policy census accepts an optional nonempty set of
 managed IDs on its existing closed request. Omission and the single-ID request
 keep their existing meanings. Batches cannot carry a requester or request

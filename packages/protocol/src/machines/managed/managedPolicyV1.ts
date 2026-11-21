@@ -14,6 +14,14 @@ import { ActionOperationIdentifierV1Schema } from '../../actions/operations/iden
 import { ManagedAdmissionPresetContentV1Schema } from './managedMachinePresetContentCarrierV1.js';
 
 export const MANAGED_POLICY_PROOF_HEADER = 'x-happier-managed-policy-proof';
+export const MANAGED_CONTROLLER_STOPPED_OBSERVATION_PATH_V1 = '/v1/machines/managed/controller/observe-stopped';
+export const ManagedControllerStoppedObservationV1Schema = lazyZodSchema(() => z.strictObject({
+  ...ManagedControllerCurrentnessV1Schema.shape,
+  controller: ManagedControllerV1Schema,
+  observedAt: z.number().check(z.int(), z.nonnegative()),
+}));
+export type ManagedControllerStoppedObservationV1 = z.infer<typeof ManagedControllerStoppedObservationV1Schema>;
+export const ManagedControllerStoppedObservationOutputV1Schema = lazyZodSchema(() => z.strictObject({ observed: z.literal(true) }));
 /** Advisory Account policy invalidation; the signed census and native driver retain authority. */
 export const ManagedMachinePolicyChangeHintV1Schema = lazyZodSchema(() => z.strictObject({
   managedMachinePolicy: z.literal(true),
@@ -68,13 +76,19 @@ export function createManagedPolicyCensusProofV1(input: Readonly<{ homeId: strin
   return signMachineInstallationProof({ payload: { version: 1, machineId: input.controller.machineId, installationId: input.controller.installationId,
     accountId: input.custodianAccountId, managedPolicyCensus: { homeId: input.homeId } }, privateKey: input.privateKey });
 }
+const ManagedPolicyProofPurposeV1Schema = lazyZodSchema(() => z.union([
+  ManagedPolicyPurposeV1Schema,
+  z.strictObject({ kind: z.literal('target-power-observation') }),
+]));
+export type ManagedPolicyProofPurposeV1 = z.infer<typeof ManagedPolicyProofPurposeV1Schema>;
+
 export const ManagedPolicyProofV1Schema: z.ZodMiniObject<{
   payload: typeof MachineInstallationProofPayloadV1Schema;
-  purpose: typeof ManagedPolicyPurposeV1Schema;
+  purpose: typeof ManagedPolicyProofPurposeV1Schema;
   proof: typeof MachineInstallationProofV1Schema;
   actionOrigin: z.ZodMiniOptional<typeof ExternalActionExecutionAuthorizationV1Schema>;
 }, z.core.$strict> = lazyZodSchema(() => z.strictObject({
-  payload: MachineInstallationProofPayloadV1Schema, purpose: ManagedPolicyPurposeV1Schema, proof: MachineInstallationProofV1Schema,
+  payload: MachineInstallationProofPayloadV1Schema, purpose: ManagedPolicyProofPurposeV1Schema, proof: MachineInstallationProofV1Schema,
   actionOrigin: z.optional(ExternalActionExecutionAuthorizationV1Schema),
 }));
 export type ManagedPolicyProofV1 = z.infer<typeof ManagedPolicyProofV1Schema>;
@@ -84,7 +98,7 @@ export function managedPolicyDigestV1(kind: 'resource' | 'purpose' | 'body', val
   return computeCanonicalDomainSeparatedDigest(`happier-managed-policy-${kind}-v1`, [createCanonicalJsonSigningInput(value)]);
 }
 /** The installed signer binds the causal request too; it cannot be swapped between native phases. */
-export function managedPolicyPurposeDigestV1(purpose: ManagedPolicyPurposeV1, actionOrigin?: ExternalActionExecutionAuthorizationV1): string {
+export function managedPolicyPurposeDigestV1(purpose: ManagedPolicyProofPurposeV1, actionOrigin?: ExternalActionExecutionAuthorizationV1): string {
   return managedPolicyDigestV1('purpose', actionOrigin ? { purpose, actionOrigin } : purpose);
 }
 
@@ -95,17 +109,20 @@ export function isManagedCreationCleanupV1(machine: Pick<ManagedMachineV1, 'crea
 }
 
 export function createManagedPolicyProofV1(input: Readonly<{
-  correlation: Omit<ManagedPolicyAdmissionInputV1, 'purpose'>; purpose: ManagedPolicyPurposeV1;
+  correlation: Omit<ManagedPolicyAdmissionInputV1, 'purpose'>; purpose: ManagedPolicyProofPurposeV1;
   custodianAccountId: string; path: string; body: unknown; privateKey: string | Uint8Array;
   actionOrigin?: ExternalActionExecutionAuthorizationV1;
 }> & (Readonly<{ resource: ManagedResourceV1; nativeOperation?: never }>
   | Readonly<{ resource?: never; nativeOperation: ManagedNativeOperationReferenceV1 }>
-  | Readonly<{ purpose: { kind: 'creation-cleanup' }; resource?: never; nativeOperation?: never }>)): ManagedPolicyProofV1 {
-  const { purpose, ...correlation } = ManagedPolicyAdmissionInputV1Schema.parse({ ...input.correlation, purpose: input.purpose });
+  | Readonly<{ purpose: { kind: 'creation-cleanup' | 'target-power-observation' }; resource?: never; nativeOperation?: never }>)): ManagedPolicyProofV1 {
+  const purpose = ManagedPolicyProofPurposeV1Schema.parse(input.purpose);
+  const correlation = z.extend(ManagedControllerCurrentnessV1Schema, { controller: ManagedControllerV1Schema }).parse(input.correlation);
   const actionOrigin = input.actionOrigin === undefined ? undefined : ExternalActionExecutionAuthorizationV1Schema.parse(input.actionOrigin);
   const nativeTarget = input.resource !== undefined ? ManagedResourceV1Schema.parse(input.resource)
     : input.nativeOperation !== undefined ? ManagedNativeOperationReferenceV1Schema.parse(input.nativeOperation) : null;
-  if (input.resource === undefined && purpose.kind !== 'creation-cleanup') throw new Error('Pending native policy requires creation cleanup.');
+  if (input.resource === undefined && purpose.kind !== 'creation-cleanup' && purpose.kind !== 'target-power-observation') {
+    throw new Error('This managed policy proof requires a bound native resource.');
+  }
   const payload: MachineInstallationProofPayloadV1 = { version: 1,
     machineId: correlation.controller.machineId, installationId: correlation.controller.installationId,
     accountId: input.custodianAccountId, managedPolicy: {

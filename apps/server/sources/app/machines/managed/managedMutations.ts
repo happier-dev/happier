@@ -10,7 +10,7 @@ import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines
 import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { ManagedOpaquePresetObservationV1Schema, ProviderObservationV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
-import { ManagedPolicyAdmissionInputV1Schema, type ManagedPolicyAdmissionInputV1, type ManagedPolicyPurposeV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
+import { ManagedPolicyAdmissionInputV1Schema, type ManagedControllerStoppedObservationV1, type ManagedPolicyAdmissionInputV1, type ManagedPolicyPurposeV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
@@ -446,6 +446,19 @@ export async function admitManagedControl(params: Readonly<{
             ...(!isStoredOpaquePresetMachine(current) && retainedControl?.kind === 'control' && retainedControl.resizeProvisioner
                 ? { resizeProvisioner: retainedControl.resizeProvisioner } : {}) };
     });
+}
+
+/** Publish the provider's stopped fact from an installed controller's Project read. */
+export async function reportManagedStoppedObservationInTx(tx: Tx, row: StoredManagedMachine, report: ManagedControllerStoppedObservationV1) {
+    if (!hasBoundManagedLifecycle(row) || row.creationState !== 'active' || row.archivedAt !== null || row.desired === 'delete') {
+        throw new ManagedMachineError('resource_mismatch');
+    }
+    const previous = projectManagedMachine(row).observation;
+    if (previous?.power === 'stopped' || (previous && previous.observedAt >= report.observedAt)) return;
+    const current = await tx.managedMachine.update({ where: { id: row.id }, data: {
+        observation: { ...previous, observedAt: report.observedAt, availability: 'present', power: 'stopped' },
+    } });
+    await invalidateManagedMachineInTx(tx, current);
 }
 
 /** Store native resize observation under the active admitted job, without re-admitting approved work. */

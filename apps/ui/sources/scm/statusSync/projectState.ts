@@ -111,6 +111,7 @@ export function buildSnapshotSignature(snapshot: ScmWorkingSnapshot): string {
 export async function clearSearchCacheForProject(
     sessions: ReadonlyArray<Readonly<{ sessionId: string; serverId: string | null }>>,
     workspace?: WorkspaceScopeBase,
+    reason?: 'recovery',
 ): Promise<void> {
     const workspaceKeys = new Set<string>();
     const workspaceKey = workspace ? tryBuildWorkspaceCacheKey(workspace) : null;
@@ -124,7 +125,7 @@ export async function clearSearchCacheForProject(
             clearCachedRepositoryDirectoryEntries({ sessionId });
         }
     }
-    for (const workspaceCacheKey of workspaceKeys) clearCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey });
+    for (const workspaceCacheKey of workspaceKeys) clearCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey, reason });
 }
 
 export function readScmSessionContext(sessionId: string, serverId?: string | null) {

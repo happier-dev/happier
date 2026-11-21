@@ -1,6 +1,6 @@
 type WorkspaceRepositoryDirectoryRevisionListener = () => void;
 
-const workspaceRepositoryDirectoryRevisions = new Map<string, number>();
+const workspaceRepositoryDirectoryRevisions = new Map<string, Readonly<{ revision: number; reason?: 'recovery' }>>();
 const workspaceRepositoryDirectoryListeners = new Map<string, Set<WorkspaceRepositoryDirectoryRevisionListener>>();
 
 function normalizeWorkspaceCacheKey(workspaceCacheKey: string | null | undefined): string {
@@ -10,7 +10,12 @@ function normalizeWorkspaceCacheKey(workspaceCacheKey: string | null | undefined
 export function getWorkspaceRepositoryDirectoryRevision(workspaceCacheKey: string | null | undefined): number {
     const key = normalizeWorkspaceCacheKey(workspaceCacheKey);
     if (!key) return 0;
-    return workspaceRepositoryDirectoryRevisions.get(key) ?? 0;
+    return workspaceRepositoryDirectoryRevisions.get(key)?.revision ?? 0;
+}
+
+export function isWorkspaceRepositoryDirectoryRecovery(workspaceCacheKey: string, revision: number): boolean {
+    const current = workspaceRepositoryDirectoryRevisions.get(workspaceCacheKey);
+    return current?.revision === revision && current.reason === 'recovery';
 }
 
 export function subscribeWorkspaceRepositoryDirectoryRevision(
@@ -42,13 +47,13 @@ export function markMountedWorkspaceRepositoryDirectoriesChanged(): void {
     for (const key of [...workspaceRepositoryDirectoryListeners.keys()]) markWorkspaceRepositoryDirectoryChanged(key);
 }
 
-export function markWorkspaceRepositoryDirectoryChanged(workspaceCacheKey: string | null | undefined): void {
+export function markWorkspaceRepositoryDirectoryChanged(workspaceCacheKey: string | null | undefined, reason?: 'recovery'): void {
     const key = normalizeWorkspaceCacheKey(workspaceCacheKey);
     if (!key) return;
 
-    const currentRevision = workspaceRepositoryDirectoryRevisions.get(key) ?? 0;
+    const currentRevision = workspaceRepositoryDirectoryRevisions.get(key)?.revision ?? 0;
     const nextRevision = currentRevision >= Number.MAX_SAFE_INTEGER ? 1 : currentRevision + 1;
-    workspaceRepositoryDirectoryRevisions.set(key, nextRevision);
+    workspaceRepositoryDirectoryRevisions.set(key, { revision: nextRevision, reason });
 
     const listeners = workspaceRepositoryDirectoryListeners.get(key);
     if (!listeners) return;

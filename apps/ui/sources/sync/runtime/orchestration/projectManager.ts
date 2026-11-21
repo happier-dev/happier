@@ -39,7 +39,7 @@ import { areScmWorkingSnapshotsEquivalentIgnoringFetchedAt } from '@/scm/sync/sn
 export type ProjectKey = WorkspaceScopeBase;
 
 /** A native workspace change can alter file bytes while Git status and line counts stay equal. */
-export type ScmSnapshotPublicationOptions = Readonly<{ contentChanged?: boolean }>;
+export type ScmSnapshotPublicationOptions = Readonly<{ contentChanged?: boolean; recovered?: boolean }>;
 
 export function resolveProjectMachineScopeId(metadata: { machineId?: string | null; host?: string | null; externalSessionV1?: unknown }): string {
     const machineId = resolveSessionMachineId(metadata);
@@ -131,6 +131,7 @@ export interface Project {
     scmStatus?: ScmStatus | null;
     /** Canonical source-control working snapshot for this project */
     scmSnapshot?: ScmWorkingSnapshot | null;
+    scmRecoveryRevision?: number;
     /** Last error encountered while refreshing source-control snapshot for this project */
     scmSnapshotError?: ProjectScmSnapshotError | null;
     /** Paths touched in this project/workspace (path -> timestamp) */
@@ -165,10 +166,27 @@ class ProjectManager {
     private registeredKeyByProjectId: Map<string, string> = new Map();
     private sessionToProject: Map<string, string> = new Map();
     private nextProjectId = 1;
+    private readonly workspaceScmRecoveryInFlight = new Set<string>();
     private readonly scmSnapshotListeners = new Set<Readonly<{
         listener: (scopeKey: string) => void;
         scopeKeys: ReadonlySet<string>;
     }>>();
+
+    getWorkspaceScmRecoveryRevision(key: ProjectKey): number {
+        return this.getProjectForWorkspace(key)?.scmRecoveryRevision ?? 0;
+    }
+
+    getWorkspaceScmRecoveryInFlight(key: ProjectKey): boolean {
+        return this.workspaceScmRecoveryInFlight.has(this.getProjectKeyString(key));
+    }
+
+    setWorkspaceScmRecoveryInFlight(key: ProjectKey, inFlight: boolean): void {
+        const scopeKey = this.getProjectKeyString(key);
+        if (!scopeKey || this.workspaceScmRecoveryInFlight.has(scopeKey) === inFlight) return;
+        if (inFlight) this.workspaceScmRecoveryInFlight.add(scopeKey);
+        else this.workspaceScmRecoveryInFlight.delete(scopeKey);
+        this.publishScmSnapshotChange(key);
+    }
 
     /** SCM demand is independent of unrelated root-store publications. */
     subscribeScmSnapshots(listener: (scopeKey: string) => void, scopeKeys: ReadonlySet<string>): () => void {
@@ -696,9 +714,10 @@ class ProjectManager {
      */
     updateProjectScmSnapshotById(projectId: string, scmSnapshot: ScmWorkingSnapshot | null, options?: ScmSnapshotPublicationOptions): boolean {
         const project = this.projects.get(projectId);
-        if (!project || project.scmSnapshot === scmSnapshot
-            || !options?.contentChanged && areScmWorkingSnapshotsEquivalentIgnoringFetchedAt(project.scmSnapshot ?? null, scmSnapshot)) return false;
+        if (!project || !options?.recovered && (project.scmSnapshot === scmSnapshot
+            || !options?.contentChanged && areScmWorkingSnapshotsEquivalentIgnoringFetchedAt(project.scmSnapshot ?? null, scmSnapshot))) return false;
 
+        if (options?.recovered) project.scmRecoveryRevision = (project.scmRecoveryRevision ?? 0) + 1;
         project.scmSnapshot = scmSnapshot;
         project.lastScmStatusUpdate = Date.now();
         project.updatedAt = Date.now();

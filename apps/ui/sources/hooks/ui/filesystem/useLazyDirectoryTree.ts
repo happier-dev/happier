@@ -122,7 +122,8 @@ export function useLazyDirectoryTree<LoadContext = undefined>(input: {
     }, [expandedPaths, onExpandedPathsChange, useExternalExpanded]);
 
     const [rootLoading, setRootLoading] = React.useState(false);
-    const [rootError, setRootError] = React.useState<string | null>(null);
+    const [rootFailure, setRootFailure] = React.useState<{ error: string; code?: string } | null>(null);
+    const rootError = rootFailure?.error ?? null;
     const [directoryEntriesByPath, setDirectoryEntriesByPath] = React.useState<Map<string, LazyDirectoryTreeEntry[]>>(() => {
         const seedExpandedPaths = useExternalExpanded ? normalizeExpandedPaths(expandedPaths!) : null;
         return seedDirectoryEntriesByPathFromCache({ rootDirectoryPath, expandedPaths: seedExpandedPaths, getCachedEntries });
@@ -182,7 +183,7 @@ export function useLazyDirectoryTree<LoadContext = undefined>(input: {
         setInternalExpandedPaths([]);
         setLoadingDirectories(new Set());
         setDirectoryErrors(new Map());
-        setRootError(null);
+        setRootFailure(null);
         setArrivedPaths(new Set());
         staleDirectoriesRef.current.clear();
         queuedMutationPathsRef.current.clear();
@@ -229,7 +230,7 @@ export function useLazyDirectoryTree<LoadContext = undefined>(input: {
     const applyDirectoryLoadResult = React.useCallback((directoryPath: string, result: LazyDirectoryTreeLoadResult) => {
         if (result.ok) {
             staleDirectoriesRef.current.delete(directoryPath);
-            if (directoryPath === rootDirectoryPathRef.current) setRootError(null);
+            if (directoryPath === rootDirectoryPathRef.current) setRootFailure(null);
             const reconciled = replaceLazyDirectoryTreeDirectory({ directoryEntriesByPath: directoryEntriesByPathRef.current,
                 directoryPath, entries: result.entries });
             const pruned = (path: string) => reconciled.prunedDirectoryRoots.some(root => path === root || path.startsWith(`${root}/`));
@@ -252,7 +253,9 @@ export function useLazyDirectoryTree<LoadContext = undefined>(input: {
         }
 
         const message = typeof result.error === 'string' ? result.error.trim() : '';
-        if (directoryPath === rootDirectoryPathRef.current) setRootError(message || 'unknown_error');
+        if (directoryPath === rootDirectoryPathRef.current) {
+            setRootFailure({ error: message || 'unknown_error', code: result.errorCode });
+        }
         setDirectoryErrors((prev) => {
             const next = new Map(prev);
             next.set(directoryPath, message || 'unknown_error');
@@ -381,7 +384,7 @@ export function useLazyDirectoryTree<LoadContext = undefined>(input: {
     }, [setExpandedPaths]);
 
     const retryRoot = React.useCallback(async (context?: LoadContext) => {
-        setRootError(null);
+        setRootFailure(null);
         // A failed root speaks for every folder that failed with it, so its one retry clears them all:
         // once the root answers, the expanded folders load again.
         if (directoryErrorsRef.current.size > 0) {
@@ -450,6 +453,7 @@ export function useLazyDirectoryTree<LoadContext = undefined>(input: {
     return {
         rootLoading: scopeKeyRef.current === scopeKey && rootLoading,
         rootError: scopeKeyRef.current === scopeKey ? rootError : null,
+        rootErrorCode: scopeKeyRef.current === scopeKey ? rootFailure?.code ?? null : null,
         rootLoaded: scopeKeyRef.current === scopeKey && directoryEntriesByPath.has(rootDirectoryPath),
         nodes,
         toggleDirectory,

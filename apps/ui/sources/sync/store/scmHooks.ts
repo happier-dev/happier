@@ -195,6 +195,14 @@ export function useWorkspaceScmSlotLacksList(scope: WorkspaceScopeBase | null, e
     });
 }
 
+export function useWorkspaceScmRecoveryRevision(scope: WorkspaceScopeBase | null) {
+    return useScmValue(scope, () => scope ? projectManager.getWorkspaceScmRecoveryRevision(scope) : 0);
+}
+
+export function useWorkspaceScmRecoveryInFlight(scope: WorkspaceScopeBase | null): boolean {
+    return useScmValue(scope, () => scope !== null && projectManager.getWorkspaceScmRecoveryInFlight(scope));
+}
+
 export function useWorkspaceScmSnapshotError(scope: WorkspaceScopeBase | null) {
     return useScmValue(scope, state => scope ? state.getWorkspaceScmSnapshotError(scope) : null);
 }

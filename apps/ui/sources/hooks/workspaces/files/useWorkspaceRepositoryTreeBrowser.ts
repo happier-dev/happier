@@ -10,6 +10,10 @@ import {
     listWorkspaceRepositoryDirectoryEntries,
     warmWorkspaceRepositoryDirectoryCache,
 } from '@/sync/domains/workspaces/files/workspaceRepositoryDirectory';
+import {
+    getWorkspaceRepositoryDirectoryRevision,
+    isWorkspaceRepositoryDirectoryRecovery,
+} from '@/sync/domains/workspaces/files/workspaceRepositoryDirectoryRevision';
 import { tryBuildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { useWorkspaceRepositoryDirectoryRevision } from './useWorkspaceRepositoryDirectoryRevision';
 
@@ -43,7 +47,7 @@ function toLazyEntries(directoryPath: string, entries: readonly RepositoryDirect
 function toLazyLoadResult(directoryPath: string, result: ListRepositoryDirectoryEntriesResult): LazyDirectoryTreeLoadResult {
     if (!result.ok) {
         // A stopped attached workspace keeps its typed refusal so the root state can name it and offer Start (remote workspaces F7).
-        return result.errorCode === 'managed_power_required' ? { ok: false, error: result.errorCode } : result;
+        return result.errorCode === 'managed_power_required' ? { ...result, error: result.errorCode } : result;
     }
     return {
         ok: true,
@@ -76,6 +80,11 @@ export function useWorkspaceRepositoryTreeBrowser(input: Readonly<{
     const scope = React.useMemo(() => input.scope, [input.scope.serverId, input.scope.machineId, input.scope.rootPath, input.scope.workspace]);
     const workspaceCacheKey = React.useMemo(() => tryBuildWorkspaceCacheKey(scope) ?? '', [scope]);
     const directoryRevision = useWorkspaceRepositoryDirectoryRevision(workspaceCacheKey);
+    const rootDirectoryPath = input.rootDirectoryPath ?? '';
+    const treeKey = JSON.stringify([workspaceCacheKey, rootDirectoryPath]);
+    const lastRootRead = React.useRef({ treeKey, revision: directoryRevision });
+    const [recoveryRead, setRecoveryRead] = React.useState<{ treeKey: string } | null>(null);
+
     const effectiveReloadToken = React.useMemo(() => (
         `${input.reloadToken ?? ''}:${directoryRevision}`
     ), [directoryRevision, input.reloadToken]);
@@ -89,9 +98,20 @@ export function useWorkspaceRepositoryTreeBrowser(input: Readonly<{
     }, [workspaceCacheKey]);
 
     const loadDirectoryEntries = React.useCallback(async (directoryPath: string, signal: AbortSignal) => {
-        const result = await listWorkspaceRepositoryDirectoryEntries({ scope, directoryPath, signal });
-        return toLazyLoadResult(directoryPath, result);
-    }, [scope]);
+        const revision = getWorkspaceRepositoryDirectoryRevision(workspaceCacheKey);
+        const previousRead = lastRootRead.current;
+        const isRoot = directoryPath === rootDirectoryPath;
+        const recovering = isRoot && previousRead.treeKey === treeKey && previousRead.revision !== revision
+            && isWorkspaceRepositoryDirectoryRecovery(workspaceCacheKey, revision);
+        if (isRoot) lastRootRead.current = { treeKey, revision };
+        const read = recovering ? { treeKey } : null;
+        if (read) setRecoveryRead(read);
+        try {
+            return toLazyLoadResult(directoryPath, await listWorkspaceRepositoryDirectoryEntries({ scope, directoryPath, signal }));
+        } finally {
+            if (read) setRecoveryRead(current => current === read ? null : current);
+        }
+    }, [scope, treeKey, rootDirectoryPath, workspaceCacheKey]);
 
     const getCachedDirectoryMetadata = React.useCallback((directoryPath: string) => (
         getCachedWorkspaceRepositoryDirectoryMetadata({ workspaceCacheKey, directoryPath })
@@ -103,10 +123,10 @@ export function useWorkspaceRepositoryTreeBrowser(input: Readonly<{
     }, [scope]);
 
     const tree = useLazyDirectoryTree({
-        scopeKey: JSON.stringify([workspaceCacheKey, input.rootDirectoryPath ?? '']),
+        scopeKey: treeKey,
         enabled: input.enabled,
         retainNodesWhenDisabled: true,
-        rootDirectoryPath: input.rootDirectoryPath ?? '',
+        rootDirectoryPath,
         expandedPaths: input.expandedPaths,
         onExpandedPathsChange: input.onExpandedPathsChange,
         reloadToken: effectiveReloadToken,
@@ -138,5 +158,6 @@ export function useWorkspaceRepositoryTreeBrowser(input: Readonly<{
     const demandedPaths = React.useMemo(() => nodes.filter(node => node.type === 'file' || node.type === 'directory').map(node => node.path), [nodes]);
     const history = useWorkspaceEntryHistory({ scope, folder: input.rootDirectoryPath ?? '', paths: demandedPaths,
         headOid: input.headOid, repoRootPath: input.repoRootPath, enabled: input.enabled && input.historyEnabled === true, reloadToken: input.reloadToken });
-    return { ...tree, nodes, gitIgnoreAvailable, history, liveFileWrites };
+    return { ...tree, nodes, gitIgnoreAvailable, history, liveFileWrites,
+        recoveryInFlight: input.enabled && recoveryRead?.treeKey === treeKey };
 }

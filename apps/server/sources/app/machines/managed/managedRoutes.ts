@@ -14,14 +14,14 @@ import { readExternalActionManagedAcquireAdmission } from '@/app/auth/externalAc
 import { ManagedAdmissionInputV1Schema, ManagedControllerCurrentnessV1Schema, ManagedControllerCurrentInputV1Schema, ManagedControllerReportV1Schema, ManagedEnrollmentCorrelationV1Schema, ManagedControllerContextInputV1Schema, ManagedControllerContextOutputV1Schema, ManagedBootstrapCredentialCreateV1Schema, ManagedControllerSubmitInputV1Schema, ManagedControllerMachineOutputV1Schema, resolveManagedAcquireReviewV1, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1, ManagedControlAdmissionInputV1Schema, ManagedControllerIntentReportV1Schema, MANAGED_CONTROL_ACTION_IDS_V1, MachineSetupResolveInputV1Schema, MachineSetupResolveResultV1Schema, MachineSetupReportInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedWakeTargetsReadRequestV1Schema, ManagedWakeTargetsReadResultV1Schema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
-import { ManagedPolicyAdmissionInputV1Schema, ManagedPolicyAdmissionOutputV1Schema, MANAGED_POLICY_PROOF_HEADER, decodeManagedPolicyProofV1, isManagedCreationCleanupV1, managedPolicyDigestV1, managedPolicyPurposeDigestV1, ManagedPolicyCensusInputV1Schema, ManagedPolicyCensusOutputV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
+import { ManagedPolicyAdmissionInputV1Schema, ManagedPolicyAdmissionOutputV1Schema, MANAGED_POLICY_PROOF_HEADER, decodeManagedPolicyProofV1, isManagedCreationCleanupV1, managedPolicyDigestV1, managedPolicyPurposeDigestV1, ManagedPolicyCensusInputV1Schema, ManagedPolicyCensusOutputV1Schema, MANAGED_CONTROLLER_STOPPED_OBSERVATION_PATH_V1, ManagedControllerStoppedObservationV1Schema, ManagedControllerStoppedObservationOutputV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { ManagedPendingActivationFailureRequestV1Schema, PendingActivationFailureResponseV1Schema } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
-import { inReadSnapshot, inTx } from "@/storage/inTx";
+import { inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { readTeamOperationAuthenticationFromRequest } from "@/app/teams/actorContext";
 import { admitManagedAcquire } from "./managedAcquire";
-import { submitManagedAcquire, reportManagedAcquire, createManagedBootstrapCredential, requireManagedEnrollmentInTx, admitManagedControl, submitManagedIntent, reportManagedIntent, admitManagedPolicy, prepareManagedPolicy } from "./managedMutations";
-import { ManagedMachineError, readManagedMachineInTx, requireCurrentManagedMachineInTx, projectManagedMachine, requireManagedControllerInTx, sameManagedInput, readManagedCurrentRequestId, readManagedAdmissionState, readManagedEnrollmentAccountId, readManagedOpaquePresetContent, readManagedOpaquePresetContentOverride, projectManagedControllerAccess } from "./managedRows";
+import { submitManagedAcquire, reportManagedAcquire, createManagedBootstrapCredential, requireManagedEnrollmentInTx, admitManagedControl, submitManagedIntent, reportManagedIntent, admitManagedPolicy, prepareManagedPolicy, reportManagedStoppedObservationInTx } from "./managedMutations";
+import { ManagedMachineError, readManagedMachineInTx, requireCurrentManagedMachineInTx, projectManagedMachine, requireManagedControllerInTx, sameManagedInput, readManagedCurrentRequestId, readManagedAdmissionState, readManagedEnrollmentAccountId, readManagedOpaquePresetContent, readManagedOpaquePresetContentOverride, projectManagedControllerAccess, inManagedMachinePublicationTx } from "./managedRows";
 import { getManagedMachine, listManagedMachines, cancelManagedCreation, admitsManagedTargetInTx } from "./managedRead";
 import { readManagedWakeTargets } from './managedWake';
 import { markPendingActivationFailed } from '@/app/session/pending/pendingMessageService';
@@ -120,12 +120,17 @@ async function requireManagedOperationRequest(request: FastifyRequest, input: Re
     });
 }
 /** Same installation identity authenticates policy-owned HTTP effects; it never mints a public Action envelope. */
-export async function requireManagedPolicyRequest(request: FastifyRequest, path: string, input: Readonly<{ homeId: string; managedId: string; requestId?: string }>, phase: 'admit' | 'current' | 'submit' | 'report' | 'reconcile' | 'read' | 'activation-failure') {
+export async function requireManagedPolicyRequest(request: FastifyRequest, path: string, input: Readonly<{ homeId: string; managedId: string; requestId?: string }>, phase: 'admit' | 'current' | 'submit' | 'report' | 'reconcile' | 'read' | 'activation-failure' | 'observe-stop', publicationTx?: Tx) {
     const raw = request.headers[MANAGED_POLICY_PROOF_HEADER];
     if (typeof raw !== 'string') throw new ManagedMachineError('permission_denied');
     const carrier = decodeManagedPolicyProofV1(raw);
     if (!carrier?.payload.managedPolicy) throw new ManagedMachineError('permission_denied');
-    return inTx(async tx => {
+    const stoppedObservation = phase === 'observe-stop';
+    if (stoppedObservation !== (carrier.purpose.kind === 'target-power-observation')
+        || (stoppedObservation && (carrier.actionOrigin || carrier.payload.managedPolicy.requestId !== input.requestId))) {
+        throw new ManagedMachineError('permission_denied');
+    }
+    const verify = async (tx: Tx) => {
         const row = await readManagedMachineInTx(tx, input);
         const binding = carrier.payload.managedPolicy!;
         const machine = projectManagedMachine(row);
@@ -147,7 +152,8 @@ export async function requireManagedPolicyRequest(request: FastifyRequest, path:
         // Home can authenticate its already-committed cleanup via structural custody.
         const structuralCleanup = carrier.purpose.kind === 'creation-cleanup' && isManagedOpaquePresetMachineV1(machine)
             && (currentSigner && (isManagedCreationCleanupV1(machine) || phase === 'current' && admittedPolicyRequest) || submittedSigner);
-        const expectedResourceDigest = structuralCleanup ? managedPolicyDigestV1('resource', null)
+        const structuralObservation = stoppedObservation && isManagedOpaquePresetMachineV1(machine);
+        const expectedResourceDigest = structuralCleanup || structuralObservation ? managedPolicyDigestV1('resource', null)
             : nativeTarget && managedPolicyDigestV1('resource', nativeTarget);
         const acceptedSource = carrier.purpose.kind === 'accepted-input-start' ? carrier.purpose.target : undefined;
         const activationFailureSigner = phase === 'activation-failure' && acceptedSource
@@ -163,7 +169,7 @@ export async function requireManagedPolicyRequest(request: FastifyRequest, path:
             && (!controller?.managedResource || (carrier.purpose.kind === 'retention'
                 && machine.retention.kind !== 'until-delete' && machine.retention.effect === 'stop'));
         if (request.userId !== row.custodianAccountId || carrier.payload.accountId !== row.custodianAccountId
-            || !(currentSigner || submittedSigner || activationFailureSigner || accountExecutor) || binding.homeId !== row.homeId || binding.managedId !== row.id
+            || !(currentSigner || (!stoppedObservation && (submittedSigner || activationFailureSigner || accountExecutor))) || binding.homeId !== row.homeId || binding.managedId !== row.id
             || binding.purpose !== carrier.purpose.kind || binding.purposeDigest !== managedPolicyPurposeDigestV1(carrier.purpose, carrier.actionOrigin)
             || binding.method !== 'POST' || binding.path !== path || binding.bodyDigest !== managedPolicyDigestV1('body', request.body)
             || binding.resourceDigest !== expectedResourceDigest
@@ -181,8 +187,9 @@ export async function requireManagedPolicyRequest(request: FastifyRequest, path:
             // this call. Admission owns policy; follow-ups consume its request,
             // including after the source guest retires during finite work.
         }
-        return { carrier, custodianAccountId: row.custodianAccountId };
-    });
+        return { carrier, custodianAccountId: row.custodianAccountId, row };
+    };
+    return publicationTx ? verify(publicationTx) : inTx(verify);
 }
 async function respond(reply: FastifyReply, execute: () => Promise<unknown>) {
     try { return reply.send(await execute()); }
@@ -367,6 +374,17 @@ export function registerManagedMachineRoutes(app: Fastify): void {
                 ? { admittedCreationRecovery: true } : {}),
             authentication: readTeamOperationAuthenticationFromRequest(request), input: request.body });
     }));
+    app.post(MANAGED_CONTROLLER_STOPPED_OBSERVATION_PATH_V1, { preHandler: app.authenticate,
+        schema: { body: ManagedControllerStoppedObservationV1Schema, response: { 200: ManagedControllerStoppedObservationOutputV1Schema } },
+    }, async (request, reply) => respond(reply, () => inManagedMachinePublicationTx(request.body, async tx => {
+        const { row, carrier } = await requireManagedPolicyRequest(request, MANAGED_CONTROLLER_STOPPED_OBSERVATION_PATH_V1,
+            request.body, 'observe-stop', tx);
+        const binding = carrier.payload.managedPolicy!;
+        if (request.body.expectedIntentRevision !== binding.expectedIntentRevision
+            || !sameManagedInput(request.body.controller, binding.controller)) throw new ManagedMachineError('permission_denied');
+        await reportManagedStoppedObservationInTx(tx, row, request.body);
+        return { observed: true };
+    })));
     app.post('/v1/machines/managed/controller/report-resize', { preHandler: app.authenticate,
         schema: { body: ManagedControllerResizeReportV1Schema } }, async (request, reply) => respond(reply, async () => {
             const proof = await requireManagedOperationRequest(request, request.body, [MANAGED_RESIZE_ACTION_ID_V1]);

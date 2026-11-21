@@ -32,7 +32,8 @@ import { readActionFailureCauseV1, projectUnexpectedActionFailureV1 } from '@hap
 import { invalidActionOutputFailure, readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { core } from 'zod/mini';
 import { MANAGED_POLICY_PROOF_HEADER, createManagedPolicyProofV1, encodeManagedPolicyProofV1, isManagedCreationCleanupV1,
-    ManagedPolicyAdmissionInputV1Schema, ManagedPolicyAdmissionOutputV1Schema, type ManagedPolicyPurposeV1, type ManagedTargetRequesterV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
+    ManagedPolicyAdmissionInputV1Schema, ManagedPolicyAdmissionOutputV1Schema, type ManagedPolicyPurposeV1, type ManagedTargetRequesterV1,
+    type ManagedPolicyProofPurposeV1, MANAGED_CONTROLLER_STOPPED_OBSERVATION_PATH_V1, ManagedControllerStoppedObservationOutputV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { resolveExternalActionServerRequestHeaders, type ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
 import type { ManagedProviderOperationAuthority } from '@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority';
@@ -65,6 +66,7 @@ import { readManagedGuestCliLocalPayloadRoot } from '@happier-dev/cli-common/sys
 import { runBoundSessionSetup } from './boundSessionSetup';
 import type { ManagedGuestLocalStop } from './managedRetentionPolicy';
 import { MachineProvisionerNativeExecResultV1Schema, MachineProvisionerRenewResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { readManagedWorkspaceFailureCode } from '@/workspaces/source/managedWorkspaceFailure';
 import { createManagedNativeObservationWait } from './nativeObservationWait';
 import { prepareManagedSessionSshTrust } from './enrollmentSshTrust';
 import { createManagedSshSessionTransport } from './sessionSshTransport';
@@ -276,7 +278,8 @@ function declaredIssuePathLength(schema: core.$ZodType, path: readonly (string |
 }
 
 /** The controller transport consumes the server's row/currentness authority. */
-export function createManagedMachineControllerClient(input: ManagedMachineAcquisitionDriverInput, options: ManagedMachineExecutionOptions,
+export function createManagedMachineControllerClient(input: ManagedMachineAcquisitionDriverInput,
+    options: Omit<ManagedMachineExecutionOptions, 'policyPurpose'> & { readonly policyPurpose?: ManagedPolicyProofPurposeV1 },
     action: ManagedMachineActionIdV1, hydrator: ManagedPresetHydrator = createManagedPresetHydrator(input)) {
     let policyMachine = options.policyMachine;
     let homeRetry: HomeOperationRetry | undefined;
@@ -424,7 +427,8 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
                 const binding = { correlation: correlation(policyMachine), custodianAccountId: policyMachine.custodianAccountId,
                     path, body, privateKey: input.externalActionMachineRequestPrivateKey,
                     ...(options.actionOrigin ? { actionOrigin: options.actionOrigin } : {}) };
-                const proof = purpose.kind === 'creation-cleanup' && (isManagedOpaquePresetMachineV1(policyMachine) || hydrator.isOpaque(policyMachine))
+                const proof = (purpose.kind === 'creation-cleanup' || purpose.kind === 'target-power-observation')
+                    && (isManagedOpaquePresetMachineV1(policyMachine) || hydrator.isOpaque(policyMachine))
                     ? createManagedPolicyProofV1({ ...binding, purpose })
                     : policyMachine.resource ? createManagedPolicyProofV1({ ...binding, purpose, resource: policyMachine.resource })
                     : purpose.kind === 'creation-cleanup' && policyMachine.nativeOperationRef
@@ -731,7 +735,23 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 workspaceSyncTarget: { relationshipId: sync.relationshipId, lifetime } }
                 : session ? { action: 'session.spawn_new' as const, sessionTarget: { sessionId: session.sessionId, lifetime } }
                     : { action: 'projects.open' as const, projectWorkspaceTarget: { lifetime } }) }, () => current!);
-        const invoke = authority.invoke;
+        const invoke: typeof authority.invoke = sync || session ? authority.invoke : async (role, body, io) => {
+            const machine = current;
+            const observedAt = Date.now();
+            try {
+                return await authority.invoke(role, body, io);
+            } catch (error) {
+                if (readManagedWorkspaceFailureCode(error) === 'managed_power_required'
+                    && machine.observation?.power !== 'stopped' && !lifetime.aborted) {
+                    const client = createManagedMachineControllerClient(input, { requestId: options.requestId, signal: lifetime,
+                        policyPurpose: { kind: 'target-power-observation' }, policyMachine: machine }, 'machines.managed.inspect', hydrator);
+                    await client.post(MANAGED_CONTROLLER_STOPPED_OBSERVATION_PATH_V1, {
+                        ...client.correlation(machine), observedAt,
+                    }, ManagedControllerStoppedObservationOutputV1Schema).catch(() => undefined);
+                }
+                throw error;
+            }
+        };
         if (!current.resource) throw new ManagedMachineControllerError('admission_unavailable');
         const correlation = { resource: current.resource };
         // Admission may end on delete intent before native absence is reported. A placed Session

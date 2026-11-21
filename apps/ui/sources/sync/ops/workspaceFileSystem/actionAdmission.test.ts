@@ -4,6 +4,7 @@ import { FILESYSTEM_BROWSER_ACTION_IDS_V1, FilesystemListDirectoryInputSchema } 
 import { DaemonFilesystemListDirectoryRequestSchema } from '@happier-dev/protocol/machines/fileBrowser';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import type { Socket } from 'socket.io-client';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { renderHook, standardCleanup } from '@/dev/testkit';
@@ -21,7 +22,10 @@ import type { ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/
 
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
-installDisconnectedServerSocketBoundary();
+let homeSocket: Socket | undefined;
+installDisconnectedServerSocketBoundary(socket => {
+    homeSocket = socket;
+});
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
     spies: { prompt: async () => { filesystem.prompts += 1; await filesystem.promptGate; return filesystem.promptValue; },
         confirm: async () => { filesystem.prompts += 1; await filesystem.promptGate; return true; } },
@@ -292,7 +296,7 @@ describe('shared workspace filesystem Action admission', () => {
             const readError = () => storage.getState().getWorkspaceScmSnapshotError(scope);
             const names = () => tree.getCurrent().nodes.map(node => node.name);
             if (scenario === 'restart') {
-                await vi.waitFor(() => expect(tree.getCurrent().rootError).toBe('admission_unavailable'));
+                await vi.waitFor(() => expect(tree.getCurrent().rootErrorCode).toBe('admission_unavailable'));
                 expect(readError()).toBeNull();
                 expect(methods.filter(method => method === 'daemon.filesystem.listDirectory')).toHaveLength(1);
                 epoch = 'after';
@@ -339,6 +343,142 @@ describe('shared workspace filesystem Action admission', () => {
         clearMachineRequestReachabilityForMachine(account, scope.machineId);
         await Promise.resolve();
         expect(methods).toHaveLength(releasedCallCount);
+    });
+
+    it('recovers open managed Files, Git and same-HEAD Code history when the controller finishes restarting', async () => {
+        const { apiSocket } = await import('@/sync/api/session/apiSocket');
+        const { recordMachineRequestFailed } = await import('@/sync/domains/machines/reachability/machineReachability');
+        const { useWorkspaceRepositoryTreeBrowser } = await import('@/hooks/workspaces/files/useWorkspaceRepositoryTreeBrowser');
+        const { useWorkspaceEntryHistory } = await import('@/hooks/workspaces/files/useWorkspaceEntryHistory');
+        const { useWorkspaceScmSnapshotController } = await import('@/hooks/workspaces/scm/useWorkspaceScmSnapshotController');
+        const { encodePlainMachineStoredContent } = await import('@happier-dev/protocol/machines/machineStoredContent');
+        const { resolveServerScopedMachine } = await import('@/sync/domains/machines/resolveServerScopedMachine');
+        const { useWorkspaceScmRecoveryInFlight } = await import('@/sync/store/scmHooks');
+        const { rootPath, machineId } = target;
+        const workspace = { v: 2, kind: 'managed', serverId, workspaceId: 'restarted-project', managedId: 'native-guest',
+            controller: { machineId, installationId: 'test-installation' }, rootPath } as const;
+        const scope = { ...target, workspace };
+        const headOid = 'a'.repeat(40);
+        const now = Date.now();
+        const before = { status: 'running' as const, runtimeId: 'previous-runtime', pid: 1, startedAt: now - 1000 };
+        const machine = createMachineFixture({ id: machineId, active: true, activeAt: now,
+            installationId: workspace.controller.installationId, daemonState: before, daemonStateVersion: 1, presenceProtocolVersion: 1 });
+        storage.getState().applyMachines([machine], false, { sourceServerId: serverId, sourceAccountId: accountScope.accountId });
+        expect(apiSocket.getMachineRequestScope()).toMatchObject(accountScope);
+        const push = (event: string, data: unknown) => {
+            const listeners = homeSocket?.listenersAny() ?? [];
+            expect(listeners.length).toBeGreaterThan(0);
+            for (const listener of listeners) listener(event, data);
+        };
+        const pushPresence = (active: boolean) => push('ephemeral', {
+            type: 'machine-activity', id: machineId, active, activeAt: Date.now(),
+            ...(active ? { reconnected: true } : {}),
+        });
+
+        let phase: 'before' | 'offline' | 'authenticating' | 'ready' = 'before';
+        const starts: string[] = [];
+        let stopWatch: () => void = () => {};
+        let releaseReads!: () => void;
+        const holdRecoveryReads = new Promise<void>(resolve => { releaseReads = resolve; });
+        filesystem.response = async (request: FilesystemBoundaryRequest) => {
+            const isReady = phase === 'before' || phase === 'ready';
+            if (request.method === RPC_METHODS.SCM_WORKSPACE_WATCH) {
+                const observation = ScmWorkspaceWatchRequestSchema.parse(request.payload);
+                expect(observation.workspace).toEqual(workspace);
+                const unavailable = { status: 'unavailable', reason: { code: 'target_unavailable', message: 'controller unavailable' } };
+                if (!isReady) return unavailable;
+                if (!observation.observationOnly && observation.sinceRevision === undefined) {
+                    starts.push(phase);
+                    return { status: 'ready', revision: phase === 'before' ? 1 : 2 };
+                }
+                return await new Promise(resolve => {
+                    if (observation.observationOnly) stopWatch = () => resolve(unavailable);
+                    request.signal?.addEventListener('abort', () => resolve({ status: 'cancelled' }), { once: true });
+                });
+            }
+            if (request.method === RPC_METHODS.SCM_HISTORY_ENTRIES) {
+                if (!isReady) return { success: false, errorCode: 'BACKEND_UNAVAILABLE', actionErrorCode: 'admission_unavailable' };
+                return { success: true, headOid, entries: [{ path: 'sentinel.txt', kind: 'commit',
+                    commit: { oid: headOid, subject: 'guest commit', authorName: 'Guest', committedAt: 1 } }] };
+            }
+            if (request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT) {
+                if (phase === 'ready') await holdRecoveryReads;
+                if (!isReady) return { success: false, errorCode: 'BACKEND_UNAVAILABLE', actionErrorCode: 'admission_unavailable' };
+                return { success: true, snapshot: { projectKey: rootPath, fetchedAt: Date.now(),
+                    repo: { isRepo: true, rootPath }, branch: { head: 'main', headOid, upstream: null, ahead: 0, behind: 0, detached: false },
+                    stashCount: 0, hasConflicts: false, entries: [],
+                    totals: { includedFiles: 0, pendingFiles: 0, untrackedFiles: 0, includedAdded: 0,
+                        includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 } } };
+            }
+            throw new Error(`Unexpected RPC ${request.method}`);
+        };
+        await answerExternalActionAccountForHome(homes, serverId, {
+            machineId, installationId: workspace.controller.installationId, tokenEpoch: 0, actionId: 'daemon.filesystem.listDirectory',
+            failure: result => {
+                const failure = ActionExecuteFailureSchema.safeParse(result);
+                return failure.success ? failure.data : null;
+            },
+            execute: async input => {
+                expect(FilesystemListDirectoryInputSchema.parse(input).workspace).toEqual(workspace);
+                if (phase === 'ready') await holdRecoveryReads;
+                if (phase === 'authenticating') return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+                return { success: true, entries: [{ name: `${phase}.txt`, type: 'file' }] };
+            },
+        });
+        const view = await renderHook(({ online }) => {
+            const git = useWorkspaceScmSnapshotController(scope);
+            const tree = useWorkspaceRepositoryTreeBrowser({ scope, enabled: online });
+            const history = useWorkspaceEntryHistory({ scope, folder: '', paths: ['sentinel.txt'],
+                enabled: online && git.snapshot != null, headOid: git.snapshot?.branch.headOid,
+                repoRootPath: git.snapshot?.repo.rootPath });
+            return { git, tree, history, gitRecovering: useWorkspaceScmRecoveryInFlight(scope) };
+        }, { initialProps: { online: true } });
+        try {
+            await vi.waitFor(() => {
+                expect(view.getCurrent().git.error).toBeNull();
+                expect(view.getCurrent().tree.nodes.map(node => node.name)).toEqual(['before.txt']);
+                expect(view.getCurrent().history).toMatchObject({ status: 'ready', stale: false, headOid });
+                expect(starts).toEqual(['before']);
+            });
+            phase = 'offline';
+            recordMachineRequestFailed({ ...accountScope, machineId });
+            stopWatch();
+            await view.rerender({ online: false });
+            await vi.waitFor(() => expect(storage.getState().getWorkspaceScmSnapshotError(scope)).not.toBeNull());
+
+            phase = 'authenticating';
+            pushPresence(true);
+            await view.rerender({ online: true });
+            await vi.waitFor(() => {
+                expect(view.getCurrent().tree).toMatchObject({ rootErrorCode: 'admission_unavailable' });
+                expect(view.getCurrent().git.error).not.toBeNull();
+                expect(view.getCurrent().history.stale).toBe(true);
+            });
+
+            phase = 'ready';
+            const replacement = { ...before, runtimeId: 'replacement-runtime', pid: 2, startedAt: now };
+            push('update', { id: 'controller-running-update', seq: 1, createdAt: Date.now(),
+                body: { t: 'update-machine', machineId, daemonState: { version: 2, value: encodePlainMachineStoredContent(replacement) } } });
+            await vi.waitFor(() => expect(resolveServerScopedMachine(storage.getState(), serverId, machineId))
+                .toMatchObject({ installationId: workspace.controller.installationId, daemonState: { runtimeId: replacement.runtimeId } }));
+
+            await vi.waitFor(() => {
+                const { gitRecovering, tree } = view.getCurrent();
+                expect({ starts, gitRecovering, treeRecovering: tree.recoveryInFlight }).toEqual({
+                    starts: ['before', 'ready'], gitRecovering: true, treeRecovering: true,
+                });
+            });
+            releaseReads();
+            await vi.waitFor(() => {
+                const { git, tree, history, gitRecovering } = view.getCurrent();
+                expect({ starts, gitError: git.error, names: tree.nodes.map(node => node.name), history,
+                    recovery: [gitRecovering, tree.recoveryInFlight] }).toMatchObject({
+                    recovery: [false, false],
+                    starts: ['before', 'ready'], gitError: null, names: ['ready.txt'],
+                    history: { status: 'ready', stale: false, headOid },
+                });
+            });
+        } finally { releaseReads(); await view.unmount(); }
     });
 
     it('preserves a workspace list refusal through search without trying a second filesystem route', async () => {

@@ -31,7 +31,7 @@ import { createAuthenticatedRouteRequest } from '@/app/api/testkit/requestFixtur
 import { machinesRoutes } from '@/app/api/routes/machines/machinesRoutes';
 import { projectExternalActionManagedAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ManagedAdmissionOutputV1Schema, ManagedControllerContextOutputV1Schema, ManagedControllerMachineOutputV1Schema, projectManagedEnrollmentCorrelationV1, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { ManagedPolicyCensusOutputV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
+import { ManagedPolicyCensusOutputV1Schema, MANAGED_CONTROLLER_STOPPED_OBSERVATION_PATH_V1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { LUME_PLUGIN } from '../../../../../../packages/plugins/machine-lume/src/manifest';
 import { createLumeNativeClient } from '../../../../../../packages/plugins/machine-lume/src/machine/nativeClient';
 import { lumeProcessResult } from '../../../../../../packages/plugins/machine-lume/src/machine/nativeClient.testkit';
@@ -51,6 +51,53 @@ describe("managed acquisition durable authority", () => {
         harness = await createLightSqliteHarness({ tempDirPrefix: "happier-managed-acquire-", initAuth: false, initEncrypt: true, env: { HAPPIER_SERVER_IDENTITY_ID: `srv_${"a".repeat(32)}` } });
     }, 120_000);
     afterAll(async () => { if (harness) await harness.close(); });
+
+    it.each([false, true])('publishes a signed Project stopped observation for a bound guest (opaque=%s)', async opaque => {
+        const homeId = `srv_${'a'.repeat(32)}`;
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const keys = tweetnacl.sign.keyPair();
+        const host = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: account.id, metadata: '{}',
+            installationId: crypto.randomUUID(), installationPublicKey: Buffer.from(keys.publicKey).toString('base64') } });
+        const controller = { machineId: host.id, installationId: host.installationId! };
+        const provider = { pluginId: 'fixture.opaque', localId: 'vm' };
+        const launch = { provider, schemaVersion: 1, name: 'Guest', choices: {} };
+        const resource = { contributionRef: provider, schemaVersion: 1, value: { reference: 'guest' } };
+        const content = { t: 'plain' as const, v: { v: 1 as const, launch, name: 'Guest',
+            nativeResult: { kind: 'bound' as const, resource } } };
+        const stored = storeOpaquePresetLaunch({ contentEncryptionMode: 'plain', content, recipients: [] });
+        const preset = opaque ? await db.managedMachinePreset.create({ data: { homeId, custodianAccountId: account.id, name: '', launch: stored } }) : null;
+        const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,
+            controllerMachineId: host.id, controllerInstallationId: controller.installationId,
+            admittedActionRequestId: `stopped-observation-${opaque}`, admittedInput: {}, ...(preset ? { presetId: preset.id, presetRevision: 1, launch: stored }
+                : { launch, resource }), allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 3,
+            observation: { observedAt: 10, availability: 'present', power: 'running', storage: 'retained' },
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
+        const app = fastify().withTypeProvider<ZodTypeProvider>();
+        app.setValidatorCompiler(validatorCompiler); app.setSerializerCompiler(serializerCompiler);
+        app.decorate('authenticate', async (request: FastifyRequest) => {
+            Object.assign(request, createAuthenticatedRouteRequest({ userId: account.id }), { headers: request.headers });
+        });
+        onTestFinished(() => app.close());
+        registerManagedMachineRoutes(app);
+        const correlation = { homeId, managedId: row.id, controller, requestId: 'project-workspace-target', expectedIntentRevision: 3 };
+        const submit = (observedAt: number, signed = correlation, key = keys.secretKey) => {
+            const path = MANAGED_CONTROLLER_STOPPED_OBSERVATION_PATH_V1;
+            const body = { ...signed, observedAt };
+            const proof = createManagedPolicyProofV1({ correlation: signed, purpose: { kind: 'target-power-observation' },
+                custodianAccountId: account.id, path, body, privateKey: key, ...(opaque ? {} : { resource }) });
+            return app.inject({ method: 'POST', url: path, payload: body,
+                headers: { [MANAGED_POLICY_PROOF_HEADER]: encodeManagedPolicyProofV1(proof) } });
+        };
+        const read = () => db.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
+        expect((await submit(99, { ...correlation, expectedIntentRevision: 2 })).statusCode).toBe(403);
+        expect((await submit(99, correlation, tweetnacl.sign.keyPair().secretKey)).statusCode).toBe(403);
+        expect((await submit(9)).statusCode).toBe(200);
+        expect(await read()).toMatchObject({ observation: { power: 'running', observedAt: 10 } });
+        const reply = await submit(20);
+        expect(reply.statusCode, reply.body).toBe(200);
+        expect(await read()).toMatchObject({ desired: 'start', intentRevision: 3, admittedInput: {},
+            observation: { observedAt: 20, availability: 'present', power: 'stopped', storage: 'retained' } });
+    });
 
     it.each(['bound', 'may-exist'] as const)('lets only the current controller settle an opaque preset canceled after allocation (%s)', async allocation => {
         const homeId = `srv_${'a'.repeat(32)}`;

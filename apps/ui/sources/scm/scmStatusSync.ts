@@ -25,7 +25,7 @@ import {
 import { reportScmStatusSyncError } from './statusSync/errorReporting';
 import { isSessionPathWithinRepoRoot } from './sync/paths';
 import { areScmWorkingSnapshotsEquivalentIgnoringFetchedAt, isUnchangedCountsOfHeldList } from './sync/snapshotDiff';
-import { resolveProjectMachineScopeId, type ProjectScmSnapshotError } from '@/sync/runtime/orchestration/projectManager';
+import { projectManager, resolveProjectMachineScopeId, type ProjectScmSnapshotError } from '@/sync/runtime/orchestration/projectManager';
 import { readSessionWorkspaceContext } from '@/sync/domains/session/readSessionWorkspaceContext';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { resolveWorkspaceTargetForSessionFromState } from '@/sync/domains/session/resolveWorkspaceTargetForSessionFromState';
@@ -49,6 +49,9 @@ import {
     readScmEntriesPageSize,
     type ScmEntriesDemandSlot,
 } from './refresh/scmEntriesDemand';
+import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { subscribeMachineUpdates } from '@/sync/store/domains/machines';
 import { resolveSessionScmScopeFromState } from '@/sync/store/domains/managedSessionScmScope';
 
 const DEFAULT_SCM_AUTO_REFRESH_PROJECT_MIN_INTERVAL_MS = 30_000;
@@ -73,6 +76,7 @@ export class ScmStatusSync {
         const snapshot = 'scope' in demand ? state.getWorkspaceScmSnapshot(demand.scope)
             : state.getSessionProjectScmSnapshot(demand.sessionId, demand.serverId);
         const workspace = scope ? { ...scope, rootPath: snapshot?.repo.rootPath ?? scope.rootPath } : null;
+        const managedWorkspace = workspace?.workspace;
         const projectKey = workspace ? tryBuildWorkspaceCacheKey(workspace)
             : 'sessionId' in demand ? this.getProjectKeyForSession(demand.sessionId, demand.serverId) : null;
         if (!projectKey) return null;
@@ -88,12 +92,31 @@ export class ScmStatusSync {
             }
             return 'scope' in demand ? storage.getState().getWorkspaceScmSnapshot(demand.scope)
                 : storage.getState().getSessionProjectScmSnapshot(demand.sessionId, demand.serverId);
-        }, ...(workspace?.workspace ? {
+        }, ...(workspace && managedWorkspace ? {
             subscribeRecovery: (recover: () => void) => {
-                const account = selectActiveServerAccountScopeForServer(getActiveServerAccountScope(), workspace.serverId)
+                const readAccount = () => selectActiveServerAccountScopeForServer(getActiveServerAccountScope(), workspace.serverId)
                     ?? readCurrentServerCredentialAccountScopeLifetime(workspace.serverId)?.scope;
-                return subscribeMachineRpcRecovery({ machineId: workspace.machineId, serverId: workspace.serverId,
+                const account = readAccount();
+                const readRunningRuntime = () => {
+                    const row = resolveServerScopedMachine(storage.getState(), workspace.serverId, workspace.machineId);
+                    return row?.installationId === managedWorkspace.controller.installationId && row.daemonState?.status === 'running'
+                        ? row.daemonState.runtimeId : undefined;
+                };
+                let runningRuntime = readRunningRuntime();
+                const stopReconnect = subscribeMachineRpcRecovery({ machineId: workspace.machineId, serverId: workspace.serverId,
                     expectedAccountId: account?.accountId }, recover);
+                // Presence can reconnect before the replacement controller registers its RPCs.
+                // Its ready daemon-state publication can resume a watch left pending or refused on that edge.
+                const stopReady = subscribeMachineUpdates((serverId, machineIds) => {
+                    if (!machineIds.includes(workspace.machineId) || !areServerProfileIdentifiersEquivalent(workspace.serverId, serverId)
+                        || !account || readAccount()?.accountId !== account.accountId) return;
+                    const nextRuntime = readRunningRuntime();
+                    if (!nextRuntime || nextRuntime === runningRuntime) return;
+                    runningRuntime = nextRuntime;
+                    const key = this.workspaceProjectKey(scope ?? workspace);
+                    if (key && !this.autoRefresh.hasReadyWatch(key)) recover();
+                });
+                return () => { stopReconnect(); stopReady(); };
             },
         } : {}), ...(workspace && snapshot?.repo.isRepo && snapshot.repo.rootPath ? {
             watch: (callbacks: ScmAutoRefreshWatchCallbacks) => {
@@ -271,10 +294,12 @@ export class ScmStatusSync {
                     ? previousPage.entriesPage.nextCursor ?? previousPage.entriesPage.totalFiles : 0) }
             : undefined;
         const requestOptions = requestedList ? requestedPage ? { entriesPage: requestedPage } : undefined : { detail: 'summary' as const };
+        const recovering = source === 'workspace_recovery';
+        if (recovering) projectManager.setWorkspaceScmRecoveryInFlight(scope, true);
         try {
             // A managed watch can become ready after Files' initial read was refused. Republish
             // directory demand on that edge as well as on reconnect, independent of Git's result.
-            if (source === 'workspace_recovery') await clearSearchCacheForProject(this.getProjectSessions(projectKey), scope);
+            if (recovering) await clearSearchCacheForProject(this.getProjectSessions(projectKey), scope, 'recovery');
             // Legacy unscoped Sessions retain their existing Session/Machine routing and branch observation.
             // Exact-Home Sessions and Project use the incumbent addressed Machine read.
             const legacy = this.getProjectSessions(projectKey).find(ref => ref.serverId === null);
@@ -310,7 +335,9 @@ export class ScmStatusSync {
                 return;
             }
             const previousSnapshot = this.projectLastSnapshot.get(activeKey) ?? state.getWorkspaceScmSnapshot(scope);
-            const publication = source === 'filesystem' || source === 'workspace_recovery' ? { contentChanged: true } : undefined;
+            const settledError = this.readWorkspaceWatchFailure(scope, activeKey);
+            const publication = recovering || source === 'filesystem'
+                ? { contentChanged: true, recovered: recovering && settledError === null } : undefined;
             const unchangedHeldList = isUnchangedCountsOfHeldList(previousSnapshot, snapshot);
             const snapshotChanged = publication !== undefined || !unchangedHeldList
                 && !areScmWorkingSnapshotsEquivalentIgnoringFetchedAt(previousSnapshot, snapshot);
@@ -325,7 +352,6 @@ export class ScmStatusSync {
                 }
             }
             // A successful read settles the error to the watch's unavailability, if any, in one publication.
-            const settledError = this.readWorkspaceWatchFailure(scope, activeKey);
             const status = snapshot.repo.isRepo ? snapshotToScmStatus(snapshot) : null;
             const publications = [...refs.values()]
                 .filter(ref => snapshotChanged || !state.getSessionProjectScmSnapshot(ref.sessionId, ref.serverId))
@@ -373,6 +399,7 @@ export class ScmStatusSync {
             if (failure.errorCode === SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED) this.projectAutoRefreshSuspended.add(activeKey);
             reportScmStatusSyncError({ projectKey: activeKey, error });
         } finally {
+            if (recovering) projectManager.setWorkspaceScmRecoveryInFlight(scope, false);
             if (pendingPage && this.projectEntriesRequests.get(projectKey) === pendingPage) this.projectEntriesRequests.delete(projectKey);
             this.autoRefresh.reconcile(projectKey);
             if (activeKey !== projectKey) this.autoRefresh.reconcile(activeKey);

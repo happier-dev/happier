@@ -2,6 +2,7 @@ import * as React from 'react';
 import type { ScmEntryHistoryV1 } from '@happier-dev/protocol/scm';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
+import { useWorkspaceScmRecoveryRevision } from '@/sync/store/scmHooks';
 import { machineScmHistoryEntries } from '@/sync/ops/scm/machineScm';
 import { tryBuildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { resolvePathRelativeToRoot } from '@/utils/path/resolvePathRelativeToRoot';
@@ -27,6 +28,10 @@ export function useWorkspaceEntryHistory(input: Readonly<{
     enabled: boolean;
     reloadToken?: string | number;
 }>) {
+    const managedScope = input.enabled && input.scope.workspace ? input.scope : null;
+    // Re-read on a renewed repository witness even if its HEAD and path are unchanged.
+    const recoveryRevision = useWorkspaceScmRecoveryRevision(managedScope);
+    const enabled = input.enabled;
     const workspaceKey = tryBuildWorkspaceCacheKey(input.scope) ?? '';
     const scopeKey = JSON.stringify([workspaceKey, input.folder]);
     const pathsKey = JSON.stringify([...new Set(input.paths)].sort());
@@ -37,7 +42,7 @@ export function useWorkspaceEntryHistory(input: Readonly<{
         ? resolvePathRelativeToRoot({ path: scope.rootPath, root: repoRootPath, preservePathSpelling: true }) : null,
     [scope.rootPath, repoRootPath]);
     React.useEffect(() => {
-        if (!input.enabled || !workspaceKey) return;
+        if (!enabled || !workspaceKey) return;
         const paths: string[] = JSON.parse(pathsKey);
         if (paths.length === 0) return;
         const controller = new AbortController();
@@ -89,8 +94,8 @@ export function useWorkspaceEntryHistory(input: Readonly<{
             });
         }).catch(error => unavailable(error instanceof Error ? error.message : 'History unavailable'));
         return () => controller.abort();
-    }, [workspaceKey, scopeKey, scope, input.folder, pathsKey, input.headOid, input.enabled, input.reloadToken, repoRootPath, workspacePrefix]);
+    }, [workspaceKey, scopeKey, scope, input.folder, pathsKey, input.headOid, enabled, input.reloadToken, repoRootPath, workspacePrefix, recoveryRevision]);
     const value = state?.scopeKey === scopeKey ? state.value : EMPTY;
     const witnessChanged = input.headOid !== undefined && value.headOid !== input.headOid;
-    return (!input.enabled || witnessChanged || state?.repoRootPath !== repoRootPath) && value.entries.size > 0 ? { ...value, stale: true } : value;
+    return (!enabled || witnessChanged || state?.repoRootPath !== repoRootPath) && value.entries.size > 0 ? { ...value, stale: true } : value;
 }
