@@ -4031,7 +4031,8 @@ function SessionViewLoaded({
     }], [sessionId, liveComposerState.agentId, connectedServiceQuotaProfileRef, providerAccountUsageRecordIds,
         usageLimitRecovery?.selectedAuth?.kind, usageLimitRecoveryCheckNowSupported, usageLimitRecoveryCredits]);
     const [usageSource] = useProviderUsageSources({ requests: usageRequests,
-        connectedServices: accountProfile?.connectedServicesV2 ?? [], fetchEnabled: true });
+        // A retained but hidden session surface keeps its last result and does no live polling.
+        connectedServices: accountProfile?.connectedServicesV2 ?? [], fetchEnabled: surfaceFocused });
     const connectedServiceQuotaProfileKey = usageSource.profileKey;
     const connectedServiceQuotaDisplaySnapshot = usageSource.quotaDisplaySnapshot;
     const connectedServiceQuotaActiveAccountLabel = React.useMemo(() => {
@@ -4065,7 +4066,13 @@ function SessionViewLoaded({
             quotaLimitSelection: connectedServiceQuotaLimitSelection,
             nowMs: nowServerMs(),
             formatter: connectedServiceQuotaGaugeFormatter,
-            providerDisplayName: resolveConnectedServiceProviderDisplayName(gaugeSource.snapshot.serviceId),
+            // A connected login is named by its service; native or runtime-limit usage belongs to
+            // the composer's own provider, whatever service keys it.
+            providerDisplayName: providerUsageDisplaySnapshotSource?.kind === 'connected_service_quota_view'
+                && connectedServiceQuotaProfileRef
+                && gaugeSource.snapshot.serviceId === connectedServiceQuotaProfileRef.serviceId
+                ? resolveConnectedServiceProviderDisplayName(gaugeSource.snapshot.serviceId)
+                : t(getAgentCore(liveComposerState.agentId).displayNameKey),
             activeAccountDisplayLabel: providerUsageDisplaySnapshotSource?.kind === 'connected_service_quota_view'
                 && gaugeSource.snapshot === connectedServiceQuotaDisplaySnapshot
                 ? connectedServiceQuotaActiveAccountLabel
@@ -4083,6 +4090,7 @@ function SessionViewLoaded({
         sessionProviderUsageGaugeWindowModesSetting,
         sessionProviderUsageGaugeNumberWindowMode,
         sessionProviderUsageGaugeWindowMode,
+        liveComposerState.agentId,
     ]);
     const providerUsageGaugeConnectedServiceProfileRef =
         providerUsageGaugeSource

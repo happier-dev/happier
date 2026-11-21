@@ -2647,7 +2647,7 @@ describe('SessionView (direct sessions)', () => {
 
     expect(findAgentInput(screen).props.providerUsageGauge).toEqual(expect.objectContaining({
       serviceId: 'openai-codex',
-      providerDisplayName: 'connectedServices.serviceNames.openaiCodex',
+      providerDisplayName: 'agentInput.agent.codex',
       ringValueLabel: '30',
     }));
     expect(findAgentInput(screen).props.providerUsageGauge.usageRings.map((ring: { meterId: string }) => ring.meterId))
@@ -2658,6 +2658,8 @@ describe('SessionView (direct sessions)', () => {
     featureEnabledState['connectedServices.quotas'] = true;
     storageState.sessions.s1 = {
       ...storageState.sessions.s1,
+      // The evidence is Claude's, so the composer must be on Claude to show it.
+      metadata: { ...storageState.sessions.s1.metadata, flavor: 'claude' },
       lastRuntimeIssue: {
         v: 1,
         scope: 'primary_session',
@@ -2688,7 +2690,7 @@ describe('SessionView (direct sessions)', () => {
 
     expect(findAgentInput(screen).props.providerUsageGauge).toEqual(expect.objectContaining({
       serviceId: 'claude-subscription',
-      providerDisplayName: 'connectedServices.serviceNames.claudeSubscription',
+      providerDisplayName: 'agentInput.agent.claude',
       activeAccountDisplayLabel: 'claude-backup',
     }));
   });
@@ -2720,7 +2722,7 @@ describe('SessionView (direct sessions)', () => {
     expect(quotaSnapshotsState.requestedProfiles).toEqual([]);
     expect(findAgentInput(screen).props.providerUsageGauge).toEqual(expect.objectContaining({
       serviceId: 'openai-codex',
-      providerDisplayName: 'connectedServices.serviceNames.openaiCodex',
+      providerDisplayName: 'agentInput.agent.codex',
       activeAccountDisplayLabel: 'Native Codex account',
       ringValueLabel: '38',
     }));

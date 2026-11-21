@@ -201,6 +201,13 @@ export type AgentCore = Readonly<{
      */
     connectedServices?: Readonly<{
       supportedServiceIds: ReadonlyArray<ConnectedServiceId>;
+      /**
+       * The services whose quota IS this provider's own usage (its own subscription or API key).
+       * A multi-vendor agent that can borrow another provider's login (OpenCode, Pi) lists none:
+       * using a Claude login inside OpenCode is still Claude usage, so it must never be shown as
+       * OpenCode's own allowance. Defaults to none.
+       */
+      usageServiceIds?: ReadonlyArray<ConnectedServiceId>;
       quotaResetServiceIds?: ReadonlyArray<ConnectedServiceId>;
       providerStateSharing?: ConnectedServicesProviderStateSharingCapability;
       sessionAuthSwitch?: Readonly<{

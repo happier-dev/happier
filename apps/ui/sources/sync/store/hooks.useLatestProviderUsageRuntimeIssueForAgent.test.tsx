@@ -76,4 +76,10 @@ describe('selectProviderUsageRuntimeIssuesForAccounts', () => {
         const ids = selectProviderUsageRecordIds(sessions);
         expect(selectProviderUsageRecordIds(sessions)).toBe(ids);
     });
+
+    it('ignores the asking session\'s own evidence when it is for another provider', () => {
+        const sessions = { mine: session('mine', 'codex', limitIssue('codex', 1_000)) };
+        const [issue] = selectProviderUsageRuntimeIssuesForAccounts(sessions, [{ providerId: 'claude', sessionId: 'mine' }]);
+        expect(issue).toBeNull();
+    });
 });

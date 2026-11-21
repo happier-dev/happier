@@ -1771,11 +1771,10 @@ function selectProviderUsageRuntimeIssueForAccount(
   let updatedAt = -1;
   for (const session of Object.values(sessions)) {
     const issue = session.lastRuntimeIssue;
-    if (!issue?.usageLimit) continue;
-    // The asking session's own evidence always counts (including an account switch it observed);
-    // another session's evidence must be for the same provider and the same account.
+    if (!issue?.usageLimit || resolveAgentIdFromFlavor(issue.provider) !== target.providerId) continue;
+    // The asking session's own evidence for this provider always counts (including an account
+    // switch it observed); another session's evidence must also be for the same account.
     if (session.id !== target.sessionId) {
-      if (resolveAgentIdFromFlavor(issue.provider) !== target.providerId) continue;
       if (target.profileRef) {
         const ref = issue.usageLimit.quotaSnapshotRef;
         if (!ref || ref.serviceId !== target.profileRef.serviceId || ref.profileId !== target.profileRef.profileId) continue;
