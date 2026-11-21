@@ -3899,8 +3899,9 @@ export function useActiveServerAccountScope(serverId?: string | null) {
 }
 
 /** Live readers renew demand and subscriptions together when even the same Account is restored. */
-export function useActiveServerAccountScopeLifetime(): ActiveServerAccountScopeLifetime | null {
+export function useActiveServerAccountScopeLifetime(enabled = true): ActiveServerAccountScopeLifetime | null {
   const subscribe = React.useCallback((listener: () => void) => {
+    if (!enabled) return () => {};
     let disposed = false;
     let retirement: Readonly<{ dispose(): void }> | undefined;
     const changed = () => {
@@ -3924,8 +3925,9 @@ export function useActiveServerAccountScopeLifetime(): ActiveServerAccountScopeL
       unsubscribeApplied();
       unsubscribeAvailability();
     };
-  }, []);
-  return React.useSyncExternalStore(subscribe, captureActiveServerAccountScopeLifetime, captureActiveServerAccountScopeLifetime);
+  }, [enabled]);
+  const read = React.useCallback(() => enabled ? captureActiveServerAccountScopeLifetime() : null, [enabled]);
+  return React.useSyncExternalStore(subscribe, read, read);
 }
 
 /** Use the existing Account lifetime so mounted readers renew demand after restore or Home switch. */

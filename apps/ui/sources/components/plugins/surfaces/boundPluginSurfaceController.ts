@@ -1622,6 +1622,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
     };
     let machineApiBindings = createMachineApiBindings();
     const hostApi = createPluginSurfaceActionHostApi({
+        ...(accountLifetime ? { accountLifetime } : {}),
         ...(homeFamilyScope && accountLifetime ? { actionAccountLifetime: accountLifetime } : {}),
         pluginUiProjection: input.facts.pluginUiProjection,
         surfaceContext,

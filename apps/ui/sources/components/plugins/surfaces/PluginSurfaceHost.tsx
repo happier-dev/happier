@@ -142,7 +142,7 @@ import {
     type PluginSurfacePresentationState,
 } from '@/sync/domains/surfaces/copy';
 import { getPreferredLanguage, t } from '@/text';
-import { useHomeHasMachines, useMachineDisplayNamesById, useServerScopedMachine } from '@/sync/store/hooks';
+import { useActiveServerAccountScopeLifetime, useHomeHasMachines, useMachineDisplayNamesById, useServerScopedMachine } from '@/sync/store/hooks';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { resolvePluginDisplayString } from '@/components/plugins/surfaces/resolvePluginDisplayString';
@@ -275,10 +275,7 @@ import { renderPluginSessionPart } from './PluginSessionPartHost';
 import { createDeclarativeWidgetAreaRender, type DeclarativeWidgetAreaRender } from './declarativeWidgetArea';
 import { usePluginDestinationRowRenderer } from '@/components/appShell/workspace/usePluginDestinationRowRenderer';
 import { useIsBeneathPluginSurfaceNestingBoundary } from './pluginSurfaceNesting';
-import {
-    captureActiveServerAccountScopeLifetime,
-    type ActiveServerAccountScopeLifetime,
-} from '@/sync/domains/scope/activeServerAccountScope';
+import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { derivePluginUiEphemeralSharedScopeIdentity, usePluginUiEphemeralSharedScopeBinding } from './pluginUiEphemeralSharedScope';
 import {
@@ -2188,26 +2185,16 @@ function PluginSurfaceHostMount(props: Readonly<(
     const daemonSettingsInteraction = usePluginSurfaceDaemonInteraction({
         machineId: props.daemonSettingsTarget?.machineId ?? machineId,
     });
-    // Acquire the exact routed Account lifetime once for this mount. It remains an
-    // opaque cancellation/currentness input: neither the surface host nor the
-    // artifact learns an Account id or creates another epoch.
-    //
-    // Refresh on retirement so presentation fails closed synchronously even if
-    // no unrelated parent state happens to rerender this host first. The existing
-    // credential-scope owner remains the only lifecycle owner; this mount merely
-    // observes its existing retirement callback.
-    const [, refreshAfterAccountRetirement] = React.useReducer((revision: number) => revision + 1, 0);
+    // Follow the Account owner for this mount so the next demand uses the
+    // replacement lifetime, including when the same active Account returns.
     const routedAccountBindings = useServerCredentialAccountScopeBindings(serverId ? [serverId] : []);
+    const activeAccountLifetime = useActiveServerAccountScopeLifetime(!serverId);
     const accountLifetime: ActiveServerAccountScopeLifetime | null = serverId
         ? routedAccountBindings.values().next().value ?? null
-        : captureActiveServerAccountScopeLifetime();
+        : activeAccountLifetime;
     const reactNativeFeatureEnabled = useFeatureEnabled('plugins.ui.reactNativeBundles', {
         scopeKind: 'spawn', serverId: serverId ?? accountLifetime?.scope.serverId ?? '',
     });
-    React.useEffect(() => {
-        const retirement = accountLifetime?.onRetire(refreshAfterAccountRetirement);
-        return () => retirement?.dispose();
-    }, [accountLifetime]);
     const mountedTargetPluginId = hasEmbeddedRendererMount
         ? null
         : selectedSurfaceBinding?.kind === 'destination'

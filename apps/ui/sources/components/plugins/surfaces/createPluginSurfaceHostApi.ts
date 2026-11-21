@@ -296,6 +296,8 @@ export type CreatePluginSurfaceHostApiInput = Readonly<{
      * the request facade; it never creates a second lifecycle/epoch owner.
      */
     isCurrent?: () => boolean;
+    /** The controller's captured Account, which can retire while a handler is pending. */
+    accountLifetime?: Pick<import('@/sync/domains/scope/serverAccountScope').ServerAccountScopeLifetime, 'onRetire'>;
     /**
      * A controller-owned live capability predicate. It can narrow an otherwise
      * installed method during an environment refresh without replacing the
@@ -395,7 +397,7 @@ export function createPluginSurfaceHostApi(
             if (disposed || input.isCurrent?.() === false) {
                 return createPluginSurfaceHostApiError('stale_surface', ['plugin_surface_retired']);
             }
-            return pending.then(() => handleRequest(request, options));
+            return pending.then(() => dispatchRequest(request, options));
         }
         const resolved = input.resolveUnavailableError?.(error, request) ?? error;
         return resolved === error ? result : createPluginSurfaceHostApiError(resolved.code, resolved.diagnostics, resolved.message, resolved);
@@ -411,7 +413,7 @@ export function createPluginSurfaceHostApi(
         return Object.freeze(installedMethods.filter((method) => isMethodAvailable(method)));
     };
     const onDispose = input.onDispose;
-    function handleRequest(
+    function dispatchRequest(
         request: PluginUiHostApiRequestEnvelopeV1,
         options?: PluginSurfaceHostApiRequestOptions,
     ): PluginUiJsonValueV1 | Promise<PluginUiJsonValueV1> {
@@ -460,6 +462,25 @@ export function createPluginSurfaceHostApi(
             'unsupported_method',
             [`host_api_method_not_installed:${request.method}`],
         );
+    }
+    function handleRequest(
+        request: PluginUiHostApiRequestEnvelopeV1,
+        options?: PluginSurfaceHostApiRequestOptions,
+    ): PluginUiJsonValueV1 | Promise<PluginUiJsonValueV1> {
+        const result = dispatchRequest(request, options);
+        const lifetime = input.accountLifetime;
+        if (!lifetime || !(result instanceof Promise)) return result;
+
+        // Account retirement settles the caller even if its transport never
+        // answers. Physical disposal alone can be caused by a successful effect
+        // (for example navigation), so only Account retirement competes here.
+        let retirement: ReturnType<typeof lifetime.onRetire> | undefined;
+        const retired = new Promise<PluginUiJsonValueV1>(resolve => {
+            retirement = lifetime.onRetire(() => resolve(createPluginSurfaceHostApiError(
+                'stale_surface', ['plugin_surface_retired'], undefined, { retryable: false },
+            )));
+        });
+        return Promise.race([result, retired]).finally(() => retirement?.dispose());
     }
     const notifyConnectionSettled = connectionSettlement.notify;
     return Object.freeze({

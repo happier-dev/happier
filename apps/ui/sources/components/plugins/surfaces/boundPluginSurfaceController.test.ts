@@ -3878,6 +3878,87 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
         }))).resolves.toBeNull();
     });
 
+    it('settles pending Send and Resource calls on Account retirement and serves the next calls in the same mount', async () => {
+        const { useActiveServerAccountScopeLifetime } = await import('@/sync/store/hooks');
+        const { retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot }
+            = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+        const { createCanonicalPluginReactNativeHostApiAdapter } = await import('../reactNative/hostApi');
+        const { createPluginSurfaceContextFixture } = await import('@/dev/testkit/fixtures/pluginSurfaceContextFixture');
+        const previousSnapshot = getAppliedActiveServerSnapshot();
+        const previousAvailability = isAppliedActiveServerRuntimeAvailable();
+        onTestFinished(() => {
+            retireActiveServerAccountScopeLifetime();
+            publishAppliedActiveServerSnapshot(previousSnapshot, previousAvailability);
+        });
+        storage.setState({ profileScope: CURRENT_ACCOUNT_LIFETIME.scope });
+        publishAppliedActiveServerSnapshot({ serverId: FACTS.serverId, serverUrl: 'https://bound-host.test', generation: 1 });
+
+        const sent = { supported: true, result: { ok: true, result: { sent: true } } } as const;
+        const read = { supported: true, result: { ok: true,
+            resource: { pluginId: FACTS.pluginId, localId: 'review-summary' }, kind: 'asset',
+            contentType: 'application/json', digest: `sha256:${'a'.repeat(64)}`, bytesBase64: 'e30=',
+        } } as const;
+        const pendingSend = createDeferred<typeof sent>();
+        const pendingRead = createDeferred<typeof read>();
+        const executeContributedAction = vi.fn<NonNullable<BoundPluginSurfaceBinding['executeContributedAction']>>()
+            .mockImplementationOnce(() => pendingSend.promise).mockResolvedValue(sent);
+        const readResource = vi.fn<PluginSurfaceResourceReadTransport>()
+            .mockImplementationOnce(() => pendingRead.promise).mockResolvedValue(read);
+        const hook = await renderHook(() => {
+            const accountLifetime = useActiveServerAccountScopeLifetime();
+            const controller = useBoundPluginSurfaceController({
+                facts: { ...FACTS, accountLifetime },
+                binding: { executeContributedAction, readResource },
+            });
+            return React.useMemo(() => createCanonicalPluginReactNativeHostApiAdapter({
+                surface: createPluginSurfaceContextFixture({
+                    mount: { kind: 'destination', destination: { pluginId: FACTS.pluginId, localId: FACTS.contributionId }, container: 'appPage' },
+                }),
+                requestSurface: controller.surfaceContext,
+                handleRequest: controller.hostApi.handleRequest,
+                installedMethods: controller.installedMethods,
+                isCurrent: controller.isCurrent,
+            }), [controller]);
+        });
+        const old = hook.getCurrent();
+        let sendOutcome: unknown = 'pending';
+        let readOutcome: unknown = 'pending';
+        const send = (api: typeof old.api) => api.executeAction('send', {});
+        const readSummary = (api: typeof old.api) => api.readResource('review-summary');
+        try {
+            const oldSend = send(old.api).then(value => { sendOutcome = value; }, error => { sendOutcome = error; });
+            const oldRead = readSummary(old.api).then(value => { readOutcome = value; }, error => { readOutcome = error; });
+            await act(async () => {});
+            expect(executeContributedAction).toHaveBeenCalledTimes(1);
+            expect(readResource).toHaveBeenCalledTimes(1);
+            expect(sendOutcome).toBe('pending');
+            expect(readOutcome).toBe('pending');
+
+            await act(async () => { retireActiveServerAccountScopeLifetime(); });
+            expect.soft(sendOutcome).toMatchObject({ code: 'stale_surface' });
+            expect.soft(readOutcome).toMatchObject({ code: 'stale_surface' });
+            await expect(send(old.api)).rejects.toMatchObject({ code: 'stale_surface' });
+            const rebound = hook.getCurrent();
+            await expect(send(rebound.api)).resolves.toEqual({ sent: true });
+            await expect(readSummary(rebound.api)).resolves.toMatchObject({ bytes: new Uint8Array([123, 125]) });
+            expect(executeContributedAction).toHaveBeenCalledTimes(2);
+            expect(readResource).toHaveBeenCalledTimes(2);
+
+            pendingSend.resolve(sent);
+            pendingRead.resolve(read);
+            await Promise.all([oldSend, oldRead]);
+            expect(sendOutcome).toMatchObject({ code: 'stale_surface' });
+            expect(readOutcome).toMatchObject({ code: 'stale_surface' });
+            rebound.dispose();
+        } finally {
+            pendingSend.resolve(sent);
+            pendingRead.resolve(read);
+            old.dispose();
+            await hook.unmount();
+        }
+    });
+
     it('fences the facade when the captured Account lifetime retires', async () => {
         let accountCurrent = true;
         let retireController: (() => void) | undefined;

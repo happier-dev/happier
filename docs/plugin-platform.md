@@ -7294,6 +7294,12 @@ the claim for those operations, and daemon execution independently refuses an
 unclaimed or locally unverifiable caller. The existing signed envelope digest
 binds the exact claim; there is no second claim in the authorization binding.
 
+The mounted host settles a pending request with `stale_surface` when its
+captured Account lifetime retires, even if the underlying operation is still
+waiting. The retired request is terminal for that caller. New requests use the
+replacement Account binding as soon as the scope owner publishes it. An exact
+Machine mount keeps its own selected occurrence and execution authority.
+
 The daemon leases its current executable registry and reuses the mounted-caller
 admission owner to match the receiving Machine, live occurrence, admitted
 contribution, source custody and materialization. It derives the plugin caller

@@ -2927,6 +2927,8 @@ export type PluginSurfaceMachineHostApiBindings = Readonly<{
 
 export function createPluginSurfaceActionHostApi(input: Readonly<{
     surfaceContext: PluginUiSurfaceContextV1;
+    /** Account retirement settles this mount's host calls independently of Action routing. */
+    accountLifetime?: ActiveServerAccountScopeLifetime;
     /** Host-private captured scope from the canonical bound controller, never author input. */
     actionAccountLifetime?: ActiveServerAccountScopeLifetime;
     /** Structural support projected by the canonical bound controller. */
@@ -3013,6 +3015,7 @@ export function createPluginSurfaceActionHostApi(input: Readonly<{
     if (input.openableContent) {
         return createPluginSurfaceHostApi({
             surfaceContext: input.surfaceContext,
+            ...(input.accountLifetime ? { accountLifetime: input.accountLifetime } : {}),
             ...(input.admissionMethods ? { admissionMethods: input.admissionMethods } : {}),
             ...(input.isMethodAvailable ? { isMethodAvailable: input.isMethodAvailable } : {}),
             ...(input.resolveUnavailableError ? { resolveUnavailableError: input.resolveUnavailableError } : {}),
@@ -3177,6 +3180,7 @@ export function createPluginSurfaceActionHostApi(input: Readonly<{
     };
     const hostApiInput: Parameters<typeof createPluginSurfaceHostApi>[0] = {
         surfaceContext: input.surfaceContext,
+        ...(input.accountLifetime ? { accountLifetime: input.accountLifetime } : {}),
         ...(input.admissionMethods ? { admissionMethods: input.admissionMethods } : {}),
         ...(input.isMethodAvailable ? { isMethodAvailable: input.isMethodAvailable } : {}),
         ...(input.resolveUnavailableError ? { resolveUnavailableError: input.resolveUnavailableError } : {}),
