@@ -1,7 +1,7 @@
 import { isSameDynamicModelCatalog } from '@/sync/domains/models/dynamicModelProbeCacheKey';
 import { normalizeAcpConfigOptionsArray, type AcpConfigOption } from '@/sync/domains/sessionControl/configOptionsControl';
 import { createUnavailablePreflightModelList, type PreflightModelList } from '@/sync/domains/models/modelOptions';
-import { AgentProbeModelSchema } from '@happier-dev/protocol/capabilities';
+import { AgentModelsProbeObservationSchema, AgentProbeModelSchema } from '@happier-dev/protocol/capabilities';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import type { ProbedResourceSnapshot } from '@happier-dev/protocol/common/probedResourceCache';
 import type { SpawnFailureV1 } from '@happier-dev/protocol/machines/processes/spawnFailureV1';
@@ -87,7 +87,9 @@ function normalizePersistedModelList(input: unknown): PreflightModelList | null 
     });
     const supportsFreeform = Boolean(supportsFreeformRaw);
     if (modelsRaw.length > 0 && models.length === 0 && supportsFreeform !== true) return null;
-    return { availableModels: models, supportsFreeform };
+    const source = AgentModelsProbeObservationSchema.shape.source.safeParse(inputRecord.source);
+    return { availableModels: models, supportsFreeform,
+        ...(source.success && source.data !== undefined ? { source: source.data } : {}) };
 }
 
 const transientSuccessByKey = new Map<string, Readonly<{

@@ -1,13 +1,13 @@
 import type { AcpConfigOption } from '@/sync/domains/sessionControl/configOptionsControl';
 import type { PreflightModelList } from '@/sync/domains/models/modelOptions';
-import { AgentProbeModelSchema } from '@happier-dev/protocol/capabilities';
+import { AgentModelsProbeObservationSchema, AgentProbeModelSchema } from '@happier-dev/protocol/capabilities';
 
 export function parsePreflightModelListFromProbeModelsResult(raw: unknown): PreflightModelList | null {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
     const rec = raw as Record<string, unknown>;
     const modelsRaw = rec.availableModels;
     const supportsFreeformRaw = rec.supportsFreeform;
-    const sourceRaw = typeof rec.source === 'string' ? rec.source : null;
+    const source = AgentModelsProbeObservationSchema.shape.source.safeParse(rec.source);
     if (!Array.isArray(modelsRaw)) return null;
 
     const parsed: PreflightModelList = {
@@ -32,7 +32,8 @@ export function parsePreflightModelListFromProbeModelsResult(raw: unknown): Pref
                 }];
             }),
         supportsFreeform: Boolean(supportsFreeformRaw),
-        ...(sourceRaw === 'unavailable' ? { unavailable: true } : {}),
+        ...(source.success && source.data !== undefined ? { source: source.data } : {}),
+        ...(source.success && source.data === 'unavailable' ? { unavailable: true } : {}),
     };
 
     if (

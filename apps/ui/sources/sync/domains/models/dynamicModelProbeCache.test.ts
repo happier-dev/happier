@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildScmDiffSummaryModelProfiles } from '@/settings/scmDiffSummary/models';
 
-import type { PreflightModelList } from './modelOptions';
+import { getModelOptionsForAgentTypeOrPreflight, type PreflightModelList } from './modelOptions';
 
 import {
     readDynamicModelProbeCache,
@@ -115,6 +115,36 @@ describe('dynamic model probe cache', () => {
         expect(reloaded.readDynamicModelProbeCache('empty-catalog')).toMatchObject({
             kind: 'success', value: { availableModels: [], supportsFreeform: false },
         });
+    });
+
+    it('offers the six probed Muse models for the selected connected account after reload', async () => {
+        resetDynamicModelProbeCacheForTests();
+        const targetKey = 'muse-connected-account';
+        const modelIds = [
+            'default',
+            'meta/muse-wonder-1.0',
+            'meta/muse-wonder-full-1.0',
+            'meta/muse-ember-1.0',
+            'meta/muse-spark-1.3',
+            'meta/muse-spark-1.2',
+        ];
+        writeDynamicModelProbeCacheSuccess(targetKey, {
+            availableModels: modelIds.map(id => ({ id, name: id })),
+            supportsFreeform: false,
+            source: 'dynamic',
+        });
+
+        vi.resetModules();
+        const reloaded = await import('./dynamicModelProbeCache');
+        const entry = reloaded.readDynamicModelProbeCache(targetKey);
+        const options = getModelOptionsForAgentTypeOrPreflight({
+            agentType: 'muse',
+            connectedAccountSelected: true,
+            preflight: entry?.kind === 'success' ? entry.value : null,
+            preflightTargetKey: targetKey,
+            currentTargetKey: targetKey,
+        });
+        expect(options.map(option => option.value)).toEqual(modelIds);
     });
 
     it('preserves explicit capabilities and keeps legacy cached rows unknown for Summary after reload', async () => {
