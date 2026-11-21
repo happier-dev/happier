@@ -11,8 +11,8 @@ describe('Workflow host Action contract failures', () => {
     // Captured PR4 operand and refusal, produced by the real installed-host Action reader.
     const details = { issues: [{ code: 'unknown_action', path: ['id'] }] };
     const actions = createActionExecutor({});
-    const read = createWorkflowHostActionContractReader({ token: 'token', sessionId: 'session',
-      credentials: { token: 'token', encryption: null }, serverHttpBaseUrl: 'http://home.test',
+    const read = createWorkflowHostActionContractReader({ token: 'token', sessionId: 'session', mode: 'plain', ctx: null,
+      credentials: { token: 'token', encryption: null }, serverId: 'home', serverHttpBaseUrl: 'http://home.test',
     }, async input => actions.execute('action.spec.get', input, { surface: 'cli' }));
     const target = { machineId: 'machine', directory: '/repo' };
     expect(await read('action.spec.get', target)).toMatchObject({ inputSchema: expect.any(Object) });
