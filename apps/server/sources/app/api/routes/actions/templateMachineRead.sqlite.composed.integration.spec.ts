@@ -5,7 +5,7 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import { SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createSignedDiscussionHttpFixture } from './discussionExecutionAuthorization.testkit';
-import { resolveExternalActionServerRequestHeaders } from '../../../../../../cli/src/api/externalActionExecutionAuthorization';
+import { createExternalActionAuthorizedRequestHeaders, resolveExternalActionServerRequestHeaders } from '../../../../../../cli/src/api/externalActionExecutionAuthorization';
 import axios from '../../../../../../cli/src/api/client/credentialAxios';
 
 describe('approved Copy Machine read through Home authentication', () => {
@@ -18,11 +18,11 @@ describe('approved Copy Machine read through Home authentication', () => {
     }, 300_000);
     afterAll(async () => { await harness?.close(); });
 
-    it.each(['restricted-token', 'full-token', 'account'] as const)('reads the execution Machine for an admitted %s Copy child', async kind => {
+    it.each(['restricted-token', 'full-token', 'account', 'signed-account'] as const)('reads the execution Machine for an admitted %s Copy child', async kind => {
         const f = await createSignedDiscussionHttpFixture(kind === 'restricted-token' ? 'template.instantiate' : undefined,
             [], false, undefined, { machineReads: true });
         try {
-            const authorization = await f.mint('template.instantiate', { source: { kind: 'artifact', artifactId: randomUUID() } }, kind === 'account');
+            const authorization = await f.mint('template.instantiate', { source: { kind: 'artifact', artifactId: randomUUID() } }, kind === 'account' || kind === 'signed-account');
             const context: ActionExecutorContext = { surface: 'cli', authority: 'account_automation', runtimeAccountId: f.account.id,
                 externalActionExecutionAuthorization: authorization, externalActionTarget: authorization.binding.target };
             const origin = await f.app.listen({ host: '127.0.0.1', port: 0 });
@@ -31,13 +31,29 @@ describe('approved Copy Machine read through Home authentication', () => {
                 child: { action: 'session.spawn_new', role: 'create_bot', input: {} },
                 admittedReview: { action: 'session.spawn_new', role: 'create_bot', surface: 'cli' },
                 execute: async (_input, childContext) => {
-                    const resolved = resolveExternalActionServerRequestHeaders({ context: childContext, effectActionId: 'session.spawn_new',
+                    // Native Account requester HTTP retains the signed template root instead of the installed Account bearer.
+                    const resolved = kind === 'signed-account' ? { ok: true as const,
+                        headers: createExternalActionAuthorizedRequestHeaders({ authorization, effectActionId: authorization.binding.actionId,
+                            target: authorization.binding.target, method: 'GET', path,
+                            installationId: f.machine.installationId!, privateKey: f.keyPair.secretKey }) }
+                        : resolveExternalActionServerRequestHeaders({ context: childContext, effectActionId: 'session.spawn_new',
                         method: 'GET', path, daemonToken: f.presentUserToken, serverIdentityId: authorization.binding.serverIdentityId,
                         installationId: f.machine.installationId!, privateKey: f.keyPair.secretKey });
                     if (!resolved.ok) throw new Error('Expected admitted child request headers');
                     const result = await axios.get(`${origin}${path}`, { headers: {
                         ...resolved.headers, 'x-happier-account-stored-content-protocol': '2',
                     }, validateStatus: () => true });
+                    if (kind === 'signed-account') {
+                        const otherPath = `/v1/machines/${randomUUID()}`;
+                        const other = await axios.get(`${origin}${otherPath}`, { headers: {
+                            ...createExternalActionAuthorizedRequestHeaders({ authorization,
+                                effectActionId: authorization.binding.actionId, target: authorization.binding.target,
+                                method: 'GET', path: otherPath, installationId: f.machine.installationId!, privateKey: f.keyPair.secretKey }),
+                            'x-happier-account-stored-content-protocol': '2',
+                        }, validateStatus: () => true });
+                        expect({ status: other.status, refusal: other.data.authorizationRefusal })
+                            .toEqual({ status: 401, refusal: 'verification_purpose' });
+                    }
                     return { status: result.status, refusal: result.status === 200 ? null : result.data.authorizationRefusal,
                         error: result.status === 200 ? null : result.data.error };
                 } });

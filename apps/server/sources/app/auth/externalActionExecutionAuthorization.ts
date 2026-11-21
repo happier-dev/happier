@@ -2412,18 +2412,26 @@ function isArtifactJsonUpdateHttpPurpose(proof: ExternalActionExecutionRequestPr
     } catch { return false; }
 }
 
-/** Restricted PATs spend exact template HTTP purposes. */
+/** Template transport phases retain their exact root and execution Machine. */
 async function readBotTemplateHttpPurpose(verified: VerifiedSignedChildRequest,
     proof: ExternalActionExecutionRequestProof): Promise<boolean | null> {
     const root = verified.binding.actionId;
     if (!isBotTemplateRestrictedPatHttpPurposeRootActionIdV1(root)) return null;
+    const method = proof.method.toUpperCase();
+    // Native Account requester HTTP signs this same preparation read; it does
+    // not substitute the installed Account bearer used by other local callers.
+    if ((root === 'template.instantiate' || root === 'template.updates.apply')
+        && verified.effectActionId === root && !proof.reviewedChild
+        && method === 'GET' && proof.body === undefined
+        && proof.path === `/v1/machines/${encodeURIComponent(verified.binding.machineId)}`) {
+        return proof.routeInput === undefined || sameManagedInput(proof.routeInput, { id: verified.binding.machineId });
+    }
     const restrictedPat = !('authentication' in verified.binding)
         && isApiTokenGrantRestrictedV1(verified.binding.grant);
     if (!restrictedPat) return null;
     if (verified.signedChildPurpose.sibling.projectSessionDefaults)
         return isProjectSessionDefaultsHttpPurpose(verified, proof);
     if (verified.effectActionId !== root || proof.reviewedChild) return false;
-    const method = proof.method.toUpperCase();
     if (root === 'template.instantiate' && method === 'POST' && proof.path === '/v1/sessions') {
         const birth = SessionCreateRequestSchema.safeParse(proof.body);
         return birth.success && !('creationAuthorizationProof' in birth.data)
@@ -2510,11 +2518,6 @@ async function readBotTemplateHttpPurpose(verified: VerifiedSignedChildRequest,
         && (isReadOnlyArtifactHttpPurpose(proof) || isArtifactGrantsReadHttpPurpose(proof)
         || root === 'template.instantiate' && isArtifactPublicShareListHttpPurpose(proof)
         || isArtifactRecipientKeyPreparationHttpPurpose(proof))) return true;
-    if ((root === 'template.instantiate' || root === 'template.updates.apply')
-        && method === 'GET' && proof.body === undefined
-        && proof.path === `/v1/machines/${encodeURIComponent(verified.binding.machineId)}`) {
-        return proof.routeInput === undefined || sameManagedInput(proof.routeInput, { id: verified.binding.machineId });
-    }
     if ((root === 'template.instantiate' || root === 'template.updates.apply')
         && method === 'POST' && proof.path === '/v1/machines/read-batch') {
         const batch = MachineReadBatchRequestV1Schema.safeParse(proof.body);
