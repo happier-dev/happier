@@ -12,7 +12,23 @@ import { SimulatorDeviceResourceV1Schema } from './v1.js';
 import { SimulatorSidebandKindV1Schema, SimulatorSidebandMessageV1Schema } from './sidebandV1.js';
 
 const NonNegativeIntSchema = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative()));
-const NonEmptyStringSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(256)));
+export const SIMULATOR_PREVIEW_ID_MAX_LENGTH = 256;
+const NonEmptyStringSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(SIMULATOR_PREVIEW_ID_MAX_LENGTH)));
+
+// The daemon mints streamId:sourceId:holderId:nowMs. Each identifier is
+// admitted above; z.int() timestamps are nonnegative safe integers.
+export const SIMULATOR_CONTROL_LEASE_ID_MAX_LENGTH =
+  3 * SIMULATOR_PREVIEW_ID_MAX_LENGTH + 3 + String(Number.MAX_SAFE_INTEGER).length;
+export const SimulatorControlLeaseIdV1Schema = lazyZodSchema(() => z.string().check(
+  z.minLength(1), z.maxLength(SIMULATOR_CONTROL_LEASE_ID_MAX_LENGTH),
+));
+const SimulatorControlLeaseV1Schema = lazyZodSchema(() => z.extend(MachineLiveStreamControlLeaseV1Schema, {
+  leaseId: SimulatorControlLeaseIdV1Schema,
+}));
+const SimulatorControlSidebandV1Schema = lazyZodSchema(() => z.intersection(
+  MachineLiveStreamControlSidebandV1Schema,
+  z.looseObject({ leaseId: z.optional(SimulatorControlLeaseIdV1Schema) }),
+));
 
 export const SimulatorPreviewSnapshotV1Schema = lazyZodSchema(() => z.strictObject({
     v: z.literal(1),
@@ -71,18 +87,18 @@ export const SimulatorPreviewActionV1Schema = lazyZodSchema(() => z.discriminate
     type: z.literal('simulator.lease.release'),
     streamId: NonEmptyStringSchema,
     sourceId: NonEmptyStringSchema,
-    leaseId: NonEmptyStringSchema,
+    leaseId: SimulatorControlLeaseIdV1Schema,
   })),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(BaseSimulatorActionWithSimulatorV1Schema, {
     type: z.literal('simulator.lease.renew'),
     streamId: NonEmptyStringSchema,
     sourceId: NonEmptyStringSchema,
-    leaseId: NonEmptyStringSchema,
+    leaseId: SimulatorControlLeaseIdV1Schema,
     viewerId: NonEmptyStringSchema,
   })),
   z.strictObject({
     type: z.literal('simulator.control.send'),
-    control: MachineLiveStreamControlSidebandV1Schema,
+    control: SimulatorControlSidebandV1Schema,
   }),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(BaseSimulatorActionWithSimulatorV1Schema, {
     type: z.literal('simulator.sideband.request'),
@@ -92,7 +108,7 @@ export const SimulatorPreviewActionV1Schema = lazyZodSchema(() => z.discriminate
     type: z.literal('simulator.quality.set'),
     streamId: NonEmptyStringSchema,
     sourceId: NonEmptyStringSchema,
-    control: MachineLiveStreamControlSidebandV1Schema.check(z.refine((control) => control.kind === 'set_quality', { message: 'Simulator quality actions must carry set_quality controls.' })),
+    control: SimulatorControlSidebandV1Schema.check(z.refine((control) => control.kind === 'set_quality', { message: 'Simulator quality actions must carry set_quality controls.' })),
   })).check(z.refine(controlMatchesRequestedStreamAndSource, {
     message: 'Simulator quality controls must match the requested stream and source.',
   })),
@@ -100,7 +116,7 @@ export const SimulatorPreviewActionV1Schema = lazyZodSchema(() => z.discriminate
     type: z.literal('simulator.keyframe.request'),
     streamId: NonEmptyStringSchema,
     sourceId: NonEmptyStringSchema,
-    control: MachineLiveStreamControlSidebandV1Schema.check(z.refine((control) => control.kind === 'request_keyframe', { message: 'Simulator keyframe actions must carry request_keyframe controls.' })),
+    control: SimulatorControlSidebandV1Schema.check(z.refine((control) => control.kind === 'request_keyframe', { message: 'Simulator keyframe actions must carry request_keyframe controls.' })),
   })).check(z.refine(controlMatchesRequestedStreamAndSource, {
     message: 'Simulator keyframe controls must match the requested stream and source.',
   })),
@@ -134,7 +150,7 @@ export type SimulatorPreviewStreamBindingV1 = z.infer<typeof SimulatorPreviewStr
 export const SimulatorPreviewActionResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(BaseSimulatorPreviewActionResultV1Schema, {
     status: z.literal('accepted'),
-    lease: z.optional(MachineLiveStreamControlLeaseV1Schema),
+    lease: z.optional(SimulatorControlLeaseV1Schema),
     sideband: z.optional(SimulatorSidebandMessageV1Schema),
     stream: z.optional(SimulatorPreviewStreamBindingV1Schema),
   })),
