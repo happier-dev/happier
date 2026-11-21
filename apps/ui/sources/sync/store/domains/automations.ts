@@ -117,7 +117,8 @@ export function createWorkflowTriggerSetSelector(queryKey: string, includeEmpty 
         const next = selected.filter((value) => {
             // Manual Account Automations keep their owned steps after reviewed conversion too.
             return includeEmpty || value.triggers.length > 0
-                || (queryKey === 'account_inline' && Boolean(value.legacy || value.target));
+                || ((queryKey === 'account_inline' || queryKey === 'account_all') && !value.scopeSessionId
+                    && Boolean(value.legacy || value.target));
         });
         if (next.length === previous.length && next.every((value, index) => previous[index] === value)) return previous;
         previous = next;

@@ -364,19 +364,19 @@ describe('shared workflow trigger observations', () => {
         expect(selectOther(h.get())).toBe(otherSelection);
     });
 
-    it('retains manual predecessor sets in the column without restoring deleted current trigger sets', () => {
+    it.each(['account_inline', 'account_all'])('keeps manual predecessor sets without restoring deleted trigger sets in %s', queryKey => {
         const h = createHarness();
         const current: WorkflowTriggerSetV1 = { automationId: 'current', revision: 1, enabled: true, health: 'available', triggers: [] };
         const legacy: WorkflowTriggerSetV1 = { ...current, automationId: 'legacy', legacy: { editable: false, reason: 'created_in_0_2', placements: [] } };
-        h.get().applyWorkflowTriggerSetPage({ queryKey: 'account_inline', sets: [current, legacy] });
-        const select = createWorkflowTriggerSetSelector('account_inline');
+        h.get().applyWorkflowTriggerSetPage({ queryKey, sets: [current, legacy] });
+        const select = createWorkflowTriggerSetSelector(queryKey);
         expect(select(h.get()).map((set) => set.automationId)).toEqual(['legacy']);
         expect(select(h.get())).toBe(select(h.get()));
         // Reviewed conversion keeps a manual Automation's steps without inventing a schedule.
         const converted: WorkflowTriggerSetV1 = { ...current, automationId: 'legacy', revision: 2,
             target: { kind: 'inline', definition: { version: 1, inputs: [], defaults: {}, blocks: [{ kind: 'step', id: 'prompt',
                 document: { text: 'Manual prompt', references: [], attachments: [] }, input: [], result: { kind: 'text' } }] } } };
-        h.get().upsertWorkflowTriggerSet({ queryKey: 'account_inline', set: converted });
+        h.get().upsertWorkflowTriggerSet({ queryKey, set: converted });
         expect(select(h.get()).map((set) => set.automationId)).toEqual(['legacy']);
     });
 
