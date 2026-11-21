@@ -78,7 +78,7 @@ import { isDeploymentWorkspaceListHttpPurpose, isDeploymentPreparationHttpPurpos
     isSetupDeploymentPreparationReadEffect } from '@/app/deployments/deploymentPreparationAuthorization';
 import { isScmRefineInputRpcPurposeV1, verifyScmRefineSavedSessionV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { ACTION_OPERATION_CANCEL_ACTION_ID_V1, ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
-import { PROJECT_PREPARE_ACTION_ID_V1, PROJECT_SETUP_SET_ACTION_ID_V1, PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1, isProjectSetupSetChildActionIdV1, readProjectSetupSetChildRpcEffectV1, isProjectWorkspaceSyncOpenActionV1, isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
+import { isProjectCheckoutRemovalActionIdV1, PROJECT_PREPARE_ACTION_ID_V1, PROJECT_SETUP_SET_ACTION_ID_V1, PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1, isProjectSetupSetChildActionIdV1, readProjectSetupSetChildRpcEffectV1, isProjectWorkspaceSyncOpenActionV1, isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { ProjectSetupSetInputV1Schema, isProjectSetupSetChildInputV1 } from '@happier-dev/protocol/projects/projectSetupSetV1';
 import { PROJECT_SETUP_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/projects/projectSetupV1';
 import { isProjectAccountRowActionIdV1, isSessionListActionId, isWorkspaceSyncRelationshipWriteActionId, PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
@@ -181,8 +181,8 @@ import { ProjectSourcesCreateInputV1Schema, ProjectSourcesUpdateInputV1Schema, P
     ProjectSourcesDeleteInputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { PROJECT_SOURCE_LIST_ACTION_ID_V1, PROJECT_SOURCE_READ_ACTION_ID_V1, PROJECT_SOURCE_UPDATE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/projectSourcesActionIdsV1';
 import { PROJECT_DEFINITION_INSPECT_ACTION_ID } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
-import { PROJECT_TRUST_ROUTE_V1, ProjectTrustMutationRequestV1Schema, ProjectTrustReadRequestV1Schema,
-    ProjectTrustListRequestV1Schema } from '@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1';
+import { PROJECT_CHECKOUT_TEARDOWN_TRUST_READ_ROLE_V1, PROJECT_TRUST_ROUTE_V1, computeProjectCheckoutTeardownTrustReadDigestV1,
+    ProjectTrustMutationRequestV1Schema, ProjectTrustReadRequestV1Schema, ProjectTrustListRequestV1Schema } from '@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1';
 import { WORKSPACE_EXECUTION_CONFIG_ROUTE_V1, WorkspaceExecutionConfigReadRequestV1Schema,
     WorkspaceExecutionConfigMutationRequestV1Schema } from '@happier-dev/protocol/workspaces/workspaceExecutionConfigRowV1';
 import { isRequesterProjectExecutionActionV1, PROJECT_FINITE_ACTION_RPC_METHODS_V1, PROJECT_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
@@ -2842,7 +2842,10 @@ function isProjectAccountMetadataHttpPurpose(verified: VerifiedExternalActionExe
         if (url.pathname === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/read`) return readsAccountRows && ProjectAccountRowReadRequestV1Schema.safeParse(proof.body).success;
         if (url.pathname === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return readsAccountRows && ProjectAccountRowListRequestV1Schema.safeParse(proof.body).success;
         if (url.pathname === `${PROJECT_TRUST_ROUTE_V1}/read`) return ProjectTrustReadRequestV1Schema.safeParse(proof.body).success;
-        if (url.pathname === `${PROJECT_TRUST_ROUTE_V1}/list`) return ProjectTrustListRequestV1Schema.safeParse(proof.body).success;
+        // Its daemon may resolve the one Project's consent on a shared Machine; the
+        // full Trust catalog stays on the requester's own Machine.
+        if (url.pathname === `${PROJECT_TRUST_ROUTE_V1}/list`) return isRequesterOwnMachineRequest(verified)
+            && ProjectTrustListRequestV1Schema.safeParse(proof.body).success;
         return readsExecutionConfig && url.pathname === `${WORKSPACE_EXECUTION_CONFIG_ROUTE_V1}/read`
             && WorkspaceExecutionConfigReadRequestV1Schema.safeParse(proof.body).success;
     }
@@ -3022,7 +3025,7 @@ async function isContributedRootEnvironmentRead(verified: VerifiedSignedChildReq
  * Environment). A requester read with no custodian access (the requester's own GETs and Machine list)
  * needs the requester's own Machine, signed by that Machine's own key.
  */
-function isRequesterOwnMachineRequest(verified: VerifiedSignedChildRequest): boolean {
+function isRequesterOwnMachineRequest(verified: VerifiedExternalActionExecutionRequest): boolean {
     return verified.binding.custodianAccountId === verified.binding.accountId && verified.boundMachineSigned === true;
 }
 
@@ -4303,7 +4306,18 @@ export async function verifyExternalActionDomainExecutionRequest(
     let accountHttpPurpose: boolean | null;
     let accountHttpRefusal: ExternalActionAuthorizationRefusalPhase | undefined;
     if (domainPreparation === false) return refuse('deployment_domain_preparation');
-    if (isExternalActionApprovalArtifactPurpose({ binding: verified.binding, effectActionId: verified.effectActionId,
+    if (proof.reviewedChild?.role === PROJECT_CHECKOUT_TEARDOWN_TRUST_READ_ROLE_V1) {
+        // The requester's installation attests the Project selected by the accepted checkout.
+        // The Trust route reads only that requester's Account row.
+        if (!isProjectCheckoutRemovalActionIdV1(verified.binding.actionId)
+            || proof.reviewedChild.actionId !== verified.binding.actionId || verified.effectActionId !== verified.binding.actionId
+            || !isRequesterOwnMachineRequest(verified) || proof.method !== 'POST'
+            || proof.path !== `${PROJECT_TRUST_ROUTE_V1}/read`) return refuse('verification_purpose');
+        const read = ProjectTrustReadRequestV1Schema.safeParse(proof.body);
+        if (!read.success || computeProjectCheckoutTeardownTrustReadDigestV1(read.data.project) !== proof.reviewedChild.inputDigest) {
+            return refuse('verification_purpose');
+        }
+    } else if (isExternalActionApprovalArtifactPurpose({ binding: verified.binding, effectActionId: verified.effectActionId,
         method: proof.method, path: proof.path, body: proof.body })) {
         // The Action's deterministic Ask is its own output. Artifact ownership,
         // encryption and compare-and-set remain with the ordinary Artifact route.
@@ -4702,7 +4716,8 @@ export async function verifyExternalActionDomainExecutionRequest(
         const readsSource = actionId === 'projects.open' && proof.method.toUpperCase() === 'GET'
             && /^\/v1\/projects\/sources\/[^/]+$/u.test(path)
             && new URL(proof.path, 'http://home.invalid').searchParams.get('serverId') === verified.binding.serverIdentityId;
-        const readsTrust = path === `${PROJECT_TRUST_ROUTE_V1}/read` || path === `${PROJECT_TRUST_ROUTE_V1}/list`;
+        const readsTrust = path === `${PROJECT_TRUST_ROUTE_V1}/read`
+            || path === `${PROJECT_TRUST_ROUTE_V1}/list` && isRequesterOwnMachineRequest(verified);
         const opensProjectRows = actionId === 'projects.open'
             && [`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/read`, `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/mutate`].includes(path);
         const revocation = actionId === 'projects.trust.revoke' && path === `${PROJECT_TRUST_ROUTE_V1}/mutate`

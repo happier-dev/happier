@@ -8,18 +8,20 @@ import {
     ProjectTrustReadResponseV1Schema, ProjectTrustValueV1Schema, QualifiedProjectTrustProjectV1Schema,
     StoredProjectTrustValueV1Schema,
     assertProjectTrustValueForProjectV1,
+    PROJECT_CHECKOUT_TEARDOWN_TRUST_READ_ROLE_V1, computeProjectCheckoutTeardownTrustReadDigestV1,
     type ProjectTrustContentV1, type ProjectTrustMutationResponseV1, type ProjectTrustValueV1, type QualifiedProjectTrustProjectV1,
 } from '@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { isAccountScopedBlobCiphertextForKind } from '@happier-dev/protocol/crypto/accountScopedCipherEnvelope';
 import type { ActionRequiredAuthority } from '@happier-dev/protocol/actions/metadata';
+import { isProjectCheckoutRemovalActionIdV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 
 import type { StoredCredentials } from '@/persistence';
 import { readAccountEncryptionModeOnce } from '@/api/client/accountEncryptionMode';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { hasUsableAccountSettingsEncryptionMaterial } from '@/settings/accountSettings/accountSettingsEncryptionMaterial';
-import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import type { ExternalActionExecutionAuthorizationV1, ReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionApi';
 
 const StoredTrustReadResponseSchema = createStoredReadSchema(ProjectTrustReadResponseV1Schema);
 const StoredTrustListResponseSchema = createStoredReadSchema(ProjectTrustListResponseV1Schema);
@@ -28,6 +30,17 @@ export type OpenedProjectTrustRead =
     | Readonly<{ status: 'present'; revision: number; value: ProjectTrustValueV1 }>
     | Readonly<{ status: 'absent' }>
     | Readonly<{ status: 'deleted'; revision: number }>;
+
+type ProjectSetupRememberedConsent =
+    | Readonly<{ kind: 'trusted'; reviewedEffectDigest: string }>
+    | Readonly<{ kind: 'pendingApproval'; code: 'project_setup_consent_required'; reviewedEffectDigest: string }>;
+export type ProjectCheckoutTeardownConsent = (reviewedEffectDigest: string) => Promise<ProjectSetupRememberedConsent>;
+
+function resolveRememberedConsent(row: OpenedProjectTrustRead, reviewedEffectDigest: string): ProjectSetupRememberedConsent {
+    return row.status === 'present' && row.value.reviewedEffectDigest === reviewedEffectDigest
+        ? { kind: 'trusted', reviewedEffectDigest }
+        : { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest };
+}
 
 function fail(code: string): never {
     throw Object.assign(new Error(code), { code });
@@ -101,12 +114,13 @@ export function createProjectSetupTrustClient(input: ProjectSetupTrustClientInpu
         }
         return { mode: result.mode, cipher: createProjectSetupTrustRowCipher({ mode: result.mode, material: material ?? null }) };
     }
-    async function request(operation: 'read' | 'list' | 'mutate', body: unknown): Promise<unknown> {
+    async function request(operation: 'read' | 'list' | 'mutate', body: unknown, reviewedChild?: ReviewedActionChildHttpProofV1): Promise<unknown> {
         await assertCurrent();
         const path = `${PROJECT_TRUST_ROUTE_V1}/${operation}`;
         const requesterHeaders = input.authorization ? await input.authorization.requesterHttpProjection!.createRequestHeaders({
             effectActionId: input.effectActionId ?? input.authorization.binding.actionId, method: 'POST', path, body,
             ...(input.signal ? { signal: input.signal } : {}),
+            ...(reviewedChild ? { reviewedChild } : {}),
         }) : null;
         if (input.authorization && !requesterHeaders) return fail('project_trust_storage_unavailable');
         let response: AxiosResponse<unknown>;
@@ -129,29 +143,37 @@ export function createProjectSetupTrustClient(input: ProjectSetupTrustClientInpu
     function open(project: QualifiedProjectTrustProjectV1, content: ProjectTrustContentV1, context: Awaited<ReturnType<typeof modeContext>>): ProjectTrustValueV1 {
         return context.cipher.open(project, content);
     }
-    async function read(projectInput: QualifiedProjectTrustProjectV1): Promise<OpenedProjectTrustRead> {
+    async function read(projectInput: QualifiedProjectTrustProjectV1, reviewedChild?: ReviewedActionChildHttpProofV1): Promise<OpenedProjectTrustRead> {
         const project = QualifiedProjectTrustProjectV1Schema.parse(projectInput);
         if (input.authorization) {
             const profileId = input.authorization.requesterAccountProjection?.serverId;
             if (!profileId || !await isServerProfileHomeIdentity(profileId, project.serverId)) return fail('project_trust_identity_mismatch');
         }
         const context = await modeContext();
-        const parsed = StoredTrustReadResponseSchema.safeParse(await request('read', { project }));
+        const parsed = StoredTrustReadResponseSchema.safeParse(await request('read', { project }, reviewedChild));
         if (!parsed.success) return fail('project_trust_storage_unavailable');
         const row = parsed.data;
         return row.status === 'present' ? { status: 'present', revision: row.revision, value: open(project, row.content, context) } : row;
     }
     return {
-        read,
-        async resolveConsent(project: QualifiedProjectTrustProjectV1, reviewedEffectDigest: string): Promise<
-            Readonly<{ kind: 'trusted'; reviewedEffectDigest: string }>
-            | Readonly<{ kind: 'pendingApproval'; code: 'project_setup_consent_required'; reviewedEffectDigest: string }>
-        > {
+        read: (project: QualifiedProjectTrustProjectV1) => read(project),
+        async resolveConsent(project: QualifiedProjectTrustProjectV1, reviewedEffectDigest: string): Promise<ProjectSetupRememberedConsent> {
             if (!reviewedEffectDigest) return fail('project_setup_effect_unavailable');
-            const row = await read(project);
-            return row.status === 'present' && row.value.reviewedEffectDigest === reviewedEffectDigest
-                ? { kind: 'trusted', reviewedEffectDigest }
-                : { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest };
+            return resolveRememberedConsent(await read(project), reviewedEffectDigest);
+        },
+        /** The accepted checkout supplies the Project before teardown can retire its rows. */
+        captureCheckoutTeardownConsent(project: QualifiedProjectTrustProjectV1): ProjectCheckoutTeardownConsent {
+            const actionId = input.authorization?.binding.actionId;
+            const proof = actionId && isProjectCheckoutRemovalActionIdV1(actionId) ? {
+                actionId, role: PROJECT_CHECKOUT_TEARDOWN_TRUST_READ_ROLE_V1,
+                inputDigest: computeProjectCheckoutTeardownTrustReadDigestV1(project),
+            } : undefined;
+            let trust: Promise<OpenedProjectTrustRead> | undefined;
+            return async reviewedEffectDigest => {
+                if (!reviewedEffectDigest) return fail('project_setup_effect_unavailable');
+                trust ??= read(project, proof);
+                return resolveRememberedConsent(await trust, reviewedEffectDigest);
+            };
         },
         async list(projectInput?: QualifiedProjectTrustProjectV1): Promise<Array<Readonly<{ project: QualifiedProjectTrustProjectV1; revision: number; value: ProjectTrustValueV1 }>>> {
             const project = projectInput === undefined ? undefined : QualifiedProjectTrustProjectV1Schema.parse(projectInput);

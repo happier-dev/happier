@@ -285,7 +285,6 @@ import { resolveAvailableAccountSettings } from '../../../../../../cli/src/setti
 import { artifactsRoutes } from '@/app/api/routes/artifacts/artifactsRoutes';
 import { ArtifactRecipientKeyEnvelopeCommitInputV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { SESSION_DATA_KEY_ENVELOPE_BYTES_V1 } from '@happier-dev/protocol/sessions/encryption/sessionDataKeyEnvelopes';
-import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import { socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client';
 import { encrypt as encryptRpc, decrypt as decryptRpc, encodeBase64 as encodeRpcBase64 } from '../../../../../../cli/src/api/encryption';
 import { RpcHandlerManager } from '../../../../../../cli/src/api/rpc/RpcHandlerManager';
@@ -3241,6 +3240,166 @@ describe("external Action execution authorization", () => {
             expect((await send('/v1/account/project-rows/list', { unauthorizedField: true })).statusCode).not.toBe(200);
             await db.machine.update({ where: { id: fixture.machine.id }, data: { revokedAt: new Date() } });
             expect((await send('/v1/account/project-rows/list', {})).statusCode).toBe(401);
+        } finally { await app.close(); }
+    });
+
+    it('confines signed checkout teardown Trust to the attested Project on the requester’s installation', async () => {
+        const { SCM_WORKTREE_REMOVE_ACTION_ID_V1: actionId } = await import('@happier-dev/protocol/actions/scmActionIdsV1');
+        const { SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN } = await import('@happier-dev/protocol/scm/worktrees');
+        const { PROJECT_TRUST_ROUTE_V1, PROJECT_CHECKOUT_TEARDOWN_TRUST_READ_ROLE_V1,
+            computeProjectCheckoutTeardownTrustReadDigestV1 } = await import('@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1');
+        const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+        const other = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+        const keyPair = tweetnacl.sign.keyPair();
+        const machine = await db.machine.create({ data: {
+            id: crypto.randomUUID(), accountId: account.id,
+            metadata: encodePlainMachineStoredContent({ host: 'controller', platform: 'linux', happyCliVersion: 'test',
+                homeDir: '/home/controller', happyHomeDir: '/home/controller/.happier' }),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),
+            metadataVersion: 1, installationId: crypto.randomUUID(),
+            installationPublicKey: new Uint8Array(keyPair.publicKey),
+        } });
+        const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const otherToken = await auth.createToken(other.id, undefined, { kind: 'account', authority: 'present_user' });
+        const project = { serverId: await getOrCreateServerIdentityId(), projectId: 'retained-project' };
+        const envelope = ExternalActionRequestEnvelopeV1Schema.parse({
+            v: 1, requestId: crypto.randomUUID(), target: { kind: 'machine', machineId: machine.id },
+            input: { cwd: '/repo', worktreePath: '/repo/linked', confirmed: true, authorizationToken: SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN },
+        });
+        const { app } = await createApp('unrelated-team-route');
+        try {
+            const bearer = (value: string) => ({ authorization: `Bearer ${value}` });
+            const issue = (root: typeof actionId | 'projects.prepare', input: unknown, requesterToken = token) => app.inject({
+                method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(root), headers: bearer(requesterToken),
+                payload: { v: 1, machineId: machine.id, envelope: { ...envelope, input: getActionSpec(root).inputSchema.parse(input) } },
+            });
+            const mintRoot = async (...args: Parameters<typeof issue>) => {
+                const response = await issue(...args);
+                expect(response.statusCode).toBe(200);
+                return ExternalActionExecutionAuthorizationV1Schema.parse(response.json());
+            };
+            const authorization = await mintRoot(actionId, envelope.input);
+            const readPath = `${PROJECT_TRUST_ROUTE_V1}/read`;
+            const writePath = `${PROJECT_TRUST_ROUTE_V1}/mutate`;
+            const body = { project };
+            const seed = async (requesterToken: string, reviewedEffectDigest: string) => {
+                const content = { t: 'plain', v: { project, reviewedEffectDigest, approvedAtMs: 1 } };
+                const seeded = await app.inject({ method: 'POST', url: writePath, headers: bearer(requesterToken),
+                    payload: { ...body, expectedRevision: 'absent', content } });
+                expect(seeded.statusCode, seeded.body).toBe(200);
+                expect(seeded.json()).toMatchObject({ status: 'updated' });
+                return content;
+            };
+            const requesterContent = await seed(token, 'requester-reviewed-effect');
+            await seed(otherToken, 'other-reviewed-effect');
+            const child = { actionId, role: PROJECT_CHECKOUT_TEARDOWN_TRUST_READ_ROLE_V1,
+                inputDigest: computeProjectCheckoutTeardownTrustReadDigestV1(project) };
+            const sign = (path: string, payload: unknown,
+                overrides: Partial<Parameters<typeof createExternalActionAuthorizedRequestHeaders>[0]> = {}) =>
+                createExternalActionAuthorizedRequestHeaders({ authorization, effectActionId: actionId,
+                    target: authorization.binding.target, installationId: authorization.binding.installationId,
+                    method: 'POST', path, body: payload, reviewedChild: child, privateKey: keyPair.secretKey, ...overrides });
+            const send = (url: string, payload: unknown, headers = sign(url, payload)) =>
+                app.inject({ method: 'POST', url, headers, payload });
+            const origin = 'https://signed-checkout-teardown.test';
+            const projected = await projectExternalActionRequesterHttpAuthorization({ authorization, serverId: project.serverId,
+                serverIdentityId: project.serverId, serverHttpBaseUrl: origin, target: authorization.binding.target,
+                installationId: machine.installationId!, privateKey: keyPair.secretKey, rootAdmitted: true });
+            const exactHeaders = await projected?.requesterHttpProjection?.createRequestHeaders({
+                effectActionId: actionId, method: 'POST', path: readPath, body, reviewedChild: child,
+            });
+            if (!exactHeaders) throw new Error('Expected installed requester HTTP proof');
+            for (const read of [await send(readPath, body, exactHeaders), await send(readPath, body, exactHeaders)]) {
+                expect.soft(read.statusCode, read.body).toBe(200);
+                if (read.statusCode === 200) expect(ProjectTrustReadResponseV1Schema.parse(read.json()))
+                    .toMatchObject({ status: 'present', content: requesterContent });
+            }
+            const wrongProject = { project: { ...project, projectId: 'different-project' } };
+            const revoke = { ...body, expectedRevision: 1, content: null };
+            for (const [label, url, payload, headers] of [
+                ['different signed Project', readPath, wrongProject, sign(readPath, wrongProject)],
+                ['Trust write', writePath, revoke, sign(writePath, revoke)],
+                ['Trust list', `${PROJECT_TRUST_ROUTE_V1}/list`, body, sign(`${PROJECT_TRUST_ROUTE_V1}/list`, body)],
+                ['wrong role', readPath, body, sign(readPath, body, { reviewedChild: { ...child, role: 'other' } })],
+                ['missing scope', readPath, body, sign(readPath, body, { reviewedChild: undefined })],
+                ['wrong key', readPath, body, sign(readPath, body, { privateKey: tweetnacl.sign.keyPair().secretKey })],
+                ['wrong installation', readPath, body, sign(readPath, body, { installationId: crypto.randomUUID() })],
+            ] as const) expect.soft((await send(url, payload, headers)).statusCode, label).toBe(401);
+
+            // Same requester, request id and installation, but a different Home-bound envelope.
+            const replacement = await mintRoot(actionId, { ...(envelope.input as object), worktreePath: '/repo/another' });
+            expect(replacement.binding.requestEnvelopeDigest).not.toBe(authorization.binding.requestEnvelopeDigest);
+            expect.soft((await send(readPath, body, { ...exactHeaders,
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: replacement.token })).statusCode).toBe(401);
+
+            const unrelated = await mintRoot('projects.prepare', { workspace: { serverId: project.serverId,
+                workspaceId: 'accepted', machineId: machine.id, rootPath: '/repo' }, phase: 'setup' });
+            expect.soft((await send(readPath, body, sign(readPath, body, { authorization: unrelated,
+                effectActionId: unrelated.binding.actionId, reviewedChild: { ...child, actionId: unrelated.binding.actionId } }))).statusCode,
+            'teardown role on an unrelated root with its own Trust read purpose').toBe(401);
+            expect.soft((await send(readPath, body, { ...exactHeaders, ...bearer(otherToken) })).statusCode,
+                'foreign bearer cannot replace the signed requester').toBe(403);
+        } finally { await app.close(); }
+    });
+
+    it.each(['projects.prepare', 'projects.trust.list'] as const)(
+        'lists the requester’s Project Trust under %s only on the requester’s own Machine', async rootActionId => {
+        const { PROJECT_TRUST_ROUTE_V1, ProjectTrustListResponseV1Schema } = await import('@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1');
+        const requester = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+        const custodian = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+        const createMachine = async (accountId: string) => {
+            const keyPair = tweetnacl.sign.keyPair();
+            const machine = await db.machine.create({ data: {
+                id: crypto.randomUUID(), accountId,
+                metadata: encodePlainMachineStoredContent({ host: 'worker', platform: 'linux', happyCliVersion: 'test',
+                    homeDir: '/home/worker', happyHomeDir: '/home/worker/.happier' }),
+                dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),
+                metadataVersion: 1, installationId: crypto.randomUUID(),
+                installationPublicKey: new Uint8Array(keyPair.publicKey), operationProtocolCapabilitiesRevision: 1,
+                operationProtocolCapabilities: { requesterExecutionIsolation: { protocolVersions: [1] } },
+            } });
+            return { machine, keyPair };
+        };
+        const own = await createMachine(requester.id);
+        const foreign = await createMachine(custodian.id);
+        await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: foreign.machine.id,
+            principal: { kind: 'account', accountId: requester.id }, level: 'admin' }));
+        const token = await auth.createToken(requester.id, undefined, { kind: 'account', authority: 'present_user' });
+        const project = { serverId: await getOrCreateServerIdentityId(), projectId: 'approved-project' };
+        const { app } = await createApp('unrelated-team-route');
+        try {
+            const bearer = { authorization: `Bearer ${token}` };
+            const seeded = await app.inject({ method: 'POST', url: `${PROJECT_TRUST_ROUTE_V1}/mutate`, headers: bearer,
+                payload: { project, expectedRevision: 'absent',
+                    content: { t: 'plain', v: { project, reviewedEffectDigest: 'requester-reviewed-effect', approvedAtMs: 1 } } } });
+            expect(seeded.statusCode, seeded.body).toBe(200);
+            const signedTrust = async (target: typeof own, path: 'read' | 'list') => {
+                const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: crypto.randomUUID(),
+                    target: { kind: 'machine', machineId: target.machine.id },
+                    input: getActionSpec(rootActionId).inputSchema.parse(rootActionId === 'projects.trust.list' ? {}
+                        : { workspace: { serverId: project.serverId, workspaceId: 'accepted', machineId: target.machine.id,
+                            rootPath: '/repo' }, phase: 'setup' }) });
+                const issued = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(rootActionId),
+                    headers: bearer, payload: { v: 1, machineId: target.machine.id, envelope } });
+                expect(issued.statusCode, issued.body).toBe(200);
+                const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
+                const url = `${PROJECT_TRUST_ROUTE_V1}/${path}`;
+                const body = path === 'read' ? { project } : {};
+                return app.inject({ method: 'POST', url, payload: body, headers: createExternalActionAuthorizedRequestHeaders({
+                    authorization, effectActionId: rootActionId, target: authorization.binding.target,
+                    installationId: authorization.binding.installationId, method: 'POST', path: url, body,
+                    privateKey: target.keyPair.secretKey }) });
+            };
+            const ownList = await signedTrust(own, 'list');
+            expect(ownList.statusCode, ownList.body).toBe(200);
+            expect(ProjectTrustListResponseV1Schema.parse(ownList.json()).rows).toHaveLength(1);
+            expect((await signedTrust(own, 'read')).statusCode).toBe(200);
+            expect(await resolveMachineAdmission({ actorAccountId: requester.id, machineId: foreign.machine.id,
+                actionId: rootActionId })).toMatchObject({ kind: 'admitted', custodianAccountId: custodian.id });
+            const foreignList = await signedTrust(foreign, 'list');
+            expect.soft(foreignList.statusCode, `foreign custodian Trust list: ${foreignList.body}`).toBe(401);
+            // A shared Machine's daemon still resolves one Project's setup consent for the requester.
+            expect.soft((await signedTrust(foreign, 'read')).statusCode, 'foreign custodian single-Project Trust read').toBe(200);
         } finally { await app.close(); }
     });
 

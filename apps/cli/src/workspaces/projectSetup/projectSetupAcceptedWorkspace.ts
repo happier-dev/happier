@@ -1,5 +1,5 @@
 import type { WorkspaceAddressV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import { projectWorkspaceRefV1, resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { normalizeWorkspaceRootPathV1, projectWorkspaceRefV1, resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readProjectAccountRows, type ProjectAccountRowsInput } from '@/workspaces/projectAccountRows';
 import { isServerProfileHomeIdentity, resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
@@ -11,6 +11,8 @@ type ProjectSetupAcceptedWorkspaceInput = ProjectAccountRowsInput & Readonly<{
     address: Omit<ProjectSetupWorkspaceAddress, 'workspaceId'> & Readonly<{ workspaceId?: string }>;
     serverId: string;
     serverHttpBaseUrl: string;
+    /** Resolved through the admitted checkout's filesystem before removal. */
+    physicalRootPath?: string;
     signal?: AbortSignal;
 }>;
 
@@ -58,7 +60,11 @@ export async function resolveProjectSetupAcceptedWorkspace(input: ProjectSetupAc
         if (input.signal?.aborted) return fail('cancelled');
         throw error;
     }
-    const context = { normalizeServerId: (id: string) => id === input.serverId ? homeServerId : id };
+    const physicalRoot = normalizeWorkspaceRootPathV1(input.physicalRootPath);
+    const context = {
+        normalizeServerId: (id: string) => id === input.serverId ? homeServerId : id,
+        ...(physicalRoot ? { rootsEqual: (candidate: string, requested: string) => candidate === requested || candidate === physicalRoot } : {}),
+    };
     const resolved = resolveWorkspaceRefV1(workspaceRefs, input.address, context);
     if (resolved.kind !== 'resolved') {
         // Only a cold root lookup may discover an ordinary, unassociated folder.

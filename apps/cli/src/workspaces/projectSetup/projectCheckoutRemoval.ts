@@ -10,6 +10,7 @@ import { projectRuntimeAccountRowsInput } from '@/workspaces/projectAccountRows'
 import { createProjectFiniteAction, type ProjectFiniteActionRuntime } from './projectFiniteAction';
 import { resolveProjectSetupAcceptedWorkspace, type ProjectSetupAcceptedWorkspace } from './projectSetupAcceptedWorkspace';
 import type { ProjectSetupOperationContext } from './projectSetupExecution';
+import { createProjectSetupTrustClient } from './projectSetupTrust';
 import { canonicalWorktreeRootIdentity, resolvePhysicalWorktreeRootIdentity } from '@/workspaces/execution/worktreePorts';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 
@@ -61,6 +62,7 @@ export async function prepareProjectCheckoutRemoval(input: Readonly<{
     const association = input.association !== undefined ? input.association : await resolveProjectSetupAcceptedWorkspace({
         ...projectRuntimeAccountRowsInput(runtime), serverId: runtime.serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl,
         address: { serverId: runtime.serverId, machineId: runtime.machineId, rootPath: input.worktreePath },
+        physicalRootPath: physicalRoot,
         allowUnassociated: true, allowProjectless: true, signal: operation.signal,
     });
     const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
@@ -73,8 +75,12 @@ export async function prepareProjectCheckoutRemoval(input: Readonly<{
     } finally { await lease.release(); }
     let cleanup: ProjectCheckoutRemoval['cleanup'] = association?.project ? 'completed' : 'unassociated';
     if (association?.project && !input.skipCleanup && !input.missingWorktree) {
+        const checkoutTeardownConsent = createProjectSetupTrustClient({
+            ...projectRuntimeAccountRowsInput(runtime), serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal: operation.signal,
+        }).captureCheckoutTeardownConsent(association.project);
         const result = await createProjectFiniteAction(runtime, ingress, { operation,
             association: { workspace: association.workspace, project: association.project },
+            checkoutTeardownConsent,
             ...(input.unattended ? { requireRememberedConsent: true } : {}) })({
             actionId: 'projects.prepare', input: { workspace: workspaceAddressFromRefV1(association.workspace), phase: 'teardown' },
             context: input.context,

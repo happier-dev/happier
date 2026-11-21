@@ -185,6 +185,7 @@ type Review = Readonly<{ kind: 'reviewed'; invocation: Invocation }> | Readonly<
 /** Receiving host adapter. Action invocation approval has already completed at the outer executor. */
 export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, ingress: RpcHandlerContext,
     removal?: Readonly<{ operation: ProjectSetupOperationContext; association?: ProjectSetupAcceptedAssociation;
+        checkoutTeardownConsent?: ProjectSetupPreparationInput['checkoutTeardownConsent'];
         requireRememberedConsent?: boolean }>): NonNullable<ActionExecutorDeps['projectAction']> {
     const authorityRuntime = runtime;
     return async args => {
@@ -500,6 +501,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
         };
         const preparation = (): Parameters<typeof prepareProjectSetup>[0] => ({ workspace: association.workspace, projectAssociation: association,
             ...(removal?.requireRememberedConsent ? { requireRememberedConsent: true } : {}),
+            ...(removal?.checkoutTeardownConsent ? { checkoutTeardownConsent: removal.checkoutTeardownConsent } : {}),
             dotenvPreparation: dotenvPreparation(),
             originalEnvironment,
             runtimeEnvironment: runtimeEnvironments.get(association.workspace.rootPath),

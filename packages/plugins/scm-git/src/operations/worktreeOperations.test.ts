@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -226,6 +226,30 @@ describe('git worktree operations', () => {
             expect(captured).toEqual({ physicalRootPath, alreadyAbsent: true });
             expect(git('worktree', 'list', '--porcelain', '-z')).not.toContain(physicalRootPath);
             expect(git('rev-parse', '--show-toplevel').trim()).toBe(repository);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it('reports the registered checkout removed when an alias still exists after Git removal', async () => {
+        const root = realpathSync(mkdtempSync(join(tmpdir(), 'git-alias-removal-')));
+        const checkout = join(root, 'checkout');
+        const alias = join(root, 'alias');
+        const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' });
+        try {
+            git('init');
+            git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty', '-m', 'fixture');
+            git('worktree', 'add', '--detach', checkout, 'HEAD');
+            symlinkSync(checkout, alias, process.platform === 'win32' ? 'junction' : 'dir');
+            let prepared = false;
+            const result = await runWithRealGitScmRuntime(() => gitWorktreeRemove({ context: {
+                cwd: root, projectKey: root, detection: { isRepo: true, rootPath: root, mode: '.git' },
+                beforeFilesystemMutation: async () => { prepared = existsSync(checkout); },
+            }, request: { cwd: root, worktreePath: alias, confirmed: true, authorizationToken: 'remove-worktree' } }));
+            expect(prepared).toBe(true);
+            expect(existsSync(checkout)).toBe(false);
+            expect(lstatSync(alias).isSymbolicLink()).toBe(true);
+            expect(result).toMatchObject({ success: true });
         } finally {
             rmSync(root, { recursive: true, force: true });
         }

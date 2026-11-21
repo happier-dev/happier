@@ -2588,6 +2588,12 @@ layer provenance and assigned worktree ports do not enter this digest; a change
 entirely overridden by personal configuration therefore does not change consent.
 Only the existing present-person Trust writer can remember the resulting effect.
 
+Reviewed checkout removal retains the accepted checkout's qualified Project
+under the original requester. When teardown needs remembered consent, the
+installed owner signs one read for that Project. The operation compares later
+effect reviews with the opened row from that read. A new removal reads the
+requester's current row again.
+
 The development-source UI client, `sync/api/account/apiProjectTrust.ts`, captures
 the approving Home and Account for human Remember and shared purpose36 opening.
 Account-mode inventory conversion delegates to that same opener. List and Forget

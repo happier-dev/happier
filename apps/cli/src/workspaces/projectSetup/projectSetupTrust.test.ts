@@ -54,6 +54,24 @@ describe('approving-Account Project setup trust', () => {
         expect(post).not.toHaveBeenCalled();
     });
 
+    it('retains the checkout admission Trust fact across effect reviews without reopening the row', async () => {
+        vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'plain', updatedAt: 1 } });
+        const post = vi.spyOn(axios, 'post').mockResolvedValue({
+            status: 200, data: { status: 'present', revision: 1, content: { t: 'plain', v: grant } },
+        });
+        const client = createProjectSetupTrustClient({ credentials: { token: 'requester', encryption: null }, serverHttpBaseUrl: baseUrl });
+        const teardown = client.captureCheckoutTeardownConsent(project);
+        expect(post).not.toHaveBeenCalled();
+        await expect(teardown('effect')).resolves.toMatchObject({ kind: 'trusted' });
+        post.mockResolvedValue({ status: 200, data: { status: 'deleted', revision: 2 } });
+        await expect(teardown('effect')).resolves.toMatchObject({ kind: 'trusted' });
+        await expect(teardown('changed')).resolves.toMatchObject({ kind: 'pendingApproval' });
+        expect(post.mock.calls.map(([url, body]) => [url, body])).toEqual([
+            [`${baseUrl}/v1/account/project-trust/read`, { project }],
+        ]);
+        await expect(client.captureCheckoutTeardownConsent(project)('effect')).resolves.toMatchObject({ kind: 'pendingApproval' });
+    });
+
     it.each(['revoke', 'approve'] as const)('retains an unknown %s write outcome after lost or malformed acknowledgements without replay or raw credentials', async operation => {
         vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'plain', updatedAt: 1 } });
         let receipt: 'lost' | 'malformed' = 'lost';

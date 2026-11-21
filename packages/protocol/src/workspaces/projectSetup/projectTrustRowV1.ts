@@ -1,6 +1,7 @@
 import * as z from '../../zodRuntimePolicy.js';
 
 import { isAccountScopedBlobCiphertextForKind } from '../../crypto/accountScopedCipherEnvelope.js';
+import { computeCanonicalDomainSeparatedDigest } from '../../crypto/canonicalDigest.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { lazyDefinition } from '../../lazyZodSchema.js';
 
@@ -14,6 +15,13 @@ export const QualifiedProjectTrustProjectV1Schema = lazyDefinition(() => z.stric
   projectId: OpaqueIdSchema,
 }));
 export type QualifiedProjectTrustProjectV1 = z.infer<typeof QualifiedProjectTrustProjectV1Schema>;
+
+/** Scope of the installed checkout owner's signed read for the original requester. */
+export const PROJECT_CHECKOUT_TEARDOWN_TRUST_READ_ROLE_V1 = 'project.checkout.teardown.trust.read' as const;
+export function computeProjectCheckoutTeardownTrustReadDigestV1(project: QualifiedProjectTrustProjectV1): string {
+  return computeCanonicalDomainSeparatedDigest(PROJECT_CHECKOUT_TEARDOWN_TRUST_READ_ROLE_V1,
+    [JSON.stringify(project.serverId), JSON.stringify(project.projectId)]);
+}
 
 /** One approving Account's current reviewed effect; neither Machine nor digest is a row key. */
 export const ProjectTrustValueV1Schema = lazyDefinition(() => z.strictObject({

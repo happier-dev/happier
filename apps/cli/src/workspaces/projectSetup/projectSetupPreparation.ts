@@ -33,7 +33,7 @@ import { readWorkspaceSyncChildMachineFacts } from '@/workspaces/sync/workspaceS
 import { isManagedDevcontainerChildProjectionCurrentV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { readProjectDefinitionFile, readProjectDefinitionFileBytes } from './nativeDefinitionFiles';
-import { createProjectSetupTrustClient, type ProjectSetupTrustClientInput } from './projectSetupTrust';
+import { createProjectSetupTrustClient, type ProjectCheckoutTeardownConsent, type ProjectSetupTrustClientInput } from './projectSetupTrust';
 import { createProjectSetupSuccessStore, type ProjectSetupSuccessBasis } from './projectSetupSuccess';
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
@@ -87,6 +87,8 @@ export type ProjectSetupPreparationInput = Readonly<{
     approvalContext?: ActionExecutorContext;
     /** Unattended checkout destruction consumes remembered lifecycle consent only. */
     requireRememberedConsent?: boolean;
+    /** The accepted checkout's requester Trust fact for this teardown operation. */
+    checkoutTeardownConsent?: ProjectCheckoutTeardownConsent;
     signal?: AbortSignal;
 }>;
 
@@ -663,7 +665,9 @@ export async function admitReviewedProjectSetup(input: ProjectSetupPreparationIn
                 // Project trust grant or turn an agent into an approving user.
                 consent = 'thisTime';
             } else {
-                const remembered = await createProjectSetupTrustClient(input.requester).resolveConsent(plan.project, plan.reviewedEffectDigest);
+                const remembered = input.checkoutTeardownConsent
+                    ? await input.checkoutTeardownConsent(plan.reviewedEffectDigest)
+                    : await createProjectSetupTrustClient(input.requester).resolveConsent(plan.project, plan.reviewedEffectDigest);
                 if (remembered.kind === 'pendingApproval') return { kind: 'pendingApproval', code: remembered.code, plan };
                 consent = 'trusted';
             }

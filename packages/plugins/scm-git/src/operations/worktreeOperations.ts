@@ -186,7 +186,9 @@ export async function gitWorktreeRemove(input: {
     }
 
     return withGitWorktreeMutation(input.context.cwd, async () => {
-        const path = validatedPath.value;
+        // Git removes the registered checkout behind a directory alias. Use
+        // that same path for admission and for checking the removal result.
+        const path = await canonicalizePath(validatedPath.value);
         input.context.assertFilesystemPathAuthorized?.(path);
         const before = await readPathIdentity(path);
         let missingWorktree: Parameters<NonNullable<ScmBackendContext['beforeFilesystemMutation']>>[0];
@@ -214,13 +216,12 @@ export async function gitWorktreeRemove(input: {
             }
         }
         const identity = before ? await inspectGitCheckoutIdentity({ cwd: path }) : null;
-        const physicalPath = identity ? await canonicalizePath(path) : path;
         if (identity) {
             const list = await runScmCommand({ bin: 'git', cwd: input.context.cwd,
                 args: ['worktree', 'list', '--porcelain', '-z'], env: buildScmNonInteractiveEnv() });
             if (!list.success) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, error: list.stderr };
             const nested = parseGitWorktreeListPorcelain({ worktreesOutput: list.stdout, currentWorktreePath: null })
-                .some(entry => !canonicalAbsolutePathsEqual(entry.path, physicalPath) && isCanonicalAbsolutePathInsideRoot(physicalPath, entry.path));
+                .some(entry => !canonicalAbsolutePathsEqual(entry.path, path) && isCanonicalAbsolutePathInsideRoot(path, entry.path));
             if (nested) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
                 error: 'Nested registered worktrees must be removed first' };
         }
@@ -247,14 +248,14 @@ export async function gitWorktreeRemove(input: {
                 args: ['worktree', 'list', '--porcelain', '-z'], env: buildScmNonInteractiveEnv() });
             const repositoryRoot = registered.success ? await resolveGitMainWorktreePath({
                 worktreesOutput: registered.stdout, currentWorktreePath: input.context.detection.rootPath }) : null;
-            const guarded = (repositoryRoot !== null && isCanonicalAbsolutePathInsideRoot(join(repositoryRoot, '.dev', 'worktree'), physicalPath))
+            const guarded = (repositoryRoot !== null && isCanonicalAbsolutePathInsideRoot(join(repositoryRoot, '.dev', 'worktree'), path))
                 || (retainedEntry !== null && basename(path) === 'payload' && basename(dirname(path)) === retainedEntry);
             const registeredPaths = registered.success ? parseGitWorktreeListPorcelain({ worktreesOutput: registered.stdout, currentWorktreePath: null }) : null;
             const fresh = await readPathIdentity(path);
             const repository = identity ? await inspectGitCheckoutIdentity({ cwd: input.context.cwd }) : null;
             const same = before && fresh && before.dev === fresh.dev && before.ino === fresh.ino && fresh.isDirectory() && !fresh.isSymbolicLink()
                 && identity && repository && canonicalAbsolutePathsEqual(identity.commonDirPath, repository.commonDirPath);
-            if (!guarded || !same || !registeredPaths || registeredPaths.some(entry => canonicalAbsolutePathsEqual(entry.path, physicalPath) || isCanonicalAbsolutePathInsideRoot(physicalPath, entry.path))) {
+            if (!guarded || !same || !registeredPaths || registeredPaths.some(entry => canonicalAbsolutePathsEqual(entry.path, path) || isCanonicalAbsolutePathInsideRoot(path, entry.path))) {
                 return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
                     error: `Worktree removal left an unverified path: ${path}`, stderr: result.stderr };
             }
