@@ -21,6 +21,8 @@ import { ListPresentationProvider, useListPresentation } from '@/components/ui/l
 import { PagePinnedBar } from '@/components/ui/layout/PagePinnedBar';
 import { Text } from '@/components/ui/text/Text';
 import { resolveTranscriptPaint } from '@/components/sessions/transcript/transcriptPaint';
+import { isActionOperationTerminal } from '@/sync/domains/actionOperations/actionOperationStore';
+import { useActionOperationByRequestId } from '@/sync/domains/actionOperations/useActionOperations';
 import { t } from '@/text';
 
 import {
@@ -179,7 +181,11 @@ const ResultRow = React.memo(function ResultRow(
     showDivider?: boolean;
   }>,
 ) {
-  const { row } = props;
+  const sendRequest = props.row.state === 'applying' ? props.row.sendRequest : undefined;
+  const operation = useActionOperationByRequestId(sendRequest?.requestId ?? null, props.row.target.serverId, sendRequest?.accountId);
+  // A Send's managed-machine operation is the Home's Start for that request.
+  const waking = operation?.domainRef?.kind === 'managedMachine' && !isActionOperationTerminal(operation.state);
+  const row = React.useMemo((): BulkSessionChangeRow => waking ? { ...props.row, state: 'waking' } : props.row, [props.row, waking]);
   const data = React.useMemo(
     () =>
       buildBulkSessionResultRowData(

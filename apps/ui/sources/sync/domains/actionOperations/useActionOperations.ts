@@ -106,7 +106,7 @@ export function useActionOperationByRequestId(
     serverId: string | null,
     accountId?: string | null,
 ) {
-    return useActionOperationSelector(() => (
+    const read = () => (
         requestId
             ? actionOperationSelectors.selectSnapshotByRequestId(
                 actionOperationStore.getSnapshot(),
@@ -115,7 +115,8 @@ export function useActionOperationByRequestId(
                 accountId,
             )
             : null
-    ));
+    );
+    return React.useSyncExternalStore(requestId ? actionOperationStore.subscribe : subscribeToNothing, read, read);
 }
 
 export function useActiveActionOperations() {

@@ -4,6 +4,8 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 import type { BulkSessionChangeRow } from '@/components/sessions/authoring/bulk/executeBulkSessionChanges';
 import { BulkSessionResults } from './BulkSessionResults';
 import { t } from '@/text';
+import { act } from 'react-test-renderer';
+import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 
 afterEach(standardCleanup);
 
@@ -40,6 +42,32 @@ async function render(
 }
 
 describe('BulkSessionResults', () => {
+  it('shows Waking for the exact managed Start awaiting approval and Sent after delivery', async () => {
+    const pending = { ...row('a', 'applying'), sendRequest: { requestId: 'send-a', accountId: 'requester' } };
+    const element = (result: BulkSessionChangeRow) => <BulkSessionResults rows={[result]} text="Hello"
+      submitting={result.state === 'applying'} compact={false} onRetry={() => {}} onRetryFailed={() => {}}
+      onDone={() => {}} onOpenSession={() => {}} />;
+    const screen = await renderScreen(element(pending));
+    const snapshot = { version: 1 as const, operationId: 'managed-start', requestId: 'send-a',
+      actionId: 'machines.managed.power.set' as const, state: 'running' as const, revision: 1,
+      scope: { machineId: 'controller', accountId: 'requester' }, title: 'Start machine', createdAt: 1, startedAt: 2,
+      cancellation: 'supported' as const,
+      progress: { kind: 'phase' as const, phase: 'waiting_for_approval', label: 'Waiting for approval' },
+      domainRef: { kind: 'managedMachine' as const, id: 'guest' } };
+    const waking = t('session.participants.bulk.stateWaking');
+    try {
+      await act(async () => actionOperationStore.mergeSnapshots({ serverId: 'other-home', snapshots: [snapshot] }));
+      expect(screen.getTextContent()).toContain(t('session.participants.bulk.stateInProgress'));
+      await act(async () => actionOperationStore.mergeSnapshots({ serverId: 'home', snapshots: [snapshot] }));
+      expect(screen.getTextContent()).toContain(waking);
+      await screen.update(element(row('a', 'sent')));
+      expect(screen.getTextContent()).toContain(t('session.participants.bulk.stateSent'));
+      expect(screen.getTextContent()).not.toContain(waking);
+    } finally {
+      await act(async () => actionOperationStore.reset());
+    }
+  });
+
   it('offers a per-row Retry and Retry failed only once two or more sessions failed', async () => {
     const { screen, onRetry, onRetryFailed } = await render([
       row('a', 'failed', 'nl3 stopped answering'),

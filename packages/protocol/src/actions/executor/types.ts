@@ -831,6 +831,13 @@ export type ActionExecutorContext = Readonly<{
     target: ActionSessionAddress;
     result: ActionExecuteResult;
   }>) => void;
+  /** In-process notification of the request assigned to a selected Session. */
+  onSessionTargetStart?: (event: Readonly<{
+    actionId: ActionId;
+    target: ActionSessionAddress;
+    requestId: string;
+    accountId?: string;
+  }>) => void;
   /** Existing operation-owner sinks, strictly in-process and never Action input. */
   operationProgress?: Readonly<{
     update(progress: Readonly<{ label?: string; phase?: string; queueAhead?: number; current?: number; total?: number;

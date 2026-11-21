@@ -57,11 +57,12 @@ export function useBulkSessionComposer(input: Readonly<{
             ...previous.filter(row => !keys.has(bulkChangeTargetKey(row.target))),
             ...initialRows,
         ]));
+        const updateRow = (row: BulkSessionChangeRow) => setRows(previous => orderBulkSessionChangeRows([
+            ...previous.filter(old => bulkChangeTargetKey(old.target) !== bulkChangeTargetKey(row.target)), row,
+        ]));
         try {
             await executeBulkSessionChanges({ plan: planned, executeConfirmed: input.executeConfirmed ?? frontDoor.confirmed,
-                context: input.context, onResult: row => setRows(previous => orderBulkSessionChangeRows([
-                    ...previous.filter(old => bulkChangeTargetKey(old.target) !== bulkChangeTargetKey(row.target)), row,
-                ])) });
+                context: input.context, onSendStarted: updateRow, onResult: updateRow });
         } finally {
             running.current = false;
             setSubmitting(false);

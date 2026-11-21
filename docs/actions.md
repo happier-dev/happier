@@ -420,8 +420,9 @@ an engine switch, read the current Agent first and send a transition only if
 the target still needs to switch. If message admission was ambiguous, reuse
 the original message identity (`localId`, or the plugin’s `idempotencyKey`).
 
-Fan-out runs concurrently across Machines and in selection order within each
-Machine, using the Machine id in the authorized Session status projection.
+Fan-out starts all targets on a Home concurrently when each target's Machine
+placement is known, including targets on the same Machine. Placement comes
+from the authorized Session status projection.
 If any target has unknown Machine placement, its whole Home runs sequentially.
 The executor preserves positional child request ids and selection-ordered final
 results. Hosts can pass `context.onSessionTargetResult` to receive the executor's
@@ -429,6 +430,9 @@ per-target progress event `{actionId, position, target, result}` as each target
 settles, including typed failures and cancellations. The in-process callback
 lets hosts update result rows directly and is separate from the Action input
 and plugin Host Event contracts.
+Hosts can observe the assigned child request through the in-process
+`context.onSessionTargetStart` callback. Bulk Compose uses that request to
+display the Home's managed Start operation while it is in flight.
 Plain Session IDs retain their existing result shape. Group sends/status reads
 return each target's outcome. Native participant recipients remain separate
 inside-Session routing identities.

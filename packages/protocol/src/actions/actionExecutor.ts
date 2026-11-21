@@ -4330,39 +4330,36 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       if (sessionTarget && ctx.sessionTargetsV1 && !ctx.sessionTargetsV1.operands && !options?.sessionTargetLeaf) {
         const snapshot = ctx.sessionTargetsV1;
         const { actionAutomationAdmission: _groupAutomationAdmission,
-          prepareAdmittedExecutionOrigin: _groupExecutionOrigin, onSessionTargetResult: _groupTargetResult, ...materialContext } = ctx;
+          prepareAdmittedExecutionOrigin: _groupExecutionOrigin, onSessionTargetResult: _groupTargetResult,
+          onSessionTargetStart: groupTargetStart, ...materialContext } = ctx;
         const runTargets = async (): Promise<ActionExecuteResult> => {
           const parentRequestId = ctx.actionRequestId ?? bytesToHex(randomBytes(16));
           const results = await runActionSessionFanout({ actionId, targets: snapshot.targets, context: snapshot.selector ? ctx : materialContext, deps,
             execute: async (target, position, machineId) => {
-            // The group already admitted Account authority, the credential's
-            // Action ceiling and enablement. Each new target retains its own
-            // credential-target, caller-scope and domain admission.
-            const result: ActionExecuteResult = ctx.signal?.aborted
-              ? { ok: false, errorCode: 'cancelled', error: 'cancelled' }
-              : await executeCoreTerminal(actionId, (() => {
-                  const childInput = replaceActionSessionTargetField(readRecord(admittedInput), snapshot.field, target.sessionId);
-                  if (actionId !== SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1) return childInput;
-                  return { ...childInput, serverId: target.serverId,
-                    ...(machineId ? { machineId } : {}) };
-                })(),
-                  { ...materialContext, serverId: target.serverId,
-                    actionRequestId: snapshot.targets.length === 1 ? parentRequestId
-                      : deriveActionChildRequestIdV1({ parentRequestId, parentActionId: actionId, childActionId: actionId, position }),
-                    // A reviewed/resolved host leaf remains this exact Session
-                    // through fresh transport reads, including durable replay.
-                    ...(actionId === 'action.invoke' ? {} : { expectedSessionAddress: target }),
-                    ...(actionId === SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1 && machineId
-                      ? { expectedSessionMachineId: machineId } : {}),
-                    sessionTargetsV1: actionId === 'action.invoke' && sessionTarget.cardinality === 'one'
-                      ? snapshot : { ...snapshot, targets: [target], selector: false },
-                    // Dispatch wrappers delegate their target's approval policy;
-                    // resolving a Session operand does not admit that policy.
-                    bypassApprovals: delegatesApprovalClassificationToResolvedAction(actionId)
-                      ? materialContext.bypassApprovals : true }, true,
-                  legacyMetadataLabel, undefined, options?.approvalReplay === true, undefined, true, undefined, hostInternal);
-            return result;
-          } });
+              // The group already admitted Account authority, the credential's
+              // Action ceiling and enablement. Each new target retains its own
+              // credential-target, caller-scope and domain admission.
+              if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+              const actionRequestId = snapshot.targets.length === 1 ? parentRequestId
+                : deriveActionChildRequestIdV1({ parentRequestId, parentActionId: actionId, childActionId: actionId, position });
+              if (snapshot.selector) groupTargetStart?.({ actionId, target, requestId: actionRequestId, accountId: ctx.runtimeAccountId });
+              const childInput = replaceActionSessionTargetField(readRecord(admittedInput), snapshot.field, target.sessionId);
+              const setsConnectedService = actionId === SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1;
+              return executeCoreTerminal(actionId,
+                setsConnectedService ? { ...childInput, serverId: target.serverId, ...(machineId ? { machineId } : {}) } : childInput,
+                { ...materialContext, serverId: target.serverId, actionRequestId,
+                  // A reviewed/resolved host leaf remains this exact Session
+                  // through fresh transport reads, including durable replay.
+                  ...(actionId === 'action.invoke' ? {} : { expectedSessionAddress: target }),
+                  ...(setsConnectedService && machineId ? { expectedSessionMachineId: machineId } : {}),
+                  sessionTargetsV1: actionId === 'action.invoke' && sessionTarget.cardinality === 'one'
+                    ? snapshot : { ...snapshot, targets: [target], selector: false },
+                  // Dispatch wrappers delegate their target's approval policy;
+                  // resolving a Session operand does not admit that policy.
+                  bypassApprovals: delegatesApprovalClassificationToResolvedAction(actionId)
+                    ? materialContext.bypassApprovals : true }, true,
+                legacyMetadataLabel, undefined, options?.approvalReplay === true, undefined, true, undefined, hostInternal);
+            } });
           return snapshot.selector
             ? { ok: true, result: { kind: 'fanout', results } }
             : results[0].result;

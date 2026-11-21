@@ -1,4 +1,5 @@
-import { SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, SESSION_MESSAGE_SEND_ACTION_ID_V1,
+    type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionSessionAddressV1 } from '@happier-dev/protocol/actions/sessionAddressV1';
 import { ActionApprovalRequestCreatedResultSchema, readUnexpectedActionErrorDiagnosticV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ActionSessionFanoutResultV1Schema } from '@happier-dev/protocol/actions/sessionTargetV1';
@@ -11,6 +12,7 @@ export type BulkSessionChangeRow = Readonly<{
     target: ActionSessionAddressV1;
     actionId: ActionId;
     state: 'applying' | 'sent' | 'applied' | 'switched' | 'failed' | 'waking' | 'approval_pending' | 'skipped';
+    sendRequest?: Readonly<{ requestId: string; accountId: string }>;
     code?: string;
     reason?: string;
     result?: ActionExecuteResult;
@@ -72,6 +74,7 @@ export async function executeBulkSessionChanges(input: Readonly<{
     plan: ExistingSessionChangePlan;
     executeConfirmed: ReturnType<typeof createDefaultActionExecutor>['executeConfirmed'];
     context?: UiActionExecutorContext;
+    onSendStarted?: (row: BulkSessionChangeRow) => void;
     onResult?: (row: BulkSessionChangeRow) => void;
 }>): Promise<readonly BulkSessionChangeRow[]> {
     const rows = new Map<string, BulkSessionChangeRow>();
@@ -117,6 +120,15 @@ export async function executeBulkSessionChanges(input: Readonly<{
             try {
                 result = await input.executeConfirmed(stage.actionId, { ...stage.input,
                     sessionId: { selector: 'sessions', addresses: homeTargets } }, { ...input.context, serverId,
+                    onSessionTargetStart: event => {
+                        input.context?.onSessionTargetStart?.(event);
+                        if (event.actionId !== SESSION_MESSAGE_SEND_ACTION_ID_V1 || !event.accountId || !input.onSendStarted) return;
+                        const prior = rows.get(bulkChangeTargetKey(event.target));
+                        input.onSendStarted({ target: event.target, actionId: event.actionId, state: 'applying',
+                            sendRequest: { requestId: event.requestId, accountId: event.accountId },
+                            ...(prior?.switchedFrom ? { switchedFrom: prior.switchedFrom } : {}),
+                            ...(prior?.switchedTo ? { switchedTo: prior.switchedTo } : {}) });
+                    },
                     onSessionTargetResult: event => {
                         input.context?.onSessionTargetResult?.(event);
                         accept(event.target, event.result);
