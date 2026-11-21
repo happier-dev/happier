@@ -1105,7 +1105,10 @@ export const DeploymentEnvironmentDetail = React.memo(
                 onOpen={props.onOpenDatabase}
                 onBackups={() => openTab('settings', 'backups')}
                 onAdd={() => { openAddDatabase?.(); }} />
-              {previewAvailability !== 'preview' ? (
+              {/* A stored definition's own section already says previews follow a repository: one cause, said once
+                  (PAGE-ACCEPT-176 R10-D9). */}
+              {previewAvailability !== 'preview'
+                && !(previewAvailability === 'needsRepository' && detail.content.definition.kind === 'stored') ? (
                 // Previews are a section of their own (title, purpose, current state), never a lone card under Triggers.
                 <ItemGroup testID="project-deployments.environment.overview.previewsSection"
                   title={t('projects.deployments.sectionPreviews')}

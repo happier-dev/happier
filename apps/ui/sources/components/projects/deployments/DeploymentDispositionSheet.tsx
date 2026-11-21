@@ -298,11 +298,17 @@ function DeploymentDispositionSheet(
     icon: 'trash' as const,
     title: t('projects.deployments.platformLink.deleteTitle', { platform }),
     subtitle: t('projects.deployments.platformLink.deleteBody', { resource: resourceName, platform }),
-  } : {
+  } : props.running ? {
     id: 'remove' as const,
     icon: 'stop-circle' as const,
     title: t('projects.deployments.deleteStopTitle'),
     subtitle: t('projects.deployments.deleteStopBody', { machine }),
+  } : {
+    // Nothing recorded running: the removal stops nothing, so it reads as the removal itself (PAGE-ACCEPT-176 R10-D13).
+    id: 'remove' as const,
+    icon: 'trash' as const,
+    title: confirmTitle,
+    subtitle: t('projects.deployments.factStopsValue', { name: props.name }),
   }] : [];
   return (
     <ListPresentationProvider value="page" pageInsets="contained">
@@ -373,7 +379,8 @@ function DeploymentDispositionSheet(
             value={typedResource} editable={!busy} monospace autoCapitalize="none" autoComplete="off"
             onChangeText={setTypedResource} />} />
       </ItemGroup> : null}
-      {choice === 'remove' && props.reviewVolumes ? <ItemGroup title={t('projects.deployments.factData')}
+      {/* No named volumes: Keeps below already says what stays, so no separate empty Data card (PAGE-ACCEPT-176 R10-D13). */}
+      {choice === 'remove' && props.reviewVolumes && volumeReview?.length !== 0 ? <ItemGroup title={t('projects.deployments.factData')}
         {...(volumeReview?.length ? { description: t('projects.deployments.factDataValue') } : {})}>
         {volumeReview === null ? <SurfaceStateCard size="line" kind={volumeError ? 'error' : 'loading'}
           testID={volumeError ? 'project-deployments.disposition.volumes.error' : undefined}
@@ -383,8 +390,6 @@ function DeploymentDispositionSheet(
           diagnosticDetail={volumeFailure?.technicalDetails.map(line => `${line.label}: ${line.value}`).join('\n')}
           action={volumeError ? { label: t('common.retry'), onPress: () => setVolumeError(null),
             testID: 'project-deployments.disposition.volumes.retry' } : undefined} /> : null}
-        {volumeReview?.length === 0 ? <Item testID="project-deployments.disposition.volumes.empty"
-          title={t('projects.deployments.noDataToKeep')} mode="info" /> : null}
         {volumeReview?.map(volume => <React.Fragment key={volume.name}>
           <SegmentedChoiceItem title={volumeDisplayName(volume.name)} disabled={busy}
             testIDPrefix={`project-deployments.disposition.volume.${volume.name}`}

@@ -1506,14 +1506,19 @@ describe('Project deployments page', () => {
           await screen.pressByTestIdAsync('project-deployments.disposition.choice:detach');
         } else {
           await screen.pressByTestIdAsync('project-deployments.disposition.volumes.retry');
-          await waitForContent(screen, 'project-deployments.disposition.volumes.empty');
+          await waitForHomeGovernance(() => expect(screen.findByTestId(errorId)).toBeNull());
           expect(inventoryReads).toBe(2);
         }
       }
       await waitForHomeGovernance(() => {
         expect(screen.findByTestId('project-deployments.disposition.confirm')?.props.disabled).toBe(false);
       });
-      if (neverDeployed) await waitForContent(screen, 'project-deployments.disposition.volumes.empty');
+      if (neverDeployed) {
+        // Nothing deployed: no separate empty Data card beside Keeps, and no "stops its services" choice (PAGE-ACCEPT-176 R10-D13).
+        expect(screen.findByTestId('project-deployments.disposition.volumes.empty')).toBeNull();
+        expect(screen.findByTestId('project-deployments.disposition.fact.keeps')).not.toBeNull();
+        expect(screen.getTextContent()).not.toContain('Stop and remove');
+      }
       const previousTeardowns = homes.requestsFor('/v1/actions/deployments.teardown').length;
       const previousDeletions = homes.requestsFor(deletionPath).length;
       await screen.pressByTestIdAsync('project-deployments.disposition.confirm');
@@ -1663,7 +1668,7 @@ describe('Project deployments page', () => {
     } finally { await act(async () => { controller.retire(); }); }
   });
 
-  it('reports the same Previews availability on Overview and Settings for a stored definition', async () => {
+  it('says a stored definition needs a repository once on Overview, and keeps the Previews reason in Settings', async () => {
     const { t } = await import('@/text');
     const base = environmentDetailForHome();
     const detail = environmentDetailForHome({ content: { ...base.content, definition: { kind: 'stored',
@@ -1675,11 +1680,12 @@ describe('Project deployments page', () => {
       demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={null}
       review={noReview} onOpenReceipt={() => {}} lifetime={lifetime} />);
     try {
-      const overview = 'project-deployments.environment.overview.previews';
       const settings = 'project-deployments.environment.settings.previews.template.needsRepository';
-      await waitForContent(screen, overview);
+      // The definition section already says pull request previews follow a repository; Overview does not say it again
+      // as a Previews section (PAGE-ACCEPT-176 R10-D9).
+      await waitForContent(screen, 'project-deployments.environment.definition.repositoryRequired');
+      expect(screen.findByTestId('project-deployments.environment.overview.previewsSection')).toBeNull();
       const needsRepository = t('projects.deployments.settingsSections.previewsNeedRepository');
-      expect(screen.findByTestId(overview)?.findAll(node => node.children.includes(needsRepository)).length).toBeGreaterThan(0);
       await selectEnvironmentTab(screen, 'settings');
       await waitForContent(screen, settings);
       expect(screen.findByTestId(settings)?.findAll(node => node.children.includes(needsRepository)).length).toBeGreaterThan(0);
