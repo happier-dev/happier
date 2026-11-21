@@ -1,17 +1,21 @@
 import {
     HappierSelectionActionBar,
+    HAPPIER_SELECTION_ACTION_BAR_HEIGHT_PX,
     type HappierSelectionActionBarHost,
     type HappierSelectionActionBarOverflowItem,
     type HappierSelectionActionBarProps,
 } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
-import { useUnistyles } from 'react-native-unistyles';
+import { View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Typography } from '@/constants/Typography';
 import { Text } from '@/components/ui/text/Text';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { useOptionalSafeAreaInsets } from '@/hooks/ui/useOptionalSafeAreaInsets';
+import { useSessionCockpitPageBottomClearance } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { t } from '@/text';
 import { renderThemeMaterialSurface } from '@/components/ui/glass/GlassSurface';
 import { resolveThemeSurfaceFinish } from '@/components/ui/surfaces/themeRaisedEdge';
@@ -68,7 +72,19 @@ const CORE_SELECTION_BAR_HOST: HappierSelectionActionBarHost = {
     renderGlyph: (glyph, color, size) => <Icon name={glyph === 'dismiss' ? 'x' : 'dots-three'} size={size} color={color} />,
 };
 
-export type SelectionActionBarProps = Omit<HappierSelectionActionBarProps, 'colors' | 'host' | 'reducedMotion' | 'moreLabel'>;
+export type SelectionActionBarProps = Omit<HappierSelectionActionBarProps, 'colors' | 'host' | 'reducedMotion' | 'moreLabel'> & Readonly<{
+    /**
+     * `pinned`: the page's one bottom action bar. It floats over the bottom of its page, above the shell's floating
+     * bottom chrome (a phone's tab bar) or the safe area, and the page keeps `SELECTION_ACTION_BAR_RESERVE_PX` clear
+     * under its last content while it shows. Its parent is the page's own frame, not its scroll content.
+     */
+    placement?: 'inline' | 'pinned';
+}>;
+
+/** The gap the pinned bar keeps above whatever is under it, and above the page's last content. */
+const PINNED_GAP_PX = 12;
+/** What a page reserves under its last content while its pinned bar shows, so nothing ends behind the bar. */
+export const SELECTION_ACTION_BAR_RESERVE_PX = HAPPIER_SELECTION_ACTION_BAR_HEIGHT_PX + PINNED_GAP_PX * 2;
 
 /**
  * Happier core's binding of the ONE selection action bar (`HappierSelectionActionBar` in
@@ -77,8 +93,10 @@ export type SelectionActionBarProps = Omit<HappierSelectionActionBarProps, 'colo
  * menu, the reduced-motion preference and the inverted primary-button colour pair. Keyboard Esc stays
  * with each selection owner (session list layer, transcript shortcut), never a second handler here.
  */
-export function SelectionActionBar(props: SelectionActionBarProps): React.ReactElement | null {
+export function SelectionActionBar({ placement, ...props }: SelectionActionBarProps): React.ReactElement | null {
     const { theme } = useUnistyles();
+    const bottomChrome = useSessionCockpitPageBottomClearance();
+    const safeArea = useOptionalSafeAreaInsets();
     const reducedMotion = useReducedMotionPreference();
     // The inverse fill is near black/white: the glass fixed point (its fill over the plain page) can only reach it with a ~full coat, so the rail paints opaque by design.
     const colors = React.useMemo(() => ({
@@ -88,7 +106,7 @@ export function SelectionActionBar(props: SelectionActionBarProps): React.ReactE
         destructiveText: theme.colors.state.danger.textForeground,
     }), [theme.colors.button.primary.background, theme.colors.button.primary.tint,
         theme.colors.state.danger.foreground, theme.colors.state.danger.textForeground]);
-    return (
+    const bar = (
         <HappierSelectionActionBar
             {...props}
             colors={colors}
@@ -99,4 +117,12 @@ export function SelectionActionBar(props: SelectionActionBarProps): React.ReactE
             renderMaterialSurface={renderThemeMaterialSurface}
         />
     );
+    if (placement !== 'pinned') return bar;
+    // Above the floating bottom chrome when the shell draws one (it reports its height), else above the safe area.
+    const bottom = (bottomChrome > 0 ? bottomChrome : safeArea.bottom) + PINNED_GAP_PX;
+    return <View pointerEvents="box-none" style={[styles.pinned, { bottom }]}>{bar}</View>;
 }
+
+const styles = StyleSheet.create((theme) => ({
+    pinned: { position: 'absolute', left: theme.space.s16, right: theme.space.s16, zIndex: 30, elevation: 30, alignItems: 'center' },
+}));

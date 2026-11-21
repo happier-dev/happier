@@ -15,6 +15,7 @@ export function ReviewSummaryHost(props: Readonly<{
     more?: ReviewSummaryProps['more'];
     reviewers?: ReviewSummaryProps['reviewers'];
     onOpenReview: () => void;
+    footerAction?: ReviewSummaryProps['footerAction'];
 }>): React.ReactElement {
     const detail = useReviewDetail(props.reviewId, { scope: props.scope });
     const glance = projectReviewGlance(undefined, detail.data?.review ?? null);
@@ -24,7 +25,7 @@ export function ReviewSummaryHost(props: Readonly<{
     return <>
         <ReviewSummary subject={props.subject ?? null} glance={glance} rows={props.rows ?? []}
             more={props.more} reviewers={props.reviewers ?? []}
-            onOpenReview={props.onOpenReview} />
+            onOpenReview={props.onOpenReview} footerAction={props.footerAction} />
         {detail.status === 'error' ? <SurfaceStateCard testID="review-summary:retry" kind="error" size="line"
             title={t('common.error')} action={{ label: t('common.retry'), onPress: () => void detail.refresh() }} /> : null}
     </>;

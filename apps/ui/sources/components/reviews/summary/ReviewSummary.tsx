@@ -54,6 +54,8 @@ export type ReviewSummaryProps = Readonly<{
     busy: boolean;
   }> | null;
   onOpenRow?: (rowId: string) => void;
+  /** A quiet way on from the Review beside Open review in the footer ("Walk me through this" on a session card). */
+  footerAction?: React.ReactNode;
   testID?: string;
 }>;
 
@@ -77,7 +79,7 @@ export function ReviewSummary(props: ReviewSummaryProps): React.ReactElement {
     // In a transcript the Find owner names each run of text, so a search can land on it.
     return find ? {
       rowId: row.rowId, severity: row.severity, accessibilityLabel: `${severityLabel}: ${row.title}`,
-      severityLabel: <StructuredFindText blockId={`${find}:severity`} text={severityLabel} />,
+      severityLabel: <StructuredFindText blockId={`${find}:severity`} text={severityLabel} numberOfLines={1} style={styles.rowReviewer} />,
       title: <StructuredFindText blockId={`${find}:title`} text={row.title} numberOfLines={1} style={styles.rowTitle} />,
       reviewer: <StructuredFindText blockId={`${find}:reviewer`} text={row.reviewer} numberOfLines={1} style={styles.rowReviewer} />,
       glyph, ...place,
@@ -108,6 +110,7 @@ export function ReviewSummary(props: ReviewSummaryProps): React.ReactElement {
             <RoundButton testID="review-summary:implement" size="small" title={props.implement.label}
               loading={props.implement.busy} disabled={props.implement.busy} onPress={props.implement.onPress} />
           ) : null}
+          {props.footerAction ?? null}
           <TextLinkButton testID="review-summary:open" size="row" tone="strong" label={t('reviewWalkthrough.detail.openReview')}
             onPress={props.onOpenReview} />
         </>

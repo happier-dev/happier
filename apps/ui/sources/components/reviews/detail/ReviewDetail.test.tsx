@@ -85,7 +85,9 @@ describe('ReviewFindingsList', () => {
   it('keeps selected finding identities while the person filters the list', async () => {
     function SelectedFindings() {
       const [selected, setSelected] = React.useState<ReadonlySet<string>>(new Set());
-      return <ReviewFindingsList rows={ROWS} renderRow={rowId => <RowProbe rowId={rowId} />}
+      // Each row draws its own check in its glyph's place; the list hands it the selection it keeps across filters.
+      return <ReviewFindingsList rows={ROWS} renderRow={(rowId, _divided, selection) => <SelectionProbe testID={`review-findings:select:${rowId}`}
+          checked={selection?.selected ?? false} onPress={() => selection?.onToggle(rowId)} />}
         selection={{ selectedRowIds: selected, onToggle: rowId => setSelected(current => {
           const next = new Set(current);
           if (next.has(rowId)) next.delete(rowId); else next.add(rowId);
@@ -94,16 +96,14 @@ describe('ReviewFindingsList', () => {
     }
     const screen = await renderScreen(<SelectedFindings />);
     try {
-      expect(screen.findHostByTestId('review-findings:select:blocker-a')?.props['aria-checked']).toBe(false);
+      expect(screen.findHostByTestId('review-findings:select:blocker-a')?.props.checked).toBe(false);
       await screen.pressByTestIdAsync('review-findings:select:blocker-a');
       await screen.pressByTestIdAsync('review-findings:filter:accept');
       await screen.pressByTestIdAsync('review-findings:select:blocker-b');
       await screen.pressByTestIdAsync('review-findings:filter:all');
-      expect(screen.findHostByTestId('review-findings:select:blocker-a')?.props.accessibilityState.checked).toBe(true);
-      expect(screen.findHostByTestId('review-findings:select:blocker-b')?.props.accessibilityState.checked).toBe(true);
-      expect(screen.findHostByTestId('review-findings:select:blocker-a')?.props['aria-checked']).toBe(true);
-      expect(screen.findHostByTestId('review-findings:select:blocker-b')?.props['aria-checked']).toBe(true);
-      expect(screen.findHostByTestId('review-findings:select:high')?.props.accessibilityState.checked).toBe(false);
+      expect(screen.findHostByTestId('review-findings:select:blocker-a')?.props.checked).toBe(true);
+      expect(screen.findHostByTestId('review-findings:select:blocker-b')?.props.checked).toBe(true);
+      expect(screen.findHostByTestId('review-findings:select:high')?.props.checked).toBe(false);
     } finally { await screen.unmount(); }
   });
   it('groups rows by severity, most severe first, and filters them by decision in one press', async () => {
@@ -193,6 +193,11 @@ function RowProbe(props: Readonly<{ rowId: string }>) {
 }
 const RowProbeHost = 'RowProbe' as unknown as React.ComponentType<{
   testID: string;
+}>;
+const SelectionProbe = 'SelectionProbe' as unknown as React.ComponentType<{
+  testID: string;
+  checked: boolean;
+  onPress: () => void;
 }>;
 
 function groupOrder(

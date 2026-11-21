@@ -48,6 +48,11 @@ export type HappierPageHeaderProps = Readonly<{
   /** Whether the title is drawn. `false` when navigation chrome already shows it (the purpose line stays). */
   showTitle?: boolean;
   /**
+   * Where the thing sits among its siblings, on one quiet line over the title ("High · 3 of 6" over a pushed
+   * finding). Drawn only with the title.
+   */
+  kicker?: string;
+  /**
    * Navigation leaves the page's name to the page (a phone tab's top level, or a pushed phone page whose bar holds
    * only Back and the page's controls, as a Project's): it draws the large title. Every other
    * page, and any entity with a `leading` mark, draws the page title. This is the whole rule (DESIGN.md "One title
@@ -501,6 +506,11 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
         }}
       >
         {backLine}
+        {props.kicker && showTitle ? (
+          <View testID={props.testID ? `${props.testID}-kicker` : undefined}>
+            {renderText({ role: 'meta', text: props.kicker, header: false })}
+          </View>
+        ) : null}
         <View
           testID={props.testID ? `${props.testID}-title-row` : undefined}
           // Inline actions (and the status line under them) hang from the title's top edge, so a status

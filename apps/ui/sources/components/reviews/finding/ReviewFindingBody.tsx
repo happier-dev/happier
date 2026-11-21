@@ -145,37 +145,7 @@ function ReviewFindingWhere(
         {t('runPage.review.where')}
       </Text>
       {finding.patch ? (
-        <CodeBlockViewFrame
-          code={finding.patch}
-          wrap
-          showCopyButton
-          headerLeft={
-            path ? (
-              <View style={styles.fileHead}>
-                <Icon
-                  name="file"
-                  size={ICON_SIZE.xs}
-                  color={theme.colors.text.secondary}
-                />
-                <Text numberOfLines={1} style={styles.filePath}>
-                  {path}
-                </Text>
-              </View>
-            ) : undefined
-          }
-          containerStyle={styles.code}
-        >
-          <DiffViewer
-            mode="unified"
-            unifiedDiff={finding.patch}
-            filePath={path}
-            presentationStyleOverride="unified"
-            virtualized={false}
-            showLineNumbers
-            showPrefix
-            wrapLines
-          />
-        </CodeBlockViewFrame>
+        <ReviewFindingCode unifiedDiff={finding.patch} path={path} />
       ) : location ? (
         <View style={styles.place}>
           <Icon
@@ -192,6 +162,52 @@ function ReviewFindingWhere(
         <MarkdownView markdown={finding.suggestion} textStyle={styles.prose} />
       ) : null}
     </View>
+  );
+}
+
+/**
+ * A finding's code as its Where draws it: the file's name over numbered lines in the shared code frame. A captured
+ * excerpt (no patch) passes its lines as context and names the lines the finding is about, which keep the
+ * landed-line band (the no-Machine Changes excerpts).
+ */
+export function ReviewFindingCode(
+  props: Readonly<{ unifiedDiff: string; path: string | null; highlightLineIds?: ReadonlySet<string> }>,
+) {
+  const { theme } = useUnistyles();
+  const firstHighlight = props.highlightLineIds?.values().next().value;
+  return (
+    <CodeBlockViewFrame
+      code={props.unifiedDiff}
+      wrap
+      showCopyButton
+      headerLeft={
+        props.path ? (
+          <View style={styles.fileHead}>
+            <Icon
+              name="file"
+              size={ICON_SIZE.xs}
+              color={theme.colors.text.secondary}
+            />
+            <Text numberOfLines={1} style={styles.filePath}>
+              {props.path}
+            </Text>
+          </View>
+        ) : undefined
+      }
+      containerStyle={styles.code}
+    >
+      <DiffViewer
+        mode="unified"
+        unifiedDiff={props.unifiedDiff}
+        filePath={props.path}
+        presentationStyleOverride="unified"
+        virtualized={false}
+        showLineNumbers
+        showPrefix={props.highlightLineIds === undefined}
+        wrapLines
+        {...(firstHighlight === undefined ? {} : { highlightLineId: firstHighlight, highlightLineIds: props.highlightLineIds })}
+      />
+    </CodeBlockViewFrame>
   );
 }
 

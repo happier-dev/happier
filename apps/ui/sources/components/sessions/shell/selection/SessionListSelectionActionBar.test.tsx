@@ -50,6 +50,8 @@ vi.mock('expo-router', async () => {
 
 vi.mock('@/components/workspaceCockpit/session/SessionCockpitChromeRegistry', () => ({
     useSessionCockpitBottomChromeHeight: vi.fn(() => 0),
+    // The shared bar's pinned placement reads the page clearance; this list positions its own host.
+    useSessionCockpitPageBottomClearance: vi.fn(() => 0),
 }));
 
 function ActionBarHarness() {

@@ -292,6 +292,9 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
             more: rows.length > compactRows.length ? { label: findDisplay.more?.text ?? '', onPress: open } : null,
             reviewers: members.map(member => ({ label: member.reviewerLabel, backendId: member.backendId })),
             onOpenReview: open,
+            // The walkthrough is one more way on from the Review, so it sits in the card's footer beside Open review.
+            footerAction: canAct ? <ReviewWalkMeThroughButton sessionId={sessionId} serverId={serverId} runId={runId}
+                reviewRunIds={memberRunIds} comparisonId={normalized.comparisonId} /> : null,
         };
         return (
             <>
@@ -301,17 +304,6 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
             <ExecutionRunResultLayout
                 presentation="message"
                 testID="review-findings"
-                footActions={(
-                    <>
-                        {canAct ? (
-                            <ReviewWalkMeThroughButton sessionId={sessionId} serverId={serverId} runId={runId}
-                                reviewRunIds={memberRunIds} comparisonId={normalized.comparisonId} />
-                        ) : null}
-                    </>
-                )}
-                footHint={canAct ? (
-                    <ReviewWalkthroughEntryHint continues={members.some((member) => member.followUp.available)} findingsCount={rows.length} />
-                ) : null}
             >
                 {reviewId ? <ReviewSummaryHost {...summaryProps} reviewId={reviewId} scope={scope} />
                     : <ReviewSummary {...summaryProps} glance={{ sentence: headline, tone: highCount > 0 ? 'attention' : 'quiet', facts: [] }} />}

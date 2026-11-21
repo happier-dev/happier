@@ -67,6 +67,8 @@ export type PageHeaderPrimaryAction = NavigationHeaderAction & Readonly<{
 
 export type PageHeaderProps = Readonly<{
     title: string;
+    /** Where the thing sits among its siblings, on one quiet line over the title ("High · 3 of 6"). */
+    kicker?: string;
     /**
      * The title as a control (a main screen's "Artifacts ⌄", which opens its filters), drawn in the title's place.
      * `title` still names the page for the navigation chrome and assistive technology.
@@ -287,6 +289,7 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
         ) : null}
         <HappierPageHeader
             title={titleNode}
+            kicker={props.kicker}
             largeTitle={largeTitle && props.titleLeading == null}
             showTitle={showTitle}
             titleAccessory={props.titleAccessory}

@@ -25,6 +25,11 @@ export type HappierReviewFindingProps = Readonly<{
   decisionEditable?: boolean;
   decisionControl?: ReactNode;
   decisionGlyph?: ReactNode;
+  /**
+   * Bulk selection (lab `detail-bulk`): the row itself is the checkbox. Its check takes the decision glyph's
+   * place, so the title keeps its edge, and pressing the row selects it instead of opening it.
+   */
+  selection?: Readonly<{ selected: boolean; onToggle: (rowId: string) => void; glyph: ReactNode; disabled?: boolean; testID?: string }>;
   expanded: boolean;
   onToggleExpanded: (rowId: string) => void;
   divided?: boolean;
@@ -52,10 +57,32 @@ export function HappierReviewFinding(props: HappierReviewFindingProps) {
       {props.decision.label}
     </Text>
   ) : null;
+  const selection = props.selection;
+  const heading = (
+    <View style={styles.titleColumn}>
+      <Text role="pageRowTitle" strong style={{ color: ignored ? theme.colors.mutedText : theme.colors.text,
+        ...(ignored ? { textDecorationLine: 'line-through' } : {}) }}>{props.finding.title}</Text>
+      <View style={styles.meta}>
+        {typeof props.severityLabel === 'string' ? <Text role="cardMeta" style={{ color: theme.colors.secondaryText }}>{props.severityLabel}</Text> : props.severityLabel}
+        {typeof props.location === 'string' ? <Text role="cardMeta" numberOfLines={1} style={{ color: theme.colors.secondaryText, flexShrink: 1 }}>{props.location}</Text> : props.location}
+        {props.attribution}
+        {props.facts?.map(fact => <Text key={fact} role="cardMeta" numberOfLines={1}
+          testID={`review-finding-fact:${props.rowId}`} style={{ color: theme.colors.secondaryText }}>{fact}</Text>)}
+      </View>
+    </View>
+  );
   return (
     <View testID={`review-finding:${props.rowId}`} onLayout={onLayout}
       style={[styles.row, props.divided ? { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.colors.border } : null]}>
       <View style={styles.head}>
+        {selection ? (
+          <HappierPressable testID={selection.testID} accessibilityRole="checkbox" checked={selection.selected}
+            accessibilityLabel={props.accessibilityLabel ?? props.finding.title} disabled={selection.disabled}
+            onPress={() => selection.onToggle(props.rowId)} style={styles.toggle}>
+            <View style={styles.glyph}>{selection.glyph}</View>
+            {heading}
+          </HappierPressable>
+        ) : (
         <HappierPressable testID={`review-finding-toggle:${props.rowId}`} accessibilityRole="button"
           accessibilityLabel={props.accessibilityLabel} expanded={props.expanded}
           onPress={() => props.onToggleExpanded(props.rowId)} style={styles.toggle}>
@@ -63,18 +90,9 @@ export function HappierReviewFinding(props: HappierReviewFindingProps) {
             {props.decisionGlyph ?? <Icon name={props.decision?.value === 'accept' ? 'change-complete'
               : props.decision?.value === 'reject' ? 'pause' : props.decision?.value === 'defer' ? 'waiting' : 'change-open'} size="small" tone="secondary" />}
           </View>
-          <View style={styles.titleColumn}>
-            <Text role="pageRowTitle" strong style={{ color: ignored ? theme.colors.mutedText : theme.colors.text,
-              ...(ignored ? { textDecorationLine: 'line-through' } : {}) }}>{props.finding.title}</Text>
-            <View style={styles.meta}>
-              {typeof props.severityLabel === 'string' ? <Text role="cardMeta" style={{ color: theme.colors.secondaryText }}>{props.severityLabel}</Text> : props.severityLabel}
-              {typeof props.location === 'string' ? <Text role="cardMeta" numberOfLines={1} style={{ color: theme.colors.secondaryText, flexShrink: 1 }}>{props.location}</Text> : props.location}
-              {props.attribution}
-              {props.facts?.map(fact => <Text key={fact} role="cardMeta" numberOfLines={1}
-                testID={`review-finding-fact:${props.rowId}`} style={{ color: theme.colors.secondaryText }}>{fact}</Text>)}
-            </View>
-          </View>
+          {heading}
         </HappierPressable>
+        )}
         {props.expanded && !narrow ? decisionControl : null}
         {decisionWord}
       </View>

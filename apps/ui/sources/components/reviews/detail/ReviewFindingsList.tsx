@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import type { ReviewFinding } from '@happier-dev/protocol/reviews/ReviewFinding';
@@ -24,7 +24,6 @@ import {
 import { t } from '@/text';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
-import { SelectionCheckGlyph } from '@/components/ui/selection/SelectionCheckGlyph';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 
 export type ReviewFindingsListRow = Readonly<{
@@ -35,6 +34,8 @@ export type ReviewFindingsListRow = Readonly<{
   /** Its fix landed (the protocol's fixed fact): it leaves the decision filters for Fixed. */
   fixed?: boolean;
 }>;
+
+export type ReviewFindingsRowSelection = Readonly<{ selected: boolean; onToggle: (rowId: string) => void; disabled?: boolean }>;
 
 type DecisionFilter = 'all' | ReviewFindingDecision | 'undecided' | 'fixed';
 const rowFilter = (row: ReviewFindingsListRow): Exclude<DecisionFilter, 'all'> => row.fixed ? 'fixed' : row.decision;
@@ -58,10 +59,11 @@ const findingRowKey = (row: ReviewFindingsListRow) => row.rowId;
 export function ReviewFindingsList(
   props: Readonly<{
     rows: readonly ReviewFindingsListRow[];
-    renderRow: (rowId: string, divided: boolean) => React.ReactNode;
+    /** `selection` is set while selecting: the row draws its check in its glyph's place and pressing it selects. */
+    renderRow: (rowId: string, divided: boolean, selection?: ReviewFindingsRowSelection) => React.ReactNode;
     /**
      * Bulk selection (lab `detail-bulk`): at rest each row shows its status glyph only and the filter line carries
-     * "Select"; once `active`, each row gains its checkbox. The host owns the mode so its action bar can end it.
+     * "Select"; once `active`, each row's check replaces its glyph. The host owns the mode so its action bar can end it.
      */
     selection?: Readonly<{ selectedRowIds: ReadonlySet<string>; onToggle: (rowId: string) => void; disabled?: boolean;
       active: boolean; onStart: () => void }>;
@@ -123,18 +125,10 @@ export function ReviewFindingsList(
         REVIEW_SEVERITY_RANK[left] - REVIEW_SEVERITY_RANK[right],
     );
   }, [active, props.rows]);
-  const renderRow = (row: ReviewFindingsListRow, divided: boolean) => props.selection?.active ? (
-    <View style={styles.selectableRow}>
-      <Pressable testID={`review-findings:select:${row.rowId}`} accessibilityRole="checkbox"
-        accessibilityLabel={row.title ?? t('runPage.review.findings')} disabled={props.selection.disabled}
-        accessibilityState={{ checked: props.selection.selectedRowIds.has(row.rowId), disabled: props.selection.disabled }}
-        aria-checked={props.selection.selectedRowIds.has(row.rowId)} aria-disabled={props.selection.disabled || undefined}
-        style={styles.select} onPress={() => props.selection?.onToggle(row.rowId)}>
-        <SelectionCheckGlyph state={props.selection.selectedRowIds.has(row.rowId) ? 'checked' : 'unchecked'} />
-      </Pressable>
-      <View style={styles.selectedContent}>{props.renderRow(row.rowId, divided)}</View>
-    </View>
-  ) : props.renderRow(row.rowId, divided);
+  const selection = props.selection;
+  const renderRow = (row: ReviewFindingsListRow, divided: boolean) => props.renderRow(row.rowId, divided,
+    selection?.active ? { selected: selection.selectedRowIds.has(row.rowId), onToggle: selection.onToggle,
+      ...(selection.disabled ? { disabled: true } : {}) } : undefined);
   // No findings is the page glance's sentence ("Nothing to fix"); the list says it once there, not twice.
   if (props.rows.length === 0) return null;
   return (
@@ -184,7 +178,4 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: 'space-between', gap: theme.space.s12 },
   filterTabs: { flexShrink: 1, minWidth: 0 },
   rows: { paddingHorizontal: theme.space.s16 },
-  selectableRow: { flexDirection: 'row', alignItems: 'flex-start' },
-  selectedContent: { flex: 1, minWidth: 0 },
-  select: { padding: theme.space.s12 },
 }));

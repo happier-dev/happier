@@ -101,6 +101,11 @@ it('leads with one Implement primary while findings await, and keeps selection b
     expect(screen.findHostByTestId('review-findings:select:pending-root')).toBeNull();
     await screen.pressByTestIdAsync('review-findings:select-mode');
     expect(screen.findHostByTestId('review-findings:select:pending-root')?.props.accessibilityState.checked).toBe(false);
+    // Selecting, the row is the checkbox: its check takes the glyph's place, so it no longer opens the finding.
+    expect(screen.findHostByTestId('review-finding-toggle:pending-root')).toBeNull();
+    // The bottom bar holds the decision verbs only; applying the decided fixes stays the header's one primary.
+    expect(screen.findHostByTestId('review-detail:bulk:accept')).not.toBeNull();
+    expect(screen.findHostByTestId('review-detail:bulk:implement')).toBeNull();
   } finally { await screen.unmount(); }
 });
 

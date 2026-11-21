@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 import type { ReviewCommentCreateResponseV1 } from '@happier-dev/protocol/reviews/comments/actions';
 import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import type { ReviewRoundComparisonCaptureV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
@@ -38,9 +38,7 @@ import type { ScmDiffSummaryHost } from '@/sync/ops/scmDiffSummary/results';
 import { t } from '@/text';
 
 import { reviewSeverityLabel } from '@/components/sessions/reviews/findings/reviewFindingPresentation';
-import { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';
-import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
-import { Typography } from '@/constants/Typography';
+import { ReviewFindingCode } from './finding/ReviewFindingBody';
 
 import { ReviewCommentSnapshotView } from './ReviewCommentSnapshotView';
 import { resolveReviewCommentBodyText, resolveReviewCommentSnapshot, splitReviewCommentBody } from './content';
@@ -82,7 +80,6 @@ function reportCommentError(error: string) {
  * finding's title and severity, then the captured lines in the shared code frame under their file.
  */
 function ReviewEvidenceExcerpts(props: Pick<ReviewChangesHostProps, 'comments' | 'onOpenComment'>) {
-    const { theme } = useUnistyles();
     const labels = buildReviewCommentLabels();
     const excerpts = props.comments.flatMap(comment => {
         const snapshot = resolveReviewCommentSnapshot(comment.snapshot);
@@ -104,17 +101,27 @@ function ReviewEvidenceExcerpts(props: Pick<ReviewChangesHostProps, 'comments' |
                     {comment.findingSeverity ? <Text variant="label" style={excerptStyles.severity}>
                         {reviewSeverityLabel(comment.findingSeverity)}</Text> : null}
                 </HappierPressable>
-                {snapshot?.kind === 'text' ? (
-                    <CodeBlockView code={[...snapshot.beforeContext, ...snapshot.selectedLines, ...snapshot.afterContext].join('\n')}
-                        headerLeft={path ? <View style={excerptStyles.fileHead}>
-                            <Icon name="file" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
-                            <Text numberOfLines={1} style={excerptStyles.filePath}>{line ? `${path}:${line}` : path}</Text>
-                        </View> : undefined} />
-                ) : null}
+                {snapshot?.kind === 'text' ? <ReviewFindingCode {...capturedExcerpt(snapshot, path, line)} path={path} /> : null}
                 <ReviewCommentSnapshotView comment={comment} labels={labels} />
             </View>;
         })}
     </View>;
+}
+
+/**
+ * A captured excerpt as the finding's Where draws code: its lines numbered from where they sit in the file, the
+ * lines the finding is about banded. The lines go in as one context hunk under the file's diff header; a row's id
+ * is `c:<raw line index>`, so the excerpt's first line follows the two file lines and the hunk header.
+ */
+function capturedExcerpt(snapshot: Readonly<{ beforeContext: readonly string[]; selectedLines: readonly string[]; afterContext: readonly string[] }>,
+    path: string | null, startLine: number | null) {
+    const lines = [...snapshot.beforeContext, ...snapshot.selectedLines, ...snapshot.afterContext];
+    const first = Math.max(1, (startLine ?? 1) - snapshot.beforeContext.length);
+    const file = path ?? 'excerpt';
+    const header = [`--- a/${file}`, `+++ b/${file}`, `@@ -${first},${lines.length} +${first},${lines.length} @@`];
+    const unifiedDiff = [...header, ...lines.map(text => ` ${text}`)].join('\n');
+    const highlightLineIds = new Set(snapshot.selectedLines.map((_, index) => `c:${header.length + snapshot.beforeContext.length + index}`));
+    return { unifiedDiff, highlightLineIds };
 }
 
 /** The round's changes are on a Machine this viewer can't reach: say where to open them, then the excerpts. */
@@ -135,8 +142,6 @@ const excerptStyles = StyleSheet.create((theme) => ({
     head: { flexDirection: 'row', alignItems: 'baseline', gap: theme.space.s8, flexWrap: 'wrap' },
     title: { color: theme.colors.text.primary, flexShrink: 1 },
     severity: { color: theme.colors.text.secondary },
-    fileHead: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s6, minWidth: 0, flexShrink: 1 },
-    filePath: { ...Typography.variant('meta'), ...Typography.mono(), color: theme.colors.text.secondary, flexShrink: 1 },
 }));
 
 export function ReviewChangesHost(props: ReviewChangesHostProps) {

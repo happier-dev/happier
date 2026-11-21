@@ -919,6 +919,7 @@ export {
 } from './interaction/ActionPanel.js';
 export {
   HappierSelectionActionBar,
+  HAPPIER_SELECTION_ACTION_BAR_HEIGHT_PX,
   resolveHappierSelectionActionBarLayout,
   type HappierSelectionActionBarAction,
   type HappierSelectionActionBarHost,

@@ -25,9 +25,10 @@ import { useReviewDetail } from '../useReviewDetail';
 import { useReviewHumanActions } from '../useReviewHumanActions';
 import { useReviewHistory } from '../useReviewHistory';
 import { useReviewComments } from '@/components/sessions/reviews/findings/useReviewRunComments';
-import { ReviewFindingRow, REVIEW_FINDING_DECISIONS, reviewFindingDecisionLabel } from '@/components/sessions/reviews/findings/ReviewFindingRow';
+import { ReviewFindingPageBody, ReviewFindingRow, REVIEW_FINDING_DECISIONS, reviewFindingDecisionLabel } from '@/components/sessions/reviews/findings/ReviewFindingRow';
+import { formatReviewFindingLocation, reviewSeverityLabel } from '@/components/sessions/reviews/findings/reviewFindingPresentation';
 import type { ReviewTriageStatus } from '@happier-dev/protocol/reviews/reviewTriageStatus';
-import { SelectionActionBar } from '@/components/ui/selection/SelectionActionBar';
+import { SelectionActionBar, SELECTION_ACTION_BAR_RESERVE_PX } from '@/components/ui/selection/SelectionActionBar';
 import { useReviewFindingsModel, type ReviewFindingDecisionTarget } from '../finding/useReviewFindingsModel';
 import { ReviewQuestions, ReviewFollowUpDock } from '../finding/ReviewQuestions';
 import { useReviewQuestionRuns, type ReviewRoundRunRead } from './useReviewQuestionRuns';
@@ -36,7 +37,7 @@ import { formatElapsedDuration } from '@/components/machines/durationWords';
 import { resolveExecutionRunBackendLabel } from '@/components/sessions/runs/resolveExecutionRunBackendLabel';
 import { presentExecutionRunFailureSummary } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { formatReviewerSet } from '@/components/sessions/reviews/findings/reviewFindingsMerge';
-import { ReviewFindingsList } from './ReviewFindingsList';
+import { ReviewFindingsList, type ReviewFindingsRowSelection } from './ReviewFindingsList';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { presentSessionAddressSelection } from '@/components/sessions/transcript/messageSelection/presentSessionAddressSelection';
@@ -452,7 +453,7 @@ export function ReviewDetailHost(props: Readonly<{
     return [...reviewFindingFacts({ appearance: row.appearance, roundOrdinal: selectedRound, scopeAttribution: comment?.scopeAttribution }),
       ...(comment?.findingIdentity ? historyFactsByIdentity.get(comment.findingIdentity) ?? [] : [])];
   };
-  const renderFindingRow = (rowId: string, divided: boolean) => {
+  const renderFindingRow = (rowId: string, divided: boolean, selection?: ReviewFindingsRowSelection) => {
     const row = findingById.get(rowId);
     return row ? <ReviewFindingRow rowId={row.rowId} finding={row.finding} currentBodyMarkdown={row.currentBodyMarkdown}
       reviewContext={scope ? { reviewId: record.reviewId, commentId: row.rowId, serverId: scope.serverId } : undefined}
@@ -464,17 +465,46 @@ export function ReviewDetailHost(props: Readonly<{
       onDecide={findings.onDecide} followUp={row.followUp} threadEntries={row.threadEntries} pendingQuestion={findings.pendingQuestionByRowId[row.rowId] ?? null}
       expanded={openFinding === row.rowId} onToggleExpanded={toggleFinding} askContext={row.askContext}
       onAsk={findings.onAsk} onCreateTask={canEdit ? findings.onCreateTask : undefined} taskScope={scope}
-      facts={findingFacts(row)} /> : null;
+      facts={findingFacts(row)} selection={selection} /> : null;
   };
   if (pushedFindingId) {
     const index = findings.rows.findIndex(row => row.rowId === pushedFindingId);
+    const row = findings.rows[index]!;
+    const location = formatReviewFindingLocation(row.finding);
+    const facts = findingFacts(row);
+    const decisionBar = row.decision !== null && row.decisionEditable !== false;
+    // The pushed finding is its own page (lab `detail-finding-390`): its title is the page title under its severity
+    // and place in the Review, its facts line names where and who, and its decision waits in the bottom bar.
     return (
-      <ItemList testID="review-detail:finding-page" pageColumn="wide">
-        <PageHeader title={record.title || t('detailsSurface.review.title')} testID="review-detail:finding-page:header"
-          meta={[{ key: 'position', text: t('reviewWalkthrough.detail.findingPosition', { index: index + 1, total: findings.rows.length }) }]} />
-        {/* The finding stands on the page's edge, without a sheet; its own row already names the severity. */}
-        <ItemGroup header="none" surface="none">{renderFindingRow(pushedFindingId, false)}</ItemGroup>
-      </ItemList>
+      <View style={{ flex: 1 }}>
+        <ItemList testID="review-detail:finding-page" pageColumn="wide">
+          <PageHeader title={row.finding.title} alwaysShowTitle testID="review-detail:finding-page:header"
+            kicker={joinHappierFacts(reviewSeverityLabel(row.finding.severity),
+              t('reviewWalkthrough.detail.findingPosition', { index: index + 1, total: findings.rows.length }))}
+            meta={[...(location ? [{ key: 'location', text: location, mono: true }] : []),
+              ...(row.attribution ? [{ key: 'attribution', text: row.attribution.label }] : []),
+              ...facts.map(fact => ({ key: `fact:${fact}`, text: fact }))]} />
+          <ItemGroup header="none" surface="none">
+            <ReviewFindingPageBody rowId={row.rowId} finding={row.finding} currentBodyMarkdown={row.currentBodyMarkdown}
+              reviewContext={scope ? { reviewId: record.reviewId, commentId: row.rowId, serverId: scope.serverId } : undefined}
+              seenBefore={{ history: seenBefore, onRetry: () => void seenBefore.refresh(),
+                href: match => artifactViewRoute(match.reviewId, { thread: match.commentId }) }}
+              attribution={row.attribution} reviewers={row.reviewers} original={row.original} density="page" divided={false}
+              decision={row.decision} decisionEditable={row.decisionEditable} decisionDisabled={!row.decidable} decisionNote={null}
+              onDecide={findings.onDecide} followUp={row.followUp} threadEntries={row.threadEntries}
+              pendingQuestion={findings.pendingQuestionByRowId[row.rowId] ?? null} expanded onToggleExpanded={toggleFinding}
+              askContext={row.askContext} onAsk={findings.onAsk} ask={message => findings.onAsk(row.rowId, message)} />
+          </ItemGroup>
+          {decisionBar ? <View style={{ height: SELECTION_ACTION_BAR_RESERVE_PX }} /> : null}
+        </ItemList>
+        {decisionBar ? <SelectionActionBar placement="pinned" testID="review-detail:decision-bar" visible
+          accessibilityLabel={row.finding.title}
+          actions={[...REVIEW_FINDING_DECISIONS.map(decision => ({ id: decision, label: reviewFindingDecisionLabel(decision),
+            emphasis: 'secondary' as const, selected: row.decision === decision, testID: `review-detail:decision:${decision}`,
+            disabled: !row.decidable, onPress: () => findings.onDecide(row.rowId, decision) })),
+          ...(canEdit ? [{ id: 'create-task', label: t('runPage.review.createTask'), placement: 'menu' as const,
+            testID: 'review-detail:decision:create-task', onPress: () => { void findings.onCreateTask(row.rowId); } }] : [])]} /> : null}
+      </View>
     );
   }
   const meta = [
@@ -486,9 +516,25 @@ export function ReviewDetailHost(props: Readonly<{
     ...(audience?.shared ? [{ key: 'audience', icon: 'users' as const, text: audience.team
       ? t('artifacts.browser.facts.sharedWithTeam', { team: audience.team }) : t('artifacts.browser.facts.shared') }] : []),
   ];
+  // Select mode's one bottom bar (lab `detail-bulk`): the decision verbs for the selected findings, pinned over the
+  // page's bottom; applying the decided fixes stays the header's primary, and the rare actions wait under "…".
+  const bulkBar = canEdit ? <SelectionActionBar placement="pinned" testID="review-detail:selection" visible={selecting}
+    label={t('sessionsList.selectionSelectedCount', { count: selectedRowIds.length })}
+    dismiss={{ label: t('common.cancel'), presentation: 'glyph', disabled: bulkBusy, onPress: endSelecting }}
+    actions={[
+      ...REVIEW_FINDING_DECISIONS.map(decision => ({ id: decision, label: reviewFindingDecisionLabel(decision),
+        emphasis: decision === 'accept' ? 'primary' as const : 'secondary' as const,
+        testID: `review-detail:bulk:${decision}`, disabled: bulkBusy || selectedRowIds.length === 0, onPress: () => { void bulkDecide(decision); } })),
+      { id: 'needs_refinement', label: reviewFindingDecisionLabel('undecided'), emphasis: 'secondary',
+        testID: 'review-detail:bulk:needs_refinement', disabled: bulkBusy || selectedRowIds.length === 0, onPress: () => { void bulkDecide('needs_refinement'); } },
+      { id: 'create-task', label: t('runPage.review.createTask'), emphasis: 'secondary', placement: 'menu',
+        testID: 'review-detail:bulk:create-task', disabled: bulkBusy || selectedRowIds.length === 0,
+        onPress: () => { void findings.createTask(selectedRowIds); } },
+    ]} /> : null;
   return (
     <ReviewPagePluginContent reviewId={artifact.id} serverId={artifact.sourceServerId ?? artifactScope?.serverId ?? null}
       selection={props.pluginPageSelection}>{menu => (
+    <View style={{ flex: 1 }}>
     <ReviewDetailView
       title={record.title || t('detailsSurface.review.title')}
       meta={meta}
@@ -551,21 +597,7 @@ export function ReviewDetailHost(props: Readonly<{
           action={{ label: t('common.retry'), onPress: () => void comments.refresh() }} /> : null}
         {comments.cursor ? <TextLinkButton testID="review-findings-load-more-comments" disabled={comments.loadingMore}
           label={t(comments.loadMoreFailed ? 'common.retry' : 'files.reviewComments.durable.showMore')} onPress={() => void comments.loadMore()} /> : null}
-        {canEdit ? <SelectionActionBar testID="review-detail:selection" visible={selecting}
-          label={t('sessionsList.selectionSelectedCount', { count: selectedRowIds.length })}
-          dismiss={{ label: t('common.cancel'), presentation: 'glyph', disabled: bulkBusy, onPress: endSelecting }}
-          actions={[
-            { id: 'implement', label: t('runPage.review.implementFixes', { count: findings.implement.count }), emphasis: 'primary',
-              testID: 'review-detail:bulk:implement', disabled: bulkBusy || findings.implement.destinationDisabled,
-              busy: findings.implement.busy, onPress: () => { void implementFindings(); } },
-            ...REVIEW_FINDING_DECISIONS.map(decision => ({ id: decision, label: reviewFindingDecisionLabel(decision), emphasis: 'secondary' as const,
-              testID: `review-detail:bulk:${decision}`, disabled: bulkBusy || selectedRowIds.length === 0, onPress: () => { void bulkDecide(decision); } })),
-            { id: 'needs_refinement', label: reviewFindingDecisionLabel('undecided'), emphasis: 'secondary',
-              testID: 'review-detail:bulk:needs_refinement', disabled: bulkBusy || selectedRowIds.length === 0, onPress: () => { void bulkDecide('needs_refinement'); } },
-            { id: 'create-task', label: t('runPage.review.createTask'), emphasis: 'secondary', placement: 'menu',
-              testID: 'review-detail:bulk:create-task', disabled: bulkBusy || selectedRowIds.length === 0,
-              onPress: () => { void findings.createTask(selectedRowIds); } },
-          ]} /> : null}
+        {canEdit && selecting ? <View style={{ height: SELECTION_ACTION_BAR_RESERVE_PX }} /> : null}
         {questionRuns.state.kind === 'loading' && questionRuns.members.length === 0
           ? <SurfaceStateCard kind="loading" size="line" title={t('common.loading')} /> : null}
         {questionRuns.state.kind === 'unavailable' ? <SurfaceStateCard testID="review-detail:questions-unavailable"
@@ -597,6 +629,8 @@ export function ReviewDetailHost(props: Readonly<{
           : <ReviewActivityFeed events={activityEvents} viewerAccountId={scope?.accountId ?? null} names={names} />
       ) : null}
     </ReviewDetailView>
+    {activeTab === 'findings' ? bulkBar : null}
+    </View>
     )}</ReviewPagePluginContent>
   );
 }

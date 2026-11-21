@@ -603,7 +603,7 @@ describe('ReviewFindingsMessageCard', () => {
         expect(navigate).not.toHaveBeenCalled();
     });
 
-    it.each(['turn', 'receipt'] as const)('offers Walk me through this on a finished review captured by %s, saying honestly whether the review Run continues or a narrator writes', async (capturedBy) => {
+    it.each(['turn', 'receipt'] as const)('offers Walk me through this in the Review summary footer on a finished review captured by %s', async (capturedBy) => {
         serveComments([]);
         const navigate = vi.fn();
         const source = createTestSessionTranscriptSource({ sessionId: 'sess_1', serverId: home.serverId, workspacePath: '/repo', navigate });
@@ -613,8 +613,9 @@ describe('ReviewFindingsMessageCard', () => {
             source,
         );
         await flush();
-        expect(screen.findByTestId('review-findings-walkthrough-hint')!.findAllByType('Text').map((node) => node.props.children))
-            .toContain('reviewWalkthrough.finished.continues');
+        // Beside Open review in the summary's footer, with no footnote under the card (U8 R2 F2).
+        expect(screen.findByTestId('review-summary')!.findAllByProps({ testID: 'review-findings-walk-me-through' }).length).toBeGreaterThan(0);
+        expect(screen.findByTestId('review-findings-walkthrough-hint')).toBeNull();
 
         sessionExecutionRunActionSpy.mockResolvedValueOnce({ ok: true, result: { runId: 'run_1', callId: 'call_1', sidechainId: 'side_1',
             mode: 'continued_review', state: 'writing', comparisonId: 'cmp_1', reviewRunIds: ['run_1'], comparison: {
@@ -635,14 +636,6 @@ describe('ReviewFindingsMessageCard', () => {
         expect(navigate).toHaveBeenCalledWith(expect.stringContaining(capturedBy === 'turn' ? 'turnId=turn-4' : 'checkpointReceiptId=receipt-4'));
         expect(navigate).toHaveBeenCalledWith(expect.stringContaining('comparisonId=cmp_1'));
 
-        const ended = { ...payloadFor([finding('f1', 'high')], { retentionPolicy: 'ephemeral' }), comparisonId: 'cmp_1' };
-        const endedScreen = await renderWithSessionTranscriptSource(
-            <ReviewFindingsMessageCard serverId={home.serverId} payload={ended} sessionId="sess_1" canSendMessages />,
-            source,
-        );
-        await flush();
-        expect(endedScreen.findByTestId('review-findings-walkthrough-hint')!.findAllByType('Text').map((node) => node.props.children))
-            .toContain(t('reviewWalkthrough.finished.narrates', { count: 1 }));
     });
 
     it('draws a navigable finished review compactly and keeps triage, Ask and Implement fixes one press away in Open findings', async () => {

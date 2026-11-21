@@ -496,7 +496,7 @@ export function ReviewDetailSpecimen(
                 return next;
               }),
           }}
-          renderRow={(rowId, divided) => {
+          renderRow={(rowId, divided, selection) => {
             const fixture = byId.get(rowId)!;
             return (
               <ReviewFindingRow
@@ -529,6 +529,7 @@ export function ReviewDetailSpecimen(
                 }
                 askContext={ASK_CONTEXT}
                 onAsk={ask}
+                selection={selection}
               />
             );
           }}

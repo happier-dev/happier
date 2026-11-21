@@ -32,6 +32,7 @@ import { REVIEW_SEVERITY_COLUMN_WIDTH_PX, ReviewSeverityLabel } from '@/componen
 import { StructuredFindText } from '@/components/sessions/transcript/structured/structuredFindText';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
+import { SelectionCheckGlyph } from '@/components/ui/selection/SelectionCheckGlyph';
 import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 export type ReviewFindingDecision = 'accept' | 'reject' | 'defer';
@@ -126,6 +127,8 @@ export const ReviewFindingRow = React.memo(function ReviewFindingRow(props: Read
     taskScope?: ServerAccountScope | null;
     /** The finding's standing words from their owners (round status, already there), after who found it. */
     facts?: readonly string[];
+    /** Page rows in bulk selection: the row is the checkbox, its check in the decision glyph's place. */
+    selection?: Readonly<{ selected: boolean; onToggle: (rowId: string) => void; disabled?: boolean }>;
 }>) {
     const { theme } = useUnistyles();
     const { finding, rowId, onAsk, onDecide, onToggleExpanded } = props;
@@ -286,24 +289,6 @@ function ReviewFindingPageRow(props: Readonly<React.ComponentProps<typeof Review
     const workTheme = useWorkTheme();
     const { finding, rowId, onToggleExpanded } = props;
     const location = formatReviewFindingLocation(finding);
-    const followUp = props.followUp;
-
-    const conversation = followUp !== null && followUp.available && props.askContext ? (
-        <ReviewFindingThreadEntries
-            rowId={rowId}
-            entries={props.threadEntries}
-            pendingQuestion={props.pendingQuestion}
-            askContext={props.askContext}
-            onAsk={props.ask}
-        />
-    ) : props.threadEntries.length > 0 || (followUp !== null && !followUp.available) ? (
-        <>
-            {props.threadEntries.length > 0 ? <ReviewFindingThreadHistory entries={props.threadEntries} /> : null}
-            {followUp !== null && !followUp.available ? (
-                <Text testID={`review-finding-ask-unavailable:${rowId}`} style={styles.note}>{followUp.reason}</Text>
-            ) : null}
-        </>
-    ) : null;
 
     return (
         <HappierReviewFinding
@@ -323,29 +308,62 @@ function ReviewFindingPageRow(props: Readonly<React.ComponentProps<typeof Review
             decisionEditable={props.decisionEditable}
             decisionControl={props.decisionControl}
             decisionGlyph={<Icon name={reviewFindingDecisionGlyph(props.decision)} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />}
+            {...(props.selection ? { selection: { ...props.selection, testID: `review-findings:select:${rowId}`,
+                glyph: <SelectionCheckGlyph state={props.selection.selected ? 'checked' : 'unchecked'} /> } } : {})}
             expanded={props.expanded}
             onToggleExpanded={onToggleExpanded}
             divided={props.divided}
             theme={workTheme}
             host={WORK_HOST}
         >
-            <ReviewFindingBody
-                rowId={rowId}
-                finding={finding}
-                currentBodyMarkdown={props.currentBodyMarkdown}
-                reviewContext={props.reviewContext}
-                seenBefore={props.seenBefore}
-                reviewers={props.reviewers}
-                notice={(
-                    <>
-                        <ReviewFindingUpdatedNotice rowId={rowId} finding={finding} original={props.original} />
-                        {props.decision !== null && props.decisionNote ? <Text style={styles.note}>{props.decisionNote}</Text> : null}
-                    </>
-                )}
-                conversation={conversation}
-            />
+            <ReviewFindingPageBody {...props} />
             {props.taskControl}
         </HappierReviewFinding>
+    );
+}
+
+/**
+ * The opened finding's body (why, where, verification, history, conversation) for a page whose header already
+ * names the finding: the opened page row, and a phone's pushed finding page (lab `detail-finding-390`).
+ */
+export function ReviewFindingPageBody(props: Readonly<React.ComponentProps<typeof ReviewFindingRow> & {
+    ask: (messageMarkdown: string) => Promise<boolean>;
+}>) {
+    const { finding, rowId } = props;
+    const followUp = props.followUp;
+    const conversation = followUp !== null && followUp.available && props.askContext ? (
+        <ReviewFindingThreadEntries
+            rowId={rowId}
+            entries={props.threadEntries}
+            pendingQuestion={props.pendingQuestion}
+            askContext={props.askContext}
+            onAsk={props.ask}
+        />
+    ) : props.threadEntries.length > 0 || (followUp !== null && !followUp.available) ? (
+        <>
+            {props.threadEntries.length > 0 ? <ReviewFindingThreadHistory entries={props.threadEntries} /> : null}
+            {followUp !== null && !followUp.available ? (
+                <Text testID={`review-finding-ask-unavailable:${rowId}`} style={styles.note}>{followUp.reason}</Text>
+            ) : null}
+        </>
+    ) : null;
+
+    return (
+        <ReviewFindingBody
+            rowId={rowId}
+            finding={finding}
+            currentBodyMarkdown={props.currentBodyMarkdown}
+            reviewContext={props.reviewContext}
+            seenBefore={props.seenBefore}
+            reviewers={props.reviewers}
+            notice={(
+                <>
+                    <ReviewFindingUpdatedNotice rowId={rowId} finding={finding} original={props.original} />
+                    {props.decision !== null && props.decisionNote ? <Text style={styles.note}>{props.decisionNote}</Text> : null}
+                </>
+            )}
+            conversation={conversation}
+        />
     );
 }
 

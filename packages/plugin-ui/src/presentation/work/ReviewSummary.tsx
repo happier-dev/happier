@@ -102,10 +102,13 @@ const styles = StyleSheet.create({
   glyph: { paddingTop: 2, flexShrink: 0 },
   rowBody: { flex: 1, minWidth: 0, gap: 2 },
   rowFacts: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', columnGap: 8, rowGap: 2, minWidth: 0 },
+  // Who reviewed keeps its names; when the actions don't fit beside them (a phone), they wrap under it, still at the end.
   foot: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     gap: 12,
+    rowGap: 8,
     borderTopWidth: StyleSheet.hairlineWidth,
     paddingTop: 8,
   },
@@ -113,10 +116,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    flex: 1,
-    minWidth: 0,
+    flexGrow: 1,
+    flexShrink: 0,
+    maxWidth: '100%',
   },
-  actions: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  actions: { flexDirection: 'row', alignItems: 'center', gap: 12, marginLeft: 'auto' },
 });
 
 function toneColor(

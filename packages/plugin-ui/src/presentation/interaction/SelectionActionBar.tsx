@@ -31,6 +31,11 @@ export type HappierSelectionActionBarAction = Readonly<{
   renderIcon?: (color: string) => ReactNode;
   /** `menu`: a rare action that always waits under ⋯, so the frequent ones keep their room. */
   placement?: 'inline' | 'menu';
+  /**
+   * The bar hosts a choice (a finding's decision) rather than verbs on a selection: the chosen option wears the
+   * primary fill and is announced as the checked radio. Options of one choice are all `secondary`.
+   */
+  selected?: boolean;
   onPress: () => unknown;
 }>;
 
@@ -68,15 +73,19 @@ export type HappierSelectionActionBarHost = Readonly<{
 export type HappierSelectionActionBarProps = Readonly<{
   /** The bar keeps its last content through the exit, so it never flashes empty while it leaves. */
   visible: boolean;
-  /** "2 selected", or the state the consumer is in ("Archiving 2 of 5", "Archive 3 sessions?"). */
-  label: string;
+  /**
+   * "2 selected", or the state the consumer is in ("Archiving 2 of 5", "Archive 3 sessions?"). Omitted when the bar
+   * hosts one thing's choice (a finding's decision): the page above already names what it acts on.
+   */
+  label?: string;
   labelAccessibilityLabel?: string;
   labelTestID?: string;
   /** One quiet fact after the label ("Copied"). */
   status?: string | null;
   statusTestID?: string;
   actions: readonly HappierSelectionActionBarAction[];
-  dismiss: Readonly<{
+  /** Omitted for a bar that stands for as long as its page does (a decision bar): nothing to leave. */
+  dismiss?: Readonly<{
     /** Spoken name of the ✕; printed instead of the glyph with `presentation: 'label'`. */
     label: string;
     /** `label` when the one dismiss control does something other than clear (Stop, Done). */
@@ -154,6 +163,8 @@ export function isHappierSelectionActionBarLabelSqueezed(input: Readonly<{
 const BAR_RADIUS = 12;
 const BAR_INSET = 4;
 const ACTION_HEIGHT = 32;
+/** The pill's own height, so a page that pins it can keep its last content clear of it. */
+export const HAPPIER_SELECTION_ACTION_BAR_HEIGHT_PX = ACTION_HEIGHT + BAR_INSET * 2;
 const ACTION_RADIUS = 8;
 const ACTION_GAP = 2;
 /** Each action's hit area takes half of the gap to its neighbour, so two glyph actions never overlap. */
@@ -169,7 +180,7 @@ const actionTextStyle: HappierPortableStyle = { fontSize: 13, lineHeight: 18, fo
 const statusTextStyle: HappierPortableStyle = { fontSize: 12.5, lineHeight: 18 };
 
 type Presented = Readonly<{
-  label: string;
+  label?: string;
   labelAccessibilityLabel?: string;
   labelTestID?: string;
   status?: string | null;
@@ -258,6 +269,7 @@ export function HappierSelectionActionBar(props: HappierSelectionActionBarProps)
   const compact = layout.folded && compactAtWidth === containerWidth;
 
   if (!presented) return null;
+  const dismiss = presented.dismiss;
   const { background, foreground } = props.colors;
   const Text = props.host.Text;
   const actionColor = (action: HappierSelectionActionBarAction) => (
@@ -286,6 +298,7 @@ export function HappierSelectionActionBar(props: HappierSelectionActionBarProps)
           flexDirection: 'row', alignItems: 'center', justifyContent: layout.folded ? 'space-between' : 'flex-start', gap: ACTION_GAP,
           maxWidth: '100%', padding: BAR_INSET, borderRadius: BAR_RADIUS, backgroundColor: background,
         }}>
+        {presented.label !== undefined ? (
         <View onLayout={onLabelSlotLayout} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: LABEL_PADDING, paddingRight: LABEL_PADDING, flexShrink: 1, minWidth: 0 }}>
           <View pointerEvents="none" aria-hidden onLayout={onLabelMeasure} style={{ position: 'absolute', left: 0, top: 0, opacity: 0 }}>
             <Text numberOfLines={1} tabularNumbers style={labelTextStyle}>{presented.label}</Text>
@@ -303,7 +316,8 @@ export function HappierSelectionActionBar(props: HappierSelectionActionBarProps)
             </Text>
           ) : null}
         </View>
-        {layout.inline.length > 0 || layout.overflow.length > 0 ? (
+        ) : null}
+        {presented.label !== undefined && (layout.inline.length > 0 || layout.overflow.length > 0) ? (
           <View style={{ width: 1, height: 18, backgroundColor: foreground, opacity: DIVIDER_OPACITY, marginHorizontal: 2 }} />
         ) : null}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: ACTION_GAP }}>
@@ -314,6 +328,8 @@ export function HappierSelectionActionBar(props: HappierSelectionActionBarProps)
               accessibilityLabel={action.accessibilityLabel ?? action.label}
               disabled={action.disabled}
               busy={action.busy}
+              // One option of the bar's choice: announced as a radio, checked when chosen.
+              {...(action.selected === undefined ? {} : { accessibilityRole: 'radio' as const, checked: action.selected })}
               hitReach={ACTION_HIT_REACH}
               onPress={action.onPress}
               style={({ pressed }) => ({
@@ -328,7 +344,7 @@ export function HappierSelectionActionBar(props: HappierSelectionActionBarProps)
                 opacity: action.disabled ? 0.45 : pressed ? HAPPIER_PRESS_FEEDBACK_V1.opacity : 1,
               })}
             >
-              {action.emphasis === 'primary' ? (
+              {action.emphasis === 'primary' || action.selected === true ? (
                 <View
                   pointerEvents="none"
                   style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, borderRadius: ACTION_RADIUS, backgroundColor: foreground, opacity: PRIMARY_FILL_OPACITY }}
@@ -372,26 +388,28 @@ export function HappierSelectionActionBar(props: HappierSelectionActionBarProps)
               )}
             />
           ) : null}
+          {dismiss ? (
           <HappierPressable
-            testID={presented.dismiss.testID}
-            accessibilityLabel={presented.dismiss.label}
-            disabled={presented.dismiss.disabled}
+            testID={dismiss.testID}
+            accessibilityLabel={dismiss.label}
+            disabled={dismiss.disabled}
             hitReach={ACTION_HIT_REACH}
-            onPress={presented.dismiss.onPress}
+            onPress={dismiss.onPress}
             style={({ pressed }) => ({
               height: ACTION_HEIGHT,
               minWidth: ACTION_HEIGHT,
-              paddingHorizontal: presented.dismiss.presentation === 'label' ? 10 : 0,
+              paddingHorizontal: dismiss.presentation === 'label' ? 10 : 0,
               alignItems: 'center',
               justifyContent: 'center',
               borderRadius: ACTION_RADIUS,
               opacity: pressed ? HAPPIER_PRESS_FEEDBACK_V1.opacity : 1,
             })}
           >
-            {presented.dismiss.presentation === 'label'
-              ? <Text numberOfLines={1} style={{ ...actionTextStyle, color: foreground }}>{presented.dismiss.label}</Text>
+            {dismiss.presentation === 'label'
+              ? <Text numberOfLines={1} style={{ ...actionTextStyle, color: foreground }}>{dismiss.label}</Text>
               : props.host.renderGlyph('dismiss', foreground, GLYPH_SIZE)}
           </HappierPressable>
+          ) : null}
         </View>
         </HappierMaterialSurface>
       </Animated.View>
