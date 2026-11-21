@@ -54,7 +54,7 @@ it('borrows one current source refresh after a definitions push, with zero idle 
         })], nextCursor: null } };
     });
     const readHealthSources = createCliHealthCheckSourceSnapshotReader({ credentials, serverHttpBaseUrl: 'http://health-source.test' });
-    const assembly = await assembleAutomationRuntime({ credentials, activationTargets: [], activatedPluginIds: new Set(),
+    const assembly = assembleAutomationRuntime({ credentials, activationTargets: [], activatedPluginIds: new Set(),
         resolveCurrentMaterialization: () => null, readPluginOccurrenceId: () => null, readPluginSourceCustody: () => null,
         resolveConsumerLifecycle: () => { throw new Error('No activated source'); },
         revalidateCallerMaterialization: async () => false, revalidateCallerOccurrence: async () => false,

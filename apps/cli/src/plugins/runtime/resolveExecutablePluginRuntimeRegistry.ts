@@ -3230,7 +3230,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
     // Initial adoption precedes the health consumers; later adoptions reconcile
     // synchronously after the canonical source snapshot has been replaced.
     let reconcileAdoptedHealthChecks: (() => void) | undefined;
-    const automationAssembly = await assembleAutomationRuntime({
+    const automationAssembly = assembleAutomationRuntime({
         credentials: sessionCredentials,
         ...(params?.automationEventWatcherTransport ? { watcherTransport: params.automationEventWatcherTransport } : {}),
         async readNativePresence(definition, target, signal) {
@@ -4133,26 +4133,23 @@ export async function resolveExecutablePluginRuntimeRegistry(
         isCurrent: () => consumerAssembly.isOccurrenceCurrent(),
     });
     consumerAssembly.allRetirementSignal.addEventListener('abort', () => { void automationCatalogSubscription.dispose(); }, { once: true });
-    if (!params?.accountExecution) {
-        reconcileAdoptedHealthChecks = () => {
-            currentDomainEdgeObservation.reconcile(entry => {
-                const batch = readAdoptedHealthCheckBatch({ resolveAdoptedDefinitionSet: resolveAutomationEventAdoptedDefinitionSet,
-                    caller: entry.caller, occurrenceId: entry.occurrenceId,
-                    sourceInstanceId: entry.sourceInstanceId, signal: consumerAssembly.allRetirementSignal });
-                return batch.kind === 'available' && batch.source.subject.kind === 'environment'
-                    && batch.source.subject.environmentId === entry.environmentId
-                    && isDeepStrictEqual(batch.source.checks.find(check => check.checkId === entry.checkId), entry.check);
-            });
-            projectManagedServicesOwner.machineServiceRows.reconcileHealthResults(entry => {
-                const batch = readAdoptedHealthCheckBatch({ resolveAdoptedDefinitionSet: resolveAutomationEventAdoptedDefinitionSet,
-                    caller: entry.caller, occurrenceId: entry.occurrenceId,
-                    sourceInstanceId: entry.sourceInstanceId, signal: consumerAssembly.allRetirementSignal });
-                return batch.kind === 'available' && isDeepStrictEqual(batch.source.subject, entry.subject)
-                    && isDeepStrictEqual(batch.source.checks.find(check => check.checkId === entry.check.checkId), entry.check);
-            });
-        };
-        reconcileAdoptedHealthChecks();
-    }
+    const reconcileHealthChecks = params?.accountExecution ? undefined : () => {
+        currentDomainEdgeObservation.reconcile(entry => {
+            const batch = readAdoptedHealthCheckBatch({ resolveAdoptedDefinitionSet: resolveAutomationEventAdoptedDefinitionSet,
+                caller: entry.caller, occurrenceId: entry.occurrenceId,
+                sourceInstanceId: entry.sourceInstanceId, signal: consumerAssembly.allRetirementSignal });
+            return batch.kind === 'available' && batch.source.subject.kind === 'environment'
+                && batch.source.subject.environmentId === entry.environmentId
+                && isDeepStrictEqual(batch.source.checks.find(check => check.checkId === entry.checkId), entry.check);
+        });
+        projectManagedServicesOwner.machineServiceRows.reconcileHealthResults(entry => {
+            const batch = readAdoptedHealthCheckBatch({ resolveAdoptedDefinitionSet: resolveAutomationEventAdoptedDefinitionSet,
+                caller: entry.caller, occurrenceId: entry.occurrenceId,
+                sourceInstanceId: entry.sourceInstanceId, signal: consumerAssembly.allRetirementSignal });
+            return batch.kind === 'available' && isDeepStrictEqual(batch.source.subject, entry.subject)
+                && isDeepStrictEqual(batch.source.checks.find(check => check.checkId === entry.check.checkId), entry.check);
+        });
+    };
     disposeInvocationServiceOwners = async () => {
         await automationCatalogSubscription.dispose();
         // A composite can own no new activation components. Its local services
@@ -8358,6 +8355,11 @@ export async function resolveExecutablePluginRuntimeRegistry(
         } : {}),
     };
     resolvedRuntimeRegistryOwner = resolvedRuntimeRegistry;
+    // Adopting Automation sources replays retained Machine presence through
+    // the registry's Action services. Install those owners before replay.
+    await automationAssembly.refreshActivatedPlugin();
+    reconcileAdoptedHealthChecks = reconcileHealthChecks;
+    reconcileAdoptedHealthChecks?.();
     // Constructor-time activation still starts only at publication. Once this
     // registry serves, bind newly registered subscriptions before their service
     // can emit its first Event, using the same canonical binding owner.

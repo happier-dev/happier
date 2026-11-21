@@ -20,7 +20,7 @@ type ConsumerLifecycle = Readonly<{
     retirementSignal: AbortSignal;
 }>;
 
-export async function assembleAutomationRuntime(input: Readonly<{
+export function assembleAutomationRuntime(input: Readonly<{
     credentials: StoredCredentials | null;
     activationTargets: ResolvedContributionRegistry['activationTargets'];
     activatedPluginIds: Pick<ReadonlySet<string>, 'has'>;
@@ -306,6 +306,5 @@ export async function assembleAutomationRuntime(input: Readonly<{
         resolveAdoptedDefinitionSet,
         resolveHistoryGapSource,
     });
-    await refreshActivatedPlugin();
     return assembly;
 }

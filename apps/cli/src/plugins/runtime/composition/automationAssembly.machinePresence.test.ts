@@ -73,7 +73,8 @@ it('observes native presence and recovers retained facts at adoption and reconne
         resolveConsumerLifecycle: () => ({ isCurrent: () => true, retirementSignal: new AbortController().signal }),
         revalidateCallerMaterialization: async () => true, revalidateCallerOccurrence: async () => true,
     });
-    const assembly = await assemble();
+    const assembly = assemble();
+    await assembly.refreshActivatedPlugin();
     const expected = { input: { kind: 'source', automationId: binding.automationId, triggerId: binding.triggerId,
         triggerRevision: binding.triggerRevision, eventRef: binding.eventRef, sourceSelectorId: binding.sourceSelectorId,
         state: 'observing', code: 'none', nextRetryAt: null, observedDelta: 0, admittedDelta: 0, skippedDelta: 0 } };
@@ -93,6 +94,6 @@ it('observes native presence and recovers retained facts at adoption and reconne
     expect(admissions).toHaveLength(1);
     // A restarted owner adopts the existing definition after the producer's
     // offline transition. Recovery must not wait for another invalidation.
-    await assemble();
+    await assemble().refreshActivatedPlugin();
     expect(admissions).toHaveLength(2);
 });
