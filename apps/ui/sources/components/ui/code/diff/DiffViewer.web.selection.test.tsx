@@ -67,15 +67,15 @@ describe('DiffViewer (web renderer selection)', () => {
         expect(screen.findAllByType(LazyMountOnScreen)[0] ?? null).toBeNull();
     });
 
-    it('serves a leading lane (File page blame) through the canonical line renderer while Pierre is selected', async () => {
+    it('keeps a diff with a leading lane (File page blame, Explain captions) on Pierre, the renderer its neighbours use', async () => {
         const { DiffViewer } = await import('./DiffViewer.web');
         const unifiedDiff = ['diff --git a/a.ts b/a.ts', '--- a/a.ts', '+++ b/a.ts', '@@ -1,1 +1,2 @@', ' const a = 1;', '+const b = 2;'].join('\n');
 
         const screen = await renderScreen(<DiffViewer mode="unified" unifiedDiff={unifiedDiff} filePath="a.ts"
             renderLeadingLane={(line) => <span data-testid={`lane-${line.newLine ?? 'removed'}`} />} />);
 
-        expect(screen.findAllByType(pierreViewerType)[0] ?? null).toBeNull();
-        expect(screen.findAllByType(unifiedViewerType)[0] ?? null).toBeTruthy();
+        expect(screen.findAllByType(pierreViewerType)[0] ?? null).toBeTruthy();
+        expect(screen.findAllByType(unifiedViewerType)[0] ?? null).toBeNull();
     });
 
     it('reveals a Find match in omitted text inside Pierre and refolds it, without handing the page to another renderer', async () => {

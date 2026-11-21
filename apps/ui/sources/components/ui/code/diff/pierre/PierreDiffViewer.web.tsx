@@ -14,6 +14,7 @@ import type { DiffLineAnnotation, FileDiffMetadata, FileDiffOptions, OnDiffLineC
 import { FileDiff, Virtualizer, VirtualizerContext, WorkerPoolContext, useVirtualizer } from '@pierre/diffs/react';
 import { usePierreEnclosingScrollRoot, usePierreScrollRootVirtualizer } from './PierreScrollRootVirtualizerProvider.web';
 import { readPierreDomLine } from './pierreDomLine';
+import { PIERRE_LEADING_LANE_UNSAFE_CSS, PIERRE_LEADING_LANE_WIDTH_VAR, PierreLeadingLane, readPierreLeadingLaneRows, samePierreLeadingLaneRows, type PierreLeadingLaneRow } from './PierreLeadingLane.web';
 import { localizePierreSeparatorText } from './pierreSeparatorText.web';
 
 import { useSetting } from '@/sync/store/settingsReadHooks';
@@ -57,6 +58,8 @@ import {
 } from './pierreInitialPresentation.web';
 
 const HAPPIER_PIERRE_LINE_CLICK_HANDLED_KEY = '__happierPierreLineClickHandled';
+const NO_LEADING_LANE_ROWS: readonly PierreLeadingLaneRow[] = [];
+const LEADING_LANE_FRAME_STYLE: React.CSSProperties = { position: 'relative' };
 
 type PierrePaint = Readonly<{
     node: HTMLElement;
@@ -728,6 +731,7 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
         || props.onPressAddComment
         || props.isCommentActive
         || props.renderAfterLine
+        || props.renderLeadingLane
         || (props.selectedLineIds && props.selectedLineIds.size > 0)
         || props.scrollToLineId
         || props.highlightLineId
@@ -1069,7 +1073,7 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
     const textSelectionUnsafeCSS = `::selection { background-color: ${resolveCodeSelectionColor(theme.colors.accent.blue)}; }`;
 
     const composedUnsafeCSS = React.useMemo(() => {
-        return [PIERRE_MATERIAL_UNSAFE_CSS, PIERRE_UNIFIED_GUTTER_UNSAFE_CSS, PIERRE_FIND_HIGHLIGHT_CSS, textSelectionUnsafeCSS, diagnosticUnsafeCSS, reviewCommentHoverSlotUnsafeCSS, selectedLineUnsafeCSS, highlightLineUnsafeCSS, PIERRE_REVIEWED_LINE_UNSAFE_CSS].filter(Boolean).join('\n');
+        return [PIERRE_MATERIAL_UNSAFE_CSS, PIERRE_UNIFIED_GUTTER_UNSAFE_CSS, PIERRE_LEADING_LANE_UNSAFE_CSS, PIERRE_FIND_HIGHLIGHT_CSS, textSelectionUnsafeCSS, diagnosticUnsafeCSS, reviewCommentHoverSlotUnsafeCSS, selectedLineUnsafeCSS, highlightLineUnsafeCSS, PIERRE_REVIEWED_LINE_UNSAFE_CSS].filter(Boolean).join('\n');
     }, [textSelectionUnsafeCSS, diagnosticUnsafeCSS, highlightLineUnsafeCSS, reviewCommentHoverSlotUnsafeCSS, selectedLineUnsafeCSS]);
 
     const options = React.useMemo<FileDiffOptions<React.ReactNode, undefined>>(() => {
@@ -1285,6 +1289,37 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
         }
     }, [agentMarkUri, codeLinesByAdditionLine, codeLinesByDeletionLine, props.agentPresence, props.reviewedLineIds]);
 
+    // The leading lane (blame, caption letters): cells at the rows Pierre mounted, in the room reserved before each line.
+    const leadingLaneFrameRef = React.useRef<HTMLDivElement | null>(null);
+    const hasLeadingLane = props.renderLeadingLane !== undefined;
+    const [leadingLaneRows, setLeadingLaneRows] = React.useState<readonly PierreLeadingLaneRow[]>(NO_LEADING_LANE_ROWS);
+    const [leadingLaneWidth, setLeadingLaneWidth] = React.useState(0);
+    const paintLeadingLane = React.useCallback((paint: PierrePaint) => {
+        const frame = leadingLaneFrameRef.current;
+        if (!hasLeadingLane || !frame) {
+            setLeadingLaneRows(NO_LEADING_LANE_ROWS);
+            return;
+        }
+        const rows = readPierreLeadingLaneRows({ root: paint.node.shadowRoot ?? paint.node, frame, split: diffStyle === 'split', lineAt: (position) => position.newLine
+            ? codeLinesByAdditionLine?.get(position.newLine) : position.oldLine ? codeLinesByDeletionLine?.get(position.oldLine) : undefined });
+        setLeadingLaneRows((current) => samePierreLeadingLaneRows(current, rows) ? current : rows);
+    }, [codeLinesByAdditionLine, codeLinesByDeletionLine, diffStyle, hasLeadingLane]);
+    // The reserved room is a variable on the host, so the lane never changes Pierre's CSS (which re-measures rows).
+    React.useLayoutEffect(() => {
+        const node = paintRef.current?.node;
+        if (!node) return;
+        if (hasLeadingLane && leadingLaneWidth > 0) node.style.setProperty(PIERRE_LEADING_LANE_WIDTH_VAR, `${leadingLaneWidth}px`);
+        else node.style.removeProperty(PIERRE_LEADING_LANE_WIDTH_VAR);
+    }, [hasLeadingLane, leadingLaneWidth, leadingLaneRows]);
+    // Reserving the room can rewrap lines: rows are read again when the frame's size changes.
+    React.useEffect(() => {
+        const frame = leadingLaneFrameRef.current;
+        if (!hasLeadingLane || !frame || typeof ResizeObserver === 'undefined') return;
+        const observer = new ResizeObserver(() => { if (paintRef.current) paintLeadingLane(paintRef.current); });
+        observer.observe(frame);
+        return () => observer.disconnect();
+    }, [hasLeadingLane, paintLeadingLane]);
+
     const onPaint = React.useCallback((paint: PierrePaint) => {
         if (paintRef.current?.node !== paint.node) {
             tokenTouchGesture.current.pointer = null;
@@ -1293,6 +1328,7 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
         paintRef.current = paint;
         localizePierreSeparatorText(paint.node.shadowRoot ?? paint.node);
         paintReviewedLines(paint);
+        paintLeadingLane(paint);
         revealScrollTarget(paint);
         refreshFind(paint);
         stopIntelligenceRef.current();
@@ -1304,7 +1340,7 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
             intelligenceClickRef.current = null;
             binding?.dispose();
         };
-    }, [paintReviewedLines, refreshFind, revealScrollTarget, props.intelligence, props.rangeSelectionActive, intelligenceLines]);
+    }, [paintReviewedLines, paintLeadingLane, refreshFind, revealScrollTarget, props.intelligence, props.rangeSelectionActive, intelligenceLines]);
 
     React.useEffect(() => {
         if (useHappierRenderer || initialPresentationForceFallback) {
@@ -1367,6 +1403,9 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
         );
     })();
 
+    const leadingLane = props.renderLeadingLane && leadingLaneRows.length > 0
+        ? <PierreLeadingLane rows={leadingLaneRows} renderLeadingLane={props.renderLeadingLane} onWidth={setLeadingLaneWidth} />
+        : null;
     // Leading content scrolls with the diff, above its first line (Pierre measures the file's offset in its
     // scroller, so reveals still land on the change).
     const leading = props.leadingContent ? <div data-diff-leading-content="">{props.leadingContent}</div> : null;
@@ -1375,6 +1414,25 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
             style={{ flex: 1, minHeight: 0, maxHeight: 'inherit', overflowY: 'auto' }}
         >
             {leading}
+            <div ref={leadingLaneFrameRef} style={LEADING_LANE_FRAME_STYLE}>
+                <PierreFileDiffBody
+                    key={fileDiff.cacheKey}
+                    fileDiff={fileDiff}
+                    onPaint={onPaint}
+                    selectedLines={selectedLines}
+                    options={interactiveOptions ?? options}
+                    lineAnnotations={lineAnnotations}
+                    renderAnnotation={lineAnnotations ? renderAnnotation : undefined}
+                    renderGutterUtility={props.onPressAddComment ? renderGutterUtility : undefined}
+                    style={{ display: 'block', width: '100%' }}
+                />
+                {leadingLane}
+            </div>
+        </Virtualizer>
+    ) : (
+        <>
+        {leading}
+        <div ref={leadingLaneFrameRef} style={LEADING_LANE_FRAME_STYLE}>
             <PierreFileDiffBody
                 key={fileDiff.cacheKey}
                 fileDiff={fileDiff}
@@ -1382,25 +1440,12 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
                 selectedLines={selectedLines}
                 options={interactiveOptions ?? options}
                 lineAnnotations={lineAnnotations}
-                renderAnnotation={lineAnnotations ? renderAnnotation : undefined}
+                renderAnnotation={lineAnnotations.length > 0 ? renderAnnotation : undefined}
                 renderGutterUtility={props.onPressAddComment ? renderGutterUtility : undefined}
                 style={{ display: 'block', width: '100%' }}
             />
-        </Virtualizer>
-    ) : (
-        <>
-        {leading}
-        <PierreFileDiffBody
-            key={fileDiff.cacheKey}
-            fileDiff={fileDiff}
-            onPaint={onPaint}
-            selectedLines={selectedLines}
-            options={interactiveOptions ?? options}
-            lineAnnotations={lineAnnotations}
-            renderAnnotation={lineAnnotations.length > 0 ? renderAnnotation : undefined}
-            renderGutterUtility={props.onPressAddComment ? renderGutterUtility : undefined}
-            style={{ display: 'block', width: '100%' }}
-        />
+            {leadingLane}
+        </div>
         </>
     );
 

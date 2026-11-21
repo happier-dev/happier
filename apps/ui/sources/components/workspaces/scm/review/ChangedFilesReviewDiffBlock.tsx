@@ -454,8 +454,6 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
     // While Find is open its target is the current match, marked only by the match fill; the line ring is for hunk navigation.
     const reviewHighlightLineId = props.findActive ? undefined : props.scrollToLineId;
     // A file with captions draws its diff through their lane; every other file draws it alone, with no per-line work.
-    // A lane is drawn by the canonical line renderer, never Pierre, so its hunk headers take Pierre's quiet
-    // "N unchanged lines" band and the file reads like its neighbours.
     const withLineCaptions = (renderDiff: (lane: DiffLineCaptionLane | null) => React.ReactNode) =>
         props.hunkNotes?.lineCaptions?.(filePath, state.diff, renderDiff) ?? renderDiff(null);
 
@@ -468,7 +466,6 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
                 <DiffReviewCommentsViewer
                     renderLeadingLane={lane?.renderLeadingLane}
                     highlightLineIds={lane?.highlightLineIds}
-                    lineInfoSeparators={lane ? true : undefined}
                     findActive={props.findActive}
                     precomputedLines={findLines}
                     contextBaseText={findContextBaseText}
@@ -507,7 +504,6 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
                 <DiffViewer
                     renderLeadingLane={lane?.renderLeadingLane}
                     highlightLineIds={lane?.highlightLineIds}
-                    lineInfoSeparators={lane ? true : undefined}
                     findActive={props.findActive}
                     precomputedLines={findLines}
                     contextBaseText={findContextBaseText}

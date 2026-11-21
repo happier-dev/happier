@@ -3,10 +3,9 @@ import { useSetting } from '@/sync/store/settingsReadHooks';
 import { isPierreDiffKillSwitchEnabled, supportsPierreRuntime } from './pierre/pierreRuntimeSupport.web';
 import { usePierreEnclosingScrollRoot } from './pierre/PierreScrollRootVirtualizerProvider.web';
 
-/** Whether a diff draws through Pierre. A leading lane is a per-line cell only the canonical line renderer draws. */
-export function usePierreAllowed(rendersLeadingLane: boolean): boolean {
+/** Whether a diff draws through Pierre (a leading lane included: the adapter draws it beside Pierre's rows). */
+export function usePierreAllowed(): boolean {
     return useSetting('filesDiffRendererMode') === 'pierre'
-        && !rendersLeadingLane
         && isPierreDiffKillSwitchEnabled()
         && supportsPierreRuntime();
 }
@@ -18,5 +17,5 @@ export function usePierreAllowed(rendersLeadingLane: boolean): boolean {
 export function useInlineDiffSharesEnclosingScroller(): boolean {
     // Known limitation (Providers ORCH 2026-11-20): with the "happier" renderer setting the diff keeps its capped inner list.
     const enclosing = usePierreEnclosingScrollRoot();
-    return usePierreAllowed(false) && enclosing;
+    return usePierreAllowed() && enclosing;
 }
