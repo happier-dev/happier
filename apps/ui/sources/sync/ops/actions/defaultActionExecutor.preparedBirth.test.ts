@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { openSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
-import { SessionCreationTagV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
+import { SessionCreationKeyV1Schema, SessionCreationTagV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { openSessionRequesterBootstrapRpcRequestV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { SessionPendingTemplateOnboardingRequestV1Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1';
@@ -74,7 +74,7 @@ it.each([
     const model = { agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'team-bot-model' };
     const selection = { v: 2, updatedAt: 0, ref: { source: 'team_resource', ...team, ...model } };
     const binding = { v: 1, slot: { kind: 'provider_model' }, ...team, providerModelSelection: model };
-    const creationKey = 'browser-bot-copy';
+    const creationKey = SessionCreationKeyV1Schema.parse('browser-bot-copy');
     const input = SessionSpawnNewInputV2Schema.parse({ creationKey,
         executionTarget: { serverId, machineId: 'asleep-machine' }, directory: { kind: 'managed' }, permissionMode: 'read-only',
         agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
@@ -156,7 +156,7 @@ it.each([
         body: createAccountEncryptionCurrentnessFixtureForCredentials(credentials),
     });
     let sessionDataEncryptionKey: string | null = null;
-    const creationKey = 'browser-bot-copy';
+    const creationKey = SessionCreationKeyV1Schema.parse('browser-bot-copy');
     const input = SessionSpawnNewInputV2Schema.parse({ creationKey,
         executionTarget: { serverId, machineId: 'asleep-machine' }, directory: { kind: 'managed' },
         agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
