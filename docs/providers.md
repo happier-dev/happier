@@ -2405,6 +2405,11 @@ refuses redirects and streams a filtered, redacted response through completion
 or cancellation. Managed subscription adapters such as Muse use CLIProxyAPI for
 upstream authentication and protocol translation.
 
+The direct transport reports the upstream HTTP status to the request credential
+lease when it provides a response callback. The Connected Account request-auth
+owner classifies refreshable failures for the next explicit request. Each
+billable request makes one upstream dispatch.
+
 Run source preparation uses the admitted controller occurrence and its issued
 Account reader, not the process-global Account snapshot. The existing catalog
 owner projects that exact Account and purpose context with `current_only`, using

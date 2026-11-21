@@ -7,7 +7,7 @@ import { createProviderRedactionLease } from '@/providers/spawn/redaction';
 import { createProviderConnectionHttpTransport } from './providerConnectionHttpTransport';
 import { readProviderBrokerResponseBody } from './providerBroker.testkit';
 
-async function fixture(protocol: 'openai-responses' | 'anthropic', address = '127.0.0.1') {
+async function fixture(protocol: 'openai-responses' | 'anthropic', address = '127.0.0.1', upstreamStatus = 200) {
   const requests: { path: string; headers: Readonly<Record<string, unknown>>; body: string }[] = [];
   const server = createServer(async (request, response) => {
     const chunks: Buffer[] = [];
@@ -17,7 +17,7 @@ async function fixture(protocol: 'openai-responses' | 'anthropic', address = '12
       response.writeHead(307, { location: '/do-not-follow' }).end();
       return;
     }
-    response.writeHead(200, { 'content-type': 'text/event-stream', 'x-echo': 'source-secret', 'set-cookie': 'private=1' });
+    response.writeHead(upstreamStatus, { 'content-type': 'text/event-stream', 'x-echo': 'source-secret', 'set-cookie': 'private=1' });
     response.write('data: source-');
     if (!request.url?.includes('hold=yes')) setImmediate(() => response.end('secret\n\n'));
   });
@@ -31,6 +31,7 @@ async function fixture(protocol: 'openai-responses' | 'anthropic', address = '12
   if (!listenAddress || typeof listenAddress === 'string') throw new Error('Expected TCP upstream');
   const redaction = createProviderRedactionLease({ values: ['source-secret', 'companion-secret'] });
   const close = vi.fn(redaction.close);
+  const onResponse = vi.fn(async (_status: number, _signal: AbortSignal) => {});
   const abort = new AbortController();
   const projection = await createProviderConnectionHttpTransport().open({
     applicationEndpointTemplateId: 'downstream',
@@ -50,10 +51,11 @@ async function fixture(protocol: 'openai-responses' | 'anthropic', address = '12
       containsSensitiveValue: redaction.containsSensitiveValue,
       createStreamingSanitizer: redaction.createStreamingSanitizer,
       close,
+      onResponse,
     }),
   });
   if (!projection) throw new Error('Expected opened Provider transport');
-  return { access: projection.access, requests, close, abort };
+  return { access: projection.access, requests, close, abort, onResponse };
 }
 
 describe('Provider Connection pinned HTTP transport', () => {
@@ -91,6 +93,18 @@ describe('Provider Connection pinned HTTP transport', () => {
     expect(response.status).toBe(502);
     expect(requests.map(request => new URL(request.path, 'https://example.test').pathname)).toEqual(['/gateway/v1/messages']);
     expect(close).toHaveBeenCalledOnce();
+  });
+
+  it.each([401, 403])('reports upstream HTTP %i to the acquired lease without replaying the request', async status => {
+    const { access, requests, close, onResponse } = await fixture('openai-responses', '127.0.0.1', status);
+    const response = await access.request({ method: 'POST', pathAndQuery: '/v1/responses' });
+    expect(response.status).toBe(status);
+    expect(onResponse).toHaveBeenCalledExactlyOnceWith(status, expect.any(AbortSignal));
+    const body = new TextDecoder().decode(await readProviderBrokerResponseBody(response.body));
+    expect(body).toContain('data: ');
+    expect(body).not.toContain('source-secret');
+    expect(close).toHaveBeenCalledOnce();
+    expect(requests).toHaveLength(1);
   });
 
   it('does not fall back when the admitted address cannot reach the upstream', async () => {

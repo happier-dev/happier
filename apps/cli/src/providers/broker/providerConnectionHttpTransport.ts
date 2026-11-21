@@ -12,6 +12,7 @@ import { preserveBrokerSourceHealthFailure } from './sourceFailure';
 type RuntimeCredentialLease = Extract<Awaited<ReturnType<typeof resolveRuntimeProviderCredential>>, { ok: true }>['lease'];
 type RequestCredentialLease = RuntimeCredentialLease & Readonly<{
   queryParameters?: Readonly<Record<string, string>>;
+  onResponse?(status: number, signal: AbortSignal): Promise<void>;
 }>;
 
 type OpenInput = Readonly<{
@@ -171,6 +172,8 @@ export function createProviderConnectionHttpTransport(
             lease.close();
             return upstreamUnavailable();
           }
+          // The lease owner classifies the status for future requests. Preserve this response if recovery fails.
+          await lease.onResponse?.(response.status, signal).catch(() => undefined);
           const filtered = Object.fromEntries(Object.entries(response.headers).flatMap(([name, value]) => (
             value !== undefined && mayForwardHeader(name) && !lease.containsSensitiveValue(value) ? [[name, value]] : []
           )));
