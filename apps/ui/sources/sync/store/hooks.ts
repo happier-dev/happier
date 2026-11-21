@@ -2590,9 +2590,9 @@ function readMachineListForServer(state: StorageState, serverId: string): Machin
 }
 
 /** One Home's visible list, with the facts semantics and presentation hold of `useMachineListByServerId`. */
-export function useMachineListForServer(serverId: string, enabled = true, presented = true): Machine[] | null {
+export function useMachineListForServer(serverId: string, enabled = true, presented = true, purpose: 'facts' | 'launch' = 'facts'): Machine[] | null {
   const owner = machineInventoryPresentation(getStorage());
-  const select = React.useCallback((state: StorageState) => enabled ? owner.home(state, serverId, 'facts') : null, [enabled, owner, serverId]);
+  const select = React.useCallback((state: StorageState) => enabled ? owner.home(state, serverId, purpose) : null, [enabled, owner, purpose, serverId]);
   return usePresentedMachineInventory(select, presented || !enabled);
 }
 
@@ -2871,6 +2871,23 @@ export function useServerScopedLaunchMachine(serverId: string | null | undefined
   const selector = React.useMemo(() => createPresentedMachineInventorySelector(select, true, reconcile), [select, reconcile]);
   const getSnapshot = React.useCallback(() => selector(store.getState()), [selector, store]);
   return useServerScopedMachineSnapshot(getSnapshot, Boolean(machineId?.trim()))[0] ?? null;
+}
+
+export function useServerScopedMachinePresentation(
+  serverId: string | null | undefined,
+  machineId: string | null | undefined,
+  view: 'facts' | 'full' = 'facts',
+): Machine | null {
+  const store = getStorage();
+  const id = machineId?.trim() ?? '';
+  const getSnapshot = React.useMemo(() => {
+    if (!id) return () => null;
+    const read = view === 'facts'
+      ? machineInventoryPresentation(store).createFactsSelection(serverId, id)
+      : (state: StorageState) => resolveServerScopedMachine(state, serverId, id);
+    return () => read(store.getState());
+  }, [store, serverId, id, view]);
+  return useServerScopedMachineSnapshot(getSnapshot, Boolean(id));
 }
 
 export function useServerScopedMachine(serverId: string | null | undefined, machineId: string | null | undefined): Machine | null;

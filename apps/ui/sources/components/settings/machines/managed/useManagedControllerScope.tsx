@@ -17,7 +17,7 @@ import {
 } from '@/sync/domains/machines/administration/useTargetSelection';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { storage, useActiveServerAccountScope, useSetting, useMachineListForServer, useMachineListForServerSelection, useServerScopedMachine } from '@/sync/domains/state/storage';
+import { storage, useActiveServerAccountScope, useSetting, useMachineListForServer, useMachineListForServerSelection, useServerScopedLaunchMachine } from '@/sync/domains/state/storage';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { useIsMachineListSettled, useMachineListStatusForServer } from '@/sync/store/hooks';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
@@ -132,8 +132,8 @@ export function useManagedControllerScope(
   // Row-owned demand alone would release that answer as soon as filtering unmounts the rows.
   const [pickerOpen, setPickerOpen] = React.useState(false);
   const closedMachineId = !pickerOpen ? namedRetained?.machineId : undefined;
-  const allMachines = useMachineListForServer(input.serverId, !closedMachineId);
-  const namedMachine = useServerScopedMachine(input.serverId, closedMachineId);
+  const allMachines = useMachineListForServer(input.serverId, !closedMachineId, true, 'launch');
+  const namedMachine = useServerScopedLaunchMachine(input.serverId, closedMachineId);
   const machines = React.useMemo(() => closedMachineId ? namedMachine ? [namedMachine] : [] : allMachines,
     [allMachines, closedMachineId, namedMachine]);
   const controllerIdsKey = useMachineListForServerSelection(input.serverId, readControllerIds);

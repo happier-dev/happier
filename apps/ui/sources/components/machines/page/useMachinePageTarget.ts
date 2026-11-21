@@ -5,7 +5,7 @@ import { useLocalSearchParams } from '@/components/appShell/workspace/destinatio
 import { storage } from '@/sync/domains/state/storageStore';
 import type { StorageState } from '@/sync/store/types';
 import { isMachineVisibleForSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
-import { useMachineListForServerSelection, useServerScopedMachine } from '@/sync/store/hooks';
+import { useMachineListForServerSelection, useServerScopedMachinePresentation } from '@/sync/store/hooks';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { areServerProfileIdentifiersEquivalent, getActiveServerId, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
@@ -112,7 +112,7 @@ export function useMachinePagePresenceTarget(target: MachinePageTarget): Machine
  * belongs to, focusing that Home when the link names another, and reading the machine list once
  * when the machine is not known yet. Every page of one machine resolves it the same way.
  */
-export function useMachinePageTarget(): MachinePageTarget {
+export function useMachinePageTarget(view: 'facts' | 'full' = 'full'): MachinePageTarget {
     const language = usePreferredLanguage();
     const params = useLocalSearchParams<{ id: string; serverId?: string }>();
     const machineId = typeof params.id === 'string' ? params.id : '';
@@ -121,7 +121,7 @@ export function useMachinePageTarget(): MachinePageTarget {
     const naming = useMachinePageNaming({ activeServerId, requestedServerId, machineId, language });
     const serverId = naming.serverId;
     // The Home that lists the machine owns its row, whether or not that Home is the focused one.
-    const machine = useServerScopedMachine(serverId, machineId);
+    const machine = useServerScopedMachinePresentation(serverId, machineId, view);
     const lastSeenOnOpen = useMachineLastSeenOnOpen(machine ? [{ serverId, machineId }] : []);
     const lastSeenAtOnOpen = lastSeenOnOpen.get(resolveServerProfileScopeIdForIdentifier(serverId))?.get(machineId) ?? machine?.activeAt ?? null;
     const [isServerSwitching, setIsServerSwitching] = React.useState(false);

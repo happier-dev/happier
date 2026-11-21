@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { StyleSheet } from 'react-native';
 import { afterEach, beforeEach, expect, it, onTestFinished, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 import { MachineProvisionersListResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
 import {
@@ -66,9 +67,13 @@ it('says a Machine that offers no sandbox kinds has none, on the sheet body edge
     activeAt: Date.now(),
     kind: 'persistent',
   });
-  await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
-    { ...machine, metadata: { ...machine.metadata!, platform: 'linux' } },
-  ]);
+  const daemonState = {
+    ...machine.daemonState,
+    contributionRegistryProjectionRevision: 1,
+  };
+  const selected = { ...machine, metadata: { ...machine.metadata!, platform: 'linux' }, daemonState, daemonStateVersion: 1 };
+  const other = { ...selected, id: 'another-devbox', installationId: 'another-installation' };
+  await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [selected, other]);
   // The controller's catalog answers with no kinds at all (a CLI that reports none).
   await answerExternalActionAccountForHome(harness, serverId, {
     ...controller,
@@ -83,17 +88,21 @@ it('says a Machine that offers no sandbox kinds has none, on the sheet body edge
   });
   const { MachineIsolationAddSandboxModal } =
     await import('./MachineIsolationAddSandboxModal');
+  const { storage } = await import('@/sync/domains/state/storageStore');
   const { t } = await import('@/text');
+  let commits = 0;
   const screen = await renderScreen(
     <ListPresentationProvider value="page">
-      <MachineIsolationAddSandboxModal
-        onClose={() => {}}
-        setChrome={() => {}}
-        serverId={serverId}
-        controller={controller}
-        machineName="devbox"
-        onAdded={() => {}}
-      />
+      <React.Profiler id="Add sandbox" onRender={() => { commits += 1; }}>
+        <MachineIsolationAddSandboxModal
+          onClose={() => {}}
+          setChrome={() => {}}
+          serverId={serverId}
+          controller={controller}
+          machineName="devbox"
+          onAdded={() => {}}
+        />
+      </React.Profiler>
     </ListPresentationProvider>,
   );
   try {
@@ -116,6 +125,22 @@ it('says a Machine that offers no sandbox kinds has none, on the sheet body edge
       (node) => typeof node.type === 'string' && node.props.style != null,
     )[0]!;
     expect(StyleSheet.flatten(lineRoot.props.style).paddingHorizontal).toBe(0);
+    const publishSample = async (row: typeof selected, sample: number) => {
+      const before = commits;
+      await act(async () => storage.getState().applyMachines([{ ...row, daemonStateVersion: sample + 2, seq: sample + 2, updatedAt: sample + 2,
+        daemonState: { ...daemonState, resources: { v: 1, vitals: { state: 'unavailable', reason: 'reader_failed', since: sample },
+          attention: { level: 'calm', reasons: [] } } } }], false, { sourceServerId: serverId }));
+      return commits - before;
+    };
+    await publishSample(other, 0);
+    await publishSample(selected, 0);
+    const foreign: number[] = [];
+    const controllerOnly: number[] = [];
+    for (let sample = 1; sample <= 4; sample++) {
+      foreign.push(await publishSample(other, sample));
+      controllerOnly.push(await publishSample(selected, sample));
+    }
+    expect({ foreign, controllerOnly }).toEqual({ foreign: [0, 0, 0, 0], controllerOnly: [0, 0, 0, 0] });
   } finally {
     await screen.unmount();
   }

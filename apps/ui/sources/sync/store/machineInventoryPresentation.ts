@@ -2,12 +2,20 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { linkMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { selectVisibleMachineInventory } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import { resolveServerScopedMachineInventoryKeys } from '@/sync/domains/machines/resolveServerScopedMachines';
+import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { areMachineFactsEqual, areMachineLaunchInputsEqual } from './domains/areStoredMachinesEqual';
 import { resolveVisibleMachinesForActiveServerFromState } from './domains/machines/resolveMachinesForActiveServerFromState';
 import type { StorageState } from './types';
 
 type Purpose = 'facts' | 'launch';
 type Lists = Record<string, Machine[] | null>;
+const areExactMachineFactsEqual = (previous: Machine, next: Machine): boolean => areMachineFactsEqual(previous, next, false);
+
+function retainPresentationRow(previous: Machine | null | undefined, next: Machine, equal: (previous: Machine, next: Machine) => boolean): Machine {
+    if (!previous || previous.id !== next.id || !equal(previous, next)) return next;
+    if (previous !== next) linkMachineActivity(next, previous);
+    return previous;
+}
 
 function createProjection(equal: (previous: Machine, next: Machine) => boolean) {
     const rows = new WeakMap<Machine, Machine>();
@@ -23,9 +31,7 @@ function createProjection(equal: (previous: Machine, next: Machine) => boolean) 
         const next = visible.map((machine, index) => {
             const cached = rows.get(machine);
             if (cached) return cached;
-            const held = previous?.[index];
-            const value = held && held.id === machine.id && equal(held, machine) ? held : machine;
-            if (value !== machine) linkMachineActivity(machine, value);
+            const value = retainPresentationRow(previous?.[index], machine, equal);
             rows.set(machine, value);
             return value;
         });
@@ -73,6 +79,24 @@ function createOwner() {
         return projections[purpose];
     };
     return {
+        createFactsSelection(serverId: string | null | undefined, machineId: string) {
+            let lastProjection: ReturnType<typeof createProjection> | undefined;
+            let input: Machine | null = null;
+            let value: Machine | null = null;
+            return (state: StorageState) => {
+                const currentProjection = projection(state, 'facts');
+                if (lastProjection !== currentProjection) {
+                    lastProjection = currentProjection;
+                    input = value = null;
+                }
+                const next = resolveServerScopedMachine(state, serverId, machineId);
+                if (next !== input) {
+                    input = next;
+                    value = next ? retainPresentationRow(value, next, areExactMachineFactsEqual) : null;
+                }
+                return value;
+            };
+        },
         lists(state: StorageState, purpose: Purpose): Lists {
             return projection(state, purpose).all(state.machineListByServerId);
         },

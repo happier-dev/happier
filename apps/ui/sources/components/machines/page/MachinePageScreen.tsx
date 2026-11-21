@@ -92,7 +92,7 @@ const styles = StyleSheet.create(() => ({
  * place without a history entry; an absent `tab` returns to the tab last open on this machine.
  */
 export function MachinePageScreen() {
-    const target = useMachinePageTarget();
+    const target = useMachinePageTarget('facts');
     const door = useMachinesDoor();
     const router = useRouter();
     const routeParams = useLocalSearchParams<Record<string, string>>();

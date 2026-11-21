@@ -121,12 +121,13 @@ export function areMachineLaunchInputsEqual(previous: Machine, next: Machine): b
 }
 
 /**
- * Machine facts without the live daemon resource channel: heartbeat clocks and every content field still count,
+ * Machine facts without the live daemon resource channel. A resource publication can also advance updatedAt,
+ * so presentation readers that do not display the record's modification time can omit it.
  * while a publication that advances only `daemonStateVersion`/`seq` or `daemonState.resources` (resource samples
  * and guard) is equal.
  */
-export function areMachineFactsEqual(previous: Machine, next: Machine): boolean {
-    return areStoredMachineValuesEqual(previous, next, true, false)
+export function areMachineFactsEqual(previous: Machine, next: Machine, includeUpdatedAt = true): boolean {
+    return areStoredMachineValuesEqual(previous, next, true, false, true, includeUpdatedAt)
         && hasCurrentMachineContent(previous) === hasCurrentMachineContent(next);
 }
 
@@ -154,6 +155,7 @@ function areStoredMachineValuesEqual(
     includeHeartbeatTimestamps: boolean,
     includeResources = true,
     includeActiveState = true,
+    includeUpdatedAt = includeHeartbeatTimestamps,
 ): boolean {
     if (previous === next) return true;
     if (!previous || !next) return previous === next;
@@ -163,7 +165,7 @@ function areStoredMachineValuesEqual(
         && previous.kind === next.kind
         && (!includeResources || previous.seq === next.seq)
         && previous.createdAt === next.createdAt
-        && (!includeHeartbeatTimestamps || previous.updatedAt === next.updatedAt)
+        && (!includeUpdatedAt || previous.updatedAt === next.updatedAt)
         && (!includeActiveState || previous.active === next.active)
         && previous.presenceProtocolVersion === next.presenceProtocolVersion
         && (!includeHeartbeatTimestamps || previous.activeAt === next.activeAt)

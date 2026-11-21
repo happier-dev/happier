@@ -29,6 +29,20 @@ type MachineDaemonReadIdentity = Readonly<{
     enabled: boolean;
 }>;
 
+/** Recovery owners receive daemon revisions without making the revision a React render input. */
+export function useMachineDaemonRevisionObserver(
+    key: MachineDaemonReadKey,
+    report: (version: number | undefined) => void,
+): void {
+    const { expectedAccountId, machineId, serverId } = key;
+    React.useEffect(() => {
+        if (!expectedAccountId || !machineId) return;
+        const publish = () => report(resolveServerScopedMachine(storage.getState(), serverId, machineId)?.daemonStateVersion);
+        publish();
+        return storage.subscribe(publish, { machines: true, machineListByServerId: true, machineRecordsByServerId: true });
+    }, [expectedAccountId, machineId, report, serverId]);
+}
+
 /** Mounted and one-shot reads use the same explicit-or-active Home placement. */
 export function resolveMachineDaemonReadServerId(serverId: string | null | undefined): string {
     return resolveServerProfileScopeIdForIdentifier(serverId?.trim() || getActiveServerSnapshot().serverId);

@@ -57,6 +57,7 @@ import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/use
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { describeMachineSentence, readMachinePublishedResources, resolveMachineReasonAction, selectHeadlineReason } from '@/components/machines/summary/machineResourceSentences';
+import { useMachineHeadlineResources } from '@/components/machines/summary/useMachineHeadlineResources';
 import { resolveMachineAttentionWordColor } from '@/components/machines/summary/machineSummaryStripModel';
 import { MachineWorkingCountsProvider, useMachineWorkingCount } from '@/components/machines/work/machineWorkingCounts';
 import { trackEnterFromRectTargets, useEnterFromRect, useEnterFromRectMember } from '@/components/ui/motion/rectFlight';
@@ -243,8 +244,7 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
     });
     const replacement = useMachineReplacementActions(target, machineAccountScope);
     // What the machine publishes (plan 20): its sentence under the name and, when it needs you, its one action.
-    const daemonState: unknown = machine?.daemonState;
-    const published = React.useMemo(() => readMachinePublishedResources(daemonState), [daemonState]);
+    const published = useMachineHeadlineResources(target.serverId, machine);
     const attachedPresets = machine?.daemonState?.setup?.attachedPresets;
     const headline = published && target.online && published.attention.level !== 'calm' ? selectHeadlineReason(published.attention) : null;
     const needsYouAction = headline ? resolveMachineReasonAction(headline) : null;

@@ -3,11 +3,11 @@ import type { MachineResourceAttentionV1, MachineResourceSummaryV1 } from '@happ
 import { readMachineVitalsResourcesProjectionV1 } from '@happier-dev/protocol/machines/vitals/listMachineVitalsSummariesV1';
 import { storage } from '@/sync/domains/state/storageStore';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
-import { useMachineDaemonReadIdentities } from '../useMachineDaemonReadTarget';
+import { useMachineDaemonReadIdentities, useMachineDaemonRevisionObserver } from '../useMachineDaemonReadTarget';
 import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { EMPTY_MACHINE_RESOURCE_STATE, isMachineResourceStateStale, machineResourceStore } from './machineResourceStore';
 import type { MachineResourceKey, MachineVitalsView } from './machineRpc';
-import { readMachineResourceObservation, type MachineVitalsPublication } from './machineResourceAvailability';
+import { readMachineResourceObservation, type MachineResourceObservation, type MachineVitalsPublication } from './machineResourceAvailability';
 import { readMachineMonitoringMode } from './useMachineMonitoringMode';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
 
@@ -37,10 +37,6 @@ export function useMachineResourceSummary(input: MachineResourceKey): MachineRes
     // Exact facts of the row, not the record: a daemon publication that changes none of them renders nothing.
     const hasMachine = storage(React.useCallback((state: Parameters<typeof resolveServerScopedMachine>[0]) => selectMachine(state) !== null, [selectMachine]));
     const metadata = storage(React.useCallback((state: Parameters<typeof resolveServerScopedMachine>[0]) => selectMachine(state)?.metadata ?? null, [selectMachine]));
-    const daemonResources = storage(React.useCallback((state: Parameters<typeof resolveServerScopedMachine>[0]) => {
-        const daemonState: unknown = selectMachine(state)?.daemonState;
-        return isRecord(daemonState) ? daemonState.resources ?? null : null;
-    }, [selectMachine]));
     const monitoring = React.useMemo(() => readMachineMonitoringMode(metadata), [metadata]);
     const viewed = target.enabled;
     const key = React.useMemo(() => ({ ...target.key, view: 'summary' as const }), [target.key]);
@@ -48,38 +44,46 @@ export function useMachineResourceSummary(input: MachineResourceKey): MachineRes
     const getSnapshot = React.useCallback(() => target.accountMatches ? machineResourceStore.getState(key) : EMPTY_MACHINE_RESOURCE_STATE, [key, target.accountMatches]);
     const state = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
     const stale = isMachineResourceStateStale(state, Date.now());
-    // Keyed by the published facts, not the daemon-state carrier: another field's publication keeps this row's answer.
-    const resources = daemonResources;
-    const vitals = isRecord(resources) ? resources.vitals : null;
-    const vitalsState = isRecord(vitals) && (vitals.state === 'reporting' || vitals.state === 'unavailable') ? vitals.state : null;
-    const vitalsReason = isRecord(vitals) && typeof vitals.reason === 'string' ? vitals.reason : null;
-    const vitalsSince = isRecord(vitals) && typeof vitals.since === 'number' ? vitals.since : null;
-    const publication = React.useMemo<MachineVitalsPublication | null>(() => vitalsState
-        ? { state: vitalsState, reason: vitalsReason, since: vitalsSince } : null, [vitalsReason, vitalsSince, vitalsState]);
-    const retainedResources = React.useRef<ReturnType<typeof readMachineVitalsResourcesProjectionV1>>(undefined);
-    const publishedResources = React.useMemo(() => retainedResources.current = retainDeep(retainedResources.current,
-        readMachineVitalsResourcesProjectionV1(resources === null ? null : { resources })), [resources]);
-    const publishedAttention = publishedResources?.attention ?? null;
-    const publishedHost = publishedResources?.host;
+    // Retain the published answer over resource arrivals that do not change its availability,
+    // attention or host facts. Failure timestamps matter only against the live reporting sample.
+    const selectPublication = React.useMemo(() => {
+        let lastResources: unknown;
+        let last: (Pick<NonNullable<ReturnType<typeof readMachineVitalsResourcesProjectionV1>>, 'host' | 'attention'>
+            & Readonly<{ available: boolean; observation: MachineResourceObservation }>) | undefined;
+        return (storageState: Parameters<typeof resolveServerScopedMachine>[0]) => {
+            const daemonState: unknown = selectMachine(storageState)?.daemonState;
+            const resources = isRecord(daemonState) ? daemonState.resources ?? null : null;
+            if (last && lastResources === resources) return last;
+            lastResources = resources;
+            const vitals = isRecord(resources) ? resources.vitals : null;
+            const publication: MachineVitalsPublication | null = isRecord(vitals)
+                && (vitals.state === 'reporting' || vitals.state === 'unavailable') ? {
+                    state: vitals.state,
+                    reason: typeof vitals.reason === 'string' ? vitals.reason : null,
+                    since: typeof vitals.since === 'number' ? vitals.since : null,
+                } : null;
+            const parsed = readMachineVitalsResourcesProjectionV1(resources === null ? null : { resources });
+            last = retainDeep(last, {
+                available: publication !== null,
+                observation: readMachineResourceObservation({ ...state, stale }, publication),
+                host: parsed?.host,
+                attention: parsed?.attention,
+            });
+            return last;
+        };
+    }, [selectMachine, stale, state]);
+    const { available, attention: publishedAttention, host: publishedHost, observation } = storage(selectPublication);
     React.useEffect(() => {
         if (target.accountMatches) machineResourceStore.setPublishedHost(key, publishedHost);
     }, [key, publishedHost, target.accountMatches]);
     React.useEffect(() => {
         if (publishedAttention) machineResourceStore.setPublishedAttention(key, publishedAttention);
     }, [key, publishedAttention, state.snapshot?.attention, state.snapshot?.sample?.sampledAt]);
-    // Daemon versions reach the resource owner from the store directly; they are not a render input of this row.
-    React.useEffect(() => {
-        if (!key.expectedAccountId) return;
-        const report = () => {
-            const machine = selectMachine(storage.getState());
-            if (machine) machineResourceStore.daemonStateChanged(key, machine.daemonStateVersion);
-        };
-        report();
-        return storage.subscribe(report, { machines: true, machineListByServerId: true, machineRecordsByServerId: true });
-    }, [input.machineId, key, selectMachine]);
+    useMachineDaemonRevisionObserver(key, React.useCallback(version => {
+        machineResourceStore.daemonStateChanged(key, version);
+    }, [key]));
     const online = hasMachine ? presence.reachability === 'reachable' : true;
     return React.useMemo<MachineResourceAvailability | null>(() => {
-        const observation = readMachineResourceObservation({ ...state, stale }, publication);
         if (!target.accountMatches) return null;
         if (monitoring === 'off') return MONITORING_OFF;
         if (state.status === 'not_reported') return OLDER_HAPPIER;
@@ -87,13 +91,13 @@ export function useMachineResourceSummary(input: MachineResourceKey): MachineRes
         if (state.status === 'error' && !state.summary) return state.errorCode ? { kind: 'unavailable', errorCode: state.errorCode } : UNAVAILABLE;
         if (state.snapshot?.state === 'reporting' && !state.snapshot.sample) return NEVER_SAMPLED;
         // An unanswered read (including metadata hydration) establishes no support fact.
-        if (!state.snapshot && !publication) return null;
+        if (!state.snapshot && !available) return null;
         const { readStatus } = observation;
         const freshness = observation.freshness === 'live' && (!viewed || !online) ? 'held' : observation.freshness;
         return { kind: 'reporting', summary: state.summary, freshness,
             ...(readStatus ? { readStatus } : {}),
             attention: publishedAttention ?? state.snapshot?.attention ?? null };
-    }, [monitoring, online, publication, publishedAttention, stale, state, target.accountMatches, viewed]);
+    }, [available, monitoring, observation, online, publishedAttention, state, target.accountMatches, viewed]);
 }
 
 /** A surface's retained summaries are being revalidated by the same demand owner. */

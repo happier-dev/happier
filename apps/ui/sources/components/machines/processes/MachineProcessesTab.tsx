@@ -18,7 +18,7 @@ import type {
 import { useMachinesDoor } from '@/components/machines/page/machinesDoor';
 import { useMachineStartSession } from '@/components/machines/page/useMachineStartSession';
 import { MachineFreshnessChip, type MachineFreshness } from '@/components/machines/page/MachineFreshnessChip';
-import { readMachinePublishedResources } from '@/components/machines/summary/machineResourceSentences';
+import { useMachineHeadlineResources } from '@/components/machines/summary/useMachineHeadlineResources';
 import { resolveMachineCpuCapacityCores } from '@/components/machines/vitals/machineVitalsPresentation';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
@@ -210,11 +210,7 @@ function MachineProcessesTree(
   const router = useRouter();
   const door = useMachinesDoor();
   const { target } = useMachinePageState();
-  const daemonState: unknown = target.machine?.daemonState;
-  const published = React.useMemo(
-    () => readMachinePublishedResources(daemonState),
-    [daemonState],
-  );
+  const published = useMachineHeadlineResources(serverId, target.machine);
   const homeDir = target.machine?.metadata?.homeDir;
   const startSession = useMachineStartSession({ serverId, machineId });
 

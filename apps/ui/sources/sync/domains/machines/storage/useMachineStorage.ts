@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { HappierStorageCategoryIdV1, HappierStorageSummaryV1 } from '@happier-dev/protocol/storage/storageV1';
-import { useMachineDaemonReadTarget } from '../useMachineDaemonReadTarget';
+import { useMachineDaemonReadTarget, useMachineDaemonRevisionObserver } from '../useMachineDaemonReadTarget';
 import { machineStorageStore, type MachineStorageState } from './machineStorageStore';
 import type { MachineStorageKey } from './machineRpc';
 
@@ -8,11 +8,11 @@ export type MachineStorageHookInput = MachineStorageKey & Readonly<{ enabled?: b
 
 /** Exact Home/Account identity comes from the one daemon-read target; storage adds its daemon-restart edge. */
 export function useMachineStorageTarget(input: MachineStorageHookInput) {
-    const { key, enabled, offline, daemonStateVersion } = useMachineDaemonReadTarget(input);
-    React.useEffect(() => {
-        machineStorageStore.daemonStateChanged(key, daemonStateVersion);
-    }, [key, daemonStateVersion]);
-    return { key, enabled, offline, daemonStateVersion };
+    const { key, enabled, offline } = useMachineDaemonReadTarget({ ...input, observeDaemonStateVersion: false });
+    useMachineDaemonRevisionObserver(key, React.useCallback(version => {
+        machineStorageStore.daemonStateChanged(key, version);
+    }, [key]));
+    return { key, enabled, offline };
 }
 
 export function useMachineStorageSelection<T>(key: MachineStorageKey, select: (state: MachineStorageState) => T): T {

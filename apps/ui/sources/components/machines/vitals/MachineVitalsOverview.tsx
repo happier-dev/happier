@@ -21,6 +21,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { useServerScopedMachine } from '@/sync/store/hooks';
 import { useMachineVitalsOverview } from '@/sync/domains/machines/resources/useMachineVitalsOverview';
 import { useMachineProcesses } from '@/sync/domains/machines/processes/useMachineProcesses';
 import { useMachineStorageSummary } from '@/sync/domains/machines/storage/useMachineStorageSummary';
@@ -78,7 +79,7 @@ export const MachineVitalsOverview = React.memo(function MachineVitalsOverview(
     nativePresenceWord?: string | null;
   }>,
 ) {
-  const { machine } = props;
+  const machine = useServerScopedMachine(props.serverId, props.machine.id) ?? props.machine;
   const language = usePreferredLanguage();
   const daemonState: unknown = machine.daemonState;
   const published = React.useMemo(

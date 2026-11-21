@@ -4,6 +4,7 @@ import type { MachineVitalsSampleV1 } from '@happier-dev/protocol/machines/vital
 import { machineStorageStore, type MachineStorageState } from './machineStorageStore';
 import { selectStorageFailure, selectStorageStatus, selectStorageSummary, useMachineStorageDemand, useMachineStorageSelection, useMachineStorageTarget, type MachineStorageHookInput } from './useMachineStorage';
 import { machineResourceStore } from '../resources/machineResourceStore';
+import { useMachineDaemonRevisionObserver } from '../useMachineDaemonReadTarget';
 import { useMachineResourceLiveDemand } from '../resources/useMachineResourceLiveDemand';
 
 export type MachineStorageSummaryHookResult = MachineStorageState & Readonly<{
@@ -33,9 +34,12 @@ function joinCapacity(summary: HappierStorageSummaryV1 | null, capacity: VitalsV
 }
 
 export function useMachineStorageSummary(input: MachineStorageHookInput): MachineStorageSummaryHookResult {
-    const { key, enabled, offline, daemonStateVersion } = useMachineStorageTarget(input);
+    const { key, enabled, offline } = useMachineStorageTarget(input);
     useMachineStorageDemand(key, enabled);
-    useMachineResourceLiveDemand([{ ...key, daemonStateVersion }], { detail: 'summary', enabled });
+    useMachineDaemonRevisionObserver(key, React.useCallback(version => {
+        machineResourceStore.daemonStateChanged(key, version);
+    }, [key]));
+    useMachineResourceLiveDemand([key], { detail: 'summary', enabled });
     const storedStatus = useMachineStorageSelection(key, selectStorageStatus);
     const storedSummary = useMachineStorageSelection(key, selectStorageSummary);
     const storedFailure = useMachineStorageSelection(key, selectStorageFailure);
