@@ -2,7 +2,6 @@ import * as React from 'react';
 import { followSignal, useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 import { useAuth } from '@/auth/context/AuthContext';
-import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import {
@@ -45,6 +44,7 @@ import {
     type QuotaSnapshotLoadContext,
 } from './connectedServiceQuotaSnapshotStore';
 import {
+    buildQualifiedQuotaCredentialScope,
     buildQualifiedQuotaSnapshotScopeKey,
     getQualifiedQuotaSnapshotEntry,
     loadQualifiedQuotaSnapshotOnce,
@@ -173,11 +173,7 @@ export function useConnectedServiceQuotaSnapshots(
     const profile = useProfile((profile) => ({ connectedAccountsV4: profile.connectedAccountsV4 }), ['connectedAccountsV4']);
     const credentialScope =
         quotasEnabled && credentials && activeServer.serverId
-            ? [
-                activeServer.serverId,
-                String(activeServer.generation),
-                resolveAuthCredentialsScopeKey(credentials),
-            ].join('\u0000')
+            ? buildQualifiedQuotaCredentialScope(credentials, activeServer)
             : '';
     const fetchPolicy = options.fetchPolicy ?? 'poll';
     const resolveAccountMode = useCredentialScopedAccountModeResolver({ credentials, credentialScope });

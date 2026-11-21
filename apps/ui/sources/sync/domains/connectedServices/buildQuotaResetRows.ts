@@ -1,13 +1,11 @@
 import type {
-    ConnectedServiceQuotaRecoveryCreditV1,
     ConnectedServiceQuotaRecoveryCreditDetailsV1,
     ConnectedServiceQuotaRecoveryCreditDetailsByIdV1,
     ConnectedServiceQuotaRecoveryCreditsV1,
 } from '@happier-dev/protocol/connect/connected-service-schemas';
 
-import { isConnectedServiceQuotaRecoveryCreditAvailable } from '@happier-dev/protocol/connect/connected-service-schemas';
-
 import { formatResetCountdownDays, type ResetCountdownDaysFormatter } from './formatResetCountdown';
+import { readQuotaRecoveryCreditId, readQuotaResetOffers } from './connectedServiceQuotaResetOffers';
 
 export type QuotaResetRow = Readonly<{
     /** Stable React key — the credit `id` when present, else the row index. */
@@ -24,11 +22,6 @@ export type QuotaResetRow = Readonly<{
     description?: string;
     details?: ConnectedServiceQuotaRecoveryCreditDetailsV1;
 }>;
-
-function readCreditId(credit: ConnectedServiceQuotaRecoveryCreditV1): string | null {
-    const raw = typeof credit.id === 'string' ? credit.id.trim() : '';
-    return raw.length > 0 ? raw : null;
-}
 
 function normalizeFutureExpiry(expiresAtMs: number | null | undefined, nowMs: number): number | null {
     if (typeof expiresAtMs !== 'number' || !Number.isFinite(expiresAtMs)) return null;
@@ -55,11 +48,12 @@ export function buildQuotaResetRows(
 ): QuotaResetRow[] {
     if (!recoveryCredits) return [];
 
-    const detailedCredits = Array.isArray(recoveryCredits.credits) ? recoveryCredits.credits : [];
+    const detailedCredits = recoveryCredits.credits;
+    const offers = readQuotaResetOffers(recoveryCredits, nowMs);
     const aggregateExpiresAtMs = normalizeFutureExpiry(recoveryCredits.nextExpiresAtMs, nowMs);
 
     if (detailedCredits.length === 0) {
-        if (recoveryCredits.availableCount <= 0) return [];
+        if (offers.aggregateCount === 0) return [];
         return [{
             key: 'aggregate',
             consumableCreditId: null,
@@ -70,15 +64,7 @@ export function buildQuotaResetRows(
         }];
     }
 
-    const individuallyConsumableCredits = detailedCredits
-        .filter((credit) => isConnectedServiceQuotaRecoveryCreditAvailable(credit, nowMs))
-        .map((credit) => ({ credit, consumableCreditId: readCreditId(credit) }))
-        .filter((entry): entry is Readonly<{
-            credit: ConnectedServiceQuotaRecoveryCreditV1;
-            consumableCreditId: string;
-        }> => entry.consumableCreditId !== null)
-        .slice(0, recoveryCredits.availableCount);
-    const rows: QuotaResetRow[] = individuallyConsumableCredits.map(({ credit, consumableCreditId }) => {
+    const rows: QuotaResetRow[] = offers.identified.map(({ credit, id: consumableCreditId }) => {
         const expiresAtMs = normalizeFutureExpiry(credit.expiresAtMs, nowMs);
         return {
             key: consumableCreditId,
@@ -92,8 +78,7 @@ export function buildQuotaResetRows(
             ...(recoveryCreditDetails?.[consumableCreditId] ? { details: recoveryCreditDetails[consumableCreditId] } : {}),
         };
     });
-    const aggregateRemainder = Math.max(0, recoveryCredits.availableCount - individuallyConsumableCredits.length);
-    if (aggregateRemainder > 0) {
+    if (offers.aggregateCount > 0) {
         rows.push({
             key: 'aggregate-remainder',
             consumableCreditId: null,
@@ -105,7 +90,7 @@ export function buildQuotaResetRows(
     }
     for (const credit of detailedCredits) {
         if (credit.status !== 'unknown') continue;
-        const id = readCreditId(credit);
+        const id = readQuotaRecoveryCreditId(credit);
         if (!id) continue;
         if (typeof credit.expiresAtMs === 'number' && credit.expiresAtMs <= nowMs) continue;
         const expiresAtMs = normalizeFutureExpiry(credit.expiresAtMs, nowMs);

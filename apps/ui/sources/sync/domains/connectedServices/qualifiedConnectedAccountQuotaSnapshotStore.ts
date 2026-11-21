@@ -21,6 +21,9 @@ import { observeUsageProjection } from '@/sync/api/account/usageQueryInvalidatio
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { canRetainUsageReadFailure } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { readQuotaProfileChanges } from './quotaProfileChanges';
+import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
+import { presentConnectedServiceQuotaFreshness } from './presentConnectedServiceQuotaFreshness';
+import { quotaResetOfferIsDefinitivelyAbsent } from './connectedServiceQuotaResetOffers';
 
 import {
     readQualifiedConnectedAccountQuota,
@@ -131,6 +134,13 @@ function ensureProfileChanges(): void {
             entry.observation?.invalidate();
         }
     }, { profile: true });
+}
+
+export function buildQualifiedQuotaCredentialScope(
+    credentials: QualifiedQuotaSnapshotStoreContext['credentials'],
+    serverBasis: QualifiedQuotaSnapshotStoreContext['serverBasis'],
+): string {
+    return [serverBasis.serverId, String(serverBasis.generation), resolveAuthCredentialsScopeKey(credentials)].join('\u0000');
 }
 
 export function buildQualifiedQuotaSnapshotScopeKey(
@@ -378,6 +388,19 @@ export function getQualifiedQuotaSnapshotEntry(
 ): QualifiedQuotaSnapshotStoreEntry {
     if (!key) return EMPTY_VIEW;
     return entries.get(key)?.view ?? EMPTY_VIEW;
+}
+
+/** Consume the exact current qualified observation without acquiring quota or retaining a view. */
+export function readUnavailableQualifiedQuotaResetObservation(
+    key: string,
+    now: number,
+    providerCreditId?: string,
+): number | null {
+    const { snapshot, refreshing, error } = getQualifiedQuotaSnapshotEntry(key);
+    if (!snapshot?.recoveryCredits || refreshing || error) return null;
+    const { fetchedAt, staleSince } = presentConnectedServiceQuotaFreshness(snapshot, now);
+    return fetchedAt !== null && staleSince === null
+        && quotaResetOfferIsDefinitivelyAbsent(snapshot.recoveryCredits, now, providerCreditId) ? fetchedAt : null;
 }
 
 export function subscribeQualifiedQuotaSnapshotEntry(

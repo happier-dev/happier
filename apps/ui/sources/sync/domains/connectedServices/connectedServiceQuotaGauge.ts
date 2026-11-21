@@ -9,7 +9,6 @@ import type {
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readBuiltInLegacyConnectedAccountServiceKeyIngress, readBuiltInLegacyConnectedServiceIdForQualifiedService } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { readConnectedServiceLimitCategoryV1 } from '@happier-dev/protocol/connect/connected-service-limit-category';
-import { isConnectedServiceQuotaRecoveryCreditAvailable } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { resolveConnectedServiceQuotaMeterLabel } from '@happier-dev/protocol/connect/connectedServiceQuotaMeterLabel';
 
 import { getAgentCore, resolveAgentIdFromFlavor } from '@happier-dev/agents';
@@ -23,6 +22,7 @@ import { presentConnectedServiceQuotaReportedAmount, type ConnectedServiceQuotaR
 
 import { resolveQuotaGaugeWindowModes, type ConnectedServiceQuotaGaugeWindowMode } from './quotaGaugeWindows';
 import { projectConnectedServiceQuotaSnapshotForLimitSelection } from './projectConnectedServiceQuotaSnapshotForLimitSelection';
+import { readQuotaResetOffers } from './connectedServiceQuotaResetOffers';
 export type { ConnectedServiceQuotaGaugeWindowMode } from './quotaGaugeWindows';
 
 export type ConnectedServiceQuotaGaugeTone = 'neutral' | 'warning' | 'critical';
@@ -262,27 +262,15 @@ export function summarizeConnectedServiceQuotaRecoveryCredits(
 ): ConnectedServiceQuotaRecoveryCreditSummary | null {
     if (!recoveryCredits) return null;
 
-    const credits = recoveryCredits.credits ?? [];
-    if (credits.length > 0) {
-        const availableCount = recoveryCredits.availableCount;
-        let nextExpiresAtMs: number | null = null;
-        let providerCreditId: string | null = null;
-        for (const credit of credits) {
-            if (!isConnectedServiceQuotaRecoveryCreditAvailable(credit, nowMs)) continue;
-            const expiresAtMs = credit.expiresAtMs;
-            if (providerCreditId === null && credit.id) {
-                providerCreditId = credit.id;
-            }
-            if (typeof expiresAtMs === 'number' && Number.isFinite(expiresAtMs)) {
-                nextExpiresAtMs = nextExpiresAtMs === null ? expiresAtMs : Math.min(nextExpiresAtMs, expiresAtMs);
-            }
+    const offers = readQuotaResetOffers(recoveryCredits, nowMs);
+    if (offers.availableCount === 0) return null;
+    let nextExpiresAtMs: number | null = null;
+    for (const { expiresAtMs } of offers.eligible) {
+        if (typeof expiresAtMs === 'number' && Number.isFinite(expiresAtMs)) {
+            nextExpiresAtMs = nextExpiresAtMs === null ? expiresAtMs : Math.min(nextExpiresAtMs, expiresAtMs);
         }
-        return availableCount > 0 ? { availableCount, nextExpiresAtMs, providerCreditId } : null;
     }
-
-    return recoveryCredits.availableCount > 0
-        ? { availableCount: recoveryCredits.availableCount, nextExpiresAtMs: null, providerCreditId: null }
-        : null;
+    return { availableCount: offers.availableCount, nextExpiresAtMs, providerCreditId: offers.identified[0]?.id ?? null };
 }
 
 /**

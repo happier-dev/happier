@@ -14,6 +14,7 @@ import { listProviderGatewayContributionsV1 } from '@happier-dev/protocol/provid
 import { readAccountProviderDeclarations } from '@/providers/catalog/accountProviderDeclarations';
 import { canExecuteConnectedServiceAction, getConnectedServiceRegistrySnapshot } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { projectConnectedAccountDescriptorV1 } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
 import { createUiConnectedAccountContent } from '@/sync/ops/connectedAccounts/connectedAccountContent';
 import { randomUUID } from '@/platform/randomUUID';
@@ -295,5 +296,27 @@ export function createUiConnectedServiceAction(account: LazyActionAccountContext
         }
     };
     const execute: NonNullable<ActionExecutorDeps['connectedServiceAction']> = args => invoke(args, false);
-    return Object.assign(execute, { prepareInput: (args: Parameters<NonNullable<NonNullable<ActionExecutorDeps['connectedServiceAction']>['prepareInput']>>[0]) => invoke(args, true) });
+    type ConnectedServiceAction = NonNullable<ActionExecutorDeps['connectedServiceAction']>;
+    const readUnavailableQuotaResetObservation: NonNullable<ConnectedServiceAction['readUnavailableQuotaResetObservation']> = async input => {
+        const qualifiedKey = readBuiltInLegacyConnectedAccountServiceKeyIngress(input.serviceId);
+        const service = qualifiedKey ? parseQualifiedPluginContributionKey(qualifiedKey) : null;
+        if (!service) return null;
+        const [{ getActiveServerSnapshot, areServerProfileIdentifiersEquivalent }, quota] = await Promise.all([
+            import('@/sync/domains/server/serverRuntime'),
+            import('@/sync/domains/connectedServices/qualifiedConnectedAccountQuotaSnapshotStore'),
+        ]);
+        account.assertCurrent();
+        const serverBasis = getActiveServerSnapshot();
+        if (!areServerProfileIdentifiersEquivalent(serverBasis.serverId, account.serverId)) return null;
+        const key = quota.buildQualifiedQuotaSnapshotScopeKey({
+            credentialScope: quota.buildQualifiedQuotaCredentialScope(account.credentials, serverBasis),
+            ref: { service, accountId: input.profileId },
+            serverBasis,
+        });
+        return quota.readUnavailableQualifiedQuotaResetObservation(key, Date.now(), input.providerCreditId);
+    };
+    return Object.assign(execute, {
+        prepareInput: (args: Parameters<NonNullable<ConnectedServiceAction['prepareInput']>>[0]) => invoke(args, true),
+        readUnavailableQuotaResetObservation,
+    });
 }

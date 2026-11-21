@@ -159,7 +159,7 @@ import type { WorkspaceActionId } from '../workspaceActionFamily.js';
 import type { OpenProjectInputV1, OpenProjectResultV1 } from '../../projects/openProjectV1.js';
 import type { SessionTerminalActionId } from '../sessionTerminalActionFamily.js';
 import type { SessionAgentTransitionRequestV1 } from '../../sessions/agentTransition.js';
-import type { ConnectedServiceConfigurationActionIdV1 } from '../../connect/configurationActionsV1.js';
+import type { ConnectedServiceConfigurationActionIdV1, CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1 } from '../../connect/configurationActionsV1.js';
 import type { SettingsDeclarationActionIdV1 } from '../settingsDeclarationActionFamily.js';
 import type { ActionPolicyActionId } from '../actionPolicyActionFamily.js';
 import type { SettingsOwnerActionExecuteV1 } from '../settings/settingsOwnerActions.js';
@@ -3430,6 +3430,10 @@ export type ActionExecutorDeps = Readonly<{
     context: ActionExecutorContext;
     signal?: AbortSignal;
   }>) => Promise<unknown>) & Readonly<{
+    /** Current qualified inventory only. Missing or unknown inventory leaves ordinary consent in place. */
+    readUnavailableQuotaResetObservation?: (
+      input: ReturnType<typeof CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1['connectedServices.quota.reset']['parse']>,
+    ) => Promise<number | null>;
     /** Read-only presented-revision binding before the canonical approval owner. */
     prepareInput?: (args: Readonly<{
       actionId: 'connectedServices.accounts.revoke';

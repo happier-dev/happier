@@ -2,18 +2,15 @@ import * as React from 'react';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 import { useAuth } from '@/auth/context/AuthContext';
-import {
-    resolveAuthCredentialsScopeKey,
-} from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
-import {
-    type ProviderAccountUsageRecordId} from '@happier-dev/protocol/connect/account-usage-primitives';
+import type { ProviderAccountUsageRecordId } from '@happier-dev/protocol/connect/account-usage-primitives';
 import {
     type QualifiedConnectedAccountQuotaSnapshotV4} from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import {
     type QualifiedConnectedAccountRef,
 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import {
+    buildQualifiedQuotaCredentialScope,
     buildQualifiedQuotaSnapshotScopeKey,
     getQualifiedQuotaSnapshotEntry,
     loadQualifiedQuotaSnapshotOnce,
@@ -55,17 +52,9 @@ export function useQualifiedConnectedAccountQuota(
         },
         accountId,
     }), [accountId, serviceLocalId, servicePluginId]);
-    // Composed exactly as `useConnectedServiceQuotaSnapshots` composes it: the
-    // list and detail readers must land on ONE store entry per account, so a
-    // divergent scope here would mean two observers, two network reads, and a
-    // refresh in one that never invalidates the other.
     const credentialScope =
         credentials && activeServer.serverId
-            ? [
-                activeServer.serverId,
-                String(activeServer.generation),
-                resolveAuthCredentialsScopeKey(credentials),
-            ].join('\u0000')
+            ? buildQualifiedQuotaCredentialScope(credentials, activeServer)
             : '';
     const context =
         React.useMemo<QualifiedQuotaSnapshotStoreContext | null>(() => {

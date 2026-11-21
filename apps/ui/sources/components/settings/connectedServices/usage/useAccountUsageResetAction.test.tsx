@@ -30,6 +30,8 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { serverScopedRpcSocketPool } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool';
 import { resetScopedMachineTransportCacheForTests } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool';
 import { readFreshRecoveryCreditObservationTime } from '@/sync/domains/connectedServices/connectedServiceQuotaRecoveryCreditReceiptPresentation';
+import { useQualifiedConnectedAccountQuota } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountQuota';
+import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { AccountUsageResetsLine } from './AccountUsageFacts';
 import { useAccountUsageResetAction } from './useAccountUsageResetAction';
 
@@ -49,7 +51,7 @@ vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOrigina
 afterEach(() => { standardCleanup(); vi.restoreAllMocks(); });
 
 it.each(['approve', 'reject', 'disabled', 'stale', 'machine-rpc-failed', 'lost-machine-ack', 'daemon-control-timeout', 'available-after-check',
-    'unconfirmed-provider-receipt', 'consumed-without-projection', 'confirmed-consume', 'cancel-wait', 'detail-machine-withdrawn'] as const)('settles the native reset through the shared Action (%s)', async decision => {
+    'unconfirmed-provider-receipt', 'consumed-without-projection', 'confirmed-consume', 'cancel-wait', 'detail-machine-withdrawn', 'inventory-admission'] as const)('settles the native reset through the shared Action (%s)', async decision => {
     const bridge = await loadSyncSingletonForTests();
     const actionsSettingsV1 = ActionsSettingsV1Schema.parse({ v: 1, actions: {
         'connectedServices.quota.reset': decision === 'disabled' ? { disabledSurfaces: ['ui'] } : { approvalRequiredSurfaces: ['ui'] },
@@ -166,6 +168,78 @@ it.each(['approve', 'reject', 'disabled', 'stale', 'machine-rpc-failed', 'lost-m
     // Own UI Ask settles at the native consent boundary, without an Inbox Artifact.
     vi.mocked(Modal.confirm).mockImplementation(() => new Promise(resolve => { answerConsent = resolve; }));
     try {
+        if (decision === 'inventory-admission') {
+            const executor = createDefaultActionExecutor();
+            const reset = () => executor.execute('connectedServices.quota.reset', {
+                machineId: machine.id, serviceId: 'openai-codex', profileId: ref.accountId, providerCreditId: 'credit-1',
+            }, { surface: 'ui', authority: 'present_user', serverId: active.serverId });
+            const quotaPath = '/v4/connect/qualified/quotas';
+            const emptyAt = Date.now() - 100;
+            const availableAt = emptyAt + 1;
+            function publishQuota(fetchedAt: number, recoveryCredits: ConnectedServiceQuotaRecoveryCreditsV1) {
+                const staleAfterMs = 60_000;
+                home.answer(serverId, quotaPath, { body: QualifiedConnectedAccountQuotaResponseV4Schema.parse({
+                    ref,
+                    sourceResolution: {
+                        source: { ref, bindingKind: 'account' },
+                        recordId: buildProviderAccountUsageRecordId({ providerId: 'openai-codex', accountSubjectId: 'provider-work', subjectKind: 'account', quotaScope: 'account' }),
+                        providerAccountId: 'provider-work', fetchedAt, staleAfterMs,
+                    },
+                    content: { t: 'plain', v: {
+                        v: 1, ref, activeAccountId: 'provider-work', fetchedAt, staleAfterMs,
+                        planLabel: null, accountLabel: null, meters: [], recoveryCredits,
+                    } },
+                    metadata: { fetchedAt, staleAfterMs, status: 'ok' },
+                }) });
+            }
+            vi.mocked(Modal.confirm).mockResolvedValue(false);
+            // No owner observation exists yet. The existing consent can still be rejected.
+            await expect(reset()).resolves.toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+            expect(Modal.confirm).toHaveBeenCalledOnce();
+            vi.mocked(Modal.confirm).mockClear();
+            publishQuota(emptyAt, { availableCount: 0, credits: [] });
+            function QuotaSurface() {
+                const quota = useQualifiedConnectedAccountQuota(ref);
+                return <AccountUsageResetsLine recoveryCredits={quota.snapshot?.recoveryCredits}
+                    legacyServiceId="openai-codex" accountId={ref.accountId} snapshotFetchedAtMs={quota.snapshot?.fetchedAt ?? null}
+                    now={Date.now()} onApplied={() => {}} testID="inventory-credit" />;
+            }
+            const quotaHook = await renderHook(() => useQualifiedConnectedAccountQuota(ref), {
+                wrapper: function QuotaAccount({ children }: React.PropsWithChildren) {
+                    return <InjectedAuthProvider credentials={account.credentials}>{children}</InjectedAuthProvider>;
+                },
+            });
+            const screen = await renderScreen(<InjectedAuthProvider credentials={account.credentials}><QuotaSurface /></InjectedAuthProvider>);
+            try {
+                await vi.waitFor(() => expect(quotaHook.getCurrent().snapshot?.fetchedAt).toBe(emptyAt));
+                expect(screen.findByTestId('inventory-credit:use')).toBeNull();
+                const reads = home.requestsFor(quotaPath).length;
+                const result = await reset();
+                expect(artifacts.list()).toEqual([]);
+                expect(result).toMatchObject({
+                    ok: false, errorCode: 'connected_service_quota_recovery_credit_not_available', effectAttempted: false,
+                    details: { observedAtMs: emptyAt, recoveryActionId: 'connectedServices.quota.refresh' },
+                });
+                expect(Modal.confirm).not.toHaveBeenCalled();
+                expect(home.requestsFor(quotaPath)).toHaveLength(reads);
+                expect(home.requestsFor(refreshPath)).toEqual([]);
+
+                publishQuota(availableAt, { availableCount: 1, credits: [
+                    { id: 'credit-1', kind: 'usage_limit_reset', status: 'available' },
+                ] });
+                await act(async () => { await quotaHook.getCurrent().refresh(); });
+                expect(quotaHook.getCurrent().snapshot?.fetchedAt).toBe(availableAt);
+                expect(screen.findByTestId('inventory-credit:use')).toBeTruthy();
+                await expect(reset()).resolves.toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+                expect(Modal.confirm).toHaveBeenCalledOnce();
+                expect(artifacts.list()).toEqual([]);
+                expect(spends).toEqual([]);
+            } finally {
+                await screen.unmount();
+                await quotaHook.unmount();
+            }
+            return;
+        }
         if (decision === 'detail-machine-withdrawn') {
             home.answer(serverId, '/v1/features', { body: createRootLayoutFeaturesResponse({ capabilities: {
                 serverIdentity: { serverIdentityId: 'srv_reset_approval' },
@@ -211,7 +285,7 @@ it.each(['approve', 'reject', 'disabled', 'stale', 'machine-rpc-failed', 'lost-m
             }
             return;
         }
-        if (decision === 'daemon-control-timeout' || decision === 'available-after-check' || decision === 'cancel-wait' || decision === 'confirmed-consume') {
+        if (decision === 'reject' || decision === 'daemon-control-timeout' || decision === 'available-after-check' || decision === 'cancel-wait' || decision === 'confirmed-consume') {
             const now = Date.now();
             type QuotaObservation = Readonly<{ fetchedAt: number; recoveryCredits: ConnectedServiceQuotaRecoveryCreditsV1 | null; stale?: boolean }>;
             const available: ConnectedServiceQuotaRecoveryCreditsV1 = {
@@ -240,6 +314,19 @@ it.each(['approve', 'reject', 'disabled', 'stale', 'machine-rpc-failed', 'lost-m
                 await screen.pressByTestIdAsync('recovery-credit:use');
                 await waitForHomeGovernance(() => expect(answerConsent).toBeTypeOf('function'));
                 expect(spends).toHaveLength(0);
+                if (decision === 'reject') {
+                    expect(screen.findByTestId('recovery-credit:waiting')).toBeTruthy();
+                    expect(screen.findByTestId('recovery-credit:use')).toBeNull();
+                    await act(async () => { answerConsent!(false); });
+                    await waitForHomeGovernance(() => expect(screen.findByTestId('recovery-credit:use')).toBeTruthy());
+                    expect(screen.findByTestId('recovery-credit:waiting')).toBeNull();
+                    expect(screen.findByTestId('recovery-credit:unknown')).toBeNull();
+                    expect(artifacts.list()).toEqual([]);
+                    expect(spends).toHaveLength(0);
+                    expect(applied).toBe(false);
+                    expect(Modal.alert).not.toHaveBeenCalled();
+                    return;
+                }
                 if (decision === 'daemon-control-timeout' || decision === 'available-after-check') {
                     // A scheduled publication can land while native consent is still open.
                     // This observation predates the pending provider effect.
@@ -257,7 +344,9 @@ it.each(['approve', 'reject', 'disabled', 'stale', 'machine-rpc-failed', 'lost-m
                 }
                 if (decision === 'cancel-wait') {
                     await waitForHomeGovernance(() => expect(finishIssuedConsume).toBeTypeOf('function'));
+                    expect(screen.findByTestId('recovery-credit:waiting')).toBeTruthy();
                     expect(screen.findByTestId('recovery-credit:cancel-wait')).toBeTruthy();
+                    expect(screen.findByTestId('recovery-credit:use')).toBeNull();
                     await screen.pressByTestIdAsync('recovery-credit:cancel-wait');
                     await waitForHomeGovernance(() => expect(screen.findByTestId('recovery-credit:unknown')).toBeTruthy());
                     expect(screen.findByTestId('recovery-credit:check')).toBeTruthy();

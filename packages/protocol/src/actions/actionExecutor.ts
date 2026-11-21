@@ -493,7 +493,7 @@ import { PluginCollectionSharingClientErrorV1 } from '../plugins/data/collection
 import { isTeamMembershipHistoryActionIdV1, TeamMembershipHistoryInputV1Schema } from '../teams/membershipHistoryPreparationV1.js';
 import { ScopeActionIdSchema } from './scopeActionFamily.js';
 import { DiagnosticsActionIdSchema } from './diagnosticsActionFamily.js';
-import { ConnectedServiceConfigurationActionIdV1Schema } from '../connect/configurationActionsV1.js';
+import { CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1, ConnectedServiceConfigurationActionIdV1Schema } from '../connect/configurationActionsV1.js';
 import { isSettingsDeclarationActionIdV1 } from './settingsDeclarationActionFamily.js';
 import { isActionPolicyActionId } from './actionPolicyActionFamily.js';
 import { isVoiceConversationActionId } from './voiceConversationActionFamily.js';
@@ -2884,6 +2884,19 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       const admissionFailure = await admitInput({ actionId, input: admittedInput, context: ctx });
       if (admissionFailure) return admissionFailure;
       if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+    }
+    if (actionId === 'connectedServices.quota.reset' && !existingAdmission && !options?.approvalReplay
+      && !ctx.bypassApprovals && !ctx.presentUserApproval && deps.connectedServiceAction?.readUnavailableQuotaResetObservation) {
+      const reset = CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1[actionId].safeParse(admittedInput);
+      if (reset.success) {
+        const observedAtMs = await deps.connectedServiceAction.readUnavailableQuotaResetObservation(reset.data);
+        if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+        if (observedAtMs !== null) {
+          const errorCode = 'connected_service_quota_recovery_credit_not_available';
+          return { ok: false, errorCode, error: errorCode, effectAttempted: false,
+            details: { observedAtMs, recoveryActionId: 'connectedServices.quota.refresh' } };
+        }
+      }
     }
     if (actionId === 'connectedServices.accounts.revoke'
       && readRecord(admittedInput).emergencyRevoke !== true
