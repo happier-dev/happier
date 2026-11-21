@@ -93,6 +93,20 @@ describe('SettingsModalFloatingControls', () => {
     expect(findByTestId(tree.root, 'settings-modal-back')).toBeNull();
   });
 
+  it('omits collection Back from the inline Create way in the Machines detail pane', async () => {
+    pathnameState.value = '/settings/machines/add';
+    paramsState.value = { path: 'create' };
+    let tree!: ReactTestRenderer;
+    await act(async () => {
+      tree = create(<SettingsModalFloatingControls collectionRootPathname="/settings/machines" />);
+    });
+    try {
+      expect(findByTestId(tree.root, 'settings-modal-back')).toBeNull();
+    } finally {
+      await act(async () => { tree.unmount(); });
+    }
+  });
+
   it('shows a back button on sub-screens that returns to the parent', async () => {
     pathnameState.value = '/settings/appearance/themes';
     const tree = await renderControls();

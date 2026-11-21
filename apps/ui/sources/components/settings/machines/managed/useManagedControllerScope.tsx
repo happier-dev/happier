@@ -21,6 +21,7 @@ import { storage, useActiveServerAccountScope, useSetting, useMachineListForServ
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { useIsMachineListSettled, useMachineListStatusForServer } from '@/sync/store/hooks';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
@@ -30,6 +31,13 @@ import { readMachineRequestReachabilityObservation } from '@/sync/domains/machin
 import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
 import { useAdmittedManagedMachineAbsentEnrolledIds, useManagedMachineInventory } from './useManagedMachineInventory';
 import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
+
+export type ManagedControllerChoice = Readonly<{ scope: ServerAccountScope; controller: ManagedControllerV1 }>;
+
+export type ManagedControllerDraftSelection = Readonly<{
+  choice: ManagedControllerChoice | undefined;
+  select: (choice: ManagedControllerChoice) => void;
+}>;
 
 export type ManagedControllerScope = Readonly<{
   /** The machine whose installation runs provider calls: the person's choice, else the preselected default. */
@@ -82,6 +90,7 @@ export function useManagedControllerScope(
     serverId: string;
     /** A machine the page already names (a preset's controller, the picker's handoff), used until the person picks. */
     preferred?: ManagedControllerV1;
+    draftSelection?: ManagedControllerDraftSelection;
     /** Exact preset authority fixes the controller without granting a Machine picker. */
     delegatedPreset?: boolean;
     /** Acquisition may prefer this device; recipe authoring does not demand its native task runner. */
@@ -112,9 +121,12 @@ export function useManagedControllerScope(
     ? chosen : undefined;
   const preferredMachineId = input.preferred?.machineId;
   const preferredInstallationId = input.preferred?.installationId;
-  const namedRetained = scopedChoice?.explicit ? scopedChoice.controller
-    : preferredMachineId && preferredInstallationId ? input.preferred : scopedChoice?.controller;
   const { onSelect } = input;
+  const draftChoice = input.draftSelection?.choice;
+  const selectDraftController = input.draftSelection?.select;
+  const namedRetained = draftChoice && areAccountSettingsScopesEqual(draftChoice.scope, observationScope) ? draftChoice.controller
+    : scopedChoice?.explicit ? scopedChoice.controller
+    : preferredMachineId && preferredInstallationId ? input.preferred : scopedChoice?.controller;
 
   // The chooser owns its inventory demand, including an answer that removes its last row.
   // Row-owned demand alone would release that answer as soon as filtering unmounts the rows.
@@ -279,16 +291,21 @@ export function useManagedControllerScope(
             machineId: machine.id,
             installationId: machine.installationId,
           };
-          setChosen({ serverId: input.serverId, accountId, controller: next, explicit: true });
-          if (binding?.isCurrent()) {
-            rememberMachineAdministrationTargetObservation(binding.scope, MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.managedMachines, target);
+          const scope = binding?.isCurrent() ? binding.scope : null;
+          if (selectDraftController && scope) {
+            selectDraftController({ scope, controller: next });
+          } else {
+            setChosen({ serverId: input.serverId, accountId, controller: next, explicit: true });
+          }
+          if (scope) {
+            rememberMachineAdministrationTargetObservation(scope, MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.managedMachines, target);
           }
           onSelect?.(next);
         },
         clearTarget: () => {},
         resolveExecutionTarget,
       };
-    }, [absentMachineIds, binding, controller?.machineId, controller?.installationId, eligible, onSelect, scopedRows, rows, listSettled, activeAccountScope?.serverId, input.serverId, accountId]);
+    }, [absentMachineIds, binding, controller?.machineId, controller?.installationId, eligible, onSelect, scopedRows, rows, listSettled, activeAccountScope?.serverId, input.serverId, accountId, selectDraftController]);
 
   const chip =
     controllerMachines.length > 0 || controller ? (

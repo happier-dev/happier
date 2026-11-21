@@ -700,17 +700,18 @@ describe('mounted managed configurator', () => {
     expect(harness.requests.filter(request => /machines\.provisioners\.(check|options)|machines\.managed\.acquire/.test(request.path))).toHaveLength(0);
   });
 
-  it('keeps offline Pool recovery and gives manual Devcontainer choices a controller recovery', async () => {
+  it.each(['offline-pool', 'unassigned'] as const)('explains the saved Devcontainer preset placement in Use review (%s)', async placement => {
     const { DEVCONTAINER_PLUGIN } = await import('../../../../../../../packages/plugins/devcontainer/src/manifest');
     const { installBundledPluginUiDeclarationsForTests } = await import('@/dev/testkit/mocks/bundledPluginUiAssets');
     const manifest = PluginPortableReleaseManifestV1Schema.parse(DEVCONTAINER_PLUGIN.manifest);
     onTestFinished(installBundledPluginUiDeclarationsForTests([{ pluginId: manifest.id, pluginVersion: manifest.version,
       packageName: '@happier-dev/plugins-devcontainer', displayName: manifest.displayName, hasMachineProvisioners: true,
       entriesById: {}, normalizedManifest: manifest }]));
-    const homeId = 'srv_docker_offline_pool';
-    const serverId = await addPresetHome({ name: 'Compute', serverUrl: 'https://docker-offline-pool.example.test',
+    const homeId = `srv_docker_${placement}`;
+    const serverId = await addPresetHome({ name: 'Compute', serverUrl: `https://docker-${placement}.example.test`,
       serverIdentityId: homeId, accountId: 'owner', currentAccount: true, machinePoolsEnabled: true });
-    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, []);
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, placement === 'unassigned'
+      ? [createMachineFixture({ id: 'reachable', installationId: 'reachable-installation', activeAt: Date.now() })] : []);
     const { readPluginAccountAvailability, replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection } =
       await import('@/sync/domains/plugins/availability/projection');
     onTestFinished(clearPluginAccountAvailabilityProjection);
@@ -726,8 +727,9 @@ describe('mounted managed configurator', () => {
     const choices = { runtime: 'docker', workspaceFolder: '/home/owner/projects/website',
       configuration: { kind: 'image', image: 'ubuntu:24.04' } };
     const poolId = '6be84651-2df7-4125-aac4-0d093217b198';
-    const saved = createPlainManagedMachinePresetFixture({ id: 'docker-offline-pool', homeId, revision: 0,
-      name: 'Docker container', owner: { kind: 'account', accountId: 'owner' }, controllerPoolId: poolId,
+    const saved = createPlainManagedMachinePresetFixture({ id: `docker-${placement}`, homeId, revision: 0,
+      name: 'Docker container', owner: { kind: 'account', accountId: 'owner' },
+      ...(placement === 'offline-pool' ? { controllerPoolId: poolId } : {}),
       launch: { provider: selected.contribution, schemaVersion: selected.descriptor.schemaVersion, name: 'Docker container', choices } });
     harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: saved } });
     harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [saved] } });
@@ -745,9 +747,18 @@ describe('mounted managed configurator', () => {
     } });
     const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
     const { t } = await import('@/text');
+    const onUse = placement === 'unassigned' ? vi.fn() : undefined;
     const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
-      provisioner={buildQualifiedPluginContributionKey(selected.contribution)} presetId={saved.id} />);
+      provisioner={buildQualifiedPluginContributionKey(selected.contribution)} presetId={saved.id} onUse={onUse} />);
     try {
+      if (placement === 'unassigned') {
+        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.use')?.props.disabled).toBe(true));
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('managedMachines.add.chooseController')));
+        expect(screen.getTextContent()).not.toContain(t('managedMachines.controller.requiredUnnamed'));
+        expect(screen.findByTestId('managed-config.error')).toBeNull();
+        expect(harness.requestsFor('/v1/actions/machines.provisioners.check')).toHaveLength(0);
+        return;
+      }
       await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('machinePresets.poolNoMachine')));
       await flushHookEffects();
       expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(true);

@@ -12,6 +12,7 @@ import { MACHINE_RETENTION_CATEGORIES_V1 } from '@happier-dev/protocol/account/s
 import { memoryDocumentHref } from '@/components/memory/memoryDocumentRoutes';
 import { readMachineAddRoutePath } from '@/components/machines/add/machineAddPaths';
 import { hasNewSessionPickerContinuation } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { useNavigationLeavesLargeTitle } from '@/components/ui/layout/navigationTitleChrome';
 
 type Translate = (key: TranslationKeyNoParams) => string;
 
@@ -110,9 +111,12 @@ type SettingsParentRouteParams = Readonly<{
     path?: string | string[];
 }>;
 
+type SettingsParentRoutePresentation = Readonly<{ machineAddPushesWays: boolean }>;
+
 export function resolveSettingsRouteParentHref(
     pathname: string | null | undefined,
     params?: SettingsParentRouteParams,
+    presentation?: SettingsParentRoutePresentation,
 ): string | null {
     if (typeof pathname !== 'string') return null;
     const normalizedPathname = pathname.trim().replace(/\/+$/, '') || '/';
@@ -141,7 +145,8 @@ export function resolveSettingsRouteParentHref(
     }
 
     // A phone pushes the chosen way to add a machine as Add a machine's query state: Back returns to the ways first.
-    if (normalizedPathname === '/settings/machines/add' && readMachineAddRoutePath(params?.path)) return normalizedPathname;
+    if (presentation?.machineAddPushesWays && normalizedPathname === '/settings/machines/add'
+        && readMachineAddRoutePath(params?.path)) return normalizedPathname;
 
     // A phone pushes an open plugin source as the Sources page's query state: Back closes it to the list first.
     if (normalizedPathname === '/settings/plugins/sources' && params?.source !== undefined) return normalizedPathname;
@@ -172,8 +177,9 @@ export function resolveSettingsRouteParentHref(
 export function resolveSettingsRouteParentPathname(
     pathname: string | null | undefined,
     params?: SettingsParentRouteParams,
+    presentation?: SettingsParentRoutePresentation,
 ): string | null {
-    return resolveSettingsRouteParentHref(pathname, params)?.split('?')[0] ?? null;
+    return resolveSettingsRouteParentHref(pathname, params, presentation)?.split('?')[0] ?? null;
 }
 
 /**
@@ -201,9 +207,10 @@ export function shouldShowSettingsParentBackButton(params: Readonly<{
  * a search query, a scroll position); only when it is not there (a deep link) does the parent
  * replace the current screen. `navigate` would stack a second copy of the parent instead.
  */
-export function useSettingsParentBack(tag: string): Readonly<{ parentPathname: string | null; goToParent: () => void }> {
+export function useSettingsParentBack(tag: string, presentation?: SettingsParentRoutePresentation): Readonly<{ parentPathname: string | null; goToParent: () => void }> {
     const pathname = usePathname();
     const router = useRouter();
+    const phoneSettings = useNavigationLeavesLargeTitle();
     const params = useLocalSearchParams<SettingsParentRouteParams & {
         settingsSearch?: string | string[];
         settingsReturn?: string | string[];
@@ -211,7 +218,8 @@ export function useSettingsParentBack(tag: string): Readonly<{ parentPathname: s
     const searchOrigin = params[SETTINGS_SEARCH_RETURN_QUERY_PARAM];
     const returnToOrigin = params[SETTINGS_RETURN_QUERY_PARAM] === '1';
     const pickerContinuation = hasNewSessionPickerContinuation(params);
-    const parentHref = searchOrigin === '1' ? '/settings' : resolveSettingsRouteParentHref(pathname, params);
+    const parentHref = searchOrigin === '1' ? '/settings' : resolveSettingsRouteParentHref(pathname, params,
+        presentation ?? { machineAddPushesWays: phoneSettings });
     const parentPathname = parentHref?.split('?')[0] ?? null;
     const goToParent = React.useCallback(() => {
         if (!parentHref) return;
@@ -242,7 +250,7 @@ function SettingsParentBackButton({
     parentLabel?: Translate;
 }>): React.ReactElement | null {
     const pathname = usePathname();
-    const { parentPathname, goToParent } = useSettingsParentBack('SettingsParentBackButton.back');
+    const { parentPathname, goToParent } = useSettingsParentBack('SettingsParentBackButton.back', { machineAddPushesWays: true });
 
     if (!shouldShowSettingsParentBackButton({ pathname, hideOnTopLevel })) {
         return null;

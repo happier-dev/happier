@@ -27,7 +27,7 @@ import { describeManagedProvisionerFailure, useManagedProvisionerPresentation, u
 import { MachineProvisionerSections, MachineProvisionerSectionsSkeleton } from './MachineProvisionerSections';
 import { ManagedScopeRow } from './ManagedScopeRow';
 import { managedProvisionerStatusHint, type ManagedProvisionerCard } from './managedMachineDisplay';
-import { useManagedControllerScope } from './useManagedControllerScope';
+import { useManagedControllerScope, type ManagedControllerDraftSelection } from './useManagedControllerScope';
 import { buildManagedMachineConfigurationRoute } from './managedMachineConfigurationRoute';
 import { readMachineProvisionerHostAvailability } from '@happier-dev/cli-common/machines/managed/provisioners';
 import { showManagedGetTheAppModal } from './ManagedGetTheAppModal';
@@ -48,6 +48,7 @@ export type MachineProvisionerPickerProps = Readonly<{
     serverId: string; presetOnly?: boolean;
     /** Machine Security configures sandboxes on its named controller. */
     controller?: ManagedControllerV1;
+    draftControllerSelection?: ManagedControllerDraftSelection;
     sessionPlacement?: 'controller-local';
     /** Where "Set up this computer" leads when no machine here can manage yet (the Add form switches its own path). */
     onSetUpThisComputer?: () => void;
@@ -62,10 +63,7 @@ export function MachineProvisionerPicker(props: MachineProvisionerPickerProps) {
     if (!selectedHome) return <View testID="managed-picker"><ItemGroup title={t('managedMachines.receipt.joins')}>
         {listServerProfiles().map(home => <Item key={home.id} testID={`managed-picker.home:${home.id}`} title={resolveHomeDisplayLabel(home, home.id)} onPress={() => setChosenHome(home.id)} />)}
     </ItemGroup></View>;
-    const shared = { serverId: selectedHome, presetOnly: props.presetOnly, controller: props.controller,
-        sessionPlacement: props.sessionPlacement, onSelectProvisioner: props.onSelectProvisioner,
-        onSetUpThisComputer: props.onSetUpThisComputer };
-    return <MachineProvisionerCatalog key={selectedHome} {...shared} />;
+    return <MachineProvisionerCatalog key={selectedHome} {...props} serverId={selectedHome} />;
 }
 
 /**
@@ -80,6 +78,7 @@ export function useMachineProvisionerCatalog(props: MachineProvisionerPickerProp
     // an Account role on it when the browser cannot run that role.
     const scope = useManagedControllerScope({ serverId: props.serverId, preferred: props.controller,
         delegatedPreset: props.controller !== undefined, observeThisComputer: !props.presetOnly && !props.controller,
+        draftSelection: props.draftControllerSelection,
         testIDPrefix: 'managed-picker.controller' });
     const controller = props.presetOnly ? undefined : scope.controller;
     // The chosen machine's pushed presence: while it is offline, what it runs is said offline, never "Ready" from its last check.

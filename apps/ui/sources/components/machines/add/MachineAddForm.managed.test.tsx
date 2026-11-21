@@ -1,11 +1,14 @@
 import * as React from 'react';
+import { Dimensions } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { createNavigationPropMock } from '@/dev/testkit/mocks/reactNavigation';
+import type { MachineAdministrationTargetSelectionV1 } from '@/sync/domains/machines/administration/useTargetSelection';
 import { getTempData, storeTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
 
 const routeBoundary = vi.hoisted(() => ({ params: {} as Record<string, string>, focused: true, dispatch: vi.fn(), push: vi.fn(), replace: vi.fn() }));
@@ -64,6 +67,67 @@ describe('Add machine Connect and Create entry', () => {
             expect(readMachineAddFlowDraft()).toMatchObject({ serverId: connected, sshDraft: { host: 'keep-this-host.example' } });
             expect(harness.requests.some(request => request.path.endsWith('/acquire'))).toBe(false);
         } finally { await screen.unmount(); }
+    });
+    it('retains the explicitly chosen controller as the open Create way crosses to phone width', async () => {
+        const serverId = await harness.addHome({ name: 'Build', serverUrl: 'https://resize-add.example',
+            serverIdentityId: 'srv_resize_add', accountId: 'owner', currentAccount: true });
+        harness.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: { managedMachineCreationEnabled: true } }, version: 1 } });
+        const machines = ['first', 'other'].map(id => createMachineFixture({
+            id, installationId: `${id}-installation`, activeAt: Date.now(),
+            operationProtocolCapabilitiesRevision: 1,
+            operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } },
+        }));
+        await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, machines);
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1, setMachineAdministrationTargetPreference } =
+            await import('@/sync/domains/machines/administration/selectionPreferences');
+        storage.setState(state => ({ settingsScope: { serverId: 'srv_resize_add', accountId: 'owner' },
+            settings: { ...state.settings, machineAdministrationTargetsLocalV1: setMachineAdministrationTargetPreference(
+                state.settings.machineAdministrationTargetsLocalV1, MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.managedMachines,
+                { serverIdentityId: 'srv_resize_add', machineId: 'first' }) } }));
+        routeBoundary.params = { path: 'create', serverId };
+        const { MachineAddDraftScreen } = await import('./MachineAddDraftScreen');
+        const { MachineAdministrationTargetSelector } = await import('@/components/settings/machines/MachineAdministrationTargetSelector');
+        const viewport = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 1440, height: 844, scale: 1, fontScale: 1 });
+        const listeners = new Set<Parameters<typeof Dimensions.addEventListener>[1]>();
+        const addPlatformListener = Dimensions.addEventListener.bind(Dimensions);
+        const events = vi.spyOn(Dimensions, 'addEventListener').mockImplementation((type, listener) => {
+            const subscription = addPlatformListener(type, listener);
+            const remove = subscription.remove.bind(subscription);
+            listeners.add(listener);
+            return Object.assign(subscription, { remove: () => {
+                listeners.delete(listener);
+                remove();
+            } });
+        });
+        let screen = await renderScreen(<MachineAddDraftScreen />);
+        try {
+            const selection = (): MachineAdministrationTargetSelectionV1 | undefined => screen.tree.findAllByType(MachineAdministrationTargetSelector)
+                .find(node => node.props.testIDPrefix === 'managed-picker.controller')?.props.selection;
+            await waitForHomeGovernance(() => expect(selection()?.selectedTarget?.machineId).toBe('first'));
+            const other = selection()?.pickerRows.find(row => row.candidate.target.machineId === 'other')?.candidate.target;
+            expect(other).toBeDefined();
+            await act(async () => selection()?.selectTarget(other!));
+            expect(selection()?.selectedTarget?.machineId).toBe('other');
+            expect(screen.findHostByTestId('settings.machines.draft.form.path:create')).not.toBeNull();
+
+            const phone = { width: 390, height: 844, scale: 1, fontScale: 1 };
+            viewport.mockReturnValue(phone);
+            await act(async () => {
+                for (const listener of [...listeners]) listener({ window: phone, screen: phone });
+            });
+            expect(screen.findHostByTestId('settings.machines.draft.form.path:create')).toBeNull();
+            await waitForHomeGovernance(() => expect(selection()?.selectedTarget?.machineId).toBe('other'));
+
+            // Settings can replace its navigator when the presentation changes.
+            await screen.unmount();
+            screen = await renderScreen(<MachineAddDraftScreen />);
+            await waitForHomeGovernance(() => expect(selection()?.selectedTarget?.machineId).toBe('other'));
+        } finally {
+            await screen.unmount();
+            events.mockRestore();
+            viewport.mockRestore();
+        }
     });
     it.each([true, false])('returns an arrived machine to its original draft once and leaves a later Add open (focused initially: %s)', async focused => {
         const target = await harness.addHome({ name: 'Build', serverUrl: 'https://composer-return.example', serverIdentityId: 'srv_composer_return', accountId: 'owner' });

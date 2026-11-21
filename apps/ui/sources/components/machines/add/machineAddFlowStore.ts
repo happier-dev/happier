@@ -7,6 +7,7 @@ import type { MachineAddPathId } from './machineAddPaths';
 import type { MachineAddCommandOs } from './machineAddCommand';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import type { ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedControllerChoice } from '@/components/settings/machines/managed/useManagedControllerScope';
 
 export type MachineAddTaskHandle = Readonly<{
     runner: SystemTaskRunner;
@@ -31,6 +32,7 @@ export type MachineAddFlowDraft = Readonly<{
     path: MachineAddPathId | null;
     /** Create one is open instead of a connect path (lab `m-add`): nothing is waiting to connect. */
     creating: boolean;
+    createController?: ManagedControllerChoice;
     sshDraft: MachineAddSshDraft;
     os: MachineAddCommandOs;
     thisComputerTask: MachineAddTaskHandle | null;

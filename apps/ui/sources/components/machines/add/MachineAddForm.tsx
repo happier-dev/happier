@@ -44,6 +44,7 @@ import { machineCollectionHref } from '@/components/settings/machines/collection
 import { useMachine } from '@/sync/domains/state/storage';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { MachineProvisionerPicker, type ManagedProvisionerSelection } from '@/components/settings/machines/managed/MachineProvisionerPicker';
+import type { ManagedControllerChoice } from '@/components/settings/machines/managed/useManagedControllerScope';
 import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
@@ -66,6 +67,15 @@ export function useMachineAddPushesWays(): boolean {
 }
 
 type Flow = ReturnType<typeof useMachineAddFlow>;
+
+function selectMachineAddController(choice: ManagedControllerChoice): void {
+    updateMachineAddFlowDraft(draft => ({ ...draft, createController: choice }));
+}
+
+function MachineAddCreate(props: React.ComponentProps<typeof MachineProvisionerPicker>) {
+    const choice = useMachineAddFlowDraftSelector(draft => draft.createController);
+    return <MachineProvisionerPicker {...props} draftControllerSelection={{ choice, select: selectMachineAddController }} />;
+}
 
 const PATH_ICON: Readonly<Record<MachineAddPathId, IconName>> = {
     thisComputer: 'laptop',
@@ -178,7 +188,7 @@ export function MachineAddFormWithFlow(props: MachineAddFormProps & Readonly<{ f
     // The bar names ways in only (lab af-add): which computer runs a computer-created VM is the picker's
     // to say, on that section, and Account-created machines name none.
     const pane = showCreate || active === null
-        ? <MachineProvisionerPicker serverId={props.creationServerId ?? flow.serverId} onSetUpThisComputer={setUpThisComputer} onSelectProvisioner={props.onSelectProvisioner} />
+        ? <MachineAddCreate serverId={props.creationServerId ?? flow.serverId} onSetUpThisComputer={setUpThisComputer} onSelectProvisioner={props.onSelectProvisioner} />
         : <MachineAddPane flow={flow} pathId={active} onPage={props.layout === 'page'} testID={`${props.testID}.pane`} onStartSession={props.onStartSession} />;
     const poolFoot = props.onNewPool ? (
         <Text style={styles.foot}>
@@ -207,7 +217,7 @@ export function MachineAddFormWithFlow(props: MachineAddFormProps & Readonly<{ f
     if (pushes) {
         const opened = props.openedWay === 'create' ? (offerCreate ? 'create' : null)
             : props.openedWay && paths.some((path) => path.id === props.openedWay) ? props.openedWay : null;
-        if (opened === 'create') return <View testID={props.testID}><MachineProvisionerPicker serverId={props.creationServerId ?? flow.serverId} onSetUpThisComputer={setUpThisComputer} onSelectProvisioner={props.onSelectProvisioner} /></View>;
+        if (opened === 'create') return <View testID={props.testID}><MachineAddCreate serverId={props.creationServerId ?? flow.serverId} onSetUpThisComputer={setUpThisComputer} onSelectProvisioner={props.onSelectProvisioner} /></View>;
         if (opened) {
             return (
                 <View testID={props.testID}>

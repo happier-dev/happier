@@ -15,6 +15,7 @@ import {
 const pathnameState = vi.hoisted(() => ({ value: '/settings' }));
 const paramsState = vi.hoisted(() => ({
     category: undefined as string | undefined,
+    path: undefined as string | undefined,
     settingsReturn: undefined as string | undefined,
     draftId: undefined as string | undefined,
 }));
@@ -36,6 +37,7 @@ const identity = (key: string): string => key;
 afterEach(() => {
     pathnameState.value = '/settings';
     paramsState.category = undefined;
+    paramsState.path = undefined;
     paramsState.settingsReturn = undefined;
     paramsState.draftId = undefined;
     historyState.canGoBack = true;
@@ -110,6 +112,22 @@ describe('getSettingsStackScreenDefinitions', () => {
 });
 
 describe('settings header Back', () => {
+    it('returns from a phone Create page to the Add ways', async () => {
+        pathnameState.value = '/settings/machines/add';
+        paramsState.path = 'create';
+        const headerLeft = getSettingsStackScreenDefinitions(identity, { navigator: 'machines' })
+            .find((candidate) => candidate.name === 'add')?.options.headerLeft;
+        let tree!: ReactTestRenderer;
+        await act(async () => { tree = create(React.createElement(headerLeft as React.ElementType, { tintColor: '#111111' })); });
+        try {
+            const back = tree.root.findAll((node) => node.props?.accessibilityLabel === 'common.back' && typeof node.props?.onPress === 'function')[0];
+            await act(async () => { back.props.onPress(); });
+            expect(dismissToSpy).toHaveBeenCalledWith('/settings/machines/add');
+        } finally {
+            await act(async () => { tree.unmount(); });
+        }
+    });
+
     it('returns an Add subflow to its invoking composer through history', async () => {
         pathnameState.value = '/settings/machines/add';
         paramsState.draftId = 'original-composer';

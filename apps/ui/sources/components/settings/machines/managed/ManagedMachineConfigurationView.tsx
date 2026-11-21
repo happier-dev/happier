@@ -303,9 +303,13 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             acquireExecutionTarget: declaredAcquireTarget, controller: controllerCandidate }) : null;
     const effectiveAcquireTarget = creationPreset || declaredAcquireTarget === 'daemon' ? declaredAcquireTarget : hostAvailability?.executionTarget;
     if (effectiveAcquireTarget && effectiveAcquireTarget !== acquireTarget) setAcquireTarget(effectiveAcquireTarget);
-    // Host discovery follows the catalog's Account binding. Do not create a controller-bound draft until it settles.
-    const accountHostPending = !props.presetOnly && declaredAcquireTarget === 'account' && accountHost === null;
-    const accountHostUnreadable = !props.presetOnly && declaredAcquireTarget === 'account' && accountHost === 'unavailable';
+    // An unassigned preset needs the host decision before asking a provider for live options.
+    const needsAccountHost = !props.presetOnly && (declaredAcquireTarget === 'account'
+        || !!creationPreset && !pooledDraft && controllerCandidate === undefined);
+    const accountHostPending = needsAccountHost && accountHost === null;
+    const accountHostUnreadable = needsAccountHost && accountHost === 'unavailable';
+    const requiresControllerSelection = hostAvailability?.requiresController === true;
+    const unassignedPresetNeedsController = !!creationPreset && requiresControllerSelection;
     const needsApp = hostAvailability?.available === false && !hostAvailability.requiresController;
     const pageChip = accountAcquire || pooledDraft || props.presetOnly ? null : scope.chip;
     // A retained catalog remains readable while the selected controller answers, but cannot admit credential-bearing work.
@@ -587,7 +591,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         optionsAbort.current?.abort();
         const binding = catalog.binding;
         if (props.presetOnly || delegatedPreset || poolUnavailableAtReview || !catalogCurrent || !presetQuery.sameScope || !binding || !catalog.homeId || !catalog.client) return;
-        if (accountHostPending || accountHostUnreadable || needsApp) return;
+        if (accountHostPending || accountHostUnreadable || needsApp || unassignedPresetNeedsController) return;
         if (!catalogProvisioner || !catalogPlacementAvailable || !credentialsReady) {
             setDraft(current => current && current.optionStatus !== 'unavailable'
                 ? { ...current, optionStatus: 'unavailable', check: undefined } : current);
@@ -617,7 +621,8 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
                 result.failure ? { binding, controller: input.controller, occurrenceId: catalogProvisioner.occurrenceId } : undefined);
         });
     }, [props.presetOnly, catalogCurrent, presetQuery.sameScope, catalog.binding, catalog.homeId, catalog.client, catalogProvisioner, catalogController, catalogPlacementAvailable, controller?.machineId, controller?.installationId,
-        draft?.credentials, draft?.provisioner, credentialsReady, optionsInput, readSelectorKey, delegatedPreset, pooledDraft, poolUnavailableAtReview, accountHostPending, accountHostUnreadable, needsApp]);
+        draft?.credentials, draft?.provisioner, credentialsReady, optionsInput, readSelectorKey, delegatedPreset, pooledDraft, poolUnavailableAtReview,
+        accountHostPending, accountHostUnreadable, needsApp, unassignedPresetNeedsController]);
 
     React.useEffect(() => { readOptions(); return () => optionsAbort.current?.abort(); }, [readOptions]);
 
@@ -717,12 +722,12 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         // Delegated review consumes its saved facts; authoring consumes the current options scope.
         : (!delegatedPreset && !catalogCurrent) || !catalogProvisioner ? t('managedMachines.providers.unavailable')
         : needsApp ? t('managedMachines.add.status.needsApp')
+        : requiresControllerSelection ? t('managedMachines.add.chooseController')
         : accountHostUnreadable ? t('common.unavailable')
         : accountHostPending ? t('managedMachines.options.loading', { provider: title })
         : (!catalogPlacementAvailable || (teamId || preset?.owner.kind === 'team') && !pooledDraft && !catalogController) && !delegatedPreset ? t('managedMachines.controller.requiredUnnamed')
         : poolUnavailableAtReview ? t('machinePresets.poolNoMachine')
         : !credentialsReady ? t('managedMachines.credential.choose')
-        : hostAvailability?.requiresController ? t('managedMachines.controller.requiredUnnamed')
         : !props.presetOnly && accountSettings.settings?.managedMachineCreationEnabled === false ? t('managedMachines.creation.disabledTitle')
         : !accountSettings.settings || !props.presetOnly && accountSettings.settings.managedMachineCreationEnabled !== true ? t(accountSettings.error ? 'common.unavailable' : 'common.loading')
         : draft?.check?.available === false ? draft.check.status

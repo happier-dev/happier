@@ -172,10 +172,14 @@ describe('settingsRouteRegistry', () => {
 
     it('returns from a phone-pushed way to Add a machine before leaving it', () => {
         for (const path of ['thisComputer', 'ssh', 'anotherComputer', 'create']) {
-            expect(resolveSettingsRouteParentPathname('/settings/machines/add', { path })).toBe('/settings/machines/add');
+            expect(resolveSettingsRouteParentPathname('/settings/machines/add', { path }, { machineAddPushesWays: true })).toBe('/settings/machines/add');
         }
-        expect(resolveSettingsRouteParentPathname('/settings/machines/add')).toBe('/settings/machines');
-        expect(resolveSettingsRouteParentPathname('/settings/machines/add', { path: 'elsewhere' })).toBe('/settings/machines');
+        expect(resolveSettingsRouteParentPathname('/settings/machines/add', undefined, { machineAddPushesWays: true })).toBe('/settings/machines');
+        expect(resolveSettingsRouteParentPathname('/settings/machines/add', { path: 'elsewhere' }, { machineAddPushesWays: true })).toBe('/settings/machines');
+    });
+
+    it('returns from an inline Add a machine way to the Machines collection', () => {
+        expect(resolveSettingsRouteParentPathname('/settings/machines/add', { path: 'create' })).toBe('/settings/machines');
     });
 
     it('skips non-route identity collection segments when navigating Home administration', () => {

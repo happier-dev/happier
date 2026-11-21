@@ -25,8 +25,10 @@ import type { MachineAddPageLead } from './MachineAddPanes';
 import { machineAddLeadsWithCreate, readMachineAddRoutePath } from './machineAddPaths';
 import { readMachineAddDevice } from './useMachineAddPaths';
 import { useMachineAddFlow, useMachineAddFlowServerId } from './useMachineAddFlow';
+import { updateMachineAddFlowDraft } from './machineAddFlowStore';
 import { useManagedMachineAccountSettings } from '@/components/settings/machines/managed/useManagedMachineAccountSettings';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { buildManagedMachineConfigurationRoute } from '@/components/settings/machines/managed/managedMachineConfigurationRoute';
 import { completeMachineAddWatch } from './machineAddTaskLifetime';
 
@@ -125,9 +127,17 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
         if (returning) returnToComposer();
         else navigate(MACHINES_COLLECTION_ROOT, 'MachineAddDraftScreen.leave', true);
     }, [navigate, returning, returnToComposer]);
+    const creationScope = accountScope.binding?.scope;
     const discard = React.useCallback(async () => {
-        if (separateCreateHome || await flow.discard()) leave();
-    }, [flow.discard, leave, separateCreateHome]);
+        if (separateCreateHome) {
+            // This route must not discard the connection draft for another Home.
+            updateMachineAddFlowDraft(current => areServerAccountScopesEqual(current.createController?.scope, creationScope)
+                ? { ...current, createController: undefined } : current);
+            leave();
+        } else if (await flow.discard()) {
+            leave();
+        }
+    }, [creationScope, flow.discard, leave, separateCreateHome]);
     // Native: the stack's own Back (header, swipe) would pop to the settings page this flow was pushed over. Opened
     // from a composer, Back returns to that composer as Leave does; the return's own removal passes through. A
     // pushed way keeps its Back to the ways, and the web's history already returns to the composer.
