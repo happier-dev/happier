@@ -115,7 +115,7 @@ export async function createPluginUiActionControlBinding(params: Readonly<{
                     preparation.abort.abort();
                     if (input !== null && params.lifetimeSignal.aborted) {
                         // Mount retirement can lose the receipt after the submitted effect ran.
-                        settle({ ...projectUnexpectedActionFailureV1(null), requestId: event.requestId });
+                        settle(PluginUiActionControlExecutionV1Schema.parse({ ...projectUnexpectedActionFailureV1(null), requestId: event.requestId }));
                         return;
                     }
                     const aborted = executionCancellation.signal?.aborted === true;
