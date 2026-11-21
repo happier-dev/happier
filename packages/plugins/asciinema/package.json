@@ -1,0 +1,23 @@
+{
+  "name": "@happier-dev/plugins-asciinema",
+  "version": "0.1.0",
+  "description": "Opt-in asciicast terminal recording viewer for Happier.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.ts",
+  "files": ["src", ".happier-plugin", "README.md"],
+  "keywords": ["happier-plugin", "asciinema", "asciicast"],
+  "publishConfig": { "access": "public" },
+  "happier": { "bundled": false, "manifest": ".happier-plugin/plugin.json" },
+  "scripts": {
+    "build": "happier plugins dev build .",
+    "build:ui": "happier-plugin-build-ui --project-root .",
+    "typecheck": "happier plugins dev typecheck .",
+    "test": "node --experimental-strip-types --test test/recording.test.mjs",
+    "pack:plugin": "happier plugins pack ."
+  },
+  "dependencies": {
+    "@happier-dev/plugin-sdk": "0.0.0",
+    "asciinema-player": "3.18.0"
+  }
+}
