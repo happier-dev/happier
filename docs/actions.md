@@ -10849,8 +10849,14 @@ In 0.3 development, Rollback follows the same interactive review policy as
 Promote. The controller shows the retained version, the version currently on
 the target, and the effect on data. On an own-server rollback with a selected
 pre-migration backup, confirmation authorizes replacing data from that backup.
-The receiver reopens the reviewed candidate and compares the full review digest
-before admitting the effect. Agent requests follow the Account's approval policy.
+When the UI confirms a review returned by the controller, the receiver rebuilds
+it and compares the full review digest before admitting the effect. Approval
+requests use the fixed prepared input, including when approved from the app,
+the CLI prompt, or CLI `--approve`. Agent requests follow the Account's approval
+policy and use the same prepared input under automatic approval. Preparation
+pins the content Artifact and checks it when reopened. Home's receipt writer
+checks the Environment and target-link revisions, the serving link, and the
+Artifact and rollback operands on replay.
 
 Failed approval executions also retain a validated, code-only cause and any
 producer-authored `effectAttempted` value through settlement, public reads and CLI JSON.
