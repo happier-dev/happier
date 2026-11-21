@@ -79,7 +79,7 @@ import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntim
 import { DeploymentPlatformTargetEditor, useDeploymentPlatformTargets } from './DeploymentPlatformTargetSheet';
 import { DeploymentOwnMachineCost, DeploymentTargetPlans, DeploymentTargetPlansForAccount } from './DeploymentTargetPlans';
 import { describeDeploymentPlatformRefusal } from './deploymentPlatformRefusal';
-import { buildPlatformTargetCreateLinkInput, buildPlatformTargetLinkInput, readPreparedPlatformAccount, type PreparedPlatformTargetLink } from './platformTargetLink';
+import { buildPlatformTargetCreateLinkInput, buildPlatformTargetLinkInput, readPreparedPlatformAccount, readPreparedPlatformResourceName, type PreparedPlatformTargetLink } from './platformTargetLink';
 import type { readDeploymentPlatformTargets } from './platformTargetLink';
 import { DeploymentReviewPreviewForAccount } from './DeploymentReviewPreview';
 import {
@@ -673,7 +673,8 @@ export const DeploymentEnvironmentDraft = React.memo(
         : definitionKind === 'image' ? { kind: 'image', image: imageName.trim() }
         : storedDefinition ? { kind: 'compose' } : branch ? { kind: 'repository', ref: branch } : null,
       runsOn: onPlatform && platformTarget ? { kind: 'platform', platform: platformTarget.title, pluginId: platformTarget.pluginId,
-        machine: machineName(chosen.id), machineId: chosen.id, resource: platformProvider?.kind === 'existing' ? 'existing' : 'create' }
+        machine: machineName(chosen.id), machineId: chosen.id, resource: platformProvider?.kind === 'existing' ? 'existing' : 'create',
+        resourceName: readPreparedPlatformResourceName(platformProvider) }
         : { kind: 'machine', machine: machineName(chosen.id), machineId: chosen.id },
       answered: refusal !== null,
       refused: refusal?.kind === 'refused' && !platformRefusal,

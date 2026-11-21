@@ -155,7 +155,7 @@ export type DeploymentCreationReviewPlan = Readonly<{
   runs: Readonly<{ kind: 'repository'; ref: string } | { kind: 'compose' } | { kind: 'image'; image: string } | { kind: 'app'; name: string }> | null;
   /** `machineId` is the Machine the runs row names, so the defaults rows don't name it again. */
   runsOn: Readonly<{ kind: 'machine'; machine: string; machineId: string }
-    | { kind: 'platform'; platform: string; pluginId: string; machine: string; machineId: string; resource: 'create' | 'existing' }>;
+    | { kind: 'platform'; platform: string; pluginId: string; machine: string; machineId: string; resource: 'create' | 'existing'; resourceName: string | null }>;
   /** Create has answered (a refusal or an approval request): what was asked stays, what would follow goes. */
   answered: boolean;
   /** Create refused: nothing was created, and the Environment row says it couldn't be (journey-deploy revFail). */

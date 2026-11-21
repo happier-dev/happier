@@ -1413,6 +1413,9 @@ describe('Environment draft Machine Home', () => {
       await settle(() => expect(frame().primary.disabled, screen.getTextContent()).toBe(false));
       await act(async () => frame().press());
       await settle(() => expect(frame().step).toBe('review'));
+      const { DeploymentCreationReviewFacts } = await import('@/components/approvals/ApprovalReviewFacts');
+      expect(screen.findByType(DeploymentCreationReviewFacts).props.plan.runsOn)
+        .toMatchObject({ kind: 'platform', resource: 'create', resourceName: 'taken-project' });
       await settle(() => expect(frame().primary.disabled).toBe(false));
       await act(async () => frame().press());
       await settle(() => expect(links, screen.getTextContent()).toBe(1));

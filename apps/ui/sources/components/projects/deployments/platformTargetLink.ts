@@ -236,6 +236,15 @@ export type PreparedPlatformTargetLink =
   | Readonly<{ kind: 'create'; requestKey: string; providerCreate: PlatformTargetProviderCreate; reviewNotice: string | null;
       reviewRuntime?: PlatformTargetReviewRuntime & Readonly<{ machineName: string }> }>;
 
+export function readPreparedPlatformResourceName(prepared: PreparedPlatformTargetLink | null): string | null {
+  if (!prepared) return null;
+  if (prepared.kind === 'existing') {
+    return prepared.provider.preparedNative?.projectName ?? readPlatformResourceName(prepared.provider);
+  }
+  const name = prepared.providerCreate.resourceName;
+  return text(name) ? name : null;
+}
+
 /** The connected account a prepared platform draft acts through, when it names one Account-held account. */
 export function readPreparedPlatformAccount(prepared: PreparedPlatformTargetLink | null): QualifiedConnectedAccountRef | null {
   if (!prepared) return null;
