@@ -15726,6 +15726,7 @@ settingsSession: {
       "O link de conexão está ausente ou inválido. Verifique a URL e tente novamente.",
     connectTerminal: "Conectar terminal",
     connectedStep: {
+      restrictedTeamAccessUnavailable: "O terminal está conectado. Para usá-lo em uma equipe que exige um método de login específico, aprove um novo login do terminal em um dispositivo conectado com esse método.",
       title: 'Terminal ligado',
       body: 'Este terminal já pode iniciar sessões que podes acompanhar em qualquer dispositivo.',
       continue: 'Continuar para o Home',

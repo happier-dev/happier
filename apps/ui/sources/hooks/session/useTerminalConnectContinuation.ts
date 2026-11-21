@@ -2,7 +2,7 @@ import * as React from 'react';
 import type { Router } from 'expo-router';
 import { useAuth } from '@/auth/context/AuthContext';
 import { focusTerminalConnectTarget, prepareTerminalConnect, resolveTerminalConnectLinkState } from '@/auth/terminal/terminalConnectContinuation';
-import { useConnectTerminal } from './useConnectTerminal';
+import { useConnectTerminal, type TerminalConnectSuccess } from './useConnectTerminal';
 import { buildTerminalConnectAuthRedirectHref, type ParsedTerminalConnectUrl, type TerminalConnectPreAuthTargetDecision } from '@/utils/path/terminalConnectUrl';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Modal } from '@/modal';
@@ -23,9 +23,11 @@ export function useTerminalConnectContinuation(options: Readonly<{
     const linkState = resolveTerminalConnectLinkState(request);
     const requiresUpdate = linkState === 'update_required';
     const requestKey = request?.publicKeyB64Url ?? null;
-    const [connectedKey, setConnectedKey] = React.useState<string | null>(null);
-    const connected = connectedKey !== null && (requestKey === null || connectedKey === requestKey);
-    const onConnected = React.useCallback(() => setConnectedKey(requestKey), [requestKey]);
+    const [completed, setCompleted] = React.useState<{ requestKey: string; result: TerminalConnectSuccess } | null>(null);
+    const connected = completed && (requestKey === null || completed.requestKey === requestKey) ? completed.result : null;
+    const onConnected = React.useCallback((result: TerminalConnectSuccess) => {
+        if (requestKey !== null) setCompleted({ requestKey, result });
+    }, [requestKey]);
     const approval = useConnectTerminal({
         approvalRequest: linkState === 'ready' ? request : null,
         allowLoopbackServerOverride,

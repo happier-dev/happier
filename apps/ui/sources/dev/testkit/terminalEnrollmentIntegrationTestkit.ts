@@ -22,7 +22,9 @@ export async function completeTerminalConnectForTest(options: TerminalEnrollment
                 createdAtMs: link.pairing.createdAtMs, expiresAtMs: link.pairing.expiresAtMs },
             supportsTokenOnly: link.supportsTokenOnly === true,
         });
-        if (result !== 'approved') throw new Error(`Production terminal approval did not complete: ${result}`);
+        if (result !== 'approved' && result !== 'approved_without_team_access') {
+            throw new Error(`Production terminal approval did not complete: ${result}`);
+        }
         await options.waitForSuccess();
     } finally { await resolution.transport.close(); }
 }

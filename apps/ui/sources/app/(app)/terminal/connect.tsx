@@ -40,7 +40,7 @@ export default function TerminalConnectScreen() {
     }
 
     if (connected) {
-        return <TerminalConnectSurface testID="terminal-connect-surface" state={{ kind: 'connected', onContinue: onSuccess }} />;
+        return <TerminalConnectSurface testID="terminal-connect-surface" state={{ kind: 'connected', result: connected, onContinue: onSuccess }} />;
     }
 
     if (!hashProcessed) {

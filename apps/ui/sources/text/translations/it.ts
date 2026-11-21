@@ -15830,6 +15830,7 @@ settingsSession: {
       "Il link di connessione è mancante o non valido. Controlla l'URL e riprova.",
     connectTerminal: "Connetti terminale",
     connectedStep: {
+      restrictedTeamAccessUnavailable: "Il terminale è connesso. Per usarlo in un team che richiede un metodo di accesso specifico, approva un nuovo accesso del terminale da un dispositivo su cui hai usato quel metodo.",
       title: 'Terminale connesso',
       body: 'Questo terminale può ora avviare sessioni che puoi seguire da qualsiasi dispositivo.',
       continue: 'Continua verso Home',

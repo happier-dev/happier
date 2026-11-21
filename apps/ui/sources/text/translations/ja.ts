@@ -15894,6 +15894,7 @@ settingsSession: {
       "接続リンクが見つからないか無効です。URLを確認して再試行してください。",
     connectTerminal: "ターミナルを接続",
     connectedStep: {
+      restrictedTeamAccessUnavailable: "ターミナルが接続されました。特定のサインイン方法が必要なチームで使うには、その方法でサインインしたデバイスから新しいターミナルログインを承認してください。",
       title: 'ターミナルを接続しました',
       body: 'このターミナルからセッションを開始し、どのデバイスからでも確認できます。',
       continue: 'Home に進む',

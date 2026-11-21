@@ -14662,6 +14662,7 @@ settingsSession: {
         invalidConnectionLinkDescription: 'L\'enllaç de connexió falta o no és vàlid. Comprova l\'URL i torna-ho a provar.',
         connectTerminal: 'Connecta el terminal',
         connectedStep: {
+            restrictedTeamAccessUnavailable: "El terminal està connectat. Per fer-lo servir en un equip que requereix un mètode d’inici de sessió concret, aprova un nou inici de sessió del terminal des d’un dispositiu connectat amb aquest mètode.",
           title: 'Terminal connectat',
           body: 'Aquest terminal ja pot iniciar sessions que pots seguir des de qualsevol dispositiu.',
           continue: 'Continua al Home',

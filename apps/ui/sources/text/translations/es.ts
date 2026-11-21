@@ -15616,6 +15616,7 @@ settingsSession: {
       "El enlace de conexión falta o es inválido. Verifica la URL e intenta nuevamente.",
     connectTerminal: "Conectar terminal",
     connectedStep: {
+      restrictedTeamAccessUnavailable: "El terminal está conectado. Para usarlo en un equipo que exige un método de inicio de sesión específico, aprueba un nuevo inicio de sesión del terminal desde un dispositivo conectado con ese método.",
       title: 'Terminal conectado',
       body: 'Este terminal ya puede iniciar sesiones que puedes seguir desde cualquier dispositivo.',
       continue: 'Continuar al Home',

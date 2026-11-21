@@ -15121,6 +15121,7 @@ settingsSession: {
     invalidConnectionLinkDescription: "连接链接缺失或无效。请检查 URL 并重试。",
     connectTerminal: "连接终端",
     connectedStep: {
+      restrictedTeamAccessUnavailable: "终端已连接。若要在要求使用特定登录方式的团队中使用终端，请在已用该方式登录的设备上批准新的终端登录。",
       title: '终端已连接',
       body: '此终端现在可以启动会话，你可以在任何设备上跟进。',
       continue: '前往 Home',

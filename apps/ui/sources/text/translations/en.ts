@@ -18765,6 +18765,7 @@ const enTerminal = {
     'The connection link is missing or invalid. Please check the URL and try again.',
   connectTerminal: 'Connect terminal',
   connectedStep: {
+    restrictedTeamAccessUnavailable: "Terminal connected. To use it in a Team that requires a specific sign-in method, approve a new terminal login from a device signed in with that method.",
     title: 'Terminal connected',
     body: 'This terminal can now start sessions you can follow from any device.',
     continue: 'Continue to Home',

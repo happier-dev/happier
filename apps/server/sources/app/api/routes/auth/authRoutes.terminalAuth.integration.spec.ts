@@ -12,6 +12,8 @@ import {
 
 import { db } from "@/storage/db";
 import { auth } from "@/app/auth/auth";
+import { qualifyTeamAuthenticationInTx } from "@/app/auth/entry/qualifyTeamAuthentication";
+import { inTx } from "@/storage/inTx";
 import { authRoutes } from "./authRoutes";
 import { enableAuthentication } from "../../utils/enableAuthentication";
 import { createAppCloseTracker } from "../../testkit/appLifecycle";
@@ -129,6 +131,7 @@ describe("authRoutes (terminal auth request) (integration)", () => {
         harness.resetEnv();
         vi.unstubAllGlobals();
         await db.terminalAuthRequest.deleteMany();
+        await db.team.deleteMany();
         await db.accountIdentity.deleteMany();
         await db.account.deleteMany();
     });
@@ -609,6 +612,8 @@ describe("authRoutes (terminal auth request) (integration)", () => {
         });
         expect(approval.statusCode, approval.body).toBe(200);
 
+        expect(approval.json()).toEqual({ success: true });
+
         const authorized = await app.inject({
             method: "POST",
             url: "/v1/auth/request/claim",
@@ -645,17 +650,19 @@ describe("authRoutes (terminal auth request) (integration)", () => {
                 claimSecretHash: sha256Base64Url(claimSecret),
             },
         });
-        const approval = await app.inject({
+        const response = createTerminalProvisioningResponse({ kind: "tokenOnly", recipientPublicKey: terminal.publicKeyRaw });
+        const approve = () => app.inject({
             method: "POST",
             url: "/v1/auth/response",
             headers: { authorization: `Bearer ${approvingToken}` },
             payload: {
                 publicKey: terminal.publicKeyBase64,
-                response: createTerminalProvisioningResponse({ kind: "tokenOnly", recipientPublicKey: terminal.publicKeyRaw }),
+                response,
                 responseKind: "tokenOnly",
                 authorizeUnattendedTeamAccess: true,
             },
         });
+        const approval = await approve();
         expect(approval.statusCode, approval.body).toBe(200);
         const authorized = await app.inject({
             method: "POST",
@@ -666,6 +673,30 @@ describe("authRoutes (terminal auth request) (integration)", () => {
         const successor = await auth.verifyToken(authorized.json<{ token: string }>().token);
         expect(successor).toMatchObject({ userId: account.id, authTokenKind: "terminal" });
         expect(successor?.authenticationEvidence ?? []).toEqual([]);
+        const accepted = [{ kind: "home_method", methodId: "key_challenge" }];
+        const restrictedTeam = await db.team.create({
+            data: {
+                name: "Terminal sign-in restricted",
+                authenticationPolicy: { v: 1, mode: "restricted", accepted },
+            },
+        });
+        const unrestrictedTeam = await db.team.create({ data: { name: "Terminal sign-in unrestricted" } });
+        const qualify = (team: typeof restrictedTeam) => inTx((tx) => qualifyTeamAuthenticationInTx(tx, {
+            env: { HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "1" },
+            team,
+            accountId: account.id,
+            verifiedCredentialEvidence: successor?.authenticationEvidence,
+            operationContext: { kind: "account_automation" },
+        }));
+        await expect(qualify(restrictedTeam)).resolves.toEqual({ status: "authentication_required", accepted });
+        await expect(qualify(unrestrictedTeam)).resolves.toEqual({ status: "satisfied", matched: null });
+        expect(approval.json()).toEqual({
+            success: true,
+            unattendedTeamAccess: "authentication_evidence_unavailable",
+        });
+        const repeated = await approve();
+        expect(repeated.statusCode, repeated.body).toBe(200);
+        expect(repeated.json()).toEqual(approval.json());
         await app.close();
     });
 

@@ -15490,6 +15490,7 @@ settingsSession: {
       "Le lien de connexion est manquant ou invalide. Vérifie l’URL et réessaie.",
     connectTerminal: "Connecter le terminal",
     connectedStep: {
+      restrictedTeamAccessUnavailable: "Le terminal est connecté. Pour l’utiliser dans une équipe qui exige un mode de connexion précis, approuvez une nouvelle connexion du terminal depuis un appareil sur lequel vous avez utilisé ce mode.",
       title: 'Terminal connecté',
       body: 'Ce terminal peut maintenant lancer des sessions que tu peux suivre sur n’importe quel appareil.',
       continue: 'Continuer vers le Home',

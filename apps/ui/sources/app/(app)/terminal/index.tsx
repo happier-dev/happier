@@ -30,7 +30,7 @@ export default function TerminalScreen() {
     const publicKey = linkState === 'ready' ? parsed?.publicKeyB64Url ?? null : null;
 
     if (connected) {
-        return <TerminalConnectSurface testID="terminal-connect-surface" state={{ kind: 'connected', onContinue: onSuccess }} />;
+        return <TerminalConnectSurface testID="terminal-connect-surface" state={{ kind: 'connected', result: connected, onContinue: onSuccess }} />;
     }
 
     const linkProblem = (

@@ -7,6 +7,7 @@ import { UnauthenticatedRouteStep, type AuthRouteStepAction } from '@/components
 import { StepMark } from '@/components/onboarding/unauthShell/StepMark';
 import { FlowSurfaceActions, FlowSurfaceChrome } from '@/components/ui/flowSurface';
 import { Text } from '@/components/ui/text/Text';
+import type { TerminalConnectSuccess } from '@/hooks/session/useConnectTerminal';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
@@ -35,7 +36,7 @@ type TerminalConnectApprovalState = Readonly<{
 }>;
 
 export type TerminalConnectSurfaceState =
-    | Readonly<{ kind: 'connected'; onContinue: () => void }>
+    | Readonly<{ kind: 'connected'; result?: TerminalConnectSuccess; onContinue: () => void }>
     | TerminalConnectMessageState
     | TerminalConnectApprovalState;
 
@@ -143,7 +144,9 @@ export function TerminalConnectSurface(props: TerminalConnectSurfaceProps) {
                 stepId="terminal-connected"
                 testID={props.testID ?? 'terminal-connect-surface'}
                 title={t('terminal.connectedStep.title')}
-                subtitle={t('terminal.connectedStep.body')}
+                subtitle={props.state.result === 'approved_without_team_access'
+                    ? t('terminal.connectedStep.restrictedTeamAccessUnavailable')
+                    : t('terminal.connectedStep.body')}
                 mark={<StepMark iconName="check" />}
                 primary={{ testID: 'terminal-connect-continue', label: t('terminal.connectedStep.continue'), onPress: props.state.onContinue }}
             />

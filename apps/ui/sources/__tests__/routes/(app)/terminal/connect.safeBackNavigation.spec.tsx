@@ -34,6 +34,7 @@ await initializeTerminalRouteRuntimeForTests();
 afterAll(() => browser.restore());
 
 describe('TerminalConnectScreen safe navigation', () => {
+    let approvalReceipt: { success: true; unattendedTeamAccess?: string };
     let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
     beforeEach(async () => {
         browser.activate();
@@ -42,6 +43,7 @@ describe('TerminalConnectScreen safe navigation', () => {
         replaceMock.mockClear();
         canGoBackMock.mockClear();
         approvals.length = 0;
+        approvalReceipt = { success: true };
         const descriptor = { v: 1 as const, homeServerIdentityId: homeIdentity, canonicalServerUrl: homeUrl, revision: 1, endpoints: [{ kind: 'https' as const, url: homeUrl }] };
         const { adoptHomeProfile, setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
         const home = await adoptHomeProfile({ descriptor, source: 'manual', descriptorAuthority: 'current_connection_observation' });
@@ -58,7 +60,7 @@ describe('TerminalConnectScreen safe navigation', () => {
             if (url.pathname === '/v1/auth/response') {
                 expect(new Headers(init?.headers).get('authorization')).toBe('Bearer ' + credentials.token);
                 approvals.push(JSON.parse(String(init?.body)));
-                return json({});
+                return json(approvalReceipt);
             }
             if (url.pathname === '/v1/auth/ping') return json({});
             return null;
@@ -81,15 +83,23 @@ describe('TerminalConnectScreen safe navigation', () => {
         connection = undefined;
     });
 
-    it('replaces with / after approving terminal connect', async () => {
-        const Screen = (await import('@/app/(app)/terminal/connect')).default;
-        const screen = await renderTerminalRoute(Screen, credentials);
-        await vi.waitFor(() => expect(screen.findByTestId('terminal-connect-approve')?.props.disabled).toBe(false));
-        await act(async () => { screen.pressByTestId('terminal-connect-approve'); });
-        await vi.waitFor(() => expect(replaceMock).toHaveBeenCalledWith('/'));
-        expect(approvals).toEqual([expect.objectContaining({ responseKind: 'tokenOnly', authorizeUnattendedTeamAccess: true })]);
-        expect(backMock).not.toHaveBeenCalled();
-    });
+    it.each([undefined, 'authentication_evidence_unavailable'])(
+        'presents the terminal receipt after Accept with Team access outcome %s',
+        async (unattendedTeamAccess) => {
+            approvalReceipt = { success: true, unattendedTeamAccess };
+            const Screen = (await import('@/app/(app)/terminal/connect')).default;
+            const screen = await renderTerminalRoute(Screen, credentials);
+            await vi.waitFor(() => expect(screen.findByTestId('terminal-connect-approve')?.props.disabled).toBe(false));
+            await act(async () => { screen.pressByTestId('terminal-connect-approve'); });
+            await vi.waitFor(() => expect(screen.findByTestId('terminal-connect-continue')).not.toBeNull());
+            const message = 'terminal.connectedStep.restrictedTeamAccessUnavailable';
+            expect(screen.getTextContent().includes(message)).toBe(unattendedTeamAccess !== undefined);
+            await act(async () => { screen.pressByTestId('terminal-connect-continue'); });
+            await vi.waitFor(() => expect(replaceMock).toHaveBeenCalledWith('/'));
+            expect(approvals).toEqual([expect.objectContaining({ responseKind: 'tokenOnly', authorizeUnattendedTeamAccess: true })]);
+            expect(backMock).not.toHaveBeenCalled();
+        },
+    );
 
     it('falls back to replace(/) when router cannot go back (reject)', async () => {
         const Screen = (await import('@/app/(app)/terminal/connect')).default;

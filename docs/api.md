@@ -766,8 +766,8 @@ failure does not trigger a v1 downgrade.
   - Response: `{ status: "not_found" | "pending" | "authorized", supportsV2 }`.
 
 - `POST /v1/auth/response`
-  - Body: `{ response, publicKey }` (requires Bearer auth)
-  - Approves a terminal auth request.
+  - Requires a present-user bearer. The current request body is `{ response, publicKey, responseKind, authorizeUnattendedTeamAccess? }`.
+  - The response is `{ success: true }`. When unattended Team access was requested and the approving credential provided no current sign-in evidence, the success response includes `unattendedTeamAccess: "authentication_evidence_unavailable"`. The terminal connects and can do independently authorized work. Teams that require a specific sign-in still evaluate the terminal credential against their own policy.
 
 - `POST /v1/auth/account/request`
   - Body: `{ publicKey }`

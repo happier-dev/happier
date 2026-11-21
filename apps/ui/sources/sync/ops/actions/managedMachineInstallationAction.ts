@@ -71,7 +71,8 @@ export function createManagedMachineInstallationRespond(captured?: LazyActionAcc
                                 requesterPublicKey: decodeBase64(pairing.publicKey), supportsTokenOnly: pairing.supportsTokenOnly,
                                 pairingContext: { secret: decodeBase64(pairing.pairing.secretB64Url, 'base64url'),
                                     createdAtMs: pairing.pairing.createdAtMs, expiresAtMs: pairing.pairing.expiresAtMs }, signal });
-                            return result === 'approved' ? undefined : result === 'not_found' ? 'no_prompt' : 'auth_request_already_authorized';
+                            if (result === 'approved' || result === 'approved_without_team_access') return undefined;
+                            return result === 'not_found' ? 'no_prompt' : 'auth_request_already_authorized';
                         } finally { await target.transport.close(); }
                     },
                 }));

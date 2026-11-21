@@ -1,6 +1,7 @@
 import { z } from "zod/mini";
 import * as privacyKit from "privacy-kit";
 import { createHash } from "node:crypto";
+import { TerminalApprovalSuccessSchema, type TerminalApprovalSuccess } from "@happier-dev/protocol/auth/terminalApproval";
 import { db } from "@/storage/db";
 import { auth } from "@/app/auth/auth";
 import { debug } from "@/utils/logging/log";
@@ -403,7 +404,7 @@ export function registerTerminalAuthRequestRoutes(
                 authorizeUnattendedTeamAccess: z.optional(z.boolean()),
             }),
             response: {
-                200: z.object({ success: z.literal(true) }),
+                200: TerminalApprovalSuccessSchema,
                 400: z.object({ error: z.literal("invalid_provisioning_response") }),
                 401: z.object({ error: z.literal("Invalid public key") }),
                 403: PresentUserRequiredResponseSchema,
@@ -413,7 +414,6 @@ export function registerTerminalAuthRequestRoutes(
                         "provisioning_kind_mismatch",
                         "provisioning_material_unavailable",
                         "already_completed",
-                        "credential_authentication_evidence_unavailable",
                         "enrollment_unavailable",
                     ]),
                 }),
@@ -442,6 +442,13 @@ export function registerTerminalAuthRequestRoutes(
             return reply.code(426).send({ error: "terminal_provisioning_update_required" });
         }
         const publicKeyHex = privacyKit.encodeHex(publicKey);
+        const requestedUnattendedAccess = request.body.authorizeUnattendedTeamAccess === true;
+        const approved = (hasEvidenceSnapshot: boolean) => {
+            const receipt: TerminalApprovalSuccess = requestedUnattendedAccess && !hasEvidenceSnapshot
+                ? { success: true, unattendedTeamAccess: "authentication_evidence_unavailable" }
+                : { success: true };
+            return { status: "success", receipt } as const;
+        };
         const outcome = await inTx(async (tx) => {
             const authRequest = await tx.terminalAuthRequest.findUnique({
                 where: { publicKey: publicKeyHex },
@@ -479,11 +486,11 @@ export function registerTerminalAuthRequestRoutes(
                 const existingAuthorized = authRequest.approvalTokenEpoch !== null;
                 return authRequest.response === request.body.response
                     && authRequest.responseAccountId === request.userId
-                    && existingAuthorized === (request.body.authorizeUnattendedTeamAccess === true)
-                    ? { status: "success" } as const
+                    && existingAuthorized === requestedUnattendedAccess
+                    ? approved(authRequest.authenticationEvidence !== null)
                     : { status: "already_completed" } as const;
             }
-            const evidence = request.body.authorizeUnattendedTeamAccess === true
+            const evidence = requestedUnattendedAccess
                 ? await resolveCurrentAuthenticationEvidenceInTx(tx, {
                     env: requestHomeEnv,
                     accountId: request.userId,
@@ -503,23 +510,23 @@ export function registerTerminalAuthRequestRoutes(
                     response: request.body.response,
                     responseAccountId: request.userId,
                     authenticationEvidence: evidenceSnapshot,
-                    approvalTokenEpoch: request.body.authorizeUnattendedTeamAccess === true ? account.tokenEpoch : null,
+                    approvalTokenEpoch: requestedUnattendedAccess ? account.tokenEpoch : null,
                 },
             });
-            if (completed.count === 1) return { status: "success" } as const;
+            if (completed.count === 1) return approved(evidenceSnapshot !== null);
             const raced = await tx.terminalAuthRequest.findUnique({
                 where: { id: authRequest.id },
-                select: { response: true, responseAccountId: true, approvalTokenEpoch: true },
+                select: { response: true, responseAccountId: true, approvalTokenEpoch: true, authenticationEvidence: true },
             });
             return raced?.response === request.body.response
                 && raced.responseAccountId === request.userId
-                && (raced.approvalTokenEpoch !== null) === (request.body.authorizeUnattendedTeamAccess === true)
-                ? { status: "success" } as const
+                && (raced.approvalTokenEpoch !== null) === requestedUnattendedAccess
+                ? approved(raced.authenticationEvidence !== null)
                 : { status: "already_completed" } as const;
         });
 
         if (outcome.status === "success") {
-            return reply.send({ success: true });
+            return reply.send(outcome.receipt);
         }
         if (outcome.status === "expired") {
             return reply.code(404).send({ error: "Request not found" });

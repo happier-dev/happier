@@ -15445,6 +15445,7 @@ settingsSession: {
       "Link połączenia jest nieprawidłowy lub go brakuje. Sprawdź URL i spróbuj ponownie.",
     connectTerminal: "Połącz terminal",
     connectedStep: {
+      restrictedTeamAccessUnavailable: "Terminal jest połączony. Aby użyć go w zespole wymagającym określonej metody logowania, zatwierdź nowe logowanie terminala z urządzenia, na którym użyto tej metody.",
       title: 'Terminal połączony',
       body: 'Ten terminal może już rozpoczynać sesje, które możesz śledzić z dowolnego urządzenia.',
       continue: 'Przejdź do Home',

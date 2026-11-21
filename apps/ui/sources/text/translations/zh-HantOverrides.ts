@@ -12753,6 +12753,7 @@ settingsSession: {
         invalidConnectionLinkDescription: '連線連結缺失或無效。請檢查 URL 並重試。',
         connectTerminal: '連線終端',
         connectedStep: {
+            restrictedTeamAccessUnavailable: "終端已連線。若要在要求使用特定登入方式的團隊中使用終端，請在已用該方式登入的裝置上核准新的終端登入。",
           title: '終端機已連線',
           body: '這個終端機現在可以啟動工作階段，你可以在任何裝置上跟進。',
           continue: '前往 Home',

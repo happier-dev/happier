@@ -1,3 +1,4 @@
+import { TerminalApprovalSuccessSchema } from '@happier-dev/protocol/auth/terminalApproval';
 import { createServerFetchAtEndpoint } from '@/sync/http/client';
 import type { HomeEnrollmentTransport } from '@/auth/enrollment/homeEnrollmentTransport';
 
@@ -6,7 +7,7 @@ interface AuthRequestStatus {
     supportsV2: boolean;
 }
 
-export type AuthApproveResult = 'approved' | 'already_authorized' | 'not_found';
+export type AuthApproveResult = 'approved' | 'approved_without_team_access' | 'already_authorized' | 'not_found';
 
 type AuthRequestFetcher = (
     path: string,
@@ -84,7 +85,10 @@ async function authApproveWithRequest(
     if (!response.ok) {
         throw new Error(`Failed to approve auth request: ${response.status}`);
     }
-    return 'approved';
+    const receipt = TerminalApprovalSuccessSchema.safeParse(await response.json().catch(() => null));
+    return receipt.success && receipt.data.unattendedTeamAccess === 'authentication_evidence_unavailable'
+        ? 'approved_without_team_access'
+        : 'approved';
 }
 
 /** Approve through the already-resolved canonical Home transport. */

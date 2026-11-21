@@ -9430,6 +9430,20 @@ hidden by a cascade. Nothing outside 0.3 reads this table, so rolling back to a
 build without the Runner contract leaves these rows unread rather than
 reinterpreted.
 
+For terminal approval, `POST /v1/auth/response` accepts the optional
+`authorizeUnattendedTeamAccess` boolean. With `true`, the Home records the
+approving Account security epoch and snapshots any current sign-in evidence.
+If that snapshot is empty, approval still succeeds and its 0.3 response
+includes `unattendedTeamAccess: "authentication_evidence_unavailable"`.
+Pairing supplies no inherited sign-in evidence. The terminal credential
+continues to be subject to the Team's existing sign-in policy. Claim and
+claimless polling still refuse when a recorded approval epoch or non-empty
+evidence is no longer current.
+
+The 0.3 success field is optional. A 0.2 reader that ignores the added field
+still sees `success: true`. The 0.3 client also accepts a receipt without the
+field. No mixed-version shim is required for this unpublished shape.
+
 The strict V1 activation-create request may carry the optional literal
 `authorizeUnattendedTeamAccess: true`. Omission is the safe compatibility shape:
 the activation remains usable for independently authorized personal/direct work

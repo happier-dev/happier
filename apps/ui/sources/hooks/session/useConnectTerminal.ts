@@ -20,8 +20,10 @@ import {
 import { canUseCurrentDeviceQrScanner } from '@/utils/platform/qrScannerSupport';
 import { decodeBase64 } from '@/encryption/base64';
 
+export type TerminalConnectSuccess = 'approved' | 'approved_without_team_access';
+
 interface UseConnectTerminalOptions {
-    onSuccess?: () => void;
+    onSuccess?: (result: TerminalConnectSuccess) => void;
     onError?: (error: unknown) => void;
     allowLoopbackServerOverride?: boolean;
     approvalRequest?: ParsedTerminalConnectUrl | null;
@@ -180,12 +182,13 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
             const pairing = parsed.pairing;
             const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
             let pairingError: unknown;
+            let restrictedTeamAccessUnavailable = false;
             const executor = createActionExecutor({
                 accountTerminalsApproveAction: async (signal) => {
                     const resolution = await resolveHomeEnrollmentTransport(descriptor, target.transportOptions);
                     if (!resolution.ok) throw new Error(`Terminal pairing transport unavailable: ${resolution.reason}`);
                     try {
-                        return await approveTerminalPairing({
+                        const result = await approveTerminalPairing({
                             target: resolution.transport,
                             requesterPublicKey: publicKey,
                             pairingContext: {
@@ -197,6 +200,12 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
                             supportsTokenOnly: parsed.supportsTokenOnly === true,
                             ...(signal ? { signal } : {}),
                         });
+                        if (result === 'approved_without_team_access') {
+                            // The notice belongs to this local approval receipt. The Action still completed.
+                            restrictedTeamAccessUnavailable = true;
+                            return 'approved';
+                        }
+                        return result;
                     } catch (error) {
                         pairingError = error;
                         // The Action boundary only reports the operation failure.
@@ -218,9 +227,16 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
             clearPendingTerminalConnect();
 
             if (approvalResult === 'approved') {
+                const result = restrictedTeamAccessUnavailable ? 'approved_without_team_access' : 'approved';
                 setIsLoading(false);
-                if (options?.onSuccess) options.onSuccess();
-                else await Modal.alertAsync(t('common.success'), t('modals.terminalConnectedSuccessfully'), [{ text: t('common.ok') }]);
+                if (options?.onSuccess) options.onSuccess(result);
+                else await Modal.alertAsync(
+                    t('common.success'),
+                    restrictedTeamAccessUnavailable
+                        ? t('terminal.connectedStep.restrictedTeamAccessUnavailable')
+                        : t('modals.terminalConnectedSuccessfully'),
+                    [{ text: t('common.ok') }],
+                );
                 return true;
             }
 

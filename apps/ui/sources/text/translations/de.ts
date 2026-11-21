@@ -15715,6 +15715,7 @@ settingsSession: {
         invalidConnectionLinkDescription: 'Der Verbindungslink fehlt oder ist ungültig. Prüf die URL und versuch es noch einmal.',
         connectTerminal: 'Terminal verbinden',
         connectedStep: {
+            restrictedTeamAccessUnavailable: "Das Terminal ist verbunden. Für Teams, die eine bestimmte Anmeldemethode verlangen, bestätige eine neue Terminal-Anmeldung auf einem Gerät, auf dem du dich mit dieser Methode angemeldet hast.",
           title: 'Terminal verbunden',
           body: 'Dieses Terminal kann jetzt Sitzungen starten, denen du auf jedem Gerät folgen kannst.',
           continue: 'Weiter zum Home',
