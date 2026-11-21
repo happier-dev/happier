@@ -1,3 +1,4 @@
+import { DEPLOYMENT_TARGET_REQUIRES_REPOSITORY_DEFINITION } from '@happier-dev/protocol/deployments/resolvePublishTargetRecommendation';
 import { OWN_SERVER_DEPLOYMENT_TARGET_V1, resolvePublishTargetRecommendation, type PublishTargetRecommendationInput } from '@happier-dev/deployments';
 import { isMachineRoleActiveV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import { deploymentRecommendationDescription, deploymentRecommendationReason } from './deploymentRecommendationDescription';
@@ -250,15 +251,20 @@ export const DeploymentEnvironmentDraft = React.memo(
       machines.find((machine) => machine.id === preferredId && deploysHere(machine)) ?? machines.find(deploysHere) ?? null;
     const defaultBranch = source?.defaultRef ?? source?.repository?.repository.defaultBranch ?? null;
     const branch = ref ?? defaultBranch;
-    const platformEnvironment = React.useMemo(() => sourceId ? { projectSourceId: sourceId, repositoryBranch: branch,
-      ...(chosen ? { controllerMachineId: chosen.id } : {}) } : null, [sourceId, branch, chosen?.id]);
     React.useEffect(() => setPlatformProvider(null), [platformTarget?.key, chosen?.id, source?.revision]);
     // A repository-free Project has only stored definitions; a door may also ask for one in any Project.
     const definitionKind = props.definitionKind ?? (source !== null && source.repository === undefined ? 'compose' : null);
     const storedDefinition = definitionKind !== null;
-    const recommendationInput: PublishTargetRecommendationInput = {
-      definition: props.copyFrom?.content.definition ?? (props.catalogApp ? { from: 'catalogApp' }
+    const copiedDefinition = props.copyFrom?.content.definition;
+    const hasCatalogApp = props.catalogApp != null;
+    const definition = React.useMemo<PublishTargetRecommendationInput['definition']>(() =>
+      copiedDefinition ?? (hasCatalogApp ? { from: 'catalogApp' }
         : definitionKind ? { from: definitionKind } : { kind: 'repository' }),
+    [copiedDefinition, hasCatalogApp, definitionKind]);
+    const platformEnvironment = React.useMemo(() => sourceId ? { projectSourceId: sourceId, definition, repositoryBranch: branch,
+      ...(chosen ? { controllerMachineId: chosen.id } : {}) } : null, [sourceId, definition, branch, chosen?.id]);
+    const recommendationInput: PublishTargetRecommendationInput = {
+      definition,
       targets: [{ id: OWN_SERVER_TARGET, targetClass: 'ownServer', availability: allMachines == null ? 'unknown'
         : chosen && answers(chosen) ? 'available' : 'unavailable',
         accepts: OWN_SERVER_DEPLOYMENT_TARGET_V1.accepts, needs: OWN_SERVER_DEPLOYMENT_TARGET_V1.needs },
@@ -489,7 +495,10 @@ export const DeploymentEnvironmentDraft = React.memo(
       { id: PLUGINS_TILE, icon: 'plus', action: openPlugins, title: t('newApp.deploy.morePlatforms'), subtitle: t('newApp.deploy.morePlatformsBody') },
     ] : targetTiles;
     // A platform the definition can't use leaves the grid for one muted list with the one shared reason (whereM).
-    const unusablePlatforms = stepped ? platformTargets.filter(target => !recommendation.offeredTargetIds.includes(target.key)) : [];
+    const repositoryOnlyPlatforms = platformTargets.filter(target =>
+      recommendation.corrections.some(correction => correction.targetId === target.key && correction.kind === 'prepare_repository'));
+    const repositoryOnlyReason = repositoryOnlyPlatforms.length > 0
+      ? deploymentActionRefusalRemedy(DEPLOYMENT_TARGET_REQUIRES_REPOSITORY_DEFINITION) : undefined;
     const chooseTarget = (next: string | null) => {
       if (next === null || next === LOADING_TILE) return;
       if (next === RETRY_TILE) { platforms.retry(); return; }
@@ -763,8 +772,8 @@ export const DeploymentEnvironmentDraft = React.memo(
             {stepped ? null : retentionChoice}
           </ItemGroup>
           {/* On the page column like every other section, not across the whole pane (PAGE-ACCEPT-176 round 14). */}
-          {selectedPlatformUnavailable ? <ItemGroup header="none" surface="none">
-            <SurfaceStateCard kind="unavailable" size="line" title={t('common.unavailable')} />
+          {selectedPlatformUnavailable || repositoryOnlyReason ? <ItemGroup header="none" surface="none">
+            <SurfaceStateCard kind="unavailable" size="line" title={t('common.unavailable')} reason={repositoryOnlyReason} />
           </ItemGroup> : null}
     </>;
     const machineAway = chosen !== null && !answers(chosen);
@@ -849,11 +858,11 @@ export const DeploymentEnvironmentDraft = React.memo(
               action={{ label: t('newApp.auto.addMachine'), onPress: () => setCreatingMachine(true),
                 testID: 'project-deployments.draft.platformNeedsMachine.add', disabled: !props.lifetime }} />
           ) : null}
-          {unusablePlatforms.length > 0 ? (
+          {repositoryOnlyReason ? (
             <ItemGroup testID="project-deployments.draft.cantRun"
               title={sourceTitle || appName ? t('newApp.deploy.cantRun', { name: appName ?? sourceTitle ?? '' }) : t('newApp.deploy.cantRunUnnamed')}
-              titleRole="label" description={t('newApp.deploy.cantRunStored')}>
-              {unusablePlatforms.map(target => <Item key={target.key} mode="info" dimmed showChevron={false} title={target.title}
+              titleRole="label" description={repositoryOnlyReason}>
+              {repositoryOnlyPlatforms.map(target => <Item key={target.key} mode="info" dimmed showChevron={false} title={target.title}
                 icon={<PluginMark title={target.title} pluginId={target.pluginId} />} />)}
             </ItemGroup>
           ) : null}

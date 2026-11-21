@@ -1139,7 +1139,7 @@ it.each([
             const { showDeploymentPlatformTargetSheet } = await import('@/components/projects/deployments/DeploymentPlatformTargetSheet');
             const { createDeploymentActions } = await import('@/components/projects/deployments/deploymentActions');
             await act(async () => showDeploymentPlatformTargetSheet({ name: 'First Vercel app',
-                environment: { id: 'fresh-environment', revision: 1, projectSourceId: '' },
+                environment: { id: 'fresh-environment', revision: 1, projectSourceId: '', definition: { kind: 'repository' } },
                 ownerAccountId: 'portable-controller', lifetime: account.accountLifetime,
                 actions: createDeploymentActions(account.accountLifetime, ''), onApproval: () => {},
                 initialTargetKey: 'happier.deploy.vercel/runtime' }));

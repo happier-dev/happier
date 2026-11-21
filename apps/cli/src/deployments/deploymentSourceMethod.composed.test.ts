@@ -7,7 +7,7 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import { DeploymentTargetLinkCreateIntentInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { readDeploymentTargetLinkArtifactV1 } from '@happier-dev/deployment-protocol';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, readDeploymentTargetLinkArtifactV1 } from '@happier-dev/deployment-protocol';
 import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { createPlainAccountArtifactHttpBoundary } from '@/api/artifacts/accountArtifactStore.testkit';
@@ -23,7 +23,9 @@ import { createOwnServerDeploymentRuntimeForHost } from './targets/ownServer/own
 import { prepareTargetLinkForHost } from './prepareTargetLinkForHost';
 import { readDeploymentTargetV1 } from './targets/deploymentTargetCatalog';
 import { createContributedDeploymentTargetForHost } from './targets/contributedDeploymentTargetForHost';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import * as cloudflare from '../../../../packages/plugins/deploy-cloudflare/src/index';
 import * as vercel from '../../../../packages/plugins/deploy-vercel/src/index';
 import { PLUGIN_MANIFEST as machineVercel } from '../../../../packages/plugins/machine-vercel/src/manifest';
 import * as railway from '../../../../packages/plugins/deploy-railway/src/index';
@@ -154,15 +156,27 @@ it('retains a real Vercel Create choice through protected storage and omitted-me
     } finally { await app.close(); await mounted.dispose(); await kit.dispose(); }
 });
 
-it('returns the retained Create branch outcome after the real host association succeeds', async () => {
+it.each([
+    { targetKind: 'vercel', localId: 'runtime', plugin: vercel, stored: false },
+    { targetKind: 'vercel', localId: 'runtime', plugin: vercel, stored: true },
+    { targetKind: 'cloudflare-pages', localId: 'pages', plugin: cloudflare, stored: true },
+    { targetKind: 'cloudflare-workers', localId: 'workers', plugin: cloudflare, stored: true },
+])('admits $targetKind Link from the Environment definition (stored Compose: $stored)', async ({ targetKind, localId, plugin, stored }) => {
     const boundary = createPlainAccountArtifactHttpBoundary();
     const artifacts = createAccountArtifactStore({ credentials: boundary.credentials, getAccountEncryptionMode: async () => 'plain' });
     const environment = createDeploymentEnvironmentDetailV1();
     environment.environment.owner = { kind: 'account', accountId: 'owner' };
+    if (stored) environment.content.definition = { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}`,
+        document: 'services: {}', profiles: [], services: [] };
+    const { contentArtifactId: id, contentHeaderVersion: headerVersion, contentBodyVersion: bodyVersion } = environment.environment;
+    boundary.rows.set(id, { id, ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
+        dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion, bodyVersion, seq: 1, createdAt: 1, updatedAt: 1,
+        header: encodePlainArtifactStoredContent({ kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: environment.content.name }),
+        body: encodePlainArtifactStoredContent({ body: JSON.stringify(environment.content) }) });
     const account = { service: { pluginId: machineVercel.id, localId: 'vercel-account' }, accountId: 'profile' };
     const productionBranchOutcome = { status: 'defaultKept' as const, branch: 'main', requestedBranch: 'release',
         failureCause: { phase: 'deployment.provider.branch', errorClass: 'Error', errorCode: 'branch_missing', httpStatus: 400 } };
-    const source = { kind: 'plugin' as const, contribution: { pluginId: vercel.manifest.id, localId: 'runtime' } };
+    const source = { kind: 'plugin' as const, contribution: { pluginId: plugin.manifest.id, localId } };
     const provider = { credentialPrincipal: { kind: 'account' as const, accountId: 'owner', purpose: {
         consumer: { pluginId: vercel.manifest.id, localId: 'project-create' }, purpose: 'deploy.manage' },
         target: { kind: 'account' as const, account } },
@@ -183,14 +197,31 @@ it('returns the retained Create branch outcome after the real host association s
     const host = { credentials: boundary.credentials, serverId: 'home', serverHttpBaseUrl: 'https://branch-result.test', machineId: 'machine-a' };
     const runtime = createOwnServerDeploymentRuntimeForHost({ ...host,
         resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }) });
-    const deps = createDaemonDeploymentActionDeps({ ...host, accountArtifacts: artifacts, runtime,
-        resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }) });
-    const result = await deps.deploymentAction('deployments.targets.link', { serverId: 'home',
-        environmentId: environment.environment.id, expectedRevision: environment.environment.revision, requestKey: 'branch-created',
-        targetId: 'runtime', targetKind: 'vercel', role: 'runtime', machines: [], source, provider, provisioned: true }, {});
-    expect(result, JSON.stringify({ result, requests })).toMatchObject({ ok: true, targetLinkId: 'created-link', productionBranchOutcome });
-    expect(requests.filter(path => path.endsWith('/targets'))).toHaveLength(1);
-    expect(boundary.rows.size).toBe(1);
+    const mounted = await createAuthoredAdmittedPluginRuntimeFixture({
+        plugins: [{ manifest: plugin.manifest, files: { [plugin.manifest.entrypoints!.daemon!]: 'export function activate() {}' },
+            instantiateCommittedModule: () => ({ activate: plugin.activate }) }],
+        resolveContributes: async happyHomeDir => createResolvedContributionRegistry(projectLoadedPluginContributes({
+            loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external' })),
+    });
+    try {
+        const deps = createDaemonDeploymentActionDeps({ ...host, accountArtifacts: artifacts, runtime,
+            acquirePluginRuntimeRegistryLease: () => mounted.controller.acquireRuntimeRegistry({ resolveRuntimeRegistry: async () => mounted.registry }),
+            resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }) });
+        const result = await deps.deploymentAction('deployments.targets.link', { serverId: 'home',
+            environmentId: environment.environment.id, expectedRevision: environment.environment.revision, requestKey: 'branch-created',
+            targetId: localId, targetKind, role: 'runtime', machines: [], source, provider, ...(stored ? {} : { provisioned: true }) }, {});
+        if (stored) {
+            expect(result, JSON.stringify({ result, requests })).toMatchObject({
+                ok: false, errorCode: 'deployment_target_requires_repository_definition',
+            });
+            expect(requests.filter(path => path.endsWith('/targets'))).toHaveLength(0);
+            expect(boundary.rows.size).toBe(1);
+        } else {
+            expect(result, JSON.stringify({ result, requests })).toMatchObject({ ok: true, targetLinkId: 'created-link', productionBranchOutcome });
+            expect(requests.filter(path => path.endsWith('/targets'))).toHaveLength(1);
+            expect(boundary.rows.size).toBe(2);
+        }
+    } finally { await mounted.dispose(); }
 });
 
 it('reviews Railway Create as branch HEAD through the admitted target catalog', async () => {

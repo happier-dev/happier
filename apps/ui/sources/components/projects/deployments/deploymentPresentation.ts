@@ -8,6 +8,7 @@ import { t } from '@/text';
 import type { DeploymentActorPresentation } from './useDeploymentActorPresentations';
 import { readDeploymentRefusal } from './deploymentActionOutcome';
 import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { DEPLOYMENT_TARGET_REQUIRES_REPOSITORY_DEFINITION } from '@happier-dev/protocol/deployments/resolvePublishTargetRecommendation';
 import { deploymentRevisionLabelV1 as deploymentRevisionLabel } from '@happier-dev/deployments';
 export { deploymentRevisionLabel };
 
@@ -31,6 +32,8 @@ export function deploymentReadIssue(code: string | null | undefined): 'homeUnrea
 export function deploymentActionRefusalRemedy(code: string): string {
   if (code === 'deployment_conflict' || code === 'host_retired' || code === 'action_account_scope_changed')
     return t('projects.deployments.copy.refresh');
+  if (code === DEPLOYMENT_TARGET_REQUIRES_REPOSITORY_DEFINITION)
+    return t('projects.deployments.recommendation.requiresRepository');
   switch (readDeploymentRefusal(code).reason) {
     case 'permission': return t('projects.deployments.copy.permission');
     case 'machine': return t('projects.deployments.copy.machine');

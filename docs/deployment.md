@@ -1247,7 +1247,13 @@ with `diagnostic.requiredFact: source_machine_use` and
 refusal records `effectAttempted: false`; prepared Environment-create approval
 history retains that diagnostic bound to the reviewed Machine and role.
 
-A stored Compose definition requires no requester checkout. Native repository
+A stored Compose definition requires no requester checkout. For platform
+targets that declare a repository requirement, the wizard and Use a platform
+offer repository definitions, and Link returns
+`deployment_target_requires_repository_definition` for a stored definition
+before it creates a provider resource or associates a target. A repository
+on the Project does not change how an Environment obtains its definition.
+Stored definitions can run on an own server. Native repository
 definitions retain repository and Compose selectors, but no
 Manage-approved workspace root or commit, so their Use redeploy remains refused
 with a typed result. Requester-chosen workspace roots remain physical-owner-only

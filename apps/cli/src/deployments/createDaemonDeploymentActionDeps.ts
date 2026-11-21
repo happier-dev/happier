@@ -1,3 +1,4 @@
+import { readDeploymentDefinitionSourceKindV1, readDeploymentTargetSourceCheckV1 } from '@happier-dev/protocol/deployments/resolvePublishTargetRecommendation';
 import { createEnvironmentTelemetrySetForHost } from './telemetry/setForHost';
 import { executeOwnServerDatabaseOperationForHost } from './targets/ownServer/databaseConnection';
 import { ApiClient } from '@/api/api';
@@ -1107,11 +1108,11 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         },
         dispatchReceipt,
     });
-    async function readRuntimeCreateTarget(input: DeploymentTargetLinkCreateIntentInputV1) {
+    async function readRuntimeLinkTarget(source: DeploymentTargetLinkCreateIntentInputV1['source']) {
         const lease = host.acquirePluginRuntimeRegistryLease
             ? await host.acquirePluginRuntimeRegistryLease() : tryAcquireAuthoritativePluginRuntimeRegistryLease();
         if (!lease) return null;
-        try { return readDeploymentTargetV1(input.source, lease.registry.contributes.deploymentTargets); }
+        try { return readDeploymentTargetV1(source, lease.registry.contributes.deploymentTargets); }
         finally { await lease.release(); }
     }
     const failureEnrollment = createPlatformFailureEnrollmentForHost({ ...host,
@@ -1718,7 +1719,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 if (!input.success) return failure('invalid_parameters');
                 const enrollment = await failureEnrollment.prepare(input.data, request.context);
                 if (!('providerCreate' in input.data)) return enrollment;
-                const creation = prepareRuntimeTargetCreateForHost(input.data, await readRuntimeCreateTarget(input.data));
+                const creation = prepareRuntimeTargetCreateForHost(input.data, await readRuntimeLinkTarget(input.data.source));
                 return { ...creation, children: [...creation.children, ...(enrollment?.children ?? [])] };
             }
             if (request.actionId === 'deployments.environments.update') {
@@ -1947,9 +1948,29 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     let acknowledgedCreate = createdByParent && 'provider' in intent && intent.provider.providerResourceOrigin === 'created';
                     if ('provider' in intent && intent.provisioned === true) recovery = { ...intent,
                         provider: normalizeDeploymentTargetLinkOriginV1(intent.provider) };
+                    if ('providerCreate' in intent && (!context.operationOwnerUpdate || !context.hostReviewedChild)) {
+                        return failure('source_unavailable');
+                    }
+                    let readLinkMetadata = readEnvironmentMetadata;
+                    let target = null;
+                    if (intent.role === 'runtime' && intent.source?.kind === 'plugin') {
+                        target = await readRuntimeLinkTarget(intent.source);
+                        if (!target || target.role !== 'runtime' || target.targetKind !== intent.targetKind) {
+                            return failure('deployment_target_role_unavailable');
+                        }
+                        const checkSource = readDeploymentTargetSourceCheckV1(target);
+                        if (checkSource) {
+                            // Association reuses the metadata for this exact definition. Home compares the reviewed revision.
+                            const selected = { environmentId: intent.environmentId, context };
+                            const metadata = await readEnvironmentMetadata(selected);
+                            readLinkMetadata = async () => metadata;
+                            const environment = await readDeploymentEnvironmentForHost(selected, { readMetadata: readLinkMetadata, open, assertCurrent });
+                            const sourceRefusal = checkSource(readDeploymentDefinitionSourceKindV1(environment.content.definition));
+                            if (sourceRefusal) return failure(sourceRefusal);
+                        }
+                    }
                     if ('providerCreate' in intent) {
-                        if (!context.operationOwnerUpdate || !context.hostReviewedChild) return failure('source_unavailable');
-                        const created = await createRuntimeTargetForHost(intent, await readRuntimeCreateTarget(intent), context);
+                        const created = await createRuntimeTargetForHost(intent, target, context);
                         if (!created.ok) return created;
                         recovery = created.recovery;
                         intent = recovery;
@@ -1957,7 +1978,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     }
                     const prepared = await prepareTargetLinkForHost({ input: intent, context, acknowledgedCreate }, {
                         serverHttpBaseUrl: host.serverHttpBaseUrl, artifacts,
-                        readMetadata: readEnvironmentMetadata, assertCurrent, artifactAuthorization,
+                        readMetadata: readLinkMetadata, assertCurrent, artifactAuthorization,
                     });
                     if ('contentArtifactId' in prepared) {
                         const linked = await storage(actionId, prepared, context);

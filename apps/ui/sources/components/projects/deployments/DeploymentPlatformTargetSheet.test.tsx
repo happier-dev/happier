@@ -131,7 +131,7 @@ it.each([false, true, 'git-grant', 'branch-set', 'branch-kept', 'branch-unconfir
         ? { errorCode: result.error, error: result.error, details: 'details' in result ? result.details : result, effectAttempted: true } : null,
     });
     const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
-    await act(async () => showDeploymentPlatformTargetSheet({ name: 'Site', environment, ownerAccountId: 'owner',
+    await act(async () => showDeploymentPlatformTargetSheet({ name: 'Site', environment: { ...environment, definition: { kind: 'repository' } }, ownerAccountId: 'owner',
       lifetime: context.accountLifetime, actions: createDeploymentActions(context.accountLifetime, environment.projectSourceId), onApproval: () => {},
       initialTargetKey: `${pluginId}/beta` }));
     const mode = () => screen.root.findAllByType(SegmentedChoiceItem).find(node => node.props.testID === 'project-deployments.platform.mode');
@@ -311,7 +311,7 @@ it.each(['provisioned', 'unknown', 'unavailable', 'missingPlugin', 'staleRevisio
         return { ok: true, environmentId: environment.id, revision: 5, targetLinkId: 'cold-link', targetLinkRevision: 1 };
       } });
     const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
-    const open = async () => act(async () => showDeploymentPlatformTargetSheet({ name: 'Site', environment, ownerAccountId: 'owner',
+    const open = async () => act(async () => showDeploymentPlatformTargetSheet({ name: 'Site', environment: { ...environment, definition: { kind: 'repository' } }, ownerAccountId: 'owner',
       lifetime: context.accountLifetime, actions: createDeploymentActions(context.accountLifetime, environment.projectSourceId), onApproval: () => {},
       initialTargetKey: `${pluginId}/beta` }));
     await open();
@@ -437,7 +437,7 @@ it('keeps a settled empty required choice visible with a typed reason and Retry'
         ...(page !== null && typeof page === 'object' ? page : {}) });
     } });
     const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
-    await act(async () => showDeploymentPlatformTargetSheet({ name: 'Site', environment: { id: 'environment', revision: 4, projectSourceId: '' },
+    await act(async () => showDeploymentPlatformTargetSheet({ name: 'Site', environment: { id: 'environment', revision: 4, definition: { kind: 'repository' }, projectSourceId: '' },
       ownerAccountId: 'owner', lifetime: context.accountLifetime, actions: createDeploymentActions(context.accountLifetime, ''), onApproval: () => {},
       initialTargetKey: `${pluginId}/beta` }));
     await waitForHomeGovernance(async () => { await act(async () => {}); expect(screen.root.findAllByType(ConnectedAccountPurposeTargetChooser)).toHaveLength(1); });
@@ -481,7 +481,7 @@ it('selects independent third-party targets before resolving their account, fiel
     } } });
     homes.answer(serverId, 'POST /v1/deployments/targets/list', { body: { ok: true, items: [], nextCursor: null, coverage: 'complete' } });
     const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
-    await act(async () => showDeploymentPlatformTargetSheet({ name: 'Site', environment: { id: 'environment', revision: 4, projectSourceId, controllerMachineId: 'runtime' },
+    await act(async () => showDeploymentPlatformTargetSheet({ name: 'Site', environment: { id: 'environment', revision: 4, definition: { kind: 'repository' }, projectSourceId, controllerMachineId: 'runtime' },
       ownerAccountId: 'owner', lifetime: context.accountLifetime, actions, onApproval: () => {} }));
     await waitForHomeGovernance(async () => {
       await act(async () => {});
@@ -594,7 +594,7 @@ it('shows the existing association when Check finds the same provider scope in a
     const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
     try {
       await act(async () => showDeploymentPlatformTargetSheet({ name: 'Another site',
-        environment: { id: 'another-environment', revision: 1, projectSourceId, controllerMachineId: 'runtime' },
+        environment: { id: 'another-environment', revision: 1, definition: { kind: 'repository' }, projectSourceId, controllerMachineId: 'runtime' },
         ownerAccountId: owner.accountId, lifetime: account.accountLifetime,
         actions: createDeploymentActions(account.accountLifetime, projectSourceId), onApproval: () => {}, initialTargetKey: `${pluginId}/beta` }));
       const chooser = () => screen.root.findByType(ConnectedAccountPurposeTargetChooser);
@@ -622,7 +622,7 @@ it('opens on the platform the person already chose in the draft', async () => {
     activate: api => authored.activateAccount(api, DEPLOYMENT_TARGETS_TEST_EXECUTION.account), accountLifetime: context.accountLifetime, publishProjection: true });
   try {
     const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
-    await act(async () => showDeploymentPlatformTargetSheet({ name: 'Site', environment: { id: 'environment', revision: 4, projectSourceId: '' },
+    await act(async () => showDeploymentPlatformTargetSheet({ name: 'Site', environment: { id: 'environment', revision: 4, definition: { kind: 'repository' }, projectSourceId: '' },
       ownerAccountId: 'owner', lifetime: context.accountLifetime, actions: createDeploymentActions(context.accountLifetime, ''), onApproval: () => {},
       initialTargetKey: `${pluginId}/beta` }));
     await waitForHomeGovernance(async () => {
@@ -652,7 +652,7 @@ it.each(['push', 'retry'] as const)('continues with an acknowledged platform tok
     // The Account's own inventory has no account for this platform's service.
     storage.setState({ profile: { ...previous, id: 'owner', connectedAccountsV4: [] }, profileScope: context.accountLifetime.scope });
     const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
-    await act(async () => showDeploymentPlatformTargetSheet({ name: 'Site', environment: { id: 'environment', revision: 4, projectSourceId: '' },
+    await act(async () => showDeploymentPlatformTargetSheet({ name: 'Site', environment: { id: 'environment', revision: 4, definition: { kind: 'repository' }, projectSourceId: '' },
       ownerAccountId: 'owner', lifetime: context.accountLifetime, actions: createDeploymentActions(context.accountLifetime, ''), onApproval: () => {},
       initialTargetKey: `${pluginId}/beta` }));
     await waitForHomeGovernance(async () => {
@@ -1025,7 +1025,7 @@ it('says a repository refusal with the shared remedy after another target was in
   const receiver = await answerDeploymentTargetInspectForHome({ homes, serverId, accountId: 'owner', machineId: 'runtime', plugin: authored });
   try {
     const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
-    await act(async () => showDeploymentPlatformTargetSheet({ name: 'Site', environment: { id: 'environment', revision: 4, projectSourceId: '', controllerMachineId: 'runtime' },
+    await act(async () => showDeploymentPlatformTargetSheet({ name: 'Site', environment: { id: 'environment', revision: 4, definition: { kind: 'repository' }, projectSourceId: '', controllerMachineId: 'runtime' },
       ownerAccountId: 'owner', lifetime: context.accountLifetime, actions: createDeploymentActions(context.accountLifetime, ''), onApproval: () => {},
       initialTargetKey: `${pluginId}/beta`, onOpenRecoveryDestination: destination => opened.push(destination) }));
     await waitForHomeGovernance(async () => {
@@ -1072,7 +1072,7 @@ it('keeps loading until the Account\'s plugin availability first arrives, and ne
   try {
     const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
     // The sheet opens before this Account's availability has loaded.
-    await act(async () => showDeploymentPlatformTargetSheet({ name: 'Site', environment: { id: 'environment', revision: 4, projectSourceId: '' },
+    await act(async () => showDeploymentPlatformTargetSheet({ name: 'Site', environment: { id: 'environment', revision: 4, definition: { kind: 'repository' }, projectSourceId: '' },
       ownerAccountId: 'owner', lifetime: context.accountLifetime, actions: createDeploymentActions(context.accountLifetime, ''), onApproval: () => {} }));
     await act(async () => {});
     expect(screen.findByTestId('project-deployments.platform.failed')).toBeNull();

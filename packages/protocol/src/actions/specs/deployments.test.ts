@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from '../actionExecutor.js';
-import { getActionSpec, listActionSpecsForSurface, resolveActionExecutionPlacementForInput } from '../actionSpecs.js';
+import { doesExternalActionConsumeRequesterAccountContentV1, getActionSpec, listActionSpecsForSurface, resolveActionExecutionPlacementForInput } from '../actionSpecs.js';
 import { resolveActionApprovalRouting } from '../actionApprovalPolicy.js';
 import { projectApprovalRequestForPublicRead } from '../actionApprovalPresentation.js';
 import { bindHomeDomainHttpRequestV1 } from '../homeDomainHttpBinding.js';
@@ -33,6 +33,18 @@ it.each(['cli', 'agent', 'mcp', 'ui'] as const)('routes Environment update previ
 });
 
 describe('Deployment Action front door', () => {
+  it('allows the runtime platform Link executor to open the selected Environment even with a prepared Link Artifact', () => {
+    const actionId = 'deployments.targets.link';
+    const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 1, requestKey: 'link',
+      role: 'runtime', contentArtifactId: 'prepared-link', contentHeaderVersion: 1, contentBodyVersion: 1 };
+    expect(doesExternalActionConsumeRequesterAccountContentV1({ actionId, input: { ...input,
+      targetId: 'runtime', targetKind: 'vercel', machines: [],
+      source: { kind: 'plugin', contribution: { pluginId: 'happier.deploy.vercel', localId: 'runtime' } },
+    } })).toBe(true);
+    expect(doesExternalActionConsumeRequesterAccountContentV1({ actionId, input: { ...input,
+      targetId: 'own-server', machines: [{ machineId: 'machine', installationId: 'installation' }],
+    } })).toBe(false);
+  });
   it('admits candidate backup configuration on the controller before a runtime target exists', () => {
     const spec = getActionSpec('deployments.backups.configure');
     const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 1,

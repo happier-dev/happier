@@ -525,7 +525,7 @@ export async function connectFreshVercelThroughDeploymentUi(params: Readonly<{
             children: createElement(AppShellPluginUiProjectionProvider, { children: createElement(ModalProvider) }) }));
         unmountScreen = async () => { await act(async () => Modal.hideAll()); await screen.unmount(); };
         await act(async () => showDeploymentPlatformTargetSheet({ name: 'First Vercel app',
-            environment: { id: 'fresh-environment', revision: 1, projectSourceId: '' }, ownerAccountId: account.accountId,
+            environment: { id: 'fresh-environment', revision: 1, projectSourceId: '', definition: { kind: 'repository' } }, ownerAccountId: account.accountId,
             lifetime: account.accountLifetime, actions: createDeploymentActions(account.accountLifetime, ''),
             onApproval: () => {}, initialTargetKey: 'happier.deploy.vercel/runtime' }));
         await waitForTestEvent(screen.subscribe, () => expect(screen.findHostByTestId('project-deployments.platform.connect.add'), screen.getTextContent()).not.toBeNull());

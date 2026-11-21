@@ -49,7 +49,7 @@ export async function answerDeploymentTargetInspectForHome(params: Readonly<{
 
 /** A third-party plugin declaring two runtime platforms, Alpha and Beta, through the public deployment target contract. */
 export function createDeploymentTargetsTestPlugin(pluginId: string, runInspect: (name: string, input: JsonValue) => Promise<void> = async () => {},
-  options: Readonly<{ emptyChoices?: boolean; upload?: boolean; create?: boolean; teardown?: boolean; plans?: boolean; reviewNotice?: string;
+  options: Readonly<{ emptyChoices?: boolean; upload?: boolean; create?: boolean; teardown?: boolean; plans?: boolean; reviewNotice?: string; createProductionBranch?: boolean;
     buildRuntime?: Readonly<{ name: string; version: string; pin: string; tool: string; toolVersion: string }> }> = {}) {
   const service = DEPLOYMENT_TARGETS_TEST_SERVICE;
   const execution = DEPLOYMENT_TARGETS_TEST_EXECUTION;
@@ -117,6 +117,7 @@ export function createDeploymentTargetsTestPlugin(pluginId: string, runInspect: 
         inputHints: { fields: [
           { path: 'providerAccountId', title: 'Account', widget: 'text', required: true },
           { path: 'resourceName', title: 'Project name', widget: 'text', required: true },
+          ...(options.createProductionBranch ? [{ path: 'productionBranch', title: 'Production branch', widget: 'text', required: true }] as const : []),
           { path: 'providerEnvironment', title: 'Environment', widget: 'json', required: true, defaultValue: { kind: 'native', selection: { kind: 'production' } } },
           { path: 'sourceMethod', title: 'Source method', widget: 'select', required: true, defaultValue: 'upload', options: [{ value: 'upload', label: 'Upload' }] },
         ] },

@@ -51,7 +51,7 @@ describe('Deploy an app reads the platforms for every source (journey-deploy whe
     standardCleanup();
   });
 
-  it('a stored Compose definition sees the declared platforms, listed as unable to run it', async () => {
+  it('explains the declared repository requirement for stored Compose without treating an unknown declaration as a refusal', async () => {
     const serverId = await homes.addHome({
       name: 'Deploy',
       serverUrl: 'https://deploy-steps-platforms.test',
@@ -70,6 +70,13 @@ describe('Deploy an app reads the platforms for every source (journey-deploy whe
           api,
           DEPLOYMENT_TARGETS_TEST_EXECUTION.account,
         ),
+      accountLifetime: account.accountLifetime,
+      publishProjection: true,
+    });
+    const { manifest, activateAccount } = await import('../../../../../../packages/plugins/deploy-cloudflare/src/index');
+    const installedCloudflare = await installPortableAccountPluginReleaseForTest({
+      manifest,
+      activate: activateAccount,
       accountLifetime: account.accountLifetime,
       publishProjection: true,
     });
@@ -106,13 +113,18 @@ describe('Deploy an app reads the platforms for every source (journey-deploy whe
         ).not.toBeNull(),
       );
       await waitForHomeGovernance(() =>
-        expect(
-          screen.findHostByTestId('project-deployments.draft.cantRun'),
-          'the declared platforms are read, and listed as unable to run a stored Compose definition',
-        ).not.toBeNull(),
+        expect(screen.findHostByTestId('project-deployments.draft.cantRun')).not.toBeNull(),
       );
+      const text = screen.getTextContent();
+      expect(text).toMatch(/repository.*own server/i);
+      expect(text).toContain('Cloudflare Pages');
+      expect(text).toContain('Cloudflare Workers');
+      expect(text).not.toContain('Alpha runtime');
+      expect(screen.findHostByTestId(`project-deployments.draft.target:${manifest.id}/pages`)).toBeNull();
+      expect(screen.findHostByTestId(`project-deployments.draft.target:${manifest.id}/workers`)).toBeNull();
       await screen.unmount();
     } finally {
+      await installedCloudflare.dispose();
       await installed.dispose();
       account.dispose();
       storage.setState(previous);

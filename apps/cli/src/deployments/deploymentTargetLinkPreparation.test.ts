@@ -141,12 +141,13 @@ describe('provider link preparation through the installed Action host', () => {
         ['plain', 'match'], ['e2ee', 'match'], ['plain', 'partial'], ['e2ee', 'partial'],
         ['plain', 'denied'], ['e2ee', 'denied'], ['plain', 'mode-mismatch'], ['e2ee', 'wrong-key'],
     ] as const)('compares another Source’s normalized link for two %s Team recipients (%s) before writing', async (mode, comparison) => {
+        const { host: targetHost } = createPlatformFailureNoticeFixture();
         const source = { kind: 'plugin', contribution: { pluginId: 'example.deploy', localId: 'platform' } } as const;
         const owner = { kind: 'team', teamId: 'shared-team' } as const;
         const current = createDeploymentEnvironmentHeaderV1({ owner });
         const existing = createDeploymentEnvironmentHeaderV1({ id: 'other-environment', projectSourceId: 'other-source', owner });
         const link = createDeploymentTargetLinkHeaderV1({ id: 'other-link', environmentId: existing.id,
-            source, targetKind: 'platform', machines: [], members: [] });
+            source, targetKind: 'example', machines: [], members: [] });
         const providerIdentity = { providerAccountId: 'native-account', providerResourceId: 'native-resource', providerEnvironment: 'production' };
         const dataKey = randomBytes(32);
         const encode = (value: unknown) => mode === 'plain' ? encodePlainArtifactStoredContent(value)
@@ -189,9 +190,10 @@ describe('provider link preparation through the installed Action host', () => {
                 acquirePluginRuntimeRegistryLease: async () => { throw new Error('Link preparation cannot execute native effects'); } });
             const deps = createDaemonDeploymentActionDeps({ credentials, accountArtifacts: createCredentialedAccountArtifactStore(credentials),
                 serverId: 'home', serverHttpBaseUrl: 'https://link.test', machineId: 'controller', runtime,
+                acquirePluginRuntimeRegistryLease: targetHost.acquirePluginRuntimeRegistryLease,
                 resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }) });
             const result = await deps.deploymentAction('deployments.targets.link', { serverId: 'home', environmentId: current.id,
-                expectedRevision: current.revision, requestKey: 'link-provider', source, targetId: 'platform', targetKind: 'platform',
+                expectedRevision: current.revision, requestKey: 'link-provider', source, targetId: 'platform', targetKind: 'example',
                 role: 'runtime', machines: [], provider: { credentialPrincipal: { kind: 'account', accountId: recipient,
                     purpose: { consumer: { pluginId: 'example.deploy', localId: 'platform' }, purpose: 'manage' },
                     target: { kind: 'account', account: { service: { pluginId: 'example.deploy', localId: 'service' }, accountId: 'credential' } } },

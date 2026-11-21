@@ -1,3 +1,4 @@
+import { DEPLOYMENT_TARGET_REQUIRES_REPOSITORY_DEFINITION } from './resolvePublishTargetRecommendation.js';
 import { z } from '../zodRuntimePolicy.js';
 import { isRecord } from '../common/records.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
@@ -114,6 +115,9 @@ const recoveries = {
     deployment_log_unavailable: recovery('The deployment logs could not be read. Reconnect the serving machine and open the logs again.', 'machines', 'Reconnect log source'),
     deployment_read_failed: recovery('The Environment could not be read. Reconnect its controller and reload the Environment.', 'machines', 'Reconnect controller'),
     deployment_source_data_kept: recovery('The app stopped, but its source data was kept. Review the retained data before removing it yourself.', 'settings', 'Review retained data'),
+    [DEPLOYMENT_TARGET_REQUIRES_REPOSITORY_DEFINITION]: recovery(
+        'This platform deploys from a repository definition. Create an Environment that deploys from a repository, or run this stored definition on your own server.',
+        'source', 'Open Source details'),
     repository_required: recovery('This deployment needs a repository. Choose one for the project before deploying.', 'source', 'Choose repository'),
     needs_repository: recovery('The selected operation needs repository files. Link a repository source and review the operation again.', 'source', 'Link repository'),
     source_access_denied: recovery('You cannot manage the selected project source. Ask its owner for access or choose a source you can manage.', 'source', 'Review source access'),

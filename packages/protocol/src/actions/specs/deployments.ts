@@ -440,7 +440,12 @@ function createDeploymentActionSpecsV1(): DeploymentActionSpecsV1 {
   { ...deploymentSpec(deploymentActionIds.DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, 'Update deployment environment', '/v1/deployments/environments/:environmentId'), deploymentPreparationScope: declareDeploymentPreparationScopeV1('update'), requesterAccountContentDemandForInput: () => true },
   { ...deploymentSpec(deploymentActionIds.DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, 'Configure Environment telemetry', undefined), requesterAccountContentDemandForInput: () => true },
   deploymentSpec(deploymentActionIds.DEPLOYMENT_ENVIRONMENTS_CONTROLLER_SET_ACTION_ID_V1, 'Change environment controller', '/v1/deployments/environments/:environmentId/controller'),
-  { ...deploymentSpec(deploymentActionIds.DEPLOYMENT_TARGET_LINK_ACTION_ID_V1, 'Link deployment target', '/v1/deployments/environments/:environmentId/targets'), deploymentPreparationScope: declareDeploymentPreparationScopeV1('link'), requesterAccountContentDemandForInput: (input: unknown) => !('contentArtifactId' in readRecord(input)) },
+  { ...deploymentSpec(deploymentActionIds.DEPLOYMENT_TARGET_LINK_ACTION_ID_V1, 'Link deployment target', '/v1/deployments/environments/:environmentId/targets'),
+    deploymentPreparationScope: declareDeploymentPreparationScopeV1('link'),
+    requesterAccountContentDemandForInput: (input: unknown) => {
+      const link = readRecord(input);
+      return !('contentArtifactId' in link) || link.role === 'runtime' && readRecord(link.source).kind === 'plugin';
+    } },
   deploymentSpec(deploymentActionIds.DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1, 'Unlink deployment target', '/v1/deployments/environments/:environmentId/targets/:targetLinkId/unlink'),
   deploymentSpec(deploymentActionIds.DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1, 'Delete deployment environment', '/v1/deployments/environments/:environmentId/delete'),
   { ...deploymentSpec(deploymentActionIds.DEPLOYMENT_DEPLOY_ACTION_ID_V1, 'Deploy environment', '/v1/deployments/environments/:environmentId/deploy'), deploymentPreparationScope: declareDeploymentPreparationScopeV1('membership'), requesterAccountContentDemandForInput: () => true },

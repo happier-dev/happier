@@ -1,3 +1,9 @@
+import {
+  DEPLOYMENT_TARGET_REQUIRES_REPOSITORY_DEFINITION,
+  readDeploymentDefinitionSourceKindV1,
+  readDeploymentTargetSourceCheckV1,
+  type PublishTargetRecommendationInput,
+} from '@happier-dev/protocol/deployments/resolvePublishTargetRecommendation';
 import * as React from 'react';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
@@ -57,6 +63,7 @@ import { readProjectRepositoryIdentityV1 } from '@/sync/domains/widgets/projectW
 import { t } from '@/text';
 
 import { readDeploymentActionError, readDeploymentRefusal } from './deploymentActionOutcome';
+import { deploymentActionRefusalRemedy } from './deploymentPresentation';
 import type { createDeploymentActions } from './deploymentActions';
 import { readExistingPlatformTargetAssociation } from './deploymentReadTransport';
 import { DeploymentSourceMethodChoice } from './DeploymentSourceMethodChoice';
@@ -88,14 +95,15 @@ export type DeploymentPlatformLinkActions = Pick<
   'inspectPlatformTarget' | 'link'
 >;
 
+type PlatformLinkEnvironment = Readonly<{
+  projectSourceId: string;
+  definition: PublishTargetRecommendationInput['definition'];
+  controllerMachineId?: string;
+}>;
+
 export type DeploymentPlatformTargetSheetInput = Readonly<{
   name: string;
-  environment: Readonly<{
-    id: string;
-    revision: number;
-    projectSourceId: string;
-    controllerMachineId?: string;
-  }>;
+  environment: PlatformLinkEnvironment & Readonly<{ id: string; revision: number }>;
   ownerAccountId: string;
   lifetime: ServerAccountScopeLifetime;
   actions: DeploymentPlatformLinkActions;
@@ -208,7 +216,7 @@ const EMPTY_VALUES: Readonly<Record<string, unknown>> = Object.freeze({});
  */
 export function DeploymentPlatformTargetEditor(
   props: Omit<DeploymentPlatformTargetSheetInput, 'environment'> & CustomModalInjectedProps & Readonly<{
-    environment: Readonly<{ id?: string; revision?: number; projectSourceId: string; controllerMachineId?: string;
+    environment: PlatformLinkEnvironment & Readonly<{ id?: string; revision?: number;
       /** What runs owns the repository choice in the guided draft. Null means a choice is still required. */
       repositoryBranch?: string | null }>;
     /** Drafts review the same provider result in place; the creating page commits the association. */
@@ -294,8 +302,20 @@ export function DeploymentPlatformTargetEditor(
   }, [linkOperations, props.environment.revision]);
   const { state: platformsState, retry: retryPlatforms } =
     useDeploymentPlatformTargets(props.lifetime);
-  const targets =
-    platformsState.status === 'ready' ? platformsState.targets : [];
+  const sourceKind = readDeploymentDefinitionSourceKindV1(props.environment.definition);
+  const { targets, sourceRefusals } = React.useMemo(() => {
+    const sourceRefusals = new Map<string, typeof DEPLOYMENT_TARGET_REQUIRES_REPOSITORY_DEFINITION>();
+    const targets = platformsState.status === 'ready' ? platformsState.targets.filter(entry => {
+      const refusal = readDeploymentTargetSourceCheckV1(entry)?.(sourceKind);
+      if (!refusal) return true;
+      sourceRefusals.set(entry.key, refusal);
+      return false;
+    }) : [];
+    return { targets, sourceRefusals };
+  }, [platformsState, sourceKind]);
+  const provisionedSourceRefusal = provisioned
+    ? sourceRefusals.get(titleKey(provisioned.source.contribution.pluginId, provisioned.source.contribution.localId)) : undefined;
+  const sourceRefusal = provisionedSourceRefusal ?? (targets.length === 0 ? sourceRefusals.values().next().value : undefined);
   const [targetKey, setTargetKey] = React.useState<string | null>(props.initialTargetKey ?? null);
   const target = provisioned
     ? targets.find(entry => entry.pluginId === provisioned.source.contribution.pluginId && entry.targetId === provisioned.source.contribution.localId) ?? null
@@ -564,7 +584,7 @@ export function DeploymentPlatformTargetEditor(
   };
 
   const createOrFinish = async () => {
-    if (busy || (!provisioned && (pendingLink || unresolvedLink)) || outcomeUnknown || !props.environment.id || props.environment.revision === undefined) return;
+    if (busy || provisionedSourceRefusal || (!provisioned && (pendingLink || unresolvedLink)) || outcomeUnknown || !props.environment.id || props.environment.revision === undefined) return;
     setBusy('link');
     setLinkRefused(null);
     try {
@@ -665,7 +685,7 @@ export function DeploymentPlatformTargetEditor(
   }, [onPrepared, create, createIntentReady, draft, reviewNotice, currentNotice, controllerLabel]);
   // Before Connect there is nothing to check or link: no disabled Check anywhere, the connection leads (DESIGN-ACCEPT C1).
   const primary = createdBranchOutcome || provisioned || outcomeUnknown || duplicate || pendingLink || unresolvedLink
-    || (create && props.onPrepared) || connectionNeeded ? null : {
+    || !target || (create && props.onPrepared) || connectionNeeded ? null : {
     testID: create ? 'project-deployments.platform.create'
       : ready && !props.onPrepared ? 'project-deployments.platform.link' : 'project-deployments.platform.check',
     loading: busy !== null,
@@ -697,7 +717,7 @@ export function DeploymentPlatformTargetEditor(
   return (
     <ListPresentationProvider value={embedded ? hostPresentation : 'page'} pageInsets={embedded ? hostInsets : 'contained'}>
       <View testID="project-deployments.platform" style={embedded ? styles.embedded : deploymentSheetStyles.body}>
-        {props.onPrepared ? null : <Text style={deploymentSheetStyles.lead}>
+        {props.onPrepared || !target ? null : <Text style={deploymentSheetStyles.lead}>
           {t('projects.deployments.platformLink.lead')}
         </Text>}
         {createdBranchOutcome ? <SurfaceStateCard testID="project-deployments.platform.productionBranch" size="line"
@@ -707,7 +727,11 @@ export function DeploymentPlatformTargetEditor(
             : createdBranchOutcome.status === 'defaultKept' ? t('projects.deployments.platformLink.branchDefaultKept', createdBranchOutcome)
               : t('projects.deployments.platformLink.branchUnconfirmed', createdBranchOutcome)}
           {...(createdBranchOutcome.status === 'set' ? {} : { diagnosticCode: createdBranchOutcome.failureCause.errorCode ?? undefined })} />
-          : reviewingCreate && !target ? null : platformsState.status === 'loading' ? (
+          : sourceRefusal ? (
+          <SurfaceStateCard testID="project-deployments.platform.sourceRefused" size="line" kind="unavailable"
+            title={t('common.unavailable')}
+            reason={deploymentActionRefusalRemedy(sourceRefusal)} />
+        ) : reviewingCreate && !target ? null : platformsState.status === 'loading' ? (
           <SurfaceStateCard
             testID="project-deployments.platform.loading"
             size="line"
@@ -915,7 +939,8 @@ export function DeploymentPlatformTargetEditor(
           title={t('common.loading')} /> : null}
         {provisioned ? <SurfaceStateCard testID="project-deployments.platform.provisioned" size="line" kind="error"
           title={t('projects.deployments.platformLink.provisioned')}
-          action={{ label: t('projects.deployments.platformLink.finishLinking'), onPress: () => { void createOrFinish(); }, disabled: busy !== null }} /> : null}
+          {...(provisionedSourceRefusal ? {} : { action: { label: t('projects.deployments.platformLink.finishLinking'),
+            onPress: () => { void createOrFinish(); }, disabled: busy !== null } })} /> : null}
         {providerUrl ? <ItemGroup header="none">
           <Item testID="project-deployments.platform.openProvider" title={t('projects.deployments.platformLink.openProvider')}
             onPress={() => requestOpenExternalUrl(providerUrl, { serverId: props.lifetime.scope.serverId, expectedAccountId: props.lifetime.scope.accountId })} />
@@ -941,9 +966,10 @@ export function DeploymentPlatformTargetEditor(
             size="line"
             kind="error"
             title={t('projects.deployments.platformLink.linkRefused')}
-            reason={readDeploymentRefusal(linkRefused.code).reason === 'permission'
-              ? t('projects.deployments.platformLink.managersOnly')
-              : t('projects.deployments.nothingChanged')}
+            reason={linkRefused.code === DEPLOYMENT_TARGET_REQUIRES_REPOSITORY_DEFINITION
+              ? deploymentActionRefusalRemedy(linkRefused.code)
+              : readDeploymentRefusal(linkRefused.code).reason === 'permission'
+                ? t('projects.deployments.platformLink.managersOnly') : t('projects.deployments.nothingChanged')}
             diagnosticCode={linkRefused.code}
           />
         ) : null}

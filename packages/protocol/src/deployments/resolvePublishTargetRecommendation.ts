@@ -18,9 +18,30 @@ export type PublishTargetRecommendationInput = Readonly<{
     uploadAvailable?: boolean;
 }>;
 
+export const DEPLOYMENT_TARGET_REQUIRES_REPOSITORY_DEFINITION = 'deployment_target_requires_repository_definition';
+
+export function readDeploymentDefinitionSourceKindV1(
+    definition: PublishTargetRecommendationInput['definition'],
+): 'repository' | 'stored' | null {
+    if (definition === null) return null;
+    return 'from' in definition || definition.kind === 'stored' ? 'stored' : 'repository';
+}
+
+function refuseStoredDefinition(sourceKind: ReturnType<typeof readDeploymentDefinitionSourceKindV1>) {
+    return sourceKind === 'stored' ? DEPLOYMENT_TARGET_REQUIRES_REPOSITORY_DEFINITION : null;
+}
+
+/** The declared source requirement. With no requirement, the caller need not open protected content. */
+export function readDeploymentTargetSourceCheckV1(
+    target: Pick<PublishTargetRecommendationInput['targets'][number], 'needs'>,
+): typeof refuseStoredDefinition | null {
+    return target.needs?.includes('repository') ? refuseStoredDefinition : null;
+}
+
 /** No detection, probes, credential reads or effects. Owners supply admitted definition and availability facts. */
 export function resolvePublishTargetRecommendation(input: PublishTargetRecommendationInput): DeploymentTargetRecommendationV1 {
-    const stored = input.definition !== null && ('from' in input.definition || input.definition.kind === 'stored');
+    const sourceKind = readDeploymentDefinitionSourceKindV1(input.definition);
+    const stored = sourceKind === 'stored';
     const compose = input.definition !== null && 'compose' in input.definition && input.definition.compose !== undefined;
     const evidence: DeploymentTargetRecommendationV1['evidence'] = [];
     const uncertainty: DeploymentTargetRecommendationV1['uncertainty'] = [];
@@ -42,10 +63,15 @@ export function resolvePublishTargetRecommendation(input: PublishTargetRecommend
             && (target.sources?.gitIntegration.includes(providerKind)
                 || target.sources?.upload && input.uploadAvailable)));
     };
-    const compatible = input.targets.filter(target => {
-        if (!sourceCompatible(target)) return false;
+    const sourceCandidates = input.targets.filter(target => {
+        if (readDeploymentTargetSourceCheckV1(target)?.(sourceKind)) {
+            corrections.push({ targetId: target.id, kind: 'prepare_repository' });
+            return false;
+        }
+        return sourceCompatible(target);
+    });
+    const compatible = sourceCandidates.filter(target => {
         if (!target.accepts || !outputs) return target.targetClass === 'ownServer';
-        if (stored && target.needs?.includes('repository')) return false;
         return outputs.some(output => target.accepts!.includes(output)
             && (!target.needs?.includes('stateless') || output === 'static' || output === 'server' || output === 'workers')
             && (!target.needs?.includes('volumes') || output === 'container' || output === 'compose'));
@@ -73,8 +99,8 @@ export function resolvePublishTargetRecommendation(input: PublishTargetRecommend
     return {
         target: preferred ?? (recommended ? { id: recommended.id, targetClass: recommended.targetClass } : null),
         compatibleTargetIds: compatible.map(target => target.id),
-        offeredTargetIds: input.targets.filter(target => sourceCompatible(target) && (compatible.includes(target)
-            || (!target.accepts || !outputs) && !stored)).map(target => target.id),
+        offeredTargetIds: sourceCandidates.filter(target => compatible.includes(target)
+            || (!target.accepts || !outputs) && !stored).map(target => target.id),
         evidence, uncertainty, corrections,
     };
 }

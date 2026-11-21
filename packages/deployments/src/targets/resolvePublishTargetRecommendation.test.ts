@@ -13,6 +13,22 @@ describe('Publish target recommendation from owner facts', () => {
             });
         }
     });
+    it('offers repository-only targets for a repository definition and supplies a repair for stored Compose', () => {
+        const targets = [
+            { ...platform, id: 'vercel', accepts: ['server'], needs: ['repository', 'stateless'] },
+            { ...platform, id: 'cloudflare-pages', accepts: ['static'], needs: ['repository', 'stateless'] },
+            { ...platform, id: 'cloudflare-workers', accepts: ['workers'], needs: ['repository', 'stateless'] },
+            { ...server, accepts: ['compose'] },
+        ] as const;
+        for (const definition of [{ kind: 'stored' }, { from: 'compose' }] as const) {
+            const result = resolvePublishTargetRecommendation({ definition, targets });
+            expect(result.offeredTargetIds).toEqual(['server']);
+            expect(result.corrections).toEqual(targets.slice(0, 3).map(({ id }) => ({ targetId: id, kind: 'prepare_repository' })));
+        }
+        const fromRepository = resolvePublishTargetRecommendation({ definition: { kind: 'repository' }, targets });
+        expect(fromRepository.offeredTargetIds).toEqual(['vercel', 'cloudflare-pages', 'cloudflare-workers', 'server']);
+        expect(fromRepository.corrections).toEqual([{ targetId: 'server', kind: 'prepare_repository' }]);
+    });
     it('keeps an unavailable server as a compatible workload choice with a repair, without recommending it', () => {
         expect(resolvePublishTargetRecommendation({ definition: { kind: 'stored' },
             targets: [{ ...server, availability: 'unavailable' }] })).toMatchObject({

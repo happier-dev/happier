@@ -1155,13 +1155,16 @@ describe('Environment draft Machine Home', () => {
     const account = await captureLazyActionAccountContext(serverId);
     const previous = storage.getState();
     let committed = false;
+    let previewRequests = 0;
+    let configureCommits = 0;
+    let countConfigureCommits = false;
     const creates: unknown[] = [];
     const saved: Array<[string, unknown]> = [];
     const pluginId = 'com.example.draft-platform-create';
     const { DeploymentTargetLinkCreateIntentInputV1Schema } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
     const notice = 'Beta: the source is final at creation.';
     const pin = `sha256:3d27e5${'a'.repeat(58)}`;
-    const authoredPlugin = createDeploymentTargetsTestPlugin(pluginId, undefined, { create: true, reviewNotice: notice, plans: true,
+    const authoredPlugin = createDeploymentTargetsTestPlugin(pluginId, undefined, { create: true, reviewNotice: notice, plans: true, createProductionBranch: true,
       buildRuntime: { name: 'Node.js', version: '24.21.0', pin, tool: 'Wrangler', toolVersion: '4.156.0' } });
     const installed = await installPortableAccountPluginReleaseForTest({ manifest: authoredPlugin.manifest,
       activate: api => authoredPlugin.activateAccount(api, DEPLOYMENT_TARGETS_TEST_EXECUTION.account),
@@ -1175,6 +1178,7 @@ describe('Environment draft Machine Home', () => {
         actionId: 'deployments.environments.create', tokenEpoch: 0,
         execute: input => {
           if (typeof input === 'object' && input !== null && 'mode' in input) {
+            previewRequests++;
             const authored = DeploymentEnvironmentCreateIntentInputV1Schema.parse(input) as Record<string, unknown>;
             const { mode: _mode, name: _name, definition: _definition, ...selectors } = authored;
             return DeploymentEnvironmentCreatePreviewV1Schema.parse({ kind: 'preview', input: {
@@ -1209,9 +1213,15 @@ describe('Environment draft Machine Home', () => {
       const { TokenStorage } = await import('@/auth/storage/tokenStorage');
       const credentials = await TokenStorage.getCredentialsForServerUrl('https://draft-platform-create.test');
       const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
-        <DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId="source-app"
+        <React.Profiler id="platform-configure" onRender={() => {
+          if (countConfigureCommits) {
+            configureCommits++;
+            // Bound the broken feedback loop so RED reports its cause before React's global depth warning.
+            expect(configureCommits, 'Create new must settle before Review').toBeLessThanOrEqual(16);
+          }
+        }}><DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId="source-app"
         phone={false} platformAvailable actions={createDeploymentActions(account.accountLifetime, 'source-app')}
-        onApprovalRequested={() => {}} onSaved={(id, next) => saved.push([id, next])} onDiscard={() => {}} /></InjectedAuthProvider>);
+        onApprovalRequested={() => {}} onSaved={(id, next) => saved.push([id, next])} onDiscard={() => {}} /></React.Profiler></InjectedAuthProvider>);
       const header = () => screen.findAllByType(PageHeader)[0]!;
       await act(async () => header().props.titleEditor.onChangeText('Marketing site'));
       await waitForTestEvent(screen.subscribe,
@@ -1229,6 +1239,8 @@ describe('Environment draft Machine Home', () => {
       await patch({ providerAccountId: 'organization' });
       await patch({ resourceName: 'new-project' });
       await patch({ providerEnvironment: { kind: 'native', selection: { kind: 'production' } } });
+      countConfigureCommits = true;
+      await patch({ productionBranch: 'main' });
       // Nothing is made while the person is still choosing; Create makes the Environment, then the provider project.
       expect(creates).toEqual([]);
       expect(screen.findHostByTestId('project-deployments.platform.create')).toBeNull();
@@ -1237,6 +1249,8 @@ describe('Environment draft Machine Home', () => {
       await act(async () => header().props.primaryAction.onPress());
       await waitForHomeGovernance(async () => { await act(async () => {});
         expect(screen.findHostByTestId('project-deployments.draft.defaults'), screen.getTextContent()).not.toBeNull(); });
+      countConfigureCommits = false;
+      expect(previewRequests).toBe(1);
       // Review says, before Create, what making this resource means, in the platform's own words (deploy auto-mode U8).
       await waitForHomeGovernance(async () => { await act(async () => {});
         expect(screen.findHostByTestId('project-deployments.draft.reviewNotice'), screen.getTextContent()).not.toBeNull(); });
@@ -1257,7 +1271,8 @@ describe('Environment draft Machine Home', () => {
       expect(creates).toHaveLength(1);
       expect(creates[0]).toMatchObject({ environmentId: 'created-environment', expectedRevision: 1, targetId: 'beta',
         source: { kind: 'plugin', contribution: { pluginId, localId: 'beta' } },
-        providerCreate: { providerAccountId: 'organization', resourceName: 'new-project' } });
+        providerCreate: { providerAccountId: 'organization', resourceName: 'new-project',
+          productionBranch: 'main', sourceMethod: 'upload', providerEnvironment: { kind: 'native', selection: { kind: 'production' } } } });
       expect(saved).toEqual([['created-environment', undefined]]);
       await screen.unmount();
     } finally { standardCleanup(); await receiver.dispose(); await installed.dispose(); account.dispose(); storage.setState(previous); }
