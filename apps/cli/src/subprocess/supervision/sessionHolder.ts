@@ -15,10 +15,12 @@ import { readHostedSessionScope, sessionProcessEnvironment } from '@/agent/runti
 import { logger } from '@/ui/logger';
 import { isOwnerOnlyPath, resolveOwnerOnlySocketRoot } from '@/utils/ipc/ownerOnlyLocalEndpoint';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
 import { launchWithManagedChannelEnvironment } from '@/machines/managed/channelEnvironmentDelivery';
 import { connectSessionTarget, createTargetHolderSocketPath, readSessionTargetPlacement } from './sessionTargetRelay';
 import { PROCESS_TERMINATION_GRACE_MS } from './terminationPolicy';
+import { readManagedWorkspaceFailureCode } from '@/workspaces/source/managedWorkspaceFailure';
 import { resolveHolderWorkspaceCommand } from '@/workspaces/source/holderWorkspaceCommand';
 import { resolveProcessCustodySupportExecutable } from './processCustody';
 
@@ -662,10 +664,12 @@ export class SessionHolderChild extends ChildProcess {
                 const value = reply.value as { stream?: unknown } | undefined;
                 if (reply.ok !== true || typeof value?.stream !== 'number') {
                     const code = typeof reply.code === 'string' ? reply.code : typeof reply.error === 'string' ? reply.error : 'spawn_failed';
+                    const rpcErrorCode = readRpcErrorCode(reply);
                     refuseStart(this.target && code === 'holder_disconnected'
                         ? new PluginError({ code: 'agent_cli_target_unavailable', retryable: false,
                             message: 'The Session target workspace holder is unavailable' })
-                        : Object.assign(new Error(`Session holder could not start ${label}`), { code, syscall: 'spawn' }));
+                        : Object.assign(new Error(`Session holder could not start ${label}`), { code, syscall: 'spawn',
+                            ...(rpcErrorCode ? { rpcErrorCode } : {}) }));
                     return;
                 }
                 this.registerStream(value.stream, process);
@@ -788,7 +792,7 @@ export class SessionHolderChild extends ChildProcess {
             this.sendFrame('q', Buffer.from(JSON.stringify({ ...body, id }), 'utf8'), (error) => {
                 if (!error) return;
                 this.pendingReplies.delete(id);
-                resolve({ id, ok: false, error: 'holder_disconnected' });
+                resolve({ id, ...this.workspaceChannelFailure(this.socket?.errored ?? error) });
             });
         });
     }
@@ -814,7 +818,8 @@ export class SessionHolderChild extends ChildProcess {
         socket.on('close', () => {
             if (this.socket === socket) this.socket = null;
             if (!this.socket) attachedHolderClients.delete(this);
-            for (const [id, resolve] of this.pendingReplies) resolve({ id, ok: false, error: 'holder_disconnected' });
+            const failure = this.workspaceChannelFailure(socket.errored);
+            for (const [id, resolve] of this.pendingReplies) resolve({ id, ...failure });
             this.pendingReplies.clear();
             if (this.closed || this.exitSeen) return;
             if (this.finiteWorkspaceChannel) {
@@ -852,6 +857,11 @@ export class SessionHolderChild extends ChildProcess {
     attachWorkspaceChannel(channel: Duplex, onHello: (hello: SessionHolderHello) => void): void {
         this.finiteWorkspaceChannel = true;
         this.attachSocket(channel, onHello);
+    }
+
+    private workspaceChannelFailure(error: unknown): Readonly<{ ok: false; error: string; rpcErrorCode?: string }> {
+        const code = this.finiteWorkspaceChannel ? readManagedWorkspaceFailureCode(error) : undefined;
+        return { ok: false, error: code ?? 'holder_disconnected', ...(code ? { rpcErrorCode: code } : {}) };
     }
 
     /** The Agent never started: queued input fails instead of waiting forever. */
@@ -1310,7 +1320,7 @@ export function openSessionHolderWorkspaceChannel(channel: Duplex, onReady?: (cl
 
 export function attachSessionHolderWorkspaceChannel(channel: Duplex): Promise<SessionHolderChild> {
     return new Promise((resolve, reject) => {
-        const failed = () => reject(new PluginError({ code: 'agent_cli_target_unavailable',
+        const failed = () => reject(new PluginError({ code: readManagedWorkspaceFailureCode(channel.errored) ?? 'agent_cli_target_unavailable',
             message: 'The Session target workspace channel is unavailable', retryable: false }));
         channel.once('error', failed);
         channel.once('close', failed);

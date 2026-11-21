@@ -17,6 +17,16 @@ import { createManagedMachineAcquisitionDriver, createManagedMachineControllerCl
 import { ensureAcceptedManagedWorkspaceTarget, registerSessionTargetWorkspace, resolveSessionTargetWorkspace } from '@/daemon/sessions/sessionTargetWorkspaces';
 import { prepareWorkflowAcceptedWorkspaceTarget } from '@/daemon/workflows/resolveWorkflowWorkspace';
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
+import { createDirectoryRpcActionExecutor } from '@/rpc/handlers/fileSystem/directoryHandlers';
+import { runWithWorkspaceSourceDemand } from '@/workspaces/source/workspaceSource';
+import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { registerScmHandlers } from '@/rpc/handlers/scm';
+import { createScmBackendRegistry } from '@/scm/registry';
+import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/registeredScmBackendAdapter';
+import { createHostScmCommandRunner } from '@/scm/runtime';
+import { createHostScmHostingProviderRuntimeServices } from '@/scm/hostingProviders/runtimeServices';
+import { createGitScmBackendRuntimeRegistration } from '../../../../../packages/plugins/scm-git/src/backend';
 import { deliverSessionTargetLaunch } from '@/daemon/spawn/prepareSessionTargetPlacement';
 import { createManagedPresetHydrator } from './presetHydration';
 import { execFile } from 'node:child_process';
@@ -608,6 +618,67 @@ describe('Session placement on a managed target (driver)', () => {
 
     const syncWorkspace = { v: 2 as const, kind: 'managed' as const, id: 'native-workspace', serverId: homeId,
         managedId: machine.id, controller: machine.controller!, rootPath: '/home/u/workspace', createdAtMs: 0 };
+
+    it('reports a stopped provider through the admitted Project Files and Git reads', async () => {
+        let providerPower: 'running' | 'stopped' = 'running';
+        const h = harness({ guest: true, onNativeRole: async role => {
+            if ((role === 'bootstrap' || role === 'stream') && providerPower === 'stopped') {
+                throw new PluginError({ code: 'managed_power_required' });
+            }
+        } });
+        const lifetime = new AbortController();
+        onTestFinished(() => lifetime.abort());
+        const row = ManagedMachineV1Schema.parse({ ...machine, bootstrapInstalled: true });
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input,
+            readTargetCurrent: async (_id, request) => ({ machine: row, admitted: request.requesterAccountId === 'owner' }) });
+        const workspace = workspaceAddressFromRefV2(syncWorkspace);
+        if (workspace.kind !== 'managed') throw new Error('Expected a managed workspace');
+        const admission = createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => homeId,
+            resolveWorkspaceTarget: resolveSessionTargetWorkspace,
+            restoreManagedWorkspaceTarget: requested => ensureAcceptedManagedWorkspaceTarget({ workspace: requested,
+                requesterAccountId: 'owner', openTarget: request => driver.openProjectWorkspaceTarget({ ...request, holder }),
+                signal: lifetime.signal }) });
+        const context: RpcHandlerContext = { signal: lifetime.signal, callerAuthority: 'present_user',
+            machineAdmission: { ...syncWorkspace.controller, actorAccountId: 'owner', custodianAccountId: 'owner',
+                role: 'manage', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true };
+        const files = createDirectoryRpcActionExecutor({ workingDirectory: '/controller', accessPolicy: { kind: 'osUser' },
+            getAdditionalAllowedReadDirs: () => [], getAdditionalAllowedWriteDirs: () => [],
+            limits: { listMaxEntries: 100, treeMaxDepth: 3, treeMaxNodes: 100 } });
+        const list = { workspace, rootPath: workspace.rootPath, path: workspace.rootPath };
+        const readFiles = async () => runWithWorkspaceSourceDemand(await admission.selectWorkspaceSource(context, list), () =>
+            files.execute('daemon.filesystem.listDirectory', list, { surface: 'rpc', authority: 'present_user' }));
+
+        const registration = createGitScmBackendRuntimeRegistration();
+        const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({
+            definition: { id: 'git', kind: 'git' }, qualifiedId: 'happier.scm.git/git',
+            executableDefinition: registration.runtime!, registration,
+            scmCommandRunner: createHostScmCommandRunner({ isCurrent: () => true }),
+            hostingProviderRuntimeServices: createHostScmHostingProviderRuntimeServices({ contributes: {}, scmHostingProvidersById: new Map() }),
+        })]);
+        const handlers = new Map<string, RpcHandler>();
+        registerScmHandlers({ registerHandler: (method, handler) => { handlers.set(method, handler); } }, workspace.rootPath, {
+            registry, machineId: syncWorkspace.controller.machineId,
+            selectWorkspaceSource: admission.selectWorkspaceSource, admitWorkspaceSource: admission.rpc,
+        });
+        const readStatus = () => handlers.get(RPC_METHODS.SCM_STATUS_SNAPSHOT)!({ v: 1, kind: 'targeted_action_rpc',
+            target: workspace, input: { cwd: workspace.rootPath } }, context);
+        providerPower = 'stopped';
+        await expect.soft(readFiles()).rejects.toMatchObject({ rpcErrorCode: 'managed_power_required' });
+        await expect.soft(readStatus()).rejects.toMatchObject({ rpcErrorCode: 'managed_power_required' });
+
+        providerPower = 'running';
+        await admission.selectWorkspaceSource(context, list);
+        providerPower = 'stopped';
+        const filesResult = await readFiles();
+        const status = await readStatus();
+        const watch = await handlers.get(RPC_METHODS.SCM_WORKSPACE_WATCH)!({ directory: workspace.rootPath, workspace }, context);
+        expect({ filesResult, status, watch }).toMatchObject({
+            filesResult: { ok: true, result: { success: false, errorCode: 'managed_power_required' } },
+            status: { success: false, errorCode: 'BACKEND_UNAVAILABLE', actionErrorCode: 'managed_power_required' },
+            watch: { status: 'unavailable', reason: { code: 'managed_power_required' } },
+        });
+        expect(h.calls.filter(role => role === 'stream')).toHaveLength(3);
+    });
 
     it('refuses the other requester at Workflow admission before a guest bootstrap or file effect', async () => {
         const h = harness({ guest: true, holdStream: true });

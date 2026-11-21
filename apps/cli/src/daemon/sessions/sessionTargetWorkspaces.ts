@@ -1,9 +1,11 @@
 import type { Duplex } from 'node:stream';
 import { realpathSync } from 'node:fs';
 import type { WorkspaceManifest } from '@happier-dev/protocol';
+import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { workspaceTargetUnavailable, type WorkspaceSourcePlacement, type WorkspaceSource } from '@/workspaces/source/workspaceSource';
 
 import { openSessionHolderWorkspaceChannel, openSessionHolderWorkspaceClient, type SessionHolderChild } from '@/subprocess/supervision/sessionHolder';
+import { readManagedWorkspaceFailureCode } from '@/workspaces/source/managedWorkspaceFailure';
 import { createHolderWorkspaceSource } from '@/workspaces/source/holderWorkspaceSource';
 import { expandHomeDirPath, isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import type { ProjectOpenRuntime } from '@/workspaces/activation/openProject';
@@ -113,6 +115,10 @@ export async function ensureAcceptedManagedWorkspaceTarget(input: Readonly<{
         lifetime.signal.throwIfAborted();
         retained = registerManagedWorkspaceTarget({ ...placement, target });
         return managedWorkspaceEntry(placement)?.source ?? null;
+    } catch (error) {
+        const code = readManagedWorkspaceFailureCode(error);
+        if (code && error instanceof Error && !(error instanceof RpcError)) throw new RpcError(error.message, code);
+        throw error;
     } finally {
         signal?.removeEventListener('abort', cancel);
         if (!retained) lifetime.abort();

@@ -1846,6 +1846,11 @@ expectation published by no-replace rename, mkdir, rename) and observe+delete fo
 removal. Watches are holder `watch` streams. Creating symbolic links has no operation
 and rejects with `workspace_source_operation_unavailable`; none falls back to this
 Machine.
+
+A managed Project's provider refusal keeps its typed code through target preparation
+and the workspace holder channel. Files and Git can use `managed_power_required`
+from the provider to offer the existing Start action for the admitted workspace.
+
 Streaming producers (checkpoint materialization from `git cat-file`) write through the port's `openWrite` stream; workspace-export readers (manifest scan, file hashing, transfer resolution) read the exported workspace through the source, while export import/promotion into a sync or handoff destination stays this Machine's directory owner. Copy installs through `installWorkspaceTree` (stage beside the
 destination, swap, restore on failure); folder ZIP download, prepared entry
 exports and prepared entry imports stage through host temp space and reuse the

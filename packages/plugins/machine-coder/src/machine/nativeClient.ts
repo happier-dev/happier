@@ -271,8 +271,11 @@ export function createCoderClient(input: { request: (path: string, init?: Reques
       const native = await read(resource);
       if (!native) throw new PluginError({ code: 'managed_not_found' });
       if (native.dormant_at) throw new PluginError({ code: 'coder_dormant' });
-      if (powerOf(native) !== 'running') throw new PluginError({ code: 'managed_power_required' });
-      if (!routableCoderAgentNames(native).includes(resource.agentName)) throw new PluginError({ code: 'coder_agent_unavailable' });
+      const power = powerOf(native);
+      if (power === 'stopped') throw new PluginError({ code: 'managed_power_required' });
+      if (power !== 'running' || !routableCoderAgentNames(native).includes(resource.agentName)) {
+        throw new PluginError({ code: 'coder_agent_unavailable' });
+      }
       return { ...resource, ownerName: native.owner_name, workspaceName: native.name };
     },
   };

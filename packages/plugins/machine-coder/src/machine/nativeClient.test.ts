@@ -75,6 +75,15 @@ async function fixture(options: { preflightStatus?: number; lostCreate?: boolean
 }
 
 describe('Coder finite lifecycle through its REST boundary', () => {
+  it('requires an explicit Start for a stopped workspace, while a starting guest is unavailable', async () => {
+    const h = await fixture();
+    h.setCurrent(workspace('stopped', 'stop'));
+    await expect(h.client.guest(resource)).rejects.toMatchObject({ code: 'managed_power_required' });
+    h.setCurrent(workspace('starting'));
+    await expect(h.client.guest(resource)).rejects.toMatchObject({ code: 'coder_agent_unavailable' });
+    expect(h.requests.every(request => request.method === 'GET')).toBe(true);
+  });
+
   it('keeps a gateway failure during acquisition preflight typed after a successful acquisition', async () => {
     const options: { preflightStatus?: number } = {};
     const h = await fixture(options);
