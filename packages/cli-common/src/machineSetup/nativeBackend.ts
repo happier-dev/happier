@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { establishNativeAdministrator } from './nativeAdministrator.js';
 import { execFileWithDeadline, ExecFileTerminationError, type ExecFileWithDeadlineOptions } from '../process/execFileWithDeadline.js';
 import { MachineSetupEffectError, type MachineRecipeStepV1, type MachineSetupBackend, type MachineSetupStepObservationV1 } from './index.js';
-import { createNativeSystemBackend, readLocalAccount } from './nativeSystemBackend.js';
+import { createNativeSystemBackend, readLocalAccount, type NativeRun } from './nativeSystemBackend.js';
 import { createWorkspaceAccessBackend } from './workspaceAccess.js';
 import { createNativePackageSourceBackend } from './nativePackageSourceBackend.js';
 import { observeNativeBinfmt } from './nativeBinfmt.js';
@@ -134,8 +134,8 @@ export function createMachineSetupNativeBackend(options: Readonly<{
         const daemon = await readLocalAccount(run, 'passwd', options.daemonUsername);
         if (!daemon || Number(daemon[2]) === 0) throw new MachineSetupEffectError('required_fact_unavailable');
     };
-    const recover = (executable: string, args: readonly string[], env?: Readonly<Record<string, string>>) =>
-        (options.run ?? runMachineSetupNativeCommand)({ executable, args, ...(env ? { env } : {}) });
+    const recover: NativeRun = (executable, args, env, inputBytes) =>
+        (options.run ?? runMachineSetupNativeCommand)({ executable, args, ...(env ? { env } : {}), ...(inputBytes ? { inputBytes } : {}) });
     const firewall = createNativeFirewallBackend(run, recover, options.signal);
     const observeReboot = async (step: Extract<MachineRecipeStepV1, { kind: 'reboot' }>): Promise<MachineSetupStepObservationV1> => {
         const platform = options.platform ?? process.platform;

@@ -159,6 +159,7 @@ async function fixture(mode: 'ask' | 'preauthorized', delayProgress = false) {
         readPolicy: async () => mode === 'ask' ? ({ version: 1 as const, mode, administratorUsername: 'operator' }) : ({ version: 1 as const, mode }),
         observe: async () => observation, verifyCurrent, prompt, spawn } satisfies MachineElevationDependencies;
     return { fs, disk, backend, calls, events, launches, frames, authentication, boundaryFailures, verifyCurrent, prompt, deps, readTable: () => table,
+        setEffectiveTable(value: string) { table = value; },
         setNativePolicy(value: unknown) { nativePolicy = value; },
         setDocker(run: NonNullable<typeof docker>) { docker = run; },
         async setFirewallFacts(input: Readonly<{ interfaces: NodeJS.Dict<NetworkInterfaceInfo[]>; routes4?: unknown; routes6?: unknown;
@@ -178,7 +179,7 @@ async function fixture(mode: 'ask' | 'preauthorized', delayProgress = false) {
 }
 
 describe('firewall through the same P10 installed root invocation', () => {
-    it('records the privileged first absence and offers removal of the installed Firewall recipe', async () => {
+    it('records first absence, re-applies drifted rules, and removes the installed Firewall recipe', async () => {
         const f = await fixture('preauthorized');
         await f.setFirewallFacts({ interfaces: {
             ens18: [{ address: '10.0.2.4', netmask: '255.255.255.0', family: 'IPv4',
@@ -187,9 +188,8 @@ describe('firewall through the same P10 installed root invocation', () => {
         const definition = PLUGIN_MANIFEST.contributes?.machineRecipes?.find(recipe => recipe.id === 'firewall');
         if (!definition) throw new Error('Expected the built-in Firewall recipe');
         const pluginId = PLUGIN_MANIFEST.id;
-        const rules = 'table inet happier\ndelete table inet happier\ntable inet happier {\n  chain input {\n    type filter hook input priority filter - 10; policy accept;\n  }\n}\n';
         const item = { kind: 'softwareRecipe' as const, selection: {
-            ref: { pluginId, recipeId: definition.id, revision: definition.revision }, inputs: { rules, exposures: [] },
+            ref: { pluginId, recipeId: definition.id, revision: definition.revision }, inputs: { open: { tcp: ['443'] } },
         } };
         const sources = [{ kind: 'direct' as const, setup: { items: [item] } }];
         const input = { homeId: 'home', machineId: 'machine', mode: 'effects' as const };
@@ -209,20 +209,34 @@ describe('firewall through the same P10 installed root invocation', () => {
         const policy = createEmptyMachineSetupDesiredV1();
         const install = await prepareMachineSetupPlanV1({ ...options, input: { ...input, sources },
             current: { status: 'ready', policy, metadataVersion: 0 } });
-        if ('errorCode' in install) throw new Error(install.errorCode);
+        if ('errorCode' in install || !install.recipePlans?.length) throw new Error('Expected a Firewall setup review');
         const itemKey = machineSetupItemKeyV1(item);
-        const sourceFacts = observeMachineSetupInitialPresence(sources, install.recipePlans ?? []);
+        const sourceFacts = observeMachineSetupInitialPresence(sources, install.recipePlans);
         expect(sourceFacts).toMatchObject({ direct: { firstPresence: { [itemKey]: 'absent' } } });
-        const step = install.recipePlans?.[0]?.plan.steps[0];
-        if (step?.kind !== 'firewall') throw new Error('Expected a Firewall setup effect');
-        await f.backend.apply(step);
+        expect(await runElevatedEffect({ machineId: 'machine', operationId: 'install-firewall',
+            effect: { kind: 'setupOperation', plans: install.recipePlans.map(({ plan }) => ({ plan })) } }, f.deps))
+            .toMatchObject({ outcome: 'applied' });
+        const installed = f.readTable();
+        if (!installed) throw new Error('Expected the installed Firewall table');
+        expect(installed).toContain('tcp dport 443 accept');
+        f.setEffectiveTable(installed.replace('    iifname "lo" accept', '    iifname "lo" accept\n    tcp dport 8081 accept'));
+        expect(f.readTable()).toContain('tcp dport 8081 accept');
+
+        const current = { status: 'ready' as const, policy: { ...policy, revision: 1, sources, sourceFacts }, metadataVersion: 1 };
+        const reapply = await prepareMachineSetupPlanV1({ ...options, input, current });
+        if ('errorCode' in reapply || !reapply.recipePlans?.length) throw new Error('Expected a Firewall re-apply review');
+        expect(reapply.recipePlans[0]?.plan.nativeFacts[0]).toMatchObject({ status: 'drifted' });
+        expect(await runElevatedEffect({ machineId: 'machine', operationId: 'reapply-firewall',
+            effect: { kind: 'setupOperation', plans: reapply.recipePlans.map(({ plan }) => ({ plan })) } }, f.deps))
+            .toMatchObject({ outcome: 'applied' });
+        expect(f.readTable()).toBe(installed);
+
         const removal = await prepareMachineSetupPlanV1({ ...options, input: {
             ...input, sources: policy.sources, removeItemKeys: [itemKey],
-        }, current: { status: 'ready', policy: { ...policy, revision: 1, sources, sourceFacts }, metadataVersion: 1 } });
+        }, current });
         expect(removal).toMatchObject({ removalOffers: [{ itemKey, status: 'eligible', selected: true }],
             removalPlans: [{ itemKey, plan: { steps: [{ kind: 'firewall', operation: 'remove' }] } }] });
         if ('errorCode' in removal || !removal.removalPlans?.length) throw new Error('Expected a Firewall removal review');
-        expect(f.readTable()).toContain('table inet happier');
         expect(await runElevatedEffect({ machineId: 'machine', operationId: 'remove-firewall',
             effect: { kind: 'setupOperation', plans: removal.removalPlans.map(({ plan }) => ({ plan })) } }, f.deps))
             .toMatchObject({ outcome: 'applied' });

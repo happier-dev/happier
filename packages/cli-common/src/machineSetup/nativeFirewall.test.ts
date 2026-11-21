@@ -1,7 +1,7 @@
 import { tmpdir, type NetworkInterfaceInfo } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { MachineRecipeStepV1Schema, MachineFirewallTransitionIntentV1Schema } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
+import { MachineRecipeStepV1Schema, MachineRecipeFirewallStepV1Schema, MachineFirewallTransitionIntentV1Schema } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import { MachineReachabilityInspectResultV1Schema } from '@happier-dev/protocol/machines/reachability/actionsV1';
 import { applyMachineSetupEffectPlan, applyMachineSetupEffectPlans, checkMachineSetupEffectPlan,
     createMachineFirewallTransitionObservationStepV1, readMachineFirewallTransitionFactsV1,
@@ -43,6 +43,7 @@ vi.mock('node:fs/promises', async importOriginal => {
 const rulesPath = '/etc/happier/firewall/rules.nft';
 const unitPath = '/etc/systemd/system/happier-firewall.service';
 const rules = 'table inet happier\ndelete table inet happier\ntable inet happier {\n  chain input {\n    type filter hook input priority filter - 10; policy accept;\n    ct state established,related accept\n    iifname "lo" accept\n    ct state new drop\n  }\n  chain forward {\n    type filter hook forward priority filter - 10; policy accept;\n    ct state established,related accept\n    ct direction original ct state new drop\n  }\n}\n';
+const driftedRules = rules.replace('    iifname "lo" accept', '    iifname "lo" accept\n    tcp dport 8081 accept');
 const basis = { kind: 'bootstrap' as const, managedId: 'managed', operationId: 'operation', admittedInputDigest: 'a'.repeat(64) };
 const roots: string[] = [];
 
@@ -54,23 +55,26 @@ it('distinguishes a fresh Firewall footprint from an installed Firewall for Setu
     expect(readMachineSetupInitialPresenceV1(await check())).toBe('present');
 });
 
-it('reports native edits to the installed Firewall table as drift in the reviewed plan', async () => {
-    let edited = false;
-    const f = await fixture(undefined, table => edited
-        ? table.replace('    iifname "lo" accept', '    iifname "lo" accept\n    tcp dport 8081 accept')
-        : table);
+it('re-applies reviewed Firewall rules over live drift only while recipe custody is intact', async () => {
+    const f = await fixture();
     const check = () => checkMachineSetupEffectPlan({ basis, steps: [f.step], backend: f.backend });
     await f.backend.apply(f.step);
     expect((await check()).nativeFacts[0]?.status).toBe('satisfied');
 
-    edited = true;
+    f.setEffectiveTable(driftedRules);
     const plan = await check();
     expect(plan.nativeFacts[0]?.status).toBe('drifted');
     await expect(applyMachineSetupEffectPlans({ plans: [{ plan }], backend: f.backend }))
-        .resolves.toMatchObject({ status: 'failed', reason: 'foreign_effect_conflict' });
+        .resolves.toMatchObject({ status: 'applied', completedStepIds: [f.step.id] });
+    expect(f.readEffectiveTable()).toBe(rules);
+    expect((await check()).nativeFacts[0]?.status).toBe('satisfied');
 
+    f.setEffectiveTable(driftedRules);
     await f.fs.unlink(f.disk(rulesPath));
     expect((await check()).nativeFacts[0]).toMatchObject({ status: 'unavailable', reason: 'foreign_effect_conflict' });
+    await expect(applyMachineSetupEffectPlans({ plans: [{ plan }], backend: f.backend }))
+        .resolves.toMatchObject({ status: 'unavailable', reason: 'foreign_effect_conflict' });
+    expect(f.readEffectiveTable()).toBe(driftedRules);
 });
 
 it('removes the reviewed Firewall table, rules and boot unit through the native Setup effect', async () => {
@@ -145,6 +149,11 @@ async function fixture(listing?: Readonly<{ symbolic: string; numeric: string }>
             if (args.includes('-j') && args.includes('table')) return { code: table ? 0 : 1, stdout: JSON.stringify(nativePolicy), stderr: '' };
             if (args.includes('list')) return { code: table ? 0 : 1,
                 stdout: table && listing ? args.includes('-nn') ? listing.numeric : listing.symbolic : canonicalize(table ?? ''), stderr: '' };
+            if (args[0] === '-f' && args[1] === '-') {
+                if (!command.inputBytes) throw new Error('Missing nftables transaction on stdin');
+                table = Buffer.from(command.inputBytes).toString('utf8');
+                return { code: 0, stdout: '', stderr: '' };
+            }
             if (args.includes('-f')) { table = await fs.readFile(disk(args[args.indexOf('-f') + 1]!), 'utf8'); return { code: 0, stdout: '', stderr: '' }; }
             if (args[0] === 'delete') { table = undefined; return { code: 0, stdout: '', stderr: '' }; }
         }
@@ -165,8 +174,9 @@ async function fixture(listing?: Readonly<{ symbolic: string; numeric: string }>
         }
         throw new Error(`Unexpected native boundary ${command.executable}`);
     } });
-    const step = MachineRecipeStepV1Schema.parse({ id: 'firewall', kind: 'firewall', rules });
+    const step = MachineRecipeFirewallStepV1Schema.parse({ id: 'firewall', kind: 'firewall', rules });
     return { fs, disk, backend, step, calls, rootFile, readEffectiveTable: () => table,
+        setEffectiveTable(value: string) { table = value; },
         setNetwork(value: { routes4?: unknown; routes6?: unknown; interfaces?: NodeJS.Dict<NetworkInterfaceInfo[]> }) {
             if ('routes4' in value) routes4 = value.routes4;
             if ('routes6' in value) routes6 = value.routes6;
@@ -554,27 +564,29 @@ describe('native owned firewall', () => {
         } });
     });
 
-    it.each(['absent', 'present', 'unitAbsent'] as const)('exposes serializable recovery from the same captured %s snapshot used by native undo', async initial => {
+    it.each(['absent', 'present', 'unitAbsent', 'drifted'] as const)('exposes serializable recovery from the same captured %s snapshot used by native undo', async initial => {
         const f = await fixture();
         if (initial !== 'absent') await f.backend.apply(f.step);
         if (initial === 'unitAbsent') await f.fs.unlink(f.disk(unitPath));
+        if (initial === 'drifted') f.setEffectiveTable(driftedRules);
+        const unitPresent = initial === 'present' || initial === 'drifted';
         const previousRules = initial !== 'absent' ? await f.fs.readFile(f.disk(rulesPath), 'utf8') : null;
-        const previousUnit = initial === 'present' ? await f.fs.readFile(f.disk(unitPath), 'utf8') : null;
+        const previousUnit = unitPresent ? await f.fs.readFile(f.disk(unitPath), 'utf8') : null;
         const previousTable = f.readEffectiveTable() ?? null;
-        const changed = MachineRecipeStepV1Schema.parse({ ...f.step, rules: rules.replace('ct state new drop', 'tcp dport 443 accept\n    ct state new drop') });
+        const changed = MachineRecipeFirewallStepV1Schema.parse({ ...f.step, rules: rules.replace('ct state new drop', 'tcp dport 443 accept\n    ct state new drop') });
         const staged = await stage(f, changed);
         const recovery: unknown = Reflect.get(staged, 'recovery');
         const expected = {
             rules: previousRules === null ? { kind: 'absent' } : { kind: 'file', content: previousRules },
             unit: previousUnit === null ? { kind: 'absent' } : { kind: 'file', content: previousUnit },
-            table: previousTable, boot: { present: initial === 'present', enabled: initial === 'present', running: initial === 'present' },
+            table: previousTable, boot: { present: unitPresent, enabled: unitPresent, running: unitPresent },
         };
         const undoStart = f.calls.length;
         try {
             expect(recovery).toMatchObject({ ...expected, restore: { capturedAt: expect.any(String), commands: expect.any(Array) } });
             const saved = recovery as typeof expected & { restore: { commands: string[] } };
             expect(saved.restore.commands.join('\n')).toContain(initial === 'absent' ? "'delete' 'table' 'inet' 'happier'" : '-f');
-            expect(saved.restore.commands.join('\n')).toContain(initial === 'present' ? 'enable' : 'disable');
+            expect(saved.restore.commands.join('\n')).toContain(unitPresent ? 'enable' : 'disable');
             expect(MachineFirewallRecoveryV1Schema.parse(expected)).toEqual(expected);
             expect(MachineFirewallRecoveryV1Schema.parse(JSON.parse(JSON.stringify(recovery)))).toEqual(recovery);
             expect(MachineEffectInternalRecordSchema.parse({ type: 'firewall.staged', planIndex: 0, planDigest: 'a'.repeat(64), recovery })).toHaveProperty('recovery', recovery);
@@ -585,8 +597,12 @@ describe('native owned firewall', () => {
         const executed = f.calls.slice(undoStart).filter(call =>
             call.executable === 'systemctl' && ['stop', 'disable', 'enable', 'start', 'daemon-reload'].includes(call.args[0]!)
             || call.executable === '/usr/sbin/nft' && ['-f', 'delete'].includes(call.args[0]!));
-        expect(saved.restore!.commands.filter(command => command !== 'set -e' && !/^(?:printf|rm) /.test(command))).toEqual(
-            executed.map(call => expect.stringContaining([call.executable, ...call.args].map(quote).join(' '))));
+        expect(saved.restore!.commands.filter(command => command !== 'set -e' && (!/^(?:printf|rm) /.test(command) || command.includes('|')))).toEqual(
+            executed.map(call => {
+                const command = [call.executable, ...call.args].map(quote).join(' ');
+                return expect.stringContaining(call.inputBytes
+                    ? `printf '%s' ${quote(Buffer.from(call.inputBytes).toString('utf8'))} | ${command}` : command);
+            }));
         expect(await f.fs.readFile(f.disk(rulesPath), 'utf8').catch(() => null)).toBe(previousRules);
         expect(await f.fs.readFile(f.disk(unitPath), 'utf8').catch(() => null)).toBe(previousUnit);
     });
@@ -645,7 +661,7 @@ describe('native owned firewall', () => {
         await f.backend.apply(f.step);
         const beforeRules = await f.fs.readFile(f.disk(rulesPath), 'utf8');
         const beforeUnit = await f.fs.readFile(f.disk(unitPath), 'utf8');
-        const changed = MachineRecipeStepV1Schema.parse({ ...f.step, rules: rules.replace('ct state new drop', 'meta l4proto tcp tcp dport 443 accept\n    ct state new drop') });
+        const changed = MachineRecipeFirewallStepV1Schema.parse({ ...f.step, rules: rules.replace('ct state new drop', 'meta l4proto tcp tcp dport 443 accept\n    ct state new drop') });
         const staged = await stage(f, changed);
         expect(await staged.verify()).toBe(true);
         expect(await f.fs.readFile(f.disk(rulesPath), 'utf8')).not.toBe(beforeRules);

@@ -20,14 +20,14 @@ const unit = 'happier-firewall.service';
 export const nativeFirewallUnit = '[Unit]\nDescription=Happier owned firewall\nAfter=network-pre.target docker.service\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/usr/sbin/nft -f /etc/happier/firewall/rules.nft\n\n[Install]\nWantedBy=multi-user.target\n';
 const rootOwner = { uid: 0, gid: 0 };
 const locale = { LC_ALL: 'C' };
+const tableReplacementPrefix = 'table inet happier\ndelete table inet happier\n';
 
 /** A confinement check, not an nft parser: native nft owns syntax/semantics.
  * There is one top-level owned-table transaction, no include/variable/command
  * escape. Quoted strings/comments cannot open or close a native block. */
 function confinedTable(value: string): string {
     if (/[\r\0]/.test(value)) throw new MachineSetupEffectError('validation_failed');
-    const prefix = 'table inet happier\ndelete table inet happier\n';
-    const table = value.startsWith(prefix) ? value.slice(prefix.length) : value;
+    const table = value.startsWith(tableReplacementPrefix) ? value.slice(tableReplacementPrefix.length) : value;
     let lexical = '', quoted = false, escaped = false, comment = false, depth = 0, closed = false;
     for (const char of table) {
         if (comment) { if (char === '\n') { comment = false; lexical += '\n'; } continue; }
@@ -53,7 +53,7 @@ function confinedTable(value: string): string {
     return table;
 }
 function candidateRules(value: string) {
-    if (!value.startsWith('table inet happier\ndelete table inet happier\n')) throw new MachineSetupEffectError('validation_failed');
+    if (!value.startsWith(tableReplacementPrefix)) throw new MachineSetupEffectError('validation_failed');
     confinedTable(value);
     return value;
 }
@@ -97,24 +97,29 @@ export type MachineSetupFirewallTransitionFactsV1 = Readonly<{
 }> | Readonly<{ status: 'unavailable'; requiredFact: string }>;
 type RestoreStep = Readonly<
     { kind: 'file'; path: string; state: NativeFileState; mode: number }
-    | { kind: 'command'; executable: string; args: string[]; when?: 'unitCreated' | 'tablePresent' }
+    | { kind: 'command'; executable: string; args: string[]; when?: 'unitCreated' | 'tablePresent'; input?: string }
 >;
 const quoteShell = (value: string) => "'" + value.replace(/'/g, "'\\''") + "'";
 /** The one ordered restoration program, shared by native undo and the recovery card. */
 function restoreSteps(state: Snapshot): RestoreStep[] {
     const command = (executable: string, args: string[], when?: 'unitCreated' | 'tablePresent'): RestoreStep =>
         ({ kind: 'command', executable, args, ...(when ? { when } : {}) });
+    // A drifted live policy is separate from the saved boot artifact. Restore
+    // it after systemd so a service start cannot replace it with the boot rules.
+    const liveRules = state.table !== null && state.rules.kind === 'file' && !equivalentTable(state.table, state.rules.bytes!.toString('utf8'))
+        ? tableReplacementPrefix + confinedTable(state.table) : undefined;
     return [
         ...(state.unit.kind === 'absent' ? [command('systemctl', ['stop', '--', unit], 'unitCreated'),
             command('systemctl', ['disable', '--', unit], 'unitCreated')] : []),
         { kind: 'file', path: rulesPath, state: state.rules, mode: 0o600 },
         { kind: 'file', path: unitPath, state: state.unit, mode: 0o644 },
-        state.table === null ? command(nft, ['delete', 'table', 'inet', 'happier'], 'tablePresent')
-            : command(nft, ['-f', rulesPath]),
+        ...(state.table === null ? [command(nft, ['delete', 'table', 'inet', 'happier'], 'tablePresent')]
+            : liveRules === undefined ? [command(nft, ['-f', rulesPath])] : []),
         command('systemctl', ['daemon-reload']),
         ...(state.unit.kind !== 'absent' ? [command('systemctl', [state.boot.enabled ? 'enable' : 'disable', '--', unit])] : []),
         ...(state.boot.running ? [command('systemctl', ['start', '--', unit])]
             : state.unit.kind !== 'absent' ? [command('systemctl', ['stop', '--', unit])] : []),
+        ...(liveRules === undefined ? [] : [{ kind: 'command' as const, executable: nft, args: ['-f', '-'], input: liveRules }]),
     ];
 }
 function restoreCommand(step: RestoreStep): string {
@@ -126,6 +131,7 @@ function restoreCommand(step: RestoreStep): string {
     const command = [step.executable, ...step.args].map(quoteShell).join(' ');
     if (step.when === 'unitCreated') return `if test -f ${quoteShell(unitPath)}; then ${command}; fi`;
     if (step.when === 'tablePresent') return `if ${quoteShell(nft)} list table inet happier >/dev/null 2>&1; then ${command}; fi`;
+    if (step.input !== undefined) return `printf '%s' ${quoteShell(step.input)} | ${command}`;
     return command;
 }
 function recoveryData(state: Snapshot, steps: readonly RestoreStep[]): MachineFirewallRecoveryV1 {
@@ -215,8 +221,10 @@ function retainedSources(value: unknown, endpoint: Omit<SshEndpoint, 'sourceCidr
 }
 
 export function createNativeFirewallBackend(run: NativeRun, recover: NativeRun, signal?: AbortSignal) {
-    const effect = async (invoke: NativeRun, executable: string, args: readonly string[]) => {
-        if ((await invoke(executable, args, locale)).code !== 0) throw new MachineSetupEffectError('native_effect_failed');
+    const effect = async (invoke: NativeRun, executable: string, args: readonly string[], input?: string) => {
+        if ((await invoke(executable, args, locale, input === undefined ? undefined : Buffer.from(input))).code !== 0) {
+            throw new MachineSetupEffectError('native_effect_failed');
+        }
     };
     const boot = async (invoke = run): Promise<Boot> => {
         const result = await invoke('systemctl', ['show', '--property=LoadState', '--property=UnitFileState', '--property=ActiveState', '--', unit], locale);
@@ -243,7 +251,7 @@ export function createNativeFirewallBackend(run: NativeRun, recover: NativeRun, 
         confinedTable(result.stdout);
         return result.stdout;
     };
-    const inspect = async (step: Firewall, invoke = run, observeRecipeDrift = false): Promise<Snapshot> => {
+    const inspect = async (step: Firewall, invoke = run): Promise<Snapshot> => {
         candidateRules(step.rules);
         await assertProtectedNativeTarget(nft, 0, true);
         await assertProtectedNativeTarget(rulesPath, 0o600);
@@ -257,12 +265,13 @@ export function createNativeFirewallBackend(run: NativeRun, recover: NativeRun, 
         if (definition.kind === 'file' ? definition.bytes!.toString('utf8') !== nativeFirewallUnit : service.present) {
             throw new MachineSetupEffectError('foreign_effect_conflict');
         }
-        // Setup can show divergence when both protected recipe files identify the table.
-        // Transition planning and effects still require a restorable native baseline.
+        // Recipe replacement owns drift when both protected artifacts identify
+        // the table. Removal and live Network transition planning require the
+        // installed policy to match its rules file.
         if (nativeTable) {
             if (rules.kind !== 'file') throw new MachineSetupEffectError('foreign_effect_conflict');
-            if (!equivalentTable(nativeTable, rules.bytes!.toString('utf8'))
-                && (!observeRecipeDrift || definition.kind !== 'file')) {
+            if ((step.operation === 'remove' || step.id === nativeFirewallTransitionObservationStepId || definition.kind !== 'file')
+                && !equivalentTable(nativeTable, rules.bytes!.toString('utf8'))) {
                 throw new MachineSetupEffectError('foreign_effect_conflict');
             }
         }
@@ -421,8 +430,7 @@ export function createNativeFirewallBackend(run: NativeRun, recover: NativeRun, 
                     ...(caddy.details ? { remedy: caddy.details.remedy } : {}), caddy } } };
             const observedStep = caddy?.status === 'ready' ? { ...step,
                 exposures: [...(step.exposures ?? []), ...readCaddyContainerFirewallExposures(caddy.bindings)] } : step;
-            const state = await inspect(observedStep, run,
-                step.operation !== 'remove' && step.id !== nativeFirewallTransitionObservationStepId);
+            const state = await inspect(observedStep);
             if (step.operation === 'remove') return { stepId: step.id, status: satisfied(step, state) ? 'satisfied' : 'drifted', facts: {} };
             const transition = await transitionFacts(observedStep, state);
             return { stepId: step.id, status: transition.privateScopeAvailable ? satisfied(step, state) ? 'satisfied' : 'drifted' : 'unavailable',
@@ -487,7 +495,7 @@ export function createNativeFirewallBackend(run: NativeRun, recover: NativeRun, 
                 else {
                     if (operation.when === 'unitCreated' && !unitCreated) continue;
                     if (operation.when === 'tablePresent' && !await table(invoke)) continue;
-                    await effect(invoke, operation.executable, operation.args);
+                    await effect(invoke, operation.executable, operation.args, operation.input);
                 }
             }
         };
