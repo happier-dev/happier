@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { computerTargetKeyV1, type ComputerAccessV1 } from '@happier-dev/protocol/computer/v1';
@@ -633,14 +634,7 @@ export function ComputerTargetPicker(props: Readonly<{
                 ? 'computerUse.picker.policyCapture'
                 : 'computerUse.picker.policyNone', { agent: props.agentName })}
                     {props.onChangePolicy ? (
-                        <Text
-                            accessibilityRole="link"
-                            onPress={props.onChangePolicy}
-                            style={stylesheet.policyLink}
-                            testID={`${testID}-policy-change`}
-                        >
-                            {` ${t('computerUse.picker.policyChange')}`}
-                        </Text>
+                        <ComputerPolicyLink onPress={props.onChangePolicy} testID={`${testID}-policy-change`} />
                     ) : null}
                 </Text>
             </View>
@@ -675,4 +669,12 @@ export function ComputerTargetPicker(props: Readonly<{
             </View>
         </View>
     );
+}
+
+function ComputerPolicyLink(props: Readonly<{ onPress: () => void; testID: string }>): React.ReactElement {
+    const commands = useCurrentUiContextLocalCommands([
+        { key: 'policy', title: t('computerUse.picker.policyChange'), description: t('common.actions'), invoke: props.onPress },
+    ], { foregroundOverlay: true, unbound: 'local' });
+    return <Text accessibilityRole="link" onPress={() => { void commands.invoke('policy'); }}
+        style={stylesheet.policyLink} testID={props.testID}>{` ${t('computerUse.picker.policyChange')}`}</Text>;
 }
