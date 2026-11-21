@@ -49,6 +49,7 @@ export function MachineSetupPlanReview(
   props: Readonly<{
     prepared: MachineSetupPreparedReview | Extract<MachineSetupPreparedRemove, { ok: true }>;
     nameOf: (machineId: string) => string;
+    previouslyFailedMachineId?: string;
     /** Re-plans on another host Machine; absent when where it runs can't be changed here. */
     onChangeHost?: (machineId: string) => void;
     /**
@@ -192,11 +193,9 @@ export function MachineSetupPlanReview(
                 />
               }
               detail={
-                count === 0
-                  ? t('machinePresets.setup.review.nothingToChange')
-                  : t('machinePresets.setup.review.changes', {
-                      count,
-                    })
+                target.machineId === props.previouslyFailedMachineId ? t('approvals.status.failed')
+                  : count === 0 ? t('machinePresets.setup.review.nothingToChange')
+                    : t('machinePresets.setup.review.changes', { count })
               }
               mode="info"
               showChevron={false}

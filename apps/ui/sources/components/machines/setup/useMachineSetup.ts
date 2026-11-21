@@ -63,7 +63,7 @@ export function readOpenedMachineSetupSources(
 }
 
 /** What the person asked to review: the reviewed change decides which Action Apply runs and how it re-plans. */
-export type MachineSetupReviewIntent =
+export type MachineSetupReviewIntent = Readonly<{ previousRunFailed?: true }> & (
   | Readonly<{ kind: 'reapply' }>
   | Readonly<{ kind: 'preset'; preset: MachineSetupPresetChoice }>
   /** `name`: the attached copy's name, so the review can say what it applies (as Stop using carries it). */
@@ -74,7 +74,7 @@ export type MachineSetupReviewIntent =
   | Readonly<{
       kind: 'remove';
       item: MachineSetupRecipeItemV1;
-    }>;
+    }>);
 
 type Prepared =
   | Extract<MachineSetupPreparedApply, { ok: true }>

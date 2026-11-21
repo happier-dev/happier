@@ -885,6 +885,9 @@ describe('Machine → Setup tab (P-M1)', () => {
     }
     if (outcome === 'failed') {
       await waitForHomeGovernance(() => expect(screen.findByTestId('machine-setup-stopped.action')).not.toBeNull());
+      await screen.pressByTestIdAsync('machine-setup-stopped.action');
+      await waitForHomeGovernance(() => expect(screen.findAllByTestId('machine-setup-plan-review.target.devbox')
+        .some(node => node.props.detail === t('approvals.status.failed'))).toBe(true));
     }
     expect(hook.getCurrent().operationId).toBe(rootId);
   });

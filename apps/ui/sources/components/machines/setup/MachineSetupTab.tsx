@@ -165,7 +165,7 @@ function MachineSetupRoot(
   const machine = props.machineName;
 
   if (setup.review) {
-    return <MachineSetupReviewInPlace setup={setup} machineName={machine} />;
+    return <MachineSetupReviewInPlace setup={setup} machineId={props.machineId} machineName={machine} />;
   }
 
   const attachedKeys = new Set(attached.map((source) => source.sourceKey));
@@ -521,12 +521,15 @@ function MachineSetupAttention(
   const homeId = getServerProfileById(props.serverId)?.serverIdentityId ?? null;
   if (setup.operationId) {
     // A stopped run offers its own proposal again (the native child carries it for a combined Apply).
-    const recovery = readMachineSetupRunRecovery(setup.progressOperation?.snapshot ?? setup.operation?.snapshot, setup.plan);
+    const snapshot = setup.progressOperation?.snapshot ?? setup.operation?.snapshot;
+    const recovery = readMachineSetupRunRecovery(snapshot, setup.plan);
     const { removeItemKeys, ...retry } = recovery.retry;
     const edit = recovery.edit;
     return (
       <MachineSetupRunProgress serverId={props.serverId} setup={setup} machineName={props.machineName} localize={localize}
-        onRetry={props.editable && setup.operation ? () => { void setup.prepare(retry, removeItemKeys); } : null}
+        onRetry={props.editable && setup.operation ? () => {
+          void setup.prepare({ ...retry, ...(snapshot?.state === 'failed' ? { previousRunFailed: true } : {}) }, removeItemKeys);
+        } : null}
         onEdit={props.editable && edit && binding && homeId ? () => router.push(buildStoreListingRoute({ type: 'software',
           value: edit.ref, target: { scope: binding.scope, machine: { serverIdentityId: homeId, machineId: props.machineId } },
           inputs: edit.inputs }) as never) : null} />
@@ -605,7 +608,7 @@ function MachineSetupAttention(
 
 /** The review replaces the sections in place (MR3): the shared review card, then its closing row. */
 function MachineSetupReviewInPlace(
-  props: Readonly<{ setup: MachineSetupState; machineName: string }>,
+  props: Readonly<{ setup: MachineSetupState; machineId: string; machineName: string }>,
 ) {
   const { setup } = props;
   const review = setup.review!;
@@ -646,6 +649,7 @@ function MachineSetupReviewInPlace(
           testID="machine-setup-plan-review"
           prepared={review.prepared}
           nameOf={nameOf}
+          previouslyFailedMachineId={review.intent.previousRunFailed ? props.machineId : undefined}
           disabled={setup.pending !== null}
           onChangeRemoval={(_machineId, removeItemKeys) => {
             void setup.prepare(review.intent, removeItemKeys);
