@@ -107,9 +107,8 @@ export function resolveCanonicalSpawnProfile(input: Readonly<{
 }
 
 /**
- * Validates profile-derived spawn input against the canonical synced profile.
- * Legacy V1 rows remain on their explicit compatibility path; only V2 rows
- * are subject to the no-routing-env invariant.
+ * Checks the canonical V2 Profile declaration against the selected Agent's
+ * reserved environment. Explicit invocation values are validated at spawn input.
  */
 export function validateSpawnProfileEnvironment(input: Readonly<{
   rawSettings: Readonly<Record<string, unknown>> | null | undefined;
@@ -117,7 +116,6 @@ export function validateSpawnProfileEnvironment(input: Readonly<{
   artifactsById?: ReadonlyMap<string, ArtifactSharingResourceV1>;
   profileCatalog?: ProfileCatalogSnapshotV1;
   profilesSnapshot?: AccountSettingsProfilesSnapshot;
-  providedEnvironmentVariables: Readonly<Record<string, string>>;
   reservedEnvironmentVariableNames: ReadonlySet<string>;
 }>): SpawnProfileValidationResult {
   const resolved = resolveCanonicalSpawnProfile(input);
@@ -132,16 +130,6 @@ export function validateSpawnProfileEnvironment(input: Readonly<{
       reason: 'reserved_environment',
       message: error instanceof Error ? error.message : 'Launch profile contains an agent-owned environment key',
     };
-  }
-  for (const entry of profile.extraEnvironmentVariables) {
-    if (!Object.prototype.hasOwnProperty.call(input.providedEnvironmentVariables, entry.name)
-      || input.providedEnvironmentVariables[entry.name] !== entry.value) {
-      return {
-        ok: false,
-        reason: 'profile_overlay_mismatch',
-        message: `Launch profile environment variable '${entry.name}' does not match canonical account settings`,
-      };
-    }
   }
   return { ok: true, kind: 'slim' };
 }

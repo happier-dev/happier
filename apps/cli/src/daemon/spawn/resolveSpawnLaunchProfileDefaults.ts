@@ -11,6 +11,7 @@ import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract
 import { resolveCanonicalSpawnProfile } from '@/settings/profiles/validateSpawnProfile';
 import type { AccountSettingsProfilesSnapshot } from '@/settings/profiles/readProfilesFromAccountSettings';
 import { logger } from '@/ui/logger';
+import { mergeProjectLaunchLayers } from '@/workspaces/projectSetup/projectLaunchEnvironment';
 
 export type ResolveSpawnLaunchProfileDefaultsResult =
   | Readonly<{ ok: true; options: SpawnSessionOptions }>
@@ -35,9 +36,8 @@ export function refuseSpawnLaunchProfile(
  *
  * Public launch callers carry only a stable `profileId`; they do not receive
  * profile environment or provider/model material merely so they can echo it
- * back. Explicit model, permission and transcript fields are sparse user intent
- * and win. Profile-owned environment names remain canonical; explicit names
- * outside that overlay survive beside them.
+ * back. Explicit invocation values and explicit model, permission and
+ * transcript selections take precedence over the Profile's defaults.
  */
 export function resolveSpawnLaunchProfileDefaults(input: Readonly<{
   options: SpawnSessionOptions;
@@ -78,10 +78,9 @@ export function resolveSpawnLaunchProfileDefaults(input: Readonly<{
   if (!isLaunchProfileV2(profile)) {
     return { ok: true, options: {
       ...input.options,
-      environmentVariables: {
-        ...Object.fromEntries(profile.environmentVariables.map(entry => [entry.name, entry.value])),
-        ...input.options.environmentVariables,
-      },
+      environmentVariables: mergeProjectLaunchLayers(undefined,
+        Object.fromEntries(profile.environmentVariables.map(entry => [entry.name, entry.value])),
+        input.options.environmentVariables),
     } };
   }
 
@@ -97,7 +96,7 @@ export function resolveSpawnLaunchProfileDefaults(input: Readonly<{
   const options: SpawnSessionOptions = {
     ...input.options,
     ...(Object.keys(profileEnvironment).length > 0 || input.options.environmentVariables
-      ? { environmentVariables: { ...input.options.environmentVariables, ...profileEnvironment } }
+      ? { environmentVariables: mergeProjectLaunchLayers(undefined, profileEnvironment, input.options.environmentVariables) }
       : {}),
     ...(input.options.permissionMode === undefined && permissionMode !== undefined
       ? { permissionMode, permissionModeUpdatedAt: profile.updatedAt }

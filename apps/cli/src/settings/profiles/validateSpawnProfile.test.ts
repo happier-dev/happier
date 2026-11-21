@@ -50,7 +50,7 @@ describe('validateSpawnProfileEnvironment', () => {
       definition: { kind: 'inline' as const, profile: slim }, enabled: true, promptStack: [], skillSeeds: [], secretBindings: {} } };
     const catalog = { ...activeAuthority, status: 'ready' as const, records: [row], diagnostics: [], referenceGuardRevision: 4 };
     const input = { rawSettings: { profiles: [{ ...slim, extraEnvironmentVariables: [{ name: 'TEAM_FLAG', value: 'stale' }] }] },
-      profileId: slim.id, profileCatalog: catalog, providedEnvironmentVariables: { TEAM_FLAG: '1' }, reservedEnvironmentVariableNames: new Set<string>() };
+      profileId: slim.id, profileCatalog: catalog, reservedEnvironmentVariableNames: new Set<string>() };
     expect(validateSpawnProfileEnvironment(input)).toEqual({ ok: true, kind: 'slim' });
     expect(resolveCanonicalSpawnProfile({ ...input, profileCatalog: { ...catalog,
       records: [{ ...row, record: { ...row.record, enabled: false } }] } })).toMatchObject({ ok: false, reason: 'profile_overlay_mismatch' });
@@ -74,7 +74,7 @@ describe('validateSpawnProfileEnvironment', () => {
       .toMatchObject({ ok: false, reason: 'profile_overlay_mismatch' });
   });
 
-  it('rejects dynamic agent-owned keys in canonical V2 profiles and mismatched caller overlays', () => {
+  it('rejects dynamic agent-owned keys in canonical V2 profiles at spawn', () => {
     // An Account editor can save this external key while its Agent is offline;
     // the native spawn owner has that Agent's declarations at the point of effect.
     const offlineProfile = { ...slim, extraEnvironmentVariables: [{ name: 'THIRD_PARTY_AUTH', value: '' }],
@@ -87,23 +87,14 @@ describe('validateSpawnProfileEnvironment', () => {
         definition: { kind: 'inline', profile: offlineProfile },
       } }], diagnostics: [], referenceGuardRevision: 4 },
       profileId: 'focused',
-      providedEnvironmentVariables: { THIRD_PARTY_AUTH: '' },
       reservedEnvironmentVariableNames: new Set(['THIRD_PARTY_AUTH']),
     })).toMatchObject({ ok: false, reason: 'reserved_environment' });
-
-    expect(validateSpawnProfileEnvironment({
-      rawSettings: { profiles: [slim] },
-      profileId: 'focused',
-      providedEnvironmentVariables: { TEAM_FLAG: 'caller-substituted' },
-      reservedEnvironmentVariableNames: new Set(),
-    })).toMatchObject({ ok: false, reason: 'profile_overlay_mismatch' });
   });
 
-  it('accepts exact V2 overlays and preserves retained V1 compatibility', () => {
+  it('admits V2 declarations and preserves retained V1 compatibility', () => {
     expect(validateSpawnProfileEnvironment({
       rawSettings: { profiles: [slim] },
       profileId: 'focused',
-      providedEnvironmentVariables: { TEAM_FLAG: '1', SESSION_ONLY_FLAG: 'allowed' },
       reservedEnvironmentVariableNames: new Set(['THIRD_PARTY_AUTH']),
     })).toEqual({ ok: true, kind: 'slim' });
 
@@ -114,7 +105,6 @@ describe('validateSpawnProfileEnvironment', () => {
         createdAt: 1, updatedAt: 1,
       }] },
       profileId: 'azure-openai',
-      providedEnvironmentVariables: { OPENAI_API_KEY: 'legacy-compatible' },
       reservedEnvironmentVariableNames: new Set(['OPENAI_API_KEY']),
     })).toEqual({ ok: true, kind: 'legacy' });
   });
@@ -123,14 +113,12 @@ describe('validateSpawnProfileEnvironment', () => {
     expect(validateSpawnProfileEnvironment({
       rawSettings: null,
       profileId: 'deepseek',
-      providedEnvironmentVariables: { ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic' },
       reservedEnvironmentVariableNames: new Set(['ANTHROPIC_BASE_URL']),
     })).toMatchObject({ ok: false, reason: 'profile_overlay_mismatch' });
 
     expect(validateSpawnProfileEnvironment({
       rawSettings: {},
       profileId: 'deepseek',
-      providedEnvironmentVariables: { ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic' },
       reservedEnvironmentVariableNames: new Set(['ANTHROPIC_BASE_URL']),
     })).toMatchObject({ ok: false, reason: 'profile_overlay_mismatch' });
 
@@ -139,7 +127,6 @@ describe('validateSpawnProfileEnvironment', () => {
     expect(validateSpawnProfileEnvironment({
       rawSettings: { profiles: [retained] },
       profileId: 'deepseek',
-      providedEnvironmentVariables: { ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic' },
       reservedEnvironmentVariableNames: new Set(['ANTHROPIC_BASE_URL']),
     })).toEqual({ ok: true, kind: 'legacy' });
     expect(resolveCanonicalSpawnProfile({ rawSettings: { profiles: [retained] }, profileId: 'deepseek',

@@ -130,9 +130,6 @@ export async function prepareDaemonProviderLaunch(input: Readonly<{
             profileCatalog: accountSnapshot?.profileCatalog,
             profileId: input.options.profileId,
             artifactsById: input.launchProfileArtifacts,
-            // Compare the canonical literal overlay before Saved Secret materialization.
-            // Resolved launch values intentionally replace Profile placeholders below.
-            providedEnvironmentVariables: input.options.environmentVariables ?? {},
             reservedEnvironmentVariableNames,
         });
         if (!profileValidation.ok) {

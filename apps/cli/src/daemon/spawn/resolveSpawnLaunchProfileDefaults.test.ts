@@ -99,10 +99,7 @@ describe('resolveSpawnLaunchProfileDefaults', () => {
       ok: true,
       options: {
         ...explicit,
-        // Profile-owned names stay canonical so the daemon's existing profile
-        // validator cannot disagree with this defaulting pass. Explicit
-        // non-conflicting environment survives.
-        environmentVariables: { TEAM_FLAG: 'profile', LOCAL: '1' },
+        environmentVariables: { TEAM_FLAG: 'caller-substituted', LOCAL: '1' },
       },
     });
   });
