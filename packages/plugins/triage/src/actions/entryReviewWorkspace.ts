@@ -2,7 +2,7 @@ import { selectCurrentTargetedContribution, type JsonValue, type PluginInvocatio
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import { pluginJsonValuesEqual, projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { produceScmPullRequestReviewScope, type ScmPullRequestReviewScopeV1 } from '@happier-dev/plugin-sdk/reviews';
-import { ScmComparisonSchema, type ScmComparisonSource } from '@happier-dev/plugin-sdk/scm';
+import { ScmComparisonSchema, type ScmComparison, type ScmComparisonSource } from '@happier-dev/plugin-sdk/scm';
 import { projectTriagePrepareReviewWorkspaceInputV1, type TriagePrepareReviewWorkspaceInputV1, type TriageVerifyReviewWorkspaceResultV1 } from '@happier-dev/triage-protocol/v1';
 import { projectTriageNewSessionFailureV1 } from '../ui/header/newSessionSeedCommand.js';
 import { renderSourceQualifiedId } from '../corpus/identity/components.js';
@@ -11,6 +11,7 @@ import { indexTriageAdmittedSourcesV1 } from '../corpus/configuration/accountDat
 import { observedReviewWorkspacePreparationFor, prepareEntryReviewWorkspace, preparedReviewWorkspaceFactsFor, type TriageReviewWorkspacePreparationDepsV1 } from '../sessions/entrySessionWorkspace.js';
 import type { TriageStartEntrySessionInputV1, TriageStartPullRequestReviewInputV1, TriageStartPullRequestReviewResultV1, TriagePreparePullRequestReviewInputV1, TriagePreparePullRequestReviewResultV1 } from './entrySessionProtocol.js';
 import { TriageReobserveEntryResultV1Schema, TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1 } from './reobserveEntryProtocol.js';
+import { readPullRequestReviewRules, selectPullRequestReviewPaths } from './pullRequestReviewRules.js';
 
 type TriageReviewWorkspaceRequestV1 = Extract<
     Extract<TriageStartEntrySessionInputV1['destination'], Readonly<{ kind: 'new' }>>['materialization'],
@@ -136,7 +137,7 @@ export async function verifyTriagePullRequestReviewWorkspace(
     context: PluginInvocationContext,
     captureComparison: boolean,
 ): Promise<
-    | Readonly<{ status: 'verified'; scope: ScmPullRequestReviewScopeV1; comparisonId?: string }>
+    | Readonly<{ status: 'verified'; scope: ScmPullRequestReviewScopeV1; comparisonId?: string; inventory?: ScmComparison['inventory'] }>
     | (Extract<TriageStartPullRequestReviewResultV1, Readonly<{ status: 'refused' }>> & Readonly<{ sourceResult?: TriageVerifyReviewWorkspaceResultV1 }>)
 > {
     if ('source' in input.review.instance.binding && input.review.instance.binding.source === 'accountData') {
@@ -207,7 +208,6 @@ async function captureTriagePullRequestReviewComparison(
         return { v: 1, status: 'refused', reason: 'scopeRefused' };
     }
 
-    let comparisonId: string | undefined;
     if (captureComparison) {
         const source = input.comparisonSource;
         if (source?.kind !== 'pullRequest') {
@@ -238,10 +238,10 @@ async function captureTriagePullRequestReviewComparison(
             || comparison.data.endpoints.after !== scope.scope.observed.headSha) {
             return { v: 1, status: 'refused', reason: 'revisionMismatch' };
         }
-        comparisonId = comparison.data.id;
+        return { status: 'verified', scope: scope.scope, comparisonId: comparison.data.id, inventory: comparison.data.inventory };
     }
 
-    return { status: 'verified', scope: scope.scope, ...(comparisonId === undefined ? {} : { comparisonId }) };
+    return { status: 'verified', scope: scope.scope };
 }
 
 /** Selected-source preparation never creates a Session or starts a reviewer. */
@@ -279,13 +279,31 @@ export function createTriagePreparePullRequestReviewActionHandler(): ActionHandl
         const review = { instance: request.instance, entryRef: request.entryRef, lastKnownLocator: request.lastKnownLocator,
             observed: request.observed, workspace: request.workspace, repositoryPath: preparedWorkspace.repositoryPath,
             pullRequest: preparedWorkspace.pullRequest };
+        const resolved = input.ruleOccurrence === undefined ? undefined : await readPullRequestReviewRules({
+            repositoryPath: review.repositoryPath, baseRevision: review.observed.baseSha, occurrence: input.ruleOccurrence,
+            project: input.reviewRules, context,
+        });
+        if (resolved?.kind === 'invalid' || resolved?.kind === 'unavailable') return {
+            v: 1, status: 'unavailable', reason: resolved.kind === 'invalid' ? 'invalidReviewRules' : 'reviewRulesUnavailable',
+        };
+        if (resolved?.kind === 'skipped') return { v: 1, status: 'skipped', reason: resolved.reason, rules: resolved.rules };
         const targetSource = input.reviewTarget.comparisonSource;
         const comparisonSource = targetSource.kind === 'pullRequest' ? { ...targetSource,
             locator: { ...targetSource.locator, baseOid: request.observed.baseSha, headOid: request.observed.headSha } } : targetSource;
         const verified = await captureTriagePullRequestReviewComparison({ ...input, review, comparisonSource }, context, true);
         if (verified.status !== 'verified') return { ...verified, status: verified.reason === 'sourceUnavailable' ? 'unavailable' : 'refused' };
         if (verified.comparisonId === undefined) return { v: 1, status: 'unavailable', reason: 'sourceUnavailable' };
-        return { v: 1, status: 'prepared', review, preparedWorkspace,
+        const rules = resolved?.kind === 'ready' ? resolved.rules : undefined;
+        const selectedPaths = rules?.ignorePaths?.length
+            ? selectPullRequestReviewPaths(verified.inventory?.files.map(file => file.path) ?? [], rules.ignorePaths) : undefined;
+        if (rules && selectedPaths?.length === 0) return verified.inventory?.state === 'complete'
+            ? { v: 1, status: 'skipped', reason: 'noReviewablePaths', rules }
+            : { v: 1, status: 'unavailable', reason: 'sourceUnavailable' };
+        return { v: 1, status: 'prepared', review: { ...review,
+            ...(selectedPaths === undefined ? {} : { selectedPaths }),
+            ...(rules?.inlineThreshold === undefined ? {} : { inlineThreshold: rules.inlineThreshold }),
+        }, preparedWorkspace,
+            ...(rules === undefined ? {} : { rules }),
             scmPullRequestReviewScope: projectNativeJsonValueForTransport(verified.scope), comparisonId: verified.comparisonId, comparisonSource };
     };
 }

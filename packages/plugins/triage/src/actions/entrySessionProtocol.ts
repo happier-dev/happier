@@ -3,6 +3,7 @@ import { QualifiedConnectedAccountRefSchema } from '@happier-dev/plugin-sdk/conn
 import { ActionFailureCauseV1ProtocolSchema } from '@happier-dev/plugin-sdk/errors';
 import { PluginTargetedContributionSelectionV1Schema } from '@happier-dev/plugin-sdk/contributions';
 import { ScmComparisonSourceProtocolSchema } from '@happier-dev/plugin-sdk/scm';
+import { ReviewFindingSeverityProtocolSchema } from '@happier-dev/plugin-sdk/reviews';
 import { SessionTargetV1Schema } from '@happier-dev/plugin-sdk/sessions';
 import { SessionInputForgeEvidenceV1Schema, SessionMessageSendResultV1ProtocolSchema, ActionSessionAddressV1Schema } from '@happier-dev/plugin-sdk/sessions';
 import { AgentExecutionTargetV1Schema } from '@happier-dev/plugin-sdk/agents';
@@ -39,6 +40,7 @@ import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../projection/listWindow.js';
 import { TriageEntrySessionLinkDisplayV1Schema } from './sessionLinksProtocol.js';
 import { TriageNewSessionFailureV1Schema } from '../ui/header/newSessionSeedCommand.js';
 import { TriageWorkspaceModeV1Schema } from '../sessions/entrySessionWorkspace.js';
+import { PullRequestReviewResolvedRulesV1Schema, PullRequestReviewRuleOccurrenceV1Schema, PullRequestReviewSkipReasonV1Schema, PullRequestReviewStepRulesV1Schema } from './pullRequestReviewRules.js';
 
 export const TRIAGE_VERIFY_EXISTING_REVIEW_WORKSPACE_ACTION_LOCAL_ID_V1 = 'entries/verify-existing-review-workspace-v1';
 /** Read-only proof, not another Session selection or creation entry point. */
@@ -488,6 +490,8 @@ const TriageStartEntrySessionReviewContextV1Schema = defineProtocolObject({
     workspace: TriageSelectedWorkspaceScopeV1Schema,
     repositoryPath: triageText,
     pullRequest: defineProtocolJsonValue(),
+    selectedPaths: defineProtocolArray(triageText, { minItems: 1 }).optional(),
+    inlineThreshold: ReviewFindingSeverityProtocolSchema.optional(),
 }, { policy: 'closed' });
 
 /** Workflow preparation shares the selected-source operand with Session start. */
@@ -499,6 +503,8 @@ export const TriagePreparePullRequestReviewInputV1Schema = defineProtocolObject(
     expectedHeadSha: triageIdentifier,
     sessionId: triageSessionId,
     reviewTarget: TriagePullRequestReviewTargetV1Schema,
+    ruleOccurrence: PullRequestReviewRuleOccurrenceV1Schema.optional(),
+    reviewRules: PullRequestReviewStepRulesV1Schema.optional(),
 }, { policy: 'closed' });
 export type TriagePreparePullRequestReviewInputV1 = ReturnType<typeof TriagePreparePullRequestReviewInputV1Schema.parse>;
 export const TriagePreparePullRequestReviewResultV1Schema = defineProtocolUnion([
@@ -510,6 +516,12 @@ export const TriagePreparePullRequestReviewResultV1Schema = defineProtocolUnion(
         scmPullRequestReviewScope: defineProtocolJsonValue(),
         comparisonId: triageIdentifier,
         comparisonSource: ScmComparisonSourceProtocolSchema,
+        rules: PullRequestReviewResolvedRulesV1Schema.optional(),
+    }, { policy: 'closed' }),
+    defineProtocolObject({
+        v: defineProtocolLiteral(1), status: defineProtocolLiteral('skipped'),
+        reason: PullRequestReviewSkipReasonV1Schema,
+        rules: PullRequestReviewResolvedRulesV1Schema,
     }, { policy: 'closed' }),
     defineProtocolObject({
         v: defineProtocolLiteral(1), status: defineProtocolUnion([defineProtocolLiteral('refused'), defineProtocolLiteral('unavailable')]),

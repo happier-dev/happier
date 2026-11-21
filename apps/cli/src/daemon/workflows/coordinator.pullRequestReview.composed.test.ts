@@ -24,9 +24,9 @@ import { buildWorkflowActionContext } from './workflowActionContext';
 const event = { pluginId: 'example.forge', localId: 'pull-request' };
 const workspace = { machineId: 'machine-a', directory: '/repo', checkoutRootPath: '/repo' };
 
-async function createPrWorkflow() {
+async function createPrWorkflow(options?: Readonly<{ baseRules?: Record<string, unknown> }>) {
   const reviews: unknown[] = [];
-  const source = await createTriagePullRequestReviewActionTestkit({ executeReview: async raw => {
+  const source = await createTriagePullRequestReviewActionTestkit({ baseRules: options?.baseRules, executeReview: async raw => {
     reviews.push(raw);
     const input = ReviewStartInputSchema.parse(raw);
     return { intent: 'review', sessionId: input.sessionId,
@@ -96,6 +96,16 @@ async function createPrWorkflow() {
 }
 
 describe('PR review automation through the workflow coordinator', () => {
+  it('reads optional rules at the PR base commit and skips a nonmatching base before starting reviewers', async () => {
+    const h = await createPrWorkflow({ baseRules: { baseRefs: ['release/*'] } });
+    const run = await h.admitted('skip-other-base', 'internal');
+    expect(await h.coordinator.run(run)).toMatchObject({ state: 'succeeded' });
+    expect(h.source.rulesReads).toEqual([expect.objectContaining({ path: '.happier/review-rules.json',
+      selector: { commit: TESTKIT_OBSERVED_REVISION.baseSha } })]);
+    expect(h.reviews).toEqual([]);
+    expect(h.store.list()).toContainEqual(expect.objectContaining({ blockId: 'quick-prepare',
+      result: expect.objectContaining({ status: 'skipped', reason: 'baseRef' }) }));
+  });
   it('offers the editable PR automation through the canonical built-in catalog', () => {
     const control = resolveBuiltinWorkflowDefinitionV1('open-a-pull-request');
     expect(validateWorkflowDefinition(control?.definition).issues).toEqual([]);

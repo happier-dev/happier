@@ -9,7 +9,7 @@ import { buildReviewTriageTransitionRequestV1 } from '@happier-dev/protocol/revi
 import { createReviewFindingIdentityV1, createReviewFindingMessageHashV1 } from '@happier-dev/protocol/reviews/comments/findingIdentity';
 import { ReviewCommentV1Schema } from '@happier-dev/protocol/reviews/comments/v1';
 import { ReviewTriageOverlaySchema } from '@happier-dev/protocol/messages/structured/reviewFindingsV1';
-import { ReviewFindingContentSchema } from '@happier-dev/protocol/reviews/ReviewFinding';
+import { ReviewFindingContentSchema, ReviewFindingSeveritySchema, reviewFindingFallsBelowThreshold } from '@happier-dev/protocol/reviews/ReviewFinding';
 import { stringifyReviewCommentPrincipalCanonicalJsonV1 } from '@happier-dev/protocol/reviews/comments/actions';
 import type { ReviewCommentAnchorV1, ReviewCommentCreateRequestV1, ReviewCommentFingerprintV1, ReviewCommentScopeV1, ReviewCommentV1, ReviewCommentPrincipalHeaderV1, ReviewFinding, ReviewTriageOverlay, ReviewTriageStatus } from '@happier-dev/protocol';
 
@@ -147,6 +147,7 @@ export function createReviewRunCommentService(deps: Readonly<{
       const comments: Array<ReviewRunMaterialization['comments'][number]> = [];
       const failures: Array<{ findingId: string; errorCode: string }> = [];
       const input = record(intentInput);
+      const inlineThreshold = ReviewFindingSeveritySchema.safeParse(input?.inlineThreshold);
       const reviewerId = params.session?.reviewerId ?? (typeof input?.reviewReviewerId === 'string' ? input.reviewReviewerId : review ? null : engineId);
       const cwd = launchCwd ?? deps.cwd;
       const comparison = params.comparison ?? (typeof input?.comparisonId === 'string'
@@ -183,7 +184,10 @@ export function createReviewRunCommentService(deps: Readonly<{
             findingIdentity, findingSeverity: finding.severity, reviewedFingerprint: params.reviewedFingerprint,
             ...(finding.scopeAttribution === undefined ? {} : { scopeAttribution: finding.scopeAttribution }),
             ...(finding.extensions === undefined ? {} : { extensions: finding.extensions }),
-            finding: ReviewFindingContentSchema.parse(finding),
+            finding: ReviewFindingContentSchema.parse({ ...finding,
+              publicationPlacement: inlineThreshold.success && reviewFindingFallsBelowThreshold(finding.severity, inlineThreshold.data)
+                ? 'summary' : undefined,
+            }),
             ...(review ? { reviewId: review.reviewId, appearance: { roundOrdinal: review.roundOrdinal,
               runId: producingRunId, reviewerId,
               ...(scope.workspace ? { machineId: scope.workspace.machineId } : {}),

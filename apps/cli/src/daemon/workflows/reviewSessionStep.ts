@@ -32,8 +32,8 @@ export async function materializeWorkflowSessionReview(input: WorkflowSessionRev
   const prepared = input.params.input.values.map(value => ReviewPreparedRoundV1Schema.safeParse(value))
     .find(result => result.success);
   if (!selection?.success || !prepared?.success) return { kind: 'failed', code: 'invalid_parameters' };
-  const { reviewRound, comparisonId, comparison } = prepared.data;
-  const intentInput = { reviewRound, ...(comparisonId ? { comparisonId } : {}), ...(comparison ? { comparison } : {}) };
+  const { reviewRound, comparisonId, comparison, inlineThreshold } = prepared.data;
+  const intentInput = { reviewRound, inlineThreshold, ...(comparisonId ? { comparisonId } : {}), ...(comparison ? { comparison } : {}) };
   const content = normalizeParsedReviewContent({ value: parseTrailingJsonObject(input.rawText), intentInput, generatedAtMs: Date.now() });
   if (!content) return { kind: 'failed', code: 'invalid_output' };
   const service = createReviewRunCommentService({ cwd: input.workspace.path, scope: { workspace: input.workspace },

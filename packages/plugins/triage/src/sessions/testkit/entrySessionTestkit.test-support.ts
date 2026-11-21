@@ -389,6 +389,7 @@ export function registeredTriageActionHandler(localId: string): ActionHandler<Js
 export async function createTriagePullRequestReviewActionTestkit(options: Readonly<{
     signal?: AbortSignal;
     executeReview?: (input: unknown) => Promise<unknown>;
+    baseRules?: Record<string, unknown>;
 }> = {}) {
     const start = createTriageSelectedPrStartApprovalInput();
     if (start.destination.kind !== 'new' || start.destination.materialization.kind !== 'reviewWorkspace'
@@ -406,6 +407,7 @@ export async function createTriagePullRequestReviewActionTestkit(options: Readon
     const prepareInputs: unknown[] = [];
     const verifyInputs: unknown[] = [];
     const captureInputs: unknown[] = [];
+    const rulesReads: unknown[] = [];
     const executionOptions: unknown[] = [];
     const getOperation = { role: 'get' };
     const prepareOperation = { identity: { target: { pluginId: selected.selection.target.pluginId },
@@ -464,6 +466,12 @@ export async function createTriagePullRequestReviewActionTestkit(options: Readon
                         endpoints: { before: 'c'.repeat(40), after: currentRevision.headSha },
                         pullRequest: { baseOid: currentRevision.baseSha }, inventory: { state: 'complete', files: [], reasons: [] } } };
                 }
+                if (actionId === 'scm.file.read') {
+                    rulesReads.push(input);
+                    if (options.baseRules === undefined) return { success: false, errorCode: 'not_found' };
+                    const bytes = Buffer.from(JSON.stringify(options.baseRules));
+                    return { success: true, contentBase64: bytes.toString('base64'), sizeBytes: bytes.length, sha256: 'a'.repeat(64) };
+                }
                 if (actionId === 'review.start' && options.executeReview) {
                     events.push('review.start'); return await options.executeReview(input);
                 }
@@ -471,7 +479,7 @@ export async function createTriagePullRequestReviewActionTestkit(options: Readon
             },
         },
     } } as unknown as PluginInvocationContext; // Host services and external source/SCM transports.
-    return { context, collections, events, prepareInputs, verifyInputs, captureInputs, executionOptions, preparedWorkspace,
+    return { context, collections, events, prepareInputs, verifyInputs, captureInputs, rulesReads, executionOptions, preparedWorkspace,
         savedInput: { v: 1 as const, request, prepareReviewWorkspaceSelection: selected,
             sessionId: 'session-a', reviewTarget: { entryRef: request.entryRef,
                 lastKnownLocator: request.lastKnownLocator, comparisonSource } },

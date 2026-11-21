@@ -348,6 +348,12 @@ export function createTriageStartPullRequestReviewActionHandler(): ActionHandler
         }
         const launchSelection = !composition && input.launchSelection !== undefined && isJsonRecord(input.launchSelection)
             ? input.launchSelection : {};
+        const rulePaths = input.review.selectedPaths;
+        const requestedPaths = [compositionInput?.selectedPaths, compositionInput?.selectedFiles].flatMap(value =>
+            Array.isArray(value) ? value.filter(item => typeof item === 'string') : []);
+        const selectedPaths = rulePaths && requestedPaths.length > 0
+            ? rulePaths.filter(path => requestedPaths.includes(path)) : rulePaths;
+        if (selectedPaths?.length === 0) return { v: 1, status: 'refused', reason: 'reviewRejected' };
         // The public Review owner admits every composition. The selected PR owns
         // the Session and comparison; transient host choice only relays credentials.
         const admission = ReviewStartInputSchema.safeParse({
@@ -362,6 +368,8 @@ export function createTriageStartPullRequestReviewActionHandler(): ActionHandler
             ...(composition ? {
                 cwd: input.review.repositoryPath, scope: 'changes',
                 comparisonId: input.comparisonId, scmReviewScope: undefined, scmPullRequestReviewScope: undefined,
+                ...(selectedPaths === undefined ? {} : { selectedPaths, selectedFiles: undefined }),
+                ...(input.review.inlineThreshold === undefined ? {} : { inlineThreshold: input.review.inlineThreshold }),
             } : {}),
             sessionId: input.sessionId,
             changeType: 'committed',

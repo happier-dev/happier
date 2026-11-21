@@ -59,6 +59,34 @@ To reuse these steps, open **Advanced** and choose **Save as workflow**. Review
 and edit the unsaved workflow, then save it in the editor. Opening this copy
 does not start a Review.
 
+## Set pull request review rules
+
+The **Review pull request** workflow accepts project trigger conditions for
+base branches, author kinds, and draft state. The conditions and review options
+travel with the workflow when it is duplicated.
+
+For rules that travel with the repository, commit `.happier/review-rules.json`
+to the pull request's base branch. Happier reads the file at the verified base
+commit. A missing file leaves the project automation in control.
+
+```json
+{
+  "baseRefs": ["main", "release/*"],
+  "authorKinds": ["human"],
+  "skipDrafts": true,
+  "ignorePaths": ["**/*.lock", "generated/**"],
+  "inlineThreshold": "high"
+}
+```
+
+Each field is optional. The project workflow's `ignorePaths` and
+`inlineThreshold` options take precedence over the corresponding file fields.
+In `baseRefs` and `ignorePaths`, `*` matches within a segment, `**` can cross
+directories, and `?` matches one character within a segment. Ignored paths stay
+in the pull request but leave the review scope. When you publish a verdict,
+findings below `inlineThreshold` go in its summary. The supported thresholds
+are `blocker`, `high`, `medium`, `low`, and `nit`.
+
 ## Read findings and coverage
 
 Open **Reviews** to return to retained Reviews. Read each reviewer's completion
