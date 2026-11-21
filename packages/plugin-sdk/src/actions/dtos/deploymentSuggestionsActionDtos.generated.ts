@@ -8,7 +8,49 @@ export type DeploymentSuggestionsActionInputById = {
         projection?: 'forges' | undefined;
     };
     readonly "deployments.suggestions.check": {
-        suggestion: unknown;
+        suggestion: {
+            recommendations: {
+                source: {
+                    kind: 'catalogApp';
+                    appId: string;
+                } | {
+                    kind: 'scratch';
+                } | {
+                    kind: 'starter';
+                    starterId: string;
+                };
+                targetId: string;
+                title: string;
+                why: string;
+                whatToBuild: string;
+                stack: {
+                    framework: string;
+                    output: 'compose' | 'container' | 'native' | 'server' | 'static' | 'workers';
+                    data?: string[] | undefined;
+                    variables?: undefined | {
+                        key: string;
+                        secret: boolean;
+                        purpose?: string | undefined;
+                    }[];
+                };
+                data: {
+                    kind: 'catalogApp';
+                    appId: string;
+                } | {
+                    kind: 'none';
+                } | {
+                    kind: 'store';
+                    storeId: string;
+                    engine: string;
+                };
+                variables: {
+                    key: string;
+                    secret: boolean;
+                    purpose?: string | undefined;
+                }[];
+                repositoryProviderKind?: string | undefined;
+            }[];
+        };
         description?: string | undefined;
     };
 };
@@ -116,6 +158,8 @@ export type DeploymentSuggestionsActionResultById = {
                 starterId: string;
             };
             targetId: string;
+            title: string;
+            why: string;
             whatToBuild: string;
             stack: {
                 framework: string;

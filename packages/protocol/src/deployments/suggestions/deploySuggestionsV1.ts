@@ -21,6 +21,7 @@ import { DeploymentTargetPlanV1Schema } from '../../plugins/contributions/deploy
 import { containsPriceTextV1 } from '../../common/providerAmountV1.js';
 
 const id = () => z.string().check(z.minLength(1));
+const words = () => z.string().check(z.refine(value => value.trim().length > 0));
 export const DeploySuggestionCatalogV1Schema = lazyZodSchema(() => z.strictObject({
     starters: z.array(z.strictObject({ id: id(), title: z.string(), deploy: z.optional(DeployShapeV1Schema),
         sourceId: z.optional(id()), itemId: z.optional(id()) })),
@@ -53,7 +54,11 @@ export const DeploySuggestionRecommendationV1Schema = lazyZodSchema(() => z.stri
         z.strictObject({ kind: z.literal('catalogApp'), appId: id() }),
         z.strictObject({ kind: z.literal('scratch') }),
     ]),
-    targetId: id(), repositoryProviderKind: z.optional(id()), whatToBuild: z.string(), stack: DeployShapeV1Schema,
+    targetId: id(), repositoryProviderKind: z.optional(id()),
+    // The card says the setup in the person's terms: a short name, then one line on why it fits (lab autoRecs).
+    title: words().check(z.describe('A short name for this setup, a few words, e.g. "Static invoice page". The card\u2019s title.')),
+    why: words().check(z.describe('One sentence on why this setup fits what the person described. The card\u2019s second line.')),
+    whatToBuild: z.string().check(z.describe('What the build Session should make, for its plan; never a price.')), stack: DeployShapeV1Schema,
     data: z.discriminatedUnion('kind', [z.strictObject({ kind: z.literal('none') }),
         z.strictObject({ kind: z.literal('store'), storeId: id(), engine: z.string() }),
         z.strictObject({ kind: z.literal('catalogApp'), appId: id() })]),
@@ -187,4 +192,4 @@ export function renderDeployPlanBriefV1(description: string, recommendation: Dep
     ].join('\n\n');
 }
 
-export const DEPLOY_SUGGESTION_INSTRUCTIONS_V1 = 'Suggest deployable app setups using only the supplied catalog ids and facts. Never invent ids or prices. Variables contain names, secret flags and purposes only, never values. Keep starter, catalogApp and scratch sources separate, and managed stores separate from self-hosted catalog apps. Return recommendations and, when clarification is needed, questions in the declared canonical format. Code is built in a Session; never deploy Production.';
+export const DEPLOY_SUGGESTION_INSTRUCTIONS_V1 = 'Suggest deployable app setups using only the supplied catalog ids and facts. Never invent ids or prices. Variables contain names, secret flags and purposes only, never values. Give each recommendation a short title of a few words and one why sentence; whatToBuild says what to build. Keep starter, catalogApp and scratch sources separate, and managed stores separate from self-hosted catalog apps. Return recommendations and, when clarification is needed, questions in the declared canonical format. Code is built in a Session; never deploy Production.';

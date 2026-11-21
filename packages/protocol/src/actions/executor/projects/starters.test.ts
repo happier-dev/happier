@@ -11,7 +11,8 @@ import { renderDeployPlanBriefV1 } from '../../../deployments/suggestions/deploy
 
 const input = { serverId: 'home', machineId: 'machine', requestKey: 'starter-1', starterId: 'static-website',
   description: renderDeployPlanBriefV1('\nBuild a bakery website.\nKeep this first message unchanged.\n', {
-    source: { kind: 'starter', starterId: 'static-website' }, targetId: 'own', whatToBuild: 'A bakery website',
+    source: { kind: 'starter', starterId: 'static-website' }, targetId: 'own', title: 'Bakery website',
+    why: 'A static site fits a few pages.', whatToBuild: 'A bakery website',
     stack: { framework: 'html', output: 'static' }, data: { kind: 'none' }, variables: [],
   }), destinationParentPath: '/projects', destinationDirectoryName: 'bakery',
   repository: { owner: 'alice', name: 'bakery' } };

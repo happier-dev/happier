@@ -302,6 +302,11 @@ export function formatSessionFailureLine(parts: readonly (string | null | undefi
     return SENTENCE_END.test(line) ? line : `${line}${t('errors.sentenceEnd')}`;
 }
 
+/** Whether a runtime issue is a usage limit: the one rule the failure line and a failed task's route choice share. */
+export function isUsageLimitedRuntimeIssue(issue: Readonly<{ code?: string | null; source?: string | null }> | null | undefined): boolean {
+    return issue?.source === 'usage_limit' || issue?.code === 'usage_limit';
+}
+
 /** Present the typed cause, reported reset and recovery supported by the carried Connected Account context. */
 export function presentSessionRuntimeIssue(issue: SessionRuntimeIssueV1 | null | undefined, context?: Readonly<{
     /** The surface's own failure text that wraps this issue (a worker's result), when it has one. */
@@ -336,7 +341,7 @@ export function presentSessionRuntimeIssue(issue: SessionRuntimeIssueV1 | null |
     const requestId = issue?.failureCause?.requestId;
     const carrierFailure = issue?.failureCause?.carrierFailure;
     // A usage limit is said as the limit itself; the provider's advice stays in Details.
-    const usageLimited = issue?.source === 'usage_limit' || issue?.code === 'usage_limit';
+    const usageLimited = isUsageLimitedRuntimeIssue(issue);
     const summary = issue ? transitionTitle ?? localized ?? (usageLimited ? t('session.usageLimitRecovery.banner.title') : null)
         ?? t('errors.agentStoppedWithError') : null;
     const raw = context?.failureText ?? issue?.sanitizedPreview ?? null;

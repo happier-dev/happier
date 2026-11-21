@@ -26,7 +26,9 @@ export type NewAppAutoFact = Readonly<{
 
 export type NewAppAutoCard = Readonly<{
   id: string;
+  /** The suggestion's short name, then its one line on why it fits (lab autoRecs). */
   title: string;
+  why: string;
   recommended: boolean;
   facts: readonly NewAppAutoFact[];
   /** The platform's declared plans with their dated source (U3); never the person's plan, which only Review reads (A2). */
@@ -101,7 +103,8 @@ export function presentDeploySuggestionCard(
   ];
   return {
     id: deploySuggestionCardId(index),
-    title: recommendation.whatToBuild,
+    title: recommendation.title,
+    why: recommendation.why,
     recommended: index === 0,
     facts,
     plans: declaredPlans(recommendation.targetId),
@@ -170,6 +173,7 @@ export function DeploySuggestionCardTiles(
       cards.map((card) => ({
         id: card.id,
         title: card.title,
+        subtitle: card.why,
         ...(card.recommended ? { badge: t('newApp.auto.recommended') } : {}),
         footerLabel: cardFactsLabel(card),
       })),

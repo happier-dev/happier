@@ -15,8 +15,8 @@ const catalog = DeploySuggestionCatalogV1Schema.parse({
         { id: 'own', title: 'Own server', targetClass: 'ownServer', availability: 'available', accepts: ['compose'], needs: [] },
     ], machines: [], stores: [], forges: [{ providerKind: 'github', title: 'GitHub' }],
 });
-const recommendation = { source: { kind: 'starter', starterId: 'static' }, targetId: 'pages',
-    whatToBuild: 'A bakery website', stack: { framework: 'html', output: 'static' }, data: { kind: 'none' }, variables: [] } satisfies DeploySuggestionRecommendationV1;
+const recommendation = { source: { kind: 'starter', starterId: 'static' }, targetId: 'pages', title: 'Bakery website',
+    why: 'A few static pages need no server or database.', whatToBuild: 'A bakery website', stack: { framework: 'html', output: 'static' }, data: { kind: 'none' }, variables: [] } satisfies DeploySuggestionRecommendationV1;
 it('passes valid recommendations unchanged, drops unknown ids, incompatible pairs, price fields and missing fields', () => {
     const result = validateDeploySuggestionV1({ recommendations: [recommendation,
         { ...recommendation, targetId: 'invented' }, { ...recommendation, targetId: 'workers' },
@@ -24,6 +24,16 @@ it('passes valid recommendations unchanged, drops unknown ids, incompatible pair
         { ...recommendation, whatToBuild: 'A bakery website for $20/month' }], questions: null }, catalog);
     expect(result.recommendations).toEqual([recommendation]);
     expect(result.dropped.map(row => row.index)).toEqual([1, 2, 3, 4, 5]);
+});
+// AUTO-LIVE 11-21: the card's title was the model's whole sentence. The card reads a short title and a why line the
+// suggestion carries, so one without them is not a card.
+it('drops a recommendation without its short title or why line', () => {
+    const { title: _title, ...untitled } = recommendation;
+    const { why: _why, ...unexplained } = recommendation;
+    const result = validateDeploySuggestionV1({ recommendations: [recommendation, untitled, unexplained,
+        { ...recommendation, title: '' }, { ...recommendation, why: '  ' }] }, catalog);
+    expect(result.recommendations).toEqual([recommendation]);
+    expect(result.dropped).toEqual([1, 2, 3, 4].map(index => ({ index, reason: 'invalid_recommendation' })));
 });
 it('drops numeric CAD and dollar-word prices while preserving technical version text', () => {
     const technical = { ...recommendation, whatToBuild: 'A CAD 3D viewer with CSS 3 and React 20' };

@@ -132,8 +132,8 @@ describe('deploy suggestion read Actions', () => {
     });
     const starterId = JSON.stringify(['starters', 'website']);
     const databaseId = JSON.stringify(['apps', 'database']);
-    const recommendation = { source: { kind: 'starter', starterId }, targetId: 'own-server',
-      whatToBuild: 'Bakery website', stack: deploy, data: { kind: 'catalogApp', appId: databaseId }, variables: [] };
+    const recommendation = { source: { kind: 'starter', starterId }, targetId: 'own-server', title: 'Bakery website',
+      why: 'A static site fits a few pages.', whatToBuild: 'Bakery website', stack: deploy, data: { kind: 'catalogApp', appId: databaseId }, variables: [] };
     const result = await executor.execute('deployments.suggestions.check', {
       suggestion: { recommendations: [recommendation, { ...recommendation, targetId: 'invented' }] }, description: 'A bakery site',
     }, context);
@@ -146,6 +146,21 @@ describe('deploy suggestion read Actions', () => {
     expect(getActionSpec('deployments.suggestions.check').sideEffectClass).toBe('read');
     expect(getActionRequiredServerFeatureId('deployments.suggestions.check')).toBe('deployments');
     expect(getActionRequiredServerFeatureId('deployments.suggestions.catalog')).toBe('deployments');
+  });
+
+  // AUTO-LIVE step 8 (11-21, Session cmwqtdux): a Session agent sent its valid recommendations as a bare array. An
+  // unknown `suggestion` admitted it, the validator found no `recommendations` and answered none with no drop reason, so
+  // no cards rendered and the agent created the starter itself. The check's input declares the shape it validates.
+  it('refuses a suggestion that is not the declared shape, naming the field, instead of answering no cards', async () => {
+    // The captured `action_execute` input, unchanged.
+    const live = { description: 'make me a tiny invoice app and deploy it', suggestion: [{ data: { kind: 'none' },
+      source: { kind: 'starter', starterId: '["happier.deployment.templates/starters","static-website"]' },
+      stack: { framework: 'html', output: 'static' }, targetId: 'own-server', variables: [],
+      whatToBuild: 'Tiny invoice app - create, list and print invoices stored locally', repositoryProviderKind: 'github' }] };
+    const result = await createActionExecutor({}).execute('deployments.suggestions.check', live, context);
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    if (result.ok) throw new Error('unreachable');
+    expect(result.details).toMatchObject({ issues: [{ path: ['suggestion'] }] });
   });
 
   it('refuses a held catalog in the check input: the check reads its own', async () => {

@@ -21,7 +21,7 @@ const catalog: DeploySuggestionCatalogV1 = {
         { machineId: 'unused', label: 'Other box', online: true, readiness: 'ready', homeDir: '/home/alice' },
     ],
 };
-const recommendation = { source: { kind: 'starter', starterId: 'website' }, targetId: 'own', whatToBuild: 'Bakery website',
+const recommendation = { source: { kind: 'starter', starterId: 'website' }, targetId: 'own', title: 'Bakery website', why: 'It fits what you described.', whatToBuild: 'Bakery website',
     stack: { framework: 'html', output: 'static' }, data: { kind: 'none' }, variables: [] };
 const runner = { v: 1, modelSelection: { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'default' } } satisfies LlmTaskRunnerConfigV1;
 const terminal = (output: unknown) => ({ run: { runId: 'run_1', callId: 'call_1', sidechainId: 'call_1', intent: 'task',

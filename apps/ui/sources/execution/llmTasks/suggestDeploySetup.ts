@@ -10,7 +10,7 @@ import {
     type DeploySuggestionCatalogV1,
     type DeploySuggestionCheckResultV1,
 } from '@happier-dev/protocol/deployments/suggestions/deploySuggestionsV1';
-import type { LlmTaskRunnerChoiceV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
+import type { LlmTaskRunnerChoiceV1, LlmTaskRunnerConfigV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
 import type { LlmTaskRunnerResolutionV1, LlmTaskRunnerUnavailableAgentV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerSelection';
 import { normalizeInteractionTransientQuestionsV1, type InteractionTransientQuestionAnswerV1 } from '@happier-dev/protocol/plugins/interactions/transientV1';
 
@@ -52,7 +52,8 @@ export type DeploySuggestionOutcome =
     | Readonly<{ kind: 'noAgent'; machines: readonly DeploySuggestionUnavailableMachine[] }>
     /** Where it failed: before any agent ran (`setup`), or in the agent's Run (`run`, with the Run's typed error when it settled). */
     | Readonly<{ kind: 'failed'; code: string; stage: 'setup' }>
-    | Readonly<{ kind: 'failed'; code: string; stage: 'run'; runError?: ExecutionRunError }>
+    /** `runner`: the explicit runner the Run used, so the failure can offer that Agent's other routes (usage limit). */
+    | Readonly<{ kind: 'failed'; code: string; stage: 'run'; runError?: ExecutionRunError; runner: LlmTaskRunnerConfigV1 }>
     | Readonly<{ kind: 'stopped' }>;
 
 /** The one read of what can be offered (`deployments.suggestions.catalog`); a starter picked by hand reads the same snapshot. */
@@ -163,7 +164,7 @@ export async function suggestDeploySetup(params: Readonly<{
             });
             if (!run.ok) return params.signal?.aborted && run.errorCode === 'cancelled'
                 ? { kind: 'stopped' } : { kind: 'failed', code: run.errorCode ?? 'execution_run_failed', stage: 'run',
-                    ...(run.runError ? { runError: run.runError } : {}) };
+                    runner: resolved.runner, ...(run.runError ? { runError: run.runError } : {}) };
             if (params.signal?.aborted) return { kind: 'stopped' };
             // The check's own validator, against the exact catalog this run was given (the check Action reads a fresh one).
             const result = validateDeploySuggestionV1(run.terminal.latestToolResult ?? run.terminal.structuredMeta?.payload, catalog);

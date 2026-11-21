@@ -19,7 +19,7 @@ import {
   type DeploySuggestionProgress,
   type DeploySuggestionUnavailableMachine,
 } from '@/execution/llmTasks/suggestDeploySetup';
-import { presentExecutionRunFailureSummary } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import { isUsageLimitedRuntimeIssue, presentExecutionRunFailureSummary } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import { storage } from '@/sync/domains/state/storageStore';
 import { buildQualifiedConnectedAccountLocalSubjectId } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
@@ -251,7 +251,10 @@ export function useNewAppAutoSuggestions(
     }
     if (outcome.kind === 'questions') return { kind: 'questions', questions: outcome.questions.questions, skippable: false };
     if (outcome.kind === 'failed') return { kind: 'failed', code: outcome.code, reason: failedReason(outcome, phase.runner),
-      runner: phase.runner && params.serverId ? { serverId: params.serverId, machineId: phase.runner.machineId } : null };
+      runner: phase.runner && params.serverId ? { serverId: params.serverId, machineId: phase.runner.machineId,
+        // A usage limit offers the same Agent's other routes: the choice opens on the runner that hit it.
+        ...(outcome.stage === 'run' && isUsageLimitedRuntimeIssue(outcome.runError?.runtimeIssueV1 ?? { code: outcome.code })
+          ? { limited: outcome.runner } : {}) } : null };
     // Why the check dropped each part of the answer, by its typed reason, for Details.
     const reasons = [...new Set([...outcome.dropped, ...outcome.droppedQuestions].map((row) => row.reason))];
     return { kind: 'nothing', code: reasons.length ? reasons.join(', ') : null };

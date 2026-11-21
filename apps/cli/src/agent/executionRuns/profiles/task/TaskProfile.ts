@@ -1,11 +1,9 @@
 import { ExecutionRunTaskIntentInputV1Schema } from '@happier-dev/protocol/execution/runs/startRequest';
 import { normalizePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 
-import type {
-  ExecutionRunIntentProfile,
-  ExecutionRunProfileBoundedCompleteResult,
-} from '../ExecutionRunIntentProfile';
+import type { ExecutionRunIntentProfile } from '../ExecutionRunIntentProfile';
 import { buildExecutionRunResultContractPrompt, decodeExecutionRunProfileResult } from '@happier-dev/protocol/execution/runs/resultContract';
+import { invalidProfileResultOutput } from '../shared/invalidResultOutput';
 
 function readTaskIntentInput(value: unknown) {
   return ExecutionRunTaskIntentInputV1Schema.parse(value ?? {});
@@ -21,14 +19,6 @@ function buildTaskPrompt(params: Parameters<ExecutionRunIntentProfile['buildProm
     blocks.push(buildExecutionRunResultContractPrompt({ kind: 'json', schema: input.resultSchema })!);
   }
   return blocks.filter(Boolean).join('\n\n');
-}
-
-function invalidStructuredTaskOutput(): ExecutionRunProfileBoundedCompleteResult {
-  return {
-    status: 'failed',
-    summary: 'Task output did not match the required strict JSON result schema.',
-    toolResultOutput: { error: { code: 'invalid_output' } },
-  };
 }
 
 export const TaskProfile: ExecutionRunIntentProfile = {
@@ -58,7 +48,7 @@ export const TaskProfile: ExecutionRunIntentProfile = {
     }
 
     const decoded = decodeExecutionRunProfileResult(rawText, { kind: 'json', schema: input.resultSchema });
-    if (!decoded.ok) return invalidStructuredTaskOutput();
+    if (!decoded.ok) return invalidProfileResultOutput('Task output did not match the required strict JSON result schema', decoded);
 
     return {
       status: 'succeeded',

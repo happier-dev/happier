@@ -100,14 +100,21 @@ Ask necessary clarifying questions
 through the agent's native ask-user-question tool. Variable and secret names
 are enough: never put their values in the suggestion or conversation.
 
-Call \`deployments.suggestions.check\` with only \`suggestion\` (the proposed setup)
-and \`description\`: the person's own words exactly as they wrote them, never
-your summary. Do not pass the catalog; the check reads the current one itself.
-Its accepted typed result renders the same setup cards as the dialog.
-Let the person choose Use this setup. Starter and scratch setups create the
-repository, Project and Source through \`projects.starters.create\`, then open
-the ordinary Session with the person's description and reviewed plan. A catalog
-app is a pure deploy and continues to Where it runs without a build Session.
+Call \`deployments.suggestions.check\` with \`suggestion\` as
+\`{ "recommendations": [...] }\` in the shape its input schema declares (each one
+with a short \`title\` and a one-sentence \`why\`), and \`description\`: the
+person's own words exactly as they wrote them, never your summary. Do not pass
+the catalog; the check reads the current one itself. If no recommendation
+survives, fix the ones \`dropped\` names and check again.
+
+The check's result renders setup cards with Use this setup in this conversation;
+the cards are the person's choice, so do not ask them to pick a setup again.
+After a check with cards, tell the person to choose a card and Use this setup,
+then end your turn. Never call \`projects.starters.create\`, create a repository
+or write the app's files yourself: Use this setup creates the repository,
+Project and Source, then opens a build Session with the person's description
+and the reviewed plan. A catalog app is a pure deploy and continues to Where it
+runs without a build Session.
 
 In the build Session, inspect repository instructions and existing files, then
 build or customize the selected setup. Follow its target, data, named variables

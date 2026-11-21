@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import type { LlmTaskRunnerChoiceV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
+import { isLlmTaskRunnerAutoV1, type LlmTaskRunnerChoiceV1, type LlmTaskRunnerConfigV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
 import type { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { useThisComputerMachineId } from '@/components/machines/add/useMachineAddPaths';
 import { presentSettingWriteFailure } from '@/components/settings/shell/writeFailure';
@@ -20,9 +20,16 @@ export function DeploySuggestionRunnerSetting(props: Readonly<{
     execution: ReturnType<typeof useMountedActionExecution>;
     /** The Machine whose runners the picker reads; this computer by default. */
     machineId?: string | null;
+    /**
+     * A failed suggestion's runner that hit a usage limit. While the stored choice is still Auto, the picker opens on it,
+     * so its Runs through choice lists that Agent's other routes; picking one writes an explicit runner (the person's
+     * visible retry; Auto reads no quota per selection, Providers ORCH 11-21 17:11Z).
+     */
+    limited?: LlmTaskRunnerConfigV1;
     testIDPrefix: string;
 }>) {
-    const [choice] = useSettingMutable('deploySuggestionRunnerV1');
+    const [stored] = useSettingMutable('deploySuggestionRunnerV1');
+    const choice = props.limited && isLlmTaskRunnerAutoV1(stored) ? props.limited : stored;
     const thisComputer = useThisComputerMachineId();
     const { execution } = props;
     const write = React.useCallback((value: LlmTaskRunnerChoiceV1) => { void (async () => {

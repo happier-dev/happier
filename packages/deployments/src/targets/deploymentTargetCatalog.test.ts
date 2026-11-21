@@ -49,7 +49,8 @@ it('offers each managed database target as a store choice the suggestion check a
     }]));
     // A data target that declares no database engine is not a store a recommendation can name.
     expect(catalog.stores).toEqual([{ id: 'com.example.data/database', engine: 'postgresql', title: 'Managed Postgres' }]);
-    const recommendation = { source: { kind: 'scratch' }, targetId: 'own-server', whatToBuild: 'Invoices with a database',
+    const recommendation = { source: { kind: 'scratch' }, targetId: 'own-server', title: 'Invoices app',
+        why: 'Invoices need a server and a database.', whatToBuild: 'Invoices with a database',
         stack: { framework: 'node', output: 'server' }, data: { kind: 'store', storeId: 'com.example.data/database', engine: 'postgresql' },
         variables: [] };
     const checked = checkDeploySuggestionV1({ recommendations: [recommendation] }, { starters: [], apps: [], machines: [],

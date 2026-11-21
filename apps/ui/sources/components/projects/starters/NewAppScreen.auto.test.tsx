@@ -97,7 +97,7 @@ const targets: DeploySuggestionCatalogV1['targets'] = [
 const recommendation = {
   source: { kind: 'starter', starterId: '["starter","website"]' },
   targetId: 'own',
-  whatToBuild: 'A bakery landing page',
+  title: 'A bakery landing page', why: 'It fits what you described.', whatToBuild: 'A bakery landing page',
   stack: { framework: 'html', output: 'static' },
   data: { kind: 'none' },
   variables: [],
@@ -379,7 +379,7 @@ it('a catalog-app card continues in this dialog on Where for that app, not in th
     // An own server runs Compose and containers, so the stored catalog app fits it.
     deploymentSuggestionTargets: async () => ({ targets: [{ ...targets[0]!, accepts: ['static', 'compose', 'container'] }], stores: [] }),
     executionRunWait: async () => ({ ok: true, status: 'succeeded', result: terminal({ recommendations: [{
-      source: { kind: 'catalogApp', appId: '["app","plausible"]' }, targetId: 'own', whatToBuild: 'Self-hosted analytics',
+      source: { kind: 'catalogApp', appId: '["app","plausible"]' }, targetId: 'own', title: 'Self-hosted analytics', why: 'It fits what you described.', whatToBuild: 'Self-hosted analytics',
       stack: { framework: 'compose', output: 'container' }, data: { kind: 'none' }, variables: [] }] }) }),
   });
   const { fixture, screen, onClose } = await openDescribe('auto-catalog-where');
@@ -568,9 +568,11 @@ async function failedSuggestionReason(name: string, overrides: Ports) {
     const { reason, diagnosticCode } = failed()!.props as { reason: string; diagnosticCode: string };
     const { LlmTaskRunnerPicker } = await import('@/components/settings/llmTasks/LlmTaskRunnerPicker');
     // The runner control the failed card offers: Settings' own picker, for the same task.
-    const runnerPicker = screen.findAllByType(LlmTaskRunnerPicker).some((node) => node.props.task === 'deploy_suggestion');
+    const picker = screen.findAllByType(LlmTaskRunnerPicker).find((node) => node.props.task === 'deploy_suggestion');
+    const runnerPicker = Boolean(picker);
+    const runnerValue = picker?.props.value as unknown;
     await screen.unmount();
-    return { reason, diagnosticCode, runnerPicker };
+    return { reason, diagnosticCode, runnerPicker, runnerValue };
   } finally {
     await standardCleanup();
     await fixture.dispose();
@@ -607,6 +609,29 @@ it('a run that hit a usage limit names the Machine it ran on and offers choosing
   });
   expect(reason).toContain('devbox');
   expect(runnerPicker).toBe(true);
+});
+
+// Providers ORCH ruling (BOARD 11-21 17:11Z): after a usage limit, the failed card offers that Agent's other credential
+// routes as the person's visible retry; Auto reads no quota per selection. The picker opens on the runner that hit the
+// limit, so its Runs through choice lists that Agent's routes, and a pick writes the one runner setting.
+it('a run that hit a usage limit opens the runner choice on the Agent that hit it, with its routes to pick from', async () => {
+  const run = terminal(undefined).run;
+  const usageLimit = await failedSuggestionReason('auto-usage-limit-routes', {
+    executionRunWait: async () => ({ ok: true, status: 'failed', result: { run: { ...run, status: 'failed', error: {
+      code: 'usage_limit', message: 'Usage limit reached.',
+      runtimeIssueV1: { v: 1, scope: 'primary_session', status: 'failed', code: 'usage_limit', source: 'usage_limit',
+        occurredAt: 1, agentId: 'claude', sanitizedPreview: 'Usage limit reached',
+        usageLimit: { v: 1, resetAtMs: null, retryAfterMs: null, quotaScope: 'account', recoverability: 'wait', planType: null,
+          limitCategory: 'usage_limit' } },
+    } } } }),
+  });
+  expect(usageLimit.runnerValue, 'the explicit runner that hit the limit, not Auto').toMatchObject({ v: 1,
+    modelSelection: { agentTargetKey: expect.any(String) } });
+  const other = await failedSuggestionReason('auto-failed-other-routes', {
+    executionRunWait: async () => ({ ok: true, status: 'failed', result: { run: { ...run, status: 'failed', error: {
+      code: 'execution_run_failed', message: 'Agent stopped.' } } } }),
+  });
+  expect(other.runnerValue, 'any other failure keeps the stored choice').not.toMatchObject({ modelSelection: expect.anything() });
 });
 
 it('when every suggestion is dropped it says it couldn’t suggest, and Try again runs once more (journey-deploy F3)', async () => {

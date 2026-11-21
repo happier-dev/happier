@@ -55,7 +55,9 @@ const site = {
   source: { kind: 'starter', starterId: 'static' },
   targetId: 'pages',
   repositoryProviderKind: 'github',
-  whatToBuild: 'A bakery landing page',
+  title: 'Bakery landing page',
+  why: 'A few static pages need no server or database.',
+  whatToBuild: 'Build a bakery landing page with opening hours and a contact form as static HTML on Pages',
   stack: { framework: 'html', output: 'static' },
   data: { kind: 'none' },
   variables: [],
@@ -84,7 +86,7 @@ describe('a suggestion card’s accessible name (deploy auto-mode QA: title + ta
         id === 'pages' ? pagesPlans : null,
       ),
       presentDeploySuggestionCard(
-        { ...site, targetId: 'own', whatToBuild: 'On your own server' },
+        { ...site, targetId: 'own', title: 'On your own server' },
         catalog,
         1,
         null,
@@ -104,7 +106,10 @@ describe('a suggestion card’s accessible name (deploy auto-mode QA: title + ta
       const name = (index: number) =>
         screen.findByTestId(`card:suggestion-${index}`)?.props
           .accessibilityLabel as string | undefined;
-      expect(name(0)).toContain('A bakery landing page');
+      // AUTO-LIVE 11-21: the title is the suggestion's short name with its why line, never the build plan sentence.
+      expect(name(0)).toContain('Bakery landing page');
+      expect(name(0)).toContain('A few static pages need no server or database.');
+      expect(name(0)).not.toContain(site.whatToBuild);
       expect(name(0)).toContain('Recommended');
       expect(name(0)).toContain('Cloudflare Pages');
       expect(name(0)).toContain('Free $0.00 a month');

@@ -66,7 +66,7 @@ const site = {
   source: { kind: 'starter', starterId: 'static' },
   targetId: 'pages',
   repositoryProviderKind: 'github',
-  whatToBuild: 'A bakery landing page',
+  title: 'A bakery landing page', why: 'It fits what you described.', whatToBuild: 'A bakery landing page',
   stack: { framework: 'html', output: 'static' },
   data: { kind: 'none' },
   variables: [],
@@ -74,7 +74,7 @@ const site = {
 const analytics = {
   source: { kind: 'catalogApp', appId: 'umami' },
   targetId: 'own',
-  whatToBuild: 'Self-hosted analytics',
+  title: 'Self-hosted analytics', why: 'It fits what you described.', whatToBuild: 'Self-hosted analytics',
   stack: { framework: 'docker', output: 'container' },
   data: { kind: 'none' },
   variables: [],
@@ -83,7 +83,7 @@ const analytics = {
 const invented = {
   ...site,
   targetId: 'netlify',
-  whatToBuild: 'An invented host',
+  title: 'An invented host', why: 'It fits what you described.', whatToBuild: 'An invented host',
 };
 
 /**

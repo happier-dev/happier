@@ -20,7 +20,7 @@ const catalog: DeploySuggestionCatalogV1 = { starters: [{ id: '["starters","webs
     { id: 'analytics', title: 'Analytics', sourceId: 'apps', itemId: 'analytics' }],
     targets: [{ id: 'own', title: 'Own server', targetClass: 'ownServer', availability: 'available' }], machines: [], stores: [], forges: [{ providerKind: 'github', title: 'GitHub' }] };
 const suggestion: DeploySuggestionRecommendationV1 = { source: { kind: 'catalogApp', appId: 'analytics' }, targetId: 'own',
-    whatToBuild: 'Analytics', stack: { framework: 'compose', output: 'compose' }, data: { kind: 'none' }, variables: [] };
+    title: 'Analytics', why: 'It fits what you described.', whatToBuild: 'Analytics', stack: { framework: 'compose', output: 'compose' }, data: { kind: 'none' }, variables: [] };
 beforeEach(() => { execute.mockReset(); });
 
 it('applies a catalog app to Where without creating a Project, Session or Environment', async () => {

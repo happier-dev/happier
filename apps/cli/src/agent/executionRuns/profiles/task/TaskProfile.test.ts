@@ -64,9 +64,14 @@ describe('TaskProfile', () => {
       rawText: '{"summary":42}',
       finishedAtMs: 2,
     });
+    // AUTO-FIX-W16 item 4: a Haiku deploy_suggestion run failed invalid_output with nothing kept to say why. The
+    // failure carries the decoder's reason and the schema pointers it failed at (schema words only, never the output).
     expect(invalid).toMatchObject({
       status: 'failed',
-      toolResultOutput: { error: { code: 'invalid_output' } },
+      summary: expect.stringContaining('schema_mismatch'),
+      toolResultOutput: { error: { code: 'invalid_output', reason: 'schema_mismatch',
+        issues: [{ pointer: '/summary', message: expect.any(String) }] } },
     });
+    expect(invalid.summary).not.toContain('42');
   });
 });
