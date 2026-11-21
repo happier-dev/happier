@@ -8158,15 +8158,6 @@ class Sync {
         return areServerProfileIdentifiersEquivalent(normalizedSourceServerId, activeServerId);
     }
 
-    private shouldRefreshActiveSessionListAfterSocketHydration = (
-        reason: SyncSocketSessionHydrationReason,
-        sourceServerId?: string | null,
-    ): boolean => (
-        reason === 'socket-new-session-reconcile'
-        && !this.embedSessionScope
-        && this.isHydrationSourceActiveServer(sourceServerId)
-    );
-
     private ensureHydratedActiveSessionListRow = (
         sessionId: string,
         sourceServerId?: string | null,
@@ -8202,7 +8193,7 @@ class Sync {
         sourceServerId?: string | null,
         scopeCurrentness?: () => boolean,
     ): Promise<void> => {
-        await this.ensureSessionVisibleForMessageRoute(sessionId, {
+        const result = await this.ensureSessionVisibleForMessageRoute(sessionId, {
             forceRefresh: true,
             // A completed turn can race the consumer's initial snapshot read.
             // Its anchors must come from a read started after that update.
@@ -8211,7 +8202,14 @@ class Sync {
             includeTurnsProjection: reason === 'socket-update-turn-projection',
             scopeCurrentness,
         });
-        if (!this.shouldRefreshActiveSessionListAfterSocketHydration(reason, sourceServerId)) return;
+        if (reason !== 'socket-new-session-reconcile' || this.embedSessionScope || scopeCurrentness?.() === false
+            || !this.isHydrationSourceActiveServer(sourceServerId)) return;
+        const serverId = this.getAppliedTransportTarget()?.serverId;
+        // The exact read already supplied the Home's membership facts for this
+        // birth. Repair the list only when the row could not establish them.
+        if (result.kind === 'available' && serverId && placeSessionListRows({
+            serverId, sessionIds: [sessionId], ordinaryHasMorePages: this.readOrdinarySessionListLifecycle().frontier.hasNext,
+        })) return;
         try {
             await this.fetchSessions({
                 awaitSessionListHydration: true,

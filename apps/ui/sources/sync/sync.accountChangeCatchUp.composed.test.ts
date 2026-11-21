@@ -1316,6 +1316,41 @@ describe('sync AccountChange catch-up projection', () => {
         expect(storage.getState().sessionListRowsByServerId[scope.serverId]?.[id]?.id).toBe(id);
     });
 
+    it('places a socket-created Session from its exact batch without reading the Home list', async () => {
+        const id = 'socket-created-session-placement';
+        const row = {
+            ...createPlainSessionCurrentProjectionRecordFixture({ id, seq: 1, active: true, updatedAt: 2 }),
+            viewer: createSessionViewerFixture({ relevance: { relevant: true, reasons: ['owned_by_me'] } }),
+        };
+        const batches: string[][] = [];
+        const listReads: string[] = [];
+        await restoreTestAccount({ connectedSocket: true, onRequest: path => {
+            if (path === '/v2/sessions' || path === '/v2/sessions/active' || path === '/v2/sessions/query') listReads.push(path);
+        }, physicalRequest: (url, init) => {
+            if (new URL(url).pathname === '/v2/sessions/read-batch') {
+                const input = SessionReadBatchRequestV1Schema.parse(JSON.parse(String(init?.body)));
+                batches.push(input.sessionIds);
+            }
+            return undefined;
+        }, runtimeRequest: path => path === `/v2/sessions/${id}`
+            ? jsonResponse({ session: row, observationCursor: 2 }) : undefined });
+        if (!syncRuntime || !account) throw new Error('Expected restored Sync');
+        const serverId = account.serverId;
+        const runtime = syncRuntime as unknown as {
+            hydrateSessionFromSocketUpdate(sessionId: string, reason: 'socket-new-session-reconcile', sourceServerId: string): Promise<void>;
+        };
+        const { storage } = await import('./domains/state/storage');
+        batches.length = 0;
+        listReads.length = 0;
+
+        await runtime.hydrateSessionFromSocketUpdate(id, 'socket-new-session-reconcile', serverId);
+
+        expect(storage.getState().sessions[id]).toMatchObject({ id, serverId });
+        expect(storage.getState().ordinarySessionListMembershipByServerId[serverId]).toContain(id);
+        expect(batches).toEqual([[id]]);
+        expect(listReads).toEqual([]);
+    });
+
     it('shares the set reader and admitted identity when a change page requires list-membership repair', async () => {
         const ids = Array.from({ length: 12 }, (_, index) => `coldhome-repair-${index}`).sort();
         const physicalBatches: string[][] = [];

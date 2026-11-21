@@ -32,18 +32,20 @@ export function readSessionListRowPlacementFacts(
  * After the canonical batch owner applied these rows: place each in the ordinary
  * (owner-or-direct) corpus and in every mounted list of that Home by the
  * Home-published membership facts and the list sort key, without a list re-read.
+ * Returns whether every requested row had current placement facts.
  */
 export function placeSessionListRows(params: Readonly<{
     serverId: string;
     sessionIds: readonly string[];
     /** The ordinary frontier still has unread pages. */
     ordinaryHasMorePages: boolean;
-}>): void {
+}>): boolean {
     const state = storage.getState();
     const rows = state.sessionListRowsByServerId[params.serverId] ?? {};
     const placements: SessionListRowPlacement[] = [];
     const unplaceable: string[] = [];
-    for (const sessionId of new Set(params.sessionIds)) {
+    const sessionIds = new Set(params.sessionIds);
+    for (const sessionId of sessionIds) {
         const row = rows[sessionId];
         const facts = row ? readSessionListRowPlacementFacts(row) : null;
         if (facts) placements.push({ sessionId, facts });
@@ -62,4 +64,5 @@ export function placeSessionListRows(params: Readonly<{
         ? [rows[sessionId]!] : []);
     if (ordinaryAdditions.length > 0) state.mergeSessionListRowsForServerScope(params.serverId, ordinaryAdditions);
     placeSessionListQueryRows(params.serverId, placements, unplaceable, readSortKey);
+    return placements.length === sessionIds.size;
 }
