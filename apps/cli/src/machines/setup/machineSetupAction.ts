@@ -325,6 +325,7 @@ export function createMachineSetupPlanAction(params: Readonly<{
             await registry.projectManagedServices.resolveSetupScriptServiceEffects({
               serverId: input.homeId, machineId: input.machineId, serviceIds, signal: lifetime,
             });
+            return undefined;
           } catch (error) {
             if (lifetime?.aborted) return fail('cancelled');
             if (error instanceof PluginError && error.code === 'plugin_managed_service_unavailable') return fail(error.code);

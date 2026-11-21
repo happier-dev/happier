@@ -2767,7 +2767,7 @@ describe('managed Machine detail', () => {
                     metadata: { name: 'Working elsewhere', path: '/work', host: 'controller', machineId: controller.machineId } }),
                 createSessionFixture({ id: 'idle-guest-session', serverId, active: true, activeAt: now,
                     metadata: { name: 'Idle on the guest', path: '/work', host: 'guest', machineId: 'guest' } }),
-            ], { sourceServerId: serverId });
+            ]);
             expect(storage.getState().sessionListRowsByServerId[serverId]?.['busy-guest-session']).toBeDefined();
         }
         const machine: ManagedMachineFullV1 = { id: 'delete-reviewed', homeId: 'srv_managed_delete', custodianAccountId: 'foreign-owner', launch,
