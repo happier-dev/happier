@@ -1,7 +1,10 @@
 import * as React from 'react';
 
+import { PluginSurfaceProjectionDemand } from '@/components/plugins/surfaces/PluginSurfaceProjectionDemand';
 import { SettingsCollectionLayout } from '@/components/settings/shell/SettingsCollectionLayout';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { SKILL_PROJECTION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
+import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 
 import { SkillsRail } from './SkillsRail';
 import { SKILLS_COLLECTION_ROUTE } from './skillsCollectionModel';
@@ -21,8 +24,10 @@ function resolveSkillsChildRoute(pathname: string): string {
  */
 export const SkillsSettingsLayout = React.memo(function SkillsSettingsLayout() {
     const enabled = useFeatureEnabled('prompts.library');
+    const scope = useAccountSettingsScope();
     if (!enabled) return null;
-    return (
+    return <>
+        <PluginSurfaceProjectionDemand accountScope={scope} presents="allInstallations" sections={SKILL_PROJECTION_SECTIONS} />
         <SettingsCollectionLayout
             navigator="skills"
             rootPathname={SKILLS_COLLECTION_ROUTE}
@@ -32,5 +37,5 @@ export const SkillsSettingsLayout = React.memo(function SkillsSettingsLayout() {
             detailMinWidthPx={SKILLS_DETAIL_MIN_WIDTH_PX}
             testID="settings-skills"
         />
-    );
+    </>;
 });

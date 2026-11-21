@@ -39,9 +39,10 @@ import { StoreDiscover } from '@/components/store/StoreDiscover';
 import { listStoreKindContributions } from '@/components/store/catalog/storeKindContributions';
 import { projectPluginStoreKindDeclarationV1 } from '@happier-dev/protocol/plugins/contributions/storeKinds';
 import { PluginSurfaceProjectionDemand } from './PluginSurfaceProjectionDemand';
+import { SkillsSettingsLayout } from '@/components/settings/skills/SkillsSettingsLayout';
 import { MountedPluginActionControls } from './MountedPluginActionControls';
 import { createPluginSurfaceActionControls } from './pluginSurfaceActionControls';
-import { readPluginUiContributionOrigin } from '@/sync/domains/plugins/ui/projectionUnion';
+import { readPluginUiContributionOrigin, readPluginUiContributionSupplies } from '@/sync/domains/plugins/ui/projectionUnion';
 import type { PluginUiSurfaceContextV1 } from '@happier-dev/protocol/plugins/ui';
 import { usePluginSurfaceExecutionOrigin } from './pluginSurfaceExecutionOrigin';
 import { PluginMachineExecutionOriginSelectorView } from '@/components/settings/machines/PluginMachineExecutionOriginSelector';
@@ -83,11 +84,12 @@ afterEach(async () => {
     installDisconnectedServerSocketBoundary();
 });
 
-it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory', 'starter', 'starter-warm'] as const)('shows Machine-installed contributions for a presented %s, with no closed or settled reads', async surface => {
+it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory', 'starter', 'starter-warm', 'skills'] as const)('shows Machine-installed contributions for a presented %s, with no closed or settled reads', async surface => {
     const accountId = 'presented-demand-account';
     const serverIdentityId = `srv_presented_demand_${surface}`;
     const starterSurface = surface === 'starter' || surface === 'starter-warm';
-    const machine = createMachineFixture({ id: 'presented-machine', activeAt: starterSurface ? Date.now() : 0, storageMode: 'plain' });
+    const skillsSurface = surface === 'skills';
+    const machine = createMachineFixture({ id: 'presented-machine', activeAt: starterSurface || skillsSurface ? Date.now() : 0, storageMode: 'plain' });
     const row = createPlainMachineRowFixture({ id: machine.id, accountId, machine });
     const shippedManifest = PluginManifestV2Schema.parse(PLUGIN_MANIFEST);
     const pluginId = starterSurface ? shippedManifest.id : 'acme.preview';
@@ -110,6 +112,7 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
         materializationId: 'preview-install', pluginId, version: pluginVersion, sourceClass: 'localPath',
         portableRelease: false, uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: 1 });
     const widget = widgetProjectionEntry({ pluginId, localId: 'conversations', target: 'app' });
+    const skillId = `${pluginId}/fixture-skill`;
     // A Machine-local installation reports its runtime occurrence: Administration selects it from these facts.
     const { PluginMachineExecutionOriginV1Schema } = await import('@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1');
     const sourceCustody = { kind: 'development', registeredRootId: 'preview-root' } as const;
@@ -158,7 +161,11 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
                 ...(starterSurface ? { registrySources: { family: 'registrySources', entriesById: Object.fromEntries(registrySources.map((entry: { id: string }) => [entry.id, { ...entry, executionOrigin }])) } } : {}),
                 storeKinds: { family: 'storeKinds', entriesById: { [storeKind.id]: storeKind } },
                 pluginUi: { family: 'pluginUi', entriesById: { [widget.id]: widget } },
-                skills: { family: 'skills', entriesById: { 'acme.unopened/unopened': {
+                skills: { family: 'skills', entriesById: skillsSurface ? { [skillId]: {
+                    id: skillId, pluginId, pluginVersion,
+                    definition: { id: 'fixture-skill', directory: 'skills/fixture-skill' },
+                    executionOrigin, occurrenceId: widget.occurrenceId,
+                } } : { 'acme.unopened/unopened': {
                     id: 'acme.unopened/unopened', pluginId: 'acme.unopened', pluginVersion: '1.0.0',
                     definition: { id: 'unopened', directory: 'skills/unopened' },
                 } } },
@@ -194,7 +201,7 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
     const promptCatalog = createPromptLibraryCatalogBoundary();
     let availabilityCursor = 1;
     const home = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: `https://presented-${surface}.test`,
-        serverIdentityId, accountId, accountMode: 'plain', currentAccount: starterSurface }], route: async request => {
+        serverIdentityId, accountId, accountMode: 'plain', currentAccount: starterSurface || skillsSurface }], route: async request => {
         if (starterSurface && request.path.startsWith('/v1/actions/')) {
             // The Home HTTP boundary keeps the real Action envelope and registry host.
             const envelope = ExternalActionRequestEnvelopeV1Schema.parse(request.body);
@@ -271,6 +278,7 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
         function Presented({ visible }: Readonly<{ visible: boolean }>) {
             current = usePluginUiProjectionCurrentness({ ...target, load: false });
             if (starterSurface) return <AppShellPluginUiProjectionProvider>{visible ? <NewAppScreen onClose={() => {}} /> : null}</AppShellPluginUiProjectionProvider>;
+            if (skillsSurface) return <AppShellPluginUiProjectionProvider>{visible ? <SkillsSettingsLayout /> : null}</AppShellPluginUiProjectionProvider>;
             if (declaredDirectory) return <AppShellPluginUiProjectionProvider>
                 <StoreDiscover demand={{ presented: visible }} project={null}>
                     {() => <DeclaredDirectoryKinds />}
@@ -299,6 +307,21 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
         expect(requests).toEqual([]);
         if (surface === 'store' || surface === 'store-directory') expect(tree.tree.root.findAllByProps({ testID: storeKind.id })).toHaveLength(0);
         await tree.update(<Presented visible />);
+        if (skillsSurface) {
+            await waitForHomeGovernance(() => {
+                const skill = readCurrentAppShellPluginUiProjection({ scope: lifetime.scope, declarationsOnly: true })?.skillsById[skillId];
+                expect(readPluginUiContributionSupplies(skill)).toMatchObject([{ machineId: machine.id, occurrenceId: widget.occurrenceId }]);
+            });
+            const unrelated = new Set(Object.entries(deferred.manifest.sections)
+                .filter(([section]) => !['base', 'installedPackagesById', 'familiesById.skills'].includes(section))
+                .map(([, digest]) => digest));
+            expect(requests.filter(request => unrelated.has(request.sectionRead?.digest ?? ''))).toEqual([]);
+            const settledReads = requests.length;
+            await tree.update(<Presented visible={false} />);
+            await flushHookEffects();
+            expect(requests).toHaveLength(settledReads);
+            return;
+        }
         if (declaredDirectory) {
             await waitForHomeGovernance(() => expect(tree!.tree.root.findAllByProps({ testID: storeKind.id })).toHaveLength(1));
             await waitForHomeGovernance(() => expect(current?.phase).toBe('current'));

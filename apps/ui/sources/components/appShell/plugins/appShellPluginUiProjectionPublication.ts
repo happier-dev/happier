@@ -119,14 +119,14 @@ const NO_SETTINGS_PAGES: readonly PluginUiProjectionModel['settingsPagesById'][s
  * Unread families keep their retained value.
  */
 const partialPresentationByRead = new WeakMap<PluginUiProjectionModel, Readonly<{
-    retained: PluginUiProjectionModel; registrySources: boolean; themes: boolean; model: PluginUiProjectionModel;
+    retained: PluginUiProjectionModel; registrySources: boolean; skills: boolean; themes: boolean; model: PluginUiProjectionModel;
 }>>();
 function withReadPresentationFamilies(retained: PluginUiProjectionModel | null, read: PluginUiProjectionModel,
-    registrySources: boolean, themes: boolean): PluginUiProjectionModel {
+    registrySources: boolean, skills: boolean, themes: boolean): PluginUiProjectionModel {
     if (registrySources && (!retained || retained.generation == null)) return read;
     const base = retained ?? EMPTY_PLUGIN_UI_PROJECTION;
     const held = partialPresentationByRead.get(read);
-    if (held?.retained === base && held.registrySources === registrySources && held.themes === themes) return held.model;
+    if (held?.retained === base && held.registrySources === registrySources && held.skills === skills && held.themes === themes) return held.model;
     const installedPackagesById = { ...read.installedPackagesById, ...base.installedPackagesById };
     if (themes) for (const theme of Object.values(read.themesById)) {
         const installed = read.installedPackagesById[theme.pluginId];
@@ -136,8 +136,9 @@ function withReadPresentationFamilies(retained: PluginUiProjectionModel | null, 
         generation: base.generation ?? read.generation,
         installedPackagesById: Object.freeze(installedPackagesById),
         registrySourcesById: registrySources ? read.registrySourcesById : base.registrySourcesById,
+        skillsById: skills ? read.skillsById : base.skillsById,
         themesById: themes ? read.themesById : base.themesById });
-    partialPresentationByRead.set(read, { retained: base, registrySources, themes, model });
+    partialPresentationByRead.set(read, { retained: base, registrySources, skills, themes, model });
     return model;
 }
 
@@ -553,10 +554,11 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
             const { projection: presentedProjection, presentedPluginIds } = selectPresentedPluginUiProjection(current);
             const read = !presentedPluginIds && current?.phase === 'establishing' ? current.installedPackagesProjection ?? null : null;
             const registrySourcesRead = current?.registrySourcesCurrent === true;
+            const skillsRead = current?.skillsCurrent === true;
             const themesRead = current?.themesCurrent === true && read !== null
                 && (Object.keys(read.themesById).length > 0 || Object.keys(presentedProjection?.themesById ?? {}).length > 0);
-            const presentation = read && (registrySourcesRead || themesRead)
-                ? withReadPresentationFamilies(presentedProjection, read, registrySourcesRead, themesRead) : presentedProjection;
+            const presentation = read && (registrySourcesRead || skillsRead || themesRead)
+                ? withReadPresentationFamilies(presentedProjection, read, registrySourcesRead, skillsRead, themesRead) : presentedProjection;
             // The last theme demand can leave when its installation is withdrawn.
             // An exact Home report retires cached themes even without another theme section read.
             const themesAdmitted = reportedHome && (!serverIdentityId || reportedHome === serverIdentityId)
@@ -693,6 +695,7 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
                 && (current?.installedPackagesProjection ?? null) === (currentness.installedPackagesProjection ?? null)
                 && (current?.presentedPluginIds ?? null) === (currentness.presentedPluginIds ?? null)
                 && (current?.registrySourcesCurrent ?? false) === (currentness.registrySourcesCurrent ?? false)
+                && (current?.skillsCurrent ?? false) === (currentness.skillsCurrent ?? false)
                 && (current?.themesCurrent ?? false) === (currentness.themesCurrent ?? false)) {
                 // Missing reports already contribute null/establishing/noninteractive
                 // inputs. Their first matching answer, like Browser and descriptor

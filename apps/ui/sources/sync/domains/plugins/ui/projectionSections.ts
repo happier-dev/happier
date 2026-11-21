@@ -6,6 +6,7 @@ import { DAEMON_PROJECTION_PLUGIN_SELECTABLE_SECTIONS, DAEMON_PROJECTION_SESSION
 // Other catalogues retain separate demand.
 export const CONNECTED_ACCOUNT_PROJECTION_SECTIONS = ['familiesById.connectedAccounts'] as const;
 export const THEME_PROJECTION_SECTIONS = ['familiesById.themes'] as const;
+export const SKILL_PROJECTION_SECTIONS = ['familiesById.skills'] as const;
 // A connected-account purpose declaration resolves through its consumer's Actions/Resources,
 // managed provisioners and authentication descriptors (`readDeclaredConnectedAccountPurposeV1`).
 export const CONNECTED_ACCOUNT_PURPOSE_DECLARATION_SECTIONS = ['actionsById', 'resourcesById',

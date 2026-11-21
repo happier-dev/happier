@@ -4137,8 +4137,11 @@ registry update. The existing `skills.duplicate` Action makes a person-owned,
 editable copy through the canonical
 [`skillActionOperations`](../packages/protocol/src/prompts/library/skills/skillActionOperations.ts)
 owner; rules and Session selection use their ordinary Actions. The Skills UI
-owner supplies the byline and read-only controls; this source contract does not
-establish their rendered or loaded-runtime verification.
+owner supplies the byline and read-only controls. Opening Settings › Skills
+requests the Skills declaration section from installed suppliers. An answered
+section publishes with its Machine and occurrence provenance independently
+of the full UI catalog, allowing the library to read metadata through the
+canonical Account Action.
 Agent-native plugin skill folders remain a separate Found input. Public
 authoring guidance lives in [Contributions](../apps/docs/content/docs/plugins/manifest/contributions.mdx#library-skills-in-development);
 generated SDK API and capability reports remain the availability authority.

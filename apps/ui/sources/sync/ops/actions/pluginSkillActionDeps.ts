@@ -1,5 +1,6 @@
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { SKILL_ACTION_OUTPUT_SCHEMAS_V1, type SkillLibraryActionInputByIdV1 } from '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1';
 import { SkillReadResultV1Schema, type SkillReadInputV1 } from '@happier-dev/protocol/prompts/library/skills/skillReadV1';
 import { pluginSkillIdV1, type SkillListItemV1 } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
@@ -19,7 +20,9 @@ function sources(account: LazyActionAccountContext) {
     }));
 }
 type Source = ReturnType<typeof sources>[number];
-const unavailable = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+const unavailable = (code: string): never => {
+    throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code });
+};
 
 async function execute(account: LazyActionAccountContext, context: ActionExecutorContext, actionId: ActionId, input: unknown) {
     const { executeOriginalAccountMachineAction } = await import('@/sync/api/externalActionAccountTransport');
@@ -35,9 +38,10 @@ async function execute(account: LazyActionAccountContext, context: ActionExecuto
         throw error;
     });
     account.assertCurrent(); context.signal?.throwIfAborted();
-    if (!result.ok) throw Object.assign(new Error(result.error), {
-        code: actionId === 'skills.list' ? 'skill_content_unavailable' : result.errorCode, details: result.details,
-    });
+    if (!result?.ok) {
+        if (result && actionId !== 'skills.list') throw createActionExecuteFailureError(result);
+        return unavailable('skill_content_unavailable');
+    }
     return result.result;
 }
 
