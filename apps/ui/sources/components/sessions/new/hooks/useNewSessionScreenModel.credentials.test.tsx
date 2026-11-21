@@ -932,8 +932,12 @@ describe('New Session ACP catalog authority and retained authoring', () => {
         } finally { await hook.unmount(); }
     });
 
-    it.each(['agent_user_missing', 'workspace_not_ready'] as const)('first isolated owner launch: %s', async (code) => {
-        const fixture = await restoreCatalogAuthoringFixture({ name: `first-launch-${code.replaceAll('_', '-')}`,
+    it.each([
+        ['pending', { protection: 'setup_pending', status: { kind: 'member_not_prepared' } }],
+        ['missing', { protection: 'unavailable', status: { kind: 'unavailable', code: 'agent_user_missing' } }],
+        ['unready', { protection: 'unavailable', status: { kind: 'unavailable', code: 'workspace_not_ready' } }],
+    ] as const)('first isolated owner launch: %s', async (scenario, status) => {
+        const fixture = await restoreCatalogAuthoringFixture({ name: `first-launch-${scenario}`,
             target: bundledTarget, seedDraft: false, isolated: true });
         authoringRoute.directory = undefined;
         const original = rpc.getMockImplementation();
@@ -943,11 +947,11 @@ describe('New Session ACP catalog authority and retained authoring', () => {
         rpc.mockImplementation((request: { method: string; payload?: unknown }) => {
             if (request.method === 'machines.agentIsolation.status') {
                 statusReads += 1;
-                return Promise.resolve({ protection: 'unavailable', status: { kind: 'unavailable', code } });
+                return Promise.resolve(status);
             }
-            if (request.method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT) {
+            if (request.method === RPC_METHODS.SESSION_SPAWN_NEW) {
                 launches.push(request.payload);
-                return Promise.resolve({ ok: false, code: 'invalid_directory' });
+                return Promise.resolve({ type: 'error', code: 'spawn_failed', retryable: false });
             }
             return original(request);
         });
@@ -955,23 +959,25 @@ describe('New Session ACP catalog authority and retained authoring', () => {
         try {
             await vi.waitFor(() => {
                 const model = hook.getCurrent();
-                expect(model.requesterIsolation?.status)
-                    .toMatchObject({ status: { kind: 'unavailable', code } });
+                expect(model.requesterIsolation?.status).toEqual(status);
             });
             await vi.waitFor(() => {
                 const model = hook.getCurrent();
                 if (model.variant !== 'simple') throw new Error('Expected real simple launcher');
-                expect(model.simpleProps.canCreate, JSON.stringify(model.simpleProps.connectionStatus)).toBe(code === 'agent_user_missing');
+                expect(model.simpleProps.canCreate, JSON.stringify(model.simpleProps.connectionStatus)).toBe(scenario === 'pending');
             });
             const model = hook.getCurrent();
             if (model.variant !== 'simple') throw new Error('Expected real simple launcher');
             expect(launches).toEqual([]); // Background status must never prepare the member.
-            if (code === 'agent_user_missing') {
+            if (scenario === 'pending') {
                 expect(model.simpleProps.folderChipState).toMatchObject({ kind: 'launch_preparable' });
-                await act(async () => { await model.simpleProps.handleCreateSession(); });
-                await vi.waitFor(() => expect(launches).toHaveLength(1));
-                expect(launches[0]).toMatchObject({ prepareAgentIsolationMember: true,
-                    directory: { kind: 'path', path: '~' } });
+                expect(model.simpleProps.selectedPath).toBe('~');
+                await act(async () => { model.simpleProps.promptStore.setPrompt('First session'); });
+                const authored = hook.getCurrent();
+                if (authored.variant !== 'simple') throw new Error('Expected real simple launcher');
+                await act(async () => { await authored.simpleProps.handleCreateSession({ initialMessage: 'skip' }); });
+                expect(launches).toHaveLength(1);
+                expect(launches[0]).toMatchObject({ directory: { kind: 'path', path: '~' } });
             } else {
                 expect(model.simpleProps.folderChipState).toMatchObject({ kind: 'failed' });
                 const isolation = model.requesterIsolation;

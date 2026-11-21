@@ -8061,6 +8061,8 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
       "Aguardando sua aprovação. A sessão começa assim que for aprovada, e sua mensagem fica aqui.",
     requesterFoldersChecking: "Verificando suas pastas nesta máquina…",
     requesterFoldersFailed: "Não foi possível verificar suas pastas nesta máquina.",
+    requesterFoldersSetupPending:
+      'O Happier vai preparar seu espaço de trabalho privado quando você iniciar uma sessão ou instalar um agente.',
     requesterFoldersHint:
       "Comece no seu espaço de trabalho ou na sua pasta pessoal nesta máquina. A pasta pessoal privada do proprietário pode não estar aberta para você.",
     initialInputNotConfirmedTitle: "Confira sua primeira mensagem",

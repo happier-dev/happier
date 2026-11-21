@@ -7,6 +7,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { isRequesterDirectoryLaunchPreparable } from '@/utils/sessions/machineDefaultDirectory';
 
 /**
  * A member starting a session on someone else's machine (MEMBER-WORKSPACE): the folder their session can
@@ -52,10 +53,11 @@ export function NewSessionRequesterFolderHint(
       </View>
     );
   }
-  if (isolation.status?.protection !== 'member_separated') return null;
+  const pending = isRequesterDirectoryLaunchPreparable(isolation.status);
+  if (!pending && isolation.status?.protection !== 'member_separated') return null;
   return (
-    <View style={styles.slot} testID={`${testID}.member`}>
-      <Text style={styles.hint}>{t('newSession.requesterFoldersHint')}</Text>
+    <View style={styles.slot} testID={`${testID}.${pending ? 'pending' : 'member'}`}>
+      <Text style={styles.hint}>{t(pending ? 'newSession.requesterFoldersSetupPending' : 'newSession.requesterFoldersHint')}</Text>
     </View>
   );
 }

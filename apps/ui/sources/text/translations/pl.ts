@@ -7793,6 +7793,8 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
       "Czeka na Twoją zgodę. Sesja ruszy, gdy tylko zostanie zatwierdzona, a Twoja wiadomość zostaje tutaj.",
     requesterFoldersChecking: "Sprawdzanie Twoich folderów na tej maszynie…",
     requesterFoldersFailed: "Nie udało się sprawdzić Twoich folderów na tej maszynie.",
+    requesterFoldersSetupPending:
+      'Happier przygotuje Twój prywatny obszar roboczy, gdy rozpoczniesz sesję lub zainstalujesz agenta.',
     requesterFoldersHint:
       "Zacznij w swoim obszarze roboczym lub folderze domowym na tej maszynie. Prywatny folder domowy właściciela może nie być dla Ciebie dostępny.",
     initialInputNotConfirmedTitle: "Sprawdź swoją pierwszą wiadomość",

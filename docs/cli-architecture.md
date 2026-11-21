@@ -2914,6 +2914,12 @@ binding qualification used by launch. A missing native user returns the typed
 an unchanged policy does not establish member readiness. The UI presents that
 unavailable status as the repair result.
 
+Before the requester has a retained member binding, the read-only
+`machines.agentIsolation.status` reports `setup_pending` with
+`member_not_prepared`. The first Agent installation or Session launch prepares
+the member user and workspace. Once a binding exists, the own read checks its
+native identity and launch readiness before reporting `member_separated`.
+
 An Off review inventories the shared bootstrap and member RunAs rules derived
 from the existing private bindings, even when desired policy is already disabled.
 An unresolved binding scope or incomplete inventory adds one retained

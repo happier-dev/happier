@@ -3630,8 +3630,11 @@ export class ApiMachineClient {
                     return ready.kind === 'member_native_ready'
                         ? { protection: 'member_separated', status: ready.status, directories: ready.directories }
                         : { protection: 'unavailable', status: ready };
-                } catch {
+                } catch (error) {
                     signal?.throwIfAborted();
+                    if (error instanceof PluginError && error.code === 'member_not_prepared') {
+                        return { protection: 'setup_pending', status: { kind: 'member_not_prepared' } };
+                    }
                     return unavailable('agent_user_missing');
                 }
             },

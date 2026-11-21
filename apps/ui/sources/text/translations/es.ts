@@ -7955,6 +7955,8 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
       "Esperando tu aprobación. La sesión empieza en cuanto se apruebe, y tu mensaje se queda aquí.",
     requesterFoldersChecking: "Comprobando tus carpetas en esta máquina…",
     requesterFoldersFailed: "No se pudieron comprobar tus carpetas en esta máquina.",
+    requesterFoldersSetupPending:
+      'Happier preparará tu espacio de trabajo privado cuando inicies una sesión o instales un agente.',
     requesterFoldersHint:
       "Empieza en tu espacio de trabajo o tu carpeta personal en esta máquina. Es posible que la carpeta personal privada del propietario no esté abierta para ti.",
     initialInputNotConfirmedTitle: "Revisa tu primer mensaje",

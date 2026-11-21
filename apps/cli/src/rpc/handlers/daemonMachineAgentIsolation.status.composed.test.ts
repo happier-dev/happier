@@ -28,6 +28,7 @@ import { createCliActionExecutor } from '@/session/actions/createCliActionExecut
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createAgentIsolationEffectsBoundary } from '@/daemon/agentIsolation/agentIsolationEffects.testkit';
 
 const database = vi.hoisted(() => ({ current: null as ReturnType<typeof createInstalledMachineRpcDatabaseBoundary> | null,
   homeServerIdentityId: null as string | null }));
@@ -84,6 +85,23 @@ async function installedStatus(accountSettings?: Readonly<Record<string, unknown
 }
 
 describe('installed own Machine isolation status admission', () => {
+  it.skipIf(process.platform !== 'linux')('reports first-use setup for an enrolled member with no binding', async () => {
+    const f = await createInstalledFilesystemMachineFixture({ metadata: {
+      host: 'status-host', platform: 'linux', happyCliVersion: 'test', homeDir: '/home/status',
+      happyHomeDir: '/home/status/.happier', agentIsolation: { enabled: true, memberProvisioning: 'linuxUsersV1' },
+    } });
+    const native = createAgentIsolationEffectsBoundary({ installationId: f.installation.installationId,
+      installedCli: '/opt/happier/current/happier', readRoots: () => [], readSessionsToReplace: () => 0,
+      publishStatus: async () => {} });
+    Reflect.set(f.machine, 'socket', createApiSessionSocketStub({ connected: true }));
+    f.machine.registerMachineAgentIsolationRoutes(native.effects);
+    const read = () => f.invoke(actionId, { machineId: f.machineId }, { actorAccountId: 'member-use', role: 'use' });
+    for (const result of [await read(), await read()]) {
+      expect(result).toEqual({ protection: 'setup_pending', status: { kind: 'member_not_prepared' } });
+    }
+    expect(native.mutations).toEqual([]);
+  });
+
   it('keeps owner and member own reads usable through Home, accepts its held identity, and refuses foreign or unstamped targets', async () => {
     const f = await installedStatus();
     const input = { serverId: f.serverId, machineId: f.machineId };

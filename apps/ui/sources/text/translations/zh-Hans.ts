@@ -7655,6 +7655,8 @@ export const zhHans: TranslationStructure = {
       "正在等待你的批准。批准后会话即会开始，你的消息会保留在这里。",
     requesterFoldersChecking: "正在检查你在这台机器上的文件夹…",
     requesterFoldersFailed: "无法检查你在这台机器上的文件夹。",
+    requesterFoldersSetupPending:
+      '启动会话或安装代理时，Happier 会为你准备私有工作区。',
     requesterFoldersHint:
       "请从你在这台机器上的工作区或主文件夹开始。机器所有者的私人主文件夹可能无法访问。",
     initialInputNotConfirmedTitle: "请检查你的第一条消息",

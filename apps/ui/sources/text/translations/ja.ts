@@ -8265,6 +8265,8 @@ localTailscale: {
       "承認を待っています。承認されるとセッションが始まり、メッセージはここに残ります。",
     requesterFoldersChecking: "このマシン上のあなたのフォルダを確認しています…",
     requesterFoldersFailed: "このマシン上のあなたのフォルダを確認できませんでした。",
+    requesterFoldersSetupPending:
+      'セッションを開始するかエージェントをインストールすると、Happier がプライベートな作業スペースを準備します。',
     requesterFoldersHint:
       "このマシンでは、自分のワークスペースかホームフォルダから始めてください。所有者のプライベートなホームは開けない場合があります。",
     initialInputNotConfirmedTitle: "最初のメッセージを確認してください",

@@ -7776,6 +7776,8 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
       "En attente de ton approbation. La session démarre dès qu’elle est approuvée, et ton message reste ici.",
     requesterFoldersChecking: "Vérification de tes dossiers sur cette machine…",
     requesterFoldersFailed: "Impossible de vérifier tes dossiers sur cette machine.",
+    requesterFoldersSetupPending:
+      'Happier préparera ton espace de travail privé quand tu lanceras une session ou installeras un agent.',
     requesterFoldersHint:
       "Commence dans ton espace de travail ou ton dossier personnel sur cette machine. Le dossier personnel privé du propriétaire peut ne pas t’être accessible.",
     initialInputNotConfirmedTitle: "Vérifie ton premier message",

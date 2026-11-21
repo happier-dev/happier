@@ -16,6 +16,7 @@ export async function createInstalledFilesystemMachineFixture(options: Readonly<
     accountId?: string;
     readAdditionalHttpResponse?: NonNullable<Parameters<typeof createProjectSessionRuntimeFixture>[0]>['readAdditionalHttpResponse'];
     machineEncryption?: Readonly<{ encryptionKey: Uint8Array; encryptionVariant: 'dataKey' }>;
+    metadata?: ConstructorParameters<typeof ApiMachineClient>[1]['metadata'];
     boundSessionId?: string;
     directTransferExport?: Parameters<ApiMachineClient['setRPCHandlers']>[0]['directTransferExport'];
     agentIsolation?: ApiMachineClientLifecycleDependencies['agentIsolation'];
@@ -48,7 +49,7 @@ export async function createInstalledFilesystemMachineFixture(options: Readonly<
     });
     const machine = new ApiMachineClient(f.bootstrap.credentials.token, { id: 'machine',
         ...(options.machineEncryption ? { encryptionMode: 'e2ee' as const, ...options.machineEncryption } : { encryptionMode: 'plain' as const }),
-        metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 }, undefined,
+        metadata: options.metadata ?? null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 }, undefined,
         { resolveCurrentServerIdentityId: () => heldHome,
             get workspaceSync() { return options.readWorkspaceSync?.(); },
             ...(options.createProjectFiniteRuntime ? { createProjectFiniteRuntime: options.createProjectFiniteRuntime } : {}),

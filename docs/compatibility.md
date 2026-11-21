@@ -3569,6 +3569,14 @@ has no own-status Action or schema, so it establishes no counterpart for this
 unreleased seam. New-reader/old-daemon omission degrades safely; this does not
 establish old-reader/new-daemon support.
 
+For first use, `machines.agentIsolation.status` V1 also accepts
+`{ protection: 'setup_pending', status: { kind: 'member_not_prepared' } }`.
+Install or launch prepares the member. An enrolled member whose bound native
+user is missing receives `unavailable` with `agent_user_missing`; New Session
+leaves that member's folders unresolved. The daemon, Protocol, SDK and UI update
+together for this 0.3 development response, with no persisted format or wire
+epoch change. The older daemon response cannot distinguish these two cases.
+
 Deployment roots may carry optional `admittedMachineRole: 'use' | 'manage'`,
 minted from Home's existing Machine admission. The host verifies that carried
 fact against the signed root through the existing verification request before

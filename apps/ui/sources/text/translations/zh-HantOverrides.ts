@@ -6582,6 +6582,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             '正在等待你的核准。核准後工作階段即會開始，你的訊息會保留在這裡。',
         requesterFoldersChecking: '正在檢查你在這台機器上的資料夾…',
         requesterFoldersFailed: '無法檢查你在這台機器上的資料夾。',
+        requesterFoldersSetupPending:
+          '啟動工作階段或安裝代理程式時，Happier 會為你準備私人工作區。',
         requesterFoldersHint:
             '請從你在這台機器上的工作區或主資料夾開始。機器擁有者的私人主資料夾可能無法存取。',
         initialInputNotConfirmedTitle: '請檢查你的第一則訊息',

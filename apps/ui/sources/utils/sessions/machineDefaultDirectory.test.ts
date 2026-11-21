@@ -29,15 +29,18 @@ function machine(id: string, homeDir: string | null): Machine {
 const machines = [machine('machine-1', '/home/dev'), machine('machine-2', null)];
 
 describe('default directory for a Machine', () => {
-    it('uses requester home intent for a launch-preparable member without exposing custodian paths', () => {
+    it('uses requester home intent for first use without exposing custodian paths', () => {
         const owned: Machine = { ...machine('owned', '/home/daemon'), isShared: false,
             metadata: { ...machine('owned', '/home/daemon').metadata!,
                 agentIsolation: { enabled: true, memberProvisioning: 'linuxUsersV1' } } };
-        const ownStatus = MachineAgentIsolationOwnStatusV1Schema.parse({ protection: 'unavailable',
+        const pending = MachineAgentIsolationOwnStatusV1Schema.parse({ protection: 'setup_pending',
+            status: { kind: 'member_not_prepared' } });
+        const missing = MachineAgentIsolationOwnStatusV1Schema.parse({ protection: 'unavailable',
             status: { kind: 'unavailable', code: 'agent_user_missing' } });
-        expect(resolveDefaultDirectoryForMachine({ machineId: owned.id, machines: [owned],
-            recentPaths: ['/home/daemon/private'], ownStatus })).toBe('~');
-        expect(resolveMachineHomeDirectory({ machine: owned, ownStatus })).toBe('');
+        const target = { machineId: owned.id, machines: [owned], recentPaths: ['/home/daemon/private'] };
+        expect(resolveDefaultDirectoryForMachine({ ...target, ownStatus: pending })).toBe('~');
+        expect(resolveMachineHomeDirectory({ machine: owned, ownStatus: pending })).toBe('');
+        expect(resolveDefaultDirectoryForMachine({ ...target, ownStatus: missing })).toBe('');
     });
     it('never defaults an owned separated Machine to daemon history before its member projection arrives', () => {
         const owned: Machine = { ...machine('owned', '/home/daemon'), isShared: false,

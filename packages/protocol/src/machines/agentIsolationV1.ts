@@ -130,6 +130,7 @@ export const MachineAgentIsolationOwnStatusV1Schema = lazyZodSchema(() => z.unio
   z.strictObject({ protection: z.literal('setup_pending'), status: z.union([
     z.strictObject({ kind: z.literal('disabled') }),
     z.strictObject({ kind: z.literal('enable_required'), reason: z.literal('existing_machine_workspace_migration') }),
+    z.strictObject({ kind: z.literal('member_not_prepared') }),
     z.strictObject({ kind: z.literal('applying'), phase: z.enum(['account', 'sudoers', 'workspace', 'runtime_replacement']) }),
   ]) }),
   z.strictObject({ protection: z.literal('unavailable'), status: MachineAgentIsolationUnavailableStatusV1Schema }),

@@ -48,6 +48,8 @@ export type MachineAgentIsolationActionResultById = {
         } | {
             kind: 'enable_required';
             reason: 'existing_machine_workspace_migration';
+        } | {
+            kind: 'member_not_prepared';
         };
     } | {
         protection: 'shared_user';

@@ -9120,6 +9120,8 @@ const enNewSession = {
     'Waiting for your approval. The session starts once it’s approved, and your message stays here.',
   requesterFoldersChecking: 'Checking your folders on this machine…',
   requesterFoldersFailed: 'Couldn’t check your folders on this machine.',
+  requesterFoldersSetupPending:
+    'Happier will prepare your private workspace when you start a session or install an agent.',
   requesterFoldersHint:
     'Start in your workspace or home folder on this machine. The owner’s private home may not be open to you.',
   initialInputNotConfirmedTitle: 'Check your first message',

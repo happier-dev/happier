@@ -8182,6 +8182,8 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
       "In attesa della tua approvazione. La sessione parte appena viene approvata e il tuo messaggio resta qui.",
     requesterFoldersChecking: "Verifica delle tue cartelle su questa macchina…",
     requesterFoldersFailed: "Impossibile verificare le tue cartelle su questa macchina.",
+    requesterFoldersSetupPending:
+      'Happier preparerà il tuo spazio di lavoro privato quando avvii una sessione o installi un agente.',
     requesterFoldersHint:
       "Inizia dal tuo spazio di lavoro o dalla tua cartella home su questa macchina. La home privata del proprietario potrebbe non esserti accessibile.",
     initialInputNotConfirmedTitle: "Controlla il tuo primo messaggio",

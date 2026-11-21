@@ -7374,6 +7374,8 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
             'Esperant la teva aprovació. La sessió comença tan bon punt s’aprovi, i el teu missatge es queda aquí.',
         requesterFoldersChecking: 'Comprovant les teves carpetes en aquesta màquina…',
         requesterFoldersFailed: 'No s’han pogut comprovar les teves carpetes en aquesta màquina.',
+        requesterFoldersSetupPending:
+          'Happier prepararà el teu espai de treball privat quan iniciïs una sessió o instal·lis un agent.',
         requesterFoldersHint:
             'Comença a la teva carpeta de treball o personal en aquesta màquina. La carpeta personal privada del propietari pot no estar oberta per a tu.',
         initialInputNotConfirmedTitle: 'Comprova el teu primer missatge',

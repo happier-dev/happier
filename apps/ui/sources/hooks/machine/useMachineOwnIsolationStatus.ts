@@ -49,7 +49,7 @@ export function useMachineOwnIsolationStatus(input: Readonly<{
     }, [input.enabled, input.machineId, readStatus, execution.isCurrent, execution.ready, key, policy, attempt]);
     const current = input.enabled && execution.ready && state.key === key;
     return { status: current ? state.status : null, loading: input.enabled && (!current || state.loading),
-        launchPreparable: current && isRequesterDirectoryLaunchPreparable({ machine: input.machine, ownStatus: state.status }),
+        launchPreparable: current && isRequesterDirectoryLaunchPreparable(state.status),
         // A successful status read can still leave the requester's folders unavailable.
         failed: current && (state.failed || (state.status !== null
             && hasUnresolvedRequesterDirectories({ machine: input.machine, ownStatus: state.status }))), retry, readStatus };

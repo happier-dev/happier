@@ -13,15 +13,12 @@ import { installSettingsViewCommonModuleMocks } from '@/components/settings/sett
 installSettingsViewCommonModuleMocks({
   text: async () => vi.importActual<typeof import('@/text')>('@/text'),
 });
+const { NewSessionRequesterFolderHint } = await import('./NewSessionRequesterFolderHint');
 afterEach(() => standardCleanup());
 
-type Isolation = React.ComponentProps<
-  typeof import('./NewSessionRequesterFolderHint').NewSessionRequesterFolderHint
->['isolation'];
+type Isolation = React.ComponentProps<typeof NewSessionRequesterFolderHint>['isolation'];
 
 async function render(isolation: Isolation) {
-  const { NewSessionRequesterFolderHint } =
-    await import('./NewSessionRequesterFolderHint');
   return renderScreen(
     <NewSessionRequesterFolderHint isolation={isolation} testID="hint" />,
   );
@@ -71,6 +68,17 @@ describe('NewSessionRequesterFolderHint (a member starting on someone else’s m
       retry: vi.fn(),
     });
     expect(screen.findByTestId('hint.member')).toBeTruthy();
+    await screen.unmount();
+  });
+
+  it('tells an enrolled member when their workspace will be prepared', async () => {
+    const screen = await render({
+      status: { protection: 'setup_pending', status: { kind: 'member_not_prepared' } },
+      loading: false,
+      failed: false,
+      retry: vi.fn(),
+    });
+    expect(screen.findByTestId('hint.pending')).toBeTruthy();
     await screen.unmount();
   });
 

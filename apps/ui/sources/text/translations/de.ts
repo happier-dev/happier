@@ -7890,6 +7890,8 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
             'Wartet auf deine Freigabe. Die Session startet, sobald sie freigegeben ist, und deine Nachricht bleibt hier.',
         requesterFoldersChecking: 'Deine Ordner auf diesem Rechner werden geprüft…',
         requesterFoldersFailed: 'Deine Ordner auf diesem Rechner konnten nicht geprüft werden.',
+        requesterFoldersSetupPending:
+          'Happier richtet deinen privaten Arbeitsbereich ein, wenn du eine Sitzung startest oder einen Agenten installierst.',
         requesterFoldersHint:
             'Starte in deinem Arbeitsbereich oder Home-Ordner auf diesem Rechner. Der private Home-Ordner des Besitzers ist für dich möglicherweise nicht zugänglich.',
         initialInputNotConfirmedTitle: 'Prüfe deine erste Nachricht',

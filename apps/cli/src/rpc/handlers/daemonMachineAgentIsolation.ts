@@ -91,10 +91,16 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
       if (actionId === 'machines.agentIsolation.status') return await readOwnStatus(snapshot);
       // Shared native setup cannot qualify a person's retained member binding.
       // Repair and own-status consume the same launch-identity observation.
-      const qualifyMemberStatus = async (status: MachineAgentIsolationOwnStatusV1['status'], policy: MachineAgentIsolationPolicyV1) =>
-        status.kind === 'effective' && 'agentUser' in status
-          && resolveMachineAgentExecutionPlacementV1({ policy, platform: process.platform }) === 'member'
-          ? (await readOwnStatus({ ...policy, status })).status : status;
+      const qualifyMemberStatus = async (status: Exclude<MachineAgentIsolationOwnStatusV1['status'], { kind: 'member_not_prepared' }>,
+        policy: MachineAgentIsolationPolicyV1) => {
+        if (status.kind !== 'effective' || !('agentUser' in status)
+          || resolveMachineAgentExecutionPlacementV1({ policy, platform: process.platform }) !== 'member') return status;
+        const own = await readOwnStatus({ ...policy, status });
+        // Preview and Repair report the native prerequisite, even before first use.
+        return own.status.kind === 'member_not_prepared'
+          ? { kind: 'unavailable' as const, code: 'agent_user_missing' as const }
+          : own.status;
+      };
       const desired = actionId === 'machines.agentIsolation.preview'
         ? MACHINE_AGENT_ISOLATION_ACTION_INPUT_SCHEMAS['machines.agentIsolation.preview'].parse(raw)
         : MACHINE_AGENT_ISOLATION_ACTION_INPUT_SCHEMAS['machines.agentIsolation.set'].parse(raw);
