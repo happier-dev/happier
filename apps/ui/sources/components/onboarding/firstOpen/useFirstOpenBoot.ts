@@ -5,13 +5,16 @@ import type { GlyphSurfaceWarmup } from '@/components/atmosphere/glyph/glyphSurf
 import { useStepMotionStage } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { recordOpeningSeen } from '@/sync/domains/state/onboardingUiState';
 
+import type { FirstOpenLayoutTarget } from './FirstOpenWelcomeModelContext';
 import type { FirstOpenDecision } from './resolveFirstOpen';
 
 type SceneModule = typeof import('./FirstOpenScene');
 type Host = typeof import('./FirstOpenHost')['FirstOpenHost'];
 export type FirstOpenAdmission =
-    ({ decision: 'in-app'; scene: SceneModule | null; warmup?: GlyphSurfaceWarmup; release: () => void }
+    ({ decision: 'in-app'; scene: SceneModule | null; warmup?: GlyphSurfaceWarmup }
     | { decision: Exclude<FirstOpenDecision, 'in-app' | 'none'> }) & {
+        layoutTarget: FirstOpenLayoutTarget;
+        release: () => void;
         recordLayout: (event: LayoutChangeEvent) => boolean;
     };
 
@@ -34,9 +37,10 @@ export function useFirstOpenBoot() {
         if (decision === 'none') return;
 
         const recordLayout = createFirstOpenLayoutRecorder();
+        // Desktop acknowledges the shell to show its window. In-app builds need the actual destination.
+        const layoutTarget = decision === 'overlay-eligible' ? 'shell' : 'workflow';
         const releaseBuild = decision === 'in-app' ? stage?.prepareBuild() : undefined;
         let active = true;
-        let hostLoaded = false;
         const release = () => {
             if (!active) return;
             active = false;
@@ -47,25 +51,19 @@ export function useFirstOpenBoot() {
         };
         void import('./FirstOpenHost').then(module => {
             if (!active) return;
-            hostLoaded = true;
             setHost(() => module.FirstOpenHost);
         }, () => {});
         if (decision === 'in-app') {
-            setOpening({ decision, scene: null, release, recordLayout });
+            setOpening({ decision, scene: null, layoutTarget, release, recordLayout });
             const scene = import('./FirstOpenScene');
             const warmup = import('@/components/atmosphere/glyph/GlyphSurface').then(glyph => active ? glyph.warmGlyphSurface() : undefined);
             void Promise.all([scene, warmup]).then(([module, renderer]) => {
-                if (active) setOpening({ decision, scene: module, warmup: renderer, release, recordLayout });
+                if (active) setOpening({ decision, scene: module, warmup: renderer, layoutTarget, release, recordLayout });
             }, () => {});
         } else {
-            setOpening({ decision, recordLayout });
+            setOpening({ decision, layoutTarget, release, recordLayout });
         }
-        return {
-            release,
-            // The route can mount as soon as boot is ready. A host arriving
-            // after this boundary would remount the usable destination.
-            ready: () => { if (!hostLoaded) release(); },
-        };
+        return release;
     }, [stage]);
     return { opening, Host, admitOpening };
 }

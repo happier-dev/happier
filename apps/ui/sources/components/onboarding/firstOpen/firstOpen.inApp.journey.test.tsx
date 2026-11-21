@@ -14,7 +14,7 @@ import { replacePersistentUiStateForTest } from '@/dev/testkit/harness/persisten
 import { setReducedMotionPreferenceOverride } from '@/hooks/ui/useReducedMotionPreference';
 import { onboardingAuthHistoryState, onboardingHistoryState, readOpeningSeenAt } from '@/sync/domains/state/onboardingUiState';
 
-import { FirstOpenContentLayout } from './FirstOpenWelcomeModelContext';
+import { useFirstOpenContentLayout } from './FirstOpenWelcomeModelContext';
 import { installFirstOpenWebGraphics } from './firstOpenWebGraphics.fixture';
 import { openingClimbSeconds } from './openingTimeline';
 import { resolveFirstOpen } from './resolveFirstOpen';
@@ -59,7 +59,7 @@ it.each([
     let commitLayout: () => void = () => { throw new Error('The destination has not mounted'); };
     let readBuildReady = () => false;
     function Destination() {
-        const layout = React.useContext(FirstOpenContentLayout);
+        const layout = useFirstOpenContentLayout('workflow');
         const stage = useStepMotionStage();
         commitLayout = () => { layout?.({ nativeEvent: { layout: frame } } as Parameters<NonNullable<typeof layout>>[0]); };
         readBuildReady = () => stage?.isBuildReady() ?? false;
@@ -81,7 +81,8 @@ it.each([
     let completeTranslations: () => void = () => {};
     const translations = new Promise<void>(resolve => { completeTranslations = resolve; });
     let onAuthResolved = (_accountRestored: boolean): void => {};
-    let openingBoot: ReturnType<ReturnType<typeof useFirstOpenBoot>['admitOpening']>;
+    let releaseOpening: ReturnType<ReturnType<typeof useFirstOpenBoot>['admitOpening']>;
+    const fastBoot = input === 'built';
     let mountOpening = () => {};
     let readyApp = () => {};
     let boot: Promise<void> | undefined;
@@ -89,7 +90,7 @@ it.each([
         const [mount, setMount] = React.useState(false);
         const [ready, setReady] = React.useState(false);
         const { opening, Host, admitOpening } = useFirstOpenBoot();
-        onAuthResolved = accountRestored => { openingBoot = admitOpening(resolveFirstOpen({ accountRestored, segments })); };
+        onAuthResolved = accountRestored => { releaseOpening = admitOpening(resolveFirstOpen({ accountRestored, segments })); };
         mountOpening = () => setMount(true);
         readyApp = () => setReady(true);
         return mount && opening && Host ? <Host opening={opening}>{ready ? <Destination /> : null}</Host> : null;
@@ -110,10 +111,13 @@ it.each([
                 resolveCredentials: async () => null,
                 prepareWarmCache: async () => {},
                 prepareSessionDrafts: async () => {},
-                prepareTranslations: () => translations,
+                prepareTranslations: () => fastBoot ? Promise.resolve() : translations,
                 restoreSync: null,
                 onAuthResolved,
-                onReady: () => { openingBoot?.ready(); readyApp(); },
+                onReady: () => {
+                    // On the cold web path, boot settles while the lazy destination still loads.
+                    if (!fastBoot) readyApp();
+                },
             });
         });
         // The boot dependencies can still be pending and the React host has yet to mount.
@@ -131,6 +135,7 @@ it.each([
             });
         }
         await act(async () => {
+            if (fastBoot) readyApp();
             completeTranslations();
             await boot;
         });
@@ -186,7 +191,7 @@ it.each([
             releaseFonts?.();
             completeTranslations();
             await boot;
-            openingBoot?.release();
+            releaseOpening?.();
             root.unmount();
         });
         fontsLoaded.mockRestore();

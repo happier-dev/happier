@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Animated, AppState, Platform, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 
 import type { GlyphSurfaceReadiness } from '@/components/atmosphere/glyph/glyphSurfaceTypes';
@@ -22,9 +22,8 @@ export function FirstOpenHost({ opening, children, bootPending = false }: Readon
     children: ReactNode;
     bootPending?: boolean;
 }>) {
-    const { decision, recordLayout } = opening;
+    const { decision, layoutTarget, recordLayout, release } = opening;
     const scene = decision === 'in-app' ? opening.scene : null;
-    const release = decision === 'in-app' ? opening.release : undefined;
     const stage = useStepMotionStage();
     const activePlay = useRef(false);
     const readiness = useRef<GlyphSurfaceReadiness | null>(null);
@@ -73,7 +72,7 @@ export function FirstOpenHost({ opening, children, bootPending = false }: Readon
     }, [presenting]);
 
     useLayoutEffect(() => {
-        if (phase === 'still' || phase === 'settled') release?.();
+        if (phase === 'still' || phase === 'settled') release();
     }, [phase, release]);
 
     useLayoutEffect(() => {
@@ -158,12 +157,14 @@ export function FirstOpenHost({ opening, children, bootPending = false }: Readon
         };
     }, [interrupt, playing, scene, skip]);
 
+    const contentLayout = useMemo(() => phase === 'preparing'
+        ? { target: layoutTarget, onLayout: onFirstLayout } : null, [layoutTarget, onFirstLayout, phase]);
     const Scene = scene?.FirstOpenScene;
     return (
         <View style={bootPending ? [StyleSheet.absoluteFillObject, { opacity: 0 }] : { flex: 1, position: 'relative' }}
             pointerEvents={bootPending ? 'none' : undefined}>
             <Animated.View style={{ flex: 1, opacity }}>
-                <FirstOpenContentLayout.Provider value={phase === 'preparing' ? onFirstLayout : null}>
+                <FirstOpenContentLayout.Provider value={contentLayout}>
                     <FirstOpenWelcomeEpoch.Provider value={typeof phase === 'object' ? phase.epoch : replicaClosed ? null : replica}>
                         <FirstOpenOwnsWelcomePaint.Provider value={playing}>
                             <FirstOpenWelcomeModelContext.Provider value={waitingForReplica ? publishWelcome : null}>

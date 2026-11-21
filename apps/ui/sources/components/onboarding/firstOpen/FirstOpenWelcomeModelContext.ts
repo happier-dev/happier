@@ -4,7 +4,17 @@ import type { LayoutChangeEvent } from 'react-native';
 import type { WelcomeEntryViewModel } from '@/components/onboarding/preAuth/WelcomeEntryView';
 
 /** Kept with the other channels so the ordinary shell does not import the opening host. */
-export const FirstOpenContentLayout = createContext<((event: LayoutChangeEvent) => WelcomeEntryViewModel | undefined) | null>(null);
+export type FirstOpenLayoutTarget = 'shell' | 'workflow';
+type OnFirstOpenLayout = (event: LayoutChangeEvent) => WelcomeEntryViewModel | undefined;
+export const FirstOpenContentLayout = createContext<Readonly<{
+    target: FirstOpenLayoutTarget;
+    onLayout: OnFirstOpenLayout;
+}> | null>(null);
+
+export function useFirstOpenContentLayout(target: FirstOpenLayoutTarget): OnFirstOpenLayout | undefined {
+    const layout = useContext(FirstOpenContentLayout);
+    return layout?.target === target ? layout.onLayout : undefined;
+}
 
 /** The opening host supplies this channel only while it has a replica to update. */
 export const FirstOpenWelcomeModelContext = createContext<((model: WelcomeEntryViewModel) => void) | null>(null);

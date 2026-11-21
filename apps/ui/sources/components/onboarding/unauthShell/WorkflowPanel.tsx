@@ -3,6 +3,7 @@ import { ScrollView, View, type LayoutChangeEvent, type ViewStyle } from 'react-
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { useFirstOpenContentLayout } from '@/components/onboarding/firstOpen/FirstOpenWelcomeModelContext';
 import { useOptionalScreenIsFocused } from '@/utils/navigation/useOptionalScreenIsFocused';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { FIRST_RUN_WORKFLOW_LAYER, StepMotionLayer } from '@/components/ui/motion/stepMotion/StepMotionLayer';
@@ -192,10 +193,15 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
         ? { minHeight: welcomeScrollHeight + welcomeOverflow }
         : undefined;
     const { onColumnLayout } = props;
+    const onOpeningLayout = useFirstOpenContentLayout('workflow');
+    const onStepLayout = React.useCallback((event: LayoutChangeEvent) => {
+        onColumnLayout?.(event);
+        onOpeningLayout?.(event);
+    }, [onColumnLayout, onOpeningLayout]);
     const onWelcomeColumnLayout = React.useCallback((event: LayoutChangeEvent) => {
         setHeaderClearance(Math.max(0, Math.floor(event.nativeEvent.layout.y - headerBottom)));
-        onColumnLayout?.(event);
-    }, [headerBottom, onColumnLayout]);
+        onStepLayout(event);
+    }, [headerBottom, onStepLayout]);
 
     return (
         <View
@@ -373,7 +379,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                             testID="unauth-shell-step-transition"
                             stepKey={props.transitionKey}
                             compact={isMobile}
-                            onLayout={props.onColumnLayout}
+                            onLayout={onColumnLayout || onOpeningLayout ? onStepLayout : undefined}
                             style={isMobile ? STEP_TRANSITION_FILL_STYLE : [STEP_TRANSITION_FILL_STYLE, { maxWidth: paneMaxWidth }, styles.desktopColumn]}
                         >
                             {props.children}

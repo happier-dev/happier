@@ -98,7 +98,7 @@ import { readBrowserAppWindowRecord, resolveDesktopAppWindowBootCredentials, run
 import { ThemePreferenceTransitionHost } from '@/components/settings/appearance/ThemePreferenceTransitionHost';
 import { DesktopMainContentDragSurface } from '@/components/navigation/desktopWindowChrome/DesktopMainContentDragSurface';
 import { useDesktopMainWindowContentReady } from '@/desktop/window/useDesktopMainWindowContentReady';
-import { FirstOpenContentLayout } from '@/components/onboarding/firstOpen/FirstOpenWelcomeModelContext';
+import { FirstOpenContentLayout, useFirstOpenContentLayout } from '@/components/onboarding/firstOpen/FirstOpenWelcomeModelContext';
 import { resolveFirstOpen } from '@/components/onboarding/firstOpen/resolveFirstOpen';
 import { useFirstOpenBoot } from '@/components/onboarding/firstOpen/useFirstOpenBoot';
 import { readWebRuntimeFirstOpenCandidate } from '@/sync/runtime/webRuntimeConfig';
@@ -758,16 +758,19 @@ function AppBoot() {
     firstOpenSegments.current = segments;
     const { opening, Host: OpeningHost, admitOpening } = useFirstOpenBoot();
     const recordStillLayout = React.useCallback((event: LayoutChangeEvent) => {
-        opening?.recordLayout(event);
+        // This destination is already usable. A late host must not remount it.
+        if (opening?.recordLayout(event)) opening.release();
         return undefined;
     }, [opening]);
+    const stillLayout = React.useMemo(() => opening
+        ? { target: opening.layoutTarget, onLayout: recordStillLayout } : null, [opening, recordStillLayout]);
     const renderFirstOpen = (content: React.ReactNode, launch?: React.ReactNode) => (
         <>
             {launch}
             {opening && OpeningHost ? (
                 <OpeningHost opening={opening} bootPending={launch !== undefined}>{content}</OpeningHost>
             ) : opening ? (
-                <FirstOpenContentLayout.Provider value={recordStillLayout}>{content}</FirstOpenContentLayout.Provider>
+                <FirstOpenContentLayout.Provider value={stillLayout}>{content}</FirstOpenContentLayout.Provider>
             ) : content}
         </>
     );
@@ -778,7 +781,7 @@ function AppBoot() {
 
     React.useEffect(() => {
         let cancelled = false;
-        let openingBoot: ReturnType<typeof admitOpening>;
+        let releaseOpening: ReturnType<typeof admitOpening>;
         const runBoot = nativeSecondaryWindow ? runDesktopAppWindowBootSequence : runAppBootSequence;
         void runBoot({
             context: isDesktopOverlayWindow ? 'presenter' : 'app',
@@ -808,7 +811,7 @@ function AppBoot() {
                     accountRestored,
                     desktopCandidate: candidate,
                 });
-                openingBoot = admitOpening(decision);
+                releaseOpening = admitOpening(decision);
                 if (candidate) {
                     void invokeDesktopHost('desktop_first_open_decide', { play: decision }).catch(() => {
                         // Native still shows main as soon as it has usable content.
@@ -816,7 +819,6 @@ function AppBoot() {
                 }
             },
             onReady: (state) => {
-                openingBoot?.ready();
                 if (!cancelled) setInitState(state);
             },
         }).catch((error: unknown) => {
@@ -826,7 +828,7 @@ function AppBoot() {
         });
         return () => {
             cancelled = true;
-            openingBoot?.release();
+            releaseOpening?.();
         };
     }, [admitOpening, isDesktopOverlayWindow, primaryRealm]);
 
@@ -979,7 +981,7 @@ function RootShellChromeFrame(props: React.PropsWithChildren<Readonly<{
     isTerminalConnectRoute: boolean;
 }>>) {
     const onContentLayout = useDesktopMainWindowContentReady();
-    const onFirstOpenContent = React.useContext(FirstOpenContentLayout);
+    const onFirstOpenContent = useFirstOpenContentLayout('shell');
     const onLayout = React.useCallback((event: Parameters<typeof onContentLayout>[0]) => {
         const welcome = onFirstOpenContent?.(event);
         onContentLayout(event, welcome);
