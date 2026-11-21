@@ -12207,8 +12207,11 @@ undeclared source never activates it. This applies to installed external plugins
 as well as first-party contributions. The mounted UI binds a typed reference to
 its own plugin, machine, server and lifetime. Plugin authors never choose a transport address.
 Viewing another plugin's source is refused. Each host-source viewing requires
-the existing `capture.view` Action's blocking approval, unless the user has
+the existing `capture.view` Action's approval, unless the user has
 waived that approval for this plugin in the existing Actions settings document.
+The request is deferred: the mounted viewer resumes from the approval's
+ordinary receipt, which names only the admitted source occurrence its input
+already binds, and opens the stream for exactly that occurrence.
 A plugin's own declared source needs no additional viewing consent. Viewing
 does not transfer input or takeover authority.
 

@@ -12,8 +12,9 @@ function createCaptureViewActionSpecs() {
     title: 'View host capture',
     description: 'Allow one mounted plugin viewer to view the exact current host capture source. Approval is required by default and may be waived for that plugin in Actions settings.',
     safety: 'safe',
-    approvalResultCustody: 'live_only',
-    projectObservationOutput: () => ({ admitted: true }),
+    // The result only confirms admission of the exact source occurrence the
+    // durable request input already binds, so the requesting viewer resumes
+    // from the ordinary approval receipt; there is no live-only value to hold.
     placements: [],
     surfaces: { ui: false, voice: false, agent: false, mcp: false, cli: false, rpc: false },
     sideEffectClass: 'read',

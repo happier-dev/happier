@@ -21,12 +21,16 @@ const surface: PluginUiSurfaceContextV1 = { pluginId: 'acme.viewer', contributio
 function request(reference: PluginLiveStreamReferenceV1, subscriptionId = 'view-1'): PluginUiHostApiRequestEnvelopeV1 {
     return { version: 1, requestId: subscriptionId, surface, method: 'watchLiveStream', payload: { reference, subscriptionId } };
 }
-function owner(decision: 'approve' | 'reject' = 'reject', pendingDecision?: Promise<'approve' | 'reject'>) {
+function owner(decision: 'approve' | 'reject' = 'reject', pendingDecision?: Promise<'approve' | 'reject'>,
+    /** Rewrites the stored record after the real decision, to prove the consumer's own refusals. */
+    alterSettled?: (settled: ApprovalRequest) => ApprovalRequest) {
     let approval: ApprovalRequest | undefined;
     const requests: ApprovalRequest[] = [];
     const admissions: unknown[] = [];
+    const decided = new Map<string, Promise<unknown>>();
     const deps = {
         approvalsCreate: async (input) => { approval = input.request; requests.push(approval); return { artifactId: `approval-${requests.length}` }; },
+        approvalsGet: async () => approval ?? null,
         approvalsUpdate: async (input) => { approval = input.request; return { ok: true as const }; },
         approvalsWaitForDecision: async () => ({ decision: pendingDecision ? await pendingDecision : decision, request: approval! }),
         isApprovalExecutionOriginCurrent: async () => true,
@@ -48,11 +52,13 @@ function owner(decision: 'approve' | 'reject' = 'reject', pendingDecision?: Prom
         scope: { serverId: 'home-1', accountId: 'account-1' },
         fetchArtifact: async (artifactId: string): Promise<DecryptedArtifact | null> => {
             if (!approval) return null;
-            const answer = pendingDecision ? await pendingDecision : decision;
-            const settled: ApprovalRequest = answer === 'approve' ? { ...approval, status: 'executed',
-                decision: { kind: 'approve', decidedAtMs: 2 },
-                execution: { executedAtMs: 2, ok: true, result: { admitted: true, sourceId: source.sourceId, sourceOccurrenceId: source.sourceOccurrenceId } } }
-                : { ...approval, status: 'rejected', decision: { kind: 'reject', decidedAtMs: 2 } };
+            // The person decides through the real Action owner; the viewer then
+            // reads exactly the record that owner persisted.
+            if (!decided.has(artifactId)) decided.set(artifactId, (async () => executor.execute('approval.request.decide', {
+                artifactId, decision: pendingDecision ? await pendingDecision : decision,
+            }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home-1', runtimeAccountId: 'account-1' }))());
+            await decided.get(artifactId);
+            const settled = alterSettled ? alterSettled(approval) : approval;
             return { id: artifactId, title: null, header: buildApprovalRequestArtifactHeaderV1(settled), body: JSON.stringify(settled),
                 headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 2, isDecrypted: true };
         },
@@ -99,6 +105,18 @@ describe('mounted live stream viewing', () => {
         expect(requests).toHaveLength(2);
         viewing.disposeHostResource({ ...request({ kind: 'host', sourceId: source.sourceId }), method: 'disposeHostResource', payload: { subscriptionId: 'view-1' } });
         expect(viewing.readViewing('view-1')).toBeNull();
+        viewing.dispose();
+    });
+    it.each([
+        ['another source occurrence', (settled: ApprovalRequest) => settled.execution?.ok ? { ...settled,
+            execution: { ...settled.execution, result: { admitted: true, sourceId: source.sourceId, sourceOccurrenceId: 'screen-2' } } } : settled],
+        ['another invocation', (settled: ApprovalRequest) => settled.v === 2 ? { ...settled,
+            executionOriginV1: { ...settled.executionOriginV1, requestId: 'foreign-request' } } : settled],
+    ] as const)('refuses an approved record for %s', async (_case, alterSettled) => {
+        const { viewing, requests } = owner('approve', undefined, alterSettled);
+        expect(await viewing.watchLiveStream(request({ kind: 'host', sourceId: source.sourceId }))).toMatchObject({ code: 'unavailable' });
+        expect(viewing.readViewing('view-1')).toBeNull();
+        expect(requests).toHaveLength(1);
         viewing.dispose();
     });
     it('cancels pending descriptor disclosure on resource disposal and mount retirement', async () => {

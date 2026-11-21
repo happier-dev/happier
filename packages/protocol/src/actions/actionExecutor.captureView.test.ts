@@ -50,17 +50,19 @@ describe('host capture viewing Action admission', () => {
     expect(owner.requests()).toBe(2);
   });
 
-  it('returns the exact source occurrence once to the deciding person and stores only its admitted receipt', async () => {
+  it('records the admitted source occurrence for the requesting viewer to resume, adding nothing its input does not hold', async () => {
     const owner = executor();
     for (let occurrence = 0; occurrence < 2; occurrence++) {
       expect(await owner.invoke()).toEqual({ ok: true, result: {
         kind: 'approval_request_created', artifactId: `approval-${occurrence + 1}`, actionId: 'capture.view' } });
-      expect(await owner.decide('approve')).toMatchObject({ ok: true, result: { status: 'executed',
-        liveExecution: { ok: true, result: { admitted: true, ...input } } } });
-      expect(owner.request()?.execution?.result).toEqual({ admitted: true });
-      const repeated = await owner.decide('approve');
-      expect(repeated).toMatchObject({ ok: true, result: { status: 'executed' } });
-      if (repeated.ok) expect(repeated.result).not.toHaveProperty('liveExecution');
+      const decided = await owner.decide('approve');
+      expect(decided).toMatchObject({ ok: true, result: { status: 'executed',
+        execution: { ok: true, result: { admitted: true, ...input } } } });
+      // No live-only value exists: the deciding person and the viewer see the same receipt.
+      if (decided.ok) expect(decided.result).not.toHaveProperty('liveExecution');
+      expect(owner.request()?.actionArgs).toEqual(input);
+      expect(owner.request()?.execution?.result).toEqual({ admitted: true, ...input });
+      expect(await owner.decide('approve')).toMatchObject({ ok: true, result: { status: 'executed' } });
     }
     expect(owner.requests()).toBe(2);
   });
