@@ -11,7 +11,7 @@ import { basename, isAbsolute, relative, resolve } from 'node:path';
 import { createFileChangeObserver, DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../../packages/cli-common/fileChangeObserver.mjs';
 import { readProcessJobScopeCpuUsageUsec, readProcessJobScopeWorkingSetKiB } from './admission_memory.mjs';
 import { brokerAddress } from './admission_socket.mjs';
-import { SOURCE_WEB_EXPORT_ADMISSION_CLASS, resolveAdmissionCpuCost, resolveAdmissionDiskClass, resolveRequestedAdmissionCpuCores } from '../dev_targets/command_resources.mjs';
+import { SOURCE_RELOAD_ADMISSION_CLASS, SOURCE_WEB_EXPORT_ADMISSION_CLASS, resolveAdmissionCpuCost, resolveAdmissionDiskClass, resolveRequestedAdmissionCpuCores, usesAdmissionWorkerGrant } from '../dev_targets/command_resources.mjs';
 
 export const DECLARATION_COMPARISON_STALL_MARKER = 'HAPPIER_DECLARATION_COMPARISON_INCOMPLETE ';
 const execFileAsync = promisify(execFile);
@@ -227,7 +227,7 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
     const request = { kind: 'acquire', className: resolveAdmissionDiskClass(className), resourceClass: className, floorKiB,
       ...(durationClass && Number.isFinite(p99DurationMs) && p99DurationMs > 0 ? { durationClass, p99DurationMs } : {}),
       cpuCost,
-      requestedCpuCores: className === SOURCE_WEB_EXPORT_ADMISSION_CLASS ? 0
+      requestedCpuCores: usesAdmissionWorkerGrant(className) ? 0
         : requestedCpuCores ?? resolveRequestedAdmissionCpuCores({ env }),
       pid: process.pid, arrivedAt,
       repoDir, cacheBaseDir, noWait, locks, projects, judgment, acceptsDeclarationStall: true,
@@ -337,7 +337,11 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
               }
             }
             if (selectedCpuCores !== undefined) {
-              if (!acquiredEnv.GOMAXPROCS) acquiredEnv.GOMAXPROCS = String(selectedCpuCores);
+              // The reload's Go compiler uses the admitted CPU budget even
+              // when its caller supplied a host-sized setting.
+              if (!acquiredEnv.GOMAXPROCS || className === SOURCE_RELOAD_ADMISSION_CLASS) {
+                acquiredEnv.GOMAXPROCS = String(selectedCpuCores);
+              }
               if (!acquiredEnv.HAPPIER_VITEST_GOVERNOR_MAX_WORKERS) {
                 acquiredEnv.HAPPIER_VITEST_GOVERNOR_MAX_WORKERS = String(selectedCpuCores);
               }

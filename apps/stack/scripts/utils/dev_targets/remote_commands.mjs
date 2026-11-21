@@ -29,7 +29,7 @@ import { resolveRemoteValidationPlacementClass } from './validation_preparation_
 import { readShellCommandPrefix, workspaceBuildCommands, workspaceBuildSequence } from './shell_command_sequence.mjs';
 import { HOST_ADMISSION_OBSERVATION, HOST_OBSERVATION_PROGRAMS } from './host_observation.mjs';
 import { COMPILER_NATIVE_TEST_FILES, COMPILER_TEST_SUITES, refineCompilerSuiteSelection } from './compiler_test_suites.mjs';
-import { ADMISSION_CPU_WORKER_ENV_NAMES, ADMISSION_CPU_WORKER_FLAGS, FOCUSED_TEST_ADMISSION_CLASSES, HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES, SOURCE_RELOAD_ADMISSION_CLASS, SOURCE_WEB_EXPORT_ADMISSION_CLASS, SOURCE_WEB_EXPORT_MEMORY as EXPORT_MEMORY, SOURCE_WEB_EXPORT_MEMORY_SEGMENTS as EXPORT_MEMORY_SEGMENTS, resolveSourceWebExportMemoryFloorKiB, resolveColdAdmissionCpuCost } from './command_resources.mjs';
+import { ADMISSION_CPU_WORKER_ENV_NAMES, ADMISSION_CPU_WORKER_FLAGS, FOCUSED_TEST_ADMISSION_CLASSES, HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES, SOURCE_RELOAD_ADMISSION_CLASS, SOURCE_WEB_EXPORT_ADMISSION_CLASS, SOURCE_WEB_EXPORT_MEMORY as EXPORT_MEMORY, SOURCE_WEB_EXPORT_MEMORY_SEGMENTS as EXPORT_MEMORY_SEGMENTS, resolveSourceWebExportMemoryFloorKiB, resolveColdAdmissionCpuCost, usesAdmissionWorkerGrant } from './command_resources.mjs';
 export { HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES, SOURCE_RELOAD_ADMISSION_CLASS } from './command_resources.mjs';
 
 // Both dispatchers evaluate this policy. The native artifact is generated once,
@@ -1319,18 +1319,25 @@ function renderShellCommandRules(rules) {
   }).join('\n');
 }
 function renderNativeCpuPolicy() {
+  const grantClasses = Object.keys(HEAVYWEIGHT_COMMAND_RESOURCES).filter(usesAdmissionWorkerGrant).join('|');
   return [
+    'heavyweight_uses_worker_grant() {',
+    '  case "$1" in',
+    `    ${grantClasses}) return 0 ;;`,
+    '    *) return 1 ;;',
+    '  esac',
+    '}',
     'heavyweight_cpu_cores() {',
     '  case "$1" in',
     ...Object.keys(HEAVYWEIGHT_COMMAND_RESOURCES).map(name => {
       const cost = resolveColdAdmissionCpuCost(name);
-      const value = name === SOURCE_WEB_EXPORT_ADMISSION_CLASS ? `\${3:-${cost}}` : cost;
+      const value = usesAdmissionWorkerGrant(name) ? `\${3:-${cost}}` : cost;
       return `    ${name}) heavyweight_cpu_cost=${value} ;;`;
     }),
     `    *) heavyweight_cpu_cost=${resolveColdAdmissionCpuCost(undefined)} ;;`,
     '  esac',
     '  if [ "$heavyweight_cpu_cost" -gt "$2" ]; then heavyweight_cpu_cost=$2; fi',
-    '  if [ "$1" = source-web-export ]; then printf \'%s\' "$heavyweight_cpu_cost"; return; fi',
+    '  if heavyweight_uses_worker_grant "$1"; then printf \'%s\' "$heavyweight_cpu_cost"; return; fi',
     '  heavyweight_cpu_requested=${4:-0}',
     '  [ "$heavyweight_cpu_requested" != host ] || heavyweight_cpu_requested=$2',
     '  if { [ "${1-}" = validation ] && [ "$heavyweight_cpu_requested" -gt 0 ]; } || [ "$heavyweight_cpu_requested" -gt "$heavyweight_cpu_cost" ]; then heavyweight_cpu_cost=$heavyweight_cpu_requested; fi',

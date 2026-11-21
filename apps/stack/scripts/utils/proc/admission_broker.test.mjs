@@ -1882,6 +1882,39 @@ test('finite Expo exports charge exactly their worker bound alongside nl3 reserv
   }
 });
 
+test('reload preparation fits its esbuild worker grant on an occupied host', linux, async t => {
+  const gib = 1024 * 1024;
+  const identity = { className: 'source-reload', component: '.', entry: 'node --input-type=module', projects: [] };
+  const key = className => JSON.stringify([className, identity.component, identity.entry, identity.projects]);
+  for (const { name, occupied, inherited, expectedWorkers, memoryPeak, cpuPeak } of [
+    { name: 'cold', occupied: 69, inherited: '128', expectedWorkers: 3 },
+    { name: 'learned class', occupied: 69, expectedWorkers: 6, memoryPeak: 10.25 * gib, cpuPeak: 4000 },
+    { name: 'learned class under pressure', occupied: 107, expectedWorkers: 1, memoryPeak: 10.25 * gib, cpuPeak: 4000 },
+  ]) await t.test(name, async t => {
+    const { root } = await fixture(t, { cpuCores: 128, readCpuPressure: () => 20,
+      readMemory: () => ({ availableMemoryKiB: 70 * gib, totalMemoryKiB: 200 * gib }) });
+    if (memoryPeak) await writeFile(join(root, 'identity-kernel-peaks.json'), JSON.stringify({
+      [key('source-reload')]: [memoryPeak],
+      [key('cpu-millicores/source-reload')]: [cpuPeak],
+    }));
+    await (await acquire(root, gib, t, { cpuCost: occupied })).admit();
+    const before = await requestAdmissionSample(root);
+    assert.equal(before.reservedCpuCores, occupied);
+    const coldFloor = HEAVYWEIGHT_COMMAND_RESOURCES['source-reload'].memoryKiB;
+    const env = inherited ? { GOMAXPROCS: inherited } : {};
+    const result = await runAdmittedTask({ ...identity, entry: 'node --input-type=module -e', root,
+      floorKiB: coldFloor, machine: 'fixture', repoDir: root, cacheBaseDir: root, env, noWait: true },
+    async acquiredEnv => {
+      const work = await requestAdmissionSample(root);
+      assert.equal(Number(acquiredEnv.GOMAXPROCS), expectedWorkers);
+      assert.equal(work.reservedCpuCores - occupied, expectedWorkers);
+      assert.equal(work.reservedMemoryKiB - before.reservedMemoryKiB, memoryPeak ? 10.5 * gib : coldFloor);
+      return 0;
+    });
+    assert.equal(result, 0);
+  });
+});
+
 test('an unrecorded web export identity uses the class history for its worker and memory grant', linux, async t => {
   const gib = 1024 * 1024;
   const { root, broker } = await fixture(t, { readMemory: () => ({ availableMemoryKiB: 100 * gib, totalMemoryKiB: 100 * gib }) });

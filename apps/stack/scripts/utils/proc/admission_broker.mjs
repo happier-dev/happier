@@ -4,7 +4,7 @@ import { appendFileSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, 
 import { createConnection, createServer } from 'node:net';
 import { dirname, isAbsolute, join, posix, relative } from 'node:path';
 import { availableParallelism } from 'node:os';
-import { COLD_ADMISSION_CPU_CORES, FOCUSED_TEST_ADMISSION_CLASSES, HEAVYWEIGHT_COMMAND_RESOURCES, SOURCE_RELOAD_ADMISSION_CLASS, SOURCE_WEB_EXPORT_ADMISSION_CLASS, SOURCE_WEB_EXPORT_MEMORY, resolveSourceWebExportMemoryFloorKiB, resolveAdmissionCpuCores, isTypeScriptCompilationClass, resolveColdAdmissionCpuCost } from '../dev_targets/command_resources.mjs';
+import { COLD_ADMISSION_CPU_CORES, FOCUSED_TEST_ADMISSION_CLASSES, HEAVYWEIGHT_COMMAND_RESOURCES, SOURCE_RELOAD_ADMISSION_CLASS, SOURCE_WEB_EXPORT_ADMISSION_CLASS, SOURCE_WEB_EXPORT_MEMORY, resolveSourceWebExportMemoryFloorKiB, resolveAdmissionCpuCores, isTypeScriptCompilationClass, resolveColdAdmissionCpuCost, usesAdmissionWorkerGrant } from '../dev_targets/command_resources.mjs';
 import { createInterface } from 'node:readline';
 import { DURATION_WINDOW, nearestRankP99 } from '../dev_targets/execution_provenance.mjs';
 import { pathToFileURL } from 'node:url';
@@ -393,14 +393,16 @@ export function createAdmissionBroker({ root,
    * smallest), each reserving that peak, never the modelled maximum. */
   function sizeWaitingItem(item, peak = recordedIdentityPeakKiB(item)) {
     item.floorKiB = peak === undefined ? requestedColdFloorKiB(item) : roundPeak(peak);
-    if ((item.cpuCost ?? 'host') === 'host') item.hostCpuCores = hostCpuCores(item);
-    const sourceWebExport = (item.resourceClass ?? item.className) === SOURCE_WEB_EXPORT_ADMISSION_CLASS;
-    // Size the range on the destination, where the export's CPU history lives.
-    // Each option is both the CPU charge and the Metro worker count.
-    const ceiling = sourceWebExport ? Math.min(hostCpuCores(item), SOURCE_WEB_EXPORT_MEMORY.parallelThreads) : 0;
-    const options = sourceWebExport ? Array.from({ length: ceiling }, (_, index) => {
+    const resourceClass = item.resourceClass ?? item.className;
+    const workerGrant = usesAdmissionWorkerGrant(resourceClass);
+    if (workerGrant || (item.cpuCost ?? 'host') === 'host') item.hostCpuCores = hostCpuCores(item);
+    const sourceWebExport = resourceClass === SOURCE_WEB_EXPORT_ADMISSION_CLASS;
+    // The destination sizes each offer from its CPU history. The same count
+    // becomes the CPU reservation and the payload's worker limit.
+    const ceiling = sourceWebExport ? Math.min(item.hostCpuCores, SOURCE_WEB_EXPORT_MEMORY.parallelThreads) : item.hostCpuCores;
+    const options = workerGrant ? Array.from({ length: ceiling }, (_, index) => {
       const workers = ceiling - index;
-      return { workers, floorKiB: resolveSourceWebExportMemoryFloorKiB(workers) };
+      return { workers, floorKiB: sourceWebExport ? resolveSourceWebExportMemoryFloorKiB(workers) : item.floorKiB };
     }) : item.requestedFloorOptions;
     if (peak === undefined || !options) {
       item.floorOptions = options;
@@ -1334,7 +1336,7 @@ export function createAdmissionBroker({ root,
         const available = status(readCpuPressureForOffer());
         const probe = { cpuCost: request.cpuCost, requestedCpuCores: request.requestedCpuCores,
           className: request.className, floorKiB: request.floorKiB };
-        if (valid && probe.className === SOURCE_WEB_EXPORT_ADMISSION_CLASS) sizeWaitingItem(probe);
+        if (valid && usesAdmissionWorkerGrant(probe.className)) sizeWaitingItem(probe);
         const minimumFloorKiB = probe.floorOptions?.at(-1).floorKiB ?? probe.floorKiB;
         const memoryFits = minimumFloorKiB <= available.unreservedMemoryKiB;
         const cpuCores = valid ? minimumCpuCores(probe) : 0;

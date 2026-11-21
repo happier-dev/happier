@@ -8,9 +8,15 @@ command_vitest_environment_names='HAPPIER_VITEST_MAX_WORKERS VITEST_UI_MAX_FORKS
 command_controller_environment_names='HOME PATH NODE_OPTIONS CI HAPPIER_EXEC_CONFIG_PATH HAPPIER_STACK_HOME_DIR HAPPIER_STACK_STORAGE_DIR HAPPIER_STACK_SANDBOX_DIR HAPPIER_STACK_PM_CACHE_BASE_DIR HAPPIER_WORKSPACE_BUILD_MODE HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD HAPPIER_WORKSPACE_DIST_BUILD_LOCK_LEASES HAPPIER_TYPECHECK_DISPATCHED HSTACK_EXEC_PRE_DISPATCH_BUSY_TARGETS HSTACK_EXEC_PRE_DISPATCH_CAPACITY_TARGETS HSTACK_EXEC_PRE_DISPATCH_DISK_TARGETS HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS HSTACK_EXEC_PRE_DISPATCH_REFUSALS HSTACK_EXEC_PRE_DISPATCH_RETRY_COUNT HSTACK_EXEC_PRE_DISPATCH_SYNC_FAILED'
 controller_coalescing_environment_names='CI GOMAXPROCS HAPPIER_CLI_TEST_SKIP_BUILD HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT HAPPIER_EXEC_CONFIG_PATH HAPPIER_STACK_DISABLE_REFRESH_DEPS HAPPIER_STACK_HOME_DIR HAPPIER_STACK_PM_CACHE_BASE_DIR HAPPIER_STACK_SANDBOX_DIR HAPPIER_STACK_SKIP_REFRESH_DEPS HAPPIER_STACK_STORAGE_DIR HAPPIER_TYPECHECK_DISPATCHED HAPPIER_TYPECHECK_LOCATIONS_ONLY HAPPIER_TYPECHECK_SELECTION HAPPIER_TYPESCRIPT_COMPILER HAPPIER_VITEST_GOVERNOR_MAX_WORKERS HAPPIER_VITEST_MAX_WORKERS HAPPIER_WORKSPACE_BUILD_MODE HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD HAPPIER_WORKSPACE_DIST_BUILD_LOCK_LEASES HAPPY_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD HAPPY_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT HOME HSTACK_EXEC_PRE_DISPATCH_BUSY_TARGETS HSTACK_EXEC_PRE_DISPATCH_CAPACITY_TARGETS HSTACK_EXEC_PRE_DISPATCH_DISK_TARGETS HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS HSTACK_EXEC_PRE_DISPATCH_REFUSALS HSTACK_EXEC_PRE_DISPATCH_RETRY_COUNT HSTACK_EXEC_PRE_DISPATCH_SYNC_FAILED NODE_OPTIONS PATH VITEST_MAX_FORKS VITEST_MAX_THREADS VITEST_MIN_FORKS VITEST_MIN_THREADS VITEST_UI_MAX_FORKS'
 placement_probe_connect_timeout_seconds() { printf '%s' '7'; }
+heavyweight_uses_worker_grant() {
+  case "$1" in
+    source-reload|source-web-export) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 heavyweight_cpu_cores() {
   case "$1" in
-    source-reload) heavyweight_cpu_cost=3 ;;
+    source-reload) heavyweight_cpu_cost=${3:-3} ;;
     validation) heavyweight_cpu_cost=3 ;;
     focused-validation) heavyweight_cpu_cost=1 ;;
     focused-validation-ui) heavyweight_cpu_cost=1 ;;
@@ -35,7 +41,7 @@ heavyweight_cpu_cores() {
     *) heavyweight_cpu_cost=3 ;;
   esac
   if [ "$heavyweight_cpu_cost" -gt "$2" ]; then heavyweight_cpu_cost=$2; fi
-  if [ "$1" = source-web-export ]; then printf '%s' "$heavyweight_cpu_cost"; return; fi
+  if heavyweight_uses_worker_grant "$1"; then printf '%s' "$heavyweight_cpu_cost"; return; fi
   heavyweight_cpu_requested=${4:-0}
   [ "$heavyweight_cpu_requested" != host ] || heavyweight_cpu_requested=$2
   if { [ "${1-}" = validation ] && [ "$heavyweight_cpu_requested" -gt 0 ]; } || [ "$heavyweight_cpu_requested" -gt "$heavyweight_cpu_cost" ]; then heavyweight_cpu_cost=$heavyweight_cpu_requested; fi
@@ -69,7 +75,7 @@ heavyweight_requested_cpu_cores() {
 heavyweight_focused_test_class() { case "$1" in focused-validation|focused-validation-ui|focused-validation-cli) return 0 ;; *) return 1 ;; esac; }
 heavyweight_memory_floor_kib() {
   case "$1" in
-    source-reload) heavyweight_policy_floor='17825792' ;;
+    source-reload) heavyweight_policy_floor='7864320' ;;
     validation) heavyweight_policy_floor='2097152' ;;
     focused-validation) heavyweight_policy_floor='1048576' ;;
     focused-validation-ui) heavyweight_policy_floor='3145728' ;;

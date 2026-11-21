@@ -28,6 +28,8 @@ export function resolveSourceWebExportMemoryFloorKiB(workers) {
 // UI components have their own class and are excluded from focused calibration.
 export const COMMAND_MEMORY_MEASUREMENTS = Object.freeze({
   'focused-validation': Object.freeze({ samples: 18, p95KiB: 779072, maxKiB: 779072, roundingKiB: 1024 * 1024 }),
+  // 2026-11-21 nl3 and nl1 completed source-reload scope peaks (38 + 16).
+  'source-reload': Object.freeze({ samples: 54, maxKiB: 7472696, roundingKiB: 512 * 1024 }),
   // 2026-11-10 completed-slot-memory.jsonl across linux1, windows2-linux, nl1, nl3:
   // package-dist n=310; retain that sample count and p95 below.
   // P03-BUILD-REUSE/run2-batch-cold/rss-peaks.jsonl (2026-11-13):
@@ -36,13 +38,17 @@ export const COMMAND_MEMORY_MEASUREMENTS = Object.freeze({
   'package-dist': Object.freeze({ samples: 310, p95KiB: 4624416, maxKiB: 5327920, roundingKiB: 512 * 1024 }),
 });
 export const SOURCE_RELOAD_ADMISSION_CLASS = 'source-reload';
+const SOURCE_RELOAD_COLD_CPU_CORES = 3; // Completed average max 1.943 cores × 1.5, rounded up.
+const sourceReloadMemory = COMMAND_MEMORY_MEASUREMENTS[SOURCE_RELOAD_ADMISSION_CLASS];
 const ENTRY_LOAD_MEMORY_KIB = 3 * 1024 * 1024;
 const COMPILATION_COLD_MEMORY_KIB = Math.ceil(11_364_896 * 1.5 / (1024 * 1024)) * 1024 * 1024;
 export const HEAVYWEIGHT_COMMAND_RESOURCES = Object.freeze({
-  // Owner 2026-11-17: daemon Plugin UI preparation in QA reload #172 waited
-  // behind validation. Retain its observed 17 GiB reservation (17825792 KiB)
-  // and validation disk/host CPU shape; only queue precedence changes.
-  [SOURCE_RELOAD_ADMISSION_CLASS]: { memoryKiB: 17825792, cpuCores: 'host', diskClass: 'validation', headPriority: 2 },
+  // Finite daemon Plugin UI preparation uses the destination worker grant.
+  // The cold core count also bounds the payload during broker succession.
+  [SOURCE_RELOAD_ADMISSION_CLASS]: {
+    memoryKiB: Math.ceil(sourceReloadMemory.maxKiB / sourceReloadMemory.roundingKiB) * sourceReloadMemory.roundingKiB,
+    cpuCores: SOURCE_RELOAD_COLD_CPU_CORES, diskClass: 'validation', headPriority: 2,
+  },
   // Owner Q1 (2026-10-29): successful measured peak rounded up to whole GiB,
   // with no blanket margin. Three loaded deployment-protocol suite runs
   // peaked at 1,825,056 KiB; validation-floor-sizing-1104/measurements.json.
@@ -161,7 +167,7 @@ const SINGLE_THREADED_TYPESCRIPT_CPU_CORES = 2;
 const TYPESCRIPT_CPU_CORES = 6;
 const ENTRY_LOAD_CPU_CORES = 3;
 export const COLD_ADMISSION_CPU_CORES = Object.freeze({
-  [SOURCE_RELOAD_ADMISSION_CLASS]: 3,
+  [SOURCE_RELOAD_ADMISSION_CLASS]: SOURCE_RELOAD_COLD_CPU_CORES,
   // Existing default Metro knee measured at eight workers (see exportWorkers.mjs).
   [SOURCE_WEB_EXPORT_ADMISSION_CLASS]: SOURCE_WEB_EXPORT_MEMORY.intermediateThreads,
   validation: 3,
@@ -206,9 +212,12 @@ export function resolveColdAdmissionCpuCost(className) {
     ? COLD_ADMISSION_CPU_CORES[className] : UNKNOWN_ADMISSION_CPU_CORES;
 }
 
+export function usesAdmissionWorkerGrant(className) {
+  return className === SOURCE_RELOAD_ADMISSION_CLASS || className === SOURCE_WEB_EXPORT_ADMISSION_CLASS;
+}
+
 export function resolveAdmissionCpuCores(cost, { totalCpuCores, workers, requestedCpuCores = 0, className } = {}) {
-  if (className === SOURCE_WEB_EXPORT_ADMISSION_CLASS) return Math.min(totalCpuCores,
-    workers ?? COLD_ADMISSION_CPU_CORES[SOURCE_WEB_EXPORT_ADMISSION_CLASS]);
+  if (usesAdmissionWorkerGrant(className)) return Math.min(totalCpuCores, workers ?? resolveColdAdmissionCpuCost(className));
   // An explicit count sizes ordinary Vitest runs more directly than a class sample.
   if (className === 'validation' && Number.isSafeInteger(requestedCpuCores) && requestedCpuCores > 0) return requestedCpuCores;
   const base = cost === 'workers' ? workers ?? totalCpuCores : cost === 'host' ? totalCpuCores : cost;

@@ -644,14 +644,13 @@ test('sibling preparation reads its own persisted service placement', async t =>
   assert.equal(JSON.parse(await readFile(prepared.path, 'utf8')).runtimePlacement.server.target, 'mac-host');
 });
 
-// Owner 2026-11-17: reload preparation precedes test/typecheck traffic without reducing capacity admission.
-test('reload preparation retains its incident memory floor in both dispatchers', () => {
+test('both dispatchers place cold reload preparation by its measured worker and memory budget', () => {
   const root = fileURLToPath(new URL('../../../../../', import.meta.url)).replace(/\/$/, '');
   const args = ['node', 'apps/stack/scripts/runtime/launch/prepareSourceRuntimeReload.mjs', '--worker', '{}'];
   assert.equal(resolveRemoteCommandPolicy(args, { cwd: root }).heavyClass, 'source-reload');
-  assert.equal(resolveHeavyweightMemoryFloorKiB('source-reload'), 17825792);
+  assert.equal(resolveHeavyweightMemoryFloorKiB('source-reload'), 7.5 * 1024 * 1024);
   const native = spawnSync('/bin/sh', ['-c', `${renderNativeCommandPolicy()}
-repo_root=$1; invoked_cwd=$1; shift; resolve_native_command_policy "$@"; printf '%s,' "$policy_heavyClass"; heavyweight_memory_floor_kib source-reload`, 'policy', root, ...args], { encoding: 'utf8' });
+repo_root=$1; invoked_cwd=$1; shift; resolve_native_command_policy "$@"; printf '%s,' "$policy_heavyClass"; heavyweight_memory_floor_kib source-reload; printf ','; heavyweight_cpu_cores source-reload 128 "" host`, 'policy', root, ...args], { encoding: 'utf8' });
   assert.equal(native.status, 0, native.stderr);
-  assert.equal(native.stdout, 'source-reload,17825792');
+  assert.equal(native.stdout, 'source-reload,7864320,3');
 });

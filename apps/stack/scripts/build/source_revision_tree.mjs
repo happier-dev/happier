@@ -16,7 +16,7 @@ import { readSourceGuestPayloadTargets, sourceGuestPayloadEnvironment } from './
 import { run, runCapture } from '../utils/proc/proc.mjs';
 import { publishDependencyRefreshMarker, resolveDependencyInstallRoot, resolveDependencyRefreshLockPath, resolveDependencyRefreshMarkerPath } from '../utils/proc/dependency_refresh.mjs';
 import { cloneTree, extractRevision, isRevisionDependencyInput, prepareRevisionInstall, revisionInstallDir, sourceRevisionTreesRoot, sweepUnreferencedInstalls, withBaseLock } from './source_revision_install.mjs';
-import { SOURCE_RELOAD_ADMISSION_CLASS } from '../utils/dev_targets/remote_commands.mjs';
+import { SOURCE_RELOAD_ADMISSION_CLASS, resolveColdAdmissionCpuCost } from '../utils/dev_targets/command_resources.mjs';
 import { runSourceBuildCommand, sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
 import { readSourceSelectionPaths, readSourceSelectionRollbackPaths } from '../runtime/shared/source_selection_rollback.mjs';
 import { pendingSourceSelectionAwaitsActivation } from '../runtime/shared/pending_source_start.mjs';
@@ -227,9 +227,12 @@ async function prepareDaemonPluginUi({ treeDir, env, signal }) {
 const { BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES } = await import(${JSON.stringify(pathToFileURL(locators).href)});
 await prepareSourceCliPluginUiArtifacts({ repoRoot: ${JSON.stringify(treeDir)},
   workspaceNames: BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES.map(name => name.slice('@happier-dev/'.length)) });`;
+  const buildEnv = process.platform === 'linux' ? env : {
+    ...env, GOMAXPROCS: String(resolveColdAdmissionCpuCost(SOURCE_RELOAD_ADMISSION_CLASS)),
+  };
   await runSourceBuildCommand({ repoDir: treeDir, command: process.execPath,
     args: sourceBuildNodeArgs({ repoDir: treeDir, scriptPath: '--input-type=module', args: ['-e', code] }),
-    cwd: treeDir, env, signal, captureStdout: false, admissionClass: SOURCE_RELOAD_ADMISSION_CLASS });
+    cwd: treeDir, env: buildEnv, signal, captureStdout: false, admissionClass: SOURCE_RELOAD_ADMISSION_CLASS });
 }
 
 function supportStoreDir(treesRoot) {

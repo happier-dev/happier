@@ -219,9 +219,12 @@ invocations; already-running shells retain their parsed code.
 
 In 0.3 development, finite daemon Plugin UI preparation during a source reload
 uses `source-reload` admission at producer priority, ahead of validation, focused
-tests and typechecks. It retains the observed 17 GiB floor, validation disk
-budget and existing capacity checks. Priority never preempts
-active work. Reload coordinators still delegate admission to finite producers.
+tests and typechecks. The broker uses the destination's observed memory peaks
+and CPU history. With no history, preparation starts with a 7.5 GiB memory
+reservation and a three-worker ceiling. Under CPU pressure the broker can grant
+fewer workers, and the esbuild Go service receives exactly the reserved count
+through `GOMAXPROCS`. Priority never preempts active work. Reload coordinators
+still delegate admission to finite producers.
 The repo-dev producer's own current-checkout server and default-daemon startups
 inherit that precedence with their existing `source-bundle` resource envelope.
 A queued client retains its submitted class: relaunch it to adopt a changed

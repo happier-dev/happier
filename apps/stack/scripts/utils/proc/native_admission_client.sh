@@ -134,7 +134,7 @@ run_heavyweight_admission() {
 check_heavyweight_admission() {
   [ "$(uname -s 2>/dev/null || true)" = Linux ] || return 0
   heavyweight_floor=$(heavyweight_memory_floor_kib "$heavyweight_admission_class" "${heavyweight_admission_placement-worker}") || return 1
-  if [ "$heavyweight_admission_class" = source-web-export ]; then set -- "--class=$heavyweight_admission_class"; else set --; fi
+  if heavyweight_uses_worker_grant "$heavyweight_admission_class"; then set -- "--class=$heavyweight_admission_class"; else set --; fi
   node "$admission_client" --check "--root=$heavyweight_admission_root" "--floor-kib=$heavyweight_floor" "$@"
 }
 
