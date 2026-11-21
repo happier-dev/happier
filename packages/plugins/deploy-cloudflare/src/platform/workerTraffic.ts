@@ -5,7 +5,7 @@ import { isObject } from '../connectedAccounts/probe.js';
 import { request, failure, type DeploymentContext } from './deploymentHttp.js';
 import { uploadedWorkerReference, uploadedWorkerVersion, workerVersionHasBuild, withWorkerAddress } from './workers.js';
 import { isUploadedPreviewReference } from './previewDeploy.js';
-import { workersCommon, workersIo, workersResult } from './workersActions.js';
+import { workersAddressCommon, workersIo, workersResult } from './workersActions.js';
 
 type Outcome = DeploymentTargetRoleResultV1 | DeploymentTargetRoleFailureV1;
 
@@ -50,10 +50,10 @@ async function changeTraffic(input: DeploymentTargetRollbackInputV1, context: De
 }
 
 export const workerTrafficActions = {
-  'workers-promote': { ...workersCommon, title: 'Promote the selected Cloudflare Worker version', dangerLevel: 'writesRemote', readOnly: false,
+  'workers-promote': { ...workersAddressCommon, title: 'Promote the selected Cloudflare Worker version', dangerLevel: 'writesRemote', readOnly: false,
     confirmation: { title: 'Send all traffic to this Cloudflare Worker version?' }, inputSchema: inputs.promote.jsonSchema, resultSchema: output.jsonSchema,
     run: async (raw: JsonValue, context: PluginAccountActionContext) => workersResult(await changeTraffic(raw as unknown as DeploymentTargetRollbackInputV1, workersIo(context))) },
-  'workers-rollback': { ...workersCommon, title: 'Restore the selected Cloudflare Worker version', dangerLevel: 'writesRemote', readOnly: false,
+  'workers-rollback': { ...workersAddressCommon, title: 'Restore the selected Cloudflare Worker version', dangerLevel: 'writesRemote', readOnly: false,
     confirmation: { title: 'Restore all traffic to this Cloudflare Worker version?' }, inputSchema: inputs.rollback.jsonSchema, resultSchema: output.jsonSchema,
     run: async (raw: JsonValue, context: PluginAccountActionContext) => workersResult(await changeTraffic(raw as unknown as DeploymentTargetRollbackInputV1, workersIo(context))) },
 } as const;

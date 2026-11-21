@@ -17,10 +17,16 @@ const root = `https://api.cloudflare.com/client/v4/accounts/${accountId}`;
 
 // Current official v4 schema vectors, NOT tenant captures. Only HTTP is replaced.
 // These exercise the internal native adapter, not qualified role admission.
-function fixture(responses: unknown[]) {
+function fixture(responses: unknown[], publicStatus?: number) {
   const controller = new AbortController();
   const request = vi.fn(async (input: HttpRequest) => {
     expect(input.headers ?? {}).not.toHaveProperty('authorization');
+    if (input.url === 'https://app.my-account.workers.dev') {
+      expect(input).toMatchObject({ method: 'GET', redirect: 'manual', responseBody: 'discard' });
+      expect(input).not.toHaveProperty('credentialBinding');
+      if (publicStatus === undefined) throw new Error('An address probe was not expected');
+      return { status: publicStatus, headers: {}, body: new Uint8Array() };
+    }
     const next = responses.shift();
     if (next instanceof Error) throw next;
     return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({ success: true, result: next })) };
@@ -29,15 +35,23 @@ function fixture(responses: unknown[]) {
 }
 const observed = { ...scope, providerDeploymentId: 'build-1' };
 
-it.each([false, true])('reports only provider-enabled workers.dev addresses (enabled=%s)', async enabled => {
+it.each([
+  { enabled: false, status: undefined, addresses: [] },
+  { enabled: true, status: 200, addresses: ['https://app.my-account.workers.dev'] },
+  { enabled: true, status: 302, addresses: ['https://app.my-account.workers.dev'] },
+  { enabled: true, status: 404, addresses: undefined },
+])('publishes a Worker address only when enabled and reachable (enabled=$enabled, status=$status)', async ({
+  enabled, status, addresses,
+}) => {
   const h = fixture([{ deployments: [{ versions: [{ version_id: 'exact', percentage: 100 }] }] },
-    { enabled, previews_enabled: false }, ...(enabled ? [{ subdomain: 'my-account' }] : [])]);
-  const outcome = await entry.observeUploadedWorker({ ...scope, providerDeploymentId: 'version:exact' }, h.context);
-  expect(DeploymentTargetRoleResultV1ProtocolSchema.parse(outcome)).toMatchObject({ state: 'succeeded',
-    urls: enabled ? ['https://app.my-account.workers.dev'] : [],
-    builtInUrls: enabled ? ['https://app.my-account.workers.dev'] : [] });
-  expect(h.request.mock.calls.every(([request]) => request.method === 'GET')).toBe(true);
-  expect(h.request).toHaveBeenCalledTimes(enabled ? 3 : 2);
+    { enabled, previews_enabled: false }, ...(enabled ? [{ subdomain: 'my-account' }] : [])], status);
+  const result = DeploymentTargetRoleResultV1ProtocolSchema.parse(
+    await entry.observeUploadedWorker({ ...scope, providerDeploymentId: 'version:exact' }, h.context));
+  expect(result.state).toBe('succeeded');
+  expect(result.urls).toEqual(addresses);
+  expect(result.builtInUrls).toEqual(addresses);
+  const publicReads = h.request.mock.calls.filter(([request]) => request.url === 'https://app.my-account.workers.dev');
+  expect(publicReads).toHaveLength(enabled ? 1 : 0);
 });
 
 it('preserves proven activation when address discovery is unavailable', async () => {

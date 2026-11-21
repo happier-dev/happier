@@ -6,6 +6,7 @@ import { isObject } from '../connectedAccounts/probe.js';
 import { request, failure, type DeploymentContext } from './deploymentHttp.js';
 import { observeBuild } from './builds.js';
 
+export const workersAddressAccessId = 'cloudflare-workers-address';
 export type WorkerContext = DeploymentContext;
 export type WorkerSelection = Readonly<{ accountId: string; workerTag: string; scriptName: string; triggerUuid: string;
   repository: DeploymentTargetRepositoryAccessV1['repository'] }>;
@@ -99,7 +100,7 @@ async function observation(value: unknown, input: WorkerObservation, context: Wo
   return 'state' in result && result.state === 'succeeded' ? withWorkerAddress(result, input, context) : result;
 }
 
-/** Address availability is independent of version activation. Never advertise a disabled workers.dev route.
+/** Verify the public address separately from native version activation.
  * https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/subdomain/
  * https://developers.cloudflare.com/api/resources/workers/subresources/subdomains/
  */
@@ -114,8 +115,11 @@ export async function withWorkerAddress(result: DeploymentTargetRoleResultV1, in
     if (!route.value.enabled) return { ...result, urls: [], builtInUrls: [] };
     const account = await request(context, accountId, '/workers/subdomain', 'observe');
     if ('code' in account || !isObject(account.value) || !text(account.value.subdomain)) return result;
-    const urls = [`https://${scriptName}.${account.value.subdomain}.workers.dev`];
-    return { ...result, urls, builtInUrls: urls };
+    const url = `https://${scriptName}.${account.value.subdomain}.workers.dev`;
+    // A route can be enabled before the deployed Worker serves its public hostname.
+    const response = await context.http.request({ url, method: 'GET', redirect: 'manual', responseBody: 'discard' },
+      { signal: context.signal });
+    return response.status >= 200 && response.status < 400 ? { ...result, urls: [url], builtInUrls: [url] } : result;
   } catch (error) {
     if (context.signal.aborted || isPluginError(error)) return result;
     throw error;

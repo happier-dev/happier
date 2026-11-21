@@ -58,6 +58,10 @@ it.each(['promote', 'rollback'] as const)('changes Worker traffic for %s to the 
   const requests: HttpRequest[] = [];
   const http = createPluginHttpFixture({ async request(request) {
     requests.push(request);
+    if (request.url === 'https://selected-worker.account-name.workers.dev') {
+      expect(request).not.toHaveProperty('credentialBinding');
+      return { status: 200, headers: {}, body: new Uint8Array() };
+    }
     const path = new URL(request.url).pathname;
     const result = path.endsWith('/scripts/selected-worker/subdomain') ? { enabled: true }
       : path.endsWith('/workers/subdomain') ? { subdomain: 'account-name' }
@@ -77,6 +81,7 @@ it.each(['promote', 'rollback'] as const)('changes Worker traffic for %s to the 
       ['POST', '/client/v4/accounts/account/workers/scripts/selected-worker/deployments'],
       ['GET', '/client/v4/accounts/account/workers/scripts/selected-worker/subdomain'],
       ['GET', '/client/v4/accounts/account/workers/subdomain'],
+      ['GET', '/'],
     ]);
     expect(new URL(requests[0]!.url).searchParams.get('deployable')).toBe('true');
     expect(JSON.parse(new TextDecoder().decode(requests[2]!.body))).toEqual({ strategy: 'percentage', versions: [{ version_id: 'native-version', percentage: 100 }] });

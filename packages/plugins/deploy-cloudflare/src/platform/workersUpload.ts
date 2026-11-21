@@ -8,7 +8,7 @@ import { isObject } from '../connectedAccounts/probe.js';
 import { request, requestWorkerAssets } from './deploymentHttp.js';
 import { CLOUDFLARE_BUILD_IMAGE, CLOUDFLARE_WRANGLER_VERSION } from './cloudflareToolchain.js';
 import { prepareWorkerBuild } from './workersBuild.js';
-import { observeUploadedWorker, uploadedWorkerReference } from './workers.js';
+import { observeUploadedWorker, uploadedWorkerReference, workersAddressAccessId } from './workers.js';
 import { isUploadedPreviewReference, observeUploadedPreview, uploadedPreviewReference, uploadedPreviewSelection } from './previewDeploy.js';
 
 async function encode(form: FormData) {
@@ -123,7 +123,7 @@ async function upload(input: DeploymentTargetUploadDeployInputV1, context: Plugi
 export const workersUpload: Extract<PluginActionDeclaration, { execution?: { target: 'daemon' } }> & {
   run(value: JsonValue, context: PluginInvocationContext): Promise<DeploymentTargetRoleResultV1>;
 } = { execution: { target: 'daemon' }, scopes: ['global'], surfaces: ['cli', 'plugin'], placementBindings: [],
-  hostAccess: ['cloudflare-workers', 'deploy.manage'], connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'deploy.manage' }],
+  hostAccess: ['cloudflare-workers', 'deploy.manage', workersAddressAccessId], connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'deploy.manage' }],
   title: 'Upload the reviewed compiled Cloudflare Worker', dangerLevel: 'writesRemote', readOnly: false,
   confirmation: { title: 'Build and upload this reviewed commit to Cloudflare Workers?' },
   inputSchema: inputs.uploadDeploy.jsonSchema, resultSchema: output.jsonSchema,

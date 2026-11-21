@@ -556,10 +556,11 @@ deployment response can confirm alias assignment while the project's alias field
 
 Cloudflare **Create new** enables the Worker's public `workers.dev` route when it
 creates the script and leaves preview URLs disabled. **Use existing** observes and
-preserves the existing route configuration. Worker observations report a URL only
-when the provider confirms that the route is enabled. They use the account's actual
-subdomain. An explicitly disabled route records an empty URL list. An unavailable
-address read leaves addresses unknown without changing proven deployment success.
+preserves the existing route configuration. After Cloudflare confirms the version
+is serving and the route is enabled, Happier makes one public GET to the Worker's
+name and the account's actual subdomain. A successful response or redirect confirms
+the address for the receipt. A disabled route records an empty list. An unsuccessful
+address check leaves the address unknown and keeps the confirmed deployment result.
 A serving platform receipt with no provider URL leads to the Environment's Domains
 page. Platform receipts use platform outcome copy and omit Machine execution and
 Docker image-retention facts.

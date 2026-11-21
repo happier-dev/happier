@@ -18,6 +18,7 @@ import { pagesLogsActions, workersLogsActions } from './platform/logs.js';
 import { domainActions } from './platform/domains.js';
 import { variableActions } from './platform/variables.js';
 import { dnsRecordActions } from './platform/dnsRecords.js';
+import { workersAddressAccessId } from './platform/workers.js';
 
 import { targetOptionResources, targetOptionsRead, targetOptionInputTypes } from './platform/targetOptions.js';
 import { inspect, productInspectActions } from './platform/inspect.js';
@@ -201,6 +202,8 @@ export const definition: Pick<DefinePluginInput<typeof actions>,
     scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.cloudflare.com' }], methods: ['GET', 'POST', 'PUT', 'DELETE'] },
   }, { id: 'cloudflare-workers', capability: 'network', reason: 'Inspect, deploy or delete the selected Worker or Preview and manage its reviewed builds.',
     scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.cloudflare.com' }], methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] },
+  }, { id: workersAddressAccessId, capability: 'network', reason: 'Confirm that the selected Worker answers on its public workers.dev address.',
+    scope: { targets: [{ kind: 'httpsHostSuffix', hostSuffix: 'workers.dev' }], methods: ['GET'] },
   }, { id: 'cloudflare-pages', capability: 'network', reason: 'Adopt an existing Pages project and upload the reviewed prepared assets and Functions.',
     scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.cloudflare.com' }], methods: ['GET', 'POST', 'PATCH', 'DELETE'] },
   }, { id: 'cloudflare-oauth', capability: 'network', reason: 'Exchange, refresh and revoke the registered Cloudflare OAuth authorization.',

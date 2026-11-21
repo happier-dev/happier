@@ -8,7 +8,7 @@ import type { PluginAccountActionContext, PluginActionDeclaration } from '@happi
 import { targetProductSchema } from './targetOptions.js';
 import { cloudflareReviewNotice } from './reviewNotice.js';
 import { workerEnvironmentKey, prepareWorker, deployWorker, observeWorker, cancelWorker, observeUploadedWorker,
-  isUploadedWorkerReference, resolveWorkerTag } from './workers.js';
+  isUploadedWorkerReference, resolveWorkerTag, workersAddressAccessId } from './workers.js';
 import { inspectPreviewIdentity, preparePreview } from './preview.js';
 import { teardownWorker } from './workersTeardown.js';
 import { deployPreview, observePreview, cancelPreview, observeUploadedPreview, isUploadedPreviewReference,
@@ -43,6 +43,7 @@ type PreparationAction = Extract<PluginActionDeclaration, { execution: { target:
 const common = { execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
   scopes: ['global'], surfaces: ['cli', 'plugin'], placementBindings: [],
   hostAccess: ['cloudflare-workers', 'deploy.manage'], connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'deploy.manage' }] } as const;
+export const workersAddressCommon = { ...common, hostAccess: [...common.hostAccess, workersAddressAccessId] } as const;
 function io(context: PluginAccountActionContext) {
   if (!context.services.http) throw new PluginError({ code: 'client_required' });
   return { http: context.services.http, signal: context.signal, now: () => Date.now() };
@@ -157,10 +158,10 @@ async function deploy(input: DeploymentTargetDeployInputV1, context: PluginAccou
 
 export const workerActions = {
   'workers-link': link,
-  'workers-deploy': { ...common, title: 'Deploy the reviewed commit to Cloudflare Workers', dangerLevel: 'writesRemote', readOnly: false,
+  'workers-deploy': { ...workersAddressCommon, title: 'Deploy the reviewed commit to Cloudflare Workers', dangerLevel: 'writesRemote', readOnly: false,
     confirmation: { title: 'Deploy this reviewed commit to Cloudflare Workers?' }, inputSchema: inputs.deploy.jsonSchema, resultSchema: output.jsonSchema,
     run: (value: JsonValue, context: PluginAccountActionContext) => deploy(value as unknown as DeploymentTargetDeployInputV1, context) },
-  'workers-observe': { ...common, title: 'Observe the selected Cloudflare Worker deployment', dangerLevel: 'safe', readOnly: true,
+  'workers-observe': { ...workersAddressCommon, title: 'Observe the selected Cloudflare Worker deployment', dangerLevel: 'safe', readOnly: true,
     inputSchema: inputs.observe.jsonSchema, resultSchema: output.jsonSchema,
     run: async (value: JsonValue, context: PluginAccountActionContext) => {
       const input = value as unknown as DeploymentTargetObserveInputV1;
@@ -178,7 +179,7 @@ export const workerActions = {
     confirmation: { title: 'Delete this Cloudflare Worker or Preview and its associated resources?' },
     inputSchema: inputs.teardown.jsonSchema, resultSchema: output.jsonSchema,
     run: (value: JsonValue, context: PluginAccountActionContext) => teardownWorker(value as unknown as DeploymentTargetObserveInputV1, io(context)) },
-  'workers-cancel': { ...common, title: 'Cancel the selected Cloudflare Worker build', dangerLevel: 'writesRemote', readOnly: false,
+  'workers-cancel': { ...workersAddressCommon, title: 'Cancel the selected Cloudflare Worker build', dangerLevel: 'writesRemote', readOnly: false,
     confirmation: { title: 'Cancel this Cloudflare Worker build?' }, inputSchema: inputs.cancel.jsonSchema, resultSchema: output.jsonSchema,
     run: async (value: JsonValue, context: PluginAccountActionContext) => {
       const input = value as unknown as DeploymentTargetCancelInputV1;
