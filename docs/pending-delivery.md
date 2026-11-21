@@ -116,6 +116,15 @@ delivery with `didWrite: false` (`alreadyAccepted` to the caller). A changed
 request under the same local ID returns `session_input_idempotency_conflict`.
 Home compares opaque bytes and derives no plaintext equality from them.
 
+For encrypted main-conversation input admitted by a Machine, the opaque tag
+covers the authored input and its requested action. The delivery action can
+depend on runtime activity when the input is first admitted. An exact replay
+rejoins custody or returns the previously delivered outcome, with the original
+delivery action retained. Home still checks the authenticated target and the
+opaque tag. Older tags generated from an inactive-runtime delivery action can
+conflict when they differ from the authored action. Home has no plaintext
+evidence that would let it distinguish those historical requests.
+
 ## Follow-original replay (0.3 development)
 
 Pending reads project `hostFollowInput` from the server-admitted Follow receipt,

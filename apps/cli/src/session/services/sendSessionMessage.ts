@@ -1890,11 +1890,13 @@ export async function sendSessionMessage(
     && sessionTarget.rawSession.active !== true
     && params.resumeInactiveSession !== false
     && (receiverDelivery === undefined || receiverDelivery.disposition === 'wake');
-  const requestedAction: PendingRequestedActionV1 = resolveSessionUserMessageRequestedAction({
-    deliveryIntent: shouldResumeInactiveSession ? 'runtime_bootstrap' : 'ordinary',
+  const authoredRequestedAction = resolveSessionUserMessageRequestedAction({
     ...(receiverControlled ? { requestedAction: { v: 1, kind: 'enqueue' } as const }
       : params.requestedAction ? { requestedAction: params.requestedAction } : {}),
   });
+  const requestedAction = shouldResumeInactiveSession
+    ? resolveSessionUserMessageRequestedAction({ deliveryIntent: 'runtime_bootstrap', requestedAction: authoredRequestedAction })
+    : authoredRequestedAction;
   const requestEqualityEvidenceV1 = requiresMachineAdmission && sessionTarget.mode === 'e2ee'
     ? {
         kind: 'e2eeTag' as const,
@@ -1906,7 +1908,9 @@ export async function sendSessionMessage(
             record,
             ...(params.pendingAdmissionMode ? { pendingAdmissionMode: params.pendingAdmissionMode } : {}),
           }),
-          requestedAction,
+          // A first delivery can bootstrap an idle runtime. That decision must
+          // not change the identity of the same authored input on a retry.
+          requestedAction: authoredRequestedAction,
         }),
       }
     : undefined;

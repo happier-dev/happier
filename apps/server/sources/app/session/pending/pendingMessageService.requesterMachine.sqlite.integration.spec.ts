@@ -854,7 +854,8 @@ describe('requester Session input through the custodian Machine socket', () => {
         const token = await auth.createToken(custodian.id, undefined, { kind: 'account', authority: 'present_user' });
         // Only Socket.IO is substituted. Authentication, C41 grants, exact
         // AccessKey binding, Pending admission and durable SQLite writes are real.
-        const enqueue = async (source: typeof target, localId: string) => {
+        const enqueue = async (source: typeof target, localId: string,
+            kind: 'enqueue' | 'send_now' = 'enqueue', tag = 'A'.repeat(43)) => {
             const socket = Object.assign(createAuthenticatedFakeSocket({ nsp: { server: createSocketRoomDiscoveryHarness(async () => []) },
                 data: { clientType: 'machine-scoped', machineId: source.id,
                 [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: source.installationId } }), { handshake: { auth: { token } } });
@@ -863,7 +864,7 @@ describe('requester Session input through the custodian Machine socket', () => {
             } });
             const request = SessionPendingEnqueueByMachineRequestV1Schema.parse({ v: 1, sessionId: session.id,
                 targetMachineId: target.id, localId, content: { t: 'encrypted', c: 'protected-requester-input' },
-                requestedAction: { v: 1, kind: 'enqueue' }, requestEqualityEvidenceV1: { kind: 'e2eeTag', tag: 'A'.repeat(43) } });
+                requestedAction: { v: 1, kind }, requestEqualityEvidenceV1: { kind: 'e2eeTag', tag } });
             let response: unknown;
             await getSocketHandler(socket, SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1)(request, (value: unknown) => { response = value; });
             return SessionPendingEnqueueByMachineResponseV1Schema.parse(response).result;
@@ -876,8 +877,19 @@ describe('requester Session input through the custodian Machine socket', () => {
             inputAdmissionReceipt: { issuer: 'authenticatedMachine', admittedTarget: {
                 accountId: requester.id, machineId: target.id, sessionId: session.id, installationId: target.installationId } },
         });
-        expect(await enqueue(target, 'hosted-input')).toEqual({ status: 'alreadyAccepted', localId: 'hosted-input' });
-        expect(await enqueue(wrongSource, 'wrong-source')).toMatchObject({ status: 'rejected' });
+        expect(await enqueue(target, 'hosted-input', 'send_now')).toEqual({ status: 'alreadyAccepted', localId: 'hosted-input' });
+        expect(await enqueue(target, 'hosted-input', 'send_now', 'B'.repeat(43))).toEqual({
+            status: 'rejected', code: 'session_input_idempotency_conflict',
+        });
+        expect(await db.sessionPendingMessage.findUniqueOrThrow({ where: {
+            sessionId_localId: { sessionId: session.id, localId: 'hosted-input' },
+        }, select: { requestedAction: true } })).toEqual({ requestedAction: { v: 1, kind: 'enqueue' } });
+        expect(await enqueue(wrongSource, 'hosted-input')).toMatchObject({ status: 'rejected' });
+        const replacementInstallation = await db.machine.update({ where: { id: target.id }, data: { installationId: randomUUID() } });
+        expect(await enqueue(replacementInstallation, 'hosted-input', 'send_now')).toEqual({
+            status: 'rejected', code: 'session_input_idempotency_conflict',
+        });
+        await db.machine.update({ where: { id: target.id }, data: { installationId: target.installationId } });
         expect(await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: target.id,
             principal: { kind: 'account', accountId: requester.id } }))).toMatchObject({ kind: 'removed' });
         expect(await enqueue(target, 'revoked-input')).toMatchObject({ status: 'rejected' });

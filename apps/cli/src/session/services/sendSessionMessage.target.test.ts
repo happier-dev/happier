@@ -245,7 +245,11 @@ describe('target Session input authoring through HTTP', () => {
     { signed: false, home: 'legacy', assertedCause: false, direct: false }, { signed: false, home: 'unavailable', assertedCause: false, direct: false },
     { signed: true, home: 'canonical', assertedCause: true, direct: false },
     { signed: false, home: 'canonical', assertedCause: false, direct: true },
-  ] as const)('admits a signed external CLI Send through the current E2EE layout-one owner and Machine socket (signed=$signed, Home=$home, asserted=$assertedCause, direct=$direct)', async ({ signed, home, assertedCause, direct }) => {
+    { signed: true, home: 'canonical', assertedCause: false, direct: false, replay: true },
+  ] as const)('admits a signed external CLI Send through the current E2EE layout-one owner and Machine socket (signed=$signed, Home=$home, asserted=$assertedCause, direct=$direct, replay=$replay)', async (testCase) => {
+    const { signed, home, assertedCause, direct } = testCase;
+    const replay = 'replay' in testCase;
+    let active = true;
     const sendCredentials = { ...credentials,
       token: `fixture.${Buffer.from(JSON.stringify({ sub: 'requester' })).toString('base64url')}.signature` };
     const secret = credentials.encryption.secret;
@@ -262,8 +266,9 @@ describe('target Session input authoring through HTTP', () => {
     http.get.mockImplementation(async (url: string) => {
       if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: { mode: 'e2ee', version: 1,
         signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+      if (replay && url.endsWith(`/v2/sessions/${sessionId}/pending`)) return { status: 200, data: { pending: [] } };
       if (url.includes(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session: createSessionRecordFixture({
-        id: sessionId, active: true, encryptionMode: 'e2ee', dataEncryptionKey, metadataLayoutVersion: 1, ownerMetadata, share: null,
+        id: sessionId, active, encryptionMode: 'e2ee', dataEncryptionKey, metadataLayoutVersion: 1, ownerMetadata, share: null,
         metadata: encryptSessionPayload({ ctx, payload: { v: 1 } }),
       }) } };
       throw new Error(`Unexpected read: ${url}`);
@@ -275,17 +280,18 @@ describe('target Session input authoring through HTTP', () => {
       publicKey: encodeBase64(keys.publicKey, 'base64url'), privateKey: encodeBase64(keys.secretKey, 'base64url') });
     const client = new ApiMachineClient('token', { id: 'machine-a', encryptionMode: 'plain',
       metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
-    const admitted: unknown[] = [];
+    const admitted: ReturnType<typeof SessionPendingEnqueueByMachineRequestV1Schema.parse>[] = [];
     const authoredInputs: ReturnType<typeof UserMessageSchema.parse>[] = [];
     Reflect.set(client, 'socket', createApiSessionSocketStub({ connected: true, emitWithAck: (event, raw) => {
       const request = SessionPendingEnqueueByMachineRequestV1Schema.parse(raw);
       if (signed) {
-        expect(request.externalAction?.authorization.binding.requestId).toBe('signed-cli-send');
+        const requestId = admitted.length === 0 ? 'signed-cli-send' : `signed-cli-retry-${admitted.length}`;
+        expect(request.externalAction?.authorization.binding.requestId).toBe(requestId);
         if (!request.externalAction) throw new Error('Expected original caller authorization');
         const { externalAction, ...unsignedRequest } = request;
         expect(verifyExternalActionMachineRpcRequestV1({ authorizationToken: externalAction.authorization.token,
           effectActionId: 'session.message.send', target: externalAction.target, installationId: externalAction.installationId,
-          event, method: event, requestId: 'signed-cli-send', params: unsignedRequest, publicKey: keys.publicKey,
+          event, method: event, requestId, params: unsignedRequest, publicKey: keys.publicKey,
           signature: externalAction.machineSignature })).toBe(true);
       } else expect(request.externalAction).toBeUndefined();
       expect(request.targetMachineId).toBe('machine-a');
@@ -293,15 +299,30 @@ describe('target Session input authoring through HTTP', () => {
         ciphertextBase64: request.content.t === 'encrypted' ? request.content.c : '' }));
       authoredInputs.push(authored);
       admitted.push(request);
+      if (replay) {
+        if (admitted.length === 1) {
+          // Home delivered the input, then the Machine lost the admission reply.
+          return Promise.resolve({ v: 1, result: { status: 'outcomeUnknown', localId: request.localId, code: 'timeout' } });
+        }
+        const delivered = admitted[0]!;
+        const sameInput = request.localId === delivered.localId
+          && request.sessionId === delivered.sessionId && request.targetMachineId === delivered.targetMachineId
+          && request.requestEqualityEvidenceV1?.kind === 'e2eeTag'
+          && delivered.requestEqualityEvidenceV1?.kind === 'e2eeTag'
+          && request.requestEqualityEvidenceV1.tag === delivered.requestEqualityEvidenceV1.tag;
+        return Promise.resolve({ v: 1, result: sameInput
+          ? { status: 'alreadyAccepted', localId: request.localId }
+          : { status: 'rejected', code: 'session_input_idempotency_conflict' } });
+      }
       return Promise.resolve({ v: 1, result: { status: 'accepted', localId: request.localId } });
     } }));
     const target = { kind: 'session' as const, sessionId };
     const input = { sessionId, message: 'Continue the replied session', localId: 'signed-cli-input', wait: false };
-    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'terminal-proof', binding: {
+    const authorize = (requestId: string, requestInput: typeof input) => ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'terminal-proof', binding: {
       accountId: 'requester', authentication: { kind: 'terminal', tokenEpoch: 1 },
       serverIdentityId: 'srv_home', machineId: 'machine-a', custodianAccountId: 'requester', installationId: 'installation',
-      actionId: 'session.message.send', requestId: 'signed-cli-send', target,
-      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({ v: 1, requestId: 'signed-cli-send', target, input }),
+      actionId: 'session.message.send', requestId, target,
+      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({ v: 1, requestId, target, input: requestInput }),
       accountEncryptionMode: 'e2ee',
     } });
     const deps = createCliActionDeps({ token: sendCredentials.token, credentials: sendCredentials, sessionId, mode: 'plain', ctx: null,
@@ -326,13 +347,28 @@ describe('target Session input authoring through HTTP', () => {
         } } });
         return;
       }
-      const result = await createActionExecutor({
-    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"session.message.send": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps }).execute('session.message.send', input,
-        { surface: 'cli', authority: 'present_user', externalActionTarget: target,
+      const executor = createActionExecutor({
+        readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"session.message.send": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps });
+      const execute = (requestId: string, requestInput: typeof input) => executor.execute('session.message.send', requestInput,
+        { surface: replay ? 'ui' : 'cli', authority: 'present_user', externalActionTarget: target,
           ...(assertedCause ? { actionRequestAttributionV1: { requestRef: 'signed-cli-input',
             requester: { serverId: 'local-home-alias', accountId: 'requester' },
             persona: { serverId: 'local-home-alias', sessionId }, origin: null } } : {}),
-          ...(signed ? { externalActionExecutionAuthorization: authorization } : {}) });
+          ...(signed ? { externalActionExecutionAuthorization: authorize(requestId, requestInput) } : {}) });
+      const result = await execute('signed-cli-send', input);
+      if (replay) {
+        expect(result).toMatchObject({ ok: true, result: { status: 'outcomeUnknown', localId: input.localId } });
+        active = false;
+        expect(await execute('signed-cli-retry-1', input)).toMatchObject({
+          ok: true, result: { status: 'alreadyAccepted', localId: input.localId },
+        });
+        const changedAction = { ...input, requestedAction: { v: 1, kind: 'send_now' } };
+        expect(await execute('signed-cli-retry-2', changedAction)).toMatchObject({
+          ok: true, result: { status: 'rejected', code: 'session_input_idempotency_conflict' },
+        });
+        expect(admitted.map(({ requestedAction }) => requestedAction.kind)).toEqual(['steer_if_active', 'send_now', 'send_now']);
+        return;
+      }
       expect(result, JSON.stringify(result)).toMatchObject(assertedCause
         ? { ok: true, result: { status: 'rejected', code: 'session_input_untrusted_assertion' } }
         : home === 'unavailable'

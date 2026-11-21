@@ -1231,7 +1231,15 @@ async function enqueuePendingMessageWithAdmission(
                 ) {
                     return { ok: false, error: "invalid-params" } as const;
                 }
-                if (!isDeepStrictEqual(normalizePendingRequestedActionV1(existing.requestedAction, 'stored'), requestedAction)) {
+                // For authenticated encrypted main input, the opaque tag binds
+                // the authored action. The retained action is the original
+                // delivery decision and is never replaced by an admission retry.
+                const hasOpaqueMachineEquality = admission.kind === "machine"
+                    && targetExecutionRunId === null
+                    && requestEqualityEvidenceV1?.kind === "e2eeTag";
+                if (!hasOpaqueMachineEquality
+                    && !isDeepStrictEqual(normalizePendingRequestedActionV1(existing.requestedAction, 'stored'), requestedAction)
+                ) {
                     return identityConflict;
                 }
                 const existingReceipt = existing.inputAdmissionReceipt == null
