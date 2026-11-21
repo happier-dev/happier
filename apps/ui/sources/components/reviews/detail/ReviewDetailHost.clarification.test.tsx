@@ -41,7 +41,7 @@ it('clarifies each current native appearance with its own run and local finding 
     permissionMode: 'default', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'streaming',
     status: 'succeeded', startedAtMs: 1 });
   fixture = await createSessionFilesViewFixture({ serverUrl: 'https://native-clarification.test', sessionId,
-    settings: { actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'execution.run.action': ['ui'] } } },
+    settings: { actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'execution.run.action': ['ui'] } } },
     rpc: request => {
       if (request.method === RPC_METHODS.CAPABILITIES_DESCRIBE) return EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE;
       if (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_GET) {

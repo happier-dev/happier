@@ -61,7 +61,7 @@ export function ReviewFindingsList(
     after?: React.ReactNode;
     testID?: string;
   }>,
-): React.ReactElement {
+): React.ReactElement | null {
   const [filter, setFilter] = React.useState<DecisionFilter>('all');
   const commands = useCurrentUiContextLocalCommands([{
     key: 'review.detail.filter_findings', title: t('runPage.review.findings'),

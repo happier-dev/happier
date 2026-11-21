@@ -30,9 +30,8 @@ it.each([undefined, 's1'])('starts a Walkthrough against the retained comparison
         request: createSessionReadBatchFetchBoundary(async (url, init) => {
             const path = new URL(String(url)).pathname;
             return sessionId && (path === `/v2/sessions/${sessionId}` || path === `/v1/sessions/${sessionId}/turns`)
-                ? sessions.handle(url, init) ?? undefined : undefined;
+                ? sessions.handle(url, init) : null;
         }),
-        featureOverrides: { features: { execution: { runs: { enabled: true } } } },
         rpc: request => {
             if (request.method === RPC_METHODS.CAPABILITIES_DESCRIBE) return { protocolVersion: 1,
                 capabilities: [{ id: 'tool.executionRuns', kind: 'tool', protocol: { version: 2, available: true,
