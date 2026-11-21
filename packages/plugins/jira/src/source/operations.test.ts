@@ -74,11 +74,13 @@ export function host(respond: (url: URL, body: unknown) => { status?: number; bo
 }
 
 describe('Jira source through provider HTTP', () => {
-    it('includes a labeled approval fact for every accepted create field', () => {
+    it('advertises only approval facts supported by the Jira create write', () => {
       const declared = PLUGIN_MANIFEST.contributes.actions?.find(action => action.id === JIRA_ACTIONS.create);
       const facts = declared?.confirmation?.inputFields ?? [];
-      const titledFieldPaths = facts.filter(fact => fact.title && fact.path.startsWith('fields.')).map(fact => fact.path);
-      expect(titledFieldPaths).toEqual(JIRA_TASK_FIELDS.map(field => `fields.${field}`));
+      expect(facts.map(fact => fact.path)).toEqual([
+        'instance.locator.displayLabel', 'kindId', ...JIRA_TASK_FIELDS.map(field => `fields.${field}`), 'placeId',
+      ]);
+      expect(facts.every(fact => Boolean(fact.title))).toBe(true);
     });
     it.each([
         ['updated', 'asc', 'updated ASC'], ['updated', 'desc', 'updated DESC'],

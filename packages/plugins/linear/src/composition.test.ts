@@ -8,11 +8,13 @@ import { LINEAR_ACTIONS, LINEAR_CREATE_FIELDS } from './contracts.js';
 import { host, instance, issue, page } from './fixtures.test-support.js';
 
 describe('public Linear source composition', () => {
-  it('includes a labeled approval fact for every accepted create field', () => {
+  it('advertises only approval facts supported by the Linear create write', () => {
     const declared = LINEAR_PLUGIN.manifest.contributes.actions?.find(action => action.id === LINEAR_ACTIONS.create);
     const facts = declared?.confirmation?.inputFields ?? [];
-    const titledFieldPaths = facts.filter(fact => fact.title && fact.path.startsWith('fields.')).map(fact => fact.path);
-    expect(titledFieldPaths).toEqual(LINEAR_CREATE_FIELDS.map(field => `fields.${field}`));
+    expect(facts.map(fact => fact.path)).toEqual([
+      'instance.locator.displayLabel', 'kindId', ...LINEAR_CREATE_FIELDS.map(field => `fields.${field}`),
+    ]);
+    expect(facts.every(fact => Boolean(fact.title))).toBe(true);
   });
   it('lists searchable, paged teams through the safe registered source role and projects configuration without HTTP', async () => {
     const h = host(({ operationName, variables }) => {

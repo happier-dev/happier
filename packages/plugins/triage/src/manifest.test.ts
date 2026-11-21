@@ -19,6 +19,7 @@ import {
   TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1,
 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
+import { INTERNAL_TASK_EDIT_FIELDS_V1 } from './internalTasks/source.js';
 
 import {
   PLUGIN_MANIFEST,
@@ -159,6 +160,12 @@ describe('Triage plugin manifest', () => {
           .toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
       }
     }
+  });
+  it('advertises only approval facts supported by the internal task create write', () => {
+    const create = PLUGIN_MANIFEST.contributes.actions.find(action => action.id === 'internal/tasks/create-v1');
+    expect(create?.confirmation?.inputFields?.map(fact => fact.path)).toEqual([
+      'kindId', ...INTERNAL_TASK_EDIT_FIELDS_V1.map(field => `fields.${field}`), 'initialStatusId',
+    ]);
   });
   it('admits personal Account task writes directly by their declared defaults', async () => {
     for (const id of ['tasks/create-v1', 'tasks/edit-v1', 'tasks/transition-v1',

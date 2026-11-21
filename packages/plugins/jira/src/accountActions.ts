@@ -48,7 +48,6 @@ export const JIRA_ACCOUNT_ACTIONS = {
             { path: 'kindId', title: 'Type' },
             ...JIRA_TASK_FIELDS.map(field => ({ path: `fields.${field}`, title: jiraCreateFieldTitles[field] })),
             { path: 'placeId', title: 'Place' },
-            { path: 'initialStatusId', title: 'Initial status' },
           ],
         },
         dangerLevel: 'writesRemote', hostAccess: access, connectedAccountPurposeBindings: bindings,

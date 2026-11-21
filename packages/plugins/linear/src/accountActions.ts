@@ -78,7 +78,6 @@ export const LINEAR_ACCOUNT_ACTIONS = {
             { path: 'instance.locator.displayLabel', title: 'Source' },
             { path: 'kindId', title: 'Type' },
             ...LINEAR_CREATE_FIELDS.map(field => ({ path: `fields.${field}`, title: linearCreateFieldTitles[field] })),
-            { path: 'initialStatusId', title: 'Initial status' },
           ],
         },
         inputSchema: TriageSourceConnectedAccountInputsV1.create.jsonSchema,

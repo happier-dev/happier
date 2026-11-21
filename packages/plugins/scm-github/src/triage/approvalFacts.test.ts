@@ -9,6 +9,7 @@ import { PLUGIN_MANIFEST as JIRA_MANIFEST } from '../../../jira/src/manifest.js'
 import { LINEAR_ACTIONS } from '../../../linear/src/contracts.js';
 import { PLUGIN_MANIFEST as LINEAR_MANIFEST } from '../../../linear/src/manifest.js';
 import { GITHUB_TRIAGE_ACTION_IDS_V1, PLUGIN_MANIFEST } from '../manifest.js';
+import { GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1 } from './contribution.js';
 
 function reviewFacts(action: PluginActionContributionV2, input: unknown) {
     const facts = (action.confirmation?.inputFields ?? []).flatMap(({ path, title }) => {
@@ -53,6 +54,10 @@ describe('Triage write approval facts', () => {
         const action = PluginActionContributionV2Schema.parse(
             PLUGIN_MANIFEST.contributes.actions?.find(({ id }) => id === GITHUB_TRIAGE_ACTION_IDS_V1.create),
         );
+        const createFields = GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1.kinds.find(kind => kind.id === 'issue')!.taskCapabilities!.createFields!;
+        expect(action.confirmation?.inputFields?.map(fact => fact.path).sort()).toEqual([
+            'instance.locator.displayLabel', ...createFields.map(field => `fields.${field}`),
+        ].sort());
         const token = 'fixture-source-configuration';
         const input = {
             v: 1,
