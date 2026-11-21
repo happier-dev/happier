@@ -184,7 +184,7 @@ const { createEntityDragDropRuntime } = await import('@/components/ui/treeDragDr
 const { createPluginEntityDragDropBinding, executeMountedPluginEntityDropAction, settlePluginEntityDropActionResult } = await import('./entityDragDrop/pluginEntityDragDropBinding');
 const { createUiAccountActionTransport } = await import('@/sync/ops/actions/accountActionTransport');
 const { answerDiscussionThreadForTests, createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } = await import('@/dev/testkit/harness/homeGovernanceHarness');
-const { readPluginAccountAvailability, replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+const { canMergePluginAccountAvailabilityRows, readPluginAccountAvailability, replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
 const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
 const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
 const { setActiveServer } = await import('@/sync/domains/server/serverRuntime');
@@ -516,8 +516,28 @@ function createClientTargetAction(input: Readonly<{
     });
 }
 
+function publishClientActionAvailabilityFixture(
+    scope: ActiveServerAccountScopeLifetime['scope'],
+    manifest: Extract<ReturnType<typeof ingestPluginManifestV2>, { ok: true }>['manifest'],
+    enabled = true,
+): void {
+    const pluginIds = canMergePluginAccountAvailabilityRows(scope) ? [manifest.id] : undefined;
+    replacePluginAccountAvailabilityProjection({ scope, pluginIds, snapshot: {
+        availabilityCursor: 1, snapshots: [], materializations: [], intentReads: [{ pluginId: manifest.id, response: {
+            availabilityCursor: 1, hostingCapability: { enabled: false }, packageAssets: [], uiArtifacts: [],
+            intent: { pluginId: manifest.id, desiredVersion: manifest.version, enabled, offlineUiHosting: 'disabled',
+                writableCollections: [], revision: 'one' },
+            release: { ref: { pluginId: manifest.id, version: manifest.version }, archiveDigestSha256: `sha256:${'a'.repeat(64)}`,
+                normalizedManifest: manifest, collectionContracts: [], uiSlots: [],
+                packageAssetArchive: { archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources: [] } },
+        } }],
+    } });
+}
+
 function createClientActionActivation(input: Readonly<{
     pluginId?: string;
+    pluginVersion?: string;
+    accountAvailabilityStartsCold?: true;
     approvalScope?: PluginProjectedActionV2['approvalScope'];
     localId?: string;
     dangerLevel?: PluginProjectedActionV2['dangerLevel'];
@@ -549,7 +569,7 @@ function createClientActionActivation(input: Readonly<{
     authorization?: Partial<NonNullable<PluginProjectedActionV2['authorization']>>;
 }>) {
     const pluginId = input.authoredAccount ? authoredAccountManifest.id : input.pluginId ?? CALLER_PLUGIN_ID;
-    const pluginVersion = input.accountManifest?.version ?? (input.authoredAccount ? authoredAccountManifest.version : '1.2.3');
+    const pluginVersion = input.pluginVersion ?? input.accountManifest?.version ?? (input.authoredAccount ? authoredAccountManifest.version : '1.2.3');
     const localId = input.localId ?? 'refresh-index';
     const executionOrigin = input.machineExecutionOrigin ?? clientActionExecutionOrigin(pluginId);
     const hostOrigin = Object.freeze({
@@ -575,6 +595,19 @@ function createClientActionActivation(input: Readonly<{
         execution: authoredDeclaration.execution, placementBindings: authoredDeclaration.placementBindings,
         dangerLevel: authoredDeclaration.dangerLevel, confirmation: authoredDeclaration.confirmation,
     }) : baseAction;
+    if (action.execution.target === 'client' && input.accountLifetime && !input.accountAvailabilityStartsCold) {
+        const scope = input.accountLifetime.scope;
+        // These executable fixtures bypass the HTTP census. Provide its settled
+        // input when the test has not installed an Account intent of its own.
+        if (readPluginAccountAvailability(scope).readCurrentAccountIntent(pluginId) == null) {
+            const normalized = ingestPluginManifestV2({
+                schemaVersion: 2, id: pluginId, version: pluginVersion, displayName: 'Client Action fixture',
+                runtime: { apiVersion: 1 }, contributes: {},
+            });
+            if (!normalized.ok) throw new Error('Client Action fixture manifest did not ingest');
+            publishClientActionAvailabilityFixture(scope, normalized.manifest);
+        }
+    }
     clientActionSchemasByQualifiedId.set(`${pluginId}/${localId}`, {
         inputSchema: input.inputSchema ?? {},
         ...(input.outputSchema ? { outputSchema: input.outputSchema } : {}),
@@ -798,6 +831,124 @@ function resolveDaemonTargetAction(
         available: true,
     };
 }
+
+it.each(['cold', 'pinned Machine mount', 'unavailable'] as const)(
+    'settles Tasks draft custody through the client Action and destination (%s)', async mode => {
+        const { PLUGIN_MANIFEST } = await import('@happier-dev/plugins-triage/manifest');
+        const { activate } = await import('@happier-dev/plugins-triage/happier-plugin-ui/triage-mounted-ui-action-native');
+        const { renderSurface } = await import('@happier-dev/plugins-triage/happier-plugin-ui/triage-list-page-native');
+        const { TRIAGE_TASKS_OPEN_CREATE_ACTION_LOCAL_ID_V1, TriageTaskDraftLaunchV1Schema } = await import(
+            '../../../../../../packages/plugins/triage/src/actions/tasksProtocol');
+        const { createPluginClientTestkit, createPluginUiTestkit, createSurfaceContextFixture } = await import('@happier-dev/plugin-sdk/testing');
+        const { derivePluginUiEphemeralSharedScopeIdentity, usePluginUiEphemeralSharedScopeBinding } = await import('./pluginUiEphemeralSharedScope');
+        const availability = await import('@/sync/domains/plugins/availability/projection');
+        const normalized = ingestPluginManifestV2(PLUGIN_MANIFEST);
+        if (!normalized.ok) throw new Error('Expected the Triage manifest to ingest');
+        const manifest = normalized.manifest;
+        const identity = { pluginId: manifest.id, localId: TRIAGE_TASKS_OPEN_CREATE_ACTION_LOCAL_ID_V1 };
+        const declaration = manifest.contributes.actions.find(action => action.id === identity.localId);
+        if (declaration?.execution.target !== 'client') throw new Error('Expected the Tasks client Action');
+        const client = await createPluginClientTestkit({ manifest: PLUGIN_MANIFEST, activate,
+            target: { ...declaration.execution.client, platform: 'web' } });
+        onTestFinished(() => client.dispose());
+        const registered = client.registration('actions', identity.localId);
+        if (!registered) throw new Error('Expected the Tasks handler');
+        const handler = vi.fn(registered as PluginClientActionHandler);
+        const lifetime = clientAccountLifetime(resolveServerProfileScopeIdForIdentifier(rpcHomes.get('server-client-action')!.id));
+        const activation = createClientActionActivation({ ...identity, pluginVersion: manifest.version,
+            accountLifetime: lifetime, accountAvailabilityStartsCold: true, handler, inputSchema: declaration.inputSchema });
+        const pinned = mode === 'pinned Machine mount';
+        const memory = new AbortController();
+        onTestFinished(() => memory.abort());
+        const open = vi.fn<import('./openPluginSurface').PluginSurfaceOpenHandler>(async () => ({ ok: true }));
+        clearPluginAccountAvailabilityProjection();
+        onTestFinished(clearPluginAccountAvailabilityProjection);
+        const owner = readPluginAccountAvailability(lifetime.scope);
+        expect(owner.readCurrentAccountExecution(manifest.id)).toMatchObject({ code: 'account_availability_not_loaded' });
+        const subscribed = Promise.withResolvers<void>();
+        let waits = 0;
+        let releases = 0;
+        const spy = vi.spyOn(availability, 'readPluginAccountAvailability').mockImplementation(scope => {
+            const reader = readPluginAccountAvailability(scope);
+            return { ...reader, subscribe(listener, pluginId) {
+                const unsubscribe = reader.subscribe(listener, pluginId);
+                if (pluginId !== manifest.id) return unsubscribe;
+                waits++;
+                subscribed.resolve();
+                return () => { releases++; unsubscribe(); };
+            } };
+        });
+        onTestFinished(() => spy.mockRestore());
+        await activation.composition.unload();
+        onTestFinished(() => activation.composition.unload());
+        expect((await activation.composition.reconcile([activation.activation])).map(attempt => attempt.result)).toEqual([{ ok: true }]);
+        const dispatch = () => dispatchPluginSurfaceAction({
+            action: identity, input: { originReview: { reviewId: 'cold-review', findingIds: ['selected-finding'] } },
+            signal: memory.signal, invocationSurface: 'ui', clientAction: { openSurface: open },
+            pluginUiProjection: activation.projection, resolveContributedAction: resolveExactClientAction(activation.action),
+            ...(pinned ? { expectedContributorOccurrenceId: activation.action.occurrenceId,
+                contributedAction: { machineId: getPluginMachineExecutionOriginRef(activation.activation.executionOrigin!).machineId,
+                    serverId: lifetime.scope.serverId, accountLifetime: lifetime } } : {}),
+        });
+        const invocation = dispatch();
+        // On the old dispatch, the synchronous custody snapshot lets the Action finish before
+        // Account publication. With the fix, publication releases the one scoped subscription.
+        await Promise.race([invocation, subscribed.promise]);
+        const enabled = mode !== 'unavailable';
+        publishClientActionAvailabilityFixture(lifetime.scope, manifest, enabled);
+        const admission = owner.readCurrentAccountExecution(manifest.id);
+        if (!enabled) {
+            expect(admission.kind).toBe('unavailable');
+            if (admission.kind !== 'unavailable') throw new Error('Expected unavailable Account custody');
+            expect(await invocation).toMatchObject({ ok: false, code: 'unavailable', reason: admission.code });
+            expect(handler).not.toHaveBeenCalled();
+            expect(open).not.toHaveBeenCalled();
+        } else {
+            expect(await invocation).toEqual({ ok: true, result: { status: 'applied' } });
+            if (admission.kind !== 'available') throw new Error('Expected Account custody after publication');
+            const launch = TriageTaskDraftLaunchV1Schema.parse(open.mock.calls[0]?.[0].input);
+            const fixture = await createPluginUiTestkit({
+                identity: { instanceId: 'tasks-from-review', mountNonce: 'launch' },
+                authorPlugin: { id: manifest.id, version: manifest.version },
+                surface: null,
+                surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination',
+                    destination: { pluginId: manifest.id, localId: 'tasks' }, container: 'appPage' } }),
+                // The destination itself mounts below through the UI testkit's native renderer.
+                adapter: { mount: async () => ({
+                    snapshot: async () => ({ revision: 0, nodes: [] }),
+                    update: async () => {}, invoke: async () => {}, dispose: async () => {},
+                }) },
+                handlers: { executeAction: () => { throw new Error('Account transport unavailable'); } },
+            });
+            onTestFinished(() => fixture.dispose());
+            const mountLifetime = { isCurrent: lifetime.isCurrent };
+            function Tasks() {
+                const scopeIdentity = derivePluginUiEphemeralSharedScopeIdentity({
+                    accountLifetime: lifetime, pluginId: manifest.id,
+                    occurrenceId: pinned ? activation.action.occurrenceId : admission.custodyId,
+                    ...(pinned ? { executionOrigin: activation.activation.executionOrigin } : {}),
+                    artifactDigest: `sha256:${'b'.repeat(64)}`,
+                }, pinned ? undefined : { admission, pluginVersion: manifest.version });
+                const shared = usePluginUiEphemeralSharedScopeBinding({ ...scopeIdentity, mountLifetime });
+                const node = renderSurface({ ...fixture.context, launchInput: launch });
+                if (!React.isValidElement(node)) throw new Error('Expected a Tasks surface');
+                return React.cloneElement(node as React.ReactElement<{ ephemeralSharedScope: typeof shared }>, { ephemeralSharedScope: shared });
+            }
+            const mounted = await renderScreen(React.createElement(Tasks));
+            try {
+                expect(mounted.getTextContent()).toContain('Where does it belong?');
+            } finally {
+                await mounted.unmount();
+            }
+            if (!pinned) {
+                expect(await dispatch()).toEqual({ ok: true, result: { status: 'applied' } });
+                expect(open).toHaveBeenCalledTimes(2);
+            }
+        }
+        expect(waits).toBe(pinned ? 0 : 1);
+        expect(releases).toBe(waits);
+    },
+);
 
 it('settles Viewed writes through the native mount without an AppShell Action origin', async () => {
     const { ScmComparisonSchema } = await import('@happier-dev/protocol/scm/comparison');

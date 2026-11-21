@@ -3,6 +3,7 @@ import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machi
 import type { PluginUiArtifactDigestV1 } from '@happier-dev/protocol/plugins/ui';
 import { useLayoutEffect, useState } from 'react';
 
+import type { PluginAccountExecutionAdmission } from '@/sync/domains/plugins/availability/reader';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { PluginUiAccountExecutableOrigin } from '@/sync/domains/plugins/ui/projectionOrigins';
 import { readServerAccountScopeOwnerLifetime, serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
@@ -222,7 +223,7 @@ function createOccurrenceFacade(input: Readonly<{
     return shared;
 }
 
-type SharedScopeInput = Readonly<{
+type SharedScopeIdentity = Readonly<{
     accountLifetime: ActiveServerAccountScopeLifetime | null;
     pluginId: string;
     occurrenceId?: string;
@@ -233,8 +234,20 @@ type SharedScopeInput = Readonly<{
     accountExecutionOrigin?: PluginUiAccountExecutableOrigin | null;
     /** Fences mount currentness and qualifies execution-bound values independently of presentation. */
     executionOrigin?: PluginMachineExecutionOriginV1 | null;
-    isCurrent(): boolean;
 }>;
+
+type SharedScopeInput = SharedScopeIdentity & Readonly<{ isCurrent(): boolean }>;
+
+export function derivePluginUiEphemeralSharedScopeIdentity(
+    identity: Omit<SharedScopeIdentity, 'pluginGenerationId'>,
+    accountCustody?: Readonly<{ admission: PluginAccountExecutionAdmission | undefined; pluginVersion: string }>,
+): SharedScopeIdentity {
+    const admission = accountCustody?.admission;
+    const pluginGenerationId = identity.accountExecutionOrigin?.custodyId
+        ?? (admission?.kind === 'available' && admission.manifest.version === accountCustody?.pluginVersion
+            ? admission.custodyId : undefined);
+    return { ...identity, ...(pluginGenerationId === undefined ? {} : { pluginGenerationId }) };
+}
 
 function resolveSharedValueOwner(input: SharedScopeInput, namespace: 'presentation' | 'execution'): PluginUiEphemeralSharedScope | null {
     if (!input.accountLifetime || !input.isCurrent()) return null;
@@ -353,15 +366,7 @@ export function retireIdlePluginUiEphemeralSharedValuesExcept(
     }
 }
 
-type MountedScopeInput = Readonly<{
-    accountLifetime: ActiveServerAccountScopeLifetime | null;
-    pluginId: string;
-    occurrenceId?: string;
-    pluginGenerationId?: string;
-    /** Admitted presentation bytes, not executable currentness or custody. */
-    artifactDigest?: PluginUiArtifactDigestV1;
-    accountExecutionOrigin?: PluginUiAccountExecutableOrigin | null;
-    executionOrigin?: PluginMachineExecutionOriginV1 | null;
+type MountedScopeInput = SharedScopeIdentity & Readonly<{
     mountLifetime: Readonly<{ isCurrent(): boolean }>;
 }>;
 

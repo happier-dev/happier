@@ -280,7 +280,7 @@ import {
     type ActiveServerAccountScopeLifetime,
 } from '@/sync/domains/scope/activeServerAccountScope';
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import { usePluginUiEphemeralSharedScopeBinding } from './pluginUiEphemeralSharedScope';
+import { derivePluginUiEphemeralSharedScopeIdentity, usePluginUiEphemeralSharedScopeBinding } from './pluginUiEphemeralSharedScope';
 import {
     pluginUiProjectionAdmissionTargetKey,
     readPluginUiProjectionTargetedAdmissionSnapshot,
@@ -981,8 +981,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
         viewId: string;
         mount: SurfaceContext['mount'];
         occurrenceId?: string;
-        /** Existing Account-selected plugin generation, shared by sibling renderers. */
-        pluginGenerationId?: string;
+        sharedScopeIdentity: ReturnType<typeof derivePluginUiEphemeralSharedScopeIdentity>;
         /** Immutable admitted presentation bytes, independent of executable occurrence. */
         artifactDigest: PluginUiArtifactDigestV1;
         platform: string;
@@ -1401,13 +1400,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
     );
     const canonicalPrivateDataClient = props.dataClient ?? undefined;
     const canonicalEphemeralSharedScope = usePluginUiEphemeralSharedScopeBinding({
-        accountLifetime: canonicalAccountLifetime,
-        pluginId: canonicalIdentity.pluginId,
-        occurrenceId: canonicalIdentity.occurrenceId,
-        pluginGenerationId: canonicalIdentity.pluginGenerationId,
-        artifactDigest: canonicalIdentity.artifactDigest,
-        accountExecutionOrigin: canonicalIdentity.accountExecutionOrigin,
-        executionOrigin: canonicalIdentity.executionOrigin,
+        ...canonicalIdentity.sharedScopeIdentity,
         mountLifetime: props.mountLifetime,
     });
     const canonicalPrivateHostBindings = React.useMemo(() => Object.freeze({
@@ -4122,15 +4115,17 @@ function PluginSurfaceHostMount(props: Readonly<(
                     ? reactNativeTechnicalAdmission.missingHostMethods.join(', ') : undefined);
         }
         const renderOccurrenceId = readOptionalString(baseControllerFacts.occurrenceId);
+        const pluginVersion = readOptionalString(contribution?.pluginVersion) ?? '0.0.0';
         const canonicalRenderIdentity = {
             pluginId: mountedPluginId,
-            pluginVersion: readOptionalString(contribution?.pluginVersion) ?? '0.0.0',
+            pluginVersion,
             viewId: mountedContributionId,
             mount: surfaceMount,
             occurrenceId: renderOccurrenceId,
-            pluginGenerationId: declarationAdmission?.kind === 'available'
-                && declarationAdmission.manifest.version === readOptionalString(contribution?.pluginVersion)
-                ? declarationAdmission.custodyId : undefined,
+            sharedScopeIdentity: derivePluginUiEphemeralSharedScopeIdentity({
+                accountLifetime, pluginId: mountedPluginId, occurrenceId: renderOccurrenceId,
+                accountExecutionOrigin, artifactDigest: artifactGraph.digest, executionOrigin,
+            }, accountUnionMount || !executionOrigin ? { admission: declarationAdmission, pluginVersion } : undefined),
             artifactDigest: artifactGraph.digest,
             accountExecutionOrigin,
             platform: props.platform ?? resolvedHostApi.platform,

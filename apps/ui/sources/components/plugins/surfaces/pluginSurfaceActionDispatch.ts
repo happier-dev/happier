@@ -168,7 +168,8 @@ import {
 import { createPluginSurfaceLocalHostHandlers } from './pluginSurfaceLocalHostHandlers';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { executePreparedPluginSurfaceAction, type PluginSurfaceSpokenActionRequest } from './pluginSurfaceActionPreparation';
-import { getPluginUiEphemeralSharedScope } from './pluginUiEphemeralSharedScope';
+import { settlePluginAccountExecution } from '@/sync/domains/plugins/availability/reader';
+import { derivePluginUiEphemeralSharedScopeIdentity, getPluginUiEphemeralSharedScope } from './pluginUiEphemeralSharedScope';
 import { createPluginOpenNewSessionHandler } from './pluginOpenNewSessionHostApi';
 import {
     getMachineContributionRegistryProjectionRevision,
@@ -1670,6 +1671,7 @@ async function executeClientContributedAction(
         ? mergeAbortSignals(input.signal
             ? [input.signal, admittedAccountLifetimeController.signal]
             : [admittedAccountLifetimeController.signal]) : null;
+    let sharedScopeIdentity: ReturnType<typeof derivePluginUiEphemeralSharedScopeIdentity> | undefined;
     const invocationResult = await (input.readObservation
         ? preparedInput.observe : preparedInput.invoke)({
         ...(admittedAccountInvocationLifetime
@@ -1714,6 +1716,34 @@ async function executeClientContributedAction(
                 && !await input.hostAction.context.verifyMachineAdmissionCurrent()) {
                 return Object.freeze({ status: 'unavailable' as const, code: 'plugin_action_generation_retired',
                     message: 'Plugin action generation is no longer current' });
+            }
+            if (initial.action.execution.target === 'client' && initial.registration.occurrenceId) {
+                const accountLifetime = initial.registration.accountLifetime ?? null;
+                const caller = input.callerBinding ?? (input.invocation?.kind === 'clientPluginAction'
+                    ? input.invocation.clientActionBinding : input.resourceCaller);
+                const exactOccurrence = input.expectedContributorOccurrenceId !== undefined
+                    || hostTarget?.kind === 'machine'
+                    || (caller ? caller.pluginVersion === undefined : input.contributedAction !== undefined);
+                const admission = accountLifetime && !exactOccurrence
+                    ? await settlePluginAccountExecution(readPluginAccountAvailability(accountLifetime.scope),
+                        initial.action.pluginId, handlerInput.signal)
+                    : undefined;
+                if (admission === null) return null; // The invocation owner projects cancellation.
+                if (admission?.kind === 'unavailable') {
+                    return { status: 'unavailable' as const, code: admission.code, message: admission.code };
+                }
+                sharedScopeIdentity = derivePluginUiEphemeralSharedScopeIdentity({
+                    accountLifetime,
+                    pluginId: initial.action.pluginId,
+                    occurrenceId: initial.registration.occurrenceId,
+                    accountExecutionOrigin: readPluginUiAccountExecutableOrigin(initial.action),
+                    artifactDigest: initial.registration.artifactDigest,
+                    executionOrigin: initial.registration.executionOrigin,
+                }, { admission, pluginVersion: initial.pluginVersion });
+                if (admission && !sharedScopeIdentity.pluginGenerationId) {
+                    return { status: 'unavailable' as const, code: 'plugin_action_generation_retired',
+                        message: 'Plugin action generation is no longer current' };
+                }
             }
             return null;
         },
@@ -2001,10 +2031,6 @@ async function executeClientContributedAction(
                             return null;
                         }).catch(error => { stop(); throw error; });
                     }
-                    const sharedGeneration = !accountContext && current.registration.accountLifetime
-                        ? readPluginAccountAvailability(current.registration.accountLifetime.scope)
-                            .readCurrentAccountExecution(current.action.pluginId)
-                        : null;
                     const value = accountContext
                         ? (current.handler as PluginAccountActionHandler)(actionInput, accountContext)
                         : (current.handler as PluginClientActionHandler)(actionInput, {
@@ -2020,20 +2046,9 @@ async function executeClientContributedAction(
                         signal,
                         ...(input.hostAction?.context?.sessionTargetsV1 ? { sessionTargetsV1: input.hostAction.context.sessionTargetsV1 } : {}),
                         ui: clientCapability!.ui,
-                        ephemeralSharedScope: current.registration.occurrenceId
-                            ? getPluginUiEphemeralSharedScope({
-                                accountLifetime: current.registration.accountLifetime ?? null,
-                                pluginId: current.action.pluginId,
-                                occurrenceId: current.registration.occurrenceId,
-                                accountExecutionOrigin: readPluginUiAccountExecutableOrigin(current.action),
-                                pluginGenerationId: sharedGeneration?.kind === 'available'
-                                    && sharedGeneration.manifest.version === current.pluginVersion
-                                    ? sharedGeneration.custodyId : undefined,
-                                ...(current.registration.artifactDigest === undefined
-                                    ? {} : { artifactDigest: current.registration.artifactDigest }),
-                                executionOrigin: current.registration.executionOrigin,
-                                isCurrent: () => current.isCurrent() && !signal.aborted,
-                            })
+                        ephemeralSharedScope: sharedScopeIdentity
+                            ? getPluginUiEphemeralSharedScope({ ...sharedScopeIdentity,
+                                isCurrent: () => current.isCurrent() && !signal.aborted })
                             : null,
                         ...(currentUiContext === undefined ? {} : { currentUiContext }),
                         ...(messageAction === undefined ? {} : { messageAction }),

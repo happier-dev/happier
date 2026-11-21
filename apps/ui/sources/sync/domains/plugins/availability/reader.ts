@@ -2453,6 +2453,44 @@ function createBoundReader(input: Readonly<{
 }
 
 /**
+ * A cold invocation joins the Availability publisher for its plugin. Lazy
+ * declarations still load through the same owner as mounted readers.
+ */
+export async function settlePluginAccountExecution(
+    reader: PluginAccountAvailabilityReader,
+    pluginId: string,
+    signal: AbortSignal,
+): Promise<PluginAccountExecutionAdmission | null> {
+    if (signal.aborted) return null;
+    const read = () => reader.readCurrentAccountExecution(pluginId);
+    const isAwaitingCensus = (admission: PluginAccountExecutionAdmission) =>
+        admission.kind === 'unavailable' && admission.code === 'account_availability_not_loaded';
+    let admission = read();
+    if (isAwaitingCensus(admission)) {
+        const published = await new Promise<PluginAccountExecutionAdmission | null>(resolve => {
+            const finish = (result: PluginAccountExecutionAdmission | null) => {
+                unsubscribe();
+                signal.removeEventListener('abort', abort);
+                resolve(result);
+            };
+            const abort = () => finish(null);
+            const observe = () => {
+                const current = read();
+                if (!isAwaitingCensus(current)) finish(current);
+            };
+            const unsubscribe = reader.subscribe(observe, pluginId);
+            signal.addEventListener('abort', abort, { once: true });
+            if (signal.aborted) abort();
+            else observe();
+        });
+        if (!published || signal.aborted) return null;
+        admission = published;
+    }
+    return admission.kind === 'unavailable' && admission.code === 'plugin_ui_declaration_pending'
+        ? reader.ensureCurrentAccountExecution(pluginId) : admission;
+}
+
+/**
  * A fixed Account/realm projection reader for currentness/materialization
  * facts. Byte materialization and renderer containment remain with their
  * concrete producers; this reader has no URL or cache-source selection path.
