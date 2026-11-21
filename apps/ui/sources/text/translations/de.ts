@@ -1968,6 +1968,8 @@ export const de: TranslationStructure = {
         transientFailureTitle: 'Server ausgelastet',
         transientFailure: "Der Server war ausgelastet, daher wurde nichts geändert. Versuche es erneut.",
         trayPosition: ({ index, total }: { index: number; total: number }) => `Anfrage ${index} von ${total}`,
+        earlierFailures: ({ count }: { count: number }) => count === 1 ? '1 frühere Aktion fehlgeschlagen' : `${count} frühere Aktionen fehlgeschlagen`,
+        earlierFailuresShow: 'Anzeigen',
         failureGeneric: 'Die freigegebene Aktion ist fehlgeschlagen',
         failureNoReason: 'Es wurde kein Grund aufgezeichnet.',
         failureNamed: ({ action }: { action: string }) => `Nicht abgeschlossen: ${action}`,

@@ -1764,6 +1764,8 @@ const enApprovals = {
   transientFailureTitle: 'Server busy',
   transientFailure: "The server was busy, so nothing was changed. Try again.",
   trayPosition: ({ index, total }: { index: number; total: number }) => `Request ${index} of ${total}`,
+  earlierFailures: ({ count }: { count: number }) => count === 1 ? '1 earlier action failed' : `${count} earlier actions failed`,
+  earlierFailuresShow: 'Show',
   failureGeneric: 'The approved action failed',
   failureNoReason: 'No reason was recorded.',
   failureNamed: ({ action }: { action: string }) => `Couldn't finish: ${action}`,

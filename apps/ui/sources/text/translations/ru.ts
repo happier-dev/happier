@@ -2188,6 +2188,8 @@ export const ru: TranslationStructure = {
     transientFailureTitle: 'Сервер занят',
     transientFailure: "Сервер был занят, поэтому ничего не изменилось. Повторите попытку.",
     trayPosition: ({ index, total }: { index: number; total: number }) => `Запрос ${index} из ${total}`,
+    earlierFailures: ({ count }: { count: number }) => count % 10 === 1 && count % 100 !== 11 ? `${count} предыдущее действие не выполнено` : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? `${count} предыдущих действия не выполнены` : `${count} предыдущих действий не выполнено`,
+    earlierFailuresShow: 'Показать',
     failureGeneric: 'Одобренное действие не выполнено',
     failureNoReason: 'Причина не записана.',
     failureNamed: ({ action }: { action: string }) => `Не удалось завершить: ${action}`,

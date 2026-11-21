@@ -2172,6 +2172,8 @@ export const zhHans: TranslationStructure = {
     transientFailureTitle: '服务器正忙',
     transientFailure: "服务器正忙，因此未做任何更改。请重试。",
     trayPosition: ({ index, total }: { index: number; total: number }) => `第 ${index} 个请求，共 ${total} 个`,
+    earlierFailures: ({ count }: { count: number }) => `之前有 ${count} 个操作失败`,
+    earlierFailuresShow: '显示',
     failureGeneric: '已批准的操作失败了',
     failureNoReason: '未记录原因。',
     failureNamed: ({ action }: { action: string }) => `未能完成：${action}`,

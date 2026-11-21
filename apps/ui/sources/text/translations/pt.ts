@@ -2395,6 +2395,8 @@ export const pt: TranslationStructure = {
     transientFailureTitle: 'Servidor ocupado',
     transientFailure: "O servidor estava ocupado, então nada foi alterado. Tente novamente.",
     trayPosition: ({ index, total }: { index: number; total: number }) => `Pedido ${index} de ${total}`,
+    earlierFailures: ({ count }: { count: number }) => count === 1 ? '1 ação anterior falhou' : `${count} ações anteriores falharam`,
+    earlierFailuresShow: 'Mostrar',
     failureGeneric: 'A ação aprovada falhou',
     failureNoReason: 'Nenhum motivo foi registrado.',
     failureNamed: ({ action }: { action: string }) => `Não foi possível concluir: ${action}`,

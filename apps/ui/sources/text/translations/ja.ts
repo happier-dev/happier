@@ -2341,6 +2341,8 @@ export const ja: TranslationStructure = {
     transientFailureTitle: 'サーバーがビジー状態です',
     transientFailure: "サーバーがビジー状態だったため、何も変更されていません。もう一度お試しください。",
     trayPosition: ({ index, total }: { index: number; total: number }) => `リクエスト ${index}/${total}`,
+    earlierFailures: ({ count }: { count: number }) => `以前のアクション ${count} 件が失敗しました`,
+    earlierFailuresShow: '表示',
     failureGeneric: '承認した操作に失敗しました',
     failureNoReason: '理由は記録されていません。',
     failureNamed: ({ action }: { action: string }) => `完了できませんでした：${action}`,

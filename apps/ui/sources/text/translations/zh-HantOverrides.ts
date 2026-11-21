@@ -1641,6 +1641,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     transientFailureTitle: '伺服器忙碌中',
     transientFailure: "伺服器忙碌中，因此未做任何變更。請重試。",
     trayPosition: ({ index, total }: { index: number; total: number }) => `第 ${index} 個請求，共 ${total} 個`,
+    earlierFailures: ({ count }: { count: number }) => `之前有 ${count} 個操作失敗`,
+    earlierFailuresShow: '顯示',
     failureGeneric: '已核准的操作失敗了',
     failureNoReason: '未記錄原因。',
     failureNamed: ({ action }: { action: string }) => `未能完成：${action}`,

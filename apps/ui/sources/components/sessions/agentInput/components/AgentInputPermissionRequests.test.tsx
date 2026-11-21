@@ -51,12 +51,17 @@ vi.mock('@/components/tools/shell/permissions/PermissionPromptCard', () => ({
     },
 }));
 
-vi.mock('@/components/tools/shell/approvals/ApprovalPromptCard', () => ({
-    ApprovalPromptCard: (props: any) => {
-        capturedApprovalPromptCardProps.push(props);
-        return React.createElement('ApprovalPromptCard', props);
-    },
-}));
+vi.mock('@/components/tools/shell/approvals/ApprovalPromptCard', async () => {
+    const { ApprovalPromptRoomContext } = await import('@/components/tools/shell/approvals/ApprovalPromptChrome');
+    return {
+        ApprovalPromptCard: (props: any) => {
+            // The room the tray gives this card: bounded to it, a card keeps its decision in view.
+            const room = React.useContext(ApprovalPromptRoomContext);
+            capturedApprovalPromptCardProps.push({ ...props, roomBoundPx: room?.boundFor(String(props.artifact.id)) ?? null });
+            return React.createElement('ApprovalPromptCard', props);
+        },
+    };
+});
 
 vi.mock('@/components/tools/shell/userActions/UserActionPromptCard', () => ({
     UserActionPromptCard: (props: any) => {
@@ -334,5 +339,93 @@ describe('AgentInputPermissionRequests', () => {
         expect(capturedPermissionPromptCardProps).toHaveLength(0);
         expect(capturedApprovalPromptCardProps).toHaveLength(1);
         expect(capturedUserActionPromptCardProps).toHaveLength(0);
+    });
+
+    describe('a pending approval below earlier failures', () => {
+        const approval = (id: string, status: 'open' | 'executed') => ({
+            artifact: {
+                id,
+                header: { v: 1, kind: 'approval_request.v1', title: id, approvalStatus: status, sessionId: 's1' },
+            },
+            approval: {
+                v: 1,
+                status,
+                createdAtMs: 1,
+                updatedAtMs: 1,
+                createdBy: { surface: 'agent', sessionId: 's1' },
+                requestedSurface: 'agent',
+                actionId: 'deployments.environments.create',
+                actionArgs: {},
+                summary: id,
+            },
+        }) as unknown as NonNullable<React.ComponentProps<typeof AgentInputPermissionRequestsComponent>['approvalRequests']>[number];
+        // A 1280 × 577 window leaves the tray this little room above the input.
+        const SHORT_TRAY_PX = 160;
+        const props = (
+            approvals: ReturnType<typeof approval>[],
+            presentation: 'shared' | 'oneAtATime' = 'shared',
+        ) => ({
+            sessionId: 's1',
+            permissionRequests: [],
+            approvalRequests: approvals,
+            permissionLocationsById: new Map(),
+            metadata: null,
+            canApprovePermissions: true,
+            maxHeightPx: SHORT_TRAY_PX,
+            maxHeightCeilingPx: SHORT_TRAY_PX,
+            presentation,
+            onContentSizeChange: () => {},
+            onLayout: () => {},
+            onScroll: () => {},
+            fadeVisibility: { top: false, bottom: false },
+        } satisfies React.ComponentProps<typeof AgentInputPermissionRequestsComponent>);
+        const FOLD_TEST_ID = 'agentInput.permissionRequests.earlierFailures';
+        // The fold row's expanded state as assistive technology reads it.
+        const foldExpanded = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen
+            .findAll((node) => node.props?.testID === FOLD_TEST_ID && node.props.accessibilityState !== undefined)
+            .at(0)?.props.accessibilityState?.expanded;
+
+        it('gives the pending approval the whole tray and folds the failures into one row it reaches after it', async () => {
+            capturedApprovalPromptCardProps.length = 0;
+            const screen = await renderScreen(React.createElement(AgentInputPermissionRequests, props([
+                approval('failed-1', 'executed'), approval('failed-2', 'executed'), approval('pending', 'open'),
+            ])));
+            const shownIds = () => screen.findAll((node) => String(node.type) === 'ApprovalPromptCard').map((node) => node.props.artifact.id);
+
+            // Only the pending request takes the tray, with all of its room, so Approve is in view without dismissing anything.
+            expect(shownIds()).toEqual(['pending']);
+            const pendingBound = capturedApprovalPromptCardProps.filter((card) => card.artifact && (card.artifact as { id: string }).id === 'pending').at(-1)?.roomBoundPx;
+            expect(pendingBound).toBeGreaterThanOrEqual(SHORT_TRAY_PX - 8);
+
+            // One quiet row stands for both failures; keyboard and screen readers reach the pending approval first.
+            expect(screen.findByTestId(FOLD_TEST_ID)).toBeTruthy();
+            expect(foldExpanded(screen)).toBe(false);
+            const order = screen.findAll((node) => String(node.type) === 'ApprovalPromptCard' || node.props?.testID === FOLD_TEST_ID)
+                .map((node) => String(node.type) === 'ApprovalPromptCard' ? node.props.artifact.id : 'fold');
+            expect(order[0]).toBe('pending');
+            expect(order).toContain('fold');
+
+            // Show lists each failure once, and the pending approval stays first.
+            await screen.pressByTestIdAsync(FOLD_TEST_ID);
+            expect(shownIds()).toEqual(['pending', 'failed-1', 'failed-2']);
+            expect(foldExpanded(screen)).toBe(true);
+        });
+
+        it('pages only the pending approvals on a phone', async () => {
+            const screen = await renderScreen(React.createElement(AgentInputPermissionRequests, props([
+                approval('failed-1', 'executed'), approval('pending', 'open'),
+            ], 'oneAtATime')));
+            expect(screen.findAll((node) => String(node.type) === 'ApprovalPromptCard').map((node) => node.props.artifact.id)).toEqual(['pending']);
+            expect(screen.findByTestId('agentInput.permissionRequests.pager')).toBeNull();
+            expect(screen.findByTestId(FOLD_TEST_ID)).toBeTruthy();
+        });
+
+        it('keeps failures as cards when nothing is pending', async () => {
+            const screen = await renderScreen(React.createElement(AgentInputPermissionRequests, props([
+                approval('failed-1', 'executed'), approval('failed-2', 'executed'),
+            ])));
+            expect(screen.findAll((node) => String(node.type) === 'ApprovalPromptCard').map((node) => node.props.artifact.id)).toEqual(['failed-1', 'failed-2']);
+            expect(screen.findByTestId(FOLD_TEST_ID)).toBeNull();
+        });
     });
 });

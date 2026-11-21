@@ -5,7 +5,9 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { PermissionPromptCard } from '@/components/tools/shell/permissions/PermissionPromptCard';
 import { ApprovalPromptCard } from '@/components/tools/shell/approvals/ApprovalPromptCard';
 import { ApprovalPromptRoomContext, resolveApprovalPromptTrayMaxHeight, shareApprovalPromptRoom, type ApprovalPromptCardHeights, type ApprovalPromptRoom } from '@/components/tools/shell/approvals/ApprovalPromptChrome';
@@ -20,6 +22,13 @@ import { t } from '@/text';
 type AttentionRequest =
     | Readonly<{ kind: 'permission'; request: PendingPermissionRequest }>
     | Readonly<{ kind: 'approval'; request: OpenApprovalAttentionArtifactForSession }>;
+
+const NO_ATTENTION_REQUESTS: readonly AttentionRequest[] = Object.freeze([]);
+
+/** A request still waiting for the person's decision; the rest are settled failures kept until dismissed. */
+function isPendingAttentionRequest(request: AttentionRequest): boolean {
+    return request.kind === 'permission' || request.request.approval.status === 'open';
+}
 
 function getAttentionRequestKey(request: AttentionRequest): string {
     switch (request.kind) {
@@ -76,6 +85,31 @@ const stylesheet = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.border.default,
         opacity: 1,
     },
+    // Folded failures sit above the pending requests on screen but after them in reading and focus order.
+    pendingFirst: {
+        flexDirection: 'column-reverse',
+    },
+    earlierFailures: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s8,
+        minHeight: 32,
+        paddingHorizontal: theme.space.s16,
+        paddingVertical: theme.space.s4,
+        borderBottomWidth: TRAY_DIVIDER_PX,
+        borderBottomColor: theme.colors.border.default,
+    },
+    earlierFailuresPressed: {
+        opacity: 0.6,
+    },
+    earlierFailuresLabel: {
+        flex: 1,
+        minWidth: 0,
+        color: theme.colors.text.secondary,
+    },
+    earlierFailuresToggle: {
+        color: theme.colors.text.primary,
+    },
 }));
 
 export const AgentInputPermissionRequests = React.memo(function AgentInputPermissionRequests(props: Readonly<{
@@ -110,19 +144,42 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
         ...permissionRequests.map((request) => ({ kind: 'permission' as const, request })),
         ...approvalRequests.map((request) => ({ kind: 'approval' as const, request })),
     ], [approvalRequests, permissionRequests]);
+    // A pending request is the one thing the person must act on. While one waits, the failures settled before it
+    // fold into one quiet row so its decision has the tray; they stay in the transcript where they happened, and
+    // the tray lists them only when the person asks. With nothing pending, the failures are the tray, as before.
+    const { pendingRequests, foldedFailures } = React.useMemo(() => {
+        const pending = attentionRequests.filter(isPendingAttentionRequest);
+        if (pending.length === 0 || pending.length === attentionRequests.length) {
+            return { pendingRequests: attentionRequests, foldedFailures: NO_ATTENTION_REQUESTS };
+        }
+        return { pendingRequests: pending, foldedFailures: attentionRequests.filter((item) => !isPendingAttentionRequest(item)) };
+    }, [attentionRequests]);
+    // Shown for the requests now pending; a new request folds them again.
+    const pendingKey = pendingRequests.map(getAttentionRequestKey).join('|');
+    const [failuresShownFor, setFailuresShownFor] = React.useState<string | null>(null);
+    const failuresShown = foldedFailures.length > 0 && failuresShownFor === pendingKey;
+    const shownFailures = failuresShown ? foldedFailures : NO_ATTENTION_REQUESTS;
     // The request on screen when one shows at a time. Deciding it shows the one that takes its place.
     const [current, setCurrent] = React.useState<Readonly<{ key: string; index: number }> | null>(null);
-    const oneAtATime = props.presentation === 'oneAtATime' && attentionRequests.length > 1;
+    const oneAtATime = props.presentation === 'oneAtATime' && pendingRequests.length > 1;
     const currentIndex = (() => {
         if (!oneAtATime || !current) return 0;
-        const held = attentionRequests.findIndex((item) => getAttentionRequestKey(item) === current.key);
-        return held >= 0 ? held : Math.min(current.index, attentionRequests.length - 1);
+        const held = pendingRequests.findIndex((item) => getAttentionRequestKey(item) === current.key);
+        return held >= 0 ? held : Math.min(current.index, pendingRequests.length - 1);
     })();
-    const shownRequests = oneAtATime ? attentionRequests.slice(currentIndex, currentIndex + 1) : attentionRequests;
+    const shownPending = oneAtATime ? pendingRequests.slice(currentIndex, currentIndex + 1) : pendingRequests;
+    const shownRequests = shownFailures.length > 0 ? [...shownPending, ...shownFailures] : shownPending;
     const showRequestAt = React.useCallback((index: number) => {
-        const item = attentionRequests[index];
+        const item = pendingRequests[index];
         if (item) setCurrent({ key: getAttentionRequestKey(item), index });
-    }, [attentionRequests]);
+    }, [pendingRequests]);
+    // The folded row takes its own height from the room the composer leaves the tray.
+    const [earlierFailuresRowPx, setEarlierFailuresRowPx] = React.useState(0);
+    const foldRowPx = foldedFailures.length > 0 ? earlierFailuresRowPx : 0;
+    const onEarlierFailuresLayout = React.useCallback((event: LayoutChangeEvent) => {
+        const height = Math.ceil(event.nativeEvent.layout.height);
+        setEarlierFailuresRowPx((previous) => previous === height ? previous : height);
+    }, []);
     // The requests share the tray: each card reports the height it wants, and the room is divided so every
     // card's decision is in view at once (the shortest keep their height; the rest split what is left).
     const [cardHeights, setCardHeights] = React.useState<ReadonlyMap<string, ApprovalPromptCardHeights>>(() => new Map());
@@ -133,10 +190,12 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
             decisionsPx = TRAY_BOTTOM_INSET_PX + (shownRequests.length - 1) * TRAY_DIVIDER_PX;
             for (const [, card] of cardHeights) decisionsPx += card.minimum;
         }
+        const ceilingPx = props.maxHeightCeilingPx ?? null;
         return resolveApprovalPromptTrayMaxHeight({
-            preferredPx: props.maxHeightPx, decisionsPx, ceilingPx: props.maxHeightCeilingPx ?? null,
+            preferredPx: Math.max(0, props.maxHeightPx - foldRowPx), decisionsPx,
+            ceilingPx: ceilingPx === null ? null : Math.max(0, ceilingPx - foldRowPx),
         });
-    }, [cardHeights, props.maxHeightCeilingPx, props.maxHeightPx, shownRequests.length]);
+    }, [cardHeights, foldRowPx, props.maxHeightCeilingPx, props.maxHeightPx, shownRequests.length]);
     const scrollStyle = React.useMemo(() => ({ maxHeight: trayMaxHeightPx }), [trayMaxHeightPx]);
     const reportCardHeights = React.useCallback((cardId: string, heights: ApprovalPromptCardHeights | null) => setCardHeights((current) => {
         const previous = current.get(cardId);
@@ -159,9 +218,45 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
         return null;
     }
 
+    const renderRequest = (item: AttentionRequest, dividerAbove: boolean) => (
+        <React.Fragment key={getAttentionRequestKey(item)}>
+            {dividerAbove ? (
+                <View
+                    testID={`agentInput.permissionRequests.divider:${getAttentionRequestKey(item)}`}
+                    style={styles.divider}
+                />
+            ) : null}
+            {item.kind === 'permission' ? (
+                <PermissionPromptCard
+                    chrome="inline"
+                    request={item.request}
+                    location={props.permissionLocationsById.get(item.request.id) ?? null}
+                    sessionId={props.sessionId}
+                    metadata={props.metadata}
+                    canApprovePermissions={props.canApprovePermissions}
+                    disabledReason={props.disabledReason}
+                />
+            ) : (
+                <ApprovalPromptCard
+                    chrome="inline"
+                    artifact={item.request.artifact}
+                    approval={item.request.approval}
+                    location={props.approvalLocationsByArtifactId?.get(item.request.artifact.id) ?? null}
+                    sessionId={props.sessionId}
+                    metadata={props.metadata}
+                    canApprovePermissions={props.canApprovePermissions}
+                    disabledReason={props.disabledReason}
+                />
+            )}
+        </React.Fragment>
+    );
+    const earlierFailuresLabel = t('approvals.earlierFailures', { count: foldedFailures.length });
+    const earlierFailuresToggle = failuresShown ? t('common.hide') : t('approvals.earlierFailuresShow');
+
     return (
         <View style={styles.permissionRequestsContainer}>
             <View testID="agentInput.permissionRequests.chrome" style={styles.chrome}>
+                <View style={foldedFailures.length > 0 ? styles.pendingFirst : null}>
                 <View style={{ position: 'relative' }}>
                     <ScrollView
                         testID="agentInput.permissionRequests.scroll"
@@ -176,39 +271,15 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
                     >
                         {/* The requests share the tray: each card's facts scroll and its decision stays in view. */}
                         <ApprovalPromptRoomContext.Provider value={room}>
-                        <View style={{ paddingTop: 0 }}>
-                            {shownRequests.map((item, index) => (
-                                <React.Fragment key={getAttentionRequestKey(item)}>
-                                    {index > 0 ? (
-                                        <View
-                                            testID={`agentInput.permissionRequests.divider:${getAttentionRequestKey(item)}`}
-                                            style={styles.divider}
-                                        />
-                                    ) : null}
-                                    {item.kind === 'permission' ? (
-                                        <PermissionPromptCard
-                                            chrome="inline"
-                                            request={item.request}
-                                            location={props.permissionLocationsById.get(item.request.id) ?? null}
-                                            sessionId={props.sessionId}
-                                            metadata={props.metadata}
-                                            canApprovePermissions={props.canApprovePermissions}
-                                            disabledReason={props.disabledReason}
-                                        />
-                                    ) : (
-                                        <ApprovalPromptCard
-                                            chrome="inline"
-                                            artifact={item.request.artifact}
-                                            approval={item.request.approval}
-                                            location={props.approvalLocationsByArtifactId?.get(item.request.artifact.id) ?? null}
-                                            sessionId={props.sessionId}
-                                            metadata={props.metadata}
-                                            canApprovePermissions={props.canApprovePermissions}
-                                            disabledReason={props.disabledReason}
-                                        />
-                                    )}
-                                </React.Fragment>
-                            ))}
+                        <View style={shownFailures.length > 0 ? styles.pendingFirst : null}>
+                            <View>{shownPending.map((item, index) => renderRequest(item, index > 0))}</View>
+                            {/* Shown failures read after the pending requests and sit above them, each listed once. */}
+                            {shownFailures.length > 0 ? (
+                                <View>
+                                    {shownFailures.map((item, index) => renderRequest(item, index > 0))}
+                                    <View style={styles.divider} />
+                                </View>
+                            ) : null}
                         </View>
                         </ApprovalPromptRoomContext.Provider>
                     </ScrollView>
@@ -228,11 +299,28 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
                         }}
                     />
                 </View>
+                {foldedFailures.length > 0 ? (
+                    <View onLayout={onEarlierFailuresLayout}>
+                        <HappierPressable
+                            testID="agentInput.permissionRequests.earlierFailures"
+                            accessibilityRole="button"
+                            accessibilityLabel={`${earlierFailuresLabel}, ${earlierFailuresToggle}`}
+                            expanded={failuresShown}
+                            onPress={() => setFailuresShownFor(failuresShown ? null : pendingKey)}
+                            style={({ pressed }: { pressed: boolean }) => [styles.earlierFailures, pressed ? styles.earlierFailuresPressed : null]}
+                        >
+                            <Icon name="warning-circle" size={14} color={theme.colors.text.secondary} />
+                            <Text variant="meta" style={styles.earlierFailuresLabel} numberOfLines={1}>{earlierFailuresLabel}</Text>
+                            <Text variant="meta" emphasis="medium" style={styles.earlierFailuresToggle}>{earlierFailuresToggle}</Text>
+                        </HappierPressable>
+                    </View>
+                ) : null}
+                </View>
                 {/* The pager sits at the tray foot, which stays put while cards of different heights page above it. */}
                 {oneAtATime ? (
                     <View testID="agentInput.permissionRequests.pager" style={styles.pager}>
                         <Text variant="meta" emphasis="medium" style={styles.pagerPosition} numberOfLines={1}>
-                            {t('approvals.trayPosition', { index: currentIndex + 1, total: attentionRequests.length })}
+                            {t('approvals.trayPosition', { index: currentIndex + 1, total: pendingRequests.length })}
                         </Text>
                         <IconButton
                             testID="agentInput.permissionRequests.previous"
@@ -251,7 +339,7 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
                             variant="plain"
                             size={24}
                             interactiveTargetGapPx={4}
-                            disabled={currentIndex === attentionRequests.length - 1}
+                            disabled={currentIndex === pendingRequests.length - 1}
                             onPress={() => showRequestAt(currentIndex + 1)}
                         />
                     </View>

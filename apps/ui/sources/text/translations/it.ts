@@ -2173,6 +2173,8 @@ export const it: TranslationStructure = {
     transientFailureTitle: 'Server occupato',
     transientFailure: "Il server era occupato, quindi non è stato modificato nulla. Riprova.",
     trayPosition: ({ index, total }: { index: number; total: number }) => `Richiesta ${index} di ${total}`,
+    earlierFailures: ({ count }: { count: number }) => count === 1 ? '1 azione precedente non riuscita' : `${count} azioni precedenti non riuscite`,
+    earlierFailuresShow: 'Mostra',
     failureGeneric: "L'azione approvata non è riuscita",
     failureNoReason: 'Non è stato registrato alcun motivo.',
     failureNamed: ({ action }: { action: string }) => `Impossibile completare: ${action}`,

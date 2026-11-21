@@ -2194,6 +2194,8 @@ export const ca: TranslationStructure = {
         transientFailureTitle: 'Servidor ocupat',
         transientFailure: "El servidor estava ocupat, així que no s'ha canviat res. Torna-ho a provar.",
         trayPosition: ({ index, total }: { index: number; total: number }) => `Sol·licitud ${index} de ${total}`,
+        earlierFailures: ({ count }: { count: number }) => count === 1 ? '1 acció anterior ha fallat' : `${count} accions anteriors han fallat`,
+        earlierFailuresShow: 'Mostra',
         failureGeneric: "L'acció aprovada ha fallat",
         failureNoReason: "No s'ha registrat cap motiu.",
         failureNamed: ({ action }: { action: string }) => `No s'ha pogut completar: ${action}`,

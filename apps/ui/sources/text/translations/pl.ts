@@ -2187,6 +2187,8 @@ export const pl: TranslationStructure = {
     transientFailureTitle: 'Serwer zajęty',
     transientFailure: "Serwer był zajęty, więc nic nie zostało zmienione. Spróbuj ponownie.",
     trayPosition: ({ index, total }: { index: number; total: number }) => `Prośba ${index} z ${total}`,
+    earlierFailures: ({ count }: { count: number }) => count === 1 ? '1 wcześniejsza akcja nie powiodła się' : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? `${count} wcześniejsze akcje nie powiodły się` : `${count} wcześniejszych akcji nie powiodło się`,
+    earlierFailuresShow: 'Pokaż',
     failureGeneric: 'Zatwierdzona akcja nie powiodła się',
     failureNoReason: 'Nie zapisano przyczyny.',
     failureNamed: ({ action }: { action: string }) => `Nie udało się dokończyć: ${action}`,
