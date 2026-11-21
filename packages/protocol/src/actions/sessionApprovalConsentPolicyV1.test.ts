@@ -30,6 +30,15 @@ describe('readSessionApprovalConsentActionIdV1', () => {
     ).toBeNull();
   });
 
+  it('names a contributed target-Action request by its qualified id', () => {
+    expect(
+      readSessionApprovalConsentActionIdV1({
+        kind: 'plugin_target_action',
+        qualifiedActionId: 'acme.publisher/actions/releases/publish',
+      }),
+    ).toBe('acme.publisher/actions/releases/publish');
+  });
+
   it('offers no Session row where the policy owner decides elsewhere', () => {
     expect(
       readSessionApprovalConsentActionIdV1({

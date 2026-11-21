@@ -34,17 +34,24 @@ export function isSessionApprovalConsentEligibleV1(actionId: string): boolean {
 
 /**
  * The policy id a stored approval request's Session row would key on (`profileActionId ?? actionId`):
- * a contributed Action by its qualified id, never the invoke carrier. Null when no Session row can
+ * a contributed Action (invoked or a target-Action request) by its qualified id, never the invoke carrier. Null when no Session row can
  * change this Action's Ask, so the approval sheet offers none.
  */
 export function readSessionApprovalConsentActionIdV1(
-  request: Readonly<{ actionId: string; actionArgs?: unknown }>,
+  request:
+    | Readonly<{ actionId: string; actionArgs?: unknown }>
+    | Readonly<{ kind: 'plugin_target_action'; qualifiedActionId: string }>,
 ): string | null {
-  let actionId: string = request.actionId;
-  if (actionId === ACTION_INVOKE_ACTION_ID_V1) {
+  let actionId: string;
+  if ('qualifiedActionId' in request) {
+    // A contributed target-Action request already names its Action by qualified id.
+    actionId = request.qualifiedActionId;
+  } else if (request.actionId === ACTION_INVOKE_ACTION_ID_V1) {
     const invocation = ActionInvokeInputSchema.safeParse(request.actionArgs);
     if (!invocation.success) return null;
     actionId = formatQualifiedPluginActionId(invocation.data.action);
+  } else {
+    actionId = request.actionId;
   }
   return isSessionApprovalConsentEligibleV1(actionId) ? actionId : null;
 }
