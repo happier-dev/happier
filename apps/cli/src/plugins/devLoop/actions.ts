@@ -1,6 +1,6 @@
 import { PluginScaffoldUiModeSchema, PluginScaffoldTemplateSchema, PluginPublishInspectActionInputSchema,
   PluginPublishPrepareActionInputSchema, PluginPublishActionInputSchema, PluginPublishStatusActionInputSchema,
-  PluginLogsReadActionInputSchema } from '@happier-dev/protocol/actions/actionSpecs';
+  PluginGitPreviewActionInputSchema, PluginLogsReadActionInputSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionExecutorContext, PluginDevLoopActionIdV1 } from '@happier-dev/protocol';
 import { PluginGitInstallSourceSchema } from '@happier-dev/protocol/plugins/source-spec';
 
@@ -238,6 +238,11 @@ export async function executePluginDevLoopAction(
   services: PluginDevLoopActionServices = {},
 ): Promise<unknown> {
   const input = readInput(params.input);
+
+  if (params.actionId === 'plugins.git.preview') {
+    const { previewGitPluginSource } = await import('@/plugins/discovery/sources/git');
+    return previewGitPluginSource(PluginGitPreviewActionInputSchema.parse(input).source, params.context?.signal);
+  }
 
   if (params.actionId === 'plugins.dev.publication.inspect' || params.actionId === 'plugins.dev.publication.prepare'
     || params.actionId === 'plugins.dev.publish' || params.actionId === 'plugins.dev.publication.status') {

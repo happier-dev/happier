@@ -856,6 +856,7 @@ describe('Action Spec Registry', () => {
     const expectations = [
       ['plugins.scaffold', 'danger'],
       ['plugins.install', 'danger'],
+      ['plugins.git.preview', 'safe'],
       ['plugins.uninstall', 'danger'],
       ['plugins.enable', 'danger'],
       ['plugins.disable', 'danger'],

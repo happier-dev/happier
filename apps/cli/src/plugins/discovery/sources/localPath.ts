@@ -26,6 +26,7 @@ export type ResolvedLocalPathPluginSourceSuccess = Readonly<{
   sourceSpec: PluginSourceSpecV1;
   vendorContent?: Readonly<{
     generatedFiles: ReadonlyMap<string, string>;
+    contentCounts: VendorContentProjection['contentCounts'];
     notImported: VendorContentProjection['notImported'];
   }>;
 }>;
@@ -145,7 +146,7 @@ export async function resolveLocalPathPluginSource(params: Readonly<{
         manifestRead = await readPluginManifest({ ...readOptions, generatedManifestContents });
         const generatedFiles = new Map(projected.files);
         generatedFiles.set(PLUGIN_MANIFEST_RELATIVE_PATH.split('\\').join('/'), generatedManifestContents);
-        vendorContent = { generatedFiles, notImported: projected.notImported };
+        vendorContent = { generatedFiles, contentCounts: projected.contentCounts, notImported: projected.notImported };
       }
     } catch (error) {
       return { ok: false, diagnostics: [{ code: 'plugin_manifest_invalid', message: error instanceof Error ? error.message : 'Invalid vendor plugin source' }] };

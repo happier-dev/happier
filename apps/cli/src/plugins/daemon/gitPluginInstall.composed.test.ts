@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import { createRegistryHostV1 } from '@happier-dev/protocol/registries';
+import { createActionExecutor } from '@happier-dev/protocol/actions';
 import { InstalledPluginCapabilityEntryV1Schema } from '@happier-dev/protocol/capabilities/pluginMarketplace';
 
 import { runScmCommand } from '@/scm/runtime';
@@ -13,6 +14,7 @@ import { createPluginRegistryStateStore } from '@/plugins/store/registry/current
 import { createMarketplaceIndexService } from '@/plugins/store/marketplace/service';
 import { createRegistryUpdateCheck } from '@/registries/updates/registryUpdateTracker';
 import { createPluginRegistryUpdateTracker } from '@/registries/updates/trackers/pluginUpdateTracker';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createDaemonPluginChangeService } from './changeService';
 import { createDaemonPathPluginChangePreparer } from './pathChangePreparer';
 import { resolveInstalledPluginUpdate } from './resolveInstalledUpdate';
@@ -82,6 +84,27 @@ describe('Git vendor plugin installation', () => {
       vi.stubEnv('GIT_CONFIG_VALUE_0', locator);
       vi.stubEnv('GIT_CONFIG_KEY_1', 'protocol.file.allow');
       vi.stubEnv('GIT_CONFIG_VALUE_1', 'always');
+      if (mode === 'direct') {
+        const executor = createActionExecutor({
+          ...createUnavailableActionTransportDeps(),
+          pluginsDevLoopAction: executePluginDevLoopAction,
+        });
+        await expect(executor.execute('plugins.git.preview', {
+          machineId: 'home', source: { locator, subdirectory: 'plugins/kit' },
+        }, { surface: 'ui' })).resolves.toMatchObject({ ok: true, result: {
+          ok: true,
+          source: { locator, subdirectory: 'plugins/kit' },
+          resolvedCommit: released,
+          release: { kind: 'stableRelease', tag: 'v1.2.0' },
+          summary: { kind: 'plugin', version: '1.2.0', vendorPlugin: {
+            contentCounts: { skills: 0, commands: 1, agents: 0, mcpServers: 0 },
+            notImported: { hooks: 1 },
+          } },
+        } });
+        await expect(readInstalledPluginCatalog({ happyHomeDir })).resolves.toEqual([]);
+        expect(releaseFetch).toHaveBeenCalledTimes(1);
+        releaseFetch.mockClear();
+      }
       const action = await executePluginDevLoopAction({ actionId: 'plugins.install',
         input: { machineId: 'home', source: mode === 'catalog' ? { kind: 'gitCatalog', sourceId: 'vendor', itemId: 'kit' }
           : { kind: 'git', locator, subdirectory: 'plugins/kit' } } }, {

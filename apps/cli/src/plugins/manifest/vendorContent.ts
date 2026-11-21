@@ -38,6 +38,7 @@ const layouts = [
 export type VendorContentProjection = Readonly<{
   manifest: PluginManifestV2;
   files: ReadonlyMap<string, string>;
+  contentCounts: Readonly<{ skills: number; commands: number; agents: number; mcpServers: number }>;
   notImported: PluginContentNotImportedV1;
 }>;
 
@@ -193,6 +194,7 @@ export async function projectVendorPluginContent(root: string, identity: string)
     if (!markdown || !appendSkill(localId(basename(path)), path)) other.add('skills');
   }
 
+  const contentCounts = { skills: skills.length, commands: 0, agents: 0, mcpServers: 0 };
   for (const family of ['commands', 'agents'] as const) {
     const filesByPath = new Set(await markdownFiles(root, family));
     const declarations = Array.isArray(metadata[family]) ? metadata[family] : metadata[family] === undefined ? [] : [metadata[family]];
@@ -212,6 +214,7 @@ export async function projectVendorPluginContent(root: string, identity: string)
       const id = `${family === 'commands' ? 'command' : 'agent'}-${name}`;
       const destination = `.happier-plugin/imported/${id}`;
       if (!markdown || !name || !appendSkill(id, destination)) { notImported[family]++; continue; }
+      contentCounts[family]++;
       const description = readSkillFrontmatterV1(markdown).description || `${family === 'commands' ? 'Command' : 'Agent'}: ${basename(path, '.md')}`;
       files.set(`${destination}/SKILL.md`, `---\nname: ${id}\ndescription: ${JSON.stringify(description)}\n---\n${markdown.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/u, '')}`);
     }
@@ -253,6 +256,7 @@ export async function projectVendorPluginContent(root: string, identity: string)
     notImported.mcpServers++;
   }
   const workflows = admitHappierExtension(fields(metadata.extensions), servers, other);
+  contentCounts.mcpServers = servers.length;
   const hooks = metadata.hooks ?? readJson(await text(root, 'hooks/hooks.json'))?.hooks;
   notImported.hooks = Array.isArray(hooks) ? hooks.length : Object.keys(fields(hooks) ?? {}).length || (hooks ? 1 : 0);
   for (const key of ['rules', 'lspServers', 'app', 'outputStyles'] as const) if (metadata[key] !== undefined) other.add(key);
@@ -266,6 +270,7 @@ export async function projectVendorPluginContent(root: string, identity: string)
       ...(typeof metadata.description === 'string' ? { description: metadata.description } : {}),
       contributes: { skills, systemTools, mcp: { servers }, ...(workflows.length ? { workflows } : {}) } },
     files,
+    contentCounts,
     notImported: { ...notImported, ...(other.size ? { other: [...other] } : {}) },
   };
 }

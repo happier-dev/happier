@@ -34,6 +34,7 @@ export const PLUGIN_DEVELOPMENT_INPUT_FIELDS = {
     { path: 'dryRun', title: 'Preview only', widget: 'boolean' },
     { path: 'force', title: 'Replace existing install', widget: 'boolean' },
   ],
+  'plugins.git.preview': [{ ...machine, required: true }, { path: 'source', title: 'Git repository source', widget: 'json', required: true }],
   'plugins.uninstall': [plugin, machine, dispositions, { path: 'deleteData', title: 'Delete plugin data', widget: 'boolean' }],
   'plugins.enable': [plugin, machine, scope],
   'plugins.disable': [plugin, machine, scope, dispositions],

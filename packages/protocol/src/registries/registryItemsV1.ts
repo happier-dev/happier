@@ -14,6 +14,7 @@ import { DeploymentTemplateV1Schema } from '../plugins/contributions/deploymentT
 import { RegistryBrowserExtensionV1Schema } from './registryBrowserExtensionV1.js';
 import { RegistryStarterV1Schema } from './registryStarterV1.js';
 import { DeployShapeV1Schema } from '../deployments/deployShapeV1.js';
+import { PluginWorkflowContributionV1Schema } from '../plugins/contributions/workflowDeclarationV1.js';
 import { PetAssetMediaTypeV1Schema } from '../pets/accountLibrary.js';
 import { PluginContentNotImportedV1Schema, PluginGitCatalogPointerV1Schema, PluginGitCatalogSourceV1Schema } from '../plugins/sourceSpecV1.js';
 export { RegistryGitTreeRefV1Schema, WellKnownSkillRefV1Schema, RegistrySkillContentRefV1Schema,
@@ -66,6 +67,23 @@ export const RegistryPluginListingSummaryV1Schema = lazyZodSchema(() => z.strict
   links: MarketplaceIndexEntryV1Schema.shape.links,
 }));
 export type RegistryPluginListingSummaryV1 = z.infer<typeof RegistryPluginListingSummaryV1Schema>;
+/** Catalog-declared presentation facts. The installation review reports actual omissions. */
+export const RegistryVendorPluginSummaryV1Schema = lazyZodSchema(() => {
+  const count = PluginContentNotImportedV1Schema.shape.commands;
+  return z.strictObject({
+    categories: z.optional(z.array(z.string().check(z.trim(), z.minLength(1)))),
+    contentCounts: z.optional(z.strictObject({
+      skills: z.optional(count),
+      commands: z.optional(count),
+      agents: z.optional(count),
+      mcpServers: z.optional(count),
+    })),
+    notImported: z.optional(z.partial(PluginContentNotImportedV1Schema)),
+    suggestedAutomations: z.optional(z.array(PluginWorkflowContributionV1Schema)),
+  });
+});
+export type RegistryVendorPluginSummaryV1 = z.infer<typeof RegistryVendorPluginSummaryV1Schema>;
+
 export const RegistryItemSummaryV1Schema = lazyZodSchema(() => z.strictObject({
   sourceId: z.string().check(z.minLength(1)), kind: RegistryKindV1Schema, itemId: z.string(), title: z.string().check(z.minLength(1)),
   description: z.optional(z.string()), version: z.optional(z.string().check(z.minLength(1))), iconUrl: z.optional(z.string()),
@@ -85,6 +103,7 @@ export const RegistryItemSummaryV1Schema = lazyZodSchema(() => z.strictObject({
   starterDeploy: z.optional(DeployShapeV1Schema),
   pluginListing: z.optional(RegistryPluginListingSummaryV1Schema),
   pluginGit: z.optional(PluginGitCatalogSourceV1Schema),
+  vendorPlugin: z.optional(RegistryVendorPluginSummaryV1Schema),
   themeMetadata: z.optional(RegistryThemeListingV1Schema),
   petMetadata: z.optional(RegistryPetMetadataV1Schema),
 }));

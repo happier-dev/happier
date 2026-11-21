@@ -13401,6 +13401,21 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `contextualTarget` (json): Mounted contextual target
 - `origin` (json, required): Exact execution origin
 
+## `plugins.git.preview`
+
+**Preview a Git plugin** — Read the resolved Git revision and plugin content on the selected Machine before install review.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+- `machineId` (text, required): Machine
+- `source` (json, required): Git repository source
+
 ## `plugins.install`
 
 **Install plugin** — Request approval to install and trust an exact marketplace or local plugin; the daemon retains custody of the install effect.

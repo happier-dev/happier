@@ -2,7 +2,8 @@ import { PLUGIN_DEVELOPMENT_INPUT_FIELDS } from './pluginDevelopmentInputHints.j
 import type { PreNormalizedActionSpec } from './definition.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { PluginUpdatePolicyV1Schema } from '../../marketplace/pluginUpdatePolicyV1.js';
-import { PluginGitInstallSourceSchema } from '../../plugins/sourceSpecV1.js';
+import { PluginGitCommitV1Schema, PluginGitInstallSourceSchema, PluginGitSourceV1Schema } from '../../plugins/sourceSpecV1.js';
+import { RegistryItemSummaryV1Schema } from '../../registries/registryItemsV1.js';
 import { ManagedResourceDispositionV1Schema } from '../../machines/managed/managedDependencyV1.js';
 import { PluginInvocationLogReadQueryV1Schema } from '../../daemon/pluginInvocationLogs.js';
 import { z } from '../../zodRuntimePolicy.js';
@@ -92,6 +93,22 @@ export const PluginInstallCliInputSchema = lazyZodSchema(() => (<T extends z.Zod
   machineId: z.optional(z.string().check(z.trim(), z.minLength(1))),
 })));
 
+export const PluginGitPreviewActionInputSchema = lazyZodSchema(() => z.strictObject({
+  machineId: PluginMarketplaceInstallActionInputSchema.shape.machineId,
+  source: PluginGitSourceV1Schema,
+}));
+
+export const PluginGitPreviewActionOutputSchema = lazyZodSchema(() => z.strictObject({
+  ok: z.literal(true),
+  source: PluginGitSourceV1Schema,
+  resolvedCommit: PluginGitCommitV1Schema,
+  release: z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('stableRelease'), tag: z.string().check(z.minLength(1)) }),
+    z.strictObject({ kind: z.literal('defaultBranch') }),
+  ]),
+  summary: RegistryItemSummaryV1Schema,
+}));
+
 export const PluginUninstallActionInputSchema = lazyZodSchema(() => z.strictObject({
   pluginId: z.string().check(z.trim(), z.minLength(1)),
   machineId: z.optional(z.string().check(z.trim(), z.minLength(1))),
@@ -166,6 +183,7 @@ export const PluginLogsReadActionInputSchema = lazyZodSchema(() => z.strictObjec
 export const PluginDevLoopActionInputSchemas = {
   'plugins.scaffold': PluginScaffoldActionInputSchema,
   'plugins.install': PluginInstallActionInputSchema,
+  'plugins.git.preview': PluginGitPreviewActionInputSchema,
   'plugins.uninstall': PluginUninstallActionInputSchema,
   'plugins.enable': PluginEnableActionInputSchema,
   'plugins.disable': PluginDisableActionInputSchema,
@@ -263,6 +281,7 @@ export const PluginDevLoopActionOutputSchema = lazyZodSchema(() => z.union([
 export const PluginDevLoopActionOutputSchemas = {
   'plugins.scaffold': PluginDevLoopActionOutputSchema,
   'plugins.install': PluginDevLoopActionOutputSchema,
+  'plugins.git.preview': PluginGitPreviewActionOutputSchema,
   'plugins.uninstall': PluginDevLoopActionOutputSchema,
   'plugins.enable': PluginDevLoopActionOutputSchema,
   'plugins.disable': PluginDevLoopActionOutputSchema,
@@ -287,6 +306,7 @@ export const PluginDevLoopActionOutputSchemas = {
 export const PLUGIN_DEV_LOOP_ACTION_TITLES: Readonly<Record<PluginDevLoopActionIdV1, string>> = Object.freeze({
   'plugins.scaffold': 'Scaffold plugin',
   'plugins.install': 'Install plugin',
+  'plugins.git.preview': 'Preview a Git plugin',
   'plugins.uninstall': 'Uninstall plugin',
   'plugins.enable': 'Enable plugin',
   'plugins.disable': 'Disable plugin',
@@ -314,6 +334,7 @@ export const PLUGIN_DEV_LOOP_ACTION_TITLES: Readonly<Record<PluginDevLoopActionI
 export const PLUGIN_DEV_LOOP_ACTION_DESCRIPTIONS: Readonly<Record<PluginDevLoopActionIdV1, string>> = Object.freeze({
   'plugins.scaffold': 'Create a local plugin scaffold from the first-party template.',
   'plugins.install': 'Request approval to install and trust an exact marketplace or local plugin; the daemon retains custody of the install effect.',
+  'plugins.git.preview': 'Read the resolved Git revision and plugin content on the selected Machine before install review.',
   'plugins.uninstall': 'Remove a plugin installed from a local folder on a machine.',
   'plugins.enable': 'Enable a plugin for the Account or this Machine. Machine scope is the default.',
   'plugins.disable': 'Disable a plugin for the Account or this Machine, preserving retained data and resource review. Machine scope is the default.',
@@ -371,7 +392,7 @@ export function readPluginDevLoopApprovalSubject(input: unknown): string | null 
 
 export function createPluginDevLoopActionSpec(actionId: PluginDevLoopActionIdV1): PreNormalizedActionSpec {
   const describeApproval = PLUGIN_DEV_LOOP_APPROVAL_SUMMARIES[actionId];
-  const isRead = actionId === 'plugins.list' || actionId === 'plugins.change.status' || actionId === 'plugins.logs.read'
+  const isRead = actionId === 'plugins.list' || actionId === 'plugins.change.status' || actionId === 'plugins.logs.read' || actionId === 'plugins.git.preview'
     || actionId === 'plugins.dev.publication.inspect' || actionId === 'plugins.dev.publication.status';
   const isPublication = actionId === 'plugins.dev.publish' || actionId.startsWith('plugins.dev.publication.');
   const isPreparation = actionId === 'plugins.dev.publication.prepare';
@@ -382,6 +403,7 @@ export function createPluginDevLoopActionSpec(actionId: PluginDevLoopActionIdV1)
     || actionId === 'plugins.uninstall'
     || isLifecycle
     || actionId === 'plugins.install'
+    || actionId === 'plugins.git.preview'
     || actionId === 'plugins.reload'
     || actionId === 'plugins.change.status'
     || actionId === 'plugins.dev.submit'

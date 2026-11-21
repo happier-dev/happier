@@ -298,6 +298,7 @@ export const WorkflowActionIdV1Schema = lazyZodSchema(() => z.enum(WORKFLOW_ACTI
 export const PLUGIN_DEV_LOOP_ACTION_IDS_V1 = [
   'plugins.scaffold',
   'plugins.install',
+  'plugins.git.preview',
   'plugins.uninstall',
   'plugins.enable',
   'plugins.disable',

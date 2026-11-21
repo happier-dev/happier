@@ -357,6 +357,7 @@ import { PLUGIN_SESSION_HOOK_MANAGEMENT_ACTION_SPECS_V1 } from './specs/pluginSe
 import { PluginDevLoopActionInputSchemas, PluginDevLoopActionOutputSchemas, createPluginDevLoopActionSpec } from './specs/pluginDevelopment.js';
 export * from './specs/pluginPublication.js';
 export { PluginScaffoldActionInputSchema, PluginScaffoldUiModeSchema, type PluginScaffoldUiMode, DEFAULT_PLUGIN_SCAFFOLD_UI_MODE, PluginScaffoldTemplateSchema, type PluginScaffoldTemplate, PluginLogsReadActionInputSchema } from './specs/pluginDevelopment.js';
+export { PluginGitPreviewActionInputSchema, PluginGitPreviewActionOutputSchema } from './specs/pluginDevelopment.js';
 import { SessionSendMessagePluginInputV1Schema, SESSION_MESSAGE_ACTION_SPECS } from './specs/session/messages.js';
 export { SessionSendMessageInputSchema, type SessionMessageSendAuthoredInput } from './specs/session/messages.js';
 import { APPROVAL_REQUEST_ACTION_SPECS } from './specs/approvals.js';

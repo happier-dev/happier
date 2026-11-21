@@ -55,7 +55,10 @@ Use **Add → Git repository** to install directly from an HTTPS Git URL and an
 optional folder within the repository. In 0.3 development source, Happier uses
 the latest stable release on GitHub or the
 default branch if none exists. Other HTTPS Git hosts use the default branch.
-The selected machine records the commit used for the installation.
+Before **Review**, a client can call `plugins.git.preview` on the selected
+Machine to read the resolved revision, description, importable content counts,
+and omissions. Review resolves the current source again and shows the revision
+being approved. The selected Machine records the commit used for installation.
 
 Happier imports skills, Markdown commands and agents as skills, and supported
 MCP server declarations from Claude, Codex, Cursor, and Agent Plugins packages.
