@@ -26,6 +26,12 @@ const { createPlainArtifactHomeFixture } = await import('@/dev/testkit/harness/a
 const { installVoiceWebRtcBrowserBoundary, TestVoiceAudioContext } = await import('@/dev/testkit/harness/voiceWebRtcHarness');
 const { createDaemonStreamingSttController } = await import('./DaemonStreamingSttController');
 const { createWebDaemonSpeechPcmCapture } = await import('./WebDaemonSpeechPcmCapture.web');
+const { createLocalVoiceCaptureOwner } = await import('../input/LocalVoiceCaptureOwner');
+const { voiceConversationRuntimeMachine } = await import('../machine/VoiceConversationRuntimeMachine');
+const { confirmVoiceCaptureStarted, surfaceRecoverableVoiceCaptureError } = await import('../machine/voiceConversationRuntimeHelpers');
+const { deriveLocalVoiceSessionSnapshot } = await import('../machine/deriveLocalVoiceSessionSnapshot');
+const { useVoiceConversationRuntimeStore } = await import('../machine/voiceConversationRuntimeStore');
+const { resolveVoiceSurfaceState } = await import('@/components/voice/surface/resolveVoiceSurfaceState');
 const { createTurnEndpointController } = await import('@/voice/runtime/input/TurnEndpointController');
 const { daemonSpeechStreamDiagnostics } = await import('./daemonSpeechStreamDiagnostics');
 const { voiceSettingsParse, readLocalConversationVoiceSettings, writeLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');
@@ -628,80 +634,138 @@ describe('createDaemonStreamingSttController with actual capture and daemon clie
     expect(context.processor.onaudioprocess).toBeNull();
   });
 
-  it.each(['reconnect', 'end'] as const)('retires disconnected capture and handles %s on the same call', async (next) => {
+  it.each(['reconnect', 'end', 'mute', 'stop'] as const)('shows capture recovery and handles %s on the same call', async (next) => {
     const { createDaemonSpeechStreamSender } = await import('./DaemonSpeechStreamSender');
     const { DaemonSpeechRelayDisconnectedError } = await import('./DaemonSpeechRelayDisconnectedError');
     const disconnected = createDeferred<void>();
     const waiting = createDeferred<void>();
     const connected = createDeferred<void>();
     const replacement = createDeferred<void>();
+    const admitReplacement = createDeferred<void>();
+    const firstChunk = createDeferred<void>();
+    const releaseCleanup = createDeferred<void>();
     const call = new AbortController();
-    let starts = 0;
-    const runtime = createDaemonStreamingSttController({
-      getSettings: () => storage.getState().settings,
-      createPcmCapture: createWebDaemonSpeechPcmCapture,
-      createClient: () => ({
-        createStreamingSttSender: async () => createDaemonSpeechStreamSender({
-          requestId: 'capture-request-' + (starts + 1),
-          transport: {
-            start: async (request) => {
-              const streamId = 'stream-' + ++starts;
-              if (starts === 2) replacement.resolve();
-              return { ok: true, requestId: request.requestId, streamId, generation: 1,
-                ackSeq: -1, format: DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT };
-            },
-            chunk: async ({ streamId, generation, seq }) => {
-              if (streamId === 'stream-1' && seq === 1) {
-                await disconnected.promise;
-                throw new DaemonSpeechRelayDisconnectedError(signal => {
-                  waiting.resolve();
-                  return new Promise<boolean>(resolve => {
-                    signal.addEventListener('abort', () => resolve(false), { once: true });
-                    void connected.promise.then(() => resolve(!signal.aborted));
-                  });
-                });
-              }
-              return { ok: true, streamId, generation, ackSeq: seq,
-                events: [{ type: 'partial', seq, text: streamId, confidence: null, isEndpoint: false }] };
-            },
-            finish: async ({ streamId, generation, finalSeq }) =>
-              DaemonVoiceInferenceSttStreamFinishResponseSchema.parse({
-                ok: true, streamId, generation, ackSeq: finalSeq, finalText: '', events: [],
-              }),
-            cancel: async ({ streamId, generation }) => ({ ok: true, streamId, generation }),
-          },
-        }),
-      }),
+    const sessionId = 'active-control-session';
+    const project = () => deriveLocalVoiceSessionSnapshot('local_conversation', 'local', voiceConversationRuntimeMachine.getSnapshot());
+    const surface = () => resolveVoiceSurfaceState(project());
+    const notices: string[] = [];
+    const unsubscribe = useVoiceConversationRuntimeStore.subscribe(() => {
+      const { errorMessage } = project();
+      if (errorMessage) notices.push(errorMessage);
     });
-    activeController = runtime;
-    const params = startParams({ callSignal: call.signal, capturePurpose: 'conversation' });
+    let starts = 0;
+    const owner = createLocalVoiceCaptureOwner({
+      getSettings: () => storage.getState().settings,
+      onCaptureStarted: confirmVoiceCaptureStarted,
+      onCaptureError: surfaceRecoverableVoiceCaptureError,
+    }, {
+      createLiveMicSession: () => browser.micSession,
+      createDaemonStreamingSttController: deps => {
+        const runtime = createDaemonStreamingSttController({
+          ...deps,
+          createPcmCapture: createWebDaemonSpeechPcmCapture,
+          createClient: () => ({
+            createStreamingSttSender: async () => createDaemonSpeechStreamSender({
+              requestId: 'capture-request-' + (starts + 1),
+              transport: {
+                start: async (request) => {
+                  const streamId = 'stream-' + ++starts;
+                  if (starts === 2) {
+                    replacement.resolve();
+                    await admitReplacement.promise;
+                  }
+                  return { ok: true, requestId: request.requestId, streamId, generation: 1,
+                    ackSeq: -1, format: DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT };
+                },
+                chunk: async ({ streamId, generation, seq }) => {
+                  if (streamId === 'stream-1' && seq === 0) firstChunk.resolve();
+                  if (streamId === 'stream-1' && seq === 1) {
+                    await disconnected.promise;
+                    throw new DaemonSpeechRelayDisconnectedError(signal => {
+                      waiting.resolve();
+                      return new Promise<boolean>(resolve => {
+                        signal.addEventListener('abort', () => resolve(false), { once: true });
+                        void connected.promise.then(() => resolve(!signal.aborted));
+                      });
+                    });
+                  }
+                  return { ok: true, streamId, generation, ackSeq: seq,
+                    events: [{ type: 'partial', seq, text: streamId, confidence: null, isEndpoint: false }] };
+                },
+                finish: async ({ streamId, generation, finalSeq }) =>
+                  DaemonVoiceInferenceSttStreamFinishResponseSchema.parse({
+                    ok: true, streamId, generation, ackSeq: finalSeq, finalText: '', events: [],
+                  }),
+                cancel: async ({ streamId, generation }) => {
+                  if (next === 'reconnect' && streamId === 'stream-1') await releaseCleanup.promise;
+                  return { ok: true, streamId, generation };
+                },
+              },
+            }),
+          }),
+        });
+        activeController = runtime;
+        return runtime;
+      },
+    });
     try {
-      await runtime.start(params);
+      voiceConversationRuntimeMachine.transitionToConnected({ controlSessionId: sessionId });
+      await owner.startCapture({ sessionId, callSignal: call.signal, provider: 'local_neural',
+        localNeuralExecution: 'daemon', capturePurpose: 'conversation', handsFree: true });
+      expect(surface()).toBe('listening');
+      const originalTrack = browser.micTrack;
       emitPcm();
-      await params.events.partial;
-      expect(params.sink.onPartial).toHaveBeenCalledWith('stream-1');
+      await firstChunk.promise;
       emitPcm();
       disconnected.resolve();
-      const outcome = await Promise.race([waiting.promise.then(() => 'waiting'), params.events.error.then(() => 'failed')]);
-      expect(outcome).toBe('waiting');
-      await vi.waitFor(() => expect(runtime.hasUnretiredInput()).toBe(false));
+      await waiting.promise;
+      await vi.waitFor(() => expect(context.processor.onaudioprocess).toBeNull());
+      expect(surface()).toBe('reconnecting');
+      expect(notices).toEqual([]);
       expect(starts).toBe(1);
-      if (next === 'end') {
-        await runtime.stop();
+
+      if (next !== 'reconnect') {
+        if (next === 'end') {
+          voiceConversationRuntimeMachine.transitionToEnding({ controlSessionId: sessionId });
+          await owner.stopSession(sessionId);
+          voiceConversationRuntimeMachine.transitionToDisconnected({ controlSessionId: sessionId });
+          expect(surface()).toBe('idle');
+        } else if (next === 'mute') {
+          await owner.setMuted({ sessionId, muted: true });
+          expect(browser.micSession.isMuted()).toBe(true);
+        } else {
+          await owner.stopCapture({ sessionId, provider: 'local_neural' });
+        }
+        expect(surface()).not.toBe('reconnecting');
+        expect(context.processor.onaudioprocess).toBeNull();
+        expect(originalTrack.readyState).toBe('ended');
         connected.resolve();
         await new Promise<void>(resolve => setImmediate(resolve));
         expect(starts).toBe(1);
+        expect(notices).toEqual([]);
         return;
       }
+
       connected.resolve();
       await replacement.promise;
-      await vi.waitFor(() => expect(context.processor.onaudioprocess).toBeTypeOf('function'));
-      emitPcm();
-      await vi.waitFor(() => expect(params.sink.onPartial).toHaveBeenCalledWith('stream-2'));
-      expect(params.sink.onError).not.toHaveBeenCalled();
+      expect(surface()).toBe('reconnecting');
+      expect(notices).toEqual([]);
+      admitReplacement.resolve();
+      await vi.waitFor(() => expect(surface()).toBe('listening'));
+      expect(context.processor.onaudioprocess).toBeTypeOf('function');
+      expect(originalTrack.readyState).toBe('ended');
+      expect(browser.micTrack.readyState).toBe('live');
+      expect(project().errorPresentation).toBe('notice');
+      expect(project().errorRecoveryAction).toBe('none');
+      expect(notices).toEqual(['voice_capture_recovered']);
     } finally {
+      unsubscribe();
       call.abort();
       connected.resolve();
+      admitReplacement.resolve();
+      releaseCleanup.resolve();
+      await owner.stopSession(sessionId);
+      voiceConversationRuntimeMachine.reset();
     }
   });
 

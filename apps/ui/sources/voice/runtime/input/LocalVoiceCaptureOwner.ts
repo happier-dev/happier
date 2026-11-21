@@ -38,6 +38,7 @@ import {
 } from '@/voice/runtime/input/createRuntimeTurnPolicyController';
 import type { VoiceMachineErrorKind } from '@/voice/runtime/machine/voiceConversationRuntimeTypes';
 import type { SttController, SttSink } from '@/voice/input/sttController';
+import { presentVoiceCaptureRecovery } from '@/voice/runtime/machine/voiceConversationRuntimeHelpers';
 import { isVoiceBargeInEnabled, resolveLocalVoiceAdapterSettings } from '@/voice/local/localVoiceSettings';
 import { ensureInterruptionWordSegmentationAvailable } from './segmentInterruptionWords';
 
@@ -430,6 +431,7 @@ export function createLocalVoiceCaptureOwner(
     const beginSttCapture = (
         controlSessionId: string,
         externalSignal?: AbortSignal,
+        capturePurpose?: 'dictation' | 'conversation',
     ): Readonly<{
         armMicPlateauWatchdog: () => void;
         sink: SttSink;
@@ -490,6 +492,22 @@ export function createLocalVoiceCaptureOwner(
         };
         armActiveMicPlateauWatchdog = armMicPlateauWatchdog;
         const sink: SttSink = {
+            ...(capturePurpose === 'conversation' ? { onCaptureRecovery: (state) => {
+                if (activeAbortController !== abortController || abortController.signal.aborted) return;
+                if (state === 'reconnecting') {
+                    clearMicPlateauWatchdog();
+                    latestPartialTranscript = null;
+                    audioStarted = false;
+                } else if (state === 'recovered') {
+                    armMicPlateauWatchdog();
+                }
+                if (state !== 'recovered') {
+                    // Release the current track or any pending replacement acquisition.
+                    // The same mic session can acquire again on capture start.
+                    void liveMicSession?.teardown().catch(() => {});
+                }
+                presentVoiceCaptureRecovery(controlSessionId, state);
+            } } satisfies Pick<SttSink, 'onCaptureRecovery'> : {}),
             onAudioStarted: () => {
                 audioStarted = true;
                 clearMicPlateauWatchdog();
@@ -849,7 +867,7 @@ export function createLocalVoiceCaptureOwner(
                         sink,
                         signal,
                         unlinkExternalAbort,
-                    } = beginSttCapture(normalizedSessionId, externalSignal);
+                    } = beginSttCapture(normalizedSessionId, externalSignal, capturePurpose);
                     if (signal.aborted) {
                         unlinkExternalAbort();
                         await releaseLiveMicAfterFailedStartup(normalizedSessionId, provider, micSession);

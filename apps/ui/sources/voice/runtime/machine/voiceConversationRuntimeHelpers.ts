@@ -1,3 +1,4 @@
+import type { SttCaptureRecovery } from '@/voice/input/sttController';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import { readConnectedServiceUxDiagnosticFromError } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 
@@ -52,6 +53,16 @@ export function confirmVoiceCaptureStarted(controlSessionId: string): void {
 
     voiceConversationRuntimeMachine.confirmListeningStarted({
         controlSessionId: normalizedControlSessionId,
+    });
+}
+
+export function presentVoiceCaptureRecovery(controlSessionId: string, state: SttCaptureRecovery): void {
+    voiceConversationRuntimeMachine.setReconnecting({
+        controlSessionId,
+        reconnecting: state === 'reconnecting',
+        recoveryNotice: state === 'recovered'
+            ? createVoiceMachineError({ kind: 'transport_disconnect', reason: 'voice_capture_recovered' })
+            : null,
     });
 }
 

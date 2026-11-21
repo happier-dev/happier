@@ -17873,6 +17873,7 @@ const voiceReadinessTranslations = { ja: defineVoiceReadinessTranslation({
     model_incompatible: '選択したモデルはこの音声プロバイダーに対応していません。',
     model_unknown: '音声プロバイダーのモデルを確認できませんでした。',
     device_stt_unavailable: 'このデバイスでは音声認識を利用できません。',
+    voice_capture_recovered: 'Voice が聞けなかった言葉をもう一度。',
     device_stt_availability_unknown: '音声認識を利用できるか確認しています。',
     short: {
       needsSetup: '設定が必要',

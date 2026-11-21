@@ -33,6 +33,14 @@ describe('Voice presence captions for a bound Session target', () => {
       .toEqual({ kind: 'caption', text: voice.captionLabel });
   });
 
+  it('renders a listening recovery notice through the existing caption on both placements', () => {
+    const notice = t('voice.readiness.voice_capture_recovered');
+    const voice = { ...base, surfaceState: 'listening', failureMessage: notice } as const;
+    expect(resolveVoicePresenceCaption(voice)).toBe(notice);
+    expect(resolveVoiceCompactLine(voice, 'Earlier reply', 'Release captain')).toEqual({ kind: 'caption', text: notice });
+    expect(resolveVoicePresenceCaption({ ...voice, muted: true })).toBe(t('voicePresence.captions.muted'));
+  });
+
   it('tells the person to press Send only while the call is waiting for it, ahead of the last words', () => {
     const waiting = { ...base, surfaceState: 'listening', awaitingSend: true } as const;
     expect(resolveVoicePresenceCaption(waiting)).toBe(t('voicePresence.captions.listeningSend'));

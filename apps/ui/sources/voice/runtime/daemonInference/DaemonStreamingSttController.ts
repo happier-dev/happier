@@ -46,7 +46,6 @@ type ActiveDaemonStreamingStt = {
     finalText: string;
     aborted: boolean;
     cancelAttempt: Promise<void> | null;
-    recovery?: AbortController;
     hasAudio: boolean;
     unlinkAbort: () => void;
 };
@@ -55,7 +54,7 @@ type ActiveDaemonStreamingStt = {
 // Keep startup and retirement owned by that existing call lifetime.
 const captureStarts = new WeakMap<AbortSignal | DaemonStreamingSttClient, {
     pending: Promise<void>;
-    retire: () => Promise<void>;
+    retire: (continuingRecovery?: AbortSignal) => Promise<void>;
 }>();
 
 const DAEMON_STT_START_ERROR_REASONS = new Set([
@@ -159,6 +158,7 @@ export function createDaemonStreamingSttController(
     deps: DaemonStreamingSttControllerDeps = {},
 ): DaemonStreamingSttController {
     let active: ActiveDaemonStreamingStt | null = null;
+    let recovery: { handle: ActiveDaemonStreamingStt; abort: AbortController } | null = null;
     let stopping: Promise<SttStopResult> | null = null;
     let paused: Readonly<{ params: SttStartParams; result: Promise<SttStopResult> }> | null = null;
     const unretiredCaptures = new Set<DaemonSpeechPcmCapture>();
@@ -254,9 +254,9 @@ export function createDaemonStreamingSttController(
         await attempt;
     };
 
-    const startAttempt = async (params: SttStartParams, prefixText = '') => {
+    const startAttempt = async (params: SttStartParams, prefixText: string, recoverySignal?: AbortSignal) => {
         const { sessionId, micSession, sink, signal, callSignal, capturePurpose } = params;
-        const isAborted = () => signal?.aborted || callSignal?.aborted;
+        const isAborted = () => signal?.aborted || callSignal?.aborted || recoverySignal?.aborted;
         paused = null;
         if (isAborted()) {
             return;
@@ -379,7 +379,7 @@ export function createDaemonStreamingSttController(
             if (handle.sessionId) {
                 endpointController?.startSession(handle.sessionId);
             }
-            if (signal || callSignal) {
+            if (signal || callSignal || recoverySignal) {
                 const abort = () => {
                     if (active === handle) {
                         void cancelActive(handle);
@@ -387,9 +387,11 @@ export function createDaemonStreamingSttController(
                 };
                 signal?.addEventListener('abort', abort, { once: true });
                 callSignal?.addEventListener('abort', abort, { once: true });
+                recoverySignal?.addEventListener('abort', abort, { once: true });
                 handle.unlinkAbort = () => {
                     signal?.removeEventListener('abort', abort);
                     callSignal?.removeEventListener('abort', abort);
+                    recoverySignal?.removeEventListener('abort', abort);
                 };
             }
             if (isAborted()) {
@@ -405,6 +407,7 @@ export function createDaemonStreamingSttController(
                 if (active === handle) {
                     active = null;
                 }
+                return;
             }
             return handle;
         } catch (error) {
@@ -427,16 +430,18 @@ export function createDaemonStreamingSttController(
             sink.onError(failure);
         }
     };
-    const start = (params: SttStartParams, prefixText = ''): Promise<void> => {
+    const start = (params: SttStartParams, prefixText = '', recoverySignal?: AbortSignal): Promise<void> => {
         const key = params.callSignal ?? client;
         const owner = captureStarts.get(key) ?? { pending: Promise.resolve(), retire: async () => {} };
         captureStarts.set(key, owner);
         const attempt = owner.pending.then(async () => {
-            if (params.signal?.aborted || params.callSignal?.aborted) return;
-            await owner.retire();
-            const handle = await startAttempt(params, prefixText);
-            owner.retire = async () => {
-                handle?.recovery?.abort();
+            if (params.signal?.aborted || params.callSignal?.aborted || recoverySignal?.aborted) return;
+            await owner.retire(recoverySignal);
+            const handle = await startAttempt(params, prefixText, recoverySignal);
+            owner.retire = async (continuingRecovery) => {
+                if (handle && recovery?.handle === handle && recovery.abort.signal !== continuingRecovery) {
+                    recovery.abort.abort();
+                }
                 // End can abandon a held cancellation reply. Its sender is
                 // already locally closed; physical capture still must retire
                 // before this admitted call can listen again.
@@ -447,6 +452,9 @@ export function createDaemonStreamingSttController(
                 await stopping;
                 await cancelActive(handle ?? null);
             };
+            if (recoverySignal && handle && active === handle && !handle.aborted) {
+                params.sink.onCaptureRecovery?.('recovered');
+            }
         });
         owner.pending = attempt.catch(() => {});
         return attempt;
@@ -456,25 +464,30 @@ export function createDaemonStreamingSttController(
         waitForReconnect: (signal: AbortSignal) => Promise<boolean>,
     ): Promise<void> => {
         const { signal, callSignal, sink } = handle.params;
-        const recovery = new AbortController();
-        handle.recovery = recovery;
-        const abort = () => recovery.abort();
+        const pending = { handle, abort: new AbortController() };
+        recovery = pending;
+        const recoverySignal = pending.abort.signal;
+        const abort = () => pending.abort.abort();
+        const cancelPresentation = () => sink.onCaptureRecovery?.('cancelled');
+        recoverySignal.addEventListener('abort', cancelPresentation, { once: true });
+        // The failed sender has already closed and dispatched cleanup. Its
+        // cancel() is now a no-op, so retirement only waits for local PCM.
+        const retirement = cancelActive(handle);
+        sink.onCaptureRecovery?.('reconnecting');
         signal?.addEventListener('abort', abort, { once: true });
         callSignal?.addEventListener('abort', abort, { once: true });
         try {
-            const [connected] = await Promise.all([
-                waitForReconnect(recovery.signal),
-                cancelActive(handle),
-            ]);
-            if (!connected || recovery.signal.aborted || active !== handle) return;
-            handle.recovery = undefined;
+            const [connected] = await Promise.all([waitForReconnect(recoverySignal), retirement]);
+            if (!connected || recoverySignal.aborted || active !== handle) return;
             active = null;
-            await start(handle.params, handle.finalText);
+            await start(handle.params, handle.finalText, recoverySignal);
         } catch (cause) {
-            if (!recovery.signal.aborted) sink.onError(createVoiceMachineError({
+            if (!recoverySignal.aborted) sink.onError(createVoiceMachineError({
                 kind: 'provider_error', reason: 'daemon_streaming_stt_pcm_chunk_failed', cause,
             }));
         } finally {
+            if (recovery === pending) recovery = null;
+            recoverySignal.removeEventListener('abort', cancelPresentation);
             signal?.removeEventListener('abort', abort);
             callSignal?.removeEventListener('abort', abort);
         }
@@ -483,11 +496,12 @@ export function createDaemonStreamingSttController(
         if (stopping) {
             return stopping;
         }
-        const handle = active;
+        const recovering = recovery;
+        const handle = active ?? recovering?.handle;
+        recovering?.abort.abort();
         if (!handle) {
             return { finalText: '' };
         }
-        handle.recovery?.abort();
         const pending = (async () => {
             try {
                 if (handle.sessionId) {
@@ -550,7 +564,7 @@ export function createDaemonStreamingSttController(
     return {
         start,
         discardInput: async () => {
-            active?.recovery?.abort();
+            recovery?.abort.abort();
             await Promise.all([...unretiredCaptures].map(retireCapture));
         },
         hasUnretiredInput: () => unretiredCaptures.size > 0,
@@ -561,8 +575,8 @@ export function createDaemonStreamingSttController(
         },
         setMuted: async (muted) => {
             if (muted) {
-                if (paused || !active) return;
-                const handle = active;
+                const handle = active ?? recovery?.handle;
+                if (paused || !handle) return;
                 // Close the remote stream while it is still owned, retaining
                 // its final in this capture until Send. Muted input produces no
                 // traffic and must not depend on the daemon's abandoned-stream TTL.

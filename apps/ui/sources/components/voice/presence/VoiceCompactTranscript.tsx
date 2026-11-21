@@ -26,7 +26,7 @@ const voiceProviderRegistry = createDefaultVoiceProviderRegistry();
  * stands in placeholder speech.
  */
 export const VoiceCompactTranscript = React.memo(function VoiceCompactTranscript(props: Readonly<{
-    voice: Pick<VoiceAttemptControlProjection, 'sessionId' | 'live' | 'muted' | 'surfaceState' | 'captionLabel' | 'targetSessionAddress' | 'awaitingSend'>;
+    voice: Pick<VoiceAttemptControlProjection, 'sessionId' | 'live' | 'muted' | 'surfaceState' | 'captionLabel' | 'targetSessionAddress' | 'awaitingSend' | 'failureMessage'>;
     testID?: string;
 }>): React.ReactElement | null {
     const voiceSettings = useSetting('voice');

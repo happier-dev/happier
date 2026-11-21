@@ -17963,6 +17963,7 @@ const voiceReadinessTranslations = { ru: defineVoiceReadinessTranslation({
     model_incompatible: 'Выбранная модель несовместима с этим голосовым провайдером.',
     model_unknown: 'Не удалось проверить модель голосового провайдера.',
     device_stt_unavailable: 'Распознавание речи недоступно на этом устройстве.',
+    voice_capture_recovered: 'Повторите то, что Voice пропустил.',
     device_stt_availability_unknown: 'Доступность распознавания речи всё ещё проверяется.',
     short: {
       needsSetup: 'Нужна настройка',

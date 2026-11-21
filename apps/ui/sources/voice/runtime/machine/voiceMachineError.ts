@@ -146,6 +146,8 @@ export function createVoiceMachineError(params: Readonly<{
         // Waiting for quota is not a setup failure. The native Run owns any automatic recovery.
         ...(params.kind === 'provider_error' && params.reason === 'usage_limit'
             ? { recoveryAction: 'none' as const, presentation: 'error' as const, retryPolicy: 'never' as const } : {}),
+        ...(params.kind === 'transport_disconnect' && params.reason === 'voice_capture_recovered'
+            ? { recoveryAction: 'none' as const, retryPolicy: 'never' as const } : {}),
         ...(providerError ? {
             providerError,
             retryPolicy: providerError.retryable ? 'user_action' as const : 'never' as const,

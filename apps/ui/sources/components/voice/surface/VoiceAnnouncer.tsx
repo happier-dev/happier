@@ -5,6 +5,7 @@ import {
     useVoiceAttemptControl,
     VOICE_ATTEMPT_IDLE_TARGET_GLOBAL,
 } from '@/components/voice/attempt/useVoiceAttemptControl';
+import { resolveVoiceListeningNotice } from '@/components/voice/presence/resolveVoicePresenceCaption';
 import { useActiveServerAccountScope, useSetting } from '@/sync/domains/state/storage';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
@@ -270,6 +271,7 @@ export const VoiceAnnouncer = React.memo(function VoiceAnnouncer(): React.ReactE
         control.sessionId ?? '',
     ].join('|'), [accountScope, control.sessionId]);
 
+    const recoveryMessage = resolveVoiceListeningNotice(control) ?? (control.recoveryAvailable ? control.recoveryLabel : null);
     const stateAnnouncements = React.useMemo<readonly VoiceStateAnnouncement[]>(() => [
         {
             id: 'session-attention',
@@ -283,10 +285,8 @@ export const VoiceAnnouncer = React.memo(function VoiceAnnouncer(): React.ReactE
         },
         {
             id: 'recovery',
-            transitionKey: control.recoveryAvailable
-                ? `voice-recovery:${control.recoveryLabel ?? 'available'}`
-                : 'voice-recovery:none',
-            text: control.recoveryAvailable ? control.recoveryLabel : null,
+            transitionKey: `voice-recovery:${recoveryMessage ?? 'none'}`,
+            text: recoveryMessage,
         },
     ], [
         control.statusCell,
@@ -294,8 +294,7 @@ export const VoiceAnnouncer = React.memo(function VoiceAnnouncer(): React.ReactE
         control.capturing,
         control.micStateLabel,
         control.muted,
-        control.recoveryAvailable,
-        control.recoveryLabel,
+        recoveryMessage,
     ]);
     return (
         <VoiceAnnouncerSurface

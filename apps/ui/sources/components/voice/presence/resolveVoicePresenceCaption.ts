@@ -11,7 +11,11 @@ const FAILED: ReadonlySet<string> = new Set(['permission_required', 'error']);
 const CALL_FIRST: ReadonlySet<string> = new Set(['connecting', 'ending', 'reconnecting', 'permission_required', 'error']);
 
 type CaptionFacts = Pick<VoiceAttemptControlProjection, 'live' | 'muted' | 'surfaceState' | 'captionLabel'>
-    & Partial<Pick<VoiceAttemptControlProjection, 'statusCell' | 'canCommitInput' | 'awaitingSend'>>;
+    & Partial<Pick<VoiceAttemptControlProjection, 'statusCell' | 'canCommitInput' | 'awaitingSend' | 'failureMessage'>>;
+
+export function resolveVoiceListeningNotice(voice: CaptionFacts): string | null {
+    return voice.live && voice.surfaceState === 'listening' && !voice.muted ? voice.failureMessage ?? null : null;
+}
 
 /**
  * The call state's one helpful line (lab `voice-presence` captions): a failure's reason from the
@@ -26,6 +30,8 @@ export function resolveVoicePresenceCaption(voice: CaptionFacts, targetName: str
     if (voice.surfaceState === 'ending') return t('voiceAssistant.ending');
     if (FAILED.has(voice.surfaceState)) return voice.captionLabel.trim() || null;
     if (voice.live && voice.muted) return t('voicePresence.captions.muted');
+    const notice = resolveVoiceListeningNotice(voice);
+    if (notice) return notice;
     if (voice.live && voice.statusCell === 'needs_you') return t('voicePresence.captions.needsYou');
     if (voice.awaitingSend) return t('voicePresence.captions.listeningSend');
     if (voice.surfaceState === 'live') return voice.captionLabel.trim() || null;
@@ -47,6 +53,8 @@ export function resolveVoiceCompactLine(
     latestTranscriptText: string | null,
     targetName: string | null = null,
 ): Readonly<{ kind: 'caption' | 'transcript'; text: string }> | null {
+    const notice = resolveVoiceListeningNotice(voice);
+    if (notice) return { kind: 'caption', text: notice };
     const caption = resolveVoicePresenceCaption(voice, targetName);
     const callFirst = (voice.live && (voice.muted || voice.awaitingSend === true || voice.statusCell === 'needs_you'
         || (voice.surfaceState === 'thinking' && voice.canCommitInput === false))) || CALL_FIRST.has(voice.surfaceState);

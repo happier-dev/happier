@@ -17813,6 +17813,7 @@ const voiceReadinessTranslations = { 'zh-Hant': defineVoiceReadinessTranslation(
     model_incompatible: '所選模型與此語音提供者不相容。',
     model_unknown: '無法檢查語音提供者模型。',
     device_stt_unavailable: '此裝置無法使用語音辨識。',
+    voice_capture_recovered: '請重複 Voice 沒聽到的話。',
     device_stt_availability_unknown: '仍在檢查語音辨識是否可用。',
     short: {
       needsSetup: '需要設定',

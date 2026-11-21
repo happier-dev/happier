@@ -17813,6 +17813,7 @@ const voiceReadinessTranslations = { 'zh-Hans': defineVoiceReadinessTranslation(
     model_incompatible: '所选模型与此语音提供商不兼容。',
     model_unknown: '无法检查语音提供商模型。',
     device_stt_unavailable: '此设备无法使用语音识别。',
+    voice_capture_recovered: '请重复 Voice 没听到的话。',
     device_stt_availability_unknown: '仍在检查语音识别是否可用。',
     short: {
       needsSetup: '需要设置',

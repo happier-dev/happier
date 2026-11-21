@@ -53,6 +53,7 @@ export type VoiceReadinessCopy = {
   model_installing: string;
   model_incompatible: string;
   model_unknown: string;
+  voice_capture_recovered: string;
   device_stt_unavailable: string;
   device_stt_availability_unknown: string;
   /** One short status for a choice in a list (a gallery tile); the full reason stays on the card. */
@@ -147,6 +148,7 @@ export const voiceReadinessTranslationsEnglish = { en: defineVoiceReadinessTrans
     model_installing: 'The selected Voice model is still being installed.',
     model_incompatible: 'The selected model is incompatible with this Voice provider.',
     model_unknown: 'The Voice provider model could not be checked.',
+    voice_capture_recovered: 'Repeat what Voice missed.',
     device_stt_unavailable: 'Speech recognition is not available on this device.',
     device_stt_availability_unknown: 'Speech recognition availability is still being checked.',
     short: {

@@ -17995,6 +17995,7 @@ const voiceReadinessTranslations = { fr: defineVoiceReadinessTranslation({
     model_incompatible: 'Le modèle sélectionné est incompatible avec ce provider Voice.',
     model_unknown: 'Le modèle du provider Voice n’a pas pu être vérifié.',
     device_stt_unavailable: 'La reconnaissance vocale n’est pas disponible sur cet appareil.',
+    voice_capture_recovered: 'Répétez ce que Voice n’a pas entendu.',
     device_stt_availability_unknown: 'La disponibilité de la reconnaissance vocale est en cours de vérification.',
     short: {
       needsSetup: 'À configurer',

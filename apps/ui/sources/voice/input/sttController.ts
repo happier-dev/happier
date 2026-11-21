@@ -18,8 +18,12 @@ export type SttEndpointReason = 'silence' | 'vad' | 'manual' | 'max_duration';
  * - `onEndpoint` — the turn boundary was detected, with its reason.
  * - `onError` — a typed boundary failure (already classified).
  */
+export type SttCaptureRecovery = 'reconnecting' | 'recovered' | 'cancelled';
+
 export type SttSink = Readonly<{
     onAudioStarted: () => void;
+    /** The current capture is unavailable until its replacement can accept audio, or the wait is cancelled. */
+    onCaptureRecovery?: (state: SttCaptureRecovery) => void;
     onPartial: (text: string) => void;
     onFinal: (text: string) => void;
     onEndpoint: (reason: SttEndpointReason) => void;

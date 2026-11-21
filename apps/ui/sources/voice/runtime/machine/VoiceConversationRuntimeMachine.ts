@@ -66,6 +66,7 @@ export type VoiceConversationRuntimeMachine = Readonly<{
     setReconnecting: (args: TransitionArgs & {
         reconnecting: boolean;
         retryAvailable?: boolean;
+        recoveryNotice?: VoiceMachineError | null;
     }) => void;
     setMuted: (args: MuteArgs) => void;
     setInUseVoice: (args: TransitionArgs & { inUseVoice: VoiceConversationInUseVoice | null }) => void;
@@ -431,7 +432,7 @@ export function createVoiceConversationRuntimeMachine(): VoiceConversationRuntim
             cancelActiveListeningAttemptIfOwned({ controlSessionId, adapterId, attemptId });
             applyStateTransition({ controlSessionId, toState: 'disconnected', error, adapterId: adapterId ?? null, attemptId });
         },
-        setReconnecting: ({ controlSessionId, adapterId, attemptId, reconnecting, retryAvailable }) => {
+        setReconnecting: ({ controlSessionId, adapterId, attemptId, reconnecting, retryAvailable, recoveryNotice }) => {
             patchSnapshot((current) => {
                 const ownsSnapshot = current.controlSessionId === controlSessionId
                     && current.adapterId === (adapterId ?? null)
@@ -444,14 +445,15 @@ export function createVoiceConversationRuntimeMachine(): VoiceConversationRuntim
                 if (
                     !ownsSnapshot
                     || (
-                        current.reconnecting === reconnecting
+                        (recoveryNotice === undefined || current.error === recoveryNotice)
+                        && current.reconnecting === reconnecting
                         && (current.reconnectRetryAvailable === true) === nextRetryAvailable
                     )
                 ) {
                     return current;
                 }
                 return withReconnectRetryAvailability(
-                    { ...current, reconnecting },
+                    { ...current, reconnecting, error: recoveryNotice === undefined ? current.error : recoveryNotice },
                     nextRetryAvailable,
                 );
             });
