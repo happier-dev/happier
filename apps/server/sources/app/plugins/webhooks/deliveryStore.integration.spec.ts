@@ -1,3 +1,8 @@
+import { randomUUID } from 'node:crypto';
+import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
+import { managedGithubEndpointKey, revokePluginWebhookEndpointV1 } from './endpointStore';
+import { removeUnusedManagedRepositoryWebhook } from './removeUnusedManagedRepositoryWebhook';
+import { updateAutomationTrigger } from '@/app/automations/automationCrudService';
 import { createHmac } from "node:crypto";
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -111,6 +116,9 @@ describe("plugin webhook durable delivery admission", () => {
         harness?.resetEnv();
         await harness?.resetDbTables([
             () => db.accountChange.deleteMany(),
+            () => db.automationTrigger.deleteMany(),
+            () => db.automationEventCatalogState.deleteMany(),
+            () => db.automation.deleteMany(),
             () => db.pluginWebhookDelivery.deleteMany(),
             () => db.pluginWebhookEndpoint.deleteMany(),
             () => db.pluginWebhookRoute.deleteMany(),
@@ -305,6 +313,91 @@ describe("plugin webhook durable delivery admission", () => {
         });
     }
 
+    async function seedManagedWebhook() {
+        const { account, route, endpoint } = await seedCurrentTarget();
+        await db.pluginWebhookEndpoint.update({
+            where: { id: endpoint.id },
+            data: { ensureIdempotencyKey: managedGithubEndpointKey("42"),
+                sourceInstanceId: "github:repository:42", providerRepositoryHookId: "123" },
+        });
+        const automationId = "managed-automation";
+        const eventRef = { pluginId: "acme.github", localId: "push" };
+        const triggerRows = ["managed-trigger-first", "managed-trigger-last"].map(id => {
+            const sourceSelectorId = randomUUID();
+            const definitionEnvelope = sealAutomationTriggerDefinitionStoredEnvelopeV1({
+                mode: "plain", binding: { v: 1, automationId, triggerId: id, triggerRevision: 0,
+                    triggerKind: "pluginEvent", eventRef, sourceSelectorId },
+                definition: { v: 1, sourceInstanceId: "github:repository:42", sourceConfig: {}, displayLabel: "example/app",
+                    filter: null, maximumObservationAgeMs: null },
+            });
+            return { id, kind: "pluginEvent" as const, eventPluginId: eventRef.pluginId, eventLocalId: eventRef.localId,
+                sourceSelectorId, sourceContractVersion: 1, definitionEnvelope: JSON.stringify(definitionEnvelope),
+                webhookEndpointId: endpoint.id, observationTransport: "checkpointedPull",
+                watcherMachineId: "machine-1", watcherMachineInstallationId: "installation-1",
+                watcherPluginId: "acme.github", watcherMaterializationId: "materialization-1" };
+        });
+        const automation = await db.automation.create({
+            data: { id: automationId, accountId: account.id, name: "Deploy", templateCiphertext: "{}",
+                triggers: { create: triggerRows } },
+            include: { triggers: true },
+        });
+        return { account, route, endpoint, triggers: automation.triggers };
+    }
+
+    it.each(["removed", "unavailable"] as const)("retires the route after the last consumer even when GitHub removal is %s", async (outcome) => {
+        const { account, route, triggers: [first, last] } = await seedManagedWebhook();
+        let deleted = 0;
+        const remove = (consumer: typeof first) => removeUnusedManagedRepositoryWebhook({
+            accountId: account.id, consumer,
+            async forward({ operation }) {
+                expect(operation).toMatchObject({ kind: "remove", hookId: "123", repositoryId: "42" });
+                expect(await db.pluginWebhookRoute.findUnique({ where: { id: route.id } })).toMatchObject({ enabled: true });
+                deleted++;
+                return outcome === "removed" ? { kind: "removed" }
+                    : { kind: "unavailable", code: "github_webhook_removal_refused" };
+            },
+        });
+        await db.automationTrigger.delete({ where: { id: first.id } });
+        await expect(remove(first)).resolves.toEqual({ kind: "retained" });
+        expect(deleted).toBe(0);
+        await db.automationTrigger.delete({ where: { id: last.id } });
+        await expect(remove(last)).resolves.toEqual(outcome === "removed" ? { kind: "removed" }
+            : { kind: "unavailable", code: "github_webhook_removal_refused" });
+        expect(await db.pluginWebhookRoute.findUnique({ where: { id: route.id } })).toMatchObject({ enabled: false });
+        await expect(remove(last)).resolves.toEqual({ kind: "retained" });
+        expect(deleted).toBe(1);
+    });
+
+    it("retires a managed route when editing its last polling trigger clears the attachment", async () => {
+        const { account, route, endpoint, triggers: [first, last] } = await seedManagedWebhook();
+        await db.automationTrigger.delete({ where: { id: first.id } });
+        const consumers: Parameters<typeof removeUnusedManagedRepositoryWebhook>[0]["consumer"][] = [];
+        const mutation = {
+            accountId: account.id, automationId: last.automationId, triggerId: last.id,
+            expectedRevision: last.revision, enabled: false,
+            trigger: { kind: "schedule", schedule: { kind: "interval", scheduleExpr: null, everyMs: 60_000, timezone: null } },
+            onDeletedWebhookConsumer: (consumer: typeof last) => consumers.push(consumer),
+        } as const;
+        const result = await updateAutomationTrigger(mutation);
+        expect(result?.triggers.find(trigger => trigger.id === last.id)).toMatchObject({ webhookEndpointId: null });
+        for (const consumer of consumers) {
+            await removeUnusedManagedRepositoryWebhook({ accountId: account.id, consumer,
+                async forward() { return { kind: "removed" }; } });
+        }
+        expect(await db.pluginWebhookEndpoint.findUnique({ where: { id: endpoint.id } })).toMatchObject({ enabled: false });
+        expect(await db.pluginWebhookRoute.findUnique({ where: { id: route.id } })).toMatchObject({ enabled: false });
+    });
+
+    it("lets the owner manually retire a managed route with no live consumer", async () => {
+        const { account, route, endpoint, triggers } = await seedManagedWebhook();
+        await db.automationTrigger.deleteMany({
+            where: { id: { in: triggers.map(trigger => trigger.id) } },
+        });
+        await revokePluginWebhookEndpointV1({ accountId: account.id, webhookEndpointId: endpoint.id,
+            expectedRevision: endpoint.revision, idempotencyKey: "manual-recovery" });
+        expect(await db.pluginWebhookRoute.findUnique({ where: { id: route.id } })).toMatchObject({ enabled: false });
+    });
+
     it("commits one frozen exact-target envelope before scheduling a content-free wake", async () => {
         await seedCurrentTarget();
         const wake = vi.fn();
@@ -344,8 +437,24 @@ describe("plugin webhook durable delivery admission", () => {
         });
     });
 
-    it("routes verified ingress through durable admission before emitting one exact-machine AccountChange wake", async () => {
-        await seedCurrentTarget();
+    it.each([false, true])("routes verified ingress through durable admission (managed GitHub hook: %s)", async (managed) => {
+        const { account, endpoint } = await seedCurrentTarget();
+        const triggerId = "managed-trigger";
+        if (managed) {
+            await db.pluginWebhookEndpoint.update({
+                where: { id: endpoint.id }, data: { providerRepositoryHookId: "42" },
+            });
+            await db.automation.create({ data: {
+                id: "managed-automation", accountId: account.id, name: "Deploy", templateCiphertext: "{}",
+                triggers: { create: {
+                    id: triggerId, kind: "pluginEvent", eventPluginId: "acme.github", eventLocalId: "push",
+                    sourceSelectorId: "managed-source", sourceContractVersion: 1, observationTransport: "checkpointedPull",
+                    webhookEndpointId: endpoint.id, definitionEnvelope: "{}",
+                    watcherMachineId: "machine-1", watcherMachineInstallationId: "installation-1",
+                    watcherPluginId: "acme.github", watcherMaterializationId: "materialization-1",
+                } },
+            } });
+        }
         emitUpdate.mockClear();
         const rawBody = Uint8Array.from(Buffer.from('{"action":"opened"}', "utf8"));
         const signature = `sha256=${createHmac("sha256", "ingress-secret").update(rawBody).digest("hex")}`;
@@ -388,23 +497,37 @@ describe("plugin webhook durable delivery admission", () => {
             admitDelivery: admitPluginWebhookDeliveryV1,
         };
 
-        await expect(ingestPluginWebhookV1({
+        const send = (delivery: string, hookId: string, deliverySignature = signature) => ingestPluginWebhookV1({
             opaqueRouteId: "opaque-delivery",
             rawBody,
             headers: {
-                "x-hub-signature-256": signature,
-                "x-github-delivery": "delivery-guid-ingress-wake-1",
+                "x-hub-signature-256": deliverySignature,
+                "x-github-delivery": delivery,
+                "x-github-hook-id": hookId,
                 "x-github-event": "issues",
                 "content-type": "application/json",
             },
             now: NOW,
             onCommittedWake: emitPluginWebhookDeliveryCommittedWakeV1,
             dependencies,
-        })).resolves.toMatchObject({ kind: "accepted", duplicate: false });
-
-        const row = await db.pluginWebhookDelivery.findFirstOrThrow({
-            where: { accountId: "account-delivery" },
         });
+        const readTrigger = () => db.automationTrigger.findUniqueOrThrow({ where: { id: triggerId } });
+        if (managed) {
+            await send("invalid-signature", "42", `sha256=${"0".repeat(64)}`);
+            expect(await readTrigger()).toMatchObject({ observationTransport: "checkpointedPull", watcherMachineId: "machine-1" });
+            await send("wrong-hook", "99");
+            expect(await readTrigger()).toMatchObject({ observationTransport: "checkpointedPull", watcherMachineId: "machine-1" });
+            expect(await db.pluginWebhookEndpoint.findUniqueOrThrow({ where: { id: endpoint.id } }))
+                .toMatchObject({ providerConfirmedAt: null });
+        }
+        const accepted = await send("delivery-guid-ingress-wake-1", "42");
+        expect(accepted).toMatchObject({ kind: "accepted", duplicate: false });
+        if (managed) {
+            expect(await readTrigger()).toMatchObject({ observationTransport: "durablePush", watcherMachineId: null,
+                watcherMachineInstallationId: null, watcherMaterializationId: null, watcherPluginId: null });
+        }
+        if (accepted.kind !== "accepted") throw new Error("Signed webhook delivery was not admitted");
+        const row = await db.pluginWebhookDelivery.findUniqueOrThrow({ where: { id: accepted.deliveryId } });
         const change = await readWebhookChange();
         expect(row).toMatchObject({
             accountId: "account-delivery",

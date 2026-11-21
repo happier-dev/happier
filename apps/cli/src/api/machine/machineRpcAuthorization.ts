@@ -1,4 +1,9 @@
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import {
+  MANAGED_PLUGIN_WEBHOOK_DAEMON_RPC_METHOD_V1,
+  ManagedPluginWebhookOriginV1Schema,
+  ManagedPluginWebhookRequestV1Schema,
+} from '@happier-dev/protocol/plugins/webhooks/managedRepositoryWebhookRpcV1';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
@@ -1279,6 +1284,24 @@ export async function authorizeMachineRpcRequest(
   machine?: MachineRpcAdmissionBoundary,
   source?: 'authenticated_home_socket',
 ): Promise<RpcAuthorizationResult> {
+  if (request.method === MANAGED_PLUGIN_WEBHOOK_DAEMON_RPC_METHOD_V1
+    || request.method.endsWith(`:${MANAGED_PLUGIN_WEBHOOK_DAEMON_RPC_METHOD_V1}`)) {
+    if (source !== 'authenticated_home_socket' || !machine
+      || request.method !== `${machine.machineId}:${MANAGED_PLUGIN_WEBHOOK_DAEMON_RPC_METHOD_V1}`)
+      return forbidden('machine_target');
+    const origin = ManagedPluginWebhookOriginV1Schema.safeParse(request.authorization);
+    const operation = ManagedPluginWebhookRequestV1Schema.safeParse(request.params);
+    if (!origin.success || !operation.success || origin.data.machineId !== machine.machineId)
+      return forbidden('machine_target');
+    try {
+      if (origin.data.accountId !== await machine.resolveCustodianAccountId(request.signal))
+        return forbidden('machine_custodian');
+      if (request.signal?.aborted) return forbidden('request_cancelled');
+      return { ok: true };
+    } catch {
+      return forbidden('authorization_unavailable');
+    }
+  }
   const referenceExecution = request.workspaceSyncSourceExecution?.externalActionExecution;
   const referenceEnvironmentId = readDeploymentReferenceServiceListEnvironmentIdV1(referenceExecution?.authorization.binding.actionId,
     referenceExecution?.effectActionId, referenceExecution?.reviewedChild);

@@ -1,3 +1,5 @@
+import { removeUnusedManagedRepositoryWebhook, type DeletedManagedWebhookConsumer } from "@/app/plugins/webhooks/removeUnusedManagedRepositoryWebhook";
+import { settleManagedRepositoryWebhookSaves } from "@/app/plugins/webhooks/settleManagedRepositoryWebhookSaves";
 import { AutomationTriggerEventDeclarationsRequestSchema, AutomationTriggerEventDeclarationsResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { readAutomationTriggerEventDeclarations } from '@/app/automations/automationEventPayloadSchemaProjection';
 import { z } from "zod/mini";
@@ -118,6 +120,25 @@ function sendStoredContentFailure(reply: { code(code: number): { send(body: unkn
 
 function isAutomationDefinitionValidationError(error: unknown): error is AutomationValidationError | AutomationEventCurrentnessError | z.core.$ZodError {
     return error instanceof AutomationValidationError || error instanceof AutomationEventCurrentnessError || error instanceof z.core.$ZodError;
+}
+
+function collectManagedWebhookRemovals(app: Fastify, accountId: string) {
+    const consumers = new Map<string, DeletedManagedWebhookConsumer>();
+    return {
+        onDeletedWebhookConsumer(consumer: DeletedManagedWebhookConsumer) {
+            if (consumer.webhookEndpointId) consumers.set(consumer.webhookEndpointId, consumer);
+        },
+        async finish() {
+            let unavailable: string | undefined;
+            for (const consumer of consumers.values()) {
+                const result = await removeUnusedManagedRepositoryWebhook({
+                    accountId, consumer, forward: app.forwardManagedPluginWebhookToMachine,
+                });
+                if (result.kind === 'unavailable') unavailable ??= result.code;
+            }
+            return unavailable;
+        },
+    };
 }
 
 async function toAutomationDefinitionDetailWithCurrentEventStatus(
@@ -321,10 +342,12 @@ export function registerAutomationV3Routes(
                     ...(body.assignments !== undefined ? { assignments: body.assignments } : {}),
                 },
             });
-            return reply.send(await toAutomationDefinitionDetailWithCurrentEventStatus(
-                automation,
-                accountCurrentness,
-            ));
+            const managedGithubRepositoryHooks = await settleManagedRepositoryWebhookSaves({
+                request, accountId: request.userId, automation, mutations: body.triggers,
+                forward: app.forwardManagedPluginWebhookToMachine,
+            });
+            const detail = await toAutomationDefinitionDetailWithCurrentEventStatus(automation, accountCurrentness);
+            return reply.send({ ...detail, ...(managedGithubRepositoryHooks ? { managedGithubRepositoryHooks } : {}) });
         } catch (error) {
             if (error instanceof AutomationStoredContentReadError) {
                 return sendStoredContentFailure(reply);
@@ -405,17 +428,25 @@ export function registerAutomationV3Routes(
             })) {
                 return sendStoredContentFailure(reply);
             }
+            const hookRemoval = collectManagedWebhookRemovals(app, request.userId);
             const automation = await reconcileAutomationDefinition({
                 accountId: request.userId,
                 authentication: readTeamOperationAuthenticationFromRequest(request),
                 automationId: request.params.id,
                 input: body,
+                onDeletedWebhookConsumer: hookRemoval.onDeletedWebhookConsumer,
             });
             if (!automation) return reply.code(404).send({ error: "automation_not_found" });
-            return reply.send(await toAutomationDefinitionDetailWithCurrentEventStatus(
-                automation,
-                accountCurrentness,
-            ));
+            const managedGithubRepositoryHooks = await settleManagedRepositoryWebhookSaves({
+                request, accountId: request.userId, automation, mutations: body.triggers,
+                forward: app.forwardManagedPluginWebhookToMachine,
+            });
+            const managedGithubRepositoryHookRemovalError = await hookRemoval.finish();
+            const detail = await toAutomationDefinitionDetailWithCurrentEventStatus(automation, accountCurrentness);
+            return reply.send({ ...detail,
+                ...(managedGithubRepositoryHooks ? { managedGithubRepositoryHooks } : {}),
+                ...(managedGithubRepositoryHookRemovalError ? { managedGithubRepositoryHookRemovalError } : {}),
+            });
         } catch (error) {
             if (error instanceof AutomationStoredContentReadError) {
                 return sendStoredContentFailure(reply);
@@ -455,10 +486,12 @@ export function registerAutomationV3Routes(
                 trigger: body.trigger,
             });
             if (!automation) return reply.code(404).send({ error: "automation_not_found" });
-            return reply.send(await toAutomationDefinitionDetailWithCurrentEventStatus(
-                automation,
-                accountCurrentness,
-            ));
+            const managedGithubRepositoryHooks = await settleManagedRepositoryWebhookSaves({
+                request, accountId: request.userId, automation, mutations: [body],
+                forward: app.forwardManagedPluginWebhookToMachine,
+            });
+            const detail = await toAutomationDefinitionDetailWithCurrentEventStatus(automation, accountCurrentness);
+            return reply.send({ ...detail, ...(managedGithubRepositoryHooks ? { managedGithubRepositoryHooks } : {}) });
         } catch (error) {
             if (error instanceof AutomationStoredContentReadError) {
                 return sendStoredContentFailure(reply);
@@ -487,7 +520,9 @@ export function registerAutomationV3Routes(
                 && accountCurrentness.mode !== "plain") {
                 return sendStoredContentFailure(reply);
             }
+            const hookRemoval = collectManagedWebhookRemovals(app, request.userId);
             const automation = await updateAutomationTrigger({
+                onDeletedWebhookConsumer: hookRemoval.onDeletedWebhookConsumer,
                 accountId: request.userId,
                 authentication: readTeamOperationAuthenticationFromRequest(request),
                 automationId: request.params.id,
@@ -500,6 +535,8 @@ export function registerAutomationV3Routes(
                     : {}),
             });
             if (!automation) return reply.code(404).send({ error: "automation_not_found" });
+            const removalError = await hookRemoval.finish();
+            if (removalError) request.log.warn({ code: removalError }, "Managed repository hook removal failed");
             return reply.send(await toAutomationDefinitionDetailWithCurrentEventStatus(
                 automation,
                 accountCurrentness,
@@ -527,18 +564,19 @@ export function registerAutomationV3Routes(
         if (!accountCurrentness) return sendStoredContentFailure(reply);
         try {
             const body = AutomationTriggerDeleteRequestSchema.parse(request.body);
+            const hookRemoval = collectManagedWebhookRemovals(app, request.userId);
             const automation = await deleteAutomationTrigger({
                 accountId: request.userId,
                 authentication: readTeamOperationAuthenticationFromRequest(request),
                 automationId: request.params.id,
                 triggerId: body.triggerId,
                 expectedRevision: body.expectedRevision,
+                onDeletedWebhookConsumer: hookRemoval.onDeletedWebhookConsumer,
             });
             if (!automation) return reply.code(404).send({ error: "automation_not_found" });
-            return reply.send(await toAutomationDefinitionDetailWithCurrentEventStatus(
-                automation,
-                accountCurrentness,
-            ));
+            const managedGithubRepositoryHookRemovalError = await hookRemoval.finish();
+            const detail = await toAutomationDefinitionDetailWithCurrentEventStatus(automation, accountCurrentness);
+            return reply.send({ ...detail, ...(managedGithubRepositoryHookRemovalError ? { managedGithubRepositoryHookRemovalError } : {}) });
         } catch (error) {
             if (error instanceof AutomationStoredContentReadError) {
                 return sendStoredContentFailure(reply);
@@ -556,10 +594,14 @@ export function registerAutomationV3Routes(
         schema: { params: z.object({ id: z.string() }) },
     }, async (request, reply) => {
         try {
+            const hookRemoval = collectManagedWebhookRemovals(app, request.userId);
             const deleted = await deleteAutomation({ accountId: request.userId, automationId: request.params.id,
-                authentication: readTeamOperationAuthenticationFromRequest(request) });
+                authentication: readTeamOperationAuthenticationFromRequest(request),
+                onDeletedWebhookConsumer: hookRemoval.onDeletedWebhookConsumer, });
             if (!deleted) return reply.code(404).send({ error: "automation_not_found" });
-            return reply.send(AutomationDeleteResponseSchema.parse({ ok: true, removedRevision: deleted.removedRevision }));
+            const managedGithubRepositoryHookRemovalError = await hookRemoval.finish();
+            return reply.send(AutomationDeleteResponseSchema.parse({ ok: true, removedRevision: deleted.removedRevision,
+                ...(managedGithubRepositoryHookRemovalError ? { managedGithubRepositoryHookRemovalError } : {}) }));
         } catch (error) {
             if (!isAutomationDefinitionValidationError(error)) throw error;
             return reply.code(400).send({ error: automationDefinitionValidationMessage(error) });

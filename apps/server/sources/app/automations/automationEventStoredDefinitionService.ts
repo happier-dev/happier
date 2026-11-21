@@ -608,6 +608,9 @@ export async function readAutomationEventStoredDefinitionsV1(params: Readonly<{
                 sourceSelectorId: row.sourceSelectorId,
                 sourceContractVersion: row.sourceContractVersion,
                 observationTransport,
+                ...(observationTransport.kind === "durablePush"
+                    && durablePushEndpointsById.get(observationTransport.webhookEndpointId)?.managedRepositoryHook
+                    ? { managedRepositoryHook: true } : {}),
                 storedDefinitionEnvelope: envelope.envelope,
                 payloadSchema: contribution.payloadSchema,
                 subjectServerId: serverIdentityId,

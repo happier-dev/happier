@@ -1,4 +1,7 @@
 import { captureConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-common/connectedAccounts';
+import { readGithubManagedRepositoryHookSource, writeGithubManagedRepositoryWebhook } from '@happier-dev/plugins-scm-github';
+import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import type { ManagedPluginWebhookRequestV1, ManagedPluginWebhookResultV1 } from '@happier-dev/protocol/plugins/webhooks/managedRepositoryWebhookRpcV1';
 import { GITHUB_BROKER_WATCHER_V1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { GITHUB_EVENT_SETUP_ACTIONS_V1 } from '@happier-dev/protocol/automations/event-setup-result';
 import { createDeploymentTargetRoleExecEnvironmentForHost } from '@/deployments/targets/createDeploymentTargetRoleExecEnvironmentForHost';
@@ -343,7 +346,7 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
         });
     };
 
-    return createTargetActionInvocationRegistry({
+    const options = {
         actions: readActions(),
         subjectKinds: params.contributes.subjectKinds ?? [],
         expectedActions,
@@ -683,5 +686,65 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                 dispose: () => lease.dispose(),
             });
         },
-    });
+    } satisfies Parameters<typeof createTargetActionInvocationRegistry>[0];
+    const invocations = createTargetActionInvocationRegistry(options);
+    return {
+        ...invocations,
+        async writeManagedGithubRepositoryHook(input: Readonly<{
+            request: ManagedPluginWebhookRequestV1;
+            source: NonNullable<ReturnType<typeof readGithubManagedRepositoryHookSource>>;
+            machineId: string;
+            signal: AbortSignal;
+        }>): Promise<ManagedPluginWebhookResultV1> {
+            const unavailable = { kind: 'unavailable', code: 'target_unavailable' } as const;
+            if (params.executionRealm === 'account') return unavailable;
+            const { pluginId, repository: localId } = GITHUB_EVENT_SETUP_ACTIONS_V1;
+            const { request, signal, source } = input;
+            await params.prepareInvocationServices?.({ pluginId, localId });
+            const action = resolveCatalogAction(pluginId, localId);
+            const registration = readActions().find(candidate => candidate.pluginId === pluginId && candidate.localId === localId);
+            const materialization = params.resolveCurrentPluginMaterializationRef?.(pluginId);
+            if (!action || !registration || !materialization || materialization.machineId !== input.machineId
+                || materialization.materializationId !== request.materializationId) return unavailable;
+            const isCurrent = () => !signal.aborted && params.readCurrentPluginOccurrenceId?.(pluginId) === registration.occurrenceId;
+            const bound = await params.resolveHostBinding(action, {
+                surface: 'plugin', hostAccessRequests: registration.definition.hostAccessRequests ?? [], signal,
+            });
+            // Reuse the repository Action's exact purpose selection and configured HTTP port.
+            // Neither the Action input nor its execution receives the Home signing verifier.
+            const selectedInput = { repository: source.repositoryId, credentialRef: source.credentialRef };
+            const bindPurpose: NonNullable<Parameters<typeof createTargetActionInvocationRegistry>[0]['bindConnectedAccountActionOperation']> = options.bindConnectedAccountActionOperation;
+            const purpose = await bindPurpose({
+                pluginId, localId, pluginVersion: registration.pluginVersion, input: selectedInput,
+                correlationId: request.operationId, signal, isCurrent,
+            });
+            if (purpose && 'status' in purpose) return { kind: 'unavailable', code: purpose.code };
+            if (!purpose?.exactPurposeBindingSubjectId) {
+                purpose?.dispose();
+                return { kind: 'unavailable', code: CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired };
+            }
+            const diagnostic = { pluginId, occurrenceId: registration.occurrenceId, correlationId: request.operationId };
+            try {
+                if (!bound || !isCurrent()) return unavailable;
+                if (request.kind === 'register') {
+                    params.beginDiagnosticScope?.(diagnostic, signal, { signingSecret: request.signingSecret }, ['signingSecret']);
+                }
+                const services = options.createServices({
+                    plugin: { id: pluginId, version: registration.pluginVersion },
+                    contribution: { id: localId, qualifiedId: action.qualifiedId },
+                    occurrenceId: registration.occurrenceId, sourceCustody: registration.sourceCustody,
+                    correlationId: request.operationId, surface: 'plugin', signal, isOccurrenceCurrent: () => !signal.aborted,
+                }, { ...bound.serviceBinding, exactPurposeBindingSubjectId: purpose.exactPurposeBindingSubjectId });
+                return await writeGithubManagedRepositoryWebhook({
+                    plugin: { id: pluginId, version: registration.pluginVersion }, requestId: request.operationId,
+                    invokedAtMs: Date.now(), signal, services,
+                }, request.kind === 'register'
+                    ? { kind: 'register', ...source, publicUrl: request.publicUrl, signingSecret: request.signingSecret }
+                    : { kind: 'remove', ...source, hookId: request.hookId });
+            } finally {
+                purpose.dispose();
+                if (request.kind === 'register') params.completeDiagnosticScope?.(diagnostic);
+            }
+        },
+    };
 }

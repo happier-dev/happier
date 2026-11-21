@@ -825,8 +825,9 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
   };
   const writeResult = async (row: AutomationDefinitionDetail, triggerId?: ReturnType<typeof AutomationTriggerIdSchema.parse>, includeEventDefinition = false, prepared?: PreparedTriggerProjection): Promise<WorkflowTriggerWriteResult> => {
     const trigger = triggerId ? row.triggers.find((item) => item.id === triggerId) : undefined;
+    const managedGithubRepositoryHook = row.managedGithubRepositoryHooks?.find(item => item.triggerId === triggerId)?.result;
     try {
-      return { set: await projection(row, undefined, prepared), ...(triggerId ? { triggerId } : {}), ...(trigger ? { triggerRevision: trigger.revision } : {}),
+      return { ...(managedGithubRepositoryHook ? { managedGithubRepositoryHook } : {}), set: await projection(row, undefined, prepared), ...(triggerId ? { triggerId } : {}), ...(trigger ? { triggerRevision: trigger.revision } : {}),
         ...(includeEventDefinition && triggerId ? { triggerDefinition: await eventDefinition(row, triggerId) } : {}) };
     } catch (cause) {
       // The Automation write already returned. A failed private projection is
@@ -1275,7 +1276,9 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
           parent: { actionId: 'workflow.trigger.add', input: approvalInput(input) }, caller });
         const prepared = await prepareTriggerProjection({ target, context: mergedContext }, scope?.sessionId, admittedSource);
         const committed = await reconcile(row, mergedContext, target, targetProject, {
-          triggers: [...retainedTriggers(row), { kind: 'new', triggerId, trigger: input.trigger }], removedTriggers: [],
+          triggers: [...retainedTriggers(row), { kind: 'new', triggerId, trigger: input.trigger,
+            ...('managedGithubRepositoryId' in input && input.managedGithubRepositoryId !== undefined
+              ? { managedGithubRepositoryId: input.managedGithubRepositoryId } : {}) }], removedTriggers: [],
         }, row.enabled, false, current.storedContext, caller);
         return writeResult(committed, triggerId, false, prepared);
       }
@@ -1350,7 +1353,9 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       const row = await deps.automations.create({ automationId, name: WORKFLOW_TRIGGER_SET_STORAGE_NAME, description: null, enabled: true,
         workflowDefinitionId: target.kind === 'workflow' ? target.ref : null, scopeSessionId: scope?.sessionId ?? null,
         executionRecipe,
-        assignments: [{ machineId, enabled: true }], triggers: [{ triggerId, trigger: input.trigger }] }, undefined, caller?.signal);
+        assignments: [{ machineId, enabled: true }], triggers: [{ triggerId, trigger: input.trigger,
+          ...('managedGithubRepositoryId' in input && input.managedGithubRepositoryId !== undefined
+            ? { managedGithubRepositoryId: input.managedGithubRepositoryId } : {}) }] }, undefined, caller?.signal);
       return writeResult(row, triggerId, false, prepared);
     },
     update: async (raw: WorkflowTriggerUpdateRequestV1, caller?: Caller, scope?: AdmittedSessionWrite) => {
@@ -1390,7 +1395,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         reviewedProject = (await deps.resolveSession(sessionId, caller)).project;
         current = { target: input.patch.target, context: triggerContext(input.patch, input.patch.target, input.patch.project) };
       } else current = await opened(row, false, caller);
-      const { target: nextTarget, project: nextProject, enabled, trigger, deployment, actionApproval, ...contextPatch } = input.patch;
+      const { target: nextTarget, project: nextProject, enabled, trigger, deployment, actionApproval, managedGithubRepositoryId: registrationRepository, ...contextPatch } = input.patch;
       if (trigger?.kind === 'runLifecycle') {
         if (trigger.source.kind === 'execution_run' && trigger.condition !== 'terminal') refuse('unsupported_condition');
         if (!deps.resolveRunSource) refuse('source_unavailable');
@@ -1489,7 +1494,9 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         mode: actionApproval, parent: { actionId: 'workflow.trigger.update', input: approvalInput(input) }, caller });
       else if (!setEnabled) delete context.actionApprovals;
       const prepared = await prepareTriggerProjection({ target, context }, row.scopeSessionId, admittedSource);
-      return writeResult(await reconcile(row, context, target, targetProject, { triggers, removedTriggers: [] },
+      const savedTriggers = registrationRepository === undefined ? triggers : triggers.map(item => item.triggerId === input.triggerId
+        ? { ...item, managedGithubRepositoryId: registrationRepository } : item);
+      return writeResult(await reconcile(row, context, target, targetProject, { triggers: savedTriggers, removedTriggers: [] },
         setEnabled, nextProject === undefined || (reviewedProject !== undefined
           && createCanonicalJsonSigningInput(reviewedProject) === createCanonicalJsonSigningInput(targetProject)), current.storedContext, caller), input.triggerId, false, prepared);
     },

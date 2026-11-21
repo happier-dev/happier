@@ -842,6 +842,8 @@ export const AutomationEventStoredDefinitionProjectionV1Schema = lazyZodSchema((
   sourceContractVersion: POSITIVE_SAFE_INTEGER_SCHEMA,
   observationTransport: AutomationEventSourceObservationTransportV1Schema,
   storedDefinitionEnvelope: AutomationStoredContentEnvelopeV1Schema,
+  /** For the private host opening a sealed definition originally saved as polling. */
+  managedRepositoryHook: z.optional(z.literal(true)),
   payloadSchema: PluginJsonSchemaV2Schema,
   subjectServerId: z.optional(MachineTargetV1Schema.shape.serverId),
   subjectProjections: z.optional(z.array(PluginSubjectProjectionV1Schema)),

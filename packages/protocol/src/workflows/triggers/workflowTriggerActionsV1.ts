@@ -1,4 +1,5 @@
 import * as zMini from '../../zodRuntimePolicy.js';
+import { ManagedGithubRepositoryIdV1Schema, ManagedGithubRepositoryHookSaveResultV1Schema } from '../../automations/automationEventSetupResultV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ActionRefusalDiagnosticV1Schema } from '../../actions/actionRefusalDiagnostic.js';
 import { DeploymentBackupRunInputV1Schema } from '../../deployments/deploymentBackupActionsV1.js';
@@ -208,6 +209,7 @@ const WorkflowTriggerExecutableAddRequestV1Schema = lazyZodSchema(() => z.strict
   observationOnly: z.optional(z.never()),
   ...zMini.partial(ContextFields).shape,
   trigger: SessionTriggerDefinitionInputV1Schema,
+  managedGithubRepositoryId: z.optional(ManagedGithubRepositoryIdV1Schema),
   deployment: z.optional(AutomationDeploymentTriggerFilterV1Schema),
   actionApproval: z.optional(z.enum(['automatic', 'ask'])),
 }).check(z.superRefine((value, ctx) => {
@@ -243,6 +245,7 @@ export const WorkflowTriggerUpdateRequestV1Schema = lazyZodSchema(() => z.strict
     target: zMini.optional(TriggerTargetV1Schema),
     enabled: z.optional(z.boolean()),
     trigger: zMini.optional(AutomationTriggerDefinitionSchema),
+    managedGithubRepositoryId: z.optional(ManagedGithubRepositoryIdV1Schema),
     deployment: z.optional(z.nullable(AutomationDeploymentTriggerFilterV1Schema)),
     actionApproval: z.optional(z.enum(['automatic', 'ask'])),
     onComplete: z.optional(AutomationStoredWorkflowDefinitionV2Schema.shape.onComplete),
@@ -364,6 +367,7 @@ export const WorkflowTriggerWriteResultV1Schema = lazyZodSchema(() => z.strictOb
   set: WorkflowTriggerSetV1Schema,
   triggerId: zMini.optional(AutomationTriggerIdSchema),
   triggerRevision: z.optional(Revision),
+  managedGithubRepositoryHook: z.optional(ManagedGithubRepositoryHookSaveResultV1Schema),
   triggerDefinition: z.optional(WorkflowTriggerEventDefinitionV1Schema),
 }));
 export const WorkflowTriggerRemoveResultV1Schema = lazyZodSchema(() => z.union([

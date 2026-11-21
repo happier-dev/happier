@@ -9,4 +9,6 @@ export * from './pullRequests/restAdapter.js';
 export * from './repositoryProvisioning/index.js';
 export * from './remoteUrl.js';
 export * from './webhookAction.js';
+export { GITHUB_AUTOMATION_EVENT_LOCAL_IDS } from './githubAutomationEvents.js';
+export { readGithubManagedRepositoryHookSource, writeGithubManagedRepositoryWebhook } from './githubManagedRepositoryWebhook.js';
 export * from './triage/securityAlerts/actionContracts.js';

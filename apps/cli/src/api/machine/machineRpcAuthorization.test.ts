@@ -46,6 +46,7 @@ import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requ
 import { ScmWorkEvidenceAdmissionSchema } from '@happier-dev/protocol/scm';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 import { registerScmHandlers } from '@/rpc/handlers/scm';
+import { formatPluginWebhookEndpointIdV1 } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
 
 describe('authorizeMachineRpcRequest', () => {
   it('binds checkout deletion to Home admission for the exact decrypted Session, including targeted input', async () => {
@@ -89,6 +90,59 @@ describe('authorizeMachineRpcRequest', () => {
     await expect(authorizeMachineRpcRequest({ ...request,
       authorization: { kind: 'session.write', sessionId: 'own-session' } })).resolves.toEqual({ ok: true });
   });
+  it('delivers managed webhook registration only to the operation’s admitted Account and Machine', async () => {
+    const boundary: MachineRpcAdmissionBoundary = {
+      machineId: 'watcher',
+      resolveInstallationId: () => 'watcher-installation',
+      resolveCustodianAccountId: async () => 'endpoint-account',
+      resolveHomeServerIdentityId: async () => 'endpoint-home',
+      verifyMachineAdmission: async () => true,
+    };
+    const writes: string[] = [];
+    const rpc = new RpcHandlerManager({
+      scopePrefix: 'watcher', localMachineId: 'watcher', encryptionMode: 'plain', logger: () => {},
+      authorizeRequest: (request, source) => authorizeMachineRpcRequest(request, boundary, source),
+    });
+    const operation = { endpointId: formatPluginWebhookEndpointIdV1(new Uint8Array(16).fill(1)), operationId: 'fixture-setup' };
+    const authorization = {
+      kind: 'plugin.webhook.managed.serverOrigin' as const,
+      accountId: 'endpoint-account', machineId: 'watcher',
+    };
+    const request = {
+      method: 'watcher:plugin.webhook.managed',
+      authorization,
+      params: {
+        kind: 'register' as const, ...operation, publicUrl: 'https://fixture.example/v1/plugins/webhooks/opaque',
+        materializationId: 'watcher-github', repositoryId: '42', signingSecret: 'fixture-signing-secret',
+        binding: { v: 1 as const, automationId: 'automation-1', triggerId: 'trigger-1',
+          triggerRevision: 1, triggerKind: 'pluginEvent' as const,
+          eventRef: { pluginId: 'happier.scm.forge.github', localId: 'automation/repository-pushed-v1' },
+          sourceSelectorId: '00000000-0000-4000-8000-000000000002' },
+        storedDefinitionEnvelope: { t: 'plain' as const, v: { fixture: true } },
+      },
+    };
+    // The remote write is the only effect under the gate. Home socket trust and
+    // the credentialed plugin writer are proved separately in their composed fixtures.
+    rpc.registerHandler('plugin.webhook.managed', async () => {
+      writes.push(operation.operationId);
+      return { kind: 'registered', hookId: '123' };
+    });
+    const foreign = [
+      { ...request, authorization: { ...authorization, accountId: 'foreign-account' } },
+      { ...request, authorization: { ...authorization, machineId: 'foreign-machine' } },
+    ];
+    for (const attempt of foreign) {
+      await expect(rpc.handleRequest(attempt, undefined, 'authenticated_home_socket'))
+        .resolves.toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false });
+    }
+    await expect(rpc.handleRequest(request))
+      .resolves.toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false });
+    expect(writes).toEqual([]);
+    await expect(rpc.handleRequest(request, undefined, 'authenticated_home_socket'))
+      .resolves.toEqual({ kind: 'registered', hookId: '123' });
+    expect(writes).toEqual([operation.operationId]);
+  });
+
   it('accepts SCM work evidence stamps only through authenticated Home ingress with existing Machine admission', async () => {
     const machineAdmission = { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
       installationId: 'installation', role: 'manage' as const, encryptionMode: 'plain' as const };

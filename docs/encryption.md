@@ -2688,6 +2688,13 @@ It does not store repository bytes, setup commands, Git credentials, Artifact
 keys, or Machine encryption material. Source metadata is not converted into a
 private Account-row envelope when the Account changes encryption mode.
 
+For Deploy on push, the Home also receives the numeric GitHub repository ID
+in plaintext when the trigger is saved. The repository is already visible to
+the Home through the Project Source metadata exception above. The trigger
+definition remains sealed for E2EE Accounts. The Home sends its own webhook
+signing secret to the admitted Machine through the private server-origin
+Machine RPC for the registration. The secret is excluded from Action results.
+
 A signed creation without requester Account context omits that private row and private
 member preferences; it does not read them with the Machine custodian's credentials.
 Public defaults still use the original signed creation selection and each resource's

@@ -1868,6 +1868,7 @@ export const PLUGIN_UI_HOST_PROVIDED_PROTOCOL_SPECIFIERS: readonly string[] = Ob
     '@happier-dev/protocol/plugins/webhooks/deliveryV1',
     '@happier-dev/protocol/plugins/webhooks/endpointActionIdsV1',
     '@happier-dev/protocol/plugins/webhooks/endpointV1',
+    '@happier-dev/protocol/plugins/webhooks/managedRepositoryWebhookRpcV1',
     '@happier-dev/protocol/plugins/webhooks/statusV1',
     '@happier-dev/protocol/profiles/backendProfileSchema',
     '@happier-dev/protocol/profiles/builtInBackendProfiles',

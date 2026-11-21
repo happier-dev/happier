@@ -1,4 +1,5 @@
 import { FastifyBaseLogger, FastifyInstance } from "fastify";
+import type { ForwardManagedPluginWebhookOperation } from "./socket/managedPluginWebhookDispatcher";
 import { ZodTypeProvider } from "fastify-type-provider-zod";
 import { IncomingMessage, Server, ServerResponse } from "http";
 import type { PeerTcpTunnelRelayTransportFactory } from "@/app/machines/peer/mediation/tunnel/peerRelayStreamTransport";
@@ -210,6 +211,7 @@ declare module 'fastify' {
         forwardAutomationReplyHandoffToMachine: (
             params: unknown,
         ) => Promise<AutomationReplyHandoffDispatchResultV1>;
+        forwardManagedPluginWebhookToMachine: ForwardManagedPluginWebhookOperation;
         forwardSessionServerStartToMachine: (
             params: unknown,
             options?: Readonly<{ signal?: AbortSignal }>,

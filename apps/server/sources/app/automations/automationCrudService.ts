@@ -15,6 +15,7 @@ import { markSharedWorkflowTriggerSummaryChangedInTx, publishAutomationMutationI
 import type { Prisma } from "@prisma/client";
 
 import { afterTx, inTx, type Tx } from "@/storage/inTx";
+import type { DeletedManagedWebhookConsumer } from "@/app/plugins/webhooks/removeUnusedManagedRepositoryWebhook";
 import { db } from "@/storage/db";
 import { getDbProviderFromEnv, isPrismaErrorCode } from "@/storage/prisma";
 import { resolveDbSqlDialect } from "@/config/databaseProvider";
@@ -1197,6 +1198,18 @@ async function tryRejoinAutomationTriggerCreateTx(params: Readonly<{
  * currentness is the proof, and these rows are a projection of reporter
  * observations rather than durable history.
  */
+function notifyDetachedWebhookConsumerAfterTx(
+    tx: Tx,
+    consumer: DeletedManagedWebhookConsumer,
+    nextEndpointId: Prisma.AutomationTriggerUncheckedUpdateInput["webhookEndpointId"],
+    onDeletedWebhookConsumer?: (consumer: DeletedManagedWebhookConsumer) => void,
+): void {
+    if (consumer.webhookEndpointId && nextEndpointId !== undefined
+        && nextEndpointId !== consumer.webhookEndpointId && onDeletedWebhookConsumer) {
+        afterTx(tx, () => onDeletedWebhookConsumer(consumer));
+    }
+}
+
 async function deleteSupersededAutomationEventSourceStatusTx(params: Readonly<{
     tx: Tx;
     triggerId: string;
@@ -5596,6 +5609,7 @@ export async function reconcileAutomationDefinition(params: Readonly<{
     authentication?: DeploymentAuthentication;
     automationId: string;
     input: AutomationDefinitionReconcileRequest;
+    onDeletedWebhookConsumer?: (consumer: DeletedManagedWebhookConsumer) => void;
 }>): Promise<AutomationListItem | null> {
     const durablePushInput = params.input.triggers.find((item) =>
         (item.kind === "new" && item.trigger.kind === "pluginEvent"
@@ -5811,6 +5825,7 @@ export async function reconcileAutomationDefinition(params: Readonly<{
                 data: automationTriggerTombstoneUpdate(now, trigger.kind),
             });
             if (deleted.count !== 1) throw new AutomationTriggerMutationConflictError();
+            notifyDetachedWebhookConsumerAfterTx(tx, trigger, null, params.onDeletedWebhookConsumer);
             if (trigger.kind === "pluginEvent") {
                 // Removed Event triggers change checkpoint-retirement truth
                 // even when the definition or trigger was already paused.
@@ -5946,6 +5961,7 @@ export async function reconcileAutomationDefinition(params: Readonly<{
                 data,
             });
             if (updated.count !== 1) throw new AutomationTriggerMutationConflictError();
+            notifyDetachedWebhookConsumerAfterTx(tx, trigger, data.webhookEndpointId, params.onDeletedWebhookConsumer);
             if (trigger.kind === "pluginEvent" || nextKind === "pluginEvent") {
                 eventProjectionChanged ||= params.input.enabled;
                 changedEventTriggerIds.add(trigger.id);
@@ -6112,6 +6128,7 @@ export async function updateAutomationTrigger(params: Readonly<{
     expectedRevision: number;
     enabled?: boolean;
     trigger?: AutomationTriggerDefinition;
+    onDeletedWebhookConsumer?: (consumer: DeletedManagedWebhookConsumer) => void;
     triggerDefinitionEnvelope?: AutomationTriggerPatchRequest["triggerDefinitionEnvelope"];
 }>): Promise<AutomationListItem | null> {
     if (params.enabled === undefined && params.trigger === undefined) {
@@ -6285,6 +6302,7 @@ export async function updateAutomationTrigger(params: Readonly<{
             throw new AutomationTriggerMutationConflictError();
         }
         await advanceAutomationTriggerSetRevisionTx(tx, automation, now);
+        notifyDetachedWebhookConsumerAfterTx(tx, existing, data.webhookEndpointId, params.onDeletedWebhookConsumer);
         const eventProjectionChanged = automation.enabled && (
             existing.kind === "pluginEvent" || nextKind === "pluginEvent"
         );
@@ -6333,6 +6351,7 @@ export async function deleteAutomationTrigger(params: Readonly<{
     automationId: string;
     triggerId: string;
     expectedRevision: number;
+    onDeletedWebhookConsumer?: (consumer: DeletedManagedWebhookConsumer) => void;
 }>): Promise<AutomationListItem | null> {
     return await inTx(async (tx) => {
         await admitAutomationDeploymentMutationInTx(tx, { ...params, removal: true });
@@ -6369,6 +6388,7 @@ export async function deleteAutomationTrigger(params: Readonly<{
             throw new AutomationTriggerMutationConflictError();
         }
         await advanceAutomationTriggerSetRevisionTx(tx, automation, now);
+        notifyDetachedWebhookConsumerAfterTx(tx, existing, null, params.onDeletedWebhookConsumer);
         if (existing.kind === "pluginEvent") {
             await ensureAutomationEventCatalogStateTx({
                 tx,
@@ -6407,7 +6427,7 @@ export async function deleteAutomation(params: {
     accountId: string;
     authentication?: DeploymentAuthentication;
     automationId: string;
-
+    onDeletedWebhookConsumer?: (consumer: DeletedManagedWebhookConsumer) => void;
 }): Promise<Readonly<{ removedRevision: number }> | false> {
     return await inTx(async (tx) => {
         await admitAutomationDeploymentMutationInTx(tx, { ...params, removal: true });
@@ -6423,7 +6443,7 @@ export async function deleteAutomation(params: {
 export async function deleteAutomationTx(tx: Tx, params: {
     accountId: string;
     automationId: string;
-
+    onDeletedWebhookConsumer?: (consumer: DeletedManagedWebhookConsumer) => void;
 }): Promise<Readonly<{ removedRevision: number }> | false> {
         await acquireWorkflowPublicationLocksInTx(tx, { accountId: params.accountId, automationIds: [params.automationId],
             runWhere: { accountId: params.accountId, automationId: params.automationId } });
@@ -6464,6 +6484,11 @@ export async function deleteAutomationTx(tx: Tx, params: {
             data: { enabled: false, nextRunAt: null, updatedAt: deletedAt },
         });
 
+        if (params.onDeletedWebhookConsumer) {
+            for (const trigger of existing.triggers) {
+                notifyDetachedWebhookConsumerAfterTx(tx, trigger, null, params.onDeletedWebhookConsumer);
+            }
+        }
         if (existing.triggers.some((trigger) => trigger.kind === "pluginEvent")) {
             await ensureAutomationEventCatalogStateTx({
                 tx,

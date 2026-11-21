@@ -1,3 +1,4 @@
+import { GITHUB_MANAGED_PUSH_EVENT_LOCAL_ID_V1 } from '@happier-dev/plugin-sdk/events';
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import { ScmHostingPullRequestLifecycleActionV1ProtocolSchema, ScmHostingPullRequestLifecycleV1ProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
 import { TriagePullRequestReviewTargetV1Schema, type TriagePullRequestReviewTargetV1 } from '@happier-dev/triage-protocol/v1';
@@ -15,7 +16,7 @@ export const GITHUB_AUTOMATION_EVENT_LOCAL_IDS = Object.freeze({
   pullRequestMerged: 'automation/pull-request-merged-v1',
   pullRequestOpened: 'automation/pull-request-opened-v1',
   pullRequestLifecycle: 'automation/pull-request-lifecycle-v1',
-  push: 'automation/repository-pushed-v1',
+  push: GITHUB_MANAGED_PUSH_EVENT_LOCAL_ID_V1,
   checksCompleted: 'automation/pull-request-checks-completed-v1',
   checksFailed: 'automation/pull-request-checks-failed-v1',
   checksPassed: 'automation/pull-request-checks-passed-v1',

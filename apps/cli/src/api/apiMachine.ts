@@ -1,4 +1,5 @@
 import { publishDaemonHostEvent } from '@/daemon/events/publishDaemonHostEvent';
+import { registerManagedRepositoryHookFromHome } from './machine/writeManagedRepositoryHookFromHome';
 import { projectAccountEntitiesInvalidationForHost } from '@/daemon/events/accountEntityInvalidation';
 import { readMachinePresenceAutomationOccurrenceV1 } from '@happier-dev/protocol/machines/machinePresenceTransitionsV1';
 import { applyCliActionAutomationUpdateV1, reconnectCliActionAutomationsV1, refreshCliActionAutomationsFromChangesV1 } from './actionAutomations';
@@ -2170,6 +2171,14 @@ export class ApiMachineClient {
         registerWorkspaceFaviconHandlers(createFilesystemEffectRpcRegistrar(this.rpcHandlerManager, this.filesystemEffectAdmission), {
             defaultDirectory: this.machineRpcWorkingDirectory,
             accessPolicy: this.filesystemAccessPolicy,
+        });
+        registerManagedRepositoryHookFromHome({
+            rpc: this.rpcHandlerManager,
+            readCredentials: async () => {
+                if (configuration.activeServerId !== machineRuntimeServerId || this.projectionSchedulingClosed) return null;
+                const credentials = await readStoredCredentialsForServerId(machineRuntimeServerId);
+                return credentials?.token === this.token ? credentials : null;
+            },
         });
         registerMachineConnectedAccountRpcHandlers({
             rpcHandlerManager: this.rpcHandlerManager,

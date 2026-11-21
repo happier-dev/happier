@@ -39,6 +39,7 @@ import { MANAGED_FINITE_WAKE_RPC_METHOD } from '@happier-dev/protocol/machines/m
 import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD,
     ManagedActivityReadRequestV1Schema, ManagedAdmissionDrainConfirmRequestV1Schema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { SESSION_SERVER_START_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/sessions/creation/sessionServerStartV1';
+import { MANAGED_PLUGIN_WEBHOOK_DAEMON_RPC_METHOD_V1, ManagedPluginWebhookOriginV1Schema } from '@happier-dev/protocol/plugins/webhooks/managedRepositoryWebhookRpcV1';
 import { isSocketRpcActionApiServerOriginAuthorizationContext, isSocketRpcAutomationReplyHandoffServerOriginAuthorizationContext, isSocketRpcSessionServerStartServerOriginAuthorizationContext, isSocketRpcMachineAccessLossServerOriginAuthorizationContext, isSocketRpcSessionAuthorizationNamespace, parseSocketRpcAuthorizationContext, resolveSocketRpcSessionAuthorization } from '@happier-dev/protocol/socketRpc';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
@@ -154,6 +155,8 @@ const SERVER_ORIGIN_RPC_FAMILIES: readonly Readonly<{
 }>[] = [
     { methods: [AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1], isAuthorization: isSocketRpcAutomationReplyHandoffServerOriginAuthorizationContext, serverOnly: true },
     { methods: [SESSION_SERVER_START_DAEMON_RPC_METHOD_V1], isAuthorization: isSocketRpcSessionServerStartServerOriginAuthorizationContext, serverOnly: true },
+    { methods: [MANAGED_PLUGIN_WEBHOOK_DAEMON_RPC_METHOD_V1],
+        isAuthorization: value => ManagedPluginWebhookOriginV1Schema.safeParse(value).success, serverOnly: true },
     { methods: [EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, MANAGED_FINITE_WAKE_RPC_METHOD], isAuthorization: isSocketRpcActionApiServerOriginAuthorizationContext, serverOnly: true },
     { methods: [RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS], isAuthorization: isSocketRpcMachineAccessLossServerOriginAuthorizationContext, serverOnly: true },
     { methods: [RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_ADMISSION], isAuthorization: isSocketRpcLocalServicesPreviewAdmissionServerOriginAuthorizationContext, serverOnly: true, requiresMachineAdmission: true },
@@ -492,6 +495,7 @@ export class RpcHandlerManager {
         // the Session key and the hop never leaves the machine. Handlers keep the Session's content mode.
         let rpcContent: SocketRpcContent = source === 'local_session_channel' ? { mode: 'plain' } : admittedContent;
         const privateMethod = this.readUnprefixedMethod(request.method);
+        const managedWebhook = privateMethod === MANAGED_PLUGIN_WEBHOOK_DAEMON_RPC_METHOD_V1;
         const confidential = privateMethod === RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE
             || privateMethod === RPC_METHODS.DAEMON_SECRET_SOURCE_INVOKE
             || privateMethod === RPC_METHODS.DAEMON_BROWSER_PROFILE_COOKIE_SOURCE_READ
@@ -977,7 +981,8 @@ export class RpcHandlerManager {
                 if (!hasDiagnosticTrace && request.requestId === undefined && callId !== null) diagnostic.requestId = callId;
             } catch (error) {
                 return await respond(request, {
-                    error: confidential ? 'confidential_continuation_failed' : error instanceof Error ? error.message : 'Unable to open RPC content',
+                    error: managedWebhook ? 'target_unavailable'
+                        : confidential ? 'confidential_continuation_failed' : error instanceof Error ? error.message : 'Unable to open RPC content',
                     errorCode: confidential ? 'confidential_continuation_failed' : readRpcErrorCode(error) ?? RPC_ERROR_CODES.UPDATE_REQUIRED,
                 });
             }
@@ -1338,7 +1343,7 @@ export class RpcHandlerManager {
 
             // Encrypt and return the response
             nextPhase('response');
-            const acknowledgement = confidential ? null : this.projectAcknowledgement(
+            const acknowledgement = confidential || managedWebhook ? null : this.projectAcknowledgement(
                 request,
                 decryptedParams,
                 result,
@@ -1355,6 +1360,9 @@ export class RpcHandlerManager {
                     .includes(causeCode) ? { causeCode } : {}),
                 ...diagnostic.failure,
                 phaseDurationsMs: { ...phaseDurationsMs, ...diagnostic.failure?.phaseDurationsMs } };
+            if (managedWebhook) {
+                return await respond(request, { kind: 'unavailable', code: 'target_unavailable' });
+            }
             if (confidential) {
                 return await respond(request, { error: 'confidential_continuation_failed', errorCode: 'confidential_continuation_failed' });
             }

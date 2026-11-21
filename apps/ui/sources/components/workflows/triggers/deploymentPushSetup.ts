@@ -1,5 +1,8 @@
+import {
+  GITHUB_EVENT_SETUP_ACTIONS_V1, GITHUB_MANAGED_PUSH_EVENT_LOCAL_ID_V1, readGithubRepositoryIdFromEventSourceV1,
+} from '@happier-dev/protocol/automations/event-setup-result';
 import type { AutomationDeploymentTriggerV1 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
-import type { AutomationTriggerDefinitionInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
+import type { AutomationPluginEventDefinitionTrigger, AutomationTriggerDefinitionInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 import type { DeploymentEnvironmentHeaderV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentEnvironmentRefV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
 import { getWorkflowStarterExamplesV1 } from '@happier-dev/protocol/workflows/builtins/examples';
@@ -18,6 +21,18 @@ export function buildDeploymentPushFilter(branch: string, existing?: AutomationD
   return { ...filter, ...(branch.trim() ? { branch: branch.trim() } : {}) };
 }
 
+type DeploymentPushSource = AutomationTriggerDefinitionInput | Omit<AutomationPluginEventDefinitionTrigger, 'enabled'>;
+
+/** The Home decides whether a selected GitHub source can register a managed hook. */
+export function readDeploymentPushManagedRepositoryId(trigger: DeploymentPushSource | null | undefined): string | undefined {
+  if (!trigger || trigger.kind !== 'pluginEvent' || !('eventRef' in trigger)
+    || !('observationTransport' in trigger) || trigger.observationTransport.kind !== 'checkpointedPull'
+    || !('sourceInstanceId' in trigger) || typeof trigger.sourceInstanceId !== 'string'
+    || trigger.eventRef.pluginId !== GITHUB_EVENT_SETUP_ACTIONS_V1.pluginId
+    || trigger.eventRef.localId !== GITHUB_MANAGED_PUSH_EVENT_LOCAL_ID_V1) return undefined;
+  return readGithubRepositoryIdFromEventSourceV1(trigger.sourceInstanceId);
+}
+
 /** Fixed destination operands only. The trigger owner binds SHA/requestKey from its admitted occurrence. */
 export function buildDeploymentPushRequest(
   config: Omit<DeploymentPushSetupConfig, 'protection'>,
@@ -27,7 +42,9 @@ export function buildDeploymentPushRequest(
 ) {
   const starter = getWorkflowStarterExamplesV1().find(example => example.key === 'deploy-on-push');
   if (!starter) throw new Error('deploy-on-push starter unavailable');
+  const managedGithubRepositoryId = readDeploymentPushManagedRepositoryId(trigger);
   return {
+    ...(managedGithubRepositoryId === undefined ? {} : { managedGithubRepositoryId }),
     target: { kind: 'inline' as const, definition: starter.definition },
     project: config.project,
     executionTarget: { kind: 'detached_run' as const },

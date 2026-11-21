@@ -14,6 +14,16 @@ import { projectPluginWebhookEndpointReadinessV1 } from "./endpointReadiness";
 import { markPluginWebhookAccountChangedInTxV1 } from "./accountChange";
 import type { PluginWebhookVerifierV1 } from '@happier-dev/protocol/plugins/contributions/webhooks';
 
+const MANAGED_GITHUB_ENDPOINT_KEY_PREFIX = 'managed-github-repository:';
+
+export function managedGithubEndpointKey(repositoryId: string): string {
+    return MANAGED_GITHUB_ENDPOINT_KEY_PREFIX + repositoryId;
+}
+
+export function isManagedGithubEndpointKey(key: string | null): boolean {
+    return key?.startsWith(MANAGED_GITHUB_ENDPOINT_KEY_PREFIX) ?? false;
+}
+
 export class PluginWebhookEndpointStoreError extends Error {
     constructor(readonly code:
         | "idempotency_conflict"
@@ -124,8 +134,8 @@ function projectEnsureRejoin(row: Readonly<{
     });
 }
 
-async function readEnsureIdempotencyV1(accountId: string, idempotencyKey: string) {
-    return await db.pluginWebhookEndpoint.findFirst({
+async function readEnsureIdempotencyV1(accountId: string, idempotencyKey: string, tx?: Tx) {
+    return await (tx ?? db).pluginWebhookEndpoint.findFirst({
         where: { accountId, ensureIdempotencyKey: idempotencyKey },
         select: ENSURE_REJOIN_SELECT_V1,
     });
@@ -135,8 +145,10 @@ async function readEnsureDeterministicConflictV1(params: Readonly<{
     accountId: string;
     input: PluginWebhookEndpointEnsureInputV1;
     contribution: ResolvedPluginWebhookContributionV1;
+    tx?: Tx;
 }>): Promise<"source_conflict" | "installation_conflict" | null> {
-    const source = await db.pluginWebhookEndpoint.findFirst({
+    const client = params.tx ?? db;
+    const source = await client.pluginWebhookEndpoint.findFirst({
         where: {
             accountId: params.accountId,
             pluginId: params.contribution.pluginId,
@@ -150,7 +162,7 @@ async function readEnsureDeterministicConflictV1(params: Readonly<{
     if (source) return "source_conflict";
 
     if (params.input.setup.kind !== "githubSharedInstallationV1") return null;
-    const installation = await db.pluginWebhookEndpoint.findFirst({
+    const installation = await client.pluginWebhookEndpoint.findFirst({
         where: {
             providerInstallationId: params.input.setup.installationId,
             route: {
@@ -193,9 +205,11 @@ export async function ensurePluginWebhookEndpointV1(params: Readonly<{
     target: ResolvedPluginWebhookTargetV1;
     publicBaseUrl: string;
     randomBytes?: (length: number) => Uint8Array;
+    managed?: true;
 }>): Promise<PluginWebhookEndpointEnsureResultV1> {
     if (
-        params.input.webhookContribution.pluginId !== params.contribution.pluginId
+        isManagedGithubEndpointKey(params.input.idempotencyKey) !== (params.managed === true)
+        || params.input.webhookContribution.pluginId !== params.contribution.pluginId
         || params.input.webhookContribution.localId !== params.contribution.localId
         || params.input.targetMaterialization.machineId !== params.target.materialization.machineId
         || params.input.targetMaterialization.materializationId !== params.target.materialization.materializationId
@@ -247,7 +261,7 @@ export async function ensurePluginWebhookEndpointV1(params: Readonly<{
         }
     }
     const requestFingerprint = ensureFingerprint(params);
-    const existing = await readEnsureIdempotencyV1(params.accountId, params.input.idempotencyKey);
+    const existing = await readEnsureIdempotencyV1(params.accountId, params.input.idempotencyKey, params.tx);
     if (existing) return projectEnsureRejoin(existing, requestFingerprint, params.publicBaseUrl);
     const deterministicConflict = await readEnsureDeterministicConflictV1(params);
     if (deterministicConflict) throw new PluginWebhookEndpointStoreError(deterministicConflict);
@@ -477,6 +491,7 @@ type PluginWebhookEndpointTargetCurrentnessV1 = Readonly<{
 export type CurrentPluginWebhookEndpointTargetV1 = Readonly<{
     webhookEndpointId: string;
     revision: number;
+    managedRepositoryHook?: true;
     webhookContribution: Readonly<{ pluginId: string; localId: string }>;
 }>;
 
@@ -508,11 +523,13 @@ function projectCurrentPluginWebhookEndpointTargetV1(endpoint: Readonly<{
     revision: number;
     pluginId: string | null;
     webhookContributionId: string | null;
+    providerRepositoryHookId: string | null;
 }>): CurrentPluginWebhookEndpointTargetV1 | null {
     if (endpoint.pluginId === null || endpoint.webhookContributionId === null) return null;
     return {
         webhookEndpointId: endpoint.id,
         revision: endpoint.revision,
+        ...(endpoint.providerRepositoryHookId === null ? {} : { managedRepositoryHook: true }),
         webhookContribution: {
             pluginId: endpoint.pluginId,
             localId: endpoint.webhookContributionId,
@@ -540,6 +557,7 @@ export async function readCurrentPluginWebhookEndpointTargetTxV1(params: Readonl
             revision: true,
             pluginId: true,
             webhookContributionId: true,
+            providerRepositoryHookId: true,
         },
     });
     return endpoint ? projectCurrentPluginWebhookEndpointTargetV1(endpoint) : null;
@@ -565,6 +583,7 @@ export async function listCurrentPluginWebhookEndpointTargetsTxV1(params: Readon
             revision: true,
             pluginId: true,
             webhookContributionId: true,
+            providerRepositoryHookId: true,
         },
     });
     return endpoints.flatMap((endpoint) => {
@@ -642,7 +661,8 @@ export async function revokePluginWebhookEndpointV1(params: Readonly<{
         }
         const endpoint = await tx.pluginWebhookEndpoint.findFirst({
             where: { id: params.webhookEndpointId, accountId: params.accountId },
-            select: { revision: true, enabled: true, revokedAt: true, routingKind: true, routeId: true, pluginId: true },
+            select: { revision: true, enabled: true, revokedAt: true, routingKind: true, routeId: true, pluginId: true,
+                ensureIdempotencyKey: true },
         });
         if (!endpoint) throw new PluginWebhookEndpointStoreError("endpoint_unavailable");
         if (endpoint.revision !== params.expectedRevision) throw new PluginWebhookEndpointStoreError("idempotency_conflict");
@@ -652,7 +672,9 @@ export async function revokePluginWebhookEndpointV1(params: Readonly<{
         if (revision !== endpoint.revision) {
             const updated = await tx.pluginWebhookEndpoint.updateMany({
                 where: { id: params.webhookEndpointId, accountId: params.accountId, revision: params.expectedRevision, enabled: true, revokedAt: null },
-                data: { enabled: false, revokedAt: now, revision: { increment: 1 } },
+                data: { enabled: false, revokedAt: now, revision: { increment: 1 },
+                    ...(isManagedGithubEndpointKey(endpoint.ensureIdempotencyKey)
+                        ? { releasedAt: now, sourceInstanceId: null, ensureIdempotencyKey: null } : {}) },
             });
             if (updated.count !== 1) throw new PluginWebhookEndpointStoreError("idempotency_conflict");
             if (endpoint.routingKind === "accountEndpoint") {

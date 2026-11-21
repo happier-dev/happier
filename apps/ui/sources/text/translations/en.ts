@@ -22566,6 +22566,16 @@ const enProjects = {
       unavailable: "This page isn’t available for this checkout yet.",
   },
   deployments: {
+            pushDelivery: {
+                title: 'Delivery',
+                saved: 'Trigger saved',
+                webhook: 'This trigger receives pushes directly from GitHub.',
+                managedOnSave: 'Save to set up a webhook if GitHub can reach this Home and the account can manage webhooks. Until then, this trigger checks GitHub Events.',
+                polling: 'GitHub Events can take 30 seconds to 6 hours to show a push. Happier checks the feed on its next scheduled check.',
+                pending: 'Waiting for the first verified delivery. The trigger keeps checking GitHub Events in the meantime.',
+                reconnect: 'The trigger uses GitHub Events. Reconnect the selected GitHub account with permission to manage webhooks on this repository.',
+                unconfirmed: 'The trigger uses GitHub Events. Happier could not confirm the webhook. Save again to retry.',
+            },
       title: "Deployments",
       creationDefaults: 'Deployment creation defaults',
       environments: "Environments",

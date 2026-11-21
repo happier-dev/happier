@@ -69,6 +69,7 @@ import {
 import { artifactUpdateHandler } from "./socket/artifactUpdateHandler";
 import { accessKeyHandler } from "./socket/accessKeyHandler";
 import { createServerRpcForwarder } from "./socket/serverRpcForwarder";
+import { createManagedPluginWebhookDispatcher } from "./socket/managedPluginWebhookDispatcher";
 import { createAutomationReplyHandoffDaemonDispatcher } from "./socket/automationReplyHandoffDispatcher";
 import { createExternalActionDaemonDispatcher, resolveCurrentSessionMachineFromServer, resolveCurrentSessionPublisherFromServer } from "./socket/externalActionDispatcher";
 import {
@@ -378,6 +379,7 @@ export function startSocket(app: Fastify): () => Promise<void> {
         io,
         sessionPublisherPresence,
     });
+    app.forwardManagedPluginWebhookToMachine = createManagedPluginWebhookDispatcher({ io });
     app.forwardSessionServerStartToMachine =
         createSessionServerStartDaemonDispatcher({ io });
     const sessionServerStartAutomationIngress = createSessionServerStartAutomationIngress({

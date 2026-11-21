@@ -471,8 +471,21 @@ operationally:
 
 #### Setting up durable push
 
-Pick **Webhook** when the composer offers the choice, then configure the source
-as usual. Happier creates the endpoint for you and shows two values:
+For **Deploy on push or merge**, Happier can register a repository webhook
+when GitHub can reach the Home over HTTPS. The selected GitHub Connected Account
+needs permission to write Webhooks on that repository. Reconnect it with that
+permission if setup asks you to. **Waiting for verified delivery** means the
+hook is registered and Happier is waiting for a signed delivery. **Webhook**
+means Happier has verified a delivery. When GitHub cannot reach the Home,
+**GitHub Events polling** waits on GitHub's events feed, which can take from
+30 seconds to 6 hours before Happier's next check.
+
+When you remove the last trigger using a managed webhook, Happier tries to
+delete the GitHub hook and retires its Home route. If GitHub removal fails,
+delete the leftover hook in the repository's Webhooks settings.
+
+When the composer offers manual setup, Happier creates the endpoint for you
+and shows two values:
 
 - a **payload URL** on your Happier server, and
 - a **secret**, shown once and never again.
@@ -483,9 +496,6 @@ open the repository or organization settings, select **Webhooks**, then choose
 `application/json`, and choose the events you want. Happier verifies every
 delivery against that secret. A mistyped secret rejects the delivery; check
 GitHub's delivery response when nothing appears in Happier.
-
-Happier does not create the webhook for you and does not need a GitHub App: a
-plain repository or organization webhook is the whole setup.
 
 #### Verify delivery, then verify the Run
 

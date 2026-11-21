@@ -1,3 +1,4 @@
+export { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 export type { AuthCallbackCreateInput } from '../connectedAccounts.js';
 export { requestDeviceGrantStep, type DeviceGrantStepInput } from './deviceGrantStep.js';
 export {

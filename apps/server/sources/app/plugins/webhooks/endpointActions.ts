@@ -1,3 +1,4 @@
+import { isManagedGithubEndpointKey } from "./endpointStore";
 import { PluginWebhookEndpointCredentialConfigureResultV1Schema, PluginWebhookEndpointCredentialFinishRotationResultV1Schema, PluginWebhookEndpointCredentialRotateResultV1Schema, type PluginWebhookEndpointCredentialConfigureInputV1, type PluginWebhookEndpointCredentialConfigureResultV1, type PluginWebhookEndpointCredentialFinishRotationInputV1, type PluginWebhookEndpointCredentialFinishRotationResultV1, type PluginWebhookEndpointCredentialRotateInputV1, type PluginWebhookEndpointCredentialRotateResultV1, type PluginWebhookDeliveryMovePendingInputV1, type PluginWebhookEndpointCheckCorrespondenceInputV1, type PluginWebhookEndpointCheckCorrespondenceResultV1, type PluginWebhookEndpointConvergeTargetInputV1, type PluginWebhookEndpointConvergeTargetResultV1, type PluginWebhookEndpointEnsureInputV1, type PluginWebhookEndpointReadInputV1, type PluginWebhookEndpointRetargetInputV1, type PluginWebhookEndpointRevokeInputV1 } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
 
 import { isPluginIntentSelectingDeclarationV1 } from "@/app/plugins/availability/currentDeclaration";
@@ -113,9 +114,10 @@ export async function rotatePluginWebhookEndpointCredentialV1(params: Readonly<{
                 revokedAt: true,
                 routingKind: true,
                 routeId: true,
+                ensureIdempotencyKey: true,
             },
         });
-        if (!endpoint || !endpoint.enabled || endpoint.revokedAt !== null || endpoint.routingKind !== "accountEndpoint") {
+        if (!endpoint || isManagedGithubEndpointKey(endpoint.ensureIdempotencyKey) || !endpoint.enabled || endpoint.revokedAt !== null || endpoint.routingKind !== "accountEndpoint") {
             throw new PluginWebhookEndpointStoreError("endpoint_unavailable");
         }
         // Rotation carries no operation identity, so `expectedRevision + 1`

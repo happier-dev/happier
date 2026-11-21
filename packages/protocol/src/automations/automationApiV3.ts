@@ -1,4 +1,5 @@
 import { AutomationTriggerReferenceV1Schema } from './automationTriggerIdentity.js';
+import { ManagedGithubRepositoryIdV1Schema, ManagedGithubRepositoryHookSaveResultV1Schema } from './automationEventSetupResultV1.js';
 import { AutomationTriggerActionIdV1Schema, AutomationActionPhaseV1Schema } from './automationActionIdentityV1.js';
 import { AutomationActionTriggerDefinitionEnvelopeV1Schema } from './automationActionTriggerV1.js';
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
@@ -169,6 +170,7 @@ const AutomationDefinitionExecutionRecipeSchema = lazyZodSchema(() => z.union([
 export const AUTOMATION_PRIVATE_DISPLAY_PLACEHOLDER_V1 = 'Automation';
 
 export const AutomationTriggerCreateRequestSchema = lazyZodSchema(() => z.strictObject({
+  managedGithubRepositoryId: z.optional(ManagedGithubRepositoryIdV1Schema),
   triggerId: AutomationTriggerIdSchema,
   trigger: AutomationTriggerDefinitionInputSchema,
 }));
@@ -254,6 +256,7 @@ export type AutomationDefinitionPatchRequest = z.infer<
  * the row byte-for-byte unchanged while still supplying its exact CAS witness.
  */
 export const AutomationTriggerReconcileExistingItemSchema = lazyZodSchema(() => z.strictObject({
+  managedGithubRepositoryId: z.optional(ManagedGithubRepositoryIdV1Schema),
   kind: z.literal('existing'),
   triggerId: AutomationTriggerIdSchema,
   expectedRevision: AutomationTriggerRevisionSchema,
@@ -283,6 +286,7 @@ export type AutomationTriggerReconcileExistingItem = z.infer<
 >;
 
 export const AutomationTriggerReconcileNewItemSchema = lazyZodSchema(() => z.strictObject({
+  managedGithubRepositoryId: z.optional(ManagedGithubRepositoryIdV1Schema),
   kind: z.literal('new'),
   triggerId: AutomationTriggerIdSchema,
   trigger: AutomationTriggerDefinitionInputSchema,
@@ -445,6 +449,12 @@ export type AutomationDefinitionListItem = z.infer<typeof AutomationDefinitionLi
  */
 export const AutomationDefinitionDetailSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationDefinitionBaseSchema, {
   triggers: z.array(AutomationTriggerDetailSchema),
+  /** Present only in the result of a Save that attempted managed hook registration. */
+  managedGithubRepositoryHooks: z.optional(z.array(z.strictObject({
+    triggerId: AutomationTriggerIdSchema,
+    result: ManagedGithubRepositoryHookSaveResultV1Schema,
+  }))),
+  managedGithubRepositoryHookRemovalError: z.optional(z.string()),
   /** Latest due occurrence per current schedule revision; absence means the server has no exact projection. */
   scheduleOccurrences: z.optional(z.array(z.strictObject({ triggerId: AutomationTriggerIdSchema, triggerRevision: AutomationTriggerRevisionSchema,
     scheduledFor: TIMESTAMP_SCHEMA, startedAt: z.nullable(TIMESTAMP_SCHEMA), held: z.boolean(),
@@ -1151,6 +1161,7 @@ export type AutomationV3RunMutationResponse = z.infer<typeof AutomationV3RunMuta
 export const AutomationDeleteResponseSchema = lazyZodSchema(() => z.strictObject({
   ok: z.literal(true),
   /** The live templateVersion removed by deletion; older servers omit this evidence. */
+  managedGithubRepositoryHookRemovalError: z.optional(z.string()),
   removedRevision: z.optional(z.number().check(z.int(), z.nonnegative(), z.int())),
 }));
 export type AutomationDeleteResponse = z.infer<typeof AutomationDeleteResponseSchema>;

@@ -29,7 +29,7 @@ import type { createTargetComposerAttachmentRegistry } from '../lifecycle/contri
 import type { createTargetComposerReferenceRegistry } from '../lifecycle/contributions/targetComposerReferences';
 import type { ClientContributedActionExecutor } from '../invocation/actions/executeContributedAction';
 import type { CurrentGlobalExternalSessionsRouter } from '@/session/external/currentGlobalRouting';
-import type { createTargetActionInvocationRegistry } from '../invocation/targetActionRegistry';
+import type { buildTargetActionInvocationRegistry } from '../invocation/buildTargetActionRegistry';
 import type { CliActionMachineAdmissionTransport } from '@/session/actions/createCliActionExecutorFromCredentials';
 import type { PluginDaemonDatabaseCapability, PluginDaemonDatabasePreparedContract, PluginDaemonDatabaseQuiescence, StablePluginDaemonDatabaseHost } from '../context/daemonDatabase';
 import type { CliServerFeaturesSnapshot } from '@/features/featureDecisionService';
@@ -138,7 +138,7 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     /** Exact daemon-admitted sources for a background child; this does not activate them. */
     readAdmittedBackgroundServicePlugins?(pluginIds: readonly string[]): readonly AdmittedBackgroundServicePlugin[];
     targetActivationFacts?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['targetActivationFacts'];
-    targetActionInvocations: ReturnType<typeof createTargetActionInvocationRegistry>;
+    targetActionInvocations: ReturnType<typeof buildTargetActionInvocationRegistry>;
     /** Existing authenticated machine reverse RPC; the answering UI owns client execution. */
     executeClientAction?: ClientContributedActionExecutor;
     /**

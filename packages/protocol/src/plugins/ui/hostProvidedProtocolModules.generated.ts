@@ -1793,1211 +1793,1212 @@ import * as m1788 from '../../plugins/ui/widgetAreaHost.js';
 import * as m1789 from '../../plugins/webhooks/deliveryV1.js';
 import * as m1790 from '../../plugins/webhooks/endpointActionIdsV1.js';
 import * as m1791 from '../../plugins/webhooks/endpointV1.js';
-import * as m1792 from '../../plugins/webhooks/statusV1.js';
-import * as m1793 from '../../profiles/backendProfileSchema.js';
-import * as m1794 from '../../profiles/builtInBackendProfiles.js';
-import * as m1795 from '../../profiles/builtInProfileVersion.js';
-import * as m1796 from '../../profiles/environmentVariables.js';
-import * as m1797 from '../../profiles/historicalCompatibilityV1.js';
-import * as m1798 from '../../profiles/index.js';
-import * as m1799 from '../../profiles/launchPreferencesV1.js';
-import * as m1800 from '../../profiles/listProjection.js';
-import * as m1801 from '../../profiles/profileActionIdsV1.js';
-import * as m1802 from '../../profiles/profileActionsV1.js';
-import * as m1803 from '../../profiles/profileCatalogV1.js';
-import * as m1804 from '../../profiles/profileCompatibility.js';
-import * as m1805 from '../../profiles/profileOperations.js';
-import * as m1806 from '../../profiles/profileRecordSchemaV1.js';
-import * as m1807 from '../../profiles/profileRecordV1.js';
-import * as m1808 from '../../profiles/profileRequirements.js';
-import * as m1809 from '../../profiles/profileTransferSchemaV1.js';
-import * as m1810 from '../../profiles/profileTransferV1.js';
-import * as m1811 from '../../profiles/read.js';
-import * as m1812 from '../../profiles/resolveBackendProfile.js';
-import * as m1813 from '../../profiles/secretReferenceOverlayV1.js';
-import * as m1814 from '../../profiles/secretSatisfaction.js';
-import * as m1815 from '../../profiles/transferLegacyProfilesV1.js';
-import * as m1816 from '../../profiles/v2/authoringPreferences.js';
-import * as m1817 from '../../profiles/v2/profileId.js';
-import * as m1818 from '../../profiles/v2/schema.js';
-import * as m1819 from '../../profiles/visibilityV1.js';
-import * as m1820 from '../../projects/deploymentCreationDefaultsV1.js';
-import * as m1821 from '../../projects/openProjectDraftV1.js';
-import * as m1822 from '../../projects/openProjectV1.js';
-import * as m1823 from '../../projects/projectAccountRowCipherV1.js';
-import * as m1824 from '../../projects/projectAccountRowsV1.js';
-import * as m1825 from '../../projects/projectAccountSnapshotV1.js';
-import * as m1826 from '../../projects/projectContextV1.js';
-import * as m1827 from '../../projects/projectDeploymentDefaultsV1.js';
-import * as m1828 from '../../projects/projectListProjectionV1.js';
-import * as m1829 from '../../projects/projectOrganizationV1.js';
-import * as m1830 from '../../projects/projectServicesActionsV1.js';
-import * as m1831 from '../../projects/projectVisibilityV1.js';
-import * as m1832 from '../../projects/projectWorkspaceActionsV1.js';
-import * as m1833 from '../../projects/readinessInputV1.js';
-import * as m1834 from '../../projects/readinessV1.js';
-import * as m1835 from '../../projects/sources/projectSourceAttachmentAdmissionV1.js';
-import * as m1836 from '../../projects/sources/projectSourceV1.js';
-import * as m1837 from '../../projects/starters/createV1.js';
-import * as m1838 from '../../projects/workspaceRefKeyV1.js';
-import * as m1839 from '../../prompts/buildAppendSystemPromptBaseV1.js';
-import * as m1840 from '../../prompts/changeTitleInstructionV1.js';
-import * as m1841 from '../../prompts/codingPromptBehaviorV1.js';
-import * as m1842 from '../../prompts/effectiveCodingPromptBehaviorV1.js';
-import * as m1843 from '../../prompts/isMemoryRecallGuidanceSupported.js';
-import * as m1844 from '../../prompts/library/artifactFolderActionIdsV1.js';
-import * as m1845 from '../../prompts/library/contextSelectionsV1.js';
-import * as m1846 from '../../prompts/library/happierGuideInstructionsV1.js';
-import * as m1847 from '../../prompts/library/memoryActionsV1.js';
-import * as m1848 from '../../prompts/library/memoryDocV1.js';
-import * as m1849 from '../../prompts/library/memoryFactCandidatesV1.js';
-import * as m1850 from '../../prompts/library/promptArtifactRefsV1.js';
-import * as m1851 from '../../prompts/library/promptAssetDescriptorsV1.js';
-import * as m1852 from '../../prompts/library/promptAssetsV1.js';
-import * as m1853 from '../../prompts/library/promptBundleSchemas.js';
-import * as m1854 from '../../prompts/library/promptDocV2.js';
-import * as m1855 from '../../prompts/library/promptExternalLinksV1.js';
-import * as m1856 from '../../prompts/library/promptFolderActionSchemasV1.js';
-import * as m1857 from '../../prompts/library/promptFolderActionsV1.js';
-import * as m1858 from '../../prompts/library/promptFoldersV1.js';
-import * as m1859 from '../../prompts/library/promptInvocationActionOperations.js';
-import * as m1860 from '../../prompts/library/promptInvocationsV1.js';
-import * as m1861 from '../../prompts/library/promptLibraryActionOperations.js';
-import * as m1862 from '../../prompts/library/promptLibraryCatalogV1.js';
-import * as m1863 from '../../prompts/library/promptLibraryDigests.js';
-import * as m1864 from '../../prompts/library/promptLibraryRowsV1.js';
-import * as m1865 from '../../prompts/library/promptLibrarySchemasV1.js';
-import * as m1866 from '../../prompts/library/promptPlacementV1.js';
-import * as m1867 from '../../prompts/library/promptStacksV1.js';
-import * as m1868 from '../../prompts/library/renderPromptTemplateTextV1.js';
-import * as m1869 from '../../prompts/library/resolvePromptStackSystemAppendBlocksV1.js';
-import * as m1870 from '../../prompts/library/skillRulesActionsV1.js';
-import * as m1871 from '../../prompts/library/skills/convertStackSkillEntriesV1.js';
-import * as m1872 from '../../prompts/library/skills/firstPartySkillsV1.js';
-import * as m1873 from '../../prompts/library/skills/foundSkillTransferV1.js';
-import * as m1874 from '../../prompts/library/skills/readSkillLibraryCatalog.js';
-import * as m1875 from '../../prompts/library/skills/resolveSessionSkillPlanV1.js';
-import * as m1876 from '../../prompts/library/skills/skillActionIdsV1.js';
-import * as m1877 from '../../prompts/library/skills/skillActionOperations.js';
-import * as m1878 from '../../prompts/library/skills/skillActionSchemasV1.js';
-import * as m1879 from '../../prompts/library/skills/skillCostV1.js';
-import * as m1880 from '../../prompts/library/skills/skillCreatorV1.js';
-import * as m1881 from '../../prompts/library/skills/skillIndexV1.js';
-import * as m1882 from '../../prompts/library/skills/skillLibraryItemV1.js';
-import * as m1883 from '../../prompts/library/skills/skillListSummaryV1.js';
-import * as m1884 from '../../prompts/library/skills/skillReadV1.js';
-import * as m1885 from '../../prompts/library/skills/skillReferencesV1.js';
-import * as m1886 from '../../prompts/library/skills/skillStatusV1.js';
-import * as m1887 from '../../prompts/library/skills/skillTrustV1.js';
-import * as m1888 from '../../prompts/library/skills/skillUpdateFilesV1.js';
-import * as m1889 from '../../prompts/library/skills/skillUsageV1.js';
-import * as m1890 from '../../prompts/library/skills/skillZipV1.js';
-import * as m1891 from '../../prompts/memoryRecallGuidanceV1.js';
-import * as m1892 from '../../prompts/promptPlanV1.js';
-import * as m1893 from '../../prompts/roles/accountRoleActions.js';
-import * as m1894 from '../../prompts/roles/builtInRolesV1.js';
-import * as m1895 from '../../prompts/roles/index.js';
-import * as m1896 from '../../prompts/roles/renderSessionRoleBlockV1.js';
-import * as m1897 from '../../prompts/roles/resolveRoleSelectionV1.js';
-import * as m1898 from '../../prompts/roles/roleActionIdsV1.js';
-import * as m1899 from '../../prompts/roles/roleActionsV1.js';
-import * as m1900 from '../../prompts/roles/roleArtifactSharingV1.js';
-import * as m1901 from '../../prompts/roles/roleArtifactV1.js';
-import * as m1902 from '../../prompts/roles/roleOverrideRecordV1.js';
-import * as m1903 from '../../prompts/roles/rolesV1.js';
-import * as m1904 from '../../prompts/roles/sessionRolesSnapshot.js';
-import * as m1905 from '../../prompts/systemPromptBaseV1.js';
-import * as m1906 from '../../providers/agy/oauth.js';
-import * as m1907 from '../../providers/brokerRouteGrantV1.js';
-import * as m1908 from '../../providers/canonicalOrderV1.js';
-import * as m1909 from '../../providers/capabilities/v1.js';
-import * as m1910 from '../../providers/catalog/accountModelProjectionV1.js';
-import * as m1911 from '../../providers/catalog/anthropic.js';
-import * as m1912 from '../../providers/catalog/brokerApplicationProjectionV1.js';
-import * as m1913 from '../../providers/catalog/currentSelectionRecoveryV1.js';
-import * as m1914 from '../../providers/catalog/descriptorV1.js';
-import * as m1915 from '../../providers/catalog/limits.js';
-import * as m1916 from '../../providers/catalog/merge.js';
-import * as m1917 from '../../providers/catalog/modelPickerVisibility.js';
-import * as m1918 from '../../providers/catalog/pickerProjectionV1.js';
-import * as m1919 from '../../providers/catalog/pickerTypesV1.js';
-import * as m1920 from '../../providers/catalog/reasoningEffort.js';
-import * as m1921 from '../../providers/catalog/response.js';
-import * as m1922 from '../../providers/claude/oauthProfile.js';
-import * as m1923 from '../../providers/codex/oauth.js';
-import * as m1924 from '../../providers/compatibility/resolve.js';
-import * as m1925 from '../../providers/compatibility/sourceFacts.js';
-import * as m1926 from '../../providers/compatibility/v1.js';
-import * as m1927 from '../../providers/connections/accountProviderActionV1.js';
-import * as m1928 from '../../providers/connections/catalogSchemasV1.js';
-import * as m1929 from '../../providers/connections/connectionRowsV1.js';
-import * as m1930 from '../../providers/connections/creationV1.js';
-import * as m1931 from '../../providers/connections/customCopyV1.js';
-import * as m1932 from '../../providers/connections/customTemplateV1.js';
-import * as m1933 from '../../providers/connections/declarationDemandV1.js';
-import * as m1934 from '../../providers/connections/effectiveEndpointV1.js';
-import * as m1935 from '../../providers/connections/endpointPolicyReviewV1.js';
-import * as m1936 from '../../providers/connections/normalizeCustomTemplateV1.js';
-import * as m1937 from '../../providers/connections/providerConnectionsCatalogV1.js';
-import * as m1938 from '../../providers/connections/reconcileCatalogV1.js';
-import * as m1939 from '../../providers/connections/sourceFactsV1.js';
-import * as m1940 from '../../providers/connections/tombstoneV1.js';
-import * as m1941 from '../../providers/connections/v1.js';
-import * as m1942 from '../../providers/contributionIdentityV1.js';
-import * as m1943 from '../../providers/contributions/v1.js';
-import * as m1944 from '../../providers/credentials/v1.js';
-import * as m1945 from '../../providers/detection/descriptorV1.js';
-import * as m1946 from '../../providers/detection/v1.js';
-import * as m1947 from '../../providers/endpointPolicyV1.js';
-import * as m1948 from '../../providers/endpointUrlSchema.js';
-import * as m1949 from '../../providers/errors.js';
-import * as m1950 from '../../providers/executeProviderActionV1.js';
-import * as m1951 from '../../providers/fingerprints.js';
-import * as m1952 from '../../providers/gatewayContributionsV1.js';
-import * as m1953 from '../../providers/grants/v1.js';
-import * as m1954 from '../../providers/httpsUrlSchema.js';
-import * as m1955 from '../../providers/ids.js';
-import * as m1956 from '../../providers/index.js';
-import * as m1957 from '../../providers/managedPurposeOperationRestrictionV1.js';
-import * as m1958 from '../../providers/manualModelInput.js';
-import * as m1959 from '../../providers/materialization/v1.js';
-import * as m1960 from '../../providers/migrations/accountSettingsV1.js';
-import * as m1961 from '../../providers/migrations/conflictsV1.js';
-import * as m1962 from '../../providers/migrations/legacyProfileReferencesV1.js';
-import * as m1963 from '../../providers/migrations/legacyProfilesV1.js';
-import * as m1964 from '../../providers/modelFavoritesV1.js';
-import * as m1965 from '../../providers/originRelativePathSchema.js';
-import * as m1966 from '../../providers/outputFailure.js';
-import * as m1967 from '../../providers/ownRecordValue.js';
-import * as m1968 from '../../providers/providerActionIdsV1.js';
-import * as m1969 from '../../providers/providerActionsV1.js';
-import * as m1970 from '../../providers/publicHeadersSchema.js';
-import * as m1971 from '../../providers/runtimeState/v1.js';
-import * as m1972 from '../../providers/safety/headers.js';
-import * as m1973 from '../../providers/safety/index.js';
-import * as m1974 from '../../providers/safety/limits.js';
-import * as m1975 from '../../providers/safety/locality.js';
-import * as m1976 from '../../providers/safety/metadataDestinations.js';
-import * as m1977 from '../../providers/safety/redaction.js';
-import * as m1978 from '../../providers/safety/response.js';
-import * as m1979 from '../../providers/safety/url.js';
-import * as m1980 from '../../providers/securityFingerprintsV1.js';
-import * as m1981 from '../../providers/selection/activeSelectionValidationV1.js';
-import * as m1982 from '../../providers/selection/v1.js';
-import * as m1983 from '../../providers/selection/v2.js';
-import * as m1984 from '../../providers/sessions/adapterBindingKeyV1.js';
-import * as m1985 from '../../providers/sessions/agentSessionProviderBindingV1.js';
-import * as m1986 from '../../providers/sessions/bindingMetadataV1.js';
-import * as m1987 from '../../providers/sessions/lifecycle.js';
-import * as m1988 from '../../providers/settings/classifySubtreeV1.js';
-import * as m1989 from '../../providers/settings/externalReferencesV1.js';
-import * as m1990 from '../../providers/settings/limits.js';
-import * as m1991 from '../../providers/settings/operationsV1.js';
-import * as m1992 from '../../providers/settings/v1.js';
-import * as m1993 from '../../push/activityRemoteAlert.js';
-import * as m1994 from '../../push/expoPushDelivery.js';
-import * as m1995 from '../../push/machineRemoteAlert.js';
-import * as m1996 from '../../push/notificationQuestionActions.js';
-import * as m1997 from '../../push/pushNotificationActions.js';
-import * as m1998 from '../../push/pushNotificationTest.js';
-import * as m1999 from '../../push/pushTokenRegistration.js';
-import * as m2000 from '../../push/readyNotificationContent.js';
-import * as m2001 from '../../push/sessionChangedWake.js';
-import * as m2002 from '../../reach/capabilityApplyTimingV1.js';
-import * as m2003 from '../../reach/projectReachV1.js';
-import * as m2004 from '../../reach/reachPlaceV1.js';
-import * as m2005 from '../../reach/reachRuleV1.js';
-import * as m2006 from '../../reach/reachRulesChangeV1.js';
-import * as m2007 from '../../reach/resolveReachV1.js';
-import * as m2008 from '../../reach/resolveSessionCapabilitiesV1.js';
-import * as m2009 from '../../reach/sessionCapabilityMetadataV1.js';
-import * as m2010 from '../../reach/sessionCapabilitySelectionV1.js';
-import * as m2011 from '../../recording/results.js';
-import * as m2012 from '../../registries/formats/acpRegistry.js';
-import * as m2013 from '../../registries/formats/chromeWebStore.js';
-import * as m2014 from '../../registries/formats/claudeMarketplace.js';
-import * as m2015 from '../../registries/formats/composeCatalog.js';
-import * as m2016 from '../../registries/formats/composeTemplateNormalizationV1.js';
-import * as m2017 from '../../registries/formats/composeTomlCatalog.js';
-import * as m2018 from '../../registries/formats/dokployTemplateNormalizationV1.js';
-import * as m2019 from '../../registries/formats/github.js';
-import * as m2020 from '../../registries/formats/happierAppCatalog.js';
-import * as m2021 from '../../registries/formats/happierBrowserExtensionCatalog.js';
-import * as m2022 from '../../registries/formats/happierCatalog.js';
-import * as m2023 from '../../registries/formats/happierNpm.js';
-import * as m2024 from '../../registries/formats/happierStarterCatalog.js';
-import * as m2025 from '../../registries/formats/index.js';
-import * as m2026 from '../../registries/formats/mcpRegistry.js';
-import * as m2027 from '../../registries/formats/registryAppCatalogV1.js';
-import * as m2028 from '../../registries/formats/registryFormatAdapterV1.js';
-import * as m2029 from '../../registries/formats/registryMarketplaceCatalogBindingV1.js';
-import * as m2030 from '../../registries/formats/registryPluginListingV1.js';
-import * as m2031 from '../../registries/formats/skillsSh.js';
-import * as m2032 from '../../registries/formats/wellKnownSkills.js';
-import * as m2033 from '../../registries/index.js';
-import * as m2034 from '../../registries/registryActionIdsV1.js';
-import * as m2035 from '../../registries/registryActionsV1.js';
-import * as m2036 from '../../registries/registryAppMappingV1.js';
-import * as m2037 from '../../registries/registryAppUpdateAdmissionV1.js';
-import * as m2038 from '../../registries/registryBotTemplateUpdatePointerV1.js';
-import * as m2039 from '../../registries/registryBrowserExtensionV1.js';
-import * as m2040 from '../../registries/registryContentRefV1.js';
-import * as m2041 from '../../registries/registryFetchPlanV1.js';
-import * as m2042 from '../../registries/registryGitTreeV1.js';
-import * as m2043 from '../../registries/registryHostV1.js';
-import * as m2044 from '../../registries/registryItemsV1.js';
-import * as m2045 from '../../registries/registryListV1.js';
-import * as m2046 from '../../registries/registryPackageContentV1.js';
-import * as m2047 from '../../registries/registryPluginSourcesV1.js';
-import * as m2048 from '../../registries/registryRpcV1.js';
-import * as m2049 from '../../registries/registrySourcesMutationV1.js';
-import * as m2050 from '../../registries/registrySourcesV1.js';
-import * as m2051 from '../../registries/registryStarterV1.js';
-import * as m2052 from '../../registries/registryUpdatesV1.js';
-import * as m2053 from '../../registries/registryUpstreamV1.js';
-import * as m2054 from '../../remoteHosts/remoteHostActionIdsV1.js';
-import * as m2055 from '../../remoteHosts/remoteHostActionsV1.js';
-import * as m2056 from '../../remoteHosts/remoteHostCatalogV1.js';
-import * as m2057 from '../../remoteHosts/remoteHostRecordV1.js';
-import * as m2058 from '../../remoteHosts/remoteHostSchemasV1.js';
-import * as m2059 from '../../retention/serverRetentionPolicyV2.js';
-import * as m2060 from '../../reviews/ReviewAssumption.js';
-import * as m2061 from '../../reviews/ReviewFinding.js';
-import * as m2062 from '../../reviews/ReviewQuestion.js';
-import * as m2063 from '../../reviews/comments/actions.js';
-import * as m2064 from '../../reviews/comments/content.js';
-import * as m2065 from '../../reviews/comments/findingIdentity.js';
-import * as m2066 from '../../reviews/comments/index.js';
-import * as m2067 from '../../reviews/comments/mutation.js';
-import * as m2068 from '../../reviews/comments/proposals.js';
-import * as m2069 from '../../reviews/comments/publicationTransport.js';
-import * as m2070 from '../../reviews/comments/queries.js';
-import * as m2071 from '../../reviews/comments/snapshots.js';
-import * as m2072 from '../../reviews/comments/transport.js';
-import * as m2073 from '../../reviews/comments/triageTransition.js';
-import * as m2074 from '../../reviews/comments/v1.js';
-import * as m2075 from '../../reviews/projectReviewFindingsOverlay.js';
-import * as m2076 from '../../reviews/resolveEffectiveReviewFindings.js';
-import * as m2077 from '../../reviews/reviewApplyV1.js';
-import * as m2078 from '../../reviews/reviewEngines.js';
-import * as m2079 from '../../reviews/reviewFindingClassification.js';
-import * as m2080 from '../../reviews/reviewFindingsApplyInputV1.js';
-import * as m2081 from '../../reviews/reviewFollowUp.js';
-import * as m2082 from '../../reviews/reviewLaunchFailure.js';
-import * as m2083 from '../../reviews/reviewNarration.js';
-import * as m2084 from '../../reviews/reviewPublicationEvidence.js';
-import * as m2085 from '../../reviews/reviewStart.js';
-import * as m2086 from '../../reviews/reviewTriageStatus.js';
-import * as m2087 from '../../reviews/scmPullRequestScope.js';
-import * as m2088 from '../../reviews/scope.js';
-import * as m2089 from '../../rpc/answeringClient.js';
-import * as m2090 from '../../rpc/errors.js';
-import * as m2091 from '../../rpc/index.js';
-import * as m2092 from '../../rpc/machineWatchWindow.js';
-import * as m2093 from '../../rpc/methods.js';
-import * as m2094 from '../../rpc/npmRegistryProfiles.js';
-import * as m2095 from '../../rpc/providers.js';
-import * as m2096 from '../../rpc/socket.js';
-import * as m2097 from '../../rpc/teamCredentialSourceModels.js';
-import * as m2098 from '../../runtime/agentExecutionRunV1.js';
-import * as m2099 from '../../runtime/agentRuntimeDiagnosticV1.js';
-import * as m2100 from '../../runtime/agentSessionConfigurationV1.js';
-import * as m2101 from '../../runtime/agentSessionLimitsV1.js';
-import * as m2102 from '../../runtime/agentSessionRuntimeRetryV1.js';
-import * as m2103 from '../../runtime/agentSessionScalarsV1.js';
-import * as m2104 from '../../runtime/agentSessionStartupInstructionsV1.js';
-import * as m2105 from '../../runtime/agentSessionV1.js';
-import * as m2106 from '../../runtime/agentUsageObservedPayloadV1.js';
-import * as m2107 from '../../runtime/authRefresh.js';
-import * as m2108 from '../../runtime/catalog/index.js';
-import * as m2109 from '../../runtime/catalog/skills.js';
-import * as m2110 from '../../runtime/catalog/vendorPlugins.js';
-import * as m2111 from '../../runtime/eventKindsV1.js';
-import * as m2112 from '../../runtime/index.js';
-import * as m2113 from '../../runtime/input/composerAttachmentV1.js';
-import * as m2114 from '../../runtime/input/composerContentV1.js';
-import * as m2115 from '../../runtime/input/composerInstanceId.js';
-import * as m2116 from '../../runtime/input/composerReferenceProviderV1.js';
-import * as m2117 from '../../runtime/input/composerSuggestionTokenV1.js';
-import * as m2118 from '../../runtime/input/imageInputV1.js';
-import * as m2119 from '../../runtime/input/index.js';
-import * as m2120 from '../../runtime/input/inlineReferenceTokenV1.js';
-import * as m2121 from '../../runtime/input/mentionRefV1.js';
-import * as m2122 from '../../runtime/input/skillMentionV1.js';
-import * as m2123 from '../../runtime/input/structuredInputV1.js';
-import * as m2124 from '../../runtime/input/v1.js';
-import * as m2125 from '../../runtime/input/vendorPluginMentionV1.js';
-import * as m2126 from '../../runtime/permissionIntentV1.js';
-import * as m2127 from '../../scm/backendCapabilities.js';
-import * as m2128 from '../../scm/backendIdentity.js';
-import * as m2129 from '../../scm/branches.js';
-import * as m2130 from '../../scm/capabilities.js';
-import * as m2131 from '../../scm/changeCounting.js';
-import * as m2132 from '../../scm/clearSavedResults.js';
-import * as m2133 from '../../scm/cloneProtocol.js';
-import * as m2134 from '../../scm/commitPublication.js';
-import * as m2135 from '../../scm/comparison.js';
-import * as m2136 from '../../scm/comparisonDiscard.js';
-import * as m2137 from '../../scm/comparisonOccurrences.js';
-import * as m2138 from '../../scm/defaultBranchPushPolicy.js';
-import * as m2139 from '../../scm/diffSummary.js';
-import * as m2140 from '../../scm/diffSummaryCommitPlan.js';
-import * as m2141 from '../../scm/diffSummaryResult.js';
-import * as m2142 from '../../scm/entriesHistoryV1.js';
-import * as m2143 from '../../scm/fileAtRevision.js';
-import * as m2144 from '../../scm/fileChangesScope.js';
-import * as m2145 from '../../scm/fileViewed.js';
-import * as m2146 from '../../scm/freshness.js';
-import * as m2147 from '../../scm/hostingProviderOperations.js';
-import * as m2148 from '../../scm/hostingRepositoryIdentity.js';
-import * as m2149 from '../../scm/index.js';
-import * as m2150 from '../../scm/operationError.js';
-import * as m2151 from '../../scm/operationOutcome.js';
-import * as m2152 from '../../scm/operationState.js';
-import * as m2153 from '../../scm/pathScope.js';
-import * as m2154 from '../../scm/pullRequestLifecycleV1.js';
-import * as m2155 from '../../scm/pullRequests.js';
-import * as m2156 from '../../scm/remoteNormalization.js';
-import * as m2157 from '../../scm/remotePolicy.js';
-import * as m2158 from '../../scm/remoteResponse.js';
-import * as m2159 from '../../scm/remoteWebUrl.js';
-import * as m2160 from '../../scm/repositoryClone.js';
-import * as m2161 from '../../scm/repositoryFilesPullRequest.js';
-import * as m2162 from '../../scm/repositoryFilesPullRequestActionIds.js';
-import * as m2163 from '../../scm/repositoryProvisioning.js';
-import * as m2164 from '../../scm/requestBase.js';
-import * as m2165 from '../../scm/resolveScmBackendCapabilities.js';
-import * as m2166 from '../../scm/reviewWorkspace.js';
-import * as m2167 from '../../scm/reviewedMarks.js';
-import * as m2168 from '../../scm/selectedMutationPath.js';
-import * as m2169 from '../../scm/stash.js';
-import * as m2170 from '../../scm/suggestions.js';
-import * as m2171 from '../../scm/workEvidence.js';
-import * as m2172 from '../../scm/workingSnapshot.js';
-import * as m2173 from '../../scm/workspaceWatch.js';
-import * as m2174 from '../../scm/worktreeName.js';
-import * as m2175 from '../../scm/worktrees.js';
-import * as m2176 from '../../sentFrom.js';
-import * as m2177 from '../../server/control/contract.js';
-import * as m2178 from '../../server/http/connectionLifetimeV1.js';
-import * as m2179 from '../../server/http/requestBodyBoundsV1.js';
-import * as m2180 from '../../server/relayDrift.js';
-import * as m2181 from '../../server/urls/hostedWebappUrl.js';
-import * as m2182 from '../../server/urls/index.js';
-import * as m2183 from '../../server/urls/loopbackHostname.js';
-import * as m2184 from '../../server/urls/serverUrlComparableKey.js';
-import * as m2185 from '../../serverConfig/entries/emailEntries.js';
-import * as m2186 from '../../serverConfig/entries/integrationsEntries.js';
-import * as m2187 from '../../serverConfig/entries/policiesEntries.js';
-import * as m2188 from '../../serverConfig/entries/reachEntries.js';
-import * as m2189 from '../../serverConfig/entries/serverRuntimeEntries.js';
-import * as m2190 from '../../serverConfig/entries/storageEntries.js';
-import * as m2191 from '../../serverConfig/homeSettingsOwnership.js';
-import * as m2192 from '../../serverConfig/homeSettingsWrite.js';
-import * as m2193 from '../../serverConfig/index.js';
-import * as m2194 from '../../serverConfig/registry.js';
-import * as m2195 from '../../serverConfig/serverConfigCodec.js';
-import * as m2196 from '../../serverConfig/serverConfigEntry.js';
-import * as m2197 from '../../sessionStop.js';
-import * as m2198 from '../../sessions/access/index.js';
-import * as m2199 from '../../sessions/access/releasedDirectSessionShareV1.js';
-import * as m2200 from '../../sessions/access/sessionAccessActionsV1.js';
-import * as m2201 from '../../sessions/access/sessionAccessGrantV1.js';
-import * as m2202 from '../../sessions/access/sessionAccessOperationsV1.js';
-import * as m2203 from '../../sessions/access/sessionAccessPrincipalV1.js';
-import * as m2204 from '../../sessions/access/sessionBrowserAccessV1.js';
-import * as m2205 from '../../sessions/access/sessionEffectiveAccessV1.js';
-import * as m2206 from '../../sessions/access/sessionInitialAccessCreateV1.js';
-import * as m2207 from '../../sessions/access/sessionInitialAccessDraftV1.js';
-import * as m2208 from '../../sessions/access/sessionRecipientEnvelopeBindingV1.js';
-import * as m2209 from '../../sessions/access/sessionResponsibilityV1.js';
-import * as m2210 from '../../sessions/agentTransition.js';
-import * as m2211 from '../../sessions/agentTransitionDivider.js';
-import * as m2212 from '../../sessions/agentTransitionEffectStage.js';
-import * as m2213 from '../../sessions/agentTransitionVectors.js';
-import * as m2214 from '../../sessions/attach/metadataIdentityPolicy.js';
-import * as m2215 from '../../sessions/authoring/buildFieldArtifacts.js';
-import * as m2216 from '../../sessions/authoring/contextKinds.js';
-import * as m2217 from '../../sessions/authoring/creationFieldsV1.js';
-import * as m2218 from '../../sessions/authoring/fieldCatalog.js';
-import * as m2219 from '../../sessions/authoring/fieldDefinition.js';
-import * as m2220 from '../../sessions/authoring/index.js';
-import * as m2221 from '../../sessions/authoring/selectionFieldsV1.js';
-import * as m2222 from '../../sessions/authoring/syncedSessionAuthoringV1.js';
-import * as m2223 from '../../sessions/authoring/temporaryComputerWorkspaceV1.js';
-import * as m2224 from '../../sessions/awareness/action.js';
-import * as m2225 from '../../sessions/awareness/availability.js';
-import * as m2226 from '../../sessions/awareness/index.js';
-import * as m2227 from '../../sessions/awareness/inputV1.js';
-import * as m2228 from '../../sessions/awareness/presentationV1.js';
-import * as m2229 from '../../sessions/awareness/projectV1.js';
-import * as m2230 from '../../sessions/awareness/projectionV1.js';
-import * as m2231 from '../../sessions/awareness/recap.js';
-import * as m2232 from '../../sessions/awareness/runtime.js';
-import * as m2233 from '../../sessions/awareness/waitV1.js';
-import * as m2234 from '../../sessions/awareness/work.js';
-import * as m2235 from '../../sessions/board/actionIds.js';
-import * as m2236 from '../../sessions/board/actions.js';
-import * as m2237 from '../../sessions/board/changeHint.js';
-import * as m2238 from '../../sessions/board/declarative/authoring.js';
-import * as m2239 from '../../sessions/board/declarative/normalize.js';
-import * as m2240 from '../../sessions/board/declarative/note.js';
-import * as m2241 from '../../sessions/board/declarative/snapshot.js';
-import * as m2242 from '../../sessions/board/errors.js';
-import * as m2243 from '../../sessions/board/forkVisualCopies.js';
-import * as m2244 from '../../sessions/board/ids.js';
-import * as m2245 from '../../sessions/board/idsV1.js';
-import * as m2246 from '../../sessions/board/index.js';
-import * as m2247 from '../../sessions/board/item.js';
-import * as m2248 from '../../sessions/board/layout.js';
-import * as m2249 from '../../sessions/board/layoutOperations.js';
-import * as m2250 from '../../sessions/board/mutations.js';
-import * as m2251 from '../../sessions/board/transcriptReference.js';
-import * as m2252 from '../../sessions/board/visualPolicy.js';
-import * as m2253 from '../../sessions/changes/checkpointAttributionScope.js';
-import * as m2254 from '../../sessions/changes/index.js';
-import * as m2255 from '../../sessions/changes/mergeTurnChangeSets.js';
-import * as m2256 from '../../sessions/changes/reconcileWithScmSnapshot.js';
-import * as m2257 from '../../sessions/changes/rollbacks.js';
-import * as m2258 from '../../sessions/changes/schemas.js';
-import * as m2259 from '../../sessions/changes/types.js';
-import * as m2260 from '../../sessions/context/sessionContextV1.js';
-import * as m2261 from '../../sessions/continuation/recoveryV1.js';
-import * as m2262 from '../../sessions/continueWithReplay.js';
-import * as m2263 from '../../sessions/control/checkpoints/index.js';
-import * as m2264 from '../../sessions/control/checkpoints/v1.js';
-import * as m2265 from '../../sessions/control/contract.js';
-import * as m2266 from '../../sessions/control/exactTurnCancellationV1.js';
-import * as m2267 from '../../sessions/control/handoff/handoffRpc.js';
-import * as m2268 from '../../sessions/control/handoff/handoffSchemas.js';
-import * as m2269 from '../../sessions/control/handoff/handoffStatus.js';
-import * as m2270 from '../../sessions/control/handoff/handoffTargetReplacementApprovalV1.js';
-import * as m2271 from '../../sessions/control/handoff/handoffTypes.js';
-import * as m2272 from '../../sessions/control/handoff/workspaceSyncCommittedCopyV1.js';
-import * as m2273 from '../../sessions/control/handoff/workspaceSyncConflictProjection.js';
-import * as m2274 from '../../sessions/control/handoff/workspaceSyncSchemas.js';
-import * as m2275 from '../../sessions/control/handoff/workspaceTransferSourcePathSafety.js';
-import * as m2276 from '../../sessions/control/index.js';
-import * as m2277 from '../../sessions/control/listResult.js';
-import * as m2278 from '../../sessions/control/machineSessionTerminalV1.js';
-import * as m2279 from '../../sessions/control/modelTransitionV1.js';
-import * as m2280 from '../../sessions/control/pendingDeliveryRecoveryV1.js';
-import * as m2281 from '../../sessions/control/pendingInputInterruptAndRunV1.js';
-import * as m2282 from '../../sessions/control/pendingWithdrawV1.js';
-import * as m2283 from '../../sessions/control/readCursor.js';
-import * as m2284 from '../../sessions/control/rollback/checkpointCodeRollback.js';
-import * as m2285 from '../../sessions/control/rollback/index.js';
-import * as m2286 from '../../sessions/control/runtimeIssueMetadataV1.js';
-import * as m2287 from '../../sessions/control/runtimeIssueV1.js';
-import * as m2288 from '../../sessions/control/sessionCompactionAvailabilityV1.js';
-import * as m2289 from '../../sessions/control/sessionProviderCliAttachPrepareV1.js';
-import * as m2290 from '../../sessions/control/sessionReadinessV1.js';
-import * as m2291 from '../../sessions/control/sessionResumeRequestV1.js';
-import * as m2292 from '../../sessions/control/sessionRunnerRestartV1.js';
-import * as m2293 from '../../sessions/control/sessionRunnerRestartV2.js';
-import * as m2294 from '../../sessions/control/sessionRunnerRuntimeV1.js';
-import * as m2295 from '../../sessions/control/sessionRunnerRuntimeV2.js';
-import * as m2296 from '../../sessions/control/sessionUsageLimitRecoveryOperationResultV1.js';
-import * as m2297 from '../../sessions/control/terminalComposerClearV1.js';
-import * as m2298 from '../../sessions/creation/externalActionRequesterInvocationBaseV1.js';
-import * as m2299 from '../../sessions/creation/hostOnboardingPresentationV1.js';
-import * as m2300 from '../../sessions/creation/index.js';
-import * as m2301 from '../../sessions/creation/sessionAttestedContextV1.js';
-import * as m2302 from '../../sessions/creation/sessionCreateOriginV1.js';
-import * as m2303 from '../../sessions/creation/sessionCreationActionIdsV1.js';
-import * as m2304 from '../../sessions/creation/sessionCreationAuthorizationV1.js';
-import * as m2305 from '../../sessions/creation/sessionCreationCorrespondenceV1.js';
-import * as m2306 from '../../sessions/creation/sessionCreationIdentityV1.js';
-import * as m2307 from '../../sessions/creation/sessionCreationTargetPreparationV1.js';
-import * as m2308 from '../../sessions/creation/sessionDirectoryIntentV1.js';
-import * as m2309 from '../../sessions/creation/sessionDiscussionParticipantV1.js';
-import * as m2310 from '../../sessions/creation/sessionExecutionTargetV1.js';
-import * as m2311 from '../../sessions/creation/sessionInitialTriggerAdmissionV1.js';
-import * as m2312 from '../../sessions/creation/sessionPlacementSelectionV1.js';
-import * as m2313 from '../../sessions/creation/sessionPreparedBirthV1.js';
-import * as m2314 from '../../sessions/creation/sessionRequesterBootstrapSchemasV1.js';
-import * as m2315 from '../../sessions/creation/sessionRequesterBootstrapV1.js';
-import * as m2316 from '../../sessions/creation/sessionServerStartV1.js';
-import * as m2317 from '../../sessions/creation/sessionSpawnBudget.js';
-import * as m2318 from '../../sessions/creation/sessionSpawnLaunchErrorV1.js';
-import * as m2319 from '../../sessions/creation/sessionSpawnNewInputV2.js';
-import * as m2320 from '../../sessions/creation/sessionSpawnNewResultV1.js';
-import * as m2321 from '../../sessions/creation/sessionSpawnNewSelectionV2.js';
-import * as m2322 from '../../sessions/creation/sessionSpawnSourceContextV1.js';
-import * as m2323 from '../../sessions/creation/testFixtures/sessionSpawnInputBeforeCommitObservation.js';
-import * as m2324 from '../../sessions/creation/testFixtures/sessionSpawnResultBeforeCommitObservation.js';
-import * as m2325 from '../../sessions/encryption/membershipSessionDataKeyEnvelopes.js';
-import * as m2326 from '../../sessions/encryption/prepareSessionDataKeyEnvelopeItemV1.js';
-import * as m2327 from '../../sessions/encryption/sessionDataKeyEnvelopes.js';
-import * as m2328 from '../../sessions/encryption/sessionDataKeyPreparationPass.js';
-import * as m2329 from '../../sessions/external/accounting.js';
-import * as m2330 from '../../sessions/external/contentSearchMatch.js';
-import * as m2331 from '../../sessions/external/daemonRpcV1.js';
-import * as m2332 from '../../sessions/external/externalAgentObservationV1.js';
-import * as m2333 from '../../sessions/external/followLifecycleV1.js';
-import * as m2334 from '../../sessions/external/historicalImportIdentity.js';
-import * as m2335 from '../../sessions/external/hookManagementV1.js';
-import * as m2336 from '../../sessions/external/index.js';
-import * as m2337 from '../../sessions/external/legacyDirectSessionWireSchemasV1.js';
-import * as m2338 from '../../sessions/external/linkedSessionMetadata.js';
-import * as m2339 from '../../sessions/external/operationActionSchemasV1.js';
-import * as m2340 from '../../sessions/external/operationActionsV1.js';
-import * as m2341 from '../../sessions/external/operationV1.js';
-import * as m2342 from '../../sessions/external/publicTranscriptFollowV1.js';
-import * as m2343 from '../../sessions/external/rpcErrorCodes.js';
-import * as m2344 from '../../sessions/external/secureRefreshV1.js';
-import * as m2345 from '../../sessions/external/sourceCatalog.js';
-import * as m2346 from '../../sessions/external/sourceTranscriptItemV1.js';
-import * as m2347 from '../../sessions/external/statusDemandV1.js';
-import * as m2348 from '../../sessions/external/takeoverV1.js';
-import * as m2349 from '../../sessions/folders/folderSettings.js';
-import * as m2350 from '../../sessions/follow/accountFollow.js';
-import * as m2351 from '../../sessions/follow/accountVoiceFollowTransportV1.js';
-import * as m2352 from '../../sessions/follow/actionTransport.js';
-import * as m2353 from '../../sessions/follow/actions.js';
-import * as m2354 from '../../sessions/follow/api.js';
-import * as m2355 from '../../sessions/follow/changes.js';
-import * as m2356 from '../../sessions/follow/followPolicyEditorV1.js';
-import * as m2357 from '../../sessions/follow/followSourceRefTransportV1.js';
-import * as m2358 from '../../sessions/follow/index.js';
-import * as m2359 from '../../sessions/follow/sessionCoordinatorActionsV1.js';
-import * as m2360 from '../../sessions/follow/sessionCoordinatorSetupV1.js';
-import * as m2361 from '../../sessions/follow/sessionCoordinatorV1.js';
-import * as m2362 from '../../sessions/follow/sessionDeliveryMuteV1.js';
-import * as m2363 from '../../sessions/follow/sessionFollowDeliveryProjectionV1.js';
-import * as m2364 from '../../sessions/follow/sessionFollowFrontierV1.js';
-import * as m2365 from '../../sessions/follow/sessionFollowInputV1.js';
-import * as m2366 from '../../sessions/follow/sessionFollowListV1.js';
-import * as m2367 from '../../sessions/follow/sessionFollowOriginalV1.js';
-import * as m2368 from '../../sessions/follow/sessionFollowPolicyV1.js';
-import * as m2369 from '../../sessions/follow/sessionFollowRuleContentCodecV1.js';
-import * as m2370 from '../../sessions/follow/sessionFollowRuleOccurrenceV1.js';
-import * as m2371 from '../../sessions/follow/sessionFollowRulePreviewV1.js';
-import * as m2372 from '../../sessions/follow/sessionFollowRuleV1.js';
-import * as m2373 from '../../sessions/follow/sessionFollowSelectedDeliveryV1.js';
-import * as m2374 from '../../sessions/follow/sessionFollowSourceKeyPreparationV1.js';
-import * as m2375 from '../../sessions/follow/sessionFollowSourceOccurrenceV1.js';
-import * as m2376 from '../../sessions/follow/sessionFollowSourceProjectionV1.js';
-import * as m2377 from '../../sessions/follow/sessionFollowSourcesApi.js';
-import * as m2378 from '../../sessions/follow/sessionFollowTransportV1.js';
-import * as m2379 from '../../sessions/follow/sessionFollowUpdateEnvelopeV1.js';
-import * as m2380 from '../../sessions/follow/sessionManagerV1.js';
-import * as m2381 from '../../sessions/follow/sessionReceiverDeliveryV1.js';
-import * as m2382 from '../../sessions/follow/voiceTrackedSessionAddressV1.js';
-import * as m2383 from '../../sessions/follow/voiceTrackedTargetsCompatibilityV1.js';
-import * as m2384 from '../../sessions/fork.js';
-import * as m2385 from '../../sessions/forkPoint.js';
-import * as m2386 from '../../sessions/general.js';
-import * as m2387 from '../../sessions/identity/botFaceGeometry.js';
-import * as m2388 from '../../sessions/identity/botFaceShapeGenerator.js';
-import * as m2389 from '../../sessions/identity/botFaceShapeValidation.js';
-import * as m2390 from '../../sessions/identity/sessionBotFaceV1.js';
-import * as m2391 from '../../sessions/identity/sessionBotV1.js';
-import * as m2392 from '../../sessions/idsV1.js';
-import * as m2393 from '../../sessions/index.js';
-import * as m2394 from '../../sessions/instructions/sessionVoicePreferenceV1.js';
-import * as m2395 from '../../sessions/listFilter/index.js';
-import * as m2396 from '../../sessions/listFilter/sessionListFilterQueryV1.js';
-import * as m2397 from '../../sessions/listFilter/sessionListFilterV1.js';
-import * as m2398 from '../../sessions/listing/cursor.js';
-import * as m2399 from '../../sessions/listing/query.js';
-import * as m2400 from '../../sessions/listing/response.js';
-import * as m2401 from '../../sessions/media/imageMarksV1.js';
-import * as m2402 from '../../sessions/media/imageReferenceV1.js';
-import * as m2403 from '../../sessions/messages/agentExternalSessionTranscriptRawRecord.js';
-import * as m2404 from '../../sessions/messages/autonomousExchangeV1.js';
-import * as m2405 from '../../sessions/messages/canonicalTurnDiffTool.js';
-import * as m2406 from '../../sessions/messages/coerceSessionUserPromptV1.js';
-import * as m2407 from '../../sessions/messages/emptyCanonicalTurnDiffSuppression.js';
-import * as m2408 from '../../sessions/messages/messageActionReferenceV1.js';
-import * as m2409 from '../../sessions/messages/messageStructuredPresentationV1.js';
-import * as m2410 from '../../sessions/messages/pendingDeliveryBlockedReason.js';
-import * as m2411 from '../../sessions/messages/pendingDeliveryStatusV1.js';
-import * as m2412 from '../../sessions/messages/sessionCapabilityNoticeV1.js';
-import * as m2413 from '../../sessions/messages/sessionExternalShareableTranscriptV1.js';
-import * as m2414 from '../../sessions/messages/sessionInputAdmission.js';
-import * as m2415 from '../../sessions/messages/sessionInputAdmissionRejectionV1.js';
-import * as m2416 from '../../sessions/messages/sessionInputAuthoringV1.js';
-import * as m2417 from '../../sessions/messages/sessionInputForgeEvidenceV1.js';
-import * as m2418 from '../../sessions/messages/sessionInputPromptContextV1.js';
-import * as m2419 from '../../sessions/messages/sessionInputReferenceProjectionV1.js';
-import * as m2420 from '../../sessions/messages/sessionInputResultV1.js';
-import * as m2421 from '../../sessions/messages/sessionMediaV1.js';
-import * as m2422 from '../../sessions/messages/sessionMessageAccountActorV1.js';
-import * as m2423 from '../../sessions/messages/sessionMessageDeliveryResolutionV1.js';
-import * as m2424 from '../../sessions/messages/sessionMessageInvocationV1.js';
-import * as m2425 from '../../sessions/messages/sessionMessageMeta.js';
-import * as m2426 from '../../sessions/messages/sessionMessageObservationFactsV1.js';
-import * as m2427 from '../../sessions/messages/sessionMessageRefV1.js';
-import * as m2428 from '../../sessions/messages/sessionMessageReplyPublicationV1.js';
-import * as m2429 from '../../sessions/messages/sessionMessageReplyV1.js';
-import * as m2430 from '../../sessions/messages/sessionMessageRole.js';
-import * as m2431 from '../../sessions/messages/sessionMessagesPageV1.js';
-import * as m2432 from '../../sessions/messages/sessionPendingAdmissionSettlementV1.js';
-import * as m2433 from '../../sessions/messages/sessionPendingExecutionRunMachineAdmissionV2.js';
-import * as m2434 from '../../sessions/messages/sessionPendingMachineAdmissionV1.js';
-import * as m2435 from '../../sessions/messages/sessionStoredMessageContent.js';
-import * as m2436 from '../../sessions/messages/sessionTranscriptPageLimits.js';
-import * as m2437 from '../../sessions/messages/spawnedFirstTurn.js';
-import * as m2438 from '../../sessions/messages/specialCommands.js';
-import * as m2439 from '../../sessions/messages/transcriptBodySemanticProjection.js';
-import * as m2440 from '../../sessions/messages/transcriptObservationV1.js';
-import * as m2441 from '../../sessions/messages/transcriptPeerSenderV1.js';
-import * as m2442 from '../../sessions/messages/transcriptRawRecordV1.js';
-import * as m2443 from '../../sessions/messages/transcriptSourceTimestampV1.js';
-import * as m2444 from '../../sessions/metadata/acpConfiguredBackendV1.js';
-import * as m2445 from '../../sessions/metadata/agentRuntimeFacetsV1.js';
-import * as m2446 from '../../sessions/metadata/compat/runtimeDescriptorMetadata.js';
-import * as m2447 from '../../sessions/metadata/connectedServiceMaterializationIdentityV1.js';
-import * as m2448 from '../../sessions/metadata/metadataOverridesV1.js';
-import * as m2449 from '../../sessions/metadata/providerAccountUsageRefsV1.js';
-import * as m2450 from '../../sessions/metadata/runtimeDescriptorV1.js';
-import * as m2451 from '../../sessions/metadata/sessionActionConfirmationsV1.js';
-import * as m2452 from '../../sessions/metadata/sessionDirectoryV1.js';
-import * as m2453 from '../../sessions/metadata/sessionDisplayEnvelopesV1.js';
-import * as m2454 from '../../sessions/metadata/sessionDisplayProjectionV1.js';
-import * as m2455 from '../../sessions/metadata/sessionDisplaySchemasV1.js';
-import * as m2456 from '../../sessions/metadata/sessionExplicitStopV1.js';
-import * as m2457 from '../../sessions/metadata/sessionMetadataEnvelopesV1.js';
-import * as m2458 from '../../sessions/metadata/sessionMetadataPresentationSchemasV1.js';
-import * as m2459 from '../../sessions/metadata/sessionMetadataSchemasV1.js';
-import * as m2460 from '../../sessions/metadata/sessionPendingQueueHoldV1.js';
-import * as m2461 from '../../sessions/metadata/sessionPermissionModes.js';
-import * as m2462 from '../../sessions/metadata/sessionRollbackRangesV1.js';
-import * as m2463 from '../../sessions/metadata/sessionTitle.js';
-import * as m2464 from '../../sessions/metadata/sessionWorkspaceLocationV1.js';
-import * as m2465 from '../../sessions/metadata/systemSessionV1.js';
-import * as m2466 from '../../sessions/metadata/terminalMetadata.js';
-import * as m2467 from '../../sessions/metadata/windowsRemoteSessionLaunchMode.js';
-import * as m2468 from '../../sessions/metadata/windowsTerminalWindowName.js';
-import * as m2469 from '../../sessions/mutations/sessionMutationEqualityV1.js';
-import * as m2470 from '../../sessions/organization/accountEncryptionMigrationInventory.js';
-import * as m2471 from '../../sessions/organization/appearances.js';
-import * as m2472 from '../../sessions/organization/attentionAction.js';
-import * as m2473 from '../../sessions/organization/attentionActionIdsV1.js';
-import * as m2474 from '../../sessions/organization/constants.js';
-import * as m2475 from '../../sessions/organization/content.js';
-import * as m2476 from '../../sessions/organization/contentSchemas.js';
-import * as m2477 from '../../sessions/organization/folders.js';
-import * as m2478 from '../../sessions/organization/index.js';
-import * as m2479 from '../../sessions/organization/mutations.js';
-import * as m2480 from '../../sessions/organization/ordering.js';
-import * as m2481 from '../../sessions/organization/pins.js';
-import * as m2482 from '../../sessions/organization/snapshot.js';
-import * as m2483 from '../../sessions/organization/standings.js';
-import * as m2484 from '../../sessions/organization/tags.js';
-import * as m2485 from '../../sessions/pending/acceptedPendingSettlementV1.js';
-import * as m2486 from '../../sessions/pending/pendingActivationAuthorizationV1.js';
-import * as m2487 from '../../sessions/pending/pendingLocalId.js';
-import * as m2488 from '../../sessions/pending/pendingMessageMutationFingerprintV1.js';
-import * as m2489 from '../../sessions/pending/pendingProviderAction.js';
-import * as m2490 from '../../sessions/pending/pendingRequestedActionV1.js';
-import * as m2491 from '../../sessions/pending/pendingResetStartReadinessV1.js';
-import * as m2492 from '../../sessions/pending/retainedPendingContextV1.js';
-import * as m2493 from '../../sessions/pending/sessionPendingQueueWakeV1.js';
-import * as m2494 from '../../sessions/permissions/index.js';
-import * as m2495 from '../../sessions/permissions/mediationRecordsV1.js';
-import * as m2496 from '../../sessions/permissions/nativeChoicesV1.js';
-import * as m2497 from '../../sessions/permissions/permissionSystemRecordKinds.js';
-import * as m2498 from '../../sessions/permissions/questionV1.js';
-import * as m2499 from '../../sessions/permissions/respondRpcParamsV1.js';
-import * as m2500 from '../../sessions/permissions/v1.js';
-import * as m2501 from '../../sessions/personal/attention.js';
-import * as m2502 from '../../sessions/personal/eventEligibility.js';
-import * as m2503 from '../../sessions/personal/index.js';
-import * as m2504 from '../../sessions/personal/readState.js';
-import * as m2505 from '../../sessions/personal/relevance.js';
-import * as m2506 from '../../sessions/personal/tracking.js';
-import * as m2507 from '../../sessions/personal/viewer.js';
-import * as m2508 from '../../sessions/pluginAccess.js';
-import * as m2509 from '../../sessions/presence/sessionHumanPresenceV1.js';
-import * as m2510 from '../../sessions/presentation/currentSessionPresentationV1.js';
-import * as m2511 from '../../sessions/presentation/index.js';
-import * as m2512 from '../../sessions/read/sessionReadBatchV1.js';
-import * as m2513 from '../../sessions/readState/actionIds.js';
-import * as m2514 from '../../sessions/readState/actionTransport.js';
-import * as m2515 from '../../sessions/readState/actions.js';
-import * as m2516 from '../../sessions/readState/api.js';
-import * as m2517 from '../../sessions/readState/idsV1.js';
-import * as m2518 from '../../sessions/readState/index.js';
-import * as m2519 from '../../sessions/relations/workerUpdateV1.js';
-import * as m2520 from '../../sessions/replaySeedBudget.js';
-import * as m2521 from '../../sessions/reservedSessionMessageLocalId.js';
-import * as m2522 from '../../sessions/rollback.js';
-import * as m2523 from '../../sessions/rollbackPlanning.js';
-import * as m2524 from '../../sessions/runtime/activity/index.js';
-import * as m2525 from '../../sessions/runtime/activity/sessionRuntimeActivity.js';
-import * as m2526 from '../../sessions/runtime/activity/transport.js';
-import * as m2527 from '../../sessions/runtime/index.js';
-import * as m2528 from '../../sessions/runtimeModeSetRpcV1.js';
-import * as m2529 from '../../sessions/runtimeModeV1.js';
-import * as m2530 from '../../sessions/sessionConsumptionV1.js';
-import * as m2531 from '../../sessions/sessionEventDelivery.js';
-import * as m2532 from '../../sessions/slashCommands.js';
-import * as m2533 from '../../sessions/spawnSession.js';
-import * as m2534 from '../../sessions/spawnSessionNonce.js';
-import * as m2535 from '../../sessions/state/_constants.js';
-import * as m2536 from '../../sessions/state/_types.js';
-import * as m2537 from '../../sessions/state/capabilitySchema.js';
-import * as m2538 from '../../sessions/state/fieldRegistrySchema.js';
-import * as m2539 from '../../sessions/state/index.js';
-import * as m2540 from '../../sessions/state/valueSchemas/acpConfigOption.js';
-import * as m2541 from '../../sessions/state/valueSchemas/acpSessionMode.js';
-import * as m2542 from '../../sessions/state/valueSchemas/attention.js';
-import * as m2543 from '../../sessions/state/valueSchemas/externalAgent.js';
-import * as m2544 from '../../sessions/state/valueSchemas/index.js';
-import * as m2545 from '../../sessions/state/valueSchemas/model.js';
-import * as m2546 from '../../sessions/state/valueSchemas/permissionMode.js';
-import * as m2547 from '../../sessions/state/valueSchemas/providerSessionId.js';
-import * as m2548 from '../../sessions/state/valueSchemas/readState.js';
-import * as m2549 from '../../sessions/state/valueSchemas/runtimeActivity.js';
-import * as m2550 from '../../sessions/state/valueSchemas/runtimeDescriptor.js';
-import * as m2551 from '../../sessions/state/valueSchemas/title.js';
-import * as m2552 from '../../sessions/state/valueSchemas/turnProgress.js';
-import * as m2553 from '../../sessions/state/valueSchemas/usageLimitRecovery.js';
-import * as m2554 from '../../sessions/state/valueSchemas/workState.js';
-import * as m2555 from '../../sessions/subagents/durableCustodyV1.js';
-import * as m2556 from '../../sessions/subagents/index.js';
-import * as m2557 from '../../sessions/subagents/subagentGroupRefV1.js';
-import * as m2558 from '../../sessions/subagents/subagentRefV1.js';
-import * as m2559 from '../../sessions/system/records/activity/activitySystemRecordKinds.js';
-import * as m2560 from '../../sessions/system/records/activity/activitySystemRecordPayload.js';
-import * as m2561 from '../../sessions/system/records/index.js';
-import * as m2562 from '../../sessions/system/records/memory/memorySystemRecordKinds.js';
-import * as m2563 from '../../sessions/system/records/memory/memorySystemRecordPayload.js';
-import * as m2564 from '../../sessions/system/records/sessionSystemRecord.js';
-import * as m2565 from '../../sessions/system/records/sessionSystemRecordAddress.js';
-import * as m2566 from '../../sessions/system/records/sessionSystemRecordCatalog.js';
-import * as m2567 from '../../sessions/system/records/sessionSystemRecordContent.js';
-import * as m2568 from '../../sessions/system/records/sessionSystemRecordKind.js';
-import * as m2569 from '../../sessions/system/records/sessionSystemRecordNamespace.js';
-import * as m2570 from '../../sessions/system/records/sessionSystemRecordPayloads.js';
-import * as m2571 from '../../sessions/system/records/sessionSystemRecordRevision.js';
-import * as m2572 from '../../sessions/system/records/sessionSystemRecordRoutes.js';
-import * as m2573 from '../../sessions/turns/compat/agentIdentity.js';
-import * as m2574 from '../../sessions/turns/index.js';
-import * as m2575 from '../../sessions/turns/sessionTurnLifecycleStatusV1.js';
-import * as m2576 from '../../sessions/turns/sessionTurnMutationV1.js';
-import * as m2577 from '../../sessions/turns/sessionTurnV1.js';
-import * as m2578 from '../../sessions/userActionRequiredOccurrenceV1.js';
-import * as m2579 from '../../sessions/userMessageRpc.js';
-import * as m2580 from '../../sessions/work/activityHeadlineOrdering.js';
-import * as m2581 from '../../sessions/work/agentActivity/adapters/fromExecutionRunStatus.js';
-import * as m2582 from '../../sessions/work/agentActivity/adapters/fromSubagentStatus.js';
-import * as m2583 from '../../sessions/work/agentActivity/adapters/fromWorkflowAgentStatus.js';
-import * as m2584 from '../../sessions/work/agentActivity/adapters/fromWorkflowRunStatus.js';
-import * as m2585 from '../../sessions/work/agentActivity/adapters/index.js';
-import * as m2586 from '../../sessions/work/agentActivity/agentActivityEntryId.js';
-import * as m2587 from '../../sessions/work/agentActivity/agentActivityEntryV1.js';
-import * as m2588 from '../../sessions/work/agentActivity/agentActivityHeadlineBuild.js';
-import * as m2589 from '../../sessions/work/agentActivity/agentActivityHeadlineV1.js';
-import * as m2590 from '../../sessions/work/agentActivity/agentActivityKindV1.js';
-import * as m2591 from '../../sessions/work/agentActivity/agentActivityStatusV1.js';
-import * as m2592 from '../../sessions/work/agentActivity/agentActivityToneV1.js';
-import * as m2593 from '../../sessions/work/agentActivity/index.js';
-import * as m2594 from '../../sessions/work/backgroundTask/backgroundTaskRecordV1.js';
-import * as m2595 from '../../sessions/work/backgroundTask/backgroundTaskRedaction.js';
-import * as m2596 from '../../sessions/work/backgroundTask/index.js';
-import * as m2597 from '../../sessions/work/sessionActivityHeadlineBundleV1.js';
-import * as m2598 from '../../sessions/work/state/index.js';
-import * as m2599 from '../../sessions/work/state/sessionWorkStateBounds.js';
-import * as m2600 from '../../sessions/work/state/sessionWorkStateItemIds.js';
-import * as m2601 from '../../sessions/work/state/sessionWorkStateMerge.js';
-import * as m2602 from '../../sessions/work/state/sessionWorkStatePrimary.js';
-import * as m2603 from '../../sessions/work/state/sessionWorkStateRpc.js';
-import * as m2604 from '../../sessions/work/state/sessionWorkStateV1.js';
-import * as m2605 from '../../sessions/work/workflow/index.js';
-import * as m2606 from '../../sessions/work/workflow/sessionWorkflowActivityHeadlineBuild.js';
-import * as m2607 from '../../sessions/work/workflow/sessionWorkflowActivityHeadlineV1.js';
-import * as m2608 from '../../sessions/work/workflow/sessionWorkflowPhases.js';
-import * as m2609 from '../../sessions/work/workflow/sessionWorkflowRunRecordRevision.js';
-import * as m2610 from '../../sessions/work/workflow/sessionWorkflowRunSnapshotV1.js';
-import * as m2611 from '../../settings/registry/buildSettingArtifacts.js';
-import * as m2612 from '../../settings/registry/settingDefinition.js';
-import * as m2613 from '../../sharing/publicViewer.js';
-import * as m2614 from '../../sharing/storedContentPublicShareV1.js';
-import * as m2615 from '../../social/friends.js';
-import * as m2616 from '../../spawn/envOverlay.js';
-import * as m2617 from '../../ssh/commandFailure.js';
-import * as m2618 from '../../ssh/homeAuthorityMismatch.js';
-import * as m2619 from '../../ssh/hostTrust.js';
-import * as m2620 from '../../ssh/sshTarget.js';
-import * as m2621 from '../../ssh/tunnels.js';
-import * as m2622 from '../../storage/artifactStoredContent.js';
-import * as m2623 from '../../storage/binaryBlobV1.js';
-import * as m2624 from '../../storage/storageV1.js';
-import * as m2625 from '../../storage/storedJsonContentEnvelope.js';
-import * as m2626 from '../../strings/maxCodeUnits.js';
-import * as m2627 from '../../strings/opaqueIdentifier.js';
-import * as m2628 from '../../strings/preservedBoundedNfcString.js';
-import * as m2629 from '../../strings/trimIdent.js';
-import * as m2630 from '../../system/tasks/acquisitionProgress.js';
-import * as m2631 from '../../system/tasks/index.js';
-import * as m2632 from '../../system/tasks/promptKindCatalog.js';
-import * as m2633 from '../../system/tasks/promptPayloadContracts.js';
-import * as m2634 from '../../system/tasks/relayAccessConfigV1.js';
-import * as m2635 from '../../system/tasks/spec.js';
-import * as m2636 from '../../system/tasks/stepIdCatalog.js';
-import * as m2637 from '../../system/tasks/tailscaleEnsureReadyTaskContract.js';
-import * as m2638 from '../../system/tasks/tailscaleSecureAccessTaskContract.js';
-import * as m2639 from '../../tasks/entryRefV1.js';
-import * as m2640 from '../../teams/actionIdsV1.js';
-import * as m2641 from '../../teams/actionsV1.js';
-import * as m2642 from '../../teams/capabilities.js';
-import * as m2643 from '../../teams/credentials/actionHttpPurposeV1.js';
-import * as m2644 from '../../teams/credentials/actionIdsV1.js';
-import * as m2645 from '../../teams/credentials/actionOperationV1.js';
-import * as m2646 from '../../teams/credentials/actionsV1.js';
-import * as m2647 from '../../teams/credentials/deliveryV1.js';
-import * as m2648 from '../../teams/credentials/directMaterialCensusV1.js';
-import * as m2649 from '../../teams/credentials/directMaterialReconcileV1.js';
-import * as m2650 from '../../teams/credentials/directMaterialUseV1.js';
-import * as m2651 from '../../teams/credentials/directMaterialV1.js';
-import * as m2652 from '../../teams/credentials/externalApiKeyV1.js';
-import * as m2653 from '../../teams/credentials/externalProviderApiV1.js';
-import * as m2654 from '../../teams/credentials/index.js';
-import * as m2655 from '../../teams/credentials/providerModelCatalogV1.js';
-import * as m2656 from '../../teams/credentials/readinessV1.js';
-import * as m2657 from '../../teams/credentials/resourceReadinessV1.js';
-import * as m2658 from '../../teams/credentials/resourceSelectionV1.js';
-import * as m2659 from '../../teams/credentials/resourceV1.js';
-import * as m2660 from '../../teams/credentials/runnerBrokerReadinessV1.js';
-import * as m2661 from '../../teams/credentials/runnerSelectionV1.js';
-import * as m2662 from '../../teams/credentials/sessionBindingIntentV1.js';
-import * as m2663 from '../../teams/credentials/sessionBindingV1.js';
-import * as m2664 from '../../teams/credentials/sourceBindingV1.js';
-import * as m2665 from '../../teams/credentials/sourceCandidatesV1.js';
-import * as m2666 from '../../teams/credentials/teamCredentialModelCatalogV1.js';
-import * as m2667 from '../../teams/credentials/usageExportV1.js';
-import * as m2668 from '../../teams/credentials/usageV1.js';
-import * as m2669 from '../../teams/cursor.js';
-import * as m2670 from '../../teams/directory/actionIds.js';
-import * as m2671 from '../../teams/directory/index.js';
-import * as m2672 from '../../teams/directory/v1.js';
-import * as m2673 from '../../teams/errors.js';
-import * as m2674 from '../../teams/externalGroupBindings/actionIds.js';
-import * as m2675 from '../../teams/externalGroupBindings/index.js';
-import * as m2676 from '../../teams/externalGroupBindings/v1.js';
-import * as m2677 from '../../teams/group.js';
-import * as m2678 from '../../teams/groupLabel.js';
-import * as m2679 from '../../teams/identity/actionIds.js';
-import * as m2680 from '../../teams/identity/admission.js';
-import * as m2681 from '../../teams/identity/connection.js';
-import * as m2682 from '../../teams/identity/errors.js';
-import * as m2683 from '../../teams/identity/ids.js';
-import * as m2684 from '../../teams/identity/index.js';
-import * as m2685 from '../../teams/identity/workos.js';
-import * as m2686 from '../../teams/index.js';
-import * as m2687 from '../../teams/invitation.js';
-import * as m2688 from '../../teams/invitationToken.js';
-import * as m2689 from '../../teams/logo.js';
-import * as m2690 from '../../teams/managedDefaults.js';
-import * as m2691 from '../../teams/membership.js';
-import * as m2692 from '../../teams/membershipHistoryPreparationV1.js';
-import * as m2693 from '../../teams/principal.js';
-import * as m2694 from '../../teams/projections.js';
-import * as m2695 from '../../teams/resourceGrantAccessV1.js';
-import * as m2696 from '../../teams/resourceRecipientKeyPreparationV1.js';
-import * as m2697 from '../../teams/team.js';
-import * as m2698 from '../../terminal/compatibility.js';
-import * as m2699 from '../../terminal/index.js';
-import * as m2700 from '../../terminal/input.js';
-import * as m2701 from '../../terminal/inputEncoding.js';
-import * as m2702 from '../../terminal/stream.js';
-import * as m2703 from '../../terminal/workspace.js';
-import * as m2704 from '../../testing/accountScopedCipherFixtures.js';
-import * as m2705 from '../../testing/pluginInstallationReviewFixture.js';
-import * as m2706 from '../../todos/taskResourceClientV1.js';
-import * as m2707 from '../../todos/taskResourceV1.js';
-import * as m2708 from '../../todos/todoActionOperationsV1.js';
-import * as m2709 from '../../todos/todoLabelColoursV1.js';
-import * as m2710 from '../../todos/todoSessionLinkV1.js';
-import * as m2711 from '../../tools/autoApprovedNames.generated.js';
-import * as m2712 from '../../tools/happierToolAutoApprovalV1.js';
-import * as m2713 from '../../tools/happierToolsShellBridge.js';
-import * as m2714 from '../../tools/shellWords.js';
-import * as m2715 from '../../tools/structuredQuestionAnswersV1.js';
-import * as m2716 from '../../tools/toolMutationClassification.js';
-import * as m2717 from '../../tools/v2/aliases.js';
-import * as m2718 from '../../tools/v2/index.js';
-import * as m2719 from '../../tools/v2/meta.js';
-import * as m2720 from '../../tools/v2/names.js';
-import * as m2721 from '../../tools/v2/patch.js';
-import * as m2722 from '../../tools/v2/schemas.js';
-import * as m2723 from '../../tools/v2/subAgentFamilies.js';
-import * as m2724 from '../../transfers/attachments/attachmentLimitsV1.js';
-import * as m2725 from '../../transfers/attachments/attachmentPathV1.js';
-import * as m2726 from '../../transfers/attachments/attachmentPayloadV1.js';
-import * as m2727 from '../../transfers/relay/v2/index.js';
-import * as m2728 from '../../transfers/relay/v2/socketEvents.js';
-import * as m2729 from '../../transfers/relay/v2/transferRelayEnvelopeSchema.js';
-import * as m2730 from '../../transfers/sessions/index.js';
-import * as m2731 from '../../transfers/sessions/sessionAttachmentHandleV1.js';
-import * as m2732 from '../../transfers/sessions/sessionAttachmentUploadInitRequestV1.js';
-import * as m2733 from '../../transfers/sessions/transferSessionIds.js';
-import * as m2734 from '../../transfers/sessions/transferSessionSchemas.js';
-import * as m2735 from '../../transfers/sessions/transferSessionTypes.js';
-import * as m2736 from '../../updates/index.js';
-import * as m2737 from '../../updates/sessionUpdate.js';
-import * as m2738 from '../../updates/versionComparison.js';
-import * as m2739 from '../../usage/coach/buildUsageCoachRemedies.js';
-import * as m2740 from '../../usage/coach/coachActions.js';
-import * as m2741 from '../../usage/coach/coachDetectorIds.js';
-import * as m2742 from '../../usage/coach/coachDigestSuggestion.js';
-import * as m2743 from '../../usage/coach/coachFinding.js';
-import * as m2744 from '../../usage/coach/coachRemedy.js';
-import * as m2745 from '../../usage/coach/coachVendorFacts.js';
-import * as m2746 from '../../usage/coach/evaluateUsageCoach.js';
-import * as m2747 from '../../usage/coach/usageMcpBindingUsage.js';
-import * as m2748 from '../../usage/coach/usagePromptComposition.js';
-import * as m2749 from '../../usage/composePublicUsageRecap.js';
-import * as m2750 from '../../usage/composeUsageRecap.js';
-import * as m2751 from '../../usage/contextUsage.js';
-import * as m2752 from '../../usage/index.js';
-import * as m2753 from '../../usage/legacyUsageTokens.js';
-import * as m2754 from '../../usage/projectUsageQueryDelivery.js';
-import * as m2755 from '../../usage/projectUsageSourcesDelivery.js';
-import * as m2756 from '../../usage/resolveUsageHowYouWork.js';
-import * as m2757 from '../../usage/resolveUsagePageAggregation.js';
-import * as m2758 from '../../usage/usageAccountingMembership.js';
-import * as m2759 from '../../usage/usageActionIdsV1.js';
-import * as m2760 from '../../usage/usageActivityProjectionFacts.js';
-import * as m2761 from '../../usage/usageActivitySummary.js';
-import * as m2762 from '../../usage/usageAgentCalendar.js';
-import * as m2763 from '../../usage/usageAggregation.js';
-import * as m2764 from '../../usage/usageAnalyticsBatchDelivery.js';
-import * as m2765 from '../../usage/usageAnalyticsContracts.js';
-import * as m2766 from '../../usage/usageAnalyticsDemandProjection.js';
-import * as m2767 from '../../usage/usageCalendar.js';
-import * as m2768 from '../../usage/usageCalendarExport.js';
-import * as m2769 from '../../usage/usageCollaboration.js';
-import * as m2770 from '../../usage/usageCost.js';
-import * as m2771 from '../../usage/usageCostFactTotals.js';
-import * as m2772 from '../../usage/usageCostFacts.js';
-import * as m2773 from '../../usage/usageExport.js';
-import * as m2774 from '../../usage/usageFilterOptions.js';
-import * as m2775 from '../../usage/usageFootprint.js';
-import * as m2776 from '../../usage/usageFormatting.js';
-import * as m2777 from '../../usage/usageLeaderProjection.js';
-import * as m2778 from '../../usage/usageModelPriceCatalog.js';
-import * as m2779 from '../../usage/usageModelPriceDelivery.js';
-import * as m2780 from '../../usage/usageModelPriceSchemas.js';
-import * as m2781 from '../../usage/usageModelPriceSnapshot.js';
-import * as m2782 from '../../usage/usageMoney.js';
-import * as m2783 from '../../usage/usageOutcomeAllocation.js';
-import * as m2784 from '../../usage/usagePlanInsights.js';
-import * as m2785 from '../../usage/usagePricingPopulation.js';
-import * as m2786 from '../../usage/usagePricingReuse.js';
-import * as m2787 from '../../usage/usageRecap.js';
-import * as m2788 from '../../usage/usageSessionEvidence.js';
-import * as m2789 from '../../usage/usageSessionFactKinds.js';
-import * as m2790 from '../../usage/usageSourceSummary.js';
-import * as m2791 from '../../usage/usageSources.js';
-import * as m2792 from '../../usage/usageSourcesActionIdsV1.js';
-import * as m2793 from '../../usage/usageSteering.js';
-import * as m2794 from '../../usage/usageSummary.js';
-import * as m2795 from '../../usage/usageSummaryCalendarPricing.js';
-import * as m2796 from '../../usage/usageTimingV1.js';
-import * as m2797 from '../../usage/usageTokenCategories.js';
-import * as m2798 from '../../usage/usageVocabularyV1.js';
-import * as m2799 from '../../usage/usageWorkEvidence.js';
-import * as m2800 from '../../usage/usageWorkIntervals.js';
-import * as m2801 from '../../usage/usageWorkSources.js';
-import * as m2802 from '../../valueRefs/valueRefV1.js';
-import * as m2803 from '../../voice/actions.js';
-import * as m2804 from '../../voice/attemptPresentation.js';
-import * as m2805 from '../../voice/diagnostics.js';
-import * as m2806 from '../../voice/modelPacks/artifactBindingV1.js';
-import * as m2807 from '../../voice/modelPacks/artifactRolesV1.js';
-import * as m2808 from '../../voice/modelPacks/catalog.js';
-import * as m2809 from '../../voice/modelPacks/contributionV1.js';
-import * as m2810 from '../../voice/modelPacks/identityV1.js';
-import * as m2811 from '../../voice/modelPacks/kokoro.js';
-import * as m2812 from '../../voice/modelPacks/manifest.js';
-import * as m2813 from '../../voice/modelPacks/pathSafety.js';
-import * as m2814 from '../../voice/modelPacks/promotionIntentV1.js';
-import * as m2815 from '../../voice/outputEvents.js';
-import * as m2816 from '../../voice/prompt.js';
-import * as m2817 from '../../voice/providerContributionIdentity.js';
-import * as m2818 from '../../voice/providerOperations.js';
-import * as m2819 from '../../voice/realtime/agentSession.js';
-import * as m2820 from '../../voice/realtime/capabilities.js';
-import * as m2821 from '../../voice/realtime/events.js';
-import * as m2822 from '../../voice/realtime/index.js';
-import * as m2823 from '../../voice/realtime/providerSettings.js';
-import * as m2824 from '../../voice/realtime/toolArguments.js';
-import * as m2825 from '../../voice/realtime/transcriptLadder.js';
-import * as m2826 from '../../voice/recognitionLanguage.js';
-import * as m2827 from '../../voice/runtimeConfig.js';
-import * as m2828 from '../../voice/sessionBinding.js';
-import * as m2829 from '../../voice/settings/builtInRegistry.js';
-import * as m2830 from '../../voice/settings/conversationLanguage.js';
-import * as m2831 from '../../voice/settings/dictation.js';
-import * as m2832 from '../../voice/settings/externalProviderSettings.js';
-import * as m2833 from '../../voice/settings/generatedBundledVoiceSelectionOptions.js';
-import * as m2834 from '../../voice/settings/handsFree.js';
-import * as m2835 from '../../voice/settings/legacyOpenAiChatProviderMigration.js';
-import * as m2836 from '../../voice/settings/localConversation.js';
-import * as m2837 from '../../voice/settings/localDirect.js';
-import * as m2838 from '../../voice/settings/localStt.js';
-import * as m2839 from '../../voice/settings/localTts.js';
-import * as m2840 from '../../voice/settings/migrations/legacyAdapters.js';
-import * as m2841 from '../../voice/settings/migrations/releasedVoiceSettingsCompatibility.js';
-import * as m2842 from '../../voice/settings/migrations/speechProviders.js';
-import * as m2843 from '../../voice/settings/providerConfig.js';
-import * as m2844 from '../../voice/settings/providerFieldBinding.js';
-import * as m2845 from '../../voice/settings/providerRegistry.js';
-import * as m2846 from '../../voice/settings/providerSelection.js';
-import * as m2847 from '../../voice/settings/providerSettings.js';
-import * as m2848 from '../../voice/settings/speechProvider.js';
-import * as m2849 from '../../voice/settings/timing.js';
-import * as m2850 from '../../voice/settings/voiceAgentSelection.js';
-import * as m2851 from '../../voice/settings/voiceCredentialBindingCompatibility.js';
-import * as m2852 from '../../voice/settings/voiceSettingBindings.js';
-import * as m2853 from '../../voice/settings/voiceSettings.js';
-import * as m2854 from '../../voice/settings/voiceSettingsPersistence.js';
-import * as m2855 from '../../voice/settings/welcome.js';
-import * as m2856 from '../../voice/sourceDisclosureV1.js';
-import * as m2857 from '../../voice/speech.js';
-import * as m2858 from '../../voice/speechText.js';
-import * as m2859 from '../../voice/toolResultsChannel.js';
-import * as m2860 from '../../voice/voiceAgentRunMetadataContract.js';
-import * as m2861 from '../../voice/voiceAgentRunMetadataV1.js';
-import * as m2862 from '../../widgets/actionIdsV1.js';
-import * as m2863 from '../../widgets/actionsV1.js';
-import * as m2864 from '../../widgets/builtinWidgetDescriptorV1.js';
-import * as m2865 from '../../widgets/definitionActionIdsV1.js';
-import * as m2866 from '../../widgets/definitionActionsV1.js';
-import * as m2867 from '../../widgets/definitionIdsV1.js';
-import * as m2868 from '../../widgets/executeWidgetDefinitionActionV1.js';
-import * as m2869 from '../../widgets/executeWidgetInstanceActionV1.js';
-import * as m2870 from '../../widgets/executeWidgetLayoutFragmentActionV1.js';
-import * as m2871 from '../../widgets/executeWidgetSnapshotPostV1.js';
-import * as m2872 from '../../widgets/fragmentActionIdsV1.js';
-import * as m2873 from '../../widgets/fragmentActionsV1.js';
-import * as m2874 from '../../widgets/fragmentIdsV1.js';
-import * as m2875 from '../../widgets/homeWidgetActionPortV1.js';
-import * as m2876 from '../../widgets/index.js';
-import * as m2877 from '../../widgets/instanceIdsV1.js';
-import * as m2878 from '../../widgets/publicProfileWidgetPresetsV1.js';
-import * as m2879 from '../../widgets/sessionBoardWidgetActionPortV1.js';
-import * as m2880 from '../../widgets/usageBreakdownTitleV1.js';
-import * as m2881 from '../../widgets/usageWidgetPresetsV1.js';
-import * as m2882 from '../../widgets/widgetActionInputResolverV1.js';
-import * as m2883 from '../../widgets/widgetActionScopeV1.js';
-import * as m2884 from '../../widgets/widgetApprovalPresentationV1.js';
-import * as m2885 from '../../widgets/widgetAreaReadFailureV1.js';
-import * as m2886 from '../../widgets/widgetConnectedAccountPurposeBindingV1.js';
-import * as m2887 from '../../widgets/widgetDefinitionArtifactV1.js';
-import * as m2888 from '../../widgets/widgetDefinitionPromotionV1.js';
-import * as m2889 from '../../widgets/widgetDefinitionPublicationV1.js';
-import * as m2890 from '../../widgets/widgetDefinitionV1.js';
-import * as m2891 from '../../widgets/widgetInputAdmissionV1.js';
-import * as m2892 from '../../widgets/widgetInstanceV1.js';
-import * as m2893 from '../../widgets/widgetLayoutFragmentArtifactV1.js';
-import * as m2894 from '../../widgets/widgetLayoutFragmentV1.js';
-import * as m2895 from '../../widgets/widgetLayoutItemV1.js';
-import * as m2896 from '../../widgets/widgetPresentationV1.js';
-import * as m2897 from '../../widgets/widgetPublicProfileAdmissionV1.js';
-import * as m2898 from '../../widgets/widgetPublicSnapshotPreparationV1.js';
-import * as m2899 from '../../widgets/widgetPublicSnapshotV1.js';
-import * as m2900 from '../../widgets/widgetSharedInputAdmissionV1.js';
-import * as m2901 from '../../widgets/widgetSnapshotV1.js';
-import * as m2902 from '../../widgets/widgetSurfaceArtifactV1.js';
-import * as m2903 from '../../widgets/widgetViewerPurposeV1.js';
-import * as m2904 from '../../widgets/workBoardWidgetActionPortV1.js';
-import * as m2905 from '../../workflows/actionsV1.js';
-import * as m2906 from '../../workflows/builtins/answerAndReview.js';
-import * as m2907 from '../../workflows/builtins/backupExamples.js';
-import * as m2908 from '../../workflows/builtins/catalog.js';
-import * as m2909 from '../../workflows/builtins/debate.js';
-import * as m2910 from '../../workflows/builtins/definitionParts.js';
-import * as m2911 from '../../workflows/builtins/deploymentFleetV1.js';
-import * as m2912 from '../../workflows/builtins/deploymentMoveV1.js';
-import * as m2913 from '../../workflows/builtins/examples.js';
-import * as m2914 from '../../workflows/builtins/freshOpinions.js';
-import * as m2915 from '../../workflows/builtins/keepGoing.js';
-import * as m2916 from '../../workflows/builtins/machineUpdatesV1.js';
-import * as m2917 from '../../workflows/builtins/openAPullRequest.js';
-import * as m2918 from '../../workflows/builtins/planWithAPanel.js';
-import * as m2919 from '../../workflows/builtins/reviewAndConverge.js';
-import * as m2920 from '../../workflows/builtins/starterActionsV1.js';
-import * as m2921 from '../../workflows/commandOutputV1.js';
-import * as m2922 from '../../workflows/composeWorkflowRunWorkerUpdateV1.js';
-import * as m2923 from '../../workflows/index.js';
-import * as m2924 from '../../workflows/invocationRecovery.js';
-import * as m2925 from '../../workflows/listing/workflowListFilterV1.js';
-import * as m2926 from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
-import * as m2927 from '../../workflows/stepActionsV1.js';
-import * as m2928 from '../../workflows/triggers/triggerTargetV1.js';
-import * as m2929 from '../../workflows/triggers/workflowTriggerActionsV1.js';
-import * as m2930 from '../../workflows/workflowActionTextV1.js';
-import * as m2931 from '../../workflows/workflowAuthoringEqualityV1.js';
-import * as m2932 from '../../workflows/workflowBlockIdProtocol.js';
-import * as m2933 from '../../workflows/workflowComposerDocumentV1.js';
-import * as m2934 from '../../workflows/workflowDefinitionEditV1.js';
-import * as m2935 from '../../workflows/workflowDefinitionRefV1.js';
-import * as m2936 from '../../workflows/workflowDefinitionResolverV1.js';
-import * as m2937 from '../../workflows/workflowDefinitionV1.js';
-import * as m2938 from '../../workflows/workflowDestinationsV1.js';
-import * as m2939 from '../../workflows/workflowDiscussionCaptureV1.js';
-import * as m2940 from '../../workflows/workflowDiscussionContextV1.js';
-import * as m2941 from '../../workflows/workflowDiscussionPublicationV1.js';
-import * as m2942 from '../../workflows/workflowDiscussionRoundV1.js';
-import * as m2943 from '../../workflows/workflowDocumentSchemasV1.js';
-import * as m2944 from '../../workflows/workflowDocumentV1.js';
-import * as m2945 from '../../workflows/workflowEffectActionIdsV1.js';
-import * as m2946 from '../../workflows/workflowIdsV1.js';
-import * as m2947 from '../../workflows/workflowInvocationIdentityV1.js';
-import * as m2948 from '../../workflows/workflowInvocationMembersV1.js';
-import * as m2949 from '../../workflows/workflowInvocationStructureV1.js';
-import * as m2950 from '../../workflows/workflowLeafV1.js';
-import * as m2951 from '../../workflows/workflowPluginSourceContractV1.js';
-import * as m2952 from '../../workflows/workflowPluginSourceV1.js';
-import * as m2953 from '../../workflows/workflowProgressV1.js';
-import * as m2954 from '../../workflows/workflowReferenceV1.js';
-import * as m2955 from '../../workflows/workflowResultFieldsV1.js';
-import * as m2956 from '../../workflows/workflowRunAccountEncryptionV1.js';
-import * as m2957 from '../../workflows/workflowRunDataKeyV1.js';
-import * as m2958 from '../../workflows/workflowRunDisplayMetadataV1.js';
-import * as m2959 from '../../workflows/workflowRunKeyV1.js';
-import * as m2960 from '../../workflows/workflowRunStateV1.js';
-import * as m2961 from '../../workflows/workflowRunStorageV1.js';
-import * as m2962 from '../../workflows/workflowRunVisibilityV1.js';
-import * as m2963 from '../../workflows/workflowSessionAuthoringV1.js';
-import * as m2964 from '../../workflows/workflowSessionContextV1.js';
-import * as m2965 from '../../workflows/workflowSessionScopeV1.js';
-import * as m2966 from '../../workflows/workflowStartPreparationV1.js';
-import * as m2967 from '../../workflows/workflowStepLabel.js';
-import * as m2968 from '../../workflows/workflowStepSelectionV1.js';
-import * as m2969 from '../../workflows/workflowStoredContentV1.js';
-import * as m2970 from '../../workflows/workflowTargetUnavailableReasonV1.js';
-import * as m2971 from '../../workflows/workflowV1.js';
-import * as m2972 from '../../workflows/workflowValidationV1.js';
-import * as m2973 from '../../workflows/workflowWorkspaceV1.js';
-import * as m2974 from '../../workspace/anchors/v1.js';
-import * as m2975 from '../../workspace/favicon/v1.js';
-import * as m2976 from '../../workspace/workspaceTabsV1.js';
-import * as m2977 from '../../workspaces/checkoutKindSchema.js';
-import * as m2978 from '../../workspaces/index.js';
-import * as m2979 from '../../workspaces/locationSchema.js';
-import * as m2980 from '../../workspaces/manifestSchema.js';
-import * as m2981 from '../../workspaces/projectServicePlacementV1.js';
-import * as m2982 from '../../workspaces/projectServiceRelocationV1.js';
-import * as m2983 from '../../workspaces/projectSetup/projectManifestDocument.js';
-import * as m2984 from '../../workspaces/projectSetup/projectManifestV1.js';
-import * as m2985 from '../../workspaces/projectSetup/projectMemoryDemandV1.js';
-import * as m2986 from '../../workspaces/projectSetup/projectSetupSuccessV1.js';
-import * as m2987 from '../../workspaces/projectSetup/projectTrustRowV1.js';
-import * as m2988 from '../../workspaces/projectWorkerExecutionV1.js';
-import * as m2989 from '../../workspaces/projectWorkerPreferencesV1.js';
-import * as m2990 from '../../workspaces/workspaceExecutionConfigClientV1.js';
-import * as m2991 from '../../workspaces/workspaceExecutionConfigRowV1.js';
-import * as m2992 from '../../workspaces/workspaceRefResolutionV1.js';
-import * as m2993 from '../../workspaces/workspaceRefV1.js';
-import * as m2994 from '../../workspaces/workspaceSyncAdmissionV1.js';
-import * as m2995 from '../../workspaces/workspaceSyncTopology.js';
-import * as m2996 from '../../zodRuntimePolicy.js';
+import * as m1792 from '../../plugins/webhooks/managedRepositoryWebhookRpcV1.js';
+import * as m1793 from '../../plugins/webhooks/statusV1.js';
+import * as m1794 from '../../profiles/backendProfileSchema.js';
+import * as m1795 from '../../profiles/builtInBackendProfiles.js';
+import * as m1796 from '../../profiles/builtInProfileVersion.js';
+import * as m1797 from '../../profiles/environmentVariables.js';
+import * as m1798 from '../../profiles/historicalCompatibilityV1.js';
+import * as m1799 from '../../profiles/index.js';
+import * as m1800 from '../../profiles/launchPreferencesV1.js';
+import * as m1801 from '../../profiles/listProjection.js';
+import * as m1802 from '../../profiles/profileActionIdsV1.js';
+import * as m1803 from '../../profiles/profileActionsV1.js';
+import * as m1804 from '../../profiles/profileCatalogV1.js';
+import * as m1805 from '../../profiles/profileCompatibility.js';
+import * as m1806 from '../../profiles/profileOperations.js';
+import * as m1807 from '../../profiles/profileRecordSchemaV1.js';
+import * as m1808 from '../../profiles/profileRecordV1.js';
+import * as m1809 from '../../profiles/profileRequirements.js';
+import * as m1810 from '../../profiles/profileTransferSchemaV1.js';
+import * as m1811 from '../../profiles/profileTransferV1.js';
+import * as m1812 from '../../profiles/read.js';
+import * as m1813 from '../../profiles/resolveBackendProfile.js';
+import * as m1814 from '../../profiles/secretReferenceOverlayV1.js';
+import * as m1815 from '../../profiles/secretSatisfaction.js';
+import * as m1816 from '../../profiles/transferLegacyProfilesV1.js';
+import * as m1817 from '../../profiles/v2/authoringPreferences.js';
+import * as m1818 from '../../profiles/v2/profileId.js';
+import * as m1819 from '../../profiles/v2/schema.js';
+import * as m1820 from '../../profiles/visibilityV1.js';
+import * as m1821 from '../../projects/deploymentCreationDefaultsV1.js';
+import * as m1822 from '../../projects/openProjectDraftV1.js';
+import * as m1823 from '../../projects/openProjectV1.js';
+import * as m1824 from '../../projects/projectAccountRowCipherV1.js';
+import * as m1825 from '../../projects/projectAccountRowsV1.js';
+import * as m1826 from '../../projects/projectAccountSnapshotV1.js';
+import * as m1827 from '../../projects/projectContextV1.js';
+import * as m1828 from '../../projects/projectDeploymentDefaultsV1.js';
+import * as m1829 from '../../projects/projectListProjectionV1.js';
+import * as m1830 from '../../projects/projectOrganizationV1.js';
+import * as m1831 from '../../projects/projectServicesActionsV1.js';
+import * as m1832 from '../../projects/projectVisibilityV1.js';
+import * as m1833 from '../../projects/projectWorkspaceActionsV1.js';
+import * as m1834 from '../../projects/readinessInputV1.js';
+import * as m1835 from '../../projects/readinessV1.js';
+import * as m1836 from '../../projects/sources/projectSourceAttachmentAdmissionV1.js';
+import * as m1837 from '../../projects/sources/projectSourceV1.js';
+import * as m1838 from '../../projects/starters/createV1.js';
+import * as m1839 from '../../projects/workspaceRefKeyV1.js';
+import * as m1840 from '../../prompts/buildAppendSystemPromptBaseV1.js';
+import * as m1841 from '../../prompts/changeTitleInstructionV1.js';
+import * as m1842 from '../../prompts/codingPromptBehaviorV1.js';
+import * as m1843 from '../../prompts/effectiveCodingPromptBehaviorV1.js';
+import * as m1844 from '../../prompts/isMemoryRecallGuidanceSupported.js';
+import * as m1845 from '../../prompts/library/artifactFolderActionIdsV1.js';
+import * as m1846 from '../../prompts/library/contextSelectionsV1.js';
+import * as m1847 from '../../prompts/library/happierGuideInstructionsV1.js';
+import * as m1848 from '../../prompts/library/memoryActionsV1.js';
+import * as m1849 from '../../prompts/library/memoryDocV1.js';
+import * as m1850 from '../../prompts/library/memoryFactCandidatesV1.js';
+import * as m1851 from '../../prompts/library/promptArtifactRefsV1.js';
+import * as m1852 from '../../prompts/library/promptAssetDescriptorsV1.js';
+import * as m1853 from '../../prompts/library/promptAssetsV1.js';
+import * as m1854 from '../../prompts/library/promptBundleSchemas.js';
+import * as m1855 from '../../prompts/library/promptDocV2.js';
+import * as m1856 from '../../prompts/library/promptExternalLinksV1.js';
+import * as m1857 from '../../prompts/library/promptFolderActionSchemasV1.js';
+import * as m1858 from '../../prompts/library/promptFolderActionsV1.js';
+import * as m1859 from '../../prompts/library/promptFoldersV1.js';
+import * as m1860 from '../../prompts/library/promptInvocationActionOperations.js';
+import * as m1861 from '../../prompts/library/promptInvocationsV1.js';
+import * as m1862 from '../../prompts/library/promptLibraryActionOperations.js';
+import * as m1863 from '../../prompts/library/promptLibraryCatalogV1.js';
+import * as m1864 from '../../prompts/library/promptLibraryDigests.js';
+import * as m1865 from '../../prompts/library/promptLibraryRowsV1.js';
+import * as m1866 from '../../prompts/library/promptLibrarySchemasV1.js';
+import * as m1867 from '../../prompts/library/promptPlacementV1.js';
+import * as m1868 from '../../prompts/library/promptStacksV1.js';
+import * as m1869 from '../../prompts/library/renderPromptTemplateTextV1.js';
+import * as m1870 from '../../prompts/library/resolvePromptStackSystemAppendBlocksV1.js';
+import * as m1871 from '../../prompts/library/skillRulesActionsV1.js';
+import * as m1872 from '../../prompts/library/skills/convertStackSkillEntriesV1.js';
+import * as m1873 from '../../prompts/library/skills/firstPartySkillsV1.js';
+import * as m1874 from '../../prompts/library/skills/foundSkillTransferV1.js';
+import * as m1875 from '../../prompts/library/skills/readSkillLibraryCatalog.js';
+import * as m1876 from '../../prompts/library/skills/resolveSessionSkillPlanV1.js';
+import * as m1877 from '../../prompts/library/skills/skillActionIdsV1.js';
+import * as m1878 from '../../prompts/library/skills/skillActionOperations.js';
+import * as m1879 from '../../prompts/library/skills/skillActionSchemasV1.js';
+import * as m1880 from '../../prompts/library/skills/skillCostV1.js';
+import * as m1881 from '../../prompts/library/skills/skillCreatorV1.js';
+import * as m1882 from '../../prompts/library/skills/skillIndexV1.js';
+import * as m1883 from '../../prompts/library/skills/skillLibraryItemV1.js';
+import * as m1884 from '../../prompts/library/skills/skillListSummaryV1.js';
+import * as m1885 from '../../prompts/library/skills/skillReadV1.js';
+import * as m1886 from '../../prompts/library/skills/skillReferencesV1.js';
+import * as m1887 from '../../prompts/library/skills/skillStatusV1.js';
+import * as m1888 from '../../prompts/library/skills/skillTrustV1.js';
+import * as m1889 from '../../prompts/library/skills/skillUpdateFilesV1.js';
+import * as m1890 from '../../prompts/library/skills/skillUsageV1.js';
+import * as m1891 from '../../prompts/library/skills/skillZipV1.js';
+import * as m1892 from '../../prompts/memoryRecallGuidanceV1.js';
+import * as m1893 from '../../prompts/promptPlanV1.js';
+import * as m1894 from '../../prompts/roles/accountRoleActions.js';
+import * as m1895 from '../../prompts/roles/builtInRolesV1.js';
+import * as m1896 from '../../prompts/roles/index.js';
+import * as m1897 from '../../prompts/roles/renderSessionRoleBlockV1.js';
+import * as m1898 from '../../prompts/roles/resolveRoleSelectionV1.js';
+import * as m1899 from '../../prompts/roles/roleActionIdsV1.js';
+import * as m1900 from '../../prompts/roles/roleActionsV1.js';
+import * as m1901 from '../../prompts/roles/roleArtifactSharingV1.js';
+import * as m1902 from '../../prompts/roles/roleArtifactV1.js';
+import * as m1903 from '../../prompts/roles/roleOverrideRecordV1.js';
+import * as m1904 from '../../prompts/roles/rolesV1.js';
+import * as m1905 from '../../prompts/roles/sessionRolesSnapshot.js';
+import * as m1906 from '../../prompts/systemPromptBaseV1.js';
+import * as m1907 from '../../providers/agy/oauth.js';
+import * as m1908 from '../../providers/brokerRouteGrantV1.js';
+import * as m1909 from '../../providers/canonicalOrderV1.js';
+import * as m1910 from '../../providers/capabilities/v1.js';
+import * as m1911 from '../../providers/catalog/accountModelProjectionV1.js';
+import * as m1912 from '../../providers/catalog/anthropic.js';
+import * as m1913 from '../../providers/catalog/brokerApplicationProjectionV1.js';
+import * as m1914 from '../../providers/catalog/currentSelectionRecoveryV1.js';
+import * as m1915 from '../../providers/catalog/descriptorV1.js';
+import * as m1916 from '../../providers/catalog/limits.js';
+import * as m1917 from '../../providers/catalog/merge.js';
+import * as m1918 from '../../providers/catalog/modelPickerVisibility.js';
+import * as m1919 from '../../providers/catalog/pickerProjectionV1.js';
+import * as m1920 from '../../providers/catalog/pickerTypesV1.js';
+import * as m1921 from '../../providers/catalog/reasoningEffort.js';
+import * as m1922 from '../../providers/catalog/response.js';
+import * as m1923 from '../../providers/claude/oauthProfile.js';
+import * as m1924 from '../../providers/codex/oauth.js';
+import * as m1925 from '../../providers/compatibility/resolve.js';
+import * as m1926 from '../../providers/compatibility/sourceFacts.js';
+import * as m1927 from '../../providers/compatibility/v1.js';
+import * as m1928 from '../../providers/connections/accountProviderActionV1.js';
+import * as m1929 from '../../providers/connections/catalogSchemasV1.js';
+import * as m1930 from '../../providers/connections/connectionRowsV1.js';
+import * as m1931 from '../../providers/connections/creationV1.js';
+import * as m1932 from '../../providers/connections/customCopyV1.js';
+import * as m1933 from '../../providers/connections/customTemplateV1.js';
+import * as m1934 from '../../providers/connections/declarationDemandV1.js';
+import * as m1935 from '../../providers/connections/effectiveEndpointV1.js';
+import * as m1936 from '../../providers/connections/endpointPolicyReviewV1.js';
+import * as m1937 from '../../providers/connections/normalizeCustomTemplateV1.js';
+import * as m1938 from '../../providers/connections/providerConnectionsCatalogV1.js';
+import * as m1939 from '../../providers/connections/reconcileCatalogV1.js';
+import * as m1940 from '../../providers/connections/sourceFactsV1.js';
+import * as m1941 from '../../providers/connections/tombstoneV1.js';
+import * as m1942 from '../../providers/connections/v1.js';
+import * as m1943 from '../../providers/contributionIdentityV1.js';
+import * as m1944 from '../../providers/contributions/v1.js';
+import * as m1945 from '../../providers/credentials/v1.js';
+import * as m1946 from '../../providers/detection/descriptorV1.js';
+import * as m1947 from '../../providers/detection/v1.js';
+import * as m1948 from '../../providers/endpointPolicyV1.js';
+import * as m1949 from '../../providers/endpointUrlSchema.js';
+import * as m1950 from '../../providers/errors.js';
+import * as m1951 from '../../providers/executeProviderActionV1.js';
+import * as m1952 from '../../providers/fingerprints.js';
+import * as m1953 from '../../providers/gatewayContributionsV1.js';
+import * as m1954 from '../../providers/grants/v1.js';
+import * as m1955 from '../../providers/httpsUrlSchema.js';
+import * as m1956 from '../../providers/ids.js';
+import * as m1957 from '../../providers/index.js';
+import * as m1958 from '../../providers/managedPurposeOperationRestrictionV1.js';
+import * as m1959 from '../../providers/manualModelInput.js';
+import * as m1960 from '../../providers/materialization/v1.js';
+import * as m1961 from '../../providers/migrations/accountSettingsV1.js';
+import * as m1962 from '../../providers/migrations/conflictsV1.js';
+import * as m1963 from '../../providers/migrations/legacyProfileReferencesV1.js';
+import * as m1964 from '../../providers/migrations/legacyProfilesV1.js';
+import * as m1965 from '../../providers/modelFavoritesV1.js';
+import * as m1966 from '../../providers/originRelativePathSchema.js';
+import * as m1967 from '../../providers/outputFailure.js';
+import * as m1968 from '../../providers/ownRecordValue.js';
+import * as m1969 from '../../providers/providerActionIdsV1.js';
+import * as m1970 from '../../providers/providerActionsV1.js';
+import * as m1971 from '../../providers/publicHeadersSchema.js';
+import * as m1972 from '../../providers/runtimeState/v1.js';
+import * as m1973 from '../../providers/safety/headers.js';
+import * as m1974 from '../../providers/safety/index.js';
+import * as m1975 from '../../providers/safety/limits.js';
+import * as m1976 from '../../providers/safety/locality.js';
+import * as m1977 from '../../providers/safety/metadataDestinations.js';
+import * as m1978 from '../../providers/safety/redaction.js';
+import * as m1979 from '../../providers/safety/response.js';
+import * as m1980 from '../../providers/safety/url.js';
+import * as m1981 from '../../providers/securityFingerprintsV1.js';
+import * as m1982 from '../../providers/selection/activeSelectionValidationV1.js';
+import * as m1983 from '../../providers/selection/v1.js';
+import * as m1984 from '../../providers/selection/v2.js';
+import * as m1985 from '../../providers/sessions/adapterBindingKeyV1.js';
+import * as m1986 from '../../providers/sessions/agentSessionProviderBindingV1.js';
+import * as m1987 from '../../providers/sessions/bindingMetadataV1.js';
+import * as m1988 from '../../providers/sessions/lifecycle.js';
+import * as m1989 from '../../providers/settings/classifySubtreeV1.js';
+import * as m1990 from '../../providers/settings/externalReferencesV1.js';
+import * as m1991 from '../../providers/settings/limits.js';
+import * as m1992 from '../../providers/settings/operationsV1.js';
+import * as m1993 from '../../providers/settings/v1.js';
+import * as m1994 from '../../push/activityRemoteAlert.js';
+import * as m1995 from '../../push/expoPushDelivery.js';
+import * as m1996 from '../../push/machineRemoteAlert.js';
+import * as m1997 from '../../push/notificationQuestionActions.js';
+import * as m1998 from '../../push/pushNotificationActions.js';
+import * as m1999 from '../../push/pushNotificationTest.js';
+import * as m2000 from '../../push/pushTokenRegistration.js';
+import * as m2001 from '../../push/readyNotificationContent.js';
+import * as m2002 from '../../push/sessionChangedWake.js';
+import * as m2003 from '../../reach/capabilityApplyTimingV1.js';
+import * as m2004 from '../../reach/projectReachV1.js';
+import * as m2005 from '../../reach/reachPlaceV1.js';
+import * as m2006 from '../../reach/reachRuleV1.js';
+import * as m2007 from '../../reach/reachRulesChangeV1.js';
+import * as m2008 from '../../reach/resolveReachV1.js';
+import * as m2009 from '../../reach/resolveSessionCapabilitiesV1.js';
+import * as m2010 from '../../reach/sessionCapabilityMetadataV1.js';
+import * as m2011 from '../../reach/sessionCapabilitySelectionV1.js';
+import * as m2012 from '../../recording/results.js';
+import * as m2013 from '../../registries/formats/acpRegistry.js';
+import * as m2014 from '../../registries/formats/chromeWebStore.js';
+import * as m2015 from '../../registries/formats/claudeMarketplace.js';
+import * as m2016 from '../../registries/formats/composeCatalog.js';
+import * as m2017 from '../../registries/formats/composeTemplateNormalizationV1.js';
+import * as m2018 from '../../registries/formats/composeTomlCatalog.js';
+import * as m2019 from '../../registries/formats/dokployTemplateNormalizationV1.js';
+import * as m2020 from '../../registries/formats/github.js';
+import * as m2021 from '../../registries/formats/happierAppCatalog.js';
+import * as m2022 from '../../registries/formats/happierBrowserExtensionCatalog.js';
+import * as m2023 from '../../registries/formats/happierCatalog.js';
+import * as m2024 from '../../registries/formats/happierNpm.js';
+import * as m2025 from '../../registries/formats/happierStarterCatalog.js';
+import * as m2026 from '../../registries/formats/index.js';
+import * as m2027 from '../../registries/formats/mcpRegistry.js';
+import * as m2028 from '../../registries/formats/registryAppCatalogV1.js';
+import * as m2029 from '../../registries/formats/registryFormatAdapterV1.js';
+import * as m2030 from '../../registries/formats/registryMarketplaceCatalogBindingV1.js';
+import * as m2031 from '../../registries/formats/registryPluginListingV1.js';
+import * as m2032 from '../../registries/formats/skillsSh.js';
+import * as m2033 from '../../registries/formats/wellKnownSkills.js';
+import * as m2034 from '../../registries/index.js';
+import * as m2035 from '../../registries/registryActionIdsV1.js';
+import * as m2036 from '../../registries/registryActionsV1.js';
+import * as m2037 from '../../registries/registryAppMappingV1.js';
+import * as m2038 from '../../registries/registryAppUpdateAdmissionV1.js';
+import * as m2039 from '../../registries/registryBotTemplateUpdatePointerV1.js';
+import * as m2040 from '../../registries/registryBrowserExtensionV1.js';
+import * as m2041 from '../../registries/registryContentRefV1.js';
+import * as m2042 from '../../registries/registryFetchPlanV1.js';
+import * as m2043 from '../../registries/registryGitTreeV1.js';
+import * as m2044 from '../../registries/registryHostV1.js';
+import * as m2045 from '../../registries/registryItemsV1.js';
+import * as m2046 from '../../registries/registryListV1.js';
+import * as m2047 from '../../registries/registryPackageContentV1.js';
+import * as m2048 from '../../registries/registryPluginSourcesV1.js';
+import * as m2049 from '../../registries/registryRpcV1.js';
+import * as m2050 from '../../registries/registrySourcesMutationV1.js';
+import * as m2051 from '../../registries/registrySourcesV1.js';
+import * as m2052 from '../../registries/registryStarterV1.js';
+import * as m2053 from '../../registries/registryUpdatesV1.js';
+import * as m2054 from '../../registries/registryUpstreamV1.js';
+import * as m2055 from '../../remoteHosts/remoteHostActionIdsV1.js';
+import * as m2056 from '../../remoteHosts/remoteHostActionsV1.js';
+import * as m2057 from '../../remoteHosts/remoteHostCatalogV1.js';
+import * as m2058 from '../../remoteHosts/remoteHostRecordV1.js';
+import * as m2059 from '../../remoteHosts/remoteHostSchemasV1.js';
+import * as m2060 from '../../retention/serverRetentionPolicyV2.js';
+import * as m2061 from '../../reviews/ReviewAssumption.js';
+import * as m2062 from '../../reviews/ReviewFinding.js';
+import * as m2063 from '../../reviews/ReviewQuestion.js';
+import * as m2064 from '../../reviews/comments/actions.js';
+import * as m2065 from '../../reviews/comments/content.js';
+import * as m2066 from '../../reviews/comments/findingIdentity.js';
+import * as m2067 from '../../reviews/comments/index.js';
+import * as m2068 from '../../reviews/comments/mutation.js';
+import * as m2069 from '../../reviews/comments/proposals.js';
+import * as m2070 from '../../reviews/comments/publicationTransport.js';
+import * as m2071 from '../../reviews/comments/queries.js';
+import * as m2072 from '../../reviews/comments/snapshots.js';
+import * as m2073 from '../../reviews/comments/transport.js';
+import * as m2074 from '../../reviews/comments/triageTransition.js';
+import * as m2075 from '../../reviews/comments/v1.js';
+import * as m2076 from '../../reviews/projectReviewFindingsOverlay.js';
+import * as m2077 from '../../reviews/resolveEffectiveReviewFindings.js';
+import * as m2078 from '../../reviews/reviewApplyV1.js';
+import * as m2079 from '../../reviews/reviewEngines.js';
+import * as m2080 from '../../reviews/reviewFindingClassification.js';
+import * as m2081 from '../../reviews/reviewFindingsApplyInputV1.js';
+import * as m2082 from '../../reviews/reviewFollowUp.js';
+import * as m2083 from '../../reviews/reviewLaunchFailure.js';
+import * as m2084 from '../../reviews/reviewNarration.js';
+import * as m2085 from '../../reviews/reviewPublicationEvidence.js';
+import * as m2086 from '../../reviews/reviewStart.js';
+import * as m2087 from '../../reviews/reviewTriageStatus.js';
+import * as m2088 from '../../reviews/scmPullRequestScope.js';
+import * as m2089 from '../../reviews/scope.js';
+import * as m2090 from '../../rpc/answeringClient.js';
+import * as m2091 from '../../rpc/errors.js';
+import * as m2092 from '../../rpc/index.js';
+import * as m2093 from '../../rpc/machineWatchWindow.js';
+import * as m2094 from '../../rpc/methods.js';
+import * as m2095 from '../../rpc/npmRegistryProfiles.js';
+import * as m2096 from '../../rpc/providers.js';
+import * as m2097 from '../../rpc/socket.js';
+import * as m2098 from '../../rpc/teamCredentialSourceModels.js';
+import * as m2099 from '../../runtime/agentExecutionRunV1.js';
+import * as m2100 from '../../runtime/agentRuntimeDiagnosticV1.js';
+import * as m2101 from '../../runtime/agentSessionConfigurationV1.js';
+import * as m2102 from '../../runtime/agentSessionLimitsV1.js';
+import * as m2103 from '../../runtime/agentSessionRuntimeRetryV1.js';
+import * as m2104 from '../../runtime/agentSessionScalarsV1.js';
+import * as m2105 from '../../runtime/agentSessionStartupInstructionsV1.js';
+import * as m2106 from '../../runtime/agentSessionV1.js';
+import * as m2107 from '../../runtime/agentUsageObservedPayloadV1.js';
+import * as m2108 from '../../runtime/authRefresh.js';
+import * as m2109 from '../../runtime/catalog/index.js';
+import * as m2110 from '../../runtime/catalog/skills.js';
+import * as m2111 from '../../runtime/catalog/vendorPlugins.js';
+import * as m2112 from '../../runtime/eventKindsV1.js';
+import * as m2113 from '../../runtime/index.js';
+import * as m2114 from '../../runtime/input/composerAttachmentV1.js';
+import * as m2115 from '../../runtime/input/composerContentV1.js';
+import * as m2116 from '../../runtime/input/composerInstanceId.js';
+import * as m2117 from '../../runtime/input/composerReferenceProviderV1.js';
+import * as m2118 from '../../runtime/input/composerSuggestionTokenV1.js';
+import * as m2119 from '../../runtime/input/imageInputV1.js';
+import * as m2120 from '../../runtime/input/index.js';
+import * as m2121 from '../../runtime/input/inlineReferenceTokenV1.js';
+import * as m2122 from '../../runtime/input/mentionRefV1.js';
+import * as m2123 from '../../runtime/input/skillMentionV1.js';
+import * as m2124 from '../../runtime/input/structuredInputV1.js';
+import * as m2125 from '../../runtime/input/v1.js';
+import * as m2126 from '../../runtime/input/vendorPluginMentionV1.js';
+import * as m2127 from '../../runtime/permissionIntentV1.js';
+import * as m2128 from '../../scm/backendCapabilities.js';
+import * as m2129 from '../../scm/backendIdentity.js';
+import * as m2130 from '../../scm/branches.js';
+import * as m2131 from '../../scm/capabilities.js';
+import * as m2132 from '../../scm/changeCounting.js';
+import * as m2133 from '../../scm/clearSavedResults.js';
+import * as m2134 from '../../scm/cloneProtocol.js';
+import * as m2135 from '../../scm/commitPublication.js';
+import * as m2136 from '../../scm/comparison.js';
+import * as m2137 from '../../scm/comparisonDiscard.js';
+import * as m2138 from '../../scm/comparisonOccurrences.js';
+import * as m2139 from '../../scm/defaultBranchPushPolicy.js';
+import * as m2140 from '../../scm/diffSummary.js';
+import * as m2141 from '../../scm/diffSummaryCommitPlan.js';
+import * as m2142 from '../../scm/diffSummaryResult.js';
+import * as m2143 from '../../scm/entriesHistoryV1.js';
+import * as m2144 from '../../scm/fileAtRevision.js';
+import * as m2145 from '../../scm/fileChangesScope.js';
+import * as m2146 from '../../scm/fileViewed.js';
+import * as m2147 from '../../scm/freshness.js';
+import * as m2148 from '../../scm/hostingProviderOperations.js';
+import * as m2149 from '../../scm/hostingRepositoryIdentity.js';
+import * as m2150 from '../../scm/index.js';
+import * as m2151 from '../../scm/operationError.js';
+import * as m2152 from '../../scm/operationOutcome.js';
+import * as m2153 from '../../scm/operationState.js';
+import * as m2154 from '../../scm/pathScope.js';
+import * as m2155 from '../../scm/pullRequestLifecycleV1.js';
+import * as m2156 from '../../scm/pullRequests.js';
+import * as m2157 from '../../scm/remoteNormalization.js';
+import * as m2158 from '../../scm/remotePolicy.js';
+import * as m2159 from '../../scm/remoteResponse.js';
+import * as m2160 from '../../scm/remoteWebUrl.js';
+import * as m2161 from '../../scm/repositoryClone.js';
+import * as m2162 from '../../scm/repositoryFilesPullRequest.js';
+import * as m2163 from '../../scm/repositoryFilesPullRequestActionIds.js';
+import * as m2164 from '../../scm/repositoryProvisioning.js';
+import * as m2165 from '../../scm/requestBase.js';
+import * as m2166 from '../../scm/resolveScmBackendCapabilities.js';
+import * as m2167 from '../../scm/reviewWorkspace.js';
+import * as m2168 from '../../scm/reviewedMarks.js';
+import * as m2169 from '../../scm/selectedMutationPath.js';
+import * as m2170 from '../../scm/stash.js';
+import * as m2171 from '../../scm/suggestions.js';
+import * as m2172 from '../../scm/workEvidence.js';
+import * as m2173 from '../../scm/workingSnapshot.js';
+import * as m2174 from '../../scm/workspaceWatch.js';
+import * as m2175 from '../../scm/worktreeName.js';
+import * as m2176 from '../../scm/worktrees.js';
+import * as m2177 from '../../sentFrom.js';
+import * as m2178 from '../../server/control/contract.js';
+import * as m2179 from '../../server/http/connectionLifetimeV1.js';
+import * as m2180 from '../../server/http/requestBodyBoundsV1.js';
+import * as m2181 from '../../server/relayDrift.js';
+import * as m2182 from '../../server/urls/hostedWebappUrl.js';
+import * as m2183 from '../../server/urls/index.js';
+import * as m2184 from '../../server/urls/loopbackHostname.js';
+import * as m2185 from '../../server/urls/serverUrlComparableKey.js';
+import * as m2186 from '../../serverConfig/entries/emailEntries.js';
+import * as m2187 from '../../serverConfig/entries/integrationsEntries.js';
+import * as m2188 from '../../serverConfig/entries/policiesEntries.js';
+import * as m2189 from '../../serverConfig/entries/reachEntries.js';
+import * as m2190 from '../../serverConfig/entries/serverRuntimeEntries.js';
+import * as m2191 from '../../serverConfig/entries/storageEntries.js';
+import * as m2192 from '../../serverConfig/homeSettingsOwnership.js';
+import * as m2193 from '../../serverConfig/homeSettingsWrite.js';
+import * as m2194 from '../../serverConfig/index.js';
+import * as m2195 from '../../serverConfig/registry.js';
+import * as m2196 from '../../serverConfig/serverConfigCodec.js';
+import * as m2197 from '../../serverConfig/serverConfigEntry.js';
+import * as m2198 from '../../sessionStop.js';
+import * as m2199 from '../../sessions/access/index.js';
+import * as m2200 from '../../sessions/access/releasedDirectSessionShareV1.js';
+import * as m2201 from '../../sessions/access/sessionAccessActionsV1.js';
+import * as m2202 from '../../sessions/access/sessionAccessGrantV1.js';
+import * as m2203 from '../../sessions/access/sessionAccessOperationsV1.js';
+import * as m2204 from '../../sessions/access/sessionAccessPrincipalV1.js';
+import * as m2205 from '../../sessions/access/sessionBrowserAccessV1.js';
+import * as m2206 from '../../sessions/access/sessionEffectiveAccessV1.js';
+import * as m2207 from '../../sessions/access/sessionInitialAccessCreateV1.js';
+import * as m2208 from '../../sessions/access/sessionInitialAccessDraftV1.js';
+import * as m2209 from '../../sessions/access/sessionRecipientEnvelopeBindingV1.js';
+import * as m2210 from '../../sessions/access/sessionResponsibilityV1.js';
+import * as m2211 from '../../sessions/agentTransition.js';
+import * as m2212 from '../../sessions/agentTransitionDivider.js';
+import * as m2213 from '../../sessions/agentTransitionEffectStage.js';
+import * as m2214 from '../../sessions/agentTransitionVectors.js';
+import * as m2215 from '../../sessions/attach/metadataIdentityPolicy.js';
+import * as m2216 from '../../sessions/authoring/buildFieldArtifacts.js';
+import * as m2217 from '../../sessions/authoring/contextKinds.js';
+import * as m2218 from '../../sessions/authoring/creationFieldsV1.js';
+import * as m2219 from '../../sessions/authoring/fieldCatalog.js';
+import * as m2220 from '../../sessions/authoring/fieldDefinition.js';
+import * as m2221 from '../../sessions/authoring/index.js';
+import * as m2222 from '../../sessions/authoring/selectionFieldsV1.js';
+import * as m2223 from '../../sessions/authoring/syncedSessionAuthoringV1.js';
+import * as m2224 from '../../sessions/authoring/temporaryComputerWorkspaceV1.js';
+import * as m2225 from '../../sessions/awareness/action.js';
+import * as m2226 from '../../sessions/awareness/availability.js';
+import * as m2227 from '../../sessions/awareness/index.js';
+import * as m2228 from '../../sessions/awareness/inputV1.js';
+import * as m2229 from '../../sessions/awareness/presentationV1.js';
+import * as m2230 from '../../sessions/awareness/projectV1.js';
+import * as m2231 from '../../sessions/awareness/projectionV1.js';
+import * as m2232 from '../../sessions/awareness/recap.js';
+import * as m2233 from '../../sessions/awareness/runtime.js';
+import * as m2234 from '../../sessions/awareness/waitV1.js';
+import * as m2235 from '../../sessions/awareness/work.js';
+import * as m2236 from '../../sessions/board/actionIds.js';
+import * as m2237 from '../../sessions/board/actions.js';
+import * as m2238 from '../../sessions/board/changeHint.js';
+import * as m2239 from '../../sessions/board/declarative/authoring.js';
+import * as m2240 from '../../sessions/board/declarative/normalize.js';
+import * as m2241 from '../../sessions/board/declarative/note.js';
+import * as m2242 from '../../sessions/board/declarative/snapshot.js';
+import * as m2243 from '../../sessions/board/errors.js';
+import * as m2244 from '../../sessions/board/forkVisualCopies.js';
+import * as m2245 from '../../sessions/board/ids.js';
+import * as m2246 from '../../sessions/board/idsV1.js';
+import * as m2247 from '../../sessions/board/index.js';
+import * as m2248 from '../../sessions/board/item.js';
+import * as m2249 from '../../sessions/board/layout.js';
+import * as m2250 from '../../sessions/board/layoutOperations.js';
+import * as m2251 from '../../sessions/board/mutations.js';
+import * as m2252 from '../../sessions/board/transcriptReference.js';
+import * as m2253 from '../../sessions/board/visualPolicy.js';
+import * as m2254 from '../../sessions/changes/checkpointAttributionScope.js';
+import * as m2255 from '../../sessions/changes/index.js';
+import * as m2256 from '../../sessions/changes/mergeTurnChangeSets.js';
+import * as m2257 from '../../sessions/changes/reconcileWithScmSnapshot.js';
+import * as m2258 from '../../sessions/changes/rollbacks.js';
+import * as m2259 from '../../sessions/changes/schemas.js';
+import * as m2260 from '../../sessions/changes/types.js';
+import * as m2261 from '../../sessions/context/sessionContextV1.js';
+import * as m2262 from '../../sessions/continuation/recoveryV1.js';
+import * as m2263 from '../../sessions/continueWithReplay.js';
+import * as m2264 from '../../sessions/control/checkpoints/index.js';
+import * as m2265 from '../../sessions/control/checkpoints/v1.js';
+import * as m2266 from '../../sessions/control/contract.js';
+import * as m2267 from '../../sessions/control/exactTurnCancellationV1.js';
+import * as m2268 from '../../sessions/control/handoff/handoffRpc.js';
+import * as m2269 from '../../sessions/control/handoff/handoffSchemas.js';
+import * as m2270 from '../../sessions/control/handoff/handoffStatus.js';
+import * as m2271 from '../../sessions/control/handoff/handoffTargetReplacementApprovalV1.js';
+import * as m2272 from '../../sessions/control/handoff/handoffTypes.js';
+import * as m2273 from '../../sessions/control/handoff/workspaceSyncCommittedCopyV1.js';
+import * as m2274 from '../../sessions/control/handoff/workspaceSyncConflictProjection.js';
+import * as m2275 from '../../sessions/control/handoff/workspaceSyncSchemas.js';
+import * as m2276 from '../../sessions/control/handoff/workspaceTransferSourcePathSafety.js';
+import * as m2277 from '../../sessions/control/index.js';
+import * as m2278 from '../../sessions/control/listResult.js';
+import * as m2279 from '../../sessions/control/machineSessionTerminalV1.js';
+import * as m2280 from '../../sessions/control/modelTransitionV1.js';
+import * as m2281 from '../../sessions/control/pendingDeliveryRecoveryV1.js';
+import * as m2282 from '../../sessions/control/pendingInputInterruptAndRunV1.js';
+import * as m2283 from '../../sessions/control/pendingWithdrawV1.js';
+import * as m2284 from '../../sessions/control/readCursor.js';
+import * as m2285 from '../../sessions/control/rollback/checkpointCodeRollback.js';
+import * as m2286 from '../../sessions/control/rollback/index.js';
+import * as m2287 from '../../sessions/control/runtimeIssueMetadataV1.js';
+import * as m2288 from '../../sessions/control/runtimeIssueV1.js';
+import * as m2289 from '../../sessions/control/sessionCompactionAvailabilityV1.js';
+import * as m2290 from '../../sessions/control/sessionProviderCliAttachPrepareV1.js';
+import * as m2291 from '../../sessions/control/sessionReadinessV1.js';
+import * as m2292 from '../../sessions/control/sessionResumeRequestV1.js';
+import * as m2293 from '../../sessions/control/sessionRunnerRestartV1.js';
+import * as m2294 from '../../sessions/control/sessionRunnerRestartV2.js';
+import * as m2295 from '../../sessions/control/sessionRunnerRuntimeV1.js';
+import * as m2296 from '../../sessions/control/sessionRunnerRuntimeV2.js';
+import * as m2297 from '../../sessions/control/sessionUsageLimitRecoveryOperationResultV1.js';
+import * as m2298 from '../../sessions/control/terminalComposerClearV1.js';
+import * as m2299 from '../../sessions/creation/externalActionRequesterInvocationBaseV1.js';
+import * as m2300 from '../../sessions/creation/hostOnboardingPresentationV1.js';
+import * as m2301 from '../../sessions/creation/index.js';
+import * as m2302 from '../../sessions/creation/sessionAttestedContextV1.js';
+import * as m2303 from '../../sessions/creation/sessionCreateOriginV1.js';
+import * as m2304 from '../../sessions/creation/sessionCreationActionIdsV1.js';
+import * as m2305 from '../../sessions/creation/sessionCreationAuthorizationV1.js';
+import * as m2306 from '../../sessions/creation/sessionCreationCorrespondenceV1.js';
+import * as m2307 from '../../sessions/creation/sessionCreationIdentityV1.js';
+import * as m2308 from '../../sessions/creation/sessionCreationTargetPreparationV1.js';
+import * as m2309 from '../../sessions/creation/sessionDirectoryIntentV1.js';
+import * as m2310 from '../../sessions/creation/sessionDiscussionParticipantV1.js';
+import * as m2311 from '../../sessions/creation/sessionExecutionTargetV1.js';
+import * as m2312 from '../../sessions/creation/sessionInitialTriggerAdmissionV1.js';
+import * as m2313 from '../../sessions/creation/sessionPlacementSelectionV1.js';
+import * as m2314 from '../../sessions/creation/sessionPreparedBirthV1.js';
+import * as m2315 from '../../sessions/creation/sessionRequesterBootstrapSchemasV1.js';
+import * as m2316 from '../../sessions/creation/sessionRequesterBootstrapV1.js';
+import * as m2317 from '../../sessions/creation/sessionServerStartV1.js';
+import * as m2318 from '../../sessions/creation/sessionSpawnBudget.js';
+import * as m2319 from '../../sessions/creation/sessionSpawnLaunchErrorV1.js';
+import * as m2320 from '../../sessions/creation/sessionSpawnNewInputV2.js';
+import * as m2321 from '../../sessions/creation/sessionSpawnNewResultV1.js';
+import * as m2322 from '../../sessions/creation/sessionSpawnNewSelectionV2.js';
+import * as m2323 from '../../sessions/creation/sessionSpawnSourceContextV1.js';
+import * as m2324 from '../../sessions/creation/testFixtures/sessionSpawnInputBeforeCommitObservation.js';
+import * as m2325 from '../../sessions/creation/testFixtures/sessionSpawnResultBeforeCommitObservation.js';
+import * as m2326 from '../../sessions/encryption/membershipSessionDataKeyEnvelopes.js';
+import * as m2327 from '../../sessions/encryption/prepareSessionDataKeyEnvelopeItemV1.js';
+import * as m2328 from '../../sessions/encryption/sessionDataKeyEnvelopes.js';
+import * as m2329 from '../../sessions/encryption/sessionDataKeyPreparationPass.js';
+import * as m2330 from '../../sessions/external/accounting.js';
+import * as m2331 from '../../sessions/external/contentSearchMatch.js';
+import * as m2332 from '../../sessions/external/daemonRpcV1.js';
+import * as m2333 from '../../sessions/external/externalAgentObservationV1.js';
+import * as m2334 from '../../sessions/external/followLifecycleV1.js';
+import * as m2335 from '../../sessions/external/historicalImportIdentity.js';
+import * as m2336 from '../../sessions/external/hookManagementV1.js';
+import * as m2337 from '../../sessions/external/index.js';
+import * as m2338 from '../../sessions/external/legacyDirectSessionWireSchemasV1.js';
+import * as m2339 from '../../sessions/external/linkedSessionMetadata.js';
+import * as m2340 from '../../sessions/external/operationActionSchemasV1.js';
+import * as m2341 from '../../sessions/external/operationActionsV1.js';
+import * as m2342 from '../../sessions/external/operationV1.js';
+import * as m2343 from '../../sessions/external/publicTranscriptFollowV1.js';
+import * as m2344 from '../../sessions/external/rpcErrorCodes.js';
+import * as m2345 from '../../sessions/external/secureRefreshV1.js';
+import * as m2346 from '../../sessions/external/sourceCatalog.js';
+import * as m2347 from '../../sessions/external/sourceTranscriptItemV1.js';
+import * as m2348 from '../../sessions/external/statusDemandV1.js';
+import * as m2349 from '../../sessions/external/takeoverV1.js';
+import * as m2350 from '../../sessions/folders/folderSettings.js';
+import * as m2351 from '../../sessions/follow/accountFollow.js';
+import * as m2352 from '../../sessions/follow/accountVoiceFollowTransportV1.js';
+import * as m2353 from '../../sessions/follow/actionTransport.js';
+import * as m2354 from '../../sessions/follow/actions.js';
+import * as m2355 from '../../sessions/follow/api.js';
+import * as m2356 from '../../sessions/follow/changes.js';
+import * as m2357 from '../../sessions/follow/followPolicyEditorV1.js';
+import * as m2358 from '../../sessions/follow/followSourceRefTransportV1.js';
+import * as m2359 from '../../sessions/follow/index.js';
+import * as m2360 from '../../sessions/follow/sessionCoordinatorActionsV1.js';
+import * as m2361 from '../../sessions/follow/sessionCoordinatorSetupV1.js';
+import * as m2362 from '../../sessions/follow/sessionCoordinatorV1.js';
+import * as m2363 from '../../sessions/follow/sessionDeliveryMuteV1.js';
+import * as m2364 from '../../sessions/follow/sessionFollowDeliveryProjectionV1.js';
+import * as m2365 from '../../sessions/follow/sessionFollowFrontierV1.js';
+import * as m2366 from '../../sessions/follow/sessionFollowInputV1.js';
+import * as m2367 from '../../sessions/follow/sessionFollowListV1.js';
+import * as m2368 from '../../sessions/follow/sessionFollowOriginalV1.js';
+import * as m2369 from '../../sessions/follow/sessionFollowPolicyV1.js';
+import * as m2370 from '../../sessions/follow/sessionFollowRuleContentCodecV1.js';
+import * as m2371 from '../../sessions/follow/sessionFollowRuleOccurrenceV1.js';
+import * as m2372 from '../../sessions/follow/sessionFollowRulePreviewV1.js';
+import * as m2373 from '../../sessions/follow/sessionFollowRuleV1.js';
+import * as m2374 from '../../sessions/follow/sessionFollowSelectedDeliveryV1.js';
+import * as m2375 from '../../sessions/follow/sessionFollowSourceKeyPreparationV1.js';
+import * as m2376 from '../../sessions/follow/sessionFollowSourceOccurrenceV1.js';
+import * as m2377 from '../../sessions/follow/sessionFollowSourceProjectionV1.js';
+import * as m2378 from '../../sessions/follow/sessionFollowSourcesApi.js';
+import * as m2379 from '../../sessions/follow/sessionFollowTransportV1.js';
+import * as m2380 from '../../sessions/follow/sessionFollowUpdateEnvelopeV1.js';
+import * as m2381 from '../../sessions/follow/sessionManagerV1.js';
+import * as m2382 from '../../sessions/follow/sessionReceiverDeliveryV1.js';
+import * as m2383 from '../../sessions/follow/voiceTrackedSessionAddressV1.js';
+import * as m2384 from '../../sessions/follow/voiceTrackedTargetsCompatibilityV1.js';
+import * as m2385 from '../../sessions/fork.js';
+import * as m2386 from '../../sessions/forkPoint.js';
+import * as m2387 from '../../sessions/general.js';
+import * as m2388 from '../../sessions/identity/botFaceGeometry.js';
+import * as m2389 from '../../sessions/identity/botFaceShapeGenerator.js';
+import * as m2390 from '../../sessions/identity/botFaceShapeValidation.js';
+import * as m2391 from '../../sessions/identity/sessionBotFaceV1.js';
+import * as m2392 from '../../sessions/identity/sessionBotV1.js';
+import * as m2393 from '../../sessions/idsV1.js';
+import * as m2394 from '../../sessions/index.js';
+import * as m2395 from '../../sessions/instructions/sessionVoicePreferenceV1.js';
+import * as m2396 from '../../sessions/listFilter/index.js';
+import * as m2397 from '../../sessions/listFilter/sessionListFilterQueryV1.js';
+import * as m2398 from '../../sessions/listFilter/sessionListFilterV1.js';
+import * as m2399 from '../../sessions/listing/cursor.js';
+import * as m2400 from '../../sessions/listing/query.js';
+import * as m2401 from '../../sessions/listing/response.js';
+import * as m2402 from '../../sessions/media/imageMarksV1.js';
+import * as m2403 from '../../sessions/media/imageReferenceV1.js';
+import * as m2404 from '../../sessions/messages/agentExternalSessionTranscriptRawRecord.js';
+import * as m2405 from '../../sessions/messages/autonomousExchangeV1.js';
+import * as m2406 from '../../sessions/messages/canonicalTurnDiffTool.js';
+import * as m2407 from '../../sessions/messages/coerceSessionUserPromptV1.js';
+import * as m2408 from '../../sessions/messages/emptyCanonicalTurnDiffSuppression.js';
+import * as m2409 from '../../sessions/messages/messageActionReferenceV1.js';
+import * as m2410 from '../../sessions/messages/messageStructuredPresentationV1.js';
+import * as m2411 from '../../sessions/messages/pendingDeliveryBlockedReason.js';
+import * as m2412 from '../../sessions/messages/pendingDeliveryStatusV1.js';
+import * as m2413 from '../../sessions/messages/sessionCapabilityNoticeV1.js';
+import * as m2414 from '../../sessions/messages/sessionExternalShareableTranscriptV1.js';
+import * as m2415 from '../../sessions/messages/sessionInputAdmission.js';
+import * as m2416 from '../../sessions/messages/sessionInputAdmissionRejectionV1.js';
+import * as m2417 from '../../sessions/messages/sessionInputAuthoringV1.js';
+import * as m2418 from '../../sessions/messages/sessionInputForgeEvidenceV1.js';
+import * as m2419 from '../../sessions/messages/sessionInputPromptContextV1.js';
+import * as m2420 from '../../sessions/messages/sessionInputReferenceProjectionV1.js';
+import * as m2421 from '../../sessions/messages/sessionInputResultV1.js';
+import * as m2422 from '../../sessions/messages/sessionMediaV1.js';
+import * as m2423 from '../../sessions/messages/sessionMessageAccountActorV1.js';
+import * as m2424 from '../../sessions/messages/sessionMessageDeliveryResolutionV1.js';
+import * as m2425 from '../../sessions/messages/sessionMessageInvocationV1.js';
+import * as m2426 from '../../sessions/messages/sessionMessageMeta.js';
+import * as m2427 from '../../sessions/messages/sessionMessageObservationFactsV1.js';
+import * as m2428 from '../../sessions/messages/sessionMessageRefV1.js';
+import * as m2429 from '../../sessions/messages/sessionMessageReplyPublicationV1.js';
+import * as m2430 from '../../sessions/messages/sessionMessageReplyV1.js';
+import * as m2431 from '../../sessions/messages/sessionMessageRole.js';
+import * as m2432 from '../../sessions/messages/sessionMessagesPageV1.js';
+import * as m2433 from '../../sessions/messages/sessionPendingAdmissionSettlementV1.js';
+import * as m2434 from '../../sessions/messages/sessionPendingExecutionRunMachineAdmissionV2.js';
+import * as m2435 from '../../sessions/messages/sessionPendingMachineAdmissionV1.js';
+import * as m2436 from '../../sessions/messages/sessionStoredMessageContent.js';
+import * as m2437 from '../../sessions/messages/sessionTranscriptPageLimits.js';
+import * as m2438 from '../../sessions/messages/spawnedFirstTurn.js';
+import * as m2439 from '../../sessions/messages/specialCommands.js';
+import * as m2440 from '../../sessions/messages/transcriptBodySemanticProjection.js';
+import * as m2441 from '../../sessions/messages/transcriptObservationV1.js';
+import * as m2442 from '../../sessions/messages/transcriptPeerSenderV1.js';
+import * as m2443 from '../../sessions/messages/transcriptRawRecordV1.js';
+import * as m2444 from '../../sessions/messages/transcriptSourceTimestampV1.js';
+import * as m2445 from '../../sessions/metadata/acpConfiguredBackendV1.js';
+import * as m2446 from '../../sessions/metadata/agentRuntimeFacetsV1.js';
+import * as m2447 from '../../sessions/metadata/compat/runtimeDescriptorMetadata.js';
+import * as m2448 from '../../sessions/metadata/connectedServiceMaterializationIdentityV1.js';
+import * as m2449 from '../../sessions/metadata/metadataOverridesV1.js';
+import * as m2450 from '../../sessions/metadata/providerAccountUsageRefsV1.js';
+import * as m2451 from '../../sessions/metadata/runtimeDescriptorV1.js';
+import * as m2452 from '../../sessions/metadata/sessionActionConfirmationsV1.js';
+import * as m2453 from '../../sessions/metadata/sessionDirectoryV1.js';
+import * as m2454 from '../../sessions/metadata/sessionDisplayEnvelopesV1.js';
+import * as m2455 from '../../sessions/metadata/sessionDisplayProjectionV1.js';
+import * as m2456 from '../../sessions/metadata/sessionDisplaySchemasV1.js';
+import * as m2457 from '../../sessions/metadata/sessionExplicitStopV1.js';
+import * as m2458 from '../../sessions/metadata/sessionMetadataEnvelopesV1.js';
+import * as m2459 from '../../sessions/metadata/sessionMetadataPresentationSchemasV1.js';
+import * as m2460 from '../../sessions/metadata/sessionMetadataSchemasV1.js';
+import * as m2461 from '../../sessions/metadata/sessionPendingQueueHoldV1.js';
+import * as m2462 from '../../sessions/metadata/sessionPermissionModes.js';
+import * as m2463 from '../../sessions/metadata/sessionRollbackRangesV1.js';
+import * as m2464 from '../../sessions/metadata/sessionTitle.js';
+import * as m2465 from '../../sessions/metadata/sessionWorkspaceLocationV1.js';
+import * as m2466 from '../../sessions/metadata/systemSessionV1.js';
+import * as m2467 from '../../sessions/metadata/terminalMetadata.js';
+import * as m2468 from '../../sessions/metadata/windowsRemoteSessionLaunchMode.js';
+import * as m2469 from '../../sessions/metadata/windowsTerminalWindowName.js';
+import * as m2470 from '../../sessions/mutations/sessionMutationEqualityV1.js';
+import * as m2471 from '../../sessions/organization/accountEncryptionMigrationInventory.js';
+import * as m2472 from '../../sessions/organization/appearances.js';
+import * as m2473 from '../../sessions/organization/attentionAction.js';
+import * as m2474 from '../../sessions/organization/attentionActionIdsV1.js';
+import * as m2475 from '../../sessions/organization/constants.js';
+import * as m2476 from '../../sessions/organization/content.js';
+import * as m2477 from '../../sessions/organization/contentSchemas.js';
+import * as m2478 from '../../sessions/organization/folders.js';
+import * as m2479 from '../../sessions/organization/index.js';
+import * as m2480 from '../../sessions/organization/mutations.js';
+import * as m2481 from '../../sessions/organization/ordering.js';
+import * as m2482 from '../../sessions/organization/pins.js';
+import * as m2483 from '../../sessions/organization/snapshot.js';
+import * as m2484 from '../../sessions/organization/standings.js';
+import * as m2485 from '../../sessions/organization/tags.js';
+import * as m2486 from '../../sessions/pending/acceptedPendingSettlementV1.js';
+import * as m2487 from '../../sessions/pending/pendingActivationAuthorizationV1.js';
+import * as m2488 from '../../sessions/pending/pendingLocalId.js';
+import * as m2489 from '../../sessions/pending/pendingMessageMutationFingerprintV1.js';
+import * as m2490 from '../../sessions/pending/pendingProviderAction.js';
+import * as m2491 from '../../sessions/pending/pendingRequestedActionV1.js';
+import * as m2492 from '../../sessions/pending/pendingResetStartReadinessV1.js';
+import * as m2493 from '../../sessions/pending/retainedPendingContextV1.js';
+import * as m2494 from '../../sessions/pending/sessionPendingQueueWakeV1.js';
+import * as m2495 from '../../sessions/permissions/index.js';
+import * as m2496 from '../../sessions/permissions/mediationRecordsV1.js';
+import * as m2497 from '../../sessions/permissions/nativeChoicesV1.js';
+import * as m2498 from '../../sessions/permissions/permissionSystemRecordKinds.js';
+import * as m2499 from '../../sessions/permissions/questionV1.js';
+import * as m2500 from '../../sessions/permissions/respondRpcParamsV1.js';
+import * as m2501 from '../../sessions/permissions/v1.js';
+import * as m2502 from '../../sessions/personal/attention.js';
+import * as m2503 from '../../sessions/personal/eventEligibility.js';
+import * as m2504 from '../../sessions/personal/index.js';
+import * as m2505 from '../../sessions/personal/readState.js';
+import * as m2506 from '../../sessions/personal/relevance.js';
+import * as m2507 from '../../sessions/personal/tracking.js';
+import * as m2508 from '../../sessions/personal/viewer.js';
+import * as m2509 from '../../sessions/pluginAccess.js';
+import * as m2510 from '../../sessions/presence/sessionHumanPresenceV1.js';
+import * as m2511 from '../../sessions/presentation/currentSessionPresentationV1.js';
+import * as m2512 from '../../sessions/presentation/index.js';
+import * as m2513 from '../../sessions/read/sessionReadBatchV1.js';
+import * as m2514 from '../../sessions/readState/actionIds.js';
+import * as m2515 from '../../sessions/readState/actionTransport.js';
+import * as m2516 from '../../sessions/readState/actions.js';
+import * as m2517 from '../../sessions/readState/api.js';
+import * as m2518 from '../../sessions/readState/idsV1.js';
+import * as m2519 from '../../sessions/readState/index.js';
+import * as m2520 from '../../sessions/relations/workerUpdateV1.js';
+import * as m2521 from '../../sessions/replaySeedBudget.js';
+import * as m2522 from '../../sessions/reservedSessionMessageLocalId.js';
+import * as m2523 from '../../sessions/rollback.js';
+import * as m2524 from '../../sessions/rollbackPlanning.js';
+import * as m2525 from '../../sessions/runtime/activity/index.js';
+import * as m2526 from '../../sessions/runtime/activity/sessionRuntimeActivity.js';
+import * as m2527 from '../../sessions/runtime/activity/transport.js';
+import * as m2528 from '../../sessions/runtime/index.js';
+import * as m2529 from '../../sessions/runtimeModeSetRpcV1.js';
+import * as m2530 from '../../sessions/runtimeModeV1.js';
+import * as m2531 from '../../sessions/sessionConsumptionV1.js';
+import * as m2532 from '../../sessions/sessionEventDelivery.js';
+import * as m2533 from '../../sessions/slashCommands.js';
+import * as m2534 from '../../sessions/spawnSession.js';
+import * as m2535 from '../../sessions/spawnSessionNonce.js';
+import * as m2536 from '../../sessions/state/_constants.js';
+import * as m2537 from '../../sessions/state/_types.js';
+import * as m2538 from '../../sessions/state/capabilitySchema.js';
+import * as m2539 from '../../sessions/state/fieldRegistrySchema.js';
+import * as m2540 from '../../sessions/state/index.js';
+import * as m2541 from '../../sessions/state/valueSchemas/acpConfigOption.js';
+import * as m2542 from '../../sessions/state/valueSchemas/acpSessionMode.js';
+import * as m2543 from '../../sessions/state/valueSchemas/attention.js';
+import * as m2544 from '../../sessions/state/valueSchemas/externalAgent.js';
+import * as m2545 from '../../sessions/state/valueSchemas/index.js';
+import * as m2546 from '../../sessions/state/valueSchemas/model.js';
+import * as m2547 from '../../sessions/state/valueSchemas/permissionMode.js';
+import * as m2548 from '../../sessions/state/valueSchemas/providerSessionId.js';
+import * as m2549 from '../../sessions/state/valueSchemas/readState.js';
+import * as m2550 from '../../sessions/state/valueSchemas/runtimeActivity.js';
+import * as m2551 from '../../sessions/state/valueSchemas/runtimeDescriptor.js';
+import * as m2552 from '../../sessions/state/valueSchemas/title.js';
+import * as m2553 from '../../sessions/state/valueSchemas/turnProgress.js';
+import * as m2554 from '../../sessions/state/valueSchemas/usageLimitRecovery.js';
+import * as m2555 from '../../sessions/state/valueSchemas/workState.js';
+import * as m2556 from '../../sessions/subagents/durableCustodyV1.js';
+import * as m2557 from '../../sessions/subagents/index.js';
+import * as m2558 from '../../sessions/subagents/subagentGroupRefV1.js';
+import * as m2559 from '../../sessions/subagents/subagentRefV1.js';
+import * as m2560 from '../../sessions/system/records/activity/activitySystemRecordKinds.js';
+import * as m2561 from '../../sessions/system/records/activity/activitySystemRecordPayload.js';
+import * as m2562 from '../../sessions/system/records/index.js';
+import * as m2563 from '../../sessions/system/records/memory/memorySystemRecordKinds.js';
+import * as m2564 from '../../sessions/system/records/memory/memorySystemRecordPayload.js';
+import * as m2565 from '../../sessions/system/records/sessionSystemRecord.js';
+import * as m2566 from '../../sessions/system/records/sessionSystemRecordAddress.js';
+import * as m2567 from '../../sessions/system/records/sessionSystemRecordCatalog.js';
+import * as m2568 from '../../sessions/system/records/sessionSystemRecordContent.js';
+import * as m2569 from '../../sessions/system/records/sessionSystemRecordKind.js';
+import * as m2570 from '../../sessions/system/records/sessionSystemRecordNamespace.js';
+import * as m2571 from '../../sessions/system/records/sessionSystemRecordPayloads.js';
+import * as m2572 from '../../sessions/system/records/sessionSystemRecordRevision.js';
+import * as m2573 from '../../sessions/system/records/sessionSystemRecordRoutes.js';
+import * as m2574 from '../../sessions/turns/compat/agentIdentity.js';
+import * as m2575 from '../../sessions/turns/index.js';
+import * as m2576 from '../../sessions/turns/sessionTurnLifecycleStatusV1.js';
+import * as m2577 from '../../sessions/turns/sessionTurnMutationV1.js';
+import * as m2578 from '../../sessions/turns/sessionTurnV1.js';
+import * as m2579 from '../../sessions/userActionRequiredOccurrenceV1.js';
+import * as m2580 from '../../sessions/userMessageRpc.js';
+import * as m2581 from '../../sessions/work/activityHeadlineOrdering.js';
+import * as m2582 from '../../sessions/work/agentActivity/adapters/fromExecutionRunStatus.js';
+import * as m2583 from '../../sessions/work/agentActivity/adapters/fromSubagentStatus.js';
+import * as m2584 from '../../sessions/work/agentActivity/adapters/fromWorkflowAgentStatus.js';
+import * as m2585 from '../../sessions/work/agentActivity/adapters/fromWorkflowRunStatus.js';
+import * as m2586 from '../../sessions/work/agentActivity/adapters/index.js';
+import * as m2587 from '../../sessions/work/agentActivity/agentActivityEntryId.js';
+import * as m2588 from '../../sessions/work/agentActivity/agentActivityEntryV1.js';
+import * as m2589 from '../../sessions/work/agentActivity/agentActivityHeadlineBuild.js';
+import * as m2590 from '../../sessions/work/agentActivity/agentActivityHeadlineV1.js';
+import * as m2591 from '../../sessions/work/agentActivity/agentActivityKindV1.js';
+import * as m2592 from '../../sessions/work/agentActivity/agentActivityStatusV1.js';
+import * as m2593 from '../../sessions/work/agentActivity/agentActivityToneV1.js';
+import * as m2594 from '../../sessions/work/agentActivity/index.js';
+import * as m2595 from '../../sessions/work/backgroundTask/backgroundTaskRecordV1.js';
+import * as m2596 from '../../sessions/work/backgroundTask/backgroundTaskRedaction.js';
+import * as m2597 from '../../sessions/work/backgroundTask/index.js';
+import * as m2598 from '../../sessions/work/sessionActivityHeadlineBundleV1.js';
+import * as m2599 from '../../sessions/work/state/index.js';
+import * as m2600 from '../../sessions/work/state/sessionWorkStateBounds.js';
+import * as m2601 from '../../sessions/work/state/sessionWorkStateItemIds.js';
+import * as m2602 from '../../sessions/work/state/sessionWorkStateMerge.js';
+import * as m2603 from '../../sessions/work/state/sessionWorkStatePrimary.js';
+import * as m2604 from '../../sessions/work/state/sessionWorkStateRpc.js';
+import * as m2605 from '../../sessions/work/state/sessionWorkStateV1.js';
+import * as m2606 from '../../sessions/work/workflow/index.js';
+import * as m2607 from '../../sessions/work/workflow/sessionWorkflowActivityHeadlineBuild.js';
+import * as m2608 from '../../sessions/work/workflow/sessionWorkflowActivityHeadlineV1.js';
+import * as m2609 from '../../sessions/work/workflow/sessionWorkflowPhases.js';
+import * as m2610 from '../../sessions/work/workflow/sessionWorkflowRunRecordRevision.js';
+import * as m2611 from '../../sessions/work/workflow/sessionWorkflowRunSnapshotV1.js';
+import * as m2612 from '../../settings/registry/buildSettingArtifacts.js';
+import * as m2613 from '../../settings/registry/settingDefinition.js';
+import * as m2614 from '../../sharing/publicViewer.js';
+import * as m2615 from '../../sharing/storedContentPublicShareV1.js';
+import * as m2616 from '../../social/friends.js';
+import * as m2617 from '../../spawn/envOverlay.js';
+import * as m2618 from '../../ssh/commandFailure.js';
+import * as m2619 from '../../ssh/homeAuthorityMismatch.js';
+import * as m2620 from '../../ssh/hostTrust.js';
+import * as m2621 from '../../ssh/sshTarget.js';
+import * as m2622 from '../../ssh/tunnels.js';
+import * as m2623 from '../../storage/artifactStoredContent.js';
+import * as m2624 from '../../storage/binaryBlobV1.js';
+import * as m2625 from '../../storage/storageV1.js';
+import * as m2626 from '../../storage/storedJsonContentEnvelope.js';
+import * as m2627 from '../../strings/maxCodeUnits.js';
+import * as m2628 from '../../strings/opaqueIdentifier.js';
+import * as m2629 from '../../strings/preservedBoundedNfcString.js';
+import * as m2630 from '../../strings/trimIdent.js';
+import * as m2631 from '../../system/tasks/acquisitionProgress.js';
+import * as m2632 from '../../system/tasks/index.js';
+import * as m2633 from '../../system/tasks/promptKindCatalog.js';
+import * as m2634 from '../../system/tasks/promptPayloadContracts.js';
+import * as m2635 from '../../system/tasks/relayAccessConfigV1.js';
+import * as m2636 from '../../system/tasks/spec.js';
+import * as m2637 from '../../system/tasks/stepIdCatalog.js';
+import * as m2638 from '../../system/tasks/tailscaleEnsureReadyTaskContract.js';
+import * as m2639 from '../../system/tasks/tailscaleSecureAccessTaskContract.js';
+import * as m2640 from '../../tasks/entryRefV1.js';
+import * as m2641 from '../../teams/actionIdsV1.js';
+import * as m2642 from '../../teams/actionsV1.js';
+import * as m2643 from '../../teams/capabilities.js';
+import * as m2644 from '../../teams/credentials/actionHttpPurposeV1.js';
+import * as m2645 from '../../teams/credentials/actionIdsV1.js';
+import * as m2646 from '../../teams/credentials/actionOperationV1.js';
+import * as m2647 from '../../teams/credentials/actionsV1.js';
+import * as m2648 from '../../teams/credentials/deliveryV1.js';
+import * as m2649 from '../../teams/credentials/directMaterialCensusV1.js';
+import * as m2650 from '../../teams/credentials/directMaterialReconcileV1.js';
+import * as m2651 from '../../teams/credentials/directMaterialUseV1.js';
+import * as m2652 from '../../teams/credentials/directMaterialV1.js';
+import * as m2653 from '../../teams/credentials/externalApiKeyV1.js';
+import * as m2654 from '../../teams/credentials/externalProviderApiV1.js';
+import * as m2655 from '../../teams/credentials/index.js';
+import * as m2656 from '../../teams/credentials/providerModelCatalogV1.js';
+import * as m2657 from '../../teams/credentials/readinessV1.js';
+import * as m2658 from '../../teams/credentials/resourceReadinessV1.js';
+import * as m2659 from '../../teams/credentials/resourceSelectionV1.js';
+import * as m2660 from '../../teams/credentials/resourceV1.js';
+import * as m2661 from '../../teams/credentials/runnerBrokerReadinessV1.js';
+import * as m2662 from '../../teams/credentials/runnerSelectionV1.js';
+import * as m2663 from '../../teams/credentials/sessionBindingIntentV1.js';
+import * as m2664 from '../../teams/credentials/sessionBindingV1.js';
+import * as m2665 from '../../teams/credentials/sourceBindingV1.js';
+import * as m2666 from '../../teams/credentials/sourceCandidatesV1.js';
+import * as m2667 from '../../teams/credentials/teamCredentialModelCatalogV1.js';
+import * as m2668 from '../../teams/credentials/usageExportV1.js';
+import * as m2669 from '../../teams/credentials/usageV1.js';
+import * as m2670 from '../../teams/cursor.js';
+import * as m2671 from '../../teams/directory/actionIds.js';
+import * as m2672 from '../../teams/directory/index.js';
+import * as m2673 from '../../teams/directory/v1.js';
+import * as m2674 from '../../teams/errors.js';
+import * as m2675 from '../../teams/externalGroupBindings/actionIds.js';
+import * as m2676 from '../../teams/externalGroupBindings/index.js';
+import * as m2677 from '../../teams/externalGroupBindings/v1.js';
+import * as m2678 from '../../teams/group.js';
+import * as m2679 from '../../teams/groupLabel.js';
+import * as m2680 from '../../teams/identity/actionIds.js';
+import * as m2681 from '../../teams/identity/admission.js';
+import * as m2682 from '../../teams/identity/connection.js';
+import * as m2683 from '../../teams/identity/errors.js';
+import * as m2684 from '../../teams/identity/ids.js';
+import * as m2685 from '../../teams/identity/index.js';
+import * as m2686 from '../../teams/identity/workos.js';
+import * as m2687 from '../../teams/index.js';
+import * as m2688 from '../../teams/invitation.js';
+import * as m2689 from '../../teams/invitationToken.js';
+import * as m2690 from '../../teams/logo.js';
+import * as m2691 from '../../teams/managedDefaults.js';
+import * as m2692 from '../../teams/membership.js';
+import * as m2693 from '../../teams/membershipHistoryPreparationV1.js';
+import * as m2694 from '../../teams/principal.js';
+import * as m2695 from '../../teams/projections.js';
+import * as m2696 from '../../teams/resourceGrantAccessV1.js';
+import * as m2697 from '../../teams/resourceRecipientKeyPreparationV1.js';
+import * as m2698 from '../../teams/team.js';
+import * as m2699 from '../../terminal/compatibility.js';
+import * as m2700 from '../../terminal/index.js';
+import * as m2701 from '../../terminal/input.js';
+import * as m2702 from '../../terminal/inputEncoding.js';
+import * as m2703 from '../../terminal/stream.js';
+import * as m2704 from '../../terminal/workspace.js';
+import * as m2705 from '../../testing/accountScopedCipherFixtures.js';
+import * as m2706 from '../../testing/pluginInstallationReviewFixture.js';
+import * as m2707 from '../../todos/taskResourceClientV1.js';
+import * as m2708 from '../../todos/taskResourceV1.js';
+import * as m2709 from '../../todos/todoActionOperationsV1.js';
+import * as m2710 from '../../todos/todoLabelColoursV1.js';
+import * as m2711 from '../../todos/todoSessionLinkV1.js';
+import * as m2712 from '../../tools/autoApprovedNames.generated.js';
+import * as m2713 from '../../tools/happierToolAutoApprovalV1.js';
+import * as m2714 from '../../tools/happierToolsShellBridge.js';
+import * as m2715 from '../../tools/shellWords.js';
+import * as m2716 from '../../tools/structuredQuestionAnswersV1.js';
+import * as m2717 from '../../tools/toolMutationClassification.js';
+import * as m2718 from '../../tools/v2/aliases.js';
+import * as m2719 from '../../tools/v2/index.js';
+import * as m2720 from '../../tools/v2/meta.js';
+import * as m2721 from '../../tools/v2/names.js';
+import * as m2722 from '../../tools/v2/patch.js';
+import * as m2723 from '../../tools/v2/schemas.js';
+import * as m2724 from '../../tools/v2/subAgentFamilies.js';
+import * as m2725 from '../../transfers/attachments/attachmentLimitsV1.js';
+import * as m2726 from '../../transfers/attachments/attachmentPathV1.js';
+import * as m2727 from '../../transfers/attachments/attachmentPayloadV1.js';
+import * as m2728 from '../../transfers/relay/v2/index.js';
+import * as m2729 from '../../transfers/relay/v2/socketEvents.js';
+import * as m2730 from '../../transfers/relay/v2/transferRelayEnvelopeSchema.js';
+import * as m2731 from '../../transfers/sessions/index.js';
+import * as m2732 from '../../transfers/sessions/sessionAttachmentHandleV1.js';
+import * as m2733 from '../../transfers/sessions/sessionAttachmentUploadInitRequestV1.js';
+import * as m2734 from '../../transfers/sessions/transferSessionIds.js';
+import * as m2735 from '../../transfers/sessions/transferSessionSchemas.js';
+import * as m2736 from '../../transfers/sessions/transferSessionTypes.js';
+import * as m2737 from '../../updates/index.js';
+import * as m2738 from '../../updates/sessionUpdate.js';
+import * as m2739 from '../../updates/versionComparison.js';
+import * as m2740 from '../../usage/coach/buildUsageCoachRemedies.js';
+import * as m2741 from '../../usage/coach/coachActions.js';
+import * as m2742 from '../../usage/coach/coachDetectorIds.js';
+import * as m2743 from '../../usage/coach/coachDigestSuggestion.js';
+import * as m2744 from '../../usage/coach/coachFinding.js';
+import * as m2745 from '../../usage/coach/coachRemedy.js';
+import * as m2746 from '../../usage/coach/coachVendorFacts.js';
+import * as m2747 from '../../usage/coach/evaluateUsageCoach.js';
+import * as m2748 from '../../usage/coach/usageMcpBindingUsage.js';
+import * as m2749 from '../../usage/coach/usagePromptComposition.js';
+import * as m2750 from '../../usage/composePublicUsageRecap.js';
+import * as m2751 from '../../usage/composeUsageRecap.js';
+import * as m2752 from '../../usage/contextUsage.js';
+import * as m2753 from '../../usage/index.js';
+import * as m2754 from '../../usage/legacyUsageTokens.js';
+import * as m2755 from '../../usage/projectUsageQueryDelivery.js';
+import * as m2756 from '../../usage/projectUsageSourcesDelivery.js';
+import * as m2757 from '../../usage/resolveUsageHowYouWork.js';
+import * as m2758 from '../../usage/resolveUsagePageAggregation.js';
+import * as m2759 from '../../usage/usageAccountingMembership.js';
+import * as m2760 from '../../usage/usageActionIdsV1.js';
+import * as m2761 from '../../usage/usageActivityProjectionFacts.js';
+import * as m2762 from '../../usage/usageActivitySummary.js';
+import * as m2763 from '../../usage/usageAgentCalendar.js';
+import * as m2764 from '../../usage/usageAggregation.js';
+import * as m2765 from '../../usage/usageAnalyticsBatchDelivery.js';
+import * as m2766 from '../../usage/usageAnalyticsContracts.js';
+import * as m2767 from '../../usage/usageAnalyticsDemandProjection.js';
+import * as m2768 from '../../usage/usageCalendar.js';
+import * as m2769 from '../../usage/usageCalendarExport.js';
+import * as m2770 from '../../usage/usageCollaboration.js';
+import * as m2771 from '../../usage/usageCost.js';
+import * as m2772 from '../../usage/usageCostFactTotals.js';
+import * as m2773 from '../../usage/usageCostFacts.js';
+import * as m2774 from '../../usage/usageExport.js';
+import * as m2775 from '../../usage/usageFilterOptions.js';
+import * as m2776 from '../../usage/usageFootprint.js';
+import * as m2777 from '../../usage/usageFormatting.js';
+import * as m2778 from '../../usage/usageLeaderProjection.js';
+import * as m2779 from '../../usage/usageModelPriceCatalog.js';
+import * as m2780 from '../../usage/usageModelPriceDelivery.js';
+import * as m2781 from '../../usage/usageModelPriceSchemas.js';
+import * as m2782 from '../../usage/usageModelPriceSnapshot.js';
+import * as m2783 from '../../usage/usageMoney.js';
+import * as m2784 from '../../usage/usageOutcomeAllocation.js';
+import * as m2785 from '../../usage/usagePlanInsights.js';
+import * as m2786 from '../../usage/usagePricingPopulation.js';
+import * as m2787 from '../../usage/usagePricingReuse.js';
+import * as m2788 from '../../usage/usageRecap.js';
+import * as m2789 from '../../usage/usageSessionEvidence.js';
+import * as m2790 from '../../usage/usageSessionFactKinds.js';
+import * as m2791 from '../../usage/usageSourceSummary.js';
+import * as m2792 from '../../usage/usageSources.js';
+import * as m2793 from '../../usage/usageSourcesActionIdsV1.js';
+import * as m2794 from '../../usage/usageSteering.js';
+import * as m2795 from '../../usage/usageSummary.js';
+import * as m2796 from '../../usage/usageSummaryCalendarPricing.js';
+import * as m2797 from '../../usage/usageTimingV1.js';
+import * as m2798 from '../../usage/usageTokenCategories.js';
+import * as m2799 from '../../usage/usageVocabularyV1.js';
+import * as m2800 from '../../usage/usageWorkEvidence.js';
+import * as m2801 from '../../usage/usageWorkIntervals.js';
+import * as m2802 from '../../usage/usageWorkSources.js';
+import * as m2803 from '../../valueRefs/valueRefV1.js';
+import * as m2804 from '../../voice/actions.js';
+import * as m2805 from '../../voice/attemptPresentation.js';
+import * as m2806 from '../../voice/diagnostics.js';
+import * as m2807 from '../../voice/modelPacks/artifactBindingV1.js';
+import * as m2808 from '../../voice/modelPacks/artifactRolesV1.js';
+import * as m2809 from '../../voice/modelPacks/catalog.js';
+import * as m2810 from '../../voice/modelPacks/contributionV1.js';
+import * as m2811 from '../../voice/modelPacks/identityV1.js';
+import * as m2812 from '../../voice/modelPacks/kokoro.js';
+import * as m2813 from '../../voice/modelPacks/manifest.js';
+import * as m2814 from '../../voice/modelPacks/pathSafety.js';
+import * as m2815 from '../../voice/modelPacks/promotionIntentV1.js';
+import * as m2816 from '../../voice/outputEvents.js';
+import * as m2817 from '../../voice/prompt.js';
+import * as m2818 from '../../voice/providerContributionIdentity.js';
+import * as m2819 from '../../voice/providerOperations.js';
+import * as m2820 from '../../voice/realtime/agentSession.js';
+import * as m2821 from '../../voice/realtime/capabilities.js';
+import * as m2822 from '../../voice/realtime/events.js';
+import * as m2823 from '../../voice/realtime/index.js';
+import * as m2824 from '../../voice/realtime/providerSettings.js';
+import * as m2825 from '../../voice/realtime/toolArguments.js';
+import * as m2826 from '../../voice/realtime/transcriptLadder.js';
+import * as m2827 from '../../voice/recognitionLanguage.js';
+import * as m2828 from '../../voice/runtimeConfig.js';
+import * as m2829 from '../../voice/sessionBinding.js';
+import * as m2830 from '../../voice/settings/builtInRegistry.js';
+import * as m2831 from '../../voice/settings/conversationLanguage.js';
+import * as m2832 from '../../voice/settings/dictation.js';
+import * as m2833 from '../../voice/settings/externalProviderSettings.js';
+import * as m2834 from '../../voice/settings/generatedBundledVoiceSelectionOptions.js';
+import * as m2835 from '../../voice/settings/handsFree.js';
+import * as m2836 from '../../voice/settings/legacyOpenAiChatProviderMigration.js';
+import * as m2837 from '../../voice/settings/localConversation.js';
+import * as m2838 from '../../voice/settings/localDirect.js';
+import * as m2839 from '../../voice/settings/localStt.js';
+import * as m2840 from '../../voice/settings/localTts.js';
+import * as m2841 from '../../voice/settings/migrations/legacyAdapters.js';
+import * as m2842 from '../../voice/settings/migrations/releasedVoiceSettingsCompatibility.js';
+import * as m2843 from '../../voice/settings/migrations/speechProviders.js';
+import * as m2844 from '../../voice/settings/providerConfig.js';
+import * as m2845 from '../../voice/settings/providerFieldBinding.js';
+import * as m2846 from '../../voice/settings/providerRegistry.js';
+import * as m2847 from '../../voice/settings/providerSelection.js';
+import * as m2848 from '../../voice/settings/providerSettings.js';
+import * as m2849 from '../../voice/settings/speechProvider.js';
+import * as m2850 from '../../voice/settings/timing.js';
+import * as m2851 from '../../voice/settings/voiceAgentSelection.js';
+import * as m2852 from '../../voice/settings/voiceCredentialBindingCompatibility.js';
+import * as m2853 from '../../voice/settings/voiceSettingBindings.js';
+import * as m2854 from '../../voice/settings/voiceSettings.js';
+import * as m2855 from '../../voice/settings/voiceSettingsPersistence.js';
+import * as m2856 from '../../voice/settings/welcome.js';
+import * as m2857 from '../../voice/sourceDisclosureV1.js';
+import * as m2858 from '../../voice/speech.js';
+import * as m2859 from '../../voice/speechText.js';
+import * as m2860 from '../../voice/toolResultsChannel.js';
+import * as m2861 from '../../voice/voiceAgentRunMetadataContract.js';
+import * as m2862 from '../../voice/voiceAgentRunMetadataV1.js';
+import * as m2863 from '../../widgets/actionIdsV1.js';
+import * as m2864 from '../../widgets/actionsV1.js';
+import * as m2865 from '../../widgets/builtinWidgetDescriptorV1.js';
+import * as m2866 from '../../widgets/definitionActionIdsV1.js';
+import * as m2867 from '../../widgets/definitionActionsV1.js';
+import * as m2868 from '../../widgets/definitionIdsV1.js';
+import * as m2869 from '../../widgets/executeWidgetDefinitionActionV1.js';
+import * as m2870 from '../../widgets/executeWidgetInstanceActionV1.js';
+import * as m2871 from '../../widgets/executeWidgetLayoutFragmentActionV1.js';
+import * as m2872 from '../../widgets/executeWidgetSnapshotPostV1.js';
+import * as m2873 from '../../widgets/fragmentActionIdsV1.js';
+import * as m2874 from '../../widgets/fragmentActionsV1.js';
+import * as m2875 from '../../widgets/fragmentIdsV1.js';
+import * as m2876 from '../../widgets/homeWidgetActionPortV1.js';
+import * as m2877 from '../../widgets/index.js';
+import * as m2878 from '../../widgets/instanceIdsV1.js';
+import * as m2879 from '../../widgets/publicProfileWidgetPresetsV1.js';
+import * as m2880 from '../../widgets/sessionBoardWidgetActionPortV1.js';
+import * as m2881 from '../../widgets/usageBreakdownTitleV1.js';
+import * as m2882 from '../../widgets/usageWidgetPresetsV1.js';
+import * as m2883 from '../../widgets/widgetActionInputResolverV1.js';
+import * as m2884 from '../../widgets/widgetActionScopeV1.js';
+import * as m2885 from '../../widgets/widgetApprovalPresentationV1.js';
+import * as m2886 from '../../widgets/widgetAreaReadFailureV1.js';
+import * as m2887 from '../../widgets/widgetConnectedAccountPurposeBindingV1.js';
+import * as m2888 from '../../widgets/widgetDefinitionArtifactV1.js';
+import * as m2889 from '../../widgets/widgetDefinitionPromotionV1.js';
+import * as m2890 from '../../widgets/widgetDefinitionPublicationV1.js';
+import * as m2891 from '../../widgets/widgetDefinitionV1.js';
+import * as m2892 from '../../widgets/widgetInputAdmissionV1.js';
+import * as m2893 from '../../widgets/widgetInstanceV1.js';
+import * as m2894 from '../../widgets/widgetLayoutFragmentArtifactV1.js';
+import * as m2895 from '../../widgets/widgetLayoutFragmentV1.js';
+import * as m2896 from '../../widgets/widgetLayoutItemV1.js';
+import * as m2897 from '../../widgets/widgetPresentationV1.js';
+import * as m2898 from '../../widgets/widgetPublicProfileAdmissionV1.js';
+import * as m2899 from '../../widgets/widgetPublicSnapshotPreparationV1.js';
+import * as m2900 from '../../widgets/widgetPublicSnapshotV1.js';
+import * as m2901 from '../../widgets/widgetSharedInputAdmissionV1.js';
+import * as m2902 from '../../widgets/widgetSnapshotV1.js';
+import * as m2903 from '../../widgets/widgetSurfaceArtifactV1.js';
+import * as m2904 from '../../widgets/widgetViewerPurposeV1.js';
+import * as m2905 from '../../widgets/workBoardWidgetActionPortV1.js';
+import * as m2906 from '../../workflows/actionsV1.js';
+import * as m2907 from '../../workflows/builtins/answerAndReview.js';
+import * as m2908 from '../../workflows/builtins/backupExamples.js';
+import * as m2909 from '../../workflows/builtins/catalog.js';
+import * as m2910 from '../../workflows/builtins/debate.js';
+import * as m2911 from '../../workflows/builtins/definitionParts.js';
+import * as m2912 from '../../workflows/builtins/deploymentFleetV1.js';
+import * as m2913 from '../../workflows/builtins/deploymentMoveV1.js';
+import * as m2914 from '../../workflows/builtins/examples.js';
+import * as m2915 from '../../workflows/builtins/freshOpinions.js';
+import * as m2916 from '../../workflows/builtins/keepGoing.js';
+import * as m2917 from '../../workflows/builtins/machineUpdatesV1.js';
+import * as m2918 from '../../workflows/builtins/openAPullRequest.js';
+import * as m2919 from '../../workflows/builtins/planWithAPanel.js';
+import * as m2920 from '../../workflows/builtins/reviewAndConverge.js';
+import * as m2921 from '../../workflows/builtins/starterActionsV1.js';
+import * as m2922 from '../../workflows/commandOutputV1.js';
+import * as m2923 from '../../workflows/composeWorkflowRunWorkerUpdateV1.js';
+import * as m2924 from '../../workflows/index.js';
+import * as m2925 from '../../workflows/invocationRecovery.js';
+import * as m2926 from '../../workflows/listing/workflowListFilterV1.js';
+import * as m2927 from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
+import * as m2928 from '../../workflows/stepActionsV1.js';
+import * as m2929 from '../../workflows/triggers/triggerTargetV1.js';
+import * as m2930 from '../../workflows/triggers/workflowTriggerActionsV1.js';
+import * as m2931 from '../../workflows/workflowActionTextV1.js';
+import * as m2932 from '../../workflows/workflowAuthoringEqualityV1.js';
+import * as m2933 from '../../workflows/workflowBlockIdProtocol.js';
+import * as m2934 from '../../workflows/workflowComposerDocumentV1.js';
+import * as m2935 from '../../workflows/workflowDefinitionEditV1.js';
+import * as m2936 from '../../workflows/workflowDefinitionRefV1.js';
+import * as m2937 from '../../workflows/workflowDefinitionResolverV1.js';
+import * as m2938 from '../../workflows/workflowDefinitionV1.js';
+import * as m2939 from '../../workflows/workflowDestinationsV1.js';
+import * as m2940 from '../../workflows/workflowDiscussionCaptureV1.js';
+import * as m2941 from '../../workflows/workflowDiscussionContextV1.js';
+import * as m2942 from '../../workflows/workflowDiscussionPublicationV1.js';
+import * as m2943 from '../../workflows/workflowDiscussionRoundV1.js';
+import * as m2944 from '../../workflows/workflowDocumentSchemasV1.js';
+import * as m2945 from '../../workflows/workflowDocumentV1.js';
+import * as m2946 from '../../workflows/workflowEffectActionIdsV1.js';
+import * as m2947 from '../../workflows/workflowIdsV1.js';
+import * as m2948 from '../../workflows/workflowInvocationIdentityV1.js';
+import * as m2949 from '../../workflows/workflowInvocationMembersV1.js';
+import * as m2950 from '../../workflows/workflowInvocationStructureV1.js';
+import * as m2951 from '../../workflows/workflowLeafV1.js';
+import * as m2952 from '../../workflows/workflowPluginSourceContractV1.js';
+import * as m2953 from '../../workflows/workflowPluginSourceV1.js';
+import * as m2954 from '../../workflows/workflowProgressV1.js';
+import * as m2955 from '../../workflows/workflowReferenceV1.js';
+import * as m2956 from '../../workflows/workflowResultFieldsV1.js';
+import * as m2957 from '../../workflows/workflowRunAccountEncryptionV1.js';
+import * as m2958 from '../../workflows/workflowRunDataKeyV1.js';
+import * as m2959 from '../../workflows/workflowRunDisplayMetadataV1.js';
+import * as m2960 from '../../workflows/workflowRunKeyV1.js';
+import * as m2961 from '../../workflows/workflowRunStateV1.js';
+import * as m2962 from '../../workflows/workflowRunStorageV1.js';
+import * as m2963 from '../../workflows/workflowRunVisibilityV1.js';
+import * as m2964 from '../../workflows/workflowSessionAuthoringV1.js';
+import * as m2965 from '../../workflows/workflowSessionContextV1.js';
+import * as m2966 from '../../workflows/workflowSessionScopeV1.js';
+import * as m2967 from '../../workflows/workflowStartPreparationV1.js';
+import * as m2968 from '../../workflows/workflowStepLabel.js';
+import * as m2969 from '../../workflows/workflowStepSelectionV1.js';
+import * as m2970 from '../../workflows/workflowStoredContentV1.js';
+import * as m2971 from '../../workflows/workflowTargetUnavailableReasonV1.js';
+import * as m2972 from '../../workflows/workflowV1.js';
+import * as m2973 from '../../workflows/workflowValidationV1.js';
+import * as m2974 from '../../workflows/workflowWorkspaceV1.js';
+import * as m2975 from '../../workspace/anchors/v1.js';
+import * as m2976 from '../../workspace/favicon/v1.js';
+import * as m2977 from '../../workspace/workspaceTabsV1.js';
+import * as m2978 from '../../workspaces/checkoutKindSchema.js';
+import * as m2979 from '../../workspaces/index.js';
+import * as m2980 from '../../workspaces/locationSchema.js';
+import * as m2981 from '../../workspaces/manifestSchema.js';
+import * as m2982 from '../../workspaces/projectServicePlacementV1.js';
+import * as m2983 from '../../workspaces/projectServiceRelocationV1.js';
+import * as m2984 from '../../workspaces/projectSetup/projectManifestDocument.js';
+import * as m2985 from '../../workspaces/projectSetup/projectManifestV1.js';
+import * as m2986 from '../../workspaces/projectSetup/projectMemoryDemandV1.js';
+import * as m2987 from '../../workspaces/projectSetup/projectSetupSuccessV1.js';
+import * as m2988 from '../../workspaces/projectSetup/projectTrustRowV1.js';
+import * as m2989 from '../../workspaces/projectWorkerExecutionV1.js';
+import * as m2990 from '../../workspaces/projectWorkerPreferencesV1.js';
+import * as m2991 from '../../workspaces/workspaceExecutionConfigClientV1.js';
+import * as m2992 from '../../workspaces/workspaceExecutionConfigRowV1.js';
+import * as m2993 from '../../workspaces/workspaceRefResolutionV1.js';
+import * as m2994 from '../../workspaces/workspaceRefV1.js';
+import * as m2995 from '../../workspaces/workspaceSyncAdmissionV1.js';
+import * as m2996 from '../../workspaces/workspaceSyncTopology.js';
+import * as m2997 from '../../zodRuntimePolicy.js';
 
 export const PLUGIN_UI_HOST_PROVIDED_PROTOCOL_MODULES: Readonly<Record<string, unknown>> = Object.freeze({
     '@happier-dev/protocol/abortSignal': m0,
@@ -4866,1253 +4867,1254 @@ export const PLUGIN_UI_HOST_PROVIDED_PROTOCOL_MODULES: Readonly<Record<string, u
     '@happier-dev/protocol/plugins/webhooks/deliveryV1': m1789,
     '@happier-dev/protocol/plugins/webhooks/endpointActionIdsV1': m1790,
     '@happier-dev/protocol/plugins/webhooks/endpointV1': m1791,
-    '@happier-dev/protocol/plugins/webhooks/statusV1': m1792,
-    '@happier-dev/protocol/profiles/backendProfileSchema': m1793,
-    '@happier-dev/protocol/profiles/builtInBackendProfiles': m1794,
-    '@happier-dev/protocol/profiles/builtInProfileVersion': m1795,
-    '@happier-dev/protocol/profiles/environmentVariables': m1796,
-    '@happier-dev/protocol/profiles/historicalCompatibilityV1': m1797,
-    '@happier-dev/protocol/profiles/index': m1798,
-    '@happier-dev/protocol/profiles/launchPreferencesV1': m1799,
-    '@happier-dev/protocol/profiles/listProjection': m1800,
-    '@happier-dev/protocol/profiles/profileActionIdsV1': m1801,
-    '@happier-dev/protocol/profiles/profileActionsV1': m1802,
-    '@happier-dev/protocol/profiles/profileCatalogV1': m1803,
-    '@happier-dev/protocol/profiles/profileCompatibility': m1804,
-    '@happier-dev/protocol/profiles/profileOperations': m1805,
-    '@happier-dev/protocol/profiles/profileRecordSchemaV1': m1806,
-    '@happier-dev/protocol/profiles/profileRecordV1': m1807,
-    '@happier-dev/protocol/profiles/profileRequirements': m1808,
-    '@happier-dev/protocol/profiles/profileTransferSchemaV1': m1809,
-    '@happier-dev/protocol/profiles/profileTransferV1': m1810,
-    '@happier-dev/protocol/profiles/read': m1811,
-    '@happier-dev/protocol/profiles/resolveBackendProfile': m1812,
-    '@happier-dev/protocol/profiles/secretReferenceOverlayV1': m1813,
-    '@happier-dev/protocol/profiles/secretSatisfaction': m1814,
-    '@happier-dev/protocol/profiles/transferLegacyProfilesV1': m1815,
-    '@happier-dev/protocol/profiles/v2/authoringPreferences': m1816,
-    '@happier-dev/protocol/profiles/v2/profileId': m1817,
-    '@happier-dev/protocol/profiles/v2/schema': m1818,
-    '@happier-dev/protocol/profiles/visibilityV1': m1819,
-    '@happier-dev/protocol/projects/deploymentCreationDefaultsV1': m1820,
-    '@happier-dev/protocol/projects/openProjectDraftV1': m1821,
-    '@happier-dev/protocol/projects/openProjectV1': m1822,
-    '@happier-dev/protocol/projects/projectAccountRowCipherV1': m1823,
-    '@happier-dev/protocol/projects/projectAccountRowsV1': m1824,
-    '@happier-dev/protocol/projects/projectAccountSnapshotV1': m1825,
-    '@happier-dev/protocol/projects/projectContextV1': m1826,
-    '@happier-dev/protocol/projects/projectDeploymentDefaultsV1': m1827,
-    '@happier-dev/protocol/projects/projectListProjectionV1': m1828,
-    '@happier-dev/protocol/projects/projectOrganizationV1': m1829,
-    '@happier-dev/protocol/projects/projectServicesActionsV1': m1830,
-    '@happier-dev/protocol/projects/projectVisibilityV1': m1831,
-    '@happier-dev/protocol/projects/projectWorkspaceActionsV1': m1832,
-    '@happier-dev/protocol/projects/readinessInputV1': m1833,
-    '@happier-dev/protocol/projects/readinessV1': m1834,
-    '@happier-dev/protocol/projects/sources/projectSourceAttachmentAdmissionV1': m1835,
-    '@happier-dev/protocol/projects/sources/projectSourceV1': m1836,
-    '@happier-dev/protocol/projects/starters/createV1': m1837,
-    '@happier-dev/protocol/projects/workspaceRefKeyV1': m1838,
-    '@happier-dev/protocol/prompts/buildAppendSystemPromptBaseV1': m1839,
-    '@happier-dev/protocol/prompts/changeTitleInstructionV1': m1840,
-    '@happier-dev/protocol/prompts/codingPromptBehaviorV1': m1841,
-    '@happier-dev/protocol/prompts/effectiveCodingPromptBehaviorV1': m1842,
-    '@happier-dev/protocol/prompts/isMemoryRecallGuidanceSupported': m1843,
-    '@happier-dev/protocol/prompts/library/artifactFolderActionIdsV1': m1844,
-    '@happier-dev/protocol/prompts/library/contextSelectionsV1': m1845,
-    '@happier-dev/protocol/prompts/library/happierGuideInstructionsV1': m1846,
-    '@happier-dev/protocol/prompts/library/memoryActionsV1': m1847,
-    '@happier-dev/protocol/prompts/library/memoryDocV1': m1848,
-    '@happier-dev/protocol/prompts/library/memoryFactCandidatesV1': m1849,
-    '@happier-dev/protocol/prompts/library/promptArtifactRefsV1': m1850,
-    '@happier-dev/protocol/prompts/library/promptAssetDescriptorsV1': m1851,
-    '@happier-dev/protocol/prompts/library/promptAssetsV1': m1852,
-    '@happier-dev/protocol/prompts/library/promptBundleSchemas': m1853,
-    '@happier-dev/protocol/prompts/library/promptDocV2': m1854,
-    '@happier-dev/protocol/prompts/library/promptExternalLinksV1': m1855,
-    '@happier-dev/protocol/prompts/library/promptFolderActionSchemasV1': m1856,
-    '@happier-dev/protocol/prompts/library/promptFolderActionsV1': m1857,
-    '@happier-dev/protocol/prompts/library/promptFoldersV1': m1858,
-    '@happier-dev/protocol/prompts/library/promptInvocationActionOperations': m1859,
-    '@happier-dev/protocol/prompts/library/promptInvocationsV1': m1860,
-    '@happier-dev/protocol/prompts/library/promptLibraryActionOperations': m1861,
-    '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1': m1862,
-    '@happier-dev/protocol/prompts/library/promptLibraryDigests': m1863,
-    '@happier-dev/protocol/prompts/library/promptLibraryRowsV1': m1864,
-    '@happier-dev/protocol/prompts/library/promptLibrarySchemasV1': m1865,
-    '@happier-dev/protocol/prompts/library/promptPlacementV1': m1866,
-    '@happier-dev/protocol/prompts/library/promptStacksV1': m1867,
-    '@happier-dev/protocol/prompts/library/renderPromptTemplateTextV1': m1868,
-    '@happier-dev/protocol/prompts/library/resolvePromptStackSystemAppendBlocksV1': m1869,
-    '@happier-dev/protocol/prompts/library/skillRulesActionsV1': m1870,
-    '@happier-dev/protocol/prompts/library/skills/convertStackSkillEntriesV1': m1871,
-    '@happier-dev/protocol/prompts/library/skills/firstPartySkillsV1': m1872,
-    '@happier-dev/protocol/prompts/library/skills/foundSkillTransferV1': m1873,
-    '@happier-dev/protocol/prompts/library/skills/readSkillLibraryCatalog': m1874,
-    '@happier-dev/protocol/prompts/library/skills/resolveSessionSkillPlanV1': m1875,
-    '@happier-dev/protocol/prompts/library/skills/skillActionIdsV1': m1876,
-    '@happier-dev/protocol/prompts/library/skills/skillActionOperations': m1877,
-    '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1': m1878,
-    '@happier-dev/protocol/prompts/library/skills/skillCostV1': m1879,
-    '@happier-dev/protocol/prompts/library/skills/skillCreatorV1': m1880,
-    '@happier-dev/protocol/prompts/library/skills/skillIndexV1': m1881,
-    '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1': m1882,
-    '@happier-dev/protocol/prompts/library/skills/skillListSummaryV1': m1883,
-    '@happier-dev/protocol/prompts/library/skills/skillReadV1': m1884,
-    '@happier-dev/protocol/prompts/library/skills/skillReferencesV1': m1885,
-    '@happier-dev/protocol/prompts/library/skills/skillStatusV1': m1886,
-    '@happier-dev/protocol/prompts/library/skills/skillTrustV1': m1887,
-    '@happier-dev/protocol/prompts/library/skills/skillUpdateFilesV1': m1888,
-    '@happier-dev/protocol/prompts/library/skills/skillUsageV1': m1889,
-    '@happier-dev/protocol/prompts/library/skills/skillZipV1': m1890,
-    '@happier-dev/protocol/prompts/memoryRecallGuidanceV1': m1891,
-    '@happier-dev/protocol/prompts/promptPlanV1': m1892,
-    '@happier-dev/protocol/prompts/roles/accountRoleActions': m1893,
-    '@happier-dev/protocol/prompts/roles/builtInRolesV1': m1894,
-    '@happier-dev/protocol/prompts/roles/index': m1895,
-    '@happier-dev/protocol/prompts/roles/renderSessionRoleBlockV1': m1896,
-    '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1': m1897,
-    '@happier-dev/protocol/prompts/roles/roleActionIdsV1': m1898,
-    '@happier-dev/protocol/prompts/roles/roleActionsV1': m1899,
-    '@happier-dev/protocol/prompts/roles/roleArtifactSharingV1': m1900,
-    '@happier-dev/protocol/prompts/roles/roleArtifactV1': m1901,
-    '@happier-dev/protocol/prompts/roles/roleOverrideRecordV1': m1902,
-    '@happier-dev/protocol/prompts/roles/rolesV1': m1903,
-    '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot': m1904,
-    '@happier-dev/protocol/prompts/systemPromptBaseV1': m1905,
-    '@happier-dev/protocol/providers': m1956,
-    '@happier-dev/protocol/providers/active-model-selection': m1981,
-    '@happier-dev/protocol/providers/agy/oauth': m1906,
-    '@happier-dev/protocol/providers/anthropic-models': m1911,
-    '@happier-dev/protocol/providers/binding-compatibility': m1924,
-    '@happier-dev/protocol/providers/brokerRouteGrantV1': m1907,
-    '@happier-dev/protocol/providers/canonicalOrderV1': m1908,
-    '@happier-dev/protocol/providers/capabilities/v1': m1909,
-    '@happier-dev/protocol/providers/catalog/accountModelProjectionV1': m1910,
-    '@happier-dev/protocol/providers/catalog/anthropic': m1911,
-    '@happier-dev/protocol/providers/catalog/brokerApplicationProjectionV1': m1912,
-    '@happier-dev/protocol/providers/catalog/currentSelectionRecoveryV1': m1913,
-    '@happier-dev/protocol/providers/catalog/descriptorV1': m1914,
-    '@happier-dev/protocol/providers/catalog/limits': m1915,
-    '@happier-dev/protocol/providers/catalog/merge': m1916,
-    '@happier-dev/protocol/providers/catalog/modelPickerVisibility': m1917,
-    '@happier-dev/protocol/providers/catalog/pickerProjectionV1': m1918,
-    '@happier-dev/protocol/providers/catalog/pickerTypesV1': m1919,
-    '@happier-dev/protocol/providers/catalog/reasoningEffort': m1920,
-    '@happier-dev/protocol/providers/catalog/response': m1921,
-    '@happier-dev/protocol/providers/claude/oauth-profile': m1922,
-    '@happier-dev/protocol/providers/claude/oauthProfile': m1922,
-    '@happier-dev/protocol/providers/codex/oauth': m1923,
-    '@happier-dev/protocol/providers/compatibility/resolve': m1924,
-    '@happier-dev/protocol/providers/compatibility/sourceFacts': m1925,
-    '@happier-dev/protocol/providers/compatibility/v1': m1926,
-    '@happier-dev/protocol/providers/connections/accountProviderActionV1': m1927,
-    '@happier-dev/protocol/providers/connections/catalogSchemasV1': m1928,
-    '@happier-dev/protocol/providers/connections/connectionRowsV1': m1929,
-    '@happier-dev/protocol/providers/connections/creationV1': m1930,
-    '@happier-dev/protocol/providers/connections/customCopyV1': m1931,
-    '@happier-dev/protocol/providers/connections/customTemplateV1': m1932,
-    '@happier-dev/protocol/providers/connections/declarationDemandV1': m1933,
-    '@happier-dev/protocol/providers/connections/effectiveEndpointV1': m1934,
-    '@happier-dev/protocol/providers/connections/endpointPolicyReviewV1': m1935,
-    '@happier-dev/protocol/providers/connections/normalizeCustomTemplateV1': m1936,
-    '@happier-dev/protocol/providers/connections/providerConnectionsCatalogV1': m1937,
-    '@happier-dev/protocol/providers/connections/reconcileCatalogV1': m1938,
-    '@happier-dev/protocol/providers/connections/sourceFactsV1': m1939,
-    '@happier-dev/protocol/providers/connections/tombstoneV1': m1940,
-    '@happier-dev/protocol/providers/connections/v1': m1941,
-    '@happier-dev/protocol/providers/contribution-identity': m1942,
-    '@happier-dev/protocol/providers/contributionIdentityV1': m1942,
-    '@happier-dev/protocol/providers/contributions': m1943,
-    '@happier-dev/protocol/providers/contributions/v1': m1943,
-    '@happier-dev/protocol/providers/credential-headers': m1972,
-    '@happier-dev/protocol/providers/credentials/v1': m1944,
-    '@happier-dev/protocol/providers/detection/descriptorV1': m1945,
-    '@happier-dev/protocol/providers/detection/v1': m1946,
-    '@happier-dev/protocol/providers/endpoint-url': m1948,
-    '@happier-dev/protocol/providers/endpointPolicyV1': m1947,
-    '@happier-dev/protocol/providers/endpointUrlSchema': m1948,
-    '@happier-dev/protocol/providers/errors': m1949,
-    '@happier-dev/protocol/providers/executeProviderActionV1': m1950,
-    '@happier-dev/protocol/providers/fingerprints': m1951,
-    '@happier-dev/protocol/providers/gatewayContributionsV1': m1952,
-    '@happier-dev/protocol/providers/grants/v1': m1953,
-    '@happier-dev/protocol/providers/httpsUrlSchema': m1954,
-    '@happier-dev/protocol/providers/ids': m1955,
-    '@happier-dev/protocol/providers/index': m1956,
-    '@happier-dev/protocol/providers/managedPurposeOperationRestrictionV1': m1957,
-    '@happier-dev/protocol/providers/manualModelInput': m1958,
-    '@happier-dev/protocol/providers/materialization/v1': m1959,
-    '@happier-dev/protocol/providers/migrations/accountSettingsV1': m1960,
-    '@happier-dev/protocol/providers/migrations/conflictsV1': m1961,
-    '@happier-dev/protocol/providers/migrations/legacyProfileReferencesV1': m1962,
-    '@happier-dev/protocol/providers/migrations/legacyProfilesV1': m1963,
-    '@happier-dev/protocol/providers/model-selection': m1982,
-    '@happier-dev/protocol/providers/modelFavoritesV1': m1964,
-    '@happier-dev/protocol/providers/originRelativePathSchema': m1965,
-    '@happier-dev/protocol/providers/outputFailure': m1966,
-    '@happier-dev/protocol/providers/ownRecordValue': m1967,
-    '@happier-dev/protocol/providers/providerActionIdsV1': m1968,
-    '@happier-dev/protocol/providers/providerActionsV1': m1969,
-    '@happier-dev/protocol/providers/public-headers': m1970,
-    '@happier-dev/protocol/providers/publicHeadersSchema': m1970,
-    '@happier-dev/protocol/providers/runtimeState/v1': m1971,
-    '@happier-dev/protocol/providers/safety/headers': m1972,
-    '@happier-dev/protocol/providers/safety/index': m1973,
-    '@happier-dev/protocol/providers/safety/limits': m1974,
-    '@happier-dev/protocol/providers/safety/locality': m1975,
-    '@happier-dev/protocol/providers/safety/metadataDestinations': m1976,
-    '@happier-dev/protocol/providers/safety/redaction': m1977,
-    '@happier-dev/protocol/providers/safety/response': m1978,
-    '@happier-dev/protocol/providers/safety/url': m1979,
-    '@happier-dev/protocol/providers/securityFingerprintsV1': m1980,
-    '@happier-dev/protocol/providers/selection/activeSelectionValidationV1': m1981,
-    '@happier-dev/protocol/providers/selection/v1': m1982,
-    '@happier-dev/protocol/providers/selection/v2': m1983,
-    '@happier-dev/protocol/providers/sensitive-value-redaction': m1977,
-    '@happier-dev/protocol/providers/sessions/adapterBindingKeyV1': m1984,
-    '@happier-dev/protocol/providers/sessions/agentSessionProviderBindingV1': m1985,
-    '@happier-dev/protocol/providers/sessions/bindingMetadataV1': m1986,
-    '@happier-dev/protocol/providers/sessions/lifecycle': m1987,
-    '@happier-dev/protocol/providers/settings/classifySubtreeV1': m1988,
-    '@happier-dev/protocol/providers/settings/externalReferencesV1': m1989,
-    '@happier-dev/protocol/providers/settings/limits': m1990,
-    '@happier-dev/protocol/providers/settings/operationsV1': m1991,
-    '@happier-dev/protocol/providers/settings/v1': m1992,
-    '@happier-dev/protocol/push/activityRemoteAlert': m1993,
-    '@happier-dev/protocol/push/expoPushDelivery': m1994,
-    '@happier-dev/protocol/push/machineRemoteAlert': m1995,
-    '@happier-dev/protocol/push/notificationQuestionActions': m1996,
-    '@happier-dev/protocol/push/pushNotificationActions': m1997,
-    '@happier-dev/protocol/push/pushNotificationTest': m1998,
-    '@happier-dev/protocol/push/pushTokenRegistration': m1999,
-    '@happier-dev/protocol/push/readyNotificationContent': m2000,
-    '@happier-dev/protocol/push/sessionChangedWake': m2001,
-    '@happier-dev/protocol/reach/capabilityApplyTimingV1': m2002,
-    '@happier-dev/protocol/reach/projectReachV1': m2003,
-    '@happier-dev/protocol/reach/reachPlaceV1': m2004,
-    '@happier-dev/protocol/reach/reachRuleV1': m2005,
-    '@happier-dev/protocol/reach/reachRulesChangeV1': m2006,
-    '@happier-dev/protocol/reach/resolveReachV1': m2007,
-    '@happier-dev/protocol/reach/resolveSessionCapabilitiesV1': m2008,
-    '@happier-dev/protocol/reach/sessionCapabilityMetadataV1': m2009,
-    '@happier-dev/protocol/reach/sessionCapabilitySelectionV1': m2010,
-    '@happier-dev/protocol/recording/results': m2011,
-    '@happier-dev/protocol/registries': m2033,
-    '@happier-dev/protocol/registries/formats/acpRegistry': m2012,
-    '@happier-dev/protocol/registries/formats/chromeWebStore': m2013,
-    '@happier-dev/protocol/registries/formats/claudeMarketplace': m2014,
-    '@happier-dev/protocol/registries/formats/composeCatalog': m2015,
-    '@happier-dev/protocol/registries/formats/composeTemplateNormalizationV1': m2016,
-    '@happier-dev/protocol/registries/formats/composeTomlCatalog': m2017,
-    '@happier-dev/protocol/registries/formats/dokployTemplateNormalizationV1': m2018,
-    '@happier-dev/protocol/registries/formats/github': m2019,
-    '@happier-dev/protocol/registries/formats/happierAppCatalog': m2020,
-    '@happier-dev/protocol/registries/formats/happierBrowserExtensionCatalog': m2021,
-    '@happier-dev/protocol/registries/formats/happierCatalog': m2022,
-    '@happier-dev/protocol/registries/formats/happierNpm': m2023,
-    '@happier-dev/protocol/registries/formats/happierStarterCatalog': m2024,
-    '@happier-dev/protocol/registries/formats/index': m2025,
-    '@happier-dev/protocol/registries/formats/mcpRegistry': m2026,
-    '@happier-dev/protocol/registries/formats/registryAppCatalogV1': m2027,
-    '@happier-dev/protocol/registries/formats/registryFormatAdapterV1': m2028,
-    '@happier-dev/protocol/registries/formats/registryMarketplaceCatalogBindingV1': m2029,
-    '@happier-dev/protocol/registries/formats/registryPluginListingV1': m2030,
-    '@happier-dev/protocol/registries/formats/skillsSh': m2031,
-    '@happier-dev/protocol/registries/formats/wellKnownSkills': m2032,
-    '@happier-dev/protocol/registries/index': m2033,
-    '@happier-dev/protocol/registries/registryActionIdsV1': m2034,
-    '@happier-dev/protocol/registries/registryActionsV1': m2035,
-    '@happier-dev/protocol/registries/registryAppMappingV1': m2036,
-    '@happier-dev/protocol/registries/registryAppUpdateAdmissionV1': m2037,
-    '@happier-dev/protocol/registries/registryBotTemplateUpdatePointerV1': m2038,
-    '@happier-dev/protocol/registries/registryBrowserExtensionV1': m2039,
-    '@happier-dev/protocol/registries/registryContentRefV1': m2040,
-    '@happier-dev/protocol/registries/registryFetchPlanV1': m2041,
-    '@happier-dev/protocol/registries/registryGitTreeV1': m2042,
-    '@happier-dev/protocol/registries/registryHostV1': m2043,
-    '@happier-dev/protocol/registries/registryItemsV1': m2044,
-    '@happier-dev/protocol/registries/registryListV1': m2045,
-    '@happier-dev/protocol/registries/registryPackageContentV1': m2046,
-    '@happier-dev/protocol/registries/registryPluginSourcesV1': m2047,
-    '@happier-dev/protocol/registries/registryRpcV1': m2048,
-    '@happier-dev/protocol/registries/registrySourcesMutationV1': m2049,
-    '@happier-dev/protocol/registries/registrySourcesV1': m2050,
-    '@happier-dev/protocol/registries/registryStarterV1': m2051,
-    '@happier-dev/protocol/registries/registryUpdatesV1': m2052,
-    '@happier-dev/protocol/registries/registryUpstreamV1': m2053,
-    '@happier-dev/protocol/remoteHosts/remoteHostActionIdsV1': m2054,
-    '@happier-dev/protocol/remoteHosts/remoteHostActionsV1': m2055,
-    '@happier-dev/protocol/remoteHosts/remoteHostCatalogV1': m2056,
-    '@happier-dev/protocol/remoteHosts/remoteHostRecordV1': m2057,
-    '@happier-dev/protocol/remoteHosts/remoteHostSchemasV1': m2058,
-    '@happier-dev/protocol/retention/serverRetentionPolicyV2': m2059,
-    '@happier-dev/protocol/reviews/ReviewAssumption': m2060,
-    '@happier-dev/protocol/reviews/ReviewFinding': m2061,
-    '@happier-dev/protocol/reviews/ReviewQuestion': m2062,
-    '@happier-dev/protocol/reviews/comments/actions': m2063,
-    '@happier-dev/protocol/reviews/comments/content': m2064,
-    '@happier-dev/protocol/reviews/comments/findingIdentity': m2065,
-    '@happier-dev/protocol/reviews/comments/index': m2066,
-    '@happier-dev/protocol/reviews/comments/mutation': m2067,
-    '@happier-dev/protocol/reviews/comments/proposals': m2068,
-    '@happier-dev/protocol/reviews/comments/publicationTransport': m2069,
-    '@happier-dev/protocol/reviews/comments/queries': m2070,
-    '@happier-dev/protocol/reviews/comments/snapshots': m2071,
-    '@happier-dev/protocol/reviews/comments/transport': m2072,
-    '@happier-dev/protocol/reviews/comments/triageTransition': m2073,
-    '@happier-dev/protocol/reviews/comments/v1': m2074,
-    '@happier-dev/protocol/reviews/projectReviewFindingsOverlay': m2075,
-    '@happier-dev/protocol/reviews/resolveEffectiveReviewFindings': m2076,
-    '@happier-dev/protocol/reviews/reviewApplyV1': m2077,
-    '@happier-dev/protocol/reviews/reviewEngines': m2078,
-    '@happier-dev/protocol/reviews/reviewFindingClassification': m2079,
-    '@happier-dev/protocol/reviews/reviewFindingsApplyInputV1': m2080,
-    '@happier-dev/protocol/reviews/reviewFollowUp': m2081,
-    '@happier-dev/protocol/reviews/reviewLaunchFailure': m2082,
-    '@happier-dev/protocol/reviews/reviewNarration': m2083,
-    '@happier-dev/protocol/reviews/reviewPublicationEvidence': m2084,
-    '@happier-dev/protocol/reviews/reviewStart': m2085,
-    '@happier-dev/protocol/reviews/reviewTriageStatus': m2086,
-    '@happier-dev/protocol/reviews/scmPullRequestScope': m2087,
-    '@happier-dev/protocol/reviews/scope': m2088,
-    '@happier-dev/protocol/rpc': m2091,
-    '@happier-dev/protocol/rpc/answeringClient': m2089,
-    '@happier-dev/protocol/rpc/errors': m2090,
-    '@happier-dev/protocol/rpc/index': m2091,
-    '@happier-dev/protocol/rpc/machineWatchWindow': m2092,
-    '@happier-dev/protocol/rpc/methods': m2093,
-    '@happier-dev/protocol/rpc/npmRegistryProfiles': m2094,
-    '@happier-dev/protocol/rpc/providers': m2095,
-    '@happier-dev/protocol/rpc/socket': m2096,
-    '@happier-dev/protocol/rpc/teamCredentialSourceModels': m2097,
-    '@happier-dev/protocol/rpcErrors': m2090,
-    '@happier-dev/protocol/runtime': m2112,
-    '@happier-dev/protocol/runtime/agentExecutionRunV1': m2098,
-    '@happier-dev/protocol/runtime/agentRuntimeDiagnosticV1': m2099,
-    '@happier-dev/protocol/runtime/agentSessionConfigurationV1': m2100,
-    '@happier-dev/protocol/runtime/agentSessionLimitsV1': m2101,
-    '@happier-dev/protocol/runtime/agentSessionRuntimeRetryV1': m2102,
-    '@happier-dev/protocol/runtime/agentSessionScalarsV1': m2103,
-    '@happier-dev/protocol/runtime/agentSessionStartupInstructionsV1': m2104,
-    '@happier-dev/protocol/runtime/agentSessionV1': m2105,
-    '@happier-dev/protocol/runtime/agentUsageObservedPayloadV1': m2106,
-    '@happier-dev/protocol/runtime/authRefresh': m2107,
-    '@happier-dev/protocol/runtime/catalog/index': m2108,
-    '@happier-dev/protocol/runtime/catalog/skills': m2109,
-    '@happier-dev/protocol/runtime/catalog/vendorPlugins': m2110,
-    '@happier-dev/protocol/runtime/eventKindsV1': m2111,
-    '@happier-dev/protocol/runtime/index': m2112,
-    '@happier-dev/protocol/runtime/input/composerAttachmentV1': m2113,
-    '@happier-dev/protocol/runtime/input/composerContentV1': m2114,
-    '@happier-dev/protocol/runtime/input/composerInstanceId': m2115,
-    '@happier-dev/protocol/runtime/input/composerReferenceProviderV1': m2116,
-    '@happier-dev/protocol/runtime/input/composerSuggestionTokenV1': m2117,
-    '@happier-dev/protocol/runtime/input/imageInputV1': m2118,
-    '@happier-dev/protocol/runtime/input/index': m2119,
-    '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1': m2120,
-    '@happier-dev/protocol/runtime/input/mentionRefV1': m2121,
-    '@happier-dev/protocol/runtime/input/skillMentionV1': m2122,
-    '@happier-dev/protocol/runtime/input/structuredInputV1': m2123,
-    '@happier-dev/protocol/runtime/input/v1': m2124,
-    '@happier-dev/protocol/runtime/input/vendorPluginMentionV1': m2125,
-    '@happier-dev/protocol/runtime/permissionIntentV1': m2126,
-    '@happier-dev/protocol/scm': m2149,
-    '@happier-dev/protocol/scm/backendCapabilities': m2127,
-    '@happier-dev/protocol/scm/backendIdentity': m2128,
-    '@happier-dev/protocol/scm/branches': m2129,
-    '@happier-dev/protocol/scm/capabilities': m2130,
-    '@happier-dev/protocol/scm/changeCounting': m2131,
-    '@happier-dev/protocol/scm/clearSavedResults': m2132,
-    '@happier-dev/protocol/scm/cloneProtocol': m2133,
-    '@happier-dev/protocol/scm/commitPublication': m2134,
-    '@happier-dev/protocol/scm/comparison': m2135,
-    '@happier-dev/protocol/scm/comparisonDiscard': m2136,
-    '@happier-dev/protocol/scm/comparisonOccurrences': m2137,
-    '@happier-dev/protocol/scm/defaultBranchPushPolicy': m2138,
-    '@happier-dev/protocol/scm/diffSummary': m2139,
-    '@happier-dev/protocol/scm/diffSummaryCommitPlan': m2140,
-    '@happier-dev/protocol/scm/diffSummaryResult': m2141,
-    '@happier-dev/protocol/scm/entriesHistoryV1': m2142,
-    '@happier-dev/protocol/scm/fileAtRevision': m2143,
-    '@happier-dev/protocol/scm/fileChangesScope': m2144,
-    '@happier-dev/protocol/scm/fileViewed': m2145,
-    '@happier-dev/protocol/scm/freshness': m2146,
-    '@happier-dev/protocol/scm/hostingProviderOperations': m2147,
-    '@happier-dev/protocol/scm/hostingRepositoryIdentity': m2148,
-    '@happier-dev/protocol/scm/index': m2149,
-    '@happier-dev/protocol/scm/operationError': m2150,
-    '@happier-dev/protocol/scm/operationOutcome': m2151,
-    '@happier-dev/protocol/scm/operationState': m2152,
-    '@happier-dev/protocol/scm/pathScope': m2153,
-    '@happier-dev/protocol/scm/pullRequestLifecycleV1': m2154,
-    '@happier-dev/protocol/scm/pullRequests': m2155,
-    '@happier-dev/protocol/scm/remoteNormalization': m2156,
-    '@happier-dev/protocol/scm/remotePolicy': m2157,
-    '@happier-dev/protocol/scm/remoteResponse': m2158,
-    '@happier-dev/protocol/scm/remoteWebUrl': m2159,
-    '@happier-dev/protocol/scm/repositoryClone': m2160,
-    '@happier-dev/protocol/scm/repositoryFilesPullRequest': m2161,
-    '@happier-dev/protocol/scm/repositoryFilesPullRequestActionIds': m2162,
-    '@happier-dev/protocol/scm/repositoryProvisioning': m2163,
-    '@happier-dev/protocol/scm/requestBase': m2164,
-    '@happier-dev/protocol/scm/resolveScmBackendCapabilities': m2165,
-    '@happier-dev/protocol/scm/reviewWorkspace': m2166,
-    '@happier-dev/protocol/scm/reviewedMarks': m2167,
-    '@happier-dev/protocol/scm/selectedMutationPath': m2168,
-    '@happier-dev/protocol/scm/stash': m2169,
-    '@happier-dev/protocol/scm/suggestions': m2170,
-    '@happier-dev/protocol/scm/workEvidence': m2171,
-    '@happier-dev/protocol/scm/workingSnapshot': m2172,
-    '@happier-dev/protocol/scm/workspaceWatch': m2173,
-    '@happier-dev/protocol/scm/worktreeName': m2174,
-    '@happier-dev/protocol/scm/worktrees': m2175,
-    '@happier-dev/protocol/sentFrom': m2176,
-    '@happier-dev/protocol/server/control/contract': m2177,
-    '@happier-dev/protocol/server/http/connectionLifetimeV1': m2178,
-    '@happier-dev/protocol/server/http/requestBodyBoundsV1': m2179,
-    '@happier-dev/protocol/server/relayDrift': m2180,
-    '@happier-dev/protocol/server/urls': m2182,
-    '@happier-dev/protocol/server/urls/hostedWebappUrl': m2181,
-    '@happier-dev/protocol/server/urls/index': m2182,
-    '@happier-dev/protocol/server/urls/loopbackHostname': m2183,
-    '@happier-dev/protocol/server/urls/serverUrlComparableKey': m2184,
-    '@happier-dev/protocol/serverConfig/entries/emailEntries': m2185,
-    '@happier-dev/protocol/serverConfig/entries/integrationsEntries': m2186,
-    '@happier-dev/protocol/serverConfig/entries/policiesEntries': m2187,
-    '@happier-dev/protocol/serverConfig/entries/reachEntries': m2188,
-    '@happier-dev/protocol/serverConfig/entries/serverRuntimeEntries': m2189,
-    '@happier-dev/protocol/serverConfig/entries/storageEntries': m2190,
-    '@happier-dev/protocol/serverConfig/homeSettingsOwnership': m2191,
-    '@happier-dev/protocol/serverConfig/homeSettingsWrite': m2192,
-    '@happier-dev/protocol/serverConfig/index': m2193,
-    '@happier-dev/protocol/serverConfig/registry': m2194,
-    '@happier-dev/protocol/serverConfig/serverConfigCodec': m2195,
-    '@happier-dev/protocol/serverConfig/serverConfigEntry': m2196,
-    '@happier-dev/protocol/sessionStop': m2197,
-    '@happier-dev/protocol/sessions': m2393,
-    '@happier-dev/protocol/sessions/access/index': m2198,
-    '@happier-dev/protocol/sessions/access/releasedDirectSessionShareV1': m2199,
-    '@happier-dev/protocol/sessions/access/sessionAccessActionsV1': m2200,
-    '@happier-dev/protocol/sessions/access/sessionAccessGrantV1': m2201,
-    '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1': m2202,
-    '@happier-dev/protocol/sessions/access/sessionAccessPrincipalV1': m2203,
-    '@happier-dev/protocol/sessions/access/sessionBrowserAccessV1': m2204,
-    '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1': m2205,
-    '@happier-dev/protocol/sessions/access/sessionInitialAccessCreateV1': m2206,
-    '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1': m2207,
-    '@happier-dev/protocol/sessions/access/sessionRecipientEnvelopeBindingV1': m2208,
-    '@happier-dev/protocol/sessions/access/sessionResponsibilityV1': m2209,
-    '@happier-dev/protocol/sessions/agentTransition': m2210,
-    '@happier-dev/protocol/sessions/agentTransitionDivider': m2211,
-    '@happier-dev/protocol/sessions/agentTransitionEffectStage': m2212,
-    '@happier-dev/protocol/sessions/agentTransitionVectors': m2213,
-    '@happier-dev/protocol/sessions/attach/metadataIdentityPolicy': m2214,
-    '@happier-dev/protocol/sessions/authoring/buildFieldArtifacts': m2215,
-    '@happier-dev/protocol/sessions/authoring/contextKinds': m2216,
-    '@happier-dev/protocol/sessions/authoring/creationFieldsV1': m2217,
-    '@happier-dev/protocol/sessions/authoring/fieldCatalog': m2218,
-    '@happier-dev/protocol/sessions/authoring/fieldDefinition': m2219,
-    '@happier-dev/protocol/sessions/authoring/index': m2220,
-    '@happier-dev/protocol/sessions/authoring/selectionFieldsV1': m2221,
-    '@happier-dev/protocol/sessions/authoring/syncedSessionAuthoringV1': m2222,
-    '@happier-dev/protocol/sessions/authoring/temporaryComputerWorkspaceV1': m2223,
-    '@happier-dev/protocol/sessions/awareness/action': m2224,
-    '@happier-dev/protocol/sessions/awareness/availability': m2225,
-    '@happier-dev/protocol/sessions/awareness/index': m2226,
-    '@happier-dev/protocol/sessions/awareness/inputV1': m2227,
-    '@happier-dev/protocol/sessions/awareness/presentationV1': m2228,
-    '@happier-dev/protocol/sessions/awareness/projectV1': m2229,
-    '@happier-dev/protocol/sessions/awareness/projectionV1': m2230,
-    '@happier-dev/protocol/sessions/awareness/recap': m2231,
-    '@happier-dev/protocol/sessions/awareness/runtime': m2232,
-    '@happier-dev/protocol/sessions/awareness/waitV1': m2233,
-    '@happier-dev/protocol/sessions/awareness/work': m2234,
-    '@happier-dev/protocol/sessions/board': m2246,
-    '@happier-dev/protocol/sessions/board/actionIds': m2235,
-    '@happier-dev/protocol/sessions/board/actions': m2236,
-    '@happier-dev/protocol/sessions/board/changeHint': m2237,
-    '@happier-dev/protocol/sessions/board/declarative/authoring': m2238,
-    '@happier-dev/protocol/sessions/board/declarative/normalize': m2239,
-    '@happier-dev/protocol/sessions/board/declarative/note': m2240,
-    '@happier-dev/protocol/sessions/board/declarative/snapshot': m2241,
-    '@happier-dev/protocol/sessions/board/errors': m2242,
-    '@happier-dev/protocol/sessions/board/forkVisualCopies': m2243,
-    '@happier-dev/protocol/sessions/board/ids': m2244,
-    '@happier-dev/protocol/sessions/board/idsV1': m2245,
-    '@happier-dev/protocol/sessions/board/index': m2246,
-    '@happier-dev/protocol/sessions/board/item': m2247,
-    '@happier-dev/protocol/sessions/board/layout': m2248,
-    '@happier-dev/protocol/sessions/board/layoutOperations': m2249,
-    '@happier-dev/protocol/sessions/board/mutations': m2250,
-    '@happier-dev/protocol/sessions/board/transcriptReference': m2251,
-    '@happier-dev/protocol/sessions/board/visualPolicy': m2252,
-    '@happier-dev/protocol/sessions/changes/checkpointAttributionScope': m2253,
-    '@happier-dev/protocol/sessions/changes/index': m2254,
-    '@happier-dev/protocol/sessions/changes/mergeTurnChangeSets': m2255,
-    '@happier-dev/protocol/sessions/changes/reconcileWithScmSnapshot': m2256,
-    '@happier-dev/protocol/sessions/changes/rollbacks': m2257,
-    '@happier-dev/protocol/sessions/changes/schemas': m2258,
-    '@happier-dev/protocol/sessions/changes/types': m2259,
-    '@happier-dev/protocol/sessions/context/sessionContextV1': m2260,
-    '@happier-dev/protocol/sessions/continuation/recoveryV1': m2261,
-    '@happier-dev/protocol/sessions/continueWithReplay': m2262,
-    '@happier-dev/protocol/sessions/control/checkpoints/index': m2263,
-    '@happier-dev/protocol/sessions/control/checkpoints/v1': m2264,
-    '@happier-dev/protocol/sessions/control/contract': m2265,
-    '@happier-dev/protocol/sessions/control/exactTurnCancellationV1': m2266,
-    '@happier-dev/protocol/sessions/control/handoff/handoffRpc': m2267,
-    '@happier-dev/protocol/sessions/control/handoff/handoffSchemas': m2268,
-    '@happier-dev/protocol/sessions/control/handoff/handoffStatus': m2269,
-    '@happier-dev/protocol/sessions/control/handoff/handoffTargetReplacementApprovalV1': m2270,
-    '@happier-dev/protocol/sessions/control/handoff/handoffTypes': m2271,
-    '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1': m2272,
-    '@happier-dev/protocol/sessions/control/handoff/workspaceSyncConflictProjection': m2273,
-    '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas': m2274,
-    '@happier-dev/protocol/sessions/control/handoff/workspaceTransferSourcePathSafety': m2275,
-    '@happier-dev/protocol/sessions/control/index': m2276,
-    '@happier-dev/protocol/sessions/control/listResult': m2277,
-    '@happier-dev/protocol/sessions/control/machineSessionTerminalV1': m2278,
-    '@happier-dev/protocol/sessions/control/modelTransitionV1': m2279,
-    '@happier-dev/protocol/sessions/control/pendingDeliveryRecoveryV1': m2280,
-    '@happier-dev/protocol/sessions/control/pendingInputInterruptAndRunV1': m2281,
-    '@happier-dev/protocol/sessions/control/pendingWithdrawV1': m2282,
-    '@happier-dev/protocol/sessions/control/readCursor': m2283,
-    '@happier-dev/protocol/sessions/control/rollback/checkpointCodeRollback': m2284,
-    '@happier-dev/protocol/sessions/control/rollback/index': m2285,
-    '@happier-dev/protocol/sessions/control/runtimeIssueMetadataV1': m2286,
-    '@happier-dev/protocol/sessions/control/runtimeIssueV1': m2287,
-    '@happier-dev/protocol/sessions/control/sessionCompactionAvailabilityV1': m2288,
-    '@happier-dev/protocol/sessions/control/sessionProviderCliAttachPrepareV1': m2289,
-    '@happier-dev/protocol/sessions/control/sessionReadinessV1': m2290,
-    '@happier-dev/protocol/sessions/control/sessionResumeRequestV1': m2291,
-    '@happier-dev/protocol/sessions/control/sessionRunnerRestartV1': m2292,
-    '@happier-dev/protocol/sessions/control/sessionRunnerRestartV2': m2293,
-    '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1': m2294,
-    '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV2': m2295,
-    '@happier-dev/protocol/sessions/control/sessionUsageLimitRecoveryOperationResultV1': m2296,
-    '@happier-dev/protocol/sessions/control/terminalComposerClearV1': m2297,
-    '@happier-dev/protocol/sessions/creation/externalActionRequesterInvocationBaseV1': m2298,
-    '@happier-dev/protocol/sessions/creation/hostOnboardingPresentationV1': m2299,
-    '@happier-dev/protocol/sessions/creation/index': m2300,
-    '@happier-dev/protocol/sessions/creation/sessionAttestedContextV1': m2301,
-    '@happier-dev/protocol/sessions/creation/sessionCreateOriginV1': m2302,
-    '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1': m2303,
-    '@happier-dev/protocol/sessions/creation/sessionCreationAuthorizationV1': m2304,
-    '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1': m2305,
-    '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1': m2306,
-    '@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1': m2307,
-    '@happier-dev/protocol/sessions/creation/sessionDirectoryIntentV1': m2308,
-    '@happier-dev/protocol/sessions/creation/sessionDiscussionParticipantV1': m2309,
-    '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1': m2310,
-    '@happier-dev/protocol/sessions/creation/sessionInitialTriggerAdmissionV1': m2311,
-    '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1': m2312,
-    '@happier-dev/protocol/sessions/creation/sessionPreparedBirthV1': m2313,
-    '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapSchemasV1': m2314,
-    '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1': m2315,
-    '@happier-dev/protocol/sessions/creation/sessionServerStartV1': m2316,
-    '@happier-dev/protocol/sessions/creation/sessionSpawnBudget': m2317,
-    '@happier-dev/protocol/sessions/creation/sessionSpawnLaunchErrorV1': m2318,
-    '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2': m2319,
-    '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1': m2320,
-    '@happier-dev/protocol/sessions/creation/sessionSpawnNewSelectionV2': m2321,
-    '@happier-dev/protocol/sessions/creation/sessionSpawnSourceContextV1': m2322,
-    '@happier-dev/protocol/sessions/creation/testFixtures/sessionSpawnInputBeforeCommitObservation': m2323,
-    '@happier-dev/protocol/sessions/creation/testFixtures/sessionSpawnResultBeforeCommitObservation': m2324,
-    '@happier-dev/protocol/sessions/encryption/membershipSessionDataKeyEnvelopes': m2325,
-    '@happier-dev/protocol/sessions/encryption/prepareSessionDataKeyEnvelopeItemV1': m2326,
-    '@happier-dev/protocol/sessions/encryption/sessionDataKeyEnvelopes': m2327,
-    '@happier-dev/protocol/sessions/encryption/sessionDataKeyPreparationPass': m2328,
-    '@happier-dev/protocol/sessions/external/accounting': m2329,
-    '@happier-dev/protocol/sessions/external/contentSearchMatch': m2330,
-    '@happier-dev/protocol/sessions/external/daemonRpcV1': m2331,
-    '@happier-dev/protocol/sessions/external/externalAgentObservationV1': m2332,
-    '@happier-dev/protocol/sessions/external/followLifecycleV1': m2333,
-    '@happier-dev/protocol/sessions/external/historicalImportIdentity': m2334,
-    '@happier-dev/protocol/sessions/external/hookManagementV1': m2335,
-    '@happier-dev/protocol/sessions/external/index': m2336,
-    '@happier-dev/protocol/sessions/external/legacyDirectSessionWireSchemasV1': m2337,
-    '@happier-dev/protocol/sessions/external/linked-metadata': m2338,
-    '@happier-dev/protocol/sessions/external/linkedSessionMetadata': m2338,
-    '@happier-dev/protocol/sessions/external/operationActionSchemasV1': m2339,
-    '@happier-dev/protocol/sessions/external/operationActionsV1': m2340,
-    '@happier-dev/protocol/sessions/external/operationV1': m2341,
-    '@happier-dev/protocol/sessions/external/publicTranscriptFollowV1': m2342,
-    '@happier-dev/protocol/sessions/external/rpcErrorCodes': m2343,
-    '@happier-dev/protocol/sessions/external/secureRefreshV1': m2344,
-    '@happier-dev/protocol/sessions/external/sourceCatalog': m2345,
-    '@happier-dev/protocol/sessions/external/sourceTranscriptItemV1': m2346,
-    '@happier-dev/protocol/sessions/external/statusDemandV1': m2347,
-    '@happier-dev/protocol/sessions/external/takeoverV1': m2348,
-    '@happier-dev/protocol/sessions/folders/folderSettings': m2349,
-    '@happier-dev/protocol/sessions/follow': m2358,
-    '@happier-dev/protocol/sessions/follow/accountFollow': m2350,
-    '@happier-dev/protocol/sessions/follow/accountVoiceFollowTransportV1': m2351,
-    '@happier-dev/protocol/sessions/follow/actionTransport': m2352,
-    '@happier-dev/protocol/sessions/follow/actions': m2353,
-    '@happier-dev/protocol/sessions/follow/api': m2354,
-    '@happier-dev/protocol/sessions/follow/changes': m2355,
-    '@happier-dev/protocol/sessions/follow/followPolicyEditorV1': m2356,
-    '@happier-dev/protocol/sessions/follow/followSourceRefTransportV1': m2357,
-    '@happier-dev/protocol/sessions/follow/index': m2358,
-    '@happier-dev/protocol/sessions/follow/sessionCoordinatorActionsV1': m2359,
-    '@happier-dev/protocol/sessions/follow/sessionCoordinatorSetupV1': m2360,
-    '@happier-dev/protocol/sessions/follow/sessionCoordinatorV1': m2361,
-    '@happier-dev/protocol/sessions/follow/sessionDeliveryMuteV1': m2362,
-    '@happier-dev/protocol/sessions/follow/sessionFollowDeliveryProjectionV1': m2363,
-    '@happier-dev/protocol/sessions/follow/sessionFollowFrontierV1': m2364,
-    '@happier-dev/protocol/sessions/follow/sessionFollowInputV1': m2365,
-    '@happier-dev/protocol/sessions/follow/sessionFollowListV1': m2366,
-    '@happier-dev/protocol/sessions/follow/sessionFollowOriginalV1': m2367,
-    '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1': m2368,
-    '@happier-dev/protocol/sessions/follow/sessionFollowRuleContentCodecV1': m2369,
-    '@happier-dev/protocol/sessions/follow/sessionFollowRuleOccurrenceV1': m2370,
-    '@happier-dev/protocol/sessions/follow/sessionFollowRulePreviewV1': m2371,
-    '@happier-dev/protocol/sessions/follow/sessionFollowRuleV1': m2372,
-    '@happier-dev/protocol/sessions/follow/sessionFollowSelectedDeliveryV1': m2373,
-    '@happier-dev/protocol/sessions/follow/sessionFollowSourceKeyPreparationV1': m2374,
-    '@happier-dev/protocol/sessions/follow/sessionFollowSourceOccurrenceV1': m2375,
-    '@happier-dev/protocol/sessions/follow/sessionFollowSourceProjectionV1': m2376,
-    '@happier-dev/protocol/sessions/follow/sessionFollowSourcesApi': m2377,
-    '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1': m2378,
-    '@happier-dev/protocol/sessions/follow/sessionFollowUpdateEnvelopeV1': m2379,
-    '@happier-dev/protocol/sessions/follow/sessionManagerV1': m2380,
-    '@happier-dev/protocol/sessions/follow/sessionReceiverDeliveryV1': m2381,
-    '@happier-dev/protocol/sessions/follow/voiceTrackedSessionAddressV1': m2382,
-    '@happier-dev/protocol/sessions/follow/voiceTrackedTargetsCompatibilityV1': m2383,
-    '@happier-dev/protocol/sessions/fork': m2384,
-    '@happier-dev/protocol/sessions/forkPoint': m2385,
-    '@happier-dev/protocol/sessions/general': m2386,
-    '@happier-dev/protocol/sessions/identity/botFaceGeometry': m2387,
-    '@happier-dev/protocol/sessions/identity/botFaceShapeGenerator': m2388,
-    '@happier-dev/protocol/sessions/identity/botFaceShapeValidation': m2389,
-    '@happier-dev/protocol/sessions/identity/sessionBotFaceV1': m2390,
-    '@happier-dev/protocol/sessions/identity/sessionBotV1': m2391,
-    '@happier-dev/protocol/sessions/idsV1': m2392,
-    '@happier-dev/protocol/sessions/index': m2393,
-    '@happier-dev/protocol/sessions/instructions/sessionVoicePreferenceV1': m2394,
-    '@happier-dev/protocol/sessions/listFilter/index': m2395,
-    '@happier-dev/protocol/sessions/listFilter/sessionListFilterQueryV1': m2396,
-    '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1': m2397,
-    '@happier-dev/protocol/sessions/listing/cursor': m2398,
-    '@happier-dev/protocol/sessions/listing/query': m2399,
-    '@happier-dev/protocol/sessions/listing/response': m2400,
-    '@happier-dev/protocol/sessions/media/imageMarksV1': m2401,
-    '@happier-dev/protocol/sessions/media/imageReferenceV1': m2402,
-    '@happier-dev/protocol/sessions/messages/agentExternalSessionTranscriptRawRecord': m2403,
-    '@happier-dev/protocol/sessions/messages/autonomousExchangeV1': m2404,
-    '@happier-dev/protocol/sessions/messages/canonicalTurnDiffTool': m2405,
-    '@happier-dev/protocol/sessions/messages/coerceSessionUserPromptV1': m2406,
-    '@happier-dev/protocol/sessions/messages/emptyCanonicalTurnDiffSuppression': m2407,
-    '@happier-dev/protocol/sessions/messages/messageActionReferenceV1': m2408,
-    '@happier-dev/protocol/sessions/messages/messageStructuredPresentationV1': m2409,
-    '@happier-dev/protocol/sessions/messages/pendingDeliveryBlockedReason': m2410,
-    '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1': m2411,
-    '@happier-dev/protocol/sessions/messages/sessionCapabilityNoticeV1': m2412,
-    '@happier-dev/protocol/sessions/messages/sessionExternalShareableTranscriptV1': m2413,
-    '@happier-dev/protocol/sessions/messages/sessionInputAdmission': m2414,
-    '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1': m2415,
-    '@happier-dev/protocol/sessions/messages/sessionInputAuthoringV1': m2416,
-    '@happier-dev/protocol/sessions/messages/sessionInputForgeEvidenceV1': m2417,
-    '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1': m2418,
-    '@happier-dev/protocol/sessions/messages/sessionInputReferenceProjectionV1': m2419,
-    '@happier-dev/protocol/sessions/messages/sessionInputResultV1': m2420,
-    '@happier-dev/protocol/sessions/messages/sessionMediaV1': m2421,
-    '@happier-dev/protocol/sessions/messages/sessionMessageAccountActorV1': m2422,
-    '@happier-dev/protocol/sessions/messages/sessionMessageDeliveryResolutionV1': m2423,
-    '@happier-dev/protocol/sessions/messages/sessionMessageInvocationV1': m2424,
-    '@happier-dev/protocol/sessions/messages/sessionMessageMeta': m2425,
-    '@happier-dev/protocol/sessions/messages/sessionMessageObservationFactsV1': m2426,
-    '@happier-dev/protocol/sessions/messages/sessionMessageRefV1': m2427,
-    '@happier-dev/protocol/sessions/messages/sessionMessageReplyPublicationV1': m2428,
-    '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1': m2429,
-    '@happier-dev/protocol/sessions/messages/sessionMessageRole': m2430,
-    '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1': m2431,
-    '@happier-dev/protocol/sessions/messages/sessionPendingAdmissionSettlementV1': m2432,
-    '@happier-dev/protocol/sessions/messages/sessionPendingExecutionRunMachineAdmissionV2': m2433,
-    '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1': m2434,
-    '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent': m2435,
-    '@happier-dev/protocol/sessions/messages/sessionTranscriptPageLimits': m2436,
-    '@happier-dev/protocol/sessions/messages/spawnedFirstTurn': m2437,
-    '@happier-dev/protocol/sessions/messages/special-commands': m2438,
-    '@happier-dev/protocol/sessions/messages/specialCommands': m2438,
-    '@happier-dev/protocol/sessions/messages/transcriptBodySemanticProjection': m2439,
-    '@happier-dev/protocol/sessions/messages/transcriptObservationV1': m2440,
-    '@happier-dev/protocol/sessions/messages/transcriptPeerSenderV1': m2441,
-    '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1': m2442,
-    '@happier-dev/protocol/sessions/messages/transcriptSourceTimestampV1': m2443,
-    '@happier-dev/protocol/sessions/metadata/acpConfiguredBackendV1': m2444,
-    '@happier-dev/protocol/sessions/metadata/agentRuntimeFacetsV1': m2445,
-    '@happier-dev/protocol/sessions/metadata/compat/runtimeDescriptorMetadata': m2446,
-    '@happier-dev/protocol/sessions/metadata/connectedServiceMaterializationIdentityV1': m2447,
-    '@happier-dev/protocol/sessions/metadata/directory': m2452,
-    '@happier-dev/protocol/sessions/metadata/metadataOverridesV1': m2448,
-    '@happier-dev/protocol/sessions/metadata/overrides': m2448,
-    '@happier-dev/protocol/sessions/metadata/permission-modes': m2461,
-    '@happier-dev/protocol/sessions/metadata/providerAccountUsageRefsV1': m2449,
-    '@happier-dev/protocol/sessions/metadata/runtime-descriptor': m2450,
-    '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat': m2446,
-    '@happier-dev/protocol/sessions/metadata/runtimeDescriptorV1': m2450,
-    '@happier-dev/protocol/sessions/metadata/sessionActionConfirmationsV1': m2451,
-    '@happier-dev/protocol/sessions/metadata/sessionDirectoryV1': m2452,
-    '@happier-dev/protocol/sessions/metadata/sessionDisplayEnvelopesV1': m2453,
-    '@happier-dev/protocol/sessions/metadata/sessionDisplayProjectionV1': m2454,
-    '@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1': m2455,
-    '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1': m2456,
-    '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1': m2457,
-    '@happier-dev/protocol/sessions/metadata/sessionMetadataPresentationSchemasV1': m2458,
-    '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1': m2459,
-    '@happier-dev/protocol/sessions/metadata/sessionPendingQueueHoldV1': m2460,
-    '@happier-dev/protocol/sessions/metadata/sessionPermissionModes': m2461,
-    '@happier-dev/protocol/sessions/metadata/sessionRollbackRangesV1': m2462,
-    '@happier-dev/protocol/sessions/metadata/sessionTitle': m2463,
-    '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1': m2464,
-    '@happier-dev/protocol/sessions/metadata/systemSessionV1': m2465,
-    '@happier-dev/protocol/sessions/metadata/terminalMetadata': m2466,
-    '@happier-dev/protocol/sessions/metadata/windowsRemoteSessionLaunchMode': m2467,
-    '@happier-dev/protocol/sessions/metadata/windowsTerminalWindowName': m2468,
-    '@happier-dev/protocol/sessions/mutations/sessionMutationEqualityV1': m2469,
-    '@happier-dev/protocol/sessions/organization/accountEncryptionMigrationInventory': m2470,
-    '@happier-dev/protocol/sessions/organization/appearances': m2471,
-    '@happier-dev/protocol/sessions/organization/attentionAction': m2472,
-    '@happier-dev/protocol/sessions/organization/attentionActionIdsV1': m2473,
-    '@happier-dev/protocol/sessions/organization/constants': m2474,
-    '@happier-dev/protocol/sessions/organization/content': m2475,
-    '@happier-dev/protocol/sessions/organization/contentSchemas': m2476,
-    '@happier-dev/protocol/sessions/organization/folders': m2477,
-    '@happier-dev/protocol/sessions/organization/index': m2478,
-    '@happier-dev/protocol/sessions/organization/mutations': m2479,
-    '@happier-dev/protocol/sessions/organization/ordering': m2480,
-    '@happier-dev/protocol/sessions/organization/pins': m2481,
-    '@happier-dev/protocol/sessions/organization/snapshot': m2482,
-    '@happier-dev/protocol/sessions/organization/standings': m2483,
-    '@happier-dev/protocol/sessions/organization/tags': m2484,
-    '@happier-dev/protocol/sessions/pending/acceptedPendingSettlementV1': m2485,
-    '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1': m2486,
-    '@happier-dev/protocol/sessions/pending/pendingLocalId': m2487,
-    '@happier-dev/protocol/sessions/pending/pendingMessageMutationFingerprintV1': m2488,
-    '@happier-dev/protocol/sessions/pending/pendingProviderAction': m2489,
-    '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1': m2490,
-    '@happier-dev/protocol/sessions/pending/pendingResetStartReadinessV1': m2491,
-    '@happier-dev/protocol/sessions/pending/retainedPendingContextV1': m2492,
-    '@happier-dev/protocol/sessions/pending/sessionPendingQueueWakeV1': m2493,
-    '@happier-dev/protocol/sessions/permissions/index': m2494,
-    '@happier-dev/protocol/sessions/permissions/mediationRecordsV1': m2495,
-    '@happier-dev/protocol/sessions/permissions/nativeChoicesV1': m2496,
-    '@happier-dev/protocol/sessions/permissions/permissionSystemRecordKinds': m2497,
-    '@happier-dev/protocol/sessions/permissions/questionV1': m2498,
-    '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1': m2499,
-    '@happier-dev/protocol/sessions/permissions/v1': m2500,
-    '@happier-dev/protocol/sessions/personal/attention': m2501,
-    '@happier-dev/protocol/sessions/personal/eventEligibility': m2502,
-    '@happier-dev/protocol/sessions/personal/index': m2503,
-    '@happier-dev/protocol/sessions/personal/readState': m2504,
-    '@happier-dev/protocol/sessions/personal/relevance': m2505,
-    '@happier-dev/protocol/sessions/personal/tracking': m2506,
-    '@happier-dev/protocol/sessions/personal/viewer': m2507,
-    '@happier-dev/protocol/sessions/pluginAccess': m2508,
-    '@happier-dev/protocol/sessions/presence/sessionHumanPresenceV1': m2509,
-    '@happier-dev/protocol/sessions/presentation/currentSessionPresentationV1': m2510,
-    '@happier-dev/protocol/sessions/presentation/index': m2511,
-    '@happier-dev/protocol/sessions/read/sessionReadBatchV1': m2512,
-    '@happier-dev/protocol/sessions/readState/actionIds': m2513,
-    '@happier-dev/protocol/sessions/readState/actionTransport': m2514,
-    '@happier-dev/protocol/sessions/readState/actions': m2515,
-    '@happier-dev/protocol/sessions/readState/api': m2516,
-    '@happier-dev/protocol/sessions/readState/idsV1': m2517,
-    '@happier-dev/protocol/sessions/readState/index': m2518,
-    '@happier-dev/protocol/sessions/relations/workerUpdateV1': m2519,
-    '@happier-dev/protocol/sessions/replay-seed-budget': m2520,
-    '@happier-dev/protocol/sessions/replaySeedBudget': m2520,
-    '@happier-dev/protocol/sessions/reservedSessionMessageLocalId': m2521,
-    '@happier-dev/protocol/sessions/rollback': m2522,
-    '@happier-dev/protocol/sessions/rollbackPlanning': m2523,
-    '@happier-dev/protocol/sessions/runtime/activity/index': m2524,
-    '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity': m2525,
-    '@happier-dev/protocol/sessions/runtime/activity/transport': m2526,
-    '@happier-dev/protocol/sessions/runtime/index': m2527,
-    '@happier-dev/protocol/sessions/runtimeModeSetRpcV1': m2528,
-    '@happier-dev/protocol/sessions/runtimeModeV1': m2529,
-    '@happier-dev/protocol/sessions/sessionConsumptionV1': m2530,
-    '@happier-dev/protocol/sessions/sessionEventDelivery': m2531,
-    '@happier-dev/protocol/sessions/slashCommands': m2532,
-    '@happier-dev/protocol/sessions/spawnSession': m2533,
-    '@happier-dev/protocol/sessions/spawnSessionNonce': m2534,
-    '@happier-dev/protocol/sessions/state/_constants': m2535,
-    '@happier-dev/protocol/sessions/state/_types': m2536,
-    '@happier-dev/protocol/sessions/state/capabilitySchema': m2537,
-    '@happier-dev/protocol/sessions/state/fieldRegistrySchema': m2538,
-    '@happier-dev/protocol/sessions/state/index': m2539,
-    '@happier-dev/protocol/sessions/state/valueSchemas/acpConfigOption': m2540,
-    '@happier-dev/protocol/sessions/state/valueSchemas/acpSessionMode': m2541,
-    '@happier-dev/protocol/sessions/state/valueSchemas/attention': m2542,
-    '@happier-dev/protocol/sessions/state/valueSchemas/externalAgent': m2543,
-    '@happier-dev/protocol/sessions/state/valueSchemas/index': m2544,
-    '@happier-dev/protocol/sessions/state/valueSchemas/model': m2545,
-    '@happier-dev/protocol/sessions/state/valueSchemas/permissionMode': m2546,
-    '@happier-dev/protocol/sessions/state/valueSchemas/providerSessionId': m2547,
-    '@happier-dev/protocol/sessions/state/valueSchemas/readState': m2548,
-    '@happier-dev/protocol/sessions/state/valueSchemas/runtimeActivity': m2549,
-    '@happier-dev/protocol/sessions/state/valueSchemas/runtimeDescriptor': m2550,
-    '@happier-dev/protocol/sessions/state/valueSchemas/title': m2551,
-    '@happier-dev/protocol/sessions/state/valueSchemas/turnProgress': m2552,
-    '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery': m2553,
-    '@happier-dev/protocol/sessions/state/valueSchemas/workState': m2554,
-    '@happier-dev/protocol/sessions/subagents': m2556,
-    '@happier-dev/protocol/sessions/subagents/durableCustodyV1': m2555,
-    '@happier-dev/protocol/sessions/subagents/index': m2556,
-    '@happier-dev/protocol/sessions/subagents/subagentGroupRefV1': m2557,
-    '@happier-dev/protocol/sessions/subagents/subagentRefV1': m2558,
-    '@happier-dev/protocol/sessions/system/records/activity/activitySystemRecordKinds': m2559,
-    '@happier-dev/protocol/sessions/system/records/activity/activitySystemRecordPayload': m2560,
-    '@happier-dev/protocol/sessions/system/records/index': m2561,
-    '@happier-dev/protocol/sessions/system/records/memory/memorySystemRecordKinds': m2562,
-    '@happier-dev/protocol/sessions/system/records/memory/memorySystemRecordPayload': m2563,
-    '@happier-dev/protocol/sessions/system/records/sessionSystemRecord': m2564,
-    '@happier-dev/protocol/sessions/system/records/sessionSystemRecordAddress': m2565,
-    '@happier-dev/protocol/sessions/system/records/sessionSystemRecordCatalog': m2566,
-    '@happier-dev/protocol/sessions/system/records/sessionSystemRecordContent': m2567,
-    '@happier-dev/protocol/sessions/system/records/sessionSystemRecordKind': m2568,
-    '@happier-dev/protocol/sessions/system/records/sessionSystemRecordNamespace': m2569,
-    '@happier-dev/protocol/sessions/system/records/sessionSystemRecordPayloads': m2570,
-    '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRevision': m2571,
-    '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes': m2572,
-    '@happier-dev/protocol/sessions/turns/compat/agentIdentity': m2573,
-    '@happier-dev/protocol/sessions/turns/index': m2574,
-    '@happier-dev/protocol/sessions/turns/sessionTurnLifecycleStatusV1': m2575,
-    '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1': m2576,
-    '@happier-dev/protocol/sessions/turns/sessionTurnV1': m2577,
-    '@happier-dev/protocol/sessions/userActionRequiredOccurrenceV1': m2578,
-    '@happier-dev/protocol/sessions/userMessageRpc': m2579,
-    '@happier-dev/protocol/sessions/work-state': m2598,
-    '@happier-dev/protocol/sessions/work/activityHeadlineOrdering': m2580,
-    '@happier-dev/protocol/sessions/work/agentActivity/adapters/fromExecutionRunStatus': m2581,
-    '@happier-dev/protocol/sessions/work/agentActivity/adapters/fromSubagentStatus': m2582,
-    '@happier-dev/protocol/sessions/work/agentActivity/adapters/fromWorkflowAgentStatus': m2583,
-    '@happier-dev/protocol/sessions/work/agentActivity/adapters/fromWorkflowRunStatus': m2584,
-    '@happier-dev/protocol/sessions/work/agentActivity/adapters/index': m2585,
-    '@happier-dev/protocol/sessions/work/agentActivity/agentActivityEntryId': m2586,
-    '@happier-dev/protocol/sessions/work/agentActivity/agentActivityEntryV1': m2587,
-    '@happier-dev/protocol/sessions/work/agentActivity/agentActivityHeadlineBuild': m2588,
-    '@happier-dev/protocol/sessions/work/agentActivity/agentActivityHeadlineV1': m2589,
-    '@happier-dev/protocol/sessions/work/agentActivity/agentActivityKindV1': m2590,
-    '@happier-dev/protocol/sessions/work/agentActivity/agentActivityStatusV1': m2591,
-    '@happier-dev/protocol/sessions/work/agentActivity/agentActivityToneV1': m2592,
-    '@happier-dev/protocol/sessions/work/agentActivity/index': m2593,
-    '@happier-dev/protocol/sessions/work/backgroundTask/backgroundTaskRecordV1': m2594,
-    '@happier-dev/protocol/sessions/work/backgroundTask/backgroundTaskRedaction': m2595,
-    '@happier-dev/protocol/sessions/work/backgroundTask/index': m2596,
-    '@happier-dev/protocol/sessions/work/sessionActivityHeadlineBundleV1': m2597,
-    '@happier-dev/protocol/sessions/work/state/index': m2598,
-    '@happier-dev/protocol/sessions/work/state/sessionWorkStateBounds': m2599,
-    '@happier-dev/protocol/sessions/work/state/sessionWorkStateItemIds': m2600,
-    '@happier-dev/protocol/sessions/work/state/sessionWorkStateMerge': m2601,
-    '@happier-dev/protocol/sessions/work/state/sessionWorkStatePrimary': m2602,
-    '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc': m2603,
-    '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1': m2604,
-    '@happier-dev/protocol/sessions/work/workflow/index': m2605,
-    '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowActivityHeadlineBuild': m2606,
-    '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowActivityHeadlineV1': m2607,
-    '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowPhases': m2608,
-    '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowRunRecordRevision': m2609,
-    '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowRunSnapshotV1': m2610,
-    '@happier-dev/protocol/settings/registry/buildSettingArtifacts': m2611,
-    '@happier-dev/protocol/settings/registry/settingDefinition': m2612,
-    '@happier-dev/protocol/sharing/public-viewer': m2613,
-    '@happier-dev/protocol/sharing/publicViewer': m2613,
-    '@happier-dev/protocol/sharing/storedContentPublicShareV1': m2614,
-    '@happier-dev/protocol/social/friends': m2615,
-    '@happier-dev/protocol/socketRpc': m2096,
-    '@happier-dev/protocol/spawn/envOverlay': m2616,
-    '@happier-dev/protocol/spawnSession': m2533,
-    '@happier-dev/protocol/ssh/commandFailure': m2617,
-    '@happier-dev/protocol/ssh/homeAuthorityMismatch': m2618,
-    '@happier-dev/protocol/ssh/hostTrust': m2619,
-    '@happier-dev/protocol/ssh/sshTarget': m2620,
-    '@happier-dev/protocol/ssh/tunnels': m2621,
-    '@happier-dev/protocol/storage/artifactStoredContent': m2622,
-    '@happier-dev/protocol/storage/binaryBlobV1': m2623,
-    '@happier-dev/protocol/storage/storageV1': m2624,
-    '@happier-dev/protocol/storage/storedJsonContentEnvelope': m2625,
-    '@happier-dev/protocol/strings/maxCodeUnits': m2626,
-    '@happier-dev/protocol/strings/opaqueIdentifier': m2627,
-    '@happier-dev/protocol/strings/preservedBoundedNfcString': m2628,
-    '@happier-dev/protocol/strings/trimIdent': m2629,
-    '@happier-dev/protocol/system/tasks/acquisitionProgress': m2630,
-    '@happier-dev/protocol/system/tasks/index': m2631,
-    '@happier-dev/protocol/system/tasks/promptKindCatalog': m2632,
-    '@happier-dev/protocol/system/tasks/promptPayloadContracts': m2633,
-    '@happier-dev/protocol/system/tasks/relayAccessConfigV1': m2634,
-    '@happier-dev/protocol/system/tasks/spec': m2635,
-    '@happier-dev/protocol/system/tasks/stepIdCatalog': m2636,
-    '@happier-dev/protocol/system/tasks/tailscaleEnsureReadyTaskContract': m2637,
-    '@happier-dev/protocol/system/tasks/tailscaleSecureAccessTaskContract': m2638,
-    '@happier-dev/protocol/tasks/entryRefV1': m2639,
-    '@happier-dev/protocol/teams': m2686,
-    '@happier-dev/protocol/teams/actionIdsV1': m2640,
-    '@happier-dev/protocol/teams/actionsV1': m2641,
-    '@happier-dev/protocol/teams/capabilities': m2642,
-    '@happier-dev/protocol/teams/credentials/actionHttpPurposeV1': m2643,
-    '@happier-dev/protocol/teams/credentials/actionIdsV1': m2644,
-    '@happier-dev/protocol/teams/credentials/actionOperationV1': m2645,
-    '@happier-dev/protocol/teams/credentials/actionsV1': m2646,
-    '@happier-dev/protocol/teams/credentials/deliveryV1': m2647,
-    '@happier-dev/protocol/teams/credentials/directMaterialCensusV1': m2648,
-    '@happier-dev/protocol/teams/credentials/directMaterialReconcileV1': m2649,
-    '@happier-dev/protocol/teams/credentials/directMaterialUseV1': m2650,
-    '@happier-dev/protocol/teams/credentials/directMaterialV1': m2651,
-    '@happier-dev/protocol/teams/credentials/externalApiKeyV1': m2652,
-    '@happier-dev/protocol/teams/credentials/externalProviderApiV1': m2653,
-    '@happier-dev/protocol/teams/credentials/index': m2654,
-    '@happier-dev/protocol/teams/credentials/providerModelCatalogV1': m2655,
-    '@happier-dev/protocol/teams/credentials/readinessV1': m2656,
-    '@happier-dev/protocol/teams/credentials/resourceReadinessV1': m2657,
-    '@happier-dev/protocol/teams/credentials/resourceSelectionV1': m2658,
-    '@happier-dev/protocol/teams/credentials/resourceV1': m2659,
-    '@happier-dev/protocol/teams/credentials/runnerBrokerReadinessV1': m2660,
-    '@happier-dev/protocol/teams/credentials/runnerSelectionV1': m2661,
-    '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1': m2662,
-    '@happier-dev/protocol/teams/credentials/sessionBindingV1': m2663,
-    '@happier-dev/protocol/teams/credentials/sourceBindingV1': m2664,
-    '@happier-dev/protocol/teams/credentials/sourceCandidatesV1': m2665,
-    '@happier-dev/protocol/teams/credentials/teamCredentialModelCatalogV1': m2666,
-    '@happier-dev/protocol/teams/credentials/usageExportV1': m2667,
-    '@happier-dev/protocol/teams/credentials/usageV1': m2668,
-    '@happier-dev/protocol/teams/cursor': m2669,
-    '@happier-dev/protocol/teams/directory/actionIds': m2670,
-    '@happier-dev/protocol/teams/directory/index': m2671,
-    '@happier-dev/protocol/teams/directory/v1': m2672,
-    '@happier-dev/protocol/teams/errors': m2673,
-    '@happier-dev/protocol/teams/externalGroupBindings/actionIds': m2674,
-    '@happier-dev/protocol/teams/externalGroupBindings/index': m2675,
-    '@happier-dev/protocol/teams/externalGroupBindings/v1': m2676,
-    '@happier-dev/protocol/teams/group': m2677,
-    '@happier-dev/protocol/teams/groupLabel': m2678,
-    '@happier-dev/protocol/teams/identity/actionIds': m2679,
-    '@happier-dev/protocol/teams/identity/admission': m2680,
-    '@happier-dev/protocol/teams/identity/connection': m2681,
-    '@happier-dev/protocol/teams/identity/errors': m2682,
-    '@happier-dev/protocol/teams/identity/ids': m2683,
-    '@happier-dev/protocol/teams/identity/index': m2684,
-    '@happier-dev/protocol/teams/identity/workos': m2685,
-    '@happier-dev/protocol/teams/index': m2686,
-    '@happier-dev/protocol/teams/invitation': m2687,
-    '@happier-dev/protocol/teams/invitationToken': m2688,
-    '@happier-dev/protocol/teams/logo': m2689,
-    '@happier-dev/protocol/teams/managedDefaults': m2690,
-    '@happier-dev/protocol/teams/membership': m2691,
-    '@happier-dev/protocol/teams/membershipHistoryPreparationV1': m2692,
-    '@happier-dev/protocol/teams/principal': m2693,
-    '@happier-dev/protocol/teams/projections': m2694,
-    '@happier-dev/protocol/teams/resourceGrantAccessV1': m2695,
-    '@happier-dev/protocol/teams/resourceRecipientKeyPreparationV1': m2696,
-    '@happier-dev/protocol/teams/team': m2697,
-    '@happier-dev/protocol/terminal': m2699,
-    '@happier-dev/protocol/terminal/compatibility': m2698,
-    '@happier-dev/protocol/terminal/index': m2699,
-    '@happier-dev/protocol/terminal/input': m2700,
-    '@happier-dev/protocol/terminal/inputEncoding': m2701,
-    '@happier-dev/protocol/terminal/stream': m2702,
-    '@happier-dev/protocol/terminal/workspace': m2703,
-    '@happier-dev/protocol/testing/accountScopedCipherFixtures': m2704,
-    '@happier-dev/protocol/testing/pluginInstallationReviewFixture': m2705,
-    '@happier-dev/protocol/todos/taskResourceClientV1': m2706,
-    '@happier-dev/protocol/todos/taskResourceV1': m2707,
-    '@happier-dev/protocol/todos/todoActionOperationsV1': m2708,
-    '@happier-dev/protocol/todos/todoLabelColoursV1': m2709,
-    '@happier-dev/protocol/todos/todoSessionLinkV1': m2710,
-    '@happier-dev/protocol/tools/autoApprovedNames.generated': m2711,
-    '@happier-dev/protocol/tools/happierToolAutoApprovalV1': m2712,
-    '@happier-dev/protocol/tools/happierToolsShellBridge': m2713,
-    '@happier-dev/protocol/tools/shellWords': m2714,
-    '@happier-dev/protocol/tools/structuredQuestionAnswersV1': m2715,
-    '@happier-dev/protocol/tools/toolMutationClassification': m2716,
-    '@happier-dev/protocol/tools/v2': m2718,
-    '@happier-dev/protocol/tools/v2/aliases': m2717,
-    '@happier-dev/protocol/tools/v2/index': m2718,
-    '@happier-dev/protocol/tools/v2/meta': m2719,
-    '@happier-dev/protocol/tools/v2/names': m2720,
-    '@happier-dev/protocol/tools/v2/patch': m2721,
-    '@happier-dev/protocol/tools/v2/schemas': m2722,
-    '@happier-dev/protocol/tools/v2/subAgentFamilies': m2723,
-    '@happier-dev/protocol/transferRelayV2': m2727,
-    '@happier-dev/protocol/transferSessions': m2730,
-    '@happier-dev/protocol/transfers/attachments/attachmentLimitsV1': m2724,
-    '@happier-dev/protocol/transfers/attachments/attachmentPathV1': m2725,
-    '@happier-dev/protocol/transfers/attachments/attachmentPayloadV1': m2726,
-    '@happier-dev/protocol/transfers/relay/v2/index': m2727,
-    '@happier-dev/protocol/transfers/relay/v2/socketEvents': m2728,
-    '@happier-dev/protocol/transfers/relay/v2/transferRelayEnvelopeSchema': m2729,
-    '@happier-dev/protocol/transfers/sessions/index': m2730,
-    '@happier-dev/protocol/transfers/sessions/sessionAttachmentHandleV1': m2731,
-    '@happier-dev/protocol/transfers/sessions/sessionAttachmentUploadInitRequestV1': m2732,
-    '@happier-dev/protocol/transfers/sessions/transferSessionIds': m2733,
-    '@happier-dev/protocol/transfers/sessions/transferSessionSchemas': m2734,
-    '@happier-dev/protocol/transfers/sessions/transferSessionTypes': m2735,
-    '@happier-dev/protocol/updates': m2736,
-    '@happier-dev/protocol/updates/index': m2736,
-    '@happier-dev/protocol/updates/sessionUpdate': m2737,
-    '@happier-dev/protocol/updates/versionComparison': m2738,
-    '@happier-dev/protocol/usage/coach/buildUsageCoachRemedies': m2739,
-    '@happier-dev/protocol/usage/coach/coachActions': m2740,
-    '@happier-dev/protocol/usage/coach/coachDetectorIds': m2741,
-    '@happier-dev/protocol/usage/coach/coachDigestSuggestion': m2742,
-    '@happier-dev/protocol/usage/coach/coachFinding': m2743,
-    '@happier-dev/protocol/usage/coach/coachRemedy': m2744,
-    '@happier-dev/protocol/usage/coach/coachVendorFacts': m2745,
-    '@happier-dev/protocol/usage/coach/evaluateUsageCoach': m2746,
-    '@happier-dev/protocol/usage/coach/usageMcpBindingUsage': m2747,
-    '@happier-dev/protocol/usage/coach/usagePromptComposition': m2748,
-    '@happier-dev/protocol/usage/composePublicUsageRecap': m2749,
-    '@happier-dev/protocol/usage/composeUsageRecap': m2750,
-    '@happier-dev/protocol/usage/contextUsage': m2751,
-    '@happier-dev/protocol/usage/index': m2752,
-    '@happier-dev/protocol/usage/legacyUsageTokens': m2753,
-    '@happier-dev/protocol/usage/projectUsageQueryDelivery': m2754,
-    '@happier-dev/protocol/usage/projectUsageSourcesDelivery': m2755,
-    '@happier-dev/protocol/usage/resolveUsageHowYouWork': m2756,
-    '@happier-dev/protocol/usage/resolveUsagePageAggregation': m2757,
-    '@happier-dev/protocol/usage/usageAccountingMembership': m2758,
-    '@happier-dev/protocol/usage/usageActionIdsV1': m2759,
-    '@happier-dev/protocol/usage/usageActivityProjectionFacts': m2760,
-    '@happier-dev/protocol/usage/usageActivitySummary': m2761,
-    '@happier-dev/protocol/usage/usageAgentCalendar': m2762,
-    '@happier-dev/protocol/usage/usageAggregation': m2763,
-    '@happier-dev/protocol/usage/usageAnalyticsBatchDelivery': m2764,
-    '@happier-dev/protocol/usage/usageAnalyticsContracts': m2765,
-    '@happier-dev/protocol/usage/usageAnalyticsDemandProjection': m2766,
-    '@happier-dev/protocol/usage/usageCalendar': m2767,
-    '@happier-dev/protocol/usage/usageCalendarExport': m2768,
-    '@happier-dev/protocol/usage/usageCollaboration': m2769,
-    '@happier-dev/protocol/usage/usageCost': m2770,
-    '@happier-dev/protocol/usage/usageCostFactTotals': m2771,
-    '@happier-dev/protocol/usage/usageCostFacts': m2772,
-    '@happier-dev/protocol/usage/usageExport': m2773,
-    '@happier-dev/protocol/usage/usageFilterOptions': m2774,
-    '@happier-dev/protocol/usage/usageFootprint': m2775,
-    '@happier-dev/protocol/usage/usageFormatting': m2776,
-    '@happier-dev/protocol/usage/usageLeaderProjection': m2777,
-    '@happier-dev/protocol/usage/usageModelPriceCatalog': m2778,
-    '@happier-dev/protocol/usage/usageModelPriceDelivery': m2779,
-    '@happier-dev/protocol/usage/usageModelPriceSchemas': m2780,
-    '@happier-dev/protocol/usage/usageModelPriceSnapshot': m2781,
-    '@happier-dev/protocol/usage/usageMoney': m2782,
-    '@happier-dev/protocol/usage/usageOutcomeAllocation': m2783,
-    '@happier-dev/protocol/usage/usagePlanInsights': m2784,
-    '@happier-dev/protocol/usage/usagePricingPopulation': m2785,
-    '@happier-dev/protocol/usage/usagePricingReuse': m2786,
-    '@happier-dev/protocol/usage/usageRecap': m2787,
-    '@happier-dev/protocol/usage/usageSessionEvidence': m2788,
-    '@happier-dev/protocol/usage/usageSessionFactKinds': m2789,
-    '@happier-dev/protocol/usage/usageSourceSummary': m2790,
-    '@happier-dev/protocol/usage/usageSources': m2791,
-    '@happier-dev/protocol/usage/usageSourcesActionIdsV1': m2792,
-    '@happier-dev/protocol/usage/usageSteering': m2793,
-    '@happier-dev/protocol/usage/usageSummary': m2794,
-    '@happier-dev/protocol/usage/usageSummaryCalendarPricing': m2795,
-    '@happier-dev/protocol/usage/usageTimingV1': m2796,
-    '@happier-dev/protocol/usage/usageTokenCategories': m2797,
-    '@happier-dev/protocol/usage/usageVocabularyV1': m2798,
-    '@happier-dev/protocol/usage/usageWorkEvidence': m2799,
-    '@happier-dev/protocol/usage/usageWorkIntervals': m2800,
-    '@happier-dev/protocol/usage/usageWorkSources': m2801,
-    '@happier-dev/protocol/valueRefs/valueRefV1': m2802,
-    '@happier-dev/protocol/voice/actions': m2803,
-    '@happier-dev/protocol/voice/attemptPresentation': m2804,
-    '@happier-dev/protocol/voice/diagnostics': m2805,
-    '@happier-dev/protocol/voice/modelPacks/artifactBindingV1': m2806,
-    '@happier-dev/protocol/voice/modelPacks/artifactRolesV1': m2807,
-    '@happier-dev/protocol/voice/modelPacks/catalog': m2808,
-    '@happier-dev/protocol/voice/modelPacks/contributionV1': m2809,
-    '@happier-dev/protocol/voice/modelPacks/identityV1': m2810,
-    '@happier-dev/protocol/voice/modelPacks/kokoro': m2811,
-    '@happier-dev/protocol/voice/modelPacks/manifest': m2812,
-    '@happier-dev/protocol/voice/modelPacks/pathSafety': m2813,
-    '@happier-dev/protocol/voice/modelPacks/promotionIntentV1': m2814,
-    '@happier-dev/protocol/voice/outputEvents': m2815,
-    '@happier-dev/protocol/voice/prompt': m2816,
-    '@happier-dev/protocol/voice/providerContributionIdentity': m2817,
-    '@happier-dev/protocol/voice/providerOperations': m2818,
-    '@happier-dev/protocol/voice/realtime': m2822,
-    '@happier-dev/protocol/voice/realtime/agentSession': m2819,
-    '@happier-dev/protocol/voice/realtime/capabilities': m2820,
-    '@happier-dev/protocol/voice/realtime/events': m2821,
-    '@happier-dev/protocol/voice/realtime/index': m2822,
-    '@happier-dev/protocol/voice/realtime/providerSettings': m2823,
-    '@happier-dev/protocol/voice/realtime/toolArguments': m2824,
-    '@happier-dev/protocol/voice/realtime/transcriptLadder': m2825,
-    '@happier-dev/protocol/voice/recognitionLanguage': m2826,
-    '@happier-dev/protocol/voice/runtimeConfig': m2827,
-    '@happier-dev/protocol/voice/sessionBinding': m2828,
-    '@happier-dev/protocol/voice/settings/builtInRegistry': m2829,
-    '@happier-dev/protocol/voice/settings/conversationLanguage': m2830,
-    '@happier-dev/protocol/voice/settings/dictation': m2831,
-    '@happier-dev/protocol/voice/settings/externalProviderSettings': m2832,
-    '@happier-dev/protocol/voice/settings/generatedBundledVoiceSelectionOptions': m2833,
-    '@happier-dev/protocol/voice/settings/handsFree': m2834,
-    '@happier-dev/protocol/voice/settings/legacyOpenAiChatProviderMigration': m2835,
-    '@happier-dev/protocol/voice/settings/localConversation': m2836,
-    '@happier-dev/protocol/voice/settings/localDirect': m2837,
-    '@happier-dev/protocol/voice/settings/localStt': m2838,
-    '@happier-dev/protocol/voice/settings/localTts': m2839,
-    '@happier-dev/protocol/voice/settings/migrations/legacyAdapters': m2840,
-    '@happier-dev/protocol/voice/settings/migrations/releasedVoiceSettingsCompatibility': m2841,
-    '@happier-dev/protocol/voice/settings/migrations/speechProviders': m2842,
-    '@happier-dev/protocol/voice/settings/providerConfig': m2843,
-    '@happier-dev/protocol/voice/settings/providerFieldBinding': m2844,
-    '@happier-dev/protocol/voice/settings/providerRegistry': m2845,
-    '@happier-dev/protocol/voice/settings/providerSelection': m2846,
-    '@happier-dev/protocol/voice/settings/providerSettings': m2847,
-    '@happier-dev/protocol/voice/settings/speechProvider': m2848,
-    '@happier-dev/protocol/voice/settings/timing': m2849,
-    '@happier-dev/protocol/voice/settings/voiceAgentSelection': m2850,
-    '@happier-dev/protocol/voice/settings/voiceCredentialBindingCompatibility': m2851,
-    '@happier-dev/protocol/voice/settings/voiceSettingBindings': m2852,
-    '@happier-dev/protocol/voice/settings/voiceSettings': m2853,
-    '@happier-dev/protocol/voice/settings/voiceSettingsPersistence': m2854,
-    '@happier-dev/protocol/voice/settings/welcome': m2855,
-    '@happier-dev/protocol/voice/sourceDisclosureV1': m2856,
-    '@happier-dev/protocol/voice/speech': m2857,
-    '@happier-dev/protocol/voice/speechText': m2858,
-    '@happier-dev/protocol/voice/toolResultsChannel': m2859,
-    '@happier-dev/protocol/voice/voiceAgentRunMetadataContract': m2860,
-    '@happier-dev/protocol/voice/voiceAgentRunMetadataV1': m2861,
-    '@happier-dev/protocol/widgets': m2876,
-    '@happier-dev/protocol/widgets/actionIdsV1': m2862,
-    '@happier-dev/protocol/widgets/actionsV1': m2863,
-    '@happier-dev/protocol/widgets/builtinWidgetDescriptorV1': m2864,
-    '@happier-dev/protocol/widgets/definitionActionIdsV1': m2865,
-    '@happier-dev/protocol/widgets/definitionActionsV1': m2866,
-    '@happier-dev/protocol/widgets/definitionIdsV1': m2867,
-    '@happier-dev/protocol/widgets/executeWidgetDefinitionActionV1': m2868,
-    '@happier-dev/protocol/widgets/executeWidgetInstanceActionV1': m2869,
-    '@happier-dev/protocol/widgets/executeWidgetLayoutFragmentActionV1': m2870,
-    '@happier-dev/protocol/widgets/executeWidgetSnapshotPostV1': m2871,
-    '@happier-dev/protocol/widgets/fragmentActionIdsV1': m2872,
-    '@happier-dev/protocol/widgets/fragmentActionsV1': m2873,
-    '@happier-dev/protocol/widgets/fragmentIdsV1': m2874,
-    '@happier-dev/protocol/widgets/homeWidgetActionPortV1': m2875,
-    '@happier-dev/protocol/widgets/index': m2876,
-    '@happier-dev/protocol/widgets/instanceIdsV1': m2877,
-    '@happier-dev/protocol/widgets/publicProfileWidgetPresetsV1': m2878,
-    '@happier-dev/protocol/widgets/sessionBoardWidgetActionPortV1': m2879,
-    '@happier-dev/protocol/widgets/usageBreakdownTitleV1': m2880,
-    '@happier-dev/protocol/widgets/usageWidgetPresetsV1': m2881,
-    '@happier-dev/protocol/widgets/widgetActionInputResolverV1': m2882,
-    '@happier-dev/protocol/widgets/widgetActionScopeV1': m2883,
-    '@happier-dev/protocol/widgets/widgetApprovalPresentationV1': m2884,
-    '@happier-dev/protocol/widgets/widgetAreaReadFailureV1': m2885,
-    '@happier-dev/protocol/widgets/widgetConnectedAccountPurposeBindingV1': m2886,
-    '@happier-dev/protocol/widgets/widgetDefinitionArtifactV1': m2887,
-    '@happier-dev/protocol/widgets/widgetDefinitionPromotionV1': m2888,
-    '@happier-dev/protocol/widgets/widgetDefinitionPublicationV1': m2889,
-    '@happier-dev/protocol/widgets/widgetDefinitionV1': m2890,
-    '@happier-dev/protocol/widgets/widgetInputAdmissionV1': m2891,
-    '@happier-dev/protocol/widgets/widgetInstanceV1': m2892,
-    '@happier-dev/protocol/widgets/widgetLayoutFragmentArtifactV1': m2893,
-    '@happier-dev/protocol/widgets/widgetLayoutFragmentV1': m2894,
-    '@happier-dev/protocol/widgets/widgetLayoutItemV1': m2895,
-    '@happier-dev/protocol/widgets/widgetPresentationV1': m2896,
-    '@happier-dev/protocol/widgets/widgetPublicProfileAdmissionV1': m2897,
-    '@happier-dev/protocol/widgets/widgetPublicSnapshotPreparationV1': m2898,
-    '@happier-dev/protocol/widgets/widgetPublicSnapshotV1': m2899,
-    '@happier-dev/protocol/widgets/widgetSharedInputAdmissionV1': m2900,
-    '@happier-dev/protocol/widgets/widgetSnapshotV1': m2901,
-    '@happier-dev/protocol/widgets/widgetSurfaceArtifactV1': m2902,
-    '@happier-dev/protocol/widgets/widgetViewerPurposeV1': m2903,
-    '@happier-dev/protocol/widgets/workBoardWidgetActionPortV1': m2904,
-    '@happier-dev/protocol/workflows': m2923,
-    '@happier-dev/protocol/workflows/actionsV1': m2905,
-    '@happier-dev/protocol/workflows/builtins/answerAndReview': m2906,
-    '@happier-dev/protocol/workflows/builtins/backupExamples': m2907,
-    '@happier-dev/protocol/workflows/builtins/catalog': m2908,
-    '@happier-dev/protocol/workflows/builtins/debate': m2909,
-    '@happier-dev/protocol/workflows/builtins/definitionParts': m2910,
-    '@happier-dev/protocol/workflows/builtins/deploymentFleetV1': m2911,
-    '@happier-dev/protocol/workflows/builtins/deploymentMoveV1': m2912,
-    '@happier-dev/protocol/workflows/builtins/examples': m2913,
-    '@happier-dev/protocol/workflows/builtins/freshOpinions': m2914,
-    '@happier-dev/protocol/workflows/builtins/keepGoing': m2915,
-    '@happier-dev/protocol/workflows/builtins/machineUpdatesV1': m2916,
-    '@happier-dev/protocol/workflows/builtins/openAPullRequest': m2917,
-    '@happier-dev/protocol/workflows/builtins/planWithAPanel': m2918,
-    '@happier-dev/protocol/workflows/builtins/reviewAndConverge': m2919,
-    '@happier-dev/protocol/workflows/builtins/starterActionsV1': m2920,
-    '@happier-dev/protocol/workflows/commandOutputV1': m2921,
-    '@happier-dev/protocol/workflows/composeWorkflowRunWorkerUpdateV1': m2922,
-    '@happier-dev/protocol/workflows/index': m2923,
-    '@happier-dev/protocol/workflows/invocationRecovery': m2924,
-    '@happier-dev/protocol/workflows/listing/workflowListFilterV1': m2925,
-    '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1': m2926,
-    '@happier-dev/protocol/workflows/stepActionsV1': m2927,
-    '@happier-dev/protocol/workflows/triggers/triggerTargetV1': m2928,
-    '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1': m2929,
-    '@happier-dev/protocol/workflows/workflowActionTextV1': m2930,
-    '@happier-dev/protocol/workflows/workflowAuthoringEqualityV1': m2931,
-    '@happier-dev/protocol/workflows/workflowBlockIdProtocol': m2932,
-    '@happier-dev/protocol/workflows/workflowComposerDocumentV1': m2933,
-    '@happier-dev/protocol/workflows/workflowDefinitionEditV1': m2934,
-    '@happier-dev/protocol/workflows/workflowDefinitionRefV1': m2935,
-    '@happier-dev/protocol/workflows/workflowDefinitionResolverV1': m2936,
-    '@happier-dev/protocol/workflows/workflowDefinitionV1': m2937,
-    '@happier-dev/protocol/workflows/workflowDestinationsV1': m2938,
-    '@happier-dev/protocol/workflows/workflowDiscussionCaptureV1': m2939,
-    '@happier-dev/protocol/workflows/workflowDiscussionContextV1': m2940,
-    '@happier-dev/protocol/workflows/workflowDiscussionPublicationV1': m2941,
-    '@happier-dev/protocol/workflows/workflowDiscussionRoundV1': m2942,
-    '@happier-dev/protocol/workflows/workflowDocumentSchemasV1': m2943,
-    '@happier-dev/protocol/workflows/workflowDocumentV1': m2944,
-    '@happier-dev/protocol/workflows/workflowEffectActionIdsV1': m2945,
-    '@happier-dev/protocol/workflows/workflowIdsV1': m2946,
-    '@happier-dev/protocol/workflows/workflowInvocationIdentityV1': m2947,
-    '@happier-dev/protocol/workflows/workflowInvocationMembersV1': m2948,
-    '@happier-dev/protocol/workflows/workflowInvocationStructureV1': m2949,
-    '@happier-dev/protocol/workflows/workflowLeafV1': m2950,
-    '@happier-dev/protocol/workflows/workflowPluginSourceContractV1': m2951,
-    '@happier-dev/protocol/workflows/workflowPluginSourceV1': m2952,
-    '@happier-dev/protocol/workflows/workflowProgressV1': m2953,
-    '@happier-dev/protocol/workflows/workflowReferenceV1': m2954,
-    '@happier-dev/protocol/workflows/workflowResultFieldsV1': m2955,
-    '@happier-dev/protocol/workflows/workflowRunAccountEncryptionV1': m2956,
-    '@happier-dev/protocol/workflows/workflowRunDataKeyV1': m2957,
-    '@happier-dev/protocol/workflows/workflowRunDisplayMetadataV1': m2958,
-    '@happier-dev/protocol/workflows/workflowRunKeyV1': m2959,
-    '@happier-dev/protocol/workflows/workflowRunStateV1': m2960,
-    '@happier-dev/protocol/workflows/workflowRunStorageV1': m2961,
-    '@happier-dev/protocol/workflows/workflowRunVisibilityV1': m2962,
-    '@happier-dev/protocol/workflows/workflowSessionAuthoringV1': m2963,
-    '@happier-dev/protocol/workflows/workflowSessionContextV1': m2964,
-    '@happier-dev/protocol/workflows/workflowSessionScopeV1': m2965,
-    '@happier-dev/protocol/workflows/workflowStartPreparationV1': m2966,
-    '@happier-dev/protocol/workflows/workflowStepLabel': m2967,
-    '@happier-dev/protocol/workflows/workflowStepSelectionV1': m2968,
-    '@happier-dev/protocol/workflows/workflowStoredContentV1': m2969,
-    '@happier-dev/protocol/workflows/workflowTargetUnavailableReasonV1': m2970,
-    '@happier-dev/protocol/workflows/workflowV1': m2971,
-    '@happier-dev/protocol/workflows/workflowValidationV1': m2972,
-    '@happier-dev/protocol/workflows/workflowWorkspaceV1': m2973,
-    '@happier-dev/protocol/workspace/anchors/v1': m2974,
-    '@happier-dev/protocol/workspace/favicon/v1': m2975,
-    '@happier-dev/protocol/workspace/workspaceTabsV1': m2976,
-    '@happier-dev/protocol/workspaces': m2978,
-    '@happier-dev/protocol/workspaces/checkoutKindSchema': m2977,
-    '@happier-dev/protocol/workspaces/index': m2978,
-    '@happier-dev/protocol/workspaces/locationSchema': m2979,
-    '@happier-dev/protocol/workspaces/manifestSchema': m2980,
-    '@happier-dev/protocol/workspaces/projectServicePlacementV1': m2981,
-    '@happier-dev/protocol/workspaces/projectServiceRelocationV1': m2982,
-    '@happier-dev/protocol/workspaces/projectSetup/projectManifestDocument': m2983,
-    '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1': m2984,
-    '@happier-dev/protocol/workspaces/projectSetup/projectMemoryDemandV1': m2985,
-    '@happier-dev/protocol/workspaces/projectSetup/projectSetupSuccessV1': m2986,
-    '@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1': m2987,
-    '@happier-dev/protocol/workspaces/projectWorkerExecutionV1': m2988,
-    '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1': m2989,
-    '@happier-dev/protocol/workspaces/workspaceExecutionConfigClientV1': m2990,
-    '@happier-dev/protocol/workspaces/workspaceExecutionConfigRowV1': m2991,
-    '@happier-dev/protocol/workspaces/workspaceRefResolutionV1': m2992,
-    '@happier-dev/protocol/workspaces/workspaceRefV1': m2993,
-    '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1': m2994,
-    '@happier-dev/protocol/workspaces/workspaceSyncTopology': m2995,
-    '@happier-dev/protocol/zodRuntimePolicy': m2996,
+    '@happier-dev/protocol/plugins/webhooks/managedRepositoryWebhookRpcV1': m1792,
+    '@happier-dev/protocol/plugins/webhooks/statusV1': m1793,
+    '@happier-dev/protocol/profiles/backendProfileSchema': m1794,
+    '@happier-dev/protocol/profiles/builtInBackendProfiles': m1795,
+    '@happier-dev/protocol/profiles/builtInProfileVersion': m1796,
+    '@happier-dev/protocol/profiles/environmentVariables': m1797,
+    '@happier-dev/protocol/profiles/historicalCompatibilityV1': m1798,
+    '@happier-dev/protocol/profiles/index': m1799,
+    '@happier-dev/protocol/profiles/launchPreferencesV1': m1800,
+    '@happier-dev/protocol/profiles/listProjection': m1801,
+    '@happier-dev/protocol/profiles/profileActionIdsV1': m1802,
+    '@happier-dev/protocol/profiles/profileActionsV1': m1803,
+    '@happier-dev/protocol/profiles/profileCatalogV1': m1804,
+    '@happier-dev/protocol/profiles/profileCompatibility': m1805,
+    '@happier-dev/protocol/profiles/profileOperations': m1806,
+    '@happier-dev/protocol/profiles/profileRecordSchemaV1': m1807,
+    '@happier-dev/protocol/profiles/profileRecordV1': m1808,
+    '@happier-dev/protocol/profiles/profileRequirements': m1809,
+    '@happier-dev/protocol/profiles/profileTransferSchemaV1': m1810,
+    '@happier-dev/protocol/profiles/profileTransferV1': m1811,
+    '@happier-dev/protocol/profiles/read': m1812,
+    '@happier-dev/protocol/profiles/resolveBackendProfile': m1813,
+    '@happier-dev/protocol/profiles/secretReferenceOverlayV1': m1814,
+    '@happier-dev/protocol/profiles/secretSatisfaction': m1815,
+    '@happier-dev/protocol/profiles/transferLegacyProfilesV1': m1816,
+    '@happier-dev/protocol/profiles/v2/authoringPreferences': m1817,
+    '@happier-dev/protocol/profiles/v2/profileId': m1818,
+    '@happier-dev/protocol/profiles/v2/schema': m1819,
+    '@happier-dev/protocol/profiles/visibilityV1': m1820,
+    '@happier-dev/protocol/projects/deploymentCreationDefaultsV1': m1821,
+    '@happier-dev/protocol/projects/openProjectDraftV1': m1822,
+    '@happier-dev/protocol/projects/openProjectV1': m1823,
+    '@happier-dev/protocol/projects/projectAccountRowCipherV1': m1824,
+    '@happier-dev/protocol/projects/projectAccountRowsV1': m1825,
+    '@happier-dev/protocol/projects/projectAccountSnapshotV1': m1826,
+    '@happier-dev/protocol/projects/projectContextV1': m1827,
+    '@happier-dev/protocol/projects/projectDeploymentDefaultsV1': m1828,
+    '@happier-dev/protocol/projects/projectListProjectionV1': m1829,
+    '@happier-dev/protocol/projects/projectOrganizationV1': m1830,
+    '@happier-dev/protocol/projects/projectServicesActionsV1': m1831,
+    '@happier-dev/protocol/projects/projectVisibilityV1': m1832,
+    '@happier-dev/protocol/projects/projectWorkspaceActionsV1': m1833,
+    '@happier-dev/protocol/projects/readinessInputV1': m1834,
+    '@happier-dev/protocol/projects/readinessV1': m1835,
+    '@happier-dev/protocol/projects/sources/projectSourceAttachmentAdmissionV1': m1836,
+    '@happier-dev/protocol/projects/sources/projectSourceV1': m1837,
+    '@happier-dev/protocol/projects/starters/createV1': m1838,
+    '@happier-dev/protocol/projects/workspaceRefKeyV1': m1839,
+    '@happier-dev/protocol/prompts/buildAppendSystemPromptBaseV1': m1840,
+    '@happier-dev/protocol/prompts/changeTitleInstructionV1': m1841,
+    '@happier-dev/protocol/prompts/codingPromptBehaviorV1': m1842,
+    '@happier-dev/protocol/prompts/effectiveCodingPromptBehaviorV1': m1843,
+    '@happier-dev/protocol/prompts/isMemoryRecallGuidanceSupported': m1844,
+    '@happier-dev/protocol/prompts/library/artifactFolderActionIdsV1': m1845,
+    '@happier-dev/protocol/prompts/library/contextSelectionsV1': m1846,
+    '@happier-dev/protocol/prompts/library/happierGuideInstructionsV1': m1847,
+    '@happier-dev/protocol/prompts/library/memoryActionsV1': m1848,
+    '@happier-dev/protocol/prompts/library/memoryDocV1': m1849,
+    '@happier-dev/protocol/prompts/library/memoryFactCandidatesV1': m1850,
+    '@happier-dev/protocol/prompts/library/promptArtifactRefsV1': m1851,
+    '@happier-dev/protocol/prompts/library/promptAssetDescriptorsV1': m1852,
+    '@happier-dev/protocol/prompts/library/promptAssetsV1': m1853,
+    '@happier-dev/protocol/prompts/library/promptBundleSchemas': m1854,
+    '@happier-dev/protocol/prompts/library/promptDocV2': m1855,
+    '@happier-dev/protocol/prompts/library/promptExternalLinksV1': m1856,
+    '@happier-dev/protocol/prompts/library/promptFolderActionSchemasV1': m1857,
+    '@happier-dev/protocol/prompts/library/promptFolderActionsV1': m1858,
+    '@happier-dev/protocol/prompts/library/promptFoldersV1': m1859,
+    '@happier-dev/protocol/prompts/library/promptInvocationActionOperations': m1860,
+    '@happier-dev/protocol/prompts/library/promptInvocationsV1': m1861,
+    '@happier-dev/protocol/prompts/library/promptLibraryActionOperations': m1862,
+    '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1': m1863,
+    '@happier-dev/protocol/prompts/library/promptLibraryDigests': m1864,
+    '@happier-dev/protocol/prompts/library/promptLibraryRowsV1': m1865,
+    '@happier-dev/protocol/prompts/library/promptLibrarySchemasV1': m1866,
+    '@happier-dev/protocol/prompts/library/promptPlacementV1': m1867,
+    '@happier-dev/protocol/prompts/library/promptStacksV1': m1868,
+    '@happier-dev/protocol/prompts/library/renderPromptTemplateTextV1': m1869,
+    '@happier-dev/protocol/prompts/library/resolvePromptStackSystemAppendBlocksV1': m1870,
+    '@happier-dev/protocol/prompts/library/skillRulesActionsV1': m1871,
+    '@happier-dev/protocol/prompts/library/skills/convertStackSkillEntriesV1': m1872,
+    '@happier-dev/protocol/prompts/library/skills/firstPartySkillsV1': m1873,
+    '@happier-dev/protocol/prompts/library/skills/foundSkillTransferV1': m1874,
+    '@happier-dev/protocol/prompts/library/skills/readSkillLibraryCatalog': m1875,
+    '@happier-dev/protocol/prompts/library/skills/resolveSessionSkillPlanV1': m1876,
+    '@happier-dev/protocol/prompts/library/skills/skillActionIdsV1': m1877,
+    '@happier-dev/protocol/prompts/library/skills/skillActionOperations': m1878,
+    '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1': m1879,
+    '@happier-dev/protocol/prompts/library/skills/skillCostV1': m1880,
+    '@happier-dev/protocol/prompts/library/skills/skillCreatorV1': m1881,
+    '@happier-dev/protocol/prompts/library/skills/skillIndexV1': m1882,
+    '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1': m1883,
+    '@happier-dev/protocol/prompts/library/skills/skillListSummaryV1': m1884,
+    '@happier-dev/protocol/prompts/library/skills/skillReadV1': m1885,
+    '@happier-dev/protocol/prompts/library/skills/skillReferencesV1': m1886,
+    '@happier-dev/protocol/prompts/library/skills/skillStatusV1': m1887,
+    '@happier-dev/protocol/prompts/library/skills/skillTrustV1': m1888,
+    '@happier-dev/protocol/prompts/library/skills/skillUpdateFilesV1': m1889,
+    '@happier-dev/protocol/prompts/library/skills/skillUsageV1': m1890,
+    '@happier-dev/protocol/prompts/library/skills/skillZipV1': m1891,
+    '@happier-dev/protocol/prompts/memoryRecallGuidanceV1': m1892,
+    '@happier-dev/protocol/prompts/promptPlanV1': m1893,
+    '@happier-dev/protocol/prompts/roles/accountRoleActions': m1894,
+    '@happier-dev/protocol/prompts/roles/builtInRolesV1': m1895,
+    '@happier-dev/protocol/prompts/roles/index': m1896,
+    '@happier-dev/protocol/prompts/roles/renderSessionRoleBlockV1': m1897,
+    '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1': m1898,
+    '@happier-dev/protocol/prompts/roles/roleActionIdsV1': m1899,
+    '@happier-dev/protocol/prompts/roles/roleActionsV1': m1900,
+    '@happier-dev/protocol/prompts/roles/roleArtifactSharingV1': m1901,
+    '@happier-dev/protocol/prompts/roles/roleArtifactV1': m1902,
+    '@happier-dev/protocol/prompts/roles/roleOverrideRecordV1': m1903,
+    '@happier-dev/protocol/prompts/roles/rolesV1': m1904,
+    '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot': m1905,
+    '@happier-dev/protocol/prompts/systemPromptBaseV1': m1906,
+    '@happier-dev/protocol/providers': m1957,
+    '@happier-dev/protocol/providers/active-model-selection': m1982,
+    '@happier-dev/protocol/providers/agy/oauth': m1907,
+    '@happier-dev/protocol/providers/anthropic-models': m1912,
+    '@happier-dev/protocol/providers/binding-compatibility': m1925,
+    '@happier-dev/protocol/providers/brokerRouteGrantV1': m1908,
+    '@happier-dev/protocol/providers/canonicalOrderV1': m1909,
+    '@happier-dev/protocol/providers/capabilities/v1': m1910,
+    '@happier-dev/protocol/providers/catalog/accountModelProjectionV1': m1911,
+    '@happier-dev/protocol/providers/catalog/anthropic': m1912,
+    '@happier-dev/protocol/providers/catalog/brokerApplicationProjectionV1': m1913,
+    '@happier-dev/protocol/providers/catalog/currentSelectionRecoveryV1': m1914,
+    '@happier-dev/protocol/providers/catalog/descriptorV1': m1915,
+    '@happier-dev/protocol/providers/catalog/limits': m1916,
+    '@happier-dev/protocol/providers/catalog/merge': m1917,
+    '@happier-dev/protocol/providers/catalog/modelPickerVisibility': m1918,
+    '@happier-dev/protocol/providers/catalog/pickerProjectionV1': m1919,
+    '@happier-dev/protocol/providers/catalog/pickerTypesV1': m1920,
+    '@happier-dev/protocol/providers/catalog/reasoningEffort': m1921,
+    '@happier-dev/protocol/providers/catalog/response': m1922,
+    '@happier-dev/protocol/providers/claude/oauth-profile': m1923,
+    '@happier-dev/protocol/providers/claude/oauthProfile': m1923,
+    '@happier-dev/protocol/providers/codex/oauth': m1924,
+    '@happier-dev/protocol/providers/compatibility/resolve': m1925,
+    '@happier-dev/protocol/providers/compatibility/sourceFacts': m1926,
+    '@happier-dev/protocol/providers/compatibility/v1': m1927,
+    '@happier-dev/protocol/providers/connections/accountProviderActionV1': m1928,
+    '@happier-dev/protocol/providers/connections/catalogSchemasV1': m1929,
+    '@happier-dev/protocol/providers/connections/connectionRowsV1': m1930,
+    '@happier-dev/protocol/providers/connections/creationV1': m1931,
+    '@happier-dev/protocol/providers/connections/customCopyV1': m1932,
+    '@happier-dev/protocol/providers/connections/customTemplateV1': m1933,
+    '@happier-dev/protocol/providers/connections/declarationDemandV1': m1934,
+    '@happier-dev/protocol/providers/connections/effectiveEndpointV1': m1935,
+    '@happier-dev/protocol/providers/connections/endpointPolicyReviewV1': m1936,
+    '@happier-dev/protocol/providers/connections/normalizeCustomTemplateV1': m1937,
+    '@happier-dev/protocol/providers/connections/providerConnectionsCatalogV1': m1938,
+    '@happier-dev/protocol/providers/connections/reconcileCatalogV1': m1939,
+    '@happier-dev/protocol/providers/connections/sourceFactsV1': m1940,
+    '@happier-dev/protocol/providers/connections/tombstoneV1': m1941,
+    '@happier-dev/protocol/providers/connections/v1': m1942,
+    '@happier-dev/protocol/providers/contribution-identity': m1943,
+    '@happier-dev/protocol/providers/contributionIdentityV1': m1943,
+    '@happier-dev/protocol/providers/contributions': m1944,
+    '@happier-dev/protocol/providers/contributions/v1': m1944,
+    '@happier-dev/protocol/providers/credential-headers': m1973,
+    '@happier-dev/protocol/providers/credentials/v1': m1945,
+    '@happier-dev/protocol/providers/detection/descriptorV1': m1946,
+    '@happier-dev/protocol/providers/detection/v1': m1947,
+    '@happier-dev/protocol/providers/endpoint-url': m1949,
+    '@happier-dev/protocol/providers/endpointPolicyV1': m1948,
+    '@happier-dev/protocol/providers/endpointUrlSchema': m1949,
+    '@happier-dev/protocol/providers/errors': m1950,
+    '@happier-dev/protocol/providers/executeProviderActionV1': m1951,
+    '@happier-dev/protocol/providers/fingerprints': m1952,
+    '@happier-dev/protocol/providers/gatewayContributionsV1': m1953,
+    '@happier-dev/protocol/providers/grants/v1': m1954,
+    '@happier-dev/protocol/providers/httpsUrlSchema': m1955,
+    '@happier-dev/protocol/providers/ids': m1956,
+    '@happier-dev/protocol/providers/index': m1957,
+    '@happier-dev/protocol/providers/managedPurposeOperationRestrictionV1': m1958,
+    '@happier-dev/protocol/providers/manualModelInput': m1959,
+    '@happier-dev/protocol/providers/materialization/v1': m1960,
+    '@happier-dev/protocol/providers/migrations/accountSettingsV1': m1961,
+    '@happier-dev/protocol/providers/migrations/conflictsV1': m1962,
+    '@happier-dev/protocol/providers/migrations/legacyProfileReferencesV1': m1963,
+    '@happier-dev/protocol/providers/migrations/legacyProfilesV1': m1964,
+    '@happier-dev/protocol/providers/model-selection': m1983,
+    '@happier-dev/protocol/providers/modelFavoritesV1': m1965,
+    '@happier-dev/protocol/providers/originRelativePathSchema': m1966,
+    '@happier-dev/protocol/providers/outputFailure': m1967,
+    '@happier-dev/protocol/providers/ownRecordValue': m1968,
+    '@happier-dev/protocol/providers/providerActionIdsV1': m1969,
+    '@happier-dev/protocol/providers/providerActionsV1': m1970,
+    '@happier-dev/protocol/providers/public-headers': m1971,
+    '@happier-dev/protocol/providers/publicHeadersSchema': m1971,
+    '@happier-dev/protocol/providers/runtimeState/v1': m1972,
+    '@happier-dev/protocol/providers/safety/headers': m1973,
+    '@happier-dev/protocol/providers/safety/index': m1974,
+    '@happier-dev/protocol/providers/safety/limits': m1975,
+    '@happier-dev/protocol/providers/safety/locality': m1976,
+    '@happier-dev/protocol/providers/safety/metadataDestinations': m1977,
+    '@happier-dev/protocol/providers/safety/redaction': m1978,
+    '@happier-dev/protocol/providers/safety/response': m1979,
+    '@happier-dev/protocol/providers/safety/url': m1980,
+    '@happier-dev/protocol/providers/securityFingerprintsV1': m1981,
+    '@happier-dev/protocol/providers/selection/activeSelectionValidationV1': m1982,
+    '@happier-dev/protocol/providers/selection/v1': m1983,
+    '@happier-dev/protocol/providers/selection/v2': m1984,
+    '@happier-dev/protocol/providers/sensitive-value-redaction': m1978,
+    '@happier-dev/protocol/providers/sessions/adapterBindingKeyV1': m1985,
+    '@happier-dev/protocol/providers/sessions/agentSessionProviderBindingV1': m1986,
+    '@happier-dev/protocol/providers/sessions/bindingMetadataV1': m1987,
+    '@happier-dev/protocol/providers/sessions/lifecycle': m1988,
+    '@happier-dev/protocol/providers/settings/classifySubtreeV1': m1989,
+    '@happier-dev/protocol/providers/settings/externalReferencesV1': m1990,
+    '@happier-dev/protocol/providers/settings/limits': m1991,
+    '@happier-dev/protocol/providers/settings/operationsV1': m1992,
+    '@happier-dev/protocol/providers/settings/v1': m1993,
+    '@happier-dev/protocol/push/activityRemoteAlert': m1994,
+    '@happier-dev/protocol/push/expoPushDelivery': m1995,
+    '@happier-dev/protocol/push/machineRemoteAlert': m1996,
+    '@happier-dev/protocol/push/notificationQuestionActions': m1997,
+    '@happier-dev/protocol/push/pushNotificationActions': m1998,
+    '@happier-dev/protocol/push/pushNotificationTest': m1999,
+    '@happier-dev/protocol/push/pushTokenRegistration': m2000,
+    '@happier-dev/protocol/push/readyNotificationContent': m2001,
+    '@happier-dev/protocol/push/sessionChangedWake': m2002,
+    '@happier-dev/protocol/reach/capabilityApplyTimingV1': m2003,
+    '@happier-dev/protocol/reach/projectReachV1': m2004,
+    '@happier-dev/protocol/reach/reachPlaceV1': m2005,
+    '@happier-dev/protocol/reach/reachRuleV1': m2006,
+    '@happier-dev/protocol/reach/reachRulesChangeV1': m2007,
+    '@happier-dev/protocol/reach/resolveReachV1': m2008,
+    '@happier-dev/protocol/reach/resolveSessionCapabilitiesV1': m2009,
+    '@happier-dev/protocol/reach/sessionCapabilityMetadataV1': m2010,
+    '@happier-dev/protocol/reach/sessionCapabilitySelectionV1': m2011,
+    '@happier-dev/protocol/recording/results': m2012,
+    '@happier-dev/protocol/registries': m2034,
+    '@happier-dev/protocol/registries/formats/acpRegistry': m2013,
+    '@happier-dev/protocol/registries/formats/chromeWebStore': m2014,
+    '@happier-dev/protocol/registries/formats/claudeMarketplace': m2015,
+    '@happier-dev/protocol/registries/formats/composeCatalog': m2016,
+    '@happier-dev/protocol/registries/formats/composeTemplateNormalizationV1': m2017,
+    '@happier-dev/protocol/registries/formats/composeTomlCatalog': m2018,
+    '@happier-dev/protocol/registries/formats/dokployTemplateNormalizationV1': m2019,
+    '@happier-dev/protocol/registries/formats/github': m2020,
+    '@happier-dev/protocol/registries/formats/happierAppCatalog': m2021,
+    '@happier-dev/protocol/registries/formats/happierBrowserExtensionCatalog': m2022,
+    '@happier-dev/protocol/registries/formats/happierCatalog': m2023,
+    '@happier-dev/protocol/registries/formats/happierNpm': m2024,
+    '@happier-dev/protocol/registries/formats/happierStarterCatalog': m2025,
+    '@happier-dev/protocol/registries/formats/index': m2026,
+    '@happier-dev/protocol/registries/formats/mcpRegistry': m2027,
+    '@happier-dev/protocol/registries/formats/registryAppCatalogV1': m2028,
+    '@happier-dev/protocol/registries/formats/registryFormatAdapterV1': m2029,
+    '@happier-dev/protocol/registries/formats/registryMarketplaceCatalogBindingV1': m2030,
+    '@happier-dev/protocol/registries/formats/registryPluginListingV1': m2031,
+    '@happier-dev/protocol/registries/formats/skillsSh': m2032,
+    '@happier-dev/protocol/registries/formats/wellKnownSkills': m2033,
+    '@happier-dev/protocol/registries/index': m2034,
+    '@happier-dev/protocol/registries/registryActionIdsV1': m2035,
+    '@happier-dev/protocol/registries/registryActionsV1': m2036,
+    '@happier-dev/protocol/registries/registryAppMappingV1': m2037,
+    '@happier-dev/protocol/registries/registryAppUpdateAdmissionV1': m2038,
+    '@happier-dev/protocol/registries/registryBotTemplateUpdatePointerV1': m2039,
+    '@happier-dev/protocol/registries/registryBrowserExtensionV1': m2040,
+    '@happier-dev/protocol/registries/registryContentRefV1': m2041,
+    '@happier-dev/protocol/registries/registryFetchPlanV1': m2042,
+    '@happier-dev/protocol/registries/registryGitTreeV1': m2043,
+    '@happier-dev/protocol/registries/registryHostV1': m2044,
+    '@happier-dev/protocol/registries/registryItemsV1': m2045,
+    '@happier-dev/protocol/registries/registryListV1': m2046,
+    '@happier-dev/protocol/registries/registryPackageContentV1': m2047,
+    '@happier-dev/protocol/registries/registryPluginSourcesV1': m2048,
+    '@happier-dev/protocol/registries/registryRpcV1': m2049,
+    '@happier-dev/protocol/registries/registrySourcesMutationV1': m2050,
+    '@happier-dev/protocol/registries/registrySourcesV1': m2051,
+    '@happier-dev/protocol/registries/registryStarterV1': m2052,
+    '@happier-dev/protocol/registries/registryUpdatesV1': m2053,
+    '@happier-dev/protocol/registries/registryUpstreamV1': m2054,
+    '@happier-dev/protocol/remoteHosts/remoteHostActionIdsV1': m2055,
+    '@happier-dev/protocol/remoteHosts/remoteHostActionsV1': m2056,
+    '@happier-dev/protocol/remoteHosts/remoteHostCatalogV1': m2057,
+    '@happier-dev/protocol/remoteHosts/remoteHostRecordV1': m2058,
+    '@happier-dev/protocol/remoteHosts/remoteHostSchemasV1': m2059,
+    '@happier-dev/protocol/retention/serverRetentionPolicyV2': m2060,
+    '@happier-dev/protocol/reviews/ReviewAssumption': m2061,
+    '@happier-dev/protocol/reviews/ReviewFinding': m2062,
+    '@happier-dev/protocol/reviews/ReviewQuestion': m2063,
+    '@happier-dev/protocol/reviews/comments/actions': m2064,
+    '@happier-dev/protocol/reviews/comments/content': m2065,
+    '@happier-dev/protocol/reviews/comments/findingIdentity': m2066,
+    '@happier-dev/protocol/reviews/comments/index': m2067,
+    '@happier-dev/protocol/reviews/comments/mutation': m2068,
+    '@happier-dev/protocol/reviews/comments/proposals': m2069,
+    '@happier-dev/protocol/reviews/comments/publicationTransport': m2070,
+    '@happier-dev/protocol/reviews/comments/queries': m2071,
+    '@happier-dev/protocol/reviews/comments/snapshots': m2072,
+    '@happier-dev/protocol/reviews/comments/transport': m2073,
+    '@happier-dev/protocol/reviews/comments/triageTransition': m2074,
+    '@happier-dev/protocol/reviews/comments/v1': m2075,
+    '@happier-dev/protocol/reviews/projectReviewFindingsOverlay': m2076,
+    '@happier-dev/protocol/reviews/resolveEffectiveReviewFindings': m2077,
+    '@happier-dev/protocol/reviews/reviewApplyV1': m2078,
+    '@happier-dev/protocol/reviews/reviewEngines': m2079,
+    '@happier-dev/protocol/reviews/reviewFindingClassification': m2080,
+    '@happier-dev/protocol/reviews/reviewFindingsApplyInputV1': m2081,
+    '@happier-dev/protocol/reviews/reviewFollowUp': m2082,
+    '@happier-dev/protocol/reviews/reviewLaunchFailure': m2083,
+    '@happier-dev/protocol/reviews/reviewNarration': m2084,
+    '@happier-dev/protocol/reviews/reviewPublicationEvidence': m2085,
+    '@happier-dev/protocol/reviews/reviewStart': m2086,
+    '@happier-dev/protocol/reviews/reviewTriageStatus': m2087,
+    '@happier-dev/protocol/reviews/scmPullRequestScope': m2088,
+    '@happier-dev/protocol/reviews/scope': m2089,
+    '@happier-dev/protocol/rpc': m2092,
+    '@happier-dev/protocol/rpc/answeringClient': m2090,
+    '@happier-dev/protocol/rpc/errors': m2091,
+    '@happier-dev/protocol/rpc/index': m2092,
+    '@happier-dev/protocol/rpc/machineWatchWindow': m2093,
+    '@happier-dev/protocol/rpc/methods': m2094,
+    '@happier-dev/protocol/rpc/npmRegistryProfiles': m2095,
+    '@happier-dev/protocol/rpc/providers': m2096,
+    '@happier-dev/protocol/rpc/socket': m2097,
+    '@happier-dev/protocol/rpc/teamCredentialSourceModels': m2098,
+    '@happier-dev/protocol/rpcErrors': m2091,
+    '@happier-dev/protocol/runtime': m2113,
+    '@happier-dev/protocol/runtime/agentExecutionRunV1': m2099,
+    '@happier-dev/protocol/runtime/agentRuntimeDiagnosticV1': m2100,
+    '@happier-dev/protocol/runtime/agentSessionConfigurationV1': m2101,
+    '@happier-dev/protocol/runtime/agentSessionLimitsV1': m2102,
+    '@happier-dev/protocol/runtime/agentSessionRuntimeRetryV1': m2103,
+    '@happier-dev/protocol/runtime/agentSessionScalarsV1': m2104,
+    '@happier-dev/protocol/runtime/agentSessionStartupInstructionsV1': m2105,
+    '@happier-dev/protocol/runtime/agentSessionV1': m2106,
+    '@happier-dev/protocol/runtime/agentUsageObservedPayloadV1': m2107,
+    '@happier-dev/protocol/runtime/authRefresh': m2108,
+    '@happier-dev/protocol/runtime/catalog/index': m2109,
+    '@happier-dev/protocol/runtime/catalog/skills': m2110,
+    '@happier-dev/protocol/runtime/catalog/vendorPlugins': m2111,
+    '@happier-dev/protocol/runtime/eventKindsV1': m2112,
+    '@happier-dev/protocol/runtime/index': m2113,
+    '@happier-dev/protocol/runtime/input/composerAttachmentV1': m2114,
+    '@happier-dev/protocol/runtime/input/composerContentV1': m2115,
+    '@happier-dev/protocol/runtime/input/composerInstanceId': m2116,
+    '@happier-dev/protocol/runtime/input/composerReferenceProviderV1': m2117,
+    '@happier-dev/protocol/runtime/input/composerSuggestionTokenV1': m2118,
+    '@happier-dev/protocol/runtime/input/imageInputV1': m2119,
+    '@happier-dev/protocol/runtime/input/index': m2120,
+    '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1': m2121,
+    '@happier-dev/protocol/runtime/input/mentionRefV1': m2122,
+    '@happier-dev/protocol/runtime/input/skillMentionV1': m2123,
+    '@happier-dev/protocol/runtime/input/structuredInputV1': m2124,
+    '@happier-dev/protocol/runtime/input/v1': m2125,
+    '@happier-dev/protocol/runtime/input/vendorPluginMentionV1': m2126,
+    '@happier-dev/protocol/runtime/permissionIntentV1': m2127,
+    '@happier-dev/protocol/scm': m2150,
+    '@happier-dev/protocol/scm/backendCapabilities': m2128,
+    '@happier-dev/protocol/scm/backendIdentity': m2129,
+    '@happier-dev/protocol/scm/branches': m2130,
+    '@happier-dev/protocol/scm/capabilities': m2131,
+    '@happier-dev/protocol/scm/changeCounting': m2132,
+    '@happier-dev/protocol/scm/clearSavedResults': m2133,
+    '@happier-dev/protocol/scm/cloneProtocol': m2134,
+    '@happier-dev/protocol/scm/commitPublication': m2135,
+    '@happier-dev/protocol/scm/comparison': m2136,
+    '@happier-dev/protocol/scm/comparisonDiscard': m2137,
+    '@happier-dev/protocol/scm/comparisonOccurrences': m2138,
+    '@happier-dev/protocol/scm/defaultBranchPushPolicy': m2139,
+    '@happier-dev/protocol/scm/diffSummary': m2140,
+    '@happier-dev/protocol/scm/diffSummaryCommitPlan': m2141,
+    '@happier-dev/protocol/scm/diffSummaryResult': m2142,
+    '@happier-dev/protocol/scm/entriesHistoryV1': m2143,
+    '@happier-dev/protocol/scm/fileAtRevision': m2144,
+    '@happier-dev/protocol/scm/fileChangesScope': m2145,
+    '@happier-dev/protocol/scm/fileViewed': m2146,
+    '@happier-dev/protocol/scm/freshness': m2147,
+    '@happier-dev/protocol/scm/hostingProviderOperations': m2148,
+    '@happier-dev/protocol/scm/hostingRepositoryIdentity': m2149,
+    '@happier-dev/protocol/scm/index': m2150,
+    '@happier-dev/protocol/scm/operationError': m2151,
+    '@happier-dev/protocol/scm/operationOutcome': m2152,
+    '@happier-dev/protocol/scm/operationState': m2153,
+    '@happier-dev/protocol/scm/pathScope': m2154,
+    '@happier-dev/protocol/scm/pullRequestLifecycleV1': m2155,
+    '@happier-dev/protocol/scm/pullRequests': m2156,
+    '@happier-dev/protocol/scm/remoteNormalization': m2157,
+    '@happier-dev/protocol/scm/remotePolicy': m2158,
+    '@happier-dev/protocol/scm/remoteResponse': m2159,
+    '@happier-dev/protocol/scm/remoteWebUrl': m2160,
+    '@happier-dev/protocol/scm/repositoryClone': m2161,
+    '@happier-dev/protocol/scm/repositoryFilesPullRequest': m2162,
+    '@happier-dev/protocol/scm/repositoryFilesPullRequestActionIds': m2163,
+    '@happier-dev/protocol/scm/repositoryProvisioning': m2164,
+    '@happier-dev/protocol/scm/requestBase': m2165,
+    '@happier-dev/protocol/scm/resolveScmBackendCapabilities': m2166,
+    '@happier-dev/protocol/scm/reviewWorkspace': m2167,
+    '@happier-dev/protocol/scm/reviewedMarks': m2168,
+    '@happier-dev/protocol/scm/selectedMutationPath': m2169,
+    '@happier-dev/protocol/scm/stash': m2170,
+    '@happier-dev/protocol/scm/suggestions': m2171,
+    '@happier-dev/protocol/scm/workEvidence': m2172,
+    '@happier-dev/protocol/scm/workingSnapshot': m2173,
+    '@happier-dev/protocol/scm/workspaceWatch': m2174,
+    '@happier-dev/protocol/scm/worktreeName': m2175,
+    '@happier-dev/protocol/scm/worktrees': m2176,
+    '@happier-dev/protocol/sentFrom': m2177,
+    '@happier-dev/protocol/server/control/contract': m2178,
+    '@happier-dev/protocol/server/http/connectionLifetimeV1': m2179,
+    '@happier-dev/protocol/server/http/requestBodyBoundsV1': m2180,
+    '@happier-dev/protocol/server/relayDrift': m2181,
+    '@happier-dev/protocol/server/urls': m2183,
+    '@happier-dev/protocol/server/urls/hostedWebappUrl': m2182,
+    '@happier-dev/protocol/server/urls/index': m2183,
+    '@happier-dev/protocol/server/urls/loopbackHostname': m2184,
+    '@happier-dev/protocol/server/urls/serverUrlComparableKey': m2185,
+    '@happier-dev/protocol/serverConfig/entries/emailEntries': m2186,
+    '@happier-dev/protocol/serverConfig/entries/integrationsEntries': m2187,
+    '@happier-dev/protocol/serverConfig/entries/policiesEntries': m2188,
+    '@happier-dev/protocol/serverConfig/entries/reachEntries': m2189,
+    '@happier-dev/protocol/serverConfig/entries/serverRuntimeEntries': m2190,
+    '@happier-dev/protocol/serverConfig/entries/storageEntries': m2191,
+    '@happier-dev/protocol/serverConfig/homeSettingsOwnership': m2192,
+    '@happier-dev/protocol/serverConfig/homeSettingsWrite': m2193,
+    '@happier-dev/protocol/serverConfig/index': m2194,
+    '@happier-dev/protocol/serverConfig/registry': m2195,
+    '@happier-dev/protocol/serverConfig/serverConfigCodec': m2196,
+    '@happier-dev/protocol/serverConfig/serverConfigEntry': m2197,
+    '@happier-dev/protocol/sessionStop': m2198,
+    '@happier-dev/protocol/sessions': m2394,
+    '@happier-dev/protocol/sessions/access/index': m2199,
+    '@happier-dev/protocol/sessions/access/releasedDirectSessionShareV1': m2200,
+    '@happier-dev/protocol/sessions/access/sessionAccessActionsV1': m2201,
+    '@happier-dev/protocol/sessions/access/sessionAccessGrantV1': m2202,
+    '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1': m2203,
+    '@happier-dev/protocol/sessions/access/sessionAccessPrincipalV1': m2204,
+    '@happier-dev/protocol/sessions/access/sessionBrowserAccessV1': m2205,
+    '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1': m2206,
+    '@happier-dev/protocol/sessions/access/sessionInitialAccessCreateV1': m2207,
+    '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1': m2208,
+    '@happier-dev/protocol/sessions/access/sessionRecipientEnvelopeBindingV1': m2209,
+    '@happier-dev/protocol/sessions/access/sessionResponsibilityV1': m2210,
+    '@happier-dev/protocol/sessions/agentTransition': m2211,
+    '@happier-dev/protocol/sessions/agentTransitionDivider': m2212,
+    '@happier-dev/protocol/sessions/agentTransitionEffectStage': m2213,
+    '@happier-dev/protocol/sessions/agentTransitionVectors': m2214,
+    '@happier-dev/protocol/sessions/attach/metadataIdentityPolicy': m2215,
+    '@happier-dev/protocol/sessions/authoring/buildFieldArtifacts': m2216,
+    '@happier-dev/protocol/sessions/authoring/contextKinds': m2217,
+    '@happier-dev/protocol/sessions/authoring/creationFieldsV1': m2218,
+    '@happier-dev/protocol/sessions/authoring/fieldCatalog': m2219,
+    '@happier-dev/protocol/sessions/authoring/fieldDefinition': m2220,
+    '@happier-dev/protocol/sessions/authoring/index': m2221,
+    '@happier-dev/protocol/sessions/authoring/selectionFieldsV1': m2222,
+    '@happier-dev/protocol/sessions/authoring/syncedSessionAuthoringV1': m2223,
+    '@happier-dev/protocol/sessions/authoring/temporaryComputerWorkspaceV1': m2224,
+    '@happier-dev/protocol/sessions/awareness/action': m2225,
+    '@happier-dev/protocol/sessions/awareness/availability': m2226,
+    '@happier-dev/protocol/sessions/awareness/index': m2227,
+    '@happier-dev/protocol/sessions/awareness/inputV1': m2228,
+    '@happier-dev/protocol/sessions/awareness/presentationV1': m2229,
+    '@happier-dev/protocol/sessions/awareness/projectV1': m2230,
+    '@happier-dev/protocol/sessions/awareness/projectionV1': m2231,
+    '@happier-dev/protocol/sessions/awareness/recap': m2232,
+    '@happier-dev/protocol/sessions/awareness/runtime': m2233,
+    '@happier-dev/protocol/sessions/awareness/waitV1': m2234,
+    '@happier-dev/protocol/sessions/awareness/work': m2235,
+    '@happier-dev/protocol/sessions/board': m2247,
+    '@happier-dev/protocol/sessions/board/actionIds': m2236,
+    '@happier-dev/protocol/sessions/board/actions': m2237,
+    '@happier-dev/protocol/sessions/board/changeHint': m2238,
+    '@happier-dev/protocol/sessions/board/declarative/authoring': m2239,
+    '@happier-dev/protocol/sessions/board/declarative/normalize': m2240,
+    '@happier-dev/protocol/sessions/board/declarative/note': m2241,
+    '@happier-dev/protocol/sessions/board/declarative/snapshot': m2242,
+    '@happier-dev/protocol/sessions/board/errors': m2243,
+    '@happier-dev/protocol/sessions/board/forkVisualCopies': m2244,
+    '@happier-dev/protocol/sessions/board/ids': m2245,
+    '@happier-dev/protocol/sessions/board/idsV1': m2246,
+    '@happier-dev/protocol/sessions/board/index': m2247,
+    '@happier-dev/protocol/sessions/board/item': m2248,
+    '@happier-dev/protocol/sessions/board/layout': m2249,
+    '@happier-dev/protocol/sessions/board/layoutOperations': m2250,
+    '@happier-dev/protocol/sessions/board/mutations': m2251,
+    '@happier-dev/protocol/sessions/board/transcriptReference': m2252,
+    '@happier-dev/protocol/sessions/board/visualPolicy': m2253,
+    '@happier-dev/protocol/sessions/changes/checkpointAttributionScope': m2254,
+    '@happier-dev/protocol/sessions/changes/index': m2255,
+    '@happier-dev/protocol/sessions/changes/mergeTurnChangeSets': m2256,
+    '@happier-dev/protocol/sessions/changes/reconcileWithScmSnapshot': m2257,
+    '@happier-dev/protocol/sessions/changes/rollbacks': m2258,
+    '@happier-dev/protocol/sessions/changes/schemas': m2259,
+    '@happier-dev/protocol/sessions/changes/types': m2260,
+    '@happier-dev/protocol/sessions/context/sessionContextV1': m2261,
+    '@happier-dev/protocol/sessions/continuation/recoveryV1': m2262,
+    '@happier-dev/protocol/sessions/continueWithReplay': m2263,
+    '@happier-dev/protocol/sessions/control/checkpoints/index': m2264,
+    '@happier-dev/protocol/sessions/control/checkpoints/v1': m2265,
+    '@happier-dev/protocol/sessions/control/contract': m2266,
+    '@happier-dev/protocol/sessions/control/exactTurnCancellationV1': m2267,
+    '@happier-dev/protocol/sessions/control/handoff/handoffRpc': m2268,
+    '@happier-dev/protocol/sessions/control/handoff/handoffSchemas': m2269,
+    '@happier-dev/protocol/sessions/control/handoff/handoffStatus': m2270,
+    '@happier-dev/protocol/sessions/control/handoff/handoffTargetReplacementApprovalV1': m2271,
+    '@happier-dev/protocol/sessions/control/handoff/handoffTypes': m2272,
+    '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1': m2273,
+    '@happier-dev/protocol/sessions/control/handoff/workspaceSyncConflictProjection': m2274,
+    '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas': m2275,
+    '@happier-dev/protocol/sessions/control/handoff/workspaceTransferSourcePathSafety': m2276,
+    '@happier-dev/protocol/sessions/control/index': m2277,
+    '@happier-dev/protocol/sessions/control/listResult': m2278,
+    '@happier-dev/protocol/sessions/control/machineSessionTerminalV1': m2279,
+    '@happier-dev/protocol/sessions/control/modelTransitionV1': m2280,
+    '@happier-dev/protocol/sessions/control/pendingDeliveryRecoveryV1': m2281,
+    '@happier-dev/protocol/sessions/control/pendingInputInterruptAndRunV1': m2282,
+    '@happier-dev/protocol/sessions/control/pendingWithdrawV1': m2283,
+    '@happier-dev/protocol/sessions/control/readCursor': m2284,
+    '@happier-dev/protocol/sessions/control/rollback/checkpointCodeRollback': m2285,
+    '@happier-dev/protocol/sessions/control/rollback/index': m2286,
+    '@happier-dev/protocol/sessions/control/runtimeIssueMetadataV1': m2287,
+    '@happier-dev/protocol/sessions/control/runtimeIssueV1': m2288,
+    '@happier-dev/protocol/sessions/control/sessionCompactionAvailabilityV1': m2289,
+    '@happier-dev/protocol/sessions/control/sessionProviderCliAttachPrepareV1': m2290,
+    '@happier-dev/protocol/sessions/control/sessionReadinessV1': m2291,
+    '@happier-dev/protocol/sessions/control/sessionResumeRequestV1': m2292,
+    '@happier-dev/protocol/sessions/control/sessionRunnerRestartV1': m2293,
+    '@happier-dev/protocol/sessions/control/sessionRunnerRestartV2': m2294,
+    '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1': m2295,
+    '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV2': m2296,
+    '@happier-dev/protocol/sessions/control/sessionUsageLimitRecoveryOperationResultV1': m2297,
+    '@happier-dev/protocol/sessions/control/terminalComposerClearV1': m2298,
+    '@happier-dev/protocol/sessions/creation/externalActionRequesterInvocationBaseV1': m2299,
+    '@happier-dev/protocol/sessions/creation/hostOnboardingPresentationV1': m2300,
+    '@happier-dev/protocol/sessions/creation/index': m2301,
+    '@happier-dev/protocol/sessions/creation/sessionAttestedContextV1': m2302,
+    '@happier-dev/protocol/sessions/creation/sessionCreateOriginV1': m2303,
+    '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1': m2304,
+    '@happier-dev/protocol/sessions/creation/sessionCreationAuthorizationV1': m2305,
+    '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1': m2306,
+    '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1': m2307,
+    '@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1': m2308,
+    '@happier-dev/protocol/sessions/creation/sessionDirectoryIntentV1': m2309,
+    '@happier-dev/protocol/sessions/creation/sessionDiscussionParticipantV1': m2310,
+    '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1': m2311,
+    '@happier-dev/protocol/sessions/creation/sessionInitialTriggerAdmissionV1': m2312,
+    '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1': m2313,
+    '@happier-dev/protocol/sessions/creation/sessionPreparedBirthV1': m2314,
+    '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapSchemasV1': m2315,
+    '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1': m2316,
+    '@happier-dev/protocol/sessions/creation/sessionServerStartV1': m2317,
+    '@happier-dev/protocol/sessions/creation/sessionSpawnBudget': m2318,
+    '@happier-dev/protocol/sessions/creation/sessionSpawnLaunchErrorV1': m2319,
+    '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2': m2320,
+    '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1': m2321,
+    '@happier-dev/protocol/sessions/creation/sessionSpawnNewSelectionV2': m2322,
+    '@happier-dev/protocol/sessions/creation/sessionSpawnSourceContextV1': m2323,
+    '@happier-dev/protocol/sessions/creation/testFixtures/sessionSpawnInputBeforeCommitObservation': m2324,
+    '@happier-dev/protocol/sessions/creation/testFixtures/sessionSpawnResultBeforeCommitObservation': m2325,
+    '@happier-dev/protocol/sessions/encryption/membershipSessionDataKeyEnvelopes': m2326,
+    '@happier-dev/protocol/sessions/encryption/prepareSessionDataKeyEnvelopeItemV1': m2327,
+    '@happier-dev/protocol/sessions/encryption/sessionDataKeyEnvelopes': m2328,
+    '@happier-dev/protocol/sessions/encryption/sessionDataKeyPreparationPass': m2329,
+    '@happier-dev/protocol/sessions/external/accounting': m2330,
+    '@happier-dev/protocol/sessions/external/contentSearchMatch': m2331,
+    '@happier-dev/protocol/sessions/external/daemonRpcV1': m2332,
+    '@happier-dev/protocol/sessions/external/externalAgentObservationV1': m2333,
+    '@happier-dev/protocol/sessions/external/followLifecycleV1': m2334,
+    '@happier-dev/protocol/sessions/external/historicalImportIdentity': m2335,
+    '@happier-dev/protocol/sessions/external/hookManagementV1': m2336,
+    '@happier-dev/protocol/sessions/external/index': m2337,
+    '@happier-dev/protocol/sessions/external/legacyDirectSessionWireSchemasV1': m2338,
+    '@happier-dev/protocol/sessions/external/linked-metadata': m2339,
+    '@happier-dev/protocol/sessions/external/linkedSessionMetadata': m2339,
+    '@happier-dev/protocol/sessions/external/operationActionSchemasV1': m2340,
+    '@happier-dev/protocol/sessions/external/operationActionsV1': m2341,
+    '@happier-dev/protocol/sessions/external/operationV1': m2342,
+    '@happier-dev/protocol/sessions/external/publicTranscriptFollowV1': m2343,
+    '@happier-dev/protocol/sessions/external/rpcErrorCodes': m2344,
+    '@happier-dev/protocol/sessions/external/secureRefreshV1': m2345,
+    '@happier-dev/protocol/sessions/external/sourceCatalog': m2346,
+    '@happier-dev/protocol/sessions/external/sourceTranscriptItemV1': m2347,
+    '@happier-dev/protocol/sessions/external/statusDemandV1': m2348,
+    '@happier-dev/protocol/sessions/external/takeoverV1': m2349,
+    '@happier-dev/protocol/sessions/folders/folderSettings': m2350,
+    '@happier-dev/protocol/sessions/follow': m2359,
+    '@happier-dev/protocol/sessions/follow/accountFollow': m2351,
+    '@happier-dev/protocol/sessions/follow/accountVoiceFollowTransportV1': m2352,
+    '@happier-dev/protocol/sessions/follow/actionTransport': m2353,
+    '@happier-dev/protocol/sessions/follow/actions': m2354,
+    '@happier-dev/protocol/sessions/follow/api': m2355,
+    '@happier-dev/protocol/sessions/follow/changes': m2356,
+    '@happier-dev/protocol/sessions/follow/followPolicyEditorV1': m2357,
+    '@happier-dev/protocol/sessions/follow/followSourceRefTransportV1': m2358,
+    '@happier-dev/protocol/sessions/follow/index': m2359,
+    '@happier-dev/protocol/sessions/follow/sessionCoordinatorActionsV1': m2360,
+    '@happier-dev/protocol/sessions/follow/sessionCoordinatorSetupV1': m2361,
+    '@happier-dev/protocol/sessions/follow/sessionCoordinatorV1': m2362,
+    '@happier-dev/protocol/sessions/follow/sessionDeliveryMuteV1': m2363,
+    '@happier-dev/protocol/sessions/follow/sessionFollowDeliveryProjectionV1': m2364,
+    '@happier-dev/protocol/sessions/follow/sessionFollowFrontierV1': m2365,
+    '@happier-dev/protocol/sessions/follow/sessionFollowInputV1': m2366,
+    '@happier-dev/protocol/sessions/follow/sessionFollowListV1': m2367,
+    '@happier-dev/protocol/sessions/follow/sessionFollowOriginalV1': m2368,
+    '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1': m2369,
+    '@happier-dev/protocol/sessions/follow/sessionFollowRuleContentCodecV1': m2370,
+    '@happier-dev/protocol/sessions/follow/sessionFollowRuleOccurrenceV1': m2371,
+    '@happier-dev/protocol/sessions/follow/sessionFollowRulePreviewV1': m2372,
+    '@happier-dev/protocol/sessions/follow/sessionFollowRuleV1': m2373,
+    '@happier-dev/protocol/sessions/follow/sessionFollowSelectedDeliveryV1': m2374,
+    '@happier-dev/protocol/sessions/follow/sessionFollowSourceKeyPreparationV1': m2375,
+    '@happier-dev/protocol/sessions/follow/sessionFollowSourceOccurrenceV1': m2376,
+    '@happier-dev/protocol/sessions/follow/sessionFollowSourceProjectionV1': m2377,
+    '@happier-dev/protocol/sessions/follow/sessionFollowSourcesApi': m2378,
+    '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1': m2379,
+    '@happier-dev/protocol/sessions/follow/sessionFollowUpdateEnvelopeV1': m2380,
+    '@happier-dev/protocol/sessions/follow/sessionManagerV1': m2381,
+    '@happier-dev/protocol/sessions/follow/sessionReceiverDeliveryV1': m2382,
+    '@happier-dev/protocol/sessions/follow/voiceTrackedSessionAddressV1': m2383,
+    '@happier-dev/protocol/sessions/follow/voiceTrackedTargetsCompatibilityV1': m2384,
+    '@happier-dev/protocol/sessions/fork': m2385,
+    '@happier-dev/protocol/sessions/forkPoint': m2386,
+    '@happier-dev/protocol/sessions/general': m2387,
+    '@happier-dev/protocol/sessions/identity/botFaceGeometry': m2388,
+    '@happier-dev/protocol/sessions/identity/botFaceShapeGenerator': m2389,
+    '@happier-dev/protocol/sessions/identity/botFaceShapeValidation': m2390,
+    '@happier-dev/protocol/sessions/identity/sessionBotFaceV1': m2391,
+    '@happier-dev/protocol/sessions/identity/sessionBotV1': m2392,
+    '@happier-dev/protocol/sessions/idsV1': m2393,
+    '@happier-dev/protocol/sessions/index': m2394,
+    '@happier-dev/protocol/sessions/instructions/sessionVoicePreferenceV1': m2395,
+    '@happier-dev/protocol/sessions/listFilter/index': m2396,
+    '@happier-dev/protocol/sessions/listFilter/sessionListFilterQueryV1': m2397,
+    '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1': m2398,
+    '@happier-dev/protocol/sessions/listing/cursor': m2399,
+    '@happier-dev/protocol/sessions/listing/query': m2400,
+    '@happier-dev/protocol/sessions/listing/response': m2401,
+    '@happier-dev/protocol/sessions/media/imageMarksV1': m2402,
+    '@happier-dev/protocol/sessions/media/imageReferenceV1': m2403,
+    '@happier-dev/protocol/sessions/messages/agentExternalSessionTranscriptRawRecord': m2404,
+    '@happier-dev/protocol/sessions/messages/autonomousExchangeV1': m2405,
+    '@happier-dev/protocol/sessions/messages/canonicalTurnDiffTool': m2406,
+    '@happier-dev/protocol/sessions/messages/coerceSessionUserPromptV1': m2407,
+    '@happier-dev/protocol/sessions/messages/emptyCanonicalTurnDiffSuppression': m2408,
+    '@happier-dev/protocol/sessions/messages/messageActionReferenceV1': m2409,
+    '@happier-dev/protocol/sessions/messages/messageStructuredPresentationV1': m2410,
+    '@happier-dev/protocol/sessions/messages/pendingDeliveryBlockedReason': m2411,
+    '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1': m2412,
+    '@happier-dev/protocol/sessions/messages/sessionCapabilityNoticeV1': m2413,
+    '@happier-dev/protocol/sessions/messages/sessionExternalShareableTranscriptV1': m2414,
+    '@happier-dev/protocol/sessions/messages/sessionInputAdmission': m2415,
+    '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1': m2416,
+    '@happier-dev/protocol/sessions/messages/sessionInputAuthoringV1': m2417,
+    '@happier-dev/protocol/sessions/messages/sessionInputForgeEvidenceV1': m2418,
+    '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1': m2419,
+    '@happier-dev/protocol/sessions/messages/sessionInputReferenceProjectionV1': m2420,
+    '@happier-dev/protocol/sessions/messages/sessionInputResultV1': m2421,
+    '@happier-dev/protocol/sessions/messages/sessionMediaV1': m2422,
+    '@happier-dev/protocol/sessions/messages/sessionMessageAccountActorV1': m2423,
+    '@happier-dev/protocol/sessions/messages/sessionMessageDeliveryResolutionV1': m2424,
+    '@happier-dev/protocol/sessions/messages/sessionMessageInvocationV1': m2425,
+    '@happier-dev/protocol/sessions/messages/sessionMessageMeta': m2426,
+    '@happier-dev/protocol/sessions/messages/sessionMessageObservationFactsV1': m2427,
+    '@happier-dev/protocol/sessions/messages/sessionMessageRefV1': m2428,
+    '@happier-dev/protocol/sessions/messages/sessionMessageReplyPublicationV1': m2429,
+    '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1': m2430,
+    '@happier-dev/protocol/sessions/messages/sessionMessageRole': m2431,
+    '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1': m2432,
+    '@happier-dev/protocol/sessions/messages/sessionPendingAdmissionSettlementV1': m2433,
+    '@happier-dev/protocol/sessions/messages/sessionPendingExecutionRunMachineAdmissionV2': m2434,
+    '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1': m2435,
+    '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent': m2436,
+    '@happier-dev/protocol/sessions/messages/sessionTranscriptPageLimits': m2437,
+    '@happier-dev/protocol/sessions/messages/spawnedFirstTurn': m2438,
+    '@happier-dev/protocol/sessions/messages/special-commands': m2439,
+    '@happier-dev/protocol/sessions/messages/specialCommands': m2439,
+    '@happier-dev/protocol/sessions/messages/transcriptBodySemanticProjection': m2440,
+    '@happier-dev/protocol/sessions/messages/transcriptObservationV1': m2441,
+    '@happier-dev/protocol/sessions/messages/transcriptPeerSenderV1': m2442,
+    '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1': m2443,
+    '@happier-dev/protocol/sessions/messages/transcriptSourceTimestampV1': m2444,
+    '@happier-dev/protocol/sessions/metadata/acpConfiguredBackendV1': m2445,
+    '@happier-dev/protocol/sessions/metadata/agentRuntimeFacetsV1': m2446,
+    '@happier-dev/protocol/sessions/metadata/compat/runtimeDescriptorMetadata': m2447,
+    '@happier-dev/protocol/sessions/metadata/connectedServiceMaterializationIdentityV1': m2448,
+    '@happier-dev/protocol/sessions/metadata/directory': m2453,
+    '@happier-dev/protocol/sessions/metadata/metadataOverridesV1': m2449,
+    '@happier-dev/protocol/sessions/metadata/overrides': m2449,
+    '@happier-dev/protocol/sessions/metadata/permission-modes': m2462,
+    '@happier-dev/protocol/sessions/metadata/providerAccountUsageRefsV1': m2450,
+    '@happier-dev/protocol/sessions/metadata/runtime-descriptor': m2451,
+    '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat': m2447,
+    '@happier-dev/protocol/sessions/metadata/runtimeDescriptorV1': m2451,
+    '@happier-dev/protocol/sessions/metadata/sessionActionConfirmationsV1': m2452,
+    '@happier-dev/protocol/sessions/metadata/sessionDirectoryV1': m2453,
+    '@happier-dev/protocol/sessions/metadata/sessionDisplayEnvelopesV1': m2454,
+    '@happier-dev/protocol/sessions/metadata/sessionDisplayProjectionV1': m2455,
+    '@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1': m2456,
+    '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1': m2457,
+    '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1': m2458,
+    '@happier-dev/protocol/sessions/metadata/sessionMetadataPresentationSchemasV1': m2459,
+    '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1': m2460,
+    '@happier-dev/protocol/sessions/metadata/sessionPendingQueueHoldV1': m2461,
+    '@happier-dev/protocol/sessions/metadata/sessionPermissionModes': m2462,
+    '@happier-dev/protocol/sessions/metadata/sessionRollbackRangesV1': m2463,
+    '@happier-dev/protocol/sessions/metadata/sessionTitle': m2464,
+    '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1': m2465,
+    '@happier-dev/protocol/sessions/metadata/systemSessionV1': m2466,
+    '@happier-dev/protocol/sessions/metadata/terminalMetadata': m2467,
+    '@happier-dev/protocol/sessions/metadata/windowsRemoteSessionLaunchMode': m2468,
+    '@happier-dev/protocol/sessions/metadata/windowsTerminalWindowName': m2469,
+    '@happier-dev/protocol/sessions/mutations/sessionMutationEqualityV1': m2470,
+    '@happier-dev/protocol/sessions/organization/accountEncryptionMigrationInventory': m2471,
+    '@happier-dev/protocol/sessions/organization/appearances': m2472,
+    '@happier-dev/protocol/sessions/organization/attentionAction': m2473,
+    '@happier-dev/protocol/sessions/organization/attentionActionIdsV1': m2474,
+    '@happier-dev/protocol/sessions/organization/constants': m2475,
+    '@happier-dev/protocol/sessions/organization/content': m2476,
+    '@happier-dev/protocol/sessions/organization/contentSchemas': m2477,
+    '@happier-dev/protocol/sessions/organization/folders': m2478,
+    '@happier-dev/protocol/sessions/organization/index': m2479,
+    '@happier-dev/protocol/sessions/organization/mutations': m2480,
+    '@happier-dev/protocol/sessions/organization/ordering': m2481,
+    '@happier-dev/protocol/sessions/organization/pins': m2482,
+    '@happier-dev/protocol/sessions/organization/snapshot': m2483,
+    '@happier-dev/protocol/sessions/organization/standings': m2484,
+    '@happier-dev/protocol/sessions/organization/tags': m2485,
+    '@happier-dev/protocol/sessions/pending/acceptedPendingSettlementV1': m2486,
+    '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1': m2487,
+    '@happier-dev/protocol/sessions/pending/pendingLocalId': m2488,
+    '@happier-dev/protocol/sessions/pending/pendingMessageMutationFingerprintV1': m2489,
+    '@happier-dev/protocol/sessions/pending/pendingProviderAction': m2490,
+    '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1': m2491,
+    '@happier-dev/protocol/sessions/pending/pendingResetStartReadinessV1': m2492,
+    '@happier-dev/protocol/sessions/pending/retainedPendingContextV1': m2493,
+    '@happier-dev/protocol/sessions/pending/sessionPendingQueueWakeV1': m2494,
+    '@happier-dev/protocol/sessions/permissions/index': m2495,
+    '@happier-dev/protocol/sessions/permissions/mediationRecordsV1': m2496,
+    '@happier-dev/protocol/sessions/permissions/nativeChoicesV1': m2497,
+    '@happier-dev/protocol/sessions/permissions/permissionSystemRecordKinds': m2498,
+    '@happier-dev/protocol/sessions/permissions/questionV1': m2499,
+    '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1': m2500,
+    '@happier-dev/protocol/sessions/permissions/v1': m2501,
+    '@happier-dev/protocol/sessions/personal/attention': m2502,
+    '@happier-dev/protocol/sessions/personal/eventEligibility': m2503,
+    '@happier-dev/protocol/sessions/personal/index': m2504,
+    '@happier-dev/protocol/sessions/personal/readState': m2505,
+    '@happier-dev/protocol/sessions/personal/relevance': m2506,
+    '@happier-dev/protocol/sessions/personal/tracking': m2507,
+    '@happier-dev/protocol/sessions/personal/viewer': m2508,
+    '@happier-dev/protocol/sessions/pluginAccess': m2509,
+    '@happier-dev/protocol/sessions/presence/sessionHumanPresenceV1': m2510,
+    '@happier-dev/protocol/sessions/presentation/currentSessionPresentationV1': m2511,
+    '@happier-dev/protocol/sessions/presentation/index': m2512,
+    '@happier-dev/protocol/sessions/read/sessionReadBatchV1': m2513,
+    '@happier-dev/protocol/sessions/readState/actionIds': m2514,
+    '@happier-dev/protocol/sessions/readState/actionTransport': m2515,
+    '@happier-dev/protocol/sessions/readState/actions': m2516,
+    '@happier-dev/protocol/sessions/readState/api': m2517,
+    '@happier-dev/protocol/sessions/readState/idsV1': m2518,
+    '@happier-dev/protocol/sessions/readState/index': m2519,
+    '@happier-dev/protocol/sessions/relations/workerUpdateV1': m2520,
+    '@happier-dev/protocol/sessions/replay-seed-budget': m2521,
+    '@happier-dev/protocol/sessions/replaySeedBudget': m2521,
+    '@happier-dev/protocol/sessions/reservedSessionMessageLocalId': m2522,
+    '@happier-dev/protocol/sessions/rollback': m2523,
+    '@happier-dev/protocol/sessions/rollbackPlanning': m2524,
+    '@happier-dev/protocol/sessions/runtime/activity/index': m2525,
+    '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity': m2526,
+    '@happier-dev/protocol/sessions/runtime/activity/transport': m2527,
+    '@happier-dev/protocol/sessions/runtime/index': m2528,
+    '@happier-dev/protocol/sessions/runtimeModeSetRpcV1': m2529,
+    '@happier-dev/protocol/sessions/runtimeModeV1': m2530,
+    '@happier-dev/protocol/sessions/sessionConsumptionV1': m2531,
+    '@happier-dev/protocol/sessions/sessionEventDelivery': m2532,
+    '@happier-dev/protocol/sessions/slashCommands': m2533,
+    '@happier-dev/protocol/sessions/spawnSession': m2534,
+    '@happier-dev/protocol/sessions/spawnSessionNonce': m2535,
+    '@happier-dev/protocol/sessions/state/_constants': m2536,
+    '@happier-dev/protocol/sessions/state/_types': m2537,
+    '@happier-dev/protocol/sessions/state/capabilitySchema': m2538,
+    '@happier-dev/protocol/sessions/state/fieldRegistrySchema': m2539,
+    '@happier-dev/protocol/sessions/state/index': m2540,
+    '@happier-dev/protocol/sessions/state/valueSchemas/acpConfigOption': m2541,
+    '@happier-dev/protocol/sessions/state/valueSchemas/acpSessionMode': m2542,
+    '@happier-dev/protocol/sessions/state/valueSchemas/attention': m2543,
+    '@happier-dev/protocol/sessions/state/valueSchemas/externalAgent': m2544,
+    '@happier-dev/protocol/sessions/state/valueSchemas/index': m2545,
+    '@happier-dev/protocol/sessions/state/valueSchemas/model': m2546,
+    '@happier-dev/protocol/sessions/state/valueSchemas/permissionMode': m2547,
+    '@happier-dev/protocol/sessions/state/valueSchemas/providerSessionId': m2548,
+    '@happier-dev/protocol/sessions/state/valueSchemas/readState': m2549,
+    '@happier-dev/protocol/sessions/state/valueSchemas/runtimeActivity': m2550,
+    '@happier-dev/protocol/sessions/state/valueSchemas/runtimeDescriptor': m2551,
+    '@happier-dev/protocol/sessions/state/valueSchemas/title': m2552,
+    '@happier-dev/protocol/sessions/state/valueSchemas/turnProgress': m2553,
+    '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery': m2554,
+    '@happier-dev/protocol/sessions/state/valueSchemas/workState': m2555,
+    '@happier-dev/protocol/sessions/subagents': m2557,
+    '@happier-dev/protocol/sessions/subagents/durableCustodyV1': m2556,
+    '@happier-dev/protocol/sessions/subagents/index': m2557,
+    '@happier-dev/protocol/sessions/subagents/subagentGroupRefV1': m2558,
+    '@happier-dev/protocol/sessions/subagents/subagentRefV1': m2559,
+    '@happier-dev/protocol/sessions/system/records/activity/activitySystemRecordKinds': m2560,
+    '@happier-dev/protocol/sessions/system/records/activity/activitySystemRecordPayload': m2561,
+    '@happier-dev/protocol/sessions/system/records/index': m2562,
+    '@happier-dev/protocol/sessions/system/records/memory/memorySystemRecordKinds': m2563,
+    '@happier-dev/protocol/sessions/system/records/memory/memorySystemRecordPayload': m2564,
+    '@happier-dev/protocol/sessions/system/records/sessionSystemRecord': m2565,
+    '@happier-dev/protocol/sessions/system/records/sessionSystemRecordAddress': m2566,
+    '@happier-dev/protocol/sessions/system/records/sessionSystemRecordCatalog': m2567,
+    '@happier-dev/protocol/sessions/system/records/sessionSystemRecordContent': m2568,
+    '@happier-dev/protocol/sessions/system/records/sessionSystemRecordKind': m2569,
+    '@happier-dev/protocol/sessions/system/records/sessionSystemRecordNamespace': m2570,
+    '@happier-dev/protocol/sessions/system/records/sessionSystemRecordPayloads': m2571,
+    '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRevision': m2572,
+    '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes': m2573,
+    '@happier-dev/protocol/sessions/turns/compat/agentIdentity': m2574,
+    '@happier-dev/protocol/sessions/turns/index': m2575,
+    '@happier-dev/protocol/sessions/turns/sessionTurnLifecycleStatusV1': m2576,
+    '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1': m2577,
+    '@happier-dev/protocol/sessions/turns/sessionTurnV1': m2578,
+    '@happier-dev/protocol/sessions/userActionRequiredOccurrenceV1': m2579,
+    '@happier-dev/protocol/sessions/userMessageRpc': m2580,
+    '@happier-dev/protocol/sessions/work-state': m2599,
+    '@happier-dev/protocol/sessions/work/activityHeadlineOrdering': m2581,
+    '@happier-dev/protocol/sessions/work/agentActivity/adapters/fromExecutionRunStatus': m2582,
+    '@happier-dev/protocol/sessions/work/agentActivity/adapters/fromSubagentStatus': m2583,
+    '@happier-dev/protocol/sessions/work/agentActivity/adapters/fromWorkflowAgentStatus': m2584,
+    '@happier-dev/protocol/sessions/work/agentActivity/adapters/fromWorkflowRunStatus': m2585,
+    '@happier-dev/protocol/sessions/work/agentActivity/adapters/index': m2586,
+    '@happier-dev/protocol/sessions/work/agentActivity/agentActivityEntryId': m2587,
+    '@happier-dev/protocol/sessions/work/agentActivity/agentActivityEntryV1': m2588,
+    '@happier-dev/protocol/sessions/work/agentActivity/agentActivityHeadlineBuild': m2589,
+    '@happier-dev/protocol/sessions/work/agentActivity/agentActivityHeadlineV1': m2590,
+    '@happier-dev/protocol/sessions/work/agentActivity/agentActivityKindV1': m2591,
+    '@happier-dev/protocol/sessions/work/agentActivity/agentActivityStatusV1': m2592,
+    '@happier-dev/protocol/sessions/work/agentActivity/agentActivityToneV1': m2593,
+    '@happier-dev/protocol/sessions/work/agentActivity/index': m2594,
+    '@happier-dev/protocol/sessions/work/backgroundTask/backgroundTaskRecordV1': m2595,
+    '@happier-dev/protocol/sessions/work/backgroundTask/backgroundTaskRedaction': m2596,
+    '@happier-dev/protocol/sessions/work/backgroundTask/index': m2597,
+    '@happier-dev/protocol/sessions/work/sessionActivityHeadlineBundleV1': m2598,
+    '@happier-dev/protocol/sessions/work/state/index': m2599,
+    '@happier-dev/protocol/sessions/work/state/sessionWorkStateBounds': m2600,
+    '@happier-dev/protocol/sessions/work/state/sessionWorkStateItemIds': m2601,
+    '@happier-dev/protocol/sessions/work/state/sessionWorkStateMerge': m2602,
+    '@happier-dev/protocol/sessions/work/state/sessionWorkStatePrimary': m2603,
+    '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc': m2604,
+    '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1': m2605,
+    '@happier-dev/protocol/sessions/work/workflow/index': m2606,
+    '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowActivityHeadlineBuild': m2607,
+    '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowActivityHeadlineV1': m2608,
+    '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowPhases': m2609,
+    '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowRunRecordRevision': m2610,
+    '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowRunSnapshotV1': m2611,
+    '@happier-dev/protocol/settings/registry/buildSettingArtifacts': m2612,
+    '@happier-dev/protocol/settings/registry/settingDefinition': m2613,
+    '@happier-dev/protocol/sharing/public-viewer': m2614,
+    '@happier-dev/protocol/sharing/publicViewer': m2614,
+    '@happier-dev/protocol/sharing/storedContentPublicShareV1': m2615,
+    '@happier-dev/protocol/social/friends': m2616,
+    '@happier-dev/protocol/socketRpc': m2097,
+    '@happier-dev/protocol/spawn/envOverlay': m2617,
+    '@happier-dev/protocol/spawnSession': m2534,
+    '@happier-dev/protocol/ssh/commandFailure': m2618,
+    '@happier-dev/protocol/ssh/homeAuthorityMismatch': m2619,
+    '@happier-dev/protocol/ssh/hostTrust': m2620,
+    '@happier-dev/protocol/ssh/sshTarget': m2621,
+    '@happier-dev/protocol/ssh/tunnels': m2622,
+    '@happier-dev/protocol/storage/artifactStoredContent': m2623,
+    '@happier-dev/protocol/storage/binaryBlobV1': m2624,
+    '@happier-dev/protocol/storage/storageV1': m2625,
+    '@happier-dev/protocol/storage/storedJsonContentEnvelope': m2626,
+    '@happier-dev/protocol/strings/maxCodeUnits': m2627,
+    '@happier-dev/protocol/strings/opaqueIdentifier': m2628,
+    '@happier-dev/protocol/strings/preservedBoundedNfcString': m2629,
+    '@happier-dev/protocol/strings/trimIdent': m2630,
+    '@happier-dev/protocol/system/tasks/acquisitionProgress': m2631,
+    '@happier-dev/protocol/system/tasks/index': m2632,
+    '@happier-dev/protocol/system/tasks/promptKindCatalog': m2633,
+    '@happier-dev/protocol/system/tasks/promptPayloadContracts': m2634,
+    '@happier-dev/protocol/system/tasks/relayAccessConfigV1': m2635,
+    '@happier-dev/protocol/system/tasks/spec': m2636,
+    '@happier-dev/protocol/system/tasks/stepIdCatalog': m2637,
+    '@happier-dev/protocol/system/tasks/tailscaleEnsureReadyTaskContract': m2638,
+    '@happier-dev/protocol/system/tasks/tailscaleSecureAccessTaskContract': m2639,
+    '@happier-dev/protocol/tasks/entryRefV1': m2640,
+    '@happier-dev/protocol/teams': m2687,
+    '@happier-dev/protocol/teams/actionIdsV1': m2641,
+    '@happier-dev/protocol/teams/actionsV1': m2642,
+    '@happier-dev/protocol/teams/capabilities': m2643,
+    '@happier-dev/protocol/teams/credentials/actionHttpPurposeV1': m2644,
+    '@happier-dev/protocol/teams/credentials/actionIdsV1': m2645,
+    '@happier-dev/protocol/teams/credentials/actionOperationV1': m2646,
+    '@happier-dev/protocol/teams/credentials/actionsV1': m2647,
+    '@happier-dev/protocol/teams/credentials/deliveryV1': m2648,
+    '@happier-dev/protocol/teams/credentials/directMaterialCensusV1': m2649,
+    '@happier-dev/protocol/teams/credentials/directMaterialReconcileV1': m2650,
+    '@happier-dev/protocol/teams/credentials/directMaterialUseV1': m2651,
+    '@happier-dev/protocol/teams/credentials/directMaterialV1': m2652,
+    '@happier-dev/protocol/teams/credentials/externalApiKeyV1': m2653,
+    '@happier-dev/protocol/teams/credentials/externalProviderApiV1': m2654,
+    '@happier-dev/protocol/teams/credentials/index': m2655,
+    '@happier-dev/protocol/teams/credentials/providerModelCatalogV1': m2656,
+    '@happier-dev/protocol/teams/credentials/readinessV1': m2657,
+    '@happier-dev/protocol/teams/credentials/resourceReadinessV1': m2658,
+    '@happier-dev/protocol/teams/credentials/resourceSelectionV1': m2659,
+    '@happier-dev/protocol/teams/credentials/resourceV1': m2660,
+    '@happier-dev/protocol/teams/credentials/runnerBrokerReadinessV1': m2661,
+    '@happier-dev/protocol/teams/credentials/runnerSelectionV1': m2662,
+    '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1': m2663,
+    '@happier-dev/protocol/teams/credentials/sessionBindingV1': m2664,
+    '@happier-dev/protocol/teams/credentials/sourceBindingV1': m2665,
+    '@happier-dev/protocol/teams/credentials/sourceCandidatesV1': m2666,
+    '@happier-dev/protocol/teams/credentials/teamCredentialModelCatalogV1': m2667,
+    '@happier-dev/protocol/teams/credentials/usageExportV1': m2668,
+    '@happier-dev/protocol/teams/credentials/usageV1': m2669,
+    '@happier-dev/protocol/teams/cursor': m2670,
+    '@happier-dev/protocol/teams/directory/actionIds': m2671,
+    '@happier-dev/protocol/teams/directory/index': m2672,
+    '@happier-dev/protocol/teams/directory/v1': m2673,
+    '@happier-dev/protocol/teams/errors': m2674,
+    '@happier-dev/protocol/teams/externalGroupBindings/actionIds': m2675,
+    '@happier-dev/protocol/teams/externalGroupBindings/index': m2676,
+    '@happier-dev/protocol/teams/externalGroupBindings/v1': m2677,
+    '@happier-dev/protocol/teams/group': m2678,
+    '@happier-dev/protocol/teams/groupLabel': m2679,
+    '@happier-dev/protocol/teams/identity/actionIds': m2680,
+    '@happier-dev/protocol/teams/identity/admission': m2681,
+    '@happier-dev/protocol/teams/identity/connection': m2682,
+    '@happier-dev/protocol/teams/identity/errors': m2683,
+    '@happier-dev/protocol/teams/identity/ids': m2684,
+    '@happier-dev/protocol/teams/identity/index': m2685,
+    '@happier-dev/protocol/teams/identity/workos': m2686,
+    '@happier-dev/protocol/teams/index': m2687,
+    '@happier-dev/protocol/teams/invitation': m2688,
+    '@happier-dev/protocol/teams/invitationToken': m2689,
+    '@happier-dev/protocol/teams/logo': m2690,
+    '@happier-dev/protocol/teams/managedDefaults': m2691,
+    '@happier-dev/protocol/teams/membership': m2692,
+    '@happier-dev/protocol/teams/membershipHistoryPreparationV1': m2693,
+    '@happier-dev/protocol/teams/principal': m2694,
+    '@happier-dev/protocol/teams/projections': m2695,
+    '@happier-dev/protocol/teams/resourceGrantAccessV1': m2696,
+    '@happier-dev/protocol/teams/resourceRecipientKeyPreparationV1': m2697,
+    '@happier-dev/protocol/teams/team': m2698,
+    '@happier-dev/protocol/terminal': m2700,
+    '@happier-dev/protocol/terminal/compatibility': m2699,
+    '@happier-dev/protocol/terminal/index': m2700,
+    '@happier-dev/protocol/terminal/input': m2701,
+    '@happier-dev/protocol/terminal/inputEncoding': m2702,
+    '@happier-dev/protocol/terminal/stream': m2703,
+    '@happier-dev/protocol/terminal/workspace': m2704,
+    '@happier-dev/protocol/testing/accountScopedCipherFixtures': m2705,
+    '@happier-dev/protocol/testing/pluginInstallationReviewFixture': m2706,
+    '@happier-dev/protocol/todos/taskResourceClientV1': m2707,
+    '@happier-dev/protocol/todos/taskResourceV1': m2708,
+    '@happier-dev/protocol/todos/todoActionOperationsV1': m2709,
+    '@happier-dev/protocol/todos/todoLabelColoursV1': m2710,
+    '@happier-dev/protocol/todos/todoSessionLinkV1': m2711,
+    '@happier-dev/protocol/tools/autoApprovedNames.generated': m2712,
+    '@happier-dev/protocol/tools/happierToolAutoApprovalV1': m2713,
+    '@happier-dev/protocol/tools/happierToolsShellBridge': m2714,
+    '@happier-dev/protocol/tools/shellWords': m2715,
+    '@happier-dev/protocol/tools/structuredQuestionAnswersV1': m2716,
+    '@happier-dev/protocol/tools/toolMutationClassification': m2717,
+    '@happier-dev/protocol/tools/v2': m2719,
+    '@happier-dev/protocol/tools/v2/aliases': m2718,
+    '@happier-dev/protocol/tools/v2/index': m2719,
+    '@happier-dev/protocol/tools/v2/meta': m2720,
+    '@happier-dev/protocol/tools/v2/names': m2721,
+    '@happier-dev/protocol/tools/v2/patch': m2722,
+    '@happier-dev/protocol/tools/v2/schemas': m2723,
+    '@happier-dev/protocol/tools/v2/subAgentFamilies': m2724,
+    '@happier-dev/protocol/transferRelayV2': m2728,
+    '@happier-dev/protocol/transferSessions': m2731,
+    '@happier-dev/protocol/transfers/attachments/attachmentLimitsV1': m2725,
+    '@happier-dev/protocol/transfers/attachments/attachmentPathV1': m2726,
+    '@happier-dev/protocol/transfers/attachments/attachmentPayloadV1': m2727,
+    '@happier-dev/protocol/transfers/relay/v2/index': m2728,
+    '@happier-dev/protocol/transfers/relay/v2/socketEvents': m2729,
+    '@happier-dev/protocol/transfers/relay/v2/transferRelayEnvelopeSchema': m2730,
+    '@happier-dev/protocol/transfers/sessions/index': m2731,
+    '@happier-dev/protocol/transfers/sessions/sessionAttachmentHandleV1': m2732,
+    '@happier-dev/protocol/transfers/sessions/sessionAttachmentUploadInitRequestV1': m2733,
+    '@happier-dev/protocol/transfers/sessions/transferSessionIds': m2734,
+    '@happier-dev/protocol/transfers/sessions/transferSessionSchemas': m2735,
+    '@happier-dev/protocol/transfers/sessions/transferSessionTypes': m2736,
+    '@happier-dev/protocol/updates': m2737,
+    '@happier-dev/protocol/updates/index': m2737,
+    '@happier-dev/protocol/updates/sessionUpdate': m2738,
+    '@happier-dev/protocol/updates/versionComparison': m2739,
+    '@happier-dev/protocol/usage/coach/buildUsageCoachRemedies': m2740,
+    '@happier-dev/protocol/usage/coach/coachActions': m2741,
+    '@happier-dev/protocol/usage/coach/coachDetectorIds': m2742,
+    '@happier-dev/protocol/usage/coach/coachDigestSuggestion': m2743,
+    '@happier-dev/protocol/usage/coach/coachFinding': m2744,
+    '@happier-dev/protocol/usage/coach/coachRemedy': m2745,
+    '@happier-dev/protocol/usage/coach/coachVendorFacts': m2746,
+    '@happier-dev/protocol/usage/coach/evaluateUsageCoach': m2747,
+    '@happier-dev/protocol/usage/coach/usageMcpBindingUsage': m2748,
+    '@happier-dev/protocol/usage/coach/usagePromptComposition': m2749,
+    '@happier-dev/protocol/usage/composePublicUsageRecap': m2750,
+    '@happier-dev/protocol/usage/composeUsageRecap': m2751,
+    '@happier-dev/protocol/usage/contextUsage': m2752,
+    '@happier-dev/protocol/usage/index': m2753,
+    '@happier-dev/protocol/usage/legacyUsageTokens': m2754,
+    '@happier-dev/protocol/usage/projectUsageQueryDelivery': m2755,
+    '@happier-dev/protocol/usage/projectUsageSourcesDelivery': m2756,
+    '@happier-dev/protocol/usage/resolveUsageHowYouWork': m2757,
+    '@happier-dev/protocol/usage/resolveUsagePageAggregation': m2758,
+    '@happier-dev/protocol/usage/usageAccountingMembership': m2759,
+    '@happier-dev/protocol/usage/usageActionIdsV1': m2760,
+    '@happier-dev/protocol/usage/usageActivityProjectionFacts': m2761,
+    '@happier-dev/protocol/usage/usageActivitySummary': m2762,
+    '@happier-dev/protocol/usage/usageAgentCalendar': m2763,
+    '@happier-dev/protocol/usage/usageAggregation': m2764,
+    '@happier-dev/protocol/usage/usageAnalyticsBatchDelivery': m2765,
+    '@happier-dev/protocol/usage/usageAnalyticsContracts': m2766,
+    '@happier-dev/protocol/usage/usageAnalyticsDemandProjection': m2767,
+    '@happier-dev/protocol/usage/usageCalendar': m2768,
+    '@happier-dev/protocol/usage/usageCalendarExport': m2769,
+    '@happier-dev/protocol/usage/usageCollaboration': m2770,
+    '@happier-dev/protocol/usage/usageCost': m2771,
+    '@happier-dev/protocol/usage/usageCostFactTotals': m2772,
+    '@happier-dev/protocol/usage/usageCostFacts': m2773,
+    '@happier-dev/protocol/usage/usageExport': m2774,
+    '@happier-dev/protocol/usage/usageFilterOptions': m2775,
+    '@happier-dev/protocol/usage/usageFootprint': m2776,
+    '@happier-dev/protocol/usage/usageFormatting': m2777,
+    '@happier-dev/protocol/usage/usageLeaderProjection': m2778,
+    '@happier-dev/protocol/usage/usageModelPriceCatalog': m2779,
+    '@happier-dev/protocol/usage/usageModelPriceDelivery': m2780,
+    '@happier-dev/protocol/usage/usageModelPriceSchemas': m2781,
+    '@happier-dev/protocol/usage/usageModelPriceSnapshot': m2782,
+    '@happier-dev/protocol/usage/usageMoney': m2783,
+    '@happier-dev/protocol/usage/usageOutcomeAllocation': m2784,
+    '@happier-dev/protocol/usage/usagePlanInsights': m2785,
+    '@happier-dev/protocol/usage/usagePricingPopulation': m2786,
+    '@happier-dev/protocol/usage/usagePricingReuse': m2787,
+    '@happier-dev/protocol/usage/usageRecap': m2788,
+    '@happier-dev/protocol/usage/usageSessionEvidence': m2789,
+    '@happier-dev/protocol/usage/usageSessionFactKinds': m2790,
+    '@happier-dev/protocol/usage/usageSourceSummary': m2791,
+    '@happier-dev/protocol/usage/usageSources': m2792,
+    '@happier-dev/protocol/usage/usageSourcesActionIdsV1': m2793,
+    '@happier-dev/protocol/usage/usageSteering': m2794,
+    '@happier-dev/protocol/usage/usageSummary': m2795,
+    '@happier-dev/protocol/usage/usageSummaryCalendarPricing': m2796,
+    '@happier-dev/protocol/usage/usageTimingV1': m2797,
+    '@happier-dev/protocol/usage/usageTokenCategories': m2798,
+    '@happier-dev/protocol/usage/usageVocabularyV1': m2799,
+    '@happier-dev/protocol/usage/usageWorkEvidence': m2800,
+    '@happier-dev/protocol/usage/usageWorkIntervals': m2801,
+    '@happier-dev/protocol/usage/usageWorkSources': m2802,
+    '@happier-dev/protocol/valueRefs/valueRefV1': m2803,
+    '@happier-dev/protocol/voice/actions': m2804,
+    '@happier-dev/protocol/voice/attemptPresentation': m2805,
+    '@happier-dev/protocol/voice/diagnostics': m2806,
+    '@happier-dev/protocol/voice/modelPacks/artifactBindingV1': m2807,
+    '@happier-dev/protocol/voice/modelPacks/artifactRolesV1': m2808,
+    '@happier-dev/protocol/voice/modelPacks/catalog': m2809,
+    '@happier-dev/protocol/voice/modelPacks/contributionV1': m2810,
+    '@happier-dev/protocol/voice/modelPacks/identityV1': m2811,
+    '@happier-dev/protocol/voice/modelPacks/kokoro': m2812,
+    '@happier-dev/protocol/voice/modelPacks/manifest': m2813,
+    '@happier-dev/protocol/voice/modelPacks/pathSafety': m2814,
+    '@happier-dev/protocol/voice/modelPacks/promotionIntentV1': m2815,
+    '@happier-dev/protocol/voice/outputEvents': m2816,
+    '@happier-dev/protocol/voice/prompt': m2817,
+    '@happier-dev/protocol/voice/providerContributionIdentity': m2818,
+    '@happier-dev/protocol/voice/providerOperations': m2819,
+    '@happier-dev/protocol/voice/realtime': m2823,
+    '@happier-dev/protocol/voice/realtime/agentSession': m2820,
+    '@happier-dev/protocol/voice/realtime/capabilities': m2821,
+    '@happier-dev/protocol/voice/realtime/events': m2822,
+    '@happier-dev/protocol/voice/realtime/index': m2823,
+    '@happier-dev/protocol/voice/realtime/providerSettings': m2824,
+    '@happier-dev/protocol/voice/realtime/toolArguments': m2825,
+    '@happier-dev/protocol/voice/realtime/transcriptLadder': m2826,
+    '@happier-dev/protocol/voice/recognitionLanguage': m2827,
+    '@happier-dev/protocol/voice/runtimeConfig': m2828,
+    '@happier-dev/protocol/voice/sessionBinding': m2829,
+    '@happier-dev/protocol/voice/settings/builtInRegistry': m2830,
+    '@happier-dev/protocol/voice/settings/conversationLanguage': m2831,
+    '@happier-dev/protocol/voice/settings/dictation': m2832,
+    '@happier-dev/protocol/voice/settings/externalProviderSettings': m2833,
+    '@happier-dev/protocol/voice/settings/generatedBundledVoiceSelectionOptions': m2834,
+    '@happier-dev/protocol/voice/settings/handsFree': m2835,
+    '@happier-dev/protocol/voice/settings/legacyOpenAiChatProviderMigration': m2836,
+    '@happier-dev/protocol/voice/settings/localConversation': m2837,
+    '@happier-dev/protocol/voice/settings/localDirect': m2838,
+    '@happier-dev/protocol/voice/settings/localStt': m2839,
+    '@happier-dev/protocol/voice/settings/localTts': m2840,
+    '@happier-dev/protocol/voice/settings/migrations/legacyAdapters': m2841,
+    '@happier-dev/protocol/voice/settings/migrations/releasedVoiceSettingsCompatibility': m2842,
+    '@happier-dev/protocol/voice/settings/migrations/speechProviders': m2843,
+    '@happier-dev/protocol/voice/settings/providerConfig': m2844,
+    '@happier-dev/protocol/voice/settings/providerFieldBinding': m2845,
+    '@happier-dev/protocol/voice/settings/providerRegistry': m2846,
+    '@happier-dev/protocol/voice/settings/providerSelection': m2847,
+    '@happier-dev/protocol/voice/settings/providerSettings': m2848,
+    '@happier-dev/protocol/voice/settings/speechProvider': m2849,
+    '@happier-dev/protocol/voice/settings/timing': m2850,
+    '@happier-dev/protocol/voice/settings/voiceAgentSelection': m2851,
+    '@happier-dev/protocol/voice/settings/voiceCredentialBindingCompatibility': m2852,
+    '@happier-dev/protocol/voice/settings/voiceSettingBindings': m2853,
+    '@happier-dev/protocol/voice/settings/voiceSettings': m2854,
+    '@happier-dev/protocol/voice/settings/voiceSettingsPersistence': m2855,
+    '@happier-dev/protocol/voice/settings/welcome': m2856,
+    '@happier-dev/protocol/voice/sourceDisclosureV1': m2857,
+    '@happier-dev/protocol/voice/speech': m2858,
+    '@happier-dev/protocol/voice/speechText': m2859,
+    '@happier-dev/protocol/voice/toolResultsChannel': m2860,
+    '@happier-dev/protocol/voice/voiceAgentRunMetadataContract': m2861,
+    '@happier-dev/protocol/voice/voiceAgentRunMetadataV1': m2862,
+    '@happier-dev/protocol/widgets': m2877,
+    '@happier-dev/protocol/widgets/actionIdsV1': m2863,
+    '@happier-dev/protocol/widgets/actionsV1': m2864,
+    '@happier-dev/protocol/widgets/builtinWidgetDescriptorV1': m2865,
+    '@happier-dev/protocol/widgets/definitionActionIdsV1': m2866,
+    '@happier-dev/protocol/widgets/definitionActionsV1': m2867,
+    '@happier-dev/protocol/widgets/definitionIdsV1': m2868,
+    '@happier-dev/protocol/widgets/executeWidgetDefinitionActionV1': m2869,
+    '@happier-dev/protocol/widgets/executeWidgetInstanceActionV1': m2870,
+    '@happier-dev/protocol/widgets/executeWidgetLayoutFragmentActionV1': m2871,
+    '@happier-dev/protocol/widgets/executeWidgetSnapshotPostV1': m2872,
+    '@happier-dev/protocol/widgets/fragmentActionIdsV1': m2873,
+    '@happier-dev/protocol/widgets/fragmentActionsV1': m2874,
+    '@happier-dev/protocol/widgets/fragmentIdsV1': m2875,
+    '@happier-dev/protocol/widgets/homeWidgetActionPortV1': m2876,
+    '@happier-dev/protocol/widgets/index': m2877,
+    '@happier-dev/protocol/widgets/instanceIdsV1': m2878,
+    '@happier-dev/protocol/widgets/publicProfileWidgetPresetsV1': m2879,
+    '@happier-dev/protocol/widgets/sessionBoardWidgetActionPortV1': m2880,
+    '@happier-dev/protocol/widgets/usageBreakdownTitleV1': m2881,
+    '@happier-dev/protocol/widgets/usageWidgetPresetsV1': m2882,
+    '@happier-dev/protocol/widgets/widgetActionInputResolverV1': m2883,
+    '@happier-dev/protocol/widgets/widgetActionScopeV1': m2884,
+    '@happier-dev/protocol/widgets/widgetApprovalPresentationV1': m2885,
+    '@happier-dev/protocol/widgets/widgetAreaReadFailureV1': m2886,
+    '@happier-dev/protocol/widgets/widgetConnectedAccountPurposeBindingV1': m2887,
+    '@happier-dev/protocol/widgets/widgetDefinitionArtifactV1': m2888,
+    '@happier-dev/protocol/widgets/widgetDefinitionPromotionV1': m2889,
+    '@happier-dev/protocol/widgets/widgetDefinitionPublicationV1': m2890,
+    '@happier-dev/protocol/widgets/widgetDefinitionV1': m2891,
+    '@happier-dev/protocol/widgets/widgetInputAdmissionV1': m2892,
+    '@happier-dev/protocol/widgets/widgetInstanceV1': m2893,
+    '@happier-dev/protocol/widgets/widgetLayoutFragmentArtifactV1': m2894,
+    '@happier-dev/protocol/widgets/widgetLayoutFragmentV1': m2895,
+    '@happier-dev/protocol/widgets/widgetLayoutItemV1': m2896,
+    '@happier-dev/protocol/widgets/widgetPresentationV1': m2897,
+    '@happier-dev/protocol/widgets/widgetPublicProfileAdmissionV1': m2898,
+    '@happier-dev/protocol/widgets/widgetPublicSnapshotPreparationV1': m2899,
+    '@happier-dev/protocol/widgets/widgetPublicSnapshotV1': m2900,
+    '@happier-dev/protocol/widgets/widgetSharedInputAdmissionV1': m2901,
+    '@happier-dev/protocol/widgets/widgetSnapshotV1': m2902,
+    '@happier-dev/protocol/widgets/widgetSurfaceArtifactV1': m2903,
+    '@happier-dev/protocol/widgets/widgetViewerPurposeV1': m2904,
+    '@happier-dev/protocol/widgets/workBoardWidgetActionPortV1': m2905,
+    '@happier-dev/protocol/workflows': m2924,
+    '@happier-dev/protocol/workflows/actionsV1': m2906,
+    '@happier-dev/protocol/workflows/builtins/answerAndReview': m2907,
+    '@happier-dev/protocol/workflows/builtins/backupExamples': m2908,
+    '@happier-dev/protocol/workflows/builtins/catalog': m2909,
+    '@happier-dev/protocol/workflows/builtins/debate': m2910,
+    '@happier-dev/protocol/workflows/builtins/definitionParts': m2911,
+    '@happier-dev/protocol/workflows/builtins/deploymentFleetV1': m2912,
+    '@happier-dev/protocol/workflows/builtins/deploymentMoveV1': m2913,
+    '@happier-dev/protocol/workflows/builtins/examples': m2914,
+    '@happier-dev/protocol/workflows/builtins/freshOpinions': m2915,
+    '@happier-dev/protocol/workflows/builtins/keepGoing': m2916,
+    '@happier-dev/protocol/workflows/builtins/machineUpdatesV1': m2917,
+    '@happier-dev/protocol/workflows/builtins/openAPullRequest': m2918,
+    '@happier-dev/protocol/workflows/builtins/planWithAPanel': m2919,
+    '@happier-dev/protocol/workflows/builtins/reviewAndConverge': m2920,
+    '@happier-dev/protocol/workflows/builtins/starterActionsV1': m2921,
+    '@happier-dev/protocol/workflows/commandOutputV1': m2922,
+    '@happier-dev/protocol/workflows/composeWorkflowRunWorkerUpdateV1': m2923,
+    '@happier-dev/protocol/workflows/index': m2924,
+    '@happier-dev/protocol/workflows/invocationRecovery': m2925,
+    '@happier-dev/protocol/workflows/listing/workflowListFilterV1': m2926,
+    '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1': m2927,
+    '@happier-dev/protocol/workflows/stepActionsV1': m2928,
+    '@happier-dev/protocol/workflows/triggers/triggerTargetV1': m2929,
+    '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1': m2930,
+    '@happier-dev/protocol/workflows/workflowActionTextV1': m2931,
+    '@happier-dev/protocol/workflows/workflowAuthoringEqualityV1': m2932,
+    '@happier-dev/protocol/workflows/workflowBlockIdProtocol': m2933,
+    '@happier-dev/protocol/workflows/workflowComposerDocumentV1': m2934,
+    '@happier-dev/protocol/workflows/workflowDefinitionEditV1': m2935,
+    '@happier-dev/protocol/workflows/workflowDefinitionRefV1': m2936,
+    '@happier-dev/protocol/workflows/workflowDefinitionResolverV1': m2937,
+    '@happier-dev/protocol/workflows/workflowDefinitionV1': m2938,
+    '@happier-dev/protocol/workflows/workflowDestinationsV1': m2939,
+    '@happier-dev/protocol/workflows/workflowDiscussionCaptureV1': m2940,
+    '@happier-dev/protocol/workflows/workflowDiscussionContextV1': m2941,
+    '@happier-dev/protocol/workflows/workflowDiscussionPublicationV1': m2942,
+    '@happier-dev/protocol/workflows/workflowDiscussionRoundV1': m2943,
+    '@happier-dev/protocol/workflows/workflowDocumentSchemasV1': m2944,
+    '@happier-dev/protocol/workflows/workflowDocumentV1': m2945,
+    '@happier-dev/protocol/workflows/workflowEffectActionIdsV1': m2946,
+    '@happier-dev/protocol/workflows/workflowIdsV1': m2947,
+    '@happier-dev/protocol/workflows/workflowInvocationIdentityV1': m2948,
+    '@happier-dev/protocol/workflows/workflowInvocationMembersV1': m2949,
+    '@happier-dev/protocol/workflows/workflowInvocationStructureV1': m2950,
+    '@happier-dev/protocol/workflows/workflowLeafV1': m2951,
+    '@happier-dev/protocol/workflows/workflowPluginSourceContractV1': m2952,
+    '@happier-dev/protocol/workflows/workflowPluginSourceV1': m2953,
+    '@happier-dev/protocol/workflows/workflowProgressV1': m2954,
+    '@happier-dev/protocol/workflows/workflowReferenceV1': m2955,
+    '@happier-dev/protocol/workflows/workflowResultFieldsV1': m2956,
+    '@happier-dev/protocol/workflows/workflowRunAccountEncryptionV1': m2957,
+    '@happier-dev/protocol/workflows/workflowRunDataKeyV1': m2958,
+    '@happier-dev/protocol/workflows/workflowRunDisplayMetadataV1': m2959,
+    '@happier-dev/protocol/workflows/workflowRunKeyV1': m2960,
+    '@happier-dev/protocol/workflows/workflowRunStateV1': m2961,
+    '@happier-dev/protocol/workflows/workflowRunStorageV1': m2962,
+    '@happier-dev/protocol/workflows/workflowRunVisibilityV1': m2963,
+    '@happier-dev/protocol/workflows/workflowSessionAuthoringV1': m2964,
+    '@happier-dev/protocol/workflows/workflowSessionContextV1': m2965,
+    '@happier-dev/protocol/workflows/workflowSessionScopeV1': m2966,
+    '@happier-dev/protocol/workflows/workflowStartPreparationV1': m2967,
+    '@happier-dev/protocol/workflows/workflowStepLabel': m2968,
+    '@happier-dev/protocol/workflows/workflowStepSelectionV1': m2969,
+    '@happier-dev/protocol/workflows/workflowStoredContentV1': m2970,
+    '@happier-dev/protocol/workflows/workflowTargetUnavailableReasonV1': m2971,
+    '@happier-dev/protocol/workflows/workflowV1': m2972,
+    '@happier-dev/protocol/workflows/workflowValidationV1': m2973,
+    '@happier-dev/protocol/workflows/workflowWorkspaceV1': m2974,
+    '@happier-dev/protocol/workspace/anchors/v1': m2975,
+    '@happier-dev/protocol/workspace/favicon/v1': m2976,
+    '@happier-dev/protocol/workspace/workspaceTabsV1': m2977,
+    '@happier-dev/protocol/workspaces': m2979,
+    '@happier-dev/protocol/workspaces/checkoutKindSchema': m2978,
+    '@happier-dev/protocol/workspaces/index': m2979,
+    '@happier-dev/protocol/workspaces/locationSchema': m2980,
+    '@happier-dev/protocol/workspaces/manifestSchema': m2981,
+    '@happier-dev/protocol/workspaces/projectServicePlacementV1': m2982,
+    '@happier-dev/protocol/workspaces/projectServiceRelocationV1': m2983,
+    '@happier-dev/protocol/workspaces/projectSetup/projectManifestDocument': m2984,
+    '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1': m2985,
+    '@happier-dev/protocol/workspaces/projectSetup/projectMemoryDemandV1': m2986,
+    '@happier-dev/protocol/workspaces/projectSetup/projectSetupSuccessV1': m2987,
+    '@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1': m2988,
+    '@happier-dev/protocol/workspaces/projectWorkerExecutionV1': m2989,
+    '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1': m2990,
+    '@happier-dev/protocol/workspaces/workspaceExecutionConfigClientV1': m2991,
+    '@happier-dev/protocol/workspaces/workspaceExecutionConfigRowV1': m2992,
+    '@happier-dev/protocol/workspaces/workspaceRefResolutionV1': m2993,
+    '@happier-dev/protocol/workspaces/workspaceRefV1': m2994,
+    '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1': m2995,
+    '@happier-dev/protocol/workspaces/workspaceSyncTopology': m2996,
+    '@happier-dev/protocol/zodRuntimePolicy': m2997,
 });

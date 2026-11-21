@@ -236,7 +236,6 @@ import {
 } from '@/session/services/pluginSessionHandleCapabilities';
 import { createUnavailablePluginServices } from './invocation/services/unavailable';
 import { projectOrdinaryPluginSessionLiveCapabilities } from './context/session/ordinaryPluginSessionLiveCapabilities';
-import type { createTargetActionInvocationRegistry } from './invocation/targetActionRegistry';
 import {
     createCliActionExecutorFromCredentials,
     type CliActionMachineAdmissionTransport,
@@ -974,7 +973,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         includeDefaults?: boolean;
         signal?: AbortSignal;
     }>) => Promise<AgentCliSessionCommandPluginSettingsV1 | null> = async () => null;
-    let targetActionInvocations: ReturnType<typeof createTargetActionInvocationRegistry> | null = null;
+    let targetActionInvocations: ReturnType<typeof buildTargetActionInvocationRegistry> | null = null;
     let disposeInvocationServiceOwners: () => Promise<void> = async () => {};
     let resolvedRuntimeRegistryOwner: ResolvedExecutablePluginRuntimeRegistry | null = null;
     // Holds `fenceTerminalActivationFailure` below, published once the

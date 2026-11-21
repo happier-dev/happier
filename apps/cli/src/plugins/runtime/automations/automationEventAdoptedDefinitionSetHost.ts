@@ -172,11 +172,14 @@ async function projectStoredDefinition(params: Readonly<{
   });
   if (!projected.success) return null;
   if (projected.data.observationTransport.kind === 'durablePush') {
-    if (payload.data.webhookRoutingSourceInstanceId === undefined) return null;
+    const routingSource = payload.data.webhookRoutingSourceInstanceId ?? (
+      params.storedDefinition.managedRepositoryHook ? payload.data.sourceInstanceId : undefined
+    );
+    if (routingSource === undefined) return null;
     return {
       definition: {
         ...projected.data,
-        webhookRoutingSourceInstanceId: payload.data.webhookRoutingSourceInstanceId,
+        webhookRoutingSourceInstanceId: routingSource,
       },
       payloadValidator,
       subjectDeclaration,

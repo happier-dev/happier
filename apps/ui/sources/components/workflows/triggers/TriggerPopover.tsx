@@ -163,7 +163,7 @@ type TriggerPopoverBaseProps = Readonly<{
     activityEvent?: AutomationRunPluginEventTriggerEvidenceV1;
     /** Host rows under When (the set's Runs on), and after Then (a workflow's Inputs and Roles). */
     setRows?: React.ReactNode;
-    afterRows?: React.ReactNode;
+    afterRows?: React.ReactNode | ((when: TriggerWhenValue) => React.ReactNode);
     /** False while a host row the write needs (Runs on) is unresolved. */
     hostComplete?: boolean;
     /**
@@ -766,7 +766,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                                     ) : null}
                                 </>
                             ) : null}
-                            {props.afterRows ?? null}
+                            {typeof props.afterRows === 'function' ? props.afterRows(when) : props.afterRows ?? null}
                             </> : null}
                         </ItemGroup>
                         {/* Placement rows already present this review; Session hosts supply only their Machine. */}

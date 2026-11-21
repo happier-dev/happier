@@ -1,5 +1,7 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
+import type { HomeReachabilityV1 } from '../home/governance/reachability.js';
+import { classifyProviderHostnameSyntax, parseProviderIpAddress } from '../providers/safety/locality.js';
 import { asProtocolZod, projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 
 import { AutomationEventPositiveSafeIntegerV1Schema } from './automationColumnBoundsV1.js';
@@ -10,6 +12,38 @@ import {
 } from './automationEventJsonBoundsV1.js';
 import type { PluginJsonSchemaV2 } from '../plugins/contributions/publicTypes.js';
 import { embedProtocolJsonSchema } from '../plugins/actions/protocolComposableSchema.js';
+
+/** The existing GitHub push Event can gain managed delivery after its polling trigger commits. */
+export const GITHUB_MANAGED_PUSH_EVENT_LOCAL_ID_V1 = 'automation/repository-pushed-v1';
+
+/** A configured HTTPS ingress is a candidate. GitHub delivery establishes readiness. */
+export function readManagedGithubWebhookHomeUrlV1(
+  home: Pick<HomeReachabilityV1, 'publicAddress' | 'hostAccess'>,
+): string | null {
+  const { url, inferredFrom } = home.publicAddress;
+  if (!url || inferredFrom === 'tailscale_serve'
+    || (inferredFrom === 'relay_access' && home.hostAccess?.exposure !== 'public')) return null;
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname;
+    const ip = parseProviderIpAddress(hostname);
+    return parsed.protocol === 'https:' && classifyProviderHostnameSyntax(hostname) !== 'loopback'
+      && (ip === null || ip.locality === 'public') ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+export function readGithubRepositoryIdFromEventSourceV1(sourceInstanceId: string): string | undefined {
+  return /^github:repository:([1-9][0-9]*)$/u.exec(sourceInstanceId)?.[1];
+}
+export const ManagedGithubRepositoryIdV1Schema = lazyZodSchema(() => z.string().check(z.regex(/^[1-9][0-9]*$/u)));
+export const ManagedGithubRepositoryHookSaveResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('polling'), code: z.string() }),
+  z.strictObject({ kind: z.literal('pendingVerification') }),
+  z.strictObject({ kind: z.literal('webhook') }),
+]));
+export type ManagedGithubRepositoryHookSaveResultV1 = z.infer<typeof ManagedGithubRepositoryHookSaveResultV1Schema>;
 
 /** The deployment setup's one finite repository lookup uses the existing repository setup Action. */
 export const GITHUB_EVENT_SETUP_ACTIONS_V1 = Object.freeze({

@@ -1869,6 +1869,7 @@ export const PLUGIN_UI_HOST_PROVIDED_PROTOCOL_MODULE_LOADERS: Readonly<Record<st
     '@happier-dev/protocol/plugins/webhooks/deliveryV1': () => require('@happier-dev/protocol/plugins/webhooks/deliveryV1'),
     '@happier-dev/protocol/plugins/webhooks/endpointActionIdsV1': () => require('@happier-dev/protocol/plugins/webhooks/endpointActionIdsV1'),
     '@happier-dev/protocol/plugins/webhooks/endpointV1': () => require('@happier-dev/protocol/plugins/webhooks/endpointV1'),
+    '@happier-dev/protocol/plugins/webhooks/managedRepositoryWebhookRpcV1': () => require('@happier-dev/protocol/plugins/webhooks/managedRepositoryWebhookRpcV1'),
     '@happier-dev/protocol/plugins/webhooks/statusV1': () => require('@happier-dev/protocol/plugins/webhooks/statusV1'),
     '@happier-dev/protocol/profiles/backendProfileSchema': () => require('@happier-dev/protocol/profiles/backendProfileSchema'),
     '@happier-dev/protocol/profiles/builtInBackendProfiles': () => require('@happier-dev/protocol/profiles/builtInBackendProfiles'),

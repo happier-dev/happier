@@ -278,7 +278,12 @@ export async function admitVerifiedPluginWebhookV1(params: Readonly<{
         const stored = createPluginWebhookStoredEnvelopeV1({ account, content });
         if (!stored.ok) return { kind: "rejected", statusCode: 503, code: "unavailable" };
 
+        // The verifier authenticates the body; this header correlates that verified
+        // delivery with the hook this endpoint previously created.
+        const githubHookId = route.verifierKind === "github_hmac_sha256_v1"
+            ? readSingleHeader(params.headers, "x-github-hook-id") : undefined;
         const admitted = await dependencies.admitDelivery({
+            ...(githubHookId && /^[1-9][0-9]*$/u.test(githubHookId) ? { githubHookId } : {}),
             endpointId: endpoint.endpointId,
             expectedEndpointRevision: endpoint.revision,
             routeId: route.routeId,

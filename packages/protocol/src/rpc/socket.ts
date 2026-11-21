@@ -1,4 +1,5 @@
 import * as zMini from '../zodRuntimePolicy.js';
+import type { ManagedPluginWebhookOriginV1 } from '../plugins/webhooks/managedRepositoryWebhookRpcV1.js';
 import { AuthTokenAuthenticationEvidenceSnapshotV1Schema } from '../auth/authToken.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { IrohEndpointDescriptorV1Schema } from '../connectivity/iroh/endpointDescriptorV1.js';
@@ -423,6 +424,7 @@ export const SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS = {
   SESSION_PERMISSION_RESPOND: 'session.permission.respond',
   AUTOMATION_REPLY_HANDOFF_SERVER_ORIGIN: 'automation.replyHandoff.serverOrigin',
   SESSION_SERVER_START_SERVER_ORIGIN: 'session.serverStart.serverOrigin',
+  MANAGED_PLUGIN_WEBHOOK_SERVER_ORIGIN: 'plugin.webhook.managed.serverOrigin',
   ACTION_API_SERVER_ORIGIN: 'action.api.serverOrigin',
   MACHINE_ACCESS_LOSS_SERVER_ORIGIN: 'machine.accessLoss.serverOrigin',
   LOCAL_SERVICES_PREVIEW_ADMISSION_SERVER_ORIGIN: 'localServices.preview.admission.serverOrigin',
@@ -585,6 +587,7 @@ export type SocketRpcAuthorizationContext =
   | SessionFollowSourceKeyPrepareAuthorizationV1
   | SocketRpcAutomationReplyHandoffServerOriginAuthorizationContext
   | SocketRpcSessionServerStartServerOriginAuthorizationContext
+  | ManagedPluginWebhookOriginV1
   | SocketRpcActionApiServerOriginAuthorizationContext
   | SocketRpcMachineAccessLossServerOriginAuthorizationContext
   | SocketRpcLocalServicesPreviewAdmissionServerOriginAuthorizationContext

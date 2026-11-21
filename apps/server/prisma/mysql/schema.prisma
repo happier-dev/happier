@@ -4288,6 +4288,7 @@ model PluginWebhookEndpoint {
     /// status) derives `ready` from it, so an enabled endpoint the provider was never configured
     /// with is never reported as a working delivery path.
     providerConfirmedAt               DateTime?
+    providerRepositoryHookId          String?
     tombstoneExpiresAt                DateTime?
     targetMachineId                   String? @db.VarChar(256)
     targetMachineInstallationId       String? @db.VarChar(256)

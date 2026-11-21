@@ -1,16 +1,18 @@
 import * as React from 'react';
 import type { View } from 'react-native';
+import { GITHUB_EVENT_SETUP_ACTIONS_V1, GITHUB_MANAGED_PUSH_EVENT_LOCAL_ID_V1 } from '@happier-dev/protocol/automations/event-setup-result';
 import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 import { addWorkflowTrigger } from '@/sync/domains/workflows/workflowTriggerActions';
 import { sync } from '@/sync/sync';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { DeploymentPushTriggerFields } from './DeploymentPushTriggerFields';
+import { DeploymentPushTriggerFields, showDeploymentPushDeliveryResult } from './DeploymentPushTriggerFields';
 import { TriggerPopover } from './TriggerPopover';
 import { buildDeploymentPushRequest, type DeploymentPushSetupConfig } from './deploymentPushSetup';
 
-const PUSH_EVENT = { pluginId: 'happier.scm.forge.github', localId: 'automation/repository-pushed-v1' } as const;
+const PUSH_EVENT = { pluginId: GITHUB_EVENT_SETUP_ACTIONS_V1.pluginId,
+  localId: GITHUB_MANAGED_PUSH_EVENT_LOCAL_ID_V1 } as const;
 const NO_WORKFLOWS = [] as const;
 
 /** Repository setup and save failures remain owned by the ordinary Event/trigger editor. */
@@ -41,12 +43,14 @@ export function DeploymentPushTriggerSetup(props: Readonly<{
     machineId={props.config.project.machineId}
     directory={props.config.project.directory}
     serverId={props.config.environment.serverId}
-    afterRows={<DeploymentPushTriggerFields branch={branch} onBranchChange={setBranch}
-      approval={displayedApproval} inherited={approval === undefined} onApprovalChange={setApproval} />}
+    afterRows={when => <DeploymentPushTriggerFields branch={branch} onBranchChange={setBranch}
+      approval={displayedApproval} inherited={approval === undefined} onApprovalChange={setApproval}
+      source={when.kind === 'pluginEvent' ? when.value : undefined} />}
     onSubmit={async (_value, write) => {
       if (write.trigger === null) return;
-      await addWorkflowTrigger(buildDeploymentPushRequest(props.config, write.trigger, approval, branch),
+      const saved = await addWorkflowTrigger(buildDeploymentPushRequest(props.config, write.trigger, approval, branch),
         props.accountLifetime === undefined ? {} : { accountLifetime: props.accountLifetime });
+      showDeploymentPushDeliveryResult(saved.managedGithubRepositoryHook);
       fireAndForget(sync.refreshAutomations());
     }}
   />;

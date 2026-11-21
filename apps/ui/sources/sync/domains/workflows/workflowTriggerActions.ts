@@ -22,11 +22,7 @@ import { readManagedMachineTriggerAction } from '@happier-dev/protocol/actions/e
  * a revision conflict or a typed refusal rather than on prose.
  */
 
-export type WorkflowTriggerWriteResult = Readonly<{
-    set: WorkflowTriggerSetV1;
-    triggerId?: string;
-    triggerRevision?: number;
-}>;
+export type WorkflowTriggerWriteResult = Readonly<z.output<typeof WorkflowTriggerWriteResultV1Schema>>;
 
 type CallOptions = Readonly<{
     signal?: AbortSignal;

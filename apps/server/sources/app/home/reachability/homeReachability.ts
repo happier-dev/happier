@@ -64,6 +64,20 @@ function projectIrohState(state: HomeIrohEndpointState): HomeReachabilityV1["iro
     return state.status === "not-composed" ? "not_composed" : state.status;
 }
 
+export function projectHomeIngressReachability(params: Readonly<{
+    env: ServerConfigEnv;
+    access: InferredPublicServerAccess | null;
+}>): Pick<HomeReachabilityV1, "publicAddress" | "hostAccess"> {
+    const relayAccess = params.access?.relayAccess ?? null;
+    const method = relayAccess ? getRelayAccessProviderDescriptor({ kind: 'builtin', id: relayAccess.providerId }).definition.homeAccessMethod : undefined;
+    return {
+        publicAddress: projectPublicAddress(params.env, params.access),
+        hostAccess: relayAccess && method
+            ? { method, exposure: relayAccess.exposure, shareUrl: relayAccess.shareUrl }
+            : null,
+    };
+}
+
 export function projectHomeReachability(params: Readonly<{
     /** The live configuration overlay (deployment env, stored Home values, inferred address). */
     env: ServerConfigEnv;
@@ -71,15 +85,9 @@ export function projectHomeReachability(params: Readonly<{
     iroh: HomeIrohEndpointState;
     irohAvailable: boolean;
 }>): HomeReachabilityV1 {
-    const relayAccess = params.access?.relayAccess ?? null;
-    // Observed native status is a projection of the static pre-plugin Home catalog.
-    const method = relayAccess ? getRelayAccessProviderDescriptor({ kind: 'builtin', id: relayAccess.providerId }).definition.homeAccessMethod : undefined;
     return {
-        publicAddress: projectPublicAddress(params.env, params.access),
+        ...projectHomeIngressReachability(params),
         webApp: projectWebApp(params.env),
-        hostAccess: relayAccess && method
-            ? { method, exposure: relayAccess.exposure, shareUrl: relayAccess.shareUrl }
-            : null,
         iroh: {
             availability: params.irohAvailable ? "available" : "not_available",
             mode: readServerConfig(params.env, SERVER_CONFIG.HAPPIER_HOME_IROH_MODE) === "disabled" ? "disabled" : "enabled",

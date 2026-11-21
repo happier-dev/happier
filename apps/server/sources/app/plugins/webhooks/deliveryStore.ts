@@ -5,6 +5,7 @@ import type { PluginWebhookDeliveryMovePendingResultV1 } from '@happier-dev/prot
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { PLUGIN_WEBHOOK_MAX_STORED_ENVELOPE_BYTES_V1, StoredPluginWebhookDeliveryContentV1Schema } from '@happier-dev/protocol/plugins/webhooks/deliveryV1';
 
+import { ensureAutomationEventCatalogStateTx } from "@/app/automations/automationEnabledTransition";
 import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/accountEncryptionTransition";
 import { resolveCurrentClaimablePluginMachineMaterializationTx } from "@/app/plugins/availability/operations";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
@@ -210,10 +211,13 @@ function accountEncryptionMatches(params: Readonly<{
 }
 
 async function confirmPluginWebhookEndpointForAuthenticatedDeliveryInTx(
-    tx: Pick<Prisma.TransactionClient, "pluginWebhookEndpoint">,
+    tx: Prisma.TransactionClient,
     params: Readonly<{
         endpointId: string;
         providerConfirmedAt: Date | null;
+        providerRepositoryHookId: string | null;
+        githubHookId?: string;
+        accountId: string;
         currentCredentialVersionId: string | null;
         authenticatedCredentialVersionId?: string;
         now: Date;
@@ -224,9 +228,36 @@ async function confirmPluginWebhookEndpointForAuthenticatedDeliveryInTx(
         || params.authenticatedCredentialVersionId === undefined
         || params.currentCredentialVersionId !== params.authenticatedCredentialVersionId
     ) return;
-    await tx.pluginWebhookEndpoint.updateMany({
-        where: { id: params.endpointId, providerConfirmedAt: null },
+    const pendingAttachment = {
+        automation: { accountId: params.accountId, deletedAt: null },
+        kind: "pluginEvent" as const,
+        deletedAt: null,
+        observationTransport: "checkpointedPull" as const,
+        webhookEndpointId: params.endpointId,
+    };
+    if (params.providerRepositoryHookId !== null) {
+        if (params.githubHookId !== params.providerRepositoryHookId) return;
+    } else if (await tx.automationTrigger.findFirst({ where: pendingAttachment, select: { id: true } })) {
+        // A push trigger is still waiting for a conclusive registration response.
+        return;
+    }
+    const confirmed = await tx.pluginWebhookEndpoint.updateMany({
+        where: { id: params.endpointId, providerConfirmedAt: null,
+            providerRepositoryHookId: params.providerRepositoryHookId },
         data: { providerConfirmedAt: params.now },
+    });
+    if (confirmed.count !== 1 || params.providerRepositoryHookId === null) return;
+    const promoted = await tx.automationTrigger.updateMany({
+        where: pendingAttachment,
+        data: { observationTransport: "durablePush",
+            // Existing durable push accepts times strictly after this boundary.
+            // Include the signed delivery that changes the transport.
+            observationStartsAt: new Date(params.now.getTime() - 1),
+            watcherMachineId: null, watcherMachineInstallationId: null,
+            watcherPluginId: null, watcherMaterializationId: null },
+    });
+    if (promoted.count > 0) await ensureAutomationEventCatalogStateTx({
+        tx, accountId: params.accountId, projectionChanged: true,
     });
 }
 
@@ -259,6 +290,7 @@ export async function admitPluginWebhookDeliveryV1(params: Readonly<{
     verifierKind: PluginWebhookVerifierV1['kind'];
     /** The exact credential version whose secret verified this delivery. */
     credentialVersionId?: string;
+    githubHookId?: string;
     deliveryIdentityDigest: string;
     stored: PluginWebhookStoredEnvelopeReadyV1;
     now?: Date;
@@ -315,6 +347,7 @@ export async function admitPluginWebhookDeliveryV1(params: Readonly<{
                     handlerActionId: true,
                     sourceInstanceId: true,
                     providerConfirmedAt: true,
+                    providerRepositoryHookId: true,
                     route: {
                         select: {
                             currentCredential: { select: { credentialVersionId: true } },
@@ -354,7 +387,8 @@ export async function admitPluginWebhookDeliveryV1(params: Readonly<{
                 authenticatedCredentialVersionId: params.credentialVersionId,
                 now,
             });
-            if (!credentialStillAccepted) {
+            if (!credentialStillAccepted || (endpoint.providerRepositoryHookId !== null
+                && endpoint.providerRepositoryHookId !== params.githubHookId)) {
                 return { kind: "endpointUnavailable" };
             }
 
@@ -366,6 +400,9 @@ export async function admitPluginWebhookDeliveryV1(params: Readonly<{
                 await confirmPluginWebhookEndpointForAuthenticatedDeliveryInTx(tx, {
                     endpointId: endpoint.id,
                     providerConfirmedAt: endpoint.providerConfirmedAt,
+                    providerRepositoryHookId: endpoint.providerRepositoryHookId,
+                    githubHookId: params.githubHookId,
+                    accountId: endpoint.accountId,
                     currentCredentialVersionId: endpoint.route.currentCredential?.credentialVersionId ?? null,
                     authenticatedCredentialVersionId: params.credentialVersionId,
                     now,
@@ -521,6 +558,9 @@ export async function admitPluginWebhookDeliveryV1(params: Readonly<{
         await confirmPluginWebhookEndpointForAuthenticatedDeliveryInTx(tx, {
             endpointId: endpoint.id,
             providerConfirmedAt: endpoint.providerConfirmedAt,
+            providerRepositoryHookId: endpoint.providerRepositoryHookId,
+            githubHookId: params.githubHookId,
+            accountId: endpoint.accountId,
             currentCredentialVersionId: endpoint.route.currentCredential?.credentialVersionId ?? null,
             authenticatedCredentialVersionId: params.credentialVersionId,
             now,
@@ -559,7 +599,9 @@ export async function admitPluginWebhookDeliveryV1(params: Readonly<{
                 },
                 select: {
                     id: true,
+                    accountId: true,
                     providerConfirmedAt: true,
+                    providerRepositoryHookId: true,
                     route: {
                         select: {
                             currentCredential: { select: { credentialVersionId: true } },
@@ -570,7 +612,8 @@ export async function admitPluginWebhookDeliveryV1(params: Readonly<{
                     },
                 },
             });
-            if (!endpoint) return null;
+            if (!endpoint || endpoint.accountId === null || (endpoint.providerRepositoryHookId !== null
+                && endpoint.providerRepositoryHookId !== params.githubHookId)) return null;
             if (!isPluginWebhookCredentialAcceptedAt({
                 verifierKind: params.verifierKind,
                 currentCredentialVersionId: endpoint.route.currentCredential?.credentialVersionId ?? null,
@@ -586,6 +629,9 @@ export async function admitPluginWebhookDeliveryV1(params: Readonly<{
             await confirmPluginWebhookEndpointForAuthenticatedDeliveryInTx(tx, {
                 endpointId: endpoint.id,
                 providerConfirmedAt: endpoint.providerConfirmedAt,
+                providerRepositoryHookId: endpoint.providerRepositoryHookId,
+                githubHookId: params.githubHookId,
+                accountId: endpoint.accountId,
                 currentCredentialVersionId: endpoint.route.currentCredential?.credentialVersionId ?? null,
                 authenticatedCredentialVersionId: params.credentialVersionId,
                 now,

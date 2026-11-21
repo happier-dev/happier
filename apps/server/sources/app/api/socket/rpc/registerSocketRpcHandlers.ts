@@ -29,6 +29,7 @@ import { CURRENT_SESSION_PRESENTATION_BIND_RPC_METHOD, CURRENT_SESSION_PRESENTAT
 import type { SessionInputMachineTargetV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { ExternalActionMachineRpcExecutionV1Schema, isExternalActionManagedWakeRootV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { SESSION_SERVER_START_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/sessions/creation/sessionServerStartV1';
+import { MANAGED_PLUGIN_WEBHOOK_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/plugins/webhooks/managedRepositoryWebhookRpcV1';
 import { SessionFollowSourceKeyPrepareAuthorizationV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceKeyPreparationV1';
 import { resolveEphemeralRunnerMachineRpcAuthority, type EphemeralRunnerMachineRpcAuthority } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { isUiBrowserAutomationDispatchMethod } from '@happier-dev/protocol/browser/automation/reverseDispatchV1';
@@ -426,6 +427,7 @@ const RESERVED_SERVER_ORIGIN_DAEMON_RPC_METHODS = new Set<string>([
     EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
     MANAGED_FINITE_WAKE_RPC_METHOD,
     SESSION_SERVER_START_DAEMON_RPC_METHOD_V1,
+    MANAGED_PLUGIN_WEBHOOK_DAEMON_RPC_METHOD_V1,
 ]);
 
 function readReservedServerOriginTargetMachineId(method: string): string | null {
@@ -484,6 +486,7 @@ async function canRegisterReservedServerOriginRpcMethod(params: Readonly<{
         isSessionServerStartReservedRpcMethod(params.method)
         || isExternalActionReservedRpcMethod(params.method)
         || params.method.endsWith(`:${RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS}`)
+        || params.method.endsWith(`:${MANAGED_PLUGIN_WEBHOOK_DAEMON_RPC_METHOD_V1}`)
     )
         || readVerifiedMachineSocketInstallationIdFromSocketData(readSocketData(params.socket)) !== null;
 }

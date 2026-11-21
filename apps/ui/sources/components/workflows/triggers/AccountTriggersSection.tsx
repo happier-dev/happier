@@ -43,8 +43,8 @@ import { accountTriggerRemoval, projectAccountTriggerRows, type AccountTriggerRo
 import { isWorkflowTriggerSourceGone } from './sessionTriggerGroups';
 import { TriggerPopover } from './TriggerPopover';
 import { TriggerRow } from './TriggerRow';
-import { DeploymentPushTriggerFields } from './DeploymentPushTriggerFields';
-import { buildDeploymentPushFilter } from './deploymentPushSetup';
+import { DeploymentPushTriggerFields, showDeploymentPushDeliveryResult } from './DeploymentPushTriggerFields';
+import { buildDeploymentPushFilter, readDeploymentPushManagedRepositoryId } from './deploymentPushSetup';
 import { TriggerRunsOnRow } from './TriggerRunsOnRow';
 import { buildTriggerExecutionTarget, readWorkflowTriggerSetForm } from './sessionTriggerForm';
 import { useTriggerThenOptions } from './useTriggerThenOptions';
@@ -407,8 +407,9 @@ function AccountTriggerPopover(props: Readonly<{
                     description={t('workflows.triggers.editor.runsOnAccountDescription')} />
             </>}
             showThen={deploymentTrigger ? false : undefined}
-            afterRows={deploymentTrigger ? <DeploymentPushTriggerFields branch={branch} onBranchChange={setBranch}
-                approval={actionApproval ?? savedActionApproval} onApprovalChange={setActionApproval} /> : undefined}
+            afterRows={deploymentTrigger ? when => <DeploymentPushTriggerFields branch={branch} onBranchChange={setBranch}
+                approval={actionApproval ?? savedActionApproval} onApprovalChange={setActionApproval}
+                source={when.kind === 'pluginEvent' ? when.value : undefined} /> : undefined}
             onRunNow={!needsReview && triggerId === null ? async () => { await runNow.runNow(set.automationId, 'newSession'); } : undefined}
             onToggleEnabled={props.onToggleEnabled}
             onSaveAsWorkflow={needsReview ? undefined : props.onSaveAsWorkflow}
@@ -424,7 +425,8 @@ function AccountTriggerPopover(props: Readonly<{
                 const target = write.target ?? (deploymentTrigger ? set.target : null);
                 if (target === null || project === null) return;
                 const definition = write.trigger === null ? null : (({ enabled: _enabled, ...definition }) => definition)(write.trigger);
-                await updateWorkflowTrigger({
+                const managedGithubRepositoryId = deploymentTrigger ? readDeploymentPushManagedRepositoryId(write.trigger) : undefined;
+                const saved = await updateWorkflowTrigger({
                     automationId: set.automationId,
                     ...(triggerId === null ? {} : { triggerId }),
                     expectedRevision: set.revision,
@@ -433,6 +435,7 @@ function AccountTriggerPopover(props: Readonly<{
                         ...(set.context ? (({ workspace: _workspace, inlineDefinition: _inlineDefinition, onComplete: _onComplete,
                             actionApprovals: _actionApprovals, deploymentTriggers: _deploymentTriggers, ...context }) => context)(set.context) : {}),
                         ...(deploymentTrigger ? { actionApproval: actionApproval ?? savedActionApproval } : {}),
+                        ...(managedGithubRepositoryId === undefined ? {} : { managedGithubRepositoryId }),
                         ...(deploymentTrigger && branch !== (deploymentTrigger.branch ?? '')
                             ? { deployment: buildDeploymentPushFilter(branch, deploymentTrigger) } : {}),
                         target,
@@ -443,6 +446,7 @@ function AccountTriggerPopover(props: Readonly<{
                         inputs: deploymentTrigger ? set.context?.inputs ?? {} : write.inputs,
                     },
                 }, props.accountLifetime === undefined ? {} : { accountLifetime: props.accountLifetime });
+                if (deploymentTrigger) showDeploymentPushDeliveryResult(saved?.managedGithubRepositoryHook);
                 props.onWritten();
             }}
             onDelete={async () => {
