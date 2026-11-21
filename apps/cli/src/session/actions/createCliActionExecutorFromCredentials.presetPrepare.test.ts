@@ -1,11 +1,14 @@
-import { afterEach, expect, it, vi } from 'vitest';
-import { AccountSettingsSchema } from '@happier-dev/protocol';
+import { afterEach, expect, it, onTestFinished, vi } from 'vitest';
+import { AccountSettingsSchema, FeaturesResponseSchema } from '@happier-dev/protocol';
 import { bindPresentUserActionConfirmationV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
+import { WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { createDaemonManagedMachineActionAdapter } from '@/daemon/startup/managedMachineActionAdapter';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
 
@@ -41,4 +44,46 @@ it('preserves the installed Prepare owner refusal through the credentialed daemo
     const result = await executor.execute(actionId, input, context);
     expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'action_failed',
         failureCause: { errorCode: 'admission_unavailable' } });
+});
+
+it('returns the selected controller acquisition outcome for a confirmed Workflow preset', async () => {
+    const published = await pluginReloadController.adoptPreparedRuntimeRegistry({
+        registry: await resolveExecutablePluginRuntimeRegistry({ pluginIds: [] }),
+        changedPluginIds: [], durableRevision: 1, runningSessionDisposition: 'retainRunningSessions',
+    });
+    onTestFinished(() => pluginReloadController.shutdown());
+    expect(published.ok).toBe(true);
+
+    const actionId = WORKFLOW_RUN_START_ACTION_ID_V1;
+    const runId = '82111111-1111-4111-8111-111111111111';
+    const project = { machineId: 'controller', directory: '/fixture/project',
+        sessionPlacement: { kind: 'preset' as const, homeId: 'srv_home', presetId: 'preset' } };
+    const target = { kind: 'machine' as const, machineId: project.machineId, project };
+    const input = { runId, source: { kind: 'inline' as const, definition: { version: 1, blocks: [
+        { kind: 'action', id: 'command', actionId: 'machines.command.run', input: { command: { kind: 'literal', value: 'echo guest' } } },
+    ] } } };
+    const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`;
+    const executor = createCliActionExecutorFromCredentials({
+        credentials: { token, encryption: null, credentialProvenance: 'stored_session' },
+        machineId: project.machineId, serverId: 'home', serverIdentityId: 'srv_home',
+        serverApiUrl: 'https://fixture.test', pluginActionExecutionOwner: 'current_process',
+        actionsSettingsProvider: createActionSettingsProvider({ accountSettings: AccountSettingsSchema.parse({}) }),
+        resolveServerFeaturesSnapshot: () => ({ status: 'ready', provenance: 'authenticated',
+            features: FeaturesResponseSchema.parse({
+                features: { automations: { enabled: true }, workflows: { enabled: true } }, capabilities: {},
+            }) }),
+        // The controller acquisition port stands in for a provider refusal.
+        // Verify the outcome of the Action, including which preset reached it.
+        acquireWorkflowPlacement: async request => ({
+            ok: false, errorCode: 'target_unavailable', error: 'target_unavailable',
+            details: { errorCode: 'guest_not_enrolled', presetId: request.project.sessionPlacement?.kind === 'preset'
+                ? request.project.sessionPlacement.presetId : null, runId: request.start.runId },
+        }),
+    });
+    const context = bindPresentUserActionConfirmationV1(actionId, input, { surface: 'rpc', authority: 'present_user',
+        actionCaller: { kind: 'host' }, runtimeAccountId: 'account', serverId: 'home',
+        serverIdentityId: 'srv_home', externalActionTarget: target });
+    const result = await executor.execute(actionId, input, context);
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'target_unavailable',
+        details: { errorCode: 'guest_not_enrolled', presetId: 'preset', runId } });
 });

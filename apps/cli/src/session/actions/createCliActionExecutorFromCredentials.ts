@@ -870,6 +870,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
   confidentialSecretFill?: ActionExecutorDeps['confidentialSecretFill'];
   confidentialActionInputs?: ActionExecutorDeps['confidentialActionInputs'];
   workflowAction?: ActionExecutorDeps['workflowAction'];
+  acquireWorkflowPlacement?: ActionExecutorDeps['acquireWorkflowPlacement'];
   registerWorkflowTriggerList?: Parameters<typeof createCliActionDeps>[0]['registerWorkflowTriggerList'];
   managedMachineAction?: ActionExecutorDeps['managedMachineAction'];
   machinePresetPrepare?: ActionExecutorDeps['machinePresetPrepare'];
@@ -1318,6 +1319,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         : {}),
       ...(params.machineGuardAction ? { machineGuardAction: params.machineGuardAction } : {}),
       ...(params.workflowAction ? { workflowAction: params.workflowAction } : {}),
+      ...(params.acquireWorkflowPlacement ? { acquireWorkflowPlacement: params.acquireWorkflowPlacement } : {}),
       ...(params.registerWorkflowTriggerList ? { registerWorkflowTriggerList: params.registerWorkflowTriggerList } : {}),
       ...(params.restoreManagedWorkflowWorkspaceSource ? { restoreManagedWorkflowWorkspaceSource: params.restoreManagedWorkflowWorkspaceSource } : {}),
       ...(params.workflowAcceptedAuthorizationCurrentness
