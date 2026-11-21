@@ -26,7 +26,8 @@ it('verifies B against its applied declarations without reading a later saved En
             const applied = { kind: 'applied' as const, exportKey: 'database', machineId: host.machineId,
                 installationId: 'installation-c', exports: handle.appliedServiceExports ?? [],
                 row: lease.registry.projectManagedServices.machineServiceRows.read(handle), signal: new AbortController().signal };
-            expect(await resolvePrivateServiceExportAdmissionForHost(applied)).toEqual({ ...admission, kind: 'iroh' });
+            expect(await resolvePrivateServiceExportAdmissionForHost(applied)).toEqual({ kind: 'iroh',
+                machineId: admission.machineId, scheme: admission.scheme, serviceExport: admission.serviceExport });
             // An exposed target is observable but cannot supply a host forward destination.
             await expect(resolvePrivateServiceExportAdmissionForHost({ ...applied, row: { ...applied.row,
                 configuration: { ports: [{ target: 5432, published: null, bindAddress: null, protocol: 'tcp' }] },

@@ -17,6 +17,9 @@ import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/ca
 import { createTcpTunnelServiceExportCommitmentV1, type TcpTunnelServiceExportBindingV1 } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantScopesV1';
 import type { PeerTcpTunnelStreamConnection } from './frames';
 
+/** RFC 6455 policy closure for an admitted service export whose authority ended. */
+export const SERVICE_EXPORT_POLICY_CLOSE_CODE = 1008;
+
 export type PeerTcpTunnelTcpConnection = PeerTcpTunnelStreamConnection;
 
 export type PeerTcpTunnelRuntimeLimits = Readonly<{

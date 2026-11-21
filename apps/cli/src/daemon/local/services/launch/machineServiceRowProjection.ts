@@ -138,6 +138,8 @@ export function createMachineServiceRowProjection(watchRevision: (watch: Machine
                 ...(handle.kind === 'environment' && handle.identity ? { deployment: previous?.deployment ?? Object.freeze({
                     deploymentId: handle.deploymentId, installationId: handle.release.installationId, service: handle.identity,
                 }) } : {}),
+                ...(handle.kind === 'environment' && handle.serviceExportGeneration
+                    ? { serviceExportGeneration: handle.serviceExportGeneration } : {}),
                 ...(handle.kind === 'adopted' ? {
                     // A watch edit replaces its immutable adopted handle.
                     watchId: handle.watch.watchId, watchRevision: identity?.kind === 'adopted' ? identity.watchRevision : watchRevision(handle.watch),

@@ -64,7 +64,7 @@ function selectIrohExport(exported: DeploymentServiceExportV1 | undefined, row: 
     if (ports.length !== 1) return null;
     const port = ports[0]!;
     const binding = TcpTunnelServiceExportBindingV1Schema.safeParse({
-        exportKey: exported.key, ...row.deployment, generation: row.generation,
+        exportKey: exported.key, ...row.deployment, generation: row.serviceExportGeneration,
         destination: { host: port.bindAddress, port: Number(port.published) },
     });
     return binding.success ? { kind: 'iroh', machineId: expected.machineId, scheme: exported.scheme, serviceExport: binding.data } : null;

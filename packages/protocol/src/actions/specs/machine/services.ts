@@ -51,6 +51,8 @@ export const MachineServiceRowV1Schema = lazyZodSchema(() => z.strictObject({
     reason: z.optional(id()), expectedDown: z.optional(z.literal('stop')),
   })),
   deployment: z.optional(z.strictObject({ deploymentId: id(), installationId: id(), service: MachineDeploymentServiceIdentityV1Schema })),
+  /** Applied native occurrence for Iroh export bindings, independent of the daemon observation generation. */
+  serviceExportGeneration: z.optional(id()),
   nativeInstance: z.optional(z.strictObject({
     adapter: MachineServiceWatchV1Schema.shape.adapter,
     nativeResourceId: MachineServiceWatchV1Schema.shape.nativeResourceId,

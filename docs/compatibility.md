@@ -2649,6 +2649,16 @@ protocol epoch changes.
 
 ## Local Services observation lifetime (unreleased 0.3)
 
+Applied deployment service rows carry `serviceExportGeneration` for Iroh bindings.
+The Iroh binding uses that native occurrence identity across daemon observation
+restarts. Service controls still use the observation generation. This unreleased
+0.3 change needs matching Protocol and daemons on both ends, and a matching UI for
+strict Machine service reads. A row missing the export generation cannot admit a
+new Iroh export forward. The grant and tunnel-open shapes are unchanged, and there
+is no persistence migration. An attached Iroh service export uses WebSocket
+policy closure when its authority is withdrawn so a consumer can release its
+local listener and distinguish retirement from an interrupted carrier.
+
 The existing closed inventory-watch request accepts optional `observationOnly`.
 That request retains mounted producer demand until cancellation; value watches
 continue to answer on material changes. The updated UI and daemon load together.

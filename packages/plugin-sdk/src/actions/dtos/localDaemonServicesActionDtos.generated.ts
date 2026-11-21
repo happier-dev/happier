@@ -395,6 +395,7 @@ export type LocalDaemonServicesActionResultById = {
                     serviceId: string;
                 };
             };
+            serviceExportGeneration?: string | undefined;
             nativeInstance?: undefined | {
                 adapter: {
                     pluginId: string;
@@ -530,6 +531,7 @@ export type LocalDaemonServicesActionResultById = {
                     serviceId: string;
                 };
             };
+            serviceExportGeneration?: string | undefined;
             nativeInstance?: undefined | {
                 adapter: {
                     pluginId: string;

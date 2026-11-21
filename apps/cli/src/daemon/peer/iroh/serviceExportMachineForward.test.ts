@@ -42,11 +42,12 @@ describe('Machine service export forward', () => {
     };
     const key = tweetnacl.sign.keyPair();
     const trustRoots = [{ keyId: 'home-key', publicKey: Buffer.from(key.publicKey).toString('base64url') }];
-    const target = await startPeerMediationLoopbackServer({ nowMs: () => 2000, endpointExpiresAt: 300000,
+    const startTarget = () => startPeerMediationLoopbackServer({ nowMs: () => 2000, endpointExpiresAt: 300000,
       expected: { accountId, machineId: targetId, flowKind: 'tcp_tunnel', routeKind: 'loopback_direct', endpointFingerprint: 'listener' },
       trustRoots, tunnel: { resolveServiceExport: async () => ({ binding, retirementSignal: new AbortController().signal }) },
       irohMachineAdmission: { localEndpointId: targetEndpoint, role: 'acceptor',
         allowedFlows: ['tcp_tunnel'], resolveApplicationTarget: () => null } });
+    let target = await startTarget();
     let carrierClosed = 0;
     let carrierEndpoint = targetEndpoint;
     let grantAccountId = accountId;
@@ -129,7 +130,7 @@ describe('Machine service export forward', () => {
       await oldDestinationAccepted;
       const destinationClosed = new Promise<void>(resolve => destination.close(() => resolve()));
       const unavailableCarrier = await acquire({ targetMachineId: targetId, serviceExport: binding,
-        onFailure: error => { failures.push(error.code); } });
+        onFailure: error => { failures.push(error.code); }, onRecovered: () => { recoveries++; } });
       try {
         const failedClient = connect({ host: unavailableDestination.host, port: unavailableDestination.port });
         const clientClosed = once(failedClient, 'close');
@@ -153,12 +154,15 @@ describe('Machine service export forward', () => {
         expect(recoveries).toBe(1);
         await unavailableDestination.close();
         await target.stop();
-        // The listener is released by the actual WebSocket close, before its consumer disposes it.
-        const refused = connect({ host: unavailableCarrier.host, port: unavailableCarrier.port });
-        const listenerRefused = once(refused, 'connect');
-        await expect(listenerRefused).rejects.toMatchObject({ code: expect.stringMatching(/^ECONN(?:REFUSED|RESET)$/u) });
-        refused.destroy();
+        target = await startTarget();
+        const restartedClient = connect({ host: unavailableCarrier.host, port: unavailableCarrier.port, allowHalfOpen: true });
+        sockets.add(restartedClient);
+        const restartedResponse = readAll(restartedClient);
+        restartedClient.end('same app after the target restart');
+        expect(await restartedResponse).toEqual(Buffer.from('same app after the target restart').reverse());
+        restartedClient.destroy();
         expect(failures).toEqual(['tcp_connect_failed', 'machine_carrier_unavailable']);
+        expect(recoveries).toBe(2);
       } finally {
         await unavailableDestination.close();
         await unavailableCarrier.close();

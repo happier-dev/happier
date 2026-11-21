@@ -203,6 +203,7 @@ export type ProjectManagedServiceHandle = ManagedServiceHandle & ProjectManagedS
     /** Existing exact Home identity captured once at native admission, never resolved per observation. */
     homeServerIdentityId?: string | null;
     instanceId: string;
+    serviceExportGeneration?: string;
     endpointKind: NonNullable<LocalServiceLaunchTargetV1['endpointKind']>;
     retirementSignal: AbortSignal;
     isCurrent(): boolean;
@@ -4963,6 +4964,9 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                     clearFailedAttempt();
                 },
                 instanceId: process.snapshot().instanceId,
+                ...(witness.kind === 'environment'
+                    ? { serviceExportGeneration: createHash('sha256').update(request.specIdentity).digest('hex') }
+                    : {}),
                 endpointKind: request.processSpec.mode.kind === 'native' ? 'native' as const
                     : request.processSpec.mode.endpointNone ? 'none' as const : 'http' as const,
                 retirementSignal: lifetime.signal,

@@ -2022,6 +2022,10 @@ address with an actual host port. Host networking cannot establish that mapping.
 `resolvePrivateServiceExportAdmissionForHost` selects the active member,
 installation and current managed-service occurrence and derives the exact
 `TcpTunnelServiceExportBindingV1`, including its generation and loopback destination.
+The applied service owner derives the export generation from the deployment and
+its exact native container identity. Re-observing those same containers after a
+daemon restart preserves the binding. Replacing the containers changes it, even
+when the deployment receipt is the same.
 Home receives only the exact allowed port and a SHA-256 commitment to that binding
 with A's random 256-bit nonce; Compose service names, export keys and the nonce
 travel to B only in the encrypted Iroh tunnel open. Machine service rows and
@@ -2037,8 +2041,12 @@ the first application connection. Iroh's own
 relay fallback remains within that carrier; the user-socket server relay is not
 a Machine service-forward fallback. The consuming service owns its local Node
 loopback listener and disposes it with retained service custody. Ordinary API
-reconnect leaves the Iroh carrier running; cold observation recovery rebinds the
-address recorded in the receipt. A port conflict is visible and requires retry or
+reconnect leaves the Iroh carrier running. If a publisher daemon restart closes
+the carrier, the next app connection acquires a new carrier and grant for the
+unchanged applied export through the same listener and injected address.
+Concurrent connections share that acquisition. Export withdrawal ends the
+listener and its open streams. Cold consumer recovery rebinds the address
+recorded in the receipt. A port conflict is visible and requires retry or
 redeployment rather than silently changing a running container's environment.
 
 In unreleased 0.3, Iroh references and host telemetry on native Linux Docker

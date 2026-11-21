@@ -8,7 +8,7 @@ import { PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2 } from '@happier-dev/protocol/
 import { PEER_TCP_TUNNEL_OPEN_PATH_V2, PeerTcpTunnelOpenV2Schema } from '@happier-dev/protocol/machines/peer/mediation/tunnel/openAuthorizationV2';
 import type { PeerFlowKindV1, VoiceMediaApplicationAuthorityV1 } from '@happier-dev/protocol';
 
-import { openPeerTcpTunnel, type OpenPeerTcpTunnelInput, type OpenPeerTcpTunnelResult } from './open';
+import { openPeerTcpTunnel, SERVICE_EXPORT_POLICY_CLOSE_CODE, type OpenPeerTcpTunnelInput, type OpenPeerTcpTunnelResult } from './open';
 import {
     createPeerTcpTunnelApplicationSubstreamSession,
     createPeerTcpTunnelSubstreamMuxSession,
@@ -50,7 +50,7 @@ export type RegisterPeerTcpTunnelLoopbackRoutesOptions = Omit<OpenPeerTcpTunnelI
 type ActivePeerTcpTunnel = (OpenPeerTcpTunnelResult & { ok: true }) & Readonly<{
     openStreamTimeout?: ReturnType<typeof setTimeout>;
 }> & {
-    closeTransport?: () => void | Promise<void>;
+    closeTransport?: (reasonCode?: string) => void | Promise<void>;
     detachLifetime?: () => void;
     pendingControl?: Readonly<{ detach: () => void; close: () => void }>;
 };
@@ -58,7 +58,7 @@ type ActivePeerTcpTunnel = (OpenPeerTcpTunnelResult & { ok: true }) & Readonly<{
 type PeerTcpTunnelFastifyWebSocket = Readonly<{
     on: (event: 'message' | 'close', handler: (payload?: unknown) => void) => void;
     send: (payload: string | Uint8Array) => void;
-    close: () => void;
+    close: (code?: number) => void;
 }>;
 
 type PeerTcpTunnelLoopbackSession = Readonly<{
@@ -121,14 +121,14 @@ export function registerPeerTcpTunnelLoopbackRoutes(
         if (tunnel.openStreamTimeout) clearTimeout(tunnel.openStreamTimeout);
         tunnel.detachLifetime?.();
         tunnel.pendingControl?.close();
-        return Promise.all([tunnel.closeTransport?.(), tunnel.previewApplication?.close()]).then(() => undefined);
+        return Promise.all([tunnel.closeTransport?.(reasonCode), tunnel.previewApplication?.close()]).then(() => undefined);
     };
     options.onServiceExportTunnelsReady?.({
         readRequesterAccountIds: () => [...new Set([...activeTunnels.values()]
             .flatMap(tunnel => tunnel.serviceExport ? [tunnel.serviceExport.requesterAccountId] : []))],
         async closeByRequester(accountId) {
             await Promise.all([...activeTunnels].filter(([, tunnel]) => tunnel.serviceExport?.requesterAccountId === accountId)
-                .map(([tunnelId]) => releaseTunnel(tunnelId, 'flow.aborted')));
+                .map(([tunnelId]) => releaseTunnel(tunnelId, 'flow.aborted', 'service_export_unavailable')));
         },
     });
     const grantConsumption = createAtomicRouteGrantConsumption({ activationFailurePolicy: 'consume' });
@@ -225,10 +225,10 @@ export function registerPeerTcpTunnelLoopbackRoutes(
                 };
                 sessions.set(tunnelId, entry);
                 if (tunnel.serviceExport) {
-                    tunnel.closeTransport = async () => {
+                    tunnel.closeTransport = async reasonCode => {
                         sessions.delete(tunnelId);
                         await substreamMux?.close();
-                        closeSocket(socket);
+                        socket.close(reasonCode === 'service_export_unavailable' ? SERVICE_EXPORT_POLICY_CLOSE_CODE : undefined);
                     };
                 }
                 if (tunnel.previewApplication) {
