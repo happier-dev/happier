@@ -71,6 +71,8 @@ import { t } from '@/text';
 import { projectWorkflowFlow, resolveWorkflowFlowScopedNodeId } from '@/components/workflows/flow/workflowFlowProjection';
 import { WorkflowFlowView } from '@/components/workflows/flow/WorkflowFlowView';
 import { WorkflowRunStateMark } from '@/components/workflows/presentation/WorkflowLifecycleStatus';
+import { WordCrossFade } from '@/components/ui/motion/WordCrossFade';
+import { WorkflowRunOutcomeEmphasis } from './WorkflowRunOutcomeEmphasis';
 import type { VirtualizedListRef } from '@/components/ui/lists/virtualized';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { useFloatingChromeClearance } from '@/components/ui/layout/useFloatingChromeClearance';
@@ -1367,13 +1369,16 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             )}
             <View
                 testID={`${testIDPrefix}-outcome-region`}
-                style={[styles.outcome, phone ? null : styles.onTitleEdge, props.completionEmphasis === true ? styles.outcomeCompleted : null]}
+                style={[styles.outcome, phone ? null : styles.onTitleEdge]}
                 accessibilityRole="summary"
             >
-                {props.completionEmphasis === true ? <View testID={`${testIDPrefix}-outcome-emphasis`} /> : null}
+                <WorkflowRunOutcomeEmphasis testID={`${testIDPrefix}-outcome-emphasis`}
+                    active={props.completionEmphasis === true} onTitleEdge={!phone} />
                 {/* The headline names the state; the attention card explains its concrete request. */}
                 <View style={styles.outcomeLine}>
                     <WorkflowRunStateMark presentation={outcomePresentation} testID={`${testIDPrefix}-outcome-mark`} />
+                    {/* The status word and its sentence change in place with one cross-fade (07 §M1). */}
+                    <WordCrossFade wordKey={outcomeWord} style={styles.outcomeSentenceSlot}>
                     <Text testID={`${testIDPrefix}-outcome`} style={styles.outcomeSentence}>
                         {/* The status word leads in the heading weight; the sentence after it reads as
                             prose (lab run-A). The semantic tone also colours the leading mark. */}
@@ -1383,6 +1388,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                             {outcomeLine.slice(outcomeWord.length)}
                         </> : outcomeLine}
                     </Text>
+                    </WordCrossFade>
                 </View>
                 {/* The failed step the outcome names by its number, by its title (WAVE-ACCEPT-1118D c1). */}
                 {failedStep?.title ? <Text testID={`${testIDPrefix}-failed-step-title`} numberOfLines={1}

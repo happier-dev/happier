@@ -4163,19 +4163,27 @@ describe('WorkflowRunContent', () => {
       run: createWorkflowRunSummaryFixture({ id: 'run-1', state: 'succeeded' }),
     });
 
-    // A haptic with nothing on screen is feedback only some users receive.
-    const emphasisedStyle = flattenTestStyle(
+    // A haptic with nothing on screen is feedback only some users receive, and the
+    // wash is opacity only (07 §M1): the region's box is the same before, during and
+    // after the moment, so the tabs and the map never move.
+    const emphasisedRegion = flattenTestStyle(
       emphasised.findByTestId('workflow-run-outcome-region')?.props.style,
     );
-    const quietStyle = flattenTestStyle(
+    const quietRegion = flattenTestStyle(
       quiet.findByTestId('workflow-run-outcome-region')?.props.style,
     );
-    expect(emphasisedStyle.backgroundColor).toBeDefined();
-    expect(quietStyle.backgroundColor).toBeUndefined();
-    expect(
-      emphasised.findByTestId('workflow-run-outcome-emphasis'),
-    ).toBeTruthy();
-    expect(quiet.findByTestId('workflow-run-outcome-emphasis')).toBeNull();
+    expect(emphasisedRegion).toEqual(quietRegion);
+    const emphasisedLayer = flattenTestStyle(
+      emphasised.findByTestId('workflow-run-outcome-emphasis')?.props.style,
+    );
+    const quietLayer = flattenTestStyle(
+      quiet.findByTestId('workflow-run-outcome-emphasis')?.props.style,
+    );
+    // The layer stays mounted so the tint can fade out instead of cutting.
+    expect(emphasisedLayer.position).toBe('absolute');
+    expect(emphasisedLayer.backgroundColor).toBeDefined();
+    expect(emphasisedLayer.opacity).toBe(1);
+    expect(quietLayer.opacity).toBe(0);
   });
 
   it('keeps Delete history in the destructive overflow instead of beside normal actions', async () => {

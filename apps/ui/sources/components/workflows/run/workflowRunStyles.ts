@@ -167,24 +167,37 @@ export const workflowRunStyles = StyleSheet.create((theme) => ({
         gap: theme.space.s8,
     },
     /**
-     * The completion moment's visible half: a brief semantic success wash on
-     * the existing outcome surface, using only existing state color roles. It
-     * is what pairs with `hapticsLight`, and reduced motion omits it because
-     * the status change alone already tells the same truth.
+     * The completion moment's visible half: a brief semantic success wash behind
+     * the outcome's words, using only existing state color roles. It is a layer
+     * inside the region, never padding or margin on it, so the page's geometry
+     * never changes (07 §M1); it breathes a step past the words and stays inside
+     * the column's text inset. It pairs with `hapticsLight`; reduced motion never
+     * shows it because the status change alone already tells the same truth.
      */
-    outcomeCompleted: {
+    outcomeEmphasis: {
+        position: 'absolute',
+        top: -theme.space.s8,
+        bottom: -theme.space.s8,
+        left: HAPPIER_PAGE_METRICS.pageTextInsetPx - theme.space.s8,
+        right: HAPPIER_PAGE_METRICS.pageTextInsetPx - theme.space.s8,
         backgroundColor: theme.colors.state.success.background,
         borderRadius: theme.borderRadius.xl,
-        paddingHorizontal: theme.space.s12,
-        paddingVertical: theme.space.s8,
-        marginHorizontal: -theme.space.s12,
-        marginVertical: -theme.space.s8,
+        pointerEvents: 'none',
+    },
+    /** Wide: the wash starts a step before the words on the title's edge, not at the column. */
+    outcomeEmphasisOnTitleEdge: {
+        left: WORKFLOW_PAGE_TITLE_EDGE_PX - theme.space.s8,
     },
     /** The Run's state mark leads its sentence, centred on the first line. */
     outcomeLine: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s8,
+    },
+    /** The cross-fading slot that holds the sentence takes the line's remaining width. */
+    outcomeSentenceSlot: {
+        flexShrink: 1,
+        minWidth: 0,
     },
     outcomeSentence: {
         ...Typography.variant('reading'),
