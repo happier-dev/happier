@@ -1,9 +1,12 @@
 import { expect, test, type Page, type Request } from '@playwright/test';
+import { parseTerminalConnectLinkV4Parameters } from '@happier-dev/protocol/auth/terminalConnectLinkV4';
+import { join } from 'node:path';
 
 import { ensureQaUiUrlHasHmrDisabled, resolveQaUiUrl } from '../../../../scripts/qa/resolveQaUiUrl.mjs';
 import { resolveTestDbProvider, startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { createRunDirs } from '../../src/testkit/runDir';
+import { startCliAuthLoginForTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { assertSameHomeComposerRestingBox, measureHomeComposerRestingBox } from '../../src/testkit/uiE2e/homeComposerRestingBox';
 import { gotoCommittedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { secretBearingBrowserCapturePolicy } from '../../src/testkit/uiE2e/secretBearingBrowserCapture';
@@ -260,6 +263,68 @@ test('firstOpen.F1.newHere | firstOpen.03.F1 provisions one Account and reaches 
     // A reload proves the real landing persisted an Account on this device.
     await page.reload({ waitUntil: 'commit' });
     await expectHome(page);
+});
+
+test('firstOpen.F13.terminal reads the CLI request at Accept and stops URL-only legacy links before transport', async ({ page }, testInfo) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await openApp(page);
+    await page.getByTestId('welcome-primary-start').click();
+    await expectHome(page);
+    const serverUrl = server?.baseUrl ?? new URL(uiBaseUrl).searchParams.get('server');
+    if (!serverUrl) throw new Error('The terminal replay needs the selected Home');
+    const cli = await startCliAuthLoginForTerminalConnect({
+        testDir: testInfo.outputPath('terminal'),
+        cliHomeDir: testInfo.outputPath(join('terminal', 'cli-home')),
+        serverUrl, webappUrl: uiBaseUrl,
+        waitForConnectUrlReady: false,
+        env: { ...process.env, CI: '1', HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1', HAPPIER_VARIANT: 'dev' },
+    });
+    const reads = countRequests(page, '/v1/auth/request/status', 'GET');
+    const approvals = countRequests(page, '/v1/auth/response', 'POST');
+    const observe = () => ({ reads: reads.value(), approvals: approvals.value() });
+    const openLink = async (href: string) => {
+        // Navigation diagnostics must not reveal the CLI's pairing proof.
+        await page.goto(href, { waitUntil: 'commit' }).catch(() => { throw new Error('Could not open the terminal link'); });
+    };
+    try {
+        const legacy = new URL(cli.connectUrl);
+        const params = new URLSearchParams(legacy.hash.slice(1));
+        const envelope = parseTerminalConnectLinkV4Parameters(params);
+        if (envelope) {
+            params.delete('v4');
+            params.set('key', envelope.publicKeyB64Url);
+            params.set('server', envelope.homeConnectionDescriptor.canonicalServerUrl);
+            params.set('pairingSecret', envelope.pairing.secretB64Url);
+            params.set('createdAt', String(envelope.pairing.createdAtMs));
+            params.set('expiresAt', String(envelope.pairing.expiresAtMs));
+        }
+        params.delete('serverIdentityId');
+        params.delete('supportsTokenOnly');
+        legacy.hash = params.toString();
+        await openLink(legacy.href);
+        await expect(page.getByTestId('terminal-connect-next')).toBeVisible();
+        await expect(page.getByText('Update required', { exact: true })).toBeVisible();
+        expect(observe()).toEqual({ reads: 0, approvals: 0 });
+
+        await openLink(cli.connectUrl);
+        const approve = page.getByTestId('terminal-connect-approve');
+        await expect(approve).toBeEnabled();
+        expect(observe()).toEqual({ reads: 0, approvals: 0 });
+        const status = page.waitForResponse(response => response.request().method() === 'GET'
+            && new URL(response.url()).pathname === '/v1/auth/request/status');
+        await approve.click();
+        expect(await (await status).json()).toMatchObject({ status: 'pending', supportsV2: true });
+        await expect(page.getByTestId('terminal-connect-continue')).toBeVisible();
+        expect(observe()).toEqual({ reads: 1, approvals: 1 });
+        await cli.waitForSuccess();
+        await page.getByTestId('terminal-connect-continue').click();
+        await expect.poll(() => new URL(page.url()).pathname).toBe('/');
+        expect(observe()).toEqual({ reads: 1, approvals: 1 });
+    } finally {
+        reads.stop();
+        approvals.stop();
+        await cli.stop();
+    }
 });
 
 test('Home reserves the resting composer box before opening the editor', async ({ page }) => {

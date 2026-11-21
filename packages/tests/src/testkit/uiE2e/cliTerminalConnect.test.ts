@@ -54,6 +54,27 @@ it('keeps pairing material available to approval while removing it from failed-l
   }
 });
 
+it('recognizes descriptor links and redacts their sealed pairing envelope', async () => {
+  const testDir = await mkdtemp(join(tmpdir(), 'terminal-connect-descriptor-'));
+  const script = join(testDir, 'descriptor-login.mjs');
+  const webappUrl = 'http://127.0.0.1:12345';
+  const payload = 'fixture-descriptor-envelope';
+  const connectUrl = `${webappUrl}/terminal/connect#v4=${payload}`;
+  await writeFile(script, `console.log(${JSON.stringify(connectUrl)}); process.exitCode = 1;`);
+  const login = await startCliAuthLoginForTerminalConnect({
+    testDir, cliHomeDir: join(testDir, 'home'), serverUrl: webappUrl, webappUrl,
+    waitForConnectUrlReady: false, env: process.env, cliLaunchSpec: { command: process.execPath, args: [script] },
+  });
+  try {
+    expect(login.connectUrl).toBe(connectUrl);
+    await expect(login.waitForSuccess()).rejects.toThrow('#v4=[redacted]');
+    expect(await readFile(join(testDir, 'cli.auth.login.stdout.log'), 'utf8')).not.toContain(payload);
+  } finally {
+    await login.stop();
+    await rm(testDir, { recursive: true, force: true });
+  }
+});
+
 it('carries workspace source export resolution into source-mode terminal login children', async () => {
   const testDir = await mkdtemp(join(tmpdir(), 'terminal-connect-source-'));
   const script = join(testDir, 'source-login.mjs');

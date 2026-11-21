@@ -23,7 +23,8 @@ import { waitFor } from '../timing';
 import { expandLoopbackBaseUrlCandidates } from '../network/loopbackBaseUrl';
 
 const DEFAULT_TERMINAL_CONNECT_URL_TIMEOUT_MS = 180_000;
-const TERMINAL_CONNECT_KEY_PATTERN = /([#&](?:key|pairingSecret)=)[^&\s]+/gu;
+const TERMINAL_CONNECT_URL_PATTERN = /https?:\/\/[^\s)]+\/terminal\/connect#(?:key|v4)=[^\s]+/;
+const TERMINAL_CONNECT_KEY_PATTERN = /([#&](?:key|pairingSecret|v4)=)[^&\s]+/gu;
 
 function redactTerminalConnectKeys(text: string): string {
   return text.replace(TERMINAL_CONNECT_KEY_PATTERN, '$1[redacted]');
@@ -126,7 +127,7 @@ export function resolveCliTerminalConnectOwnershipLeasesDir(rootDir: string = re
 function extractTerminalConnectUrl(text: string): string | null {
   for (const raw of extractHttpUrls(text)) {
     const cleaned = normalizeUrl(raw);
-    if (!cleaned.includes('/terminal/connect#key=')) continue;
+    if (!TERMINAL_CONNECT_URL_PATTERN.test(cleaned)) continue;
     return cleaned;
   }
   return null;
@@ -322,7 +323,7 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
   try {
     const match = await waitForRegexInFile({
       path: stdoutPath,
-      regex: /https?:\/\/[^\s)]+\/terminal\/connect#key=[^\s]+/,
+      regex: TERMINAL_CONNECT_URL_PATTERN,
       timeoutMs: params.connectUrlTimeoutMs ?? DEFAULT_TERMINAL_CONNECT_URL_TIMEOUT_MS,
       pollMs: 100,
       context: 'CLI terminal connect URL',

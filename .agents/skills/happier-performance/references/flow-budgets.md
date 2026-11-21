@@ -291,7 +291,7 @@ The first-open gates in `.project/plans/2026-11-19-first-open/` own these formul
 | `firstOpen.03.F10` | Existing Home connection and its existing probe. | Browser hand-off to a Home address |
 | `firstOpen.03.F11` | One invitation preview, one accept and the chosen sign-in method's calls. | Team plan D join and sign-in |
 | `firstOpen.03.F12` | One preview and one accept only where offered. | Invitation outcomes at the join receiver |
-| `firstOpen.03.F13` | One terminal request read and one approval after Accept. | Real CLI link through the web receiver |
+| `firstOpen.03.F13` | V2: one request-status GET and one approval POST after Accept. Released URL-only links that require update: zero status reads and approval writes. | CLI-issued link and legacy compatibility through the web receiver; observe the approval transport |
 | `firstOpen.03.F14` | Returning-method lead adds 0 reads. Recovery uses only the chosen method's calls. | Same-profile logout, return and Home recovery |
 | `firstOpen.03.F15` | No reread until Retry, then 1 for the failed resource. | Welcome notices at the server boundary |
 | `firstOpen.03.landing` | One destination choice and navigation per interactive sign-in. A continuation mounts no intermediate Home. The landing adds no credential or descriptor reads, requests, or Action dispatches. Record time to a usable destination without imposing a deadline. | OAuth, email, pairing, terminal, new-session and Team continuations |
