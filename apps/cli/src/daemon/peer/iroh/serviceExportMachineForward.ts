@@ -111,6 +111,7 @@ export function createServiceExportMachineForward(input: Readonly<{
       const admitted = PeerTcpTunnelOpenResponseV1Schema.parse(body);
       const streamUrl = new URL(admitted.streamPath, origin);
       streamUrl.protocol = 'ws:';
+      streamUrl.searchParams.set('tunnelId', tunnelId);
       socket = new WebSocket(streamUrl, { headers: { [MACHINE_HTTP_LOCAL_CAPABILITY_HEADER]: carrier.localCapability } });
       socket.on('error', onCarrierFailure);
       socket.on('close', onCarrierFailure);

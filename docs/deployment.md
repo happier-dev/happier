@@ -2002,7 +2002,9 @@ the destination daemon runs that same occurrence selector against the declaratio
 retained on its applied Environment service and compares the resulting binding at
 tunnel open. B does not fetch a newer saved Environment or use requester credentials.
 A supplied port or membership alone does not authorize a connection.
-The transport uses the existing Machine Iroh carrier and TCP framing. Iroh's own
+The transport uses the existing Machine Iroh carrier and TCP framing. The stream
+upgrade attaches the export tunnel and clears the pending stream deadline before
+the first application connection. Iroh's own
 relay fallback remains within that carrier; the user-socket server relay is not
 a Machine service-forward fallback. The consuming service owns its local Node
 loopback listener and disposes it with retained service custody. Ordinary API

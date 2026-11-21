@@ -1471,6 +1471,10 @@ changing the V2 carrier epoch or adding stored data. The inspected `../0.2`
 frontier at `7b37d65ca75e58560f8f3ca850958ac5407d2e75` has no peer-mediation
 contracts under `packages/protocol/src/machines/peer/mediation`.
 
+The matching B daemon passes the admitted `tunnelId` in the stream upgrade
+query so A attaches the service export while the forward is idle. This uses the
+existing dedicated tunnel attachment and keeps the grant and frame schemas.
+
 
 ## Cross-custodian Workspace Sync seed (unreleased 0.3)
 

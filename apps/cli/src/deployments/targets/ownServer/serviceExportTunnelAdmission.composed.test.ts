@@ -96,18 +96,15 @@ it.each(['requester access loss', 'applied export retirement'] as const)(
                 expect((await app.inject({ method: 'POST', url: '/peer-mediation/v2/tunnel/open',
                     payload: open(admitted.serviceExport, 'live') })).statusCode).toBe(200);
                 await app.ready();
-                const ws = await (app as typeof app & { injectWS(path: string): Promise<WebSocket> }).injectWS('/peer-mediation/v1/tunnel/stream');
+                const streamPath = '/peer-mediation/v1/tunnel/stream?tunnelId=live';
+                const ws = await (app as typeof app & { injectWS(path: string): Promise<WebSocket> }).injectWS(streamPath);
                 ws.send(encodePeerTcpTunnelBinaryFrameV2({ header: {
                     version: 2, kind: 'open', tunnelId: 'live', substreamId: 'child', payloadLength: 0,
                 } }));
                 await vi.waitFor(() => expect(sockets).toHaveLength(1));
-                const duplicate = await (app as typeof app & { injectWS(path: string): Promise<WebSocket> }).injectWS('/peer-mediation/v1/tunnel/stream');
-                duplicate.send(encodePeerTcpTunnelBinaryFrameV2({ header: {
-                    version: 2, kind: 'open', tunnelId: 'live', substreamId: 'duplicate', payloadLength: 0,
-                } }));
-                await vi.waitFor(() => expect(duplicate.readyState === 3 || sockets.length === 2).toBe(true));
+                const duplicate = await (app as typeof app & { injectWS(path: string): Promise<WebSocket> }).injectWS(streamPath);
+                await vi.waitFor(() => expect(duplicate.readyState).toBe(3));
                 expect(sockets).toHaveLength(1);
-                expect(duplicate.readyState).toBe(3);
                 if (mode === 'applied export retirement') {
                     const handle = lease.registry.projectManagedServices.resolveEnvironmentService(host.serverId, admitted.serviceExport.service);
                     if (!handle) throw new Error('Applied service handle missing');

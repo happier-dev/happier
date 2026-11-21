@@ -140,18 +140,17 @@ export function registerPeerTcpTunnelLoopbackRoutes(
     app.register(async (streamRoutes) => {
         streamRoutes.get(PEER_TCP_TUNNEL_STREAM_PATH, { websocket: true }, (socket: PeerTcpTunnelFastifyWebSocket, request) => {
             const query = new URL(request.raw.url ?? '/', 'http://localhost').searchParams;
-            const previewTunnelIds = query.getAll('tunnelId');
-            const previewTunnelId = previewTunnelIds.length === 1 ? previewTunnelIds[0] : null;
+            const tunnelIds = query.getAll('tunnelId');
+            const boundTunnelId = tunnelIds.length === 1 ? tunnelIds[0] : null;
             const sessions = new Map<string, PeerTcpTunnelLoopbackSession>();
-            const getSession = (tunnelId: string, attachPreview = false) => {
-                if (previewTunnelId && tunnelId !== previewTunnelId) return null;
+            const getSession = (tunnelId: string) => {
+                if (boundTunnelId && tunnelId !== boundTunnelId) return null;
                 const existing = sessions.get(tunnelId);
                 if (existing) return existing;
                 const tunnel = activeTunnels.get(tunnelId);
                 if (!tunnel) return null;
-                if ((tunnel.previewApplication || tunnel.serviceExport) && tunnel.closeTransport) return null;
-                if (tunnel.previewApplication && !attachPreview) return null;
-                if (attachPreview && !tunnel.previewApplication) return null;
+                const dedicated = Boolean(tunnel.previewApplication || tunnel.serviceExport);
+                if (dedicated !== Boolean(boundTunnelId) || (dedicated && tunnel.closeTransport)) return null;
                 if (tunnel.openStreamTimeout) {
                     clearTimeout(tunnel.openStreamTimeout);
                 }
@@ -229,7 +228,7 @@ export function registerPeerTcpTunnelLoopbackRoutes(
                     tunnel.closeTransport = async () => {
                         sessions.delete(tunnelId);
                         await substreamMux?.close();
-                        if (sessions.size === 0) closeSocket(socket);
+                        closeSocket(socket);
                     };
                 }
                 if (tunnel.previewApplication) {
@@ -348,10 +347,8 @@ export function registerPeerTcpTunnelLoopbackRoutes(
                     sessions.delete(tunnelId);
                 }
             });
-            // Native previews attach their already-admitted exact tunnel before any guest
-            // frames. The established WS now owns even an idle viewer's registration.
-            if (previewTunnelIds.length > 0
-                && (!previewTunnelId || previewTunnelIds.length !== 1 || !getSession(previewTunnelId, true))) {
+            // The upgrade attaches the admitted tunnel before the first application connection.
+            if (tunnelIds.length > 0 && (!boundTunnelId || !getSession(boundTunnelId))) {
                 closeSocket(socket);
             }
         });

@@ -129,7 +129,14 @@ it.each(['cold replay', 'requester access loss'] as const)('composes a native pr
                 const sourceEndpoint = source.runtime.endpoint.endpointId;
                 const consumerEndpoint = consumer.runtime.endpoint.endpointId;
                 const before = await selectExport();
-                forward = await consumer.acquire({ targetMachineId: publisher.machineId, serviceExport: before });
+                const waitBeforeFirstConnection = scenario === 'cold replay';
+                if (waitBeforeFirstConnection) vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+                try {
+                    forward = await consumer.acquire({ targetMachineId: publisher.machineId, serviceExport: before });
+                    if (waitBeforeFirstConnection) await vi.advanceTimersByTimeAsync(30_001);
+                } finally {
+                    if (waitBeforeFirstConnection) vi.useRealTimers();
+                }
                 const retainedPort = forward.port;
                 expect(await readMarker(retainedPort)).toBe(marker);
                 if (scenario === 'requester access loss') {
