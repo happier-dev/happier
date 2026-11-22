@@ -4,10 +4,11 @@ import { act, renderHook } from '@/dev/testkit/hooks/renderHook';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { waitForTestEvent } from '@/dev/testkit/hooks/waitForTestEvent';
 import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
-import { createDeploymentEnvironmentHeaderV1,
+import { createDeploymentEnvironmentHeaderV1, createDeploymentReceiptHeaderV1,
     createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { buildDeploymentAccountChangeV1, readDeploymentAccountChangeV1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { useDeploymentActivity, useDeploymentCollection } from './useDeploymentReads';
+import { useDeploymentActivity, useDeploymentCollection, useDeploymentEnvironment,
+    useDeploymentEnvironmentDomains, useDeploymentHistory, useDeploymentReceipt } from './useDeploymentReads';
 import { ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 
 const homes = createHomeGovernanceHarness();
@@ -20,6 +21,61 @@ const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 describe('deployment ProjectSource scope', () => {
     beforeEach(() => homes.reset());
     afterEach(() => standardCleanup());
+
+    it.each([false, true])('opens one Environment header on a 500-Environment Home (serving Receipt: %s)', async serving => {
+        const serverId = await homes.addHome({ name: 'Overview Home', serverUrl: 'https://deploy-overview.test', accountId: 'alice' });
+        const account = await captureLazyActionAccountContext(serverId);
+        const inventory = Array.from({ length: 500 }, (_, index) => createDeploymentEnvironmentHeaderV1({
+            id: `environment-${index}`, contentArtifactId: `environment-artifact-${index}`,
+            serverId, owner: { kind: 'account', accountId: 'alice' },
+        }));
+        const environment = inventory[499]!;
+        const receipt = createDeploymentReceiptHeaderV1({ environmentId: environment.id, contentArtifactId: null });
+        const content = createDeploymentEnvironmentDetailV1().content;
+        const path = `/v1/deployments/environments/${environment.id}`;
+        const receiptPath = `/v1/deployments/receipts/${receipt.id}`;
+        const demand = { mounted: true, visible: true, focused: true };
+        let revision = environment.revision;
+        await account.createArtifactDocument({ artifactId: environment.contentArtifactId,
+            header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: content.name }, body: JSON.stringify(content) });
+        homes.answer(serverId, '/v1/deployments/environments', { body: { ok: true, items: inventory, nextCursor: null } });
+        homes.answer(serverId, path, { select: () => ({ body: {
+            ok: true, environment: { ...environment, revision }, targetLinks: [],
+        } }) });
+        homes.answer(serverId, `${path}/domains`, { select: () => ({ body: {
+            ok: true, environmentId: environment.id, revision, domains: [], nextCursor: null,
+        } }) });
+        homes.answer(serverId, `${path}/deployments`, { body: { ok: true, items: [], nextCursor: null } });
+        homes.answer(serverId, receiptPath, { body: { ok: true, deployment: receipt } });
+        const hook = await renderHook(() => {
+            const { controller } = useDeploymentProject(account.accountLifetime, environment.projectSourceId, demand);
+            return { environment: useDeploymentEnvironment(controller, environment.id, demand),
+                domains: useDeploymentEnvironmentDomains(controller, environment.id, demand),
+                history: useDeploymentHistory(controller, environment.id, demand),
+                receipt: useDeploymentReceipt(controller, environment.id, serving ? receipt.id : null, demand) };
+        });
+        const requestsTo = (url: string) => homes.requests.filter(request => request.path.split('?')[0] === url);
+        try {
+            await vi.waitFor(() => {
+                expect(hook.getCurrent().environment.snapshot.value?.environment.id).toBe(environment.id);
+                expect(hook.getCurrent().domains.result).toMatchObject({ status: 'empty' });
+                expect(hook.getCurrent().history.result).toMatchObject({ status: 'empty' });
+                expect(hook.getCurrent().receipt.snapshot.value?.deployment.id).toBe(serving ? receipt.id : undefined);
+            });
+            expect(requestsTo(path)).toHaveLength(1);
+            expect(requestsTo(`${path}/domains`)).toHaveLength(1);
+            expect(requestsTo(`${path}/deployments`)).toHaveLength(1);
+            expect(requestsTo(receiptPath)).toHaveLength(serving ? 1 : 0);
+            expect(requestsTo('/v1/deployments/environments')).toHaveLength(0);
+
+            revision++;
+            const change = buildDeploymentAccountChangeV1({ projectSourceId: environment.projectSourceId,
+                environmentId: environment.id, revision });
+            await act(async () => publishHomeAccountChange(serverId, [change.entityId], { changeKinds: ['account'] }));
+            await vi.waitFor(() => expect(hook.getCurrent().environment.snapshot.value?.environment.revision).toBe(revision));
+            expect(requestsTo(path)).toHaveLength(2);
+        } finally { await hook.unmount(); account.dispose(); }
+    });
 
     it('refreshes only demanded bound Environments on a saved Secret rotation push', async () => {
         const serverId = await homes.addHome({ name: 'Secret revisions', serverUrl: 'https://deployment-secret-revisions.test', accountId: 'alice' });
@@ -56,9 +112,7 @@ describe('deployment ProjectSource scope', () => {
             const beforeOther = reads('other').length;
             savedRevision = 2;
             await act(async () => publishHomeAccountChange(serverId, ['bound'], { changeKinds: ['savedSecretResource'] }));
-            // One existing front-door Action reads its Environment approval scope,
-            // then performs the metadata effect; this wake starts that Action once.
-            await vi.waitFor(() => expect(reads('bound')).toHaveLength(beforeBound + 2));
+            await vi.waitFor(() => expect(reads('bound')).toHaveLength(beforeBound + 1));
             await vi.waitFor(() => expect(leases[0]!.getSnapshot().value?.secretRevisions[0]?.facts[0]?.currentRevision).toBe(2));
             expect(reads('other')).toHaveLength(beforeOther);
             expect(leases[1]!.getSnapshot().value?.secretRevisions[0]?.facts[0]?.currentRevision).toBe(1);

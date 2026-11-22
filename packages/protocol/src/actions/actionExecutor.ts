@@ -3618,12 +3618,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       if (prepared) ctx = { ...ctx, ...prepared };
     }
     const scopeAdmission = existingAdmission ? { approvalScope: existingAdmission.approvalScope,
+      approvalSettings: existingAdmission.approvalSettings,
       automationSubjects: existingAdmission.automationSubjects }
       : await readActionApprovalScopeAdmissionV1({ actionId, spec, input: admittedInput,
         context: ctx, deps, phase: options?.approvalReplay ? 'replay' : 'prepare',
+        dispatchImmediately: options?.dispatchImmediately === true && !hostInternal,
         isSameHome: (left, right) => isSameHome(left, right, ctx) });
     if ('ok' in scopeAdmission) return scopeAdmission;
-    const { approvalScope } = scopeAdmission;
+    const { approvalScope, approvalSettings } = scopeAdmission;
     // One admitted operand snapshot serves both phases, including approval continuation.
     // Contributed invocations consume their declaration's input-sensitive effect fact at its owner.
     // A Home-verified hop (or in-process dispatch) of the exact root Action continues
@@ -3756,7 +3758,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         spec,
         input: admittedInput,
         context,
-        settings: deps.readActionsSettings?.(context) ?? context.actionsSettings,
+        settings: approvalSettings ?? deps.readActionsSettings?.(context) ?? context.actionsSettings,
         // Input-only in-flow consent answers its designed review; a newly discovered
         // mandatory consequence still needs this owner's exact carried review.
         reviewAdmitted: reviewAdmitted && !childReviewRequired
@@ -3913,6 +3915,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       ...(hostInternal ? { hostInternal: true } : {}),
       ...(workflowSessionScope === undefined ? {} : { workflowSessionScope }),
       ...(approvalScope ? { approvalScope } : {}),
+      ...(approvalSettings ? { approvalSettings } : {}),
       ...('automationSubjects' in scopeAdmission && scopeAdmission.automationSubjects
         ? { automationSubjects: scopeAdmission.automationSubjects } : {}),
       ...(discussionParticipantLaunch ? { discussionParticipantLaunch } : {}),

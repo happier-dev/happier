@@ -1,6 +1,7 @@
 import { type ActionId } from '../actionIds.js';
 import type { ActionExecutorContext, ActionPreparedInvocation, ActionPrepareResult } from './types.js';
 import type { ActionApprovalPolicyScopeV1 } from '../actionApprovalPolicy.js';
+import type { ActionsSettingsV1 } from '../actionSettings.js';
 import { type MemoryWriteAdmissionV1 } from './memoryDocumentActions.js';
 import { type DiscussionModelParticipantLaunchV1 } from '../../discussions/modelParticipantLaunch.js';
 import type { ActionExecutorDeps } from './types.js';
@@ -29,6 +30,8 @@ export type PreparedCoreAdmission = Readonly<{
     /** Private parent-child admission survives preparation; never caller-authored or persisted. */
     hostInternal?: true;
     approvalScope?: ActionApprovalPolicyScopeV1;
+    /** An immediate read admits global-only policy against one settings snapshot. */
+    approvalSettings?: ActionsSettingsV1;
     automationSubjects?: readonly import('../../automations/automationSubjectV1.js').AutomationSubjectContextV1[];
     memoryAdmission?: MemoryWriteAdmissionV1;
     /** Keep the original creation consequence after effective policy narrows the input. */

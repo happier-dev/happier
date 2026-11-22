@@ -1,7 +1,10 @@
 import type { ActionId } from '../actionIds.js';
-import type { ActionApprovalPolicyScopeV1 } from '../actionApprovalPolicy.js';
+import { readExplicitActionApprovalPreferenceV1, type ActionApprovalPolicyScopeV1 } from '../actionApprovalPolicy.js';
+import type { ActionsSettingsV1 } from '../actionSettings.js';
 import type { ActionSpec } from '../actionSpecs.js';
+import { isPresentUserHostInvocation } from '../invocationAuthority.js';
 import type { AutomationSubjectContextV1 } from '../../automations/automationSubjectV1.js';
+import { isDeploymentActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
 import { MachineServiceLogsReadInputV1Schema, MachineServiceControlInputV1Schema } from '../specs/machine/services.js';
 import { MachineServiceExecInputV1Schema } from '../specs/machine/services.js';
 import { readRecord } from '../../inputs/inputRecords.js';
@@ -10,10 +13,11 @@ import type { ActionExecuteFailure, ActionExecutorContext, ActionExecutorDeps } 
 
 export type ActionApprovalScopeAdmissionV1 = Readonly<{
   approvalScope?: ActionApprovalPolicyScopeV1;
+  approvalSettings?: ActionsSettingsV1;
   automationSubjects?: readonly AutomationSubjectContextV1[];
 }>;
 
-/** Scope comes from the admitted owner, never caller context or a policy snapshot. */
+/** Exact scope comes from the admitted owner, never caller context or a policy snapshot. */
 export async function readActionApprovalScopeAdmissionV1(args: Readonly<{
   actionId: ActionId;
   spec: ActionSpec;
@@ -21,6 +25,7 @@ export async function readActionApprovalScopeAdmissionV1(args: Readonly<{
   context: ActionExecutorContext;
   deps: ActionExecutorDeps;
   phase: 'prepare' | 'dispatch' | 'replay';
+  dispatchImmediately?: boolean;
   isSameHome: ActionHomeEquivalence;
 }>): Promise<ActionApprovalScopeAdmissionV1 | ActionExecuteFailure> {
   const { actionId, spec, input, context, deps } = args;
@@ -29,6 +34,18 @@ export async function readActionApprovalScopeAdmissionV1(args: Readonly<{
   const declaredScope = projection ? projection.scope : spec.approvalScope;
   const automationSubjects = projection?.subjects.map(subject => ({ role: 'operand' as const, subject }));
   const operandFacts = automationSubjects?.length ? { automationSubjects } : {};
+  if (spec.approvalScope === 'environment' && spec.sideEffectClass === 'read' && spec.approvalPolicy?.uiConfirmation === 'direct'
+    && spec.serverTransport?.method === 'GET' && spec.executionPlacement === 'account' && !spec.executionPlacementForInput
+    && isDeploymentActionIdV1(actionId) && args.phase === 'prepare' && args.dispatchImmediately
+    && context.surface === 'ui' && context.callerSurface === undefined && isPresentUserHostInvocation(context)
+    && !context.approvalProfileId && !context.approvalProfile && !context.sessionApprovalConsents?.rows.length) {
+    // Home admits access in each GET. Keep the exact scope for Ask and whenever
+    // an Environment or its Preview template could supply a saved preference.
+    const settings = deps.readActionsSettings?.(context) ?? context.actionsSettings;
+    if (settings && !settings.scopedApprovalPreferences?.some(row => row.actionId === actionId
+      && row.scope.kind === 'environment')
+      && readExplicitActionApprovalPreferenceV1(actionId, settings, context) !== true) return { approvalSettings: settings };
+  }
   if (actionId === 'machines.services.exec') {
     const request = MachineServiceExecInputV1Schema.parse(input);
     if (context.serverId && !args.isSameHome(request.serverId, context.serverId)) return wrongHome();
