@@ -47,7 +47,8 @@ vi.mock('node:child_process', async importOriginal => {
     const actual = await importOriginal<typeof import('node:child_process')>();
     const { spawnWorkspaceCheckoutNativeBoundary } = await import('./workspaceCheckoutNative.testkit');
     return { ...actual, spawn: (command: string, args: readonly string[], options: import('node:child_process').SpawnOptions) => {
-        expect(command).toBe('sudo');
+        // The Linux scope composer may wrap the admitted sudo target.
+        expect([command, ...args]).toContain('sudo');
         expect(args.slice(-2)).toEqual(['/opt/happier/cli/current/happier', 'agent-launch']);
         return spawnWorkspaceCheckoutNativeBoundary(actual.spawn, options);
     } };

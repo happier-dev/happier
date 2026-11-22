@@ -2,6 +2,7 @@ import { createInterface } from 'node:readline';
 import { ExecFileTerminationError } from '@happier-dev/cli-common/process';
 import { spawnAuthorizedHostExecLaunchForHost, type HostAuthorizedPluginExecLaunch } from '@/plugins/runtime/invocation/services/exec';
 import type { SupervisedPluginProcess } from '@/plugins/runtime/exec/processSupervisor';
+import { prepareCgroupProcessLaunchScope } from '@/daemon/platform/linux/buildCgroupSelfMigratingHappyCliLaunchSpec';
 
 /** A finite private pipe over the incumbent native launcher and process owner.
  * Cancellation is delivered to the member, which owns its installer descendants. */
@@ -14,9 +15,10 @@ export async function runMemberAgentEffect<T>(input: Readonly<{
   let release = input.launch.release;
   let process: SupervisedPluginProcess;
   try {
+    const linuxProcessLaunchScope = globalThis.process.platform === 'linux' ? await prepareCgroupProcessLaunchScope() : null;
     process = spawnAuthorizedHostExecLaunchForHost({ ...input.launch,
       maxStdoutBytes: 0, maxStderrBytes: 0, waitForGracefulRootExitBeforeTreeStop: true },
-    { retainLaunch: retained => { release = retained; } });
+    { linuxProcessLaunchScope, retainLaunch: retained => { release = retained; } });
   } catch (error) { await release(); throw error; }
   const lines = createInterface({ input: process.child.stdout });
   let terminal: T | undefined;

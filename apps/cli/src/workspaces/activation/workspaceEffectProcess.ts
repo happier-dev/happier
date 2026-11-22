@@ -1,4 +1,5 @@
 import type { Duplex, Readable, Writable } from 'node:stream';
+import { prepareCgroupProcessLaunchScope } from '@/daemon/platform/linux/buildCgroupSelfMigratingHappyCliLaunchSpec';
 import {
   authorizeResolvedProjectExecLaunchForHost,
   spawnAuthorizedHostExecLaunchForHost,
@@ -129,8 +130,9 @@ export async function runWorkspaceEffectChild(input: WorkspaceEffectInvocation &
 }>): Promise<WorkspaceEffectChildOutcome> {
   let transferred = false;
   try {
+    const linuxProcessLaunchScope = globalThis.process.platform === 'linux' ? await prepareCgroupProcessLaunchScope() : null;
     await input.beforeSpawn?.();
-    const process = spawnAuthorizedHostExecLaunchForHost(input.launch, { signal: input.signal });
+    const process = spawnAuthorizedHostExecLaunchForHost(input.launch, { signal: input.signal, linuxProcessLaunchScope });
     transferred = true;
     return await runWorkspaceEffectPipe(input, { input: process.child.stdout, output: process.child.stdin,
       wait: async () => {

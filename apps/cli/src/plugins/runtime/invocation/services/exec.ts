@@ -1280,6 +1280,7 @@ export function createProjectNativeToolchainIoForHost(input: Readonly<{
                 const signal = invocation ? request.signal ? AbortSignal.any([invocation.signal, request.signal]) : invocation.signal : request.signal;
                 assertOpen();
                 if (signal?.aborted) fail('plugin_exec_aborted', 'Process operation was aborted');
+                const linuxProcessLaunchScope = process.platform === 'linux' ? await prepareCgroupProcessLaunchScope() : null;
                 // Native environment evaluation can execute workspace code before
                 // the final script exists. Its actual command uses the same tuple
                 // authority, not a preflight that is discarded before spawning.
@@ -1310,6 +1311,7 @@ export function createProjectNativeToolchainIoForHost(input: Readonly<{
                     processOwnerTag: formatProcessOwnerTag({ happierHomeDir: configuration.happyHomeDir, owner: { kind: 'happier' } }),
                 }, {
                     ...(signal ? { signal } : {}),
+                    linuxProcessLaunchScope,
                     ...(input.ownerRemainder ? { ownerRemainder: input.ownerRemainder } : {}),
                 });
                 retain(supervised);
