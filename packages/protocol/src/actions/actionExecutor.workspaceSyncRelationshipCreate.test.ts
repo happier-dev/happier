@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { computeWorkspaceSyncPolicyDigest } from '../sessions/control/handoff/workspaceSyncSchemas.js';
 import { createActionExecutor } from './actionExecutor.js';
+import { bindPresentUserActionConfirmationV1 } from './executor/approvalReview.js';
 import type { ActionExecutorDeps } from './executor/types.js';
 import { ApprovalRequestV2Schema, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
@@ -80,6 +81,32 @@ describe('workspace.sync.relationship.create Action', () => {
       expect(artifacts).toBe(0);
     }
   });
+
+  it.each([['the reviewed request', 'press-1', true], ['a fresh request', 'press-2', false]] as const)(
+    'admits a headless carried-review confirmation on %s only, since the destination proof binds that request', async (_label, confirmRequestId, runs) => {
+      const effects: unknown[] = [];
+      const executor = createActionExecutor({
+        // The target daemon stamps the request's operationId into its proof (workspaceSyncTargetAuthority).
+        sessionHandoffTargetReplacementApprovalPreflight: async args => ({ type: 'approval_required', approval: {
+          v: 1 as const, consequences: ['delete_target_only_files_during_exact_mirror'] as const, serverId: 'home',
+          machineId: 'target-machine', canonicalRoot: '/work/existing', rootFingerprint: 'a'.repeat(64), operationId: args.operationId } }),
+        workspaceSyncRelationshipCreate: async args => { effects.push(args); return result; },
+        approvalsCreate: async () => { throw new Error('unexpected self-approval'); },
+      });
+      const exactInput = { ...input, mode: 'mirror_exactly' as const };
+      const press = (actionRequestId: string) => ({ surface: 'ui' as const, authority: 'present_user' as const,
+        actionCaller: { kind: 'host' as const }, serverId: 'home', runtimeAccountId: 'alice', actionRequestId,
+        externalActionTarget: { kind: 'machine' as const, machineId: 'source-machine' } });
+      const review = await executor.execute('workspace.sync.relationship.create', exactInput, press('press-1'));
+      if (review.ok) throw new Error('expected a carried review');
+      const reviewDigest = (review.details as { reviewDigest: string }).reviewDigest;
+      const confirmed = await executor.execute('workspace.sync.relationship.create', exactInput,
+        bindPresentUserActionConfirmationV1('workspace.sync.relationship.create', exactInput, press(confirmRequestId), reviewDigest));
+      expect(confirmed).toMatchObject(runs ? { ok: true, result }
+        : { ok: false, errorCode: 'action_interactive_review_required',
+          details: { review: { preview: { handoffTargetReplacementApproval: { operationId: 'press-2' } } } } });
+      expect(effects).toHaveLength(runs ? 1 : 0);
+    });
 
   it('binds exact-mirror replacement approval to the replacement Action and its exact old link', async () => {
     const exactInput = { ...input, mode: 'mirror_exactly' as const, replaceRelationshipId: 'old-link' };

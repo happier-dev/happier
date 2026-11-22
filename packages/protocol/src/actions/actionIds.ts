@@ -1215,3 +1215,12 @@ export function isSessionListActionId(value: unknown): value is 'session.list' {
 export function isWorkspaceSyncRelationshipWriteActionId(value: unknown): value is 'workspace.sync.relationship.create' | 'workspace.sync.relationship.replace' {
   return value === 'workspace.sync.relationship.create' || value === 'workspace.sync.relationship.replace';
 }
+
+/**
+ * Actions whose carried interactive review binds a proof to the invocation's request id (a Session draft's
+ * sandbox acquire; a Sync destination proof's operationId). Their confirm replays the reviewed request, so the
+ * proof the person saw is the one that runs; a fresh request would rebuild a different review.
+ */
+export function keepsReviewedRequestOnConfirmV1(actionId: string): boolean {
+  return isSessionSpawnNewActionIdV1(actionId) || isWorkspaceSyncRelationshipWriteActionId(actionId);
+}

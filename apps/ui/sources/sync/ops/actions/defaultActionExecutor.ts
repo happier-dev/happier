@@ -11,7 +11,7 @@ import { resolveAmbientTeamCredentialModelForModelIntent } from '@happier-dev/ag
 import { actionInputValidationFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
 import { readActionOutputDiagnostic, withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { logPluginSurfaceDiagnostic } from '@/components/plugins/shared/pluginSurfaceDiagnosticLog';
-import { isSessionSpawnNewActionIdV1, SESSION_MESSAGE_SEND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { isSessionSpawnNewActionIdV1, keepsReviewedRequestOnConfirmV1, SESSION_MESSAGE_SEND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { isComputerRuntimeActionId } from '@happier-dev/protocol/actions/executor/computer';
 import { readLocalServiceControlActionRequest, resolveLocalServiceDomainActionRpcBinding } from '@happier-dev/protocol/actions/specs/localServices';
@@ -5256,9 +5256,11 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     };
   };
 
-  // A confirmed re-execution after a receiving executor's refusal is a new invocation of the same exact input,
-  // bound (at each path's existing binding site) to the review that executor carried back.
-  const freshRequest = (context: ActionExecutorContext): ActionExecutorContext => ({ ...context, actionRequestId: randomUUID() });
+  // A confirmed re-execution after a receiving executor's refusal re-sends the same exact input, bound (at each
+  // path's existing binding site) to the review that executor carried back. It is a new invocation unless the
+  // Action's review binds a proof to the reviewed request, which the confirm must then replay.
+  const confirmationRequest = (actionId: ActionId, context: ActionExecutorContext): ActionExecutorContext =>
+    keepsReviewedRequestOnConfirmV1(actionId) ? context : { ...context, actionRequestId: randomUUID() };
   const executeMachineAction = async (actionId: ActionId, input: unknown, context: ActionExecutorContext, confirmInFlow = false) => {
     // Direct Machine ingress shares the canonical Home normalization used by the core executor,
     // before input-bound consent and the signed receiving request are created.
@@ -5300,9 +5302,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       if (candidate && !originalDeploymentAuthorization) {
         return { ok: false, errorCode: 'approval_stale', error: 'approval_stale', effectAttempted: false };
       }
-      // A Session draft's attempt ID also identifies its reviewed sandbox acquire.
-      const confirmedContext = isSessionSpawnNewActionIdV1(actionId) ? context : freshRequest(context);
-      return executeMachineOwnedAction({ actionId, input: actionInput, context: confirmedContext, confirmInFlow: true,
+      return executeMachineOwnedAction({ actionId, input: actionInput, context: confirmationRequest(actionId, context), confirmInFlow: true,
         reviewDigest, reviewedDeploymentInput,
         ...(candidate && originalDeploymentAuthorization ? { deploymentReview: { candidate,
           originalAuthorizationToken: originalDeploymentAuthorization } } : {}) });
@@ -5345,7 +5345,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       : await confirmOwnUiRefusal(actionId, input, resolved,
         await executor.execute(actionId, input, confirmInFlow ? bindPresentUserActionConfirmation(actionId, input, resolved) : resolved),
         deps.presentUserActionConfirmation, (confirmedInput, reviewDigest) =>
-          executor.execute(actionId, confirmedInput, bindPresentUserActionConfirmation(actionId, confirmedInput, freshRequest(resolved), reviewDigest)));
+          executor.execute(actionId, confirmedInput, bindPresentUserActionConfirmation(actionId, confirmedInput, confirmationRequest(actionId, resolved), reviewDigest)));
   };
   return {
     previewSessionTargets: async (target, context) => {
@@ -5374,7 +5374,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           ...(context?.signal ? { signal: context.signal } : {}) });
       return await confirmOwnUiRefusal(actionId, input, resolvedContext, await native(input, resolvedContext, confirmInFlow),
         deps.presentUserActionConfirmation, (confirmedInput, reviewDigest) =>
-          native(confirmedInput, freshRequest(resolvedContext), true, reviewDigest));
+          native(confirmedInput, confirmationRequest(actionId, resolvedContext), true, reviewDigest));
     },
     readWidgetInputDescriptor: async request => {
       const port = readWidgetActionSurfacePortV1(widgetInputDeps, request.ref.surface);
@@ -5409,7 +5409,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       return prepared.kind === 'ready' ? { ...prepared, invocation: { ...prepared.invocation,
         run: async () => await confirmOwnUiRefusal(actionId, input, resolved, await prepared.invocation.run(),
           deps.presentUserActionConfirmation, (confirmedInput, reviewDigest) =>
-            executor.execute(actionId, confirmedInput, bindPresentUserActionConfirmation(actionId, confirmedInput, freshRequest(resolved), reviewDigest))) } } : prepared;
+            executor.execute(actionId, confirmedInput, bindPresentUserActionConfirmation(actionId, confirmedInput, confirmationRequest(actionId, resolved), reviewDigest))) } } : prepared;
     },
     executeAdmittedClientAction: (actionId, input, context) => executor.executeAdmittedClientAction(actionId, input, context),
     execute: executeAction,

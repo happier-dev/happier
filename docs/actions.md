@@ -1359,7 +1359,10 @@ reviewer eligibility.
 For an own-UI press that still needs review, a receiving executor without a native
 confirmation presenter returns its prepared review and `reviewDigest` with `action_interactive_review_required`.
 The originating UI presents that review and binds a fresh invocation's confirmation
-to its digest. The receiving executor recognizes the press from the existing
+to its digest. An Action whose review binds a proof to the request id
+(`keepsReviewedRequestOnConfirmV1`: Session creation's sandbox acquire, a Sync
+destination proof's operationId) replays the reviewed request id instead, so the
+proof the person saw is the one that runs. The receiving executor recognizes the press from the existing
 Home-admitted Account binding and rebuilds the review for a digest-bearing confirmation,
 refusing a changed digest with the fresh review before any effect. Existing valid
 input-bound in-flow confirmations without a review digest retain their admission.
