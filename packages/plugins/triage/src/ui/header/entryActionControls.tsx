@@ -167,6 +167,23 @@ export type TriageEntryActionControlsPropsV1 = Readonly<{
  */
 type TriageActionIntentV1 = 'review' | 'fix' | 'ask' | 'other';
 
+/**
+ * The entry's own status change, when it is not a control of its own in the row (an issue on PRs & Issues, lab
+ * merged-detail-issue: the work leads, Close and Reopen wait in ⋯ as its last rows). The task's edit owner supplies
+ * the source's own transitions and their writes; this row only lists them.
+ */
+export type TriageEntryStatusMenuV1 = Readonly<{
+  label: string;
+  items: NonNullable<React.ComponentProps<typeof Menu>['items']>;
+  radioGroups: NonNullable<React.ComponentProps<typeof Menu>['radioGroups']>;
+  disabled: boolean;
+  onSelect(id: string): void;
+}>;
+
+export const TriageEntryStatusMenuContext = React.createContext<TriageEntryStatusMenuV1 | null>(null);
+
+const STATUS_ITEM_PREFIX = 'triage-status:';
+
 /** Source support and the selected entry's readiness are separate facts. */
 export function resolveTriageReviewPreparationV1(input: Readonly<{
   sourceCanPrepare: boolean;
@@ -392,6 +409,7 @@ export function TriageEntryActionControls(
     fitBand(bandRoom ?? 0, bandControlsWidth.current);
   };
   const extraItems = props.overflowItems ?? [];
+  const statusMenu = React.useContext(TriageEntryStatusMenuContext);
   // Make task is a rarer action than Ask, so it is always a row of ⋯. On a phone the source's write is one too; a
   // write with several methods keeps them as one group.
   const write = compact ? props.sourceWrite : undefined;
@@ -400,7 +418,7 @@ export function TriageEntryActionControls(
   const writeMethods = write?.methods !== undefined && write.methods.length > 1 && !writeBlocked ? write.methods : null;
   const writeShown = write !== undefined && !triageSourceWriteReplacedByNativeStateV1(write);
   const hasOverflow = overflowActions.length > 0 || extraItems.length > 0 || mergeChoices !== null
-    || props.taskDraft !== undefined || writeShown;
+    || props.taskDraft !== undefined || writeShown || statusMenu !== null;
   // The reason a control cannot start sits with that control: under the row when a blocked action is in sight,
   // as the subtitle of its own menu row when it waits behind More, so the row never says "cannot" beside an action
   // that can.
@@ -535,7 +553,14 @@ export function TriageEntryActionControls(
       ...(item.disabled === true ? { disabled: true } : {}),
     })),
     ...(mergeChoices === null ? [] : mergeChoices.items),
+    // A state change is the last thing ⋯ offers (DESIGN "destructive and state changes last").
+    ...(statusMenu === null ? [] : statusMenu.items.map((item) => ({ ...item, id: `${STATUS_ITEM_PREFIX}${item.id}`,
+      ...('radioGroupId' in item && item.radioGroupId !== undefined ? { radioGroupId: `${STATUS_ITEM_PREFIX}${item.radioGroupId}` } : {}),
+      ...(statusMenu.disabled ? { disabled: true } : {}) }))),
   ];
+  const statusGroups = statusMenu === null ? [] : statusMenu.radioGroups.map((group) => ({ ...group,
+    id: `${STATUS_ITEM_PREFIX}${group.id}`,
+    selectedId: group.selectedId == null ? group.selectedId : `${STATUS_ITEM_PREFIX}${group.selectedId}` }));
   // The source's merge alternatives follow the entry's own actions in the same ⋯; a merge method choice keeps its group.
   const menuGroups = [
     ...(writeMethods === null || write === undefined ? [] : [{
@@ -547,6 +572,7 @@ export function TriageEntryActionControls(
   ];
   const selectMenuItem = (id: string) => {
     setMoreOpen(false);
+    if (id.startsWith(STATUS_ITEM_PREFIX)) { statusMenu?.onSelect(id.slice(STATUS_ITEM_PREFIX.length)); return; }
     if (id === MAKE_TASK_ITEM_ID) { void makeTask.run(); return; }
     if (id === `${SOURCE_WRITE_ITEM_PREFIX}retry`) { void write?.retry?.(); return; }
     if (write !== undefined && id.startsWith(SOURCE_WRITE_ITEM_PREFIX)) {
@@ -597,6 +623,7 @@ export function TriageEntryActionControls(
           triggerAccessibilityLabel={moreLabel}
           items={menuItems}
           {...(menuGroups.length === 0 ? {} : { groups: [...menuGroups], showGroupLabels: true })}
+          {...(statusGroups.length === 0 ? {} : { radioGroups: statusGroups })}
           {...(mergeChoices?.explanation == null ? {} : { sheet: { title: moreLabel, footer: mergeChoices.explanation } })}
           onSelect={selectMenuItem}
         />

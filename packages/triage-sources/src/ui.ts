@@ -36,6 +36,8 @@ export { TriageStatusRow, type TriageStatusRowProps } from './ui/statusRow.js';
 export { TriageSourcePartialReadBanner, TriageSourceReadFailureDetails } from './ui/readFailure.js';
 export {
   TriageDetailStory,
+  TriageStoryFactsProvider,
+  type TriageStoryFactsV1,
   TriageDetailChangeSummary,
   TriageChecksRollupLine,
   TriageDetailChecks,

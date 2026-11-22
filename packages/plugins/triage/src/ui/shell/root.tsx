@@ -142,7 +142,7 @@ import {
   type TriageRouteLensV1,
 } from '../navigation/location.js';
 import { TriageActionsEditor } from '../actions/ActionsEditor.js';
-import { TriageCreateTaskFields } from '../detail/taskFields.js';
+import { TriageCreateTaskFields, TriageTaskControlsPlacementContext } from '../detail/taskFields.js';
 import { useTriageTaskWriteState } from '../detail/taskWrite.js';
 import { readTriageSelectedObservationV1 } from '../window/selectedObservation.js';
 import { readTriageAbsentRouteV1 } from './absentRoute.js';
@@ -2635,6 +2635,8 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       <TriageEntryPublicationContext.Provider value={entryPublication}>
       <TriageHeaderPublicationContext.Provider value={readPublishedHeader}>
       <TriageListRowEnvironmentContext.Provider value={rowEnvironment}>
+      {/* PRs & Issues leads an issue's detail with the work (lab merged-detail-issue); Tasks with its Status (lab t1). */}
+      <TriageTaskControlsPlacementContext.Provider value={taskAudience === undefined ? 'story' : 'header'}>
         <Collection<TriageListItemV1>
           resizeKey="triage"
           model={collection}
@@ -3049,6 +3051,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
             />
           )}
         />
+      </TriageTaskControlsPlacementContext.Provider>
       </TriageListRowEnvironmentContext.Provider>
       </TriageHeaderPublicationContext.Provider>
       </TriageEntryPublicationContext.Provider>

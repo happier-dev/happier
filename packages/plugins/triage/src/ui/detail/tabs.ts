@@ -75,6 +75,13 @@ function presentationOf(
   };
 }
 
+/** Whether a kind's detail is the tabbed frame (its source renders panels) rather than its source's whole body. */
+export function triageDetailKindHasTabsV1(
+  entryTabs: readonly TriageSourceDetailTabV1[] | undefined,
+): entryTabs is readonly TriageSourceDetailTabV1[] {
+  return entryTabs !== undefined && entryTabs.length > 0;
+}
+
 export function planTriageDetailTabsV1(input: Readonly<{
   workflowSubject: TriageSourceWorkflowSubjectV1 | null;
   entryTabs: readonly TriageSourceDetailTabV1[] | undefined;
@@ -82,7 +89,7 @@ export function planTriageDetailTabsV1(input: Readonly<{
   entryFacts?: readonly TriageRowFactV1[];
   fixPullRequest: TriageDetailFixPullRequestTabsV1 | null;
 }>): TriageDetailCompositionV1 {
-  if (input.entryTabs === undefined || input.entryTabs.length === 0) return WHOLE;
+  if (!triageDetailKindHasTabsV1(input.entryTabs)) return WHOLE;
   const changesFromFixPullRequest = input.workflowSubject === 'issue'
     || input.workflowSubject === 'errorIssue';
 

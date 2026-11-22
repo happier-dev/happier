@@ -3,6 +3,7 @@ import { Button, Card, HappierBodyEdgeContext, Chart, Column, Columns, HAPPIER_P
 import { formatTriageTimestampV1 } from '@happier-dev/triage-protocol/v1';
 
 import { summarizeTriageChangesV1, type TriageChangedFileV1, type TriageChangeTotalsV1 } from './changeSummary.js';
+import { resolveTriageCrossCopyContext } from './crossCopyContext.js';
 import { TriageStatusRow } from './statusRow.js';
 import { TriageTextPreview } from './textPreview.js';
 
@@ -12,6 +13,31 @@ const STORY_TITLES = Object.freeze({
   report: { key: 'plugins.triage.detailStory.report', fallback: 'The report' },
   error: { key: 'plugins.triage.detailStory.happened', fallback: 'What happened' },
 });
+
+/**
+ * The entry's own editable facts (a task's Assignees and Labels, its write notice), handed by the mounted Triage
+ * parent to the story's first step, where the lab reads them (merged-detail-issue). The story claims them while it
+ * draws them, and the parent keeps them above the story only while nothing has claimed them, so a source whose story
+ * has no first step never loses them. The parent keeps custody of the facts' state and writes.
+ */
+export type TriageStoryFactsV1 = Readonly<{ facts: React.ReactNode; claim(): () => void }>;
+
+const TriageStoryFactsContext = resolveTriageCrossCopyContext<TriageStoryFactsV1 | null>(
+  Symbol.for('happier.triageSources.privateStoryFactsContext.v1'),
+  null,
+);
+
+export function TriageStoryFactsProvider(props: Readonly<{ value: TriageStoryFactsV1 | null; children: React.ReactNode }>): React.ReactElement {
+  return <TriageStoryFactsContext.Provider value={props.value}>{props.children}</TriageStoryFactsContext.Provider>;
+}
+
+/** The parent's facts for step ①, claimed for as long as the step is mounted. */
+function useClaimedStoryFacts(): React.ReactNode {
+  const value = React.useContext(TriageStoryFactsContext);
+  const claim = value?.claim;
+  React.useLayoutEffect(() => claim?.(), [claim]);
+  return value?.facts ?? null;
+}
 
 /**
  * Composition only: the source retains ownership of evidence and its read lifecycle.
@@ -38,12 +64,29 @@ export function TriageDetailStory({ kind, children, loading, notice, changes, ch
 }>): React.ReactElement {
   const text = usePluginTranslation();
   if (kind === undefined) return <ScrollArea><Stack gap="large">{children}</Stack></ScrollArea>;
-  const body = loading === true
+  return <TriageDetailStorySteps kind={kind} loading={loading} notice={notice} changes={changes} checks={checks}
+    trailing={trailing} text={text}>{children}</TriageDetailStorySteps>;
+}
+
+function TriageDetailStorySteps({ kind, children, loading, notice, changes, checks, trailing, text }: Readonly<{
+  kind: keyof typeof STORY_TITLES;
+  children: React.ReactNode;
+  loading: boolean | undefined;
+  notice: React.ReactNode | undefined;
+  changes: React.ReactNode | undefined;
+  checks: React.ReactNode | undefined;
+  trailing: React.ReactNode | undefined;
+  text: ReturnType<typeof usePluginTranslation>;
+}>): React.ReactElement {
+  // The entry's facts are part of ① (Labels, Assignee under the report), not configuration above the work.
+  const facts = useClaimedStoryFacts();
+  const read = loading === true
     ? <TriageStoryLoadingLines label={text('plugins.triage.surface.detail.reading', 'Reading this entry')} />
     // The ask reads as text: a folded row in it (Facts) stands on the text's edge, not a list row's inset.
     : <HappierBodyEdgeContext.Provider value>
       <TriageTextPreview testID="triage-story-ask-body">{children}</TriageTextPreview>
     </HappierBodyEdgeContext.Provider>;
+  const body = facts === null ? read : <Stack gap="medium">{read}{facts}</Stack>;
   return <Stack gap="large">
     <Step marker={{ kind: 'number', value: 1 }}
       title={STORY_TITLES[kind].fallback}

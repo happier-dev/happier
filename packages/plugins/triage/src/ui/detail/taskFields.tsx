@@ -30,6 +30,9 @@ import { TriageTaskOriginLink } from './taskOrigin.js';
 import { useLinkedSessionOpen } from './useLinkedSessionOpen.js';
 import { taskWriteMessage, taskSourceLinkLabel } from '../taskWriteMessage.js';
 import { TaskWriteNotice } from './TaskWriteNotice.js';
+import { TriageStoryFactsProvider, type TriageStoryFactsV1 } from '@happier-dev/triage-sources/ui';
+import { TriageEntryStatusMenuContext, type TriageEntryStatusMenuV1 } from '../header/entryActionControls.js';
+import { triageDetailKindHasTabsV1 } from './tabs.js';
 import { sameTriageSourceIdentity } from '../../corpus/identity/components.js';
 import { INTERNAL_TASK_SOURCE_V1 } from '../../internalTasks/identity.js';
 import { TRIAGE_TASKS_SET_ORIGIN_ERROR_ACTION_LOCAL_ID_V1 } from '../../actions/taskOriginProtocol.js';
@@ -708,6 +711,14 @@ export type TriageEditTaskPlacementV1 = Readonly<{
 const NO_TASK_RELATIONS: TriageEditTaskPlacementV1['relations'] = Object.freeze({ blockedBy: null, subTasks: null });
 
 /**
+ * Where a task's own controls sit in its detail. `header` (Tasks, lab t1): its Status leads the action row and its
+ * properties sit above the story. `story` (PRs & Issues, lab merged-detail-issue): the work leads, the properties are
+ * facts in the story's first step and the status change waits in the action row's ⋯. The list page that opens the
+ * detail decides it; every other host keeps the Tasks placement.
+ */
+export const TriageTaskControlsPlacementContext = React.createContext<'header' | 'story'>('header');
+
+/**
  * Exact editable values belong to the source read, never to the bounded display projection.
  *
  * One owner holds the editor's state; the detail decides where its two parts sit. Key it per entry instance so a
@@ -737,6 +748,11 @@ export function TriageEditTaskScope(props: Readonly<{
   const [draft, setDraft] = React.useState<Record<string, unknown>>({});
   const [issues, setIssues] = React.useState<Record<string, string>>({});
   const [statusOpen, setStatusOpen] = React.useState(false);
+  // A tabbed source's story may carry the properties in its first step; until it claims them they stay above it.
+  const [factsClaimed, setFactsClaimed] = React.useState(false);
+  const claimFacts = React.useCallback(() => { setFactsClaimed(true); return () => setFactsClaimed(false); }, []);
+  const storyPlacement = React.useContext(TriageTaskControlsPlacementContext) === 'story'
+    && triageDetailKindHasTabsV1(kind?.detailTabs);
   const write = useTriageTaskCommit(props.onApplied, { entryRef: props.row.entryRef,
     sourceInstanceId: selected?.sourceInstanceId ?? '' }, props.linkedSessionIds);
   const rebaseFields = write.rebaseFields;
@@ -759,8 +775,14 @@ export function TriageEditTaskScope(props: Readonly<{
       retry: () => { void props.onApplied().catch(() => undefined); } } } : {}) });
   const canEdit = kind?.task === true && fields.length > 0
     && resolveTriageSourceTaskOperationV1(context.targetedContributions, props.row.entryRef.source, 'edit') !== undefined;
+  // The same provider tree on every path, so a read that lands never remounts the detail under it.
+  const place = (placement: TriageEditTaskPlacementV1, facts: TriageStoryFactsV1 | null, statusMenu: TriageEntryStatusMenuV1 | null) => (
+    <TriageStoryFactsProvider value={facts}>
+      <TriageEntryStatusMenuContext.Provider value={statusMenu}>{props.children(placement)}</TriageEntryStatusMenuContext.Provider>
+    </TriageStoryFactsProvider>
+  );
   if (kind?.task !== true || selected === null || snapshot === undefined) {
-    return props.children({ status: null, controls: null, relations: NO_TASK_RELATIONS, edit: null, form: null });
+    return place({ status: null, controls: null, relations: NO_TASK_RELATIONS, edit: null, form: null }, null, null);
   }
   const transitions = resolveTriageSourceTaskOperationV1(context.targetedContributions, props.row.entryRef.source, 'transition') === undefined
     ? [] : capabilities?.transitions ?? [];
@@ -798,6 +820,10 @@ export function TriageEditTaskScope(props: Readonly<{
   const transitionTrigger = currentStatus ?? transitionLabel;
   const transitionAccessibilityLabel = currentStatus === null ? transitionLabel : `${transitionLabel}, ${currentStatus}`;
   const statusMenu = taskStatusMenu(transitions, { label: currentStatus, state: snapshot.state }, transitionLabel, workflow.action<string>);
+  const selectStatus = (value: string) => {
+    const transition = transitions.find(candidate => candidate.id === value);
+    if (transition !== undefined && value !== statusMenu.currentId) workflow.select(transition);
+  };
   const valuesNotice = readFailed ? <Banner tone="warning" title={text('plugins.triage.tasks.editValuesUnavailable',
     'Some current task values could not be loaded. Only fully loaded fields can be edited.')} /> : null;
   const canEditText = canEdit && textFields.length > 0;
@@ -806,9 +832,7 @@ export function TriageEditTaskScope(props: Readonly<{
   const status = transitions.length === 0 ? null : <Menu open={statusOpen && !statusDisabled} onOpenChange={(open) => setStatusOpen(open && !statusDisabled)}
       trigger={transitionTrigger} triggerAccessibilityLabel={transitionAccessibilityLabel} triggerAppearance="control" disabled={statusDisabled}
       {...(currentCategory === null ? {} : { triggerTaskStatus: currentCategory })}
-      items={statusMenu.items} radioGroups={statusMenu.radioGroups}
-      onSelect={(value) => { const transition = transitions.find(candidate => candidate.id === value);
-        if (transition !== undefined && value !== statusMenu.currentId) workflow.select(transition); }} />;
+      items={statusMenu.items} radioGroups={statusMenu.radioGroups} onSelect={selectStatus} />;
   const propertyValues = values ?? {};
   const propertyAssigneeLabels = new Map<string, string | null>(withAssigneeNames(assigneeLabels, assigneeDirectory));
   const assigneeIds = propertyValues.assigneeIds ?? [];
@@ -901,7 +925,12 @@ export function TriageEditTaskScope(props: Readonly<{
       context={{ sourceName: descriptor?.displayName, operation: 'edit', target: write.progress }}
       sourceUrl={selected.observation.locator.webUrl} />
   </Stack>;
-  return props.children({ status, controls, relations, edit: canEditText ? { open: () => { void openEditor(); }, disabled } : null, form });
+  const edit = canEditText ? { open: () => { void openEditor(); }, disabled } : null;
+  if (!storyPlacement) return place({ status, controls, relations, edit, form }, null, null);
+  const statusInMore = transitions.length === 0 ? null : { label: transitionLabel, items: statusMenu.items,
+    radioGroups: statusMenu.radioGroups, disabled: statusDisabled, onSelect: selectStatus };
+  return place({ status: null, controls: factsClaimed ? null : controls, relations, edit, form },
+    { facts: controls, claim: claimFacts }, statusInMore);
 }
 
 /**

@@ -4375,8 +4375,8 @@ function GithubChecksStep(): React.ReactElement | null {
  */
 function GithubStoryFacts({ overview }: Readonly<{ overview: GithubOverviewValueV1 }>): React.ReactElement | null {
   const text = usePluginTranslation();
-  // An issue is a task in Triage: its Assignees and Labels are the task's own property rows above the story, so the
-  // story does not say them a second time.
+  // An issue is a task in Triage: its Assignees and Labels are the task's own editable property rows, which Triage
+  // places in this step (or above the story on Tasks), so the story does not say them a second time.
   const issue = overview.kindId === 'issue';
   const labels = issue ? [] : overview.labels ?? [];
   const reviewers = overview.kindId === 'pull-request' ? overview.requestedReviewers ?? [] : [];

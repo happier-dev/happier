@@ -20,7 +20,9 @@ import { readTriageSelectedObservationV1 } from '../window/selectedObservation.j
 import { useTriageListWindow } from '../window/useTriageListWindow.js';
 import { createTriageEphemeralSharedScopeFixture } from '../window/ephemeralSharedScope.test-support.js';
 import type { TriageTaskFieldChoicesV1 } from '@happier-dev/triage-protocol/v1';
-import { TriageCreateTaskFields, TriageEditTaskScope, TriageTaskRowStatusControl, useTriageTaskCommit } from './taskFields.js';
+import { TriageCreateTaskFields, TriageEditTaskScope, TriageTaskControlsPlacementContext, TriageTaskRowStatusControl, useTriageTaskCommit } from './taskFields.js';
+import { TriageDetailStory } from '@happier-dev/triage-sources/ui';
+import { TriageEntryActionControls } from '../header/entryActionControls.js';
 import { TriageTaskStory } from './taskStory.js';
 import { INTERNAL_TASK_SOURCE_V1 } from '../../internalTasks/identity.js';
 import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../../internalTasks/configuration.js';
@@ -38,7 +40,7 @@ afterEach(async () => { for (const fixture of mounted.splice(0)) await fixture.d
 function targetedTaskSource(source: TriageEntryRefV1['source'], kindId: string, role: 'create' | 'edit', readOnly = false,
   fields: readonly TriageTaskFieldV1[] = ['title', 'body'],
   transitions: NonNullable<TriageTaskCapabilitiesV1['transitions']> = [],
-  initialStatuses?: TriageTaskCapabilitiesV1['initialStatuses'], fieldChoices?: true): PluginUiTargetedContributionsV1 {
+  initialStatuses?: TriageTaskCapabilitiesV1['initialStatuses'], fieldChoices?: true, tabbed?: true): PluginUiTargetedContributionsV1 {
   const protocol = { id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 };
   const contributor = { pluginId: source.pluginId, contributionId: source.localId,
     occurrenceId: source.pluginId === 'happier.triage' ? 'triage-one' : 'source-one',
@@ -50,6 +52,7 @@ function targetedTaskSource(source: TriageEntryRefV1['source'], kindId: string, 
       contributor, protocol,
       descriptor: TriageSourceDescriptorV1Schema.parse({ ...createTriageSourceV1Fixture().descriptor,
         kinds: [{ id: kindId, task: true, workflowSubject: 'issue', displayName: 'Issue',
+          ...(tabbed === undefined ? {} : { detailTabs: [{ kind: 'shared', id: 'overview' }] }),
           taskCapabilities: { [role === 'create' ? 'createFields' : 'editFields']: fields,
             ...(initialStatuses === undefined ? {} : { initialStatuses }),
             ...(fieldChoices === undefined ? {} : { fieldChoices }),
@@ -656,6 +659,8 @@ async function mountEditor(options: Readonly<{ readOnly?: boolean; uncertain?: b
   rereadFails?: boolean;
   recoveryValues?: TriageTaskFieldsV1;
   snapshotCapabilities?: TriageTaskCapabilitiesV1;
+  /** Mount the detail as the PRs & Issues page does: a tabbed source's report story and the action row's ⋯. */
+  storyPlacement?: true;
   labelColors?: readonly Readonly<{ name: string; colorToken: string }>[] }> = {}) {
   const sourceFixture = createTriageSourceV1Fixture();
   const source = { ...sourceFixture, configuredInstance: { ...sourceFixture.configuredInstance,
@@ -672,7 +677,8 @@ async function mountEditor(options: Readonly<{ readOnly?: boolean; uncertain?: b
   const row = foldTriageListWindow({ observations: [{ ...observation, entryRef }], lanes: [],
     configuredSourcesStatus: 'complete', activeSourceInstanceIds: [observation.sourceInstanceId],
     lens: TRIAGE_LIST_DEFAULT_LENS_V1, assembledAtMs: 1_000 }).rows[0]!;
-  const targeted = targetedTaskSource(entryRef.source, entryRef.kindId, 'edit', options.readOnly, options.fields, options.transitions);
+  const targeted = targetedTaskSource(entryRef.source, entryRef.kindId, 'edit', options.readOnly, options.fields, options.transitions,
+    undefined, undefined, options.storyPlacement);
   const saved: ReturnType<typeof TriageEditTaskActionInputV1Schema.parse>[] = [];
   const transitioned: unknown[] = [];
   const opened: string[] = [];
@@ -689,15 +695,24 @@ async function mountEditor(options: Readonly<{ readOnly?: boolean; uncertain?: b
       authorPlugin: { id: 'happier.triage', version: '0.0.0' },
       surface: defineUiSurface(() => {
         const detail = useTriagePostMutationRow(row, lanes);
-        return <TriageEditTaskScope row={detail.row ?? row} instance={source.configuredInstance} disabled={false}
+        const scoped = <TriageEditTaskScope row={detail.row ?? row} instance={source.configuredInstance} disabled={false}
           taskFields={detail.exactRead?.taskFields} taskFieldChoices={detail.exactRead?.taskFieldChoices} onApplied={async () => {
             rereads++;
             if (options.rereadFails) throw new Error('Refresh unavailable');
             await detail.completePostMutation();
           }}
           relationRows={[row, ...(options.relationRows ?? [])]}>
-          {(task) => <>{task.status}{task.controls}<TriageTaskStory task={task} notes={null} renderAgentStep={() => null} /></>}
+          {(task) => options.storyPlacement ? <>
+            {task.controls}
+            <TriageEntryActionControls target={{ kind: 'entry', sectionId: 'open', entryRef,
+              sourceInstanceId: observation.sourceInstanceId }} actions={[]} workflowSubject="issue" viewerIsAuthor={false}
+              reviewPreparation="unsupported" leading={task.status} onAction={() => undefined} />
+            <TriageDetailStory kind="report"><Text value="The checkout stays disabled." /></TriageDetailStory>
+          </> : <>{task.status}{task.controls}<TriageTaskStory task={task} notes={null} renderAgentStep={() => null} /></>}
         </TriageEditTaskScope>;
+        return options.storyPlacement
+          ? <TriageTaskControlsPlacementContext.Provider value="story">{scoped}</TriageTaskControlsPlacementContext.Provider>
+          : scoped;
       }),
       surfaceContext: createSurfaceContextFixture({ targetedContributions: targeted,
         ...(options.viewerAccountId === undefined ? {} : { accountScope: { serverId: 'fixture-home', accountId: options.viewerAccountId } }) }),
@@ -1132,6 +1147,28 @@ it('checks the task\'s current status in its workflow menu, and choosing it agai
   expect(choice('Closed')?.getAttribute('aria-checked')).toBe('false');
   await act(async () => { choice('Open')!.click(); });
   expect(transitioned).toHaveLength(0);
+});
+
+it('leads a PRs & Issues issue with its work: properties in the report, the status change last in ⋯', async () => {
+  const transitions = [
+    { id: 'reopen', label: 'Open', state: { presentation: 'active', nativeLabel: 'Open' } },
+    { id: 'close', label: 'Closed', state: { presentation: 'resolved', nativeLabel: 'Closed', completionReason: 'completed' } },
+  ] satisfies NonNullable<TriageTaskCapabilitiesV1['transitions']>;
+  const { fixture, transitioned, saved } = await mountEditor({ storyPlacement: true, nativeLabel: 'Open', transitions,
+    fields: ['assigneeIds', 'labelIds'], values: { assigneeIds: [], labelIds: ['docs'] } });
+  // No status control before the work: the row's own control is gone, its change is a row of ⋯.
+  await expect(fixture.queryByRole('button', { name: 'Change status, Open' })).resolves.toBeUndefined();
+  // The properties are facts of the report: drawn once, inside its first step, and still edited in place.
+  const properties = document.querySelectorAll('[data-testid="triage-task-properties"]');
+  expect(properties).toHaveLength(1);
+  const report = [...document.querySelectorAll<HTMLElement>('*')].find(node => node.childElementCount === 0 && node.textContent === 'The report');
+  expect(report!.compareDocumentPosition(properties[0]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  await expect(fixture.getByRole('button', { name: 'Labels, docs' })).resolves.toBeDefined();
+  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'More actions' })); });
+  const closed = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find(node => node.textContent?.includes('Closed'));
+  await act(async () => { closed!.click(); });
+  expect(transitioned).toEqual([expect.objectContaining({ transitionId: 'close' })]);
+  expect(saved).toEqual([]);
 });
 
 it('names the status control by the task\'s current status in the source\'s own word', async () => {
