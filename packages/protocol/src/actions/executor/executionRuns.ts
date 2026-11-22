@@ -58,7 +58,9 @@ export async function startExecutionRunWithSelectionV1(
   if (notReady) return notReady;
   const modelNotGranted = refuseExecutionRunStartOutsideCallerModelsV1(admitted, context);
   if (modelNotGranted) return modelNotGranted;
-  return deps.executionRunStart(sessionId, admitted, { ...opts, approvalProfileTeamOrGroupDerived:
+  return deps.executionRunStart(sessionId, admitted, { ...opts,
+    ...(current ? { agentStartContext: current } : {}),
+    approvalProfileTeamOrGroupDerived:
     input.approvalProfileId === undefined && context.approvalProfileTeamOrGroupDerived === true });
 }
 

@@ -89,7 +89,7 @@ describe('createActionExecutor (review.start)', () => {
       reviewers: [{ kind: 'engine', engineId: 'codex' }], instructions: 'Inspect the change.',
       permissionMode: 'read_only', then: 'report', childSelection: 'agentDefault',
     }, { surface: 'cli', authority: 'present_user', executionRunTargetMachineId: 'machine-1', agentStartContext: context }))
-      .toMatchObject({ ok: true, result: { results: [{ ok: true, runId: 'native-review-run' }] } });
+      .toMatchObject({ ok: true, result: { results: [{ ok: true, result: { runId: 'native-review-run' } }] } });
   });
 
   it('retains saved Workflow lineage in durable native Review admission', async () => {
