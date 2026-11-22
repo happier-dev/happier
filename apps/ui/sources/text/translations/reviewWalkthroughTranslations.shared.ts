@@ -224,6 +224,9 @@ export type ReviewWalkthroughTranslations = {
         reviewerRun: (params: Count) => string;
         fixed: string;
         fixedIn: (params: Readonly<{ sha: string }>) => string;
+        retryReviewer: (params: Readonly<{ name: string }>) => string;
+        retryReviewerUnavailable: string;
+        retryRoundDescription: string;
         fixedCount: (params: Count) => string;
         reviewersDidntFinish: (params: Readonly<{ names: string }>) => string;
         eventDecided: (params: Readonly<{ decision: string; title: string }>) => string;
@@ -491,6 +494,9 @@ export const en: ReviewWalkthroughTranslations = {
         reviewerRun: ({ count }) => `Reviewer ${count}`,
         fixed: 'Fixed',
         fixedIn: ({ sha }) => `Fixed in ${sha}`,
+        retryReviewer: ({ name }) => `Retry ${name}`,
+        retryReviewerUnavailable: 'This Review can’t retry one reviewer. Start a new round with every reviewer instead.',
+        retryRoundDescription: 'Only this reviewer reads the code again, in a new round. The other reviewers’ results stay as they are.',
         fixedCount: ({ count }) => `${count} fixed`,
         reviewersDidntFinish: ({ names }) => `${names} didn’t finish`,
         eventDecided: ({ decision, title }) => `chose ${decision} for “${title}”`,

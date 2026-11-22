@@ -90,3 +90,8 @@ export function projectReviewRoundReviewers(
       findingsCount: read?.findingsCount ?? null, run: read?.run ?? null };
   });
 }
+
+/** A reviewer the round names as not having finished (partial, failed or stopped): it can be retried. Unknown is not unfinished. */
+export function isReviewRoundReviewerUnfinished(reviewer: Pick<ReviewRoundReviewer, 'outcome'>): boolean {
+  return reviewer.outcome !== null && reviewer.outcome !== 'running' && reviewer.outcome !== 'completed';
+}

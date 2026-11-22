@@ -41,7 +41,8 @@ import { formatElapsedDuration } from '@/components/machines/durationWords';
 import { resolveExecutionRunAgentMarkId } from '@/components/sessions/runs/resolveExecutionRunBackendLabel';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
-import { projectReviewRoundReviewers, reviewRoundReviewerOutcomeLabel, type ReviewRoundReviewerRead } from '../reviewRoundReviewers';
+import { isReviewRoundReviewerUnfinished, projectReviewRoundReviewers, reviewRoundReviewerOutcomeLabel, type ReviewRoundReviewerRead } from '../reviewRoundReviewers';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 import { resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
@@ -569,7 +570,11 @@ export function ReviewDetailHost(props: Readonly<{
         {/* A partial round says once, here, who didn't finish and why (lab notice line); the score line says no more. */}
         {round?.state === 'partial' ? <SurfaceStateCard testID="review-detail:partial" kind="warning" size="line"
           title={unfinishedReviewers.length > 0 ? t('reviewWalkthrough.detail.reviewersDidntFinish', {
-            names: formatReviewerSet(unfinishedReviewers.map(reviewer => reviewer.name)) }) : t('reviewWalkthrough.detail.qualityPartial')} /> : null}
+            names: formatReviewerSet(unfinishedReviewers.map(reviewer => reviewer.name)) }) : t('reviewWalkthrough.detail.qualityPartial')}
+          // One reviewer that didn't finish is retried from the notice too (lab `detail-runs`: "Retry CodeRabbit").
+          {...(newRound.retry && unfinishedReviewers.length === 1 && isReviewRoundReviewerUnfinished(unfinishedReviewers[0]!) ? { action: {
+            label: t('reviewWalkthrough.detail.retryReviewer', { name: unfinishedReviewers[0]!.name }), testID: 'review-detail:partial:retry',
+            onPress: () => newRound.retry?.(unfinishedReviewers[0]!.reviewerId) } } : {})} /> : null}
         {scope && newRound.approval.approvalPending && newRound.approval.approvalId ? <ActionApprovalPendingNotice
         testID="review-detail:new-round-approval" message={t('approvals.title')}
         onOpenApproval={() => router.push(`/inbox/approvals/${encodeURIComponent(newRound.approval.approvalId!)}?serverId=${encodeURIComponent(scope.serverId)}`)} /> : null}
@@ -678,7 +683,8 @@ export function ReviewDetailHost(props: Readonly<{
           comments={roundComments} view={changesView} onSelectView={setChangesView} onOpenComment={openComment} />
         </>
       ) : null}
-      {activeTab === 'runs' && round ? <ReviewRoundRuns round={round} scope={scope} reads={questionRuns.runs} /> : null}
+      {activeTab === 'runs' && round ? <ReviewRoundRuns round={round} scope={scope} reads={questionRuns.runs}
+        onRetry={round.ordinal === lastOrdinal ? newRound.retry : null} /> : null}
       {activeTab === 'activity' ? (
         comments.status === 'idle' || comments.status === 'loading' ? <ItemGroup header="none"><ItemLoadStateRows state={LOADING_ROWS} rows={3} /></ItemGroup>
           : <ReviewActivityFeed events={activityEvents} viewerAccountId={scope?.accountId ?? null} names={names} />
@@ -699,6 +705,8 @@ export function ReviewRoundRuns(props: Readonly<{
   round: ReviewRecordRound;
   scope: ServerAccountScope | null;
   reads?: ReadonlyMap<string, ReviewRoundRunRead>;
+  /** Retry one reviewer that did not finish, as a new round with only it (the latest round only). */
+  onRetry?: ((reviewerId: string) => void) | null;
 }>) {
   const router = useRouter();
   const { scope } = props;
@@ -731,6 +739,11 @@ export function ReviewRoundRuns(props: Readonly<{
         return <Item key={reviewer.reviewerId} testID={`review-detail:run:${reviewer.runId ?? reviewer.reviewerId}`}
           title={reviewer.name} subtitle={joinHappierFacts(reviewer.outcome === null ? null
             : reviewRoundReviewerOutcomeLabel(reviewer.outcome), duration) || undefined}
+          // Lab `detail-runs`: a reviewer that didn't finish offers Retry at its row's end.
+          {...(props.onRetry && isReviewRoundReviewerUnfinished(reviewer) ? { rightElement: <RoundButton size="small" display="secondary"
+            testID={`review-detail:run-retry:${reviewer.reviewerId}`} title={t('common.retry')}
+            accessibilityLabel={t('reviewWalkthrough.detail.retryReviewer', { name: reviewer.name })}
+            onPress={() => props.onRetry?.(reviewer.reviewerId)} /> } : {})}
           {...(href ? { onPress: () => router.push(href as never) } : {})} />;
       }) : null}
       {runs.map((run, index) => {

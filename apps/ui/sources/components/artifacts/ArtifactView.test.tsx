@@ -355,6 +355,121 @@ describe('Artifact composed view reads', () => {
                     && 'includeStructured' in request.params && request.params.includeStructured === true))).toHaveLength(0);
         } finally { await confirmation?.unmount(); await screen.unmount(); }
     });
+    it('retries only a reviewer that did not finish, from its Runs row, as a new round of the same Workflow (lab detail-runs)', async () => {
+        const reviewId = 'review-workflow-retry';
+        const nativeReads = installSessionActionRpcBoundary(request => {
+            if (request.method.endsWith(RPC_METHODS.CAPABILITIES_DESCRIBE)) return EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE;
+            if (request.method.endsWith(SESSION_RPC_METHODS.EXECUTION_RUN_GET)
+                && request.params && typeof request.params === 'object' && 'includeStructured' in request.params
+                && request.params.includeStructured === true) {
+                return { ok: false, errorCode: 'run_not_found', error: 'This prior executable leaf is no longer available' };
+            }
+            throw new Error(`A Workflow repeat must not replay its leaf RPC: ${request.method}`);
+        });
+        const runId = '11111111-1111-4111-8111-111111111111';
+        const selected = ReviewStartInputSchema.parse({ scope: 'repository', instructions: 'Review this repository.', reviewers: [
+            { kind: 'engine', engineId: 'codex' },
+            { kind: 'session', session: { serverId: 'review-home', sessionId: 'existing-reviewer' } },
+            { kind: 'person', principal: { kind: 'account', accountId: 'owner' }, required: false },
+        ] });
+        const built = buildReviewStepsWorkflowV1(selected, { reviewId, roundOrdinal: 1 });
+        const accepted = await materializeWorkflowAcceptedSnapshotV1({ definition: built.definition,
+            context: { source: { kind: 'inline' }, inputs: built.inputs, machineId: 'review-machine', executionTarget: { kind: 'session' },
+                workspaceTarget: { project: { machineId: 'review-machine', directory: '/repo', checkoutRootPath: '/repo' } },
+                origin: { kind: 'direct' }, authorization: { principal: { kind: 'host' } } }, admission: { kind: 'user' },
+            effects: { resolveTargetAvailability: async () => true,
+                resolveSessionTarget: async () => ({ address: { serverId: 'review-home', sessionId: 'existing-reviewer' }, machineId: 'review-machine' }),
+                admitSessionAuthority: async () => true,
+                readActionContract: async id => {
+                    const action = actionSpecToActionDefinitionV1(getActionSpec(ActionIdSchema.parse(id)));
+                    return { inputSchema: StrictJsonValueSchema.parse(action.inputSchema), outputSchema: StrictJsonValueSchema.parse(action.outputSchema ?? {}) };
+                } } });
+        if (!accepted.ok) throw new Error(`Review fixture admission failed: ${accepted.error.code}`);
+        const run = createWorkflowRunSummaryFixture({ id: runId, ownerAccountId: 'owner', origin: { kind: 'direct' },
+            machineId: 'review-machine', state: 'succeeded' });
+        const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+            binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'owner', runId }, acceptedSnapshot: accepted.snapshot }));
+        const keyCensus = WorkflowRunRecipientCensusResponseV1Schema.parse({ runId, ownerAccountId: 'owner', access: 'owner',
+            encryptionMode: 'plain', dataEncryptionKey: null, callerDataEncryptionKey: null, recipients: [], visibleTeamId: null,
+            ownerAccountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } });
+        const record: DecryptedArtifact = { id: reviewId, title: 'Composed Review', isDecrypted: true,
+            header: { kind: 'review.v1', v: 1, reviewId, title: 'Composed Review' },
+            body: JSON.stringify({ v: 1, rounds: [{ ordinal: 1, state: 'partial', startedAt: 1, finishedAt: 2,
+                reviewerIds: ['step-1-reviewer-1', 'step-1-reviewer-2'], runs: [{ kind: 'workflow', runId },
+                    { kind: 'execution', runId: 'leaf-that-must-not-repeat', machineId: 'review-machine' }],
+                // The settled round's own per-reviewer results: Codex finished, the Session reviewer did not.
+                reviewerOutcomes: [{ reviewerId: 'step-1-reviewer-1', displayName: 'Codex', outcome: 'completed' },
+                    { reviewerId: 'step-1-reviewer-2', displayName: 'Existing reviewer', outcome: 'failed' }] }] }),
+            ownerAccountId: 'owner', access: 'owner', storageMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+        let http: Awaited<ReturnType<typeof createScmRunActionHttpBoundary>> | undefined;
+        const starts: unknown[] = [];
+        const { served } = await setup('document', undefined, false, request => {
+            if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(FeaturesResponseSchema.parse({ features: {
+                workflows: { enabled: true }, automations: { enabled: true }, execution: { runs: { enabled: true } },
+                encryption: { plaintextStorage: { enabled: true }, accountOptOut: { enabled: true } } },
+                capabilities: { serverIdentity: { serverIdentityId: 'srv_review_new_round_workflow' } } }));
+            if (request.path === '/v3/automations/runs/workflow-storage') {
+                const operation = (request.body as { operation: string }).operation;
+                if (operation === 'get') return Response.json({ run, acceptedEnvelope, checkpointEnvelope: null, resultEnvelope: null, keyCensus });
+                if (operation === 'invocations.list') return Response.json({ invocations: [], parentRevision: run.revision, keyCensus, progressEnvelopesByInvocationId: {} });
+                if (operation === 'run-key.census') return Response.json(keyCensus);
+            }
+            if (http && (request.path.startsWith('/v1/actions/') || request.path.startsWith('/v1/machines')))
+                return http.handle(request.url, { method: request.method, headers: request.headers,
+                    ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) }).then(response => {
+                    if (!response) throw new Error(`Unserved Workflow boundary: ${request.path}`);
+                    return response;
+                });
+        }, false, true);
+        if (!await setServerProfileIdentityForUrl(served.homes.owner!.serverUrl, 'srv_review_new_round_workflow')) {
+            throw new Error('The Workflow Home fixture must have its published identity');
+        }
+        http = await createScmRunActionHttpBoundary({ serverUrl: served.homes.owner!.serverUrl, serverIdentityId: 'srv_review_new_round_workflow',
+            accountId: 'owner', machineId: 'review-machine', actionIds: ['workflow.run.start'], execute(_id, input) {
+                starts.push(input);
+                return { run: createWorkflowRunSummaryFixture({ id: (input as { runId: string }).runId,
+                    ownerAccountId: 'owner', origin: { kind: 'direct' }, machineId: 'review-machine' }), admission: 'created' };
+            } });
+        const scope = captureActiveServerAccountScopeLifetime()?.scope;
+        if (!scope) throw new Error('The test Home must be applied');
+        vi.mocked(Modal.show).mockClear();
+        vi.mocked(Modal.confirm).mockResolvedValue(true);
+        const row = { ...record, sourceServerId: scope.serverId };
+        const screen = await renderScreen(<ArtifactView artifactId={row.id} artifact={row} presentation="page" />);
+        let confirmation: Awaited<ReturnType<typeof renderScreen>> | undefined;
+        try {
+            expect(served.requests.filter(request => (request.body as { operation?: string })?.operation === 'get')).toHaveLength(0);
+            await waitForHomeGovernance(() => expect(screen.findByTestId('review-detail:tab:runs')).not.toBeNull());
+            await screen.pressByTestIdAsync('review-detail:tab:runs');
+            // Retry stands only on the reviewer that did not finish.
+            await waitForHomeGovernance(() => expect(screen.findByTestId('review-detail:run-retry:step-1-reviewer-2')).not.toBeNull());
+            expect(screen.findByTestId('review-detail:run-retry:step-1-reviewer-1')).toBeNull();
+            await screen.pressByTestIdAsync('review-detail:run-retry:step-1-reviewer-2');
+            const dialog = vi.mocked(Modal.show).mock.calls.at(-1)?.[0];
+            if (!dialog) throw new Error('Expected New round confirmation');
+            const chrome = { current: null as import('@/modal/types').CustomModalChromeCardConfig | null };
+            const Component = dialog.component as React.ComponentType<CustomModalInjectedProps>;
+            const closed = vi.fn();
+            confirmation = await renderScreen(<Component {...dialog.props} onClose={closed}
+                setChrome={value => { chrome.current = value as typeof chrome.current; }} />);
+            // The next round names only the retried reviewer.
+            await waitForHomeGovernance(() => expect(confirmation!.findByTestId('review-new-round:reviewer:step-1-reviewer-2')).not.toBeNull());
+            expect(confirmation.findByTestId('review-new-round:reviewer:step-1-reviewer-1')).toBeNull();
+            expect(confirmation.findByTestId('review-new-round:reviewer:step-1-reviewer-3')).toBeNull();
+            if (!chrome.current) throw new Error('Expected confirmation footer');
+            const footer = await renderScreen(<>{chrome.current.footer}</>);
+            try { await footer.pressByTestIdAsync('review-new-round:start');
+                await waitForHomeGovernance(() => expect(closed).toHaveBeenCalledOnce());
+            } finally { await footer.unmount(); }
+            expect(starts).toHaveLength(1);
+            expect(starts[0]).toMatchObject({ source: { replay: { runId, intent: 'another_round', reviewerIds: ['step-1-reviewer-2'] } } });
+            expect(served.requests.filter(request => request.path === '/v1/actions/execution.run.get'
+                || request.path === '/v1/actions/execution.run.action')).toHaveLength(0);
+            expect(nativeReads.filter(request => request.method.endsWith(SESSION_RPC_METHODS.EXECUTION_RUN_ACTION)
+                || request.method.endsWith(SESSION_RPC_METHODS.EXECUTION_RUN_GET) && !(request.params && typeof request.params === 'object'
+                    && 'includeStructured' in request.params && request.params.includeStructured === true))).toHaveLength(0);
+        } finally { await confirmation?.unmount(); await screen.unmount(); }
+    });
     it.each(['session', 'detached', 'unavailable', 'late-unavailable'] as const)('previews native Review New round continuity before one explicit start (%s)', async mode => {
         const serverIdentityId = `srv_review_new_round_${mode}`;
         const reviewId = `review-new-round-${mode}`;

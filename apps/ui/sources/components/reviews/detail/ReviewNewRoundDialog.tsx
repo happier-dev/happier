@@ -43,6 +43,8 @@ type ReviewNewRoundDialogProps = CustomModalInjectedProps &
     reason?: string | null;
     onFresh?: () => void;
     onRetry?: () => void;
+    /** Retrying one reviewer that didn't finish: the dialog names it and says only it runs again. */
+    retrying?: boolean;
   }>;
 
 function continuityLabel(reviewer: ReviewNewRoundReviewer): string {
@@ -72,6 +74,7 @@ export function ReviewNewRoundDialog(
   const [busy, setBusy] = React.useState(false);
   const [failure, setFailure] = React.useState<string | null>(null);
   const { onStart, onClose } = props;
+  const retriedName = props.retrying && props.reviewers.length === 1 ? props.reviewers[0]!.label : null;
   const start = React.useCallback(async () => {
     setBusy(true);
     setFailure(null);
@@ -85,8 +88,8 @@ export function ReviewNewRoundDialog(
     (): CustomModalChromeCardConfig => ({
       kind: 'card',
       material: 'solid',
-      title: t('reviewWalkthrough.detail.newRound'),
-      subtitle: t('reviewWalkthrough.detail.newRoundDescription'),
+      title: retriedName !== null ? t('reviewWalkthrough.detail.retryReviewer', { name: retriedName }) : t('reviewWalkthrough.detail.newRound'),
+      subtitle: t(props.retrying ? 'reviewWalkthrough.detail.retryRoundDescription' : 'reviewWalkthrough.detail.newRoundDescription'),
       subtitleLines: 2,
       testID: 'review-new-round',
       scrollHost: 'bounded',
@@ -117,7 +120,7 @@ export function ReviewNewRoundDialog(
         </ModalCardFooterActions>
       ),
     }),
-    [busy, costsAccepted, failure, onClose, props.ready, props.reason, start],
+    [busy, costsAccepted, failure, onClose, props.ready, props.reason, props.retrying, retriedName, start],
   );
   useModalCardChrome(props.setChrome, chrome);
   return (
