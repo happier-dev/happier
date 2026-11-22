@@ -177,6 +177,7 @@ import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifet
 import { createInvocationSavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
 import { createCliPersonalSavedSecretActionExecute } from '@/settings/secrets/personalSavedSecretActionHost';
 import { readApprovalRequesterDecisionV1, readLiveCliApprovalOriginScope, resolveApprovalExecutor, type ApprovalRequestV2, type StoredApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { resolveCliApprovalDecisionPlacement } from './approvals/decisionPlacement';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { isApprovalDecisionReviewerBindingV1 } from '@happier-dev/protocol/actions/externalActionBindingAuthority';
 import { isMachineTerminalActionId } from '@happier-dev/protocol/actions/specs/machineTerminal';
@@ -1455,28 +1456,18 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           return failure.success ? failure.data : actionFailure('invalid_action_transport_output');
         }
         if (request.v !== 2) return null;
-        const executor = resolveApprovalExecutor(request);
-        if (executor.kind === 'unavailable') return actionFailure('approval_origin_unavailable');
-        const remoteClientReplay = executor.kind === 'app' && executor.placement === 'client'
-          && !params.clientActionExecute && !getDaemonClientActionExecutor(approvalServerId);
-        const origin = request.executionOriginV1;
-        // Client delivery may have entered through local MCP control, without
-        // a signed external carrier. A Session target retains its admitting
-        // Machine separately; the target itself must remain the Session.
         // This is placement only: the existing replay owner admits the decision.
-        const clientReplayMachineId = remoteClientReplay && origin.target
-          ? origin.target.kind === 'machine' ? origin.target.machineId : origin.machineId
-          : undefined;
-        if (remoteClientReplay && !clientReplayMachineId) return actionFailure('approval_origin_unavailable');
-        if (machineAdmissionTransport || params.machineActionDirectTargetTransport
-          || params.pluginActionExecutionOwner === 'current_process'
-          || executor.kind === 'app' && !remoteClientReplay) return null;
-        // A live effect stays in its original waiter. Machine RPC only carries
-        // the authenticated decision to that process; it never rebuilds input.
-        const machineId = executor.kind === 'daemon' ? executor.machineId
-          : executor.kind === 'live_invocation' ? executor.daemonMachineId : clientReplayMachineId;
-        if (!machineId) return actionFailure('approval_origin_unavailable');
-        const forwardedDecision = decision ?? (executor.kind === 'live_invocation' ? 'approve' as const : undefined);
+        // A live effect stays in its original waiter, and a forwarded Session Ask
+        // stays with the daemon that holds its signed carrier. Machine RPC only
+        // carries the authenticated decision to that process; it never rebuilds input.
+        const placement = resolveCliApprovalDecisionPlacement({ request,
+          hostsMachineExecution: Boolean(machineAdmissionTransport || params.machineActionDirectTargetTransport
+            || params.pluginActionExecutionOwner === 'current_process'),
+          hasClientPort: Boolean(params.clientActionExecute || getDaemonClientActionExecutor(approvalServerId)) });
+        if (placement.kind === 'unavailable') return actionFailure('approval_origin_unavailable');
+        if (placement.kind === 'local') return null;
+        const { machineId } = placement;
+        const forwardedDecision = decision ?? (placement.executor === 'live_invocation' ? 'approve' as const : undefined);
         if (!request.executionOriginV1.serverIdentityId) return actionFailure('approval_origin_unavailable');
         if (signal?.aborted) return actionFailure('cancelled');
         onReplayDispatched?.();
