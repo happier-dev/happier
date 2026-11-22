@@ -83,6 +83,12 @@ import { BrowserPluginSurfacePlacements } from './BrowserPluginSurfacePlacements
 import { BrowserSurfaceFallback, type BrowserSurfaceUnavailableReason } from './BrowserSurfaceFallback';
 import { RetainedPresentationSlotBinder, useRetainedPresentationSlotVisible } from '@/components/ui/presentation/retainedPresentationSlots';
 import { HeaderActionsScope, useEnclosingHeaderActionsScope } from '@/components/navigation/stackHeaderActions';
+import {
+    NavigationTitleChromeProvider,
+    useNavigationChromeShowsBack,
+    useNavigationTitleChromePublisher,
+    useNavigationTitleChromeShowsTitle,
+} from '@/components/ui/layout/navigationTitleChrome';
 import { useRetainedPresentationSlotGeometry } from '@/components/ui/presentation/retainedPresentationSlotGeometry';
 import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 import { useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
@@ -290,8 +296,15 @@ export function BrowserSurfaceHost(props: BrowserSurfaceHostProps): React.ReactE
     // The Details group this page stands in lends its strip's controls through this scope; the page's chrome above
     // the router claims them (one tab bar on a phone), so the scope travels with the retained body.
     const headerActionsScope = useEnclosingHeaderActionsScope();
-    const runtime = headerActionsScope === undefined ? <BrowserSurfaceRuntime {...props} />
+    // The Details tab names itself by the page it shows (its presented-title projection), so the retained body
+    // carries the tab's title publisher across the portal too.
+    const titlePublisher = useNavigationTitleChromePublisher();
+    const titleShown = useNavigationTitleChromeShowsTitle();
+    const backShown = useNavigationChromeShowsBack();
+    const scoped = headerActionsScope === undefined ? <BrowserSurfaceRuntime {...props} />
         : <HeaderActionsScope scopeKey={headerActionsScope}><BrowserSurfaceRuntime {...props} /></HeaderActionsScope>;
+    const runtime = titlePublisher === null ? scoped
+        : <NavigationTitleChromeProvider showsTitle={titleShown} showsBack={backShown} publisher={titlePublisher}>{scoped}</NavigationTitleChromeProvider>;
     // Retain the runtime owner with its page, not only the picture. These scopes borrow the
     // incumbent ports across portal reparenting; they create no new Account or viewer authority.
     return (
@@ -403,6 +416,15 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
     const openExternalFactsRef = React.useRef(openExternalFacts);
     openExternalFactsRef.current = openExternalFacts;
     const openExternalAvailability = selectBrowserOpenExternalAvailability({ ...openExternalFacts, view: focusedView });
+    // A Details tab is named by the page it shows: a launchpad tab reopened over its kept page, or a page opened in
+    // place, reads the page's title, not "Browser". Presentation only; the tab's stored title stays as it is.
+    const publishDetailTitle = useNavigationTitleChromePublisher()?.setDetailTitle;
+    const shownTitle = focusedView?.title?.trim() || null;
+    React.useEffect(() => {
+        if (!publishDetailTitle) return undefined;
+        publishDetailTitle(shownTitle);
+        return () => publishDetailTitle(null);
+    }, [publishDetailTitle, shownTitle]);
     const reportedViewRef = React.useRef<Readonly<{ resetKey: typeof resetKey; view: BrowserSurfaceViewStateChange }> | null>(null);
     React.useEffect(() => {
         if (!focusedView) return;
