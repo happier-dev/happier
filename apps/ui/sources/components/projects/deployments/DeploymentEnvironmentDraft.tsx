@@ -593,7 +593,8 @@ export const DeploymentEnvironmentDraft = React.memo(
             title={name.trim() || t('projects.deployments.newEnvironment')}
             alwaysShowTitle
             leading={
-              <PageHeaderMarkIcon name="plus" />
+              // A copy carries the Environment's own mark; a new one starts from "+" (R11-D7).
+              <PageHeaderMarkIcon name={props.copyFrom ? 'copy' : 'plus'} />
             }
             titleEditor={partial ? undefined : {
               value: name,
@@ -778,7 +779,8 @@ export const DeploymentEnvironmentDraft = React.memo(
             {stepped ? null : retentionChoice}
           </ItemGroup>
           {/* On the page column like every other section, not across the whole pane (PAGE-ACCEPT-176 round 14). */}
-          {selectedPlatformUnavailable || repositoryOnlyReason ? <ItemGroup header="none" surface="none">
+          {/* Only for a platform that is chosen: a refusal of an option the page doesn't draw is a stray line (R11-D7). */}
+          {selectedPlatformUnavailable ? <ItemGroup header="none" surface="none">
             <SurfaceStateCard kind="unavailable" size="line" title={t('common.unavailable')} reason={repositoryOnlyReason} />
           </ItemGroup> : null}
     </>;
@@ -933,7 +935,8 @@ export const DeploymentEnvironmentDraft = React.memo(
               ? t('projects.deployments.platformLink.platformBuilds')
               : t('projects.deployments.whatRunsDescription')}
           >
-            {props.copyFrom ? <Item title={deploymentDefinitionLabel(props.copyFrom.content) ?? t('projects.deployments.whatRunsTitle')}
+            {/* What the copy runs, named for itself, not the section's title again (PAGE-ACCEPT-176 R11-D7). */}
+            {props.copyFrom ? <Item title={deploymentDefinitionLabel(props.copyFrom.content) ?? t('projects.deployments.composeFile')}
               subtitle={props.copyFrom.content.name} mode="info" /> : props.catalogApp ? <>
                 <DeploymentTemplateDomainRows domains={props.catalogApp.domains} testIDPrefix="project-deployments.draft.domain"
                   hostname={key => domainHostnames[key] ?? ''} invalidKeys={domainChoices?.invalidKeys}

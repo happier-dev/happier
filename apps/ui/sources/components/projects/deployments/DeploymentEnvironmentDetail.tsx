@@ -3,6 +3,7 @@ import * as React from 'react';
 import { resolveDeploymentSourceMethodV1 } from '@happier-dev/deployments/contracts/v1';
 import { isDeploymentDomainAttachedV1, selectDeploymentTargetRemovalChoicesV1 } from '@happier-dev/deployments';
 import { SubjectTriggersSection } from '@/components/workflows/triggers/SubjectTriggersSection';
+import { isSameDeploymentName } from './DeploymentEnvironmentCollection';
 import { useProjectSource } from '@/components/projects/sources/useProjectSources';
 import { View } from 'react-native';
 import { REVEAL_DELAY_MS, useSettingReveal } from '@/components/settings/shell/SettingRow';
@@ -980,7 +981,9 @@ export const DeploymentEnvironmentDetail = React.memo(
                 : <PageHeaderMarkIcon name={runtime?.source.kind === 'host' || (!runtime && definition) ? 'hard-drives' : 'cloud'} />
             }
             titleAccessory={
-              detail.environment.protection === 'production' ? (
+              // A Production named "Production" says it once, in its name (PAGE-ACCEPT-176 R11-D9).
+              detail.environment.protection === 'production'
+                && !isSameDeploymentName(detail.content.name, t('projects.deployments.production')) ? (
                 <StatusPill
                   variant="neutral"
                   hideDot

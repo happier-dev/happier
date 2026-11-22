@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useUnistyles } from 'react-native-unistyles';
 import { View } from 'react-native';
 import type { DeploymentReadControllerV1 } from '@happier-dev/deployments';
 
@@ -93,6 +94,7 @@ export type DeploymentDispositionSheetInput = Readonly<{
 function DeploymentDispositionSheet(
   props: DeploymentDispositionSheetInput & CustomModalInjectedProps,
 ) {
+  const { theme } = useUnistyles();
   const [choice, setChoice] = React.useState<Choice>(
     // A provider resource starts where the removal owner says: Delete for what Happier created, Unlink otherwise.
     // On a Machine, something running starts on the choice that stops nothing; Stop and remove is one press away.
@@ -197,9 +199,7 @@ function DeploymentDispositionSheet(
     settings: normalizeActionsSettings(rawActionsSettings), environment: agentApproval.environment,
     actionIds: agentApproval.actionIds }) : false, [agentApproval, rawActionsSettings]);
   const footer = (
-    <ModalCardFooterActions cancel={{ onPress: onClose, testID: 'project-deployments.disposition.cancel', disabled: busy }}
-      note={agentsAskFirst ? t('projects.deployments.agentsAskFirstNote') : null}
-      noteTestID="project-deployments.disposition.agentsAskFirst">
+    <ModalCardFooterActions cancel={{ onPress: onClose, testID: 'project-deployments.disposition.cancel', disabled: busy }}>
       <RoundButton
         testID="project-deployments.disposition.confirm"
         size="normal"
@@ -308,7 +308,7 @@ function DeploymentDispositionSheet(
     id: 'remove' as const,
     icon: 'trash' as const,
     title: confirmTitle,
-    subtitle: t('projects.deployments.factStopsValue', { name: props.name }),
+    subtitle: t('projects.deployments.deleteIdleBody', { name: props.name }),
   }] : [];
   return (
     <ListPresentationProvider value="page" pageInsets="contained">
@@ -335,6 +335,9 @@ function DeploymentDispositionSheet(
               })
             : t('projects.deployments.deleteLeadIdle', { name: props.name })}
       </Text>
+      {/* Who may do this without asking is part of what the person reads first, not a note beside Cancel (R11-D8). */}
+      {agentsAskFirst ? <Text testID="project-deployments.disposition.agentsAskFirst" variant="meta"
+        style={{ color: theme.colors.text.secondary }}>{t('projects.deployments.agentsAskFirstNote')}</Text> : null}
       {props.running || props.hasRetainedAssociations ? (
         <SelectionTiles<Choice>
           testIdPrefix="project-deployments.disposition.choice"

@@ -82,7 +82,8 @@ describe('Source availability at Environment creation', () => {
       const screen = await renderScreen(body(definition));
       if (available) {
         await waitForTestEvent(screen.subscribe, () => screen.findByTestId(populated
-          ? 'project-deployments.rail.add' : 'project-deployments.empty.deployApp'), node => node !== null);
+          // The Project page's one New environment (PAGE-ACCEPT-176 R11-D6).
+          ? 'project-deployments.project.add' : 'project-deployments.empty.deployApp'), node => node !== null);
         expect(screen.findByTestId('project-deployments.sourceUnavailable')).toBeNull();
         if (!populated) {
           await screen.update(body('compose'));
@@ -96,7 +97,7 @@ describe('Source availability at Environment creation', () => {
       } else {
         await waitForTestEvent(screen.subscribe, () => screen.findByTestId('project-deployments.sourceUnavailable'), node => node !== null);
         expect(screen.findByTestId('project-deployments.empty.deployApp')).toBeNull();
-        expect(screen.findByTestId('project-deployments.rail.add')).toBeNull();
+        expect(screen.findByTestId('project-deployments.project.add')).toBeNull();
         expect(screen.findByTestId('project-deployments.rail.draft')).toBeNull();
         expect(screen.findByTestId('project-deployments.draft')).toBeNull();
         const { t } = await import('@/text');

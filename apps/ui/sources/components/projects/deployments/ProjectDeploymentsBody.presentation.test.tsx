@@ -38,6 +38,14 @@ function Page(props: Readonly<{ controller: ReturnType<typeof createDeploymentRe
         serverId={scope.serverId} accountId={scope.accountId} sourceId="source-app" header={props.header} />;
 }
 
+const { DeploymentEnvironmentStateMark } = await import('./rows/DeploymentEnvironmentRow');
+/** The Project page row's State word (Services row anatomy): its tone says whether it needs the person. */
+function stateWord(screen: { findAllByType: (type: unknown) => Array<{ props: Record<string, unknown> }> }, environmentId: string) {
+    const mark = screen.findAllByType(DeploymentEnvironmentStateMark)
+        .find(node => node.props.testID === `project-deployments.project.environments.row.${environmentId}.stateWord`);
+    return mark?.props.state as { tone?: string } | undefined;
+}
+
 describe('Environment detail in a split pane', () => {
     it('shows the Project Environments when its Services route replaces an open Environment', async () => {
         const detail = createDeploymentEnvironmentDetailV1();
@@ -63,7 +71,8 @@ describe('Environment detail in a split pane', () => {
         try {
             expect(screen.findByTestId('project-deployments.rail')).toBeNull();
             await screen.update(page({}));
-            expect(screen.findByTestId(`project-deployments.rail.row.${detail.environment.id}.state`)).not.toBeNull();
+            // Nothing open: the Project page lists its Environments, each with its state (PAGE-ACCEPT-176 R11-D6).
+            expect(stateWord(screen, detail.environment.id)?.tone).toBe('danger');
         } finally {
             await screen.unmount();
             controller.retire();
@@ -124,11 +133,12 @@ describe('Environment detail in a split pane', () => {
             demand={demand} lifetime={null} serverId={scope.serverId} accountId={scope.accountId} sourceId={scope.projectSourceId} />
         </AccountNoticeInvestigationBoundary>);
         try {
-            const highlight = `project-deployments.rail.row.${detail.environment.id}:needs-you:accent`;
-            expect(screen.findByTestId(highlight)).not.toBeNull();
+            // On the Project page the row's State says the trouble, as Services → Apps does, and goes quiet when the
+            // receipt recovers (PAGE-ACCEPT-176 R11-D6).
+            expect(stateWord(screen, detail.environment.id)?.tone).toMatch(/danger|warning/);
             state = 'succeeded';
             await act(async () => { await controller.refreshDemanded(); });
-            expect(screen.findByTestId(highlight)).toBeNull();
+            expect(stateWord(screen, detail.environment.id)?.tone ?? 'quiet').toBe('quiet');
         } finally {
             await screen.unmount(); controller.retire();
             storage.setState({ localSettings: previousLocalSettings });
@@ -151,7 +161,7 @@ describe('Environment detail in a split pane', () => {
             demand={{ mounted: true, visible: true, focused: true }} lifetime={null} serverId={scope.serverId}
             accountId={scope.accountId} sourceId={scope.projectSourceId} /></AccountNoticeInvestigationBoundary>);
         try {
-            expect(screen.findByTestId(`project-deployments.rail.row.${detail.environment.id}.state`)).not.toBeNull();
+            expect(stateWord(screen, detail.environment.id)?.tone).toBe('danger');
         } finally {
             await screen.unmount(); controller.retire();
         }
@@ -177,9 +187,9 @@ describe('Environment detail in a split pane', () => {
         try {
             const ids = screen.tree.findAll((node: { props: Record<string, unknown> }) => typeof node.props.testID === 'string')
                 .map((node: { props: Record<string, unknown> }) => node.props.testID as string);
-            const group = ids.indexOf('project-deployments.rail.previews');
-            expect(group).toBeGreaterThan(ids.indexOf(`project-deployments.rail.row.${detail.environment.id}`));
-            expect(ids.indexOf('project-deployments.rail.row.env-preview-142')).toBeGreaterThan(group);
+            const group = ids.indexOf('project-deployments.project.previews');
+            expect(group).toBeGreaterThan(ids.indexOf(`project-deployments.project.environments.row.${detail.environment.id}`));
+            expect(ids.indexOf('project-deployments.project.previewRows.row.env-preview-142')).toBeGreaterThan(group);
         } finally {
             await screen.unmount(); controller.retire();
         }

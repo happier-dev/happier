@@ -25,6 +25,11 @@ import { CollectionDraftTitleScope } from '@/components/ui/lists/collection/Coll
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { PageHeader } from '@/components/ui/layout/PageHeader';
+import { Icon } from '@/components/ui/icons/Icon';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
+import { DeploymentEnvironmentRows } from './DeploymentEnvironmentRows';
 import { useCollectionRailWidth } from '@/components/ui/lists/collection/useCollectionRailWidth';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { usePageSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
@@ -601,6 +606,51 @@ const ProjectDeploymentsPage = React.memo(
         />
       ));
     const scale = Math.max(1, fontScale);
+    // The bare Project route with nothing open is the Project's own page (PAGE-ACCEPT-176 R11-D6): an entity header
+    // naming the Project and what the page is for, New environment as its one action, its Environments, and the agent
+    // ways as one row.
+    if (props.workspaceRef == null && !hasDetail) {
+      const repository = sourceRead.source?.source.repository?.repository.nameWithOwner ?? null;
+      const projectEnvironments = items.filter(item => item.environment.purpose !== 'preview');
+      const projectPreviews = items.filter(item => item.environment.purpose === 'preview');
+      return (
+        <View testID="project-deployments" style={{ flex: 1, minHeight: 0 }}>
+          <ItemList testID="project-deployments.project">
+            <PageHeader
+              testID="project-deployments.project.header"
+              leading={<Icon name="folder" size={28} color={theme.colors.text.secondary} />}
+              title={sourceRead.source?.source.name ?? t('projects.deployments.environments')}
+              description={t('projects.deployments.services.projectPurpose')}
+              meta={[
+                { key: 'environments', text: t('projects.deployments.services.countEnvironmentsTotal', { count: projectEnvironments.length }) },
+                ...(repository ? [{ key: 'repository', text: repository, mono: true }] : []),
+              ]}
+              {...(canCreate ? { primaryAction: { title: t('projects.deployments.newEnvironment'), icon: 'plus' as const,
+                onPress: () => startDraft(null), testID: 'project-deployments.project.add' } } : {})}
+              alwaysShowBack={phone}
+            />
+            {stale ? <SurfaceFreshnessLine testID="project-deployments.project.stale" reason={stale.reason}
+              action={{ label: t('common.retry'), onPress: stale.onRetry }} /> : null}
+            {/* Its Environments in the Services row anatomy (Environment, Last deploy, Runs on, State), each opening
+                its page; a pull request's Previews follow under their own label, as they do in the rail. */}
+            <DeploymentEnvironmentRows items={projectEnvironments} serverId={props.serverId} lifetime={props.lifetime ?? null}
+              testID="project-deployments.project.environments" accessibilityLabel={t('projects.deployments.environments')} />
+            {projectPreviews.length > 0 ? <>
+              <ItemGroup testID="project-deployments.project.previews" title={t('projects.deployments.previewsTitle')} />
+              <DeploymentEnvironmentRows items={projectPreviews} serverId={props.serverId} lifetime={props.lifetime ?? null}
+                testID="project-deployments.project.previewRows" accessibilityLabel={t('projects.deployments.previewsTitle')} />
+            </> : null}
+            {preparation ? (
+              <ItemGroup header="none" surface="none">
+                <View testID="project-deployments.project.agents" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s16 }}>
+                  {preparation}
+                </View>
+              </ItemGroup>
+            ) : null}
+          </ItemList>
+        </View>
+      );
+    }
     if (besideList) {
       return (
         <View testID="project-deployments" style={{ flex: 1, minHeight: 0 }}>

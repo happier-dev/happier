@@ -689,8 +689,9 @@ export const DeploymentVariablesPanel = React.memo(
               reason={t('projects.deployments.variablesEmptyBody')}
               {...(draft.canEdit ? {
                 action: props.lifetime
-                  ? { label: t('projects.deployments.addSaved'), onPress: () => { void pickSaved(); } }
-                  : { label: t('projects.deployments.addPlain'), onPress: () => setAdding('plain') },
+                  // The page's Deploy is its one filled primary: the empty file's ways in stay quiet (PAGE-ACCEPT-176 R10-D10).
+                  ? { label: t('projects.deployments.addSaved'), onPress: () => { void pickSaved(); }, invitation: false }
+                  : { label: t('projects.deployments.addPlain'), onPress: () => setAdding('plain'), invitation: false },
                 secondaryAction: { label: t('projects.deployments.addPaste'), onPress: () => setMode('bulk') },
               } : {})}
             />

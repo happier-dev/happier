@@ -16,6 +16,7 @@ import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDispla
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { describeCodeSource } from './codeSourcePresentation';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
+import { useDeviceType } from '@/utils/platform/responsive';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import {
   SelectionTiles,
@@ -86,6 +87,7 @@ export function NewAppCodeSources(
   const askedMachineId = address.resolution.kind === 'resolving' || address.resolution.kind === 'unavailable'
     ? address.resolution.machineId ?? null : null;
   const askedMachine = useServerScopedMachineLabel(props.scope.serverId, askedMachineId);
+  const devicePhone = useDeviceType() === 'phone';
   // A submitted search that is not an address is only a search: it never reads as a refused link.
   const refusal = address.refusal && address.refusal !== 'projects.sources.loading'
     && address.refusal !== 'projects.sources.addressInvalid'
@@ -145,6 +147,9 @@ export function NewAppCodeSources(
           }}
           // The lab's sentence on wide; a phone's field holds the short one whole (QA #34, 320).
           placeholder={t(props.columns === 1 ? 'newApp.codeSearchPlaceholderShort' : 'newApp.codeSearchPlaceholder')}
+          // Deploy an app opens on its search, where the person starts (PAGE-ACCEPT-176 R11-D10); a phone keeps
+          // its keyboard down until the field is touched, as the describe step does.
+          autoFocus={!devicePhone}
         />
         {reading ? <EmptyState testID="newApp.code.address.reading" layout="line" lineLoading title={reading} /> : null}
         {refusal ? (

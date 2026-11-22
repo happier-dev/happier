@@ -189,7 +189,8 @@ export function DeploymentEnvironmentRows(
           ),
       // A long Machine name keeps its end, the short id that tells same-named Machines apart.
       runsOn: (row) => row.runsOn ? <MiddleEllipsisText value={row.runsOn} style={meta} /> : null,
-      state: (row) => row.stateWord ? <DeploymentEnvironmentStateMark state={row.stateWord} /> : null,
+      state: (row) => row.stateWord ? <DeploymentEnvironmentStateMark state={row.stateWord}
+        testID={`${props.testID}.row.${row.environmentId}.stateWord`} /> : null,
     };
     const fields: CollectionField<Row>[] = contributedColumns.map(column => ({ ...column, render: 'field' in column
       ? row => <ServiceColumnCell column={column} environmentId={row.environmentId} collectorMachineId={row.collectorMachineId} />
