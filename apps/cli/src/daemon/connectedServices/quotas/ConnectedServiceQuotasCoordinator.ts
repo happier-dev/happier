@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { setTimeout, clearTimeout } from 'node:timers';
 import { buildProviderAccountUsageIdentityFromQualifiedAccount } from '../accountUsage/qualifiedAccountIdentity';
 import { isProviderAccountUsageOwnershipRefusalCode, isProviderAccountUsageSourceLinkFailureCode, maintainProviderAccountUsageDaySummariesForRecord, persistProviderAccountUsageWithDaySummaries } from '../accountUsage/persistence';
@@ -161,6 +162,15 @@ import {
   resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceInput,
   resolveQualifiedConnectedAccountServiceForIngressServiceId,
 } from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
+
+type ScheduledQuotaRecordTrace = {
+  due: boolean;
+  reason: 'parked' | 'scheduled' | 'backoff' | 'read' | 'unavailable' | 'current' | 'poll';
+  nextDueDelayMs: number | null;
+  providerOutcome: 'ok' | 'failed' | 'retry-after' | null;
+  retryAfterMs: number | null;
+  writeResult: 'written' | 'unchanged' | 'refused' | null;
+};
 
 /**
  * The replacement read starts one refresh interval before the reading's freshness deadline, so a
@@ -3762,6 +3772,7 @@ export class ConnectedServiceQuotasCoordinator {
   }
 
   private async persistQualifiedConnectedAccountQuota(input: Readonly<{
+    trace?: Pick<ScheduledQuotaRecordTrace, 'writeResult'>;
     signal?: AbortSignal;
     stageDaySummaries?: (recordId: string, throughMs: number) => void;
     accountMode: 'e2ee' | 'plain';
@@ -3772,6 +3783,7 @@ export class ConnectedServiceQuotasCoordinator {
         isCurrent(): boolean | Promise<boolean>;
       }>;
   }>): Promise<boolean> {
+    if (input.trace) input.trace.writeResult = 'refused';
     input.signal?.throwIfAborted();
     const runtime = this.qualifiedConnectedAccountRuntime;
     if (
@@ -3822,7 +3834,11 @@ export class ConnectedServiceQuotasCoordinator {
       nowMs: this.now(),
       minFreshnessMs: this.quotaPersistenceMinFreshnessMs,
     });
-    if (!decision.persist) return decision.reason === 'unchanged_fresh';
+    if (!decision.persist) {
+      const unchanged = decision.reason === 'unchanged_fresh';
+      if (input.trace && unchanged) input.trace.writeResult = 'unchanged';
+      return unchanged;
+    }
     const write = {
       source: {
         ref: input.profile.ref,
@@ -3891,6 +3907,7 @@ export class ConnectedServiceQuotasCoordinator {
     });
     input.signal?.throwIfAborted();
     if (outcome.status === 'written') {
+      if (input.trace) input.trace.writeResult = 'written';
       for (const previousKey of this.quotaPersistenceStateByKey.keys()) {
         if (previousKey.startsWith(keyPrefix) && previousKey !== key) this.quotaPersistenceStateByKey.delete(previousKey);
       }
@@ -4124,6 +4141,7 @@ export class ConnectedServiceQuotasCoordinator {
 
   /** All qualified quota producers share admission, source bootstrap and failure publication. */
   private async invokeQualifiedAccountQuota(input: Readonly<{
+    trace?: ScheduledQuotaRecordTrace;
     profile: QualifiedConnectedAccountProfileV4;
     accountMode: 'plain' | 'e2ee';
     backgroundObservation?: boolean;
@@ -4186,7 +4204,11 @@ export class ConnectedServiceQuotasCoordinator {
           });
         },
         assertProviderCallAllowed: () => {
-          if (!isDeferredByBackoff()) return;
+          if (!isDeferredByBackoff()) {
+            if (input.trace) input.trace.providerOutcome = 'failed';
+            return;
+          }
+          if (input.trace) input.trace.reason = 'backoff';
           providerDeferred = new Error('Qualified quota invocation deferred by provider backoff');
           throw providerDeferred;
         },
@@ -4204,6 +4226,7 @@ export class ConnectedServiceQuotasCoordinator {
           activeProfileId: input.profile.ref.accountId,
         }),
       });
+      if (input.trace && invocation.result) input.trace.providerOutcome = 'ok';
       if (invocation.basis.isCurrent()) {
         this.failureStateByBindingKey.delete(key);
         if (invocation.result?.recoveryCredits) this.settleRecoveryCreditsFromFreshQuota(completedRecoveryCreditAttempts, invocation.result.recoveryCredits);
@@ -4215,7 +4238,14 @@ export class ConnectedServiceQuotasCoordinator {
       if (deferred && input.refreshRequestedAt === undefined) return null;
       if (!admittedBasis?.isCurrent()) throw error;
       const now = this.now();
-      if (!deferred) this.applyFailureBackoff({ now, key, error });
+      if (!deferred) {
+        this.applyFailureBackoff({ now, key, error });
+        const retry = this.failureStateByBindingKey.get(key);
+        if (input.trace?.providerOutcome === 'failed' && retry?.providerDirected) {
+          input.trace.providerOutcome = 'retry-after';
+          input.trace.retryAfterMs = Math.max(0, retry.nextAllowedAt - now);
+        }
+      }
       // A missed background poll leaves the last Home observation intact.
       if (input.backgroundObservation && wasConnectedServiceQuotaObserved(lastKnown)) throw error;
       const failure = isRecord(error) ? error : null;
@@ -4237,7 +4267,7 @@ export class ConnectedServiceQuotasCoordinator {
       try {
         await this.persistQualifiedConnectedAccountQuota({
           accountMode: input.accountMode, profile: input.profile, snapshot, basis: admittedBasis,
-          signal: input.signal, stageDaySummaries: input.stageDaySummaries,
+          signal: input.signal, stageDaySummaries: input.stageDaySummaries, trace: input.trace,
         });
       } catch {
         logger.warn('[DAEMON RUN] Qualified quota refresh failure outcome could not be published');
@@ -4498,6 +4528,17 @@ export class ConnectedServiceQuotasCoordinator {
     }
 
     const switchEvaluationTargets: ActiveGroupQuotaSwitchTarget[] = [];
+    const traceByRecord = new Map<string, ScheduledQuotaRecordTrace>();
+    const captureRecordTrace = (recordId: string | null, trace: ScheduledQuotaRecordTrace) => {
+      if (!recordId) return;
+      // Credential aliases can share a usage record. Prefer the actual attempt over a skipped alias.
+      const previous = traceByRecord.get(recordId);
+      if (!previous || (!previous.due && trace.due)
+        || (previous.providerOutcome === null && trace.providerOutcome !== null)
+        || (previous.writeResult !== 'written' && trace.writeResult === 'written')) {
+        traceByRecord.set(recordId, trace);
+      }
+    };
     const poolSessionRunning = input.qualifiedGroupTargets.length > 0;
     const currentKeys = new Set(profiles.map(profile => `qualified:${qualifiedAccountQuotaKey(profile.ref)}`));
     for (const key of this.qualifiedQuotaScheduleByKey.keys()) {
@@ -4565,13 +4606,24 @@ export class ConnectedServiceQuotasCoordinator {
           summaryMaintenance: schedule?.summaryMaintenance };
         this.qualifiedQuotaScheduleByKey.set(key, schedule);
       }
+      const trace: ScheduledQuotaRecordTrace = {
+        due: true, reason: 'read', nextDueDelayMs: null,
+        providerOutcome: null, retryAfterMs: null, writeResult: null,
+      };
       if (schedule.at === null || schedule.at > input.now) {
         if (schedule.at !== null) input.scheduleAt(schedule.at);
+        trace.due = false;
+        const backoff = this.failureStateByBindingKey.get(key);
+        trace.nextDueDelayMs = schedule.at !== null && Number.isFinite(schedule.at) ? schedule.at - input.now : null;
+        trace.reason = backoff && backoff.nextAllowedAt > input.now ? 'backoff'
+          : trace.nextDueDelayMs === null ? 'parked' : 'scheduled';
+        captureRecordTrace(schedule.recordId, trace);
         await settleHealth();
         continue;
       }
       let nextProbeAt: number | null = null;
       let recordId = schedule.recordId;
+      let initializedRecordId: string | undefined;
       let summaryMaintenance = schedule.summaryMaintenance;
       let savedSummary: { work: ReturnType<typeof stageDaySummaries>; basis: string } | undefined;
       let observationIncomplete = false;
@@ -4584,6 +4636,7 @@ export class ConnectedServiceQuotasCoordinator {
           profile,
           'quota_read',
         )) {
+          trace.reason = 'unavailable';
           continue;
         }
         const canProbe = this.shouldRunQualifiedQuotaOperation(profile, 'quota_poll');
@@ -4605,15 +4658,18 @@ export class ConnectedServiceQuotasCoordinator {
         } else {
           summaryMaintenance = undefined;
         }
+        trace.reason = 'unavailable';
         if (!isConnectedServiceCredentialHealthStatusUsable(profile.status)) continue;
         // Register saved Accounts as well as newly settled ones. Home Refresh is
         // source-addressed, so this must not depend on provider acquisition succeeding.
         const initializedSource = !existingSnapshot
           ? await this.initializeQualifiedAccountQuotaSourceForProfile({ profile, accountMode: input.accountMode, signal: input.signal, stageDaySummaries })
           : null;
+        initializedRecordId = initializedSource?.recordId;
         const refreshRequestedAt = existing?.metadata.refreshRequestedAt;
         const pendingRefresh = refreshRequestedAt !== undefined && refreshRequestedAt > (existing?.metadata.fetchedAt ?? 0);
         if (failureState && input.now < failureState.nextAllowedAt && !pendingRefresh) {
+          trace.reason = 'backoff';
           input.scheduleAt(failureState.nextAllowedAt);
           continue;
         }
@@ -4623,6 +4679,7 @@ export class ConnectedServiceQuotasCoordinator {
           && isConnectedServiceQuotaObservationFresh({ observedAtMs: localSnapshot.fetchedAt, nowMs: input.now,
             maxAgeMs: localSnapshot.staleAfterMs })
           && (existing?.metadata.refreshRequestedAt === undefined || existing.metadata.refreshRequestedAt <= localSnapshot.fetchedAt)) {
+          trace.reason = 'current';
           nextProbeAt = canProbe ? localProbeAt : null;
           this.failureStateByBindingKey.delete(key);
           continue;
@@ -4650,6 +4707,7 @@ export class ConnectedServiceQuotasCoordinator {
               <= existing.metadata.fetchedAt
           )
         ) {
+          trace.reason = 'current';
           nextProbeAt = canProbe ? existingProbeAt : null;
           this.failureStateByBindingKey.delete(key);
           // Fresh authoritative server row: hydrate the local canonical store passively
@@ -4677,8 +4735,10 @@ export class ConnectedServiceQuotasCoordinator {
         if (!canProbe) {
           continue;
         }
+        trace.reason = 'poll';
         const invocation =
           await this.invokeQualifiedAccountQuota({
+            trace,
             signal: input.signal,
             cancellationSignal: input.signal,
             fetchTimeoutMs: this.fetchTimeoutMs,
@@ -4696,6 +4756,7 @@ export class ConnectedServiceQuotasCoordinator {
           continue;
         }
         if (!invocation?.result || !invocation.basis.isCurrent()) {
+          if (invocation?.result) trace.writeResult = 'refused';
           observationIncomplete = true;
           continue;
         }
@@ -4728,6 +4789,7 @@ export class ConnectedServiceQuotasCoordinator {
           snapshot,
           basis: invocation.basis,
           stageDaySummaries,
+          trace,
         });
         if (!written) continue;
         await this.recordQualifiedPolledAccountUsageLocally({
@@ -4753,6 +4815,7 @@ export class ConnectedServiceQuotasCoordinator {
         input.signal?.throwIfAborted();
         await settleHealth();
         const settleSchedule = () => {
+          captureRecordTrace(recordId ?? initializedRecordId ?? null, trace);
           // A Refresh arriving during the async probe replaces this schedule.
           if (this.qualifiedQuotaScheduleByKey.get(key) === schedule) {
             const settledAt = this.now();
@@ -4767,6 +4830,8 @@ export class ConnectedServiceQuotasCoordinator {
               summaryMaintenance = { ...summaryMaintenance, retryAt: settledAt + this.probeIntervalMs };
             }
             const quotaDeadline = this.failureStateByBindingKey.get(key)?.nextAllowedAt ?? nextProbeAt;
+            trace.nextDueDelayMs = quotaDeadline !== null && Number.isFinite(quotaDeadline)
+              ? Math.max(0, quotaDeadline - settledAt) : null;
             const summaryDeadline = summaryMaintenance?.retryAt ?? null;
             const deadline = quotaDeadline === null ? summaryDeadline
               : summaryDeadline === null ? quotaDeadline : Math.min(quotaDeadline, summaryDeadline);
@@ -4795,6 +4860,13 @@ export class ConnectedServiceQuotasCoordinator {
       });
       const retryAt = result.status === 'written' || result.status === 'unsupported' ? null : this.now() + this.probeIntervalMs;
       for (const settle of work.settle) settle(retryAt);
+    }
+
+    for (const [recordId, trace] of traceByRecord) {
+      logger.infoFile('[DAEMON RUN] Scheduled quota record', {
+        record: createHash('sha256').update(recordId).digest('hex').slice(0, 10),
+        ...trace,
+      });
     }
 
     // The single existing convergence owner runs once, over deduped current qualified targets,

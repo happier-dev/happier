@@ -70,7 +70,7 @@ import type {
 } from '@happier-dev/protocol';
 import type { AgentAccountUsageSnapshot } from '@happier-dev/plugin-sdk/agents/runtime';
 import { isRecord } from '@happier-dev/plugin-sdk';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -352,6 +352,11 @@ it.each([1, 2])('reads one day index per record after processing two due profile
     providerId, accountSubjectId: profile.providerIdentity!.accountId!, subjectKind: 'account', quotaScope: 'account',
   }));
   const recordIds = recordKeys.map(buildProviderAccountUsageRecordId);
+  const trace: unknown[] = [];
+  const log = vi.spyOn(logger, 'infoFile').mockImplementation((message, fields) => {
+    if (message === '[DAEMON RUN] Scheduled quota record') trace.push(fields);
+  });
+  onTestFinished(() => log.mockRestore());
   const detailWrites: string[] = [];
   const detailsAtDayIndex: string[][] = [];
   const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
@@ -399,6 +404,18 @@ it.each([1, 2])('reads one day index per record after processing two due profile
   expect(detailWrites).toEqual(recordIds);
   expect(detailsAtDayIndex).toHaveLength(recordCount);
   if (recordCount === 1) expect(detailsAtDayIndex[0]).toEqual(recordIds);
+  expect(trace).toEqual([...new Set(recordIds)].map(recordId => ({
+    record: createHash('sha256').update(recordId).digest('hex').slice(0, 10),
+    due: true, reason: 'poll', nextDueDelayMs: null,
+    providerOutcome: 'ok', retryAfterMs: null, writeResult: 'written',
+  })));
+  trace.length = 0;
+  await runWithServerHttpBaseUrl('https://quota-work.test', () => coordinator.tickOnce());
+  expect(trace).toEqual([...new Set(recordIds)].map(recordId => ({
+    record: createHash('sha256').update(recordId).digest('hex').slice(0, 10),
+    due: false, reason: 'parked', nextDueDelayMs: null,
+    providerOutcome: null, retryAfterMs: null, writeResult: null,
+  })));
 });
 
 it('polls actual group members through shared inventory without expanding every scheduled account into every group', async () => {
