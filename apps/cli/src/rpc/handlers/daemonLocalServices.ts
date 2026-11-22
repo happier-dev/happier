@@ -1,7 +1,7 @@
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { LocalServiceInventoryCountResponseV1Schema, type LocalServiceInventoryCountResponseV1 } from '@happier-dev/protocol/local/services/inventory/v1';
 import { DaemonLocalServiceInventoryLauncherWatchResponseV1Schema, type DaemonLocalServiceInventoryLauncherWatchResponseV1 } from '@happier-dev/protocol/local/services/inventory/v1';
-import { DaemonLocalServiceActionExecuteRequestV1Schema, DaemonLocalServiceActionExecuteResponseV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
+import { DaemonLocalServiceActionExecuteRequestV1Schema, DaemonLocalServiceActionExecuteResponseV1Schema, LocalServiceCopyUrlResultV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
 import { DaemonLocalServiceInventoryRefreshRequestV1Schema, DaemonLocalServiceInventoryRefreshResponseV1Schema, DaemonLocalServiceInventorySnapshotRequestV1Schema, DaemonLocalServiceInventorySnapshotResponseV1Schema, DaemonLocalServiceInventoryWatchRequestV1Schema, DaemonLocalServiceInventoryWatchResponseV1Schema } from '@happier-dev/protocol/local/services/inventory/v1';
 import { DaemonLocalServiceLauncherHistoryClearResponseV1Schema, DaemonLocalServiceLauncherLeafRequestV1Schema, DaemonLocalServiceLauncherOpenPreviewResponseV1Schema, DaemonLocalServiceLauncherRegisterPreviewResponseV1Schema, DaemonLocalServiceLauncherSnapshotRequestV1Schema, DaemonLocalServiceLauncherSnapshotResponseV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { DaemonLocalServicePublicPreviewCopyUrlRequestV1Schema, DaemonLocalServicePublicPreviewCopyUrlResponseV1Schema, DaemonLocalServicePublicPreviewCreateRequestV1Schema, DaemonLocalServicePublicPreviewCreateResponseV1Schema, DaemonLocalServicePublicPreviewRevokeRequestV1Schema, DaemonLocalServicePublicPreviewRevokeResponseV1Schema, DaemonLocalServicePublicPreviewStatusRequestV1Schema, DaemonLocalServicePublicPreviewStatusResponseV1Schema, isLocalServicePublicPreviewCreateConfirmed } from '@happier-dev/protocol/local/services/public/v1';
@@ -318,6 +318,11 @@ export function registerDaemonLocalServicesMachineRpcHandlers(
                 if (result && typeof result === 'object' && 'ok' in result && result.ok === false) return result;
                 const deferredApproval = ActionApprovalRequestCreatedResultSchema.safeParse(result);
                 if (deferredApproval.success) return deferredApproval.data;
+                if (request.action === 'copy_url') {
+                    // The aggregate's original receipt predates presentation destinations.
+                    const { destinationUrl: _destination, ...receipt } = LocalServiceCopyUrlResultV1Schema.parse(result);
+                    return DaemonLocalServiceActionExecuteResponseV1Schema.parse({ protocolVersion: 1, result: receipt });
+                }
                 return DaemonLocalServiceActionExecuteResponseV1Schema.parse({
                     protocolVersion: 1,
                     result,

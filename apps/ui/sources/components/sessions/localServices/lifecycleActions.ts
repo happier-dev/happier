@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { createLocalServiceActionConfirmationNonceV1, LocalServiceActionResultV1Schema, LocalServiceManagedServiceActionTargetV1Schema, type LocalServiceActionKindV1, type LocalServiceActionRequestV1 } from '@happier-dev/protocol/local/services/actions/v1';
+import { createLocalServiceActionConfirmationNonceV1, LocalServiceActionResultV1Schema, LocalServiceCopyUrlResultV1Schema, LocalServiceManagedServiceActionTargetV1Schema, type LocalServiceActionKindV1, type LocalServiceActionRequestV1 } from '@happier-dev/protocol/local/services/actions/v1';
 import { resolveLocalServiceActionKindForRuntimeActionId } from '@happier-dev/protocol/actions/specs/localServices';
 import type { FrontDoorRuntimeActionExecute as RuntimeActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { DaemonLocalServiceLauncherHistoryClearResponseV1Schema, DaemonLocalServiceLauncherLeafRequestV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
@@ -430,12 +430,11 @@ export function useLocalServiceCopyUrlAction(
                 surface: 'ui',
             },
         });
-        const parsed = LocalServiceActionResultV1Schema.safeParse(result);
-        // A denied or unparseable result is a real refusal: the clipboard stays untouched rather
-        // than routing around the policy the action exists to enforce.
-        if (!parsed.success || parsed.data.status !== 'succeeded') {
+        const parsed = LocalServiceCopyUrlResultV1Schema.safeParse(result);
+        if (!parsed.success || parsed.data.status !== 'succeeded' || parsed.data.action !== 'copy_url') {
             return false;
         }
-        return await copyToClipboard(value);
+        const destination = parsed.data.destinationUrl ?? (managed?.declaration ? undefined : value);
+        return destination === undefined ? false : await copyToClipboard(destination);
     }, [copyToClipboard, machineId, runtimeActionExecute, serverId, sessionId, workspaceId]);
 }

@@ -398,6 +398,8 @@ describe('credentialed CLI Local Services runtime dispatch', () => {
             status: 'succeeded', action: 'copy_url',
             destinationUrl: expect.stringContaining('/preview-service/machine-a/stable-web?serverId=home-a'),
         } });
+        expect(await daemon({ actionId: 'localServices.actions.copyUrl', input, context: { ...context, surface: 'ui' } }))
+            .toMatchObject({ status: 'succeeded', destinationUrl: expect.stringContaining('/preview-service/machine-a/stable-web?serverId=home-a') });
         expect(requests).toHaveLength(1);
     });
 

@@ -181,6 +181,35 @@ describe('local service lifecycle action helpers', () => {
         expect(LocalServiceActionRequestV1Schema.parse(requests[0]!.input).target).not.toHaveProperty('sessionId');
     });
 
+    it('copies the admitted private destination instead of the displayed local listener', async () => {
+        const destinationUrl = 'https://home.test/browser/local-service?targetId=project-web';
+        const runtimeActionExecute: RuntimeActionExecute = async request => ({
+            v: 1, requestId: LocalServiceActionRequestV1Schema.parse(request.input).requestId,
+            action: 'copy_url', status: 'succeeded', auditEvents: [], destinationUrl,
+        });
+        const clipboard = vi.fn(async () => true);
+        const hook = await renderHook(() => useLocalServiceCopyUrlAction({
+            runtimeActionExecute, copyToClipboard: clipboard, serverId: 'home-a',
+        }));
+        const target = managedCopyTarget();
+        expect(await hook.getCurrent()(target, target.endpointUrl!)).toBe(true);
+        expect(clipboard).toHaveBeenCalledExactlyOnceWith(destinationUrl);
+    });
+
+    it('leaves the clipboard untouched when an older Machine omits the declaration destination', async () => {
+        const runtimeActionExecute: RuntimeActionExecute = async request => ({
+            v: 1, requestId: LocalServiceActionRequestV1Schema.parse(request.input).requestId,
+            action: 'copy_url', status: 'succeeded', auditEvents: [],
+        });
+        const clipboard = vi.fn(async () => true);
+        const hook = await renderHook(() => useLocalServiceCopyUrlAction({
+            runtimeActionExecute, copyToClipboard: clipboard, serverId: 'home-a',
+        }));
+        const target = managedCopyTarget();
+        expect(await hook.getCurrent()(target, target.endpointUrl!)).toBe(false);
+        expect(clipboard).not.toHaveBeenCalled();
+    });
+
     it('hides a managed occurrence through Forget while retaining exact source and avoiding Stop', async () => {
         const requests: Parameters<RuntimeActionExecute>[0][] = [];
         const runtimeActionExecute: RuntimeActionExecute = async request => {
@@ -232,7 +261,8 @@ describe('local service lifecycle action helpers', () => {
             const runtimeActionExecute: RuntimeActionExecute = async request => {
                 requests.push(request);
                 const parsed = LocalServiceActionRequestV1Schema.parse(request.input);
-                return { v: 1, requestId: parsed.requestId, action: parsed.action, status: 'succeeded', auditEvents: [] };
+                return { v: 1, requestId: parsed.requestId, action: parsed.action, status: 'succeeded', auditEvents: [],
+                    ...(parsed.action === 'copy_url' ? { destinationUrl: 'https://managed-service-alias.test/browser/local-service?targetId=web' } : {}) };
             };
             const clipboard = vi.fn(async () => true);
             const context = { runtimeActionExecute, serverId: home.id };

@@ -249,7 +249,7 @@ export function createLocalServiceActionRoutes(input: Readonly<{
             requestedAt,
             confirmed: admitted.requiresConfirmation,
         });
-        if (request.action !== 'copy_url' || outcome.status !== 'succeeded' || execution?.actionContext.surface !== 'cli') {
+        if (request.action !== 'copy_url' || outcome.status !== 'succeeded' || !execution) {
             return receipt;
         }
         // The Action already admitted this exact occurrence. The launcher feed
@@ -268,8 +268,11 @@ export function createLocalServiceActionRoutes(input: Readonly<{
         const locator = destination ?? (browserTarget ? { serverId: context.serverId ?? configuration.activeServerId,
             machineId: browserTarget.machineId, targetId: browserTarget.targetId } : null);
         const destinationUrl = locator && buildLocalServiceDeclarationPreviewLandingUrlV1(configuration.webappUrl, locator);
-        return destinationUrl ? LocalServiceCopyUrlResultV1Schema.parse({ ...receipt, destinationUrl })
-            : deniedResult({ request, requestedAt, reasonCode: 'local_service_destination_unavailable' });
+        if (destinationUrl) return LocalServiceCopyUrlResultV1Schema.parse({ ...receipt, destinationUrl });
+        // Rows without a private destination can still copy their displayed listener in the app.
+        return destination || context.surface === 'cli'
+            ? deniedResult({ request, requestedAt, reasonCode: 'local_service_destination_unavailable' })
+            : receipt;
     }
     return {
         async execute(request, execution) {
