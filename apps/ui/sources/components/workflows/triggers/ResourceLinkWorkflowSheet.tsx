@@ -100,11 +100,12 @@ export function ResourceLinkWorkflowSheet(
     (
       ref: string | null,
       nextWhen: ResourceWorkflowTriggerStartOption['when'] | null,
+      eventStart?: Extract<ResourceWorkflowTriggerStartOption, { relation: 'event' }>,
     ) => {
       // An Event start is configured in its own rows first; the draft follows once its value exists.
       if (!ref || !nextWhen) return setDraft(null);
       if (nextWhen.kind === 'pluginEvent') {
-        return setDraft(nextWhen.value ? { workflow: ref, trigger: nextWhen.value } : null);
+        return setDraft(nextWhen.value && eventStart ? { workflow: ref, trigger: nextWhen.value } : null, eventStart);
       }
       setDraft({ workflow: ref, trigger: { ...nextWhen, enabled: true } });
     },
@@ -253,7 +254,7 @@ export function ResourceLinkWorkflowSheet(
             listAccessibilityLabel={t('workflows.triggers.link.title', { name: props.resourceName })}
             onSelect={(id) => {
               setWorkflow(id);
-              draftFor(id, when);
+              draftFor(id, when, choice?.relation === 'event' ? choice : undefined);
             }}
             onRequestClose={props.onRequestClose}
             autoFocusInputOnWeb
@@ -284,7 +285,7 @@ export function ResourceLinkWorkflowSheet(
                   searchPlaceholder={t('workflows.triggers.link.findWorkflow')}
                   onSelect={(id) => {
                     setWorkflow(id);
-                    draftFor(id, when);
+                    draftFor(id, when, choice?.relation === 'event' ? choice : undefined);
                   }}
                 />
               </View>
@@ -352,7 +353,7 @@ export function ResourceLinkWorkflowSheet(
                 onChange={(next) => {
                   if (next.kind === 'pluginEvent') {
                     setWhen(next);
-                    draftFor(workflow, next);
+                    draftFor(workflow, next, choice);
                   }
                 }}
               />

@@ -18,7 +18,7 @@ import { Modal } from '@/modal';
 import { buildPermissionToolCallRoute, canOpenPermissionToolCallRoute } from '@/utils/sessions/permissions/buildPermissionToolCallRoute';
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { ApprovalDecisionFooter } from './ApprovalDecisionFooter';
-import { ApprovalAutomaticChecks, readApprovalAutomaticChecksCarryRefusal, useApprovalAutomaticChecksControls } from '@/components/approvals/ApprovalAutomaticChecks';
+import { ApprovalAutomaticChecks, readApprovalAutomaticChecksCarryRefusal, readApprovalAutomaticChecksForRequest, useApprovalAutomaticChecksControls } from '@/components/approvals/ApprovalAutomaticChecks';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { PetImportConfirmationCard } from '@/components/approvals/PetImportConfirmationCard';
 import { ApprovalPromptChrome } from './ApprovalPromptChrome';
@@ -148,13 +148,13 @@ function TargetActionApprovalPromptCard(props: ApprovalPromptCardProps<TargetAct
     const canApprove = transcriptSource.actions !== null
         && presentationAllowsApproval
         && (sourceInteraction.canApproveActions ?? sourceInteraction.canApprovePermissions);
-    const approvalRouteUnavailable = isApprovalReplayRouteUnavailable(props.approval);
+    const approvalRouteUnavailable = props.approval.status === 'open' && isApprovalReplayRouteUnavailable(props.approval);
     const accessDisabled = !canApprove || Boolean(approvalDisabledReason);
     const decisionDisabled = accessDisabled || approvalRouteUnavailable || requesterDecision.withheld;
     const automaticChecksPresentation = usePromptAutomaticChecksPresentation(props.approval, props.artifact.id,
         approvalHome.serverId, decisionDisabled);
     const actionFields = React.useMemo(() => describeApprovalRequestFields(props.approval), [props.approval]);
-    const automaticChecks = props.approval.automaticChecks ?? null;
+    const automaticChecks = readApprovalAutomaticChecksForRequest(props.approval);
     const checks = useApprovalAutomaticChecksControls({ checks: automaticChecks, decide, unavailable: decisionDisabled,
         isDeciding, setIsDeciding });
     const openChecksRoute = React.useMemo(() => transcriptSource.navigate
@@ -315,7 +315,7 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
     const canApprove = transcriptSource.actions !== null
         && presentationAllowsApproval
         && (sourceInteraction.canApproveActions ?? sourceInteraction.canApprovePermissions);
-    const approvalRouteUnavailable = isApprovalReplayRouteUnavailable(props.approval);
+    const approvalRouteUnavailable = props.approval.status === 'open' && isApprovalReplayRouteUnavailable(props.approval);
     const accessDisabled = !canApprove || Boolean(approvalDisabledReason);
     const decisionDisabled = accessDisabled || approvalRouteUnavailable || requesterDecision.withheld;
     const canOpenToolRoute = transcriptSource.navigate !== null && canOpenPermissionToolCallRoute(props.location ?? null);
@@ -324,7 +324,7 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
 
     // Before checks hold this Action (05 S6/S8/S9): the footer answers a shared check's consent, cancels a running
     // check, or approves anyway after a failed one; the body says which check and why.
-    const automaticChecks = props.approval.v === 2 ? props.approval.automaticChecks ?? null : null;
+    const automaticChecks = readApprovalAutomaticChecksForRequest(props.approval.v === 2 ? props.approval : null);
     // A refusal by a before check says its reason inside the checks block, once.
     const checksCarryRefusal = readApprovalAutomaticChecksCarryRefusal(automaticChecks);
     const { decision: checksDecision, answerConsent: onTriggerConsent, cancelChecks: onCancelChecks } = useApprovalAutomaticChecksControls({

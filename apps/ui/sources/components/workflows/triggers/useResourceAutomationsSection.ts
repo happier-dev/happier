@@ -36,6 +36,7 @@ const EMPTY_ROWS: readonly AccountTriggerRow[] = [];
 const EMPTY_WHEN_OPTIONS: readonly ResourceWorkflowTriggerStartOption[] = Object.freeze([]);
 
 type ResourceAutomationLinkInput = Exclude<Parameters<typeof addWorkflowTrigger>[0], Readonly<{ observationOnly: unknown }>>;
+type ResourceEventLinkStart = Extract<ResourceWorkflowTriggerStartOption, { relation: 'event' }>;
 export type ResourceAutomationLinkDraft = Readonly<Omit<ResourceAutomationLinkInput,
     'project' | 'target' | 'workflow' | 'trigger'> & { workflow: string;
         /** Link authors a new definition; saved revision-bound envelopes are not authoring starts. */
@@ -85,7 +86,7 @@ export type ResourceAutomationsSectionRead = SelectedAutomationsSectionRead & Re
         whenOptions: readonly WorkflowLinkTriggerStartOption[];
         whenStatus: 'idle' | 'loading' | 'ready' | 'machineOffline' | 'unavailable';
         draft: ResourceAutomationLinkDraft | null;
-        setDraft(draft: ResourceAutomationLinkDraft | null): void;
+        setDraft(draft: ResourceAutomationLinkDraft | null, eventStart?: ResourceEventLinkStart): void;
         missingAudience: ReturnType<typeof useDocumentShareController>['missingAudience'];
         audienceNames?: ReadonlyMap<string, string>;
         issue: ReturnType<typeof useDocumentShareController>['issue'];
@@ -222,9 +223,9 @@ export function useResourceAutomationsSection(props: ResourceSectionInput): Reso
                 : actionCatalog.phase === 'error' || actionCatalog.phase === 'unsupported' || eventCatalog.status === 'unavailable' ? 'unavailable'
                     : eventCatalog.status === 'idle' && !eventsReady ? 'idle' : 'loading';
     const whenOptions = React.useMemo(() => whenStatus === 'ready' && subject
-        ? buildResourceWorkflowTriggerStartOptions({ subject, actions: actionCatalog.specs,
+        ? buildResourceWorkflowTriggerStartOptions({ subject, contextSubjects: props.contextSubjects, actions: actionCatalog.specs,
             events: eventCatalog.events, machineId: actionCatalog.machineId }) : EMPTY_WHEN_OPTIONS,
-    [whenStatus, subject, actionCatalog.specs, eventCatalog.events, actionCatalog.machineId]);
+    [whenStatus, subject, props.contextSubjects, actionCatalog.specs, eventCatalog.events, actionCatalog.machineId]);
     const retryWhen = useEventCallback(() => {
         if (whenStatus !== 'unavailable') return;
         if (actionCatalog.phase === 'error' || actionCatalog.phase === 'unsupported') actionCatalog.retry();
@@ -247,12 +248,12 @@ function useWorkflowLinkController(input: Readonly<{
     const [linkDraft, setLinkDraft] = React.useState<ResourceAutomationLinkDraft | null>(null);
     const current = React.useRef({ draft: linkDraft, binding, demanded });
     current.current = { draft: linkDraft, binding, demanded };
-    const setDraft = React.useCallback((draft: ResourceAutomationLinkDraft | null) => {
-        // This flow links an Automation to the selected resource. Source setup supplies
-        // its configuration; the resource section supplies the authored subject once.
+    const setDraft = React.useCallback((draft: ResourceAutomationLinkDraft | null, eventStart?: ResourceEventLinkStart) => {
+        // Setup configures the source. The selected start supplies the resource the Event actually observes.
         setLinkDraft(draft && subject && (draft.trigger.kind === 'pluginEvent'
             || (draft.trigger.kind === 'action' && !('consentFor' in draft.trigger)))
-            ? { ...draft, trigger: { ...draft.trigger, subject } } : draft);
+            ? { ...draft, trigger: { ...draft.trigger,
+                subject: draft.trigger.kind === 'pluginEvent' ? eventStart?.subject ?? subject : subject } } : draft);
     }, [subject]);
 
     const machineId = subject?.kind === 'machine' ? subject.machineId : '';

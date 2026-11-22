@@ -218,7 +218,9 @@ export function createWorkflowActionHttpTransport(params: Readonly<{
                 const materialized = await materializeWorkflowAcceptedSnapshotV1({ definition: createWorkflowDefinitionFixture({
                     defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } } },
                 }), admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true },
-                    context: { source: { kind: 'inline' }, inputs: {}, machineId: run.machineId ?? 'machine-1',
+                    context: { source: run.sourceArtifactId && run.sourceSavedBy
+                        ? { kind: 'saved', definitionId: run.sourceArtifactId, revision: { headerVersion: 1, bodyVersion: 1 }, savedBy: run.sourceSavedBy }
+                        : { kind: 'inline' }, inputs: {}, machineId: run.machineId ?? 'machine-1',
                         executionTarget: { kind: 'session' }, origin: { kind: 'direct' }, authorization: { principal: { kind: 'host' } },
                         workspaceTarget: { project: { machineId: run.machineId ?? 'machine-1', directory: '/repo', checkoutRootPath: '/repo' } } },
                 });

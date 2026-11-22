@@ -1694,6 +1694,48 @@ describe('ApprovalDetailScreen', () => {
     expect(JSON.parse(homes.artifacts(account.serverId).readPlainBody(currentArtifact.id) ?? 'null').decision?.kind).not.toBe('reject');
   });
 
+  it('retains the failed check reason after Deny without offering an override on reopen', async () => {
+    const artifact = await createDaemonRoutedApprovalArtifact();
+    const selected = { phase: 'before', actionIds: ['session.title.set'], mode: 'wait', onFailure: 'ask',
+      automationId: 'automation-freeze', triggerId: 'trigger-freeze', triggerRevision: 1,
+      workflowId: 'artifact-release-freeze', workflowRevision: 3, ownerAccountId: 'account-mara' };
+    const run = { automationId: selected.automationId, triggerId: selected.triggerId, runId: 'run-freeze' };
+    const request = ApprovalRequestV2Schema.parse({ ...JSON.parse(artifact.body), status: 'rejected', updatedAtMs: 3,
+      decision: { kind: 'reject', decidedAtMs: 3 }, automaticChecks: {
+        phase: 'override', humanApprovalRequired: false, subjects: [], selectionStatus: 'ready', notices: [],
+        selected: [selected], consents: [{ automationId: run.automationId, triggerId: run.triggerId, decision: 'allow' }],
+        runs: [run], results: [{ ...run, outcome: 'failed', reason: 'content_unavailable' }],
+      } });
+    currentArtifact = { ...artifact, header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request) };
+    const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+    const screen = await renderScreen(<ApprovalDetailScreen artifactId={artifact.id} />);
+
+    expect(approvalItem(screen, 'approvals.status')?.props.detail).toBe('approvals.status.rejected');
+    expect(screen.findByTestId('approvals.automatic-checks:override')).toBeNull();
+    expect(screen.findByTestId('approvals.automatic-checks:refused')).not.toBeNull();
+    expect(screen.getTextContent()).toContain('content_unavailable');
+  });
+
+  it('uses the executed receipt when the deciding Home loses its reply', async () => {
+    const artifact = await createApiTargetActionApprovalArtifact();
+    const request = TargetActionApprovalRequestV1Schema.parse(JSON.parse(artifact.body));
+    const execution = { executedAtMs: 3, ok: true, result: {} } as const;
+    const settled = TargetActionApprovalRequestV1Schema.parse({ ...request, status: 'executed',
+      updatedAtMs: 3, decision: { kind: 'approve', decidedAtMs: 2 }, execution });
+    currentArtifact = artifact;
+    remoteArtifact = { ...artifact, header: buildTargetActionApprovalArtifactHeaderV1(settled), body: JSON.stringify(settled) };
+    daemonReply = { ok: false, errorCode: 'database_transaction_timeout', error: 'The reply was lost after commit' };
+    const { Modal } = await import('@/modal');
+    const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+    const screen = await renderScreen(<ApprovalDetailScreen artifactId={artifact.id} />);
+    await screen.pressByTestIdAsync('approvals.approve');
+
+    await vi.waitFor(() => expect(approvalItem(screen, 'approvals.status')?.props.detail).toBe('approvals.status.executed'));
+    expect(Modal.alert).not.toHaveBeenCalled();
+    expect(screen.findByTestId('approvals.home-unavailable')).toBeNull();
+    expect(homes.requestsFor('/v1/actions/approval.request.decide')).toHaveLength(1);
+  });
+
   it.each(['rejected', 'accepted'] as const)('retains the ORIGINAL %s result delivery beside successful execution', async deliveryStatus => {
     const artifact = await createDaemonRoutedApprovalArtifact('session.stop');
     const request = ApprovalRequestV2Schema.parse(JSON.parse(artifact.body));

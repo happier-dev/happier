@@ -671,6 +671,39 @@ describe('WorkflowsColumn', () => {
         expect(threeLines).toBeDefined();
         expect(threeLines).not.toBe(threeLinesOff);
     });
+    it('shows the saved Workflow author on the recipient’s Runs page', async () => {
+        const { UserProfileSchema } = await import('@happier-dev/protocol/social/friends');
+        const author = UserProfileSchema.parse({ id: 'account-owner', name: 'Workflow author', firstName: 'Workflow',
+            lastName: 'author', avatar: null, username: 'author', bio: null, status: 'none', publicKey: null });
+        storage.setState(state => ({ users: { ...state.users, [author.id]: author } }));
+        const shared = createWorkflowRunSummaryFixture({ id: 'shared-run', ownerAccountId: 'account-a',
+            sourceArtifactId: '933cef3e-bdb1-45a4-9db4-95b7872d12fb', startedBy: 'trigger', state: 'succeeded',
+            sourceSavedBy: { kind: 'person', accountId: author.id } });
+        const answer = executeMock.getMockImplementation()!;
+        executeMock.mockImplementation((actionId, input) => actionId === 'workflow.run.list'
+            ? Promise.resolve({ ok: true, result: { runs: [shared], metadataByRunId: {
+                [shared.id]: { kind: 'available', value: { title: 'A shared Before check' } },
+            } } }) : answer(actionId, input));
+        routeState.pathname = '/workflows/runs';
+        const { HostCollection } = await import('@happier-dev/plugin-ui');
+        const screen = await renderScreen(<AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}>
+            <WorkflowsRunsRoute />
+        </AppShellColumnContext.Provider>, { wrapper: TestAuth });
+        const { t } = await import('@/text');
+        await vi.waitFor(async () => {
+            await act(async () => {});
+            const table = screen.findAllByType(HostCollection).find(node => node.props.testID === 'workflow-runs:collection');
+            expect(table).toBeDefined();
+            expect(screen.getTextContent()).toContain('A shared Before check');
+            const saved = Object.values(storage.getState().workflowRunsById).find(row => row.id === shared.id)?.summary;
+            expect(saved?.sourceSavedBy).toEqual(shared.sourceSavedBy);
+            const accessible = screen.findAll(node => node.props.testID === 'workflow-runs:row:shared-run'
+                && typeof node.props.accessibilityLabel === 'string').map(node => node.props.accessibilityLabel);
+            expect(accessible.join(' ')).toContain(t('workflows.run.editedBy', { name: author.name! }));
+            expect(screen.getTextContent()).toContain(t('workflows.run.editedBy', { name: author.name! }));
+        });
+    });
+
     // B1 list review 2: the Runs table chooses its Columns through the one Collection Columns owner.
     it('lets the Runs table choose its Columns, so a default-hidden column can be turned on', async () => {
         answerLists();

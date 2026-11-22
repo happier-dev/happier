@@ -149,7 +149,7 @@ const WorkflowRunColumnRow = React.memo(function WorkflowRunColumnRow(
   // Lines 1 is the name alone; Lines 2 adds the run's subject (and a plugin's context detail); Lines 3 adds who started
   // it and how long it took when those details are on. The sidebar row has one line under its name, so they share it.
   const { lines, details, readPluginDetail } = props.display;
-  const line = lines === 1 ? null : [row.subject, readPluginDetail(row, 'context')].filter(Boolean).join(' · ') || null;
+  const line = lines === 1 ? null : [row.editedBy, row.subject, readPluginDetail(row, 'context')].filter(Boolean).join(' · ') || null;
   // Lines 3 is its own line under the subject (lab "Lines × details"), as the Runs page list draws it.
   const lineThree = lines === 3 ? [
     details.startedBy ? row.startedBy : null,
@@ -180,7 +180,7 @@ const WorkflowRunColumnRow = React.memo(function WorkflowRunColumnRow(
         ) : undefined
       }
       {...(lineThree === null ? {} : { lines: [{ key: 'line-3', start: lineThree }] })}
-      accessibilityLabel={[row.title, stateWord, lineThree].filter(Boolean).join(', ')}
+      accessibilityLabel={[row.title, row.editedBy, stateWord, lineThree].filter(Boolean).join(', ')}
       selected={props.selected}
       onPress={props.onOpen}
     />

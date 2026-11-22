@@ -836,7 +836,7 @@ describe('Account Workflow Library and settings', () => {
         expect(reads()).toEqual([]);
         await hook.unmount();
     });
-    it.each(['schedule', 'action', 'pluginEvent', 'lifetimeSession'] as const)('links a built-in Workflow through the trigger owner without an Artifact grant review (%s)', async kind => {
+    it.each(['schedule', 'action', 'pluginEvent', 'backup', 'lifetimeSession'] as const)('links a built-in Workflow through the trigger owner without an Artifact grant review (%s)', async kind => {
         const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');
         const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
         home.answer(serverId, 'POST /v3/automations/query', { body: AutomationDefinitionListResponseSchema.parse({
@@ -847,6 +847,7 @@ describe('Account Workflow Library and settings', () => {
             // Layout 1 shared metadata omits the legacy owner fields in the UI Metadata alias.
             metadata: { name: 'Session link' } as ReturnType<typeof createSessionFixture>['metadata'],
             ownerMetadataView: { path: '/repo', host: 'test', homeDir: '/home/test', machineId: project.machineId, flavor: 'claude' } })]);
+        const backup = { kind: 'backup', serverId, environmentId: 'source-environment' } as const;
         const hook = await renderHook(() => useResourceAutomationsSection(kind === 'lifetimeSession'
             ? { subject: { kind: 'session', serverId, sessionId: 'session-link' } }
             : { serverId, subject: { kind: 'environment', machineId: project.machineId, environmentId: 'source-environment' },
@@ -858,13 +859,29 @@ describe('Account Workflow Library and settings', () => {
                 schedule: { kind: 'cron', scheduleExpr: '0 9 * * *', everyMs: null, timezone: null } }
             : kind === 'action' ? { kind: 'action', phase: 'after', enabled: true, actionIds: ['deployments.deploy'],
                 filter: { v: 1, all: [{ field: '/outcome', op: 'eq', value: 'failed' }] } }
-                : { kind: 'pluginEvent', enabled: true, eventRef: { pluginId: 'acme.deploy', localId: 'released' },
+                : { kind: 'pluginEvent', enabled: true,
+                    eventRef: kind === 'backup' ? { pluginId: 'happier.machine.services', localId: 'backup-succeeded' }
+                        : { pluginId: 'acme.deploy', localId: 'released' },
                     sourceInstanceId: 'production', sourceContractVersion: 1, sourceConfig: { environment: 'production' },
                     displayLabel: 'Production', observationTransport: { kind: 'checkpointedPull',
-                        watcherMaterializationRef: { machineId: project.machineId, pluginId: 'acme.deploy', materializationId: 'deploy' } },
+                        watcherMaterializationRef: { machineId: project.machineId,
+                            pluginId: kind === 'backup' ? 'happier.machine.services' : 'acme.deploy', materializationId: 'deploy' } },
                     filter: null, maximumObservationAgeMs: null };
+        const { buildResourceWorkflowTriggerStartOptions } = await import('./workflowTriggerStarts');
+        const { PluginEventAutomationDeclarationV1Schema } = await import('@happier-dev/protocol/automations/automationEventDeclarationV1');
+        const { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 } = await import('@happier-dev/protocol/deployments/deploymentActionIdsV1');
+        const backupStart = kind === 'backup' && configuredTrigger.kind === 'pluginEvent'
+            ? buildResourceWorkflowTriggerStartOptions({ subject: { ...backup, kind: 'environment' }, contextSubjects: [backup],
+                actions: [], machineId: project.machineId, events: [{ eventRef: configuredTrigger.eventRef, title: 'Backup succeeded',
+                    pluginName: null, automation: PluginEventAutomationDeclarationV1Schema.parse({ v: 1, eligible: true,
+                        subjectKinds: ['backup', 'environment', 'machine'], completesActionIds: [DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1],
+                        completionOutcome: 'succeeded',
+                        source: { sourceContractVersion: 1, supportedObservationTransports: ['checkpointedPull'],
+                            sourceConfigSchema: { type: 'object' }, setupActionRef: { pluginId: 'happier.machine.services', localId: 'backup-setup' } },
+                    }) }] }).find(option => option.relation === 'event') : undefined;
+        if (kind === 'backup') expect(backupStart).toBeDefined();
         await act(async () => hook.getCurrent().link.setDraft({ workflow: 'builtin:review-and-converge', trigger: configuredTrigger,
-            ...(kind === 'lifetimeSession' ? { lifetimeSession: { sessionId: 'session-link' } } : {}) }));
+            ...(kind === 'lifetimeSession' ? { lifetimeSession: { sessionId: 'session-link' } } : {}) }, backupStart));
         expect(hook.getCurrent().link.missingAudience).toEqual([]);
         let outcome: Awaited<ReturnType<ReturnType<typeof useResourceAutomationsSection>['link']['submit']>> | undefined;
         await act(async () => { outcome = await hook.getCurrent().link.submit('accept'); });
@@ -887,8 +904,8 @@ describe('Account Workflow Library and settings', () => {
                 binding: { v: 1, automationId: submitted.automationId, triggerId: submittedTrigger.triggerId, triggerRevision: 0, triggerKind: 'action' } }))
                 .toMatchObject({ kind: 'available', definition: { ...authored,
                     subject: { kind: 'environment', serverId, environmentId: 'source-environment' } } });
-        } else if (kind === 'pluginEvent') expect(submittedTrigger.trigger).toMatchObject({ ...configuredTrigger,
-            subject: { kind: 'environment', serverId, environmentId: 'source-environment' } });
+        } else if (kind === 'pluginEvent' || kind === 'backup') expect(submittedTrigger.trigger).toMatchObject({ ...configuredTrigger,
+            subject: kind === 'backup' ? backup : { kind: 'environment', serverId, environmentId: 'source-environment' } });
         else expect(submittedTrigger.trigger).toEqual(configuredTrigger);
         expect(home.requests.filter(request => request.path.includes('/access/grants'))).toEqual([]);
         await hook.unmount();

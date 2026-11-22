@@ -12,7 +12,7 @@ import { readDiscussionDraftApproval } from './discussionDraftApproval';
 import { WorkspaceSyncConflictResolutionResultV1Schema, WorkspaceSyncConflictResolutionV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
 import { ApprovalDecisionBar } from './ApprovalDecisionBar';
-import { ApprovalAutomaticChecks, readApprovalAutomaticChecksCarryRefusal, readApprovalAutomaticChecksShown, useApprovalAutomaticChecksControls } from './ApprovalAutomaticChecks';
+import { ApprovalAutomaticChecks, readApprovalAutomaticChecksCarryRefusal, readApprovalAutomaticChecksForRequest, readApprovalAutomaticChecksShown, useApprovalAutomaticChecksControls } from './ApprovalAutomaticChecks';
 import { Modal } from '@/modal';
 import { HappyError } from '@/utils/errors/errors';
 import { t } from '@/text';
@@ -310,8 +310,8 @@ export function useApprovalReview(props: ApprovalReviewInput) {
         parsed.request.executionOriginV1.serverId.trim(),
       )
     : approvalServerId;
-  const approvalRouteUnavailable = homeUnavailable || ((parsed?.kind === 'built_in' || parsed?.kind === 'target')
-    && isApprovalReplayRouteUnavailable(parsed.request));
+  const approvalRouteUnavailable = parsed?.request.status === 'open' && (homeUnavailable
+    || ((parsed.kind === 'built_in' || parsed.kind === 'target') && isApprovalReplayRouteUnavailable(parsed.request)));
   // The Home is named as the person knows it. Its exact identity stays the fallback: when this
   // device has no profile for it, or the saved route no longer matches the Home that asked.
   const approvalHomeKnown = Boolean(approvalServerId && !approvalRouteUnavailable && getServerProfileById(approvalServerId));
@@ -522,8 +522,9 @@ export function useApprovalReview(props: ApprovalReviewInput) {
     readApprovalArtifactTitleInput(artifact, matchedBody, [sessionId]), approvalServerId ?? null);
 
   // Before checks holding this Action (05 S6/S8/S9) are read and answered as the transcript card does.
-  const automaticChecks = parsed?.kind === 'target' || parsed?.kind === 'built_in' && parsed.request.v === 2
-    ? parsed.request.automaticChecks ?? null : null;
+  const automaticChecks = readApprovalAutomaticChecksForRequest(
+    parsed?.kind === 'target' || parsed?.kind === 'built_in' && parsed.request.v === 2 ? parsed.request : null,
+  );
   const decideChecks = React.useCallback(async (decision: 'approve' | 'reject' | 'cancel', options?: ApprovalDecisionOptions) => {
     // The review's decide alerts its own failures, so the controls never alert twice.
     await decide(decision, options?.triggerConsent ? { triggerConsent: options.triggerConsent } : undefined);

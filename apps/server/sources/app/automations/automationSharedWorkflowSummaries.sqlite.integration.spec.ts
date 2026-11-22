@@ -6,6 +6,8 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, MACHINE_PLAIN_DATA_KEY_MARKER,
 import { AutomationDefinitionListResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { AutomationStoredWorkflowDefinitionRecipeV2Schema } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
+import { automationSubjectKeyV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
+import { AutomationSourceSelectorIdV1Schema } from '@happier-dev/protocol/automations/automationEventJsonBoundsV1';
 import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import { AutomationActionTriggerSchema, projectAutomationActionTriggerStructuralV1, type AutomationActionTrigger } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
@@ -26,6 +28,44 @@ describe('Team workflow schedule summaries', () => {
     let harness: LightSqliteHarness;
     beforeAll(async () => { harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-team-schedules-' }); }, 180_000);
     afterAll(async () => { await harness?.close(); });
+
+    it('lists the configured Backup stream directly on its Environment and as context on the Machine', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const serverId = await getOrCreateServerIdentityId();
+        const environmentId = randomUUID();
+        const subject = { kind: 'backup' as const, serverId, environmentId };
+        const automationId = randomUUID();
+        const triggerId = AutomationTriggerIdSchema.parse(randomUUID());
+        const sourceSelectorId = AutomationSourceSelectorIdV1Schema.parse(randomUUID());
+        const eventRef = { pluginId: 'happier.machine.services', localId: 'backup-succeeded' };
+        const definitionEnvelope = sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
+            binding: { v: 1, automationId, triggerId, triggerRevision: 0, triggerKind: 'pluginEvent', eventRef, sourceSelectorId },
+            definition: { v: 1, sourceInstanceId: 'configured-backup', sourceConfig: { v: 1, serverId },
+                displayLabel: 'Backup', filter: null, maximumObservationAgeMs: null },
+        });
+        await db.automation.create({ data: { id: automationId, accountId: owner.id, name: 'Backup habit', templateCiphertext: '{}',
+            triggers: { create: { id: triggerId, kind: 'pluginEvent', subjectKind: subject.kind,
+                subjectKey: automationSubjectKeyV1(subject), eventPluginId: eventRef.pluginId, eventLocalId: eventRef.localId,
+                sourceSelectorId, sourceContractVersion: 1, observationTransport: 'checkpointedPull',
+                definitionEnvelope: JSON.stringify(definitionEnvelope) } } } });
+
+        const app = createAuthenticatedTestApp();
+        registerAutomationV3Routes(app);
+        await app.ready();
+        const query = (payload: object) => app.inject({ method: 'POST', url: '/v3/automations/query',
+            headers: { 'x-test-user-id': owner.id }, payload });
+        try {
+            const exact = { attached: [{ triggerId, relation: 'direct' }] };
+            const context = { attached: [{ triggerId, relation: 'context' }] };
+            expect((await query({ subject })).json()).toMatchObject(exact);
+            expect((await query({ subject: { kind: 'machine', serverId, machineId: randomUUID() },
+                contextSubjects: [subject] })).json()).toMatchObject(context);
+            expect((await query({ subject: { kind: 'environment', serverId, environmentId: randomUUID() },
+                contextSubjects: [subject] })).json()).toMatchObject(context);
+            expect((await query({ subject: { kind: 'environment', serverId, environmentId },
+                contextSubjects: [subject] })).json()).toMatchObject(exact);
+        } finally { await app.close(); }
+    });
 
     it('retains selected direct/context admission and count privacy on SQLite without a Team', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain', name: 'Shared check author' } });

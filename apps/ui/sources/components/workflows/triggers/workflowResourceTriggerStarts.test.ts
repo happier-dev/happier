@@ -39,6 +39,17 @@ describe('resource Link When choices', () => {
       actions, events: [], machineId: 'runner' }).map(option => option.id)).toEqual(['action:after:deployments.deploy']);
   });
 
+  it('uses the Environment’s configured Backup stream as the exact subject of its Backup completion', () => {
+    const backup = { ...subject, kind: 'backup' } as const;
+    const saved = event('backup-succeeded', ['environment', 'machine']);
+    const backupCompleted = { ...saved, automation: PluginEventAutomationDeclarationV1Schema.parse({
+      ...saved.automation, subjectKinds: ['backup', 'environment', 'machine'],
+      completesActionIds: ['deployments.backups.run'], completionOutcome: 'succeeded',
+    }) };
+    const params = { subject, actions: [], events: [backupCompleted], machineId: 'runner', contextSubjects: [backup] };
+    expect(buildResourceWorkflowTriggerStartOptions(params)).toMatchObject([{ subject: backup }]);
+  });
+
   it('matches plugin Action and Event kinds from their qualified public declarations, excluding unrelated or undeclared Events', () => {
     const pluginSubject = { kind: 'plugin', serverId: 'home', pluginId: 'acme.deploy',
       subjectKindId: 'release', identity: { id: 'release-1' } } as const;

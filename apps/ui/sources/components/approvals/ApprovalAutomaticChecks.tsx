@@ -6,6 +6,8 @@ import {
   type ApprovalAutomaticChecksV1,
 } from '@happier-dev/protocol/approvals/approvalAutomaticChecks';
 
+import type { ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
@@ -36,6 +38,18 @@ export type ApprovalAutomaticChecksDecision =
   | Readonly<{ kind: 'checking' }>
   | Readonly<{ kind: 'override' }>
   | null;
+
+/** The stored check phase retains the failed occurrence after a person's final Deny. */
+export function readApprovalAutomaticChecksForRequest(
+  request: Readonly<{ status: ApprovalRequestV2['status']; automaticChecks?: ApprovalAutomaticChecksV1 }> | null,
+): ApprovalAutomaticChecksV1 | null {
+  const checks = request?.automaticChecks;
+  if (!checks) return null;
+  if (request?.status === 'rejected' && checks.phase === 'override') {
+    return { ...checks, phase: 'refused' };
+  }
+  return checks;
+}
 
 export function readApprovalAutomaticChecksDecision(
   checks: ApprovalAutomaticChecksV1 | null | undefined,

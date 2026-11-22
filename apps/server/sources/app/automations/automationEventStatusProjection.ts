@@ -4,6 +4,7 @@ import { automationEventSourceCatalogScopeKeyV1, type AutomationEventSourceCatal
 import { type PluginMachineMaterializationRefV1 } from '@happier-dev/protocol/plugins/availability/materializationRefV1';
 
 import { db } from "@/storage/db";
+import type { Tx } from "@/storage/inTx";
 
 import { portableQueryChunks as automationPortableQueryChunks } from "@/storage/portableQueryChunks";
 import type { AutomationTriggerSummarySource, AutomationTriggerItem } from "./automationTypes";
@@ -152,8 +153,9 @@ function assignedWatcherCatalogLookup(accountId: string, trigger: PluginEventTri
  */
 export async function loadAutomationEventStatusProjections(params: Readonly<{
     automations: readonly AutomationTriggerSummarySource[];
-    includePayloadSchemas?: true;
-}>): Promise<ReadonlyMap<string, AutomationEventStatusProjection>> {
+} & ({ includePayloadSchemas?: true; tx?: never } | { includePayloadSchemas?: never; tx: Tx })
+>): Promise<ReadonlyMap<string, AutomationEventStatusProjection>> {
+    const reader = params.tx ?? db;
     const projections = new Map<string, AutomationEventStatusProjection>();
     const eventEntries = params.automations.flatMap((automation) => automation.triggers.flatMap((trigger) => {
         projections.set(trigger.id, {
@@ -185,7 +187,7 @@ export async function loadAutomationEventStatusProjections(params: Readonly<{
         Promise.all(automationPortableQueryChunks({
             values: eventEntries.map(({ trigger }) => trigger.id),
             bindingsPerValue: 1,
-        }).map((chunk) => db.automationEventSourceStatus.findMany({
+        }).map((chunk) => reader.automationEventSourceStatus.findMany({
             where: { triggerId: { in: [...chunk] } },
             select: {
                 triggerId: true,
@@ -213,7 +215,7 @@ export async function loadAutomationEventStatusProjections(params: Readonly<{
             : Promise.all(automationPortableQueryChunks({
                 values: durablePushEntries,
                 bindingsPerValue: 4,
-            }).map((chunk) => db.pluginWebhookEndpoint.findMany({
+            }).map((chunk) => reader.pluginWebhookEndpoint.findMany({
                 where: {
                     OR: chunk.map(({ automation, eventPluginId, webhookEndpointId }) => ({
                         id: webhookEndpointId,
@@ -334,7 +336,7 @@ export async function loadAutomationEventStatusProjections(params: Readonly<{
         : (await Promise.all(automationPortableQueryChunks({
             values: [...catalogLookups.values()],
             bindingsPerValue: 6,
-        }).map((chunk) => db.automationEventSourceCatalogStatus.findMany({
+        }).map((chunk) => reader.automationEventSourceCatalogStatus.findMany({
             where: {
                 OR: chunk.map((lookup) => ({
                     accountId: lookup.accountId,

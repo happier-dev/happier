@@ -1,5 +1,5 @@
 import { readAutomationEventSubjectKindsV1, type PluginEventAutomationDeclarationV1 } from '@happier-dev/protocol/automations/automationEventDeclarationV1';
-import { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import type { WorkflowActionSpec } from '../presentation/workflowActionCatalog';
@@ -66,6 +66,7 @@ export function buildActionWorkflowTriggerStartOptions(params: Readonly<{
 
 export function buildResourceWorkflowTriggerStartOptions(params: Readonly<{
     subject: AutomationSubjectV1;
+    contextSubjects?: readonly AutomationSubjectV1[];
     actions: readonly WorkflowActionSpec[];
     events: readonly WorkflowTriggerEventOption[];
     machineId: string | null;
@@ -85,13 +86,19 @@ export function buildResourceWorkflowTriggerStartOptions(params: Readonly<{
         }
     }
     for (const event of params.events) {
-        if (!readAutomationEventSubjectKindsV1(event.automation).includes(subject.kind)) continue;
+        const subjectKinds = readAutomationEventSubjectKindsV1(event.automation);
+        if (!subjectKinds.includes(subject.kind)) continue;
         if (subject.kind === 'plugin' && (event.eventRef.pluginId !== subject.pluginId
             || !event.automation?.subjects?.some(kind => kind.subjectKindId === subject.subjectKindId))) continue;
         const id = eventId(event.eventRef);
         const when = createWorkflowTriggerStartWhen(id);
         if (when?.kind !== 'pluginEvent') continue;
-        options.push({ id, label: event.title, relation: 'event', subject, when, trigger: null, setupRequired: true,
+        const backupCompletion = subject.kind === 'environment' && subjectKinds.includes('backup')
+            && event.automation?.completesActionIds?.includes(DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1);
+        const eventSubject = backupCompletion ? params.contextSubjects?.find(candidate => candidate.kind === 'backup'
+            && candidate.serverId === subject.serverId && candidate.environmentId === subject.environmentId) : subject;
+        if (!eventSubject) continue;
+        options.push({ id, label: event.title, relation: 'event', subject: eventSubject, when, trigger: null, setupRequired: true,
             eventSeed: { eventRef: event.eventRef, setupInput: {},
                 ...(params.machineId === null ? {} : { monitoringMachineId: params.machineId }) } });
     }

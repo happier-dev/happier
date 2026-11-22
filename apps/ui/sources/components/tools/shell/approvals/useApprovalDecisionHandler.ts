@@ -8,7 +8,8 @@ import { readActionFailureCauseV1, readActionFailurePresentationV1 } from '@happ
 import type { ApprovalRequest} from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { TargetActionApprovalRequestV1} from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import type { ExecutionRunHostActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/executionRunHostActionApprovalRequestV1';
-import { ApprovalExecutionV1Schema, ApprovalRequestPublicSettlementSchema, resolveApprovalExecutor, type ApprovalExecutionV1 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { ApprovalExecutionV1Schema, resolveApprovalExecutor, type ApprovalExecutionV1 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { ApprovalRequestPublicReadSchema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
 import { ApprovalStaleFailureDetailsSchema } from '@happier-dev/protocol/approvals/approvalStaleReason';
 import { TeamInvitationCreateResultV1Schema, TeamInvitationReissueResultV1Schema } from '@happier-dev/protocol/teams';
 
@@ -42,6 +43,14 @@ export { resolveApprovalReplayRoute };
 export function isApprovalDecisionStale(error: unknown): boolean {
     return error instanceof HappyError ? error.code === 'approval_stale'
         : typeof error === 'object' && error !== null && 'errorCode' in error && error.errorCode === 'approval_stale';
+}
+
+function readApprovalDecisionAvailability(code: unknown, cause: unknown) {
+    const failure = readActionFailureCauseV1(cause);
+    const transient = readTransientAvailabilityFailure(code) ?? readTransientAvailabilityFailure(failure.errorCode);
+    const uncertain = code === 'approval_execution_outcome_unknown'
+        || (transient?.effectMayHaveApplied ?? (code === 'unavailable' && failure.httpStatus === 503));
+    return { failure, transient, uncertain };
 }
 
 /**
@@ -92,16 +101,11 @@ export function presentApprovalFailure(
         }
     }
     // Only a confirmed no-effect refusal may promise that nothing changed.
-    const failureCause = readActionFailureCauseV1(typeof error === 'object' && error !== null && 'failureCause' in error
+    const availability = readApprovalDecisionAvailability(code, typeof error === 'object' && error !== null && 'failureCause' in error
         ? error.failureCause : undefined);
-    const transient = readTransientAvailabilityFailure(code) ?? readTransientAvailabilityFailure(failureCause.errorCode);
-    if (transient && !(error instanceof ApprovalExecutionError)) {
-        return { reason: transient.effectMayHaveApplied ? t('errors.scmOutcomeUnknown') : transient.message, code: diagnosticCode ?? transient.code };
-    }
-    // A Service Unavailable response cannot establish whether the Home saved
-    // this decision. Ask the person to inspect it before submitting it again.
-    if (code === 'unavailable' && failureCause.httpStatus === 503 && !(error instanceof ApprovalExecutionError)) {
-        return { reason: t('errors.scmOutcomeUnknown'), code };
+    if (!(error instanceof ApprovalExecutionError)) {
+        if (availability.uncertain) return { reason: t('errors.scmOutcomeUnknown'), code: diagnosticCode ?? availability.transient?.code ?? null };
+        if (availability.transient) return { reason: availability.transient.message, code: diagnosticCode ?? availability.transient.code };
     }
     // Detail pages may pass the stored executor diagnostic as their fallback.
     // Keep machine codes as diagnostics after readable copy on every Action.
@@ -115,7 +119,7 @@ export function presentApprovalFailure(
     // A runtime family's refusal carries its typed reason in its error; the presenter reads that reason, never the text.
     const runtimeRefusal = readRuntimeActionDisabledReason(error) ? { error: (error as { error: string }).error } : null;
     return { reason: presentActionExecutionFailure({ ok: false,
-        errorCode: diagnosticCode ?? 'approval_execution_failed', failureCause, ...runtimeRefusal,
+        errorCode: diagnosticCode ?? 'approval_execution_failed', failureCause: availability.failure, ...runtimeRefusal,
         ...(publicReason ? { message: publicReason } : {}) }, reason).reason, code: diagnosticCode };
 }
 
@@ -341,21 +345,21 @@ export function useApprovalDecisionHandler(
                 });
             }
             let outcome: unknown = result.ok ? result.result : null;
-            if (!result.ok && result.errorCode === 'approval_execution_outcome_unknown') {
+            if (!result.ok && result.effectAttempted !== false
+                && readApprovalDecisionAvailability(result.errorCode, result.failureCause).uncertain) {
                 // Another execution or a lost acknowledgement can leave the decision's
                 // immediate answer behind its durable receipt. Read the exact approval
                 // through the existing executor; never replay an uncertain effect.
                 const observed = await executor.execute('approval.request.get', { artifactId: artifact.id }, {
                     surface: 'ui', ...(serverId ? { serverId } : {}),
-                    ...(approval.v === 2 ? { expectedAccountId: approval.executionOriginV1.accountId } : {}),
+                    ...(decisionContext.expectedAccountId ? { expectedAccountId: decisionContext.expectedAccountId } : {}),
                 }).catch(() => null);
                 const receipt = observed?.ok && typeof observed.result === 'object' && observed.result !== null && 'request' in observed.result
-                    ? ApprovalRequestPublicSettlementSchema.safeParse(observed.result.request) : null;
-                if (receipt?.success && (receipt.data.status === 'executed' || receipt.data.status === 'failed' || receipt.data.status === 'outcome_unknown') && receipt.data.execution) {
-                    outcome = { status: receipt.data.status, execution: receipt.data.execution };
-                    // The retained originating form settles through its canonical
-                    // Artifact reader/continuation, including a missing socket echo.
-                    if (serverId) publishHomeAccountChange(serverId, [artifact.id], { changeKinds: ['artifact'] });
+                    ? ApprovalRequestPublicReadSchema.safeParse(observed.result.request) : null;
+                if (receipt?.success) {
+                    const { status, execution } = receipt.data;
+                    if ((status === 'executed' || status === 'failed' || status === 'outcome_unknown')
+                        && execution?.ok === (status === 'executed')) outcome = { status, execution };
                 }
             }
             if (!result.ok && outcome === null) throw new HappyError(result.error, false, {

@@ -34,6 +34,10 @@ export type AutomationAttachedTriggerSelection = Readonly<{
 /** Structural selection owns direct/context discovery and its page-independent denied count. */
 export async function listAutomationAttachedTriggers(params: AutomationAttachedTriggerSelection): Promise<WorkflowAttachedTriggerPageV1> {
     const directKey = 'subject' in params ? automationSubjectKeyV1(params.subject) : null;
+    // The configured Backup stream belongs directly on its Environment. It is still
+    // selected and admitted through the supplied context subjects, like any other stream.
+    const backupKey = 'subject' in params && params.subject.kind === 'environment'
+        ? automationSubjectKeyV1({ ...params.subject, kind: 'backup' }) : null;
     const subjects = 'subject' in params
         ? new Map([params.subject, ...(params.contextSubjects ?? [])].map(subject => [automationSubjectKeyV1(subject), subject]))
         : new Map<string, AutomationSubjectV1>();
@@ -153,7 +157,7 @@ export async function listAutomationAttachedTriggers(params: AutomationAttachedT
                 account: { select: ACCOUNT_DISPLAY_PROFILE_SELECT } } });
         const sources: AutomationTriggerSummarySource[] = rows;
         const [events, lifecycle] = await Promise.all([
-            loadAutomationEventStatusProjections({ automations: sources }),
+            loadAutomationEventStatusProjections({ automations: sources, tx }),
             loadAutomationSessionLifecycleStatusProjections({ automations: sources, tx }),
         ]);
         const sourcesById = new Map(sources.map(source => [source.id, source]));
@@ -173,7 +177,8 @@ export async function listAutomationAttachedTriggers(params: AutomationAttachedT
                     ? (({ subjectKind: _subjectKind, subjectKey: _subjectKey, ...summary }) => summary)(triggerSummary) : triggerSummary;
                 attached.push({ automationId: row.id, triggerId: trigger.id, workflowDefinitionId: row.workflowDefinitionId,
                     revision: trigger.revision, enabled: row.enabled && trigger.enabled,
-                    relation: directKey === null || fact.subjectKey === directKey ? 'direct' : 'context', summary: safeSummary,
+                    relation: directKey === null || fact.subjectKey === directKey || (backupKey !== null && fact.subjectKey === backupKey)
+                        ? 'direct' : 'context', summary: safeSummary,
                     ...(workflowAccess.has(trigger.id) ? { workflowAccess: workflowAccess.get(trigger.id)! } : {}),
                     ...(trigger.kind === 'pluginEvent' ? { sourceStatus: events.get(trigger.id)?.sourceStatus ?? null,
                         sourceCatalogStatus: events.get(trigger.id)?.sourceCatalogStatus ?? null } : {}),

@@ -30,6 +30,7 @@ import { formatWorkflowRunDisplayName, resolveWorkflowRunDisplayName } from '../
 import { useWorkflowReferenceTitles } from '../presentation/workflowReferenceOptions';
 import { useWorkflowTriggerSets } from '../triggers/useWorkflowTriggerSets';
 import { useWorkflowSourcePeople } from '../useWorkflowSourcePeople';
+import { resolveEditedByLabel } from '../run/workflowEditedBy';
 import { describeAccountWorkflowLibraryRecord } from './workflowLibraryCollection';
 import { useWorkflowRunWindow } from './workflowLibraryReads';
 import { useWorkflowProjectGroupDisplay } from './workflowLibraryProjectGroups';
@@ -52,6 +53,7 @@ export type WorkflowRunCollectionRow = Readonly<{
     result: string | null;
     status: WorkStatusPresentation | null;
     startedBy: string | null;
+    editedBy: string | null;
     subject: string | null;
     createdAt: number | undefined;
 }>;
@@ -83,9 +85,11 @@ export function useWorkflowRunCollection(focused: boolean) {
         const record = describeAccountWorkflowLibraryRecord(set);
         return [set.automationId, record.sourceGone ? null : record.name] as const;
     })), [language, sets]);
-    const starters = React.useMemo(() => focused ? runs.rows.flatMap(({ summary }) => summary?.startedBy === 'user'
-        ? [{ kind: 'person' as const, accountId: summary.ownerAccountId }] : []) : [], [focused, runs.rows]);
-    const { profiles, viewerAccountId } = useWorkflowSourcePeople(starters, runs.accountLifetime);
+    const sources = React.useMemo(() => focused ? runs.rows.flatMap(({ summary }) => [
+        summary?.sourceSavedBy,
+        summary?.startedBy === 'user' ? { kind: 'person' as const, accountId: summary.ownerAccountId } : null,
+    ]) : [], [focused, runs.rows]);
+    const { profiles, viewerAccountId } = useWorkflowSourcePeople(sources, runs.accountLifetime);
     const viewerName = useSyncedAccountName(runs.accountLifetime?.scope ?? null)?.label;
     const subjectAddresses = React.useMemo(() => runs.rows.flatMap(({ id, summary }) => {
         const sessionId = summary?.origin.originSessionId;
@@ -152,6 +156,8 @@ export function useWorkflowRunCollection(focused: boolean) {
                 result: result === undefined ? null : readWorkflowRunWorkStatusFacts({ state: result }).word,
                 status: summary ? resolveWorkStatusTone({ kind: 'workflow_run', facts: readWorkflowRunWorkStatusFacts(summary) }) : null,
                 startedBy: startedByLabel,
+                editedBy: resolveEditedByLabel({ savedBy: summary?.sourceSavedBy, viewerAccountId, viewerOwnSave: 'omit',
+                    profile: summary?.sourceSavedBy?.kind === 'person' ? profiles.get(summary.sourceSavedBy.accountId)?.profile : null }),
                 subject: discussions.get(run.id) ?? subjects.get(run.id) ?? null,
                 createdAt,
                 facts: {
