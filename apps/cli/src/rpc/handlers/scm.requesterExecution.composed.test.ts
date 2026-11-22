@@ -105,24 +105,26 @@ vi.mock('node:child_process', async original => {
         const frame = await readAgentLaunchFrame(child.stdin as Readable, terminal ? 'terminal' : undefined);
         if (terminal) child.stdout.write(AGENT_LAUNCH_TERMINAL_ACCEPTED);
         os.runAs.push({ args: frame.args, uid: frame.nativeIdentity?.agentUid });
+        // The native launch shim installs the selected OS user's HOME after reading the frame.
+        const environment = { ...frame.environment, ...(frame.nativeIdentity ? { HOME: frame.nativeIdentity.home } : {}) };
         if (frame.args[0] === 'workspace-effect') {
           if (os.subprocessWorker) {
             const run = actual.spawn(process.execPath, ['--conditions=happier-source', '--import',
               new URL('../../../../../packages/cli-common/registerSourceRuntime.mjs', import.meta.url).pathname,
               new URL('../../index.ts', import.meta.url).pathname, 'workspace-effect'],
-              { cwd: frame.cwd, env: frame.environment });
+              { cwd: frame.cwd, env: environment });
             child.stdin.pipe(run.stdin); run.stdout.pipe(child.stdout, { end: false }); run.stderr.pipe(child.stderr, { end: false });
             run.on('error', () => finish(1));
             run.on('close', code => finish(code ?? 1));
             return;
           }
-          await runAddedHostedSession({ environment: { ...frame.environment }, workingDirectory: frame.cwd, end() {} },
+          await runAddedHostedSession({ environment, workingDirectory: frame.cwd, end() {} },
             () => runWorkspaceEffectWorker([], { input: child.stdin, output: child.stdout, signal: new AbortController().signal,
               currentDirectory: () => frame.cwd }));
           finish(0); return;
         }
         // Any other framed command (a Git invocation) runs as the member.
-        const run = actual.spawn(frame.executable, frame.args, { cwd: frame.cwd, env: frame.environment });
+        const run = actual.spawn(frame.executable, frame.args, { cwd: frame.cwd, env: environment });
         child.stdin.pipe(run.stdin); run.stdout.pipe(child.stdout, { end: false }); run.stderr.pipe(child.stderr, { end: false });
         run.on('close', code => finish(code ?? 1));
       } catch { finish(1); }
@@ -222,11 +224,10 @@ async function fixture(options: Readonly<{ projectCleanupUnavailable?: boolean;
   });
   const invoke = (method: string, params: unknown, accountId: string, role: 'manage' | 'use', signal?: AbortSignal,
     localActionContext?: RpcHandlerContext['localActionContext'], sessionActionOrigin?: RpcHandlerContext['sessionActionOrigin']) =>
-    manager.invokeLocal(method, params, { ...(localActionContext ? { localActionContext } : {}), rpcContext: {
+    manager.invokeLocal(method, params, { ...(localActionContext ? { localActionContext } : {}), ...(signal ? { signal } : {}), rpcContext: {
       callerAuthority: 'present_user',
       ...(sessionActionOrigin ? { sessionActionOrigin } : {}),
       verifyMachineAdmissionCurrent: async () => true,
-      ...(signal ? { signal } : {}),
       machineAdmission: { actorAccountId: accountId, custodianAccountId: 'owner-account', machineId, installationId,
         role, encryptionMode: 'plain' },
     } });
@@ -318,6 +319,32 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     expect(os.runAs.map(run => run.args[0])).toEqual(['workspace-effect']);
     expect(daemonGit()).toEqual([]);
   });
+  it('observes a Use member’s checkout through requester custody', async () => {
+    const f = await fixture();
+    const directory = f.memberRepository;
+    expect(await f.invoke(RPC_METHODS.SCM_STATUS_SNAPSHOT, { cwd: directory }, 'member-account', 'use'))
+      .toMatchObject({ success: true, snapshot: { repo: { isRepo: true } } });
+    const controller = new AbortController();
+    const watch = (input: Readonly<{ directory: string; observationOnly?: true; sinceRevision?: number }>) =>
+      f.invoke(RPC_METHODS.SCM_WORKSPACE_WATCH, input, 'member-account', 'use', controller.signal);
+    const observation = watch({ directory, observationOnly: true });
+    try {
+      const ready = await watch({ directory });
+      expect(ready, JSON.stringify(ready)).toMatchObject({ status: 'ready', revision: expect.any(Number) });
+      const changed = watch({ directory, sinceRevision: (ready as { revision: number }).revision });
+      await writeFile(join(directory, 'member-change.txt'), 'change from outside Happier');
+      expect(await changed).toMatchObject({ status: 'changed' });
+      expect(await watch({ directory: f.ownerRepository }))
+        .toMatchObject({ status: 'unavailable', reason: { code: 'path_not_allowed' } });
+    } finally {
+      controller.abort();
+      expect(await observation).toMatchObject({ status: 'cancelled' });
+    }
+    expect(os.runAs.filter(run => run.args[0] === 'workspace-effect')).toHaveLength(3);
+    expect(os.daemonTouches).toEqual([]);
+    expect(daemonGit()).toEqual([]);
+  });
+
   it('keeps a closed host call on the daemon isolation port and runs Manage as the daemon user', async () => {
     const f = await fixture();
     // Before any cached snapshot: the daemon's isolation port refusal stays typed.

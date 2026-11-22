@@ -450,7 +450,7 @@ describe('authorizeMachineRpcRequest', () => {
         ? { ok: true } : { ok: false, errorCode: 'agent_isolation_unavailable' };
       // A person's local repository read reaches the SCM owner, which runs it whole in their
       // member process; other source control needs Manage (MEMBER-SCM-READ-1114, SEC-FORKC-1115F).
-      const memberUse = method === RPC_METHODS.SCM_STATUS_SNAPSHOT ? { ok: true }
+      const memberUse = method === RPC_METHODS.SCM_STATUS_SNAPSHOT || method === RPC_METHODS.SCM_WORKSPACE_WATCH ? { ok: true }
         : method === RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_LIST || method === RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE
           ? { ok: false, errorCode: 'machine_manage_required' } : memberRefusal;
       expect(await authorizeMachineRpcRequest({ ...request, machineAdmission: { ...machineAdmission, actorAccountId: 'member', role: 'use' } }, boundary), method)

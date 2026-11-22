@@ -2156,20 +2156,24 @@ export function getScmRpcSideEffectClass(method: string) {
   return findScmRpcSpec(method)?.sideEffectClass;
 }
 
-/** A projection of `localRepository` on the declaration owner: the reads a Can use person may run. */
+function readScmLocalRepositoryAccess(method: string) {
+  return method === RPC_METHODS.SCM_WORKSPACE_WATCH ? 'read' : findScmRpcSpec(method)?.localRepository;
+}
+
+/** Local repository reads a Can use person may run, including internal observation. */
 export function isScmLocalRepositoryReadRpcMethod(method: string): boolean {
-  return findScmRpcSpec(method)?.localRepository === 'read';
+  return readScmLocalRepositoryAccess(method) === 'read';
 }
 
 /** The managed workspace carries its exact placement through these RPCs. */
 export function supportsManagedWorkspaceScmRpcMethod(method: string): boolean {
   return method === RPC_METHODS.SCM_COMMIT_CREATE || method === RPC_METHODS.SCM_REMOTE_PUSH
-    || isScmLocalRepositoryReadRpcMethod(method);
+    || findScmRpcSpec(method)?.localRepository === 'read';
 }
 
 /** A projection of `localRepository` on the declaration owner: any read or write that runs as the folder's owner. */
 export function isScmLocalRepositoryRpcMethod(method: string): boolean {
-  return findScmRpcSpec(method)?.localRepository !== undefined;
+  return readScmLocalRepositoryAccess(method) !== undefined;
 }
 
 /** A projection of `hostingCredentials` on the declaration owner. */

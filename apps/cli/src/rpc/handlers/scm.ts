@@ -4,7 +4,7 @@ import type { ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/proje
 import { runHostActionOperation } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { buildActionExecutorContextForRpc } from './_actionDispatchAdapter';
 import { createRpcCallError, RpcError } from '@happier-dev/protocol/rpcErrors';
-import { ScmWorktreeRemoveResponseSchema } from '@happier-dev/protocol/scm';
+import { ScmWorkspaceWatchResponseSchema, ScmWorktreeRemoveResponseSchema } from '@happier-dev/protocol/scm';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
@@ -161,6 +161,7 @@ export function registerScmHandlers(
         admittedRemoveWorktree?: Parameters<typeof executeScmActionOperation>[0]['removeWorktree'];
     }>,
 ): void {
+    type IsolatedRequester = Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }>;
     const refused = (actionErrorCode: string) => ({ success: false, errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
         actionErrorCode, error: 'Source control could not run on this Machine' });
     const readErrorCode = (error: unknown): string => {
@@ -169,6 +170,8 @@ export function registerScmHandlers(
     };
     const refuseRequesterPlacement = (method: string, phase: string, cause?: unknown, effectAttempted?: false) => {
         const legacy = refused(readErrorCode(cause));
+        if (method === RPC_METHODS.SCM_WORKSPACE_WATCH) return { status: 'unavailable' as const,
+            reason: { code: legacy.actionErrorCode, message: legacy.error } };
         if (method !== RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE) return legacy;
         return { success: false as const, errorCode: 'DIFF_UNAVAILABLE' as const, error: legacy.error,
             failureCause: projectActionFailureCauseV1(cause ?? { code: legacy.actionErrorCode }, phase, { allowUnknownErrorCode: true }),
@@ -179,8 +182,9 @@ export function registerScmHandlers(
     // member. The whole operation (Git and every repository metadata read) runs in the member
     // Workspace effect child: the daemon never opens a member-controlled path
     // (SEC-FORKC-1115F F1: a symlinked or FIFO Git state file).
-    const runAsMember = async (context: RpcHandlerContext, identity: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }>,
-        method: string, projectRoot: string | undefined, input: unknown, comparisons?: () => unknown, requesterAccountId?: string): Promise<unknown> => {
+    const runAsMember = async (context: RpcHandlerContext, identity: IsolatedRequester,
+        method: string, projectRoot: string | undefined, input: unknown, comparisons?: () => unknown, requesterAccountId?: string,
+        reportScmWatchEvent?: import('@/workspaces/activation/workspaceEffectWorker').WorkspaceEffectServices['reportScmWatchEvent']): Promise<unknown> => {
         if (!deps?.nativeOperationRuntime) return refuseRequesterPlacement(method, 'scm.requester.native_runtime', undefined, false);
         const material = Object.freeze({ materializationKey: context.transportRequestId ?? context.localActionContext?.actionRequestId
             ?? context.callerInputAuthorization?.binding.requestId ?? randomUUID(), environment: Object.freeze({}), selectedMaterials: Object.freeze([]) });
@@ -196,6 +200,10 @@ export function registerScmHandlers(
                 () => runWithScmComparisonOperations(createMemberScmComparisonOperations({ native, signal: context.signal }), comparisons), context.callerInputAuthorization);
             const { readScmAsMember } = await import('@/scm/rpc/memberScmRead');
             const memberRoot = native.memberIdentity.workspaceRoot;
+            const placement = { agentIsolation: native.agentIsolation, requesterIdentity: identity,
+                workspaceRoot: memberRoot, ...(projectRoot !== undefined ? { root: projectRoot } : {}),
+                method, input, signal: context.signal };
+            if (reportScmWatchEvent) return await readScmAsMember({ ...placement, reportScmWatchEvent });
             const removeMemberWorktree: import('@/scm/rpc/memberScmRead').MemberScmRemovalService | undefined = deps.resolveProjectRuntime
                 ? async (removal, workspace) => {
                     try {
@@ -208,9 +216,7 @@ export function registerScmHandlers(
                             ...(details === undefined ? {} : { details: projectNativeJsonValueForTransport(details) }) });
                     }
                 } : undefined;
-            return await readScmAsMember({ agentIsolation: native.agentIsolation, requesterIdentity: identity,
-                workspaceRoot: memberRoot, ...(projectRoot !== undefined ? { root: projectRoot } : {}),
-                method, input, signal: context.signal,
+            return await readScmAsMember({ ...placement,
                 ...(removeMemberWorktree ? { removeWorktree: removeMemberWorktree } : {}) });
         } catch (error) {
             return refuseRequesterPlacement(method, 'scm.requester.execute', error);
@@ -228,7 +234,8 @@ export function registerScmHandlers(
     // requester's Project SCM runs as the daemon user, like its file effects and shell.
     // Ingress admits anyone else only to a local repository read; closed host calls keep their runner.
     const runAsAdmittedRequester = async (context: RpcHandlerContext | undefined, method: string,
-        projectRoot: string | undefined, input: unknown, selected: WorkspaceSource, run: () => unknown): Promise<unknown> => {
+        projectRoot: string | undefined, input: unknown, selected: WorkspaceSource, run: () => unknown,
+        observeAsMember?: (context: RpcHandlerContext, identity: IsolatedRequester) => Promise<unknown>): Promise<unknown> => {
         if (!context) return await run();
         const directRequester = context.directScmWorkspaceRequester;
         const requester = directRequester ? undefined : await deps?.resolveRequester?.(context);
@@ -237,6 +244,10 @@ export function registerScmHandlers(
         try {
             const comparisons = method.startsWith('scm.diffSummary.') || method === RPC_METHODS.SCM_DIFF_FILE
                 && input !== null && typeof input === 'object' && Reflect.get(input, 'captured') !== undefined;
+            const executeAsMember = (member: IsolatedRequester) => observeAsMember
+                ? observeAsMember(context, member)
+                : runAsMember(context, member, method, projectRoot, input, comparisons ? run : undefined,
+                    identity.kind === 'unknown' ? undefined : identity.requester.accountId);
             const unrestricted = isHostRequesterUnrestrictedOwner(identity);
             if (identity.kind !== 'unknown' && (unrestricted || (selected.kind === 'local' && directRequester))) {
                 // Manage keeps full access to a member folder, but daemon Git never runs a member
@@ -257,7 +268,7 @@ export function registerScmHandlers(
                 // A member's placed Session already selected its target source: Git runs there, never
                 // on this Machine as the member (SEC1116H §4b).
                 if (member) return selected.kind === 'local'
-                    ? await runAsMember(context, member, method, projectRoot, input, comparisons ? run : undefined, identity.requester.accountId) : await run();
+                    ? await executeAsMember(member) : await run();
                 return await runWithRequesterScmCommandRunner(createHostScmCommandRunner({ isCurrent: () => !context.signal.aborted }), run);
             }
             if (!comparisons && !isScmLocalRepositoryReadRpcMethod(method)) return await run();
@@ -271,7 +282,7 @@ export function registerScmHandlers(
                 if (owner && owner.requester.serverId === identity.requester.serverId
                     && owner.requester.accountId === identity.requester.accountId) return await run();
             }
-            return await runAsMember(context, identity, method, projectRoot, input, comparisons ? run : undefined, identity.requester.accountId);
+            return await executeAsMember(identity);
         } finally { await requester?.dispose(); }
     };
     const selectSource = async (request: unknown, context: RpcHandlerContext | undefined): Promise<WorkspaceSource> => {
@@ -497,6 +508,31 @@ export function registerScmHandlers(
         selectWorkspaceSource: selectSource,
         admitWorkspaceSource: deps.admitWorkspaceSource,
         invalidateStatusSnapshot: invalidateStatusSnapshotCache,
+        runWithRequester: async (context, request, source, runLocal, observeMember) => {
+            const method = RPC_METHODS.SCM_WORKSPACE_WATCH;
+            return ScmWorkspaceWatchResponseSchema.parse(await runAsAdmittedRequester(
+                context, method, undefined, { cwd: request.directory }, source, runLocal,
+                (ingress, identity) => observeMember(JSON.stringify(identity.requester), callbacks => {
+                    const lifetime = new AbortController();
+                    void runAsMember({ ...ingress, signal: lifetime.signal }, identity, method, undefined, request,
+                        undefined, undefined, async event => {
+                            if (event === 'ready') callbacks.onReady?.();
+                            if (event === 'changed') callbacks.onChange();
+                        }).then(result => {
+                            if (lifetime.signal.aborted) return;
+                            const response = ScmWorkspaceWatchResponseSchema.parse(result);
+                            if (response.status === 'unavailable') callbacks.onUnavailable(response.reason);
+                            else callbacks.onUnavailable({ code: 'workspace_effect_outcome_unknown', message: 'Member observation ended' });
+                        }).catch(error => {
+                            if (!lifetime.signal.aborted) callbacks.onUnavailable({
+                                code: readRpcErrorCode(error) ?? 'workspace_effect_outcome_unknown',
+                                message: 'Member observation is unavailable',
+                            });
+                        });
+                    return () => lifetime.abort();
+                }),
+            ));
+        },
     });
     const runWithStatusSnapshotCacheInvalidation = async <T>(operation: () => Promise<T>): Promise<T> => {
         invalidateStatusSnapshotCache();

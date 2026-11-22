@@ -1,5 +1,6 @@
 import type { Readable, Writable } from 'node:stream';
 import { join } from 'node:path';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { createBackgroundServiceProcessFrameDecoder, encodeBackgroundServiceProcessFrame, parseBackgroundServiceProcessMessage } from '@/plugins/runtime/lifecycle/contributions/backgroundServiceProcessProtocol';
 import { createBackgroundServiceProcessServiceClient, type BackgroundServiceProcessBridgeValue } from '@/plugins/runtime/lifecycle/contributions/backgroundServiceProcessBridge';
 import { executeWorkspaceCheckoutEffect, type WorkspaceCheckoutEffect, type WorkspaceCheckoutEffectContext } from './workspaceEffect';
@@ -29,6 +30,8 @@ export type WorkspaceEffectServices = Partial<MemberScmComparisonServices> & Rea
   applyManagedWorkspaceReturn?(apply: ManagedWorkspaceReturnEffectApply): Promise<void>;
   /** A local repository operation run as the member: its whole SCM response. */
   completeScmRead?(response: unknown): Promise<void>;
+  /** Native observation facts from the member process, scoped to the parked watch. */
+  reportScmWatchEvent?(event: 'ready' | 'changed'): Promise<void>;
   /** Existing Project removal owner; child supplies filesystem facts and the destructive effect. */
   removeScmWorktree?: MemberScmRemovalService;
   /** A member's handoff Session import: the Agent's native result or typed failure. */
@@ -141,6 +144,9 @@ export async function runWorkspaceEffectWorker(args: readonly string[], io: Read
             await services.complete(result);
             send({ kind: 'settled', id: runId });
           } catch (error) {
+            // Cancellation can close the service bridge before the process receives its stop signal.
+            if ('kind' in dispatched && dispatched.kind === 'scm_read'
+              && (signal.aborted || readRpcErrorCode(error) === 'background_service_process_bridge_closed')) return;
             // The existing bridge ErrorValue preserves PluginError.data,
             // including reason/phase. Do not flatten it into failed.code/message.
             await services.fail('kind' in dispatched && dispatched.kind === 'native_sync'

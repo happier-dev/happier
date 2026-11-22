@@ -1,4 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { addAbortListener } from 'node:events';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { ScmWorkspaceWatchRequestSchema, type ScmWorkspaceWatchResponse } from '@happier-dev/protocol/scm';
+import { startScmWorkspaceWatch } from '@/scm/watch/startScmWorkspaceWatch';
 import { resolve as resolvePath } from 'node:path';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
@@ -101,6 +105,7 @@ export async function readScmAsMember(
     input: unknown;
     signal: AbortSignal;
     removeWorktree?: MemberScmRemovalService;
+    reportScmWatchEvent?: WorkspaceEffectServices['reportScmWatchEvent'];
   }>,
 ): Promise<unknown> {
   // Lexical only: the member child resolves links as the member.
@@ -124,7 +129,10 @@ export async function readScmAsMember(
       input: input.input,
       scm,
     } satisfies MemberScmReadEffect),
-    services: input.removeWorktree ? { removeScmWorktree: input.removeWorktree } : {},
+    services: {
+      ...(input.removeWorktree ? { removeScmWorktree: input.removeWorktree } : {}),
+      ...(input.reportScmWatchEvent ? { reportScmWatchEvent: input.reportScmWatchEvent } : {}),
+    },
   });
 }
 
@@ -133,7 +141,7 @@ export async function readScmAsMember(
 export async function executeMemberScmRead(
   effect: MemberScmReadEffect,
   signal: AbortSignal,
-  services?: Readonly<{ removeScmWorktree?: MemberScmRemovalService }>,
+  services?: Pick<WorkspaceEffectServices, 'removeScmWorktree' | 'reportScmWatchEvent'>,
 ): Promise<unknown> {
   const root = effect.root ?? effect.workspaceRoot;
   // isCanonicalAbsolutePathInsideRoot takes (rootPath, candidatePath).
@@ -150,6 +158,26 @@ export async function executeMemberScmRead(
     };
   const registry = await createWorkspaceEffectScmRegistry(effect.scm, {});
   try {
+    if (effect.method === RPC_METHODS.SCM_WORKSPACE_WATCH) {
+      const request = ScmWorkspaceWatchRequestSchema.parse(effect.input);
+      const directory = resolveCwd(request.directory, folder.cwd, { kind: 'restrictedRoots', roots: [folder.cwd] });
+      if (!directory.ok) return { status: 'unavailable', reason: { code: 'path_not_allowed', message: directory.error } };
+      const report = services?.reportScmWatchEvent;
+      if (!report) throw unavailable('workspace_effect_protocol_invalid');
+      if (signal.aborted) return { status: 'cancelled' };
+      let cleanup: (() => void) | undefined;
+      try {
+        return await new Promise<ScmWorkspaceWatchResponse>((resolve, reject) => {
+          const abort = addAbortListener(signal, () => resolve({ status: 'cancelled' }));
+          const stop = startScmWorkspaceWatch({ directory: directory.cwd, registry: registry.registry,
+            onReady: () => { void report('ready').catch(reject); },
+            onChange: () => { void report('changed').catch(reject); },
+            onUnavailable: reason => resolve({ status: 'unavailable', reason }),
+          });
+          cleanup = () => { abort[Symbol.dispose](); stop(); };
+        });
+      } finally { cleanup?.(); }
+    }
     const { registerScmHandlers } = await import('@/rpc/handlers/scm');
     const handlers = new Map<string, RpcHandler>();
     registerScmHandlers(

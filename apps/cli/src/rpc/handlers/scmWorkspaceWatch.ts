@@ -5,10 +5,13 @@ import { ScmWorkspaceWatchRequestSchema, type ScmWorkspaceWatchRequest, type Scm
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { ScmBackendRegistry } from '@/scm/registry';
 import { resolveCwd } from '@/scm/runtime';
-import { startScmWorkspaceWatch } from '@/scm/watch/startScmWorkspaceWatch';
+import { startScmWorkspaceWatch, type StartScmWorkspaceWatchOptions } from '@/scm/watch/startScmWorkspaceWatch';
 import { filesystemPathComparisonKey, type FilesystemAccessPolicy } from './fileSystem/accessPolicy/filesystemAccessPolicy';
 import { runWithWorkspaceSourceDemand, workspaceTargetUnavailable, type WorkspaceSource } from '@/workspaces/source/workspaceSource';
 import type { FilesystemEffectAdmission } from './fileSystem/accessPolicy/filesystemEffectAdmission';
+
+type WorkspaceWatchCallbacks = Pick<StartScmWorkspaceWatchOptions, 'onReady' | 'onChange' | 'onUnavailable'>;
+type StartWorkspaceObservation = (callbacks: WorkspaceWatchCallbacks) => () => void;
 
 type WorkspaceObservation = {
     revision: number;
@@ -29,20 +32,25 @@ export function registerScmWorkspaceWatchHandler(
         selectWorkspaceSource: (input: ScmWorkspaceWatchRequest, context?: RpcHandlerContext) => Promise<WorkspaceSource>;
         admitWorkspaceSource?: FilesystemEffectAdmission['rpc'];
         invalidateStatusSnapshot(): void;
+        runWithRequester?(
+            context: RpcHandlerContext | undefined,
+            request: ScmWorkspaceWatchRequest,
+            source: WorkspaceSource,
+            runLocal: () => Promise<ScmWorkspaceWatchResponse>,
+            observeMember: (custody: string, start: StartWorkspaceObservation) => Promise<ScmWorkspaceWatchResponse>,
+        ): Promise<ScmWorkspaceWatchResponse>;
     }>,
 ): void {
     const observations = new Map<string, WorkspaceObservation>();
     let revision = 0;
-    const observe = async (source: WorkspaceSource, directory: string, request: ScmWorkspaceWatchRequest,
+    const observe = async (key: string, start: StartWorkspaceObservation, request: ScmWorkspaceWatchRequest,
         context?: RpcHandlerContext): Promise<ScmWorkspaceWatchResponse> => {
-        // One subscription per workspace of one source: the same path in two sources is two workspaces.
-        const key = `${source.id}\0${filesystemPathComparisonKey(directory)}`;
         let observation = observations.get(key);
         if (!observation) {
             const created: WorkspaceObservation = { revision: ++revision, ready: false, users: 0, listeners: new Set(), dispose() {} };
             const notify = () => { for (const listener of created.listeners) listener(); };
             observations.set(key, created);
-            created.dispose = startScmWorkspaceWatch({ source, directory, registry: options.registry,
+            created.dispose = start({
                 onReady: () => { options.invalidateStatusSnapshot(); created.ready = true; notify(); },
                 onChange: () => { options.invalidateStatusSnapshot(); created.revision = ++revision; notify(); },
                 onUnavailable: reason => { created.unavailable = reason; notify(); },
@@ -82,7 +90,10 @@ export function registerScmWorkspaceWatchHandler(
         const { workspace } = request.data;
         try {
             const source = await options.selectWorkspaceSource(request.data, context);
-            let directory: string;
+            const observeLocal = (directory: string) => runWithWorkspaceSourceDemand(source, () =>
+                observe(`${source.id}\0${filesystemPathComparisonKey(directory)}`,
+                    callbacks => startScmWorkspaceWatch({ ...callbacks, source, directory, registry: options.registry }),
+                    request.data, context));
             if (workspace) {
                 if (source.kind === 'local') throw workspaceTargetUnavailable();
                 if (!options.admitWorkspaceSource) return { status: 'unavailable', reason: {
@@ -90,14 +101,19 @@ export function registerScmWorkspaceWatchHandler(
                 } };
                 const failure = await options.admitWorkspaceSource(context, source);
                 if (failure) return { status: 'unavailable', reason: { code: failure.errorCode, message: failure.error } };
-                directory = workspace.rootPath;
-            } else {
+                if (context?.signal.aborted) return { status: 'cancelled' };
+                return await observeLocal(workspace.rootPath);
+            }
+            const runLocal = async (): Promise<ScmWorkspaceWatchResponse> => {
                 const root = resolveCwd(request.data.directory, workingDirectory, options.accessPolicy);
                 if (!root.ok) return { status: 'unavailable', reason: { code: 'path_not_allowed', message: root.error } };
-                directory = root.cwd;
-            }
-            if (context?.signal.aborted) return { status: 'cancelled' };
-            return await runWithWorkspaceSourceDemand(source, () => observe(source, directory, request.data, context));
+                if (context?.signal.aborted) return { status: 'cancelled' };
+                return await observeLocal(root.cwd);
+            };
+            return options.runWithRequester
+                ? await options.runWithRequester(context, request.data, source, runLocal, (custody, start) =>
+                    observe(`member\0${custody}\0${filesystemPathComparisonKey(request.data.directory)}`, start, request.data, context))
+                : await runLocal();
         } catch (error) {
             if (context?.signal.aborted) return { status: 'cancelled' };
             const code = readRpcErrorCode(error);

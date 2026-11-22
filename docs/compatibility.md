@@ -6461,7 +6461,12 @@ the existing cancellable parked RPC transport. A retained observation request
 holds one shared native subscription per admitted directory; revision requests
 return readiness or change facts without repository content. Unavailable replies
 preserve the native error code and reason. Cancellation releases observation.
-Machine admission and its filesystem policy remain the authority.
+Machine admission and its filesystem policy remain the authority. A person
+with Use access observes their own checkout through the same requester
+placement as SCM status. The member process owns native observation and
+reports readiness and change facts to the daemon's existing subscription
+owner. The subscription is shared within that member's custody and ends
+when its last admitted request closes.
 
 The wire operation is V1, independently of package SemVer. All request, result
 and nested reason objects are closed; unknown fields and status variants reject.
