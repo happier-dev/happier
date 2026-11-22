@@ -1590,7 +1590,7 @@ export async function executeSpawnSessionRequest(
                         materializedRoot: connectedServiceAuth?.targetMaterializedRoot ?? null,
                         requestAuthMaterializedRoot: connectedServiceAuth?.requestAuthMaterializedRoot ?? null,
                         agentCommand: spawnEnvironment.agentCliLaunchSpec?.command ?? null,
-                        workspace: { hostRoot: inPlaceWorkspace?.rootPath ?? effectiveOptionsForSpawn.directory,
+                        workspace: { hostRoot: directory,
                             targetRoot: effectiveOptionsForSpawn.managedTargetPlacement.workspaceRoot },
                         ...(projectFiles === null ? {} : { projectFiles: { selection: projectFiles,
                             activeServerDir: configuration.activeServerDir,

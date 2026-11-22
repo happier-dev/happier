@@ -894,6 +894,85 @@ describe('executeSpawnSessionRequest', () => {
     }
   });
 
+  it('opens the exact accepted guest checkout from the private Session runner directory', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-spawn-in-place-'));
+    hoisted.activeServerDir = activeServerDir;
+    try {
+      const { createManagedSessionDirectories } = await import('@/session/creation/managedSessionDirectories');
+      const { buildSessionCreationCorrespondence } = await import('@/session/shared/sessionCreationCorrespondence');
+      const { resolveSessionAgentPath } = await import('@/subprocess/supervision/sessionTargetRelay');
+      const { runInHostedSessionScope } = await import('@/agent/runtime/lifecycle/hostedSessionScope');
+      const workspace = { v: 2 as const, kind: 'managed' as const, serverId: 'fixture-home',
+        workspaceId: 'checkout', managedId: 'guest', rootPath: '/home/coder/project',
+        controller: { machineId: 'controller', installationId: 'controller-installation' } };
+      const correspondence = buildSessionCreationCorrespondence({
+        identity: { callerCreationNamespace: 'spawn-test', creationKey: 'in-place' },
+        recipe: { execution: { machineId: workspace.controller.machineId, directory: { kind: 'managed' } },
+          organization: { folderId: null, tagIds: [] }, inPlaceWorkspace: workspace,
+          agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } },
+      });
+      const owner = createManagedSessionDirectories({ activeServerDir });
+      const sessionId = 'accepted-in-place-session';
+      const { sessionCreationTag } = correspondence;
+      const allocation = await owner.materializeForFreshSpawn({ sessionCreationTag });
+      await owner.bind({ allocationId: allocation.allocationId, sessionId });
+      const ownerMetadata = { v: 1, workspace: { path: allocation.directory, sessionDirectoryV1: { v: 1, kind: 'managed' } },
+        system: { sessionCreationCorrespondenceV1: correspondence } } as const;
+      hoisted.requireCatalogEntry.mockReturnValue({});
+      hoisted.resolveSpawnBackendIdentity.mockResolvedValueOnce({
+        ok: true, normalizedExistingSessionId: sessionId, effectiveResume: '',
+        existingSessionWorkspacePath: allocation.directory, ownerMetadata,
+        effectiveBackendTargetV2: { kind: 'backend', sourceKind: 'built_in', backendId: 'codex' },
+        sessionAttachPayload: { v: 2, encryptionMode: 'plain', snapshot: {
+          metadata: { v: 1 }, metadataVersion: 1, agentState: null, agentStateVersion: 1, ownerMetadata,
+        } },
+        catalogAgentId: 'codex',
+      });
+      const { createSessionAttachFile } = await import('../sessionAttachFile');
+      vi.mocked(createSessionAttachFile).mockResolvedValueOnce({
+        filePath: '/tmp/happier-in-place-session-attach.json',
+        cleanup: vi.fn(async () => undefined),
+      });
+      const { resolveSpawnChildEnvironment } = await import('../spawn/resolveSpawnChildEnvironment');
+      vi.mocked(resolveSpawnChildEnvironment).mockResolvedValueOnce({
+        ok: true, cleanupOnFailure: null, cleanupOnExit: null,
+        expandedEnvironmentVariables: {}, extraEnvForChild: {},
+      });
+      const { routeSpawnModeAndWaitForWebhook } = await import('../spawn/routeSpawnModeAndWaitForWebhook');
+      let runnerCwd: string | undefined;
+      let runnerEnvironment: NodeJS.ProcessEnv = {};
+      vi.mocked(routeSpawnModeAndWaitForWebhook).mockImplementationOnce(async (input) => {
+        runnerCwd = input.directory;
+        runnerEnvironment = input.extraEnvForChildWithMessage;
+        // Stop before starting an OS runner. The refused launch releases its relay.
+        return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED, errorMessage: 'fixture runner boundary' };
+      });
+      const { executeSpawnSessionRequest } = await import('./executeSpawnSessionRequest');
+      const params = createParams();
+      const token = `header.${Buffer.from(JSON.stringify({ sub: 'host-account' })).toString('base64url')}.signature`;
+      const result = await executeSpawnSessionRequest({
+        ...params, credentials: { ...params.credentials, token },
+        options: { ...params.options, resume: undefined, existingSessionId: sessionId, directory: allocation.directory },
+        openManagedSessionTarget: async ({ lifetime }) => ({
+          id: 'managed:guest', lifetime, holderPath: '/guest/holder', helperPath: '/guest/helper',
+          socketDirectory: '/guest/run', home: '/home/coder',
+          platform: { os: 'linux', arch: 'x64', home: '/home/coder' },
+          exec: async () => ({ status: 0, stdout: '', stderr: '' }),
+          putFile: async () => { throw new Error('An in-place launch must not copy project files'); },
+          ensureWorkspaceRuntime: async () => ({ binaryPath: '/guest/happier' }),
+          openChannel: () => { throw new Error('The test stops at the runner boundary'); },
+        }),
+      });
+      expect(result).toMatchObject({ type: 'error', errorMessage: 'fixture runner boundary' });
+      expect(runnerCwd).toBe(allocation.directory);
+      expect(runInHostedSessionScope({ environment: runnerEnvironment },
+        () => resolveSessionAgentPath(runnerCwd ?? ''))).toBe(workspace.rootPath);
+    } finally {
+      hoisted.activeServerDir = null;
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
+
   it('refuses a present-invalid persisted Provider binding before hooks, secrets, or child work', async () => {
     const getDaemonSpawnHooks = vi.fn(async () => ({}));
     hoisted.requireCatalogEntry.mockReturnValue({ getDaemonSpawnHooks });
