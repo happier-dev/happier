@@ -132,6 +132,25 @@ function configuredInstance(origin: string) {
 }
 
 describe('Sentry Triage source operations', () => {
+  it('supplies the mounted overview from the one registered exact issue read', async () => {
+    const origin = 'https://de.sentry.io';
+    const h = host({ responses: [onOrigin(issueDetail, origin)] });
+    const kit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST,
+      module: { activate: SENTRY_PLUGIN.activate, activateAccount }, services: h.context.services });
+    try {
+      const result = TriageGetResultV1Schema.parse(await kit.invokeAction(SENTRY_ACTION_IDS.get, {
+        v: 1, instance: configuredInstance(origin), localRef: {
+          kindId: 'error-issue', entryId: '5501001',
+          collisionScope: `${origin}${SENTRY_SCOPE_SEPARATOR}${ORGANIZATION_ID}`,
+        },
+      }));
+      expect(result).toMatchObject({ kind: 'present',
+        detailData: { kind: 'overview', eventCount: issueDetail.body.count } });
+      expect(h.request.mock.calls.map(([request]) => new URL(request.url).pathname))
+        .toEqual([`/api/0/organizations/${ORGANIZATION_ID}/issues/5501001/`]);
+    } finally { await kit.dispose(); }
+  });
+
     it('executes the Account scan through registration and HTTP without a Machine', async () => {
         const h = host({ responses: [onOrigin(issuesListPage1, 'https://us.sentry.io')] });
         const kit = await createPluginTestkit({ manifest: SENTRY_PLUGIN.manifest,

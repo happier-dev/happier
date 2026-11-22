@@ -98,11 +98,8 @@ export type SentryIssueSummaryV1 = Readonly<{
 }>;
 
 /**
- * The detail root's one Tier-A summary read.
- *
- * It is aborted with the surface, so a late result cannot replace the body of a
- * detail the reader has already left. It carries no tag value, no activity
- * record and no event row: the detail root deliberately holds none of them.
+ * Use the Tier-A summary admitted with the exact issue. Mounts that have no
+ * exact-read detail data acquire the same projection through the overview Action.
  */
 export function useSentryIssueSummary(
   input: TriageDetailSurfaceInputV1,
@@ -116,6 +113,10 @@ export function useSentryIssueSummary(
   const { active, activeSignal } = useTabPanelActivity();
   const request = useSentryDetailRequest(input);
   const { instance, localRef } = request;
+  const admitted = useMemo(() => {
+    const parsed = readIssueResult(input.detailData);
+    return parsed?.kind === 'overview' ? parsed : null;
+  }, [input.detailData]);
   const [state, setState] = useState<SentryReadStateV1<SentryIssueSummaryV1>>({
     kind: 'loading',
   });
@@ -127,7 +128,8 @@ export function useSentryIssueSummary(
   }
 
   useEffect(() => {
-    if (!active || activeSignal.aborted || signal.aborted || settledRequest.current === request) return undefined;
+    if (admitted !== null || !active || activeSignal.aborted || signal.aborted
+      || settledRequest.current === request) return undefined;
     const controller = new AbortController();
     const abort = (): void => {
       controller.abort();
@@ -171,9 +173,9 @@ export function useSentryIssueSummary(
       activeSignal.removeEventListener('abort', abort);
       controller.abort();
     };
-  }, [active, activeSignal, execute, instance, localRef, request, signal]);
+  }, [active, activeSignal, admitted, execute, instance, localRef, request, signal]);
 
-  return state;
+  return admitted === null ? state : { kind: 'ready', value: admitted as SentryIssueSummaryV1 };
 }
 
 /* --------------------------------------------------- panel-local single read */

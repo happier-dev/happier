@@ -241,7 +241,7 @@ export type SentryIssueReadInputV1 = Readonly<{
   nowMs: number;
 }>;
 
-function projectIssueOverview(body: Readonly<Record<string, unknown>>): SentryIssueOverviewProjectionV1 {
+export function projectIssueOverview(body: Readonly<Record<string, unknown>>): SentryIssueOverviewProjectionV1 {
   const assignee = readSentryAssignee(body['assignedTo']);
   const state = mapSentryIssueState(body['status'], body['substatus']);
   const eventCount = readCountText(body['count']);

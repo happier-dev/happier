@@ -82,14 +82,17 @@ const traceSections = Array.from({ length: TRACE_SECTION_COUNT }, (_, sectionInd
 
 const mounted: PluginUiTestkit[] = [];
 
-async function mountMaximumDetailSpecimen(): Promise<PluginUiTestkit> {
+async function mountMaximumDetailSpecimen(
+  detailInput = DETAIL_INPUT,
+  overviewReads: string[] = [],
+): Promise<PluginUiTestkit> {
   const page = await createPluginUiTestkit({
     identity: { instanceId: 'fixture-instance-171', mountNonce: 'fixture-mount-171' },
     authorPlugin: { id: SENTRY_PLUGIN_ID, version: '0.0.0' },
     surface: renderSurface,
     surfaceContext: createSurfaceContextFixture(),
     adapter: createPluginUiRnwSemanticSurfaceAdapter(),
-    launchInput: DETAIL_INPUT as unknown as JsonValue,
+    launchInput: detailInput as unknown as JsonValue,
     handlers: {
       executeAction: async ({ action, input }): Promise<JsonValue> => {
         const localId = (action as Readonly<{ localId?: string }>).localId;
@@ -110,6 +113,8 @@ async function mountMaximumDetailSpecimen(): Promise<PluginUiTestkit> {
               },
             };
           }
+          if (projection === 'assignment') return { kind: 'assignment', assignee: null, candidates: [], omittedCandidateCount: 0 };
+          if (projection === 'overview') overviewReads.push(localId);
           return {
             kind: 'overview',
             statePresentation: 'active',
@@ -191,6 +196,23 @@ afterEach(async () => {
 });
 
 describe('Sentry maximum-detail mounted-work specimen', () => {
+  it('uses the admitted exact overview without a second issue read', async () => {
+    const overviewReads: string[] = [];
+    const page = await mountMaximumDetailSpecimen({
+      ...DETAIL_INPUT,
+      detailData: {
+        kind: 'overview',
+        statePresentation: 'active',
+        eventCount: '347',
+        firstRelease: { version: 'admitted-release' },
+      },
+    }, overviewReads);
+
+    await selectTab(page, 'Release association');
+    await expect(page.getByText('admitted-release')).resolves.toBeDefined();
+    expect(overviewReads).toEqual([]);
+  });
+
   it('windows 100 Occurrences and a 240-frame trace through one List owner', async () => {
     const page = await mountMaximumDetailSpecimen();
 

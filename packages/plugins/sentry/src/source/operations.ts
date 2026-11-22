@@ -538,11 +538,14 @@ export async function getSentrySourceEntry(
     deployment: routed.deployment,
     nowMs: () => Date.now(),
   });
-  const resolved = await readSentryIssue(client, routed.instance, parsed.localRef.entryId);
+  const resolved = await readSentryIssue(client, routed.instance, parsed.localRef.entryId, { includeOverview: true });
 
   switch (resolved.kind) {
     case 'present':
-      return toTriagePresentObservation(resolved.snapshot);
+      return Object.freeze({
+        ...toTriagePresentObservation(resolved.snapshot),
+        ...(resolved.overview === undefined ? {} : { detailData: resolved.overview }),
+      });
     case 'merged':
       return Object.freeze({
         kind: 'merged' as const,

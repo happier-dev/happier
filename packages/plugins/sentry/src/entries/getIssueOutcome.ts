@@ -21,6 +21,7 @@ import { SENTRY_FAILURE_CODES, type SentryFailureV1 } from '../sentryContracts.j
 import type { SentryApiClientV1, SentryApiOutcomeV1 } from '../api/sentryApiClient.js';
 import { classifySentryFailure } from '../api/sentryFailure.js';
 import { readSentryAssignee } from '../detail/assignment.js';
+import { projectIssueOverview, type SentryIssueOverviewProjectionV1 } from '../detail/detailReads.js';
 import { buildSentryIssueUrl } from '../api/sentryRoutes.js';
 import {
   resolveSentryInvokedScope,
@@ -40,12 +41,14 @@ export type SentryGetOutcomeInputV1 = Readonly<{
   organizationSlug: string | null;
   nowMs: number;
   outcome: SentryApiOutcomeV1;
+  includeOverview?: boolean;
 }>;
 
 export type SentryGetOutcomeV1 =
   | Readonly<{
       kind: 'present'; localRef: SentryLocalRefV1; snapshot: SentryIssueSnapshotV1;
       /** Source-private confirming facts, never forwarded with the observation. */
+      overview?: SentryIssueOverviewProjectionV1;
       nativeStatus: string;
       nativeSubstatus: string | null;
       assignedTo: Readonly<{ type: 'user' | 'team'; id: string }> | null | undefined;
@@ -138,6 +141,7 @@ export function resolveSentryGetOutcome(input: SentryGetOutcomeInputV1): SentryG
     kind: 'present' as const,
     localRef: mapped.snapshot.localRef,
     snapshot: mapped.snapshot,
+    ...(input.includeOverview ? { overview: projectIssueOverview(body) } : {}),
     nativeStatus: typeof body.status === 'string' ? body.status : '',
     nativeSubstatus: typeof body.substatus === 'string' ? body.substatus : null,
     assignedTo,
@@ -149,10 +153,12 @@ export async function readSentryIssue(
   client: SentryApiClientV1,
   configured: SentryInvokedInstanceV1,
   requestedEntryId: string,
+  options?: Readonly<{ includeOverview: boolean }>,
 ): Promise<SentryGetOutcomeV1> {
   const requestUrl = buildSentryIssueUrl({ instance: configured, entryId: requestedEntryId });
   return resolveSentryGetOutcome({
     requestedEntryId, configured, requestUrl, organizationSlug: null, nowMs: Date.now(),
+    ...(options === undefined ? {} : { includeOverview: options.includeOverview }),
     outcome: await client.request({ url: requestUrl, operation: 'issue' }),
   });
 }
