@@ -49,6 +49,7 @@ import {
 } from './plans/UsagePlanParts';
 import { readUsagePoolAccount, readUsagePoolMembers, readUsagePoolNextQuotaRetry, UsagePoolQueue, UsagePoolSteps } from './plans/UsagePoolOrder';
 import { formatMoment } from '@/utils/datetime/formatMoment';
+import { formatConnectedServiceQuotaAllowance } from '@/sync/domains/connectedServices/accountUsage/formatProviderUsageAmount';
 
 /**
  * Below this width per account the per-account cells cannot hold a figure and a name side by side, so they become
@@ -587,8 +588,17 @@ function CapacityCell(
   const { cell, nowMs } = props;
   const text = usePlanText();
   const window = cell.account.headline;
-  // Every other window of the plan, each in its own words; none is folded into the headline.
-  const otherWindows = cell.account.windows.filter((other) => other !== window);
+  // Amount-only observations still have a figure even when there is no comparable window.
+  const amountWindows = cell.account.windows.flatMap((entry) => {
+    const amount = formatConnectedServiceQuotaAllowance(entry.reportedAmount);
+    return amount == null ? [] : [{ window: entry, amount }];
+  });
+  const figure = window ? amountWindows.find((entry) => entry.window === window) : amountWindows[0];
+  const secondaryAmounts = amountWindows
+    .filter((entry) => entry !== figure || props.lone)
+    .map((entry) => `${entry.window.label} · ${entry.amount}`);
+  const otherWindows = cell.account.windows.filter((other) => other !== window
+    && !amountWindows.some((entry) => entry.window === other));
   const remaining = window?.remainingFraction ?? null;
   const usedUp = remaining !== null && remaining <= 0;
   const countdown =
@@ -611,16 +621,16 @@ function CapacityCell(
   // so; a read still in flight, not yet read or failed keeps the quiet dash.
   // A `not_loaded` placeholder is not an answer: only an observed empty result gets the negative caption.
   const current = cell.account.read?.current;
-  const noAllowance = remaining === null && current != null && wasConnectedServiceQuotaObserved(current);
+  const noAllowance = remaining === null && !figure && current != null && wasConnectedServiceQuotaObserved(current);
   // A record with no observation (never read, not in flight) says so in the cell; the page header owns
   // "still reading", and no date is invented for it.
   const unread = cell.account.observedAtMs === null && cell.account.state.status !== 'pending' && !noAllowance;
-  const detail = cell.excluded ?? staleDetail ?? usedUpDetail
+  const statusDetail = cell.excluded ?? staleDetail ?? usedUpDetail
     ?? (noAllowance ? t('usage.board.plans.cellNoAllowance') : unread ? t('usage.board.plans.paceNotLoaded') : null);
-  const value =
-    remaining === null
-      ? t('usage.board.plans.cellUnknown')
-      : formatPlanPercent(remaining);
+  const detail = [statusDetail, ...secondaryAmounts].filter(Boolean).join(' · ') || null;
+  const value = figure?.amount ?? (remaining === null
+    ? t('usage.board.plans.cellUnknown')
+    : formatPlanPercent(remaining));
   const valueInk = (
     <Text
       style={[
@@ -639,7 +649,7 @@ function CapacityCell(
     </Text>
   );
   const valueText = remaining === null || !window ? valueInk : <ChartDatum testID={`${props.testID}.datum`}
-    datum={{ keyboard: false, label: `${props.name.title} · ${window.label}`, value: formatHappierDataExactShare(remaining, getPreferredLanguage()),
+    datum={{ keyboard: false, label: `${props.name.title} · ${window.label}`, value: figure?.amount ?? formatHappierDataExactShare(remaining, getPreferredLanguage()),
       subtitle: [window.resetAtMs === null ? null : formatPlanResetPhrase(window.resetAtMs, nowMs),
         ...otherWindows.map(other => windowNote(other))].filter(Boolean).join(' · ') }}>{valueInk}</ChartDatum>;
   const detailLine = detail === null && props.listed ? null : (
@@ -672,10 +682,8 @@ function CapacityCell(
       accessibilityLabel={[
         props.name.primaryLabel ?? props.name.title,
         props.name.qualifier,
-        window?.label,
-        remaining === null
-          ? t('usage.board.plans.cellUnknown')
-          : t('usage.board.plans.cellLeft', { percent: value }),
+        window?.label ?? figure?.window.label,
+        figure?.amount ?? (remaining === null ? value : t('usage.board.plans.cellLeft', { percent: value })),
         window?.resetAtMs != null ? formatPlanResetPhrase(window.resetAtMs, nowMs) : null,
         detail,
         // Every other window stays readable here and in Projections; none is stacked into the bar.
@@ -695,7 +703,7 @@ function CapacityCell(
         <View style={styles.listedRow}>
           <View style={styles.listedIdentity}>
             <View style={styles.cellIdentity}><UsagePlanIdentity name={props.name} compact column /></View>
-            {props.lone ? null : detailLine}
+            {(!props.lone || secondaryAmounts.length > 0) ? detailLine : null}
           </View>
           {/* The order badge rides with the figure at the row's end, never against the name (acceptance 11-21 #4). */}
           {props.lone ? rank : <View style={styles.cellHead}>{valueText}{rank}</View>}
@@ -713,7 +721,7 @@ function CapacityCell(
               included: "last read" or "used up" arrives into it, and settling never resizes the bar. Under the
               pooled bar a label is its figure and plan (lab `d2top-A`); only a state that changes what the viewer
               can do takes a line there. */}
-          {props.lone || (props.pooled || props.staleSaidOnce) && detail === null ? null : detailLine}
+          {(props.lone && secondaryAmounts.length === 0) || (props.pooled || props.staleSaidOnce) && detail === null ? null : detailLine}
         </>
       )}
     </View>

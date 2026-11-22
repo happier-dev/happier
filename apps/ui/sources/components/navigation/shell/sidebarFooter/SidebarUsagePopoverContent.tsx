@@ -47,7 +47,7 @@ import {
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
-import { formatConnectedServiceQuotaReportedAmount } from '@/sync/domains/connectedServices/accountUsage/formatProviderUsageAmount';
+import { formatConnectedServiceQuotaAllowance, formatConnectedServiceQuotaReportedAmount } from '@/sync/domains/connectedServices/accountUsage/formatProviderUsageAmount';
 import type { ConnectedServiceQuotaReportedAmount } from '@/sync/domains/connectedServices/accountUsage/presentProviderConnectionUsage';
 
 import type { SidebarFooterPopoverContentProps } from './SidebarFooterPopoverButton';
@@ -59,6 +59,7 @@ const CONTENT_INSET_PX = MENU_ROW_METRICS.paddingHorizontalPx;
 export type UsagePopoverAccountFacts = Readonly<{
     subscription: ProviderAccountSubscriptionV1 | null;
     recoveryCredits: ConnectedServiceQuotaRecoveryCreditsV1 | null;
+    quotaExhausted?: boolean;
 }>;
 
 /**
@@ -172,6 +173,7 @@ export function useUsagePopoverData(): Readonly<{
             byKey[summary.key] = {
                 subscription: recordId ? usageRecords.snapshotsByRecordId[recordId]?.subscription ?? null : null,
                 recoveryCredits: summary.recoveryCredits,
+                quotaExhausted: summary.quotaExhausted,
             };
         }
         return byKey;
@@ -256,8 +258,9 @@ export function SidebarUsagePopoverView(props: Readonly<{
     // the switching order is the pool selector's, shown on Plans.
     const accounts = React.useMemo(() => {
         const all = groupUsageByProvider(usage.accounts).flatMap((provider) => provider.accounts.map((account) => ({ provider, account })));
-        return [...all.filter((entry) => !entry.account.usedUp), ...all.filter((entry) => entry.account.usedUp)];
-    }, [usage.accounts]);
+        const exhausted = (entry: (typeof all)[number]) => facts.accounts?.[entry.account.key]?.quotaExhausted === true;
+        return [...all.filter((entry) => !exhausted(entry)), ...all.filter(exhausted)];
+    }, [facts.accounts, usage.accounts]);
     const now = Date.now();
 
     // Known identity owns the scope even before a usage reading exists. Only an unknown identity
@@ -302,6 +305,7 @@ export function SidebarUsagePopoverView(props: Readonly<{
             service={parseQualifiedPluginContributionKey(entry.provider.key)}
             legacyServiceId={entry.provider.legacyServiceId}
             account={entry.account}
+            lastKnown={usage.source === 'lastKnown'}
             facts={facts.accounts?.[entry.account.key] ?? null}
             name={names.get(entry.account.key)!}
             now={now}
@@ -499,12 +503,15 @@ const UsageAccountGroup = React.memo(function UsageAccountGroup(props: Readonly<
     service?: PluginContributionIdentityV1 | null;
     legacyServiceId: string | null;
     account: UsageAccountRow;
+    lastKnown: boolean;
     facts: UsagePopoverAccountFacts | null;
     name: ConnectedAccountNamePresentation;
     now: number;
 }>) {
     const { account } = props;
     const identity = accountHeaderLine(props.serviceLabel, props.name);
+    // Older warm entries preserved spend alone even when the provider reported a zero cap.
+    const formatAmount = props.lastKnown ? formatConnectedServiceQuotaReportedAmount : formatConnectedServiceQuotaAllowance;
     const stateLabel = account.windows.length > 0
         ? null
         : account.state === 'loading' ? t('common.loading')
@@ -529,7 +536,7 @@ const UsageAccountGroup = React.memo(function UsageAccountGroup(props: Readonly<
                             key={window.meterId}
                             label={window.label}
                             remainingPct={window.remainingPct}
-                            amount={formatConnectedServiceQuotaReportedAmount(window.reportedAmount)}
+                            amount={formatAmount(window.reportedAmount)}
                             estimated={window.status === 'estimated'}
                             resetsAt={window.resetsAt}
                             tone={window.tone}

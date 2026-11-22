@@ -2,6 +2,7 @@ import type {
   ConnectedServiceQuotaMeterV1,
 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { resolveConnectedServiceQuotaMeterLabel } from '@happier-dev/protocol/connect/connectedServiceQuotaMeterLabel';
+import { hasConnectedServiceQuotaCreditHeadroom, isConnectedServiceQuotaCreditMeter } from '@happier-dev/protocol/connect/connectedServiceQuotaLimitSelection';
 
 import { isConnectedServiceQuotaMeterVisible } from './connectedServiceQuotaMeterVisibility';
 import { presentConnectedServiceQuotaReportedAmount, type ConnectedServiceQuotaReportedAmount } from './accountUsage/presentProviderConnectionUsage';
@@ -101,6 +102,17 @@ export function computeConnectedServiceQuotaSummaryBadges(params: Readonly<{
     meterId,
     text: remainingPct === null ? '—' : `${label} ${Math.round(remainingPct)}%`,
   }));
+}
+
+/** A summary can only put an account last when all reported ways to take work are exhausted. */
+export function isConnectedServiceQuotaProvablyExhausted(meters: readonly ConnectedServiceQuotaMeterV1[]): boolean {
+  return meters.length > 0 && meters.every((meter) => {
+    if (meter.status !== 'ok' || meter.confidence === 'estimated' || meter.confidence === 'stale' || meter.confidence === 'unknown') return false;
+    const credit = isConnectedServiceQuotaCreditMeter(meter);
+    if (credit && hasConnectedServiceQuotaCreditHeadroom(meter)) return false;
+    return meter.isExhausted === true || deriveQuotaMeterValues(meter).remainingPct === 0
+      || (credit && meter.remaining === 0);
+  });
 }
 
 /** Usage details retain useful and pinned windows; strategy orders the comparable meters. */

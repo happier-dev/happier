@@ -25,6 +25,7 @@ import {
 } from '@/sync/domains/features/featureDecisionRuntime';
 import {
     buildSummaryMeters,
+    isConnectedServiceQuotaProvablyExhausted,
     type ConnectedServiceQuotaSummaryMeter,
     type ConnectedServiceQuotaSummaryStrategy,
 } from '@/sync/domains/connectedServices/connectedServiceQuotaBadges';
@@ -67,6 +68,8 @@ export type ConnectedServiceQuotaSummary = Readonly<{
     planLabel: string | null;
     primaryMeter: ConnectedServiceQuotaSummaryMeter | null;
     meters: ReadonlyArray<ConnectedServiceQuotaSummaryMeter>;
+    /** The summary can prove exhaustion from the full observed set, including unshown credits. */
+    quotaExhausted?: boolean;
     /** When the server read this snapshot (epoch ms), for an honest "as of". */
     fetchedAt: number;
     /** How long the producer says this read stays fresh; absent when it gives no window. */
@@ -402,6 +405,7 @@ export function useConnectedServiceQuotaSummaries(options?: Readonly<{
                 ...identity,
                 planLabel: isApiKey ? null : snapshot.planLabel,
                 primaryMeter: meters[0] ?? null,
+                quotaExhausted: isConnectedServiceQuotaProvablyExhausted(snapshot.meters),
                 meters,
                 fetchedAt: snapshot.fetchedAt,
                 ...(snapshot.staleAfterMs !== undefined ? { staleAfterMs: snapshot.staleAfterMs } : {}),

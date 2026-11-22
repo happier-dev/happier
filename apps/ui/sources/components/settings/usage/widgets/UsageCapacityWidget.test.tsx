@@ -533,6 +533,40 @@ it.each([['loaded_data', true], ['loaded_empty', false], ['not_loaded', false]] 
   }
 });
 
+it.each([null, 0, 10])('shows the reported spend allowance in the pool cell for cap %s', async (limit) => {
+  const query = normalizeUsageQuery({});
+  const service = { pluginId: 'happier.agent.grok', localId: 'grok' };
+  const now = Date.now();
+  const read = (accountId: string, meters: readonly unknown[]) => {
+    const recordKey = { providerId: 'xai', accountSubjectId: accountId, subjectKind: 'account', quotaScope: 'account' } as const;
+    return ConnectedServiceQuotaGetResultV1Schema.parse({
+      source: { ref: { service, accountId }, bindingKind: 'group_member', groupId: 'billing' },
+      current: { v: 1, recordKey, recordId: buildProviderAccountUsageRecordId(recordKey),
+        providerId: 'xai', accountSubject: { kind: 'providerSubject', id: accountId },
+        observedAtMs: now, fetchedAtMs: now, staleAfterMs: 60_000, source: 'providerHttp',
+        confidence: 'confirmed', state: 'loaded_data', meters, planLabel: null, accountLabel: accountId },
+      pace: [], targets: [], waitingWork: { status: 'unavailable', reason: 'unsupported' },
+    });
+  };
+  const quota = [
+    read('billing', [{ meterId: 'on-demand', label: 'On-demand spend', unit: 'unknown', used: 0, limit,
+      remaining: limit, utilizationPct: limit === 10 ? 0 : null, resetsAt: null, status: 'ok', limitScope: 'account' }]),
+    read('second', [{ meterId: 'weekly', label: 'Weekly', unit: 'count', used: null, limit: null,
+      utilizationPct: 20, resetsAt: null, status: 'ok' }]),
+  ];
+  const slice = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: quota } }, bundledUsageModelPriceCatalog).results[0]!;
+  const { UsageCapacityWidget } = await import('./UsageCapacityWidget');
+  const screen = await renderScreen(<InjectedAuthProvider credentials={null}>
+    <UsageCapacityWidget id="usage_capacity" slice={slice} query={query} serverId="home" testID="capacity"
+      model={{ refresh: async () => {} }} />
+  </InjectedAuthProvider>);
+  const cell = screen.findHostByTestId('capacity.cell.billing');
+  const amount = limit === null ? `0 · ${t('usage.board.plans.cellNoAllowance')}`
+    : t('settingsProvidersCollection.usage.amountLeftOfLimit', { amount: String(limit), limit: String(limit) });
+  expect(cell?.props.accessibilityLabel).toContain(amount);
+  expect(screen.getTextContent()).toContain(amount);
+});
+
 it.each([['medium', true, 520, false], ['tall', true, 520, false], ['full', true, 520, false], ['large', false, 520, false], ['large', false, 180, true]] as const)('draws one pooled bar with labels under its segments beside other widgets (%s), the per-account grid as a view of its own, and one row per account in a grid too narrow for its cells (native N2)', async (size, pooled, width, listed) => {
   const service = { pluginId: 'happier.agent.claude', localId: 'claude-subscription' };
   const query = normalizeUsageQuery({});

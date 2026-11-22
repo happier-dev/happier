@@ -40,3 +40,13 @@ export function formatConnectedServiceQuotaReportedAmount(
 ): string | null | undefined {
     return reported === undefined ? undefined : formatProviderUsageAmount(reported.amount, reported.unit, reported.currency);
 }
+
+/** Fresh quota observations with spend alone have no reported allowance. */
+export function formatConnectedServiceQuotaAllowance(
+    reported: ConnectedServiceQuotaReportedAmount | undefined,
+): string | null | undefined {
+    const amount = formatConnectedServiceQuotaReportedAmount(reported);
+    return reported?.amount?.kind === 'used'
+        ? `${amount} · ${t('usage.board.plans.cellNoAllowance')}`
+        : amount;
+}

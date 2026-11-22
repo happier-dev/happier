@@ -12,6 +12,7 @@ import { QualifiedConnectedServiceUsageSourceV4Schema } from '@happier-dev/proto
 import type { PendingResetStartBindingV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import { evaluatePendingResetStartAdmissionV1 } from '@happier-dev/protocol/sessions/pending/pendingResetStartReadinessV1';
 import type { MeterTone } from '@/components/ui/lists/MeterBar';
+import { presentConnectedServiceQuotaReportedAmount, type ConnectedServiceQuotaReportedAmount } from '@/sync/domains/connectedServices/accountUsage/presentProviderConnectionUsage';
 import { deriveQuotaUtilizationPct } from '@/sync/domains/connectedServices/deriveQuotaUtilizationPct';
 import { resolveQuotaMeterTone } from '@/sync/domains/connectedServices/resolveQuotaTone';
 import { isConnectedServiceQuotaMeterPercentRankable } from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';
@@ -46,6 +47,7 @@ export type UsagePlanWindow = Readonly<{
   label: string;
   /** 0–1 of the window still available; null when the provider reported no comparable value. */
   remainingFraction: number | null;
+  reportedAmount?: ConnectedServiceQuotaReportedAmount;
   resetAtMs: number | null;
   windowDurationMs: number | null;
   tone: MeterTone;
@@ -155,6 +157,7 @@ function projectWindow(
     meterId: meter.meterId,
     label: meter.label,
     remainingFraction: remainingPct === null ? null : remainingPct / 100,
+    reportedAmount: presentConnectedServiceQuotaReportedAmount(meter),
     resetAtMs: meter.resetAtMs ?? meter.resetsAt ?? null,
     windowDurationMs: meter.windowDurationMs ?? null,
     tone: resolveQuotaMeterTone({ remainingPct, status: meter.status }),

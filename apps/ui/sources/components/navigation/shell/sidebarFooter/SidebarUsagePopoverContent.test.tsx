@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { ConnectedServiceQuotaMeterV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import type { ConnectedServiceAccountNeedingSignIn, ConnectedServiceAccountWithoutUsage, ConnectedServiceQuotaSummary } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSummaries';
 import type { SidebarUsageAccountFacts } from './SidebarUsagePopoverContent';
 
@@ -111,12 +112,47 @@ describe('SidebarUsagePopoverContent', () => {
     it('lists the accounts with room before the used-up ones, keeping each group in its order (acceptance 11-21 #7)', async () => {
         state.summaries = [summary('claude:a', 'Spent one', 0), summary('claude:b', 'Spent two', 0), summary('claude:c', 'Usable', 5),
             summary('claude:d', 'Roomy', 80)];
+        const { buildSummaryMeters, isConnectedServiceQuotaProvablyExhausted } = await import('@/sync/domains/connectedServices/connectedServiceQuotaBadges');
+        const allowance = ConnectedServiceQuotaMeterV1Schema.parse({
+            meterId: 'weekly', label: 'Weekly', unit: 'count', used: null, limit: null,
+            remainingPct: 0, utilizationPct: 100, resetsAt: null, status: 'ok',
+        });
+        const credits = ConnectedServiceQuotaMeterV1Schema.parse({
+            meterId: 'credits', label: 'Credits', unit: 'credits', used: null, limit: null, remaining: 4,
+            utilizationPct: null, resetsAt: null, status: 'ok', isExhausted: false,
+        });
+        const creditBacked = [allowance, credits];
+        state.summaries.unshift({ ...summary('claude:e', 'Credit backed', 0), meters: buildSummaryMeters(creditBacked, [], 'primary') });
+        state.accounts = Object.fromEntries(([
+            ['claude:a', [allowance]],
+            ['claude:b', [allowance]],
+            ['claude:e', creditBacked],
+        ] as const).map(([key, meters]) => [key, {
+            quotaExhausted: isConnectedServiceQuotaProvablyExhausted(meters),
+            subscription: null,
+            recoveryCredits: null,
+        }]));
         const screen = await renderContent();
-        const order = screen.findAll(node => typeof node.props.testID === 'string' && /^sidebar-usage-account-claude:[a-d]$/.test(node.props.testID))
+        const order = screen.findAll(node => typeof node.props.testID === 'string' && /^sidebar-usage-account-claude:[a-e]$/.test(node.props.testID))
             .map(node => node.props.testID as string).filter((id, index, all) => all.indexOf(id) === index);
-        expect(order).toEqual(['sidebar-usage-account-claude:c', 'sidebar-usage-account-claude:d',
+        expect(order).toEqual(['sidebar-usage-account-claude:e', 'sidebar-usage-account-claude:c', 'sidebar-usage-account-claude:d',
             'sidebar-usage-account-claude:a', 'sidebar-usage-account-claude:b']);
     });
+    it.each([
+        [null, '0 · usage.board.plans.cellNoAllowance'],
+        [0, 'settingsProvidersCollection.usage.amountLeftOfLimit(amount=0,limit=0)'],
+        [10, 'settingsProvidersCollection.usage.amountLeftOfLimit(amount=10,limit=10)'],
+    ] as const)('shows the on-demand spend cap report for %s', async (limit, expected) => {
+        const { buildSummaryMeters } = await import('@/sync/domains/connectedServices/connectedServiceQuotaBadges');
+        const meter = ConnectedServiceQuotaMeterV1Schema.parse({
+            meterId: 'on-demand', label: 'On-demand spend', unit: 'unknown', used: 0, limit,
+            remaining: limit, utilizationPct: limit === 10 ? 0 : null,
+            resetsAt: null, status: 'ok', limitScope: 'account',
+        });
+        state.summaries = [{ ...summary('claude:a', 'Billing', 0), meters: buildSummaryMeters([meter], [], 'primary') }];
+        expect((await renderContent()).getTextContent()).toContain(expected);
+    });
+
     it('folds several accounts with nothing to show into one line after the accounts that answer', async () => {
         state.summaries = [summary('claude:a', null, 73, 'kevin@gmail.com')];
         state.withoutUsage = ['c', 'd', 'e'].map(id => ({

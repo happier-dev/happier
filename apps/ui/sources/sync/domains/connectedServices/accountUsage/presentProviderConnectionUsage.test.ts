@@ -111,13 +111,16 @@ function view(
 }
 
 describe('Provider connection usage presentation', () => {
-  it('reports zero spend without claiming a zero-over-zero allowance', () => {
-    const [noAllowance, capped] = snapshot([
-      { ...usd, meterId: 'on-demand', label: 'On-demand spend', unit: 'unknown', used: 0, limit: 0, remaining: 0 },
-      { ...usd, meterId: 'monthly', label: 'Monthly included', used: 10, limit: 10, remaining: 0 },
+  it.each([
+    [null, { kind: 'used', used: 0 }],
+    [0, { kind: 'remainingOfLimit', limit: 0, remaining: 0 }],
+    [10, { kind: 'remainingOfLimit', limit: 10, remaining: 10 }],
+  ] as const)('preserves the provider’s on-demand cap report for %s', (limit, amount) => {
+    const [meter] = snapshot([
+      { ...usd, meterId: 'on-demand', label: 'On-demand spend', unit: 'unknown', used: 0, limit,
+        remaining: limit, utilizationPct: limit === 10 ? 0 : null },
     ]).meters;
-    expect(presentConnectedServiceQuotaReportedAmount(noAllowance!)?.amount).toEqual({ kind: 'used', used: 0 });
-    expect(presentConnectedServiceQuotaReportedAmount(capped!)?.amount).toEqual({ kind: 'remainingOfLimit', limit: 10, remaining: 0 });
+    expect(presentConnectedServiceQuotaReportedAmount(meter!)?.amount).toEqual(amount);
   });
   it('summarizes the most constrained window in either catalog order', () => {
     const weekly = { ...usd, meterId: 'weekly', label: 'Weekly', used: 10, remaining: 10, limit: 20 };
