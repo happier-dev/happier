@@ -4545,8 +4545,10 @@ backfill or historical Run-content scan is added.
 The existing closed V1 `machines.managed.list` request accepts optional exact
 `presetId` and `enrolledMachineId` selectors. When combined, both must match.
 Selection happens in the managed query before access projection; it grants no
-additional access. Active and archived history keep their separate reads, and
-requests without selectors retain their existing shape and behavior.
+additional access. Omit `archived` or send `false` for current rows and send
+`true` for archived rows. The Machines collection sends `archived: 'all'`
+to read both in one request. This new selector requires a matching 0.3
+development client and Home.
 
 The existing `machines.managed.get` creation-request selector lets the retained
 custodian read an admitted reservation as soon as Home commits it, including

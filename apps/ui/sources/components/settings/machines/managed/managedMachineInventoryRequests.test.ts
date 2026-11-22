@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
+import { ManagedListInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
 import { createDeferred, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
@@ -63,7 +64,8 @@ it('settles only the addressed failed detail after one shared exact-row recovery
         await act(async () => publishHomeAccountChange(serverId, ['managed-1'], { ...plan, changeKinds: ['account'],
             managedMachineInventoryAffect: plannedChangesAffectManagedMachineInventory(plan) }));
         await vi.waitFor(() => expect(hook.getCurrent().detail.machinesByServerId[serverId]?.[0]?.intentRevision).toBe(2));
-        expect(hook.getCurrent().detail.entries[serverId]).toMatchObject({ status: 'ready', errorCode: undefined });
+        expect(hook.getCurrent().detail.entries[serverId]?.status).toBe('ready');
+        expect(hook.getCurrent().detail.entries[serverId]?.errorCode).toBeUndefined();
         expect(hook.getCurrent().unrelated.entries[serverId]).toBe(unrelated);
         expect(homes.requests.slice(before).map(request => request.path)).toEqual(['/v1/machines/managed/actions/get']);
     } finally { await hook.unmount(); await homes.dispose(); }
@@ -144,9 +146,9 @@ it('shares one active/archive inventory and ignores unrelated socket and consume
             if (holdChangedRow && row?.id === 'managed-64') await held.promise;
             return row ? Response.json(row) : Response.json({ error: 'managed_not_found' }, { status: 404 });
         }
-        return request.path === '/v1/machines/managed/actions/list'
-        ? Response.json({ machines: rows.filter(row => Boolean(row.archivedAt) === Boolean(
-            request.body && typeof request.body === 'object' && 'archived' in request.body && request.body.archived)) }) : undefined;
+        if (request.path !== '/v1/machines/managed/actions/list') return undefined;
+        const { archived } = ManagedListInputV1Schema.parse(request.body);
+        return Response.json({ machines: archived === 'all' ? rows : rows.filter(row => Boolean(row.archivedAt) === Boolean(archived)) });
     } });
     const serverId = homes.homes.a!.id;
     const realExecute = createDefaultActionExecutor().execute;
@@ -258,8 +260,8 @@ it('shares one active/archive inventory and ignores unrelated socket and consume
             { source: 'socket', changeKinds: ['machineRecipientAccess'] }));
         await vi.waitFor(() => expect(hook.getCurrent().first.machinesByServerId[serverId]).toHaveLength(127));
         await vi.waitFor(() => expect(hook.getCurrent().active.machinesByServerId[serverId]).toHaveLength(126));
-        expect(requests()).toBe(before.requests + 3);
-        expect(admissions).toBe(before.admissions + 3);
+        expect(requests() - before.requests).toBe(1);
+        expect(admissions - before.admissions).toBe(1);
     } finally { held.resolve(); await hook.unmount(); await homes.dispose(); }
 });
 
@@ -276,7 +278,7 @@ it('keeps the app-wide inventory quiet while Usage pushes arrive, and still re-r
     });
     const homes = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://managed-usage-quiet.test',
         serverIdentityId: homeId, accountId: 'owner' }], route: request => request.path === '/v1/machines/managed/actions/list'
-        ? Response.json({ machines: request.body && typeof request.body === 'object' && 'archived' in request.body ? [] : [row] }) : undefined });
+        ? Response.json({ machines: ManagedListInputV1Schema.parse(request.body).archived === true ? [] : [row] }) : undefined });
     const serverId = homes.homes.a!.id;
     const ids = [serverId];
     // The deletion reminder shape: an always-mounted active + archived inventory.
@@ -298,6 +300,6 @@ it('keeps the app-wide inventory quiet while Usage pushes arrive, and still re-r
         expect(lists() - before, '10 Usage pushes change no managed Machine').toBe(0);
         await act(async () => publishHomeAccountChange(serverId, ['controller'],
             { source: 'socket', changeKinds: ['machineRecipientAccess'] }));
-        await vi.waitFor(() => expect(lists() - before, 'a Machine access change still re-reads active + archived').toBe(2));
+        await vi.waitFor(() => expect(lists() - before, 'a Machine access change refreshes the combined inventory once').toBe(1));
     } finally { await hook.unmount(); await homes.dispose(); }
 });

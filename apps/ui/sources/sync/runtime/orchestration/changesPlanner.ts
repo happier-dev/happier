@@ -8,6 +8,7 @@ import {
     ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1,
     ChangeKindSchema,
     HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1,
+    MACHINE_RECIPIENT_ACCESS_CHANGE_KIND_V1,
     isAccountCurrentnessChangeV1,
     readAccountSettingsVersionChangeV1,
     isMachineProjectionChangeKindV1,
@@ -15,6 +16,7 @@ import {
     TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1,
     TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1,
     readConnectedServicesAccountChangeV1,
+    isProviderAccountUsageRefreshChangeEntityIdV1,
     readSessionUpdatedMessageChangeHintV1,
     readSessionUsageAccountingChangedV1,
     artifactKindsMayIncludeKindV1,
@@ -255,8 +257,13 @@ export function accountChangeKindsAffectManagedMachineInventory(
     changeKinds: readonly string[] | undefined,
     entityIds: readonly string[] | undefined,
 ): boolean {
-    if (changeKinds?.length && changeKinds.every(kind => kind === 'machine')) return false;
-    return accountChangeKindsAffectMachineResources(changeKinds?.filter(kind => kind !== 'machine'), entityIds);
+    if (changeKinds?.length && changeKinds.every(kind => kind === 'account') && entityIds?.length) {
+        return plannedChangesAffectManagedMachineInventory(planSyncActionsFromChanges(entityIds.map(entityId => ({
+            kind: 'account', entityId, cursor: 0, changedAt: 0,
+        }))));
+    }
+    return changeKinds === undefined || changeKinds.length === 0 || changeKinds.some(kind => !isKnownChangeKind(kind)
+        || kind === 'account' || kind === MACHINE_RECIPIENT_ACCESS_CHANGE_KIND_V1);
 }
 
 export function plannedChangesAffectManagedMachineInventory(planned: PlannedChangeActions): boolean {
@@ -610,8 +617,8 @@ export function planSyncActionsFromChanges(
 
         if (kind !== 'account' && accountChangeKindsAffectMachineResources([kind], [change.entityId])) {
             machineResourcesAffect = true;
-            if (kind !== 'machine') managedMachineInventoryAffect = true;
         }
+        if (kind === MACHINE_RECIPIENT_ACCESS_CHANGE_KIND_V1) managedMachineInventoryAffect = true;
 
         // Reserved row hints are admitted before any generic Account refresh privilege.
         if (kind === 'account' && change.entityId === 'public-profile') {
@@ -737,21 +744,18 @@ export function planSyncActionsFromChanges(
             if (changeRequiresSavedSecretCatalogRefresh(change)) {
                 invalidateSavedSecretResources = true;
                 machineResourcesAffect = true;
-                managedMachineInventoryAffect = true;
             }
             if (change.entityId !== 'self' && readConnectedServicesAccountChangeV1(change)) {
                 // The Account profile owns Connected Service status and descriptors;
                 // these dedicated rows do not change encrypted Account settings.
                 invalidateProfile = true;
                 machineResourcesAffect = true;
-                managedMachineInventoryAffect = true;
                 continue;
             }
             if (change.entityId === ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1) {
                 // Linked providers live on the Account profile; encrypted Settings are unchanged.
                 invalidateProfile = true;
                 machineResourcesAffect = true;
-                managedMachineInventoryAffect = true;
                 continue;
             }
             const runId = readWorkflowRunAccountChangeRunId(change.entityId);
@@ -780,8 +784,9 @@ export function planSyncActionsFromChanges(
                 // wake Usage, not Account profile or encrypted Settings readers.
                 if (!isProviderAccountUsageChangeEntityIdV1(change.entityId)) {
                     machineResourcesAffect = true;
-                    managedMachineInventoryAffect = true;
                 }
+                if (change.entityId === TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1
+                    || change.entityId === HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1) managedMachineInventoryAffect = true;
                 // Team and Group membership are also authorization inputs for
                 // shared Saved Secrets, so retire material at this same wake
                 // and let the catalog owner re-observe current grants.
@@ -826,7 +831,7 @@ export function planSyncActionsFromChanges(
             // several). Unknown Account ids keep the conservative Settings + Profile recovery.
             if (readAccountSettingsVersionChangeV1(change) === null && !isPrivateAccountRowEntityId(change.entityId)) {
                 machineResourcesAffect = true;
-                managedMachineInventoryAffect = true;
+                if (!isProviderAccountUsageRefreshChangeEntityIdV1(change.entityId)) managedMachineInventoryAffect = true;
             }
             if (!isPrivateAccountRowEntityId(change.entityId)) {
                 invalidateProfile = true;

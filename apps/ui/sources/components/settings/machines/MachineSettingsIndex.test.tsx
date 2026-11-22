@@ -1352,17 +1352,15 @@ describe('the machine list column in the rail door', () => {
 
 describe('Presets in the Machines collection', () => {
 
-  it('admits the active fleet beside an absent selected receipt while the archive is still loading', async () => {
+  it('admits the active fleet beside an absent selected receipt after one current and archive read', async () => {
     const { MachineCollectionRail } = await import('./collection/MachineCollectionList');
     const { CollectionSkeletonRows } = await import('@/components/ui/lists/collection/CollectionList');
     const fleet = Array.from({ length: 128 }, (_, index) => machine(`studio-${index}`, `Studio ${index}`, `studio-${index}.local`));
     await setMachines([{ serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: fleet }]);
     routeState.pathname = '/settings/machines/managed/removed-resource';
-    const activeReply = createDeferred<void>();
-    const archiveReply = createDeferred<void>();
+    const listReply = createDeferred<void>();
     home.answer(homeProfiles.get('srv_a')!, 'POST /v1/machines/managed/actions/list', {
-      select: input => ({ body: { machines: [] }, respondAfter:
-        input && typeof input === 'object' && 'archived' in input && input.archived ? archiveReply.promise : activeReply.promise }),
+      body: { machines: [] }, respondAfter: listReply.promise,
     });
     const screen = await renderScreen(<MachineCollectionRail />);
     const row = () => screen.tree.findAll(node => typeof node.type === 'string'
@@ -1372,25 +1370,21 @@ describe('Presets in the Machines collection', () => {
       // An ordinary roster alone cannot answer whether there are created machines too.
       expect(row()).toBeUndefined();
       expect(screen.tree.findAllByType(CollectionSkeletonRows)).toHaveLength(1);
-      await act(async () => activeReply.resolve());
-      await waitForHomeGovernance(() => expect(home.requests.some(request => request.path === '/v1/machines/managed/actions/list'
-        && request.input && typeof request.input === 'object' && 'archived' in request.input && request.input.archived)).toBe(true));
-      await flushHookEffects();
-      expect(row()).toBeDefined();
+      const listRequests = () => home.requests.filter(request => request.path === '/v1/machines/managed/actions/list');
+      expect(listRequests().map(request => request.input)).toEqual([expect.objectContaining({ archived: 'all' })]);
+      await act(async () => listReply.resolve());
+      await waitForHomeGovernance(() => expect(row()).toBeDefined());
       expect(screen.tree.findAllByType(CollectionSkeletonRows)).toHaveLength(0);
-      const reads = home.requests.filter(request => request.path === '/v1/machines/managed/actions/list').length;
       const admitted = row();
       await act(async () => storage.getState().applyMachineActivityUpdates(
         fleet.map(machine => ({ id: machine.id, active: true, activeAt: Date.now() })), { sourceServerId: 'srv_a' }));
       await flushHookEffects();
       expect(row()).toBe(admitted);
-      // Fleet arrivals do not start another active/archive read while the archive is pending.
-      expect(home.requests.filter(request => request.path === '/v1/machines/managed/actions/list')).toHaveLength(reads);
+      expect(listRequests()).toHaveLength(1);
       await act(async () => pressTestInstanceAsync(row()!));
       expect(routerReplaceSpy).toHaveBeenCalledWith('/settings/machines/studio-0?serverId=srv_a');
     } finally {
-      activeReply.resolve();
-      archiveReply.resolve();
+      listReply.resolve();
       await screen.unmount();
     }
   });

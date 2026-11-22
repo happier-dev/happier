@@ -289,7 +289,8 @@ export async function listManagedMachines(params: Readonly<{ actorAccountId: str
                 ...(index === 0 ? [{ admittedInput: jsonPathEquals(['enrollmentAccountId'], params.actorAccountId) },
                     { custodianAccountId: params.actorAccountId, controllerMachineId: null }] : []),
             ] } : {}),
-            archivedAt: input.archived ? { not: null } : null }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+            ...(input.archived === 'all' ? {} : { archivedAt: input.archived ? { not: null } : null }),
+            }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
             for (const row of selected) rowsById.set(row.id, row);
         }
         const rows = [...rowsById.values()].sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime()

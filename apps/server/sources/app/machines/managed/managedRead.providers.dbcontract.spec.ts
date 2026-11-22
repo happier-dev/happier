@@ -12,7 +12,7 @@ import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { readManagedWakeTargets } from './managedWake';
 import { enqueuePendingMessageByAuthenticatedMachine } from '@/app/session/pending/pendingMessageService';
 import { ManagedWakeTargetV1Schema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
-import { unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedListInputV1Schema, unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { readAccessibleMachineOpeningsInTx } from '@/app/machines/machineAccess';
 import { serializeManagedInputRuntime } from '@/app/machines/machineSerialization';
 import { recordMachineAlive } from '@/app/presence/presenceRecorder';
@@ -321,6 +321,11 @@ describe('managed query selection on disposable databases', () => {
             listManagedMachines({ actorAccountId: creator.id, input: { homeId, presetId: row.presetId!, archived } }))));
         expect(history.value.flatMap(result => result.machines.map(machine => unwrapManagedMachineReadV1(machine).id))).toEqual([row.id, archived.id]);
         expect(history.rows).toBe(2);
+        const input = ManagedListInputV1Schema.parse({ homeId, presetId: row.presetId!, archived: 'all' });
+        const all = await measureManagedRows(() => listManagedMachines({ actorAccountId: creator.id, input }));
+        expect(all.value.machines.map(machine => unwrapManagedMachineReadV1(machine).id).sort()).toEqual([row.id, archived.id].sort());
+        expect(all.rows).toBe(2);
+        expect((await listManagedMachines({ actorAccountId: stranger.id, input })).machines).toEqual([]);
         const association = await measureManagedRows(() => listManagedMachines({ actorAccountId: creator.id,
             input: { homeId, enrolledMachineId: guest.id } }));
         expect(association.value.machines.map(machine => unwrapManagedMachineReadV1(machine).id)).toEqual([row.id]);

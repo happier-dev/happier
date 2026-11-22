@@ -200,19 +200,26 @@ export function readConnectedServicesAccountChangeV1(
 
 export { PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1 } from './providerAccountUsage.js';
 /** Advisory refresh routing on the existing Account feed; never credential authority. */
+const PROVIDER_ACCOUNT_USAGE_REFRESH_PREFIX = 'provider-account-usage-refresh:';
 export const ProviderAccountUsageRefreshChangeV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('account'),
   entityId: z.string(),
   hint: z.strictObject({ providerAccountUsageRefresh: z.literal(true), recordId: ProviderAccountUsageRecordIdSchema }),
-}).check(z.refine(change => change.entityId === `provider-account-usage-refresh:${change.hint.recordId}`)));
+}).check(z.refine(change => change.entityId === `${PROVIDER_ACCOUNT_USAGE_REFRESH_PREFIX}${change.hint.recordId}`)));
 
 export function buildProviderAccountUsageRefreshChangeV1(recordId: string) {
   return ProviderAccountUsageRefreshChangeV1Schema.parse({ kind: 'account',
-    entityId: `provider-account-usage-refresh:${recordId}`, hint: { providerAccountUsageRefresh: true, recordId } });
+    entityId: `${PROVIDER_ACCOUNT_USAGE_REFRESH_PREFIX}${recordId}`, hint: { providerAccountUsageRefresh: true, recordId } });
+}
+
+/** Identifies the Account feed key on content-free socket wakes. */
+export function isProviderAccountUsageRefreshChangeEntityIdV1(entityId: string): boolean {
+  return entityId.startsWith(PROVIDER_ACCOUNT_USAGE_REFRESH_PREFIX)
+    && ProviderAccountUsageRecordIdSchema.safeParse(entityId.slice(PROVIDER_ACCOUNT_USAGE_REFRESH_PREFIX.length)).success;
 }
 
 export function readProviderAccountUsageRefreshRecordIdV1(change: Readonly<{ kind: string; entityId: string; hint?: unknown }>): string | null {
-  if (change.kind !== 'account' || !change.entityId.startsWith('provider-account-usage-refresh:')) return null;
+  if (change.kind !== 'account' || !change.entityId.startsWith(PROVIDER_ACCOUNT_USAGE_REFRESH_PREFIX)) return null;
   const parsed = ProviderAccountUsageRefreshChangeV1Schema.safeParse({ kind: change.kind, entityId: change.entityId, hint: change.hint });
   return parsed.success ? parsed.data.hint.recordId : null;
 }

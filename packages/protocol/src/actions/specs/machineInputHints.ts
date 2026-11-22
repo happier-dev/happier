@@ -100,7 +100,9 @@ export const MANAGED_MACHINE_INPUT_FIELDS = {
     { ...controller, required: false }, { ...retention, required: false }, { ...wake, required: false },
     { path: 'agentStart', title: 'Agent startup', widget: 'json' },
     { path: 'reviewedFacts', title: 'Reviewed configuration facts', widget: 'json' }],
-  'machines.managed.list': [home, { path: 'archived', title: 'Archived machines', widget: 'boolean' },
+  'machines.managed.list': [home, { path: 'archived', title: 'Machine history', widget: 'select', options: [
+    { value: false, label: 'Current' }, { value: true, label: 'Archived' }, { value: 'all', label: 'Current and archived' },
+  ] },
     { path: 'presetId', title: 'Preset id', widget: 'text' },
     { path: 'enrolledMachineId', title: 'Enrolled machine id', widget: 'text' }],
   'machines.managed.get': [home, managed],

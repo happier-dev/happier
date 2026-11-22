@@ -10,6 +10,7 @@ import {
     ChangeKindSchema,
     buildAccountIdentitiesChangeV1,
     buildConnectedServicesAccountChangeV1,
+    buildProviderAccountUsageRefreshChangeV1,
     PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1,
     HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1,
     TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1,
@@ -57,6 +58,17 @@ it('projects only admitted bodyless Review comment hints with their owning Revie
     expect(changePlanner.plannedReviewCommentChanges(planSyncActionsFromChanges([
         changes[0]!, { cursor: 5, kind: 'artifact', entityId: 'unclassified', changedAt: 5, hint: { artifactKinds: ['other'] } },
     ]))).toBeUndefined();
+});
+
+it('keeps provider usage refresh requests off managed inventory on both Home ingress paths', async () => {
+    const { publishHomeAccountChangeWake } = await import('./homeAccountChange');
+    const change = buildProviderAccountUsageRefreshChangeV1('paug_v1_test_usage');
+    const feed = planSyncActionsFromChanges([{ ...change, cursor: 1, changedAt: 1 }]);
+    const wake = publishHomeAccountChangeWake('usage-refresh-home', {
+        t: 'account-change', changeKinds: [change.kind], entityIds: [change.entityId],
+    }, 'socket');
+    expect([changePlanner.plannedChangesAffectManagedMachineInventory(feed), wake.managedMachineInventoryAffect])
+        .toEqual([false, false]);
 });
 
 it.each([false, true])('keeps Deployment changes out of generic Account refreshes (socket wake %s)', socket => {

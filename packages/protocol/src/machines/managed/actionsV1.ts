@@ -434,7 +434,7 @@ export function resolveManagedAcquireReviewV1(input: ManagedAcquireInputV1) {
     retention: input.selection.retention, wakeOnAcceptedMessage: input.selection.wakeOnAcceptedMessage };
 }
 export const ManagedAcceptedV1Schema = lazyZodSchema(() => z.strictObject({ managedId: id(), operation: z.optional(actionOperationSchema) }));
-export const ManagedListInputV1Schema = lazyZodSchema(() => z.strictObject({ homeId: id(), archived: mini.optional(mini.boolean()),
+export const ManagedListInputV1Schema = lazyZodSchema(() => z.strictObject({ homeId: id(), archived: mini.optional(z.union([mini.boolean(), z.literal('all')])),
   presetId: mini.optional(id()), enrolledMachineId: mini.optional(id()),
 }));
 /** An Account read of an opaque row carries the exact stored ciphertext and only that Account's envelope. */

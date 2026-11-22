@@ -587,9 +587,10 @@ export function publishHomeAccountChangeForRouting(
             || (details?.teamSharedResourcesAffect ?? (readinessWakePlan
                 ? plannedChangesAffectTeamSharedResources(readinessWakePlan) : true)),
         managedMachineInventoryAffect: details?.source === 'connected' || details?.source === 'snapshot'
-            // The managed list is a Machine resource: a producer that rules Machine resources out rules it out too.
-            || (details?.managedMachineInventoryAffect ?? (details?.machineResourcesAffect === false ? false
-                : accountChangeKindsAffectManagedMachineInventory(rawKinds, entityIds))),
+            || (managedMachineChangedIds ? managedMachineChangedIds.size > 0
+                : details?.managedMachineInventoryAffect ?? (details?.machineResourcesAffect === false ? false
+                    : readinessWakePlan ? plannedChangesAffectManagedMachineInventory(readinessWakePlan)
+                        : accountChangeKindsAffectManagedMachineInventory(rawKinds, entityIds))),
         ...(managedMachineChangedIds ? { managedMachineChangedIds: Object.freeze([...managedMachineChangedIds]) } : {}),
         ...(managedMachineRowsOnly ? { managedMachineRowsOnly: true as const } : {}),
         // Preserve the producer's exact non-Discussion fact even when other

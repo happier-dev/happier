@@ -2,7 +2,7 @@ import { openManagedMachineReadSnapshots } from '@/sync/ops/machines/machinePres
 import * as React from 'react';
 import { useLayoutPresentationSignal, type LayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import type { ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import type { ManagedMachineActionInputV1, ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { retainKeyedRows, retainShallow } from '@/sync/domains/state/structuralSharing';
 
 import { createFrontDoorActionExecute, type FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -57,7 +57,19 @@ function inventoryDemand(executeAction: InventoryExecute): InventoryDemand {
 }
 
 function inventoryKey(serverId: string, accountId: string | undefined, homeId: string | null | undefined, managedId: string | undefined, includeArchived: boolean, enrolledMachineId?: string): string {
-    return JSON.stringify([serverId, accountId, homeId, managedId, includeArchived, enrolledMachineId]);
+    return JSON.stringify([serverId, accountId, homeId, managedId, hasArchiveCoverage(managedId, enrolledMachineId, includeArchived), enrolledMachineId]);
+}
+
+function hasArchiveCoverage(managedId: string | undefined, enrolledMachineId: string | undefined, includeArchived: boolean): boolean {
+    return includeArchived || (!managedId && !enrolledMachineId);
+}
+
+function selectInventoryEntry(entry: ManagedMachineInventoryEntry, includeArchived: boolean, previous?: ManagedMachineInventoryEntry): ManagedMachineInventoryEntry {
+    if (includeArchived || !entry.includeArchived) return entry;
+    const current = entry.machines.filter(machine => machine.archivedAt === undefined);
+    const machines = previous?.machines.length === current.length && current.every((row, index) => previous.machines[index] === row)
+        ? previous.machines : current;
+    return retainShallow(previous, { ...entry, includeArchived: false, machines });
 }
 
 /** Exact authorized reads patch membership; broad receipts only replace already admitted rows. */
@@ -80,19 +92,18 @@ function receivedMachineRows(entry: ManagedMachineInventoryEntry, rows: Readonly
 /** One invalidation owner per executor; each demanded Account reads each changed id once. */
 function observeInventoryChanges(demand: InventoryDemand) {
     return subscribeHomeAccountChange(event => {
+        if (event.managedMachineInventoryAffect === false) return;
         const serverId = resolveServerProfileScopeIdForIdentifier(event.serverId) || event.serverId;
-        // Any change that can reach an inventory or one of its rows outdates retained receipts for this Home.
-        if (event.managedMachineChangedIds?.length !== 0
-            && (event.managedMachineInventoryAffect !== false || event.machineResourcesAffect !== false)) {
+        // The primary Home feed supplies intervening changes. This reconnect only retries unsettled readers.
+        const primaryReconnect = event.source === 'connected' && event.changesCatchUp === true;
+        if (!primaryReconnect) {
             demand.changes.set(serverId, (demand.changes.get(serverId) ?? 0) + 1);
         }
         const groups = new Map<string, InventoryReader[]>();
         for (const reader of demand.readers.values()) {
             if (!reader.isCurrent() || reader.serverId !== serverId || reader.isAwaitingApproval()) continue;
             const entry = reader.get();
-            if (entry.managedId
-                ? event.managedMachineChangedIds === undefined && event.machineResourcesAffect === false
-                : event.managedMachineInventoryAffect === false) continue;
+            if (primaryReconnect && entry.status === 'ready') continue;
             const key = JSON.stringify([entry.accountId, entry.homeId]);
             const group = groups.get(key) ?? [];
             group.push(reader);
@@ -100,7 +111,6 @@ function observeInventoryChanges(demand: InventoryDemand) {
         }
         for (const group of groups.values()) {
             if (event.managedMachineChangedIds !== undefined) {
-                if (event.managedMachineChangedIds.length === 0) continue;
                 const inventory = group.find(reader => !reader.get().managedId && reader.get().status === 'ready');
                 if (inventory) void inventory.refresh(event.managedMachineChangedIds);
                 else for (const reader of group) {
@@ -109,11 +119,10 @@ function observeInventoryChanges(demand: InventoryDemand) {
                     else if (!id) void reader.refresh();
                 }
             } else for (const reader of group) {
-                if (event.source === 'connected' && event.changesCatchUp && reader.get().status === 'ready') continue;
                 void reader.refresh();
             }
         }
-    }, { reconnect: 'refresh' });
+    }, { reconnect: { readNotCurrent: () => [...demand.readers.values()].some(reader => reader.get().status !== 'ready') } });
 }
 
 /** An entry field set to undefined is the field being absent. */
@@ -124,8 +133,7 @@ function definedFields(entry: ManagedMachineInventoryEntry): ManagedMachineInven
 function createInventoryReader(serverId: string, accountId: string, homeId: string, managedId: string | undefined,
     includeArchived: boolean, executeAction: InventoryExecute, remove: () => void, onPublished: () => void, readHomeChange: () => number,
     retained?: InventoryReceipt,
-    enrolledMachineId?: string, admitted = false, onRead?: (machines: readonly ManagedMachineV1[], absent?: ReadonlyMap<string, string>, admitMembership?: boolean) => void,
-    joinedInitialRead = false) {
+    enrolledMachineId?: string, admitted = false, onRead?: (machines: readonly ManagedMachineV1[], absent?: ReadonlyMap<string, string>, admitMembership?: boolean) => void) {
     const consumers = new Map<() => void, ServerAccountScopeLifetime>();
     const previousEntry = retained?.entry;
     let entry: ManagedMachineInventoryEntry = definedFields({ accountId, homeId, managedId, enrolledMachineId, includeArchived,
@@ -181,7 +189,7 @@ function createInventoryReader(serverId: string, accountId: string, homeId: stri
                     type ReadOutput = ManagedMachineActionOutputV1<'machines.managed.get'> | ManagedMachineActionOutputV1<'machines.managed.list'>;
                     const openRead = (value: ReadOutput) => openManagedMachineReadSnapshots({ serverId, accountId },
                         'machines' in value ? value.machines : [value], cancellation.signal);
-                    const read = (input: { homeId: string; managedId?: string; archived?: boolean; enrolledMachineId?: string }) => awaitActionApprovalResult<ManagedMachineV1[], ReadResult>({
+                    const read = (input: ManagedMachineActionInputV1<'machines.managed.list'> & { managedId?: string }) => awaitActionApprovalResult<ManagedMachineV1[], ReadResult>({
                         signal: cancellation.signal,
                         execute: async callbacks => {
                             const actionId = input.managedId ? 'machines.managed.get' : 'machines.managed.list';
@@ -231,28 +239,12 @@ function createInventoryReader(serverId: string, accountId: string, homeId: stri
                         onRead?.(machines, absent, true);
                         return;
                     }
-                    const listInput = { homeId, ...(enrolledMachineId ? { enrolledMachineId } : {}) };
-                    let result = await read(managedId ? { homeId, managedId } : listInput);
+                    const listInput: ManagedMachineActionInputV1<'machines.managed.list'> = {
+                        homeId, ...(includeArchived ? { archived: 'all' } : {}), ...(enrolledMachineId ? { enrolledMachineId } : {}),
+                    };
+                    const result = await read(managedId ? { homeId, managedId } : listInput);
                     if (cancellation.signal.aborted || !isCurrent()) return;
                     awaitingApproval = false;
-                    if (!managedId && includeArchived && result.kind === 'succeeded') {
-                        // The active list has answered even while archive recovery is pending. Publish
-                        // that receipt so collection first-load readiness follows the admitted rows.
-                        // Keep previous recovery rows until the second read settles.
-                        const active = result.machines;
-                        if (active.some(machine => machine.homeId !== homeId)) throw new Error('managed_response_invalid');
-                        // A joined current-only reader can use this first active answer.
-                        if (entry.asOf === undefined) observedChange = readChange;
-                        publish({ ...entry, asOf: Date.now(), machines:
-                            [...new Map([...active, ...entry.machines.filter(machine => machine.archivedAt !== undefined)]
-                                .map(machine => [machine.id, machine])).values()] });
-                        const archived = await read({ ...listInput, archived: true });
-                        if (cancellation.signal.aborted || !isCurrent()) return;
-                        awaitingApproval = false;
-                        result = archived.kind === 'failed' ? archived : { kind: 'succeeded', machines:
-                            [...new Map([...result.machines, ...archived.machines].map(machine => [machine.id, machine])).values()] };
-                    }
-                    if (!isCurrent() || cancellation.signal.aborted) return;
                     if (result.kind === 'failed') {
                         const code = result.code;
                         const denied = code === 'permission_denied' || code === 'not_authenticated' || code === 'action_account_scope_changed';
@@ -297,22 +289,25 @@ function createInventoryReader(serverId: string, accountId: string, homeId: stri
         controller?.abort();
         remove();
     };
+    let previousEntryForCurrent: ManagedMachineInventoryEntry | undefined;
+    let currentProjection: ManagedMachineInventoryEntry | undefined;
     return {
         serverId,
         isAwaitingApproval: () => awaitingApproval,
-        isRefreshing: () => refreshing,
         get: () => entry,
+        select(includeArchived: boolean): ManagedMachineInventoryEntry {
+            if (includeArchived || !entry.includeArchived) return entry;
+            if (!currentProjection || previousEntryForCurrent !== entry) {
+                currentProjection = selectInventoryEntry(entry, false, currentProjection);
+                previousEntryForCurrent = entry;
+            }
+            return currentProjection;
+        },
         getObservedChange: () => observedChange,
         getMachine: (id: string) => machinesById.get(id),
         getEnrolledMachine: (id: string) => machinesByEnrolledId.get(id),
         isCurrent,
         refresh,
-        /** First answer of a joined reader: the joined list read's current rows. */
-        admitJoinedReceipt(machines: readonly ManagedMachineV1[], joinedChange: number | undefined) {
-            if (!isCurrent() || entry.asOf !== undefined || refreshing) return;
-            observedChange = joinedChange;
-            publish({ ...entry, status: 'ready', errorCode: undefined, asOf: Date.now(), machines });
-        },
         receiveRows(sourceServerId: string, sourceAccountId: string, sourceHomeId: string, rows: ReadonlyMap<string, ManagedMachineV1>,
             absent?: ReadonlyMap<string, string>, admitMembership = false) {
             if (sourceServerId !== serverId || sourceAccountId !== accountId || sourceHomeId !== homeId
@@ -330,17 +325,18 @@ function createInventoryReader(serverId: string, accountId: string, homeId: stri
             };
             const retirement = binding.onRetire(release);
             listener();
-            // A joined reader takes its first answer from the in-flight read it joined (see getInventoryReader).
-            if (controller === null && !admitted && !joinedInitialRead) refresh();
+            if (controller === null && !admitted) refresh();
             return () => { retirement.dispose(); release(); };
         },
     };
 }
 
 function getInventoryReader(serverId: string, accountId: string, homeId: string, managedId: string | undefined,
-    includeArchived: boolean, executeAction: InventoryExecute, current?: ManagedMachineInventoryEntry, enrolledMachineId?: string): InventoryReader {
+    requestedArchive: boolean, executeAction: InventoryExecute, current?: ManagedMachineInventoryEntry, enrolledMachineId?: string): InventoryReader {
     const demand = inventoryDemand(executeAction);
     const inventories = demand.readers;
+    // Both Home list views demand one read. Archived rows are filtered in the current view.
+    const includeArchived = hasArchiveCoverage(managedId, enrolledMachineId, requestedArchive);
     const key = inventoryKey(serverId, accountId, homeId, managedId, includeArchived, enrolledMachineId);
     const lifetime = captureActiveServerAccountScopeLifetime();
     const readHomeChange = () => demand.changes.get(serverId) ?? 0;
@@ -363,31 +359,15 @@ function getInventoryReader(serverId: string, accountId: string, homeId: string,
         let retained = cached ?? (current?.accountId === accountId && current.homeId === homeId && current.managedId === managedId
             && current.enrolledMachineId === enrolledMachineId && (current.includeArchived ?? false) === includeArchived
             ? { entry: current, observedChange: undefined } : undefined);
-        let joined: InventoryReader | undefined;
-        if (!managedId && !includeArchived && !enrolledMachineId && !retained) {
-            // The archive-including inventory already read the current list. A settled
-            // receipt admits its current rows; later wakes refresh this reader itself.
-            const inventory = inventories.get(inventoryKey(serverId, accountId, homeId, undefined, true));
-            const receipt = inventory?.isCurrent() && !inventory.isRefreshing() ? inventory.get() : undefined;
-            if (receipt?.status === 'ready' && receipt.asOf !== undefined) {
-                retained = { entry: { ...receipt, includeArchived: false, machines: receipt.machines.filter(machine => machine.archivedAt === undefined) },
-                    observedChange: inventory?.getObservedChange() };
-            } else if (inventory?.isCurrent() && inventory.isRefreshing() && inventory.get().asOf === undefined) {
-                // Its first list read is in flight (screens mounting together): join it instead of reading the same list again.
-                joined = inventory;
-            }
-        }
         if (enrolledMachineId && !retained) {
-            for (const archived of [false, true]) {
-                const inventory = inventories.get(inventoryKey(serverId, accountId, homeId, undefined, archived));
-                const receipt = inventory?.isCurrent() ? inventory.get() : undefined;
-                const machine = receipt?.status === 'ready' ? inventory?.getEnrolledMachine(enrolledMachineId) : undefined;
-                if (!machine || !receipt) continue;
+            const inventory = inventories.get(inventoryKey(serverId, accountId, homeId, undefined, true));
+            const receipt = inventory?.isCurrent() ? inventory.get() : undefined;
+            const machine = receipt?.status === 'ready' ? inventory?.getEnrolledMachine(enrolledMachineId) : undefined;
+            if (machine && receipt) {
                 // Reuse admission without retaining broad list demand. Future invalidation
                 // is handled by this reader's exact enrolled-Machine query.
                 retained = { entry: { ...receipt, managedId, enrolledMachineId, includeArchived, machines: [machine] },
                     observedChange: inventory?.getObservedChange() };
-                break;
             }
         }
         // Reuse a settled observation only when it includes the latest Home change.
@@ -412,26 +392,8 @@ function getInventoryReader(serverId: string, accountId: string, homeId: string,
                     if (received !== receipt.machines) receipts?.set(receiptKey, { ...retainedReceipt, entry: { ...receipt, machines: received } });
                 }
                 for (const target of inventories.values()) if (target !== reader) target.receiveRows(serverId, accountId, homeId, rows, absent, admitMembership);
-            }, joined !== undefined);
+            });
         inventories.set(key, reader);
-        if (joined) {
-            const source = joined;
-            const joining = reader;
-            // One-shot: the joined read's first answer (its current rows) settles this reader; if that
-            // read ends without an answer, this reader reads for itself.
-            const settle = () => {
-                if (!joining.isCurrent()) { demand.observers.delete(settle); return; }
-                const answer = source.isCurrent() ? source.get() : undefined;
-                if (answer?.asOf !== undefined && (answer.status === 'ready' || answer.status === 'loading')) {
-                    demand.observers.delete(settle);
-                    joining.admitJoinedReceipt(answer.machines.filter(machine => machine.archivedAt === undefined), source.getObservedChange());
-                } else if (!answer || (answer.status !== 'loading' && answer.status !== 'ready')) {
-                    demand.observers.delete(settle);
-                    void joining.refresh();
-                }
-            };
-            demand.observers.add(settle);
-        }
         demand.unsubscribe ??= observeInventoryChanges(demand);
     }
     return reader;
@@ -445,8 +407,18 @@ export function retainManagedMachineInventory(lifetime: ServerAccountScopeLifeti
     if (!homeId || !lifetime.isCurrent()) throw Object.assign(new Error('Managed inventory Account is unavailable'), { code: 'plugin_resource_unavailable' });
     const reader = getInventoryReader(serverId, lifetime.scope.accountId, homeId, selection?.managedId, false, execute,
         undefined, selection?.enrolledMachineId);
-    const release = reader.subscribe(lifetime, () => listener(reader.get()));
-    return { getSnapshot: reader.get, getMachine: reader.getMachine, getEnrolledMachine: reader.getEnrolledMachine,
+    const getSnapshot = () => reader.select(false);
+    let last: ManagedMachineInventoryEntry | undefined;
+    const release = reader.subscribe(lifetime, () => {
+        const entry = getSnapshot();
+        if (last === entry) return;
+        last = entry;
+        listener(entry);
+    });
+    return { getSnapshot, getMachine: (id: string) => {
+        const machine = reader.getMachine(id);
+        return !selection?.managedId && !selection?.enrolledMachineId && machine?.archivedAt !== undefined ? undefined : machine;
+    }, getEnrolledMachine: reader.getEnrolledMachine,
         refresh: reader.refresh, dispose: release };
 }
 
@@ -462,15 +434,10 @@ export function useAdmittedManagedMachineAbsentEnrolledIds(serverId: string, bin
     }, [demand]);
     const snapshot = React.useCallback(() => {
         if (!binding?.isCurrent() || !homeId) return '[]';
-        for (const includeArchived of [false, true]) {
-            const reader = demand.readers.get(inventoryKey(scopedServerId, binding.accountId, homeId, undefined, includeArchived));
-            const entry = reader?.isCurrent() ? reader.get() : undefined;
-            // A cold narrower reader has no admitted empty census. Keep using the
-            // already-demanded receipt until that reader actually answers.
-            if (entry?.asOf !== undefined) return JSON.stringify(entry.machines.flatMap(machine =>
-                machine.archivedAt === undefined && machine.enrolledMachineId && isManagedMachineResourceAbsent(machine) ? [machine.enrolledMachineId] : []).sort());
-        }
-        return '[]';
+        const reader = demand.readers.get(inventoryKey(scopedServerId, binding.accountId, homeId, undefined, true));
+        const entry = reader?.isCurrent() ? reader.get() : undefined;
+        return entry?.asOf !== undefined ? JSON.stringify(entry.machines.flatMap(machine =>
+            machine.archivedAt === undefined && machine.enrolledMachineId && isManagedMachineResourceAbsent(machine) ? [machine.enrolledMachineId] : []).sort()) : '[]';
     }, [binding, demand, homeId, scopedServerId]);
     const absentIds = React.useSyncExternalStore(subscribe, snapshot, () => '[]');
     return React.useMemo(() => new Set(JSON.parse(absentIds) as string[]), [absentIds]);
@@ -487,12 +454,8 @@ export function useAdmittedManagedMachineRow(serverId: string, managedId: string
     }, [demand]);
     const snapshot = React.useCallback(() => {
         if (!binding?.isCurrent() || !homeId) return undefined;
-        for (const includeArchived of [false, true]) {
-            const reader = demand.readers.get(inventoryKey(serverId, binding.accountId, homeId, undefined, includeArchived));
-            const machine = reader?.isCurrent() ? reader.getMachine(managedId) : undefined;
-            if (machine) return machine;
-        }
-        return undefined;
+        const reader = demand.readers.get(inventoryKey(serverId, binding.accountId, homeId, undefined, true));
+        return reader?.isCurrent() ? reader.getMachine(managedId) : undefined;
     }, [binding, demand, homeId, managedId, serverId]);
     return React.useSyncExternalStore(subscribe, snapshot, () => undefined);
 }
@@ -554,7 +517,7 @@ export function useManagedMachineInventory<TExecute extends InventoryExecute = F
     const bindings = React.useMemo(() => new Map([...accountScopes].flatMap(([serverId, state]) => state.binding ? [[serverId, state.binding] as const] : [])), [accountScopes]);
     const [entries, setEntries] = React.useState<Readonly<Record<string, ManagedMachineInventoryEntry>>>({});
     const reads = React.useRef(new Map<string, { binding: ServerCredentialAccountScopeBinding; key: string;
-        executeAction: InventoryExecute; reader: InventoryReader; release(): void }>());
+        executeAction: InventoryExecute; includeArchived: boolean; reader: InventoryReader; release(): void }>());
     const refreshAll = React.useCallback(() => {
         for (const { reader } of reads.current.values()) reader.refresh();
     }, []);
@@ -570,7 +533,7 @@ export function useManagedMachineInventory<TExecute extends InventoryExecute = F
             )]));
             for (const [serverId, read] of reads.current) {
                 if (presented && read.binding === bindings.get(serverId) && read.binding.isCurrent() && read.reader.isCurrent()
-                    && read.key === keys.get(serverId) && read.executeAction === executeAction) continue;
+                    && read.key === keys.get(serverId) && read.executeAction === executeAction && read.includeArchived === includeArchived) continue;
                 read.release(); reads.current.delete(serverId);
             }
             for (const serverId of ids) {
@@ -579,10 +542,11 @@ export function useManagedMachineInventory<TExecute extends InventoryExecute = F
                 if (!presented || !binding?.isCurrent() || !homeId || reads.current.has(serverId)) continue;
                 const key = keys.get(serverId)!;
                 const reader = getInventoryReader(serverId, binding.accountId, homeId, managedId, includeArchived, executeAction, entries[serverId], enrolledMachineId);
-                const ownedReader = reader;
-                const release = reader.subscribe(binding, () => setEntries(previous => previous[serverId] === ownedReader.get()
-                    ? previous : { ...previous, [serverId]: ownedReader.get() }));
-                reads.current.set(serverId, { binding, key, executeAction, reader, release });
+                const release = reader.subscribe(binding, () => {
+                    const entry = reader.select(includeArchived);
+                    setEntries(previous => previous[serverId] === entry ? previous : { ...previous, [serverId]: entry });
+                });
+                reads.current.set(serverId, { binding, key, executeAction, includeArchived, reader, release });
             }
             // Entry updates are projections, not new demand. Only binding/target changes reacquire a reader.
             // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -603,7 +567,7 @@ export function useManagedMachineInventory<TExecute extends InventoryExecute = F
                 : (!resolution || resolution === 'resolving') && lifetime?.scope.serverId === serverId ? lifetime.scope.accountId : undefined;
             const cached = accountId ? retained?.get(inventoryKey(serverId, accountId,
                 getServerProfileById(serverId)?.serverIdentityId, managedId, includeArchived, enrolledMachineId))?.entry : undefined;
-            const entry = entries[serverId] ?? (cached ? { ...cached, status: 'loading' as const } : undefined);
+            const entry = entries[serverId] ?? (cached ? { ...selectInventoryEntry(cached, includeArchived), status: 'loading' as const } : undefined);
             if (accountId && entry?.accountId === accountId && entry.managedId === managedId && entry.enrolledMachineId === enrolledMachineId
                 && entry.homeId === getServerProfileById(serverId)?.serverIdentityId
                 && (entry.includeArchived ?? false) === includeArchived) result[serverId] = entry;
