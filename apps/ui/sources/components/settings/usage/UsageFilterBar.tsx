@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 import { collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { SelectionListFilterChip } from '@/components/ui/selectionList/SelectionListFilterChips';
@@ -15,7 +15,7 @@ import { useDeviceType } from '@/utils/platform/responsive';
 import { t } from '@/text';
 import type { UsageWidgetPageScope } from './usageWidgetPageContext';
 import { USAGE_SCOPE_FILTER_ALL, USAGE_SOURCES_SHOW_AGENTS, USAGE_SOURCES_SHOW_APPS, type UsageWidgetPageFilter } from './useUsageWidgetPageFilters';
-import { usageAgentColor } from './usageAccent';
+import { useUsageAgentColor } from './usageAccent';
 import { UsageAgentMark } from './widgets/usageBodyKit';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
@@ -71,7 +71,7 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
       })),
     [],
   );
-  const { theme } = useUnistyles();
+  const agentColor = useUsageAgentColor();
   // Coverage is said once, as a dot in Sources, while a source the page reads is incomplete.
   const coverageIncomplete = props.coverageIncomplete;
   const filters = React.useMemo(
@@ -101,7 +101,7 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
                     ),
                     // The same identity hue the Agent's series take on every chart.
                     accessory: (
-                      <View style={[styles.swatch, { backgroundColor: usageAgentColor(theme, option.id) }]} />
+                      <View style={[styles.swatch, { backgroundColor: agentColor(option.id) }]} />
                     ),
                   }
                 : {}),
@@ -138,7 +138,7 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
           testID: `${props.testID}.${field}`,
         };
       }),
-    [props.scopeFilters, props.testID, coverageIncomplete, theme],
+    [props.scopeFilters, props.testID, coverageIncomplete, agentColor],
   );
   // While the read that names the cost bases is outstanding the chip already shows the basis in force (its
   // only known choice), so the trailing edge keeps its width and nothing beside it moves when the rest arrive.

@@ -102,10 +102,14 @@ export function fillUsageMixCalendar(mix: UsageModelMix, range: UsageCalendarRan
     const starts = walkUsageCalendar(range, mix.buckets.map((bucket) => bucket.startMs));
     if (!starts || starts.length === mix.buckets.length) return mix;
     const recorded = new Map(mix.buckets.map((bucket) => [bucket.startMs, bucket]));
-    return { ...mix, buckets: starts.map((startMs) => {
+    const missing = new Map(starts.filter(startMs => !recorded.has(startMs)).map(startMs =>
+        [String(startMs), usageMissingBucketValue(startMs, range, coverage)]));
+    return { ...mix, ...(mix.foldedMembers && missing.size ? {
+        foldedMembers: mix.foldedMembers.map(member => ({ ...member, valueByBucket: new Map([...member.valueByBucket, ...missing]) })),
+    } : {}), buckets: starts.map((startMs) => {
         const bucket = recorded.get(startMs);
         if (bucket) return bucket;
-        const value = usageMissingBucketValue(startMs, range, coverage);
+        const value = missing.get(String(startMs)) ?? null;
         const empty = mix.keys.map(() => value);
         return { startMs, endMs: resolveUsageBucketBounds(range.granularity, startMs, range.timeZoneOffsetMinutes).bucketEndMs,
             total: value, tokens: empty, shares: empty };
@@ -135,12 +139,22 @@ export function usageAxisTicks(labels: readonly string[], lastLabel?: string): r
     return ticks;
 }
 
-export function usageMixSeries(mix: UsageCalendarMix, label: (value: string) => string, color: (index: number, key: string) => string, timeZoneOffsetMinutes = 0): readonly HappierSeries[] {
-    return mix.keys.map((key, index) => ({ id: key.key, label: label(key.label), color: color(index, key.key), detail: `${formatTokenCount(key.totalTokens)} · ${mix.total === null || key.totalTokens === null ? t('usage.board.plans.cellUnknown') : `${mix.total > 0 ? Math.round(key.totalTokens / mix.total * 100) : 0}%`}`, points: mix.buckets.map((bucket) => ({
-        id: String(bucket.startMs), x: bucket.startMs,
-        label: formatUsageCalendarDate(bucket.startMs, timeZoneOffsetMinutes, { month: 'short', day: 'numeric' }),
-        y: bucket.tokens[index] ?? null,
-    })) }));
+export function usageMixSeries(mix: UsageCalendarMix, options: Readonly<{
+    label: (key: string, fallback: string) => string;
+    color: (index: number, key: string) => string;
+    bucketLabel: (startMs: number) => string;
+    detail?: (key: UsageModelMix['keys'][number]) => string;
+}>): readonly HappierSeries[] {
+    return mix.keys.map((key, index) => ({
+        id: key.key, label: options.label(key.key, key.label), color: options.color(index, key.key),
+        detail: options.detail?.(key) ?? `${formatTokenCount(key.totalTokens)} · ${mix.total === null || key.totalTokens === null ? t('usage.board.plans.cellUnknown') : `${mix.total > 0 ? Math.round(key.totalTokens / mix.total * 100) : 0}%`}`,
+        ...(key.key === USAGE_MODEL_MIX_OTHER_KEY && mix.foldedMembers ? {
+            foldedMembers: mix.foldedMembers.map(member => ({ id: member.key, label: options.label(member.key, member.label),
+                valueByBucket: member.valueByBucket })),
+        } : {}),
+        points: mix.buckets.map(bucket => ({ id: String(bucket.startMs), x: bucket.startMs,
+            label: options.bucketLabel(bucket.startMs), y: bucket.tokens[index] ?? null })),
+    }));
 }
 
 type UsageSourceDetail = Readonly<{ id: string; label: string; execution: 'happier' | 'outside' | 'unknown'; value: number | null }>;
@@ -232,19 +246,27 @@ export function usageSourceTimelineSeries(input: Readonly<{
         }
         displayed.push(tail);
     }
+    const bucketDefault = (startMs: number) => {
+        const bucket = buckets.get(startMs);
+        // A truncated dimension or an older unpartitioned bucket cannot establish a source zero.
+        const missing = input.range ? usageMissingBucketValue(startMs, input.range, input.coverage) : null;
+        if (!bucket) return missing;
+        return missing === 0 && bucket.leaders.every(leader => leader.sources !== undefined)
+            && !input.coverage?.reasons.includes('ranked_truncation') ? 0 : null;
+    };
+    const emptyValues = starts.map(bucketDefault);
+    const valueAt = (entry: Series, startMs: number, index: number) =>
+        entry.values.has(startMs) ? entry.values.get(startMs)! : emptyValues[index]!;
     const series = displayed.map((entry, index) => ({ id: entry.key, dimensionKey: entry.key, label: entry.label,
         sourceDetails: Object.fromEntries(Object.entries(entry.details).map(([bucket, details]) => [bucket, [...details.values()]])),
         color: input.color(index, entry.key),
         ...(entry.allOutside ? { fillPattern: 'hatch' as const } : {}),
-        points: starts.map(startMs => {
-            const bucket = buckets.get(startMs);
-            // A truncated dimension or an older unpartitioned bucket cannot establish a source zero.
-            const value = bucket ? input.range && usageMissingBucketValue(startMs, input.range, input.coverage) === 0
-                && bucket.leaders.every(leader => leader.sources !== undefined)
-                && !input.coverage?.reasons.includes('ranked_truncation') ? 0 : null
-                : input.range ? usageMissingBucketValue(startMs, input.range, input.coverage) : null;
-            return { id: String(startMs), x: startMs, label: input.bucketLabel(startMs), y: entry.values.has(startMs) ? entry.values.get(startMs)! : value };
-        }) }));
+        ...(entry.key === USAGE_MODEL_MIX_OTHER_KEY ? { foldedMembers: other.map(({ entry: member }) => ({
+            id: member.key, label: member.label, valueByBucket: new Map(starts.map((startMs, index) =>
+                [String(startMs), valueAt(member, startMs, index)])),
+        })) } : {}),
+        points: starts.map((startMs, index) => ({ id: String(startMs), x: startMs,
+            label: input.bucketLabel(startMs), y: valueAt(entry, startMs, index) })) }));
     return { series, incompleteBucketStarts };
 }
 

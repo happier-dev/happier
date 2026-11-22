@@ -1420,6 +1420,8 @@ export interface UsageModelMixBucket {
  */
 export interface UsageModelMix {
     keys: UsageModelMixSeriesKey[];
+    /** Exact readings behind the drawn Other series, in the same bucket identity as the chart. */
+    foldedMembers?: readonly (Pick<UsageModelMixSeriesKey, 'key' | 'label'> & { valueByBucket: ReadonlyMap<string, number | null> })[];
     buckets: UsageModelMixBucket[];
     /** Grand total tokens across the timeline (legend share denominator). */
     total: number | null;
@@ -1457,7 +1459,9 @@ export function buildUsageModelMix(
     const entries = [...totalsByKey.entries()].map(([key, value]) => ({ key, label: value.label, total: value.tokens }));
     const { leaders: topEntries, other: tailEntries } = rankUsageTimelineSeries(entries, maxSeries);
     const grandTotal = entries.reduce<number | null>((sum, entry) => addUsageMeasurements(sum, entry.total), null);
-    const topKeys = new Set(topEntries.map((entry) => entry.key));
+    const foldedMembers = tailEntries.map(entry => ({ key: entry.key, label: entry.label,
+        valueByBucket: new Map<string, number | null>() }));
+    const foldedByKey = new Map(foldedMembers.map(member => [member.key, member]));
 
     const keys: UsageModelMixSeriesKey[] = topEntries.map((entry) => ({
         key: entry.key,
@@ -1483,10 +1487,11 @@ export function buildUsageModelMix(
         const tokens = keys.map((seriesKey) => {
             if (seriesKey.key === USAGE_MODEL_MIX_OTHER_KEY) {
                 let otherTokens: number | null = null;
-                for (const [key, tokens] of tokensByKey) {
-                    if (!topKeys.has(key)) {
-                        otherTokens = addUsageMeasurements(otherTokens, tokens);
-                    }
+                for (const [key, amount] of tokensByKey) {
+                    const member = foldedByKey.get(key);
+                    if (!member) continue;
+                    member.valueByBucket.set(String(bucket.bucketStartMs), amount);
+                    otherTokens = addUsageMeasurements(otherTokens, amount);
                 }
                 return otherTokens;
             }
@@ -1499,6 +1504,7 @@ export function buildUsageModelMix(
     const nonEmptyBuckets = buckets.filter((bucket) => bucket.total !== null && bucket.total > 0).length;
     return {
         keys,
+        ...(foldedMembers.length ? { foldedMembers } : {}),
         buckets,
         total: grandTotal,
         hasData: keys.length > 0 && buckets.length >= 2 && nonEmptyBuckets >= 1,

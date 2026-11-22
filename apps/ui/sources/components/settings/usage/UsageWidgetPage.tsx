@@ -42,7 +42,8 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { formatUsageObservedAt, isUsageObservationFromEarlierDay } from '@/sync/domains/usage/usageCalendarPresentation';
 import { t } from '@/text';
 import { UsageFilterBar, usageTokensCostMetricOptions } from './UsageFilterBar';
-import { useUsageWidgetPageFilters } from './useUsageWidgetPageFilters';
+import { createUsageAgentSeriesColor, readUsageChartAgentIds, UsageAgentColorProvider } from './usageAccent';
+import { USAGE_SCOPE_FILTER_ALL, useUsageWidgetPageFilters } from './useUsageWidgetPageFilters';
 import { useUsageAppEnvironments } from './useUsageAppEnvironments';
 import { readUsageAppCallsEnvironmentIds } from '@/sync/domains/usage/usageAppCallsSource';
 import { UsageAppsNothingRecorded } from './UsageAppsNothingRecorded';
@@ -255,7 +256,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
   const selectPageFacts = React.useCallback((slices: readonly UsageQueryResultSlice[]) =>
     readUsagePageFacts(slices, needsFilterFallback), [needsFilterFallback]);
   const pageRead = useUsageWidgetBatchSelection(selectPageFacts, sameUsagePageFacts);
-  const { facts } = pageRead;
+  const { facts, agentIds: resultAgents } = pageRead;
   const filterSlices = React.useMemo(() => pageRead.filterFallback ?? [], [pageRead.filterFallback]);
   const session = props.sessionId !== undefined;
   const presets = React.useMemo(() => session ? [{ id: USAGE_SESSION_WIDGET_PRESET_ID, name: t('usage.sessionUsage') }]
@@ -412,6 +413,11 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
     ...filter, select: (id: string, context?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) => selectFilter(filter.field, id, context, invocation),
   })), [scopeFilters, selectFilter]);
   const drill = React.useMemo(() => usageDrillFromPageFilters(admittedFilters), [admittedFilters]);
+  const agentFilterOptions = scopeFilters.find(filter => filter.field === 'agents')?.options;
+  const { theme } = useUnistyles();
+  const agentColor = React.useMemo(() => createUsageAgentSeriesColor(theme, [
+    ...resultAgents, ...(agentFilterOptions ?? []).filter(option => option.id !== USAGE_SCOPE_FILTER_ALL).map(option => option.id),
+  ]), [theme, resultAgents, agentFilterOptions]);
 
   const selected = tabs.find((tab) => tab.id === selectedLayoutId) ?? null;
   // Drawn on first paint from the view list's local edited fact, so the line never arrives late and pushes the widgets.
@@ -467,7 +473,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
   const appsNothing = appsShown && facts.nothingRecorded;
   // The selected document and the named-view inventory settle independently.
   return (
-    <>
+    <UsageAgentColorProvider value={agentColor}>
       {publication}
       <UsagePageHeader facts={facts} retry={pageReadRetry ? retryRead : null} history={history}
         appsShown={appsShown}
@@ -517,7 +523,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
       />
       </UsageDrillProvider>
       </View>
-    </>
+    </UsageAgentColorProvider>
   );
 }
 
@@ -532,6 +538,7 @@ function readUsagePageFacts(slices: readonly UsageQueryResultSlice[], needsFilte
   return {
     // Until unfiltered inventory answers, keep the existing displayed-result choices.
     filterFallback: needsFilterFallback ? slices : null,
+    agentIds: readUsageChartAgentIds(slices),
     facts: {
       pending: describeUsagePagePendingSources(slices),
       failure: readUsagePageFailure(slices),
@@ -554,7 +561,7 @@ function sameUsagePageFacts(left: ReturnType<typeof readUsagePageFacts>, right: 
   const sameFallback = left.filterFallback === right.filterFallback || (left.filterFallback !== null && right.filterFallback !== null
     && left.filterFallback.length === right.filterFallback.length && left.filterFallback.every((slice, index) => slice === right.filterFallback![index]));
   // Compare this small chrome projection, never the widgets' accounting/evidence rows.
-  return sameFallback && sameStrictJsonValue(left.facts, right.facts);
+  return sameFallback && sameStrictJsonValue(left.agentIds, right.agentIds) && sameStrictJsonValue(left.facts, right.facts);
 }
 
 /**

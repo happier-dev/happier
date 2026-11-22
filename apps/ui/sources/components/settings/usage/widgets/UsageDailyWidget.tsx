@@ -12,7 +12,7 @@ import { useWidgetFrameBodyCaption, useWidgetFrameBodyIdentity } from '@/compone
 import { useDeviceType } from '@/utils/platform/responsive';
 import { t } from '@/text';
 import { agentIdFromEngineKey, USAGE_MODEL_MIX_OTHER_KEY } from '@/sync/api/account/usageAnalytics';
-import { createUsageAgentSeriesColor, usageOtherColor, usageSignatureAccent } from '../usageAccent';
+import { useUsageAgentColor, usageOtherColor, usageSignatureAccent } from '../usageAccent';
 import { formatUsageCalendarDate, formatUsageWeeklyBucketLabel, resolveUsageShownCalendarRange } from '@/sync/domains/usage/usageCalendarPresentation';
 import { usageCostKindPhrase, usagePageCostTrend } from '../usageCostPresentation';
 import { useUsageDrill } from '../usageDrill';
@@ -23,7 +23,7 @@ import {
   usageAxisTicks,
   usageDailyBarGeometry,
   usageSeriesValueFormatter,
-  usageVolumeSeries,
+  usageVolumeSeries, usageMixSeries,
   usageSourceTimelineSeries,
   useUsageSeriesLens,
   useUsageSeriesMotion,
@@ -71,6 +71,7 @@ export function useUsageDailyChartShape(): Readonly<{ kind: 'chart'; plotPx: num
  */
 export function UsageDailyWidget(props: UsageBodyProps) {
   const { theme } = useUnistyles();
+  const agentColor = useUsageAgentColor();
   const chartTheme = useUsagePluginTheme();
   const view = useUsageAnalyticsView(props.slice, props.query);
   const presentation = useWidgetPresentation();
@@ -98,13 +99,12 @@ export function UsageDailyWidget(props: UsageBodyProps) {
       ),
     [range, props.query.granularity, props.query.timeZoneOffsetMinutes],
   );
-  const { series: sourceSeries, incompleteBucketStarts } = React.useMemo(() => { const agentColor = createUsageAgentSeriesColor(theme);
-    return usageSourceTimelineSeries({
+  const { series: sourceSeries, incompleteBucketStarts } = React.useMemo(() => usageSourceTimelineSeries({
     timeline: metric === 'cost' ? view?.pageCost.accounting.engineTimeline : props.slice.accounting?.engineTimeline,
     range, coverage, metric, costMode: props.query.costBasis, costSelection: view?.pageCost.selection ?? null,
     dimensionKey: agentIdFromEngineKey, label: usageAgentTitle,
     color: (_index, key) => key === USAGE_MODEL_MIX_OTHER_KEY ? usageOtherColor(theme) : agentColor(key), bucketLabel,
-  }); }, [props.slice.accounting?.engineTimeline, view?.pageCost, range, coverage, metric, props.query.costBasis, theme, bucketLabel]);
+  }), [props.slice.accounting?.engineTimeline, view?.pageCost, range, coverage, metric, props.query.costBasis, theme, agentColor, bucketLabel]);
   const byAgent = sourceSeries.length > 0 || (metric === 'tokens' && view?.agentMix.hasData === true);
   const agentForSeries = React.useCallback((id: string) => sourceSeries.find(entry => entry.id === id)?.dimensionKey ?? id, [sourceSeries]);
   const pageCost = view?.pageCost;
@@ -114,20 +114,12 @@ export function UsageDailyWidget(props: UsageBodyProps) {
     if (sourceSeries.length > 0) return sourceSeries;
     if (byAgent) {
       const mix = range ? fillUsageMixCalendar(view.agentMix, range, coverage) : view.agentMix;
-      const agentColor = createUsageAgentSeriesColor(theme);
-      return mix.keys.map((key, index) => ({
-        id: key.key,
-        label: key.key === USAGE_MODEL_MIX_OTHER_KEY ? t('usage.modelMix.other') : usageAgentTitle(key.key, key.label),
-        // The Agent dimension draws each Agent in its identity hue; the mark sits beside it in the legend.
-        color: key.key === USAGE_MODEL_MIX_OTHER_KEY ? usageOtherColor(theme) : agentColor(key.key),
-        detail: format(key.totalTokens),
-        points: mix.buckets.map((bucket) => ({
-          id: String(bucket.startMs),
-          x: bucket.startMs,
-          label: bucketLabel(bucket.startMs),
-          y: bucket.tokens[index] ?? null,
-        })),
-      }));
+      return usageMixSeries(mix, {
+        label: (key, fallback) => key === USAGE_MODEL_MIX_OTHER_KEY ? t('usage.modelMix.other') : usageAgentTitle(key, fallback),
+        color: (_index, key) => key === USAGE_MODEL_MIX_OTHER_KEY ? usageOtherColor(theme) : agentColor(key),
+        bucketLabel,
+        detail: key => format(key.totalTokens),
+      });
     }
     const trend = costTrend ?? view.trend;
     return usageVolumeSeries(
@@ -137,7 +129,7 @@ export function UsageDailyWidget(props: UsageBodyProps) {
       usageSignatureAccent(theme),
       props.query.timeZoneOffsetMinutes,
     ).map(entry => ({ ...entry, points: entry.points.map(point => ({ ...point, label: bucketLabel(Number(point.x) * 1000) })) }));
-  }, [view, byAgent, sourceSeries, metric, theme, format, range, coverage, bucketLabel, props.query.timeZoneOffsetMinutes, currency, costTrend]);
+  }, [view, byAgent, sourceSeries, metric, theme, agentColor, format, range, coverage, bucketLabel, props.query.timeZoneOffsetMinutes, currency, costTrend]);
   // Bars use calendar categories. Keep the timestamp as semantic identity, while exact-value
   // alternatives receive the same formatted date as the axis rather than a numeric epoch.
   const chartSeries = React.useMemo(() => series.map(entry => ({

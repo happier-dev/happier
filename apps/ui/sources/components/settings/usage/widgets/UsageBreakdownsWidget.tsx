@@ -12,7 +12,7 @@ import { useWidgetFrameBodyCaption, useWidgetFrameBodyIdentity } from '@/compone
 import { readUsageAppCallsEnvironmentIds, resolveUsageShownBreakdown } from '@/sync/domains/usage/usageAppCallsSource';
 import { formatTokenCount, formatTokenCountLong, formatUsageCost } from '@/utils/format/usageNumbers';
 import { t } from '@/text';
-import { usageAgentColor, usageMeterFill } from '../usageAccent';
+import { useUsageAgentColor, usageMeterFill } from '../usageAccent';
 import { USAGE_BREAKDOWN_DIMENSION_HEADING } from '../usageBreakdownTitle';
 import { useUsageDrill, type UsageDrillField } from '../usageDrill';
 import {
@@ -63,6 +63,7 @@ export function UsageBreakdownsWidget(props: UsageBodyProps) {
  */
 function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
   const { theme } = useUnistyles();
+  const agentColor = useUsageAgentColor();
   const [expanded, setExpanded] = React.useState<readonly string[]>([]);
   const chartTheme = useUsagePluginTheme();
   const metric = props.query.metric;
@@ -168,7 +169,7 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
             label: heading(block.dimension),
             rows: lead.rows.map((row, index) => ({
               ...row,
-              color: block.dimension === 'agent' ? usageAgentColor(theme, row.id) : usageMeterFill(theme, index === 0),
+              color: block.dimension === 'agent' ? agentColor(row.id) : usageMeterFill(theme, index === 0),
             })),
             total,
             // An unmeasured value is a quiet dash in the figure column; the row's own line says why ("Without an API

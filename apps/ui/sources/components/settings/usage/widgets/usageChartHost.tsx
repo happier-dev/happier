@@ -22,7 +22,7 @@ import type {
   UsageQuery,
   UsagePresentationMetric,
 } from '@happier-dev/protocol/inputs/usageQuery';
-import { createUsageAgentSeriesColor, usageSignatureAccent } from '../usageAccent';
+import { useUsageAgentColor, usageSignatureAccent } from '../usageAccent';
 import {
   UsageAgentMark,
   usageAgentTitle,
@@ -54,8 +54,7 @@ export function useUsageChartHost(serverId: string | null): {
     }),
     [theme],
   );
-  // One colour allocator per chart host: each Agent its Usage hue, two hue-less Agents of one chart never share one.
-  const agentColor = React.useMemo(() => createUsageAgentSeriesColor(theme), [theme]);
+  const agentColor = useUsageAgentColor();
   const agent = React.useCallback(
     (agentId: string): UsageChartAgent => ({
       id: agentId,

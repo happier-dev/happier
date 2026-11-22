@@ -6,8 +6,10 @@ import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFram
 import { formatTokenCountLong } from '@/utils/format/usageNumbers';
 import { t } from '@/text';
 import { usageSeriesColor } from '../usageAccent';
+import { usageTokensFromPartsNote } from '../usageCostPresentation';
 import {
   UsageBodyInsufficient,
+  UsageBodyNote,
   UsageBodyReading,
   UsageCoverageLine,
   usagePeriodPhrase,
@@ -124,6 +126,7 @@ function UsageOutcomesFacts(props: UsageBodyProps) {
   const accent = usageSeriesColor(appTheme, 0);
   const byKey = new Map(summary.outcomes.map((row) => [row.key, row]));
   const moneyGroups = partitionUsageWorkMoneyRows(summary.outcomes, props.query.metric);
+  const fromPartsNote = usageTokensFromPartsNote(summary.outcomes.map(row => row.tokensFromParts));
   const model: UsageOutcomesModel = { kind: 'work',
       funnel: {
         label: t('usage.board.work.funnelLabel'),
@@ -198,7 +201,6 @@ function UsageOutcomesFacts(props: UsageBodyProps) {
                     state: usageWorkPullRequestState(pullRequest),
                   }),
                   mergedIn(row),
-                  row.tokensFromParts ? t('usage.board.page.tokensFromParts') : null,
                 ]
                   .filter(Boolean)
                   .join(' · '),
@@ -238,7 +240,10 @@ function UsageOutcomesFacts(props: UsageBodyProps) {
           })),
   };
   return <UsageOutcomesBody theme={theme} model={model} sectionGap={appTheme.space.s10} testID={`${props.testID}.outcomes`}
-      sectionTitle={<UsageWorkSectionTitle>{t('usage.board.work.prLabel')}</UsageWorkSectionTitle>}
+      sectionTitle={<>
+        <UsageWorkSectionTitle>{t('usage.board.work.prLabel')}</UsageWorkSectionTitle>
+        {fromPartsNote ? <UsageBodyNote testID={`${props.testID}.fromParts`}>{fromPartsNote}</UsageBodyNote> : null}
+      </>}
       empty={<UsageBodyInsufficient testID={`${props.testID}.noPrs`} replacesContent={false}
         title={t('usage.board.work.noPrsTitle')} reason={t('usage.board.work.noPrsReason')} />}
       coverage={<UsageCoverageLine

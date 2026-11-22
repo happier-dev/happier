@@ -9,7 +9,7 @@ import {
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { agentIdFromEngineKey, USAGE_MODEL_MIX_OTHER_KEY } from '@/sync/api/account/usageAnalytics';
 import { t } from '@/text';
-import { createUsageAgentSeriesColor, usageOtherColor, usageSeriesColor } from '../usageAccent';
+import { useUsageAgentColor, usageOtherColor, usageSeriesColor } from '../usageAccent';
 import { formatUsageCalendarDate, resolveUsageShownCalendarRange } from '@/sync/domains/usage/usageCalendarPresentation';
 import { usageCostKindPhrase, usagePageCostTrend } from '../usageCostPresentation';
 import { useUsageDrill } from '../usageDrill';
@@ -58,6 +58,7 @@ export function UsageFlowWidget(props: UsageBodyProps) {
 function UsageFlowWidgetOriginal(props: UsageBodyProps) {
   const metric = UsageAccountingMetricSchema.parse(props.query.metric);
   const { theme } = useUnistyles();
+  const agentColor = useUsageAgentColor();
   const chartTheme = useUsagePluginTheme();
   const view = useUsageAnalyticsView(props.slice, props.query);
   const areaInk = useUsageSeriesAreaInk();
@@ -67,8 +68,7 @@ function UsageFlowWidgetOriginal(props: UsageBodyProps) {
   const accounting = cost ? view?.pageCost.accounting : props.slice.accounting;
   const range = React.useMemo(() => resolveUsageShownCalendarRange(props.query, props.slice.accounting?.coverage, props.slice.accounting, props.slice.accountingObservationRange),
     [props.query, props.slice.accounting, props.slice.accountingObservationRange]);
-  const { series: sourceSeries } = React.useMemo(() => { const agentColor = createUsageAgentSeriesColor(theme);
-    return usageSourceTimelineSeries({
+  const { series: sourceSeries } = React.useMemo(() => usageSourceTimelineSeries({
     timeline: byModel ? accounting?.modelTimeline : accounting?.engineTimeline,
     range, coverage: props.slice.accounting?.coverage,
     metric, costMode: props.query.costBasis, costSelection: view?.pageCost.selection ?? null,
@@ -77,7 +77,7 @@ function UsageFlowWidgetOriginal(props: UsageBodyProps) {
     color: (index, key) => key === USAGE_MODEL_MIX_OTHER_KEY ? usageOtherColor(theme)
       : byModel ? usageSeriesColor(theme, index) : agentColor(key),
     bucketLabel: startMs => formatUsageCalendarDate(startMs, props.query.timeZoneOffsetMinutes, { month: 'short', day: 'numeric' }),
-  }); }, [byModel, accounting, range, props.slice.accounting?.coverage, view?.pageCost.selection, props.query, theme]);
+  }), [byModel, accounting, range, props.slice.accounting?.coverage, view?.pageCost.selection, props.query, theme, agentColor]);
   const agentForSeries = React.useCallback((id: string) => sourceSeries.find(entry => entry.id === id)?.dimensionKey ?? id, [sourceSeries]);
   const mix = React.useMemo(() => {
     if (!view) return null;
@@ -89,38 +89,22 @@ function UsageFlowWidgetOriginal(props: UsageBodyProps) {
   );
   // The period's own buckets decide whether there is a flow to draw; the drawing then leaves the unread ends off.
   const periodSeries = React.useMemo(
-    () => (() => {
+    () => {
       if (sourceSeries.length > 0) return sourceSeries;
       if (cost && view) {
         const trend = usagePageCostTrend(view.pageCost);
         return usageVolumeSeries(range ? fillUsageTrendCalendar(trend, range, props.slice.accounting?.coverage) : trend,
           'cost', t('usage.cost'), usageSeriesColor(theme, 0), props.query.timeZoneOffsetMinutes);
       }
-      const agentColor = createUsageAgentSeriesColor(theme);
-      return mix
-        ? usageMixSeries(
-            mix,
-            (label) => label,
-            // Agents keep their identity hue; models are a magnitude ramp of the one accent.
-            (index, key) =>
-              key === USAGE_MODEL_MIX_OTHER_KEY
-                ? usageOtherColor(theme)
-                : byModel
-                  ? usageSeriesColor(theme, index)
-                  : agentColor(key),
-            props.query.timeZoneOffsetMinutes,
-          ).map((entry, index) => ({
-            ...entry,
-            label:
-              mix.keys[index]!.key === USAGE_MODEL_MIX_OTHER_KEY
-                ? t('usage.modelMix.other')
-                : byModel
-                  ? usageDimensionLabel('model', mix.keys[index]!.key, entry.label)
-                  : usageAgentTitle(mix.keys[index]!.key, entry.label),
-          }))
-        : [];
-    })(),
-    [mix, sourceSeries, cost, view, range, theme, byModel, props.query, props.slice.accounting?.coverage],
+      return mix ? usageMixSeries(mix, {
+        label: (key, fallback) => key === USAGE_MODEL_MIX_OTHER_KEY ? t('usage.modelMix.other')
+          : byModel ? usageDimensionLabel('model', key, fallback) : usageAgentTitle(key, fallback),
+        color: (index, key) => key === USAGE_MODEL_MIX_OTHER_KEY ? usageOtherColor(theme)
+          : byModel ? usageSeriesColor(theme, index) : agentColor(key),
+        bucketLabel: startMs => formatUsageCalendarDate(startMs, props.query.timeZoneOffsetMinutes, { month: 'short', day: 'numeric' }),
+      }) : [];
+    },
+    [mix, sourceSeries, cost, view, range, theme, agentColor, byModel, props.query, props.slice.accounting?.coverage],
   );
   const series = React.useMemo(() => trimUsageFlowUnreadTail(periodSeries), [periodSeries]);
   // Choosing an Agent in the lens or the legend narrows the page's one filter row to it.

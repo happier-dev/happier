@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { UsageChartInteractions } from '../usageChartInteractions';
+import { UsageAgentColorProvider, useUsageAgentColor } from '../usageAccent';
 import { useUsageModelPricesAction } from './UsageModelPrices';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -153,6 +154,7 @@ function UsageQueryWidgetContent(props: UsageWidgetBodyInput & Readonly<{
 }>) {
   const { model, query } = props;
   const slice = model.slice;
+  const agentColor = useUsageAgentColor(slice);
   const retry = useUsageRetryCommand(model.refresh, !!query && !slice && !!model.error && !model.pending);
   // Dim only facts that are being replaced: a previous period held while the new one arrives. A
   // re-read of the shown facts keeps them at full strength and says "Refreshing" in the frame's meta
@@ -239,7 +241,7 @@ function UsageQueryWidgetContent(props: UsageWidgetBodyInput & Readonly<{
       style={[styles.body, replacing ? styles.replacing : null]}
       accessibilityState={{ busy: replacing }}
     >
-      {factBody}
+      <UsageAgentColorProvider value={agentColor}>{factBody}</UsageAgentColorProvider>
     </View>
   );
 }

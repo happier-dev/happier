@@ -728,6 +728,25 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
     {plot}
     {showAxis && geometry.buckets.length ? axis : null}
   </View>;
+  const showNativeValues = nativeDense && (valuesExpanded || (!valuesLabel && !historyCanInteract));
+  const showExactValues = showNativeValues || valuesExpanded;
+  const expandedValues = useMemo(() => {
+    if (!showExactValues || !props.series.some(entry => entry.foldedMembers?.length)) return null;
+    const exactMembers = props.series.flatMap((entry, index) =>
+      (entry.foldedMembers?.length ? entry.foldedMembers : [null]).map(member => ({
+        index, label: member?.label ?? entry.label, member,
+      })));
+    const buckets = geometry.buckets.map(bucket => ({ ...bucket, values: exactMembers.map(({ index, member }) => {
+      const drawn = bucket.values[index]!;
+      if (!member) return drawn;
+      const value = member.valueByBucket.get(bucket.id);
+      return { ...drawn, seriesId: member.id, label: member.label,
+        value: typeof value === 'number' && Number.isFinite(value) ? value : null };
+    }) }));
+    return { columns: exactMembers, buckets };
+  }, [showExactValues, props.series, geometry.buckets]);
+  const exactColumns = expandedValues?.columns ?? props.series;
+  const exactBuckets = expandedValues?.buckets ?? geometry.buckets;
   return <View testID={props.testID} accessible={nativeInline && !props.decorative ? true : undefined}
     aria-hidden={props.decorative} importantForAccessibility={props.decorative ? 'no-hide-descendants' : undefined}
     role={!props.decorative && !nativeInline ? 'group' : undefined}
@@ -797,14 +816,14 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
     </View> : null}
     {props.summary ? <HappierText style={text.caption} tabularNumbers>{props.summary}</HappierText> : null}
     {valuesLabel && !toggleInLegend ? valuesToggle : null}
-    {nativeDense && (valuesExpanded || (!valuesLabel && !historyCanInteract)) ? <View testID={props.testID ? `${props.testID}-values` : undefined}>
-      {geometry.buckets.map((bucket, index) => bucketControl(bucket, index, <HappierText style={text.caption} tabularNumbers>{describe(bucket)}</HappierText>,
+    {showNativeValues ? <View testID={props.testID ? `${props.testID}-values` : undefined}>
+      {exactBuckets.map((bucket, index) => bucketControl(bucket, index, <HappierText style={text.caption} tabularNumbers>{describe(bucket)}</HappierText>,
         { justifyContent: 'center', paddingVertical: HAPPIER_DATA_METRICS.cellPaddingVerticalPx }, { top: 0, bottom: 0 }))}
     </View> : valuesExpanded ? <View style={{ marginTop: HAPPIER_DATA_METRICS.blockGapPx }}><HappierDataTable theme={props.theme} label={props.label}
-      columns={[{ label: props.label }, ...props.series.map((entry) => ({ label: entry.label }))]}
+      columns={[{ label: props.label }, ...exactColumns.map((entry) => ({ label: entry.label }))]}
       // Details keeps every meaningful digit (a display formatter may abbreviate); coordinates read in the caller's words.
-      rows={geometry.buckets.map((bucket) => [describeHappierSeriesCoordinate(bucket, reading), ...bucket.values.map((entry) => entry.value === null ? unknown : magnitude(entry.value))])}
-      rowDatums={geometry.buckets.map(datumOf)}
+      rows={exactBuckets.map((bucket) => [describeHappierSeriesCoordinate(bucket, reading), ...bucket.values.map((entry) => entry.value === null ? unknown : magnitude(entry.value))])}
+      rowDatums={exactBuckets.map(datumOf)}
       testID={props.testID ? `${props.testID}-values` : undefined} /></View> : null}
   </View>;
 }

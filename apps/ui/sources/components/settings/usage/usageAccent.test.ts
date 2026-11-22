@@ -5,7 +5,6 @@ import { HAPPIER_SERIES_RAMP_ALPHAS as USAGE_SERIES_RAMP_ALPHAS } from '@happier
 import { getAgentIdentityColor, getNeutralAgentIdentityColor } from '@/agents/catalog/catalog';
 import {
     createUsageAgentSeriesColor,
-    usageAgentColor,
     usageMeterFill,
     usageSeriesColor,
     usageSignatureAccent,
@@ -96,24 +95,31 @@ describe('Agent series colours', () => {
     for (const theme of themes) {
         const mode = theme.dark ? 'dark' : 'light';
         it(`keeps catalog hues and gives each hue-less leader a hue of its own, apart from the neutral (${mode})`, () => {
-            const color = createUsageAgentSeriesColor(theme);
+            const ids = ['muse', 'codex', 'opencode', 'grok', 'ohMyPi'];
+            const color = createUsageAgentSeriesColor(theme, ['claude', ...ids]);
             const neutral = getNeutralAgentIdentityColor(theme);
             expect(color('claude')).toBe(getAgentIdentityColor(theme, 'claude'));
-            const ranked = ['muse', 'codex', 'opencode', 'grok', 'ohMyPi'].map(color);
+            const ranked = ids.map(color);
             expect(new Set([...ranked, neutral]).size).toBe(6);
             for (const hue of ranked) expect(chroma(hue)).toBeGreaterThan(48);
             // Asked again, an Agent keeps its colour.
             expect(color('muse')).toBe(ranked[0]);
         });
 
-        it(`draws a hue-less Agent in the same hue on every chart (${mode})`, () => {
-            expect(createUsageAgentSeriesColor(theme)('muse')).toBe(usageAgentColor(theme, 'muse'));
-            expect(usageAgentColor(theme, 'muse')).toBe(usageAgentColor(theme, 'muse'));
-            expect(usageAgentColor(theme, 'codex')).toBe(getAgentIdentityColor(theme, 'codex'));
-            expect(chroma(usageAgentColor(theme, 'grok'))).toBeGreaterThan(48);
-            // The unattributed member is no Agent: it keeps the neutral, like the folded Other.
-            expect(usageAgentColor(theme, '')).toBe(getNeutralAgentIdentityColor(theme));
-            expect(createUsageAgentSeriesColor(theme)('unknown')).toBe(getNeutralAgentIdentityColor(theme));
+        it(`agrees across chart order and filter swatches when Agent hues collide (${mode})`, () => {
+            const ids = ['acme-one', 'acme-three'];
+            const read = createUsageAgentSeriesColor(theme, ids);
+            const dailyColors = ids.map(read);
+            const flowColors = [...ids].reverse().map(read).reverse();
+            const swatches = ids.map(createUsageAgentSeriesColor(theme, [...ids].reverse()));
+
+            expect(new Set(dailyColors).size).toBe(2);
+            expect({ flow: flowColors, swatches }).toEqual({ flow: dailyColors, swatches: dailyColors });
+            const next = createUsageAgentSeriesColor(theme, ['acme-three']);
+            expect(next('acme-three')).toBe(dailyColors[0]);
+            expect(read('acme-three')).toBe(dailyColors[1]);
+            expect(read('')).toBe(getNeutralAgentIdentityColor(theme));
+            expect(read('unknown')).toBe(getNeutralAgentIdentityColor(theme));
         });
     }
 });

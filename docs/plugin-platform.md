@@ -9322,6 +9322,11 @@ their ordered ramp against `theme.colors.surface`. Older theme snapshots omit
 that token; the same renderer falls back to `theme.colors.accent`. Use
 `usePluginTheme()` to consume the mounted theme rather than copying host colors.
 
+In 0.3 development source, a combined series can supply `foldedMembers` with
+each member's identity, label and exact values keyed by bucket ID. The chart
+draws the combined series and the Values disclosure exposes each member.
+Missing member values read as unknown.
+
 Private Usage and public profiles also share the original Daily, Rhythm, Period
 summary, Breakdowns, Outcomes, Recap, Footprint and Coverage bodies in
 [`presentation/usage/charts`](../packages/plugin-ui/src/presentation/usage/charts/).

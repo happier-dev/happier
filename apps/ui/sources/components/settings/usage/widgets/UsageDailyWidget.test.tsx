@@ -16,6 +16,7 @@ import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurr
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { UsageDailyWidget } from './UsageDailyWidget';
+import { UsageFlowWidget } from './UsageFlowWidget';
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { resetPlayedEntrancesForTests } from '../usageEntrance';
 import { formatUsageCalendarDate } from '@/sync/domains/usage/usageCalendarPresentation';
@@ -35,18 +36,29 @@ async function renderControls(children: React.ReactNode) {
 const day = 86_400_000;
 // Friday midnight in UTC+14, so weekend classification cannot use the UTC weekday.
 const start = Date.UTC(2026, 9, 8, 10);
-function fixture(values: readonly (number | null)[], endMs: number, byAgent = true, granularity: 'day' | 'week' = 'day') {
-  const query = normalizeUsageQuery({ period: { startMs: start, endMs }, timeZoneOffsetMinutes: 840, granularity, metric: 'tokens' });
+function fixture(values: readonly (number | null)[], endMs: number, byAgent = true, granularity: 'day' | 'week' = 'day',
+  members = ['codex'], byModel = false) {
+  const query = normalizeUsageQuery({ period: { startMs: start, endMs }, timeZoneOffsetMinutes: 840, granularity, metric: 'tokens', ...(byModel ? { breakdown: ['model'] } : {}) });
   const step = granularity === 'week' ? 7 * day : day;
   const bucket = (index: number) => resolveUsageBucketBounds(granularity, start + index * step, query.timeZoneOffsetMinutes);
   const tokens = (value: number) => ({ input: value, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: value });
   const cost = { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' };
-  const total = values.reduce<number>((sum, value) => sum + (value ?? 0), 0);
+  const totalAt = (value: number) => members.reduce((sum, _id, rank) => sum + value + rank, 0);
+  const total = values.reduce<number>((sum, value) => sum + (value === null ? 0 : totalAt(value)), 0);
+  const timeline = byAgent || byModel ? values.flatMap((value, index) => value === null ? [] : [{
+    ...bucket(index), leaders: members.map((id, rank) => {
+      const reading = tokens(value + rank);
+      return { key: byModel ? id : `${id}:local`, label: id === 'folded-member' ? 'Folded member' : undefined,
+        eventCount: 1, tokens: reading, cost, ...(byModel ? {} : {
+          sources: [{ source: 'runtime', path: 'runtime' as const, execution: 'happier' as const, eventCount: 1, tokens: reading, cost }],
+        }) };
+    }),
+  }]) : [];
   const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: {
     v: 1, totals: { tokens: tokens(total), cost, eventCount: values.filter(value => value !== null).length },
-    series: values.flatMap((value, index) => value === null ? [] : [{ ...bucket(index), eventCount: 1, tokens: tokens(value), cost }]),
-    engineTimeline: byAgent ? values.flatMap((value, index) => value === null ? [] : [{ ...bucket(index), leaders: [{ key: 'codex:local', eventCount: 1, tokens: tokens(value), cost,
-        sources: [{ source: 'runtime', path: 'runtime' as const, execution: 'happier' as const, eventCount: 1, tokens: tokens(value), cost }] }] }]) : [],
+    series: values.flatMap((value, index) => value === null ? [] : [{ ...bucket(index), eventCount: 1, tokens: tokens(totalAt(value)), cost }]),
+    engineTimeline: byModel ? [] : timeline,
+    ...(byModel ? { modelTimeline: timeline } : {}),
     coverage: { status: 'partial', reasons: ['incomplete_history'], sources: [], missingDimensions: [], ranked: [],
       range: { startMs: start, endMs, complete: false } },
   } }] }, bundledUsageModelPriceCatalog).results[0]!;
@@ -56,6 +68,19 @@ function fixture(values: readonly (number | null)[], endMs: number, byAgent = tr
 }
 
 describe('Daily period chart', () => {
+  it.each([['daily', false], ['flow', false], ['flow', true]] as const)(
+    'keeps every admitted member in %s Values when the drawing folds a member into Other (by model: %s)', async (kind, byModel) => {
+    const props = fixture([10, 20], start + 2 * day, !byModel, 'day', ['folded-member', 'b', 'c', 'd', 'e', 'f'], byModel);
+    const screen = await renderControls(kind === 'daily' ? <UsageDailyWidget {...props} />
+      : <UsageFlowWidget {...props} id="usage_flow" testID="flow" />);
+    const chart = screen.findByType(StackedSeriesChart);
+    expect(chart.props.series.map((entry: { id: string }) => entry.id)).toEqual(['f', 'e', 'd', 'c', 'b', '__other__']);
+    await screen.pressByTestIdAsync(`${kind}.chart-values-toggle`);
+    const row = screen.findHostByTestId(`${kind}.chart-values-row-0`)!;
+    expect(row.props.accessibilityLabel).toMatch(/folded member: 10/i);
+    const amounts = [...row.props.accessibilityLabel.matchAll(/: (\d+)(?= · |, |$)/g)].map(match => Number(match[1]));
+    expect(amounts.reduce((sum, value) => sum + value, 0)).toBe(75);
+  });
   it('conserves admitted weekly amounts and calls out both clipped weeks', async () => {
     const props = fixture([10, 30, 20], start + 14 * day, true, 'week');
     const screen = await renderScreen(<UsageDailyWidget {...props} />);

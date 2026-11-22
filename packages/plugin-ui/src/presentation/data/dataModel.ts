@@ -205,6 +205,8 @@ export type HappierSeriesPoint = Readonly<{ id: string; x: string | number; y: n
 export type HappierSeries = Readonly<{ id: string; label: string; color?: string; detail?: string; lineStyle?: 'solid' | 'dashed' | 'dotted'; fillPattern?: 'hatch'; fillOpacity?: number;
   /** An observed comparison line in line/area charts, excluded from stacked totals/fills. */
   overlay?: boolean;
+  /** Members combined into this mark. Values reads the member amounts instead of the combined mark. */
+  foldedMembers?: readonly Readonly<{ id: string; label: string; valueByBucket: ReadonlyMap<string, number | null> }>[];
   points: readonly HappierSeriesPoint[] }>;
 export type HappierSeriesBucket = Readonly<{
   id: string; x: string | number; label: string; annotation?: string;

@@ -16,7 +16,7 @@ import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { t } from '@/text';
-import { usageAgentColor } from '../usageAccent';
+import { useUsageAgentColor } from '../usageAccent';
 import {
   UsageBodyInsufficient,
   UsageBodyReadFailed,
@@ -69,6 +69,7 @@ export function UsageParallelWidget(props: UsageBodyProps) {
  */
 function UsageParallelWidgetOriginal(props: UsageBodyProps) {
   const { theme } = useUnistyles();
+  const agentColor = useUsageAgentColor();
   const chartTheme = useUsagePluginTheme();
   const width = useWidgetPresentation()?.geometry?.width;
   const sessionHomes = React.useMemo(() => [props.serverId], [props.serverId]);
@@ -100,11 +101,11 @@ function UsageParallelWidgetOriginal(props: UsageBodyProps) {
               (machineId ? machineNames.get(machineId) : undefined) ??
               t('usage.board.howYouWork.unknownMachine'),
             agent: (agentId) => usageAgentTitle(agentId),
-            agentColor: (agentId) => usageAgentColor(theme, agentId),
+            agentColor,
             waitColor: theme.colors.state.warning.foreground,
           })
         : [],
-    [today, lanes, sessions, machineNames, theme, props.serverId, isSessionVisible],
+    [today, lanes, sessions, machineNames, theme, agentColor, props.serverId, isSessionVisible],
   );
   const intervals = React.useMemo(
     () => groups.flatMap((group) => group.intervals),

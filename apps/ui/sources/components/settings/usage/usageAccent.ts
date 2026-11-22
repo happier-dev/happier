@@ -10,7 +10,7 @@
  *
  * Two governed exceptions (lab `kitcharts`, accepted in the widgets handoff §3.12):
  *  - the AGENT dimension draws each Agent in its own fixed identity hue, because Agents are the one
- *    dimension people already recognise by mark and colour across the app (`usageAgentColor`: the
+ *    dimension people already recognise by mark and colour across the app (`createUsageAgentSeriesColor`: the
  *    catalog hue, or Usage's fallback hue for an Agent the catalog draws without one). Models,
  *    projects, machines and token kinds keep the accent ramp;
  *  - status is said with an icon and words, in the theme's status roles.
@@ -20,6 +20,11 @@
  * dimension other than Agent is a review-rejectable regression.
  */
 
+import { createContext, useContext, useMemo } from 'react';
+import { useUnistyles } from 'react-native-unistyles';
+import { normalizeBundledAgentRoutingId } from '@happier-dev/agents';
+import { readUsageScopeOptions } from '@happier-dev/protocol/usage/usageFilterOptions';
+import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { mixHappierColorOverPaper, resolveHappierSeriesRampColor } from '@happier-dev/plugin-ui/presentation';
 import { isUnattributedUsageAgentId } from '@happier-dev/protocol/usage/usageFormatting';
 import { getAgentIdentityColor, getNeutralAgentIdentityColor } from '@/agents/catalog/catalog';
@@ -55,51 +60,81 @@ const USAGE_AGENT_FALLBACK_HUES: readonly Readonly<{ light: string; dark: string
     { light: '#7d3fb0', dark: '#c48ae8' }, // violet
 ];
 
-/** The fallback slot an Agent id hashes to, so a hue-less Agent keeps one hue on every chart and every page. */
+/** Preferred fallback slot for the canonical Agent id. */
 function usageAgentFallbackSlot(agentId: string): number {
     let hash = 0;
     for (let index = 0; index < agentId.length; index += 1) hash = (hash * 31 + agentId.charCodeAt(index)) >>> 0;
     return hash % USAGE_AGENT_FALLBACK_HUES.length;
 }
 
-/**
- * An Agent's colour on any Usage chart: its catalog identity hue, or Usage's fallback hue for it. The neutral belongs
- * to what no Agent names: the folded Other and the unattributed member (`isUnattributedUsageAgentId`).
- */
-export function usageAgentColor(theme: Readonly<{ dark: boolean }>, agentId: string): string {
-    const identity = getAgentIdentityColor(theme, agentId);
-    if (identity !== getNeutralAgentIdentityColor(theme) || isUnattributedUsageAgentId(agentId)) return identity;
-    return USAGE_AGENT_FALLBACK_HUES[usageAgentFallbackSlot(agentId)]![theme.dark ? 'dark' : 'light'];
-}
+type UsageAgentColor = (agentId: string) => string;
+const UsageAgentColorContext = createContext<UsageAgentColor | null>(null);
+export const UsageAgentColorProvider = UsageAgentColorContext.Provider;
 
-/**
- * The colours of one Agent chart, asked in rank order: each Agent its `usageAgentColor`. When two hue-less Agents of
- * the chart hash to one fallback hue, the later one takes the next free hue, so the chart's leaders stay apart from
- * each other and from the folded Other's neutral (USAGE-ACCEPT 1118 #10). Past the fallback hues, an ink step.
- */
-export function createUsageAgentSeriesColor(theme: UsageAccentThemeSlice & Readonly<{ dark: boolean }>): (agentId: string) => string {
+/** Assign the surface's hues in canonical identity order before any chart or swatch reads them. */
+export function createUsageAgentSeriesColor(
+    theme: UsageAccentThemeSlice & Readonly<{ dark: boolean }>,
+    agentIds: Iterable<string>,
+): UsageAgentColor {
     const neutral = getNeutralAgentIdentityColor(theme);
     const ink = theme.colors.text.primary ?? theme.colors.text.secondary;
+    const mode = theme.dark ? 'dark' : 'light';
     const assigned = new Map<string, string>();
     const taken = new Set<number>();
-    return (agentId) => {
-        const known = assigned.get(agentId);
-        if (known !== undefined) return known;
-        let color = getAgentIdentityColor(theme, agentId);
-        if (color === neutral && !isUnattributedUsageAgentId(agentId)) {
-            const first = usageAgentFallbackSlot(agentId);
-            const slot = Array.from({ length: USAGE_AGENT_FALLBACK_HUES.length }, (_, step) => (first + step) % USAGE_AGENT_FALLBACK_HUES.length)
-                .find((candidate) => !taken.has(candidate));
-            if (slot === undefined) {
+    const identityColor = (agentId: string) => isUnattributedUsageAgentId(agentId) ? neutral : getAgentIdentityColor(theme, agentId);
+    const fallbackHue = (slot: number) => USAGE_AGENT_FALLBACK_HUES[slot]![mode];
+
+    for (const id of [...new Set([...agentIds].map(normalizeBundledAgentRoutingId))].sort()) {
+        if (isUnattributedUsageAgentId(id)) continue;
+        let color = identityColor(id);
+        if (color === neutral) {
+            const first = usageAgentFallbackSlot(id);
+            let slot = first;
+            while (taken.has(slot) && taken.size < USAGE_AGENT_FALLBACK_HUES.length) {
+                slot = (slot + 1) % USAGE_AGENT_FALLBACK_HUES.length;
+            }
+            if (taken.has(slot)) {
                 color = resolveHappierSeriesRampColor(ink, theme.colors.surface?.base, assigned.size + 1);
             } else {
                 taken.add(slot);
-                color = USAGE_AGENT_FALLBACK_HUES[slot]![theme.dark ? 'dark' : 'light'];
+                color = fallbackHue(slot);
             }
         }
-        assigned.set(agentId, color);
-        return color;
+        assigned.set(id, color);
+    }
+    return (agentId) => {
+        const id = normalizeBundledAgentRoutingId(agentId);
+        const known = assigned.get(id);
+        if (known !== undefined) return known;
+        const identity = identityColor(id);
+        return identity !== neutral || isUnattributedUsageAgentId(id) ? identity : fallbackHue(usageAgentFallbackSlot(id));
     };
+}
+
+/** Agents named by the admitted chart results, including charts sourced from Work detail. */
+export function readUsageChartAgentIds(slices: readonly UsageQueryResultSlice[]): readonly string[] {
+  const ids = new Set(readUsageScopeOptions(slices, 'agents').keys());
+  const add = (id: string | null) => { if (id !== null) ids.add(id); };
+  for (const slice of slices) {
+    const work = slice.howYouWork;
+    for (const row of work?.agentCalendar?.periodSummary.agents ?? []) add(row.agentId);
+    for (const row of work?.intervals?.lanes ?? []) add(row.agentId);
+    for (const row of work?.steering?.byAgent ?? []) add(row.agentId);
+    for (const row of work?.runLengths?.byAgent ?? []) add(row.agentId);
+    for (const edge of work?.collaboration?.edges ?? []) {
+      add(edge.sourceAgentId);
+      add(edge.targetAgentId);
+    }
+    for (const row of slice.work?.allocations ?? []) add(row.contribution.agentId);
+  }
+  return [...ids].sort();
+}
+
+/** Standalone widget results use the same assignment over their own admitted population. */
+export function useUsageAgentColor(slice?: UsageQueryResultSlice | null): UsageAgentColor {
+    const { theme } = useUnistyles();
+    const shared = useContext(UsageAgentColorContext);
+    return useMemo(() => shared ?? createUsageAgentSeriesColor(theme, slice ? readUsageChartAgentIds([slice]) : []), [shared, slice, theme]);
 }
 
 /** The one signature accent for usage surfaces. */

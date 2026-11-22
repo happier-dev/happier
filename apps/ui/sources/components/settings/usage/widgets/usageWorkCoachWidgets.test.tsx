@@ -729,6 +729,38 @@ describe('Work and Coach widget bodies', () => {
       .toEqual({ s1: false, s2: false });
     expect(screen.getTextContent().split(t(allFromParts ? 'usage.board.page.tokensFromPartsOnce' : 'usage.board.page.tokensFromPartsSome'))).toHaveLength(2);
   });
+  it('says one parts qualifier across Session value groups and one across Outcomes rows', async () => {
+    const parts = { ...tokens, total: null };
+    const work = allocateUsageOutcomes({ contributions: [
+      { ...contribution('first', 's1', 't1'), tokens: parts },
+      { ...contribution('second', 's2', 't2'), tokens: parts },
+      { ...contribution('third', 's3', 't3'), tokens: parts },
+    ], evidence: [evidence('s1', 't1', 1), evidence('s2', 't2', 2)] });
+    const tokenQuery = normalizeUsageQuery({ ...query, metric: 'tokens' });
+    const value = await renderScreen(<UsageSessionValueWidget {...props} query={tokenQuery} slice={{ ...slice, work }}
+      id="usage_session_value" testID="value" />);
+    const outcomes = await renderScreen(<UsageOutcomesWidget {...props} query={tokenQuery} slice={{ ...slice, work }}
+      id="usage_outcomes" testID="outcomes" />);
+    expect(value.findByTestId('value.merged')).toBeTruthy();
+    expect(value.findByTestId('value.unlinked')).toBeTruthy();
+    const qualifier = t('usage.board.page.tokensFromPartsOnce');
+    expect([value.getTextContent().split(qualifier).length - 1, outcomes.getTextContent().split(qualifier).length - 1])
+      .toEqual([1, 1]);
+  });
+
+  it('qualifies hidden Session value rows only after they are shown', async () => {
+    const readings = Array.from({ length: 9 }, (_, index) => contribution(`row-${index}`, `row-${index}`, null));
+    readings[8] = { ...readings[8]!, tokens: { ...tokens, input: 1, output: 0, reasoning: null, cacheRead: null,
+      cacheWrite: null, total: null } };
+    const work = allocateUsageOutcomes({ contributions: readings, evidence: [] });
+    const screen = await renderScreen(<UsageSessionValueWidget {...props} query={normalizeUsageQuery({ ...query, metric: 'tokens' })}
+      slice={{ ...slice, work }} id="usage_session_value" testID="value" />);
+    const qualifier = t('usage.board.page.tokensFromPartsSome');
+    const collapsed = screen.getTextContent().includes(qualifier);
+    await screen.pressByTestIdAsync('value.unlinked.more.toggle');
+    expect([collapsed, screen.getTextContent().includes(qualifier)]).toEqual([false, true]);
+  });
+
   it('collapses the ledger summary to one sentence when nothing is linked, instead of repeating the total', async () => {
     const unlinked = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions, evidence: [] }));
     const screen = await renderScreen(<UsageProjectLedgerWidget {...props} slice={{ ...slice, work: unlinked }} id="usage_project_ledger" testID="ledger" />);

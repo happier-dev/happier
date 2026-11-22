@@ -11,7 +11,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { usePageRowMetrics } from '@/components/ui/lists/useResolvedItemDensity';
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
-import { usageAgentColor, usageOtherColor, usageSeriesColor } from '../usageAccent';
+import { useUsageAgentColor, usageOtherColor, usageSeriesColor } from '../usageAccent';
 import { usageTokensFromPartsNote } from '../usageCostPresentation';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
@@ -48,6 +48,7 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
   const theme = useUsagePluginTheme();
   const [expandedGroups, setExpandedGroups] = React.useState<readonly string[]>([]);
   const { theme: appTheme } = useUnistyles();
+  const agentColor = useUsageAgentColor();
   const presentation = useWidgetPresentation();
   const rowMetrics = usePageRowMetrics('list');
   const outside = <UsageOutsideSessions serverId={props.serverId} query={props.query} testID={`${props.testID}.outside`} />;
@@ -114,7 +115,9 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
       rows: summary.sessions.filter((row) => row.outcomes.length === 0),
     },
   ].flatMap(group => partitionUsageWorkMoneyRows(group.rows, props.query.metric)
-    .map(part => ({ ...group, ...part, key: `${group.id}:${part.key}` })));
+    .map(part => ({ ...group, ...part, key: `${group.id}:${part.key}`,
+      lead: leadingUsageRows(part.rows, expandedGroups.includes(group.id)) })));
+  const fromPartsNote = usageTokensFromPartsNote(groups.flatMap(group => group.lead.rows.map(row => row.tokensFromParts)));
   const width = presentation?.geometry?.width ?? 0;
   const showScatter =
     width >= SCATTER_MIN_WIDTH_PX &&
@@ -165,7 +168,7 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
             ...usedSlots.map((agentId) => ({
               id: agentId,
               label: usageAgentTitle(agentId),
-              color: usageAgentColor(appTheme, agentId),
+              color: agentColor(agentId),
             })),
             ...(plot.rows.some((row) => slotOf(row) === null)
               ? [{ id: 'other', label: t('usage.board.work.otherAgents'), color: other }]
@@ -184,22 +187,20 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
               x: row.amount,
               // Unlinked Sessions stay in the ledger; an open witnessed outcome is zero merged.
               y: merged(row),
-              color: slot === null ? other : usageAgentColor(appTheme, slot),
+              color: slot === null ? other : agentColor(slot),
               annotation: usageWorkSessionOutcomeLine(row),
               labelled: row === costliest || row === mostMerged,
             };
           })}
         />
       ); }) : null}
-      {groups.map((group) => {
-        // A caveat every row shares is said once under the group title, never repeated per row; token totals added up
-        // from their parts are always said there, once (USAGE-ACCEPT 1121 #13).
+      {groups.map((group, index) => {
+        // A caveat every row shares is said once under the group title.
         const notes = group.rows.map(row => [usageWorkSessionOutcomeLine(row)].filter(Boolean) as string[]);
         const shared = (notes[0] ?? []).filter(note => notes.every(rowNotes => rowNotes.includes(note)));
-        const fromPartsNote = usageTokensFromPartsNote(group.rows.map(row => row.tokensFromParts));
         // The group title may already be that caveat ("No linked outcome yet"); it is not said twice.
-        const said = [...shared.filter(note => note.toLocaleLowerCase() !== group.title.toLocaleLowerCase()), ...(fromPartsNote ? [fromPartsNote] : [])];
-        const lead = leadingUsageRows(group.rows, expandedGroups.includes(group.id));
+        const said = [...shared.filter(note => note.toLocaleLowerCase() !== group.title.toLocaleLowerCase()), ...(index === 0 && fromPartsNote ? [fromPartsNote] : [])];
+        const { lead } = group;
         return (
         <View key={group.key} style={styles.group}>
           <UsageWorkSectionTitle quiet>{group.title}</UsageWorkSectionTitle>
