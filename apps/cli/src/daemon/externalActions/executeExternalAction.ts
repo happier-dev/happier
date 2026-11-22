@@ -10,7 +10,7 @@ import { ACTION_OPERATION_CANCEL_ACTION_ID_V1 } from '@happier-dev/protocol/acti
 import { ActionOperationAddressV1Schema } from '@happier-dev/protocol/actions/operations/addressV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { isSessionAgentReadinessRootActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { isSessionAgentReadinessRootActionIdV1, MANAGED_ACQUIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { isPluginError } from '@happier-dev/plugin-sdk';
 
 import { ExternalActionActionIdV1Schema, ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeSchema, externalActionTargetsEqualV1, isExternalActionRequestWithinLimit, isExternalActionRequestVersionAllowedForAccountModeV1, projectExternalActionExecutionResultV1, readExternalActionProtectedRequestId } from '@happier-dev/protocol/actions/externalActionApi';
@@ -45,7 +45,8 @@ import type { ManagedMachinePolicyRequest } from '../startup/managedMachineActio
 import { deriveMountedPluginInvocationCaller, type MountedAccountPluginExecutionSelectionResolver } from '@/plugins/runtime/invocation/mountedPluginInvocationCaller';
 import { resolvePluginActionCaller } from '@/plugins/runtime/invocation/services/actionCaller';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
-import { isOriginalOwnAccountActionCustody, isOriginalSessionInputAccountActionCustody } from "../sessionEncryption/requesterAccountActionProjection";
+import { isManagedEnrollmentPolicyChildAccountCustody, isOriginalOwnAccountActionCustody,
+  isOriginalSessionInputAccountActionCustody } from '../sessionEncryption/requesterAccountActionProjection';
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 import { createExternalActionStartDiagnosticRecorder, refuseExternalActionPhase, runExternalActionPhase, traceExternalActionStage, readSessionInputAdmissionDiagnostic } from './externalActionPhase';
 import { setApprovalTraceArtifactId, timeApprovalPhase, timeApprovalPhaseSync, timeWebLatencyPhase, withApprovalActionTrace, withWebLatencyTrace } from './webLatencyTrace';
@@ -404,7 +405,9 @@ async function executeExternalActionRequest(input: Readonly<{
   };
   const prepareOwnAccount = executionAuthorization?.success && input.prepareRequesterAccountContext !== undefined
     && (isOriginalOwnAccountActionCustody(executionAuthorization.data.binding)
-      || isOriginalSessionInputAccountActionCustody(executionAuthorization.data.binding));
+      || isOriginalSessionInputAccountActionCustody(executionAuthorization.data.binding)
+      || (managedReviewedParent?.actionId === MANAGED_ACQUIRE_ACTION_ID_V1
+        && isManagedEnrollmentPolicyChildAccountCustody(executionAuthorization.data.binding)));
   if (!managedControllerCodec && executionAuthorization?.success && (executionAuthorization.data.requesterAccountContext || prepareOwnAccount)) {
     const authorization = executionAuthorization.data;
     diagnoseSessionInput('requester_prepare', 'started');

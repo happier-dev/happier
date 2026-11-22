@@ -329,8 +329,11 @@ and consumes that admission without reading private enrollment policy from Home.
 In current 0.3 development, a managed creation child restores its declared parent
 review from the installation-sealed invocation. The controller custodian may differ
 from the requester; the receiver consumes their admitted bindings without another
-published Machine custody lookup. Undeclared child policy still uses ordinary
-guest approval, with the requester's existing replay credential custody.
+published Machine custody lookup. For a Session-originated Acquire, the guest
+uses its installed Account credentials to apply reviewed enrollment policy only
+when Home resolves their profile to the signed requester Account. Undeclared
+child policy still uses ordinary guest approval, with the requester's existing
+replay credential custody.
 Enrollment copies the ready preview's metadata version into Set, including a new Machine's
 version zero. Stale versions settle as a conflict before approval.
 

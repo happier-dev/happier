@@ -53,6 +53,7 @@ import { isSessionStopChildRootV1, isSessionStopChildV1, readSessionStopChildTar
 import { readDeploymentChildRpcV1 } from '@happier-dev/protocol/deployments/deploymentChildRpcV1';
 import { deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { MachineSetupPlanInputV1Schema, isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { isManagedEnrollmentPolicyChildActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import type { RequesterWorkAttributionV1 } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
 import { PROJECT_SOURCE_UPDATE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/projectSourcesActionIdsV1';
 import { PROJECT_SETUP_SET_ACTION_ID_V1, PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
@@ -638,6 +639,13 @@ export function isOriginalOwnAccountActionCustody(binding: ExternalActionExecuti
   return isOriginalAccountActionCustody(binding) && binding.accountId === binding.custodianAccountId;
 }
 
+/** An admitted Session-origin enrollment child consumes the enrolled guest's own Account custody. */
+export function isManagedEnrollmentPolicyChildAccountCustody(binding: ExternalActionExecutionAuthorizationBindingV1): boolean {
+  return 'authentication' in binding && binding.authentication.kind === 'account'
+    && binding.sessionActionOrigin !== undefined && binding.managedContinuation?.controller !== undefined
+    && binding.accountId === binding.custodianAccountId && isManagedEnrollmentPolicyChildActionIdV1(binding.actionId);
+}
+
 /** An original input may reuse only the custody already admitted for its exact Session. */
 export function isOriginalSessionInputExternalActionCustody(binding: ExternalActionExecutionAuthorizationBindingV1): boolean {
   return !binding.sessionActionOrigin && !binding.sessionActionSource && !binding.workflowActionOrigin
@@ -826,7 +834,8 @@ export async function prepareRequesterAccountActionContext(input: Readonly<{
     const recipient = moveRecipient ?? preparation?.controller ?? finiteWake?.target.controller ?? { machineId: root.data.binding.machineId,
       installationId: root.data.binding.installationId };
     if (recipient.machineId !== input.machineId || recipient.installationId !== input.installationId) return refused('requester_preparation_recipient');
-    const regularOwnAccount = isOriginalOwnAccountActionCustody(root.data.binding);
+    const ownAccount = isOriginalOwnAccountActionCustody(root.data.binding)
+      || (input.purpose.kind === 'external_action' && isManagedEnrollmentPolicyChildAccountCustody(root.data.binding));
     const custodySessionId = readOriginalRequesterSessionCustodyId(root.data.binding);
     if (sessionCustody && (custodySessionId === null
       || input.purpose.kind !== 'external_action'
@@ -842,7 +851,7 @@ export async function prepareRequesterAccountActionContext(input: Readonly<{
     if (sessionCustody && !await sessionCustody.isCurrent()) return refused('requester_session_currentness');
     const hasBox = finiteWake ? Boolean(finiteWake.requesterAccountContext) : Boolean(root.data.requesterAccountContext);
     const encoded = hasBox ? openExternalActionRequesterAccountContextV1({ ...input, includeInvocation: true }) : null;
-    const retainedCredentials = sessionCustody?.credentials ?? (regularOwnAccount ? input.ownCredentials : undefined);
+    const retainedCredentials = sessionCustody?.credentials ?? (ownAccount ? input.ownCredentials : undefined);
     const credentials = hasBox
       ? encoded ? decodeStoredCredentials(encoded.credentials) : null
       : !moveRecipient && !preparation && !finiteWake && retainedCredentials
