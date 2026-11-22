@@ -49,6 +49,81 @@ describe('Project Scripts Setup controls', () => {
     beforeEach(async () => { await harness.reset(); actionOperationStore.reset(); rpc.machine.mockReset(); });
     afterEach(() => standardCleanup());
 
+    it('settles an already admitted shared requester Setup without a custodian push', async () => {
+        const { useProjectScriptsController } = await import('./useProjectScriptsController');
+        const { useServerCredentialAccountScopeBindings } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+        const { useActiveActionOperations } = await import('@/sync/domains/actionOperations/useActionOperations');
+        const home = await harness.addHome({ name: 'Member Setup', serverUrl: 'https://member-setup.test', accountId: 'member' });
+        const serverId = resolveServerProfileScopeIdForIdentifier(home);
+        const workspace = { serverId, workspaceId: 'checkout', machineId: 'guest', rootPath: '/srv/member/checkout' };
+        // The live shared-member projects.prepare receipt: accepted projectCommand for its Source checkout.
+        const accepted = { ...operation(serverId).snapshot, operationId: 'member-setup', state: 'accepted' as const,
+            scope: { accountId: 'member', machineId: 'guest' },
+            domainRef: { kind: 'projectCommand' as const, purpose: 'setup' as const, serverId, machineId: 'guest',
+                workspaceRefId: workspace.workspaceId, cwd: workspace.rootPath, sourceWorkspace: workspace } };
+        const terminal = createDeferred<unknown>();
+        rpc.machine.mockReturnValue(terminal.promise);
+        actionOperationStore.mergeSnapshots({ serverId, snapshots: [accepted] });
+        const homes = [serverId];
+        const hook = await renderHook(() => ({
+            controller: useProjectScriptsController(workspace, () => {},
+                useServerCredentialAccountScopeBindings(homes).get(serverId) ?? null),
+            active: useActiveActionOperations(),
+        }));
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent().controller.ready).toBe(true));
+            expect(hook.getCurrent().controller.setupOperation?.snapshot.state, JSON.stringify(hook.getCurrent().controller.failure)).toBe('accepted');
+            expect(hook.getCurrent().active.map(operation => operation.snapshot.operationId)).toContain(accepted.operationId);
+            await waitForHomeGovernance(() => expect(rpc.machine).toHaveBeenCalledTimes(1));
+            expect(rpc.machine).toHaveBeenCalledWith(expect.objectContaining({ serverId, accountId: 'member', machineId: 'guest',
+                method: 'actionOperation.get.v2', payload: { operationId: accepted.operationId, waitForTerminal: true } }));
+            await act(async () => { terminal.resolve({ kind: 'found', operation: { ...accepted, revision: 12,
+                state: 'succeeded', settledAt: 3, result: { success: true } } }); });
+            await waitForHomeGovernance(() => expect(hook.getCurrent().controller.setupOperation).toMatchObject({
+                snapshotComplete: true, snapshot: { revision: 12, state: 'succeeded' },
+            }));
+            expect(hook.getCurrent().active).toEqual([]);
+            expect(rpc.machine).toHaveBeenCalledTimes(1);
+        } finally { await hook.unmount(); }
+    });
+
+    it.each(['named', 'native'] as const)('settles a shared requester %s Script through its custody Machine without a push', async kind => {
+        const { useProjectScriptsController } = await import('./useProjectScriptsController');
+        const { useProjectScriptRun } = await import('./projectScriptRuns');
+        const { useServerCredentialAccountScopeBindings } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+        const home = await harness.addHome({ name: 'Member Scripts', serverUrl: 'https://member-scripts.test', accountId: 'member' });
+        const serverId = resolveServerProfileScopeIdForIdentifier(home);
+        const workspace = { serverId, workspaceId: 'checkout', machineId: 'source', rootPath: '/srv/member/checkout' };
+        const source = { kind: 'native' as const, tool: 'package_script', file: 'package.json', target: 'build' };
+        const selection = kind === 'named' ? { kind: 'named' as const, name: 'build' } : { kind: 'native' as const, source };
+        const accepted = { ...operation(serverId).snapshot, operationId: 'member-script', actionId: 'projects.script.run', state: 'accepted' as const,
+            scope: { accountId: 'member', machineId: 'custody' },
+            domainRef: { kind: 'projectCommand' as const, purpose: 'script' as const, serverId, machineId: 'worker',
+                workspaceRefId: 'execution', cwd: '/execution', sourceWorkspace: workspace,
+                script: { ...(kind === 'named' ? { name: 'build' } : {}), source } } };
+        actionOperationStore.mergeSnapshots({ serverId, snapshots: [accepted] });
+        const terminal = createDeferred<unknown>();
+        rpc.machine.mockReturnValue(terminal.promise);
+        const homes = [serverId];
+        const hook = await renderHook(() => {
+            const controller = useProjectScriptsController(workspace, () => {},
+                useServerCredentialAccountScopeBindings(homes).get(serverId) ?? null);
+            return useProjectScriptRun(workspace, selection, controller.accountId, controller.operationLifetime);
+        });
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent()?.snapshot.state).toBe('accepted'));
+            await waitForHomeGovernance(() => expect(rpc.machine).toHaveBeenCalledTimes(1));
+            expect(rpc.machine).toHaveBeenCalledWith(expect.objectContaining({ serverId, accountId: 'member', machineId: 'custody',
+                payload: { operationId: accepted.operationId, waitForTerminal: true } }));
+            await act(async () => { terminal.resolve({ kind: 'found', operation: { ...accepted, revision: 12,
+                state: 'succeeded', settledAt: 3 } }); });
+            await waitForHomeGovernance(() => expect(hook.getCurrent()).toMatchObject({
+                snapshotComplete: true, snapshot: { revision: 12, state: 'succeeded' },
+            }));
+            expect(rpc.machine).toHaveBeenCalledTimes(1);
+        } finally { await hook.unmount(); }
+    });
+
     it.each(['thisTime', 'untilChanged'] as const)('accepts and consents to a shared update with one %s decision', async decision => {
         const { useProjectScriptsController } = await import('./useProjectScriptsController');
         const { useServerCredentialAccountScopeBindings } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
@@ -639,6 +714,10 @@ describe('Project Scripts Setup controls', () => {
                 workspaceRefId: workspace.workspaceId, cwd: '/repo', sourceWorkspace: workspace },
         };
         actionOperationStore.mergeSnapshots({ serverId, snapshots: [setup] });
+        // The shared Setup consumer now follows the finite owner even without an Account push.
+        const terminal = createDeferred<unknown>();
+        rpc.machine.mockImplementation(async request => request.method === 'actionOperation.get.v2'
+            ? terminal.promise : { kind: 'requested' });
         const homes = [serverId];
         const changed = () => {};
         const hook = await renderHook(() => useProjectScriptsController(workspace, changed,
@@ -651,8 +730,9 @@ describe('Project Scripts Setup controls', () => {
             expect(hook.getCurrent().setupReviewOpen).toBe(true);
             act(() => hook.getCurrent().dismissConsent());
             expect(hook.getCurrent().setupReviewOpen).toBe(false);
-            expect(rpc.machine).not.toHaveBeenCalled();
-            rpc.machine.mockResolvedValue({ kind: 'requested' });
+            await waitForHomeGovernance(() => expect(rpc.machine).toHaveBeenCalledTimes(1));
+            expect(rpc.machine).toHaveBeenCalledWith(expect.objectContaining({ serverId, machineId: 'machine-1',
+                method: 'actionOperation.get.v2', payload: { operationId: setup.operationId, waitForTerminal: true } }));
             act(() => hook.getCurrent().setupStop.requestStop());
             await waitForHomeGovernance(() => expect(hook.getCurrent().setupStop.feedback).toBe('requested'));
             expect(rpc.machine).toHaveBeenCalledWith(expect.objectContaining({ serverId, machineId: 'machine-1',

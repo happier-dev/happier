@@ -806,7 +806,8 @@ function DeclaredScriptRow(
   }>,
 ) {
   const rowKey = projectScriptRowKey(props.workspace, props.name);
-  const operation = useProjectScriptRun(props.workspace, { kind: 'named', name: props.name }, props.controller.accountId);
+  const operation = useProjectScriptRun(props.workspace, { kind: 'named', name: props.name }, props.controller.accountId,
+    props.controller.operationLifetime);
   const source = describeProjectCommandSource(props.declaration.source, props.invocation);
   const resolvedChoice = resolveProjectExecutionChoiceV1({
     execution: props.declaration.execution ?? 'primary',
@@ -1450,6 +1451,7 @@ function DetectedGroups(
             entry={row.entry}
             rowKey={row.rowKey}
             accountId={props.controller.accountId}
+            operationLifetime={props.controller.operationLifetime}
             pending={props.controller.pendingKeys[row.rowKey] === true}
             failureCode={props.controller.failure?.key === row.rowKey ? props.controller.failure.code : null}
             run={props.controller.run}

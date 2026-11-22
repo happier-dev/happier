@@ -92,7 +92,7 @@ export function useProjectScriptsController(
   }>,
 ) {
   const accountId = binding?.isCurrent() ? binding.accountId : null;
-  const setupOperation = useProjectSetupRun(workspace, accountId);
+  const setupOperation = useProjectSetupRun(workspace, accountId, binding);
   const setupStop = useActionOperationStopControl(setupOperation);
   const scopeKey = JSON.stringify([
     workspace.serverId,
@@ -468,6 +468,7 @@ export function useProjectScriptsController(
 
   return {
     accountId,
+    operationLifetime: binding,
     setupOperation,
     retainedOperation,
     setupStop,

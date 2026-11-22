@@ -156,7 +156,11 @@ describe('selected Team batch progress', () => {
         act(() => actionOperationStore.setMachineObservation(query, 'reconnecting'));
         act(() => actionOperationStore.setMachineObservation(query, 'available'));
         expect(readPresentationNotice()).toBeNull();
-        expect(daemonReply.mock.calls.length).toBeLessThanOrEqual(1);
+        // The selected Open and its current Setup each join their own finite owner once.
+        expect(daemonRequests.map(request => request.params)).toEqual([
+            expect.objectContaining({ requestIdentity: { actionId: 'projects.open', requestId } }),
+            expect.objectContaining({ operationId: 'setup', waitForTerminal: true }),
+        ]);
     });
     it('queues only explicit pending selection and stops queuing when its runner settles', async () => {
         const batch = selectedBatch();

@@ -32,7 +32,7 @@ export function useTeamSetupRepositoryProgress(
         return parsed.success ? parsed.data : null;
     }, [rawResult]);
     const workspace = result?.kind === 'opened' && 'machineId' in result.workspace ? result.workspace : null;
-    const latestSetup = useProjectSetupRun(workspace, query.accountId);
+    const latestSetup = useProjectSetupRun(workspace, query.accountId, lifetime);
     const settledAt = latestSetup?.snapshot.settledAt;
     // The current native Open already accounts for matching past completion. An older
     // settlement on the same source Machine cannot settle this selected request.

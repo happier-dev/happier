@@ -28,6 +28,7 @@ export const DetectedRow = React.memo(function DetectedRow(props: Readonly<{
   entry: ProjectDefinitionDetectionV1['entries'][number];
   rowKey: string;
   accountId: string | null;
+  operationLifetime: ProjectScriptsController['operationLifetime'];
   pending: boolean;
   failureCode: string | null;
   run: ProjectScriptsController['run'];
@@ -37,7 +38,7 @@ export const DetectedRow = React.memo(function DetectedRow(props: Readonly<{
 }>) {
   const { theme } = useUnistyles();
   const source = props.entry.source;
-  const operation = useProjectScriptRun(props.workspace, { kind: 'native', source }, props.accountId);
+  const operation = useProjectScriptRun(props.workspace, { kind: 'native', source }, props.accountId, props.operationLifetime);
   const { run, rowKey } = props;
   const onRun = React.useCallback(() => { void run(rowKey, { kind: 'native', source }); }, [run, rowKey, source]);
   if (props.entry.usage === 'service') return (
