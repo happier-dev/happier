@@ -187,6 +187,7 @@ export interface NewSessionWizardAgentProps {
     selectedTeamCredentialModel?: React.ComponentProps<typeof NewSessionModelSelectionContent>['selectedTeamCredentialModel'];
     onSelectTeamCredentialModel?: React.ComponentProps<typeof NewSessionModelSelectionContent>['onSelectTeamCredentialModel'];
     providerModelProjectionAuthoritative?: boolean;
+    providerModelProjectionResolving?: boolean;
     providerModelProjectionError?: ProviderErrorV1 | null;
     providerModelProjectionFailures?: React.ComponentProps<typeof NewSessionModelSelectionContent>['providerProjectionFailures'];
     retryProviderModelProjection?: (() => Promise<void> | void) | null;
@@ -491,6 +492,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         selectedTeamCredentialModel,
         onSelectTeamCredentialModel,
         providerModelProjectionAuthoritative,
+        providerModelProjectionResolving,
         providerModelProjectionError,
         providerModelProjectionFailures,
         retryProviderModelProjection,
@@ -1122,6 +1124,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                                     selectedTeamCredentialModel={selectedTeamCredentialModel}
                                                     onSelectTeamCredentialModel={onSelectTeamCredentialModel}
                                                     providerProjectionAuthoritative={providerModelProjectionAuthoritative === true}
+                                                    providerProjectionResolving={providerModelProjectionResolving}
                                                     providerProjectionError={providerModelProjectionError}
                                                     providerProjectionFailures={providerModelProjectionFailures}
                                                     retryProviderProjection={retryProviderModelProjection}

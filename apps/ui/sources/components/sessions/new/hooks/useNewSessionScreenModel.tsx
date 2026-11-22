@@ -4602,6 +4602,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
                 : [],
             declarationContext: providerDeclarationContext(selectedMachineId, selectedMachineId === agentCatalogMachineId ? currentProjectionInputs?.pluginProjectionV2 : null),
             providerModelProjectionAuthoritative: providerModelProjection.status === 'success',
+            providerModelProjectionResolving: providerModelProjection.status === 'pending',
             providerModelProjectionError: providersFeatureEnabled ? providerModelProjection.error : null,
             providerModelProjectionFailures: providersFeatureEnabled ? providerModelProjection.refreshFailures : [],
             retryProviderModelProjection: providersFeatureEnabled ? providerModelProjection.refresh : null,

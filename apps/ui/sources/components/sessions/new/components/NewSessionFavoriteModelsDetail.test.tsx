@@ -117,7 +117,7 @@ function createBuiltInEntry(agentId: AgentId, title: string): ResolvedBackendCat
     return {
         agentCatalogEntry: createResolvedAgentCatalogEntryFixture({ agentId }),
         backendTarget,
-        backendTargetKey: `agent:${agentId}`,
+        backendTargetKey: buildBackendTargetKeyV2(backendTarget),
         kind: 'builtInAgent',
         backendId: agentId,
         agentId: agentId,
@@ -162,6 +162,7 @@ const preflightModelsByTargetKey: Record<string, {
     modelOptions: ModelOption[];
     preflightModels: PreflightModelList | null;
     probePhase?: 'idle' | 'loading' | 'refreshing';
+    retainedModelName?: (id: string) => string | null;
 }> = {};
 const providerGroupsByTargetKey: Record<string, any[]> = {};
 const providerFailuresByTargetKey: Record<string, any[]> = {};
@@ -192,14 +193,15 @@ vi.mock('@/providers/hooks/useProviderModelProjection', () => ({
 
 vi.mock('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState', () => ({
     useNewSessionPreflightModelsState: ({ backendTarget }: { backendTarget: BackendTargetRefV2 }) => {
-        const targetKey = `agent:${backendTarget.backendId}`;
+        const targetKey = buildBackendTargetKeyV2(backendTarget);
         return {
             modelOptions: preflightModelsByTargetKey[targetKey]?.modelOptions ?? [],
             preflightModels: preflightModelsByTargetKey[targetKey]?.preflightModels ?? {
                 availableModels: [],
                 supportsFreeform: false,
             },
-            probe: { phase: preflightModelsByTargetKey[targetKey]?.probePhase ?? 'idle' },
+            probe: { phase: preflightModelsByTargetKey[targetKey]?.probePhase ?? 'idle',
+                retainedModelName: preflightModelsByTargetKey[targetKey]?.retainedModelName },
         };
     },
 }));
@@ -230,13 +232,13 @@ describe('NewSessionFavoriteModelsDetail', () => {
     it('renders all available favorite models in one shared favorites group', async () => {
         const refreshSharedCatalogs = vi.fn();
         agentCoreById.claude = { dynamicProbe: 'static-only' };
-        preflightModelsByTargetKey['agent:claude'] = {
+        preflightModelsByTargetKey['agent:happier.agent.claude/claude'] = {
             modelOptions: [
                 { value: 'claude-opus-4-6', label: 'Opus 4.6', description: 'Claude model.' },
             ],
             preflightModels: null,
         };
-        preflightModelsByTargetKey['agent:codex'] = {
+        preflightModelsByTargetKey['agent:happier.agent.codex/codex'] = {
             modelOptions: [],
             preflightModels: {
                 availableModels: [{ id: 'gpt-5.5', name: 'GPT 5.5', description: 'Codex model.' }],
@@ -247,13 +249,13 @@ describe('NewSessionFavoriteModelsDetail', () => {
 
         await renderScreen(<NewSessionFavoriteModelsDetail
             favoriteModelSelections={[
-                favoriteModel('agent:claude', 'claude-opus-4-6', {
+                favoriteModel('agent:happier.agent.claude/claude', 'claude-opus-4-6', {
                     catalogAgentId: 'claude',
                     builtInAgentId: 'claude',
                     backendLabel: 'Claude',
                     modelLabel: 'Opus 4.6',
                 }),
-                favoriteModel('agent:codex', 'gpt-5.5', {
+                favoriteModel('agent:happier.agent.codex/codex', 'gpt-5.5', {
                     catalogAgentId: 'codex',
                     builtInAgentId: 'codex',
                     backendLabel: 'Codex',
@@ -264,7 +266,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
                 createBuiltInEntry('claude', 'Claude'),
                 createBuiltInEntry('codex', 'Codex'),
             ]}
-            selectedBackendTargetKey="agent:claude"
+            selectedBackendTargetKey="agent:happier.agent.claude/claude"
             selectedModelId="claude-opus-4-6"
             selectedMachineId="machine-1"
             capabilityServerId="server-1"
@@ -314,7 +316,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
     // The pane names a favourite the way the Agent pane does: its saved Thinking after its name (PICKER-ACCEPT-1120).
     it('titles each favourite with its saved Thinking, as the Agent pane does', async () => {
         agentCoreById.claude = { dynamicProbe: 'static-only' };
-        preflightModelsByTargetKey['agent:claude'] = {
+        preflightModelsByTargetKey['agent:happier.agent.claude/claude'] = {
             modelOptions: [
                 { value: 'claude-opus-4-6', label: 'Opus 4.6', description: 'Claude model.' },
                 { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6', description: 'Claude model.' },
@@ -324,13 +326,13 @@ describe('NewSessionFavoriteModelsDetail', () => {
         const { NewSessionFavoriteModelsDetail } = await import('./NewSessionFavoriteModelsDetail');
         await renderScreen(<NewSessionFavoriteModelsDetail
             favoriteModelSelections={[
-                favoriteModel('agent:claude', 'claude-opus-4-6', { catalogAgentId: 'claude', builtInAgentId: 'claude',
+                favoriteModel('agent:happier.agent.claude/claude', 'claude-opus-4-6', { catalogAgentId: 'claude', builtInAgentId: 'claude',
                     backendLabel: 'Claude', modelLabel: 'Opus 4.6', reasoningEffort: 'high' }),
-                favoriteModel('agent:claude', 'claude-sonnet-4-6', { catalogAgentId: 'claude', builtInAgentId: 'claude',
+                favoriteModel('agent:happier.agent.claude/claude', 'claude-sonnet-4-6', { catalogAgentId: 'claude', builtInAgentId: 'claude',
                     backendLabel: 'Claude', modelLabel: 'Sonnet 4.6' }),
             ]}
             resolvedBackendEntries={[createBuiltInEntry('claude', 'Claude')]}
-            selectedBackendTargetKey="agent:claude"
+            selectedBackendTargetKey="agent:happier.agent.claude/claude"
             selectedModelId="claude-sonnet-4-6"
             selectedMachineId="machine-1"
             capabilityServerId="server-1"
@@ -352,16 +354,16 @@ describe('NewSessionFavoriteModelsDetail', () => {
     });
 
     it('surfaces projection-wide Provider errors alongside per-connection failures', async () => {
-        providerErrorsByTargetKey['agent:codex'] = createProviderErrorV1('provider_machine_unavailable', {
+        providerErrorsByTargetKey['agent:happier.agent.codex/codex'] = createProviderErrorV1('provider_machine_unavailable', {
             machineId: 'machine-1',
         });
         const { NewSessionFavoriteModelsDetail } = await import('./NewSessionFavoriteModelsDetail');
         await renderScreen(<NewSessionFavoriteModelsDetail
-            favoriteModelSelections={[favoriteModel('agent:codex', 'gpt-5.5', {
+            favoriteModelSelections={[favoriteModel('agent:happier.agent.codex/codex', 'gpt-5.5', {
                 catalogAgentId: 'codex', builtInAgentId: 'codex', backendLabel: 'Codex', modelLabel: 'GPT 5.5',
             })]}
             resolvedBackendEntries={[createBuiltInEntry('codex', 'Codex')]}
-            selectedBackendTargetKey="agent:codex"
+            selectedBackendTargetKey="agent:happier.agent.codex/codex"
             selectedModelId="gpt-5.5"
             selectedMachineId="machine-1"
             capabilityServerId="server-1"
@@ -378,7 +380,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
     });
 
     it('surfaces every Provider projection failure for favorite backends', async () => {
-        providerFailuresByTargetKey['agent:codex'] = [
+        providerFailuresByTargetKey['agent:happier.agent.codex/codex'] = [
             {
                 connectionId: 'pc_secret',
                 error: createProviderErrorV1('provider_secret_missing', {
@@ -394,11 +396,11 @@ describe('NewSessionFavoriteModelsDetail', () => {
         ];
         const { NewSessionFavoriteModelsDetail } = await import('./NewSessionFavoriteModelsDetail');
         await renderScreen(<NewSessionFavoriteModelsDetail
-            favoriteModelSelections={[favoriteModel('agent:codex', 'gpt-5.5', {
+            favoriteModelSelections={[favoriteModel('agent:happier.agent.codex/codex', 'gpt-5.5', {
                 catalogAgentId: 'codex', builtInAgentId: 'codex', backendLabel: 'Codex', modelLabel: 'GPT 5.5',
             })]}
             resolvedBackendEntries={[createBuiltInEntry('codex', 'Codex')]}
-            selectedBackendTargetKey="agent:codex"
+            selectedBackendTargetKey="agent:happier.agent.codex/codex"
             selectedModelId="gpt-5.5"
             selectedMachineId="machine-1"
             capabilityServerId="server-1"
@@ -416,14 +418,14 @@ describe('NewSessionFavoriteModelsDetail', () => {
 
     it('keeps the real favorite picker root scope stable across non-structural parent rerenders', async () => {
         renderActualOptionPickerOverlay = true;
-        preflightModelsByTargetKey['agent:codex'] = {
+        preflightModelsByTargetKey['agent:happier.agent.codex/codex'] = {
             modelOptions: [],
             preflightModels: {
                 availableModels: [{ id: 'gpt-5.5', name: 'GPT 5.5' }],
                 supportsFreeform: false,
             },
         };
-        const favorite = favoriteModel('agent:codex', 'gpt-5.5', {
+        const favorite = favoriteModel('agent:happier.agent.codex/codex', 'gpt-5.5', {
             catalogAgentId: 'codex',
             builtInAgentId: 'codex',
             backendLabel: 'Codex',
@@ -439,7 +441,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
             <NewSessionFavoriteModelsDetail
                 favoriteModelSelections={favoriteModelSelections}
                 resolvedBackendEntries={resolvedBackendEntries}
-                selectedBackendTargetKey="agent:codex"
+                selectedBackendTargetKey="agent:happier.agent.codex/codex"
                 selectedModelId="gpt-5.5"
                 selectedMachineId="machine-1"
                 capabilityServerId="server-1"
@@ -655,7 +657,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
                     v: 1,
                     updatedAt: 1,
                     ref: {
-                        agentTargetKey: 'agent:codex',
+                        agentTargetKey: 'agent:happier.agent.codex/codex',
                         providerConnectionId: `pc_deleted_${index}`,
                         modelId: 'shared-model',
                     },
@@ -677,7 +679,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
         await renderScreen(<NewSessionFavoriteModelsDetail
             favoriteModelSelections={favorites}
             resolvedBackendEntries={[createBuiltInEntry('codex', 'Codex')]}
-            selectedBackendTargetKey="agent:codex"
+            selectedBackendTargetKey="agent:happier.agent.codex/codex"
             selectedModelId="default"
             selectedMachineId="machine-1"
             capabilityServerId="server-1"
@@ -708,15 +710,15 @@ describe('NewSessionFavoriteModelsDetail', () => {
 
     it('applies hidden native model policy when Providers are enabled', async () => {
         providersFeatureEnabled = true;
-        const favorite = favoriteModel('agent:codex', 'hidden-native', {
+        const favorite = favoriteModel('agent:happier.agent.codex/codex', 'hidden-native', {
             modelLabel: 'Hidden native', backendLabel: 'Codex', catalogAgentId: 'codex', builtInAgentId: 'codex',
         });
-        preflightModelsByTargetKey['agent:codex'] = {
+        preflightModelsByTargetKey['agent:happier.agent.codex/codex'] = {
             modelOptions: [{ value: 'hidden-native', label: 'Hidden native', description: '' }],
             preflightModels: { availableModels: [{ id: 'hidden-native', name: 'Hidden native' }], supportsFreeform: false },
         };
         const visibilityKey = serializeModelVisibilityRefV1({
-            scope: 'agent', agentTargetKey: 'agent:codex', providerConnectionId: null, modelId: 'hidden-native',
+            scope: 'agent', agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'hidden-native',
         });
         const scope = await account.restore({
             machines: [],
@@ -733,7 +735,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
         await renderScreen(<NewSessionFavoriteModelsDetail
             favoriteModelSelections={[favorite]}
             resolvedBackendEntries={[createBuiltInEntry('codex', 'Codex')]}
-            selectedBackendTargetKey="agent:codex"
+            selectedBackendTargetKey="agent:happier.agent.codex/codex"
             selectedModelId="default"
             selectedMachineId="machine-1"
             capabilityServerId={scope.serverId}
@@ -745,7 +747,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
         />);
 
         const picker = optionPickerOverlayProps.at(-1);
-        const value = favoriteOptionValue('agent:codex', 'hidden-native');
+        const value = favoriteOptionValue('agent:happier.agent.codex/codex', 'hidden-native');
         expect(picker?.options).toEqual(expect.arrayContaining([expect.objectContaining({ value })]));
         picker?.onSelect?.(value);
         expect(onSelectFavoriteModel).not.toHaveBeenCalled();
@@ -754,7 +756,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
     it('keeps native favorites available and disables Provider projection when Providers are unavailable', async () => {
         providersFeatureEnabled = false;
         retainStaleProviderProjectionDataWhenDisabled = true;
-        const favorite = favoriteModel('agent:codex', 'hidden-native', {
+        const favorite = favoriteModel('agent:happier.agent.codex/codex', 'hidden-native', {
             modelLabel: 'Hidden native', backendLabel: 'Codex', catalogAgentId: 'codex', builtInAgentId: 'codex',
         });
         const providerFavorite = FavoriteModelSelectionV1Schema.parse({
@@ -762,7 +764,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
                 v: 1,
                 updatedAt: 1,
                 ref: {
-                    agentTargetKey: 'agent:codex',
+                    agentTargetKey: 'agent:happier.agent.codex/codex',
                     providerConnectionId: 'pc_stale',
                     modelId: 'stale-provider-model',
                 },
@@ -772,7 +774,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
             catalogAgentId: 'codex',
             builtInAgentId: 'codex',
         });
-        providerGroupsByTargetKey['agent:codex'] = [{
+        providerGroupsByTargetKey['agent:happier.agent.codex/codex'] = [{
             connectionId: providerFavorite.selection.ref.providerConnectionId,
             providerName: 'Gateway',
             connectionName: 'Stale cache',
@@ -800,12 +802,12 @@ describe('NewSessionFavoriteModelsDetail', () => {
                 visibility: 'visible',
             }],
         }];
-        preflightModelsByTargetKey['agent:codex'] = {
+        preflightModelsByTargetKey['agent:happier.agent.codex/codex'] = {
             modelOptions: [{ value: 'hidden-native', label: 'Hidden native', description: '' }],
             preflightModels: { availableModels: [{ id: 'hidden-native', name: 'Hidden native' }], supportsFreeform: false },
         };
         const visibilityKey = serializeModelVisibilityRefV1({
-            scope: 'agent', agentTargetKey: 'agent:codex', providerConnectionId: null, modelId: 'hidden-native',
+            scope: 'agent', agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'hidden-native',
         });
         const hiddenSettings = settingsParse({
             providerSettingsV1: {
@@ -819,7 +821,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
         await renderScreen(<NewSessionFavoriteModelsDetail
             favoriteModelSelections={[favorite, providerFavorite]}
             resolvedBackendEntries={[createBuiltInEntry('codex', 'Codex')]}
-            selectedBackendTargetKey="agent:codex"
+            selectedBackendTargetKey="agent:happier.agent.codex/codex"
             selectedModelId="default"
             selectedMachineId="machine-1"
             capabilityServerId="server-1"
@@ -832,24 +834,24 @@ describe('NewSessionFavoriteModelsDetail', () => {
 
         expect(providerProjectionInputs.length).toBeGreaterThan(0);
         expect(providerProjectionInputs.every((input) => (
-            input.enabled === false && input.agentTargetKey === 'agent:codex'
+            input.enabled === false && input.agentTargetKey === 'agent:happier.agent.codex/codex'
         ))).toBe(true);
         const picker = optionPickerOverlayProps.at(-1);
-        const value = favoriteOptionValue('agent:codex', 'hidden-native');
+        const value = favoriteOptionValue('agent:happier.agent.codex/codex', 'hidden-native');
         picker?.onSelect?.(value);
         expect(onSelectFavoriteModel).toHaveBeenCalledWith(
-            expect.objectContaining({ backendTargetKey: 'agent:codex' }),
-            expectedNativeSelection('agent:codex', 'hidden-native'),
+            expect.objectContaining({ backendTargetKey: 'agent:happier.agent.codex/codex' }),
+            expectedNativeSelection('agent:happier.agent.codex/codex', 'hidden-native'),
             {},
         );
         onSelectFavoriteModel.mockClear();
-        picker?.onSelect?.(favoriteOptionValue('agent:codex', 'stale-provider-model', 'pc_stale'));
+        picker?.onSelect?.(favoriteOptionValue('agent:happier.agent.codex/codex', 'stale-provider-model', 'pc_stale'));
         expect(onSelectFavoriteModel).not.toHaveBeenCalled();
     });
 
     it('updates favorite selectability when availability changes without changing rendered option text', async () => {
         const onSelectFavoriteModel = vi.fn();
-        preflightModelsByTargetKey['agent:codex'] = {
+        preflightModelsByTargetKey['agent:happier.agent.codex/codex'] = {
             modelOptions: [],
             preflightModels: {
                 availableModels: [],
@@ -857,7 +859,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
             },
         };
         const codexEntry = createBuiltInEntry('codex', 'Codex');
-        const favorite = favoriteModel('agent:codex', 'gpt-5.5', {
+        const favorite = favoriteModel('agent:happier.agent.codex/codex', 'gpt-5.5', {
             catalogAgentId: 'codex',
             builtInAgentId: 'codex',
             backendLabel: 'Codex',
@@ -868,7 +870,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
         const screen = await renderScreen(<NewSessionFavoriteModelsDetail
             favoriteModelSelections={[favorite]}
             resolvedBackendEntries={[codexEntry]}
-            selectedBackendTargetKey="agent:claude"
+            selectedBackendTargetKey="agent:happier.agent.claude/claude"
             selectedModelId="claude-opus-4-7"
             selectedMachineId="machine-1"
             capabilityServerId="server-1"
@@ -881,10 +883,10 @@ describe('NewSessionFavoriteModelsDetail', () => {
         />);
 
         const stalePickerProps = optionPickerOverlayProps.at(-1);
-        stalePickerProps?.onSelect?.(favoriteOptionValue('agent:codex', 'gpt-5.5'));
+        stalePickerProps?.onSelect?.(favoriteOptionValue('agent:happier.agent.codex/codex', 'gpt-5.5'));
         expect(onSelectFavoriteModel).not.toHaveBeenCalled();
 
-        preflightModelsByTargetKey['agent:codex'] = {
+        preflightModelsByTargetKey['agent:happier.agent.codex/codex'] = {
             modelOptions: [
                 { value: 'gpt-5.5', label: 'GPT 5.5', description: 'Catalog model.' },
             ],
@@ -897,7 +899,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
         await screen.update(<NewSessionFavoriteModelsDetail
             favoriteModelSelections={[favorite]}
             resolvedBackendEntries={[codexEntry]}
-            selectedBackendTargetKey="agent:claude"
+            selectedBackendTargetKey="agent:happier.agent.claude/claude"
             selectedModelId="claude-opus-4-7"
             selectedMachineId="machine-1"
             capabilityServerId="server-1"
@@ -910,14 +912,14 @@ describe('NewSessionFavoriteModelsDetail', () => {
         />);
 
         const availablePickerProps = optionPickerOverlayProps.at(-1);
-        availablePickerProps?.onSelect?.(favoriteOptionValue('agent:codex', 'gpt-5.5'));
+        availablePickerProps?.onSelect?.(favoriteOptionValue('agent:happier.agent.codex/codex', 'gpt-5.5'));
 
-        expect(onSelectFavoriteModel).toHaveBeenCalledWith(codexEntry, expectedNativeSelection('agent:codex', 'gpt-5.5'), {});
+        expect(onSelectFavoriteModel).toHaveBeenCalledWith(codexEntry, expectedNativeSelection('agent:happier.agent.codex/codex', 'gpt-5.5'), {});
     });
 
     it('selects favorite from merged model options when preflight omits it', async () => {
         const onSelectFavoriteModel = vi.fn();
-        preflightModelsByTargetKey['agent:codex'] = {
+        preflightModelsByTargetKey['agent:happier.agent.codex/codex'] = {
             modelOptions: [
                 { value: 'gpt-5.4', label: 'GPT 5.4', description: 'Preflight model.' },
                 { value: 'gpt-5.5', label: 'GPT 5.5', description: 'Merged catalog model.' },
@@ -932,7 +934,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
 
         await renderScreen(<NewSessionFavoriteModelsDetail
             favoriteModelSelections={[
-                favoriteModel('agent:codex', 'gpt-5.5', {
+                favoriteModel('agent:happier.agent.codex/codex', 'gpt-5.5', {
                     catalogAgentId: 'codex',
                     builtInAgentId: 'codex',
                     backendLabel: 'Codex',
@@ -940,7 +942,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
                 }),
             ]}
             resolvedBackendEntries={[codexEntry]}
-            selectedBackendTargetKey="agent:codex"
+            selectedBackendTargetKey="agent:happier.agent.codex/codex"
             selectedModelId="default"
             selectedMachineId="machine-1"
             capabilityServerId="server-1"
@@ -953,35 +955,36 @@ describe('NewSessionFavoriteModelsDetail', () => {
         />);
 
         const latestPickerProps = optionPickerOverlayProps.at(-1);
-        latestPickerProps?.onSelect?.(favoriteOptionValue('agent:codex', 'gpt-5.5'));
+        latestPickerProps?.onSelect?.(favoriteOptionValue('agent:happier.agent.codex/codex', 'gpt-5.5'));
 
-        expect(onSelectFavoriteModel).toHaveBeenCalledWith(codexEntry, expectedNativeSelection('agent:codex', 'gpt-5.5'), {});
+        expect(onSelectFavoriteModel).toHaveBeenCalledWith(codexEntry, expectedNativeSelection('agent:happier.agent.codex/codex', 'gpt-5.5'), {});
     });
 
     it('selects dynamic favorite while model availability is loading', async () => {
         const onSelectFavoriteModel = vi.fn();
-        preflightModelsByTargetKey['agent:codex'] = {
+        preflightModelsByTargetKey['agent:happier.agent.codex/codex'] = {
             modelOptions: [],
             preflightModels: {
                 availableModels: [],
                 supportsFreeform: false,
             },
             probePhase: 'loading',
+            retainedModelName: (id) => id === 'gpt-6.2-sol' ? 'GPT-6.2-Sol' : null,
         };
         const codexEntry = createBuiltInEntry('codex', 'Codex');
         const { NewSessionFavoriteModelsDetail } = await import('./NewSessionFavoriteModelsDetail');
 
         await renderScreen(<NewSessionFavoriteModelsDetail
             favoriteModelSelections={[
-                favoriteModel('agent:codex', 'gpt-5.5', {
+                favoriteModel('agent:happier.agent.codex/codex', 'gpt-6.2-sol', {
                     catalogAgentId: 'codex',
                     builtInAgentId: 'codex',
                     backendLabel: 'Codex',
-                    modelLabel: 'GPT 5.5',
+                    modelLabel: 'gpt-6.2-sol',
                 }),
             ]}
             resolvedBackendEntries={[codexEntry]}
-            selectedBackendTargetKey="agent:codex"
+            selectedBackendTargetKey="agent:happier.agent.codex/codex"
             selectedModelId="default"
             selectedMachineId="machine-1"
             capabilityServerId="server-1"
@@ -994,14 +997,19 @@ describe('NewSessionFavoriteModelsDetail', () => {
         />);
 
         const latestPickerProps = optionPickerOverlayProps.at(-1);
-        latestPickerProps?.onSelect?.(favoriteOptionValue('agent:codex', 'gpt-5.5'));
+        expect(latestPickerProps?.options).toMatchObject([{ label: 'GPT-6.2-Sol' }]);
+        expect(latestPickerProps?.probe?.phase).toBe('idle');
+        expect(latestPickerProps?.favoriteOptions?.shortcutSlotByKey?.get(favoriteOptionValue('agent:happier.agent.codex/codex', 'gpt-6.2-sol'))).toBe(1);
+        const shortcut = latestPickerProps?.quickActionShortcuts?.find(({ shortcut }) => shortcut === 'cmd+1');
+        expect(shortcut).toBeDefined();
+        shortcut?.onActivate();
 
-        expect(onSelectFavoriteModel).toHaveBeenCalledWith(codexEntry, expectedNativeSelection('agent:codex', 'gpt-5.5'), {});
+        expect(onSelectFavoriteModel).toHaveBeenCalledWith(codexEntry, expectedNativeSelection('agent:happier.agent.codex/codex', 'gpt-6.2-sol'), {});
     });
 
     it('renders selected favorite model controls and routes control changes through the selected favorite backend', async () => {
         const onSelectFavoriteModelOptionValue = vi.fn();
-        preflightModelsByTargetKey['agent:codex'] = {
+        preflightModelsByTargetKey['agent:happier.agent.codex/codex'] = {
             modelOptions: [
                 {
                     value: 'gpt-5.5',
@@ -1047,7 +1055,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
 
         await renderScreen(<NewSessionFavoriteModelsDetail
             favoriteModelSelections={[
-                favoriteModel('agent:codex', 'gpt-5.5', {
+                favoriteModel('agent:happier.agent.codex/codex', 'gpt-5.5', {
                     catalogAgentId: 'codex',
                     builtInAgentId: 'codex',
                     backendLabel: 'Codex',
@@ -1055,7 +1063,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
                 }),
             ]}
             resolvedBackendEntries={[codexEntry]}
-            selectedBackendTargetKey="agent:codex"
+            selectedBackendTargetKey="agent:happier.agent.codex/codex"
             selectedModelId="gpt-5.5"
             selectedConfigOverrides={{ reasoning_effort: 'high' }}
             selectedMachineId="machine-1"
@@ -1082,7 +1090,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
 
         expect(onSelectFavoriteModelOptionValue).toHaveBeenCalledWith(
             codexEntry,
-            expectedNativeSelection('agent:codex', 'gpt-5.5'),
+            expectedNativeSelection('agent:happier.agent.codex/codex', 'gpt-5.5'),
             'reasoning_effort',
             'medium',
         );
@@ -1090,7 +1098,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
 
     it('drops incompatible model option overrides when selecting a favorite model', async () => {
         const onSelectFavoriteModel = vi.fn();
-        preflightModelsByTargetKey['agent:codex'] = {
+        preflightModelsByTargetKey['agent:happier.agent.codex/codex'] = {
             modelOptions: [
                 {
                     value: 'gpt-5.4',
@@ -1136,7 +1144,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
 
         await renderScreen(<NewSessionFavoriteModelsDetail
             favoriteModelSelections={[
-                favoriteModel('agent:codex', 'gpt-5.5', {
+                favoriteModel('agent:happier.agent.codex/codex', 'gpt-5.5', {
                     catalogAgentId: 'codex',
                     builtInAgentId: 'codex',
                     backendLabel: 'Codex',
@@ -1144,7 +1152,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
                 }),
             ]}
             resolvedBackendEntries={[codexEntry]}
-            selectedBackendTargetKey="agent:codex"
+            selectedBackendTargetKey="agent:happier.agent.codex/codex"
             selectedModelId="gpt-5.4"
             selectedConfigOverrides={{
                 reasoning_effort: 'xhigh',
@@ -1161,16 +1169,16 @@ describe('NewSessionFavoriteModelsDetail', () => {
         />);
 
         const latestPickerProps = optionPickerOverlayProps.at(-1);
-        latestPickerProps?.onSelect?.(favoriteOptionValue('agent:codex', 'gpt-5.5'));
+        latestPickerProps?.onSelect?.(favoriteOptionValue('agent:happier.agent.codex/codex', 'gpt-5.5'));
 
-        expect(onSelectFavoriteModel).toHaveBeenCalledWith(codexEntry, expectedNativeSelection('agent:codex', 'gpt-5.5'), {
+        expect(onSelectFavoriteModel).toHaveBeenCalledWith(codexEntry, expectedNativeSelection('agent:happier.agent.codex/codex', 'gpt-5.5'), {
             service_tier: 'fast',
         });
     });
 
     it('renders stale favorite models with a remove affordance instead of dropping the pane', async () => {
         const onRemoveFavoriteModelSelection = vi.fn();
-        const favorite = favoriteModel('agent:claude', 'retired-model', {
+        const favorite = favoriteModel('agent:happier.agent.claude/claude', 'retired-model', {
             catalogAgentId: 'claude',
             builtInAgentId: 'claude',
             backendLabel: 'Claude',
@@ -1183,7 +1191,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
             resolvedBackendEntries={[
                 createBuiltInEntry('claude', 'Claude'),
             ]}
-            selectedBackendTargetKey="agent:claude"
+            selectedBackendTargetKey="agent:happier.agent.claude/claude"
             selectedModelId="default"
             selectedMachineId="machine-1"
             capabilityServerId="server-1"
@@ -1204,14 +1212,14 @@ describe('NewSessionFavoriteModelsDetail', () => {
             iconSize: getOptionIconSize(option.icon),
         }))).toEqual([
             {
-                value: favoriteOptionValue('agent:claude', 'retired-model'),
+                value: favoriteOptionValue('agent:happier.agent.claude/claude', 'retired-model'),
                 label: 'Retired model',
                 description: 'Claude',
                 identityAgentId: 'claude',
                 iconSize: 20,
             },
         ]);
-        expect(latestPickerProps?.favoriteOptions?.values.has(favoriteOptionValue('agent:claude', 'retired-model'))).toBe(true);
+        expect(latestPickerProps?.favoriteOptions?.values.has(favoriteOptionValue('agent:happier.agent.claude/claude', 'retired-model'))).toBe(true);
 
         latestPickerProps?.favoriteOptions?.onToggle(latestPickerProps.options[0]);
 
@@ -1221,7 +1229,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
     it('routes an extended-context favorite control through model selection instead of config overrides', async () => {
         const onSelectFavoriteModel = vi.fn();
         const onSelectFavoriteModelOptionValue = vi.fn();
-        preflightModelsByTargetKey['agent:claude'] = {
+        preflightModelsByTargetKey['agent:happier.agent.claude/claude'] = {
             modelOptions: [{
                 value: 'claude-sonnet-4-6',
                 label: 'Sonnet 4.6',
@@ -1234,9 +1242,9 @@ describe('NewSessionFavoriteModelsDetail', () => {
         const { NewSessionFavoriteModelsDetail } = await import('./NewSessionFavoriteModelsDetail');
 
         await renderScreen(<NewSessionFavoriteModelsDetail
-            favoriteModelSelections={[favoriteModel('agent:claude', 'claude-sonnet-4-6')]}
+            favoriteModelSelections={[favoriteModel('agent:happier.agent.claude/claude', 'claude-sonnet-4-6')]}
             resolvedBackendEntries={[claudeEntry]}
-            selectedBackendTargetKey="agent:claude"
+            selectedBackendTargetKey="agent:happier.agent.claude/claude"
             selectedModelId="claude-sonnet-4-6"
             selectedConfigOverrides={{ reasoning_effort: 'high' }}
             selectedMachineId="machine-1"
@@ -1256,7 +1264,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
 
         expect(onSelectFavoriteModel).toHaveBeenCalledWith(
             claudeEntry,
-            expectedNativeSelection('agent:claude', 'claude-sonnet-4-6[1m]'),
+            expectedNativeSelection('agent:happier.agent.claude/claude', 'claude-sonnet-4-6[1m]'),
             { reasoning_effort: 'high' },
         );
         expect(onSelectFavoriteModelOptionValue).not.toHaveBeenCalled();

@@ -96,6 +96,8 @@ export function presentProviderModelRow(input: Readonly<{
      * context are not repeated under a name the row already shows.
      */
     statusOnly?: boolean;
+    /** Compact picker cards already index the exact id and show one status. */
+    compactPicker?: boolean;
 }>): ProviderModelRowPresentation {
     const label = input.name || input.modelId;
     const authorizationError = input.authorization?.authorized === false
@@ -148,17 +150,19 @@ export function presentProviderModelRow(input: Readonly<{
     };
     if (input.statusOnly !== true) {
         pushDetail(input.contextLabel);
-        if (label !== input.modelId) pushDetail(input.modelId);
+        if (!input.compactPicker && label !== input.modelId) pushDetail(input.modelId);
         pushDetail(input.description);
         if (input.reasoningEffortLevels) {
             pushDetail(t('settingsProviders.models.reasoningEffortSummary', { levels: input.reasoningEffortLevels }));
         }
     }
     pushDetail(primaryStatus?.label);
-    if (compatibilityStatus === 'experimental') pushDetail(t('settingsProviders.models.experimental'));
+    if (compatibilityStatus === 'experimental' && (!input.compactPicker || !primaryStatus)) {
+        pushDetail(t('settingsProviders.models.experimental'));
+    }
     // "May be unavailable" only repeats an endpoint status that already says the source cannot be reached.
-    if (input.stale && primaryStatus?.kind !== 'endpoint') pushDetail(t('settingsProviders.models.stale'));
-    if (input.loadState === 'unloaded') pushDetail(t('settingsProviders.models.notLoaded'));
+    if (!input.compactPicker && input.stale && primaryStatus?.kind !== 'endpoint') pushDetail(t('settingsProviders.models.stale'));
+    if (!input.compactPicker && input.loadState === 'unloaded') pushDetail(t('settingsProviders.models.notLoaded'));
 
     return {
         label,

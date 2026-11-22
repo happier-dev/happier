@@ -23,6 +23,18 @@ export type FavoriteModelEntry = Readonly<{
   sourceLabel: string | null;
 }>;
 
+/** Assign the first nine saved identities their stable keyboard slots. */
+export function assignFavoriteModelSlots(keys: Iterable<string>) {
+  const digits = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
+  const slots = new Map<string, typeof digits[number]>();
+  for (const key of keys) {
+    const slot = digits[slots.size];
+    if (slot === undefined) break;
+    if (!slots.has(key)) slots.set(key, slot);
+  }
+  return slots;
+}
+
 /**
  * The account's favourite models that apply to one backend, in saved order, once each. The New Session picker and
  * an open Session's composer (which offers them to Search by name) read the same entries.

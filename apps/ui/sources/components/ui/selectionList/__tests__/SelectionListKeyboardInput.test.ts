@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createSelectionListKeyPressHandler } from '../SelectionListKeyboardInput';
-import type { SelectionListKeyboardNavApi } from '../useSelectionListKeyboardNav';
 
 /**
  * R14 — unit coverage for the per-event key dispatch extracted from the
@@ -12,14 +11,8 @@ import type { SelectionListKeyboardNavApi } from '../useSelectionListKeyboardNav
  * the stack is at root with an empty input.
  */
 describe('SelectionListKeyboardInput (R14 extracted)', () => {
-    function makeKeyboardStub(consumed: boolean): SelectionListKeyboardNavApi {
-        return {
-            focusedIndex: 0,
-            focusedOptionId: null,
-            setFocusedIndex: vi.fn(),
-            handleKey: vi.fn(() => consumed),
-            handleEscape: vi.fn(() => 'close' as const),
-        };
+    function makeKeyboardStub(consumed: boolean) {
+        return { handleKey: vi.fn(() => consumed) };
     }
 
     it('returns silently when the event has no key string', () => {

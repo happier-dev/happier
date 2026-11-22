@@ -12,6 +12,7 @@ import {
     type OptionPickerFavoriteOptions,
     type OptionPickerProbeState,
 } from '@/components/sessions/pickers/OptionPickerOverlay';
+import { assignFavoriteModelSlots } from '@/components/sessions/modelPicker/favoriteModelEntries';
 import { mergeOptionPickerProbes } from '@/components/sessions/pickers/mergeOptionPickerProbes';
 import { PROVIDER_REASONING_EFFORT_OPTION_ID, formatReasoningEffortTierLabel } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 import type { FavoriteModelTogglePayload } from '@/components/sessions/new/hooks/screenModel/newSessionFavoriteModelsPickerOption';
@@ -256,11 +257,18 @@ function FavoriteBackendModelsCollector(props: Readonly<{
         scopeKind: 'spawn',
         serverId: props.capabilityServerId,
     });
+    const matchingFavorites = React.useMemo(() => props.favoriteModelSelections.filter((favorite) => (
+        favoriteModelSelectionMatchesBackend(favorite, backendIdentity)
+    )), [backendIdentity, props.favoriteModelSelections]);
+
+    const providerFavoriteRefs = React.useMemo(() => matchingFavorites.map(getFavoriteModelRef)
+        .filter((ref) => ref.providerConnectionId !== null), [matchingFavorites]);
     const providerProjection = useProviderModelProjection({
         enabled: providersFeatureEnabled && props.selectedMachineId !== null,
         machineId: props.selectedMachineId,
         serverId: props.capabilityServerId,
         agentTargetKey: props.entry.backendTargetKey,
+        favoriteSelections: providerFavoriteRefs,
     });
     const providerSettings = useProviderSettingsForServer(props.capabilityServerId);
     const hiddenNativeKeys = React.useMemo(() => hiddenModelVisibilityKeys(
@@ -362,10 +370,6 @@ function FavoriteBackendModelsCollector(props: Readonly<{
         props.favoriteModelSelections,
     ]);
 
-    const matchingFavorites = React.useMemo(() => props.favoriteModelSelections.filter((favorite) => (
-        favoriteModelSelectionMatchesBackend(favorite, backendIdentity)
-    )), [backendIdentity, props.favoriteModelSelections]);
-
     const provisionalFavorites = React.useMemo((): readonly AvailableFavoriteModel[] => {
         const hasResolvedDynamicModels = (preflightModels?.availableModels.length ?? 0) > 0;
         const canUseProvisionalFavorites = providerCore?.model?.dynamicProbe !== 'static-only'
@@ -391,13 +395,15 @@ function FavoriteBackendModelsCollector(props: Readonly<{
                 modelSelection: favorite.selection,
                 reasoningEffort: favorite.reasoningEffort,
                 modelId,
-                modelLabel: favorite.modelLabel || modelId,
+                modelLabel: favorite.modelLabel && favorite.modelLabel !== modelId
+                    ? favorite.modelLabel
+                    : modelProbe.retainedModelName?.(modelId) ?? modelId,
                 modelDescription: '',
                 backendLabel: props.entry.title,
             });
         }
         return out;
-    }, [availableFavorites, hiddenNativeKeys, matchingFavorites, modelProbe.phase, preflightModels?.availableModels.length, props.entry.title, providerCore?.model?.dynamicProbe]);
+    }, [availableFavorites, hiddenNativeKeys, matchingFavorites, modelProbe.phase, modelProbe.retainedModelName, preflightModels?.availableModels.length, props.entry.title, providerCore?.model?.dynamicProbe]);
 
     const selectableFavorites = React.useMemo(() => (
         provisionalFavorites.length > 0 ? [...availableFavorites, ...provisionalFavorites] : availableFavorites
@@ -561,12 +567,13 @@ function FavoriteBackendModelsCollector(props: Readonly<{
         selectedModelSelection?.ref.providerConnectionId,
         selectedValue,
     ]);
+    const favoritesReady = matchingFavorites.length > 0 && staleFavorites.length === 0;
     const unifiedProbe = React.useMemo(() => mergeOptionPickerProbes([
-        modelProbe ?? null,
-        providerProjection.loading
+        favoritesReady && modelProbe.phase === 'loading' ? { ...modelProbe, phase: 'idle' } : modelProbe,
+        providerProjection.loading && !favoritesReady
             ? { phase: 'loading' as const }
             : { phase: 'idle' as const, onRefresh: () => { void providerProjection.refresh(); } },
-    ]), [modelProbe, providerProjection.loading, providerProjection.refresh]);
+    ]), [favoritesReady, modelProbe, providerProjection.loading, providerProjection.refresh]);
 
     React.useEffect(() => {
         props.onSnapshot(props.entry.backendTargetKey, {
@@ -675,8 +682,44 @@ export function NewSessionFavoriteModelsDetail(props: NewSessionFavoriteModelsDe
         }
         return out;
     }, [orderedSnapshots]);
+    const selectFavorite = React.useCallback((value: string) => {
+        const snapshot = snapshotByOptionValue.get(value);
+        const model = snapshot?.modelByValue.get(value);
+        if (!snapshot || !model || !availableValues.has(value)) return;
+        const providerId = resolveNewSessionOperationalProviderId({
+            backendTarget: snapshot.entry.backendTarget,
+            runtimeCarrierAgentId: snapshot.entry.agentId,
+        });
+        props.onSelectFavoriteModel(
+            snapshot.entry,
+            model.modelSelection,
+            sanitizeNewSessionConfigOverridesForModelSelection({
+                providerId,
+                configOptions: null,
+                modelOptions: snapshot.modelOptions,
+                selectedModelId: model.modelId,
+                selectedModelConfigOptions: model.modelSelection.ref.providerConnectionId === null
+                    ? undefined : model.modelConfigOptions ?? [],
+                selectedConfigOverrides: model.reasoningEffort === undefined
+                    ? props.selectedConfigOverrides
+                    : {
+                        ...props.selectedConfigOverrides,
+                        [PROVIDER_REASONING_EFFORT_OPTION_ID]: model.reasoningEffort,
+                    },
+            }),
+        );
+    }, [availableValues, props.onSelectFavoriteModel, props.selectedConfigOverrides, snapshotByOptionValue]);
+    const shortcutSlotByKey = React.useMemo(() => new Map(
+        [...assignFavoriteModelSlots(props.favoriteModelSelections.map(({ selection }) => buildFavoriteOptionValue(selection)))]
+            .filter(([key]) => availableValues.has(key)),
+    ), [availableValues, props.favoriteModelSelections]);
+    const quickActionShortcuts = React.useMemo(() => [...shortcutSlotByKey].map(([key, slot]) => ({
+        shortcut: `cmd+${slot}` as const,
+        onActivate: () => selectFavorite(key),
+    })), [selectFavorite, shortcutSlotByKey]);
     const favoriteOptions = React.useMemo<OptionPickerFavoriteOptions<string>>(() => ({
         values: favoriteValues,
+        shortcutSlotByKey,
         isFavoritable: (option) => favoriteValues.has(option.value) || availableValues.has(option.value),
         onToggle: (option) => {
             const snapshot = snapshotByOptionValue.get(option.value);
@@ -695,6 +738,7 @@ export function NewSessionFavoriteModelsDetail(props: NewSessionFavoriteModelsDe
         favoriteValues,
         props.onRemoveFavoriteModelSelection,
         props.onToggleFavoriteModel,
+        shortcutSlotByKey,
         snapshotByOptionValue,
     ]);
 
@@ -783,33 +827,9 @@ export function NewSessionFavoriteModelsDetail(props: NewSessionFavoriteModelsDe
                         );
                     }}
                     favoriteOptions={favoriteOptions}
-                    onSelect={(value) => {
-                        const snapshot = snapshotByOptionValue.get(value);
-                        const model = snapshot?.modelByValue.get(value);
-                        if (!snapshot || !model || !availableValues.has(value)) return;
-                        const providerId = resolveNewSessionOperationalProviderId({
-                            backendTarget: snapshot.entry.backendTarget,
-                            runtimeCarrierAgentId: snapshot.entry.agentId,
-                        });
-                        props.onSelectFavoriteModel(
-                            snapshot.entry,
-                            model.modelSelection,
-                            sanitizeNewSessionConfigOverridesForModelSelection({
-                                providerId,
-                                configOptions: null,
-                                modelOptions: snapshot.modelOptions,
-                                selectedModelId: model.modelId,
-                                selectedModelConfigOptions: model.modelSelection.ref.providerConnectionId === null
-                                    ? undefined : model.modelConfigOptions ?? [],
-                                selectedConfigOverrides: model.reasoningEffort === undefined
-                                    ? props.selectedConfigOverrides
-                                    : {
-                                        ...props.selectedConfigOverrides,
-                                        [PROVIDER_REASONING_EFFORT_OPTION_ID]: model.reasoningEffort,
-                                    },
-                            }),
-                        );
-                    }}
+                    quickActionShortcuts={quickActionShortcuts}
+                    autoFocusInputOnWeb={quickActionShortcuts.length > 0}
+                    onSelect={selectFavorite}
                 />
             ) : null}
         </View>

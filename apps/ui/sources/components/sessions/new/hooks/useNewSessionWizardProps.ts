@@ -118,6 +118,7 @@ export function useNewSessionWizardProps(params: Readonly<{
     providerModelGroups?: NewSessionWizardAgentProps['providerModelGroups'];
     declarationContext?: NewSessionWizardAgentProps['declarationContext'];
     providerModelProjectionAuthoritative?: NewSessionWizardAgentProps['providerModelProjectionAuthoritative'];
+    providerModelProjectionResolving?: boolean;
     providerModelProjectionError?: NewSessionWizardAgentProps['providerModelProjectionError'];
     providerModelProjectionFailures?: NewSessionWizardAgentProps['providerModelProjectionFailures'];
     retryProviderModelProjection?: NewSessionWizardAgentProps['retryProviderModelProjection'];
@@ -422,6 +423,7 @@ export function useNewSessionWizardProps(params: Readonly<{
             providerModelGroups: params.providerModelGroups,
             declarationContext: params.declarationContext,
             providerModelProjectionAuthoritative: params.providerModelProjectionAuthoritative,
+            providerModelProjectionResolving: params.providerModelProjectionResolving,
             providerModelProjectionError: params.providerModelProjectionError,
             providerModelProjectionFailures: params.providerModelProjectionFailures,
             retryProviderModelProjection: params.retryProviderModelProjection,
@@ -454,6 +456,7 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.providerModelGroups,
         params.declarationContext,
         params.providerModelProjectionAuthoritative,
+        params.providerModelProjectionResolving,
         params.providerModelProjectionError,
         params.providerModelProjectionFailures,
         params.retryProviderModelProjection,

@@ -1384,9 +1384,16 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
     // Native (iOS/Android) does not need this — there is no hardware keyboard
     // hierarchy to bind to and the visual surface relies on row taps. The
     // prop is silently ignored by the native View renderer.
-    const headerlessKeyHandler: Record<string, unknown> = showSearchHeader
-        ? {}
-        : { onKeyDown: handleKeyPress };
+    const listKeyHandler: Record<string, unknown> = !showSearchHeader
+        ? { onKeyDown: handleKeyPress }
+        : IS_WEB && hasQuickActions ? {
+            // The input consumes its handled events. An event bubbling from a focused row
+            // can activate a list shortcut without taking over that control's navigation.
+            onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => {
+                if (event.defaultPrevented || event.nativeEvent?.isComposing) return;
+                keyboard.handleQuickAction(event);
+            },
+        } : {};
 
     const seatInputInBody = props.inputPlacement === 'body';
     // One canonical input node, positioned by `inputPlacement`. Every placement
@@ -1584,7 +1591,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
             style={[containerStyle, themeSurfaceStyles.surface(themeSurfaceEnabled ? props.themeSurface?.root : undefined)]}
             pointerEvents={measuredPopoverHeight.hidden ? 'none' : undefined}
             onLayout={handleContainerLayout}
-            {...headerlessKeyHandler}
+            {...listKeyHandler}
             {...(IS_WEB ? ({ onMouseMove: handlePointerMove } as Record<string, unknown>) : {})}
         >
             {renderMeasureHost ? (

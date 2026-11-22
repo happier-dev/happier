@@ -181,6 +181,53 @@ describe('SessionModelPicker Runs through', () => {
     }
   });
 
+  it('keeps the last settled source group while a replacement projection resolves', async () => {
+    const providerGroups = [group(gateway, 'CLIProxyAPI', 'Work', [
+      { modelId: 'claude-sonnet-5-5', name: 'Sonnet 5.5' },
+    ])];
+    const screen = await renderScreen(picker({ providerGroups }));
+    try {
+      expect(screen.findByTestId(`${ROW}:switch`)).not.toBeNull();
+      await screen.update(picker({ providerProjectionAuthoritative: false, providerProjectionResolving: true }));
+      expect(screen.findByTestId(`${ROW}:switch`)).not.toBeNull();
+      expect(texts(screen)).toContain('CLIProxyAPI · Work');
+    } finally {
+      await screen.unmount();
+    }
+    const cold = await renderScreen(picker({ providerProjectionAuthoritative: false, providerProjectionResolving: true }));
+    try {
+      expect(cold.findByTestId(`${ROW}:value`)).toBeNull();
+    } finally {
+      await cold.unmount();
+    }
+  });
+
+  it('shows the Provider display description and only one verification state', async () => {
+    const gatewayGroup = group(gateway, 'CLIProxyAPI', 'Work', [
+      { modelId: 'sonnet-wire-id', name: 'Sonnet 5.5' },
+    ]);
+    const row = gatewayGroup.rows[0]!;
+    const screen = await renderScreen(picker({
+      purpose: 'preference',
+      providerGroups: [{ ...gatewayGroup, rows: [{
+        ...row,
+        descriptor: { ...row.descriptor, description: 'A balanced coding model.' },
+        compatibility: { ...row.compatibility, confirmed: false, result: {
+          status: 'experimental', selectedProtocol: 'anthropic-messages', evidence: row.compatibility.result.evidence,
+        } },
+      }] }],
+    }));
+    try {
+      const overlay = screen.findByType(OptionPickerOverlay);
+      const option = overlay.props.sections.flatMap((section: { options: { label: string; description?: string }[] }) =>
+        section.options).find((candidate: { label: string }) => candidate.label === 'Sonnet 5.5'
+          && candidate.description?.includes('A balanced coding model.'));
+      expect(option?.description).toMatch(/^A balanced coding model\.( · [^.·]+)?$/);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it('names one source as a plain value with its usage: no button, no menu (owner 11-18 decision 4)', async () => {
     const screen = await renderScreen(
       picker({ selected: native('claude-opus-5-5') }),

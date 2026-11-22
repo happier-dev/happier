@@ -4255,6 +4255,7 @@ export function useSessionComposerController({
                         homeNameByTeamId={teamCredentialCatalog.homeNameByTeamId}
                         teamCredentialResourceStatusByKey={teamCredentialCatalog.resourceStatusByKey}
                         providerProjectionAuthoritative={providerModelProjection.status === 'success'}
+                        providerProjectionResolving={providerModelProjection.status === 'pending'}
                         projectionError={providersFeatureEnabled ? providerModelProjection.error : null}
                         projectionFailures={providersFeatureEnabled ? providerModelProjection.refreshFailures : []}
                         retryProjection={providersFeatureEnabled ? providerModelProjection.refresh : null}

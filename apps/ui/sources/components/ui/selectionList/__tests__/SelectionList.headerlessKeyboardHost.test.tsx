@@ -122,6 +122,23 @@ describe('SelectionList headerless keyboard host (FR3-4)', () => {
         );
     });
 
+    it('activates a quick action from row focus when the list also has a search input', async () => {
+        const activateFavorite = vi.fn();
+        const screen = await renderScreen(<SelectionList {...defaultProps({
+            rootStep: makeListOnlyStep({ inputPlaceholder: 'Search' }),
+            quickActionShortcuts: [{ shortcut: 'cmd+1', onActivate: activateFavorite }],
+        })} />);
+        try {
+            const handler = screen.findByTestId('sl')?.props.onKeyDown;
+            await act(async () => {
+                handler?.({ key: '1', ctrlKey: true, preventDefault: vi.fn(), stopPropagation: vi.fn() });
+            });
+            expect(activateFavorite).toHaveBeenCalledOnce();
+        } finally {
+            await screen.unmount();
+        }
+    });
+
     it('does NOT expose a redundant container key handler when the search header is mounted', async () => {
         // When the header is mounted, the input row owns the keyboard event
         // surface. The container key handler must NOT be added too, otherwise

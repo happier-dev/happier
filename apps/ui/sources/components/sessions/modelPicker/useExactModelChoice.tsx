@@ -45,6 +45,7 @@ function ExactModelChoiceModal(
     }[];
     providerGroups: ProjectionGroups;
     providerProjectionAuthoritative: boolean;
+    providerProjectionResolving: boolean;
     projectionError: SessionModelPickerProps['projectionError'];
     projectionFailures: SessionModelPickerProps['projectionFailures'];
     retryProjection: SessionModelPickerProps['retryProjection'];
@@ -67,6 +68,7 @@ function ExactModelChoiceModal(
       nativeModels={props.nativeModels}
       providerGroups={props.providerGroups}
       providerProjectionAuthoritative={props.providerProjectionAuthoritative}
+      providerProjectionResolving={props.providerProjectionResolving}
       projectionError={props.projectionError}
       projectionFailures={props.projectionFailures}
       retryProjection={props.retryProjection}
@@ -231,6 +233,7 @@ export function useExactModelChoice(
       nativeModels,
       providerGroups,
       providerProjectionAuthoritative,
+      providerProjectionResolving: providersEnabled && projection.status === 'pending',
       projectionError: providersEnabled ? projection.error : null,
       projectionFailures: providersEnabled ? projection.refreshFailures : undefined,
       retryProjection: providersEnabled ? projection.refresh : null,
@@ -262,6 +265,7 @@ export function useExactModelChoice(
       projection.refreshFailures,
       projection.refresh,
       projection.pendingApproval,
+      projection.status,
       providersEnabled,
     ],
   );

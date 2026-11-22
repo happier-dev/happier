@@ -26,6 +26,7 @@ import { ProviderErrorItems } from '@/components/settings/providers/ProviderErro
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import type { ProviderPendingApproval } from '@/providers/actions/useProviderActionClient';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { useProviderModelProjection } from '@/providers/hooks/useProviderModelProjection';
 import { useProviderConnections } from '@/providers/hooks/useProviderConnections';
 import { useProviderConnectionUsageForSource } from '@/providers/hooks/useProviderConnectionUsageForSource';
@@ -65,6 +66,7 @@ import { selectSessionModelPickerSourceGroups } from './selectSessionModelPicker
 import { SessionModelFavoriteEffortNote, SessionModelRunsThrough, type SessionModelPickerSource } from './SessionModelRunsThrough';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { PROVIDER_REASONING_EFFORT_OPTION_ID, formatReasoningEffortTierLabel } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
+import { assignFavoriteModelSlots } from './favoriteModelEntries';
 import { AgentInputChipPickerCloseContext } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
 import type { SelectionListKeyboardHint, SelectionListQuickActionShortcut } from '@/components/ui/selectionList';
 import { resolveModModifier } from '@/keyboard/bindings';
@@ -93,7 +95,6 @@ import {
     type ReportedModelStatus,
 } from './reportedModelPresentation';
 
-const FAVORITE_SHORTCUT_DIGITS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
 
 const MODEL_PICKER_THEME_SURFACE = {
     root: { surface: 'model-picker', part: 'root', state: 'default' },
@@ -201,6 +202,8 @@ export type SessionModelPickerProps = Readonly<{
     teamCredentialResourceStatusByKey?: TeamCredentialResourceStatusByKey;
     selectedTeamCredentialModel?: TeamCredentialProviderModelSelectionV1 | null;
     providerProjectionAuthoritative: boolean;
+    /** The active source projection is still acquiring its first answer for this read. */
+    providerProjectionResolving?: boolean;
     projectionError?: ProviderErrorV1 | null;
     projectionFailures?: readonly DaemonProviderModelProjectionRefreshFailureV1[];
     retryProjection?: (() => Promise<void> | void) | null;
@@ -318,6 +321,7 @@ function SessionAccountModelPicker({ picker, connectedServices, sourceBrowse }: 
     return <SessionModelPickerContent {...picker} declarationContext={context}
         providerGroups={[...picker.providerGroups, ...(projection.data?.groups ?? EMPTY_PROJECTION_GROUPS)]}
         providerProjectionAuthoritative={picker.providerProjectionAuthoritative && projection.status === 'success'}
+        providerProjectionResolving={picker.providerProjectionResolving || projection.status === 'pending'}
         projectionError={projection.error ?? picker.projectionError}
         projectionFailures={[...(picker.projectionFailures ?? []), ...projection.refreshFailures]}
         retryProjection={projection.error ? projection.refresh : picker.retryProjection}
@@ -407,6 +411,7 @@ function SessionModelSourceBrowse(props: Readonly<{
             nativeModels={EMPTY_NATIVE_MODELS}
             providerGroups={projection.data?.groups ?? EMPTY_PROJECTION_GROUPS}
             providerProjectionAuthoritative={projection.status === 'success'}
+            providerProjectionResolving={projection.status === 'pending'}
             projectionError={projection.error ?? authorizationError}
             projectionFailures={projection.refreshFailures}
             retryProjection={projection.refresh}
@@ -670,9 +675,7 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
         }) }));
     }, [labeledSections, paneSaysUnavailable, selectedAttribution, selectedKey]);
     const hiddenSources = props.hiddenSources ?? [];
-    const favoriteSlots = React.useMemo(() => new Map(
-        [...(props.favoriteKeys ?? [])].map((key, index) => [key, index + 1]),
-    ), [props.favoriteKeys]);
+    const favoriteSlots = React.useMemo(() => assignFavoriteModelSlots(props.favoriteKeys ?? []), [props.favoriteKeys]);
     const favoriteOptions = React.useMemo<OptionPickerFavoriteOptions<SessionModelPickerOptionValue> | undefined>(() => {
         if (!props.favoriteKeys || !props.onToggleFavorite) return undefined;
         return {
@@ -777,7 +780,7 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
             const ref = option.value;
             if (!ref || isTeamCredentialProviderModelPickerValue(ref) || option.disabled || option.availability === 'unavailable') return [];
             const key = sessionModelSelectionKey(ref);
-            const digit = FAVORITE_SHORTCUT_DIGITS.find(candidate => candidate === favoriteSlots.get(key));
+            const digit = favoriteSlots.get(key);
             if (digit === undefined || seen.has(key)) return [];
             seen.add(key);
             return [{ key, ref, digit }];
@@ -834,11 +837,28 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
     const canUpdateFavorite = Boolean(props.onUpdateFavoriteModelReasoningEffort) && selectedRef !== null
         && !isTeamCredentialProviderModelPickerValue(selectedRef);
     // The selected model's sources, decided once by the grouping selector (PICKER-DATA-1118).
-    const selectedSourceGroup = React.useMemo(() => selectSessionModelPickerSourceGroups(presentedSections,
+    const projectedSourceGroup = React.useMemo(() => selectSessionModelPickerSourceGroups(presentedSections,
         { agentTargetKey: props.agentTargetKey, hiddenSources: props.hiddenSources ?? [] })
         .find(candidate => candidate.sources.some(source => source.options.some(option => (
             option.source !== undefined && sessionModelSelectionKey(option.value) === selectedKey)))),
     [presentedSections, props.agentTargetKey, props.hiddenSources, selectedKey]);
+    const sourceScope = JSON.stringify([props.sourceBrowse?.serverId, props.sourceBrowse?.machineId, selectedKey]);
+    const accountLifetime = captureActiveServerAccountScopeLifetime();
+    const settledSource = React.useRef<{
+        scope: string;
+        accountLifetime: typeof accountLifetime;
+        group: typeof projectedSourceGroup;
+    } | null>(null);
+    const sourceResolving = props.providerProjectionResolving === true;
+    React.useLayoutEffect(() => {
+        if (!sourceResolving) settledSource.current = { scope: sourceScope, accountLifetime, group: projectedSourceGroup };
+    }, [accountLifetime, projectedSourceGroup, sourceResolving, sourceScope]);
+    const previousSource = settledSource.current;
+    const selectedSourceGroup = sourceResolving
+        ? previousSource?.scope === sourceScope && previousSource.accountLifetime === accountLifetime
+            ? previousSource.group
+            : undefined
+        : projectedSourceGroup;
     // A failure line names the source it is about, so two unreachable sources never read as one anonymous line.
     // A failed source has no model group; its name comes from the same connection read the route sources use.
     const failedConnectionIds = [props.projectionError?.connectionId, ...(props.projectionFailures ?? []).map((failure) => failure.connectionId)]
@@ -878,7 +898,7 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
         const rows = group ? (
             <SessionModelRunsThrough group={group} selectedKey={selectedKey} sourceLabel={sourceLabel}
                 routeRows={routeRows} renderUsage={renderSourceUsage}
-                onPick={(source) => pickSource(source, sourceLabel(source))} />
+                onPick={(source) => { if (!sourceResolving) pickSource(source, sourceLabel(source)); }} />
         ) : undefined;
         const note = favoriteSlot > 0 && favoriteEffortLabel && sessionEffort && favoriteEffort !== sessionEffort
             && canUpdateFavorite && selectedRef !== null && !isTeamCredentialProviderModelPickerValue(selectedRef) ? (
@@ -888,7 +908,7 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
         if (!rows && !note) return undefined;
         return { rows, ...(note ? { controlNotes: { [PROVIDER_REASONING_EFFORT_OPTION_ID]: note } } : {}) };
     }, [canUpdateFavorite, favoriteEffort, favoriteEffortLabel, favoriteSlot, pickSource, props.hiddenSources,
-        renderSourceUsage, routeRows, selectedKey, selectedRef, selectedSourceGroup, sessionEffort, updateFavoriteEffort]);
+        renderSourceUsage, routeRows, selectedKey, selectedRef, selectedSourceGroup, sourceResolving, sessionEffort, updateFavoriteEffort]);
     const failureSubject = (connectionId: string | undefined): string | null => {
         if (!connectionId) return null;
         const group = props.providerGroups.find((candidate) => candidate.connectionId === connectionId);

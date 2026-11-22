@@ -39,7 +39,7 @@ export type SelectionListKeyPressEvent = {
 };
 
 export type SelectionListKeyPressHandlerArgs = Readonly<{
-    keyboard: SelectionListKeyboardNavApi;
+    keyboard: Pick<SelectionListKeyboardNavApi, 'handleKey'>;
     isComposing: boolean;
     focusedOptionId: string | null;
     onActivate: (optionId: string) => void;

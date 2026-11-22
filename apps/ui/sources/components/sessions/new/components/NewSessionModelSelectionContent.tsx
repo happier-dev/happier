@@ -78,6 +78,7 @@ export type NewSessionModelSelectionContentProps = Readonly<{
     teamCredentialServerId?: string | null;
     selectedTeamCredentialModel?: TeamCredentialProviderModelSelectionV1 | null;
     providerProjectionAuthoritative: boolean;
+    providerProjectionResolving?: boolean;
     providerProjectionError?: ProviderErrorV1 | null;
     providerProjectionFailures?: readonly DaemonProviderModelProjectionRefreshFailureV1[];
     retryProviderProjection?: (() => Promise<void> | void) | null;
@@ -255,6 +256,7 @@ export function NewSessionModelSelectionContent(props: NewSessionModelSelectionC
             teamCredentialResourceStatusByKey={props.teamCredentialResourceStatusByKey}
             selectedTeamCredentialModel={selectedTeamCredentialModel}
             providerProjectionAuthoritative={props.providerProjectionAuthoritative}
+            providerProjectionResolving={props.providerProjectionResolving}
             projectionError={props.providerProjectionError}
             projectionFailures={props.providerProjectionFailures}
             retryProjection={props.retryProviderProjection}

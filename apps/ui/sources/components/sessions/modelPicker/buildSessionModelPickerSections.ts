@@ -261,6 +261,7 @@ export function buildSessionModelPickerSections(input: Readonly<{
             if (row.visibility !== 'visible' && !hiddenCurrentSelection) return [];
             const presentation = presentProviderModelRow({
                 purpose: input.purpose,
+                compactPicker: true,
                 modelId: row.ref.modelId,
                 name: row.descriptor.name,
                 description: row.descriptor.description,
@@ -278,8 +279,6 @@ export function buildSessionModelPickerSections(input: Readonly<{
                 label: presentation.label,
                 searchText: row.ref.modelId,
                 description: presentation.description,
-                // The line leads with the model id, which tells a gateway's look-alike names apart: a phone row
-                // gets the card's second line instead of cutting the id short.
                 descriptionLines: 2,
                 source,
                 upstreamRef: row.descriptor.upstreamRef,

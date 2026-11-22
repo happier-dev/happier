@@ -504,6 +504,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
             {...props.teamModels}
             selectedAttribution={modelAttribution}
             providerProjectionAuthoritative={providerProjection.status === 'success'}
+            providerProjectionResolving={providerProjection.status === 'pending'}
             projectionError={providersFeatureEnabled ? providerProjection.error : null}
                 projectionFailures={providersFeatureEnabled ? providerProjection.refreshFailures : []}
             retryProjection={providersFeatureEnabled ? providerProjection.refresh : null}
@@ -544,7 +545,11 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
                 props.onToggleFavoriteModel?.({
                     modelId: ref.modelId,
                     ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
-                    modelLabel: row?.descriptor.name ?? ref.modelId,
+                    modelLabel: row?.descriptor.name ?? (ref.providerConnectionId === null
+                        ? modelProbe.retainedModelName?.(ref.modelId)
+                            ?? findModelOptionForEffectiveModelId(modelOptions, ref.modelId)?.label
+                            ?? ref.modelId
+                        : ref.modelId),
                     modelSelection: { v: 1, updatedAt: Date.now(), ref },
                     ...(group ? {
                         providerDisplaySnapshot: {

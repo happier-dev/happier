@@ -11,7 +11,7 @@ import type {
 import type {
     SessionDirectoryIntentV1,
 } from '@happier-dev/protocol/sessions/creation/sessionDirectoryIntentV1';
-import type { NewSessionDraftModelIntent } from '@happier-dev/protocol/actions/appShellActionFamily';
+import type { NewSessionDraftAgentIntent, NewSessionDraftModelIntent } from '@happier-dev/protocol/actions/appShellActionFamily';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { PromptPickerOpenRequest } from '@/components/sessions/agentInput/commandMenu/promptPickerActionPort';
 import { composerRefsV1Equal } from '@happier-dev/protocol/plugins/ui/composerRef';
@@ -227,6 +227,7 @@ export function useNewSessionComposerDocument(params: Readonly<{
     isSubmitting: boolean;
     setDirectoryIntent?: (intent: SessionDirectoryIntentV1) => void;
     applyModelIntent?: (intent: NewSessionDraftModelIntent) => Promise<boolean>;
+    applyAgentIntent?: (intent: NewSessionDraftAgentIntent) => Promise<boolean>;
     isPresented?: boolean;
 }>): NewSessionComposerDocument {
     const layoutPresented = useLayoutPresentationActive();
@@ -654,6 +655,13 @@ export function useNewSessionComposerDocument(params: Readonly<{
             if (expectedScope?.serverId && (!ownerScope || !areServerProfileIdentifiersEquivalent(ownerScope.serverId, expectedScope.serverId))) return false;
             if (expectedScope?.accountId && ownerScope?.accountId !== expectedScope.accountId) return false;
             return await params.applyModelIntent(intent);
+        },
+        applyNewSessionAgentIntent: async (intent, expectedScope) => {
+            if (!params.applyAgentIntent || !readSnapshot().state.editable) return false;
+            const ownerScope = readScope();
+            if (expectedScope?.serverId && (!ownerScope || !areServerProfileIdentifiersEquivalent(ownerScope.serverId, expectedScope.serverId))) return false;
+            if (expectedScope?.accountId && ownerScope?.accountId !== expectedScope.accountId) return false;
+            return await params.applyAgentIntent(intent);
         },
         commitDocument,
         createAttachmentInstanceId: randomUUID,

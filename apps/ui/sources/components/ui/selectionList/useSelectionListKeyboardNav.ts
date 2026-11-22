@@ -27,6 +27,8 @@ export type SelectionListKeyboardNavApi = Readonly<{
     setFocusedIndex: (i: number) => void;
     /** Returns true if the key event was consumed (caller should preventDefault on web). */
     handleKey: (event: SelectionListKeyboardEvent) => boolean;
+    /** Activates registered quick actions when focus is outside the search field. */
+    handleQuickAction: (event: SelectionListKeyboardEvent) => boolean;
     /**
      * Returns the local Escape outcome:
      *   - 'pop-step'    : a step was popped
@@ -551,6 +553,16 @@ export function useSelectionListKeyboardNav(
         return 'close';
     }, [canPopStep, onPopStep, inputValue, onClearInput]);
 
+    const handleQuickAction = React.useCallback<SelectionListKeyboardNavApi['handleQuickAction']>((event) => {
+        if (!quickActionShortcuts || isComposing || !isCmdOrCtrl(event)) return false;
+        const key = `cmd+${event.key.toLowerCase()}`;
+        const shortcut = quickActionShortcuts.find((binding) => binding.shortcut === key);
+        if (!shortcut) return false;
+        if ('optionId' in shortcut) onActivate(shortcut.optionId);
+        else shortcut.onActivate();
+        return consume(event);
+    }, [isComposing, onActivate, quickActionShortcuts]);
+
     const handleKey = React.useCallback<SelectionListKeyboardNavApi['handleKey']>((event) => {
         // Ask the layout where this arrow lands. Returns false when there is no
         // layout adapter, when it declines, or when it names an index outside
@@ -753,17 +765,7 @@ export function useSelectionListKeyboardNav(
                 break;
         }
 
-        if (quickActionShortcuts && !isComposing && isCmdOrCtrl(event)) {
-            const key = `cmd+${event.key.toLowerCase()}`;
-            const shortcut = quickActionShortcuts.find((binding) => binding.shortcut === key);
-            if (shortcut) {
-                if ('optionId' in shortcut) onActivate(shortcut.optionId);
-                else shortcut.onActivate();
-                return consume(event);
-            }
-        }
-
-        return false;
+        return handleQuickAction(event);
     }, [
         flatVisibleOptionIds,
         virtualizedOptionSource,
@@ -771,7 +773,7 @@ export function useSelectionListKeyboardNav(
         onActivate,
         onCommandActivate,
         handleEscape,
-        quickActionShortcuts,
+        handleQuickAction,
         isComposing,
         ghostSuffixPresent,
         inputCaretAtEnd,
@@ -791,7 +793,7 @@ export function useSelectionListKeyboardNav(
     ]);
 
     return React.useMemo(
-        () => ({ focusedIndex, focusedOptionId, setFocusedIndex, handleKey, handleEscape }),
-        [focusedIndex, focusedOptionId, setFocusedIndex, handleKey, handleEscape],
+        () => ({ focusedIndex, focusedOptionId, setFocusedIndex, handleKey, handleEscape, handleQuickAction }),
+        [focusedIndex, focusedOptionId, setFocusedIndex, handleKey, handleEscape, handleQuickAction],
     );
 }
