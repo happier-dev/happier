@@ -513,6 +513,14 @@ describe('the mounted Sentry issue detail body', () => {
     await expect(page.queryByRole('tab')).resolves.toBeUndefined();
     expect(harness.countOf(SENTRY_ACTION_IDS.readEvent)).toBe(1);
   });
+  it('keeps What happened to one reading line while the issue and its occurrence both read (N7-S)', async () => {
+    const pending = () => new Promise<JsonValue>(() => {});
+    const harness = createHarness({ readSummary: pending, readEvent: pending });
+    const page = await mountDetail(harness, createSurfaceContextFixture(), undefined, 'overview');
+    await expect(page.getByRole('heading', { name: 'What happened' })).resolves.toBeDefined();
+    expect((document.body.textContent ?? '').match(/Reading one occurrence of this issue/gu) ?? []).toHaveLength(1);
+    await expect(page.queryByText('Reading this issue from Sentry')).resolves.toBeUndefined();
+  });
   it('demands the selected occurrence when the host opens Stack trace directly', async () => {
     const harness = createHarness();
     const page = await mountDetail(harness, createSurfaceContextFixture(), undefined, 'stack-trace');

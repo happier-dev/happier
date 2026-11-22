@@ -212,12 +212,15 @@ function SelectedOccurrenceSummary({
   locale,
   nowMs,
   onOpenStackTrace,
+  story = false,
 }: Readonly<{
   controller: SentrySelectedEventControllerV1;
   locale: string;
   nowMs: number;
   /** Absent when no tab or frame panel offers the stack trace. */
   onOpenStackTrace?: (() => void) | undefined;
+  /** In the story's first step a failure is one line, so the step's preview never clips a centred state (N7-S). */
+  story?: boolean;
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const { demand, read } = controller;
@@ -240,6 +243,7 @@ function SelectedOccurrenceSummary({
       <ErrorState
         title="This occurrence could not be read"
         titleKey="plugins.sentry.ui.occurrenceUnavailable"
+        {...(story ? { layout: 'line' as const } : {})}
         description={failureDescription(
           read.failure,
           text('plugins.sentry.ui.readFailed', 'Sentry could not complete this read.'), text,
@@ -818,9 +822,14 @@ function OverviewPanel({
           locale={locale}
           nowMs={nowMs}
           onOpenStackTrace={onOpenStackTrace}
+          story
         />
         {overview.summary === null ? null : <Text variant="meta">{overview.summary}</Text>}
-        <LiveSummary summary={summary} locale={locale} nowMs={nowMs} part="status" />
+        {/* One reading state at a time (N7-S): while the occurrence reads, its line speaks for the step; the issue's own
+            read then says itself as the same quiet line, never a centred loading page inside the story. */}
+        {summary.kind !== 'loading' ? <LiveSummary summary={summary} locale={locale} nowMs={nowMs} part="status" />
+          : selectedEvent.read.kind === 'idle' || selectedEvent.read.kind === 'loading' ? null
+            : <Status tone="muted" pulsing label={text('plugins.sentry.ui.readingIssue', 'Reading this issue from Sentry')} />}
         {statusFields.length === 0 ? null : (
           <Row gap="small">
             {statusFields.map((field) => (
