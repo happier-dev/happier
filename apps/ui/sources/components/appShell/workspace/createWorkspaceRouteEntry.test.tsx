@@ -105,11 +105,14 @@ describe('WorkspaceRouteEntry', () => {
         { route: 'Settings', RouteEntry: PluginSettingsPageRoute, testID: 'plugin-settings-page-hydrating' },
         { route: 'App root', RouteEntry: PluginAppPageRootRoute, testID: 'plugin-app-page-hydrating' },
         { route: 'App deep link', RouteEntry: PluginAppPageDeepLinkRoute, testID: 'plugin-app-page-hydrating' },
-    ])('uses the plugin $route skeleton before Account/workspace hydration admits its body', async ({ RouteEntry, testID }) => {
+    ])('uses the plugin $route skeleton before Account/workspace hydration admits its body', async ({ route, RouteEntry, testID }) => {
         const screen = await renderScreen(<WorkspaceNavigationProvider value={workspace(false)}>
             <RouteEntry />
         </WorkspaceNavigationProvider>);
         expect(screen.findByTestId(`${testID}-loading-skeleton`)).not.toBeNull();
+        if (route !== 'Settings') {
+            expect(screen.findByTestId(`${testID}-toolbar`)).not.toBeNull();
+        }
         expect(screen.getTextContent()).toBe('');
     });
     it('keeps the page-shaped loading fallback until the retained route owns the body, without mounting a temporary editable page', async () => {

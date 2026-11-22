@@ -24,13 +24,8 @@ export const PLUGINS_SURFACE_ICON = 'cube' as const satisfies IconName;
 
 /** The app-page host: the main sidebar's Plugins destination. */
 export const PLUGINS_APP_ROUTE = '/plugins' as const;
-/**
- * Everything under the app host's `/plugins` belongs to the Plugins destination — the listing, a
- * plugin's page, and a plugin page this viewer no longer has (its tombstone offers "Manage plugin") —
- * except a plugin-contributed app page (`/plugins/<pluginId>/<localId>…`), whose own destination
- * claims its route more specifically.
- */
-export const PLUGINS_APP_PAGE_PATTERNS = ['/plugins/[...rest]'] as const;
+/** Store leaves (listing, panels and package detail) are one segment below the Store root. */
+export const PLUGINS_APP_PAGE_PATTERNS = ['/plugins/[pluginId]'] as const;
 
 /**
  * An App panel (`rightSidebarTab × app`) as its own page, under the Plugins destination: where it opens

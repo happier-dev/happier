@@ -13,7 +13,9 @@ import { useDestinationFocus, useDestinationRouter, useDestinationVisibility } f
 import { PluginSurfacePlacementHost } from '@/components/plugins/surfaces';
 import { PluginSurfaceFallback } from '@/components/sessions/panes/PluginSurfaceFallback';
 import { PluginPageBackStepProvider } from '@/components/plugins/shared/PluginPageBackStep';
-import { PluginPageIdentityHeaderProvider } from '@/components/plugins/shared/PluginPageIdentityHeader';
+import {
+    PluginAppPageLoadingFrame, PluginPageIdentityHeaderProvider, pluginPageContentFrameStyle,
+} from '@/components/plugins/shared/PluginPageIdentityHeader';
 import { PluginMachineExecutionOriginSelectorView } from '@/components/settings/machines/PluginMachineExecutionOriginSelector';
 import { NavigationLargeTitleProvider, useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/navigationTitleChrome';
 import { PluginPagePresentation } from './PluginPagePresentation';
@@ -21,7 +23,6 @@ import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentat
 import { useNativeBackLayerBackHandler } from '@/components/ui/overlays/NativeBackLayerBoundary';
 import { useUnsavedDraftNavigationGuard } from '@/utils/navigation/useUnsavedDraftNavigationGuard';
 import { createPluginSurfaceHostApiError, type PluginSurfaceHostApiMethodHandler } from '@/components/plugins/surfaces/createPluginSurfaceHostApi';
-import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
 import { HAPPIER_PAGE_METRICS, HappierColumnEdgeContext } from '@happier-dev/plugin-ui/presentation';
 import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
 import type { BoundPluginSurfaceBinding } from '@/components/plugins/surfaces/boundPluginSurfaceController';
@@ -63,20 +64,6 @@ import {
  * route renders the canonical unavailable surface rather than a blank screen or
  * a redirect that would hide the fact from the user.
  */
-/**
- * A plugin page is a work surface the plugin composes, like the host's own
- * list/detail collections (Settings → Agents, Providers), which fill their
- * page. It takes the host page gutter — the inset page sheets and headers use —
- * so no page sits flush against the window edge, and the full width, so a
- * list beside its detail is not squeezed into the reading measure. Reading
- * content inside a page keeps its own measure (state tiles, prose).
- */
-const pageContentFrameStyle = {
-    flex: 1,
-    width: '100%',
-    paddingHorizontal: resolveItemGroupContentHorizontalInsetPx(),
-} as const;
-
 /**
  * The page gutter is already the page's sheet edge (as on a core page, `CoreCollectionScope`): a plain block the
  * plugin composes (a toolbar, a banner, a facts strip, a card) stands on it beside the sheets, and the
@@ -448,8 +435,12 @@ export function PluginPageContent(props: Readonly<{
         return renderPage(
             <>
                 {props.appChrome ? <PluginPageRouteChrome title={null} options={headerOptions} /> : null}
-                <View testID="plugin-app-page-establishing" style={pageContentFrameStyle}>
-                    <PluginSurfaceFallback testID="plugin-app-page-loading" state="loading" />
+                <View testID="plugin-app-page-establishing" style={{ flex: 1 }}>
+                    {props.appChrome ? <PluginAppPageLoadingFrame testID="plugin-app-page-loading" /> : (
+                        <View style={pluginPageContentFrameStyle}>
+                            <PluginSurfaceFallback testID="plugin-app-page-loading" state="loading" />
+                        </View>
+                    )}
                 </View>
             </>
         );
@@ -483,9 +474,9 @@ export function PluginPageContent(props: Readonly<{
         <RetainedPanelSurface isActive={isVisible}>
                 {/* The Home line stands on the screen's own edge, as on every main screen, not on the page's inset. */}
                 {mainScreenHead ? <PhoneMainTabLine /> : null}
-                <FloatingChromeClearedFrame testID="plugin-app-page-host" style={pageContentFrameStyle}>
+                <FloatingChromeClearedFrame testID="plugin-app-page-host" style={pluginPageContentFrameStyle}>
                     <HappierColumnEdgeContext.Provider value={PLUGIN_PAGE_COLUMN_EDGE_PX}>
-                    <PagePinnedBarGutterContext.Provider value={pageContentFrameStyle.paddingHorizontal}>
+                    <PagePinnedBarGutterContext.Provider value={pluginPageContentFrameStyle.paddingHorizontal}>
                     <PluginPageBackStepProvider owner={locationOwner}>
                     <NavigationLargeTitleProvider largeTitle={largeTitle}>
                     <PluginPageIdentityHeaderProvider pluginId={props.pluginId} title={headerTitle} description={page.description} headerStyle={page.headerStyle}

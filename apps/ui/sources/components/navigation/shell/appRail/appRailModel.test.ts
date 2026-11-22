@@ -5,9 +5,11 @@ import { treeRowId } from '@/components/sessions/shell/drop-resolution/treeRowId
 
 import type { PluginPage } from '@/components/plugins/pages/pluginPages';
 import {
+    hrefForDestinationRef,
     isCompactAppDestinationInvokable,
     isCompactAppDestinationVisible,
     resolveCompactAppDestinations,
+    resolveDestinationRefFromHref,
 } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { createSessionFixture } from '@/dev/testkit';
 import { buildSessionOrganizationProjection, buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization';
@@ -216,6 +218,25 @@ describe('app rail model', () => {
         expect(at('/search')).toEqual(['search', 'search', 'none']);
         expect(at('/artifacts')).toEqual(['artifacts', 'artifacts', 'none']);
         expect(at('/artifacts/artifact-1')).toEqual(['artifacts', 'artifacts', 'none']);
+    });
+
+    it('keeps a cold app-page route out of the Store and addressable while the plugin catalog is pending', () => {
+        const pending = catalog([]);
+        const declared = page('triage');
+        const ready = catalog([declared]);
+        const href = `${declared.routePath}/entries/example%3A1?view=mine`;
+        const cold = resolveAppShellLocation(pending, href);
+        expect(cold.column).toEqual({ kind: 'none' });
+        expect(resolveAppShellLocation(ready, href).column).toBe(cold.column);
+        expect(resolveAppShellLocation(pending, '/plugins/listing').column).toEqual({ kind: 'builtin', id: 'plugins' });
+
+        const target = resolveDestinationRefFromHref(pending, href);
+        expect(target).toEqual({
+            kind: declared.id,
+            params: { pluginId: declared.pluginId, localId: declared.localId, subPath: 'entries/example:1', view: 'mine' },
+        });
+        expect(target).toEqual(resolveDestinationRefFromHref(ready, href));
+        expect(hrefForDestinationRef(pending, target!)).toBe(href);
     });
 
     it("stands a plugin page's own column beside it, and peeks it from its rail icon", () => {

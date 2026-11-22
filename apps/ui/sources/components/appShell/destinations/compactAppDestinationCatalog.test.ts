@@ -677,7 +677,10 @@ describe('catalog destination instances', () => {
         expect(resolveDestinationRefFromHref(catalog, '/session/sess-a?serverId=home-b')).toEqual({
             kind: 'session', params: { id: 'sess-a', serverId: 'home-b' },
         });
-        expect(resolveDestinationRefFromHref(catalog, '/plugins/acme.notes/notes2')).toBeNull();
+        expect(resolveDestinationRefFromHref(catalog, '/plugins/acme.notes/notes2')).toEqual({
+            kind: 'plugin:acme.notes:notes2', params: { pluginId: 'acme.notes', localId: 'notes2' },
+        });
+        expect(resolveCurrentAppDestination(catalog, '/plugins/acme.notes/notes2')).toBeNull();
     });
 
     it('keeps session details and automation identities addressable as tabs', () => {
@@ -832,8 +835,8 @@ describe('resolveCurrentAppDestination', () => {
         expect(at('/plugins/')).toBe('plugins');
         expect(at('/plugins/listing')).toBe('plugins');
         expect(at('/plugins/acme.tools')).toBe('plugins');
-        // A plugin page this viewer no longer has keeps its tombstone under Plugins, not Sessions.
-        expect(at('/plugins/acme.gone/page')).toBe('plugins');
+        // Even its unavailable state belongs to the app-page route.
+        expect(at('/plugins/acme.gone/page')).toBeNull();
         expect(at('/plugins/acme.notes/notes')).toBe('plugin:acme.notes:notes');
         expect(at('/plugins/acme.notes/notes/history/1')).toBe('plugin:acme.notes:notes');
         expect(at('/plugins/acme.prompts/prompts')).toBe('plugin:acme.prompts:prompts');

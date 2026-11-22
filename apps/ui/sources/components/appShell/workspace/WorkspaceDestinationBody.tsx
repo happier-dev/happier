@@ -13,6 +13,8 @@ import { workspaceSettingsLayoutKeys } from './workspaceRouteContext';
 import { WorkspaceRouteOutlet } from './WorkspaceRouteOutlet';
 import { DestinationBodyLoading } from './DestinationBodyLoading';
 import { HomeHubLoading } from '@/components/hub/HomeHubLoading';
+import { PluginAppPageLoadingFrame } from '@/components/plugins/shared/PluginPageIdentityHeader';
+import { readPluginAppPageRouteView } from '@/components/plugins/pages/pluginPageRoute';
 
 // Routes that share one editor loader also share its lazy identity: promotion
 // after Save must not suspend an already mounted editor on another route chunk.
@@ -59,9 +61,10 @@ export const WorkspaceDestinationBody = React.memo(function WorkspaceDestination
     const match = matchWorkspaceDestinationRoute(props.pathname);
     const Body = match ? bodies[match.routeKey] : undefined;
     if (match && workspacePluginAppPageRouteKey(match.routeKey) && props.target.params.pluginId && props.target.params.localId) {
-        return <React.Suspense fallback={<DestinationBodyLoading />}>
+        return <React.Suspense fallback={<PluginAppPageLoadingFrame testID="plugin-app-page-module-loading" />}>
             <PluginAppPageScreen pluginId={props.target.params.pluginId}
-                localId={props.target.params.localId} subPath={props.target.params.subPath ?? ''} />
+                localId={props.target.params.localId} subPath={props.target.params.subPath ?? ''}
+                view={readPluginAppPageRouteView(props.target.params.view)} />
         </React.Suspense>;
     }
     if (!Body) return <DestinationUnavailable />;

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useLocalSearchParams } from '@/components/appShell/workspace/destinationRoute';
 
 import { PluginAppPageScreen } from '@/components/appShell/plugins/PluginAppPageScreen';
-import { PluginSurfaceFallback } from '@/components/sessions/panes/PluginSurfaceFallback';
+import { PluginAppPageLoadingFrame } from '@/components/plugins/shared/PluginPageIdentityHeader';
 import {
     readPluginAppPageRouteView,
     readPluginPageRouteIdentity,
@@ -25,5 +25,5 @@ export const WorkspaceRouteBody = React.memo(function PluginPageDeepRoute() {
 import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
 export default function RouteEntry() {
     return <WorkspaceRouteEntry Body={WorkspaceRouteBody}
-        loadingFallback={<PluginSurfaceFallback testID="plugin-app-page-hydrating" state="loading" />} />;
+        loadingFallback={<PluginAppPageLoadingFrame testID="plugin-app-page-hydrating" />} />;
 }

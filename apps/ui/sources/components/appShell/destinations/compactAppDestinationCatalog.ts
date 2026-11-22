@@ -36,7 +36,8 @@ import {
     type PluginPage,
 } from '@/components/plugins/pages/pluginPages';
 import { usePluginPageCatalogActivationHandler } from '@/components/plugins/pages/pluginPageNavigation';
-import { readPluginAppPageRouteView } from '@/components/plugins/pages/pluginPageRoute';
+import { buildPluginAppPageRoutePath, parsePluginAppPageRoutePath, readPluginAppPageRouteView } from '@/components/plugins/pages/pluginPageRoute';
+import { buildPluginSurfaceDestinationId } from '@/components/plugins/surfaces/pluginSurfaceDestinations';
 import {
     useOptionalUniversalSearchRuntime,
     type UniversalSearchScopeSeed,
@@ -71,7 +72,7 @@ import { resolveSessionRoutePathForSurface } from '@/components/workspaceCockpit
 import { resolveSettingsRouteTitleKey } from '@/components/settings/navigation/settingsRouteRegistry';
 import { readSessionDisplayTitle, sessionDisplayTitle } from '@/utils/sessions/sessionDisplayTitle';
 import { readDiscussionTitle, useDiscussionTitleProjections } from '@/sync/ops/discussions/useDiscussionRepositorySnapshot';
-import { matchWorkspaceDestinationRoute, registeredWorkspaceRoutes, workspaceRouteHref } from '@/components/appShell/workspace/workspaceRoutes';
+import { matchWorkspaceDestinationRoute, registeredWorkspaceRoutes, workspacePluginAppPageRouteKey, workspaceRouteHref } from '@/components/appShell/workspace/workspaceRoutes';
 import { useWorkspaceDestinationTitles, type WorkspaceDestinationTitle } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { formatWorkflowRunDisplayName, resolveWorkflowRunDisplayName } from '@/components/workflows/presentation/workflowRunDisplayName';
@@ -955,8 +956,7 @@ export function resolveDestinationRefFromHref(
         return null;
     }
     const path = normalizePathname(url.pathname);
-    const rawParts = splitPath(path);
-    const decodedParts = rawParts.map(decodeSegment);
+    const decodedParts = splitPath(path).map(decodeSegment);
     if (decodedParts.some((part) => part === null)) return null;
     const parts = decodedParts as string[];
     const [first, second, third, ...rest] = parts;
@@ -1016,25 +1016,18 @@ export function resolveDestinationRefFromHref(
     if (first === 'automations' && second && third === undefined && !['settings', 'new', 'edit'].includes(second)) {
         return { kind: 'automation', params: { ...query, id: second } };
     }
-    if (first === 'plugins' && parts.length >= 3
-        && !catalog.some((item) => item.kind === 'plugin' && item.container === 'appPage'
-            && item.destination.pluginId === second && item.destination.localId === third)) return null;
-    const destination = resolveCurrentAppDestination(catalog, path);
-    if (!destination || destination.activation !== 'navigate') return null;
-    if (destination.kind === 'plugin') {
-        const baseParts = splitPath(destination.routePath);
-        if (rawParts.length < baseParts.length) return null;
-        const subPath = parts.slice(baseParts.length).join('/');
+    if (route && workspacePluginAppPageRouteKey(route.routeKey)) {
+        // The address is known before the page declaration. The body owns the pending and unavailable states.
+        const appPage = parsePluginAppPageRoutePath(href);
+        if (!appPage) return null;
+        const { pluginId, localId, subPath } = appPage;
         return {
-            kind: destination.id,
-            params: {
-                ...query,
-                ...(subPath ? { subPath } : {}),
-                pluginId: destination.destination.pluginId,
-                localId: destination.destination.localId,
-            },
+            kind: buildPluginSurfaceDestinationId(pluginId, localId),
+            params: { ...query, ...(subPath ? { subPath } : {}), pluginId, localId },
         };
     }
+    const destination = resolveCurrentAppDestination(catalog, path);
+    if (!destination || destination.activation !== 'navigate') return null;
     if (destination.id === 'settings') {
         if (!route) return null;
         // A decoded slash inside a dynamic segment is not a route separator.
@@ -1102,15 +1095,13 @@ export function hrefForDestinationRef(
         return appendQuery(path, params, ['pageId', ...Object.keys(matchWorkspaceDestinationRoute(path)?.params ?? {})]);
     }
     if (ref.kind === 'newTab') return '/';
-    const destination = catalog.find((item) => item.id === ref.kind && item.activation === 'navigate');
-    if (!destination) return null;
-    if (destination.kind === 'plugin') {
-        if (params.pluginId !== destination.destination.pluginId || params.localId !== destination.destination.localId) return null;
-        const subPath = params.subPath
-            ? `/${params.subPath.split('/').map(encodedSegment).join('/')}`
-            : '';
-        return appendQuery(`${destination.routePath}${subPath}`, params, ['pluginId', 'localId', 'subPath']);
+    const { pluginId, localId, subPath } = params;
+    if (pluginId && localId && ref.kind === buildPluginSurfaceDestinationId(pluginId, localId)) {
+        const path = buildPluginAppPageRoutePath({ pluginId, localId, subPath });
+        return appendQuery(path, params, ['pluginId', 'localId', 'subPath']);
     }
+    const destination = catalog.find((item) => item.id === ref.kind && item.activation === 'navigate');
+    if (!destination || destination.kind === 'plugin') return null;
     return appendQuery(destination.routePath, params, []);
 }
 

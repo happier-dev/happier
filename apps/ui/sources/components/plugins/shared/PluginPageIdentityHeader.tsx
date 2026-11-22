@@ -10,7 +10,29 @@ import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/App
 import { PluginMark } from '@/components/settings/plugins/PluginMark';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 
+import { PluginSurfaceFallback } from '@/components/sessions/panes/PluginSurfaceFallback';
+import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
+
 import { PluginSurfacePageHeaderContext, type PluginSurfacePageIdentity } from './pluginSurfaceInteractionAvailability';
+
+// The App page and its loading frame use the same sheet gutter.
+export const pluginPageContentFrameStyle = {
+    flex: 1,
+    width: '100%',
+    paddingHorizontal: resolveItemGroupContentHorizontalInsetPx(),
+} as const;
+
+/** Reserve the App page toolbar while its declaration and title are still loading. */
+export function PluginAppPageLoadingFrame(props: Readonly<{ testID: string }>): React.ReactElement {
+    return <View style={pluginPageContentFrameStyle}>
+        <PluginSurfacePageHeaderContext.Provider value={{
+            header: <View testID={`${props.testID}-toolbar`} style={stylesheet.toolbar} />,
+            loadingFrame: 'collection',
+        }}>
+            <PluginSurfaceFallback testID={props.testID} state="loading" />
+        </PluginSurfacePageHeaderContext.Provider>
+    </View>;
+}
 
 /**
  * A plugin page route's identity (its title and the package's mark, with the route's own controls such
