@@ -10,6 +10,8 @@ import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/action
 import { DATABASE_STATEMENT_RUN_ACTION_ID_V1, DATABASE_STATS_ENABLE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { readDeploymentDatabaseSizesV1 } from '@happier-dev/deployments';
 import { DatabaseStatsEnableInputV1Schema } from '@happier-dev/plugin-sdk/database';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import * as workbenchPlugin from '@happier-dev/plugins-database-workbench';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
     verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions';
@@ -266,13 +268,19 @@ it.skipIf(localPostgres ? !nativePostgresqlAvailable : shape === 'mysql' ? !nati
                         expect.soft(actual.stdout).toMatch(new RegExp(`^ +${count}$`, 'mu'));
                         expect.soft(await enableEffects()).toMatch(new RegExp(`^ +${count}$`, 'mu'));
                     };
-                    await expectExtension(0);
-                    const wanted = { ok: true, operation: 'stats.enable', status: shape === 'stats-preloaded' ? 'enabled' : 'restart_required' };
-                    await expect.soft(executeSetup(manager)).resolves.toEqual(wanted);
-                    const count = shape === 'stats-preloaded' ? 1 : 0;
-                    await expectExtension(count);
-                    await expect.soft(executeSetup(manager)).resolves.toEqual(wanted);
-                    await expectExtension(count);
+                    const statsAction = await createPluginTestkit({
+                        manifest: workbenchPlugin.manifest, module: workbenchPlugin,
+                        services: { deploymentDatabases: manager },
+                    });
+                    try {
+                        await expectExtension(0);
+                        const wanted = { ok: true, operation: 'stats.enable', status: shape === 'stats-preloaded' ? 'enabled' : 'restart_required' };
+                        const count = shape === 'stats-preloaded' ? 1 : 0;
+                        await expect.soft(statsAction.invokeAction(setupAction.localId, setup)).resolves.toEqual(wanted);
+                        await expectExtension(count);
+                        await expect.soft(statsAction.invokeAction(setupAction.localId, setup)).resolves.toEqual(wanted);
+                        await expectExtension(count);
+                    } finally { await statsAction.dispose(); }
                     if (shape === 'stats-preloaded') {
                         await pg.execute('SET ROLE happier_ro; SELECT count(*) FROM information_schema.pg_stat_statements');
                     }
