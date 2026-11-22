@@ -145,6 +145,7 @@ describe('native Codex continuation startup settlement', () => {
         let stage = 'fixture_setup';
         const methods: string[] = [];
         const diagnostics: { code: string; details: unknown }[] = [];
+        const attestSessionOpen = vi.fn(async (_attestation: unknown) => {});
         const lifetime = new AbortController();
         onTestFinished(() => { lifetime.abort(); osBoundary.home = ''; });
         onTestFailed(() => {
@@ -167,6 +168,7 @@ describe('native Codex continuation startup settlement', () => {
             });
             const plan = await createNativeAgentRuntimeSessionPlanFixture({
                 generationSignal: lifetime.signal,
+                attestSessionOpen,
                 runtime, lease: createLease(agentId), backend: contributions.backend,
                 agent: { ...contributions.agent, richDefinition: {
                     ...contributions.agent.richDefinition,
@@ -203,7 +205,22 @@ describe('native Codex continuation startup settlement', () => {
             expect(diagnostics).toContainEqual(expect.objectContaining({ code: 'codex_continuation_unreachable' }));
             if (mode === 'rejected') {
                 expect(diagnostics).toContainEqual({ code: 'codex_continuation_unreachable',
-                    details: expect.objectContaining({ errorCode: '-32000' }) });
+                    details: expect.objectContaining({ phase: 'codex.thread_read', errorCode: '-32000' }) });
+                expect(attestSessionOpen).toHaveBeenCalledWith(expect.objectContaining({
+                    phase: 'refused',
+                    request: expect.objectContaining({ sessionId: 'session-fixture' }),
+                    failure: expect.objectContaining({
+                        code: 'codex_continuation_unreachable',
+                        failureCause: expect.objectContaining({
+                            phase: 'client_start',
+                            actionCause: {
+                                phase: 'codex.thread_read', errorClass: 'JsonRpcApplicationError',
+                                errorCode: '-32000', httpStatus: null,
+                            },
+                        }),
+                    }),
+                }));
+                expect(JSON.stringify(attestSessionOpen.mock.calls)).not.toContain('rollout persistence failed');
             }
             expect(fixture.requests.some(request => request.method === 'thread/read')).toBe(true);
             expect(fixture.requests.some(request => request.method === 'thread/resume' || request.method === 'turn/start')).toBe(false);

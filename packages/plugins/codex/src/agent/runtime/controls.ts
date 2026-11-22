@@ -10,6 +10,7 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 import {
   readUnexpectedActionErrorDiagnosticV1,
   projectSessionGoalControlDiagnosticDetails,
+  type ActionFailureCauseV1,
   type SessionGoalControlDiagnosticStage,
 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
@@ -18,6 +19,7 @@ import {
   type CodexSessionCatalogReader,
 } from './appServer/catalog/index.js';
 import { createCodexNativeAppServerClient } from './appServer/client.js';
+import { readCodexAppServerPrimaryFailure } from './appServer/startupFailure.js';
 import { isCodexAppServerApplicationRejectionForMethod } from './appServer/compatibility.js';
 import {
   createCodexGoalProjection,
@@ -220,19 +222,23 @@ const continuation: AgentSessionContinuationControl = {
     const providerSessionId = request.kind === 'resume'
       ? request.providerSessionId
       : request.source.providerSessionId;
+    let phase = 'codex.app_server_spawn';
     try {
-      await withControlClient(context, async (client) => await client.request('thread/read', {
-        threadId: providerSessionId,
-        includeTurns: false,
-      }));
+      await withControlClient(context, async (client) => {
+        phase = 'codex.thread_read';
+        await client.request('thread/read', { threadId: providerSessionId, includeTurns: false });
+      }, () => {
+        phase = 'codex.app_server_initialize';
+      });
       return { status: 'reachable' };
     } catch (error) {
-      const { errorClass, errorCode, httpStatus } = readUnexpectedActionErrorDiagnosticV1(error);
-      const details = { errorClass, errorCode, httpStatus };
-      // Required verification is refused before sessions.open. Record the safe
-      // cause here, before the host replaces this diagnostic with exit 78.
-      context.services.logger.warn('codex_continuation_unreachable', details);
-      return { status: 'unreachable', diagnostic: { ...diagnostic('codex_continuation_unreachable'), details } };
+      const { errorClass, errorCode, httpStatus } = readUnexpectedActionErrorDiagnosticV1(readCodexAppServerPrimaryFailure(error));
+      const failureCause = { phase, errorClass, errorCode, httpStatus } satisfies ActionFailureCauseV1;
+      context.services.logger.warn('codex_continuation_unreachable', failureCause);
+      return {
+        status: 'unreachable',
+        diagnostic: { ...diagnostic('codex_continuation_unreachable'), details: { failureCause } },
+      };
     }
   },
 };

@@ -1021,6 +1021,15 @@ Loaded-daemon replay requires the orchestrator's next authorized reload.
 
 ## Native Agent seam
 
+In 0.3 development source, required Codex continuation verification carries
+its existing `codex_continuation_unreachable` refusal into the Session runtime
+issue at `client_start`. The nested `failureCause.actionCause` identifies
+app-server setup and spawn (`codex.app_server_spawn`), app-server initialization
+(`codex.app_server_initialize`), or retained thread lookup
+(`codex.thread_read`). It carries allowlisted error classes and codes with an
+HTTP status when available. Native messages and response data stay in the
+owning process.
+
 In 0.3 development, ACP prompt usage projection may complete asynchronously at
 the existing prompt-response boundary. The host supplies the native Session id,
 effective process environment and cancellation signal to the

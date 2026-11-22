@@ -20,15 +20,39 @@ describe('Codex continuation native failure evidence', () => {
       }, context);
       expect(result).toMatchObject({ status: 'unreachable', diagnostic: {
         code: 'codex_continuation_unreachable',
-        details: { errorClass: 'JsonRpcApplicationError', errorCode: '-32000', httpStatus: null },
+        details: { failureCause: {
+          phase: 'codex.thread_read', errorClass: 'JsonRpcApplicationError', errorCode: '-32000', httpStatus: null,
+        } },
       } });
       expect(warn).toHaveBeenCalledWith('codex_continuation_unreachable', {
-        errorClass: 'JsonRpcApplicationError', errorCode: '-32000', httpStatus: null,
+        phase: 'codex.thread_read', errorClass: 'JsonRpcApplicationError', errorCode: '-32000', httpStatus: null,
       });
       if (result.status !== 'reachable') expect(AgentRuntimeDiagnosticDataV1Schema.safeParse(result.diagnostic).success).toBe(true);
       expect(JSON.stringify({ result, logs: warn.mock.calls })).not.toContain('rollout persistence failed');
       expect(fixture.requests.some(request => request.method === 'thread/resume')).toBe(false);
     });
+  });
+
+  it('identifies initialize rejection separately from thread lookup with the same RPC code', async () => {
+    await withCodexNativeAttachFixture(async fixture => {
+      const warn = vi.fn();
+      const context = {
+        signal: new AbortController().signal,
+        services: { exec: fixture.exec, logger: { warn, debug: vi.fn() } },
+        session: { id: 'session-1', cwd: fixture.directory, activity: 'inactive', connectedAccounts: [], launchEnvironment: fixture.launchEnvironment },
+      } as unknown as AgentSessionControlContext;
+      const result = await createCodexNativeSessionControls().continuation.verify({
+        kind: 'resume', sessionId: 'session-1', cwd: fixture.directory, providerSessionId: 'fresh-thread',
+      }, context);
+      expect(result).toMatchObject({ status: 'unreachable', diagnostic: {
+        code: 'codex_continuation_unreachable',
+        details: { failureCause: {
+          phase: 'codex.app_server_initialize', errorClass: 'JsonRpcApplicationError', errorCode: '-32000', httpStatus: null,
+        } },
+      } });
+      expect(fixture.requests.some(request => request.method === 'thread/read')).toBe(false);
+      expect(JSON.stringify({ result, logs: warn.mock.calls })).not.toContain('PRIVATE_INITIALIZE');
+    }, { initializeFailure: { code: -32000, message: 'Initialization failed: PRIVATE_INITIALIZE' } });
   });
 
   it('reads the thread through the target Session native launch identity, as its runtime does', async () => {
@@ -71,7 +95,9 @@ describe('Codex continuation native failure evidence', () => {
         kind: 'resume', sessionId: 'session-1', cwd: fixture.directory, providerSessionId: 'fresh-thread',
       }, context);
       expect(result).toMatchObject({ status: 'unreachable', diagnostic: {
-        details: { errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null },
+        details: { failureCause: {
+          phase: 'codex.app_server_spawn', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null,
+        } },
       } });
       expect(JSON.stringify({ result, logs: warn.mock.calls })).not.toMatch(/PRIVATE_TOKEN|private body/);
     });
