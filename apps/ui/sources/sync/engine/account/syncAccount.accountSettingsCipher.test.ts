@@ -7,6 +7,11 @@ import {
     sealAccountScopedBlobCiphertext,
 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
+import { Encryption } from '@/sync/encryption/encryption';
+import { encodeBase64 } from '@/encryption/base64';
+
+const secret = new Uint8Array(32).fill(7);
+const credentials = { token: 'e2ee-account', secret: encodeBase64(secret, 'base64url') };
 
 vi.mock('expo-constants', () => ({
     default: {},
@@ -52,6 +57,7 @@ describe('handleUpdateAccountSocketUpdate account settings ciphertext', () => {
             },
             updateCreatedAt: 123,
             currentProfile: { ...profileDefaults },
+            credentials,
             encryption,
             applyProfile,
             applySettings,
@@ -62,19 +68,14 @@ describe('handleUpdateAccountSocketUpdate account settings ciphertext', () => {
         expect(applySettings).toHaveBeenCalledWith(expect.objectContaining({ analyticsOptOut: true }), 7);
     });
 
-    it('applies settingsV2 plain content without calling decryptRaw', async () => {
+    it('keeps the incumbent when a Plain settings update arrives on an E2EE Account', async () => {
         const { handleUpdateAccountSocketUpdate } = await import('./syncAccount');
 
         const applyProfile = vi.fn();
         const applySettings = vi.fn();
-        const machineKey = new Uint8Array(32).fill(7);
-
-        const encryption = {
-            getContentPrivateKey: () => machineKey,
-            decryptRaw: vi.fn(async () => {
-                throw new Error('decryptRaw should not be used for plaintext settings');
-            }),
-        } as any;
+        const encryption = await Encryption.create(secret);
+        const log = vi.fn();
+        const getLocalSettings = vi.fn(() => ({ analyticsOptOut: false }));
 
         await handleUpdateAccountSocketUpdate({
             accountUpdate: {
@@ -85,14 +86,17 @@ describe('handleUpdateAccountSocketUpdate account settings ciphertext', () => {
             },
             updateCreatedAt: 123,
             currentProfile: { ...profileDefaults },
+            credentials,
             encryption,
             applyProfile,
             applySettings,
-            log: { log: vi.fn() },
+            getLocalSettings,
+            log: { log },
         });
 
-        expect(encryption.decryptRaw).not.toHaveBeenCalled();
-        expect(applySettings).toHaveBeenCalledWith(expect.objectContaining({ analyticsOptOut: true }), 9);
+        expect(applySettings).not.toHaveBeenCalled();
+        expect(getLocalSettings).not.toHaveBeenCalled();
+        expect(log).toHaveBeenCalledWith(expect.stringContaining('account_mode_downgrade_unverified'));
     });
 
     it('opens canonical account_scoped_v1 settingsV2 encrypted content without calling decryptRaw', async () => {
@@ -124,6 +128,7 @@ describe('handleUpdateAccountSocketUpdate account settings ciphertext', () => {
             },
             updateCreatedAt: 123,
             currentProfile: { ...profileDefaults },
+            credentials,
             encryption,
             applyProfile,
             applySettings,
@@ -152,6 +157,7 @@ describe('handleUpdateAccountSocketUpdate account settings ciphertext', () => {
             },
             updateCreatedAt: 123,
             currentProfile: { ...profileDefaults },
+            credentials,
             encryption: {
                 getContentPrivateKey: () =>
                     new Uint8Array(32).fill(7),
@@ -183,6 +189,7 @@ describe('handleUpdateAccountSocketUpdate account settings ciphertext', () => {
             },
             updateCreatedAt: 123,
             currentProfile: { ...profileDefaults },
+            credentials,
             encryption: null,
             applyProfile: vi.fn(),
             applySettings,
@@ -234,6 +241,7 @@ describe('handleUpdateAccountSocketUpdate account settings ciphertext', () => {
             },
             updateCreatedAt: 123,
             currentProfile: { ...profileDefaults },
+            credentials,
             encryption: {
                 getContentPrivateKey: () => machineKey,
             } as any,

@@ -79,6 +79,7 @@ describe('handleUpdateAccountSocketUpdate settings merge', () => {
                 updateCreatedAt: 123,
                 currentProfile: { ...profileDefaults },
                 encryption: null,
+                credentials: { token: 'plain-account' },
                 applyProfile: vi.fn(),
                 applySettings: vi.fn(),
                 getLocalSettings: () => settingsState.current,
@@ -267,6 +268,7 @@ describe('handleUpdateAccountSocketUpdate settings merge', () => {
             updateCreatedAt: 123,
             currentProfile: { ...profileDefaults },
             encryption,
+            credentials: { token: 'e2ee-account', secret: 'fixture' },
             applyProfile,
             applySettings,
             getLocalSettings: () => settingsState.current,
@@ -296,11 +298,6 @@ describe('handleUpdateAccountSocketUpdate settings merge', () => {
         const applyProfile = vi.fn();
         const applySettings = vi.fn();
         const applySettingsForScope = vi.fn();
-        const machineKey = new Uint8Array(32).fill(7);
-        const encryption = {
-            getContentPrivateKey: () => machineKey,
-            decryptRaw: vi.fn(),
-        } as any;
 
         await handleUpdateAccountSocketUpdate({
             accountUpdate: {
@@ -311,7 +308,8 @@ describe('handleUpdateAccountSocketUpdate settings merge', () => {
             },
             updateCreatedAt: 123,
             currentProfile: { ...profileDefaults },
-            encryption,
+            encryption: null,
+            credentials: { token: 'plain-account' },
             settingsScope,
             applyProfile,
             applySettings,

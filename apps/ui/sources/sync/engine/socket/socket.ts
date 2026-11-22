@@ -2040,6 +2040,7 @@ export async function handleUpdateContainer(params: {
             updateCreatedAt: updateData.createdAt,
             currentProfile,
             encryption,
+            credentials: params.credentials,
             settingsSecretsKey: params.settingsSecretsKey,
             settingsSecretsReadKeys: params.settingsSecretsReadKeys,
             settingsScope,

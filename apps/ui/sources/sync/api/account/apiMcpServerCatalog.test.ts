@@ -166,7 +166,7 @@ describe('MCP row HTTP inventory boundary', () => {
         try {
             // Another device writes Settings; the socket delivers the whole new document.
             await handleUpdateAccountSocketUpdate({ accountUpdate: { settingsV2: { content: { t: 'plain', v: { analyticsOptOut: true } }, version: 8 } },
-                updateCreatedAt: 1, currentProfile: { ...profileDefaults }, encryption: null,
+                updateCreatedAt: 1, currentProfile: { ...profileDefaults }, encryption: null, credentials: account.credentials,
                 settingsScope: { serverId: owner.serverId, accountId: owner.accountId },
                 applyProfile: () => {}, applySettings: () => {}, applySettingsForScope: () => {}, log: { log: () => {} } });
             settingsGets = 0;

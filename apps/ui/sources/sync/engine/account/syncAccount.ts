@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import { readAccountNameFromLegacyProfileV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
+import { AccountModeDowngradeUnverifiedError, admitReportedAccountMode } from '@happier-dev/sync-client';
 
 import { deletePushToken as deletePushTokenApi, registerPushToken as registerPushTokenApi } from '@/sync/api/session/apiPush';
 import type { Encryption } from '@/sync/encryption/encryption';
@@ -11,10 +12,11 @@ import {
     type AccountSettingsScope,
 } from '@/sync/domains/settings/scope/accountSettingsScope';
 import {
+    AccountSettingsStoredContentUnavailableError,
     normalizeAccountSettingsForLocalStorage,
     openAccountSettingsStoredContent,
 } from '@/sync/domains/settings/accountSettingsNormalization';
-import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
+import { readAccountE2eeCustody, TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { HappyError } from '@/utils/errors/errors';
 import {
     areServerProfileIdentifiersEquivalent,
@@ -46,7 +48,7 @@ import { createAccountSettingsScope } from '@/sync/domains/settings/scope/accoun
 import { parseToken } from '@/utils/auth/parseToken';
 import { createServerRequestForExplicitServerScope, runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
-import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
+import { fetchAccountEncryptionMode, getCachedAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import { captureAccountEncryptionObservationForHome } from '@/sync/http/accountEncryptionObservationBinding';
 import { readAccountSettingsBaseline } from '@/sync/engine/settings/accountSettingsBaseline';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
@@ -195,6 +197,7 @@ export async function handleUpdateAccountSocketUpdate(params: {
     updateCreatedAt: number;
     currentProfile: Profile;
     encryption: Encryption | null;
+    credentials?: AuthCredentials | null;
     settingsSecretsKey?: Uint8Array | null;
     settingsSecretsReadKeys?: ReadonlyArray<Uint8Array | null | undefined>;
     applyProfile: (profile: Profile) => void;
@@ -293,18 +296,35 @@ export async function handleUpdateAccountSocketUpdate(params: {
         version: number;
         source: 'v1' | 'v2';
     }>): void => {
-        const pushWasEnabled = isExpoPushNotificationChannelEnabled(getLocalSettings?.());
+        const credentials = params.credentials;
+        if (!credentials) {
+            throw new HappyError('Account encryption observation unavailable', false, {
+                kind: 'config',
+                code: 'account-encryption-currentness-unavailable',
+            });
+        }
+        const content = paramsForSettings.content;
+        const heldMode = getCachedAccountEncryptionMode(credentials, settingsScope?.serverId);
+        // A predecessor Home has no currentness observation. Admit its Plain
+        // envelope with the same custody decision used by the observation.
+        const expectedMode = heldMode ?? (
+            content && typeof content === 'object' && 't' in content && content.t === 'plain'
+                ? admitReportedAccountMode({ reported: 'plain', custody: readAccountE2eeCustody(credentials) })
+                : paramsForSettings.source === 'v1' ? 'e2ee' : undefined
+        );
         const opened = openAccountSettingsStoredContent({
-            content: paramsForSettings.content,
+            content,
             encryption,
-            ...(paramsForSettings.source === 'v1' ? { expectedMode: 'e2ee' as const } : {}),
+            expectedMode,
         });
+        const localSettings = getLocalSettings?.();
+        const pushWasEnabled = isExpoPushNotificationChannelEnabled(localSettings);
         const normalizedSettings = normalizeAccountSettingsForLocalStorage({
             raw: opened.raw,
             mode: opened.mode,
             settingsSecretsKey,
             settingsSecretsReadKeys,
-            localSettings: getLocalSettings?.(),
+            localSettings,
         });
         const settingsSchemaVersion = normalizedSettings.schemaVersion ?? 1;
         if (settingsSchemaVersion > SUPPORTED_SCHEMA_VERSION) {
@@ -326,6 +346,15 @@ export async function handleUpdateAccountSocketUpdate(params: {
         );
     };
 
+    const reportSettingsSyncFailure = (source: 'v1' | 'v2', error: unknown): void => {
+        const reason = error instanceof AccountModeDowngradeUnverifiedError
+            || error instanceof AccountSettingsStoredContentUnavailableError
+            || error instanceof HappyError
+            ? `${error.code ?? error.name}: ${error.message}`
+            : error instanceof Error ? error.message : String(error);
+        log.log(`Failed to process settings${source === 'v2' ? ' v2' : ''} update: ${reason}`);
+    };
+
     // Handle settings updates (new for profile sync)
     if (accountUpdate.settingsV2?.content || accountUpdate.settingsV2?.content === null) {
         try {
@@ -335,8 +364,7 @@ export async function handleUpdateAccountSocketUpdate(params: {
                 source: 'v2',
             });
         } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            log.log(`Failed to process settings v2 update: ${message}`);
+            reportSettingsSyncFailure('v2', error);
         }
     } else if (accountUpdate.settings?.value) {
         try {
@@ -349,9 +377,7 @@ export async function handleUpdateAccountSocketUpdate(params: {
                 source: 'v1',
             });
         } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            log.log(`Failed to process settings update: ${message}`);
-            // Don't crash on settings sync errors, just log
+            reportSettingsSyncFailure('v1', error);
         }
     }
 }

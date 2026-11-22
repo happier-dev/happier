@@ -3136,6 +3136,12 @@ writers keep consuming those owners and add no check of their own. Custody comes
 the credential the caller holds; a CLI caller that holds only a bearer reads the
 stored credential for that bearer.
 
+In 0.3 development, the app opens live Account Settings under the mode held by
+the matching Home's Account observation. If the observation has no held mode,
+including on predecessor Homes, a Plain envelope goes through the same admission
+decision with the socket's existing credentials. A refusal leaves the current
+Settings in place and records its reason through the existing sync log.
+
 Own-Account Machine rows migrate with the Account, so a Machine row the Home reports
 plain is a Home-reported Account mode. `admitMachineRowPlainMode` applies the same
 decision where a row resolves plain: UI Machine sync (which locks the row for every

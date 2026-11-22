@@ -1,9 +1,10 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { encodeBase64 } from '@/encryption/base64';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { getStorage } from '@/sync/domains/state/storage';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createLegacyAccountEncryptionCurrentnessFixture, createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { disconnectActiveServerConnection, restoreConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
@@ -45,7 +46,7 @@ import { NOTIFICATION_CHANNELS_ROUTE_V1 } from '@happier-dev/protocol/account/se
 import { createDeferred, renderHook } from '@/dev/testkit';
 import { useAiLaunchProfilesWithReadState } from '@/sync/store/useAiLaunchProfiles';
 import { useSessionAuthoringControlFacts } from '@/components/sessions/authoring/controls/useSessionAuthoringControlFacts';
-import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { refreshProfileCatalog, invalidateProfileCatalogProjection } from '@/sync/engine/settings/profileCatalogEngine';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
@@ -658,13 +659,106 @@ describe('Profile catalog captured Account transport', () => {
         // Another device writes Settings; the socket delivers the whole new document at the new head.
         settingsHeadVersion = 9;
         await handleUpdateAccountSocketUpdate({ accountUpdate: { settingsV2: { content: { t: 'plain', v: { analyticsOptOut: true } }, version: 9 } },
-            updateCreatedAt: 1, currentProfile: { ...profileDefaults }, encryption: null, settingsScope: scope,
+            updateCreatedAt: 1, currentProfile: { ...profileDefaults }, encryption: null, credentials: credentialsFor('a'), settingsScope: scope,
             applyProfile: () => {}, applySettings: () => {}, applySettingsForScope: () => {}, log: { log: () => {} } });
         settingsReadCounter.count = 0;
         const projection = await readProfileCatalogProjection(scope);
         expect(projection).toMatchObject({ source: 'destination' });
         expect(settingsReadCounter.count).toBe(0);
     });
+    it('consumes the replacement Plain observation after conversion keeps historical keys', async () => {
+        const { handleUpdateAccountSocketUpdate } = await import('@/sync/engine/account/syncAccount');
+        const { captureAccountSettingsRequest } = await import('@/sync/api/account/accountSettingsRequest');
+        const { persistAccountE2eeMaterialCustody } = await import('@/sync/ops/account/accountE2eeMaterialCustody');
+        const { profileDefaults } = await import('@/sync/domains/profiles/profile');
+        const { switchConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+        const accountId = 'account-settings-conversion';
+        const secret = new Uint8Array(32).fill(7);
+        const activeCredentials = { ...credentialsFor('settings-conversion'), secret: encodeBase64(secret, 'base64url') };
+        let currentness = createLegacyAccountEncryptionCurrentnessFixture({ secret });
+        let currentnessReads = 0;
+        let settingsReads = 0;
+        const account = await restoreServerAccountForTest({
+            accountId,
+            serverUrl: 'https://settings-conversion.example.test',
+            credentials: activeCredentials,
+            configureSocket: configureConnectedServerSocketBoundary,
+            request: async url => {
+                const path = new URL(String(url)).pathname;
+                if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+                if (path === '/v1/account/encryption') return Response.json({ mode: currentness.mode, updatedAt: currentness.updatedAt });
+                if (path === '/v1/account/profile') return Response.json({ ...profileDefaults, id: accountId });
+                if (path === '/v1/account/encryption/currentness') {
+                    currentnessReads++;
+                    return Response.json(currentness);
+                }
+                if (path === '/v2/account/settings') {
+                    settingsReads++;
+                    return Response.json({ version: 1, content: null });
+                }
+                return null;
+            },
+        });
+        const conversionScope = { serverId: account.serverId, accountId };
+        try {
+            const initialBinding = apiSocket.getAccountEncryptionObservationBinding(activeCredentials);
+            expect(await initialBinding?.read()).toMatchObject({ mode: 'e2ee' });
+            const applySettingsForScope = vi.fn();
+            const getLocalSettings = vi.fn(() => ({ analyticsOptOut: false }));
+            const log = vi.fn();
+            const plain = {
+                accountUpdate: { settingsV2: { content: { t: 'plain', v: { analyticsOptOut: true } }, version: 2 } },
+                updateCreatedAt: 124,
+                currentProfile: { ...profileDefaults },
+                settingsScope: conversionScope,
+                applyProfile: vi.fn(),
+                applySettings: vi.fn(),
+                applySettingsForScope,
+                getLocalSettings,
+                log: { log },
+            };
+            const beforeRejected = [currentnessReads, settingsReads];
+            await handleUpdateAccountSocketUpdate({ ...plain, credentials: activeCredentials, encryption: null });
+            expect(log).toHaveBeenCalledWith(expect.stringContaining('account_settings_content_invalid'));
+            expect(applySettingsForScope).not.toHaveBeenCalled();
+            expect(getLocalSettings).not.toHaveBeenCalled();
+            expect([currentnessReads, settingsReads]).toEqual(beforeRejected);
+
+            // Model the Home's committed migration, then run the converting
+            // device's real custody write and replacement connection.
+            const captured = await captureAccountSettingsRequest({ credentials: activeCredentials, settingsScope: conversionScope });
+            if (!captured) throw new Error('Expected the active Account Settings scope');
+            try {
+                currentness = createPlainAccountEncryptionCurrentnessFixture({ version: 2, settingsVersion: 2 });
+                expect(await persistAccountE2eeMaterialCustody({
+                    credentials: activeCredentials,
+                    custody: 'historical',
+                    captured,
+                    persistCredentials: async (next, options) => {
+                        const stored = await TokenStorage.setCredentialsForServerUrl(account.home.serverUrl, {
+                            serverId: account.serverId,
+                            expectedCredentials: options?.expectedCredentials,
+                        }, next);
+                        if (!stored) throw new Error('Expected the converting credential to be stored');
+                        return { kind: 'completed' };
+                    },
+                })).toBe(true);
+            } finally { captured.dispose(); }
+            await switchConnectionToActiveServer();
+            const converted = await TokenStorage.getCredentialsForServerUrl(account.home.serverUrl, { serverId: account.serverId });
+            expect(converted).toMatchObject({ ...activeCredentials, custody: 'historical' });
+            if (!converted) throw new Error('Expected the converted Account credential');
+            const replacement = apiSocket.getAccountEncryptionObservationBinding(converted);
+            expect(await replacement?.read()).toMatchObject({ mode: 'plain' });
+
+            const beforeAccepted = [currentnessReads, settingsReads];
+            await handleUpdateAccountSocketUpdate({ ...plain, credentials: converted, encryption: null });
+            expect(applySettingsForScope).toHaveBeenCalledWith(conversionScope, expect.objectContaining({ analyticsOptOut: true }), 2);
+            expect(getLocalSettings).toHaveBeenCalledTimes(1);
+            expect([currentnessReads, settingsReads]).toEqual(beforeAccepted);
+        } finally { await account.dispose(); }
+    });
+
     it('reads no full Settings document for a foreign write delivered over a connected socket', async () => {
         installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary);
         scope = await activateHome('socket-copy');
@@ -675,7 +769,7 @@ describe('Profile catalog captured Account transport', () => {
             const { handleUpdateAccountSocketUpdate } = await import('@/sync/engine/account/syncAccount');
             const { profileDefaults } = await import('@/sync/domains/profiles/profile');
             await handleUpdateAccountSocketUpdate({ accountUpdate: { settingsV2: { content: { t: 'plain', v: { analyticsOptOut: true } }, version: 9 } },
-                updateCreatedAt: 1, currentProfile: { ...profileDefaults }, encryption: null, settingsScope: scope,
+                updateCreatedAt: 1, currentProfile: { ...profileDefaults }, encryption: null, credentials: binding.credentials, settingsScope: scope,
                 applyProfile: () => {}, applySettings: () => {}, applySettingsForScope: () => {}, log: { log: () => {} } });
             settingsReadCounter.count = 0;
             // The head is deliberately unknown here: only the live observation may admit the delivered copy.

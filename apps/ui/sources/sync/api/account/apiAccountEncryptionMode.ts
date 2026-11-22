@@ -725,8 +725,8 @@ async function readSharedAccountEncryptionMode(
 /**
  * The live admitted Account socket's identity, without issuing a request.
  */
-export function getCachedAccountEncryptionMode(credentials: AuthCredentials): AccountEncryptionMode | null {
-    return sync?.getAccountEncryptionObservationBinding(credentials)?.peek()?.mode ?? null;
+export function getCachedAccountEncryptionMode(credentials: AuthCredentials, serverId?: string): AccountEncryptionMode | null {
+    return sync?.getAccountEncryptionObservationBinding(credentials, serverId)?.peek()?.mode ?? null;
 }
 
 export async function updateAccountEncryptionMode(
