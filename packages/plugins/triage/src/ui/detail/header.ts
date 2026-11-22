@@ -200,14 +200,14 @@ export function projectTriageDetailHeaderV1(
     workflowSubject: kind?.workflowSubject ?? null,
     kindGlyph: kind?.glyph ?? null,
     lastReadAtMs: observation?.observedAtMs ?? null,
-    scopeLabel: present?.snapshot.scopeLabel ?? null,
+    scopeLabel: present?.snapshot.scopeLabel ?? row.entryRef.collisionScope,
     stateLabel: present?.snapshot.state.nativeLabel ?? null,
     lifecyclePresentation: present?.snapshot.state.presentation ?? null,
     connectionLabel: input.connectionLabel,
     sourcePluginId: row.entryRef.source.pluginId,
     // A source may address an entry by its own title (a personal task): saying it twice is not an address.
     addressLabel: (present?.locator.displayPath !== undefined && present.locator.displayPath !== present.snapshot.title
-      ? present.locator.displayPath : undefined) ?? present?.snapshot.scopeLabel ?? null,
+      ? present.locator.displayPath : undefined) ?? present?.snapshot.scopeLabel ?? row.entryRef.collisionScope,
     breadcrumb: present === null ? null : Object.freeze([
       present.snapshot.scopeLabel,
       ...(present.snapshot.designation === undefined ? [] : [present.snapshot.designation]),

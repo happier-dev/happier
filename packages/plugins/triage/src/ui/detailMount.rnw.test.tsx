@@ -3435,6 +3435,8 @@ describe('opening a row into the source detail', () => {
         await act(async () => { await shell.updatePageLocation(alertPath('1')); });
         await expect(shell.queryByText('This entry is outside the current filter')).resolves.toBeUndefined();
         expect(document.body.textContent).toContain('Reading this entry');
+        await expect(shell.getByRole('heading', { name: '1' })).resolves.toBeDefined();
+        await expect(shell.getByText('example/repository')).resolves.toBeDefined();
         await act(async () => { await refreshMountedShell(shell, published); });
         expect(requestedLocations).not.toContain('');
         await act(async () => { release(); });
@@ -3449,7 +3451,12 @@ describe('opening a row into the source detail', () => {
         const shell = await mountShell({ subPath, securityAlert: true, activeSurface: true, partialScan: true,
             hostedDetail: true, refusedHostReads: refused, publishCurrentUiContext: context => { published = context; } });
         await expect(shell.queryByText('This entry is outside the current filter')).resolves.toBeUndefined();
-        expect(document.body.textContent).toContain('These details could not be read');
+        await expect(shell.getByRole('heading', { name: '1' })).resolves.toBeDefined();
+        const detail = document.querySelector<HTMLElement>('[role="group"][aria-label="Details pane"]');
+        await vi.waitFor(() => expect(detail?.textContent).toContain('These details could not be read'));
+        expect(detail?.textContent).toContain('example/repository');
+        expect(detail?.textContent?.split('These details could not be read')).toHaveLength(2);
+        await expect(shell.getByRole('button', { name: 'Retry' })).resolves.toBeDefined();
         await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Details' })); });
         await expect(shell.getByText('unavailable plugin_mounted_caller_unavailable')).resolves.toBeDefined();
         refused.clear();
@@ -3558,6 +3565,7 @@ describe('opening a row into the source detail', () => {
             initialRegion = findRegion();
             expect(initialRegion).not.toBeNull();
             expect(initialRegion?.textContent).toContain('Reading this entry');
+            expect(initialRegion?.querySelector('[role="heading"]')?.textContent).toBe('17');
         } finally {
             await act(async () => { release(); });
         }

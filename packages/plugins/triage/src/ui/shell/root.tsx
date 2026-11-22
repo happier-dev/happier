@@ -78,9 +78,11 @@ import { planTriageDetailTabsV1 } from '../detail/tabs.js';
 import type { TriageDetailAvailableTabV1 } from '../detail/body.js';
 import { projectTriageDetailHeaderV1 } from '../detail/header.js';
 import { useTriagePostMutationRow } from '../detail/useTriagePostMutationRow.js';
-import { presentInternalTaskReadFailure } from '../../internalTasks/readFailure.js';
+import { readTriageEntryGlyphV1 } from '../window/entryDisplay.js';
 import {
   renderTriageDetailHeaderV1,
+  TriageDetailReadFailure,
+  TriageInlineDetailIdentity,
   TriageDetailRegion,
 } from '../detail/region.js';
 import {
@@ -1233,7 +1235,6 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     surface.selection,
     window.readOwner,
   );
-  const selectedReadRefusal = presentInternalTaskReadFailure(selectedReadFailure?.code, text);
   // The page's one refresh (lab: "Updated · ⟳"): a press re-reads the list and, once, the open entry through its
   // existing exact read; the generation tells the mounted detail's Activity to re-read its source as well.
   const [detailRefreshGeneration, setDetailRefreshGeneration] = React.useState(0);
@@ -2446,6 +2447,16 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
    * like", and they would diverge the first time either changed. The Collection
    * tells it when the host already supplies the identity band and Close.
    */
+  const routeDetailHeader = (entryRef: TriageEntryRefV1) => {
+    const pin = pinsByEntry.get(triageEntryRowKey(entryRef));
+    const kind = readSourceDescriptor(entryRef.source)?.kinds.find(candidate => candidate.id === entryRef.kindId);
+    return {
+      title: pin?.displayAtMark.title ?? entryRef.entryId,
+      subtitle: pin?.displayAtMark.scopeLabel ?? entryRef.collisionScope,
+      subtitleLeading: <TriageSourceMark source={entryRef.source} />,
+      leading: <Icon name={readTriageEntryGlyphV1(null, kind?.workflowSubject ?? null, kind?.glyph ?? null)} />,
+    };
+  };
   const detailRow = selectedRow ?? lastKnown?.row ?? null;
   const detailContent = (headerHosted: boolean, pushed: boolean): React.ReactNode => openEntry === null ? null : (
     detailRow !== null ? (
@@ -2484,17 +2495,15 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         }}
         onClose={dismissDetail}
       />
-    ) : readFailed ? <Stack gap="small"><ErrorState
-        titleKey={selectedReadRefusal === null ? 'plugins.triage.surface.detail.accountError.title' : undefined}
-        title={selectedReadRefusal ?? 'These details could not be read'}
-        descriptionKey={selectedReadRefusal === null ? 'plugins.triage.surface.detail.accountError.description' : undefined}
-        description={selectedReadRefusal === null ? "This entry's details are unavailable right now. Try again when the connection is available." : undefined}
-        action={<Button titleKey="plugins.triage.surface.actions.retry" title="Retry" variant="secondary" onPress={completePostMutation} />}
-      /><PullRequestFailureDetails
-        codes={[selectedReadFailure?.code, ...(selectedReadFailure?.diagnostics?.map(diagnostic => diagnostic.code) ?? [])]}
-        requestId={readPluginErrorRequestIdV1(selectedReadFailure)}
-        detail={selectedReadFailure?.data.message}
-      /></Stack> : <LoadingState titleKey="plugins.triage.surface.detail.reading" title="Reading this entry" />
+    ) : (
+      <Stack gap="small">
+        {headerHosted ? null : <TriageInlineDetailIdentity identity={routeDetailHeader(openEntry)}
+          controls={<IconButton icon={<Icon name="close" tone="secondary" />}
+            accessibilityLabel={text('plugins.triage.surface.close', 'Close')} onPress={dismissDetail} />} />}
+        {readFailed ? <TriageDetailReadFailure failure={selectedReadFailure} retry={completePostMutation} />
+          : <LoadingState titleKey="plugins.triage.surface.detail.reading" title="Reading this entry" />}
+      </Stack>
+    )
   );
 
   /**
@@ -2538,15 +2547,9 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   });
   const detailHeader = (key: string) => {
     if (key === TRIAGE_TASK_DRAFT_KEY_V1) return { title: text('plugins.triage.tasks.new', 'New task') };
-    if (selectedHeader === null && surface.selection !== null) {
-      // A pin already knows its title; the read failure belongs to the body below, not to the page title.
-      const pinnedTitle = pinsByEntry.get(triageEntryRowKey(surface.selection.entryRef))?.displayAtMark.title;
-      if (pinnedTitle !== undefined) return { title: pinnedTitle };
-      return { title: readFailed
-        ? text('plugins.triage.surface.detail.accountError.title', 'These details could not be read')
-        : text('plugins.triage.surface.detail.reading', 'Reading this entry') };
-    }
-    if (selectedHeader === null) return { title: openEntry?.entryId ?? text('plugins.triage.surface.entryNotLoaded.heading', 'These details are not loaded') };
+    if (selectedHeader === null) return openEntry === null
+      ? { title: text('plugins.triage.surface.entryNotLoaded.heading', 'These details are not loaded') }
+      : routeDetailHeader(openEntry);
     const pinRow = selectedRow === null ? lastKnownPinRow : projectTriageWindowRow(selectedRow, pinsByEntry, { text });
     return renderTriageDetailHeaderV1({ header: selectedHeader, text, locale: surfaceContext.locale, nowMs: Date.now(),
       ...(pinRow === null ? {} : { pin: { row: pinRow, handlers: pinHandlers } }) });
