@@ -17,7 +17,7 @@ describe('inactive usage-limit recovery wakes', () => {
     const stored = new Map<string, unknown>(['one', 'two', 'three'].map((sessionId, index) => [sessionId, {
       v: 1,
       status: 'waiting',
-      issueFingerprint: `usage-limit:${index === 1 && selectedAuth.serviceId ? 'another-agent' : 'codex'}:${sessionId}:100:2000`,
+      issueFingerprint: `usage-limit:${index === 1 && 'serviceId' in selectedAuth ? 'another-agent' : 'codex'}:${sessionId}:100:2000`,
       armedAtMs: 100,
       resetAtMs: 2_000,
       nextCheckAtMs: 2_000,
