@@ -375,7 +375,9 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
             } : {})}>
             <Pressable
                 testID={props.testID}
-                accessibilityRole={rowOnPress ? 'button' : undefined}
+                // React Native Web uses the role to select the host tag. Keep the execution row
+                // mounted when a native step makes its output available.
+                accessibilityRole={rowOnPress || props.phase === 'execute' ? 'button' : undefined}
                 accessibilityState={{ busy: props.phase === 'execute' && status === 'running' }}
                 disabled={!rowOnPress}
                 onPress={rowOnPress}

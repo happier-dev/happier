@@ -61,6 +61,8 @@ afterEach(() => {
     standardCleanup();
 });
 
+const { PlanChecklistCard } = await import('./PlanChecklistCard');
+
 function createItem(overrides: Partial<import('./types').PlanChecklistItem> = {}): import('./types').PlanChecklistItem {
     return {
         id: 'install_cli',
@@ -87,6 +89,28 @@ function flattenPressableStyle(style: unknown): Record<string, unknown> {
 }
 
 describe('PlanChecklistCard', () => {
+    it('keeps the execution row host when completion makes its output interactive', async () => {
+        const rowId = 'checklist-row-install_cli';
+        const expanded = vi.fn();
+        const items = [createItem({ renderDetails: undefined })];
+        const screen = await renderScreen(<PlanChecklistCard testID="checklist" phase="execute" items={items}
+            selectedIds={['install_cli']} onToggleExpanded={expanded} />);
+        const row = screen.findByTestId(rowId)!;
+        const reviewRole = row.props.accessibilityRole;
+        expect(row.props.disabled).toBe(true);
+
+        await screen.update(<PlanChecklistCard testID="checklist" phase="execute" items={items}
+            selectedIds={['install_cli']} onToggleExpanded={expanded}
+            executionById={{ install_cli: { status: 'done', logs: [{ ts: 10, level: 'info', message: 'Installed' }] } }} />);
+        const settledRow = screen.findByTestId(rowId)!;
+        expect(settledRow).toBe(row);
+        // React Native Web selects the actual DOM tag from this role.
+        expect(settledRow.props.accessibilityRole).toBe(reviewRole);
+        expect(settledRow.props.disabled).toBe(false);
+        await screen.pressByTestIdAsync(rowId);
+        expect(expanded).toHaveBeenCalledWith('install_cli');
+    });
+
     it('renders selectable rows, expands details, and forwards copy diagnostics actions', async () => {
         const { PlanChecklistCard } = await import('./PlanChecklistCard');
         const copyDiagnostics = vi.fn(async () => true);
