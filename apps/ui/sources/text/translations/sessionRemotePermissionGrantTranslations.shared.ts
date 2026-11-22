@@ -92,7 +92,7 @@ export const sessionRemotePermissionGrantTranslationsEnglish = { en: {
             addAction: 'Add an Action',
             noActionsToAdd: 'Every Action already has its own choice here.',
             emptyTitle: 'No Actions allowed yet',
-            emptyReason: 'Choose Always when an agent asks, or add an Action here.',
+            emptyReason: 'Add an Action to choose whether it runs or asks in this Session.',
             loadingTitle: 'Loading allowed Actions',
             unavailableTitle: 'Allowed Actions unavailable',
             unavailableReason: 'Happier couldn’t read this Session’s choices, so every Action asks as usual.',

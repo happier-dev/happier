@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { TextInput } from 'react-native';
 import type { SelectableMenuCategory, SelectableMenuItem, SelectableMenuItemSource } from './selectableMenuTypes';
 import { t } from '@/text';
@@ -59,6 +59,10 @@ export function useSelectableMenu(params: {
     const [localSearchQuery, setLocalSearchQuery] = useState('');
     const searchQuery = params.searchControl?.value ?? localSearchQuery;
     const onSearchChange = params.searchControl?.onValueChange;
+    // A closed menu forgets its own query, so it reopens on the whole list (a caller-owned query stays the caller's).
+    useEffect(() => {
+        if (params.open === false) setLocalSearchQuery('');
+    }, [params.open]);
     const inputRef = useRef<TextInput>(null);
 
     const allItemsRaw = useMemo(() => params.items, [params.items]);
@@ -70,13 +74,14 @@ export function useSelectableMenu(params: {
             return groupByCategory(allItemsRaw, params.categoryTitles);
         }
 
-        const filtered = allItemsRaw.filter((item) => {
-            return matchesHappierMenuQuery({
-                label: item.title,
-                description: item.subtitle,
-                query,
-            });
-        });
+        // Rows whose title matches lead; rows found only by their description follow, each in source order.
+        const titleMatches: SelectableMenuItem[] = [];
+        const descriptionMatches: SelectableMenuItem[] = [];
+        for (const item of allItemsRaw) {
+            if (matchesHappierMenuQuery({ label: item.title, query })) titleMatches.push(item);
+            else if (matchesHappierMenuQuery({ label: '', description: item.subtitle, query })) descriptionMatches.push(item);
+        }
+        const filtered = descriptionMatches.length === 0 ? titleMatches : [...titleMatches, ...descriptionMatches];
 
         if (filtered.length === 0) {
             if (params.onCreateItem) {

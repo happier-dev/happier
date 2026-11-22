@@ -15324,7 +15324,7 @@ const sessionRemotePermissionGrantTranslations = { 'zh-Hant': {
             addAction: '新增動作',
             noActionsToAdd: '每個動作在這裡都已有自己的選擇。',
             emptyTitle: '尚未允許任何動作',
-            emptyReason: '在代理詢問時選擇「永遠」，或在此新增動作。',
+            emptyReason: '新增動作，選擇它在此工作階段中直接執行還是先詢問。',
             loadingTitle: '正在載入已允許的動作',
             unavailableTitle: '已允許的動作無法使用',
             unavailableReason: 'Happier 無法讀取此工作階段的選擇，因此每個動作照常詢問。',

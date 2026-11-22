@@ -309,6 +309,27 @@ describe('useSelectableMenu (allowEmptySelection)', () => {
     await hook.unmount();
   });
 
+  it('reopens a searched menu with an empty query and lists title matches before description matches', async () => {
+    const { useSelectableMenu } = await import('./useSelectableMenu');
+    const items: SelectableMenuItem[] = [
+      { id: 'navigate', title: 'Navigate a page', subtitle: 'Open a page in the browser view', category: 'Browser', left: null, right: null },
+      { id: 'open', title: 'Open browser view', subtitle: 'Show a page beside the Session', category: 'Browser', left: null, right: null },
+      { id: 'files', title: 'Read files', subtitle: 'Open a file from the folder', category: 'Files', left: null, right: null },
+    ];
+    const hook = await renderHook(
+      ({ open }: { open: boolean }) => useSelectableMenu({ items, onRequestClose: () => {}, open }),
+      { initialProps: { open: true } },
+    );
+    try {
+      await act(async () => { hook.getCurrent().handleSearchChange('open'); });
+      expect(hook.getCurrent().allItems.map(item => item.id)).toEqual(['open', 'navigate', 'files']);
+      await hook.rerender({ open: false });
+      await hook.rerender({ open: true });
+      expect(hook.getCurrent().searchQuery).toBe('');
+      expect(hook.getCurrent().allItems).toHaveLength(3);
+    } finally { await hook.unmount(); }
+  });
+
   it('clears typeahead when a controlled menu closes before reopening', async () => {
     const { useSelectableMenu } = await import('./useSelectableMenu');
     const items: SelectableMenuItem[] = [

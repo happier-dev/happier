@@ -15385,7 +15385,7 @@ const sessionRemotePermissionGrantTranslations = { ja: {
             addAction: 'アクションを追加',
             noActionsToAdd: 'すべてのアクションにはすでにここで選択があります。',
             emptyTitle: '許可されたアクションはまだありません',
-            emptyReason: 'エージェントが確認したときに「常に」を選ぶか、ここでアクションを追加してください。',
+            emptyReason: 'アクションを追加すると、このセッションで実行するか確認するかを選べます。',
             loadingTitle: '許可されたアクションを読み込み中',
             unavailableTitle: '許可されたアクションを利用できません',
             unavailableReason: 'Happier はこのセッションの選択を読み取れなかったため、各アクションは通常どおり確認します。',
