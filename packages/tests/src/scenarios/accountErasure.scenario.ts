@@ -93,7 +93,8 @@ export async function runAccountErasureJourney(fixture: TeamSetupFFixture, datab
       expect((await readWithOriginalBearer()).status, 'The original bearer must work before erasure').toBe(200);
       const machine = await fixture.enrollDaemon(account);
       await fixture.assertKnownGoodMachineControl(account, machine);
-      expect(await account.execute('machines.command.run', { command: 'echo erasure-control' }, {
+      // The terminal credential is automation; the fixture person approves the real Inbox request.
+      expect(await account.executeReviewed('machines.command.run', { command: 'echo erasure-control' }, {
         presentUserConfirmation: { actionId: 'machines.command.run' },
         externalActionTarget: { kind: 'machine', machineId: machine.target.machineId,
           project: { machineId: machine.target.machineId, directory: machine.workspaceDir } },

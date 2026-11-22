@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 
 import { fetchMessagesSince, fetchSessionV2 } from '../../sessions';
 import { decryptLegacyBase64, encryptLegacyBase64 } from '../../messageCrypto';
+import { decryptDataKeyBase64, encryptDataKeyBase64 } from '../../rpcCrypto';
 import { sleep } from '../../timing';
 import { enqueuePendingQueueV2 } from '../../pendingQueueV2';
 import { createUserScopedSocketCollector } from '../../socketClient';
@@ -119,6 +120,7 @@ export async function enqueueSessionPromptForScenario(params: {
   token: string;
   sessionId: string;
   secret: Uint8Array;
+  encryptionVariant?: 'legacy' | 'dataKey';
   text: string;
   meta?: Record<string, unknown>;
   requestedAction?: PendingRequestedActionV1;
@@ -134,7 +136,9 @@ export async function enqueueSessionPromptForScenario(params: {
       ...(params.meta ?? {}),
     },
   };
-  const ciphertext = encryptLegacyBase64(payload, params.secret);
+  const ciphertext = params.encryptionVariant === 'dataKey'
+    ? encryptDataKeyBase64(payload, params.secret)
+    : encryptLegacyBase64(payload, params.secret);
 
   const startedAt = Date.now();
   while (Date.now() - startedAt < 30_000) {
@@ -260,6 +264,7 @@ export async function waitForAssistantMessageContaining(params: {
   token: string;
   sessionId: string;
   secret: Uint8Array;
+  encryptionVariant?: 'legacy' | 'dataKey';
   requiredSubstring?: string;
   requiredSubstrings?: string[];
   afterSeqStart?: number;
@@ -293,7 +298,9 @@ export async function waitForAssistantMessageContaining(params: {
 
     for (const row of rows) {
       try {
-        const decrypted = decryptLegacyBase64(row.content.c, params.secret) as Record<string, unknown> | null;
+        const decrypted = (params.encryptionVariant === 'dataKey'
+          ? decryptDataKeyBase64(row.content.c, params.secret)
+          : decryptLegacyBase64(row.content.c, params.secret)) as Record<string, unknown> | null;
         if (!decrypted || typeof decrypted !== 'object') continue;
         if (params.allowAnyAssistantMessage === true) return;
 
