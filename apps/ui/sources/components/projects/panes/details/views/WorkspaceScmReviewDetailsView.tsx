@@ -11,6 +11,7 @@ import { useWorkspaceScmSnapshotController } from '@/hooks/workspaces/scm/useWor
 import { NotSourceControlRepositoryState } from '@/components/workspaces/scm/states/NotSourceControlRepositoryState';
 import { SourceControlUnavailableState } from '@/components/workspaces/scm/states/SourceControlUnavailableState';
 import { SourceControlStaleSnapshotNotice } from '@/components/workspaces/scm/states/SourceControlStaleSnapshotNotice';
+import { MANAGED_POWER_REQUIRED } from '@/components/workspaces/reachability/ManagedWorkspaceStoppedState';
 import { useScmReviewLimits } from '@/scm/review/useScmReviewLimits';
 import { useSession, useSetting, useWorkspaceRefs, useWorkspaceReviewCommentsDrafts, useWorkspaceScmCommitSelectionPatches, useWorkspaceScmCommitSelectionPaths } from '@/sync/domains/state/storage';
 import { ChangedFilesReview } from '@/components/workspaces/scm/review/ChangedFilesReview';
@@ -398,13 +399,17 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
     const proposeCommits = React.useMemo(() => showProposeCommits
         ? <ScmComparisonProposeCommits onPress={onProposeCommits} /> : undefined, [showProposeCommits, onProposeCommits]);
 
+    // A stopped workspace whose last read had no changes keeps nothing worth marking stale: "No changes" would read as a
+    // clean tree it can't vouch for, so the body says it is stopped, as a cold open does (lab project-stoppedCold).
+    const stoppedWithNothingKept = error?.errorCode === MANAGED_POWER_REQUIRED && snapshot != null && selectScmChangedFileCount(snapshot) === 0;
+
     return (
         <View style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
             {authoringApproval.approvalId ? <ActionApprovalPendingNotice message={t('approvals.status.open')} summary={authoringApproval.approvalSummary}
                 testID="workspace-review-authoring-approval" onOpenApproval={() => router.push(
                     buildApprovalHref(authoringApproval.approvalId!, props.serverId),
                 )} /> : null}
-            {snapshot ? <SourceControlStaleSnapshotNotice error={error} workspaceScope={scope} onRetry={() => { void refresh(); }} testID="workspace-review-stale" /> : null}
+            {snapshot && !stoppedWithNothingKept ? <SourceControlStaleSnapshotNotice error={error} workspaceScope={scope} onRetry={() => { void refresh(); }} testID="workspace-review-stale" /> : null}
             <InputTypePickerHostProvider enabled={presented} requiresPluginTypes={false} machineId={props.machineId} serverId={props.serverId}
                 contextKey={JSON.stringify([props.serverId, props.machineId, props.rootPath])}>
             <WorkspaceScmReviewBody onVisibleFileRowCountChange={setIndexPageSize} activeReviewFile={activeReviewFile} comparison={comparison} view={view} scopeLabel={scopeLabel} scopeDetail={scopeDetail}
@@ -424,7 +429,7 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
                     active={presented} renderBar={() => renderBar()} onShowInGit={props.onShowInGit} />}
                 filesState={comparison.kind === 'workingTree' && !comparison.comparisonId
                     ? (loading || (liveFiles && indexPageSize === null)) && !snapshot ? (reachability.unreachable ? <CheckoutUnreachableState reachability={reachability} testID="scm-review-unreachable" /> : <PaneLoadingFallback />)
-                        : error && !snapshot ? <SourceControlUnavailableState details={error.message} errorCode={error.errorCode} workspaceScope={scope} onRetry={() => { void refresh(); }} />
+                        : error && (!snapshot || stoppedWithNothingKept) ? <SourceControlUnavailableState details={error.message} errorCode={error.errorCode} workspaceScope={scope} onRetry={() => { void refresh(); }} />
                             : snapshot?.repo.isRepo === false ? <NotSourceControlRepositoryState /> : null
                     : !capture.comparison ? capture.loading ? <PaneLoadingFallback />
                         : <SourceControlUnavailableState details={capture.error ?? t('scmComparison.unsupportedReason')} onRetry={capture.retry} /> : null}

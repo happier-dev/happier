@@ -511,6 +511,28 @@ describe('WorkspaceScmReviewDetailsView', () => {
         // The empty state says what the page is for, not only that it is empty.
         expect(screen.getTextContent()).toContain(t('files.noChangesPurpose'));
     });
+    it('does not read a stopped workspace as a clean tree: no "No changes" once a refresh says it is stopped', async () => {
+        const rootPath = '/home/member/review-stopped';
+        const serverUrl = 'https://managed-review-stopped.test';
+        const serverId = `srv_${Buffer.from(serverUrl).toString('base64url')}`;
+        const workspace = { v: 2, kind: 'managed', serverId, workspaceId: 'review-stopped',
+            managedId: 'review-stopped', controller: { machineId: 'm1', installationId: 'test-installation' }, rootPath } as const;
+        let stopped = false;
+        fixture = await createSessionFilesViewFixture({ rootPath, serverUrl, rpc: request =>
+            request.method === 'scm.status.snapshot' ? stopped
+                ? { success: false, errorCode: 'managed_power_required', error: 'Workspace is stopped' }
+                : { success: true, snapshot: fileViewSnapshot({ rootPath }) } : undefined });
+        fixture.storage.setState({ sessions: {} });
+        const screen = await renderMeasuredReview(<WorkspaceScmReviewDetailsView scopeId="project:workspace-stopped"
+            machineId="m1" serverId={fixture.home.id} rootPath={rootPath} workspace={workspace} />);
+        await vi.waitFor(() => expect(screen.findHostByTestId('changed-files-review-empty')).toBeTruthy());
+        stopped = true;
+        const { scmStatusSync } = await import('@/scm/scmStatusSync');
+        await act(async () => { await scmStatusSync.invalidateFromUserAndAwait({ serverId: fixture.home.id, machineId: 'm1', rootPath, workspace }); });
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('files.pane.managedStoppedChangesReason')));
+        expect(screen.findHostByTestId('changed-files-review-empty')).toBeNull();
+        expect(screen.getTextContent()).not.toContain(t('files.noChanges'));
+    });
     it('opens review comments from the Files menu instead of a row above the bar', async () => {
         fixture = await createSessionFilesViewFixture({ rootPath: '/repo', rpc: request =>
             request.method === 'scm.status.snapshot' ? { success: true, snapshot: fileViewSnapshot({ rootPath: '/repo', entries: CHANGED_ENTRIES }) } : undefined });

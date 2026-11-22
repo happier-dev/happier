@@ -8,6 +8,16 @@ import { t } from '@/text';
 /** The managed refusal code a stopped provider resource returns (protocol `managedRefusalCodeV1`). */
 export const MANAGED_POWER_REQUIRED = 'managed_power_required';
 
+const StartOfferedBeside = React.createContext(false);
+
+/**
+ * Declares that this subtree sits beside a page that already says its workspace is stopped, with Start (the Code page
+ * beside its Git pane): the line here names the state and Starting, and leaves the one Start to that page.
+ */
+export function ManagedWorkspaceStartOfferedBeside(props: Readonly<{ offered?: boolean; children: React.ReactNode }>) {
+  return <StartOfferedBeside.Provider value={props.offered !== false}>{props.children}</StartOfferedBeside.Provider>;
+}
+
 /**
  * A stopped attached workspace, wherever its contents were asked for (Files, Git): it names the workspace and
  * its one next step (lab project-stoppedCold). Stopped → Starting → `onStarted` reads again; Start shows only
@@ -46,6 +56,7 @@ function StartableWorkspaceStoppedState(
   }>,
 ) {
   const start = useManagedWorkspaceStart(props.workspaceScope);
+  const offeredBeside = React.useContext(StartOfferedBeside);
   const pending = start?.pending === true;
   const wasPending = React.useRef(pending);
   const onStarted = React.useRef(props.onStarted);
@@ -74,7 +85,9 @@ function StartableWorkspaceStoppedState(
       size={props.size}
       testID={props.testID}
       action={
-        start?.reviewApproval
+        offeredBeside
+          ? null
+          : start?.reviewApproval
           ? { label: t('approvals.details'), onPress: start.reviewApproval }
           : start && !pending
             ? {

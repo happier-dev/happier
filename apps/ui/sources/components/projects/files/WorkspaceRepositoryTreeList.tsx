@@ -17,6 +17,7 @@ import { Typography } from '@/constants/Typography';
 import { useWorkspaceRepositoryTreeBrowser } from '@/hooks/workspaces/files/useWorkspaceRepositoryTreeBrowser';
 import { RepositoryTreeRootErrorState } from '@/components/workspaces/files/repositoryTree/RepositoryTreeRootErrorState';
 import { MANAGED_POWER_REQUIRED, ManagedWorkspaceStoppedState } from '@/components/workspaces/reachability/ManagedWorkspaceStoppedState';
+
 import { t } from '@/text';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { useScmTreeBadgeIndex } from '@/components/workspaces/files/repositoryTree/useScmTreeBadgeIndex';
@@ -44,6 +45,9 @@ import { selectScmChangedFiles } from '@/scm/scmStatusFiles';
 import { ScmChangeMark } from '@/components/workspaces/scm/changes/ScmChangeMark';
 import { resolveScmChangePathTag } from '@/scm/scmChangePathTag';
 import { useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
+
+/** The typed refusal a controller returns while it cannot yet admit the read (LIFECYCLE `rootErrorCode`). */
+const ADMISSION_UNAVAILABLE = 'admission_unavailable';
 
 export type WorkspaceRepositoryTreeWebDropTarget = RepositoryFileDropTarget;
 export type WorkspaceRepositoryDirectoryState = Readonly<{ loaded: boolean; loading: boolean; error: string | null }>;
@@ -261,7 +265,7 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
         ...(props.revealedPaths ?? []),
         ...(props.scmSnapshot?.entries.flatMap(entry => entry.previousPath ? [entry.path, entry.previousPath] : [entry.path]) ?? []),
     ], [props.revealedPaths, props.scmSnapshot]);
-    const { rootLoading: treeRootLoading, rootError: treeRootError, rootLoaded, nodes: treeNodes, toggleDirectory: toggleTreeDirectory, retryRoot, retryDirectory, gitIgnoreAvailable, liveFileWrites, arrivedPaths, recoveryInFlight } = useWorkspaceRepositoryTreeBrowser({
+    const { rootLoading: treeRootLoading, rootError: treeRootError, rootErrorCode: treeRootErrorCode, rootLoaded, nodes: treeNodes, toggleDirectory: toggleTreeDirectory, retryRoot, retryDirectory, gitIgnoreAvailable, liveFileWrites, arrivedPaths, recoveryInFlight } = useWorkspaceRepositoryTreeBrowser({
         scope: props.scope,
         enabled: props.directoryListing !== false,
         expandedPaths,
@@ -298,11 +302,14 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
     // The controller came back and the listing is being read again: the rows it had stay, and the table says it is
     // reconnecting rather than naming the refusal that read is replacing (lab project-reconnecting).
     const reconnecting = !changedOnly && recoveryInFlight === true && treeNodes.length > 0;
-    const rootLoading = changedOnly ? props.scmSnapshot == null : treeRootLoading || reconnecting;
+    // The controller's startup admission refusal (typed `admission_unavailable`) is the read not being admitted yet, not a
+    // failed listing: a cold entry with nothing kept waits in loading until the controller-readiness wake reads again.
+    const admissionPending = !changedOnly && treeRootErrorCode === ADMISSION_UNAVAILABLE && treeNodes.length === 0;
+    const rootLoading = changedOnly ? props.scmSnapshot == null : treeRootLoading || reconnecting || admissionPending;
     // A stopped workspace over rows the tree kept is said once above them, with Start (lab project-stopped), not as a
     // listing failure; with nothing kept, the root state below owns it.
     const stoppedOverRows = !changedOnly && !reconnecting && treeRootError === MANAGED_POWER_REQUIRED && treeNodes.length > 0;
-    const rootError = changedOnly || reconnecting || stoppedOverRows ? null : treeRootError;
+    const rootError = changedOnly || reconnecting || stoppedOverRows || admissionPending ? null : treeRootError;
 
     const rootRefreshing = rootLoading && rootLoaded;
     React.useEffect(() => {

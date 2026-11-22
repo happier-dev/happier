@@ -25,6 +25,7 @@ import { useWorkspaceRepositoryDirectoryRevision } from '@/hooks/workspaces/file
 import { useWorkspaceScmSnapshotController } from '@/hooks/workspaces/scm/useWorkspaceScmSnapshotController';
 import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { CheckoutReachabilityLine, CheckoutReachabilityScope, CheckoutUnreachableState, useCheckoutReachability } from '@/components/workspaces/reachability/checkoutReachability';
+import { MANAGED_POWER_REQUIRED } from '@/components/workspaces/reachability/ManagedWorkspaceStoppedState';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
@@ -218,7 +219,9 @@ export const WorkspaceCodeBrowserView = React.memo(function WorkspaceCodeBrowser
     ) : null;
 
     const sheetStyle = [styles.sheet, resolveThemeHairlineBorderStyle(theme.colors.border.surface), phone ? styles.sheetPhone : null];
-    const historyFreshness = props.history === undefined && facts.stale && available ? <SurfaceFreshnessLine
+    // A stopped workspace is the explanation the tree already gives with Start; its history didn't drift (lab project-stopped).
+    const workspaceStopped = scm.error?.errorCode === MANAGED_POWER_REQUIRED;
+    const historyFreshness = props.history === undefined && facts.stale && available && !workspaceStopped ? <SurfaceFreshnessLine
         testID={`${testID}-history-stale`} asOf={null}
         reason={t('projects.code.historyChanged')}
         action={{ label: t('common.retry'), onPress: refreshHistory }} /> : null;

@@ -46,6 +46,7 @@ const repositoryTreeBrowserState = vi.hoisted(() => ({
     liveFileWrites: new Map(),
     arrivedPaths: new Set<string>(),
     rootError: null as string | null,
+    rootErrorCode: null as string | null,
     recoveryInFlight: false,
     nodes: [
         { path: 'src', name: 'src', type: 'directory', depth: 0, isExpanded: false, isLoadingChildren: false },
@@ -60,6 +61,7 @@ vi.mock('@/hooks/workspaces/files/useWorkspaceRepositoryTreeBrowser', () => ({
         rootLoading: repositoryTreeBrowserState.rootLoading,
         rootLoaded: repositoryTreeBrowserState.rootLoaded,
         rootError: repositoryTreeBrowserState.rootError,
+        rootErrorCode: repositoryTreeBrowserState.rootErrorCode,
         recoveryInFlight: repositoryTreeBrowserState.recoveryInFlight,
         nodes: repositoryTreeBrowserState.nodes,
         liveFileWrites: repositoryTreeBrowserState.liveFileWrites,
@@ -140,6 +142,7 @@ describe('WorkspaceRepositoryTreeList', () => {
         repositoryTreeBrowserState.rootLoading = false;
         repositoryTreeBrowserState.recoveryInFlight = false;
         repositoryTreeBrowserState.rootError = null;
+        repositoryTreeBrowserState.rootErrorCode = null;
         repositoryTreeBrowserState.nodes = [
             { path: 'src', name: 'src', type: 'directory', depth: 0, isExpanded: false, isLoadingChildren: false },
             { path: 'README.md', name: 'README.md', type: 'file', depth: 0 },
@@ -204,6 +207,28 @@ describe('WorkspaceRepositoryTreeList', () => {
         expect(browser?.rootError ?? null).toBeNull();
         expect(browser?.rootLoading).toBe(true);
         expect(browser?.loadingLabel).toBe('files.pane.reconnectingTo');
+    });
+
+    it('reads the typed startup admission refusal on a cold entry as loading, not as a failed listing', async () => {
+        repositoryTreeBrowserState.rootError = 'Machine admission is not ready yet';
+        repositoryTreeBrowserState.rootErrorCode = 'admission_unavailable';
+        repositoryTreeBrowserState.nodes = [];
+        await renderScreen(
+            <WorkspaceRepositoryTreeList
+                theme={theme}
+                scope={{ serverId: 'server', machineId: 'm1', rootPath: '/repo' }}
+                expandedPaths={[]}
+                onExpandedPathsChange={() => {}}
+                onOpenFile={() => {}}
+                machineName="api-dev"
+                listHeader={React.createElement('View', { testID: 'history-strip' })}
+            />,
+        );
+
+        const browser = latestFilesystemBrowserProps.current;
+        expect(browser?.rootError ?? null).toBeNull();
+        expect(browser?.rootLoading).toBe(true);
+        expect(browser?.listEmpty ?? null).toBeNull();
     });
 
     it('over the rows it kept, says a stopped workspace is stopped instead of a listing failure (lab project-stopped)', async () => {

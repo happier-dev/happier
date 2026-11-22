@@ -3,7 +3,7 @@ import { UniversalSearchRuntimeProvider } from '@/components/appShell/search/Uni
 import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { standardCleanup } from '@/dev/testkit';
+import { flushHookEffects, standardCleanup } from '@/dev/testkit';
 import { createSessionFilesViewFixture, fileViewSnapshot, installSessionFilesViewBoundaries, prepareSessionFilesViewTestkit } from '@/components/sessions/files/views/sessionFilesViewTestkit';
 import type { WorkspaceCodeLocation } from './WorkspaceCodeBrowserView';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
@@ -208,24 +208,46 @@ describe('Code consumes the qualified browser and real entry-history batch', () 
             || request.method === RPC_METHODS.SCM_HISTORY_ENTRIES)).toHaveLength(readsBeforeExpiry);
     });
 
-    it('is one column: folder entries, then the bounded file reader in their place', async () => {
-        const rootPath = '/code-aside-consumer';
-        fixture = await createSessionFilesViewFixture({ rootPath, rpc: request => {
-            if (request.method === RPC_METHODS.LIST_DIRECTORY) return { success: true, truncated: false,
+    it('does not call a stopped workspace a changed checkout: no history drift line under the kept rows (lab project-stopped)', async () => {
+        const rootPath = '/home/member/stopped';
+        const controller = { machineId: 'm1', installationId: 'test-installation' };
+        const serverUrl = 'https://managed-code-stopped.test';
+        const serverId = `srv_${Buffer.from(serverUrl).toString('base64url')}`;
+        const workspace = { v: 2, kind: 'managed', serverId, workspaceId: 'stopped-checkout',
+            managedId: 'stopped', controller, rootPath } as const;
+        const headOid = 'c'.repeat(40);
+        let stopped = false;
+        const powerRequired = { success: false, errorCode: 'managed_power_required', error: 'Workspace is stopped' };
+        fixture = await createSessionFilesViewFixture({ rootPath, serverUrl, rpc: request => {
+            if (request.method === RPC_METHODS.LIST_DIRECTORY) return stopped ? powerRequired : { success: true,
                 entries: [{ name: 'LICENSE', type: 'file' }] };
+            if (request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT) {
+                if (stopped) return powerRequired;
+                const snapshot = fileViewSnapshot({ rootPath });
+                return { success: true, snapshot: { ...snapshot, branch: { ...snapshot.branch, headOid } } };
+            }
+            if (request.method === RPC_METHODS.SCM_HISTORY_ENTRIES) {
+                if (stopped) return powerRequired;
+                const payload = request.payload as { input?: { paths: string[] } };
+                return { success: true, headOid, entries: (payload.input?.paths ?? []).map(path => ({ path, kind: 'commit',
+                    commit: { oid: headOid, subject: 'Refresh tokens before they expire', authorName: 'Ana Ruiz', committedAt: 1000 } })) };
+            }
             return { success: false, errorCode: 'FEATURE_UNSUPPORTED', error: 'Unavailable boundary operation' };
         } });
-        // Go to file is quick open (P3 §3.6): the page hands Search its own workspace, Files scope.
-        const searchRuntime = { open: vi.fn(), buildCommands: () => [] };
-        const renderPage = (location: WorkspaceCodeLocation, scope: WorkspaceScopeBase = fixture!.scope) => <UniversalSearchRuntimeProvider value={searchRuntime}>
-            <WorkspaceCodeBrowserView paneScopeId="code-aside-test"
-                scope={scope} rootLabel="Code" location={location} onNavigate={() => {}} onOpenFile={() => {}} history={null} />
-        </UniversalSearchRuntimeProvider>;
-        const screen = await fixture.render(renderPage({ path: '', kind: 'folder' }));
-        await vi.waitFor(() => expect(screen.findByTestId('repository-tree-row-LICENSE')).toBeTruthy());
-        await screen.pressByTestIdAsync('workspace-code-bar-goto');
-        expect(searchRuntime.open).toHaveBeenCalledWith(undefined, expect.objectContaining({ ...fixture.scope, sessionId: null }), { source: 'files' });
-        await screen.update(fixture.wrap(renderPage({ path: 'LICENSE', kind: 'file' })));
+        const screen = await fixture.render(<WorkspaceCodeBrowserView paneScopeId="code-stopped-drift" scope={{ ...fixture.scope, workspace }}
+            rootLabel="Code" location={{ path: '', kind: 'folder' }} onNavigate={() => {}} onOpenFile={() => {}} />);
+        await vi.waitFor(() => expect(screen.findByTestId('workspace-code-history-LICENSE')).toBeTruthy());
+        stopped = true;
+        // The tree's own Refresh (the one its View options menu runs): it re-reads the listing, the snapshot and history.
+        const tree = screen.root.findAll(node => typeof node.props?.onRequestRefresh === 'function')[0];
+        await act(async () => { tree!.props.onRequestRefresh(); });
+        // The tree says it once over its kept rows; history waits under that line instead of calling the checkout changed.
+        await vi.waitFor(() => expect(screen.findHostByTestId('repository-tree-stopped')).toBeTruthy());
+        await vi.waitFor(() => expect(fixture!.requests.filter(request => request.method === RPC_METHODS.SCM_HISTORY_ENTRIES).length).toBeGreaterThan(1));
+        await flushHookEffects({ cycles: 10 });
+        expect(screen.findHostByTestId('workspace-code-history-stale')).toBeNull();
+    });
+
     it('keeps the latest commit it knew above the retained rows while its Machine is offline (lab project-offline)', async () => {
         const rootPath = '/code-offline-commit';
         const headOid = 'b'.repeat(40);
@@ -254,6 +276,24 @@ describe('Code consumes the qualified browser and real entry-history batch', () 
         expect(screen.findHostByTestId('workspace-code-strip')).toBeTruthy();
     });
 
+    it('is one column: folder entries, then the bounded file reader in their place', async () => {
+        const rootPath = '/code-aside-consumer';
+        fixture = await createSessionFilesViewFixture({ rootPath, rpc: request => {
+            if (request.method === RPC_METHODS.LIST_DIRECTORY) return { success: true, truncated: false,
+                entries: [{ name: 'LICENSE', type: 'file' }] };
+            return { success: false, errorCode: 'FEATURE_UNSUPPORTED', error: 'Unavailable boundary operation' };
+        } });
+        // Go to file is quick open (P3 §3.6): the page hands Search its own workspace, Files scope.
+        const searchRuntime = { open: vi.fn(), buildCommands: () => [] };
+        const renderPage = (location: WorkspaceCodeLocation, scope: WorkspaceScopeBase = fixture!.scope) => <UniversalSearchRuntimeProvider value={searchRuntime}>
+            <WorkspaceCodeBrowserView paneScopeId="code-aside-test"
+                scope={scope} rootLabel="Code" location={location} onNavigate={() => {}} onOpenFile={() => {}} history={null} />
+        </UniversalSearchRuntimeProvider>;
+        const screen = await fixture.render(renderPage({ path: '', kind: 'folder' }));
+        await vi.waitFor(() => expect(screen.findByTestId('repository-tree-row-LICENSE')).toBeTruthy());
+        await screen.pressByTestIdAsync('workspace-code-bar-goto');
+        expect(searchRuntime.open).toHaveBeenCalledWith(undefined, expect.objectContaining({ ...fixture.scope, sessionId: null }), { source: 'files' });
+        await screen.update(fixture.wrap(renderPage({ path: 'LICENSE', kind: 'file' })));
         const reader = screen.root.findByType(WorkspaceFileDetailsView);
         expect(reader.props).toMatchObject({ scope: fixture.scope, filePath: 'LICENSE', presentation: 'screen' });
         expect(screen.findByTestId('workspace-code-bar-goto')).toBeTruthy();

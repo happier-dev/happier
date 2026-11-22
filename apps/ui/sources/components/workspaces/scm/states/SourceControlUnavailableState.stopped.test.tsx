@@ -13,6 +13,7 @@ const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
 const { SourceControlUnavailableState } = await import('./SourceControlUnavailableState');
 const { SourceControlStaleSnapshotNotice } = await import('./SourceControlStaleSnapshotNotice');
+const { ManagedWorkspaceStartOfferedBeside } = await import('@/components/workspaces/reachability/ManagedWorkspaceStoppedState');
 const { t } = await import('@/text');
 const { resetScopedHomeActionExecutorsForTests } = await import('@/sync/ops/actions/scopedHomeActionExecutor');
 await import('@/sync/ops/actions/defaultActionExecutor');
@@ -104,11 +105,20 @@ describe('SourceControlUnavailableState for a stopped attached workspace (remote
         home.answer(serverId, '/v1/machines', { body: [accepted.machine] });
         await publishMachineInventoryForTest({ serverId, accountId: 'owner' },
             [createManagedControllerMachineFixture({ id: controller.machineId, installationId: controller.installationId })]);
-        const screen = await renderScreen(<SourceControlStaleSnapshotNotice testID="git-stale" onRetry={vi.fn()}
-            error={{ errorCode: 'managed_power_required' }}
-            workspaceScope={{ serverId, machineId: controller.machineId, rootPath: workspace.rootPath, workspace }} />);
+        const scope = { serverId, machineId: controller.machineId, rootPath: workspace.rootPath, workspace };
+        const screen = await renderScreen(<>
+            <SourceControlStaleSnapshotNotice testID="git-stale" onRetry={vi.fn()}
+                error={{ errorCode: 'managed_power_required' }} workspaceScope={scope} />
+            {/* The Git pane beside the Code page that already says it with Start: one Start per page. */}
+            <ManagedWorkspaceStartOfferedBeside>
+                <SourceControlStaleSnapshotNotice testID="git-beside" onRetry={vi.fn()}
+                    error={{ errorCode: 'managed_power_required' }} workspaceScope={scope} />
+            </ManagedWorkspaceStartOfferedBeside>
+        </>);
         await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('files.pane.managedStoppedTitle', { workspace: 'api-dev' })));
-        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('managedMachines.actions.start')));
+        await waitForHomeGovernance(() => expect(screen.findAllByTestId('git-stale-stopped-action')).not.toHaveLength(0));
+        expect(screen.findAllByTestId('git-beside-stopped')).not.toHaveLength(0);
+        expect(screen.findAllByTestId('git-beside-stopped-action')).toHaveLength(0);
         expect(screen.getTextContent()).not.toContain(t('files.sourceControlStale.body'));
     });
 
@@ -137,9 +147,15 @@ describe('SourceControlUnavailableState for a stopped attached workspace (remote
         home.answer(serverId, '/v1/machines', { body: [accepted.machine] });
         await publishMachineInventoryForTest({ serverId, accountId: 'owner' },
             [createManagedControllerMachineFixture({ id: controller.machineId, installationId: controller.installationId })]);
-        const screen = await renderScreen(<SourceControlUnavailableState testID="git" errorCode="managed_power_required"
-            onRetry={vi.fn()} workspaceScope={{ serverId, machineId: controller.machineId, rootPath: workspace.rootPath, workspace }} />);
+        const scope = { serverId, machineId: controller.machineId, rootPath: workspace.rootPath, workspace };
+        const screen = await renderScreen(<>
+            <SourceControlUnavailableState testID="git" errorCode="managed_power_required" onRetry={vi.fn()} workspaceScope={scope} />
+            {/* Over kept changes, a refresh refused while it starts is the workspace starting, not a refresh that fell behind. */}
+            <SourceControlStaleSnapshotNotice testID="git-stale" onRetry={vi.fn()} error={{ errorCode: 'BACKEND_UNAVAILABLE' }} workspaceScope={scope} />
+        </>);
         await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('files.pane.managedStartingTitle', { workspace: 'api-dev' })));
+        await waitForHomeGovernance(() => expect(screen.findAllByTestId('git-stale-stopped')).not.toHaveLength(0));
+        expect(screen.getTextContent()).not.toContain(t('files.sourceControlStale.body'));
         expect(screen.findAllByTestId('git-stopped-action')).toHaveLength(0);
         expect(home.requestsFor('/v1/actions/machines.managed.power.set')).toHaveLength(0);
     });

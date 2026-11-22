@@ -6,6 +6,7 @@ import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessL
 import { useAnnouncedCheckoutMachine, useCheckoutReachability } from '@/components/workspaces/reachability/checkoutReachability';
 import { MANAGED_POWER_REQUIRED, ManagedWorkspaceStoppedState } from '@/components/workspaces/reachability/ManagedWorkspaceStoppedState';
 import { useManagedMachineName } from '@/components/approvals/approvalReferenceReading';
+import { useManagedWorkspaceStart } from '@/components/settings/machines/managed/useManagedWorkspaceStart';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { t } from '@/text';
 
@@ -66,6 +67,24 @@ export function SourceControlStaleSnapshotNotice(props: Readonly<{
         return <StoppedWorkspaceLine testID={`${props.testID}-stopped`} workspaceScope={props.workspaceScope ?? null} />;
     }
 
+    // An attached workspace's refresh can fail because it is starting: Home's wake owns that state, so ask it first.
+    if (props.workspaceScope?.workspace) {
+        return <ManagedWorkspaceRefreshNotice testID={props.testID} errorCode={errorCode} onRetry={props.onRetry}
+            workspaceScope={props.workspaceScope} />;
+    }
+    return <StaleRefreshLine testID={props.testID} errorCode={errorCode} onRetry={props.onRetry} />;
+}
+
+/** Over kept changes, a refresh refused while Home's wake is in flight reads Starting, like every other pane. */
+function ManagedWorkspaceRefreshNotice(props: Readonly<{ testID: string; errorCode: string | null; onRetry?: () => void;
+    workspaceScope: WorkspaceScopeBase }>) {
+    const starting = useManagedWorkspaceStart(props.workspaceScope)?.pending === true;
+    if (starting) return <StoppedWorkspaceLine testID={`${props.testID}-stopped`} workspaceScope={props.workspaceScope} />;
+    return <StaleRefreshLine testID={props.testID} errorCode={props.errorCode} onRetry={props.onRetry} />;
+}
+
+function StaleRefreshLine(props: Readonly<{ testID: string; errorCode: string | null; onRetry?: () => void }>) {
+    const { errorCode } = props;
     // Pane-states lab 0 "Stale": the retained content stays at full strength under ONE freshness line
     // that says it is behind and offers the retry — the shared line, not a SCM-local banner.
     return (

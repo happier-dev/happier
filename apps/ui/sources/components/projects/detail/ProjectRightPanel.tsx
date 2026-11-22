@@ -67,6 +67,7 @@ import type { ProjectPageV1 } from './projectRouteState';
 import { useActiveServerAccountScope, useProjectAccountRows } from '@/sync/domains/state/storage';
 import { resolveProjectTerminalScope } from './projectTerminalScope';
 import { CheckoutReachabilityLine, CheckoutReachabilityScope } from '@/components/workspaces/reachability/checkoutReachability';
+import { ManagedWorkspaceStartOfferedBeside } from '@/components/workspaces/reachability/ManagedWorkspaceStoppedState';
 import { CodeIntelligencePaneTab } from '@/components/workspaces/files/intelligence/CodeIntelligencePaneTab';
 import { useCodeIntelligencePaneProducer } from '@/components/workspaces/files/intelligence/codeIntelligencePaneStore';
 import { useRightSidebarContentFacts } from '@/components/appShell/rightSidebar/useRightSidebarContentFacts';
@@ -498,6 +499,8 @@ function ProjectRightPanelContent(props: ProjectRightPanelProps & Readonly<{
             {/* The page's line spans only its own column, and a phone pane covers it: the pane says it under its header too. */}
             <CheckoutReachabilityLine scope={workspaceScope} testID="project-rightpanel-reachability" />
             <View style={styles.body}>
+                {/* Beside the Code page, which says a stopped workspace once with Start, the pane's line leaves Start to it (lab project-stopped). */}
+                <ManagedWorkspaceStartOfferedBeside offered={props.activePage === 'code' && deviceType !== 'phone'}>
                 <SurfaceStateSizeProvider size={deviceType === 'phone' ? 'phone' : 'pane'}><SidePaneBodyProvider>
                 {rightTabSelection.kind === 'unresolved' ? (
                     <PaneLoadingFallback />
@@ -628,6 +631,7 @@ function ProjectRightPanelContent(props: ProjectRightPanelProps & Readonly<{
                     </View>
                 )}
                 </SidePaneBodyProvider></SurfaceStateSizeProvider>
+                </ManagedWorkspaceStartOfferedBeside>
             </View>
         </View>
         </PaneHeaderSlotProvider>
