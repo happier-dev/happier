@@ -20,7 +20,7 @@ import {
   usageChartWeekdays, useUsageChartHost, type UsageChartMetric,
 } from './usageChartHost';
 import {
-  projectUsageAgentShares, projectUsageConstellationModel, projectUsageDayModel, projectUsageDaylight, projectUsageRiverModel,
+  projectUsageAgentShares, projectUsageConstellationModel, projectUsageDayModel, projectUsageDaylight, projectUsageRiverModel, usageRiverHasShape,
   projectUsageRunLengthModel, projectUsageScoreModel, projectUsageShippedModel, projectUsageSkyModel, projectUsageSteeringModel,
   usageSteeringRecorded,
   projectUsageRecordFacts, projectUsagePortraitModel, projectUsageWeekHours, resolveUsageChartDay, resolveUsageChartMetric,
@@ -268,7 +268,7 @@ export function UsageRiverStyleBody(props: UsageChartStyleBodyProps) {
   const metric = resolveUsageChartMetric(props.query.metric, 'tokens');
   const model = React.useMemo(() => calendar ? projectUsageRiverModel(calendar, metric) : null, [calendar, metric]);
   const agents = React.useMemo(() => [...new Set((model?.weeks ?? []).flatMap((week) => (week.shares ?? []).flatMap(row => row.agentId === null ? [] : [row.agentId])))].map(host.agent), [model, host.agent]);
-  if (!model) return <UsageChartPending slice={props.slice} onRetry={props.model.refresh} testID={props.testID} title={t('usage.board.charts.riverEmptyTitle')} reason={t('usage.board.charts.riverEmptyReason')} />;
+  if (!model || !usageRiverHasShape(model)) return <UsageChartPending slice={props.slice} onRetry={props.model.refresh} testID={props.testID} title={t('usage.board.charts.riverEmptyTitle')} reason={t('usage.board.charts.riverEmptyReason')} />;
   // Weeks were read but no agent holds a share of any: the chart has nothing to draw, so it says so like its siblings.
   if (!model.weeks.some(week => (week.shares?.length ?? 0) > 0)) return <UsageChartPending slice={props.slice} onRetry={props.model.refresh} testID={props.testID} title={t('usage.board.charts.needsDataTitle')} reason={t('usage.board.charts.needsCalendarReason')} />;
   const dates = usageChartDateLabels(props.query);
@@ -363,6 +363,8 @@ export function UsageSteeringStyleBody(props: UsageChartStyleBodyProps) {
         rate: (value) => value === null ? unknown : (Math.round(value * 10) / 10).toString(),
         detail: (steers, busyMs) => t('usage.board.charts.steersDetail', { steers: steers ?? unknown, busy: busyMs === null ? unknown : formatUsageDuration(busyMs) }),
         count: (value) => value === null ? unknown : String(value), caption: t('usage.board.charts.steeringCaption'),
+        unsteered: (names) => names.length <= 3 ? t('usage.board.charts.notSteered', { names: names.join(', ') })
+          : t('usage.board.charts.notSteeredMore', { names: names.slice(0, 3).join(', '), count: names.length - 3 }),
         values: { ...usageChartValuesLabels(), agentColumn: t('usage.board.charts.agentColumn'), steersColumn: t('usage.board.charts.metric_steering') } }} />
     <UsageChartFooter slice={props.slice} testID={props.testID} onRetry={props.model.refresh} />
   </View>;

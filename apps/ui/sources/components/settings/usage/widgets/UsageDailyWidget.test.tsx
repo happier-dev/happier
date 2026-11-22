@@ -11,6 +11,7 @@ import { serializeUsageCostBasis } from '@happier-dev/protocol/usage/usageCostFa
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { t } from '@/text';
 import { WidgetFrameBodyRowsContext } from '@/components/widgets/frame/widgetFrameBody';
+import { WidgetFrameBodyIdentityContext, type WidgetFrameBodyIdentity } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
@@ -67,15 +68,27 @@ describe('Daily period chart', () => {
       t('usage.board.charts.partialWeek', { from: shortDate(start + 10 * day), to: shortDate(start + 13 * day) }),
     ]);
   });
-  it('names weekly bars by the dates they start on and says the chart is by week (USAGE-ACCEPT 1118 #18)', async () => {
+  it('names weekly bars by the dates they start on and names the card for its weekly bars (USAGE-ACCEPT 1118 #18, 1121 #16)', async () => {
     // Keep the last week running: replacing its date with "This week" must fail too (review F-05).
     vi.spyOn(Date, 'now').mockReturnValue(start + 12 * day);
     const props = fixture([10, 30, 20], start + 14 * day, true, 'week');
-    const screen = await renderScreen(<UsageDailyWidget {...props} />);
+    const lent: (WidgetFrameBodyIdentity | null)[] = [];
+    const screen = await renderScreen(<WidgetFrameBodyIdentityContext.Provider value={(identity) => { lent.push(identity); }}>
+      <UsageDailyWidget {...props} />
+    </WidgetFrameBodyIdentityContext.Provider>);
     const chart = screen.findByType(StackedSeriesChart);
     const shortDate = (date: number) => formatUsageCalendarDate(date, props.query.timeZoneOffsetMinutes, { month: 'short', day: 'numeric' });
     expect(chart.props.axisTicks.map((tick: { label: string }) => tick.label)).toEqual([shortDate(start), shortDate(start + 10 * day)]);
-    expect(chart.props.label).toContain(t('usage.board.page.byWeek'));
+    // "Daily usage · by week" contradicted itself at 1Y: the frame takes "Weekly usage" and the chart says it too.
+    expect(lent.at(-1)?.title).toBe(t('usage.board.page.weeklyUsage'));
+    expect(chart.props.label).toContain(t('usage.board.page.weeklyUsage'));
+  });
+  it('keeps the definition name for daily bars', async () => {
+    const lent: (WidgetFrameBodyIdentity | null)[] = [];
+    await renderScreen(<WidgetFrameBodyIdentityContext.Provider value={(identity) => { lent.push(identity); }}>
+      <UsageDailyWidget {...fixture([10, 30], start + 2 * day)} />
+    </WidgetFrameBodyIdentityContext.Provider>);
+    expect(lent.every((identity) => identity === null)).toBe(true);
   });
   it('rises on first data and draws retained bars immediately on a revisit, keeping change motion', async () => {
     const props = fixture([10, 30], start + 2 * day);

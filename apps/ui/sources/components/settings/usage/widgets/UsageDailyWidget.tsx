@@ -8,7 +8,7 @@ import {
   UsageDailyChart,
   type HappierSeries,
 } from '@happier-dev/plugin-ui/presentation';
-import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
+import { useWidgetFrameBodyCaption, useWidgetFrameBodyIdentity } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { t } from '@/text';
 import { agentIdFromEngineKey, USAGE_MODEL_MIX_OTHER_KEY } from '@/sync/api/account/usageAnalytics';
@@ -247,11 +247,15 @@ export function UsageDailyWidget(props: UsageBodyProps) {
     const running = props.query.granularity === 'day' && lastStart !== null && now >= lastStart && now - lastStart < 24 * 60 * 60 * 1000;
     return usageAxisTicks(labels, running ? t('usage.today') : undefined);
   }, [series, metric, byAgent, props.query.granularity, props.query.timeZoneOffsetMinutes, weekly, range]);
-  const measure = `${metric === 'cost' ? t('usage.cost') : t('usage.tokens')} · ${usagePeriodPhrase(props.query)}${weekly ? ` · ${t('usage.board.page.byWeek')}` : ''}`;
+  const measure = `${metric === 'cost' ? t('usage.cost') : t('usage.tokens')} · ${usagePeriodPhrase(props.query)}`;
+  // A long period draws one bar per week: the card is named for its bars ("Weekly usage"), never "Daily usage · by week"
+  // (USAGE-ACCEPT 1121 #16). A name the person gave the widget still wins at the frame.
+  const weeklyIdentity = React.useMemo(() => weekly ? { title: t('usage.board.page.weeklyUsage') } : null, [weekly]);
+  useWidgetFrameBodyIdentity(weeklyIdentity);
   // The frame's subtitle is the same from the first paint: whether the bars split by agent is only known once the
   // read answers, and the legend says it then. The chart's own label (for assistive technology) names the split.
   useWidgetFrameBodyCaption(measure);
-  const caption = byAgent ? `${metric === 'cost' ? t('usage.cost') : t('usage.tokens')} ${t('usage.board.page.byAgent')} · ${usagePeriodPhrase(props.query)}${weekly ? ` · ${t('usage.board.page.byWeek')}` : ''}` : measure;
+  const caption = byAgent ? `${metric === 'cost' ? t('usage.cost') : t('usage.tokens')} ${t('usage.board.page.byAgent')} · ${usagePeriodPhrase(props.query)}` : measure;
   const details = useUsageChartDetails(t(`usage.widgets.${props.id}`), Boolean(view && count > 0));
   const compact = presentation?.size === 'small' || presentation?.size === 'wide';
   const shape = useUsageDailyChartShape();
@@ -273,7 +277,7 @@ export function UsageDailyWidget(props: UsageBodyProps) {
     <View testID={`${props.testID}.drawn`}>
     <UsageDailyChart theme={chartTheme} gap={theme.space.s10} testID={props.testID} chart={{
         ...details,
-        label: caption,
+        label: weeklyIdentity ? `${weeklyIdentity.title} · ${caption}` : caption,
         series: drawnSeries,
         size: compact ? 'tile' : 'full',
         viewportHeight: height,

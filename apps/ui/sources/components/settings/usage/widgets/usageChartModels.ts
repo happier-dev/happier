@@ -287,6 +287,14 @@ export function projectUsageRiverModel(calendar: UsageAgentCalendar, metric: Usa
   return weeks.length >= 2 ? { width: 'amount', weeks } : null;
 }
 
+/**
+ * Whether the river has a course to draw: two complete weeks, as its empty state says. Two clipped weeks of a short
+ * period are one swoop between two points (USAGE-ACCEPT 1121 #11); the daily charts beside it carry those days.
+ */
+export function usageRiverHasShape(model: UsageRiverModel): boolean {
+  return model.weeks.filter(week => !week.partial).length >= 2;
+}
+
 /** The private portrait consumes the same day/streak and interval facts as the other Usage charts. */
 export function projectUsagePortraitModel(calendar: UsageAgentCalendar, referenceMs: number): UsagePortraitModel {
   const total = countUsageChartCalendarDates(calendar.period, calendar.timeZoneOffsetMinutes);

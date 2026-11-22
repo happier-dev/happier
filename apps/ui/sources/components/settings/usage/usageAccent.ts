@@ -10,8 +10,9 @@
  *
  * Two governed exceptions (lab `kitcharts`, accepted in the widgets handoff §3.12):
  *  - the AGENT dimension draws each Agent in its own fixed identity hue, because Agents are the one
- *    dimension people already recognise by mark and colour across the app. Models, projects,
- *    machines and token kinds keep the accent ramp;
+ *    dimension people already recognise by mark and colour across the app (`usageAgentColor`: the
+ *    catalog hue, or Usage's fallback hue for an Agent the catalog draws without one). Models,
+ *    projects, machines and token kinds keep the accent ramp;
  *  - status is said with an icon and words, in the theme's status roles.
  *
  * Magnitude colors come from here; Agent identity hues come from the Agent catalog.
@@ -20,6 +21,7 @@
  */
 
 import { mixHappierColorOverPaper, resolveHappierSeriesRampColor } from '@happier-dev/plugin-ui/presentation';
+import { isUnattributedUsageAgentId } from '@happier-dev/protocol/usage/usageFormatting';
 import { getAgentIdentityColor, getNeutralAgentIdentityColor } from '@/agents/catalog/catalog';
 
 type UsageAccentThemeSlice = Readonly<{
@@ -40,24 +42,63 @@ export function usageOtherColor(theme: Readonly<{ dark: boolean }>): string {
 }
 
 /**
- * The colours of one ranked Agent chart (Daily, Flow): each Agent its catalog identity hue. An Agent the catalog
- * draws without one takes the next step of the ink ramp in rank order, so ranked leaders stay apart from each other
- * and from the folded Other's neutral (USAGE-ACCEPT 1118 #10: ten leaders in one grey). Call it once per chart, in
- * rank order.
+ * Usage's hues for the Agents the catalog draws without an identity hue (USAGE-ACCEPT 1121 #2). They sit in the hue
+ * gaps between the catalog's Agent hues (orange, blue, green, indigo, pink) and stay clear of amber and rose, which
+ * mean "needs you" and "failed"; a leading hue-less Agent must not read as Pi's pink. Light steps are deep enough for
+ * white paper; dark steps lift for the dark card.
+ */
+const USAGE_AGENT_FALLBACK_HUES: readonly Readonly<{ light: string; dark: string }>[] = [
+    { light: '#6f8f1a', dark: '#9bb540' }, // olive
+    { light: '#9a5f33', dark: '#c08a5c' }, // umber
+    { light: '#0e8fa3', dark: '#3cb3c6' }, // cyan
+    { light: '#8e4585', dark: '#b67aac' }, // plum (darker and greyer than Pi's pink)
+    { light: '#7d3fb0', dark: '#c48ae8' }, // violet
+];
+
+/** The fallback slot an Agent id hashes to, so a hue-less Agent keeps one hue on every chart and every page. */
+function usageAgentFallbackSlot(agentId: string): number {
+    let hash = 0;
+    for (let index = 0; index < agentId.length; index += 1) hash = (hash * 31 + agentId.charCodeAt(index)) >>> 0;
+    return hash % USAGE_AGENT_FALLBACK_HUES.length;
+}
+
+/**
+ * An Agent's colour on any Usage chart: its catalog identity hue, or Usage's fallback hue for it. The neutral belongs
+ * to what no Agent names: the folded Other and the unattributed member (`isUnattributedUsageAgentId`).
+ */
+export function usageAgentColor(theme: Readonly<{ dark: boolean }>, agentId: string): string {
+    const identity = getAgentIdentityColor(theme, agentId);
+    if (identity !== getNeutralAgentIdentityColor(theme) || isUnattributedUsageAgentId(agentId)) return identity;
+    return USAGE_AGENT_FALLBACK_HUES[usageAgentFallbackSlot(agentId)]![theme.dark ? 'dark' : 'light'];
+}
+
+/**
+ * The colours of one Agent chart, asked in rank order: each Agent its `usageAgentColor`. When two hue-less Agents of
+ * the chart hash to one fallback hue, the later one takes the next free hue, so the chart's leaders stay apart from
+ * each other and from the folded Other's neutral (USAGE-ACCEPT 1118 #10). Past the fallback hues, an ink step.
  */
 export function createUsageAgentSeriesColor(theme: UsageAccentThemeSlice & Readonly<{ dark: boolean }>): (agentId: string) => string {
     const neutral = getNeutralAgentIdentityColor(theme);
     const ink = theme.colors.text.primary ?? theme.colors.text.secondary;
-    const inkSteps = new Map<string, number>();
+    const assigned = new Map<string, string>();
+    const taken = new Set<number>();
     return (agentId) => {
-        const identity = getAgentIdentityColor(theme, agentId);
-        if (identity !== neutral) return identity;
-        let step = inkSteps.get(agentId);
-        if (step === undefined) {
-            step = inkSteps.size;
-            inkSteps.set(agentId, step);
+        const known = assigned.get(agentId);
+        if (known !== undefined) return known;
+        let color = getAgentIdentityColor(theme, agentId);
+        if (color === neutral && !isUnattributedUsageAgentId(agentId)) {
+            const first = usageAgentFallbackSlot(agentId);
+            const slot = Array.from({ length: USAGE_AGENT_FALLBACK_HUES.length }, (_, step) => (first + step) % USAGE_AGENT_FALLBACK_HUES.length)
+                .find((candidate) => !taken.has(candidate));
+            if (slot === undefined) {
+                color = resolveHappierSeriesRampColor(ink, theme.colors.surface?.base, assigned.size + 1);
+            } else {
+                taken.add(slot);
+                color = USAGE_AGENT_FALLBACK_HUES[slot]![theme.dark ? 'dark' : 'light'];
+            }
         }
-        return resolveHappierSeriesRampColor(ink, theme.colors.surface?.base, step + 1);
+        assigned.set(agentId, color);
+        return color;
     };
 }
 

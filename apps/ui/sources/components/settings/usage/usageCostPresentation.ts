@@ -40,4 +40,14 @@ export function usagePageCostCaption(projection: Pick<UsagePageCostProjection, '
   return projection.selection ? t('usage.board.page.costUnpricedCaption') : t('common.unavailable');
 }
 
+/**
+ * The one note a widget carries when its token totals are added up from their reported parts: said once under the
+ * widget's figures, never after each row (USAGE-ACCEPT 1118 #11, 1121 #13). `fromParts` holds one flag per counted
+ * total the widget shows; a row's exact reading may still name its own.
+ */
+export function usageTokensFromPartsNote(fromParts: readonly boolean[]): string | null {
+  if (!fromParts.some(Boolean)) return null;
+  return fromParts.every(Boolean) ? t('usage.board.page.tokensFromPartsOnce') : t('usage.board.page.tokensFromPartsSome');
+}
+
 export { usageCostKindPhrase } from '@/sync/domains/usage/resolveUsageCostModeLabel';

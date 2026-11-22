@@ -112,6 +112,8 @@ export type UsageSteeringTideLabels = Readonly<{
   perBusyHourHeader: string; fromPhoneHeader: string; perBusyHourUnit: string; answers: string;
   rate: (value: number | null) => string; detail: (steers: number | null, busyMs: number | null) => string; count: (value: number | null) => string;
   caption: string;
+  /** The one line the Agents nobody steered or answered from a phone fold into ("Not steered: Claude, Codex"). */
+  unsteered: (names: readonly string[]) => string;
   values: UsageChartValuesLabels & Readonly<{ agentColumn: string; steersColumn: string }>;
 }>;
 
@@ -121,7 +123,11 @@ export function UsageSteeringTide(props: UsageChartBaseProps & Readonly<{ agents
   const svgText = useUsageChartSvgText(props.theme);
   const text = svgText.styles;
   const phone = width !== null && width < 720;
-  const rows = props.model.rows;
+  // Only the Agents someone steered or answered from a phone get a lane; the busy rest fold into one line, and the values
+  // keep every Agent (USAGE-ACCEPT 1121 #5: sixteen flat lanes for one steered Agent).
+  const steered = (row: UsageSteeringTideModel['rows'][number]) => (row.steers ?? 0) > 0 || (row.phoneAnswers ?? 0) > 0;
+  const rows = props.model.rows.some(steered) ? props.model.rows.filter(steered) : props.model.rows;
+  const folded = props.model.rows.filter((row) => !rows.includes(row));
   const rowHeight = phone ? 46 : 52;
   const height = rows.length * rowHeight + 22;
   const figuresWidth = phone ? 0 : 300;
@@ -191,10 +197,12 @@ export function UsageSteeringTide(props: UsageChartBaseProps & Readonly<{ agents
       <HappierText tabularNumbers style={text.strong}>{props.labels.rate(row.perBusyHour)}</HappierText>
       <HappierText style={text.caption}>{props.labels.perBusyHourUnit}</HappierText>
     </View>)}</View> : null}
+    {folded.length ? <HappierText style={text.caption} testID={props.testID ? `${props.testID}-unsteered` : undefined}>
+      {props.labels.unsteered(folded.map((row) => name(row.agentId)))}</HappierText> : null}
     <UsageChartCaption theme={props.theme}>{props.labels.caption}</UsageChartCaption>
     <UsageChartValues theme={props.theme} label={props.label} labels={props.labels.values} testID={props.testID}
       table={{ columns: [{ label: props.labels.values.agentColumn }, { label: props.labels.values.steersColumn }, { label: props.labels.fromPhoneHeader }],
-        rows: rows.flatMap(row => row.steersByHour.map((steers, hour) => [
+        rows: props.model.rows.flatMap(row => row.steersByHour.map((steers, hour) => [
           `${name(row.agentId)} · ${props.labels.clock(hour)}`, props.labels.count(steers), props.labels.count(row.phoneAnswersByHour[hour] ?? null),
         ])) }} />
   </UsageChartColumn>;
@@ -250,11 +258,26 @@ export function UsageRunLength(props: UsageChartBaseProps & Readonly<{ agents: r
         const lo = Math.log(RUN_MIN_MS), hi = Math.log(RUN_MAX_MS);
         const x = (ms: number) => label + ((Math.log(Math.max(RUN_MIN_MS, Math.min(RUN_MAX_MS, ms))) - lo) / (hi - lo)) * plot;
         const ticks = [[60_000, props.labels.ticks.minute], [600_000, props.labels.ticks.tenMinutes], [3_600_000, props.labels.ticks.hour], [RUN_MAX_MS, props.labels.ticks.fourHours]] as const;
+        // A tick label that would print into the next one keeps its rule and leaves its words to the closer tick: on a phone
+        // "1 h" and "4 h" sit 27 px apart and read "1 h4 h" (USAGE-ACCEPT 1121 #17). The end tick always keeps its label.
+        const tickSpan = (ms: number, text: string) => {
+          const reach = textWidth(text, svgText.fontSize);
+          return ms === RUN_MAX_MS ? [x(ms) - reach, x(ms)] : [x(ms) - reach / 2, x(ms) + reach / 2];
+        };
+        const labelled = ticks.map(([ms, text], at) => {
+          const next = ticks[at + 1];
+          return !next || tickSpan(ms, text)[1]! + 4 <= tickSpan(next[0], next[1])[0]!;
+        });
+        // A name wider than its column is cut to it, so it never runs into the distribution; the values keep it whole.
+        const fitName = (value: string) => {
+          const room = Math.floor((label - 8) / ((svgText.styles.body.fontSize ?? 13) * 0.62));
+          return value.length <= room ? value : `${value.slice(0, Math.max(1, room - 1)).trimEnd()}…`;
+        };
         const targets: ReactNode[] = [];
         return <><Svg width={width} height={height}>
-          {ticks.map(([ms, text]) => <G key={ms}>
+          {ticks.map(([ms, text], at) => <G key={ms}>
             <Path d={`M${r1(x(ms))},4V${height - 20}`} stroke={ink.grid} strokeWidth={1} />
-            {svgText.draw({ x: x(ms), y: height - 4, anchor: ms === RUN_MAX_MS ? 'end' : 'middle', text })}
+            {labelled[at] ? svgText.draw({ x: x(ms), y: height - 4, anchor: ms === RUN_MAX_MS ? 'end' : 'middle', text }) : null}
           </G>)}
           {rows.map((row, index) => {
             const cy = index * rowHeight + rowHeight / 2 + 2;
@@ -282,7 +305,7 @@ export function UsageRunLength(props: UsageChartBaseProps & Readonly<{ agents: r
               {dots}
               <Path d={`M${r1(x(row.medianMs))},${cy - 10}V${cy + 10}`} stroke={ink.text} strokeWidth={2} />
               <Path d={`M${r1(x(row.p90Ms))},${cy - 7}V${cy + 7}`} stroke={ink.text} strokeOpacity={0.45} strokeWidth={1.2} />
-              {svgText.draw({ x: 0, y: cy + 4, tone: 'strong', size: 'body', text: name(row.agentId) }, 'n')}
+              {svgText.draw({ x: 0, y: cy + 4, tone: 'strong', size: 'body', text: fitName(name(row.agentId)) }, 'n')}
               {svgText.draw({ x: width, y: cy - 1, anchor: 'end', tone: 'strong', size: 'body', text: props.labels.duration(row.medianMs) }, 'm')}
               {svgText.draw({ x: width, y: cy + 12, anchor: 'end', text: props.labels.detail(row.p90Ms, row.samples) }, 'd')}
             </G>;

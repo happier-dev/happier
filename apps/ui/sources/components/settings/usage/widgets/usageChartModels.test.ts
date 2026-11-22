@@ -13,6 +13,7 @@ import {
   projectUsageSkyModel,
   projectUsageSteeringModel,
   usageSteeringRecorded,
+  usageRiverHasShape,
   projectUsageWeekHours,
   type UsageAgentCalendar,
 } from './usageChartModels';
@@ -662,6 +663,22 @@ describe('Usage chart models', () => {
         ],
       })),
     );
+  });
+  // USAGE-ACCEPT 1121 #11: at 7D the river drew two clipped weeks as one swoop. It draws once two complete weeks exist,
+  // as its empty state says; the model keeps the clipped weeks for the values.
+  it('draws the river only once the period holds two complete weeks', () => {
+    const clipped = [
+      { ...bucket(3, { tokens: 100 }), startMs: START + 3 * DAY, endMs: START + 7 * DAY },
+      { ...bucket(7, { tokens: 200 }), endMs: START + 10 * DAY },
+    ];
+    const short = projectUsageRiverModel(calendar({ period: { startMs: START + 3 * DAY, endMs: START + 10 * DAY }, weeks: clipped,
+      weeklyAgentMix: clipped.map(week => ({ startMs: week.startMs, endMs: week.endMs, mix: [{ agentId: 'codex', share: 1, coverage: 'partial' }] })) }), 'tokens')!;
+    expect(short.weeks).toHaveLength(2);
+    expect(usageRiverHasShape(short)).toBe(false);
+    const whole = [0, 7].map(day => ({ ...bucket(day, { tokens: 100 }), endMs: START + (day + 7) * DAY }));
+    const long = projectUsageRiverModel(calendar({ period: { startMs: START, endMs: START + 14 * DAY }, weeks: whole,
+      weeklyAgentMix: whole.map(week => ({ startMs: week.startMs, endMs: week.endMs, mix: [{ agentId: 'codex', share: 1, coverage: 'partial' }] })) }), 'tokens')!;
+    expect(usageRiverHasShape(long)).toBe(true);
   });
   // USAGE-ACCEPT 1118 #19: asked to colour by the leading Agent with no day's leader known, the sky draws intensity,
   // so the model (and the caption that reads it) says intensity too.

@@ -81,6 +81,8 @@ function barProps(selections: string[]): Bar {
 
 describe('UsageFilterBar', () => {
   it('announces period and metric choices as radio values with their checked state', async () => {
+    Object.assign(viewport, { width: 1280, height: 900 });
+    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (X11; Linux x86_64)', maxTouchPoints: 0 });
     const screen = await renderBar([], { onMetricChange: () => {} });
     for (const [id, checked] of [['filters.period:7days', true], ['filters.period:today', false],
       ['filters.metric:tokens', true], ['filters.metric:cost', false]] as const) {
@@ -169,6 +171,26 @@ describe('UsageFilterBar', () => {
     }
   });
 
+  // USAGE-ACCEPT 1121 #14: a phone stacked the six-way period, then Filters and the basis. Six periods are a chooser
+  // (more than four short options), so the period, Filters and the basis share one row (lab uframe-Rp).
+  it('puts the period on the phone row as one chooser beside Filters and the basis', async () => {
+    const periods: string[] = [];
+    const { t } = await import('@/text');
+    const screen = await renderBar([], { costBasisOptions: ['auto', 'reported'], onPeriodChange: async (period) => { periods.push(period); return true; } });
+    try {
+      expect(screen.findHostByTestId('filters.period:7days')).toBeFalsy();
+      const chips = screen.findAllByType(SelectionListFilterChip).map((chip) => chip.props.filter);
+      expect(chips.map((chip) => chip.id)).toEqual(['period', 'scope', 'costBasis']);
+      const period = chips[0]!;
+      expect(period).toMatchObject({ selectedId: '7days', valueLabel: t('usage.period7dShort') });
+      expect(period.options.map((option: { id: string }) => option.id)).toEqual(['today', '7days', '30days', '90days', 'year', 'all']);
+      await act(async () => { period.onChange?.('30days'); });
+      expect(periods).toEqual(['30days']);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it('collapses every scope filter into one Filters chooser on a phone, keeping each choice and the narrowed count', async () => {
     const selections: string[] = [];
     const screen = await renderBar(selections);
@@ -176,12 +198,12 @@ describe('UsageFilterBar', () => {
       .findAllByType(SelectionListFilterChip)
       .map((chip) => chip.props.filter);
     // Period stays visible; the four scopes become one chip (lab d2filter P).
-    expect(chips.map((chip) => chip.id)).toEqual(['scope']);
-    expect(chips[0]!).toMatchObject({ active: true, count: '1' });
+    expect(chips.map((chip) => chip.id)).toEqual(['period', 'scope']);
+    expect(chips[1]!).toMatchObject({ active: true, count: '1' });
 
     const content = await renderScreen(
       <>
-        {chips[0]!.renderPopoverContent!({ close: () => {}, maxHeight: 600 })}
+        {chips[1]!.renderPopoverContent!({ close: () => {}, maxHeight: 600 })}
       </>,
     );
     const list = content.findAllByType(SelectionList)[0]!;

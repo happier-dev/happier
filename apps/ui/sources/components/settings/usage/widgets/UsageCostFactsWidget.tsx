@@ -18,7 +18,7 @@ import {
   UsageBodyNote,
 } from './usageBodyKit';
 import { UsageModelPricesLine } from './UsageModelPrices';
-import { usagePageCostCaption } from '../usageCostPresentation';
+import { usagePageCostCaption, usageTokensFromPartsNote } from '../usageCostPresentation';
 import { resolveUsageMeasuredTokens } from '@/sync/api/account/usageMeasuredTokens';
 
 /** Each kind of money is its own fact; they are never summed into one figure. */
@@ -65,8 +65,8 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
   ));
   // One qualifier, said once: when every fact is partial the band says so once, not under each figure (R9).
   const partialOnce = facts.length > 1 && facts.every((fact) => !fact.complete);
-  // The same for token totals added up from their parts: once under the figures, not after each one (USAGE-ACCEPT 1118 #11).
-  const fromPartsOnce = facts.length > 1 && facts.every((fact) => resolveUsageMeasuredTokens(fact.tokens).fromParts);
+  // The same for token totals added up from their parts: once under the figures, never after each one (USAGE-ACCEPT 1121 #13).
+  const fromPartsNote = usageTokensFromPartsNote(facts.map((fact) => resolveUsageMeasuredTokens(fact.tokens).fromParts));
   if (!props.slice.accounting)
     return <UsageBodyNoUsage slice={props.slice} testID={props.testID} onRetry={props.model.refresh} />;
   // The prices behind API-equivalent money live with the money they make (U10); unpriced models
@@ -129,7 +129,6 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
                     ? t('usage.board.page.factApiTokens', { tokens: formatTokenCount(tokens.total) })
                     // The tokens on the rows that carried this money, not every token of the Agents that reported it.
                     : t('usage.board.page.factCostTokens', { tokens: formatTokenCount(tokens.total) }),
-                tokens.fromParts && !fromPartsOnce ? t('usage.board.page.tokensFromParts') : null,
                 fact.complete || partialOnce ? null : t('usage.board.page.factIncomplete'),
               ]
                 .filter(Boolean)
@@ -149,10 +148,10 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
         })}
       </View>
       {/* The figures count overlapping populations, so they never present as parts of one sum. */}
-      {facts.length > 1 ? (
+      {facts.length > 1 || fromPartsNote ? (
         <UsageBodyNote testID={`${props.testID}.partial`}>
-          {[partialOnce ? usagePartialHistoryLabel() : null, fromPartsOnce ? t('usage.board.page.tokensFromPartsOnce') : null,
-            t('usage.board.page.factsOverlap')].filter(Boolean).join(' · ')}
+          {[partialOnce ? usagePartialHistoryLabel() : null, fromPartsNote,
+            facts.length > 1 ? t('usage.board.page.factsOverlap') : null].filter(Boolean).join(' · ')}
         </UsageBodyNote>
       ) : null}
       {prices}

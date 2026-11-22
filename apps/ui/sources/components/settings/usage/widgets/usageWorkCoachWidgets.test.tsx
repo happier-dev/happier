@@ -709,7 +709,8 @@ describe('Work and Coach widget bodies', () => {
     await screen.pressByTestIdAsync('coach.digest.configure');
     expect(screen.findByTestId('coach.digest.editor')).toBeNull();
   });
-  it.each([true, false])('keeps the Session value token qualifier at the scope it describes (all from parts: %s)', async allFromParts => {
+  // USAGE-ACCEPT 1121 #13: the qualifier is said once for the group, never on its rows.
+  it.each([true, false])('says the Session value token qualifier once for its group, never per row (all from parts: %s)', async allFromParts => {
     const parts = { ...contribution('parts', 's1', 't1'),
       tokens: { input: 10, output: 3, reasoning: null, cacheRead: null, cacheWrite: null, total: null } };
     const reported = contribution('second', 's2', 't2');
@@ -723,8 +724,8 @@ describe('Work and Coach widget bodies', () => {
       readonly { id: string; annotation?: string }[];
     const qualifier = t('usage.board.page.tokensFromParts');
     expect(Object.fromEntries(rows.map(row => [row.id, row.annotation?.includes(qualifier) ?? false])))
-      .toEqual({ s1: !allFromParts, s2: false });
-    expect(screen.getTextContent().split(t('usage.board.page.tokensFromPartsOnce'))).toHaveLength(allFromParts ? 2 : 1);
+      .toEqual({ s1: false, s2: false });
+    expect(screen.getTextContent().split(t(allFromParts ? 'usage.board.page.tokensFromPartsOnce' : 'usage.board.page.tokensFromPartsSome'))).toHaveLength(2);
   });
   it('collapses the ledger summary to one sentence when nothing is linked, instead of repeating the total', async () => {
     const unlinked = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions, evidence: [] }));
@@ -735,7 +736,7 @@ describe('Work and Coach widget bodies', () => {
     expect(text).not.toContain(t('usage.board.work.notLinked'));
     expect(text).not.toContain(t('usage.board.work.linkedToPrs'));
   });
-  it('labels measured token floors in the ledger while retaining a reported total in the same group', async () => {
+  it('labels measured token floors once in the ledger while retaining a reported total in the same group', async () => {
     const reported = contribution('reported', 's1', 't1');
     const parts = { ...contribution('parts', 's1', 't1'),
       tokens: { input: 1710, output: 3, reasoning: null, cacheRead: null, cacheWrite: null, total: null } };

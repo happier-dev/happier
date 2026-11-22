@@ -11,8 +11,8 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { usePageRowMetrics } from '@/components/ui/lists/useResolvedItemDensity';
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
-import { getAgentIdentityColor } from '@/agents/catalog/catalog';
-import { usageOtherColor, usageSeriesColor } from '../usageAccent';
+import { usageAgentColor, usageOtherColor, usageSeriesColor } from '../usageAccent';
+import { usageTokensFromPartsNote } from '../usageCostPresentation';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import {
@@ -165,7 +165,7 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
             ...usedSlots.map((agentId) => ({
               id: agentId,
               label: usageAgentTitle(agentId),
-              color: getAgentIdentityColor(appTheme, agentId),
+              color: usageAgentColor(appTheme, agentId),
             })),
             ...(plot.rows.some((row) => slotOf(row) === null)
               ? [{ id: 'other', label: t('usage.board.work.otherAgents'), color: other }]
@@ -184,7 +184,7 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
               x: row.amount,
               // Unlinked Sessions stay in the ledger; an open witnessed outcome is zero merged.
               y: merged(row),
-              color: slot === null ? other : getAgentIdentityColor(appTheme, slot),
+              color: slot === null ? other : usageAgentColor(appTheme, slot),
               annotation: usageWorkSessionOutcomeLine(row),
               labelled: row === costliest || row === mostMerged,
             };
@@ -192,18 +192,18 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
         />
       ); }) : null}
       {groups.map((group) => {
-        // A caveat every row shares is said once under the group title, never repeated per row.
-        const fromParts = t('usage.board.page.tokensFromParts');
-        const notes = group.rows.map(row => [usageWorkSessionOutcomeLine(row), row.tokensFromParts ? fromParts : null].filter(Boolean) as string[]);
+        // A caveat every row shares is said once under the group title, never repeated per row; token totals added up
+        // from their parts are always said there, once (USAGE-ACCEPT 1121 #13).
+        const notes = group.rows.map(row => [usageWorkSessionOutcomeLine(row)].filter(Boolean) as string[]);
         const shared = (notes[0] ?? []).filter(note => notes.every(rowNotes => rowNotes.includes(note)));
+        const fromPartsNote = usageTokensFromPartsNote(group.rows.map(row => row.tokensFromParts));
         // The group title may already be that caveat ("No linked outcome yet"); it is not said twice.
-        const said = shared.filter(note => note.toLocaleLowerCase() !== group.title.toLocaleLowerCase());
+        const said = [...shared.filter(note => note.toLocaleLowerCase() !== group.title.toLocaleLowerCase()), ...(fromPartsNote ? [fromPartsNote] : [])];
         const lead = leadingUsageRows(group.rows, expandedGroups.includes(group.id));
         return (
         <View key={group.key} style={styles.group}>
           <UsageWorkSectionTitle quiet>{group.title}</UsageWorkSectionTitle>
-          {said.length ? <Text style={[styles.note, sectionStyle]}>{said
-            .map(note => note === fromParts ? t('usage.board.page.tokensFromPartsOnce') : note).join(' · ')}</Text> : null}
+          {said.length ? <Text style={[styles.note, sectionStyle]}>{said.join(' · ')}</Text> : null}
           <RankedRows
             theme={theme}
             label={group.title}
@@ -232,7 +232,7 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
                 label: sessionLabel(row.sessionId),
                 value: row.amount,
                 color: group.id === 'unlinked' ? quiet : accent,
-                annotation: [usageWorkSessionOutcomeLine(row), row.tokensFromParts ? t('usage.board.page.tokensFromParts') : null]
+                annotation: [usageWorkSessionOutcomeLine(row)]
                   .filter((note): note is string => Boolean(note) && !shared.includes(note!))
                   .join(' · ') || undefined,
               }))}

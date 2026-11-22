@@ -15,7 +15,7 @@ import { useDeviceType } from '@/utils/platform/responsive';
 import { t } from '@/text';
 import type { UsageWidgetPageScope } from './usageWidgetPageContext';
 import { USAGE_SCOPE_FILTER_ALL, USAGE_SOURCES_SHOW_AGENTS, USAGE_SOURCES_SHOW_APPS, type UsageWidgetPageFilter } from './useUsageWidgetPageFilters';
-import { getAgentIdentityColor } from '@/agents/catalog/catalog';
+import { usageAgentColor } from './usageAccent';
 import { UsageAgentMark } from './widgets/usageBodyKit';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
@@ -101,7 +101,7 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
                     ),
                     // The same identity hue the Agent's series take on every chart.
                     accessory: (
-                      <View style={[styles.swatch, { backgroundColor: getAgentIdentityColor(theme, option.id) }]} />
+                      <View style={[styles.swatch, { backgroundColor: usageAgentColor(theme, option.id) }]} />
                     ),
                   }
                 : {}),
@@ -193,8 +193,28 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
         : null,
     [condensed, filters, props.scopeFilters, coverageIncomplete, props.testID],
   );
+  // A phone draws the six periods as one chooser (more than four short options are a select, not a segmented row), so the
+  // period, Filters and the basis share one row (USAGE-ACCEPT 1121 #14, lab uframe-Rp). A wide screen keeps the segments.
+  const periodChooser = React.useMemo(
+    (): SelectionListFilter | null =>
+      phone && props.showPeriod !== false
+        ? {
+            id: 'period',
+            label: t('usage.board.page.periodLabel'),
+            valueLabel: periodTabs.find((tab) => tab.id === props.period)?.label ?? props.period,
+            options: periodTabs,
+            selectedId: props.period,
+            onChange: (id: string) => {
+              void props.onPeriodChange(id as UsagePeriod);
+            },
+            testID: `${props.testID}.period`,
+          }
+        : null,
+    [phone, props.showPeriod, periodTabs, props.period, props.onPeriodChange, props.testID],
+  );
   const chips = (
     <>
+      {periodChooser ? <SelectionListFilterChip filter={periodChooser} currentUiContextCommandScope={periodChooser.testID} /> : null}
       {scopeChooser ? <SelectionListFilterChip filter={scopeChooser} currentUiContextCommandScope={scopeChooser.testID} /> : filters.map((filter) => (
         <SelectionListFilterChip key={filter.id} filter={filter} currentUiContextCommandScope={filter.testID} />
       ))}
@@ -222,8 +242,8 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
   const metricSlot = metricToggle ? <React.Fragment key="metric">{metricToggle}</React.Fragment> : null;
   const costSlot = costChip ? <React.Fragment key="cost">{costChip}</React.Fragment> : null;
   const trailing = phone ? [metricSlot, costSlot] : [costSlot, metricSlot];
-  const period = props.showPeriod === false ? null : (
-    <View style={phone ? styles.periodPhone : styles.period}>
+  const period = props.showPeriod === false || phone ? null : (
+    <View style={styles.period}>
       <SegmentedTabBar
         role="radiogroup"
         testIDPrefix={`${props.testID}.period`}
@@ -241,8 +261,8 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
   );
   // One tree on every width: the bar recomposes by style, so a chooser opened on one side of the phone breakpoint
   // is still open on the other.
-  // One row of controls (USAGE-ACCEPT 1118 #12): a phone puts the period on its own line and Filters with Tokens/Cost
-  // on the next (phone lab p5); a wide screen keeps period, scopes, basis and Tokens/Cost on one line (lab d2views)
+  // One row of controls (USAGE-ACCEPT 1118 #12, 1121 #14): a phone puts the period chooser, Filters, Tokens/Cost and the
+  // basis on one line, wrapping whole controls only in a long locale (lab uframe-Rp); a wide screen keeps period, scopes, basis and Tokens/Cost on one line (lab d2views)
   // and wraps only the end group, right-aligned, when the window is too narrow. The basis chip holds its width while
   // its read is outstanding (it shows the basis in force), so nothing moves when the read answers.
   return (
@@ -353,7 +373,6 @@ const styles = StyleSheet.create((theme) => ({
     rowGap: theme.space.s8,
   },
   period: { flexShrink: 0 },
-  periodPhone: { alignSelf: 'stretch' },
   rule: {
     width: StyleSheet.hairlineWidth,
     height: 20,

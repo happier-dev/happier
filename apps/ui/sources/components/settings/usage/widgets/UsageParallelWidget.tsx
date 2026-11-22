@@ -16,7 +16,7 @@ import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { t } from '@/text';
-import { getAgentIdentityColor } from '@/agents/catalog/catalog';
+import { usageAgentColor } from '../usageAccent';
 import {
   UsageBodyInsufficient,
   UsageBodyReadFailed,
@@ -100,7 +100,7 @@ function UsageParallelWidgetOriginal(props: UsageBodyProps) {
               (machineId ? machineNames.get(machineId) : undefined) ??
               t('usage.board.howYouWork.unknownMachine'),
             agent: (agentId) => usageAgentTitle(agentId),
-            agentColor: (agentId) => getAgentIdentityColor(theme, agentId),
+            agentColor: (agentId) => usageAgentColor(theme, agentId),
             waitColor: theme.colors.state.warning.foreground,
           })
         : [],

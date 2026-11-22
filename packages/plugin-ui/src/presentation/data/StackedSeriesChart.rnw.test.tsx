@@ -328,6 +328,15 @@ describe('neutral series dataset', () => {
       expect(find(clear.container, 'rain-scale-1')).toBeTruthy();
     } finally { clear.unmount(); }
   });
+  it('labels the top of the scale as well as its middle and baseline', () => {
+    // USAGE-ACCEPT 1121 #16: Daily usage and Usage flow labelled only "$1.94" on the midline, so the top value was unknown.
+    const input = [{ id: 'rain', label: 'Rainfall', points: [100, 1, 0, 2].map((y, x) => ({ id: String(x), x, y })) }];
+    const mount = mountThroughReactNativeWeb(<StackedSeriesChart theme={theme} label="Rainfall" series={input} width={240} viewportHeight={100}
+      variant="bar" size="full" testID="rain" showScaleValues scaleGutter={44} />);
+    try {
+      expect(['rain-scale-0', 'rain-scale-1', 'rain-scale-2'].map((id) => find(mount.container, id).textContent)).toEqual(['0', '50', '100']);
+    } finally { mount.unmount(); }
+  });
   it('sits the peak figure on its bar, and keeps the first bucket\'s figure inside the plot', () => {
     // Live (Usage daily): a 7M peak under a 10M scale floated far above its bar, and the first
     // column's figure was cut at the card's left edge ("7M").
@@ -406,6 +415,19 @@ describe('neutral series dataset', () => {
       expect(view.container.querySelectorAll('[data-testid^="layered-short-run-1-"]')).toHaveLength(0);
       const filled = [...view.container.querySelectorAll('path')].filter((path) => /Z$/u.test(path.getAttribute('d') ?? '') && path.getAttribute('fill') !== 'none');
       expect(filled).toHaveLength(2);
+    } finally { view.unmount(); }
+  });
+  it('keeps a lone sample stacked on other series in the stack, never a speck floating above it', () => {
+    // USAGE-ACCEPT 1121 #11: Usage flow's lone "Other" days were grey specks hovering over the curve.
+    const view = mountThroughReactNativeWeb(<StackedSeriesChart theme={theme} label="Tokens"
+      series={[
+        { id: 'base', label: 'Base', points: [5, 6, 5, 6, 5, 6].map((y, x) => ({ id: String(x), x, y })) },
+        { id: 'top', label: 'Top', points: [null, null, 0.1, null, null, null].map((y, x) => ({ id: String(x), x, y })) },
+      ]}
+      width={200} viewportHeight={100} plotInset={0} minimumMaximum={10} variant="area" size="tile" testID="speck" />);
+    try {
+      expect(view.container.querySelectorAll('[data-testid^="speck-lone-"]')).toHaveLength(0);
+      expect(view.container.querySelectorAll('circle')).toHaveLength(0);
     } finally { view.unmount(); }
   });
   it('tones only geometry above the threshold and keeps missing samples as separate paths', () => {

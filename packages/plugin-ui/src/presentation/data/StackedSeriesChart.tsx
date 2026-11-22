@@ -566,8 +566,9 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
         return <Path key={lineKey} testID={props.testID ? `${props.testID}-short-run-${seriesIndex}-${index}` : undefined}
           d={linePath} fill="none" stroke={ink} strokeWidth={HAPPIER_DATA_METRICS.lineStrokePx} strokeLinecap="round" strokeLinejoin="round" />;
       }
-      // One lone sample is a dot: as an area it would be a thin column dropping to the baseline.
-      if (indexes.length === 1 && variant === 'area' && entry.fillPattern !== 'hatch') {
+      // One lone sample is a dot: as an area it would be a thin column dropping to the baseline. A lone sample stacked on
+      // other series keeps its sliver in the stack: as a dot it floats above the curve as a speck (USAGE-ACCEPT 1121 #11).
+      if (indexes.length === 1 && variant === 'area' && !stacked && entry.fillPattern !== 'hatch') {
         const only = geometry.buckets[indexes[0]!]!.values[seriesIndex]!;
         return <Circle key={`${entry.id}:${index}`} testID={props.testID ? `${props.testID}-lone-${seriesIndex}-${index}` : undefined}
           cx={geometry.xAt(indexes[0]!)} cy={inset + geometry.yAt(only.upper)} r={Math.max(stroke, HAPPIER_DATA_METRICS.lineStrokePx)} fill={ink} />;
@@ -752,8 +753,9 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
         style={{ position: 'absolute', left: 0, right: props.scaleGutter ?? 0, top: peakInset + thresholdY, borderTopWidth: 1, borderStyle: 'dashed', borderTopColor: thresholdColor }}>
         <HappierText style={{ ...text.caption, color: thresholdColor, position: 'absolute', left: 0, bottom: HAPPIER_DATA_METRICS.axisGapPx }}>{threshold.label}</HappierText>
       </View> : null}
-      {/* The reference label shares the scale gutter: a scale value it would print over steps aside for it. */}
-      {props.showScaleValues ? (props.mirrored ? [geometry.max, 0, geometry.min] : [geometry.min, geometry.min / 2 + geometry.max / 2]).map((value, index) =>
+      {/* Baseline, middle and top each carry their value, so the scale's reach reads without hovering (USAGE-ACCEPT 1121 #16).
+          The reference label shares the scale gutter: a scale value it would print over steps aside for it. */}
+      {props.showScaleValues ? (props.mirrored ? [geometry.max, 0, geometry.min] : [geometry.min, geometry.min / 2 + geometry.max / 2, geometry.max]).map((value, index) =>
         reference && props.scaleGutter && geometry.buckets.length
           && Math.abs(geometry.yAt(value) - geometry.yAt(reference.value)) < (text.caption.lineHeight ?? props.theme.typography.caption.lineHeight) * 1.5 ? null
           : <HappierText key={index} testID={props.testID ? `${props.testID}-scale-${index}` : undefined}

@@ -2,6 +2,7 @@ import { View } from 'react-native';
 import { Circle, G, Path, Rect } from 'react-native-svg';
 import { ChartDrawing, ChartMark, ChartPathMark } from '../../data/ChartDatum.js';
 import { formatHappierDataExactShare, formatHappierDataValue, formatHappierDataValueWithPrecision } from '../../data/dataModel.js';
+import { HappierText } from '../../text/Text.js';
 
 import {
   UsageDecorativeSvg as Svg,
@@ -53,10 +54,16 @@ export function UsageWeekTide(props: UsageChartBaseProps & Readonly<{ model: Usa
     const curve = usageSmoothPath(points);
     return { base, points, curve, area: `${curve}L${r1(axis + plot)},${r1(base)}L${axis},${r1(base)}Z` };
   });
+  // A narrow card has no room beside the dot: the label would print over the ridge above it (USAGE-ACCEPT 1121 #17, the
+  // phone's "Sun 20:00" over the Sat lane). It reads as one line above the drawing; the dot still marks the hour.
+  const peakAbove = width !== null && width < 460;
+  const peakText = peak.value > 0 ? props.labels.peak(peak.row, peak.hour, peak.value) : null;
   const columns = Array.from({ length: 24 }, (_, hour) => props.labels.clock(hour));
   const rows = grid.map((row, index) => [props.labels.weekdays[index] ?? '', ...row.map((value) => value === null ? unknown
     : props.model.encoding === 'ordinal' ? props.labels.values.levelNames[value] ?? '' : formatHappierDataValueWithPrecision(formatHappierDataValue(value), props.labels.values.formatValue(value)))] as const);
   return <UsageChartColumn testID={props.testID} onLayout={onLayout}>
+    {peakAbove && peakText ? <HappierText testID={props.testID ? `${props.testID}-peak` : undefined}
+      style={{ ...svgText.styles.caption, color: props.theme.colors.text }}>{peakText}</HappierText> : null}
     <ChartDrawing style={{ height }} accessibilityLabel={props.label}>
       {width !== null ? <Svg width={width} height={height}>
         {(() => {
@@ -77,8 +84,8 @@ export function UsageWeekTide(props: UsageChartBaseProps & Readonly<{ model: Usa
           const labelY = Math.max(py - 5, (svgText.styles.body.fontSize ?? svgText.fontSize) + 1);
           return [...shapes,
             peak.value > 0 ? <Circle key="peak" cx={r1(px)} cy={r1(py)} r={3} fill={props.paint.accent} /> : null,
-            peak.value > 0 ? svgText.draw({ x: right ? px - 7 : px + 7, y: labelY, anchor: right ? 'end' : 'start', tone: 'text', size: 'body', halo: props.paint.paper,
-              text: props.labels.peak(peak.row, peak.hour, peak.value) }, 'peak-label') : null,
+            peakText && !peakAbove ? svgText.draw({ x: right ? px - 7 : px + 7, y: labelY, anchor: right ? 'end' : 'start', tone: 'text', size: 'body', halo: props.paint.paper,
+              text: peakText }, 'peak-label') : null,
             ...[0, 6, 12, 18, 24].filter((hour) => hour < 24 || width >= 380).map((hour) => svgText.draw({ x: axis + (Math.min(hour, 23) / 23) * plot, y: height - 3,
               anchor: hour === 24 ? 'end' : 'start', text: props.labels.clock(hour) }, `t${hour}`)),
           ];

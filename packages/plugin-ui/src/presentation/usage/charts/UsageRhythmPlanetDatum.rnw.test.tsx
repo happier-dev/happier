@@ -93,6 +93,22 @@ describe('Rhythm and planet chart datum targets', () => {
       expect(mount.container.textContent).not.toContain('Peak $2.00');
     } finally { mount.unmount(); }
   });
+  it('says the Week tide peak above a phone-width drawing, never over the ridge above it', () => {
+    // USAGE-ACCEPT 1121 #17: on the phone the "Sun 20:00" label sat over the Sat lane.
+    const grid = Array.from({ length: 7 }, (_, day) => Array.from({ length: 24 }, (_, hour) => day === 6 && hour === 20 ? 9 : 1));
+    const labels = { weekdays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const, clock: String,
+      peak: () => 'Sun 20:00 · 9', values: { ...values, weekdayColumn: 'Day', formatValue: formatted, levelNames: levels } };
+    const phone = datums(<UsageWeekTide {...base} width={358} labels={labels} model={{ encoding: 'amount', grid }} />);
+    try {
+      expect(phone.container.querySelector('[data-testid="chart-peak"]')?.textContent).toBe('Sun 20:00 · 9');
+      expect([...phone.container.querySelectorAll('svg text')].some(node => node.textContent === 'Sun 20:00 · 9')).toBe(false);
+    } finally { phone.unmount(); }
+    const wide = datums(<UsageWeekTide {...base} width={720} labels={labels} model={{ encoding: 'amount', grid }} />);
+    try {
+      expect(wide.container.querySelector('[data-testid="chart-peak"]')).toBeNull();
+      expect([...wide.container.querySelectorAll('svg text')].some(node => node.textContent === 'Sun 20:00 · 9')).toBe(true);
+    } finally { wide.unmount(); }
+  });
   it('uses the highest eligible Daylight hour in the caption while retaining the partial amount', () => {
     const model = { encoding: 'amount' as const, hours: [2, 1.5], night: null, peakIneligibleHours: [0] };
     const mount = datums(<UsageDaylight {...base} labels={{ clock: String, night: () => 'Night',

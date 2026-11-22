@@ -140,7 +140,6 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
   const anyLinked = summary.projects.some((row) => row.outcomes.length > 0);
   const lead = leadingUsageRows(summary.projects, showAllProjects);
   const projects = lead.rows;
-  const allRowsFromParts = summary.tokensFromParts && summary.projects.every(project => project.tokensFromParts);
   const combineDatums = (label: string, values: readonly ReturnType<typeof datum>[]) => {
     const details = values.filter(value => value !== null);
     return details.length === 0 ? null : { label, value: details.map(value => `${value.label}: ${value.value}`).join(' · '),
@@ -175,7 +174,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
     usageWorkBranchName(row.branch.branch.ref),
     cell(row.amount, row.moneyBasis),
     withProject ? row.projectKeys.map(projectWhere).join(', ') : '',
-    [sessionsLine(row.sessions.length), row.tokensFromParts ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · '),
+    sessionsLine(row.sessions.length),
     row.perSession === null || row.sessions.length < 2
       ? ''
       : t('usage.board.work.perSession', { amount: format(row.perSession, row.moneyBasis) }),
@@ -249,10 +248,10 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
             rows={row.outcomes.map((outcome) => [
               usageWorkPullRequestTitle(outcome.outcome.pullRequest),
               cell(outcome.amount, outcome.moneyBasis),
-              [t('usage.board.work.prLine', {
+              t('usage.board.work.prLine', {
                 sessions: outcome.sessions.length,
                 state: usageWorkPullRequestState(outcome.outcome.pullRequest),
-              }), outcome.tokensFromParts ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · '),
+              }),
             ])}
             rowDatums={row.outcomes.map(outcome => datum(usageWorkPullRequestTitle(outcome.outcome.pullRequest), outcome.amount, outcome.moneyBasis))}
           />
@@ -326,10 +325,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
           [anyLinked
             ? t('usage.board.work.ledgerRowLine', { sessions: row.sessionIds.length, prs: row.outcomes.length })
             : sessionsLine(row.sessionIds.length), compact ? compactBasis(row.amount, row.moneyBasis) : null,
-            // When every row's tokens were added up from their parts, the total below says it once, not every row (USAGE-ACCEPT
-            // 1118 #11); a mixed ledger keeps it on the rows it concerns.
-            row.tokensFromParts && !allRowsFromParts
-              ? t('usage.board.page.tokensFromParts') : null,
+            // Token totals added up from their parts are said once, by the total below, never on a row (USAGE-ACCEPT 1121 #13).
             projectPlace(row.projectKey)].filter(Boolean).join(' · '),
           ...(anyLinked
             ? [row.unallocated === null || row.unallocated > 0

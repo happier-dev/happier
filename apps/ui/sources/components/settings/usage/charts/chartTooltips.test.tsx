@@ -44,7 +44,7 @@ const popoverMarks = [
         labels={{ duration: (ms) => `${Math.round(ms / 1000)}s`, unknownAgent: 'Unknown', detail: (ms, n) => `${ms} · ${n}`, ticks: { minute: '1m', tenMinutes: '10m', hour: '1h', fourHours: '4h' }, caption: '',
             values: { ...markValues, agentColumn: 'Agent', medianColumn: 'Median', p90Column: 'p90', samplesColumn: 'Samples', formatCount: String } }} /> },
     { name: 'steering tide hour', value: '7', body: <UsageSteeringTide {...markBase} model={{ night: null, rows: [{ agentId: 'claude', steersByHour: [7], phoneAnswersByHour: [3], steers: 7, busyMs: 3600000, perBusyHour: 7, phoneAnswers: 3 }] }}
-        labels={{ values: { ...markValues, agentColumn: 'Agent', steersColumn: 'Steers' },  clock: String, unknownAgent: 'Unknown', perBusyHourHeader: 'Per busy hour', fromPhoneHeader: 'From phone', perBusyHourUnit: 'per hour', answers: 'Answers', rate: String, detail: String, count: String, caption: '' }} /> },
+        labels={{ values: { ...markValues, agentColumn: 'Agent', steersColumn: 'Steers' },  clock: String, unknownAgent: 'Unknown', perBusyHourHeader: 'Per busy hour', fromPhoneHeader: 'From phone', perBusyHourUnit: 'per hour', answers: 'Answers', rate: String, detail: String, count: String, caption: '', unsteered: names => names.join(', ') }} /> },
     { name: 'planet portrait', value: 'Light: 4 / 30 · Halo: 7 · Trail: 3', body: <UsagePlanetPortrait {...markBase} model={{ activeDays: { active: 4, of: 30 }, peakParallel: 7, streak: { current: 3, best: 12 } }}
         labels={{ rows: { light: 'Light', halo: 'Halo', trail: 'Trail' }, activeDays: (active, of) => `${active} / ${of}`, peak: String, streak: String, notShared: 'Not shared', lightNote: 'Active days', lightRest: '', haloNote: 'Peak parallel', haloRest: '', trailNote: String, trailRest: '' }} /> },
 ];
@@ -100,7 +100,7 @@ describe('usage chart tooltips (one ChartTooltip owner across all charts)', () =
                     steers: value, busyMs: 15_480_000, perBusyHour: value, phoneAnswers: 0 })) }}
                 labels={{ values: { ...markValues, agentColumn: 'Agent', steersColumn: 'Steers' },  clock: String, unknownAgent: 'Unknown', perBusyHourHeader: 'Per busy hour', fromPhoneHeader: 'From phone',
                     perBusyHourUnit: 'per hour', answers: 'Answers', rate: v => v === null ? '—' : String(v),
-                    detail: steers => `${steers ?? '—'} steers · 4 h 18 min busy`, count: v => v === null ? '—' : String(v), caption: '' }} />
+                    detail: steers => `${steers ?? '—'} steers · 4 h 18 min busy`, count: v => v === null ? '—' : String(v), caption: '', unsteered: names => names.join(', ') }} />
         </UsageChartInteractions>);
         const painted = screen.findAll(node => typeof node.type === 'string')
             .flatMap(node => node.children.filter(child => typeof child === 'string'));

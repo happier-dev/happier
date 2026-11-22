@@ -5,6 +5,7 @@ import { HAPPIER_SERIES_RAMP_ALPHAS as USAGE_SERIES_RAMP_ALPHAS } from '@happier
 import { getAgentIdentityColor, getNeutralAgentIdentityColor } from '@/agents/catalog/catalog';
 import {
     createUsageAgentSeriesColor,
+    usageAgentColor,
     usageMeterFill,
     usageSeriesColor,
     usageSignatureAccent,
@@ -74,17 +75,45 @@ describe('usageAccent — the single usage palette owner (R-DESIGN D-1)', () => 
     });
 });
 
+/** Spread between the strongest and weakest RGB channel: a grey or ink step has almost none, a hue has plenty. */
+function chroma(color: string): number {
+    const hex = /^#([0-9a-fA-F]{6})$/.exec(color);
+    if (!hex) throw new Error(`expected a solid #RRGGBB colour, got ${color}`);
+    const value = parseInt(hex[1]!, 16);
+    const channels = [(value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff];
+    return Math.max(...channels) - Math.min(...channels);
+}
+
 // USAGE-ACCEPT 1118 #10: a ranked Agent chart drew every Agent without a catalog hue in the one neutral, so its
-// five leaders and their Other could not be told apart.
-describe('ranked Agent series colours', () => {
-    const theme = { dark: false, colors: { text: { link: '#2BACCC', primary: '#18171C', secondary: '#6c6c70' }, surface: { base: '#FFFFFF' } } } as const;
-    it('keeps catalog hues and gives each hue-less leader its own ink step, apart from the neutral', () => {
-        const color = createUsageAgentSeriesColor(theme);
-        const neutral = getNeutralAgentIdentityColor(theme);
-        expect(color('claude')).toBe(getAgentIdentityColor(theme, 'claude'));
-        const unhued = ['acme-one', 'acme-two', 'acme-three'].map(color);
-        expect(new Set([...unhued, neutral]).size).toBe(4);
-        // Asked again, an Agent keeps its step.
-        expect(color('acme-one')).toBe(unhued[0]);
-    });
+// five leaders and their Other could not be told apart. USAGE-ACCEPT 1121 #2: the ink steps that replaced the
+// neutral drew the leading Agent (Muse, 21%) in near-black on light and near-white on dark, the loudest marks on
+// the page. Every named Agent takes a hue; only the folded Other keeps the neutral.
+describe('Agent series colours', () => {
+    const themes = [
+        { dark: false, colors: { text: { link: '#2BACCC', primary: '#18171C', secondary: '#6c6c70' }, surface: { base: '#FFFFFF' } } },
+        { dark: true, colors: { text: { link: '#9EB9FF', primary: '#EFEFEF', secondary: '#8A817C' }, surface: { base: '#1B1919' } } },
+    ] as const;
+    for (const theme of themes) {
+        const mode = theme.dark ? 'dark' : 'light';
+        it(`keeps catalog hues and gives each hue-less leader a hue of its own, apart from the neutral (${mode})`, () => {
+            const color = createUsageAgentSeriesColor(theme);
+            const neutral = getNeutralAgentIdentityColor(theme);
+            expect(color('claude')).toBe(getAgentIdentityColor(theme, 'claude'));
+            const ranked = ['muse', 'codex', 'opencode', 'grok', 'ohMyPi'].map(color);
+            expect(new Set([...ranked, neutral]).size).toBe(6);
+            for (const hue of ranked) expect(chroma(hue)).toBeGreaterThan(48);
+            // Asked again, an Agent keeps its colour.
+            expect(color('muse')).toBe(ranked[0]);
+        });
+
+        it(`draws a hue-less Agent in the same hue on every chart (${mode})`, () => {
+            expect(createUsageAgentSeriesColor(theme)('muse')).toBe(usageAgentColor(theme, 'muse'));
+            expect(usageAgentColor(theme, 'muse')).toBe(usageAgentColor(theme, 'muse'));
+            expect(usageAgentColor(theme, 'codex')).toBe(getAgentIdentityColor(theme, 'codex'));
+            expect(chroma(usageAgentColor(theme, 'grok'))).toBeGreaterThan(48);
+            // The unattributed member is no Agent: it keeps the neutral, like the folded Other.
+            expect(usageAgentColor(theme, '')).toBe(getNeutralAgentIdentityColor(theme));
+            expect(createUsageAgentSeriesColor(theme)('unknown')).toBe(getNeutralAgentIdentityColor(theme));
+        });
+    }
 });

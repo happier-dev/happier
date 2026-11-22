@@ -14,7 +14,6 @@ import {
   planetLightForProgress,
 } from '@happier-dev/brand/planet';
 import { PlanetCanvas } from '@/components/atmosphere/PlanetCanvas';
-import { getAgentIdentityColor } from '@/agents/catalog/catalog';
 import { getPreferredLanguage, t } from '@/text';
 import { formatTokenCount, formatUsageCost } from '@/utils/format/usageNumbers';
 import { formatUsageCalendarDate } from '@/sync/domains/usage/usageCalendarPresentation';
@@ -23,7 +22,7 @@ import type {
   UsageQuery,
   UsagePresentationMetric,
 } from '@happier-dev/protocol/inputs/usageQuery';
-import { usageSignatureAccent } from '../usageAccent';
+import { createUsageAgentSeriesColor, usageSignatureAccent } from '../usageAccent';
 import {
   UsageAgentMark,
   usageAgentTitle,
@@ -55,14 +54,16 @@ export function useUsageChartHost(serverId: string | null): {
     }),
     [theme],
   );
+  // One colour allocator per chart host: each Agent its Usage hue, two hue-less Agents of one chart never share one.
+  const agentColor = React.useMemo(() => createUsageAgentSeriesColor(theme), [theme]);
   const agent = React.useCallback(
     (agentId: string): UsageChartAgent => ({
       id: agentId,
       name: usageAgentTitle(agentId),
-      color: getAgentIdentityColor(theme, agentId),
+      color: agentColor(agentId),
       mark: <UsageAgentMark agentId={agentId} serverId={serverId} size={16} />,
     }),
-    [theme, serverId],
+    [agentColor, serverId],
   );
   const renderPlanet = React.useCallback<UsagePlanetSlot>(
     (spec) => <UsageChartPlanet spec={spec} dark={theme.dark} />,
