@@ -75,8 +75,10 @@ export function parseClaudeNativePermissionScreen(text: string): ClaudeNativePer
     if (footer < 0 || lines.slice(footer + 1).some((line) => line.trim())) return null;
     const question = lastLineIndex(lines.slice(0, footer), /^\s*(?:Do you want to .+|Allow .+)\?\s*$/u);
     if (question < 0) return null;
+    // A clipped command can put its upward scroll indicator just above the footer.
+    const optionsEnd = /^\s*↑ \d+ more lines\s*$/u.test(lines[footer - 1] ?? '') ? footer - 1 : footer;
     const options: { label: string; focused: boolean }[] = [];
-    for (const line of lines.slice(question + 1, footer)) {
+    for (const line of lines.slice(question + 1, optionsEnd)) {
         if (!line.trim()) continue;
         const row = /^\s*([>›❯])?\s*(\d+)\.\s+(.+)$/u.exec(line);
         if (row) {
