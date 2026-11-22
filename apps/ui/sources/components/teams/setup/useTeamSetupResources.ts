@@ -36,15 +36,14 @@ export function useTeamSetupResources(context: TeamSetupResourceContext) {
     // Repository-free Sources still carry shared setup/defaults. Keep them visible;
     // only repository selectors can enter the native clone plan.
     const sourceKinds = React.useMemo(() => {
-        // A preview can show an explicit Team audience; an administrator's other grants tell us
-        // nothing about what another member will see. Those resources use the preview placeholder.
-        const rows = context.preview ? sources.state.rows.filter(source => source.audience.some(grant =>
-            grant.principal.kind === 'team' && grant.principal.teamId === context.address.teamId)) : sources.state.rows;
+        // The scoped Source catalog distinguishes whole-Team access from the viewer's Group grants.
+        const rows = context.preview ? sources.state.rows.filter(source =>
+            source.sharedWithTeamScope === 'team' || source.sharedWithTeamScope === 'team_and_group') : sources.state.rows;
         return {
             repositorySources: rows.filter(source => source.repository !== undefined),
             repositoryFreeSources: rows.filter(source => source.repository === undefined),
         };
-    }, [context.address.teamId, context.preview, sources.state.rows]);
+    }, [context.preview, sources.state.rows]);
     const credentialFeatureEnabled = useFeatureEnabled('teams.credentialResources', {
         scopeKind: 'spawn', serverId: context.scope.serverId,
     });

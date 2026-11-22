@@ -68,7 +68,9 @@ it('previews the member page from the same Team reads, with nothing to run and a
   homes.answer(serverId, summary.path, { body: { teamId: team.id, kinds: [] } });
   const web = ProjectSourceListItemV1Schema.parse({
     id: 'source-web', revision: 1, name: 'Storefront', createdByAccountId: 'admin',
-    audience: [{ principal: { kind: 'team', teamId: team.id }, level: 'view' }],
+    owner: { kind: 'team', teamId: team.id },
+    audience: [],
+    sharedWithTeamScope: 'team',
     repository: {
       provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
       repository: { nameWithOwner: 'acme/web' }, protocol: 'https',
@@ -76,7 +78,8 @@ it('previews the member page from the same Team reads, with nothing to run and a
   });
   homes.answer(serverId, '/v1/projects/sources', {
     body: { ok: true, sources: [web, ProjectSourceListItemV1Schema.parse({
-      ...web, id: 'source-group', name: 'Group source', audience: [
+      ...web, id: 'source-group', name: 'Group source', owner: { kind: 'account', accountId: 'admin' },
+      sharedWithTeamScope: 'group', audience: [
         { principal: { kind: 'group', teamId: team.id, groupId: 'engineering' }, level: 'view' },
       ],
     })], coverage: { complete: true, nextCursor: null } },
