@@ -7,14 +7,18 @@ import { SessionStartFailureBanner } from '@/components/sessions/startFailure/Se
 import { resolveSessionStartFailureNotice } from '@/components/sessions/startFailure/sessionStartFailureNotice';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { Modal } from '@/modal';
+import { t } from '@/text';
+import { resolveSessionSpawnNewResultFailureMessage } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
 
 /**
  * Dev-only: the start-failure notice an inactive Session shows above its composer, mounted through the
  * real notice owner and banner for each closed-cause shape a QA Machine cannot produce on demand:
  * a retryable startup refusal, a non-retryable one, a disabled Agent plugin and a model that must be
- * chosen. `?cause=retry|blocked|plugin|model|all` (default all). No RPC is issued.
+ * chosen. `?cause=retry|blocked|plugin|model|all` (default all). `?cause=teamRefusal` instead opens the real alert
+ * New Session shows when the Home refuses its Team model binding (an older shared-model revision). No RPC is issued.
  */
-export type SessionStartFailureSpecimenCause = 'retry' | 'blocked' | 'plugin' | 'model';
+export type SessionStartFailureSpecimenCause = 'retry' | 'blocked' | 'plugin' | 'model' | 'teamRefusal';
 
 const ISSUES = {
     retry: { code: 'agent_startup_model_reconciliation_failed', source: 'agent_session_error',
@@ -25,7 +29,7 @@ const ISSUES = {
         failureCause: { phase: 'client_start', failureReason: 'model_selection_required', retryable: false } },
 } as const;
 
-function noticeFor(cause: SessionStartFailureSpecimenCause) {
+function noticeFor(cause: Exclude<SessionStartFailureSpecimenCause, 'teamRefusal'>) {
     const issue = SessionRuntimeIssueV1Schema.parse({ v: 1, scope: 'primary_session', status: 'failed',
         occurredAt: Date.UTC(2026, 10, 17, 9, 40), ...ISSUES[cause] });
     return resolveSessionStartFailureNotice({ issue, sessionActive: false });
@@ -33,7 +37,20 @@ function noticeFor(cause: SessionStartFailureSpecimenCause) {
 
 const noop = () => {};
 
+/** The alert New Session raises for a refused Team model binding, with the same presenter and request line. */
+function TeamRefusalScene() {
+    React.useEffect(() => {
+        Modal.alert(t('common.error'), resolveSessionSpawnNewResultFailureMessage({ type: 'error',
+            code: 'session_team_credential_binding_rejected', reason: 'resource_changed', retryable: false }, 'req-7f3a'));
+    }, []);
+    return <View testID="session-start-failure-specimen-teamRefusal" style={styles.scene} />;
+}
+
 function Scene(props: Readonly<{ cause: SessionStartFailureSpecimenCause }>) {
+    return props.cause === 'teamRefusal' ? <TeamRefusalScene /> : <NoticeScene cause={props.cause} />;
+}
+
+function NoticeScene(props: Readonly<{ cause: Exclude<SessionStartFailureSpecimenCause, 'teamRefusal'> }>) {
     const notice = React.useMemo(() => noticeFor(props.cause), [props.cause]);
     if (!notice) return <Text>{`No notice for ${props.cause}`}</Text>;
     return (

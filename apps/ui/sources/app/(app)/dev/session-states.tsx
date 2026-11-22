@@ -16,7 +16,7 @@ import { useDemoMessages } from '@/hooks/session/useDemoMessages';
 
 /**
  * Dev-only: Session failure and recovery states that live sessions rarely reach on demand — typed
- * transcript failure rows (model not found, Team refusal, Team reconnect, usage limit, Agent sign-in),
+ * transcript failure rows (model not found, Team refusal, Team reconnect, Team model reset, usage limit, Agent sign-in),
  * the quota card, and the Terminal tool card title. Every frame mounts the real owner with fixture data.
  * `?only=transcript|quota` renders one section.
  */
@@ -168,6 +168,16 @@ const TRANSCRIPT: Message[] = [
         resourceId: 'design-team-openai',
         reasonCode: 'connected_service_credential_reconnect_required',
       },
+    },
+  ),
+  runtimeRow(
+    'team-model-reset',
+    3.5 * 60_000,
+    'codex turn failed: Runner daemon authority is unavailable.',
+    {
+      code: 'team_credential_binding_not_current',
+      source: 'dependency_failure',
+      agentId: 'codex',
     },
   ),
   runtimeRow(
