@@ -792,6 +792,41 @@ describe('Session placement on a managed target (driver)', () => {
         expect(h.calls).not.toContain('acquire');
     });
 
+    it('launches the cold-installed CLI from literal argv for a Project Sync source', async () => {
+        const { guestHome, binaryPath } = await installableGuestCliPayload();
+        const lifetime = new AbortController();
+        onTestFinished(() => lifetime.abort());
+        const h = harness({
+            targetExec: async body => {
+                const request = body as { argv: string[]; inputBase64?: string };
+                if (request.argv[2]!.includes('uname -s')) {
+                    return { ...guestExec(body), stdoutBase64: Buffer.from(`Linux\naarch64\n${guestHome}\n`).toString('base64') };
+                }
+                const shell = promisify(execFile)(request.argv[0]!, request.argv.slice(1), {
+                    cwd: guestHome, env: { ...process.env, HOME: guestHome },
+                });
+                shell.child.stdin?.on('error', () => {});
+                shell.child.stdin?.end(request.inputBase64 ? Buffer.from(request.inputBase64, 'base64') : undefined);
+                const { stdout } = await shell;
+                return { ...guestExec(body), stdoutBase64: Buffer.from(stdout).toString('base64') };
+            },
+            targetPutFile: async body => {
+                const request = body as { guestPath: string; bytesBase64: string };
+                await writeFile(request.guestPath, Buffer.from(request.bytesBase64, 'base64'));
+            },
+        });
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input,
+            readTargetCurrent: async () => ({ machine, admitted: true }) });
+        const target = await driver.openWorkspaceSyncTarget({ managedId: machine.id, relationshipId: 'project-copy',
+            requesterAccountId: 'owner', workspace: { ...syncWorkspace, rootPath: join(guestHome, 'source') }, lifetime: lifetime.signal });
+        const installed = await target.ensureWorkspaceRuntime();
+        expect(await readFile(binaryPath, 'utf8')).toContain('self __install-payload');
+        // The same positional shell invocation as the native workspace worker.
+        await expect(promisify(execFile)('/bin/sh', ['-c', 'cd "$1" && exec "$2" --version',
+            'workspace-sync', guestHome, installed.binaryPath], { env: { ...process.env, HOME: guestHome } }))
+            .resolves.toMatchObject({ stdout: '0.3.0-dev\n' });
+    });
+
     it('keeps Account sync open after its creating Session ends, until the relationship ends', async () => {
         const h = harness({ guest: true, holdStream: true });
         const session = new AbortController(), relationship = new AbortController();

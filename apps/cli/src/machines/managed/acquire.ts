@@ -805,8 +805,9 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 && managedMachineSetupHasWorkV1(setup);
             const selectedExecution = hydrator.readPresetDefinition(current)?.preparationExecution;
             const channel = resolveManagedCliReleaseChannelSync({ argv: process.argv, invokedPath: process.argv[1], processEnv: process.env }).label;
+            const remoteHomeDir = `${placed.platform.home}/.happier`;
             let setupBinaryPath = selectedExecution?.binaryPath ?? resolveRemoteInstalledFirstPartyBinaryPath({ componentId: 'happier-cli',
-                remoteHomeDir: `${placed.platform.home}/.happier`, channel });
+                remoteHomeDir, channel });
             const setupClient = () => createManagedMachineControllerClient(input, {
                 requestId: request.operation?.actionRequestId ?? options.requestId, signal: finiteSignal, context: request.operation,
             }, 'machines.managed.inspect', hydrator);
@@ -819,7 +820,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     } });
                     const installed = await installManagedNativePayload({
                         channel,
-                        homeUrl: input.serverUrl, ...placed.platform, dedicatedIdentity: false,
+                        homeUrl: input.serverUrl, ...placed.platform, remoteHomeDir, dedicatedIdentity: false,
                         resource: correlation.resource.value, signal: finiteSignal,
                         exec: io.exec, putFile: io.putFile, bootstrapExec: io.exec, cleanupExec: io.exec,
                     });

@@ -4,15 +4,19 @@ import { dirname, join } from 'node:path';
 import { Duplex, PassThrough } from 'node:stream';
 import { expect, it, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
+import tweetnacl from 'tweetnacl';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol';
 import { SESSION_WORKSPACE_RETURN_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/actions/sessionWorkspaceReturnActionIdsV1';
 import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { OpenProjectInputV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import { createDefaultWorkspaceContentPolicyV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import type { ManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { deriveWorkspaceSyncRelationshipId } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
+import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { startPrivateProjectSyncChannel } from '@/workspaces/activation/privateProjectCheckoutProcess';
 import { runWorkspaceEffectWorker } from '@/workspaces/activation/workspaceEffectWorker';
 import { logger } from '@/ui/logger';
@@ -64,7 +68,7 @@ it('routes admitted native Project Open through retained requester custody befor
   expect(rows).toEqual([]);
 });
 
-it('copies a managed Project into a controller workspace through the admitted native source', async () => {
+it.each(['workspace', 'admitted Source'] as const)('copies a managed %s into a controller workspace through the native source', async entry => {
   const scmRuntime = await acquireWorkspaceSyncTestScmRuntime();
   onTestFinished(async () => { await scmRuntime.release(); });
   const diagnose = vi.spyOn(logger, 'warnLocalFile');
@@ -85,6 +89,10 @@ it('copies a managed Project into a controller workspace through the admitted na
   const key = { kind: 'workspace-ref', serverId, id: source.id };
   const rows = [{ key, revision: 0, content: { t: 'plain', v: { key, value: source } } }];
   const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
+    if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'owner' } };
+    if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
+      mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+    if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
     if (url.endsWith('/v1/machines/host')) return { status: 200, data: { machine: {
       id: 'host', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
       metadata: encodePlainMachineStoredContent({ host: 'host', platform: 'linux', homeDir: dirname(targetPath),
@@ -146,9 +154,14 @@ it('copies a managed Project into a controller workspace through the admitted na
   onTestFinished(async () => { await runtime.stop(); await Promise.all(workers); get.mockRestore(); post.mockRestore();
     withdrawActiveProjectAccountRowsSnapshot(); await rm(directory, { recursive: true, force: true }); });
   const contentPolicy = createDefaultWorkspaceContentPolicyV1();
+  const checkout = { v: 2, kind: 'managed', serverId, workspaceId: source.id, managedId: source.managedId,
+    rootPath: sourcePath, controller } as const;
+  const projectSource = { id: 'forge-project', revision: 1, name: 'Repository', createdByAccountId: 'owner', audience: [],
+    repository: { provider: { id: 'forge', kind: 'github', displayName: 'Forge', baseUrl: 'https://forge.invalid' },
+      repository: { nameWithOwner: 'group/repo' }, protocol: 'https' } } satisfies ProjectSourceV1;
   const request: OpenProjectInputV1 = { serverId, machineId: controller.machineId,
-    source: { kind: 'workspace', workspaceId: source.id, checkout: { v: 2, kind: 'managed', serverId,
-      workspaceId: source.id, managedId: source.managedId, rootPath: sourcePath, controller } },
+    source: entry === 'workspace' ? { kind: 'workspace', workspaceId: source.id, checkout }
+      : { kind: 'source', id: projectSource.id, revision: projectSource.revision, selector: projectSource.repository, checkout },
     materialization: { kind: 'sync', targetPath, workspaceAction: { kind: 'copy_once',
       contentPolicy } } };
   const context = { signal: new AbortController().signal, callerAuthority: 'present_user',
@@ -156,7 +169,31 @@ it('copies a managed Project into a controller workspace through the admitted na
     verifyMachineAdmissionCurrent: async () => true } satisfies import('@/api/rpc/types').RpcHandlerContext;
   const projectRuntime = { serverId, serverHttpBaseUrl, machineId: controller.machineId, accountId: 'owner',
     readCredentials: async () => credentials, workspaceSyncAdapter: runtime.handoffAdapter };
-  const opened = await openProject(request, projectRuntime, context);
+  let ingress: import('@/api/rpc/types').RpcHandlerContext = context;
+  if (entry === 'admitted Source') {
+    const socket = await createRequesterCurrentnessSocketHarness();
+    onTestFinished(() => socket.close());
+    const sourceRead = vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: { ok: true, source: projectSource, canManage: true } });
+    onTestFinished(() => sourceRead.mockRestore());
+    const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: 'managed-project-copy',
+      target: { kind: 'machine', machineId: controller.machineId }, input: request });
+    const authority = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'verified-project-open',
+      binding: { accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 }, serverIdentityId: serverId,
+        accountEncryptionMode: 'plain', actionId: 'projects.open', ...controller, custodianAccountId: 'owner',
+        requestId: envelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+        target: envelope.target, workspaceSyncAdmission: { relationshipId: deriveWorkspaceSyncRelationshipId(envelope.requestId),
+          sourceWorkspaceRefId: source.id, source: context.machineAdmission } } });
+    const admitted = await admitRequesterAccountActionContext({ authorization: authority, credentials,
+      serverId, serverIdentityId: serverId, serverHttpBaseUrl, isCurrent: async () => true });
+    if (!admitted) throw new Error('Open must have an admitted Account port');
+    onTestFinished(() => admitted.dispose());
+    const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: admitted.authorization,
+      serverId, serverIdentityId: serverId, serverHttpBaseUrl, target: authority.binding.target,
+      installationId: controller.installationId, privateKey: tweetnacl.sign.keyPair().secretKey, rootAdmitted: true });
+    if (!authorization) throw new Error('Open must have an admitted HTTP port');
+    ingress = { ...context, callerInputAuthorization: authorization, originalActionEnvelope: envelope };
+  }
+  const opened = await openProject(request, projectRuntime, ingress);
   expect(opened, JSON.stringify({ opened, diagnostics: diagnose.mock.calls })).toMatchObject({ kind: 'opened', directory: targetPath });
   expect(await readFile(join(targetPath, 'guest-only.bin'))).toEqual(bytes);
   expect(await readFile(join(sourcePath, 'guest-only.bin'))).toEqual(bytes);
