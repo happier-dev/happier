@@ -788,15 +788,24 @@ describe("Machine preset relational owner", () => {
             managedId: admitted.machine.id,
             requestId: 'opaque-sealed-resize',
         };
-        await expect(reportManagedResize({ ...resizeReport,
-            result: { kind: 'unknown', code: 'private_resize_unknown', nativeCause: {
-                localCause: 'native_command_failed', command: 'update', exitCode: 1, stderr: '/private/resize/diagnostic',
-            } },
-            presetContent: resizeSnapshot,
-        })).rejects.toThrow();
+        const where = { id: admitted.machine.id };
+        const beforeResizeReport = await db.managedMachine.findUniqueOrThrow({ where });
+        const app = createAuthenticatedTestApp();
+        machinesRoutes(app);
+        try {
+            const invalidResize = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/report-resize',
+                headers: { 'x-test-user-id': accountId }, payload: { ...resizeReport,
+                    result: { kind: 'unknown', code: 'private_resize_unknown', nativeCause: {
+                        localCause: 'native_command_failed', command: 'update', exitCode: 1, stderr: '/private/resize/diagnostic',
+                    } },
+                    presetContent: resizeSnapshot,
+                } });
+            expect(invalidResize.statusCode).toBe(400);
+            expect(await db.managedMachine.findUniqueOrThrow({ where })).toEqual(beforeResizeReport);
+        } finally { await app.close(); }
         await reportManagedResize({ ...resizeReport, result: { kind: 'unknown' }, presetContent: resizeSnapshot,
             observation: { observedAt: 124, availability: 'present', power: 'running', storage: 'retained' } });
-        const resized = await db.managedMachine.findUniqueOrThrow({ where: { id: admitted.machine.id } });
+        const resized = await db.managedMachine.findUniqueOrThrow({ where });
         expect(resized.launch).toEqual({ contentEncryptionMode: 'e2ee', content: resizeSnapshot, recipients: sealed.recipients });
         expect(resized.resource).toBeNull();
         expect(resized.nativeOperationRef).toBeNull();

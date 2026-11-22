@@ -1,7 +1,7 @@
 import type { ExternalActionSessionPresetAcquisitionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { isStoredOpaquePresetMachine, projectManagedMachineFull, projectManagedMachineOpaque } from './managedMachineProjection';
-import { ManagedAdmissionInputV1Schema, ManagedAdmissionPresetContentV1Schema, resolveManagedAcquireReviewV1, isManagedPresetAcquireInputV1, managedWorkspaceAttachmentIdV1, type ManagedAdmissionInputV1, type ManagedAdmissionOutputV1, type ManagedAdmissionPresetContentV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAdmissionPresetContentV1Schema, resolveManagedAcquireReviewV1, isManagedPresetAcquireInputV1, managedWorkspaceAttachmentIdV1, type ManagedAdmissionInputV1, type ManagedAdmissionOutputV1, type ManagedAdmissionPresetContentV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineFullV1Schema, type ManagedMachineV1, type ValidatedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { createManagedConfigurationFactsV1Schema } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { createPluginJsonSchemaZodValueAdapter } from "@happier-dev/protocol/plugins/actions/json-schema-validation";
@@ -71,7 +71,7 @@ export async function admitManagedAcquire(params: Readonly<{
 }>): Promise<ManagedAcquireAdmissionResult> {
     let transactionStarted = false;
     try {
-        const request = ManagedAdmissionInputV1Schema.parse(params.input);
+        const request = params.input;
         const review = resolveManagedAcquireReviewV1(request.input);
         const admittedSessionPreset = params.sessionPresetAcquisition !== undefined
             && sameManagedInput({ selection: params.sessionPresetAcquisition.selection, controller: params.sessionPresetAcquisition.controller },

@@ -1,5 +1,5 @@
 import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
-import { ManagedWakeTargetV1Schema, ManagedWakeTargetsReadRequestV1Schema, type ManagedWakeTargetV1, type ManagedWakeTargetsReadRequestV1, ManagedIntentResultSchema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
+import { ManagedWakeTargetV1Schema, type ManagedWakeTargetV1, type ManagedWakeTargetsReadRequestV1, ManagedIntentResultSchema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { isExternalActionManagedWakeRootV1, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ManagedFiniteWakeRequestV1Schema, MANAGED_FINITE_WAKE_RPC_METHOD } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { MachineInstallationPublicKeySchema } from '@happier-dev/protocol/machines/identity/installationIdentity';
@@ -388,7 +388,7 @@ export async function readPendingManagedWakeTargetInTx(tx: Tx, sessionId: string
 export async function readManagedWakeTargets(input: Readonly<{
     actorAccountId: string; request: ManagedWakeTargetsReadRequestV1; managedIds?: readonly string[];
 }>) {
-    const request = ManagedWakeTargetsReadRequestV1Schema.parse(input.request);
+    const { request } = input;
     return inTx(async tx => {
         await requireManagedControllerInTx(tx, { ...request, custodianAccountId: input.actorAccountId });
         const readRows = (ids?: readonly string[]) => tx.managedMachine.findMany({ where: { homeId: request.homeId,

@@ -6,11 +6,12 @@ import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import * as pluginJsonSchemaValidation from '@happier-dev/protocol/plugins/actions/json-schema-validation';
-import { ManagedAdmissionInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAdmissionInputV1Schema, ManagedListInputV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { auth } from '@/app/auth/auth';
 import { enableAuthentication } from '@/app/api/utils/enableAuthentication';
+import { enableSchemaValidation } from '@/app/api/utils/enableSchemaValidation';
 import { db } from '@/storage/db';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { seedBundledManagedAvailability } from './managedProjectionVolume.testkit';
@@ -41,6 +42,33 @@ describe('managed list admission cost', () => {
     afterAll(async () => {
         if (harness) await harness.close();
         if (producerDir) await rm(producerDir, { recursive: true, force: true });
+    });
+
+    it('admits the managed list body exactly once at the HTTP boundary', async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
+        enableSchemaValidation(app);
+        enableAuthentication(app);
+        registerManagedMachineRoutes(app);
+        // Count both Fastify safe parsing and any service parse on the real schema.
+        const admissions = vi.spyOn(ManagedListInputV1Schema._zod, 'run');
+        const request = { method: 'POST', url: managedMachineActionEndpointPathV1('machines.managed.list'),
+            headers: { authorization: `Bearer ${token}` } } as const;
+        try {
+            const list = await app.inject({ ...request, payload: { homeId } });
+            expect(list.statusCode, list.body).toBe(200);
+            expect(list.json()).toMatchObject({ machines: [] });
+            expect(admissions).toHaveBeenCalledTimes(1);
+
+            admissions.mockClear();
+            const invalid = await app.inject({ ...request, payload: { homeId, archived: 'invalid' } });
+            expect(invalid.statusCode, invalid.body).toBe(400);
+            expect(admissions).toHaveBeenCalledTimes(1);
+        } finally {
+            admissions.mockRestore();
+            await app.close();
+        }
     });
 
     it('signs the Home payload snapshot into the existing Retry root', async () => {

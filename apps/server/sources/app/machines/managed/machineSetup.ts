@@ -1,6 +1,6 @@
 import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
 import { isStoredOpaquePresetMachine } from './managedMachineProjection';
-import { MachineSetupResolveInputV1Schema, MachineSetupReportInputV1Schema, MachineSetupResolveResultV1Schema, ManagedMutationInputV1Schema, type MachineSetupResolveInputV1, type MachineSetupPresetApplyInputV1, type MachineSetupReportInputV1, type ManagedMachineActionInputV1, type ManagedMachineReadV1, type MachineSetupOpaquePresetSourceV1, type MachineSetupResolvedSourceEntryV1, type MachineSetupResolvedSourceV1, type MachineSetupSourceApplyEntryV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MachineSetupResolveResultV1Schema, type MachineSetupResolveInputV1, type MachineSetupPresetApplyInputV1, type MachineSetupReportInputV1, type ManagedMachineActionInputV1, type ManagedMachineReadV1, type MachineSetupOpaquePresetSourceV1, type MachineSetupResolvedSourceEntryV1, type MachineSetupResolvedSourceV1, type MachineSetupSourceApplyEntryV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineSetupV1Schema, ManagedOpaqueMachineSetupStateV1Schema, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import {
     projectManagedMachinePresetForRecipientV1,
@@ -105,7 +105,7 @@ export async function resolveMachineSetup(params: Readonly<{
     admittedMachineRole?: MachineAccessRoleV1;
     input: MachineSetupResolveInputV1; creationManagedId?: string;
 }>): Promise<ReturnType<typeof MachineSetupResolveResultV1Schema.parse>> {
-    const input = MachineSetupResolveInputV1Schema.parse(params.input);
+    const { input } = params;
     return inReadSnapshot(async tx => {
         const target = await requireTargetInTx(tx, { ...params, input });
         const resolvePreset = async (selected: Pick<MachineSetupOpaquePresetSourceV1, 'presetId' | 'presetRevision'>
@@ -214,7 +214,7 @@ export async function reportMachineSetup(params: Readonly<{
     admittedMachineRole?: MachineAccessRoleV1;
     creationManagedId?: string;
 }>): Promise<Readonly<{ machine: ManagedMachineV1 }>> {
-    const input = MachineSetupReportInputV1Schema.parse(params.input);
+    const { input } = params;
     if ('state' in input && input.state !== 'failed' && input.errorCode !== undefined) throw new ManagedMachineError('invalid_request');
     return inManagedMachinePublicationTx(input, async tx => {
         if ('target' in input) {
@@ -283,7 +283,7 @@ export async function reportMachineSetup(params: Readonly<{
 export async function skipManagedMachineSetup(params: Readonly<{
     actorAccountId: string; input: ManagedMachineActionInputV1<'machines.managed.setup.skip'>;
 }>): Promise<ManagedMachineReadV1> {
-    const input = ManagedMutationInputV1Schema.parse(params.input);
+    const { input } = params;
     return inManagedMachinePublicationTx(input, async tx => {
         if (await readCurrentServerIdentityId(process.env, tx) !== input.homeId) throw new ManagedMachineError('permission_denied');
         const row = await readManagedMachineInTx(tx, input);

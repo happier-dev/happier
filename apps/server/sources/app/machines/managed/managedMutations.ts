@@ -3,14 +3,14 @@ import { isStoredOpaquePresetMachine, projectManagedMachineFull, projectManagedM
 import { readManagedCreationBirthInTx } from './managedCreationBirth';
 import { projectManagedMachineReadForActorInTx, requireManagedCreationAccessInTx } from './managedRead';
 import { isManagedMetadataControlActionIdV1, isManagedResizeActionIdV1, MANAGED_POWER_SET_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
-import { ManagedControllerResizeReportV1Schema, type ManagedControllerResizeReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { ManagedControllerCurrentnessV1Schema, ManagedControllerReportV1Schema, ManagedControllerSubmitInputV1Schema, type ManagedControllerSubmitInputV1, ManagedEnrollmentCorrelationV1Schema, ManagedBootstrapCredentialCreateV1Schema, type ManagedControllerCurrentnessV1, type ManagedControllerReportV1, type ManagedEnrollmentCorrelationV1, type ManagedBootstrapCredentialCreateV1, ManagedControlAdmissionInputV1Schema, ManagedControllerIntentReportV1Schema, type ManagedControlAdmissionInputV1, type ManagedControllerIntentReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { type ManagedControllerResizeReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { type ManagedControllerSubmitInputV1, type ManagedControllerCurrentnessV1, type ManagedControllerReportV1, type ManagedEnrollmentCorrelationV1, type ManagedBootstrapCredentialCreateV1, type ManagedControlAdmissionInputV1, type ManagedControllerIntentReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineV1Schema, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { ManagedOpaquePresetObservationV1Schema, ProviderObservationV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
-import { ManagedPolicyAdmissionInputV1Schema, type ManagedControllerStoppedObservationV1, type ManagedPolicyAdmissionInputV1, type ManagedPolicyPurposeV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
+import { type ManagedControllerStoppedObservationV1, type ManagedPolicyAdmissionInputV1, type ManagedPolicyPurposeV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
@@ -171,7 +171,7 @@ export async function prepareManagedPolicy(params: Readonly<{ custodianAccountId
 }
 
 async function readOrAdmitManagedPolicy(params: Readonly<{ custodianAccountId: string; input: ManagedPolicyAdmissionInputV1; actionOrigin?: ExternalActionExecutionAuthorizationV1 }>, admit: boolean) {
-    const input = ManagedPolicyAdmissionInputV1Schema.parse(params.input);
+    const { input } = params;
     const execute = async (tx: Tx) => {
         const row = await readManagedMachineInTx(tx, input);
         if (row.custodianAccountId !== params.custodianAccountId || (row.controllerMachineId !== null
@@ -225,7 +225,7 @@ export async function admitManagedControl(params: Readonly<{
     admittedExecWake?: true;
     input: ManagedControlAdmissionInputV1;
 }>) {
-    const request = ManagedControlAdmissionInputV1Schema.parse(params.input);
+    const request = params.input;
     return await inManagedMachinePublicationTx({ homeId: request.input.homeId,
         managedId: 'managedMachineId' in request.input ? request.input.managedMachineId : request.input.managedId,
         ...(request.action === 'machines.managed.controller.update' && request.input.controller ? { nextControllerMachineId: request.input.controller.machineId } : {}) }, async tx => {
@@ -463,8 +463,7 @@ export async function reportManagedStoppedObservationInTx(tx: Tx, row: StoredMan
 }
 
 /** Store native resize observation under the active admitted job, without re-admitting approved work. */
-export async function reportManagedResize(input: ManagedControllerResizeReportV1) {
-    const canonical = ManagedControllerResizeReportV1Schema.parse(input);
+export async function reportManagedResize(canonical: ManagedControllerResizeReportV1) {
     return inManagedMachinePublicationTx(canonical, async tx => {
         const row = await requireActiveManagedResizeInTx(tx, canonical);
         if (isStoredOpaquePresetMachine(row)) {
@@ -499,8 +498,7 @@ export async function reportManagedResize(input: ManagedControllerResizeReportV1
 }
 
 /** Claim only the current single native effect before IO; submitted ambiguity survives policy/Move edits. */
-export async function submitManagedIntent(input: ManagedControllerCurrentnessV1) {
-    const canonical = ManagedControllerCurrentnessV1Schema.parse(input);
+export async function submitManagedIntent(canonical: ManagedControllerCurrentnessV1) {
     return await inManagedMachinePublicationTx(canonical, async tx => {
         const row = await requireCurrentManagedMachineInTx(tx, canonical, { allowInactiveCurrentIntent: true });
         // Covers automatic policy and already-admitted operations too: none
@@ -529,8 +527,7 @@ export async function submitManagedIntent(input: ManagedControllerCurrentnessV1)
 }
 
 /** Native facts reconcile the exact submitted or still-current admitted command, never a newer intent. */
-export async function reportManagedIntent(input: ManagedControllerIntentReportV1) {
-    const canonical = ManagedControllerIntentReportV1Schema.parse(input);
+export async function reportManagedIntent(canonical: ManagedControllerIntentReportV1) {
     const endedGuest = (row: StoredManagedMachine, intent: string | undefined, observation: ManagedControllerIntentReportV1['observation']) => {
         if (!row.enrolledMachineId) return null;
         const scope = { homeId: row.homeId, machineId: row.enrolledMachineId };
@@ -779,8 +776,7 @@ export async function reportManagedIntent(input: ManagedControllerIntentReportV1
 }
 
 /** Only the successful unsubmitted -> may-exist transition permits native acquisition. */
-export async function submitManagedAcquire(input: ManagedControllerSubmitInputV1) {
-    const canonical = ManagedControllerSubmitInputV1Schema.parse(input);
+export async function submitManagedAcquire(canonical: ManagedControllerSubmitInputV1) {
     return await inManagedMachinePublicationTx(canonical, async (tx) => {
         const row = await requireCurrentManagedMachineInTx(tx, canonical, { requestAuthority: 'creation' });
         const launch = canonical.presetContent === undefined ? undefined : replaceOpaquePresetContent(row, canonical.presetContent);
@@ -799,8 +795,7 @@ export async function submitManagedAcquire(input: ManagedControllerSubmitInputV1
 }
 
 /** Bound identity is saved before bootstrap, including an exact late cleanup identity. */
-export async function reportManagedAcquire(input: ManagedControllerReportV1, options: Readonly<{ requestAuthority?: 'creation' | 'intent'; cleanupReconciliation?: boolean }> = {}) {
-    const canonical = ManagedControllerReportV1Schema.parse(input);
+export async function reportManagedAcquire(canonical: ManagedControllerReportV1, options: Readonly<{ requestAuthority?: 'creation' | 'intent'; cleanupReconciliation?: boolean }> = {}) {
     return await inManagedMachinePublicationTx(canonical, async (tx) => {
         const row = await requireCurrentManagedMachineInTx(tx, canonical, { requestAuthority: options.requestAuthority ?? 'creation',
             allowCanceledResourceReport: (canonical.result.kind === "bound" || canonical.result.kind === "pending") && options.requestAuthority !== 'intent',
@@ -918,8 +913,7 @@ export async function reportManagedAcquire(input: ManagedControllerReportV1, opt
 }
 
 /** Creates the private key at SavedSecret's owner and retains only its reference atomically. */
-export async function createManagedBootstrapCredential(input: ManagedBootstrapCredentialCreateV1) {
-    const canonical = ManagedBootstrapCredentialCreateV1Schema.parse(input);
+export async function createManagedBootstrapCredential(canonical: ManagedBootstrapCredentialCreateV1) {
     return await inManagedMachinePublicationTx(canonical, async (tx) => {
         const row = await requireCurrentManagedMachineInTx(tx, canonical, { requestAuthority: 'creation' });
         if (row.bootstrapCredentialRef !== null) return { machine: projectManagedMachine(row) };
@@ -975,9 +969,8 @@ export async function requireManagedMachineRegistrationInTx(tx: Tx, input: Manag
 }
 
 /** Enrollment remains inside ordinary registration's transaction, before any Machine write. */
-export async function requireManagedEnrollmentInTx(tx: Tx, input: ManagedEnrollmentCorrelationV1,
+export async function requireManagedEnrollmentInTx(tx: Tx, canonical: ManagedEnrollmentCorrelationV1,
     authority: string | Readonly<{ controllerCustodianAccountId: string }>, declarationBodies?: ManagedDeclarationBodies) {
-    const canonical = ManagedEnrollmentCorrelationV1Schema.parse(input);
     const retained = await readManagedMachineInTx(tx, canonical);
     const row = await requireCurrentManagedMachineInTx(tx, canonical, { requestAuthority:
         canonical.requestId === retained.admittedActionRequestId ? 'creation' : 'intent' });

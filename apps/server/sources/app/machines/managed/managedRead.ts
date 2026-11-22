@@ -1,5 +1,5 @@
 import { hasStoredOpaquePresetEnvelope, isStoredOpaquePresetMachine, projectManagedMachineFull, projectManagedMachineOpaque, readAdmittedOpaquePresetLaunch } from './managedMachineProjection';
-import { ManagedListInputV1Schema, ManagedGetInputV1Schema, ManagedCancelInputV1Schema, type ManagedMachineActionInputV1, type ManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { type ManagedMachineActionInputV1, type ManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { isManagedOpaquePresetResourceDependencyV1, isManagedOpaquePresetResourceDispositionV1, ManagedResourceDependencyV1Schema, type ManagedResourceDependencyV1, type ManagedResourceDispositionV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 import { SharedSavedSecretRefV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { isManagedOpaquePresetMachineV1, redactManagedMachineCredentialReferences, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -192,7 +192,7 @@ export async function requireManagedCreationAccessInTx(tx: Tx,
 }
 export async function getManagedMachine(params: Readonly<{ actorAccountId: string; input: ManagedMachineActionInputV1<"machines.managed.get">;
     enrolledMachineId?: string }>) {
-    const input = ManagedGetInputV1Schema.parse(params.input);
+    const { input } = params;
     return await inTx(async tx => {
         await requireHome(tx, input.homeId);
         if ('creationRequestId' in input) {
@@ -269,7 +269,7 @@ export async function projectManagedMachineReadForActorInTx(tx: Tx, row: StoredM
     return projectManagedMachineReadForActor(row, await projectManagedMachineForActorInTx(tx, row, actorAccountId, admittedRole), actorAccountId);
 }
 export async function listManagedMachines(params: Readonly<{ actorAccountId: string; input: ManagedMachineActionInputV1<"machines.managed.list"> }>) {
-    const input = ManagedListInputV1Schema.parse(params.input);
+    const { input } = params;
     return await inReadSnapshot(async tx => {
         await requireHome(tx, input.homeId);
         // Retiring a controller must not conceal the custodian's retained managed
@@ -327,7 +327,7 @@ export async function listManagedMachines(params: Readonly<{ actorAccountId: str
 /** Cancellation retires creation; only the existing intent owner can perform native cleanup. */
 export async function cancelManagedCreation(params: Readonly<{ actorAccountId: string; input: ManagedMachineActionInputV1<"machines.managed.cancel"> }>,
     options: Readonly<{ onlyIfUnsubmitted?: boolean; admittedCreationRecovery?: true }> = {}) {
-    const input = ManagedCancelInputV1Schema.parse(params.input);
+    const { input } = params;
     return await inManagedMachinePublicationTx(input, async tx => {
         const row = await readManagedMachineInTx(tx, input);
         await requireHome(tx, input.homeId);
