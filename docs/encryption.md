@@ -1975,10 +1975,11 @@ entry for each E2EE preset. It opens the person's envelope through the preset
 custody (`createManagedPresetHydrator().openRecipientProjections`), which checks
 the persisted Account mode and key currentness and then calls the protocol opener
 the UI custody also calls (`openManagedMachinePresetRecipientProjectionV1`).
-Only presets owned by the host's own Account open, and only on a request under
-that Account's bearer. Team- or other-Account-owned presets and external executions
-return `unavailable` / `permission_denied`, even when the Account holds an
-envelope. Missing or stale key material returns `unavailable` /
+Only presets owned by the host's own Account open, and only when the requester is
+that Account: the bearer of the external execution carrier when one is present
+(a Session agent's call carries one even for its owner), otherwise the host's own
+token. Team- or other-Account-owned presets and another person's request return
+`unavailable` / `permission_denied`, even when the Account holds an envelope. Missing or stale key material returns `unavailable` /
 `credential_unavailable` and leaves only the sealed carrier. The server still
 returns only the sealed carrier, and Saved Secret bindings in the opened content
 stay references.

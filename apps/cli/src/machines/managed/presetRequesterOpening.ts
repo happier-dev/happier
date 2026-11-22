@@ -12,9 +12,10 @@ import { createManagedPresetHydrator } from './presetHydration';
 
 /**
  * Open the requester's own E2EE presets from an Action read with this host's Account
- * custody. Only the key holder's own request opens: an external execution runs under
- * another person's bearer, and a preset owned by another Account or a Team stays sealed
- * even when this Account holds one of its envelopes.
+ * custody. Only the key holder's own request opens: the requester is the bearer of an
+ * external execution carrier (a Session agent's call carries one even for its owner), else
+ * this host's token. A preset owned by another Account or a Team stays sealed even when
+ * this Account holds one of its envelopes.
  */
 export async function openCliMachinePresetsForRequester(
   params: Readonly<{
@@ -30,12 +31,13 @@ export async function openCliMachinePresetsForRequester(
     presetId: string,
     code: 'permission_denied' | 'credential_unavailable',
   ) => ({ kind: 'unavailable' as const, presetId, code });
-  if (params.context.externalActionExecutionAuthorization) {
+  const accountId = readAccountIdFromToken(params.token);
+  const carrier = params.context.externalActionExecutionAuthorization;
+  if (carrier && readAccountIdFromToken(carrier.token) !== accountId) {
     return params.presets.map((preset) =>
       unavailable(preset.id, 'permission_denied'),
     );
   }
-  const accountId = readAccountIdFromToken(params.token);
   const credentials =
     params.credentials?.token === params.token ? params.credentials : undefined;
   if (!accountId || !credentials)
