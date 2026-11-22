@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { defineProtocolObject, defineProtocolString, preparePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import { rehydratePluginContributionPointSemanticsV1 } from '@happier-dev/protocol/plugins/contributions/targeted';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 
 import { ingestCanonicalPluginManifest } from './ingest';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
@@ -17,6 +20,38 @@ const fixture = {
 } as const;
 
 describe('CLI canonical manifest ingestion', () => {
+  it('walks a published point schema once across repeated registry admissions', () => {
+    const launchInput = defineProtocolObject({ id: defineProtocolString() }, { policy: 'closed' });
+    const published = PluginManifestV2Schema.parse(createPluginManifestV2Fixture({ contributes: {
+      pluginContributionPoints: [{ id: 'detail', protocols: [{ id: 'detail', version: 1, operations: {},
+        surfaces: { detail: { required: true, presentation: 'content', inputSchema: launchInput.jsonSchema } } }] }],
+    } }));
+    const declaration = published.contributes.pluginContributionPoints[0]!.protocols[0]!;
+    const rawSchema = declaration.surfaces!.detail!.inputSchema;
+    let schemaDescriptorReads = 0;
+    declaration.surfaces!.detail!.inputSchema = new Proxy(rawSchema, {
+      getOwnPropertyDescriptor(value, key) {
+        if (key === '$schema') schemaDescriptorReads++;
+        return Reflect.getOwnPropertyDescriptor(value, key);
+      },
+    });
+    const ingested = ingestCanonicalPluginManifest(published, {
+      admission: 'build', manifestAuthority: 'bundled_first_party', sourceProvenance: 'localSource',
+    });
+    if (!ingested.ok) throw new Error('Expected a published manifest');
+    const protocol = ingested.manifest.contributes.pluginContributionPoints[0]!.protocols[0]!;
+    const inputSchema = protocol.surfaces!.detail!.inputSchema;
+    for (let admission = 0; admission < 3; admission++) {
+      const semantics = rehydratePluginContributionPointSemanticsV1(protocol);
+      expect(semantics?.surfaces[0]?.inputSchema.safeParse({ id: 'entry' }).success).toBe(true);
+      expect(semantics?.surfaces[0]?.inputSchema.safeParse({ id: 1 }).success).toBe(false);
+      const { validate } = preparePluginJsonSchema(inputSchema);
+      expect(validate({ id: 'entry' })).toBe(true);
+      expect(validate({ id: 1 })).toBe(false);
+    }
+    expect(schemaDescriptorReads).toBe(1);
+  });
+
   it('loads healthy declarations and reports skipped declarations', () => {
     const input = createPluginManifestV2Fixture({ contributes: { actions: [
       { id: 'healthy', title: 'Healthy', scopes: ['session'], surfaces: ['cli'],

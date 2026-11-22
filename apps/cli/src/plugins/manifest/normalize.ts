@@ -1,13 +1,14 @@
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 import type { ParsedPluginManifestV2 } from '@happier-dev/protocol';
 import { forwardPrecomputedDeclarationFields } from '@happier-dev/protocol/plugins/contributions/deferredDeclarationFields';
+import { preparePluginContributionPointDeclarationsV1 } from '@happier-dev/protocol/plugins/contributions/targeted';
 
 import type { CanonicalPluginManifest } from './types';
 
 export function normalizeParsedPluginManifestV2(manifest: ParsedPluginManifestV2): CanonicalPluginManifest {
   const normalized = {
     ...manifest,
-    contributes: Object.freeze(manifest.contributes),
+    contributes: Object.freeze(preparePluginContributionPointDeclarationsV1(manifest.contributes)),
   };
   // Normalization freezes these exact values; it changes no declaration bytes.
   forwardPrecomputedDeclarationFields(manifest, normalized);
