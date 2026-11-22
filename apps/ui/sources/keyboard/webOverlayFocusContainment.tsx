@@ -10,6 +10,22 @@ import {
     type FocusReturnTarget,
 } from './focusReturn';
 
+const overlayTabHandlers = new WeakMap<HTMLElement, (event: KeyboardEvent) => void>();
+
+/** Retained portal inputs can be DOM descendants of an overlay without sharing its React tree. */
+export function forwardWebOverlayTab(event: KeyboardEvent): void {
+    if (event.defaultPrevented || event.key !== 'Tab' || event.isComposing) return;
+    if (!(event.target instanceof HTMLElement)) return;
+
+    for (let element: HTMLElement | null = event.target; element; element = element.parentElement) {
+        const handleKeyDown = overlayTabHandlers.get(element);
+        if (handleKeyDown) {
+            handleKeyDown(event);
+            return;
+        }
+    }
+}
+
 export type WebOverlayFocusContainmentOptions = Readonly<{
     active: boolean;
     containerRef: Readonly<{ current: HTMLElement | null }>;
@@ -171,10 +187,14 @@ export function useWebOverlayFocusContainment(options: WebOverlayFocusContainmen
             focusElement(shouldWrapBackward ? lastFocusableElement : firstFocusableElement);
         };
 
+        const container = options.containerRef.current;
+        if (container) overlayTabHandlers.set(container, handleKeyDown);
+
         // Bubble phase: a control that uses Tab itself (a code editor indenting) handles it on its own element
         // first and prevents it; only a Tab nothing claimed moves focus, and only that one is contained.
         document.addEventListener('keydown', handleKeyDown);
         return () => {
+            if (container) overlayTabHandlers.delete(container);
             document.removeEventListener('keydown', handleKeyDown);
         };
     }, [options.active, options.containerRef]);

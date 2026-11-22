@@ -378,8 +378,6 @@ function UsageScopeSections(props: Readonly<{
       currentUiContextForegroundOverlay
       rootStep={step}
       onActiveStepChange={phoneSheetOnWeb ? handleActiveStepChange : undefined}
-      autoFocusInputOnWeb={phoneSheetOnWeb}
-      tabKeyBehavior={phoneSheetOnWeb ? 'traverse' : undefined}
       selection={{ kind: 'multiple', selectedIds }}
       onSelect={(id, _option, callerContext, invocation) => {
         const [section, option] = id.split(SECTION_KEY);

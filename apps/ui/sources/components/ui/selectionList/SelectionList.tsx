@@ -947,11 +947,9 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         resolveArrowTarget,
     });
 
-    const tabKeyBehavior = props.tabKeyBehavior;
     const handleKeyPress = React.useMemo(() => {
         const onKeyPress = createSelectionListKeyPressHandler({
             keyboard,
-            tabKeyBehavior,
             isComposing,
             focusedOptionId,
             onActivate: handleUiActivate,
@@ -964,7 +962,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
             pointerMovedRef.current = false;
             onKeyPress(event);
         };
-    }, [keyboard, isComposing, focusedOptionId, handleUiActivate, stack.canPop, inputValue, closeUiList, tabKeyBehavior]);
+    }, [keyboard, isComposing, focusedOptionId, handleUiActivate, stack.canPop, inputValue, closeUiList]);
 
     const handlePushStep = stack.pushStep;
 
@@ -978,14 +976,13 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
     // back hint is appended at the end of the array (the visual order chosen
     // to keep authored hints stable; the back chip is the "extra" cue).
     const backHintAvailable = React.useMemo<boolean>(() => {
-        if (tabKeyBehavior === 'traverse') return false;
         if (stack.canPop) return true;
         if (inputBehavior?.onBackUp) {
             const next = inputBehavior.onBackUp(inputValue);
             if (next !== null) return true;
         }
         return false;
-    }, [stack.canPop, inputBehavior, inputValue, tabKeyBehavior]);
+    }, [stack.canPop, inputBehavior, inputValue]);
 
     const footerHints = React.useMemo<ReadonlyArray<SelectionListKeyboardHint>>(() => {
         const authored = currentStep.footerHints ?? [];

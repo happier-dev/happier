@@ -21,6 +21,7 @@ import { readSurfaceStyleProperty } from '@/components/ui/surfaces/surfaceStyle'
 import { useGlassBackedInk } from '@/components/ui/glass/glassBackedInk';
 import { settleStepMotionOnNativeInput } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { useLocalSetting } from '@/sync/store/settingsReadHooks';
+import { forwardWebOverlayTab } from '@/keyboard/webOverlayFocusContainment';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { scaleTextStyle } from './uiFontScale';
@@ -155,7 +156,7 @@ const AppTextInput = React.forwardRef<any, AppTextInputProps>(
         const uiFontScaleSetting = useLocalSetting('uiFontScale');
         const paintColor = useHappierMaterialColorResolver();
         const uiFontScale = disableUiFontScaling ? 1 : uiFontScaleSetting;
-        const { accessibilityLabel, testID, placeholderTextColor, onChangeText, ...restProps } = props;
+        const { accessibilityLabel, testID, placeholderTextColor, onChangeText, onKeyPress, ...restProps } = props;
         // A placeholder is read (WCAG AA), so every field draws it in the theme's placeholder ink unless it names its own.
         // Web reads it from the custom property the shared `::placeholder` rule takes (theme.css); native from the prop.
         const { theme } = useUnistyles();
@@ -201,6 +202,12 @@ const AppTextInput = React.forwardRef<any, AppTextInputProps>(
             onChangeText?.(text);
         }, [onChangeText]);
 
+        const handleWebKeyPress = React.useCallback<NonNullable<RNTextInputProps['onKeyPress']>>(event => {
+            onKeyPress?.(event);
+            // RN Web's TextInput stops keydown before it reaches the document.
+            if (event.nativeEvent instanceof KeyboardEvent) forwardWebOverlayTab(event.nativeEvent);
+        }, [onKeyPress]);
+
         return (
             <RNTextInput
                 ref={ref}
@@ -208,6 +215,7 @@ const AppTextInput = React.forwardRef<any, AppTextInputProps>(
                 accessibilityLabel={accessibilityLabel}
                 testID={testID}
                 onChangeText={Platform.OS === 'web' ? onChangeText : changeText}
+                onKeyPress={Platform.OS === 'web' ? handleWebKeyPress : onKeyPress}
                 placeholderTextColor={placeholderInk}
                 {...restProps}
                 {...webAccessibilityProps}

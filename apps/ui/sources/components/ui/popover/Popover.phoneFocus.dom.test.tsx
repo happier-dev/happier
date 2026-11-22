@@ -20,11 +20,49 @@ installPopoverCommonModuleMocks({
 });
 
 const { Popover } = await import('./Popover');
+const { TextInput } = await import('@/components/ui/text/Text');
 const { View, Pressable, Text } = await import('react-native');
 const { VoiceIslandAnatomy, VoiceOrbAnatomy } = await import('@/components/voice/presence/voicePresenceAnatomy');
 const { useCompanionPointerDragSession } = await import('@/components/companion/interaction/useCompanionPointerDragSession');
 
 describe('Popover phone-sheet focus return', () => {
+    it('wraps unhandled Search Tab past a programmatic-only action and preserves handled Tab', async () => {
+        let completeSearch = true;
+        const container = document.createElement('div');
+        document.body.append(container);
+        const root = createRoot(container);
+        try {
+            await act(async () => root.render(
+                <Popover open phonePresentation="sheet" accessibilityLabel="Actions" onRequestClose={() => {}}>
+                    {() => <>
+                        <TextInput
+                            accessibilityLabel="Search actions"
+                            onKeyPress={event => {
+                                if (completeSearch && event.nativeEvent.key === 'Tab') event.preventDefault();
+                            }}
+                        />
+                        <button tabIndex={-1}>Programmatic-only action</button>
+                    </>}
+                </Popover>,
+            ));
+            const search = document.querySelector<HTMLInputElement>('[aria-label="Search actions"]')!;
+            const close = document.querySelector('[data-testid="popover-sheet.close"]');
+            const tab = () => new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+            search.focus();
+            const handled = tab();
+            await act(async () => { search.dispatchEvent(handled); });
+            expect(handled.defaultPrevented).toBe(true);
+            expect(document.activeElement).toBe(search);
+
+            completeSearch = false;
+            await act(async () => { search.dispatchEvent(tab()); });
+            expect(document.activeElement).toBe(close);
+        } finally {
+            await act(async () => root.unmount());
+            container.remove();
+        }
+    });
+
     it('steps Escape back from a view pushed inside a phone sheet, keeping the sheet open', async () => {
         const container = document.createElement('div');
         document.body.append(container);

@@ -7,8 +7,8 @@ const WEB_FOCUSABLE_SELECTOR = [
   'select:not([disabled])',
   'textarea:not([disabled])',
   '[contenteditable="true"]',
-  '[tabindex]:not([tabindex="-1"])',
-].join(',');
+  '[tabindex]',
+].map(selector => `${selector}:not([tabindex="-1"])`).join(',');
 
 /** Shared web focus eligibility for panels, containment and focus return. */
 export function listWebFocusableElements(container: HTMLElement): WebFocusableElement[] {
