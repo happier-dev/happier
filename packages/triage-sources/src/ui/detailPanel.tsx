@@ -43,9 +43,13 @@ export function TriageDetailPageScrollProvider(props: Readonly<{ pageScroll: boo
   return <TriageDetailPageScrollContext.Provider value={props.pageScroll}>{props.children}</TriageDetailPageScrollContext.Provider>;
 }
 
+export function useTriageDetailPageScroll(): boolean {
+  return React.useContext(TriageDetailPageScrollContext);
+}
+
 /** The panel Tabs layout: the page's own flow on a phone, else the bounded region a source List owns. */
 function useTriageDetailPanelLayout(scrollOwner: TriageDetailSurfaceInputV1['panelScrollOwner']): TabsItemLayout {
-  const pageScroll = React.useContext(TriageDetailPageScrollContext);
+  const pageScroll = useTriageDetailPageScroll();
   if (pageScroll) return { layout: 'page' };
   return triageDetailPanelOwnsScrollerV1(scrollOwner) ? { layout: 'fill' } : {};
 }

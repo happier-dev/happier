@@ -11,11 +11,13 @@ import {
   Text,
   formatHappierDiffStat,
   usePluginHostApi,
+  usePluginTheme,
   usePluginTranslation,
   useSurfaceContext,
 } from '@happier-dev/plugin-ui';
 
 import type { TriageChangedFileV1 } from './changeSummary.js';
+import { useTriageDetailPageScroll } from './detailPanel.js';
 
 /**
  * A source's Viewed marks for its files (GitHub's per-head marks), with the words that say where a mark is saved.
@@ -275,6 +277,8 @@ export function TriageChangedFilesList<TRow extends TriageChangedFileV1>(
     endContent?: React.ReactNode;
   }>,
 ): React.ReactElement {
+  const pageScroll = useTriageDetailPageScroll();
+  const { typography, spacing } = usePluginTheme();
   // A band title names one band among others; a lone band is untitled (List draws no band for it), so the
   // collection keeps one sectioned shape, and its rows their state, when a later page adds a second band.
   const sections = React.useMemo(
@@ -300,6 +304,8 @@ export function TriageChangedFilesList<TRow extends TriageChangedFileV1>(
       keyForItem={(row) => row.path}
       header={props.header}
       endContent={props.endContent}
+      // Seed the existing page window with a single padded line before the List measures its rows.
+      {...(pageScroll ? { pageLayout: { estimatedRowHeight: typography.reading.lineHeight + 2 * spacing.small } } : {})}
       {...(revealRequest === undefined ? {} : { revealRequest })}
       renderItem={(row) => (
         <FileRow
