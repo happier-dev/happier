@@ -192,7 +192,7 @@ export function UsageDailyWidget(props: UsageBodyProps) {
     // Cost hatching describes actual usage without a price. A calendar-only slot
     // can still have an unknown value without carrying that meaning.
     const unpricedStarts = byAgent ? incompleteBucketStarts : new Set(costTrend
-      ?.filter(point => point.reportCount > 0 && point.cost === null)
+      ?.filter(point => point.recordedUnpriced)
       .map(point => point.timestamp * 1000));
     const buckets = (series[0]?.points ?? []).flatMap((point, index) => {
       if (typeof point.x !== 'number' || !Number.isFinite(point.x)) return [];
@@ -202,7 +202,7 @@ export function UsageDailyWidget(props: UsageBodyProps) {
         && values.every(value => typeof value === 'number' && Number.isFinite(value));
       const total = complete
         ? values.reduce<number>((sum, value) => sum + (value ?? 0), 0) : null;
-      const gap = (metric !== 'cost' || unpricedStarts.has(startMs)) && values.every(value => value == null);
+      const gap = metric === 'cost' ? unpricedStarts.has(startMs) : values.every(value => value == null);
       return [{ id: point.id, startMs, total, gap }];
     });
     const peak = {

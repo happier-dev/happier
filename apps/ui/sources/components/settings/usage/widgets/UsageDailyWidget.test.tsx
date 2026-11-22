@@ -217,6 +217,39 @@ describe('Daily period chart', () => {
     expect(screen.findHostByTestId('daily.chart-gap-key')).toBeTruthy();
   });
 
+  it('hatches recorded unpriced Daily costs even when an Agent has a known bar or zero', async () => {
+    const endMs = start + 4 * day;
+    const props = fixture([20, 10, null, 30], endMs);
+    const query = normalizeUsageQuery({ ...props.query, metric: 'cost', costBasis: 'reported' });
+    const accounting = props.slice.accounting!;
+    const price = (reportedUsd: number | null) => ({ reportedUsd, estimatedUsd: null, currency: 'USD' as const });
+    const [priced, unpriced, partial] = accounting.engineTimeline!;
+    const base = priced!.leaders[0]!;
+    const leader = (key: string, amount: number | null) => ({
+      ...base, key, cost: price(amount), sources: base.sources?.map(source => ({ ...source, cost: price(amount) })),
+    });
+    const value = { ...accounting,
+      totals: { ...accounting.totals, cost: price(5) },
+      series: accounting.series?.map((bucket, index) => ({ ...bucket, cost: price([2, null, 3][index]!) })),
+      engineTimeline: [
+        { ...priced!, leaders: [leader('codex:local', 2)] },
+        { ...unpriced!, leaders: [leader('claude:local', null)] },
+        { ...partial!, leaders: [leader('codex:local', 3), leader('claude:local', null)] },
+      ],
+      coverage: { ...accounting.coverage!, status: 'complete' as const, reasons: [],
+        range: { startMs: start, endMs, complete: true } },
+    };
+    const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value }] },
+      bundledUsageModelPriceCatalog).results[0]!;
+    const screen = await renderScreen(<UsageDailyWidget {...props} query={query} slice={slice} />);
+    const chart = screen.findByType(StackedSeriesChart);
+    expect(chart.props.series.map(series => series.points[1]?.y)).toEqual([0, null]);
+    const hatches = Array.from({ length: 4 }, (_, index) => Boolean(screen.findHostByTestId(`daily.chart-gap-${start + index * day}`)));
+    expect(hatches).toEqual([false, true, false, true]);
+    expect(screen.findHostByTestId('daily.chart-bar-3-0')).toBeTruthy();
+    expect(screen.findHostByTestId('daily.chart-gap-key')).toBeTruthy();
+  });
+
   it('includes a completed historical last day, skips uncovered days, and draws no today comparison', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(start + 20 * day);
     const screen = await renderScreen(<UsageDailyWidget {...fixture([10, null, 0, 30], start + 4 * day)} />);

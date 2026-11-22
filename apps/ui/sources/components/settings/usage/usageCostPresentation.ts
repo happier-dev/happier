@@ -26,7 +26,8 @@ export function usagePageCostTrend(projection: UsagePageCostProjection) {
     const basis = resolveUsageCostBasisForSelection(bucket.cost, projection.selection);
     return { timestamp: bucket.bucketStartMs / 1000,
       tokens: resolveUsageMeasuredTokens(bucket.tokens).total, reportCount: bucket.eventCount,
-      cost: basis?.amountUsd ?? null, partialCost: basis?.partial === true };
+      cost: basis?.amountUsd ?? null, partialCost: basis?.partial === true,
+      recordedUnpriced: bucket.eventCount > 0 && (basis?.amountUsd == null || basis?.partial === true) };
   });
 }
 

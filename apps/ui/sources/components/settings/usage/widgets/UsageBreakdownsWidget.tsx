@@ -106,10 +106,6 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
       : resolveUsageMeasuredTokens(accounting.totals.tokens).total
     : null;
   const rowBasis = (label: string | undefined) => label === basisPhrase ? null : label;
-  // Token totals added up from their parts are said once under the card, never on each row (USAGE-ACCEPT 1121 #13).
-  const countedRows = dimensions.flatMap(dimension => accounting?.breakdowns?.[dimension] ?? [])
-    .map(entry => resolveUsageMeasuredTokens(entry.tokens)).filter(tokens => tokens.total !== null);
-  const fromPartsNote = usageTokensFromPartsNote(countedRows.map(tokens => tokens.fromParts));
   const blocks = dimensions.flatMap((dimension) => {
     const entries = accounting?.breakdowns?.[dimension];
     if (!entries?.length) return [];
@@ -123,6 +119,7 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
         return {
           id: entry.key,
           value,
+          tokensFromParts: tokens.total === null ? null : tokens.fromParts,
           label: usageDimensionLabel(dimension, entry.key, entry.label, machineNames),
           annotation:
             // Unknown tokens leave no "—" ahead of the basis (sweep 1110 N5); the basis still says why money is missing.
@@ -136,10 +133,13 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
     const ranked = accounting?.coverage?.ranked.find(
       (row) => row.dimension === dimension,
     );
+    const showingAll = expanded.includes(dimension);
     return [
       {
         dimension,
-        rows,
+        showingAll,
+        rowCount: rows.length,
+        lead: leadingUsageRows(rows, showingAll),
         truncated:
           ranked && !ranked.complete
             ? Math.max(0, ranked.totalEntries - entries.length)
@@ -160,14 +160,17 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
         reason={t('usage.board.page.breakdownEmptyReason')}
       />
     );
+  // Token totals added up from their parts are qualified once for the rows on display.
+  const fromPartsNote = usageTokensFromPartsNote(blocks.flatMap(block =>
+    block.lead.rows.map(row => row.tokensFromParts)).filter(fromParts => fromParts !== null));
   return (
     <UsageBreakdownsBody theme={chartTheme} spacing={theme.space} testID={`${props.testID}.breakdowns`} model={{ namedByCard,
       blocks: blocks.map((block): UsageBreakdownBlock => {
-        const lead = leadingUsageRows(block.rows, expanded.includes(block.dimension));
+        const { lead } = block;
         return {
             id: block.dimension,
             label: heading(block.dimension),
-            rows: lead.rows.map((row, index) => ({
+            rows: lead.rows.map(({ tokensFromParts: _tokensFromParts, ...row }, index) => ({
               ...row,
               color: block.dimension === 'agent' ? agentColor(row.id) : usageMeterFill(theme, index === 0),
             })),
@@ -221,7 +224,7 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
             ...(block.dimension === 'agent'
               ? {
                   leads: Object.fromEntries(
-                    block.rows.map((row) => [
+                    lead.rows.map((row) => [
                       row.id,
                       <UsageAgentMark
                         key={row.id}
@@ -233,7 +236,7 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
                 }
               : {}),
           footer: <UsageShowAllRows label={`${t(`usage.widgets.${props.id}`)}: ${heading(block.dimension)}`}
-            total={block.rows.length} hidden={lead.hidden} complete={block.truncated === 0} expanded={expanded.includes(block.dimension)}
+            total={block.rowCount} hidden={lead.hidden} complete={block.truncated === 0} expanded={block.showingAll}
             unlisted={block.truncated > 0 && lead.hidden === 0 ? t('usage.board.page.moreRows', { count: block.truncated }) : null}
             testID={`${props.testID}.${block.dimension}.more`}
             onToggle={() => setExpanded(current => current.includes(block.dimension)

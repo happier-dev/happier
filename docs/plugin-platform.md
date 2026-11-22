@@ -9327,6 +9327,10 @@ each member's identity, label and exact values keyed by bucket ID. The chart
 draws the combined series and the Values disclosure exposes each member.
 Missing member values read as unknown.
 
+Bar charts draw the existing hatch for caller-supplied `gapBucketIds`. A marked
+bucket can still show known values, and the exact Values disclosure preserves
+each reading independently.
+
 Private Usage and public profiles also share the original Daily, Rhythm, Period
 summary, Breakdowns, Outcomes, Recap, Footprint and Coverage bodies in
 [`presentation/usage/charts`](../packages/plugin-ui/src/presentation/usage/charts/).

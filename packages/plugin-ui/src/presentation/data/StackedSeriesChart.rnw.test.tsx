@@ -290,9 +290,9 @@ describe('neutral series dataset', () => {
       expect(find(mount.container, 'peaks-bucket-0').getAttribute('aria-label')).toContain('Maximum 95');
     } finally { mount.unmount(); }
   });
-  it('draws declared bucket shading and a reference box without converting unknown buckets to zero', () => {
-    const input = [{ id: 'rain', label: 'Rainfall', points: [10, null, 0, 2].map((y, x) => ({ id: String(x), x, y })) }];
-    const appearance = { bucketShading: [{ bucketId: '1' }, { bucketId: '3' }],
+  it('draws declared hatches, shading and a reference box while preserving bucket readings', () => {
+    const input = [{ id: 'rain', label: 'Rainfall', points: [10, null, 0, 2, null].map((y, x) => ({ id: String(x), x, y })) }];
+    const appearance = { gapBucketIds: ['1', '3'], bucketShading: [{ bucketId: '1' }, { bucketId: '3' }],
       barRanges: [{ bucketId: '3', lower: 2, upper: 6, label: 'Typical active day' }] };
     const mount = mountThroughReactNativeWeb(<StackedSeriesChart theme={theme} label="Rainfall" series={input}
       width={200} viewportHeight={100} variant="bar" size="full" testID="rain" reference={{ value: 6, label: 'Average' }} {...appearance} />);
@@ -305,6 +305,9 @@ describe('neutral series dataset', () => {
       expect(mount.container.querySelector('[data-testid="rain-bar-1-0"]')).toBeNull();
       expect(mount.container.querySelector('[data-testid="rain-gap-2"]')).toBeNull();
       expect(find(mount.container, 'rain-bar-2-0')).toBeTruthy();
+      expect(find(mount.container, 'rain-gap-3')).toBeTruthy();
+      expect(find(mount.container, 'rain-bar-3-0')).toBeTruthy();
+      expect(mount.container.querySelector('[data-testid="rain-gap-4"]')).toBeNull();
       expect(find(mount.container, 'rain').getAttribute('aria-label')).toContain('Typical active day 2–6');
       expect(find(mount.container, 'rain').getAttribute('aria-label')).toContain('Average 6');
       act(() => find(mount.container, 'rain-values-toggle').click());

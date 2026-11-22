@@ -143,6 +143,30 @@ describe('one selected money basis across Usage bodies', () => {
     // Once under the facts and once under the breakdown.
     expect(screen.getTextContent().split(sharedQualifier)).toHaveLength(3);
   });
+  it('qualifies folded Breakdowns rows only after they are shown', async () => {
+    const props = mountedCosts();
+    const query = normalizeUsageQuery({ ...props.query, metric: 'tokens', breakdown: ['model'] });
+    const accounting = props.slice.accounting!;
+    const cost = accounting.totals.cost;
+    const measured = [70, 60, 50, 40, 30, 20, 5, 4].map(total => ({
+      key: `model-${total}`, eventCount: 1, cost, tokens: { ...tokens, input: total, output: 0, total },
+    }));
+    const parts = { key: 'model-from-parts', eventCount: 1, cost, tokens: { ...tokens, total: null } };
+    const leaders = measured.slice(0, 6);
+    const tail = measured.slice(6);
+    const slice = { ...props.slice, accounting: { ...accounting, breakdowns: { model: [...leaders, parts, ...tail] } } };
+    const screen = await renderControls(
+      <UsageBreakdownsWidget {...props} query={query} slice={slice} id="usage_breakdowns" testID="parts-breakdown" />,
+    );
+    const qualifier = t('usage.board.page.tokensFromPartsSome');
+    const rowIds = () => screen.findByType(RankedRows).props.rows.map((row: { id: string }) => row.id);
+    expect(rowIds()).toEqual(leaders.map(row => row.key));
+    const collapsed = screen.getTextContent().includes(qualifier);
+    await screen.pressByTestIdAsync('parts-breakdown.model.more.toggle');
+    expect(rowIds()).toEqual([...leaders.map(row => row.key), parts.key, ...tail.map(row => row.key)]);
+    expect([collapsed, screen.getTextContent().includes(qualifier)]).toEqual([false, true]);
+  });
+
   it('omits unmeasured model rows while retaining measured zero and known model amounts', async () => {
     const base = mountedCosts();
     const query = normalizeUsageQuery({ ...base.query, metric: 'tokens', breakdown: ['model'] });
