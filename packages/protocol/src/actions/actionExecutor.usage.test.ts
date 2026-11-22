@@ -224,7 +224,7 @@ describe('personal usage Action execution', () => {
       resolveSessionId: () => null, reviewScope: () => undefined })).toEqual({ ok: true, result: [{ value: 'project-1', label: 'App' }] });
   });
 
-  it('lists both native Projects from the first local calendar hour in the agent picker', async () => {
+  it('keeps open-start Project choices and matches usage.query for explicit UTC and local periods', async () => {
     const first = 'a'.repeat(64);
     const second = 'b'.repeat(64);
     const outside = 'c'.repeat(64);
@@ -242,27 +242,35 @@ describe('personal usage Action execution', () => {
         accounting: queries.map(query => {
           const { startMs } = resolveUsageQueryPeriod(query, nowMs);
           const value = UsageAnalyticsQueryResponseSchema.parse({ ...accounting,
-            scopeKeys: [{ dimension: 'project', keys: startMs !== undefined && startMs <= observedAtMs ? [first, second] : [] }] });
+            scopeKeys: [{ dimension: 'project', keys: startMs === undefined || startMs <= observedAtMs ? [first, second] : [] }] });
           return { query, value, status: 'available' as const };
         }),
       }, bundledUsageModelPriceCatalog) },
     };
     const executor = createActionExecutor(deps as ActionExecutorDeps);
-    const input = { actionId: 'usage.query', optionsSourceId: 'usage.filters.projects',
-      draftInput: { period: { relative: '7days' }, timeZoneOffsetMinutes: 60 } };
+    const input = { actionId: 'usage.query', optionsSourceId: 'usage.filters.projects' };
     const context = { surface: 'agent', serverId: 'home-1' } as const;
     expect(await executor.execute('action.options.resolve', input, context))
       .toMatchObject({ ok: true, result: { options } });
-    expect(await executor.execute('action.options.resolve', {
-      ...input, draftInput: { ...input.draftInput, timeZoneOffsetMinutes: 0 },
-    }, context)).toMatchObject({ ok: true, result: { options: [] } });
 
-    const page = await executor.execute('action.options.resolve', { ...input, limit: 1 }, context);
+    const period = { relative: '7days' } as const;
+    const pageDraft = { period, timeZoneOffsetMinutes: 60 };
+    for (const [draftInput, expectedOptions] of [[pageDraft, options], [{ period }, []]] as const) {
+      const queryResult = await executor.execute('usage.query', { queries: [draftInput] }, context);
+      expect(queryResult).toMatchObject({ ok: true, result: { results: [{ accounting: {
+        scopeKeys: [{ dimension: 'project', keys: expectedOptions.map(option => option.value) }],
+      } }] } });
+      expect(await executor.execute('action.options.resolve', { ...input, draftInput }, context))
+        .toMatchObject({ ok: true, result: { options: expectedOptions } });
+    }
+
+    const pagedInput = { ...input, draftInput: pageDraft, limit: 1 };
+    const page = await executor.execute('action.options.resolve', pagedInput, context);
     expect(page).toMatchObject({ ok: true, result: { options: [options[0]], nextCursor: expect.any(String) } });
     if (!page.ok || !page.result || typeof page.result !== 'object' || !('nextCursor' in page.result)) {
       throw new Error('Expected a project continuation');
     }
-    const last = await executor.execute('action.options.resolve', { ...input, limit: 1, cursor: page.result.nextCursor }, context);
+    const last = await executor.execute('action.options.resolve', { ...pagedInput, cursor: page.result.nextCursor }, context);
     expect(last).toMatchObject({ ok: true, result: { options: [options[1]] } });
     if (!last.ok) throw new Error('Expected the final Project page');
     expect(last.result).not.toHaveProperty('nextCursor');

@@ -104,14 +104,14 @@ export function resolveUsageScopeDefaultPeriod(session?: UsageQuery['session']):
 }
 
 /** One accounting population for toolbar and Action choices. Scope chips list their
- * alternatives, while the admitted calendar, Session, and other constraints stay in force. */
+ * alternatives, while the admitted calendar, Session, and other constraints stay in force.
+ * An omitted period takes the Usage query schema's open-start default. */
 export function buildUsageScopeInventoryQuery(input: Readonly<Record<string, unknown>>): UsageQuery {
   // A draft can contain Action or widget fields in addition to the Usage operands.
   const scope = Object.fromEntries(Object.keys(UsageQuerySchema.shape)
     .filter(key => Object.hasOwn(input, key)).map(key => [key, input[key]]));
-  const session = UsageQuerySchema.shape.session.parse(scope.session);
   return normalizeUsageQuery({
-    ...scope, session, period: scope.period ?? { relative: resolveUsageScopeDefaultPeriod(session) },
+    ...scope,
     agents: [], machines: [], projects: [], sources: [],
     metric: 'tokens', breakdown: ['agent', 'machine', 'project', 'source'], includeAccounting: true,
     includeContributions: false, includeSeries: false, includeInsights: false, includeActivity: false,

@@ -6110,10 +6110,12 @@ fallback to static choices. UI options reads are demanded by an open form and
 retire with the last consumer.
 
 Usage Project choices use the same admitted accounting inventory as the page.
-For a relative period, send the page's `timeZoneOffsetMinutes` in `draftInput`
-to match its calendar cutoff. An unbounded Project choice request returns
-the full inventory. When a caller supplies `limit`, it can pass the returned
-`nextCursor` back as `cursor` with the same draft and search to continue.
+Omit the period to list all known Projects in the admitted scope. A relative
+period without an offset uses UTC, like `usage.query`. To get the same choices
+as a person's page for a relative period, pass that person's
+`timeZoneOffsetMinutes` in `draftInput`. When a caller supplies `limit`, it can
+pass the returned `nextCursor` back as `cursor` with the same draft and search
+to continue.
 
 Widget `connectedAccountOptions: true` fields use that same
 `action.options.resolve` front door with the admitted widget consumer. Choices
