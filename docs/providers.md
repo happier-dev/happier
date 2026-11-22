@@ -1938,6 +1938,12 @@ Changing a local endpoint invalidates the previous grant. The daemon must refuse
 
 In 0.3 development, revoking a machine removes that machine's grants, endpoint overrides, and machine secret bindings from the private Provider catalog. Revocation can remove the last reachable machine, so the client captures the Home/Account before revoking it and performs cleanup through the catalog's revision-checked writer, without requiring that machine's daemon or rewriting Account Settings. Plain and E2EE Accounts use their own admitted catalog envelope. An incomplete catalog, stale revision, or unknown receipt leaves cleanup pending; retry reads the current catalog rather than blindly replaying the mutation. The recovering display projection never authorizes a rewrite, and cleanup does not erase default-model intent from its separate preference.
 
+In 0.3 development, confirmed managed Delete uses the same cleanup for the
+enrolled Machine when the executing host holds the enrolled Account's catalog
+custody. An Account can also disable an exact Machine grant after that Machine
+is gone. This removes the requested grant through the Account catalog and
+preserves Account grants and grants for other Machines.
+
 Health, detected processes, discovered model catalogs, and model load state are machine-local runtime observations. They are not synced as account truth.
 
 ## Local discovery and process ownership

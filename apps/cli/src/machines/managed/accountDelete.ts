@@ -10,6 +10,7 @@ import { logger } from '@/ui/logger';
 import { createCliManagedAccountNativeInvocation, resolveCliManagedAccountProvisioner } from './accountNative';
 import type { executeCliManagedAccountPower } from './accountPower';
 import { createManagedPresetHydrator, openManagedPresetCarrier } from './presetHydration';
+import { retireManagedMachineProviderState } from './retireManagedMachineProviderState';
 
 /** Account deletion consumes the retained control admission and reports the native cleanup owner's result. */
 export async function executeCliManagedAccountDelete(input: Omit<Parameters<typeof executeCliManagedAccountPower>[0], 'body'> & Readonly<{
@@ -19,10 +20,12 @@ export async function executeCliManagedAccountDelete(input: Omit<Parameters<type
     if (!requestId) throw new ManagedMachineControllerError('admission_unavailable');
     const admitted = await input.post('admit-control', ManagedControlAdmissionInputV1Schema.parse({
         action: 'machines.managed.delete', input: input.body, requestId }), ManagedAdmissionOutputV1Schema);
-    const accepted = (machine: Readonly<{ id: string; intentRevision: number }>) => ManagedIntentResultSchema.parse({ kind: 'accepted', managedId: machine.id,
-        intentRevision: machine.intentRevision,
-        ...(input.context.operationAcceptance ? { operation: { operationId: input.context.operationAcceptance.operationId } } : {}),
-    });
+    const accepted = async (machine: typeof admitted.machine) => {
+        await retireManagedMachineProviderState(machine, input);
+        return ManagedIntentResultSchema.parse({ kind: 'accepted', managedId: machine.id, intentRevision: machine.intentRevision,
+            ...(input.context.operationAcceptance ? { operation: { operationId: input.context.operationAcceptance.operationId } } : {}),
+        });
+    };
     if (admitted.machine.desiredWhen !== 'now' || admitted.machine.allocation === 'confirmed-absent') return accepted(admitted.machine);
     const hydrator = createManagedPresetHydrator(input);
     let { machine } = await openManagedPresetCarrier(admitted, hydrator, input.signal);

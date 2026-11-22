@@ -18,6 +18,7 @@ import type { MachineProvisionerRenewResultV1 } from '@happier-dev/protocol/plug
 import { resolveManagedCliReleaseChannelSync } from '@happier-dev/cli-common/firstPartyRuntime';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { logger } from '@/ui/logger';
+import { retireManagedMachineProviderState } from './retireManagedMachineProviderState';
 
 /** In-process host receipt settlement, never part of the plugin or wire context. */
 export type ManagedNativeOperationSettlement = Readonly<{
@@ -271,8 +272,19 @@ export async function prepareManagedRetentionPolicy(params: Readonly<{
     }
 }
 
+type ManagedIntentReconciliation = ManagedMachineReconciliationInput & Readonly<{ nativeExecWake?: true }>;
+
 /** One live admitted Action, one exact retained native resource, no replay queue. */
-export async function reconcileManagedIntent(params: ManagedMachineReconciliationInput & Readonly<{ nativeExecWake?: true }>): Promise<ManagedMachineFullV1> {
+export async function reconcileManagedIntent(params: ManagedIntentReconciliation): Promise<ManagedMachineFullV1> {
+    const machine = await runManagedIntent(params);
+    await retireManagedMachineProviderState(machine, {
+        credentials: params.input.credentials, serverUrl: params.input.serverUrl,
+        context: params.options.context, signal: params.options.signal,
+    });
+    return machine;
+}
+
+async function runManagedIntent(params: ManagedIntentReconciliation): Promise<ManagedMachineFullV1> {
     let machine = params.machine;
     const { client, options } = params;
     let bridge = params.input.managedGuestActivity;
@@ -477,7 +489,7 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
                             if (!await client.readCurrent(admittedMachine)) throw new ManagedMachineControllerError('intent_changed');
                             // Only the still-live new intent re-enters normal fresh
                             // admission. The old native effect is never resubmitted.
-                            const retried = await reconcileManagedIntent({ ...params, machine });
+                            const retried = await runManagedIntent({ ...params, machine });
                             // The fresh retry can prove the earlier Delete's
                             // outcome too, but present-state retirement cannot.
                             publishSettledNativeOperation(before, retried, outstanding);

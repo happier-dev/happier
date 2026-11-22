@@ -7,6 +7,13 @@ import { ManagedMachineActionInputSchemasV1 } from '@happier-dev/protocol/machin
 import { ManagedMachineFullV1Schema, ManagedOpaquePresetMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedMachinePresetContentV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, PROVIDER_CONNECTIONS_ROWS_ROUTE_V1, ProviderConnectionsRowMutationV1Schema } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { ProviderConnectionV1Schema } from '@happier-dev/protocol/providers/connections/v1';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { fixture } from '@/plugins/runtime/invocation/actions/managedCustody.testkit';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { executeCliManagedAccountInspect } from './accountInspect';
@@ -47,6 +54,30 @@ describe('Account opaque preset lifecycle entries', () => {
         const observation = { observedAt: 10, availability: 'present' as const, power: 'stopped' as const, storage: 'retained' as const, ...(operation === 'resize' ? { size: { cpuCores: 4 } } : {}) };
         const app = fastify();
         cleanup.push(() => app.close());
+        const credentials = { token, encryption: null };
+        const connection = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_gateway', source: { kind: 'contribution',
+            contributionKey: 'happier.provider.deepseek/deepseek' }, role: 'named', displayName: 'Gateway',
+            displayNameMode: 'custom', revision: 0, createdAt: 1, updatedAt: 1 });
+        const accountGrant = { v: 1 as const, connectionId: connection.id, connectionSecurityFingerprint: 'connection-fingerprint', confirmedAt: 1 };
+        const standingGrant = { ...accountGrant, machineId: 'standing', endpointSetFingerprint: 'endpoint-fingerprint' };
+        const retiredGrant = { ...standingGrant, machineId: 'enrolled' };
+        const catalog = { ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, connections: [connection], accountGrants: [accountGrant], machineGrants: [standingGrant, retiredGrant] };
+        const catalogWrites: unknown[] = [];
+        const events: string[] = [];
+        runWithServerHttpBaseUrl(serverUrl, () => setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}),
+            rawSettings: {}, settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) }));
+        cleanup.push(resetActiveAccountSettingsSnapshotForTests);
+        app.get('/v1/account/encryption/currentness', async () => createAccountEncryptionCurrentnessFixture({ settingsVersion: 1 }));
+        app.get(PROVIDER_CONNECTIONS_ROWS_ROUTE_V1, async request => {
+            expect(request.headers.authorization).toBe(`Bearer ${token}`);
+            return { status: 'present', revision: 4, content: { t: 'plain', v: catalog } };
+        });
+        app.post(PROVIDER_CONNECTIONS_ROWS_ROUTE_V1, async request => {
+            expect(request.headers.authorization).toBe(`Bearer ${token}`);
+            events.push('catalog');
+            catalogWrites.push(ProviderConnectionsRowMutationV1Schema.parse(request.body));
+            return { status: 'updated', revision: 5, cursor: 5 };
+        });
         app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'], async () => ({
             availabilityCursor: 1, hostingCapability: { enabled: true, maxArtifactBytes: 1024, maxAccountBytes: 2048 },
             intent: { pluginId: provider.pluginId, desiredVersion: '1.0.0', enabled: true, offlineUiHosting: 'enabled', writableCollections: [], revision: 'intent-1' },
@@ -58,6 +89,7 @@ describe('Account opaque preset lifecycle entries', () => {
         await app.ready();
         cleanup.push(installAxiosFastifyAdapter({ app, origin: serverUrl }));
         let machine = ManagedOpaquePresetMachineV1Schema.parse({ id: 'managed', homeId: 'home', custodianAccountId: 'owner',
+            ...(operation === 'delete' ? { enrolledMachineId: retiredGrant.machineId, ...(reviewed ? {} : { enrollmentAccountId: 'member' }) } : {}),
             preset: { id: 'preset', revision: 1, contentEncryptionMode: 'plain' }, allocation: 'bound', creationState: 'active',
             desired: operation === 'delete' ? 'delete' : 'stop', desiredWhen: 'now', intentRevision: 1,
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
@@ -80,6 +112,7 @@ describe('Account opaque preset lifecycle entries', () => {
             }
             if (path === 'report' || path === 'report-intent') {
                 reports.push(body);
+                events.push('report');
                 expect(body).not.toHaveProperty('resource');
                 expect(body).not.toHaveProperty('launch');
                 expect(body).toHaveProperty('presetContent');
@@ -121,6 +154,10 @@ describe('Account opaque preset lifecycle entries', () => {
         expect(JSON.stringify(result)).not.toContain('private-machine');
         expect(JSON.stringify(result)).not.toContain('private-native');
         expect(reports).toHaveLength(1);
+        expect(events).toEqual(operation === 'delete' && reviewed ? ['report', 'catalog'] : operation === 'resize' ? [] : ['report']);
+        expect(catalogWrites).toEqual(operation === 'delete' && reviewed ? [expect.objectContaining({
+            expectedRevision: 4, content: { t: 'plain', v: { ...catalog, machineGrants: [standingGrant] } },
+        })] : []);
         expect(roles).toEqual(operation === 'resize' ? [provisioner.actions.resize, provisioner.actions.inspect]
             : [operation === 'delete' ? provisioner.actions.destroy : provisioner.actions.inspect]);
     });

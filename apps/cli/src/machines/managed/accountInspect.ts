@@ -9,6 +9,7 @@ import { readCurrentAccountPluginExecutionSelection } from '@/plugins/runtime/ac
 import { createCliManagedAccountNativeInvocation, resolveCliManagedAccountProvisioner } from './accountNative';
 import { publishSettledManagedNativeOperation } from './managedIntentReconciler';
 import { createManagedPresetHydrator, openManagedPresetCarrier } from './presetHydration';
+import { retireManagedMachineProviderState } from './retireManagedMachineProviderState';
 
 /** Foreground Check now observes Home's retained correlation through the shared recipe. */
 export async function executeCliManagedAccountInspect(input: Readonly<{
@@ -53,6 +54,7 @@ export async function executeCliManagedAccountInspect(input: Readonly<{
             return await native(role, body, io);
         },
     });
+    if (machine.submittedNativeEffect?.intent === 'delete') await retireManagedMachineProviderState(observed, input);
     if (machine.submittedNativeEffect) publishSettledManagedNativeOperation(input.context, machine, observed, machine.submittedNativeEffect);
     return { machine: hydrator.structural(observed) };
 }
