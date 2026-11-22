@@ -1,5 +1,5 @@
-import axios from 'axios';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import fastify from 'fastify';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { UsageEventIngestRequestSchema } from '@happier-dev/protocol';
 import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime';
@@ -14,9 +14,11 @@ import { createClaudeNativeSessionRuntimeFromOperations } from '../../../../pack
 import { createClaudeUnifiedTerminalTurnOperations } from '../../../../packages/plugins/claude/src/agent/runtime/terminal/unified/turnOperations';
 import { createNativeAgentSessionOperations } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
 import { createSessionClientUsageObservationPublisher } from '@/api/session/client/createSessionClientUsageObservationPublisher';
-import { withTempDir } from '@/testkit/fs/tempDir';
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { readOrCreateDeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
+import { createTempDir, removeTempDir, withTempDir } from '@/testkit/fs/tempDir';
 
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { vi.restoreAllMocks(); });
 
 describe('runtime usage attribution producer → host → ingest', () => {
     it('retains the terminal foreground turn without assigning its unbound sidechain to that turn', async () => {
@@ -65,13 +67,19 @@ describe('runtime usage attribution producer → host → ingest', () => {
         } } } as unknown as AgentSessionRuntimeContext;
         const session = createClaudeNativeSessionRuntimeFromOperations(operations,
             { kind: 'create', sessionId: 'usage-session', cwd: '/private/repository' }, context);
-        vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ features: {}, capabilities: { server: {
-            usageAnalytics: { version: 1, eventsIngest: { path: '/v2/usage-events' }, query: { path: '/v2/usage/query' },
-                legacy: { usageReportsPath: '/v2/usage-reports', usageQueryPath: '/v1/usage/query' } },
-        } } }), { headers: { 'content-type': 'application/json' } })));
+        const directory = await createTempDir('usage-attribution-');
+        onTestFinished(() => removeTempDir(directory));
+        const storage = await readOrCreateDeviceLocalSecretStorage({ path: join(directory, 'device.key') });
+        const app = fastify();
         const posted: unknown[] = [];
-        vi.spyOn(axios, 'post').mockImplementation(async (_url, body) => {
-            posted.push(body); return { data: { ok: true } };
+        app.post('/v2/usage-events', async request => {
+            posted.push(request.body);
+            return { ok: true };
+        });
+        const restoreAxios = installAxiosFastifyAdapter({ app, origin: 'https://usage-attribution.test' });
+        onTestFinished(async () => {
+            restoreAxios();
+            await app.close();
         });
         const publisher = createSessionClientUsageObservationPublisher({ token: 'token',
             transport: { serverId: 'home', serverUrl: 'https://usage-attribution.test',
@@ -81,7 +89,13 @@ describe('runtime usage attribution producer → host → ingest', () => {
             emitUsageEvent: () => null,
         });
         const bridge = createNativeAgentSessionOperations(session, 'usage-session', undefined, undefined, {
-            provider: 'claude', publish: input => publisher.publish({ sessionId: 'usage-session', ...input }),
+            provider: 'claude',
+            resolveAccountingWitness: async nativeSessionId => ({
+                nativeSessionId, storage,
+                authority: { serverId: 'home', accountId: 'account', machineId: 'machine' },
+                agent: { pluginId: 'happier.agent.claude', localId: 'claude' },
+            }),
+            publish: input => publisher.publish({ sessionId: 'usage-session', ...input }),
         }, undefined, undefined, {
             context, cwd: '/private/repository', connectedAccounts: [], capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
             cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },

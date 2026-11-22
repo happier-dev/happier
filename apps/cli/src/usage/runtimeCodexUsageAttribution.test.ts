@@ -1,5 +1,6 @@
-import axios from 'axios';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import fastify from 'fastify';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { buildConnectedServiceCredentialRecord, StrictJsonValueSchema, UsageEventIngestRequestSchema } from '@happier-dev/protocol';
 import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 
@@ -7,23 +8,33 @@ import { createCodexNativeAppServerSessionRuntime } from '../../../../packages/p
 import { withCodexNativeAttachFixture } from '../../../../packages/plugins/codex/src/agent/runtime/appServer/runtime.nativeAttach.test-support';
 import { createNativeAgentSessionOperations } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
 import { createSessionClientUsageObservationPublisher } from '@/api/session/client/createSessionClientUsageObservationPublisher';
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { readOrCreateDeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
 vi.mock('node:os', async importOriginal => {
     const actual = await importOriginal<typeof import('node:os')>();
     return { ...actual, userInfo: () => ({ ...actual.userInfo(), homedir: process.env.TMPDIR || actual.userInfo().homedir }) };
 });
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { vi.restoreAllMocks(); });
 
 describe('native Codex request scope → host → ingest', () => {
     it('retains the dispatch plan through exact native Usage without certifying cumulative history', async () => {
         const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' } as const;
-        vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ features: {}, capabilities: { server: {
-            usageAnalytics: { version: 1, eventsIngest: { path: '/v2/usage-events' }, query: { path: '/v2/usage/query' },
-                legacy: { usageReportsPath: '/v2/usage-reports', usageQueryPath: '/v1/usage/query' } },
-        } } }), { headers: { 'content-type': 'application/json' } })));
+        const directory = await createTempDir('usage-attribution-');
+        onTestFinished(() => removeTempDir(directory));
+        const storage = await readOrCreateDeviceLocalSecretStorage({ path: join(directory, 'device.key') });
+        const app = fastify();
         const posted: unknown[] = [];
-        // HTTP is the outward boundary; all source admission and event/publication logic is real.
-        vi.spyOn(axios, 'post').mockImplementation(async (_url, body) => { posted.push(body); return { data: { ok: true } }; });
+        app.post('/v2/usage-events', async request => {
+            posted.push(request.body);
+            return { ok: true };
+        });
+        const restoreAxios = installAxiosFastifyAdapter({ app, origin: 'https://usage-attribution.test' });
+        onTestFinished(async () => {
+            restoreAxios();
+            await app.close();
+        });
         let planType = 'plus';
         await withCodexNativeAttachFixture(async ({ runtime, emitNotification }) => {
             expect(await runtime.runtimeAuth.apply({ serviceId: service.localId, authGeneration: {
@@ -43,7 +54,13 @@ describe('native Codex request scope → host → ingest', () => {
                 emitUsageEvent: () => null,
             });
             const bridge = createNativeAgentSessionOperations(session, 'actual-happier-session', undefined, undefined, {
-                provider: 'codex', publish: input => publisher.publish({ sessionId: 'actual-happier-session', ...input }),
+                provider: 'codex',
+                resolveAccountingWitness: async nativeSessionId => ({
+                    nativeSessionId, storage,
+                    authority: { serverId: 'home', accountId: 'account', machineId: 'machine' },
+                    agent: { pluginId: 'happier.agent.codex', localId: 'codex' },
+                }),
+                publish: input => publisher.publish({ sessionId: 'actual-happier-session', ...input }),
             }, undefined, undefined, {
                 context: {} as AgentSessionRuntimeContext, cwd: '/private/repository',
                 connectedAccounts: [{ purpose: 'agent', usageAccountScope: 'personal', account: { service, accountId: 'account-A' } }],
