@@ -48,6 +48,11 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
     }, async (request, reply) => {
         const userId = request.userId;
         const { tag, metadata, agentState, dataEncryptionKey } = request.body;
+        const historicalLink = tag.startsWith(DIRECT_SESSION_LINK_TAG_PREFIX)
+            && /^[a-f0-9]{64}$/.test(tag.slice(DIRECT_SESSION_LINK_TAG_PREFIX.length));
+        const sourceCreatedAtMs = historicalLink ? request.body.sourceCreatedAtMs : undefined;
+        const sourceUpdatedAtMs = historicalLink ? request.body.sourceUpdatedAtMs : undefined;
+        const hasSourceDates = sourceCreatedAtMs !== undefined || sourceUpdatedAtMs !== undefined;
         const requestedEncryptionMode = request.body.encryptionMode;
         const policy = readEncryptionFeatureEnv(process.env);
 
@@ -74,7 +79,8 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
                     { module: "session-create", sessionId: existing.id, userId, tag },
                     `Found existing session: ${existing.id} for tag ${tag}`,
                 );
-                if (existing.active && existing.archivedAt === null) {
+                // A dated link request can replay the birth. A resume omits the source dates.
+                if (hasSourceDates || (existing.active && existing.archivedAt === null)) {
                     return { session: existing, loadUpdate: null, resolution: "existing" as const };
                 }
 
@@ -157,13 +163,6 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
                         : requestedOrAccountOrDefault;
 
             const now = Date.now();
-            // Importing a historical conversation is not new conversation activity.
-            // Apply source dates only on creation; loading/resuming an existing row
-            // still records current intent and never rewinds its publisher fence.
-            const historicalLink = tag.startsWith(DIRECT_SESSION_LINK_TAG_PREFIX)
-                && /^[a-f0-9]{64}$/.test(tag.slice(DIRECT_SESSION_LINK_TAG_PREFIX.length));
-            const sourceCreatedAtMs = historicalLink ? request.body.sourceCreatedAtMs : undefined;
-            const sourceUpdatedAtMs = historicalLink ? request.body.sourceUpdatedAtMs : undefined;
             const meaningfulActivityAtMs = Math.min(now, sourceUpdatedAtMs ?? now);
             const createdAt = new Date(Math.min(
                 meaningfulActivityAtMs,

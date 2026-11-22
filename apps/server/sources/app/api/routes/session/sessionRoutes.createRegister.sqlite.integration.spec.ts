@@ -75,9 +75,15 @@ describe("session create/load before publisher registration (SQLite integration)
             id, createdAt: sourceCreatedAtMs, meaningfulActivityAt: sourceUpdatedAtMs,
         }));
 
+        const replayed = await app.inject({ method: "POST", url: "/v1/sessions", headers, payload });
+        expect(replayed.statusCode).toBe(200);
+        expect(replayed.json()).toMatchObject({ resolution: "existing", session: { id } });
+        const afterReplay = await db.session.findUniqueOrThrow({ where: { id } });
+        expect(afterReplay.meaningfulActivityAt?.getTime()).toBe(sourceUpdatedAtMs);
+
         const resumed = await app.inject({
             method: "POST", url: "/v1/sessions", headers,
-            payload: { ...payload, sourceCreatedAtMs: 1, sourceUpdatedAtMs: 2 },
+            payload: { tag: payload.tag, metadata: payload.metadata, encryptionMode: payload.encryptionMode },
         });
         expect(resumed.statusCode).toBe(200);
         const afterResume = await db.session.findUniqueOrThrow({ where: { id } });
