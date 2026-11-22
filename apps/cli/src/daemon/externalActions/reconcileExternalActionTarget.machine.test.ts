@@ -86,6 +86,17 @@ it('selects a nested worker destination instead of SOURCE and refuses conflictin
     .toMatchObject({ kind: 'ready', target: { kind: 'machine', machineId: 'worker' } });
 });
 
+it('rejects a portable Script delivered to a Machine other than its selected Worker', () => {
+  const request = { actionId: 'projects.script.run' as const,
+    rawInput: { workspace: { serverId: 'home', workspaceId: 'source-ref', machineId: 'source', rootPath: '/source' },
+      selection: { kind: 'named', name: 'checked' },
+      choice: { kind: 'workers', destination: { kind: 'machine', machineId: 'worker' } } } };
+  expect(reconcileExternalActionTarget({ ...request, target: { kind: 'machine', machineId: 'source' }, currentMachineId: 'source' }))
+    .toMatchObject({ kind: 'rejected', execution: { errorCode: 'target_not_local' } });
+  expect(reconcileExternalActionTarget({ ...request, target: { kind: 'machine', machineId: 'worker' }, currentMachineId: 'worker' }))
+    .toMatchObject({ kind: 'ready', target: { kind: 'machine', machineId: 'worker' } });
+});
+
 it.each(['projects.inspect', 'projects.manifest.update'] as const)('routes qualified %s to its checkout Machine instead of the ambient daemon', actionId => {
   const inspect = { actionId,
     rawInput: { workspace: { serverId: 'home', workspaceId: 'worker-ref', machineId: 'worker', rootPath: '/worker' },

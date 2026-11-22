@@ -3,6 +3,7 @@ import axios from 'axios';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { AccountProfileSchema, AccountSettingsSchema, FeaturesResponseSchema } from '@happier-dev/protocol';
 import { bindExternalActionExecutionAuthorizationHttpPathV1, ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import type { ActionId } from '@happier-dev/protocol/actions';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { DeploymentActionInputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
@@ -59,7 +60,7 @@ function prepareFrom(machineId: string, current = false) {
     isRuntimeCurrent: () => true,
     readTrackedSessionAttribution: () => undefined,
   });
-  const run = (actionId: 'deployments.health.current' | 'deployments.restart' | 'deployments.targets.link' =
+  const run = (actionId: ActionId =
     'deployments.health.current', input: unknown = healthInput) =>
     prepare({
       operation: {
@@ -203,6 +204,39 @@ describe('createDaemonSessionAccountActionAuthorizationPreparer deployment read 
       machineId: receiver, sessionActionSource: { machineId: sessionMachineId },
     });
     expect(read).toHaveBeenCalledTimes(reads);
+  });
+});
+
+describe('createDaemonSessionAccountActionAuthorizationPreparer portable Project placement', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('binds the exact proposed Worker before review while retaining the Session source for Home admission', async () => {
+    const { run } = prepareFrom(sessionMachineId, true);
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      switch (new URL(String(url)).pathname) {
+        case '/v1/account/profile': return { status: 200, data: { id: 'owner' } };
+        case '/v1/account/encryption/currentness':
+          return { status: 200, data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
+        default: throw new Error(`Unexpected Home GET ${url}`);
+      }
+    });
+    // Home is the authority for admission. Even a correctly placed proposal can be refused.
+    const mint = vi.spyOn(axios, 'post').mockResolvedValue({ status: 403, data: { error: 'credential_scope_denied' } });
+    const actionId = 'projects.script.run';
+    const input = {
+      workspace: { serverId: 'srv_home', workspaceId: 'source-workspace', machineId: sessionMachineId, rootPath: '/source' },
+      selection: { kind: 'named', name: 'checked' },
+      choice: { kind: 'workers', destination: { kind: 'machine', machineId: controllerMachineId } },
+    };
+    const result = await run(actionId, input);
+    const call = mint.mock.calls.find(([url]) => new URL(String(url)).pathname ===
+      bindExternalActionExecutionAuthorizationHttpPathV1(actionId));
+    expect(call?.[1]).toMatchObject({
+      machineId: controllerMachineId,
+      sessionActionSource: { machineId: sessionMachineId },
+      envelope: { target: { kind: 'machine', machineId: controllerMachineId }, input },
+    });
+    expect(result).toMatchObject({ ok: false });
   });
 });
 

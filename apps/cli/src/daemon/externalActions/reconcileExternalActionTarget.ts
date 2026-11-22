@@ -1,6 +1,7 @@
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import { APPROVAL_REQUEST_DECIDE_ACTION_ID_V1, isApprovalRequestObservationActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { actionInputValidationFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
+import { isProjectFiniteActionIdV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { readLocalServiceControlActionRequest } from '@happier-dev/protocol/actions/specs/localServices';
 import { MANAGED_MACHINE_ACTION_IDS_V1, ManagedAcquireInputV1Schema, ManagedMachineActionInputSchemasV1, isManagedRetainedControlInvocation, resolveManagedAcquireReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { SessionSpawnNewActionAgentAuthoringInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
@@ -124,6 +125,8 @@ export function readMachineSelectorIds(actionId: ActionId, input: Readonly<Recor
     : actionId === 'machines.provisioners.list' || actionId === 'machines.provisioners.check' || actionId === 'machines.provisioners.options'
       ? readNonEmptyString(asRecord(input.controller)?.machineId) : null;
   const nestedField = NESTED_MACHINE_SELECTOR_FIELDS[actionId];
+  const projectChoice = isProjectFiniteActionIdV1(actionId) ? asRecord(input.choice) : null;
+  const exactProjectWorker = projectChoice?.kind === 'workers' ? asRecord(projectChoice.destination) : null;
   const settingsActionId = PluginSettingsAdministrationActionIdV1Schema.safeParse(actionId);
   const settingsTarget = settingsActionId.success
     ? resolvePluginSettingsAdministrationTargetV1(settingsActionId.data, input) : null;
@@ -136,6 +139,7 @@ export function readMachineSelectorIds(actionId: ActionId, input: Readonly<Recor
       : isDeploymentActionIdV1(actionId) ? readNonEmptyString(readDeploymentExecutionMachineOperandV1(actionId, input))
       : readNonEmptyString(input.machineId),
     nestedField ? readNonEmptyString(asRecord(input[nestedField])?.machineId) : null,
+    exactProjectWorker?.kind === 'machine' ? readNonEmptyString(exactProjectWorker.machineId) : null,
     settingsTarget?.kind === 'daemon' ? settingsTarget.machineId : null,
     readLocalServiceControlActionRequest(actionId, input)?.target.machineId ?? null,
   ];
