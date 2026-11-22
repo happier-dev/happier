@@ -798,6 +798,8 @@ export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
     'Session and execution-run lifecycle/state methods remain server-required; detached Runs use exact Machine admission while attached Runs retain Session authority.', 'custodian_only', undefined, undefined, true),
   serverRequired(RPC_METHODS.SESSION_SPAWN_NEW, 'durable_session_write',
     'Session and execution-run lifecycle/state methods remain server-required; detached Runs use exact Machine admission while attached Runs retain Session authority.', 'custodian_only', undefined, undefined, true),
+  serverRequired(RPC_METHODS.DAEMON_WORKFLOW_REQUESTER_CUSTODY, 'auth',
+    'Workflow requester custody uses current Machine Use and an installation-sealed requester sign-in. It never launches a process.', 'use'),
   serverRequired(RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE, 'durable_session_write',
     'Session and execution-run lifecycle/state methods remain server-required; detached Runs use exact Machine admission while attached Runs retain Session authority.', 'custodian_only', undefined, undefined, true),
   serverRequired(RPC_METHODS.DAEMON_SPAWN_SESSION_ABANDON, 'durable_session_write',

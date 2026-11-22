@@ -1174,6 +1174,18 @@ describe('MachineRpcRoutePolicyV1', () => {
     });
   });
 
+  it('routes Workflow requester custody for Machine Use without opening raw Session spawn', async () => {
+    const protocol = await importRpcPolicy();
+    if ('importError' in protocol) throw protocol.importError;
+
+    expect(protocol.resolveMachineRpcRoutePolicy('daemon.workflowRequesterCustody.v1')).toMatchObject({
+      routeClass: 'server_required', sharedMachineAccess: 'use', rpcClassification: 'internal_only',
+    });
+    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.SESSION_SPAWN_NEW)).toMatchObject({
+      sharedMachineAccess: 'custodian_only',
+    });
+  });
+
   it('keeps route-independent direct import abort authenticated through the server control plane', async () => {
     const protocol = await importRpcPolicy();
     expect(protocol).toHaveProperty('resolveMachineRpcRoutePolicy');

@@ -2,6 +2,7 @@ import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usage
 import * as React from 'react';
 import tweetnacl from 'tweetnacl';
 import { openSessionRequesterBootstrapRpcRequestV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, ActionAutomationIndexV1Schema } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
@@ -2401,7 +2402,8 @@ describe('UI Workflow Action front door', () => {
                 (added as { result: unknown }).result);
             const receiver = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9));
             const retained = machineRpc.mock.calls[0]?.[0];
-            expect(retained).toMatchObject({ machineId: 'machine-a', requireEncryptedPayload: true });
+            expect(retained).toMatchObject({ machineId: 'machine-a', method: RPC_METHODS.DAEMON_WORKFLOW_REQUESTER_CUSTODY,
+                requireEncryptedPayload: true });
             expect(JSON.stringify(retained)).not.toContain(h.account.credentials.token);
             const opened = openSessionRequesterBootstrapRpcRequestV1({ request: retained.payload,
                 machineId: 'machine-a', installationId: 'test-installation', installationPrivateKey: receiver.secretKey });

@@ -213,7 +213,7 @@ it.each(['alice', 'bob'])('keeps Workflow startup operation reads and recovery c
   }
 });
 
-it('retains and retires Workflow trigger custody through private requester bootstrap without spawning a Session', async () => {
+it('retains and retires sealed Workflow trigger custody for Machine Use without spawning a Session', async () => {
   const host = await home();
   const current = () => verifyRequesterSessionMachineAdmissionCurrent({ credentials, attribution, sessionId: 'session',
     serverHttpBaseUrl: origin, boundary: host.boundary });
@@ -225,22 +225,32 @@ it('retains and retires Workflow trigger custody through private requester boots
   sessionLifecycleRpc.registerSessionSpawnNewRpcHandlers({ rpcHandlerManager: rpc,
     requesterBootstrapBoundary: { serverId: attribution.serverId, serverHttpBaseUrl: origin, happyHomeDir: directory!,
       getObservedServerIdentityId: () => 'srv_workflow_home',
+      readInstallation: async () => ({ machineId: 'machine', identity: { installationId: 'installation',
+        version: 1, createdAt: 1, publicKey: Buffer.from(host.keyPair.publicKey).toString('base64url'),
+        privateKey: Buffer.from(host.keyPair.secretKey).toString('base64url') } }),
       spawnLifecycleHandler: async input => { launched.push(input); return { type: 'success', sessionId: 'unexpected' }; } },
   });
   const { acquireWorkflowRequesterCredentials } = await import('../workflows/requesterCustody');
-  const input = { kind: 'requester_session_bootstrap_v1', scope: 'workflow_trigger',
-    input: { executionTarget: { serverId: attribution.serverId, machineId: 'machine' }, scopeId: 'schedule', operation: 'retain' },
-    requesterBootstrap: { v: 1, disposition: 'ordinary_requester', credentials: encodeStoredCredentials(credentials) } };
-  const options = { rpcContext: { machineAdmission: { actorAccountId: 'bob', custodianAccountId: 'alice', machineId: 'machine',
+  const request = (operation: 'retain' | 'retire') => ({ kind: 'requester_session_bootstrap_v1' as const, scope: 'workflow_trigger' as const,
+    input: { executionTarget: { serverId: attribution.serverId, machineId: 'machine' }, scopeId: 'schedule', operation },
+    requesterBootstrap: { v: 1 as const, disposition: 'ordinary_requester' as const, credentials: encodeStoredCredentials(credentials) } });
+  const seal = (operation: 'retain' | 'retire') => sealSessionRequesterBootstrapRpcRequestV1({ request: request(operation),
+    installationId: 'installation', installationPublicKey: host.keyPair.publicKey, randomBytes: tweetnacl.randomBytes });
+  const options = { rpcContext: { callerAuthority: 'present_user' as const,
+    machineAdmission: { actorAccountId: 'bob', custodianAccountId: 'alice', machineId: 'machine',
     installationId: 'installation', role: 'use' as const, encryptionMode: 'plain' as const }, verifyMachineAdmissionCurrent: async () => true } };
-  expect(await rpc.invokeLocal(RPC_METHODS.SESSION_SPAWN_NEW, input, options)).toEqual({ ok: true });
+  const method = RPC_METHODS.DAEMON_WORKFLOW_REQUESTER_CUSTODY;
+  expect(await rpc.invokeLocal(method, request('retain'), options)).toMatchObject({ ok: false });
+  expect(await rpc.invokeLocal(method, seal('retain'), { rpcContext: { ...options.rpcContext, callerAuthority: 'account_automation' } }))
+    .toMatchObject({ ok: false });
+  expect(await rpc.invokeLocal(method, seal('retain'), options)).toEqual({ ok: true });
   expect(launched).toEqual([]);
   const binding = { scopeId: 'schedule', happyHomeDir: directory!, serverId: attribution.serverId,
     machineId: 'machine', installationId: 'installation', serverHttpBaseUrl: origin };
   const retained = await acquireWorkflowRequesterCredentials(binding);
   expect(retained?.attribution.accountId).toBe('bob');
   await retained?.release();
-  expect(await rpc.invokeLocal(RPC_METHODS.SESSION_SPAWN_NEW, { ...input, input: { ...input.input, operation: 'retire' } }, options)).toEqual({ ok: true });
+  expect(await rpc.invokeLocal(method, seal('retire'), options)).toEqual({ ok: true });
   expect(await acquireWorkflowRequesterCredentials(binding)).toBeNull();
 });
 afterAll(async () => { await runtimeFixture?.dispose(); runtimeFixture = undefined; });

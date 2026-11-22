@@ -183,7 +183,7 @@ export function createUiWorkflowAction(params: Readonly<{
         }, installationId, installationPublicKey, randomBytes: getRandomBytes });
         const response = await machineRpcWithServerScope<unknown, typeof payload>({
             machineId: input.machineId, serverId: account.serverId, accountId: account.accountId,
-            method: RPC_METHODS.SESSION_SPAWN_NEW, payload, requireEncryptedPayload: true,
+            method: RPC_METHODS.DAEMON_WORKFLOW_REQUESTER_CUSTODY, payload, requireEncryptedPayload: true,
             signal: account.invocationSignal, operationTimeoutMs: null,
         });
         account.assertCurrent();

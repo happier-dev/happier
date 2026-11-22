@@ -15,6 +15,71 @@ import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { resolveAutomationTemplateRetainedSession } from '@/daemon/automation/automationRetainedSession';
 import { readManagedMachine } from '@/machines/managed/readManagedMachine';
+import { readPublishedMachineRowWithLegacyOwnerProof } from '@/api/machine/readPublishedMachineRow';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import { encodeRequesterCredentials, hasStoredSessionCredentialProvenance } from '@/persistence';
+import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { projectRequesterSessionCredentialDisclosure, sealSessionRequesterBootstrapRpcRequestV1 } from
+  '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+
+type CliTriggerRequesterCustodyOptions = Readonly<{
+  serverId: string;
+  isCredentialCurrent?: () => boolean | Promise<boolean>;
+  onRequesterSessionCredentialDisclosure?: (disclosure: ReturnType<typeof projectRequesterSessionCredentialDisclosure>) =>
+    boolean | void | Promise<boolean | void>;
+}>;
+
+function createCliTriggerRequesterCustody(params: Readonly<{
+  credentials: StoredCredentials; serverHttpBaseUrl?: string; options: CliTriggerRequesterCustodyOptions;
+}>): NonNullable<Parameters<typeof createAccountWorkflowTriggerActions>[0]['workflowRequesterCustody']> {
+  const { credentials, options } = params;
+  const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+  return {
+    retain: async ({ scopeId, machineId, automationId }, { signal } = {}) => {
+      const serverUrl = params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
+      const observed = await runWithServerHttpBaseUrl(serverUrl,
+        () => readPublishedMachineRowWithLegacyOwnerProof(machineId, credentials, { signal }));
+      const accountId = readAccountIdFromToken(credentials.token);
+      const custodian = observed?.row.access?.custodian;
+      if (observed?.legacyOwnerOnly || (accountId && custodian?.accountId === accountId)) return;
+      const { installationId, installationPublicKey } = observed?.row ?? {};
+      if (!accountId || !custodian || !installationId || !installationPublicKey || observed?.row.id !== machineId) {
+        return refuse('requester_custody_unavailable');
+      }
+      if (!hasStoredSessionCredentialProvenance(credentials)) return refuse('requester_account_material_unavailable');
+      const confirm = options.onRequesterSessionCredentialDisclosure;
+      if (!confirm) return refuse('requester_credential_disclosure_required');
+      signal?.throwIfAborted();
+      if (await confirm(projectRequesterSessionCredentialDisclosure({
+        disposition: 'ordinary_requester', accountId, machineId, custodian,
+      })) !== true) return refuse('requester_credential_disclosure_declined');
+      signal?.throwIfAborted();
+      if (options.isCredentialCurrent && !await options.isCredentialCurrent()) return refuse('requester_custody_unavailable');
+      const publicKey = decodeBase64(installationPublicKey, 'base64');
+      if (encodeBase64(publicKey, 'base64') !== installationPublicKey) return refuse('requester_custody_unavailable');
+      const deliver = async (operation: 'retain' | 'retire', requestSignal?: AbortSignal) => {
+        const request = sealSessionRequesterBootstrapRpcRequestV1({ installationId, installationPublicKey: publicKey,
+          randomBytes: getRandomBytes, request: { kind: 'requester_session_bootstrap_v1', scope: 'workflow_trigger',
+            input: { executionTarget: { serverId: options.serverId, machineId }, scopeId,
+              ...(automationId ? { automationId } : {}), operation },
+            requesterBootstrap: { v: 1, disposition: 'ordinary_requester', credentials: encodeRequesterCredentials(credentials) } } });
+        const result = await callExactMachineRpc({ credentials, serverUrl, machineId, method: RPC_METHODS.DAEMON_WORKFLOW_REQUESTER_CUSTODY,
+          request, requireCurrentMachine: true, requiredMachineKind: 'persistent', timeoutMs: null,
+          waitForResultOnCancel: true, signal: requestSignal });
+        if (!result || typeof result !== 'object' || !('ok' in result) || result.ok !== true) {
+          return refuse('requester_custody_unavailable');
+        }
+      };
+      await deliver('retain', signal);
+      return () => deliver('retire');
+    },
+    // The receiving daemon retires its own scope from the Account change stream
+    // and reconnect reconciliation. Removal never sends the sign-in again.
+    retire: async () => {},
+  };
+}
 
 /** Shared authenticated Account-mode adapter for retained trigger reads and writes. */
 export function createCliAutomationEncryptionResolver(params: Readonly<{
@@ -65,6 +130,7 @@ export function createCliHealthCheckSourceSnapshotReader(params: Readonly<{
 export function createCliWorkflowTriggerActions(params: Readonly<{
   credentials: StoredCredentials;
   workflowRequesterCustody?: Parameters<typeof createAccountWorkflowTriggerActions>[0]['workflowRequesterCustody'];
+  requesterCustody?: CliTriggerRequesterCustodyOptions;
   serverHttpBaseUrl?: string;
   resolveWorkflow: WorkflowTriggerActionsDependencies['resolveWorkflow'];
   resolveWorkflowTeamIds?: WorkflowTriggerActionsDependencies['resolveWorkflowTeamIds'];
@@ -83,9 +149,11 @@ export function createCliWorkflowTriggerActions(params: Readonly<{
   const onServer = <T>(operation: () => Promise<T>): Promise<T> => params.serverHttpBaseUrl
     ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, operation) : operation();
   const token = params.credentials.token;
+  const workflowRequesterCustody = params.workflowRequesterCustody ?? (params.requesterCustody
+    ? createCliTriggerRequesterCustody({ ...params, options: params.requesterCustody }) : undefined);
   return createAccountWorkflowTriggerActions({
     ...(params.listContributedActionDefinitions ? { listContributedActionDefinitions: params.listContributedActionDefinitions } : {}),
-    ...(params.workflowRequesterCustody ? { workflowRequesterCustody: params.workflowRequesterCustody } : {}),
+    ...(workflowRequesterCustody ? { workflowRequesterCustody } : {}),
     automations: {
       list: (input) => onServer(() => listAutomationDefinitions({ token, ...input })),
       listDetails: (input) => onServer(() => listAutomationDefinitionDetails({ token, ...input })),

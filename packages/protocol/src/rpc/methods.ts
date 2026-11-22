@@ -437,6 +437,7 @@ export const RPC_METHODS = {
   DAEMON_SESSION_VENDOR_PLUGIN_CATALOG_LIST: 'daemon.sessionVendorPluginCatalog.list',
   DAEMON_SESSION_SKILL_CATALOG_LIST: 'daemon.sessionSkillCatalog.list',
   SESSION_SPAWN_NEW: 'session.spawnNew',
+  DAEMON_WORKFLOW_REQUESTER_CUSTODY: 'daemon.workflowRequesterCustody.v1',
   SESSION_CONTINUE_WITH_REPLAY: 'session.continueWithReplay',
   SESSION_FORK: 'session.fork',
   SESSION_FORK_PROVIDER_SAFE: 'session.fork.provider-safe.v1',

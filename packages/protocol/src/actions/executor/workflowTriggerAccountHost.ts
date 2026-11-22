@@ -777,27 +777,35 @@ if (trigger.kind === 'sessionLifecycle') {
     row.triggers.filter(trigger => trigger.enabled).map(trigger => ({
       scopeId: trigger.id, machineId: assignment.machineId, automationId: row.id,
     }))) : [];
-  const retainRequesterScopes = async (scopes: ReturnType<typeof requesterScopes>) => {
-    for (const scope of scopes) await params.workflowRequesterCustody?.retain(scope);
-  };
-  const retireRequesterScopes = async (previous: ReturnType<typeof requesterScopes>, next: ReturnType<typeof requesterScopes>, signal?: AbortSignal) => {
-    const active = new Set(next.map(({ scopeId, machineId }) => JSON.stringify([scopeId, machineId])));
+  const requesterScopeKey = ({ scopeId, machineId }: ReturnType<typeof requesterScopes>[number]) =>
+    JSON.stringify([scopeId, machineId]);
+  const retireRequesterScopes = async (previous: ReturnType<typeof requesterScopes>, next: ReturnType<typeof requesterScopes>,
+    signal?: AbortSignal, rollback?: ReadonlyMap<string, () => Promise<void>>) => {
+    const active = new Set(next.map(requesterScopeKey));
     for (const scope of previous) {
-      if (!active.has(JSON.stringify([scope.scopeId, scope.machineId]))) {
-        await params.workflowRequesterCustody?.retire(scope, { signal });
-      }
+      const key = requesterScopeKey(scope);
+      if (active.has(key)) continue;
+      const undo = rollback?.get(key);
+      if (undo) await undo().catch(() => {});
+      else await params.workflowRequesterCustody?.retire(scope, { signal });
     }
   };
   const commitRequesterScopes = async (
     previous: ReturnType<typeof requesterScopes>, next: ReturnType<typeof requesterScopes>,
     write: () => Promise<AutomationDefinitionDetail>, beforeWrite?: () => Promise<void>, signal?: AbortSignal,
   ) => {
-    try { await retainRequesterScopes(next); await beforeWrite?.(); }
-    catch (error) { await retireRequesterScopes(next, previous, signal); throw error; }
+    const rollback = new Map<string, () => Promise<void>>();
+    try {
+      for (const scope of next) {
+        const undo = await params.workflowRequesterCustody?.retain(scope, { signal });
+        if (undo) rollback.set(requesterScopeKey(scope), undo);
+      }
+      await beforeWrite?.();
+    } catch (error) { await retireRequesterScopes(next, previous, signal, rollback); throw error; }
     let committed: AutomationDefinitionDetail;
     try { committed = await write(); }
     catch (error) {
-      if (isConfirmedActionWriteRefusal(error)) await retireRequesterScopes(next, previous, signal);
+      if (isConfirmedActionWriteRefusal(error)) await retireRequesterScopes(next, previous, signal, rollback);
       throw error;
     }
     await retireRequesterScopes(previous, requesterScopes(committed), signal);

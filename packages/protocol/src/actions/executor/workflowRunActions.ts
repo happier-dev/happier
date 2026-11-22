@@ -515,7 +515,8 @@ export type WorkflowAccountRunActionDeps = Readonly<{
     NonNullable<WorkflowAcceptedSnapshotV1['origin']>['authenticatedStarterV1']> | undefined>;
   /** Private host custody, settled before admission; never part of Action input or stored Run content. */
   workflowRequesterCustody?: Readonly<{
-    retain: (input: Readonly<{ scopeId: string; machineId: string; automationId?: string }>) => Promise<void>;
+    retain: (input: Readonly<{ scopeId: string; machineId: string; automationId?: string }>,
+      options?: Readonly<{ signal?: AbortSignal }>) => Promise<void | (() => Promise<void>)>;
     /** Session birth supplies the already minted trigger identities before their rows are committed. */
     retainInitialTriggers?: (admissions: readonly SessionInitialTriggerAdmissionV1[]) => Promise<Readonly<{
       cleanupOnFailure: () => Promise<void>;

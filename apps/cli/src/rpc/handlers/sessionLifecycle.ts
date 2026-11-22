@@ -1,7 +1,7 @@
 import type { RpcActionExecutor, RpcActionExecutorContext } from './_actionDispatchAdapter';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { RpcHandlerContext } from '@/api/rpc/types';
-import type { RpcHandlerRegistrar } from '@/api/rpc/types';
+import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { readStoredCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
@@ -418,84 +418,96 @@ export function registerSessionSpawnNewRpcHandlers(params: Readonly<{
     }>;
     observeExecution?: RegisterActionSpecRpcHandlersParams['observeExecution'];
 }>): void {
+    const bootstrapRefused = () => ({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' });
+    const withRequesterBootstrap = (handler: RpcHandler<unknown, unknown>, custodyOnly = false): RpcHandler<unknown, unknown> => async (input, context) => {
+        if (!input || typeof input !== 'object'
+            || Reflect.get(input, 'kind') !== 'requester_session_bootstrap_v1') {
+            return custodyOnly ? bootstrapRefused() : await handler(input, context);
+        }
+        const parsed = SessionRequesterBootstrapRpcRequestV1Schema.safeParse(input);
+        const boundary = params.requesterBootstrapBoundary;
+        if (!parsed.success || !boundary || !context || !context.machineAdmission
+            || parsed.data.input.executionTarget.machineId !== context.machineAdmission.machineId) {
+            return bootstrapRefused();
+        }
+        if (custodyOnly && (context.callerAuthority !== 'present_user' || parsed.data.scope !== 'workflow_trigger'
+            || !('kind' in parsed.data.requesterBootstrap))) {
+            return bootstrapRefused();
+        }
+        let requesterBootstrap = parsed.data.requesterBootstrap;
+        if ('kind' in requesterBootstrap) {
+            if (!context.verifyMachineAdmissionCurrent || !await context.verifyMachineAdmissionCurrent()) {
+                return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+            }
+            const installation = await boundary.readInstallation?.().catch(() => null);
+            const opened = installation && installation.machineId === context.machineAdmission.machineId
+                && installation.identity.installationId === context.machineAdmission.installationId
+                ? openSessionRequesterBootstrapRpcRequestV1({ request: parsed.data,
+                    machineId: installation.machineId, installationId: installation.identity.installationId,
+                    installationPrivateKey: decodeBase64(installation.identity.privateKey, 'base64url') }) : null;
+            if (!opened) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+            requesterBootstrap = opened.requesterBootstrap;
+        } else if (context.machineAdmission.encryptionMode === 'plain'
+            && (requesterBootstrap.credentials.secret || requesterBootstrap.credentials.encryption)) {
+            // TLS protects token-only Plain sign-in. Account keys require installation confidentiality,
+            // not an assumption that Machine content itself is encrypted.
+            return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+        }
+        let custody: Awaited<ReturnType<typeof admitRequesterSessionBootstrap>>;
+        try { custody = await admitRequesterSessionBootstrap({ bootstrap: requesterBootstrap, boundary, context }); }
+        catch { custody = null; }
+        if (!custody) return { ok: false, errorCode: context.signal.aborted ? 'cancelled' : 'target_unavailable',
+            error: context.signal.aborted ? 'cancelled' : 'target_unavailable' };
+        if (parsed.data.scope === 'workflow_trigger') {
+            try {
+                if (parsed.data.input.executionTarget.serverId !== boundary.serverId) {
+                    return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+                }
+                const admitted = custody.admitted;
+                if (parsed.data.input.operation === 'retain') {
+                    await retainWorkflowRequesterCredentials({ scopeId: parsed.data.input.scopeId,
+                        automationId: parsed.data.input.automationId,
+                        happyHomeDir: boundary.happyHomeDir, credentials: admitted.credentials,
+                        attribution: admitted.attribution, homeServerIdentityId: admitted.homeServerIdentityId,
+                        machineAdmission: context.machineAdmission });
+                } else {
+                    await retireWorkflowRequesterCredentials({ scopeId: parsed.data.input.scopeId,
+                        happyHomeDir: boundary.happyHomeDir, ...admitted.attribution,
+                        serverHttpBaseUrl: boundary.serverHttpBaseUrl, signal: context.signal,
+                        homeServerIdentityId: admitted.homeServerIdentityId });
+                }
+                return { ok: true };
+            } catch {
+                return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+            } finally { await custody.admitted.dispose(); }
+        }
+        const projectedAuthorization = context.callerInputAuthorization
+            ? await custody.admitted.projectExternalActionAuthorization(context.callerInputAuthorization,
+                boundary.getObservedServerIdentityId() ?? '', context.signal)
+            : undefined;
+        if (context.callerInputAuthorization && !projectedAuthorization) {
+            await custody.cleanupOnFailure();
+            return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+        }
+        const requesterContext = Object.freeze({ ...context, requesterSessionBootstrap: custody.admitted,
+            ...(projectedAuthorization ? { callerInputAuthorization: projectedAuthorization } : {}) });
+        try {
+            const response = await handler(parsed.data.input, requesterContext);
+            if (!response || typeof response !== 'object'
+                || !['success', 'pending'].includes(String(Reflect.get(response, 'type')))) await custody.cleanupOnFailure();
+            return response;
+        } catch {
+            await custody.cleanupOnFailure();
+            return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+        }
+    };
+    if (params.requesterBootstrapBoundary) {
+        params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKFLOW_REQUESTER_CUSTODY,
+            withRequesterBootstrap(bootstrapRefused, true));
+    }
     registerActionSpecRpcHandlers({
         rpcHandlerManager: {
-            registerHandler: (method, handler) => params.rpcHandlerManager.registerHandler(method, async (input, context) => {
-                if (!input || typeof input !== 'object'
-                    || Reflect.get(input, 'kind') !== 'requester_session_bootstrap_v1') return await handler(input, context);
-                const parsed = SessionRequesterBootstrapRpcRequestV1Schema.safeParse(input);
-                const boundary = params.requesterBootstrapBoundary;
-                if (!parsed.success || !boundary || !context || !context.machineAdmission
-                    || parsed.data.input.executionTarget.machineId !== context.machineAdmission.machineId) {
-                    return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
-                }
-                let requesterBootstrap = parsed.data.requesterBootstrap;
-                if ('kind' in requesterBootstrap) {
-                    if (!context.verifyMachineAdmissionCurrent || !await context.verifyMachineAdmissionCurrent()) {
-                        return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
-                    }
-                    const installation = await boundary.readInstallation?.().catch(() => null);
-                    const opened = installation && installation.machineId === context.machineAdmission.machineId
-                        && installation.identity.installationId === context.machineAdmission.installationId
-                        ? openSessionRequesterBootstrapRpcRequestV1({ request: parsed.data,
-                            machineId: installation.machineId, installationId: installation.identity.installationId,
-                            installationPrivateKey: decodeBase64(installation.identity.privateKey, 'base64url') }) : null;
-                    if (!opened) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
-                    requesterBootstrap = opened.requesterBootstrap;
-                } else if (context.machineAdmission.encryptionMode === 'plain'
-                    && (requesterBootstrap.credentials.secret || requesterBootstrap.credentials.encryption)) {
-                    // TLS protects token-only Plain sign-in. Account keys require installation confidentiality,
-                    // not an assumption that Machine content itself is encrypted.
-                    return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
-                }
-                let custody: Awaited<ReturnType<typeof admitRequesterSessionBootstrap>>;
-                try { custody = await admitRequesterSessionBootstrap({ bootstrap: requesterBootstrap, boundary, context }); }
-                catch { custody = null; }
-                if (!custody) return { ok: false, errorCode: context.signal.aborted ? 'cancelled' : 'target_unavailable',
-                    error: context.signal.aborted ? 'cancelled' : 'target_unavailable' };
-                if (parsed.data.scope === 'workflow_trigger') {
-                    try {
-                        if (parsed.data.input.executionTarget.serverId !== boundary.serverId) {
-                            return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
-                        }
-                        const admitted = custody.admitted;
-                        if (parsed.data.input.operation === 'retain') {
-                            await retainWorkflowRequesterCredentials({ scopeId: parsed.data.input.scopeId,
-                                automationId: parsed.data.input.automationId,
-                                happyHomeDir: boundary.happyHomeDir, credentials: admitted.credentials,
-                                attribution: admitted.attribution, homeServerIdentityId: admitted.homeServerIdentityId,
-                                machineAdmission: context.machineAdmission });
-                        } else {
-                            await retireWorkflowRequesterCredentials({ scopeId: parsed.data.input.scopeId,
-                                happyHomeDir: boundary.happyHomeDir, ...admitted.attribution,
-                                serverHttpBaseUrl: boundary.serverHttpBaseUrl, signal: context.signal,
-                                homeServerIdentityId: admitted.homeServerIdentityId });
-                        }
-                        return { ok: true };
-                    } catch {
-                        return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
-                    } finally { await custody.admitted.dispose(); }
-                }
-                const projectedAuthorization = context.callerInputAuthorization
-                    ? await custody.admitted.projectExternalActionAuthorization(context.callerInputAuthorization,
-                        boundary.getObservedServerIdentityId() ?? '', context.signal)
-                    : undefined;
-                if (context.callerInputAuthorization && !projectedAuthorization) {
-                    await custody.cleanupOnFailure();
-                    return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
-                }
-                const requesterContext = Object.freeze({ ...context, requesterSessionBootstrap: custody.admitted,
-                    ...(projectedAuthorization ? { callerInputAuthorization: projectedAuthorization } : {}) });
-                try {
-                    const response = await handler(parsed.data.input, requesterContext);
-                    if (!response || typeof response !== 'object'
-                        || !['success', 'pending'].includes(String(Reflect.get(response, 'type')))) await custody.cleanupOnFailure();
-                    return response;
-                } catch {
-                    await custody.cleanupOnFailure();
-                    return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
-                }
-            }),
+            registerHandler: (method, handler) => params.rpcHandlerManager.registerHandler(method, withRequesterBootstrap(handler)),
         },
         resolveActionExecutor: async request => {
             const requester = request.ingress?.requesterSessionBootstrap;

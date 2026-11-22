@@ -3,13 +3,19 @@ import { WorkflowDefinitionV1Schema, createAccountScopedCryptoMaterialSnapshotV1
   convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
   type AutomationDefinitionDetail, type AutomationDefinitionCreateRequest, type AutomationDefinitionReconcileRequest } from '@happier-dev/protocol';
 import { AUTOMATION_TEMPLATE_V02_PLAIN, AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED } from '../../../../../packages/protocol/src/automations/automationTemplateV02.testFixtures';
+import { openSessionRequesterBootstrapRpcRequestV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import tweetnacl from 'tweetnacl';
 
-const network = vi.hoisted(() => ({ currentness: vi.fn(), session: vi.fn(), list: vi.fn(), get: vi.fn(), create: vi.fn(), reconcile: vi.fn(), remove: vi.fn() }));
+const network = vi.hoisted(() => ({ currentness: vi.fn(), session: vi.fn(), list: vi.fn(), get: vi.fn(), create: vi.fn(), reconcile: vi.fn(), remove: vi.fn(),
+  publishedMachine: vi.fn(), machineRpc: vi.fn() }));
 // These are network transport adapters; Workflow semantics and the Account codec remain real.
 vi.mock('@/api/client/connectedServiceCredentialApi', () => ({ fetchAccountEncryptionCurrentness: network.currentness }));
 vi.mock('@/api/automations', () => ({ listAutomationDefinitions: network.list, listAutomationDefinitionDetails: network.list, getAutomationDefinition: network.get,
   createAutomationDefinition: network.create, reconcileAutomationDefinition: network.reconcile, deleteAutomationDefinition: network.remove }));
 vi.mock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionById: network.session }));
+vi.mock('@/api/machine/readPublishedMachineRow', () => ({ readPublishedMachineRowWithLegacyOwnerProof: network.publishedMachine }));
+vi.mock('@/session/transport/rpc/machineRpc', () => ({ callExactMachineRpc: network.machineRpc }));
 
 const definition = WorkflowDefinitionV1Schema.parse({ version: 1,
   defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
@@ -106,6 +112,58 @@ describe('CLI workflow trigger Account codec', () => {
         display: { name: 'Workflow triggers', description: null },
       } } },
     });
+  });
+  it.each(['declined', 'accepted', 'write-refused'] as const)('settles shared Machine trigger custody when the save is %s', async decision => {
+    network.currentness.mockResolvedValue({ mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
+    const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
+    network.publishedMachine.mockResolvedValue({ row: { id: 'shared-machine', installationId: 'installation',
+      installationPublicKey: Buffer.from(installation.publicKey).toString('base64'), access: {
+      custodian: { accountId: 'machine-owner', displayName: 'Owner' },
+    } }, legacyOwnerOnly: false });
+    const { createCliWorkflowTriggerActions } = await import('./workflowTriggers');
+    const confirm = vi.fn(async () => decision !== 'declined');
+    const token = 'fixture.' + Buffer.from(JSON.stringify({ sub: 'requester' })).toString('base64url') + '.fixture';
+    const refused = Object.assign(new Error('fixture refused the write'), { status: 403 });
+    if (decision === 'write-refused') network.create.mockRejectedValueOnce(refused);
+    network.machineRpc.mockImplementation(async ({ request, machineId, method }) => {
+      expect(machineId).toBe('shared-machine');
+      expect(method).toBe(RPC_METHODS.DAEMON_WORKFLOW_REQUESTER_CUSTODY);
+      expect(JSON.stringify(request)).not.toContain(token);
+      const operation = request.input.operation;
+      if (operation === 'retain') expect(network.create).not.toHaveBeenCalled();
+      else expect(network.create).toHaveBeenCalledOnce();
+      expect(openSessionRequesterBootstrapRpcRequestV1({ request, machineId, installationId: 'installation',
+        installationPrivateKey: installation.secretKey })).toMatchObject({
+        scope: 'workflow_trigger', input: { executionTarget: { serverId: 'home', machineId },
+          operation, scopeId: expect.any(String), automationId: expect.any(String) },
+        requesterBootstrap: { credentials: { token } },
+      });
+      return { ok: true };
+    });
+    const actions = createCliWorkflowTriggerActions({ credentials: { token, encryption: null, credentialProvenance: 'stored_session' },
+      resolveWorkflow: async () => ({ definition }),
+      requesterCustody: { serverId: 'home', onRequesterSessionCredentialDisclosure: confirm } });
+    const write = actions.add({ target: { kind: 'inline', definition }, project: { machineId: 'shared-machine', directory: '/work' }, trigger },
+      { surface: 'cli', authority: 'present_user' });
+    if (decision === 'declined') {
+      await expect(write).rejects.toMatchObject({ code: 'requester_credential_disclosure_declined' });
+      expect(network.machineRpc).not.toHaveBeenCalled();
+      expect(network.create).not.toHaveBeenCalled();
+    } else if (decision === 'write-refused') {
+      await expect(write).rejects.toBe(refused);
+      const operations = network.machineRpc.mock.calls.map(([call]) => call.request.input);
+      expect(operations).toEqual([
+        expect.objectContaining({ operation: 'retain', scopeId: expect.any(String) }),
+        expect.objectContaining({ operation: 'retire', scopeId: operations[0]?.scopeId }),
+      ]);
+    } else {
+      const admitted = await write;
+      const request = network.machineRpc.mock.calls[0]?.[0].request;
+      expect(request?.input?.scopeId).toBe(admitted.triggerId);
+      expect(request?.input?.automationId).toBe(admitted.set.automationId);
+      expect(network.create).toHaveBeenCalledOnce();
+    }
+    expect(confirm).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ accountId: 'requester', machineId: 'shared-machine' }));
   });
   it('opens real E2EE context only while the Account mode and key witness match', async () => {
     const secret = new Uint8Array(32).fill(7);

@@ -360,6 +360,7 @@
   ["spawn-happy-session","custodian_only"],
   ["spawn-happy-session.provider-safe.v1","custodian_only"],
   ["session.spawnNew","custodian_only"],
+  ["daemon.workflowRequesterCustody.v1","use"],
   ["daemon.sessionCreation.prepare.v1","custodian_only"],
   ["daemon.spawnSession.abandon","custodian_only"],
   ["daemon.sessionCreation.intent.v1","custodian_only"],

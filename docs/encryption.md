@@ -6018,10 +6018,10 @@ installed owner's sign-in. Plain requesters carry their token without E2EE keys.
 In unreleased 0.3 development, shared-Machine Workflows reuse this ordinary
 requester context. A Machine `use` grant admits Workflows and schedules through
 the same Machine access owner as requester Sessions. The requester's client seals
-it to the selected installation on the existing private delivery channel, with
-`scope: 'workflow_trigger'` and
-the trigger id and its Automation id, or the Run id for a direct one-occurrence start. The existing
-requester credential owner retains it with the same local at-rest handling as
+it to the selected installation. Trigger authoring delivers the sealed message with
+`daemon.workflowRequesterCustody.v1`, carrying `scope: 'workflow_trigger'`,
+the trigger id and its Automation id. Direct one-occurrence starts retain custody
+under the Run id. The existing requester credential owner uses the same local at-rest handling as
 Session custody. The full-sign-in disclosure states that trigger custody stays
 on this Machine while the trigger exists. A direct Run retires at terminal;
 disable/delete retires trigger custody after its admitted Runs finish. A

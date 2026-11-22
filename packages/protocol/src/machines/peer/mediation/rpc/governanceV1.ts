@@ -493,6 +493,7 @@ export function resolveMachineRpcGovernance(method: string): MachineRpcGovernanc
     || method === RPC_METHODS.DAEMON_LSP_SYNC
     || method === RPC_METHODS.DAEMON_LSP_QUERY
     || method === RPC_METHODS.DAEMON_LSP_WATCH
+    || method === RPC_METHODS.DAEMON_WORKFLOW_REQUESTER_CUSTODY
     || SESSION_SPAWN_PRIVATE_INTERNAL_METHODS.has(method)
     || PMS5_DIRECT_INTERNAL_METHODS.has(method)
     || A16X_PLUGIN_UI_INTERNAL_METHODS.has(method)

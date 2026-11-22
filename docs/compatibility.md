@@ -3108,13 +3108,15 @@ the existing V1 operation adapter continues to omit these details.
 
 ## Shared-Machine Workflow requester custody (unreleased 0.3)
 
-The existing `requester_session_bootstrap_v1` private installed message adds
+The existing `requester_session_bootstrap_v1` private installed message supports
 `scope: 'workflow_trigger'`, with an exact Machine target, opaque scope id,
 optional Automation id for trigger custody, and `retain`/`retire` operation. A Session message keeps its existing absent scope
 (or explicit `session`). Both the discriminator and input are covered by the
-existing installation seal; changing either invalidates the message. An older
-strict daemon refuses the new scope. There is no unsealed or custodian-credential
-fallback. UI and daemon must reload together to use shared Workflow custody.
+existing installation seal. Shared trigger authoring uses the server-routed
+`daemon.workflowRequesterCustody.v1` method, which requires Machine Use and accepts
+only the installation-sealed Workflow scope. Raw Session spawn stays custodian-only.
+An older Home or daemon fails closed. UI, CLI, Home, and daemon need the new route
+for shared trigger authoring.
 
 The existing daemon-local requester custody record may retain an optional
 `retireWhenIdle` marker for a disabled or deleted trigger. It uses the same
