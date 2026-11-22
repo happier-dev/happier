@@ -200,6 +200,13 @@ describe('requester bootstrap installation confidentiality', () => {
       .toEqual({ caller, surface: 'plugin', authority: 'account_automation' });
   });
 
+  it('keeps the projected workspace write restriction on a requester invocation', () => {
+    const invocation = bootstrap.ExternalActionRequesterInvocationV1Schema.parse({
+      caller: { kind: 'host' }, surface: 'mcp', authority: 'account_automation', workspaceWrites: 'deny',
+    });
+    expect(invocation.workspaceWrites).toBe('deny');
+  });
+
   it.each(['own_account', 'unknown', 'other_account', 'other_home', 'terminal', 'api', 'session', 'workflow', 'plugin', 'transport_plugin'] as const)(
     'qualifies private host attribution against its admitted credential (%s)', kind => {
     const invocation = bootstrap.ExternalActionRequesterInvocationV1Schema.parse({

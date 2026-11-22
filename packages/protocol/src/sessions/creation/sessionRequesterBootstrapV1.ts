@@ -2,6 +2,7 @@ import { ActionExecuteFailureSchema, createActionExecuteFailureError } from '../
 import { computeMachineInstallationKeyFingerprintV1 } from '../../machines/identity/installationKeySchemas.js';
 import { isMachineSetupNativeCodecActionIdV1 } from '../../machines/managed/actionIdsV1.js';
 import { z } from '../../zodRuntimePolicy.js';
+import { RoleArtifactV1Schema } from '../../prompts/roles/roleArtifactV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { deploymentChildEffectActionIdForRootV1 } from '../../deployments/deploymentActionIdsV1.js';
@@ -125,6 +126,7 @@ export const ExternalActionRequesterInvocationV1Schema = lazyZodSchema(() => z.e
   actionRequestAttributionV1: z.optional(ActionRequestAttributionV1Schema),
   callerPermissionMode: z.optional(z.nullable(asProtocolZod(AgentPermissionIntentV1Schema))),
   callerInputConstraints: z.optional(CallerInputConstraintsV1Schema),
+  workspaceWrites: z.optional(RoleArtifactV1Schema.shape.workspaceWrites),
   defaultSessionId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   /** Creation-owner selection bound to this request by the existing private admission box. */
   sessionCreationDefaults: z.optional(z.strictObject({
