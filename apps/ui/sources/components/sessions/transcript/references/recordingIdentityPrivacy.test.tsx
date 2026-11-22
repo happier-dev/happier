@@ -84,6 +84,7 @@ describe('incidental Session identity during recording', () => {
         expect(JSON.stringify(screen.tree.toJSON())).toContain(continuation
             ? t('session.forking.continuedTitleWithParent', { parent: title })
             : t('session.forking.dividerTitleWithParent', { parent: title }));
+        expect(JSON.stringify(screen.tree.toJSON())).toContain(title);
         await act(async () => setScreenSharingPrivacyActive(true));
         const masked = JSON.stringify(screen.tree.toJSON());
         expect(masked).not.toContain(title);

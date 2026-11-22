@@ -9010,8 +9010,6 @@ localTailscale: {
       detailDescription: '最近の会話はテキストとして引き継がれます。画像やファイルは引き継がれません。次のメッセージを送るまで何も送信されません。',
       detailDescriptionEmpty: '引き継ぐ会話はまだありません。次のメッセージを送るまで何も送信されません。',
       announcement: ({ agent }: { agent: string }) => `次のメッセージ用に ${agent} を選択しました。まだ何も送信されていません。`,
-      continuedTitle: '以前のコンテキストから継続',
-      continuedTitleWithParent: ({ parent }: { parent: string }) => `${parent} から継続`,
       dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `このセッションは ${from_} から ${to} に引き継がれました`,
       handedOver: {
           open: "ここで引き継がれたコンテキストを表示",
@@ -9068,6 +9066,8 @@ localTailscale: {
         serverMismatch: "その会話は別の Happier サーバーにあります。そのサーバーに切り替えるか、元の会話を削除して新規に開始してください。",
     },
     forking: {
+      continuedTitle: '以前のコンテキストから継続',
+      continuedTitleWithParent: ({ parent }: { parent: string }) => `${parent} から継続`,
       dividerTitle: "以前のコンテキストから分岐しました",
       dividerTitleWithParent: ({ parent }: { parent: string }) => `${parent} から分岐しました`,
       dividerSubtitle: "以前のコンテキスト（読み取り専用）",

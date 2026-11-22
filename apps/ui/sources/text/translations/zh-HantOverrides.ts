@@ -7289,8 +7289,6 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 detailDescription: '最近的對話會以文字形式保留；圖片和檔案不會。在你傳送下一則訊息前不會傳送任何內容。',
                 detailDescriptionEmpty: '目前還沒有可保留的對話。在你傳送下一則訊息前不會傳送任何內容。',
                 announcement: ({ agent }: { agent: string }) => `已選擇 ${agent} 用於下一則訊息，尚未送出任何內容。`,
-                continuedTitle: '從先前的上下文繼續',
-                continuedTitleWithParent: ({ parent }: { parent: string }) => `從${parent}繼續`,
                 dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `這個工作階段已從 ${from_} 轉由 ${to} 繼續`,
                 handedOver: {
                     open: "檢視在此處移交的脈絡",
@@ -7347,6 +7345,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 serverMismatch: '該對話位於另一台 Happier 伺服器上。請切換回該伺服器，或移除來源對話以重新開始。',
             },
             forking: {
+                continuedTitle: '從先前的上下文繼續',
+                continuedTitleWithParent: ({ parent }: { parent: string }) => `從${parent}繼續`,
                 dividerTitle: '從較早的內容分支',
                 dividerTitleWithParent: ({ parent }: { parent: string }) => `從${parent}分支`,
                 dividerSubtitle: '較早內容（唯讀）',

@@ -10133,8 +10133,6 @@ const enSession = {
       'There’s no conversation to carry over yet. Nothing is sent until your next message.',
     announcement: ({ agent }: { agent: string }) =>
       `${agent} selected for the next message. Nothing has been sent.`,
-    continuedTitle: 'Continued from earlier context',
-    continuedTitleWithParent: ({ parent }: { parent: string }) => `Continued from ${parent}`,
     dividerTitle: ({ from: from_, to }: { from: string; to: string }) =>
       `Continued this Session from ${from_} to ${to}`,
     /** The transcript divider opens a card explaining what crossed the boundary. */
@@ -10230,6 +10228,8 @@ const enSession = {
       'That conversation lives on a different Happier server. Switch back to it, or remove the source conversation to start fresh.',
   },
   forking: {
+    continuedTitle: 'Continued from earlier context',
+    continuedTitleWithParent: ({ parent }: { parent: string }) => `Continued from ${parent}`,
     dividerTitle: 'Forked from earlier context',
     dividerTitleWithParent: ({ parent }: { parent: string }) =>
       `Forked from ${parent}`,

@@ -9161,8 +9161,6 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
       detailDescription: 'Недавний разговор сохраняется как текст; изображения и файлы — нет. Ничего не отправится до вашего следующего сообщения.',
       detailDescriptionEmpty: 'Разговора, который можно сохранить, пока нет. Ничего не отправится до вашего следующего сообщения.',
       announcement: ({ agent }: { agent: string }) => `${agent} выбран для следующего сообщения. Ничего не отправлено.`,
-      continuedTitle: 'Продолжение предыдущего контекста',
-      continuedTitleWithParent: ({ parent }: { parent: string }) => `Продолжение ${parent}`,
       dividerTitle: ({ from: from_, to }: { from: string; to: string }) => `Эта сессия продолжена с ${from_} на ${to}`,
       handedOver: {
           open: "Показать переданный здесь контекст",
@@ -9219,6 +9217,8 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
         serverMismatch: "Этот разговор находится на другом сервере Happier. Вернитесь к нему или уберите исходный разговор, чтобы начать заново.",
     },
     forking: {
+      continuedTitle: 'Продолжение предыдущего контекста',
+      continuedTitleWithParent: ({ parent }: { parent: string }) => `Продолжение ${parent}`,
       dividerTitle: "Ветка из предыдущего контекста",
       dividerTitleWithParent: ({ parent }: { parent: string }) => `Ветка из ${parent}`,
       dividerSubtitle: "Предыдущий контекст (только чтение)",
