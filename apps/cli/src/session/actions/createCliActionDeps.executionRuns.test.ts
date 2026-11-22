@@ -721,7 +721,8 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       streamId: 'stream-1',
     })).resolves.toEqual({ ok: true });
 
-    expect(fetchSessionById).toHaveBeenCalledTimes(5);
+    // The caller's approval profile is resolved once. Each dispatch still reads its current target.
+    expect(fetchSessionById).toHaveBeenCalledTimes(6);
     expect(callSessionRpc.mock.calls.map(([request]) => request.rawSession.machineId)).toEqual([
       'machine-1', 'machine-2', 'machine-2', 'machine-2', 'machine-2',
     ]);
@@ -1427,7 +1428,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } },
     });
 
-    expect(callMachineRpc).toHaveBeenCalledTimes(1);
+    expect(callMachineRpc.mock.calls.some(([request]) => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_START)).toBe(false);
     expect(callMachineRpc).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'machine-capable',
       method: RPC_METHODS.CAPABILITIES_DESCRIBE,
@@ -1551,7 +1552,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
     expect(callSessionRpc).not.toHaveBeenCalled();
   });
 
-  it('classifies an unavailable V2 capability method as protocol-unsupported before start dispatch', async () => {
+  it('retains the unavailable V2 capability method refusal before start dispatch', async () => {
     const credentials = {
       token: 'token',
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
@@ -1586,8 +1587,9 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       ioMode: 'request_response',
     }, { surface: 'rpc', defaultSessionId: 'session-1' })).resolves.toEqual({
       ok: false,
-      errorCode: 'execution_run_protocol_unsupported',
-      error: 'execution_run_protocol_unsupported',
+      errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+      error: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+      failureCause: { phase: 'capabilities.describe', errorClass: 'RpcError', errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE, httpStatus: null },
       details: {
         executionRunStart: { v: 1, runCreation: 'noRunCreated' },
         executionRunPreflight: { phase: 'capabilities.describe', cause: { code: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE } },
@@ -1673,6 +1675,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       ok: false,
       errorCode: 'execution_run_target_unavailable',
       error: 'execution_run_target_unavailable',
+      failureCause: { phase: 'capabilities.describe', errorClass: 'Error', errorCode: null, httpStatus: null },
       details: {
         executionRunStart: { v: 1, runCreation: 'noRunCreated' },
         executionRunPreflight: { phase: 'capabilities.describe', cause: { code: null } },
@@ -1703,6 +1706,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
 
     const invocation = service.execute('execution.run.start', {
       sessionId: null,
+      childSelection: 'agentDefault',
       intent: 'delegate',
       backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
       instructions: 'Summarize the change.',
@@ -1786,6 +1790,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
 
     expect(callMachineRpc.mock.calls.map(([request]) => request.method)).toEqual([
       RPC_METHODS.CAPABILITIES_DESCRIBE,
+      RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
       SESSION_RPC_METHODS.EXECUTION_RUN_START,
       SESSION_RPC_METHODS.EXECUTION_RUN_WAIT,
     ]);
@@ -1841,6 +1846,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       method: request.method,
     }))).toEqual([
       { machineId: 'machine-admitted', method: RPC_METHODS.CAPABILITIES_DESCRIBE },
+      { machineId: 'machine-admitted', method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE },
       { machineId: 'machine-admitted', method: SESSION_RPC_METHODS.EXECUTION_RUN_START },
     ]);
     expect(fetchSessionById).not.toHaveBeenCalled();
@@ -1856,9 +1862,14 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
     };
     const startError = new Error(`start ${disposition}`);
-    callMachineRpc
-      .mockResolvedValueOnce(runProtocolDescribeResponse({ version: 2, features: { detachedScope: true, startAndWait: true } }))
-      .mockRejectedValueOnce(startError);
+    callMachineRpc.mockImplementation(async ({ method }) => {
+      if (method === RPC_METHODS.CAPABILITIES_DESCRIBE) {
+        return runProtocolDescribeResponse({ version: 2, features: { detachedScope: true, startAndWait: true } });
+      }
+      if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return null;
+      if (method === SESSION_RPC_METHODS.EXECUTION_RUN_START) throw startError;
+      throw new Error(`Unexpected machine RPC ${method}`);
+    });
     readMachineRpcRequestDisposition.mockImplementation((error) => (
       error === startError ? disposition : null
     ));
@@ -1894,6 +1905,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       errorCode: 'execution_run_target_unavailable',
       error: 'execution_run_target_unavailable',
       details: { executionRunStart: { v: 1, runCreation } },
+      failureCause: { phase: SESSION_RPC_METHODS.EXECUTION_RUN_START, errorClass: 'Error', errorCode: null, httpStatus: null },
     });
   });
 });
@@ -1943,6 +1955,7 @@ describe('background memory hint Runs', () => {
       expect(methods.filter(method => method.endsWith(`:${SESSION_RPC_METHODS.EXECUTION_RUN_START}`)))
         .toEqual([`machine-local:${SESSION_RPC_METHODS.EXECUTION_RUN_START}`]);
       expect(methods.filter(method => !method.endsWith(`:${RPC_METHODS.CAPABILITIES_DESCRIBE}`)
+        && !method.endsWith(`:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`)
         && !method.endsWith(`:${SESSION_RPC_METHODS.EXECUTION_RUN_START}`)
         && !method.endsWith(`:${SESSION_RPC_METHODS.EXECUTION_RUN_WAIT}`))).toEqual([]);
     } finally {
