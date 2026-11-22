@@ -1,4 +1,5 @@
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
+import { APPROVAL_REQUEST_DECIDE_ACTION_ID_V1, isApprovalRequestObservationActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { actionInputValidationFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
 import { readLocalServiceControlActionRequest } from '@happier-dev/protocol/actions/specs/localServices';
 import { MANAGED_MACHINE_ACTION_IDS_V1, ManagedAcquireInputV1Schema, ManagedMachineActionInputSchemasV1, isManagedRetainedControlInvocation, resolveManagedAcquireReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -259,8 +260,8 @@ export function reconcileExternalActionTarget(input: Readonly<{
   const isContributedActionInvocation = input.actionId === 'action.invoke';
   // Approval reads and decisions address an Artifact, while the envelope Session
   // constrains its visibility/subject at the canonical approval executor.
-  const isSessionBoundApproval = input.actionId === 'approval.request.list'
-    || input.actionId === 'approval.request.get' || input.actionId === 'approval.request.decide';
+  const isSessionBoundApproval = isApprovalRequestObservationActionIdV1(input.actionId)
+    || input.actionId === APPROVAL_REQUEST_DECIDE_ACTION_ID_V1;
   const bindsEnvelopeSession = isContributedActionInvocation || isSessionBoundApproval
     || executionPlacement === 'client' || input.actionId.startsWith('computer.');
   const sessionSelectorId = distinctSessionSelectorIds[0] ?? null;

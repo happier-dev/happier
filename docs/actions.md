@@ -1072,6 +1072,8 @@ nonmatching Artifacts. It grants no access or decision authority.
 `approval.request.get {artifactId}` is available wherever `approval.request.decide`
 is available and returns the request with declared confidential plugin inputs
 redacted. Older plugin requests without disclosure metadata withhold their input.
+In 0.3 development, an untargeted CLI Get or List uses the signed-in Account's
+Artifact store on Home and works without a daemon.
 Both reads are discoverable through Action search. Their
 approval-control admission remains separate from deciding or executing an
 approval; listing pending work grants no decision authority.

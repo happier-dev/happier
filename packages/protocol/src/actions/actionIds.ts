@@ -65,7 +65,12 @@ export function isScmPublicationActionIdV1(actionId: string): actionId is
   return actionId === SCM_REMOTE_PUSH_ACTION_ID_V1 || actionId === SCM_PULL_REQUEST_OPEN_OR_REUSE_ACTION_ID_V1;
 }
 export const APPROVAL_REQUEST_LIST_ACTION_ID_V1 = 'approval.request.list' as const;
+export const APPROVAL_REQUEST_GET_ACTION_ID_V1 = 'approval.request.get' as const;
 export const APPROVAL_REQUEST_DECIDE_ACTION_ID_V1 = 'approval.request.decide' as const;
+export function isApprovalRequestObservationActionIdV1(actionId: string): actionId is
+  typeof APPROVAL_REQUEST_LIST_ACTION_ID_V1 | typeof APPROVAL_REQUEST_GET_ACTION_ID_V1 {
+  return actionId === APPROVAL_REQUEST_LIST_ACTION_ID_V1 || actionId === APPROVAL_REQUEST_GET_ACTION_ID_V1;
+}
 export { INBOX_GET_ACTION_ID_V1 } from './appShellActionIdsV1.js';
 
 export const SESSION_RUNTIME_REFRESH_ACTION_ID_V1 = 'session.runtime.refresh' as const;
@@ -953,7 +958,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   ],
   approvals: [
     APPROVAL_REQUEST_LIST_ACTION_ID_V1,
-    'approval.request.get',
+    APPROVAL_REQUEST_GET_ACTION_ID_V1,
     'approval.request.create',
     APPROVAL_REQUEST_DECIDE_ACTION_ID_V1,
   ],

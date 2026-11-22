@@ -26,7 +26,7 @@ import { readSessionStopConfirmationFailure } from './executor/session/stopConfi
 import { buildApprovalOriginFailure } from '../approvals/approvalStaleReason.js';
 import type { StampedStartV1 } from '../account/settings/admitAgentStartV1.js';
 import { isPluginActionInvokeConfirmationV1 } from './invocationAuthority.js';
-import { isWorkspaceSyncRelationshipWriteActionId, SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_INPUT_HANDOFF_ACTION_ID_V1, WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1 } from './actionIds.js';
+import { isApprovalRequestObservationActionIdV1, isWorkspaceSyncRelationshipWriteActionId, SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_INPUT_HANDOFF_ACTION_ID_V1, WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1 } from './actionIds.js';
 import { isProjectSourceActionIdV1 } from './specs/projectSourcesActionIdsV1.js';
 import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from './filesystemActionIdsV1.js';
 import { COMPUTER_RECORDING_ACTION_IDS_V1 } from './recordingActionIds.js';
@@ -7330,7 +7330,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return completeActionResult(res);
         }
 
-      if (actionId === 'approval.request.list' || actionId === 'approval.request.get') {
+      if (isApprovalRequestObservationActionIdV1(actionId)) {
         return await executeApprovalObservationAction({ actionId, input: data, context: ctx, deps });
       }
 

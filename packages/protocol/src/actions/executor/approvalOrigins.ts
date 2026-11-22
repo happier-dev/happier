@@ -1,5 +1,5 @@
 import { ApprovalExecutionOriginV1Schema, ApprovalRequestOriginV1Schema, isApprovalRequesterConfirmationBoundToOriginV1, type ApprovalRequesterConfirmationV1, type ApprovalExecutionOriginCallerV1, type ApprovalExecutionOriginV1, type ApprovalRequest, type ApprovalRequestOriginV1 } from '../../approvals/approvalRequestV1.js';
-import { isLocalServiceStopActionIdV1, type ActionId } from '../actionIds.js';
+import { ACTION_ID_FAMILIES_V1, isLocalServiceStopActionIdV1, type ActionId } from '../actionIds.js';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '../actionSpecs.js';
 import type { ActionCaller, ActionExecutorContext } from './types.js';
 import { normalizeId } from './inputReading.js';
@@ -376,10 +376,7 @@ export function buildApprovalExecutionOriginV1(params: Readonly<{
 }
 
 export function isApprovalActionId(actionId: ActionId): boolean {
-  return actionId === 'approval.request.list'
-    || actionId === 'approval.request.get'
-    || actionId === 'approval.request.create'
-    || actionId === 'approval.request.decide';
+  return ACTION_ID_FAMILIES_V1.approvals.some(id => id === actionId);
 }
 
 export function isApprovalRequestActionReplayAdmitted(request: ApprovalRequest, context: ActionExecutorContext): boolean {

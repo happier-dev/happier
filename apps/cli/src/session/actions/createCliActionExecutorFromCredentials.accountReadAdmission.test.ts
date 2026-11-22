@@ -1,9 +1,10 @@
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { deriveAccountMachineKeyFromRecoverySecret, FeaturesResponseSchema } from '@happier-dev/protocol';
+import { ApprovalRequestV1Schema, ARTIFACT_PLAIN_DATA_KEY_MARKER, deriveAccountMachineKeyFromRecoverySecret, encodePlainArtifactStoredContent, FeaturesResponseSchema } from '@happier-dev/protocol';
 import { ExternalActionRequestEnvelopeV2Schema, openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
@@ -11,13 +12,74 @@ import { projectPrivateLabelForRecipientV1, sealPrivateLabelV1 } from '@happier-
 import { AccessibleMachineAccessV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import { TeamCredentialUsageQueryResultV1Schema } from '@happier-dev/protocol/teams';
+import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import tweetnacl from 'tweetnacl';
 import { configuration } from '@/configuration';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { artifactListResponse, artifactReadResponse } from '@/testkit/http/artifactHome';
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
 
 describe('original CLI Account admission', () => {
     afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+    it.each([
+        { actionId: 'approval.request.get', input: { artifactId: 'owned-request' }, expected: 'owned-request' },
+        { actionId: 'approval.request.list', input: {}, expected: 'queue' },
+        { actionId: 'approval.request.get', input: { artifactId: 'other-request' }, expected: 'approval_not_found' },
+        { actionId: 'approval.request.decide', input: { artifactId: 'other-request', decision: 'approve' }, expected: 'approval_not_found' },
+    ] as const)('routes $actionId for a present user without an owned Machine to $expected', async ({ actionId, input, expected }) => {
+        await withConfiguredDaemonTestHome({ prefix: 'happier-cli-approval-observation-' }, async () => {
+            const accountId = 'reader';
+            const token = `header.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 4,
+                provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+            const request = ApprovalRequestV1Schema.parse({ v: 1, actionId: 'session.title.set',
+                status: 'open', summary: 'Review a title change', createdAtMs: 1, updatedAtMs: 1,
+                createdBy: { surface: 'cli', sessionId: 'session' }, actionArgs: { sessionId: 'session', title: 'Reviewed' } });
+            const serverId = configuration.activeServerId;
+            const artifact = { id: 'owned-request', ownerAccountId: accountId, access: 'owner', publicAudience: 'none',
+                encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+                header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(request, { legacyServerId: serverId })),
+                body: encodePlainArtifactStoredContent({ body: JSON.stringify(request) }),
+                headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+            // The Home HTTP boundary exposes the caller's Artifact and conceals other Accounts' ids.
+            vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
+                const path = new URL(url).pathname;
+                if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+                if (path === '/v1/machines') return { status: 200, data: [] };
+                expect(options?.headers?.Authorization === `Bearer ${token}`).toBe(true);
+                if (path === '/v1/artifacts') return { status: 200, data: artifactListResponse(url, [artifact]) };
+                if (path === '/v1/artifacts/owned-request') return { status: 200, data: artifact };
+                if (path === '/v1/artifacts/other-request') return { status: 404, data: { error: 'artifact_not_found' } };
+                throw new Error(`Unexpected Home read: ${path}`);
+            });
+            vi.spyOn(axios, 'post').mockImplementation(async (url, body, options) => {
+                expect(new URL(url).pathname).toBe('/v1/artifacts/read');
+                expect(options?.headers?.Authorization === `Bearer ${token}`).toBe(true);
+                return artifactReadResponse(body, id => id === artifact.id ? artifact : null);
+            });
+            const executor = createCliActionExecutorFromCredentials({
+                credentials: { token, encryption: null, credentialProvenance: 'stored_session' },
+                serverId, serverApiUrl: 'https://home.test', serverIdentityId: 'srv_home', externalActionClient: true,
+                resolveServerFeaturesSnapshot: async () => ({ status: 'ready', provenance: 'authenticated',
+                    features: FeaturesResponseSchema.parse({ features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_home' } } }) }),
+                actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({}) }),
+            });
+            const result = await executor.execute(actionId, input, {
+                surface: 'cli', serverId, authority: 'present_user', presentUserConfirmation: { actionId },
+            });
+            if (!result.ok) {
+                expect(result.errorCode).toBe(expected);
+            } else if (actionId === 'approval.request.get') {
+                const read = getActionSpec(actionId).outputSchema.safeParse(result.result);
+                expect(read.success && read.data.artifactId).toBe(expected);
+            } else {
+                expect(expected).toBe('queue');
+                const read = getActionSpec('approval.request.list').outputSchema.safeParse(result.result);
+                expect(read.success && read.data.items.map(item => item.artifactId)).toEqual([artifact.id]);
+            }
+        });
+    });
 
     it.each([
         { actionId: 'workflow.run.get', input: { runId: '46d53d20-11a7-4a49-93a8-cbf56381e2dc' } },

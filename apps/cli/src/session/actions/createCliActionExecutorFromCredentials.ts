@@ -70,7 +70,7 @@ import { ManagedMachineControllerError } from '@/machines/managed/controllerErro
 import { isPluginActionExecutionDispatchId, type PluginActionExecutionRequestOwner } from './createDaemonPluginActionExecutor';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
-import { ACTION_INVOKE_ACTION_ID_V1, ActionIdSchema, isLocalServiceStopActionIdV1, SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_INVOKE_ACTION_ID_V1, ActionIdSchema, isApprovalRequestObservationActionIdV1, isLocalServiceStopActionIdV1, SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { isSettingsDeclarationActionIdV1, SettingsDeclarationActionInputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import { deploymentPreparationOperationForActionV1 } from '@happier-dev/protocol/deployments/deploymentPreparationAdmissionV1';
 import { enrichCliActionApprovalContext } from './enrichCliActionApprovalContext';
@@ -1850,6 +1850,12 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       // retained guest is online. Keep policy/approval in the shared executor;
       // admitted Session/Run origins retain their existing credentialed owner.
       const originalCliCaller = isOriginalCliActionContext(context);
+      // Untargeted approval observations use the caller's Account Artifact store.
+      // An explicit target or daemon ingress keeps its existing admission path.
+      if (originalCliCaller && params.externalActionClient && !requireDaemonIngress
+        && !params.machineId && !context.externalActionTarget && isApprovalRequestObservationActionIdV1(actionId)) {
+        return { context };
+      }
       // The deployment owner resolves the Environment controller for original
       // template roots and unselected mutations, preserving host policy before
       // admitting preparation/Ask.
