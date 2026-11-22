@@ -66,7 +66,7 @@ import {
   serializeProviderBindingLaunchHandoffForEnv,
 } from '@/plugins/runtime/providerBindings/handoff';
 import { resolveSpawnChildEnvironment } from '@/daemon/spawn/resolveSpawnChildEnvironment';
-import { bindAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/agentCliLaunchSpec';
+import { bindAgentCliLaunchSpec, type AgentCliLaunchSpec } from '@/packagedRuntime/managedTools/agentCliLaunchSpec';
 import { prepareForegroundAgentRuntimeBootstrapForLease } from '@/daemon/spawn/prepareAgentRuntimeSessionBridge';
 import { logger } from '@/ui/logger';
 import { readProcessIdentityByPid } from '@/daemon/processIdentity';
@@ -1003,6 +1003,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
       ));
     }
     let connectedServiceAuth: Awaited<ReturnType<typeof resolveConnectedServiceAuthForSpawn>> = null;
+    let admittedAgentCliLaunchSpec: AgentCliLaunchSpec | undefined;
     if (legacyConnectedServiceCatalogAgent && effectiveConnectedServices) {
       connectedServiceRedactionLease = createProviderRedactionLease({
         values: [],
@@ -1100,6 +1101,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
           },
         };
       }
+      admittedAgentCliLaunchSpec = childEnvironment.agentCliLaunchSpec;
       connectedServiceEnvironment = Object.freeze({
         ...childEnvironment.extraEnvForChild,
       });
@@ -1634,7 +1636,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
             const finalSpawnEnvironment = await resolveForegroundFinalPluginPrerequisites({
               agentIsolation: dependencies.agentIsolation,
               memberAgentCliLaunch,
-              ...(memberAgentCliLaunch ? { admittedMemberAgentCliLaunchSpec: childEnvironment.agentCliLaunchSpec } : {}),
+              ...(memberAgentCliLaunch ? { admittedMemberAgentCliLaunchSpec: admittedAgentCliLaunchSpec } : {}),
               ...(memberAgentCliLaunch && activeProviderLaunch && providerModel ? {
                 providerBindingContext: { v: 1, agentTargetKey: activeProviderLaunch.agentTargetKey, modelId: providerModel.modelId },
               } : {}),
