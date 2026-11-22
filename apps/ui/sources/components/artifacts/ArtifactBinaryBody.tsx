@@ -20,6 +20,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { t } from '@/text';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
+import { HappyError } from '@/utils/errors/errors';
 import { formatFilePageBytes } from '@/components/workspaces/files/file/FilePageStates';
 import type { PdfPageInfo } from '@/components/ui/media/pdf/PdfViewerStates';
 import type { PdfZoom } from '@/components/ui/media/pdf/pdfZoom';
@@ -97,6 +98,9 @@ export function ArtifactBinaryBody(props: Readonly<{ artifactId: string; name: s
         };
     }, [props.artifactId, props.name, props.readBytes, props.initialBytes, reference.blobId, reference.mime, reference.sha256, reference.sizeBytes, previewable, key, attempt]);
     const ready = preview.key === key && preview.phase === 'ready' ? preview : null;
+    // The read owner says whether another attempt can succeed; a deleted or refused file stays that way.
+    const readFailedForGood = preview.key === key && preview.phase === 'failed'
+        && preview.failure instanceof HappyError && !preview.failure.canTryAgain;
     const previewInput = React.useMemo<UseFilePreviewSourceInput>(() => ({
         enabled: previewable && ready !== null,
         source: ready ? { kind: 'bytes', bytes: ready.bytes, name: props.name } : { kind: 'uri', uri: '' },
@@ -134,9 +138,10 @@ export function ArtifactBinaryBody(props: Readonly<{ artifactId: string; name: s
     });
     const [columnWidth, setColumnWidth] = React.useState<number | null>(null);
     const openFullScreen = stage?.open ?? null;
-    const bodyActions = React.useMemo((): ArtifactBodyActions | null => previewable ? {
+    // Download reads the same bytes, so it is not offered once the read has failed for good.
+    const bodyActions = React.useMemo((): ArtifactBodyActions | null => previewable && !readFailedForGood ? {
         openFullScreen, download: () => { void download(); }, downloading,
-    } : null, [previewable, openFullScreen, download, downloading]);
+    } : null, [previewable, readFailedForGood, openFullScreen, download, downloading]);
     // In the Artifact view these sit in its action row beside Share; a History version keeps them under its body.
     const hosted = usePublishArtifactBodyActions(bodyActions);
     const scrollingWellHeight = Math.round(window.height * 0.75);
@@ -164,15 +169,15 @@ export function ArtifactBinaryBody(props: Readonly<{ artifactId: string; name: s
             </View>
         )
             : previewable && preview.key === key && (preview.phase === 'failed' || filePreview.status === 'error') ? <SurfaceStateCard testID="artifact:previewFailed" kind="error"
-                title={t('artifacts.error')}
-                reason={preview.phase === 'failed'
+                title={readFailedForGood ? resolveActionExecutionErrorMessage(preview.failure, t('artifacts.error')) : t('artifacts.error')}
+                reason={readFailedForGood ? undefined : preview.phase === 'failed'
                     ? resolveActionExecutionErrorMessage(preview.failure, t('artifacts.browser.loadFailedBody'), { safeToRetry: true })
                     : filePreview.error === t('files.imagePreviewTooLarge') ? filePreview.error : t('artifacts.browser.loadFailedBody')}
                 detail={filePreview.error ?? undefined}
-                action={{ label: t('common.retry'), onPress: props.onRetry ?? (() => setAttempt(value => value + 1)) }} />
+                action={readFailedForGood ? undefined : { label: t('common.retry'), onPress: props.onRetry ?? (() => setAttempt(value => value + 1)) }} />
             : !previewable ? <FileViewerBody viewer={viewer} title={props.name} source={previewInput} sizeBytes={reference.sizeBytes}
                 isActive findSurfaceId={`artifact:${props.artifactId}`} onDownload={() => { void download(); }} testID="artifact" /> : card}
-        {!previewable || hosted ? null : <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8 }}>
+        {!previewable || hosted || readFailedForGood ? null : <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8 }}>
             {stage ? <RoundButton testID="artifact:fullScreen" title={t('files.viewer.viewFullScreen')} size="small" display="secondary" onPress={stage.open} /> : null}
             <RoundButton testID="artifact:download" title={t('files.repositoryTree.actions.download')} size="small" display="secondary" loading={downloading} onPress={() => { void download(); }} />
         </View>}

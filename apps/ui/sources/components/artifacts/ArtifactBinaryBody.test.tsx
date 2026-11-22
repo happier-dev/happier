@@ -126,6 +126,28 @@ describe('ArtifactBinaryBody', () => {
         expect(screen.findByTestId('artifact:viewerBody')).toBeNull();
         await screen.unmount();
     });
+
+    it('says a version whose document is gone was not found, without a Retry that cannot work', async () => {
+        const source = binarySource('deleted-version', 'application/pdf');
+        // The Home's typed 404 body for a deleted Artifact (artifactsRoutes).
+        source.request.mockImplementation(async () => Response.json({ error: 'Artifact not found' }, { status: 404 }));
+        const screen = await renderScreen(<ArtifactBinaryBody artifactId="deleted-version" name="Report.pdf" {...source} />);
+        await vi.waitFor(() => expect(screen.findByTestId('artifact:previewFailed')).not.toBeNull());
+        const text = screen.getTextContent();
+        expect(text).toContain('artifacts.notFound');
+        expect(text).not.toContain('artifacts.browser.loadFailedBody');
+        expect(text).not.toContain('common.retry');
+        await screen.unmount();
+    });
+
+    it('keeps Retry for a read that can succeed on another attempt', async () => {
+        const source = binarySource('busy-version', 'application/pdf');
+        source.request.mockImplementation(async () => new Response('busy', { status: 502 }));
+        const screen = await renderScreen(<ArtifactBinaryBody artifactId="busy-version" name="Report.pdf" {...source} />);
+        await vi.waitFor(() => expect(screen.findByTestId('artifact:previewFailed')).not.toBeNull());
+        expect(screen.getTextContent()).toContain('common.retry');
+        await screen.unmount();
+    });
     it('keeps PDF type and size visible and adds the page count reported by the viewer without another read', async () => {
         const previous = Platform.OS;
         Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });
@@ -420,8 +442,8 @@ describe('ArtifactBinaryBody', () => {
             const screen = await renderScreen(<ArtifactBinaryBody artifactId="image" name="image.png" {...source} />);
             await flushHookEffects();
             expect(screen.findByTestId('artifact:previewFailed')).not.toBeNull();
-            await screen.pressByTestIdAsync('artifact:download');
-            await waitForHomeGovernance(() => expect(screen.findByTestId('artifact:downloadFailed')).not.toBeNull());
+            // A mismatch is final: Download would read the same refused bytes, so it is not offered.
+            expect(screen.findByTestId('artifact:download')).toBeNull();
             expect(createUrl).not.toHaveBeenCalled();
         } finally { Object.defineProperty(Platform, 'OS', { configurable: true, value: previous }); }
     });

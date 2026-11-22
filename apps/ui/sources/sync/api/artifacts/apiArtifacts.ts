@@ -223,7 +223,9 @@ async function artifactHttpReadError(response: Response, fallback: string, code?
             { status: response.status, code: refusal.success ? refusal.data : code ?? 'content_unavailable' });
     }
     if (response.status === 404) {
-        return new HappyError('Artifact not found', false, { status: 404, code: code ?? 'not_found' });
+        // The Home's typed 404 body names a deleted or unknown Artifact; the read's own code covers other unavailability.
+        const gone = payload && typeof payload === 'object' && Reflect.get(payload, 'error') === 'Artifact not found';
+        return new HappyError('Artifact not found', false, { status: 404, code: gone ? 'artifact_not_found' : code ?? 'not_found' });
     }
     if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
         let message = fallback;
