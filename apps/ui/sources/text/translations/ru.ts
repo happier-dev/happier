@@ -9280,6 +9280,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
 	      },},
 	    resuming: "Возобновление...",
 	    resumeFailed: "Не удалось возобновить сессию",
+	    resumeConversationUnavailable: "Этот разговор больше нельзя открыть. «Продолжить» начнёт новую сессию с его стенограммой.",
 	    invalidLinkTitle: "Недействительная ссылка на сессию",
         whichHomeTitle: "Какой Home?",
         whichHomeDescription: "Эта сессия найдена в нескольких Home. Выберите Home, который нужно открыть.",

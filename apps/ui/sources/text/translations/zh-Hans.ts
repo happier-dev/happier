@@ -8511,6 +8511,7 @@ export const zhHans: TranslationStructure = {
 	      },},
 	    resuming: "正在恢复...",
 	    resumeFailed: "恢复会话失败",
+	    resumeConversationUnavailable: "此对话已无法重新打开。“继续”会根据其记录开始一个新会话。",
 	    invalidLinkTitle: "无效的会话链接",
         whichHomeTitle: "哪个 Home？",
         whichHomeDescription: "多个 Home 中都有此会话。请选择要打开的 Home。",

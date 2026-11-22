@@ -4386,6 +4386,20 @@ export function useSessionComposerController({
     }, [actionExecutor, pendingActivationActionBusy, pendingActivationPresentation, pendingRecoveryApproval.requestApproval,
         resumeActions.execute, resumeActions.executeForCaller, resumeActions.binding, sessionAccountLifetime, sessionId]);
 
+    // Continue from the transcript: the one replay continuation a stopped Session offers when
+    // its native conversation cannot be resumed. The child keeps this Session's approval rows.
+    const continueFromTranscript = React.useCallback(async (): Promise<boolean> => {
+        const outcome = await openNewSessionSourceContextNavigation({
+            sourceSessionId: sessionId,
+            forkPoint: { type: 'latest' },
+            serverId: sessionRouteServerId ?? null,
+            accountLifetime: sessionAccountLifetime,
+            continuation: true,
+            navigateToNewSession: route => router.push(route),
+        });
+        return outcome.kind === 'opened';
+    }, [router, sessionAccountLifetime, sessionId, sessionRouteServerId]);
+
     // Explicit Resume and accepted input wake failures share the same recovery projection.
     const presentResumeFailureRecovery = React.useCallback((presentation: ReturnType<typeof resolveResumeFailurePresentation>,
         silent = false, targetHome = resolvePortableServerIdentityForRoutingId(sessionRouteServerId),
@@ -4401,14 +4415,23 @@ export function useSessionComposerController({
             return true;
         }
         if (presentation.kind !== 'alert' || !presentation.recovery) return false;
+        // Continue is offered under the person's replay-resume preference, as a stopped Session's Resume offers it.
+        const canContinue = presentation.recovery === 'continue_from_transcript'
+            && resolveHappierReplayConfig(storage.getState().settings).enabled;
         if (!silent) alertActionFailure({ reason: presentation.message, code: presentation.errorCode ?? null,
+            ...(presentation.recovery === 'continue_from_transcript' ? { title: t('session.resumeFailed') } : {}),
             context: { phase: 'session.open', targetHome, reasonCode: presentation.reasonCode ?? null },
             ...(presentation.recovery === 'connected_accounts' ? {
                 recovery: { label: t('connectedServices.title'), onPress: () => router.push('/(app)/settings/connected-services') },
+            } : canContinue ? {
+                recovery: { label: t('common.continue'), onPress: () => fireAndForget(continueFromTranscript().catch((error: unknown) => {
+                    Modal.alert(t('common.error'), error instanceof Error ? error.message : t('session.resumeFailed'));
+                    return false;
+                }), { tag: 'SessionComposer.resumeFailure.continue' }) },
             } : {}),
         });
         return true;
-    }, [currentAgentLabel, ownerMetadata?.machineId, presentMachineAgentRefusal, reachableMachineTarget?.machineId,
+    }, [continueFromTranscript, currentAgentLabel, ownerMetadata?.machineId, presentMachineAgentRefusal, reachableMachineTarget?.machineId,
         router, sessionAccountScopeKey, sessionRouteServerId]);
 
     // A send that could not resume a stopped Session keeps the row queued behind
@@ -4465,15 +4488,7 @@ export function useSessionComposerController({
                     // creates the child. The legacy `session.continueWithReplay`
                     // RPC stays a compatibility ingress with no UI product use.
                     try {
-                        const outcome = await openNewSessionSourceContextNavigation({
-                            sourceSessionId: sessionId,
-                            forkPoint: { type: 'latest' },
-                            serverId: sessionRouteServerId ?? null,
-                            accountLifetime: sessionAccountLifetime,
-                            continuation: true,
-                            navigateToNewSession: route => router.push(route),
-                        });
-                        return outcome.kind === 'opened';
+                        return await continueFromTranscript();
                     } catch (e) {
                         maybeAlert(e instanceof Error ? e.message : t('session.resumeFailed'));
                         return false;
@@ -4540,7 +4555,7 @@ export function useSessionComposerController({
             maybeAlert(t('session.resumeFailed'), readRpcErrorCode(error));
             return false;
         }
-    }, [resumeActions.execute, resumeActions.executeForCaller, resumeActions.binding, agentId, handlePendingActivationRequest, pendingActivationPresentation, presentResumeFailureRecovery, sessionAccountLifetime, sessionAccountScopeKey, sessionRouteServerId, executionRunsEnabled, isMachineReachable, machineReachability, isResumable, resumeEligibility, reachableMachineTarget, router, session, sessionActionDefaultBackend, sessionId, sessionMachineAccessRemoved]);
+    }, [resumeActions.execute, resumeActions.executeForCaller, resumeActions.binding, agentId, continueFromTranscript, handlePendingActivationRequest, pendingActivationPresentation, presentResumeFailureRecovery, sessionAccountLifetime, sessionAccountScopeKey, sessionRouteServerId, executionRunsEnabled, isMachineReachable, machineReachability, isResumable, resumeEligibility, reachableMachineTarget, router, session, sessionActionDefaultBackend, sessionId, sessionMachineAccessRemoved]);
     handleUsageLimitRecoveryResumeNowRef.current = handleResumeSession;
 
     const withdrawManagedWakeInput = React.useCallback(async (row: PendingMessage) => {

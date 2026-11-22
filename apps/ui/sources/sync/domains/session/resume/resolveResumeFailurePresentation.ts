@@ -1,12 +1,12 @@
 import { normalizeSpawnSessionErrorDetail, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import { readConnectedServiceUxDiagnosticFromError } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { writePersistedBackendTargetRefV2, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import { presentSessionStartupFailureCause, presentSessionStartupFailureRecovery } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import { isSessionNativeConversationUnreachable, presentSessionStartupFailureCause, presentSessionStartupFailureRecovery } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { resolveSessionSpawnNewConnectedAccountFailure, resolveSessionSpawnNewResultFailureMessage } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
 import { t } from '@/text';
 
 export type ResumeFailurePresentation = Readonly<
-    | { kind: 'alert'; message: string; errorCode?: string; reasonCode?: string; recovery?: 'connected_accounts' | 'machine_runtime_reload' }
+    | { kind: 'alert'; message: string; errorCode?: string; reasonCode?: string; recovery?: 'connected_accounts' | 'machine_runtime_reload' | 'continue_from_transcript' }
     | { kind: 'directory_missing'; errorCode: typeof SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING }
     | { kind: 'agent_setup'; errorCode: typeof SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT }
     | { kind: 'plugin_disabled'; message: string; errorCode: 'plugin_disabled'; pluginId: string | null }
@@ -23,6 +23,9 @@ export function resolveResumeFailurePresentation(result: Readonly<{
         ? Reflect.get(result.details, 'errorDetail') : undefined));
     const cause = detail?.kind === 'connected_service_ux_diagnostic' ? detail.uxDiagnostic.code
         : detail?.kind === 'launch_error' ? detail.code : undefined;
+    // The Agent can no longer reopen this conversation: Resume cannot recover it, Continue from its transcript can.
+    if (isSessionNativeConversationUnreachable(cause)) return { kind: 'alert', message: t('session.resumeConversationUnavailable'),
+        errorCode: errorCode || cause, reasonCode: cause, recovery: 'continue_from_transcript' };
     const startupRecovery = presentSessionStartupFailureRecovery([cause, errorCode]);
     if (startupRecovery) return { kind: 'alert', message: startupRecovery.message,
         errorCode: cause || errorCode, recovery: startupRecovery.recovery };

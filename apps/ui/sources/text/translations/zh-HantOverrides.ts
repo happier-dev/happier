@@ -7380,6 +7380,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             },
             resuming: '正在恢復...',
             resumeFailed: '無法恢復工作階段',
+            resumeConversationUnavailable: '此對話已無法重新開啟。「繼續」會依據其記錄開始新的工作階段。',
             openRuns: '開啟工作階段執行',
             openAutomations: '開啟工作階段工作流程',
             openSubagents: ({ count }: { count: number }) => (count > 0 ? `開啟代理 (${count})` : '開啟代理'),

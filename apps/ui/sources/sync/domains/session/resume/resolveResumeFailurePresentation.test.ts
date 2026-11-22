@@ -144,4 +144,18 @@ describe('session resume failure presentation', () => {
             kind: 'alert', message: 'No verified transport is available for the target Home', errorCode: 'action_failed',
         });
     });
+
+    it.each(['action', 'wake'] as const)('offers Continue from the transcript when the %s Resume finds the native conversation gone', source => {
+        const errorDetail = { kind: 'launch_error', code: 'codex_continuation_unreachable', message: 'Agent native Session construction failed',
+            failureCause: { phase: 'client_start', failureReason: 'unclassified_provider_error', providerErrorCode: 'codex_continuation_unreachable' } };
+        expect(resolveResumeFailurePresentation({ errorCode: 'resume_failed', errorMessage: 'Agent native Session construction failed',
+            ...(source === 'action' ? { details: { errorDetail } } : { errorDetail }) }, 'Resume failed')).toEqual({
+            kind: 'alert', message: t('session.resumeConversationUnavailable'), errorCode: 'resume_failed',
+            reasonCode: 'codex_continuation_unreachable', recovery: 'continue_from_transcript',
+        });
+        // A startup timeout is transient: Resume stays its recovery, never Continue.
+        expect(resolveResumeFailurePresentation({ errorCode: 'resume_failed', details: { errorDetail: {
+            kind: 'launch_error', code: 'SESSION_WEBHOOK_TIMEOUT', message: 'Agent native Session startup did not complete' } } },
+            'Resume failed')).not.toMatchObject({ recovery: 'continue_from_transcript' });
+    });
 });

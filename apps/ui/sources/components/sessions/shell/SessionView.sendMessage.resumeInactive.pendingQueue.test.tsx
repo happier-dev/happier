@@ -106,6 +106,8 @@ vi.mock('@expo/vector-icons', () => ({
 vi.mock('react-native-safe-area-context', () => ({
     initialWindowMetrics: null,
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+    // No provider here: the optional-insets owner falls back to its own zero context.
+    SafeAreaInsetsContext: undefined,
 }));
 vi.mock('@react-navigation/native', () => ({
     ...createReactNavigationNativeMock(),
@@ -1693,6 +1695,46 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         expect(actionWrites()[0]?.url.pathname).toContain('waiting-row');
         expect(actionWrites()[0]?.body).toMatchObject({ requestedAction: { v: 1, kind: 'enqueue' }, resumeWhenAvailable: false });
         await screen.unmount();
+    });
+
+    it.each(['conversation-gone', 'conversation-gone-replay-off', 'transient'] as const)(
+        'offers Continue from the transcript only when Resume finds the native conversation gone (%s)', async variant => {
+        storage.setState({ settings: { ...storage.getState().settings, sessionReplayEnabled: variant !== 'conversation-gone-replay-off' } });
+        await stoppedSession();
+        // The daemon's typed session.open refusal, as captured live on build #137 (RESUME-CONTINUE-1121 open-1.json).
+        const code = variant === 'transient' ? 'SESSION_WEBHOOK_TIMEOUT' : 'codex_continuation_unreachable';
+        resumeResponse = async () => ({ type: 'error', errorCode: 'SPAWN_FAILED', errorMessage: 'Agent native Session construction failed',
+            errorDetail: { kind: 'launch_error', code, message: 'Agent native Session construction failed',
+                ...(variant === 'transient' ? {} : { failureCause: { phase: 'client_start', failureReason: 'unclassified_provider_error',
+                    providerErrorCode: code } }) } });
+        const screen = await renderSessionView({ routeServerId: runtime.serverId });
+        try {
+            await act(async () => { await emitSessionResumeRequest('s1'); });
+            await vi.waitFor(() => expect(resumeCalls()).toHaveLength(1));
+            await vi.waitFor(() => expect(modalMockState.current?.spies.alert).toHaveBeenCalledOnce());
+            const [title, body, buttons = []] = modalMockState.current!.spies.alert.mock.calls[0]!;
+            const labels = buttons.map(button => button.text);
+            if (variant === 'transient') {
+                expect(labels).not.toContain('common.continue');
+                // Resume stays the next step for a failure a retry can recover.
+                expect(findAgentInput(screen).props.connectionStatus?.action).toMatchObject({ label: 'session.pendingActivation.actions.resume' });
+                return;
+            }
+            expect([title, body]).toEqual(['session.resumeFailed', 'session.resumeConversationUnavailable']);
+            if (variant === 'conversation-gone-replay-off') {
+                expect(labels).toEqual(['approvals.technicalDetails', 'common.ok']);
+                return;
+            }
+            expect(labels).toEqual(['common.continue', 'approvals.technicalDetails', 'common.ok']);
+            await act(async () => { buttons.find(button => button.text === 'approvals.technicalDetails')?.onPress?.(); });
+            expect(JSON.parse(String(modalMockState.current!.spies.alert.mock.calls.at(-1)?.[1])))
+                .toMatchObject({ code: 'SPAWN_FAILED', phase: 'session.open', reasonCode: 'codex_continuation_unreachable' });
+            await act(async () => { buttons.find(button => button.text === 'common.continue')?.onPress?.(); });
+            await vi.waitFor(() => expect(routerPushSpy).toHaveBeenCalledWith(expect.objectContaining({
+                pathname: '/new', params: expect.objectContaining({ continuation: '1', dataId: expect.any(String) }),
+            })));
+            expect(resumeCalls()).toHaveLength(1);
+        } finally { await screen.unmount(); }
     });
 
     it('authors a replay continuation through New Session with source context instead of the legacy creator', async () => {

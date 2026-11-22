@@ -250,11 +250,19 @@ export type SessionActivationFailurePresentation = Readonly<{
     recovery: SessionActivationFailureRecovery | null;
 }>;
 
+/**
+ * The Agent can no longer reopen this Session's native conversation; retrying it cannot recover.
+ * The one typed decision read by blocked queued input and by a failed explicit Resume.
+ */
+export function isSessionNativeConversationUnreachable(code: unknown): boolean {
+    return code === 'codex_continuation_unreachable';
+}
+
 /** Native continuation has settled before acceptance; retrying the same conversation cannot recover it. */
 export function presentSessionContinuationFailure(
     issue: SessionRuntimeIssueV1 | null | undefined,
 ): SessionActivationFailurePresentation | null {
-    return issue?.code === 'codex_continuation_unreachable'
+    return isSessionNativeConversationUnreachable(issue?.code)
         ? { message: t('workflows.problem.conversationUnavailable'), recovery: 'new_session' }
         : null;
 }

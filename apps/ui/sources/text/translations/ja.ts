@@ -9129,6 +9129,7 @@ localTailscale: {
 	      },},
 	    resuming: "再開中...",
 	    resumeFailed: "セッションの再開に失敗しました",
+	    resumeConversationUnavailable: "この会話はもう再開できません。「続行」でこのトランスクリプトから新しいセッションを開始します。",
 	    invalidLinkTitle: "無効なセッションリンク",
         whichHomeTitle: "どの Home を開きますか？",
         whichHomeDescription: "このセッションは複数の Home にあります。開く Home を選んでください。",

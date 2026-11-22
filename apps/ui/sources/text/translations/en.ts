@@ -10303,6 +10303,7 @@ const enSession = {
   },
   resuming: 'Resuming...',
   resumeFailed: 'Failed to resume session',
+  resumeConversationUnavailable: 'This conversation can no longer be reopened. Continue starts a new session from its transcript.',
   invalidLinkTitle: 'Invalid session link',
   whichHomeTitle: 'Which Home?',
   whichHomeDescription:
