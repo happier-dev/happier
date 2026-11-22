@@ -1,4 +1,5 @@
 import type { Prisma as PrismaNamespace, PrismaClient as PrismaClientInstance } from "@prisma/client";
+import type { SqlDriverAdapter, SqlDriverAdapterFactory } from "@prisma/driver-adapter-utils";
 import { PGlite } from "@electric-sql/pglite";
 import { FramedPgliteSocketServer } from "./pgliteFramedSocketServer.mjs";
 import { mkdir } from "node:fs/promises";
@@ -20,6 +21,7 @@ import {
 import { isPrismaErrorCode, readPrismaDriverErrorCause, readSharedQaSchemaMismatchDiagnostic, withPrismaQueryValidationDiagnostic } from './prismaErrors';
 import { annotateWebLatencyQuery, timeWebLatencyPhase } from '@/utils/webLatencyTrace';
 import { notifySqliteCommittedWrite } from './sqliteCommittedWrites';
+import { createPrismaDriverAdapter } from "./prismaDriverAdapters";
 export { isPrismaErrorCode } from './prismaErrors';
 export type TransactionClient = PrismaNamespace.TransactionClient;
 export type PrismaClientType = PrismaClientInstance;
@@ -158,7 +160,10 @@ let sqliteReadSnapshot: {
     lock: AsyncLock;
     client: ReturnType<typeof withSharedQaSchemaDiagnostics> | null;
 } | null = null;
-let _sqliteReadinessClient: PrismaClientType | null = null;
+let sqliteReadiness: {
+    factory: SqlDriverAdapterFactory;
+    connection?: Promise<SqlDriverAdapter>;
+} | null = null;
 
 export const db: PrismaClientType = new Proxy({} as PrismaClientType, {
     get(_target, prop) {
@@ -227,10 +232,10 @@ export async function initDbSqlite(): Promise<void> {
         lock: new AsyncLock(),
         client: null,
     };
-    _sqliteReadinessClient = (await createGeneratedPrismaClient(
-        "sqlite",
-        withConnectionLimit(process.env.DATABASE_URL, 1),
-    )).client;
+    const { factory } = createPrismaDriverAdapter("sqlite", sqliteReadSnapshot.databaseUrl, {
+        sqliteBusyTimeoutMs: resolveLightSqliteBusyTimeoutMsFromEnv(process.env),
+    });
+    sqliteReadiness = { factory };
     const diagnostics = resolveSqliteStartupDiagnosticsFromEnv(process.env);
     log(
         { module: "storage", event: "sqlite-startup-diagnostics", sqlite: diagnostics },
@@ -537,17 +542,27 @@ export async function applySqliteRuntimePragmas(client: Pick<PrismaClientType, "
 // so an unreadable or non-database file fails the probe; SQLite answers `SELECT 1` without
 // touching the file. Other providers keep `SELECT 1` on the app pool.
 export async function probeDbReadiness(): Promise<void> {
-    if (_sqliteReadinessClient) {
-        await _sqliteReadinessClient.$queryRawUnsafe("SELECT count(*) FROM sqlite_master;");
+    const readiness = sqliteReadiness;
+    if (readiness) {
+        // The fixed SQL needs the SQLite adapter's busy handling and connection isolation.
+        // Go directly to that adapter so the probe does not retain a Prisma compiler.
+        const connection = readiness.connection ??= readiness.factory.connect().catch((error) => {
+            readiness.connection = undefined;
+            throw error;
+        });
+        const adapter = await connection;
+        await adapter.queryRaw({ sql: "SELECT count(*) FROM sqlite_master;", args: [], argTypes: [] });
         return;
     }
     await db.$queryRaw`SELECT 1`;
 }
 
 export async function disconnectDbReadinessProbe(): Promise<void> {
-    const readinessClient = _sqliteReadinessClient;
-    _sqliteReadinessClient = null;
-    await readinessClient?.$disconnect();
+    const connection = sqliteReadiness?.connection;
+    sqliteReadiness = null;
+    // The readiness caller owns reporting connection failures.
+    const adapter = await connection?.catch(() => undefined);
+    await adapter?.dispose();
 }
 
 export async function shutdownDbClient(): Promise<void> {

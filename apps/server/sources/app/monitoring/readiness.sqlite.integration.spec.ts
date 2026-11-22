@@ -1,17 +1,24 @@
 import { closeSync, openSync, writeSync } from "node:fs";
+import { Session } from "node:inspector";
+import { getHeapStatistics } from "node:v8";
 
 import type { FastifyReply } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { sendDatabaseReadinessResponse } from "@/app/monitoring/readiness";
 import { db } from "@/storage/db";
-import { withSqliteReadSnapshot } from "@/storage/prisma";
+import { disconnectDbReadinessProbe, withSqliteReadSnapshot } from "@/storage/prisma";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
-// A CPU-bound read that holds its pool connection for a long time, standing in for a
-// cold, large list read (#832: a ~40 MB archived-session page took ~7 s).
-const LONG_READ_SQL =
-    "WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM cnt WHERE x < 30000000) SELECT count(*) AS n FROM cnt";
+function deferred(): Readonly<{ promise: Promise<void>; resolve: () => void; reject: (reason: unknown) => void }> {
+    let resolve!: () => void;
+    let reject!: (reason: unknown) => void;
+    const promise = new Promise<void>((resolvePromise, rejectPromise) => {
+        resolve = resolvePromise;
+        reject = rejectPromise;
+    });
+    return { promise, resolve, reject };
+}
 
 async function readReadinessStatus(): Promise<number> {
     let statusCode = 200;
@@ -37,30 +44,35 @@ describe("SQLite /ready probe", () => {
         harness = null;
     });
 
-    it("answers while a long application read holds the sole primary connection", async () => {
+    it("does not retain a query compiler for the fixed SQL probe", async () => {
         harness = await createLightSqliteHarness({
-            tempDirPrefix: "happier-sqlite-readiness-head-of-line-",
-            sqliteConnectionLimit: 1,
+            tempDirPrefix: "happier-sqlite-readiness-compiler-",
             initAuth: false,
             initEncrypt: false,
             initFiles: false,
         });
-        let longReadSettled = false;
-        const longRead = db.$queryRawUnsafe(LONG_READ_SQL).finally(() => {
-            longReadSettled = true;
-        });
+        const inspector = new Session();
+        inspector.connect();
+        const usedHeapAfterCollection = async (): Promise<number> => {
+            await new Promise<void>((resolve, reject) => {
+                inspector.post("HeapProfiler.collectGarbage", (error) => error ? reject(error) : resolve());
+            });
+            return getHeapStatistics().used_heap_size;
+        };
         try {
-            await new Promise((resolve) => setTimeout(resolve, 200));
-            expect(longReadSettled).toBe(false);
-
             await expect(readReadinessStatus()).resolves.toBe(200);
-            expect(longReadSettled).toBe(false);
+            await expect(readReadinessStatus()).resolves.toBe(200);
+            const beforeClose = await usedHeapAfterCollection();
+            await disconnectDbReadinessProbe();
+            const afterClose = await usedHeapAfterCollection();
+            // The retired compiler retained 28 MiB. Leave room for unrelated GC variation.
+            expect(beforeClose - afterClose).toBeLessThan(5 * 1024 * 1024);
         } finally {
-            await longRead;
+            inspector.disconnect();
         }
-    }, 60_000);
+    });
 
-    it("answers while long reads hold both the primary connection and the read snapshot", async () => {
+    it("answers while transactions hold both the sole primary connection and the read snapshot", async () => {
         harness = await createLightSqliteHarness({
             tempDirPrefix: "happier-sqlite-readiness-snapshot-head-of-line-",
             sqliteConnectionLimit: 1,
@@ -68,24 +80,29 @@ describe("SQLite /ready probe", () => {
             initEncrypt: false,
             initFiles: false,
         });
-        let settledReads = 0;
-        const appRead = db.$queryRawUnsafe(LONG_READ_SQL).finally(() => {
-            settledReads += 1;
+        // Hold the real connections without blocking the event loop in the synchronous SQLite binding.
+        const primaryHeld = deferred();
+        const snapshotHeld = deferred();
+        const release = deferred();
+        const snapshotRead = withSqliteReadSnapshot(async (reader) => {
+            await reader.$queryRaw`SELECT count(*) FROM sqlite_master`;
+            snapshotHeld.resolve();
+            await release.promise;
         });
-        // Read-only transactions (Session listing pages) run on the snapshot connection.
-        const snapshotRead = withSqliteReadSnapshot((reader) => reader.$queryRawUnsafe(LONG_READ_SQL)).finally(() => {
-            settledReads += 1;
+        void snapshotRead.catch(snapshotHeld.reject);
+        const primaryRead = db.$transaction(async () => {
+            primaryHeld.resolve();
+            await release.promise;
         });
+        void primaryRead.catch(primaryHeld.reject);
         try {
-            await new Promise((resolve) => setTimeout(resolve, 200));
-            expect(settledReads).toBe(0);
-
+            await Promise.all([snapshotHeld.promise, primaryHeld.promise]);
             await expect(readReadinessStatus()).resolves.toBe(200);
-            expect(settledReads).toBe(0);
         } finally {
-            await Promise.all([appRead, snapshotRead]);
+            release.resolve();
+            await Promise.all([snapshotRead, primaryRead]);
         }
-    }, 120_000);
+    });
 
     it("fails when the database file is no longer a SQLite database", async () => {
         harness = await createLightSqliteHarness({
