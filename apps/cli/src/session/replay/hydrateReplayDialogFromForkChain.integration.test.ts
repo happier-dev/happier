@@ -1399,4 +1399,160 @@ describe('hydrateReplayDialogFromForkChain — character-budget window', () => {
     const untitled = await run({ rows: [textRow(1, 'user', 'hello')], charBudget: 100_000 });
     expect(untitled.result!.sourceTitleText).toBeNull();
   });
+
+  /**
+   * A conversation rollback (`metadata.sessionRollbackRangesV1`) removes turns from
+   * the Agent's own context. Replay is how the NEXT reader gets that context —
+   * an Agent switch, a replay fork, continue-with-replay — so a rolled-back turn
+   * it carries is the tangent the user removed, handed straight back.
+   *
+   * A parent segment's rollback applies only to children forked AFTER it: a
+   * child forked before the rollback holds those turns as its own history.
+   */
+  describe('conversation rollback ranges', () => {
+    const plainRow = (seq: number, role: 'user' | 'agent', text: string) => ({
+      seq,
+      createdAt: 1_000 + seq,
+      content: role === 'user'
+        ? { t: 'plain', v: { role: 'user', content: { type: 'text', text } } }
+        : { t: 'plain', v: { role: 'agent', content: { type: 'text', text } } },
+    });
+    const rollbackRanges = (ranges: ReadonlyArray<{ start: number; end: number; at: number }>) => ({
+      v: 1,
+      updatedAt: 1,
+      ranges: ranges.map((range) => ({
+        target: { type: 'before_user_message', userMessageSeq: range.start },
+        startSeqInclusive: range.start,
+        endSeqInclusive: range.end,
+        rolledBackAt: range.at,
+      })),
+    });
+    const makeSession = (id: string, seq: number, createdAt: number, metadata: Record<string, unknown>) => ({
+      id,
+      seq,
+      createdAt,
+      updatedAt: createdAt + 1,
+      active: false,
+      activeAt: 0,
+      archivedAt: null,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify(metadata),
+      metadataVersion: 0,
+      agentState: null,
+      agentStateVersion: 0,
+      pendingCount: 0,
+      pendingVersion: 0,
+      dataEncryptionKey: null,
+      share: null,
+    });
+
+    async function hydrate(params: Readonly<{
+      startingSessionId: string;
+      sessions: Map<string, ReturnType<typeof makeSession>>;
+      messages: Map<string, Array<ReturnType<typeof plainRow>>>;
+    }>) {
+      server = createServer((req, res) => {
+        const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
+        const sessionMatch = /^\/v2\/sessions\/([^/]+)$/u.exec(url.pathname);
+        if (req.method === 'GET' && sessionMatch) {
+          const session = params.sessions.get(sessionMatch[1]!);
+          res.statusCode = session ? 200 : 404;
+          res.setHeader('content-type', 'application/json');
+          res.end(session ? JSON.stringify({ session }) : undefined);
+          return;
+        }
+        const messagesMatch = /^\/v1\/sessions\/([^/]+)\/messages$/u.exec(url.pathname);
+        if (req.method === 'GET' && messagesMatch) {
+          if (respondTranscriptMessagesQueryRejection(url.searchParams, res)) return;
+          const beforeSeq = Number(url.searchParams.get('beforeSeq') ?? Number.POSITIVE_INFINITY);
+          const limit = Number(url.searchParams.get('limit') ?? 500);
+          const roles = url.searchParams.getAll('roles').flatMap((value) => value.split(','));
+          const rows = (params.messages.get(messagesMatch[1]!) ?? [])
+            .filter((row) => row.seq < beforeSeq)
+            .filter((row) => roles.length === 0 || roles.includes((row.content.v as { role: string }).role))
+            .sort((a, b) => b.seq - a.seq)
+            .slice(0, limit);
+          res.statusCode = 200;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({ hasMore: false, messages: rows }));
+          return;
+        }
+        res.statusCode = 404;
+        res.end();
+      });
+      await new Promise<void>((resolve) => {
+        server!.listen(0, '127.0.0.1', () => resolve());
+      });
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Failed to resolve server address');
+      envScope.patch({
+        HAPPIER_SERVER_URL: `http://127.0.0.1:${address.port}`,
+        HAPPIER_WEBAPP_URL: 'http://127.0.0.1:3000',
+        HAPPIER_HOME_DIR: happyHomeDir,
+      });
+      const { reloadConfiguration } = await import('@/configuration');
+      reloadConfiguration();
+      const { hydrateReplayDialogFromForkChain } = await import('./hydrateReplayDialogFromForkChain');
+      return await hydrateReplayDialogFromForkChain({
+        credentials: { token: 't', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
+        startingSessionId: params.startingSessionId,
+        limit: 10,
+        wantSynopsisText: false,
+      });
+    }
+
+    it('omits rolled-back turns of the source Session from the dialog and the latest user turn', async () => {
+      const sessionId = 'sess_rolled_back';
+      const result = await hydrate({
+        startingSessionId: sessionId,
+        sessions: new Map([[sessionId, makeSession(sessionId, 5, 100, {
+          flavor: 'codex',
+          path: '/tmp',
+          sessionRollbackRangesV1: rollbackRanges([{ start: 3, end: 4, at: 500 }]),
+        })]]),
+        messages: new Map([[sessionId, [
+          plainRow(1, 'user', 'feature A'),
+          plainRow(2, 'agent', 'working on A'),
+          plainRow(3, 'user', 'tangent B'),
+          plainRow(4, 'agent', 'working on B'),
+          plainRow(5, 'agent', 'continuing A'),
+        ]]]),
+      });
+
+      expect(result?.dialog.map((item) => item.text)).toEqual(['feature A', 'working on A', 'continuing A']);
+      expect(result?.lastUserDialogItem?.text).toBe('feature A');
+    });
+
+    it('applies a parent rollback only to children forked after it', async () => {
+      const parentSessionId = 'sess_rollback_parent';
+      const forkedBefore = 'sess_forked_before_rollback';
+      const forkedAfter = 'sess_forked_after_rollback';
+      const forkMetadata = { flavor: 'claude', path: '/tmp', forkV1: { v: 1, parentSessionId, parentCutoffSeqInclusive: 3 } };
+      const sessions = new Map([
+        [parentSessionId, makeSession(parentSessionId, 3, 100, {
+          flavor: 'codex',
+          path: '/tmp',
+          sessionRollbackRangesV1: rollbackRanges([{ start: 2, end: 2, at: 500 }]),
+        })],
+        [forkedBefore, makeSession(forkedBefore, 0, 400, forkMetadata)],
+        [forkedAfter, makeSession(forkedAfter, 0, 600, forkMetadata)],
+      ]);
+      const messages = new Map([[parentSessionId, [
+        plainRow(1, 'user', 'feature A'),
+        plainRow(2, 'user', 'tangent B'),
+        plainRow(3, 'agent', 'answer'),
+      ]]]);
+
+      const before = await hydrate({ startingSessionId: forkedBefore, sessions, messages });
+      expect(before?.dialog.map((item) => item.text)).toEqual(['feature A', 'tangent B', 'answer']);
+
+      await new Promise<void>((resolve, reject) => {
+        server!.close((error) => (error ? reject(error) : resolve()));
+      });
+      server = null;
+
+      const after = await hydrate({ startingSessionId: forkedAfter, sessions, messages });
+      expect(after?.dialog.map((item) => item.text)).toEqual(['feature A', 'answer']);
+    });
+  });
 });
