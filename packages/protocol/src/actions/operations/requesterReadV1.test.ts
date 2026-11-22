@@ -10,12 +10,13 @@ const executor = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(51));
 const substitute = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(52));
 
 // Home is the genuine boundary: it mints the signed root and delivers a key it chooses.
-function readWith(deliveredKey: Uint8Array, pinnedKey: Uint8Array) {
+function readWith(deliveredKey: Uint8Array, pinnedKey: Uint8Array, mintedMode: 'plain' | 'e2ee' = 'e2ee') {
   const requests: string[] = [];
   const result = readRequesterActionOperationV1({
     input: readRequesterOperationAddressV1(ACTION_OPERATION_GET_ACTION_ID_V1,
       { serverId: 'srv_home', machineId: 'executor', operationId: 'operation-1' })!,
     accountId: 'reader',
+    accountEncryptionMode: 'e2ee',
     serverIdentityId: 'srv_home',
     tokenEpoch: 1,
     requestId: 'read-1',
@@ -39,7 +40,7 @@ function readWith(deliveredKey: Uint8Array, pinnedKey: Uint8Array) {
             serverIdentityId: 'srv_home',
             machineId: 'executor',
             installationId: 'installation',
-            accountEncryptionMode: 'e2ee',
+            accountEncryptionMode: mintedMode,
             actionId: 'action.operations.get',
             requestId: 'read-1',
             target: { kind: 'machine', machineId: 'executor' },
@@ -87,5 +88,11 @@ describe('requester operation read executor key', () => {
       '/v1/actions/action.operations.get/execution-authorization',
       '/v1/actions/action.operations.get',
     ]);
+  });
+
+  it('refuses a root Home minted in a mode other than the reader\'s own, so the executor pin cannot be skipped', async () => {
+    const { result, requests } = readWith(substitute.publicKey, executor.publicKey, 'plain');
+    await expect(result).resolves.toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
+    expect(requests).toEqual(['/v1/actions/action.operations.get/execution-authorization']);
   });
 });

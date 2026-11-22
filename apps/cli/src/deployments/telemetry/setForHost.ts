@@ -6,6 +6,7 @@ import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_TELEMETRY_BINDINGS_CHI
 import type { DeploymentEnvironmentTelemetrySetInputV1, DeploymentEnvironmentTelemetrySetSuccessV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
 import { resolveDeploymentTelemetryCapabilitiesV1, type DeploymentTelemetryCollectorPinV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
 import { computeMachineInstallationKeyFingerprintV1 } from '@happier-dev/protocol/machines/identity/installationKeySchemas';
+import { readExecutorKeyPinFromMachineContentV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1, DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1, isMachineRoleActiveV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
@@ -31,7 +32,8 @@ type Host = Readonly<{
     savedSecretOperationContext?: SavedSecretOperationContextV1;
     readEnvironment(request: { environmentId: string; context: ActionExecutorContext }): Promise<Environment>;
     readProject(environment: Environment, context: ActionExecutorContext, readDefault: boolean): Promise<{ name: string; telemetryMachineId?: string }>;
-    readMachine(machineId: string, context: ActionExecutorContext): Promise<{ metadata: unknown; installationPublicKey?: string | null } | null>;
+    readMachine(machineId: string, context: ActionExecutorContext): Promise<{ metadata: Readonly<{ installationPublicKey?: string }> | null;
+        installationPublicKey?: string | null; encryptionMode?: 'plain' | 'e2ee' } | null>;
 }>;
 const refuse = (code: string, details?: unknown): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code,
     ...(details === undefined ? {} : { details }) }); };
@@ -61,13 +63,21 @@ export function createEnvironmentTelemetrySetForHost(host: Host) {
             let collectorPin: DeploymentTelemetryCollectorPinV1 | null = null;
             if (machineId !== null) {
                 const machine = await host.readMachine(machineId, context);
-                if (!machine?.installationPublicKey) return refuse('machine_unavailable', { role: 'telemetry', machineId });
+                if (!machine) return refuse('machine_unavailable', { role: 'telemetry', machineId });
                 if (!isMachineRoleActiveV1(machine.metadata, DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1, DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1)) {
                     return refuse('telemetry_role_inactive', { machineId });
                 }
-                // Readers seal to the key Home delivers only when it matches this private pin.
-                collectorPin = { machineId, installationKeyFingerprint:
-                    computeMachineInstallationKeyFingerprintV1(decodeBase64(machine.installationPublicKey, 'base64')) };
+                // Readers seal to the key Home delivers only when it matches this private pin. The collector's
+                // own E2EE content is the source; plain content leaves the Home row key (owner-accepted).
+                const contentPin = readExecutorKeyPinFromMachineContentV1({ machineId,
+                    contentMode: machine.encryptionMode === 'e2ee' ? 'e2ee' : 'plain',
+                    installationPublicKey: machine.metadata?.installationPublicKey });
+                if (contentPin === null) return refuse('installation_key_unbound', { machineId, recovery: 'restart_daemon' });
+                const rowKey = machine.installationPublicKey;
+                const pin = contentPin ?? (rowKey ? { machineId,
+                    installationKeyFingerprint: computeMachineInstallationKeyFingerprintV1(decodeBase64(rowKey, 'base64')) } : undefined);
+                if (!pin) return refuse('machine_unavailable', { role: 'telemetry', machineId });
+                collectorPin = pin;
             }
             const pinChanged = !sameStrictJsonValue(current.content.telemetryCollector ?? null, collectorPin);
             if (previousMachineId !== null && previousMachineId !== machineId && !input.confirmDelete) {

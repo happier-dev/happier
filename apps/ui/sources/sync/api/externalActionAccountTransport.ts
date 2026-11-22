@@ -99,8 +99,10 @@ export async function executeOriginalAccountRequesterOperation(params: Readonly<
     const authentication = readOriginalAccountActionAuthentication(account.credentials.token);
     if (!authentication) return null;
     const serverIdentityId = account.serverIdentityId;
+    // The reader's persisted Account mode decides whether the executor key must be pinned; Home's root only echoes it.
+    const { accountMode } = await account.resolveAccountEncryption();
     return withActionAccountRequestSignal(account, params.signal, signal => executeRequesterActionOperationV1({
-        ...operation, accountId: account.accountId, serverIdentityId, tokenEpoch: authentication.tokenEpoch,
+        ...operation, accountId: account.accountId, accountEncryptionMode: accountMode, serverIdentityId, tokenEpoch: authentication.tokenEpoch,
         requestId: params.requestId, randomBytes: getRandomBytes,
         request: async (path, body) => {
             const response = await account.request(path, { method: 'POST', headers: { 'Content-Type': 'application/json',

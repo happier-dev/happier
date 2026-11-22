@@ -1927,7 +1927,8 @@ describe('composed CLI managed Action origination', () => {
                 if (!operationId) throw new Error('Missing accepted operation');
                 const address = { serverId: homeId, machineId: target.machineId, operationId, waitForTerminal: true as const };
                 const read = (member: typeof requester) => readRequesterActionOperationV1({ input: address,
-                    accountId: member.account.id, serverIdentityId: homeId, tokenEpoch: member.account.tokenEpoch,
+                    accountId: member.account.id, accountEncryptionMode: member.account.encryptionMode === 'e2ee' ? 'e2ee' : 'plain',
+                    serverIdentityId: homeId, tokenEpoch: member.account.tokenEpoch,
                     requestId: crypto.randomUUID(), randomBytes: tweetnacl.randomBytes,
                     request: async (url, payload) => {
                         const response = await instance.inject({ method: 'POST', url, payload,

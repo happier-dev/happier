@@ -34,6 +34,8 @@ export type RequesterOperationRequestV1 = NonNullable<ReturnType<typeof readRequ
 
 type RequesterOperationTransport = Readonly<{
   accountId: string;
+  /** The reader's persisted Account mode; a root Home minted in another mode is refused. */
+  accountEncryptionMode: 'plain' | 'e2ee';
   serverIdentityId: string;
   tokenEpoch: number;
   authenticationKind?: ExternalActionSignedAuthenticationV1['kind'];
@@ -83,6 +85,7 @@ export async function executeRequesterActionOperationV1(params: RequesterOperati
   const root = authorization.data.binding;
   const key = authorization.data.requesterOperationReadInstallationPublicKey;
   if (!root.requesterOperationRead || !key || root.accountId !== params.accountId || root.serverIdentityId !== params.serverIdentityId
+    || root.accountEncryptionMode !== params.accountEncryptionMode
     || !('authentication' in root) || root.authentication.kind !== authentication.kind
     || root.authentication.tokenEpoch !== authentication.tokenEpoch
     || !isExternalActionAuthorizationBoundToEnvelope(root, { actionId, machineId: target.machineId, envelope })) return unavailable;

@@ -866,7 +866,7 @@ export async function prepareOriginalAccountPresetAcquire(
     target: { kind: 'machine', machineId: controller.machineId } });
 }
 
-export function executeOriginalAccountRequesterOperation(params: Readonly<{
+export async function executeOriginalAccountRequesterOperation(params: Readonly<{
   operation: RequesterOperationRequestV1;
   credentials: StoredCredentials;
   serverIdentityId: string;
@@ -893,7 +893,13 @@ export function executeOriginalAccountRequesterOperation(params: Readonly<{
     if (params.isCurrent && !await params.isCurrent()) throw new Error('not_authenticated');
   };
   const operationInput = params.operation.input;
-  return executeRequesterActionOperationV1({ ...params.operation, accountId, serverIdentityId: params.serverIdentityId,
+  // The reader's persisted Account mode decides whether the executor key must be pinned; Home's root only echoes it.
+  const accountMode = await readAccountEncryptionModeOnce({ credentials: params.credentials,
+    request: () => axios.get<unknown>(`${home}/v1/account/encryption`, { headers, validateStatus: () => true,
+      ...(params.signal ? { signal: params.signal } : {}) }) });
+  if (accountMode.kind !== 'resolved') return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+  return executeRequesterActionOperationV1({ ...params.operation, accountId, accountEncryptionMode: accountMode.mode,
+    serverIdentityId: params.serverIdentityId,
     authenticationKind: authentication.data.kind, tokenEpoch: authentication.data.tokenEpoch,
     requestId: params.requestId, randomBytes,
     request: async (path, body) => {

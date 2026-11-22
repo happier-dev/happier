@@ -154,15 +154,20 @@ refusals for both read kinds: `installation_key_mismatch` and
 
 - **Environment collector reads.** When the telemetry writer installs or moves
   the collector, it pins `telemetryCollector` (the collector Machine id and a
-  domain-separated SHA-256 fingerprint of the installation key it read at that
-  time) in the Environment's private content. Turning telemetry off removes the
+  domain-separated SHA-256 fingerprint of the installation key the collector
+  publishes in its own E2EE Machine metadata) in the Environment's private
+  content. A collector whose E2EE content publishes no key refuses setup with
+  `installation_key_unbound`. Plain collector content falls back to the Machine
+  row key. Turning telemetry off removes the
   pin. An E2EE reader opens each admitted Environment's content with its own
   Artifact opener. A missing pin refuses with recovery `telemetry_setup`: run
   telemetry setup again, which writes the pin.
 - **Requester operation reads.** The daemon publishes its own installation
   public key in its E2EE Machine metadata on every metadata refresh. An E2EE
   reader that can open that Machine's content verifies against it. Content that
-  publishes no key refuses with recovery `restart_daemon`.
+  publishes no key refuses with recovery `restart_daemon`. The reader compares
+  the minted root's `accountEncryptionMode` with its own persisted Account mode
+  and refuses a mismatch, so Home cannot skip the check by minting `plain`.
 
 The delivered key stays Home-vouched in two cases. Plain-mode readers and plain
 Machine or Environment content are server-readable by contract. A Machine whose
