@@ -1,3 +1,5 @@
+import * as React from 'react';
+
 const listeners = new Set<() => void>();
 let motionPending = false;
 let presentedHomes = 0;
@@ -36,4 +38,19 @@ export function presentReadyHome(): () => void {
 export function subscribeHomeArrival(listener: () => void): () => void {
     listeners.add(listener);
     return () => { listeners.delete(listener); };
+}
+
+/** An admitted Home child keeps its mounted state through later focus changes. */
+export function useHasHomeArrived(): boolean {
+    const [arrived, setArrived] = React.useState(isHomeArrivalSettled);
+    React.useEffect(() => {
+        if (arrived) return;
+        const admit = () => {
+            if (isHomeArrivalSettled()) setArrived(true);
+        };
+        const unsubscribe = subscribeHomeArrival(admit);
+        admit();
+        return unsubscribe;
+    }, [arrived]);
+    return arrived;
 }

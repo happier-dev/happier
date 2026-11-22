@@ -7,9 +7,10 @@ import { resolveWidgetInstanceTitle, type WidgetCandidate } from '@/components/w
 import { t } from '@/text';
 import { readWidgetGroupTitle } from '@/components/widgets/group/widgetGroupTitle';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { ReviewsListHost } from '@/components/reviews/ReviewsListHost';
+import { retryableLazy } from '@/components/ui/performance/retryableLazy';
 
 import { HubAttentionSection } from './HubAttentionSection';
+import { useHasHomeArrived } from './homeArrival';
 import { HomeCompletedBots } from './HomeCompletedBots';
 import { HubComposerSection, type HubComposerSuggestionsPresentation } from './composer/HubComposerSection';
 import { HubSetupSection } from './HubSetupSection';
@@ -45,6 +46,17 @@ const builtin = (id: string): HomeHubBuiltinDefinition => {
     if (!definition) throw new Error(`Unknown Home builtin: ${id}`);
     return definition;
 };
+const HomeReviewsList = retryableLazy(async () => ({
+    default: (await import('@/components/reviews/ReviewsListHost')).ReviewsListHost,
+}));
+
+function HomeReviewsPreview() {
+    const arrived = useHasHomeArrived();
+    return arrived ? <React.Suspense fallback={null}>
+        <HomeReviewsList surface="hub" />
+    </React.Suspense> : null;
+}
+
 export const HOME_HUB_BUILTIN_SECTIONS: readonly HomeHubBuiltinSection[] = Object.freeze([
     {
         ...builtin('start'),
@@ -71,7 +83,7 @@ export const HOME_HUB_BUILTIN_SECTIONS: readonly HomeHubBuiltinSection[] = Objec
         description: () => t('homeSettings.groups.reviews'),
         title: () => t('homeSettings.groups.reviews'),
         render: ({ menu }) => <ItemGroup title={t('homeSettings.groups.reviews')} action={menu} density="compact">
-            <ReviewsListHost surface="hub" />
+            <HomeReviewsPreview />
         </ItemGroup>,
     },
     {

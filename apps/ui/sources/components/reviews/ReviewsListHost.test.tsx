@@ -23,6 +23,7 @@ import { WorkspaceRouteBody } from '@/app/(app)/reviews';
 import { ReviewsListHost } from './ReviewsListHost';
 import { reviewRowFact } from './list/reviewRowFact';
 import { findHomeHubBuiltinSection } from '@/components/hub/homeHubSections';
+import { presentReadyHome } from '@/components/hub/homeArrival';
 import { HOME_HUB_BUILTIN_DEFINITIONS, getHomeHubDefaultLayoutV1, resolveHomeHubLayout } from '@/components/hub/layout/homeHubLayout';
 import { artifactViewRoute } from '@/components/artifacts/artifactBrowserModel';
 import { formatShortRelativeTimeAt } from '@/utils/time/formatShortRelativeTime';
@@ -81,7 +82,7 @@ describe('reviewRowFact', () => {
 });
 
 describe('/reviews live host', () => {
-    it('opens actionable Reviews from the actual Home section without a second toolbar or automatic page drain', async () => {
+    it('opens actionable Reviews after Home arrival without a second toolbar or automatic page drain', async () => {
         const section = findHomeHubBuiltinSection('reviews');
         expect(section, 'Home registers the Reviews consumer').not.toBeNull();
         expect(resolveHomeHubLayout(getHomeHubDefaultLayoutV1(), HOME_HUB_BUILTIN_DEFINITIONS, []).sections)
@@ -117,7 +118,12 @@ describe('/reviews live host', () => {
         const screen = await renderScreen(<PluginSurfaceFocusEligibilityProvider active presentationActive>
             {section!.render({ menu: <React.Fragment />, placeholder: '', frameStyle: 'plain', composerSuggestions: 'none' })}
         </PluginSurfaceFocusEligibilityProvider>);
+        let withdrawHome: (() => void) | undefined;
         try {
+            expect(reads).toBe(0);
+            expect(screen.findHostByTestId('reviews:home')).toBeNull();
+            await act(async () => { withdrawHome = presentReadyHome(); });
+            await vi.waitFor(() => expect(screen.findByTestId('reviews:home')).not.toBeNull());
             await reportCollectionLayout(screen, 'reviews:home');
             await waitForHomeGovernance(() => expect(screen.findHostByTestId('reviews:home:row:needs')).not.toBeNull());
             expect(screen.findHostByTestId('reviews:home:row:running')).not.toBeNull();
@@ -135,6 +141,7 @@ describe('/reviews live host', () => {
             expect(reads).toBe(1);
         } finally {
             await screen.unmount();
+            withdrawHome?.();
             await connection.dispose();
             storage.setState({ profileScope: previousScope });
             publishAppliedActiveServerSnapshot(previousApplied, previousAvailable);
