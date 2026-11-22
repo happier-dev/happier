@@ -17014,6 +17014,7 @@ settingsSession: {
       signedOutTitle: "Zaloguj się do tego Home, aby zobaczyć użycie",
       loading: "Odczytywanie użycia",
       unattributed: "Nieznane",
+      agentNotReported: "Agent niezgłoszony",
       average: "śr.",
       byAgent: "według agenta",
       byModel: "według modelu",

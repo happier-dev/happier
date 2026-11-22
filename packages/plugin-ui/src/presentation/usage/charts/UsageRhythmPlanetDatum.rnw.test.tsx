@@ -66,6 +66,19 @@ describe('Rhythm and planet chart datum targets', () => {
       expect(table.textContent).toContain('18:00');
     } finally { mount.unmount(); }
   });
+  it('cuts a long lane name in the Parallel work gutter with an ellipsis and keeps it whole in Values (acceptance 1122 #38)', () => {
+    const long = [{ id: 'custom-acp', name: 'Custom ACP Agent', color: '#888' }];
+    const mount = datums(<UsageDayInAgents {...base} width={720} style="lanes" agents={long} labels={dayLabels} model={{ date: '2026-09-01',
+      lanes: [{ agentId: 'custom-acp', agentTimeMs: 1234, spans: [{ fromHour: 2, toHour: 4, waits: [] }] }], atOnce: [0, 1],
+      peak: { count: 1, atHour: 2, byAgent: [{ agentId: 'custom-acp', count: 1 }] }, waitCount: 0 }} />);
+    try {
+      const drawn = [...mount.container.querySelectorAll('svg text')].map(node => node.textContent ?? '');
+      expect(drawn).not.toContain('Custom ACP Agent');
+      expect(drawn.some(text => text.startsWith('Custom') && text.endsWith('…'))).toBe(true);
+      act(() => mount.container.querySelector<HTMLButtonElement>('[aria-expanded="false"]')!.click());
+      expect(mount.container.querySelector('[role="table"]')!.textContent).toContain('Custom ACP Agent');
+    } finally { mount.unmount(); }
+  });
   it.each(['week', 'daylight'] as const)('retains exact amounts, unknown and ordinal readings in %s marks', style => {
     const labels = { weekdays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const, clock: (hour: number) => `${hour}:00`, peak: String, night: () => 'Night', caption: () => 'Daylight', values: { ...values, weekdayColumn: 'Weekday', hourColumn: 'Hour', valueColumn: 'Tokens', formatValue: formatted, levelNames: levels } };
     for (const encoding of ['amount', 'ordinal'] as const) {

@@ -16770,6 +16770,7 @@ settingsSession: {
             signedOutTitle: "Connecte-toi à ce Home pour voir l'utilisation",
             loading: "Lecture de l'utilisation",
             unattributed: "Inconnu",
+            agentNotReported: "Agent non signalé",
             average: "moy.",
             byAgent: "par agent",
             byModel: "par modèle",

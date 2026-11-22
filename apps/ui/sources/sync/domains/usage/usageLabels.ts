@@ -92,7 +92,8 @@ export function usageAgentTitle(agentId: string, fallback?: string): string {
     const providedTitle = display && display.toLowerCase() !== agentId.toLowerCase()
         && display.toLowerCase() !== formatUsageDimensionLabel('source', agentId).toLowerCase() ? display : undefined;
     // The scalar-report bridge records 'legacy' because its Agent was not recorded.
-    if (isUnattributedUsageAgentId(agentId)) return t('usage.board.page.unattributed');
+    // Said as what is missing, never as an Agent named "Unknown" (USAGE-ACCEPT 1122 #37).
+    if (isUnattributedUsageAgentId(agentId)) return t('usage.board.page.agentNotReported');
     try {
         const entry = readAgentEntry(agentId);
         if (entry.title && (entry.catalogAgentId !== null || entry.identity !== null)) return entry.title;

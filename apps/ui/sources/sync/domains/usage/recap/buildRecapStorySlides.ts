@@ -52,7 +52,7 @@ function appendComposedSlides(slides: RecapStorySlide[], recap: UsageRecapCompos
     if (agentMix?.some(row => row.tokens !== null && row.tokens > 0)) {
         const rows = [...agentMix].sort((left, right) => compareUsageMeasurementsDescending(left.tokens, right.tokens))
             .map(row => ({
-                label: row.agentId ? usageAgentTitle(row.agentId) : t('usage.board.page.unattributed'),
+                label: usageAgentTitle(row.agentId ?? ''),
                 value: row.tokens,
             }));
         slides.push({ id: 'agentMix', label: t('usage.board.recap.field_agentMix'), value: rows[0]!.label,

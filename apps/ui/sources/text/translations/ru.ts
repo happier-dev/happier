@@ -16841,6 +16841,7 @@ settingsSession: {
             signedOutTitle: "Войдите в этот Home, чтобы увидеть использование",
             loading: "Чтение использования",
             unattributed: "Неизвестно",
+            agentNotReported: "Агент не указан",
             average: "сред.",
             byAgent: "по агентам",
             byModel: "по моделям",

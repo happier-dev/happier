@@ -16061,6 +16061,7 @@ settingsSession: {
           signedOutTitle: "Inicia sessió en aquest Home per veure l’ús",
           loading: "S’està llegint l’ús",
           unattributed: "Desconegut",
+          agentNotReported: "Agent no informat",
           average: "mitj.",
           byAgent: "per agent",
           byModel: "per model",

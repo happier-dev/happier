@@ -17004,6 +17004,7 @@ settingsSession: {
             signedOutTitle: "Entre nesta Home para ver o uso",
             loading: "Lendo o uso",
             unattributed: "Desconhecido",
+            agentNotReported: "Agente não informado",
             average: "média",
             byAgent: "por agente",
             byModel: "por modelo",

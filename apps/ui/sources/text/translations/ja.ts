@@ -17173,6 +17173,7 @@ settingsSession: {
             signedOutTitle: "使用量を見るにはこの Home にサインインしてください",
             loading: "使用量を読み込み中",
             unattributed: "不明",
+            agentNotReported: "エージェント不明（未報告）",
             average: "平均",
             byAgent: "エージェント別",
             byModel: "モデル別",

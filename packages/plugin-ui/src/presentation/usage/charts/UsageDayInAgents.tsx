@@ -8,7 +8,7 @@ import { Circle, Defs, G, Path, Pattern, Rect } from 'react-native-svg';
 
 import {
   UsageDecorativeSvg as Svg,
-  UsageChartCaption, UsageChartColumn, UsageChartKey, UsageChartValues, resolveUsageChartInk, usageChartRound as r1, usageSmoothPath,
+  UsageChartCaption, UsageChartColumn, UsageChartKey, UsageChartValues, resolveUsageChartInk, usageChartFitText, usageChartRound as r1, usageSmoothPath,
   useUsageChartSvgText, useUsageChartWidth, type UsageChartAgent, type UsageChartBaseProps, type UsageChartValuesLabels,
 } from './chartKit.js';
 
@@ -174,7 +174,9 @@ function DayLanes(props: DayDrawProps & Readonly<{ phone: boolean }>) {
       {props.lanes.map((lane, index) => {
         const y = top + curveHeight + 10 + index * (nameRow + laneHeight + gap) + nameRow;
         return <G key={JSON.stringify(lane.agentId)}>
-          {svgText.draw({ x: 0, y: phone ? y - 4 : y + laneHeight - 3, text: props.name(lane.agentId), tone: 'secondary', size: 'body' })}
+          {/* The gutter cuts a long name with "…" (USAGE-ACCEPT 1122 #38: "Custom ACP /" was clipped); Values keep it whole. */}
+          {svgText.draw({ x: 0, y: phone ? y - 4 : y + laneHeight - 3, text: phone ? props.name(lane.agentId)
+            : usageChartFitText(props.name(lane.agentId), label - 6, svgText.styles.body.fontSize), tone: 'secondary', size: 'body' })}
           <Rect x={label} y={y} width={r1(plot)} height={laneHeight} rx={laneHeight / 2} fill={ink.track} />
           {lane.spans.map((span, spanIndex) => <G key={spanIndex}>
             <Rect x={r1(x(span.fromHour))} y={y + 2} width={r1(Math.max(3, x(span.toHour) - x(span.fromHour)))} height={laneHeight - 4} rx={(laneHeight - 4) / 2} fill={colour(lane.agentId)} />

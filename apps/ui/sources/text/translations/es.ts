@@ -16896,6 +16896,7 @@ settingsSession: {
             signedOutTitle: "Inicia sesión en este Home para ver el uso",
             loading: "Leyendo el uso",
             unattributed: "Desconocido",
+            agentNotReported: "Agente no informado",
             average: "media",
             byAgent: "por agente",
             byModel: "por modelo",

@@ -17267,6 +17267,7 @@ settingsSession: {
             signedOutTitle: "Accedi a questa Home per vedere l'utilizzo",
             loading: "Lettura dell'utilizzo",
             unattributed: "Sconosciuto",
+            agentNotReported: "Agente non riportato",
             average: "media",
             byAgent: "per agente",
             byModel: "per modello",

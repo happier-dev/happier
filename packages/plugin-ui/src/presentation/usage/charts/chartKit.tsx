@@ -35,6 +35,15 @@ export type UsageChartBaseProps = Readonly<{
   testID?: string;
 }>;
 
+/**
+ * A name drawn in an SVG column of `widthPx` (body text, semibold estimate): cut with "…" when it would run past the
+ * column into the drawing. Values keep the whole name; SVG text has no ellipsis of its own.
+ */
+export function usageChartFitText(value: string, widthPx: number, fontSize = 13): string {
+  const room = Math.floor(widthPx / (fontSize * 0.62));
+  return value.length <= room ? value : `${value.slice(0, Math.max(1, room - 1)).trimEnd()}…`;
+}
+
 /** A step from `color` toward the paper (the dataviz meter rule): 1 = the colour, 0 = the paper. */
 export function usageChartMix(color: string, paper: string, amount: number): string {
   return mixHappierColorOverPaper(color, paper, amount) ?? color;

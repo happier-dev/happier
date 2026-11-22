@@ -17074,6 +17074,7 @@ settingsSession: {
             signedOutTitle: "Melde dich bei diesem Home an, um die Nutzung zu sehen",
             loading: "Nutzung wird gelesen",
             unattributed: "Unbekannt",
+            agentNotReported: "Agent nicht gemeldet",
             average: "Ø",
             byAgent: "nach Agent",
             byModel: "nach Modell",

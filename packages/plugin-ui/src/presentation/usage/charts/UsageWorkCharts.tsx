@@ -7,7 +7,7 @@ import { ChartDrawing, ChartMark } from '../../data/ChartDatum.js';
 import { formatHappierDataValue, formatHappierDataValueWithPrecision } from '../../data/dataModel.js';
 import {
   UsageDecorativeSvg as Svg,
-  UsageChartCaption, UsageChartColumn, UsageChartValues, resolveUsageChartInk, usageChartMix, usageChartRound as r1, usageSmoothPath,
+  UsageChartCaption, UsageChartColumn, UsageChartValues, resolveUsageChartInk, usageChartFitText, usageChartMix, usageChartRound as r1, usageSmoothPath,
   useUsageChartSvgText, useUsageChartWidth, type UsageChartAgent, type UsageChartBaseProps, type UsageChartValuesLabels,
 } from './chartKit.js';
 import type { UsagePlanetSlot } from './usagePlanetSlot.js';
@@ -269,10 +269,7 @@ export function UsageRunLength(props: UsageChartBaseProps & Readonly<{ agents: r
           return !next || tickSpan(ms, text)[1]! + 4 <= tickSpan(next[0], next[1])[0]!;
         });
         // A name wider than its column is cut to it, so it never runs into the distribution; the values keep it whole.
-        const fitName = (value: string) => {
-          const room = Math.floor((label - 8) / ((svgText.styles.body.fontSize ?? 13) * 0.62));
-          return value.length <= room ? value : `${value.slice(0, Math.max(1, room - 1)).trimEnd()}…`;
-        };
+        const fitName = (value: string) => usageChartFitText(value, label - 8, svgText.styles.body.fontSize);
         const targets: ReactNode[] = [];
         return <><Svg width={width} height={height}>
           {ticks.map(([ms, text], at) => <G key={ms}>

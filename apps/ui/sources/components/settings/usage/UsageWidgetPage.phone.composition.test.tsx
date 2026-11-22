@@ -188,12 +188,18 @@ async function renderUsagePage(
 
 // D23 (owner 11-09): the dashboard chooser and its + leave the phone; it shows the selected view under its
 // filters. A wide window keeps them.
-it('leaves the dashboard chooser off a phone and keeps it on a wide window', async () => {
+// USAGE-ACCEPT 1122 #30: with no chooser a phone could not reach the other views and did not name the current one.
+// A phone chooses a view through the bar's folded picker; arranging (+ and ⋯) stays desktop work (D23).
+it('lets a phone choose a view without arranging, and keeps arranging on a wide window', async () => {
   const phone = await renderUsagePage();
   await waitForHomeGovernance(() =>
     expect(phone.findAllByType(UsageFilterBar)).toHaveLength(1),
   );
-  expect(phone.findAllByType(WidgetAreaLayoutBar)).toHaveLength(0);
+  const phoneBar = phone.findAllByType(WidgetAreaLayoutBar);
+  expect(phoneBar).toHaveLength(1);
+  expect(phoneBar[0]!.props.layouts.length).toBeGreaterThan(1);
+  expect(phoneBar[0]!.props.onCreate ?? null).toBeNull();
+  expect(phoneBar[0]!.props.actions ?? null).toBeNull();
   await phone.unmount();
   await home?.dispose();
   home = undefined;

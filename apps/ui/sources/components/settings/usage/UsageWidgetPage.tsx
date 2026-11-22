@@ -479,14 +479,15 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
         appsShown={appsShown}
         homeUnavailable={homeUnavailable} phone={phone}
         layouts={layoutsFact} {...(props.sessionId ? { sessionId: props.sessionId } : {})} />
-      {/* One Session is one view: the Account's named views (Plans, Sources…) mean nothing here. A phone
-          shows the selected view without the chooser and its + (D23): arranging dashboards is desktop work. */}
-      {session || phone ? null : <WidgetAreaLayoutBar
+      {/* One Session is one view: the Account's named views (Plans, Sources…) mean nothing here. A phone chooses a
+          view through the bar's folded picker, which also names the current one (USAGE-ACCEPT 1122 #30: without it the
+          other views were unreachable); arranging (+ and ⋯: create, rename, reorder, delete) stays desktop work (D23). */}
+      {session ? null : <WidgetAreaLayoutBar
         layouts={tabViews}
         selectedId={selectedLayoutId}
         onSelect={bar.onSelect}
-        onCreate={bar.create}
-        actions={bar.personalActions}
+        onCreate={phone ? null : bar.create}
+        actions={phone ? null : bar.personalActions}
         // A failed views read is said once by the page header; the bar keeps the built-in views meanwhile.
         labels={labels}
         // The page header already says "Usage": when the views fold into one chooser it is a section-level name, never a

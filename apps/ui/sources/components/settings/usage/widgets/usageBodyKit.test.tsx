@@ -332,10 +332,11 @@ describe('shared Usage identity and dependent coverage', () => {
         expect(unmeasured.findByTestId('rhythm.punchcard')).toBeNull();
         expect(unmeasured.findByTestId('rhythm.hours')).not.toBeNull();
     });
+    // USAGE-ACCEPT 1122 #37: "Unknown" read as an Agent's name; it says what is missing, as Models says "not reported".
     it('does not invent a Legacy Agent for scalar reports with unknown attribution', () => {
-        expect(usageAgentTitle('legacy')).toBe(t('usage.board.page.unattributed'));
+        expect(usageAgentTitle('legacy')).toBe(t('usage.board.page.agentNotReported'));
         expect(usageAgentTitle('unknown', 'Unknown agent')).toBe(usageAgentTitle(''));
-        expect(usageDimensionLabel('agent', 'legacy', 'Legacy')).toBe(t('usage.board.page.unattributed'));
+        expect(usageDimensionLabel('agent', 'legacy', 'Legacy')).toBe(t('usage.board.page.agentNotReported'));
         expect(usageAgentTitle('custom-acp')).toBe('Custom ACP Agent');
     });
     it('projects known accounting producers as usage, not technical ingestion names', () => {

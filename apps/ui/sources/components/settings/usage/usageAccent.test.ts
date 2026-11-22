@@ -121,5 +121,26 @@ describe('Agent series colours', () => {
             expect(read('')).toBe(getNeutralAgentIdentityColor(theme));
             expect(read('unknown')).toBe(getNeutralAgentIdentityColor(theme));
         });
+
+        // USAGE-ACCEPT 1122 #2: with sixteen Agents the hues went out in canonical id order, so the leader (Muse) fell to
+        // the ink ramp. Hues go out in the page's rank order (largest share first, id as tie-break): leaders always
+        // carry a hue and only the long tail shares the ramp; the input's order still never matters.
+        it(`gives the page's leading hue-less Agents the hues when sixteen compete (${mode})`, () => {
+            const tail = ['acme-a', 'acme-b', 'acme-c', 'acme-d', 'acme-e', 'acme-f', 'acme-g', 'acme-h', 'acme-i', 'acme-j'];
+            const leaders = ['muse', 'grok', 'ohMyPi', 'kimi', 'kilo'];
+            const population = [
+                ...tail.map(agentId => ({ agentId, weight: 1 })),
+                ...leaders.map((agentId, index) => ({ agentId, weight: 1000 - index })),
+                { agentId: 'codex', weight: 5000 },
+            ];
+            const read = createUsageAgentSeriesColor(theme, population);
+            const reversed = createUsageAgentSeriesColor(theme, [...population].reverse());
+            const leaderHues = leaders.map(read);
+            for (const hue of leaderHues) expect(chroma(hue)).toBeGreaterThan(48);
+            expect(new Set(leaderHues).size).toBe(5);
+            expect(leaders.map(reversed)).toEqual(leaderHues);
+            expect(read('codex')).toBe(getAgentIdentityColor(theme, 'codex'));
+            for (const id of tail) expect(chroma(read(id))).toBeLessThan(48);
+        });
     }
 });

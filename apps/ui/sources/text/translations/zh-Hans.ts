@@ -16538,6 +16538,7 @@ settingsSession: {
             signedOutTitle: "登录此 Home 以查看用量",
             loading: "正在读取用量",
             unattributed: "未知",
+            agentNotReported: "未报告代理",
             average: "平均",
             byAgent: "按代理",
             byModel: "按模型",
