@@ -324,9 +324,12 @@ function SampledOccurrenceSummary({
     controller: PosthogOccurrenceControllerV1;
     onOpenStackTrace: (() => void) | undefined;
 }>): React.ReactElement | null {
+    const text = usePluginTranslation();
     const trace = React.useMemo(() => posthogStackTrace(controller.selectedEvent), [controller.selectedEvent]);
+    // A step's own first read is one quiet line in its place (Sentry's "What happened", the Checks step), not a
+    // centred loading page inside the story: the step stays short, so it offers no "Read more" of nothing.
     if (controller.state.kind === 'loading') {
-        return <LoadingState title="Reading sampled occurrences" titleKey="plugins.posthog.ui.readingSamples" />;
+        return <Status tone="muted" pulsing label={text('plugins.posthog.ui.readingSamples', 'Reading sampled occurrences')} />;
     }
     if (controller.state.kind === 'unavailable') {
         return <SampledUnavailable failure={controller.state.failure} />;
