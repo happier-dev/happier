@@ -78,7 +78,7 @@ export const ReviewFindingDecisionControl = React.memo(function ReviewFindingDec
     );
 });
 
-function ReviewFindingTaskProjectionDemand({ scope }: Readonly<{ scope: ServerAccountScope }>) {
+export function ReviewFindingTaskProjectionDemand({ scope }: Readonly<{ scope: ServerAccountScope }>) {
     // The selected-origin demand reads the active Home's Machine candidates.
     const isActiveScope = useAppShellPluginUiProjection(value => areServerAccountScopesEqual(value.accountLifetime?.scope, scope));
     return isActiveScope ? <PluginSurfaceProjectionDemand pluginId={TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1} accountScope={scope} /> : null;

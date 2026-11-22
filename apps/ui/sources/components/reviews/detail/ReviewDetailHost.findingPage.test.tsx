@@ -152,6 +152,120 @@ it('titles a pushed finding with the finding itself under its severity and place
   }
 });
 
+it('shows the Action refusal when Create task is selected from a pushed finding', async () => {
+  const reviewId = 'pushed-finding-review';
+  const first = buildReviewCommentFixture({
+    id: 'first-root',
+    threadId: 'first-root',
+    reviewId,
+    accountId: 'alice',
+    state: 'open',
+    roundOrdinal: 1,
+    findingIdentity: 'a'.repeat(64),
+    finding: {
+      id: 'first-finding',
+      title: 'Settings modal remounts',
+      summary: 'Remounts on every tab',
+      severity: 'blocker',
+      category: 'correctness',
+    },
+  });
+  const opened = buildReviewCommentFixture({
+    id: 'opened-root',
+    threadId: 'opened-root',
+    reviewId,
+    accountId: 'alice',
+    state: 'open',
+    reviewTriageStatus: 'accept',
+    roundOrdinal: 1,
+    findingIdentity: 'b'.repeat(64),
+    finding: {
+      id: 'opened-finding',
+      title: 'Effect re-subscribes every render',
+      summary: 'No dependency list',
+      severity: 'high',
+      category: 'correctness',
+    },
+  });
+  fixture = await createSessionFilesViewFixture({
+    serverUrl: 'https://pushed-finding-review.test',
+    request: async (url) => {
+      if (new URL(String(url)).pathname === '/v1/reviews/comments')
+        return Response.json({
+          items: [first, opened].map(storePlainReviewCommentFixture),
+          cursor: null,
+        });
+      return Response.json({}, { status: 404 });
+    },
+  });
+  const artifact: DecryptedArtifact = {
+    id: reviewId,
+    sourceServerId: fixture.scope.serverId,
+    title: 'Pushed finding',
+    isDecrypted: true,
+    header: { kind: 'review.v1', v: 1, reviewId, title: 'Pushed finding' },
+    body: JSON.stringify({
+      v: 1,
+      rounds: [
+        {
+          ordinal: 1,
+          state: 'completed',
+          startedAt: 1,
+          finishedAt: 2,
+          reviewerIds: [],
+          runs: [],
+        },
+      ],
+    }),
+    ownerAccountId: 'alice',
+    access: 'owner',
+    storageMode: 'plain',
+    headerVersion: 1,
+    bodyVersion: 1,
+    seq: 1,
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  fixture.artifacts.replaceStoredRow(
+    createPlainArtifactHttpFixture(artifact, 'alice'),
+  );
+  const { ReviewDetailHost } = await import('./ReviewDetailHost');
+  const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+  const { t } = await import('@/text');
+  const screen = await fixture.render(
+    <ReviewDetailHost
+      artifact={artifact}
+      bodyState="ready"
+      onRetry={() => {}}
+      focusThreadId="opened-root"
+    />,
+  );
+  try {
+    await vi.waitFor(() =>
+      expect(
+        screen.findHostByTestId('review-detail:finding-page'),
+      ).not.toBeNull(),
+    );
+    const taskTestID = 'review-detail:decision:create-task';
+    const menu = screen.tree.root.findAllByType(DropdownMenu).find(node =>
+      node.props.items.some((item: { testID?: string }) => item.testID === taskTestID));
+    expect(menu).toBeDefined();
+    const item = menu!.props.items.find((entry: { testID?: string }) => entry.testID === taskTestID);
+    const { act } = await import('react-test-renderer');
+    // No Triage installation is advertised through the Account transport fixture.
+    // Select the actual menu item and let the mounted host dispatch and settle.
+    const before = screen.getTextContent();
+    await act(async () => { menu!.props.onSelect(item.id); });
+    await vi.waitFor(() => {
+      const text = screen.getTextContent();
+      expect(text).not.toBe(before);
+      expect(text).toContain(t('common.error'));
+    });
+  } finally {
+    await screen.unmount();
+  }
+});
+
 it('heads a pushed fixed finding as Fixed under "Review" in the bar, names its reviewer, and says its title and fix once', async () => {
   const reviewId = 'pushed-fixed-review';
   const title = 'Effect re-subscribes every render';

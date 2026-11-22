@@ -20,7 +20,7 @@ import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityMaterializations
     PluginAvailabilityIntentsListActionInputV1Schema, PluginAvailabilityIntentsListActionOutputV1Schema,
     PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE, PluginAccountAvailabilityIntentReadResponseV1Schema,
     PluginMachineMaterializationV1Schema } from '@happier-dev/protocol/plugins/availability';
-import { createMachineFixture, createSessionFixture, flushHookEffects } from '@/dev/testkit';
+import { createMachineFixture, createSessionFixture, flushHookEffects, renderScreen } from '@/dev/testkit';
 import { renderWithAppProviders } from '@/dev/testkit/render/renderWithAppProviders';
 import { createPlainMachineRowFixture, createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
@@ -68,6 +68,11 @@ import { clearDaemonMergedProjectionCacheForTests, loadDaemonMergedProjectionCac
     readCachedDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
 import { ReviewFindingRow } from '@/components/sessions/reviews/findings/ReviewFindingRow';
+import { createArtifactStoreBoundary, createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { ReviewDetailHost } from '@/components/reviews/detail/ReviewDetailHost';
+import { buildReviewCommentFixture, storePlainReviewCommentFixture } from '@/dev/testkit/fixtures/reviewComments';
+import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
+import { Dimensions } from 'react-native';
 
 vi.mock('socket.io-client', async original =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
@@ -410,6 +415,9 @@ async function serveSourceFleet(options: Readonly<{ refuseProjection?: boolean; 
     channels?: boolean; writeAction?: boolean; reviewTask?: boolean; inventoryGate?: Promise<void>; projectionGate?: Promise<void> }> = {}) {
     const { PluginMachineExecutionOriginV1Schema } = await import('@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1');
     const accountId = 'source-fleet-account';
+    const reviewRoot = buildReviewCommentFixture({ id: 'cold-task-root', threadId: 'cold-task-root',
+        reviewId: 'cold-task-review', accountId, roundOrdinal: 1, findingIdentity: 'a'.repeat(64),
+        finding: { id: 'engine-local', title: 'A saved finding', summary: 'A defect', severity: 'medium', category: 'correctness' } });
     const serverIdentityId = 'srv_source_fleet';
     const pluginId = options.channels ? CHANNELS_MANIFEST.id : options.reviewTask ? TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 : 'acme.triage';
     const pluginVersion = options.channels ? CHANNELS_MANIFEST.version : '1.0.0';
@@ -507,8 +515,18 @@ async function serveSourceFleet(options: Readonly<{ refuseProjection?: boolean; 
     const materializations = machines.map(machine => PluginMachineMaterializationV1Schema.parse({ serverIdentityId, machineId: machine.id,
         materializationId: `triage-${machine.id}`, pluginId, version: pluginVersion, sourceClass: 'localPath',
         portableRelease: false, uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: 1 }));
+    const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => accountId, encryptionMode: 'plain' });
+    const reviewArtifact: DecryptedArtifact = { id: reviewRoot.reviewId!, title: 'Cold finding task', isDecrypted: true,
+        header: { kind: 'review.v1', v: 1, reviewId: reviewRoot.reviewId!, title: 'Cold finding task' },
+        body: JSON.stringify({ v: 1, rounds: [{ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2, reviewerIds: [], runs: [] }] }),
+        ownerAccountId: accountId, access: 'owner', storageMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+    artifacts.replaceStoredRow(createPlainArtifactHttpFixture(reviewArtifact, accountId));
     const home = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: 'https://source-fleet.test',
         serverIdentityId, accountId, accountMode: 'plain' }], route: async request => {
+        const artifactResponse = options.reviewTask ? artifacts.handle(request.url.pathname + request.url.search, { method: request.method }) : null;
+        if (artifactResponse) return artifactResponse;
+        if (options.reviewTask && request.path === '/v1/reviews/comments')
+            return Response.json({ items: [storePlainReviewCommentFixture(reviewRoot)], cursor: null });
         if (request.path === '/v1/machines' || request.path === '/v1/machines/read-batch') {
             await options.inventoryGate;
             return request.path === '/v1/machines' ? Response.json(rows)
@@ -525,7 +543,7 @@ async function serveSourceFleet(options: Readonly<{ refuseProjection?: boolean; 
         return undefined;
     } });
     return { accountId, pluginId, machines, home, sectionReadsByMachineId, requestsByMachineId, manifestReadsByMachineId,
-        projectionsByMachineId, deferredByMachineId, widget };
+        projectionsByMachineId, deferredByMachineId, widget, reviewRoot };
 }
 
 it('discovers a Machine-only source from the presented Connect target with no Account installation census', async () => {
@@ -571,10 +589,13 @@ it('discovers a Machine-only source from the presented Connect target with no Ac
     }
 });
 
-it.each(['surface', 'Action control', 'Review New Task control'] as const)('asks only the presented %s origin for packages and UI in a cold 20-Machine source fleet', async presentation => {
-    const reviewTask = presentation === 'Review New Task control';
-    const { accountId, pluginId, machines, home, sectionReadsByMachineId, requestsByMachineId } = await serveSourceFleet({ writeAction: !reviewTask, reviewTask });
-    let tree: Awaited<ReturnType<typeof renderWithAppProviders>> | undefined;
+it.each(['surface', 'Action control', 'Review New Task control', 'Review selection task', 'Review finding page task'] as const)('asks only the presented %s origin for packages and UI in a cold 20-Machine source fleet', async presentation => {
+    const reviewTask = presentation.startsWith('Review ');
+    const reviewHost = presentation === 'Review selection task' || presentation === 'Review finding page task';
+    const dimensions = presentation === 'Review finding page task'
+        ? vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 }) : undefined;
+    const { accountId, pluginId, machines, home, sectionReadsByMachineId, requestsByMachineId, reviewRoot } = await serveSourceFleet({ writeAction: !reviewTask, reviewTask });
+    let tree: Awaited<ReturnType<typeof renderScreen>> | undefined;
     const controlLifetime = new AbortController();
     try {
         await waitForHomeGovernance(() => expect(storage.getState().isDataReady).toBe(true));
@@ -604,8 +625,14 @@ it.each(['surface', 'Action control', 'Review New Task control'] as const)('asks
             payload: { kind: 'bind', subscriptionId: 'write', action: { pluginId, localId: 'write' },
                 presentation: { title: 'Write', disabled: true } },
         }, { actionControlSubscription: { retain() {}, publish() {} } });
-        tree = await renderWithAppProviders(<AppShellPluginUiProjectionProvider>
-            {presentation === 'Action control' ? <MountedPluginActionControls controls={controls} />
+        const artifact: DecryptedArtifact = { id: reviewRoot.reviewId!, sourceServerId: serverId,
+            title: 'Cold finding task', isDecrypted: true, header: { kind: 'review.v1', v: 1, reviewId: reviewRoot.reviewId!, title: 'Cold finding task' },
+            body: JSON.stringify({ v: 1, rounds: [{ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2, reviewerIds: [], runs: [] }] }),
+            ownerAccountId: accountId, access: 'owner', storageMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+        tree = await renderScreen(<AppShellPluginUiProjectionProvider>
+            {reviewHost ? <ReviewDetailHost artifact={artifact} bodyState="ready" onRetry={() => {}}
+                focusThreadId={presentation === 'Review finding page task' ? reviewRoot.id : undefined} />
+                : presentation === 'Action control' ? <MountedPluginActionControls controls={controls} />
                 : reviewTask ? <ReviewFindingRow taskScope={lifetime.scope} onCreateTask={async () => {}} density="page" rowId="saved-finding"
                     finding={{ id: 'finding', title: 'A defect', summary: 'A finding', category: 'correctness', severity: 'high' }}
                     attribution={null} reviewers={[]} original={null} divided={false} decision={null}
@@ -613,6 +640,14 @@ it.each(['surface', 'Action control', 'Review New Task control'] as const)('asks
                     pendingQuestion={null} expanded onToggleExpanded={() => {}} askContext={null} onAsk={async () => false} />
                 : <PluginSurfaceProjectionDemand pluginId={pluginId} accountScope={lifetime.scope} />}
         </AppShellPluginUiProjectionProvider>);
+        if (reviewHost) {
+            await waitForHomeGovernance(() => expect(tree!.getTextContent()).toContain(reviewRoot.finding!.title));
+            if (presentation === 'Review selection task') {
+                await tree.pressByTestIdAsync('review-findings:select-mode');
+                await tree.pressByTestIdAsync(`review-findings:select:${reviewRoot.id}`);
+                expect(tree.findHostByTestId('review-detail:selection')).not.toBeNull();
+            } else expect(tree.findHostByTestId('review-detail:finding-page')).not.toBeNull();
+        }
         const actionId = `${pluginId}/${reviewTask ? 'tasks/open-create-v1' : 'write'}`;
         // Account descriptors rank placement intent before exact runtime admission.
         // Unopened alternative origins do not acquire Machine projections.
@@ -634,6 +669,7 @@ it.each(['surface', 'Action control', 'Review New Task control'] as const)('asks
         }
     } finally {
         if (tree) await act(async () => tree.unmount());
+        dimensions?.mockRestore();
         controlLifetime.abort();
         await home.dispose();
     }

@@ -28,7 +28,7 @@ import { useReviewDetail } from '../useReviewDetail';
 import { useReviewHumanActions } from '../useReviewHumanActions';
 import { useReviewHistory } from '../useReviewHistory';
 import { useReviewComments } from '@/components/sessions/reviews/findings/useReviewRunComments';
-import { ReviewFindingPageBody, ReviewFindingRow, REVIEW_FINDING_DECISIONS, reviewFindingDecisionLabel } from '@/components/sessions/reviews/findings/ReviewFindingRow';
+import { ReviewFindingPageBody, ReviewFindingRow, ReviewFindingTaskProjectionDemand, REVIEW_FINDING_DECISIONS, reviewFindingDecisionLabel } from '@/components/sessions/reviews/findings/ReviewFindingRow';
 import { formatReviewFindingLocation, reviewSeverityLabel } from '@/components/sessions/reviews/findings/reviewFindingPresentation';
 import type { ReviewTriageStatus } from '@happier-dev/protocol/reviews/reviewTriageStatus';
 import { SelectionActionBar, SELECTION_ACTION_BAR_RESERVE_PX } from '@/components/ui/selection/SelectionActionBar';
@@ -504,7 +504,7 @@ export function ReviewDetailHost(props: Readonly<{
       resolution={row.fixed ? reviewFindingFixedWords(row.fixCommit) : null}
       onDecide={findings.onDecide} followUp={row.followUp} threadEntries={row.threadEntries} pendingQuestion={findings.pendingQuestionByRowId[row.rowId] ?? null}
       expanded={openFinding === row.rowId} onToggleExpanded={toggleFinding} askContext={row.askContext}
-      onAsk={findings.onAsk} onCreateTask={canEdit ? findings.onCreateTask : undefined} taskScope={scope}
+      onAsk={findings.onAsk} onCreateTask={canEdit ? findings.onCreateTask : undefined}
       facts={findingFacts(row)} selection={selection} /> : null;
   };
   if (pushedFindingId) {
@@ -517,6 +517,7 @@ export function ReviewDetailHost(props: Readonly<{
     // and place in the Review, its facts line names where and who, and its decision waits in the bottom bar.
     return (
       <View style={{ flex: 1 }}>
+        {canEdit && scope ? <ReviewFindingTaskProjectionDemand scope={scope} /> : null}
         <ItemList testID="review-detail:finding-page" pageColumn="wide">
           <PageHeader title={row.finding.title} alwaysShowTitle navigationTitle={t('detailsSurface.review.title')}
             testID="review-detail:finding-page:header"
@@ -538,6 +539,7 @@ export function ReviewDetailHost(props: Readonly<{
               pendingQuestion={findings.pendingQuestionByRowId[row.rowId] ?? null} expanded onToggleExpanded={toggleFinding}
               askContext={row.askContext} onAsk={findings.onAsk} ask={message => findings.onAsk(row.rowId, message)} />
           </ItemGroup>
+          {findings.error ? <SurfaceStateCard kind="error" size="line" title={t('common.error')} reason={findings.error} /> : null}
           {decisionBar ? <View style={{ height: SELECTION_ACTION_BAR_RESERVE_PX }} /> : null}
         </ItemList>
         {decisionBar ? <SelectionActionBar placement="pinned" testID="review-detail:decision-bar" visible
@@ -578,6 +580,7 @@ export function ReviewDetailHost(props: Readonly<{
     <ReviewPagePluginContent reviewId={artifact.id} serverId={artifact.sourceServerId ?? artifactScope?.serverId ?? null}
       selection={props.pluginPageSelection}>{menu => (
     <View style={{ flex: 1 }}>
+    {canEdit && scope ? <ReviewFindingTaskProjectionDemand scope={scope} /> : null}
     <ReviewDetailView
       title={record.title || t('detailsSurface.review.title')}
       meta={meta}
