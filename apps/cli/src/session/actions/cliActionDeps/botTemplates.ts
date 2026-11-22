@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readSessionStateFieldFromMetadata, resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { createSessionStateFieldMetadataUpdater } from '@happier-dev/agents/session/state/metadataWriters';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createBotTemplateActionExecuteV1 } from '@happier-dev/protocol/bots/templates/botTemplateOperations';
 import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { createAcknowledgedAccountArtifactTransport, type ArtifactRequestAuthorizationHeaders,
@@ -17,6 +18,11 @@ import { readRequesterDeploymentArtifactStore } from '@/daemon/sessionEncryption
 import { readRequesterAccountActionTransportContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 
 const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+const refuseArtifactAuthorization = (): never => {
+  throw createActionExecuteFailureError({
+    ok: false, errorCode: 'execution_not_authorized', error: 'execution_not_authorized', effectAttempted: false,
+  });
+};
 
 export function createCliBotTemplateActionDeps(
   params: Pick<CliActionDepsParams, 'credentials' | 'serverHttpBaseUrl' | 'savedSecretOperationContext' | 'onPublicLinkIssued'>,
@@ -48,30 +54,24 @@ export function createCliBotTemplateActionDeps(
   const createExecute = (args: Parameters<NonNullable<ActionExecutorDeps['botTemplateAction']>>[0]) => {
     const context = args.context;
     const signal = args.signal ?? context.signal;
-    const requireStore = () => {
-      const authorization = context.externalActionExecutionAuthorization;
-      const requesterStore = readRequesterDeploymentArtifactStore(authorization);
-      if (requesterStore) return requesterStore;
-      if (authorization && 'credentialId' in authorization.binding
-        && authorization.binding.accountEncryptionMode === 'e2ee') return refuse('content_unavailable');
-      return host.roleArtifactStore ?? refuse('not_authenticated');
-    };
-    const artifactHeaders = (caller: ActionExecutorContext): ArtifactRequestAuthorizationHeaders => async request => {
+    const requireArtifactAccess = (caller = context) => {
       const root = caller.externalActionExecutionAuthorization;
-      if (root && 'credentialId' in root.binding) {
-        return host.resolveServerRequestHeaders(caller, args.actionId, request) ?? refuse('execution_not_authorized');
-      }
-      const accountContext = ordinaryContext(caller) ?? refuse('execution_not_authorized');
-      if (readRequesterDeploymentArtifactStore(root)) {
-        // The admitted Artifact store holds the original requester's credential.
-        const requester = readRequesterAccountActionTransportContext(root) ?? refuse('execution_not_authorized');
-        return requireExternalActionHeaders(resolveExternalActionServerRequestHeaders({
+      const isPatExecution = root && 'credentialId' in root.binding;
+      const accountContext = isPatExecution ? caller : ordinaryContext(caller) ?? refuseArtifactAuthorization();
+      const requesterStore = readRequesterDeploymentArtifactStore(root);
+      if (!requesterStore && isPatExecution && root.binding.accountEncryptionMode === 'e2ee') return refuse('content_unavailable');
+      const store = requesterStore ?? host.roleArtifactStore ?? refuse('not_authenticated');
+      // The admitted Artifact store holds the original requester's credential.
+      const requester = requesterStore && !isPatExecution
+        ? readRequesterAccountActionTransportContext(root) ?? refuseArtifactAuthorization()
+        : null;
+      const authorizationHeaders: ArtifactRequestAuthorizationHeaders = async request => requester
+        ? requireExternalActionHeaders(resolveExternalActionServerRequestHeaders({
           context: accountContext, effectActionId: args.actionId, ...request, daemonToken: requester.credentials.token,
-        }));
-      }
-      return host.resolveServerRequestHeaders(accountContext, args.actionId, request) ?? refuse('execution_not_authorized');
+        }))
+        : host.resolveServerRequestHeaders(accountContext, args.actionId, request) ?? refuseArtifactAuthorization();
+      return { store, authorizationHeaders };
     };
-    const authorizationHeaders = artifactHeaders(context);
     const readOwnedSession = async (source: Readonly<{ serverId: string; sessionId: string }>) => {
       if (!host.homeAccountId || !params.credentials) return refuse('not_authenticated');
       if (!host.isSameActionHomeId(source.serverId)) return refuse('server_scope_mismatch');
@@ -96,9 +96,18 @@ export function createCliBotTemplateActionDeps(
     };
     return createBotTemplateActionExecuteV1({
       artifacts: createAcknowledgedAccountArtifactTransport({
-        read: (artifactId, options) => requireStore().read(artifactId, { ...options, authorizationHeaders }),
-        create: input => requireStore().create({ ...input, authorizationHeaders }),
-        update: input => requireStore().update({ ...input, authorizationHeaders }),
+        read: (artifactId, options) => {
+          const { store, authorizationHeaders } = requireArtifactAccess();
+          return store.read(artifactId, { ...options, authorizationHeaders });
+        },
+        create: input => {
+          const { store, authorizationHeaders } = requireArtifactAccess();
+          return store.create({ ...input, authorizationHeaders });
+        },
+        update: input => {
+          const { store, authorizationHeaders } = requireArtifactAccess();
+          return store.update({ ...input, authorizationHeaders });
+        },
       }),
       randomId: randomUUID,
       resolvePluginRelease: async (source, _context, _signal, purpose) => {
@@ -110,9 +119,10 @@ export function createCliBotTemplateActionDeps(
       },
       isSameServerId: (left, right) => host.isSameActionHomeId(left) && host.isSameActionHomeId(right),
       recipient: { content: host.content,
-        reportAcceptedVersion: (input, reportContext) => requireStore().reportTemplateAcceptedVersion(input, reportContext.signal, {
-          authorizationHeaders: artifactHeaders(reportContext),
-      }), readSession: readOwnedSession, writeInstance: async (ref, instance, instanceContext) => {
+        reportAcceptedVersion: async (input, reportContext) => {
+          const { store, authorizationHeaders } = requireArtifactAccess(reportContext);
+          await store.reportTemplateAcceptedVersion(input, reportContext.signal, { authorizationHeaders });
+        }, readSession: readOwnedSession, writeInstance: async (ref, instance, instanceContext) => {
         const credentials = params.credentials ?? refuse('not_authenticated');
         const updater = createSessionStateFieldMetadataUpdater('intent.templateInstance', instance, undefined, null);
         const result = await updateSessionMetadataForTarget({ credentials, idOrPrefix: ref.sessionId,
@@ -149,7 +159,8 @@ export function createCliBotTemplateActionDeps(
         if (!result.ok) refuse(result.code);
       },
       grant: async input => {
-        const receipt = await requireStore().accessGrants.set(input, signal, { authorizationHeaders });
+        const { store, authorizationHeaders } = requireArtifactAccess();
+        const receipt = await store.accessGrants.set(input, signal, { authorizationHeaders });
         if (receipt.preparation?.status === 'pending') refuse('artifact_encryption_material_unavailable');
       },
       signedInLink: params.onPublicLinkIssued ? async (input, childContext) => {

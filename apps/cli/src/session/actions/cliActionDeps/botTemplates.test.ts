@@ -7,6 +7,7 @@ import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invoc
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { requesterActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { createCliActionDeps } from '../createCliActionDeps';
@@ -14,17 +15,22 @@ import { createCliActionDeps } from '../createCliActionDeps';
 describe('Bot template requester Artifact custody', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it('prepares an Agent Copy of an owned template using the Artifact credential captured for its original requester', async () => {
+  it.each([
+    { scenario: 'the original requester credential', boundary: 'admitted' },
+    { scenario: 'a root bound to a different Account', boundary: 'wrong_account' },
+    { scenario: 'a requester store without its transport context', boundary: 'missing_transport' },
+  ])('prepares or refuses an Agent Copy with $scenario', async ({ boundary }) => {
     const accountId = 'requester-account';
     const homeId = 'requester-home';
     const serverUrl = 'https://requester-home.test';
     const target = { kind: 'machine', machineId: 'copy-machine' } as const;
     const installationId = 'copy-installation';
-    const credential = (label: string) => ({
-      token: `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.${label}`,
+    const credential = (label: string, subject = accountId) => ({
+      token: `e30.${Buffer.from(JSON.stringify({ sub: subject })).toString('base64url')}.${label}`,
       encryption: null,
     });
-    const executorCredentials = credential('approval-executor');
+    const executorCredentials = credential('approval-executor',
+      boundary === 'wrong_account' ? 'different-account' : accountId);
     const requesterCredentials = credential('original-requester');
     const artifactId = randomUUID();
     const release = BotTemplateReleaseV1Schema.parse({ v: 1, version: '1.0.0', changelog: '', releasedAtMs: 1,
@@ -74,10 +80,20 @@ describe('Bot template requester Artifact custody', () => {
       }
       throw new Error(`Unexpected template Home GET ${path}`);
     });
-    const authorization = await projectRequesterAccountActionAuthorization({ authorization: root, serverIdentityId: homeId,
+    const admitted = await projectRequesterAccountActionAuthorization({ authorization: root, serverIdentityId: homeId,
       bootstrap: { credentials: requesterCredentials, serverHttpBaseUrl: serverUrl, isCurrent: async () => true,
         getBoundSessionId: () => sessionId, attribution: { serverId: homeId, accountId, machineId: target.machineId, installationId } } });
-    if (!authorization) throw new Error('Expected admitted Agent requester custody');
+    if (!admitted?.requesterAccountProjection) throw new Error('Expected admitted Agent requester custody');
+    let authorization = admitted;
+    if (boundary === 'missing_transport') {
+      // Keep the admitted Artifact store while dropping only its private transport facet.
+      const descriptors = Object.getOwnPropertyDescriptors(admitted.requesterAccountProjection);
+      Reflect.deleteProperty(descriptors, requesterActionContext);
+      authorization = {
+        ...admitted,
+        requesterAccountProjection: Object.defineProperties({ ...admitted.requesterAccountProjection }, descriptors),
+      };
+    }
     const deps = createCliActionDeps({ token: executorCredentials.token, credentials: executorCredentials,
       sessionId, mode: 'plain', ctx: null, serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl: serverUrl });
 
@@ -86,6 +102,11 @@ describe('Bot template requester Artifact custody', () => {
       externalActionExecutionAuthorization: authorization,
     } });
 
+    if (boundary !== 'admitted') {
+      expect(prepared).toMatchObject({ ok: false, errorCode: 'execution_not_authorized' });
+      expect(artifactReads).toEqual([]);
+      return;
+    }
     expect(prepared).toMatchObject({ children: expect.arrayContaining([
       expect.objectContaining({ role: 'create_bot', input: expect.objectContaining({ title: 'Owned Bot' }) }),
     ]) });
