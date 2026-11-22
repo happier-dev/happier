@@ -1,6 +1,7 @@
 import { normalizePluginUiSubPathV1, PluginUiDestinationReferenceV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { machinePageHref } from '@/components/machines/page/machinePageHref';
 import { artifactViewRoute } from '@/components/artifacts/artifactViewRoute';
+import { readTriageEntryRouteSegmentV1, TRIAGE_APP_PAGE_DESTINATION_V1 } from '@happier-dev/triage-protocol/v1';
 
 /** Read the raw path before URL can erase traversal segments. */
 export function parsePluginProjectPageRoutePath(href: string): Readonly<{
@@ -45,6 +46,12 @@ export function readPluginAppPageLocation(subPath: string | null): Readonly<{
     if (!serverId || !machineId || !installationId
         || [serverId, machineId, installationId].some(id => id.trim() !== id || id.includes('\\'))) return null;
     return { subPath: path.join('/'), machine: { serverId, machineId, installationId } };
+}
+
+/** The selected entry is part of Triage's shareable route even before its page is declared. */
+export function pluginAppPageRouteSelectsEntry(pluginId: string, subPath: string | null): boolean {
+    return pluginId === TRIAGE_APP_PAGE_DESTINATION_V1.pluginId
+        && (readPluginAppPageLocation(subPath)?.subPath.split('/').some(segment => readTriageEntryRouteSegmentV1(segment) !== null) ?? false);
 }
 
 /** Exact app-page address before URL parsing can normalize away invalid path segments. */

@@ -1145,8 +1145,8 @@ function CollectionSkeletonRows(props: Readonly<{
 const directorySkeletonColumnStyle: HappierPortableStyle = { flex: 1, minWidth: 0 };
 
 /**
- * The frame of a Collection page before the page has loaded: the table's ruled column band, its rows
- * (`CollectionSkeletonRows`) at the table's own height and insets filling the view, and the ruled footer band
+ * The frame of a Collection page before the page has loaded: the ruled column band, its rows
+ * (`CollectionSkeletonRows`) at the Collection's own height and insets filling the view, and the ruled footer band
  * the window line will fill. A host stands it under a
  * page's identity toolbar while the plugin bundle loads, so the first frame already has the loaded page's width,
  * insets and row rhythm and nothing changes shape when the Collection arrives. It carries its own theme because
@@ -1154,6 +1154,8 @@ const directorySkeletonColumnStyle: HappierPortableStyle = { flex: 1, minWidth: 
  */
 export type CollectionLoadingRowsProps = Readonly<{
   theme: HappierUiTheme;
+  /** An entry opened beside a table uses the two-line list rows and the same ruled bands. */
+  rowGeometry?: 'table' | 'list';
   /** What is loading; announced once as a busy region. Absent, the placeholder is decoration. */
   accessibilityLabel?: string;
   reducedMotion?: boolean;
@@ -1162,6 +1164,7 @@ export type CollectionLoadingRowsProps = Readonly<{
 
 export function CollectionLoadingRows(props: CollectionLoadingRowsProps): ReactElement {
   const { theme } = props;
+  const list = props.rowGeometry === 'list';
   const typography = useOptionalHappierUiTypography();
   const textScale = useOptionalHappierUiAccessibility()?.textScale ?? 1;
   const metrics = useMemo(() => resolveRowMetrics(false, false, false, theme, typography, textScale), [textScale, theme, typography]);
@@ -1172,13 +1175,13 @@ export function CollectionLoadingRows(props: CollectionLoadingRowsProps): ReactE
     setViewportHeight((current) => (current === height ? current : height));
   }, []);
   return (
-    <View testID={props.testID} onLayout={onLayout} style={[happierPageSheetFrameStyle(palette), loadingFrameStyle]}>
+    <View testID={props.testID} onLayout={onLayout} style={[list ? null : happierPageSheetFrameStyle(palette), loadingFrameStyle]}>
       <View style={{ height: TABLE.headerHeight, borderBottomWidth: 1, borderBottomColor: theme.colors.divider }} />
       <View style={loadingRowsStyle}>
         <CollectionSkeletonRows
           theme={theme}
-          rowHeight={metrics.tableRow}
-          twoLines={false}
+          rowHeight={list ? metrics.listRow : metrics.tableRow}
+          twoLines={list}
           viewportHeight={viewportHeight}
           {...(props.testID === undefined ? {} : { testID: props.testID })}
           {...(props.accessibilityLabel === undefined ? {} : { accessibilityLabel: props.accessibilityLabel })}

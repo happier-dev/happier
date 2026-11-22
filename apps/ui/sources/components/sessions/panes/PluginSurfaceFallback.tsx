@@ -6,6 +6,7 @@ import { CollectionLoadingRows } from '@happier-dev/plugin-ui/components';
 
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { PluginSurfacePageHeaderContext } from '@/components/plugins/shared/pluginSurfaceInteractionAvailability';
+import { PluginAppPageEntryLoading } from '@/components/plugins/shared/PluginAppPageEntryLoading';
 import { usePublishPluginSurfaceStateTitle } from '@/components/plugins/shared/pluginSurfaceStateTitle';
 import { PageFrame } from '@/components/ui/layout/PageFrame';
 import { usePageSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
@@ -146,9 +147,14 @@ export function PluginSurfaceFallback(props: Readonly<{
                 testID={props.testID}
                 accessibilityLabel={card.title}
                 diagnosticCode={presentation.diagnosticCode}
-                shape={pageIdentity?.loadingFrame === 'collection' ? 'collection' : 'list'}
+                shape={pageIdentity?.loadingFrame ?? 'column'}
             />
         );
+        if (pageIdentity?.loadingFrame === 'collection-detail') {
+            return <PluginAppPageEntryLoading testID={props.testID} accessibilityLabel={card.title} header={pageIdentity.loadingHeader ?? pageHeader}>
+                {skeleton}
+            </PluginAppPageEntryLoading>;
+        }
         if (!pageHeader) return skeleton;
         // A Collection page fills its content area under its toolbar; every other page sits in the page column.
         return pageIdentity?.loadingFrame === 'collection'
@@ -184,17 +190,17 @@ function PluginSurfaceLoadingSkeleton(props: Readonly<{
     testID: string;
     accessibilityLabel: string;
     diagnosticCode: string | null;
-    /** `collection`: the rows of the Collection page that is coming, in its table frame; `list`: a generic list. */
-    shape: 'list' | 'collection';
+    shape: 'column' | 'collection' | 'collection-detail';
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const pluginTheme = usePluginUiTheme(theme);
     const reducedMotion = useReducedMotionPreference();
     return (
-        <View testID={props.testID} style={{ flex: 1, paddingTop: props.shape === 'collection' ? 0 : pluginTheme.spacing.small }}>
-            {props.shape === 'collection' ? (
+        <View testID={props.testID} style={{ flex: 1, paddingTop: props.shape === 'column' ? pluginTheme.spacing.small : 0 }}>
+            {props.shape !== 'column' ? (
                 <CollectionLoadingRows
                     testID={`${props.testID}-loading-skeleton`}
+                    rowGeometry={props.shape === 'collection-detail' ? 'list' : 'table'}
                     theme={pluginTheme}
                     accessibilityLabel={props.accessibilityLabel}
                     reducedMotion={reducedMotion}

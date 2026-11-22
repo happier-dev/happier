@@ -4,6 +4,7 @@ import { useLocalSearchParams } from '@/components/appShell/workspace/destinatio
 import { PluginAppPageScreen } from '@/components/appShell/plugins/PluginAppPageScreen';
 import { PluginAppPageLoadingFrame } from '@/components/plugins/shared/PluginPageIdentityHeader';
 import {
+    pluginAppPageRouteSelectsEntry,
     readPluginAppPageRouteView,
     readPluginPageRouteIdentity,
 } from '@/components/plugins/pages/pluginPageRoute';
@@ -24,6 +25,9 @@ export const WorkspaceRouteBody = React.memo(function PluginPageDeepRoute() {
 });
 import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
 export default function RouteEntry() {
+    const params = useLocalSearchParams();
+    const { pluginId } = readPluginPageRouteIdentity(params);
+    const entryDetail = pluginAppPageRouteSelectsEntry(pluginId, readPluginPageSubPath(params.subPath));
     return <WorkspaceRouteEntry Body={WorkspaceRouteBody}
-        loadingFallback={<PluginAppPageLoadingFrame testID="plugin-app-page-hydrating" />} />;
+        loadingFallback={<PluginAppPageLoadingFrame testID="plugin-app-page-hydrating" entryDetail={entryDetail} />} />;
 }

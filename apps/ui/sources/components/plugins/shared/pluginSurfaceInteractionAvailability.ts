@@ -36,7 +36,8 @@ export const PluginSurfaceCompanionContext = React.createContext(false);
  */
 export type PluginSurfacePageIdentity = Readonly<{
     header: React.ReactNode;
-    loadingFrame: 'column' | 'collection';
+    loadingHeader?: React.ReactNode;
+    loadingFrame: 'column' | 'collection' | 'collection-detail';
 }>;
 
 export const PluginSurfacePageHeaderContext = React.createContext<PluginSurfacePageIdentity | null>(null);

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { DetailsPaneSlotHost } from '@/components/appShell/panes/details/DetailsPaneSlot';
 import { PluginPageContent } from '@/components/plugins/pages/PluginPageContent';
 import { resolvePluginPageForRoute, usePluginPages, selectPluginPagePlacements } from '@/components/plugins/pages/pluginPages';
-import { buildPluginAppPageRoutePath, readPluginAppPageLocation } from '@/components/plugins/pages/pluginPageRoute';
+import { buildPluginAppPageRoutePath, pluginAppPageRouteSelectsEntry, readPluginAppPageLocation } from '@/components/plugins/pages/pluginPageRoute';
 import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
 import { useAppShellPluginUiProjection, useProjectedPluginLocalizedTextResolver } from './AppShellPluginUiProjection';
 import { t } from '@/text';
@@ -60,6 +60,7 @@ export function PluginAppPageScreen(props: Readonly<{
         page={page} views={pages} projection={projection} routePathFor={routePathFor}
         contextualExecutionTarget={executionTarget}
         initialView={props.view ?? null}
+        entryDetail={pluginAppPageRouteSelectsEntry(props.pluginId, props.subPath)}
         accountScopeRestoring={coldAccountRestorePending || (appliedRuntimeAvailable && !isDataReady)}
         renderContent={renderContent} appChrome />;
 }

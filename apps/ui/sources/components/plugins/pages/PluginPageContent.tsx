@@ -130,6 +130,7 @@ export function PluginPageContent(props: Readonly<{
     policyContext?: PluginUiPolicyEvaluationContext;
     appChrome?: boolean;
     accountScopeRestoring?: boolean;
+    entryDetail?: boolean;
     /** The target adapter chooses its incumbent physical host inside page focus/visibility. */
     renderContent?: (content: React.ReactElement) => React.ReactNode;
     pluginId: string;
@@ -430,20 +431,33 @@ export function PluginPageContent(props: Readonly<{
         }) : projection.phase === 'establishing' || projection.hasEstablishingMembers)}
         actions={routeActions}>{body}</PluginPagePresentation>;
 
+    const renderHostedContent = (body: React.ReactElement) => (
+        <PluginSurfaceFocusEligibilityProvider
+            active={isFocused}
+            presentationActive={isVisible}
+            currentUiContextActive={isFocused}
+        >
+            {props.renderContent ? props.renderContent(body) : body}
+        </PluginSurfaceFocusEligibilityProvider>
+    );
+
     // A declared page keeps its physical host while execution revalidates.
     // The host owns its notice and retention; only a missing declaration waits here.
     if (props.subPath !== null && !page && (projection.phase === 'establishing' || projection.hasEstablishingMembers
         || (accountLifetime === null && props.accountScopeRestoring))) {
+        const loading = (
+            <View testID="plugin-app-page-establishing" style={{ flex: 1 }}>
+                {props.appChrome ? <PluginAppPageLoadingFrame testID="plugin-app-page-loading" entryDetail={props.entryDetail === true} /> : (
+                    <View style={pluginPageContentFrameStyle}>
+                        <PluginSurfaceFallback testID="plugin-app-page-loading" state="loading" />
+                    </View>
+                )}
+            </View>
+        );
         return renderPage(
             <>
                 {props.appChrome ? <PluginPageRouteChrome title={null} options={headerOptions} /> : null}
-                <View testID="plugin-app-page-establishing" style={{ flex: 1 }}>
-                    {props.appChrome ? <PluginAppPageLoadingFrame testID="plugin-app-page-loading" /> : (
-                        <View style={pluginPageContentFrameStyle}>
-                            <PluginSurfaceFallback testID="plugin-app-page-loading" state="loading" />
-                        </View>
-                    )}
-                </View>
+                {props.entryDetail ? renderHostedContent(loading) : loading}
             </>
         );
     }
@@ -482,7 +496,7 @@ export function PluginPageContent(props: Readonly<{
                     <PluginPageBackStepProvider owner={locationOwner}>
                     <NavigationLargeTitleProvider largeTitle={largeTitle}>
                     <PluginPageIdentityHeaderProvider pluginId={props.pluginId} title={headerTitle} description={page.description} headerStyle={page.headerStyle}
-                        largeTitle={largeTitle}
+                        largeTitle={largeTitle} entryDetail={props.entryDetail === true}
                         // A Machine or Project page is a tab under that host's own header (plan 30 §3.7): that header is its
                         // identity, so a page still loading draws no second title that leaves when it arrives.
                         identityOwner={page.target.kind === 'machine' || page.target.kind === 'project' ? 'host' : 'page'}>
@@ -520,20 +534,7 @@ export function PluginPageContent(props: Readonly<{
     return renderPage(
         <>
             {props.appChrome ? <PluginPageRouteChrome title={chromeTitle} options={pageHeaderOptions} /> : null}
-            <PluginSurfaceFocusEligibilityProvider
-                active={isFocused}
-                presentationActive={isVisible}
-                currentUiContextActive={isFocused}
-            >
-                {/*
-                    The page's app details pane: a plugin's `DetailsPane` (and a
-                    `Collection` opening its items) renders beside the page in the
-                    same pane every destination uses.
-                */}
-
-                {props.renderContent ? props.renderContent(pageContent) : pageContent}
-
-            </PluginSurfaceFocusEligibilityProvider>
+            {renderHostedContent(pageContent)}
         </>
     );
 }

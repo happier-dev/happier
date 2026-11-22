@@ -6,6 +6,8 @@ import { HAPPIER_PAGE_METRICS, HAPPIER_SEARCH_FIELD_METRICS } from '@happier-dev
 import { useClaimedStackHeaderActions } from '@/components/navigation/stackHeaderActions';
 import { Text } from '@/components/ui/text/Text';
 import { useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/navigationTitleChrome';
+import { DetailsPaneSlotHost, useDetailsPaneSlotBinding } from '@/components/appShell/panes/details/DetailsPaneSlot';
+import { useDetailsPaneAvailable } from '@/components/appShell/panes/details/detailsPaneAvailability';
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { PluginMark } from '@/components/settings/plugins/PluginMark';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
@@ -23,15 +25,19 @@ export const pluginPageContentFrameStyle = {
 } as const;
 
 /** Reserve the App page toolbar while its declaration and title are still loading. */
-export function PluginAppPageLoadingFrame(props: Readonly<{ testID: string }>): React.ReactElement {
-    return <View style={pluginPageContentFrameStyle}>
+export function PluginAppPageLoadingFrame(props: Readonly<{ testID: string; entryDetail?: boolean }>): React.ReactElement {
+    const slot = useDetailsPaneSlotBinding();
+    const beside = useDetailsPaneAvailable();
+    const frame = <View style={pluginPageContentFrameStyle}>
         <PluginSurfacePageHeaderContext.Provider value={{
-            header: <View testID={`${props.testID}-toolbar`} style={stylesheet.toolbar} />,
-            loadingFrame: 'collection',
+            header: <View testID={`${props.testID}-toolbar`} style={[stylesheet.toolbar, props.entryDetail && stylesheet.entryToolbar]} />,
+            loadingFrame: props.entryDetail ? 'collection-detail' : 'collection',
         }}>
             <PluginSurfaceFallback testID={props.testID} state="loading" />
         </PluginSurfacePageHeaderContext.Provider>
     </View>;
+    // The chunk and workspace-hydration fallbacks run before the page has installed its slot.
+    return props.entryDetail && beside && slot === null ? <DetailsPaneSlotHost>{frame}</DetailsPaneSlotHost> : frame;
 }
 
 /**
@@ -50,6 +56,7 @@ export function PluginPageIdentityHeaderProvider(props: Readonly<{
      * identity is that large title, where the loaded Collection draws it.
      */
     largeTitle?: boolean;
+    entryDetail?: boolean;
     /**
      * `host`: the page is a tab of a host page whose own header already names it (a Machine page), so a page that
      * has not loaded draws no second identity above its state. Default `page`.
@@ -63,14 +70,20 @@ export function PluginPageIdentityHeaderProvider(props: Readonly<{
     const installedPackage = app.pluginUiProjection?.installedPackagesById[props.pluginId] ?? null;
     const identity = React.useMemo<PluginSurfacePageIdentity | null>(() => {
         if (props.identityOwner === 'host') return null;
+        const entryLoading = props.entryDetail ? {
+            loadingFrame: 'collection-detail' as const,
+            loadingHeader: <PluginPageIdentityToolbarRow pluginId={props.pluginId} title={props.title} entryDetail />,
+        } : {};
         if (props.largeTitle === true) {
             return {
                 header: <PageHeader testID={`plugin-page-identity-large-title:${props.pluginId}`} title={props.title} alwaysShowTitle />,
                 loadingFrame: 'collection',
+                ...entryLoading,
             };
         }
         if (props.headerStyle === 'toolbar' && !chromeShowsTitle) {
-            return { header: <PluginPageIdentityToolbarRow pluginId={props.pluginId} title={props.title} />, loadingFrame: 'collection' };
+            return { header: <PluginPageIdentityToolbarRow pluginId={props.pluginId} title={props.title} />,
+                loadingFrame: 'collection', ...entryLoading };
         }
         return {
             header: (
@@ -85,8 +98,9 @@ export function PluginPageIdentityHeaderProvider(props: Readonly<{
                 />
             ),
             loadingFrame: 'column',
+            ...entryLoading,
         };
-    }, [app.machineId, app.serverId, chromeShowsTitle, installedPackage, props.description, props.headerStyle, props.identityOwner, props.largeTitle, props.pluginId, props.title]);
+    }, [app.machineId, app.serverId, chromeShowsTitle, installedPackage, props.description, props.headerStyle, props.identityOwner, props.entryDetail, props.largeTitle, props.pluginId, props.title]);
     return <PluginSurfacePageHeaderContext.Provider value={identity}>{props.children}</PluginSurfacePageHeaderContext.Provider>;
 }
 
@@ -96,11 +110,11 @@ export function PluginPageIdentityHeaderProvider(props: Readonly<{
  * position when the surface arrives, and its loading frame is the Collection's own (the full content area, not the
  * page column).
  */
-function PluginPageIdentityToolbarRow(props: Readonly<{ pluginId: string; title: string }>): React.ReactElement {
+function PluginPageIdentityToolbarRow(props: Readonly<{ pluginId: string; title: string; entryDetail?: boolean }>): React.ReactElement {
     // The stack-header controls its route placed (Run on) come here, as in the page header, where no stack header is drawn.
     const routeActions = useClaimedStackHeaderActions();
     return (
-        <View testID={`plugin-page-identity-toolbar:${props.pluginId}`} style={stylesheet.toolbar}>
+        <View testID={`plugin-page-identity-toolbar:${props.pluginId}`} style={[stylesheet.toolbar, props.entryDetail && stylesheet.entryToolbar]}>
             <Text variant="heading" accessibilityRole="header" numberOfLines={1} style={stylesheet.title}>{props.title}</Text>
             {routeActions}
         </View>
@@ -117,6 +131,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         // The same top space the loaded Collection page opens with (plugin-ui `Collection`), so the title stays put.
         marginTop: HAPPIER_PAGE_METRICS.pageHeaderUnderChromePaddingTopPx,
     },
+    entryToolbar: { marginTop: 0 },
     title: {
         flexShrink: 1,
         minWidth: 0,

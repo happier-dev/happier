@@ -1,6 +1,7 @@
 import { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import * as React from 'react';
 import { StyleSheet } from 'react-native';
+import { buildTriageEntryRouteSegmentV1 } from '@happier-dev/triage-protocol/v1';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -1391,6 +1392,47 @@ describe('plugin app page host route (EU-5b)', () => {
         expect(screen.findByTestId('plugin-app-page-establishing')).toBeTruthy();
         expect(screen.findByTestId('plugin-app-page-unavailable')).toBeNull();
         expect(reactNativeSurfaceProps).toHaveLength(0);
+    });
+
+    it('reserves the saved details width on the first frame of a cold detail route with a pending catalog', async () => {
+        const { Dimensions } = await import('react-native');
+        const window = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 1440, height: 900, scale: 1, fontScale: 1 });
+        const { PluginAppPageScreen } = await import('./PluginAppPageScreen');
+        const { AppShellPluginUiProjectionValueProvider } = await import('./AppShellPluginUiProjection');
+        const { MultiPaneHostWithBottom } = await import('@/components/ui/panels/MultiPaneHostWithBottom');
+        const detailsPaneWidthPx = 610;
+        const previousSettings = storage.getState().localSettings;
+        storage.setState({ localSettings: { ...previousSettings, detailsPaneWidthPx, uiMultiPanePanelsEnabled: true } });
+        const selectedEntry = buildTriageEntryRouteSegmentV1({
+            source: { pluginId: 'happier.scm.forge.github', localId: 'pull-requests' },
+            kindId: 'pull-request', collisionScope: 'repository', entryId: '4',
+        });
+        try {
+            const screen = await renderScreen(
+                <AppPaneProvider>
+                    <AppShellPluginUiProjectionValueProvider value={{
+                        pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION, pluginBrowserProjection: null,
+                        phase: 'establishing', interactionEnabled: false, machineId: null, serverId: null, platform: 'web',
+                        accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: { status: 'establishing' },
+                        reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {},
+                    }}>
+                        <PluginAppPageScreen pluginId="happier.triage" localId="triage" subPath={`sv,assigned/${selectedEntry}`} />
+                    </AppShellPluginUiProjectionValueProvider>
+                </AppPaneProvider>,
+            );
+            expect(screen.findByTestId('plugin-app-page-establishing')).toBeTruthy();
+            expect(screen.findByTestId('plugin-app-page-loading-loading-skeleton')).toBeTruthy();
+            expect(screen.findByTestId('plugin-app-page-loading-toolbar-search')).toBeTruthy();
+            expect(screen.findByTestId('plugin-app-page-loading-detail-skeleton')).toBeTruthy();
+            const pane = screen.findByType<typeof MultiPaneHostWithBottom>(MultiPaneHostWithBottom);
+            expect(pane.props.layout.details).toBe('docked');
+            expect(pane.props.detailsDockWidthPx).toBe(detailsPaneWidthPx);
+            expect(reactNativeSurfaceProps).toHaveLength(0);
+            await screen.unmount();
+        } finally {
+            storage.setState({ localSettings: previousSettings });
+            window.mockRestore();
+        }
     });
 
     it('keeps a cold restored page pending through a held Profile read, then settles on failure', async () => {
