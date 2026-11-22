@@ -120,7 +120,13 @@ function ArtifactHistoryContent(props: HistorySubject & Readonly<{ onClose: () =
     // The sync store is active-Home-only. Its same-id row is useful only while it belongs to this
     // captured Account; direct Discussion entry may never have put this Doc in that store at all.
     const activeArtifact = getStorage()(state => areServerAccountScopesEqual(state.profileScope, scope)
-        ? state.artifacts[props.artifactId] : undefined);
+        ? state.artifacts[props.artifactId] ?? null : undefined);
+    // Absence is a deletion only after this captured Account's row has been observed. A direct
+    // Discussion read need not populate the active-Home store, and another Home says nothing here.
+    const documentPresent = React.useRef<boolean | null>(null);
+    if (activeArtifact) documentPresent.current = true;
+    else if (activeArtifact === null && documentPresent.current !== null) documentPresent.current = false;
+    const canRestore = props.canRestore && documentPresent.current !== false;
     const retainedArtifact = React.useRef(props.currentArtifact);
     const artifact = activeArtifact && (!retainedArtifact.current || activeArtifact.seq >= retainedArtifact.current.seq)
         ? activeArtifact : retainedArtifact.current;
@@ -331,7 +337,7 @@ function ArtifactHistoryContent(props: HistorySubject & Readonly<{ onClose: () =
                 {sideBySide || chosen === null ? list : null}
                 {preview}
             </View>
-            {chosen && props.canRestore && unreadableBodyVersion !== chosen.bodyVersion ? (
+            {chosen && ((canRestore && unreadableBodyVersion !== chosen.bodyVersion) || restoreFailure) ? (
                 <View style={[styles.footer, !sideBySide ? styles.footerStacked : null]}>
                     {restoreFailure ? (
                         <SurfaceStateCard
@@ -348,14 +354,14 @@ function ArtifactHistoryContent(props: HistorySubject & Readonly<{ onClose: () =
                             {t('artifacts.browser.history.restoreNote')}
                         </Text>
                     )}
-                    <RoundButton
+                    {canRestore && unreadableBodyVersion !== chosen.bodyVersion ? <RoundButton
                         testID="artifact-history:restore"
                         size="small"
                         title={t('artifacts.browser.history.restore', { n: versionNumber(chosen) })}
                         leading={<Icon name="arrow-arc-left" size={14} color={theme.colors.button.primary.tint} />}
                         loading={restoring}
                         onPress={() => { void restore(chosen.bodyVersion); }}
-                    />
+                    /> : null}
                 </View>
             ) : null}
         </View>

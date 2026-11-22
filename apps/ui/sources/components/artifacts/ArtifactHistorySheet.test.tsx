@@ -236,6 +236,42 @@ describe('Artifact History continuity', () => {
         expect(getActiveServerSnapshot().serverId).toBe(served.homes.c!.id);
         expect(served.requests.filter(request => request.path.startsWith('/v1/artifacts/document')).every(request => request.home === 'b')).toBe(true);
     });
+    it.each([900, 390])('withdraws Restore when deletion is pushed to an already readable History (%s)', async width => {
+        const { screen, served } = await setup(request => request.path.endsWith('/revisions') ? Response.json(revisions) : undefined,
+            undefined, width);
+        await screen.pressByTestIdAsync('artifact-history:version:1');
+        expect(screen.getTextContent()).toContain('Notes 1');
+        expect(screen.findByTestId('artifact-history:restore')).not.toBeNull();
+        await act(async () => getStorage().getState().deleteArtifact('document'));
+        expect(screen.findByTestId('artifact-history:restore')).toBeNull();
+        expect(screen.getTextContent()).toContain('Notes 1');
+        if (width === 390) await screen.pressByTestIdAsync('artifact-history:versions');
+        await screen.pressByTestIdAsync('artifact-history:version:2');
+        expect(screen.getTextContent()).toContain('Notes 2');
+        expect(screen.findByTestId('artifact-history:restore')).toBeNull();
+        expect(served.requests.filter(request => request.path.endsWith('/revisions'))).toHaveLength(1);
+    });
+
+    it('keeps the retained version and the refusal when deletion arrives during Restore', async () => {
+        const response = createDeferred<Response>();
+        const { screen, served } = await setup(request => request.path.endsWith('/revisions') ? Response.json(revisions)
+            : request.path.endsWith('/restore') ? response.promise : undefined);
+        await screen.pressByTestIdAsync('artifact-history:version:1');
+        const restore = screen.pressByTestIdAsync('artifact-history:restore');
+        await waitForHomeGovernance(() => expect(served.requests.some(request => request.path.endsWith('/restore'))).toBe(true));
+        await act(async () => getStorage().getState().deleteArtifact('document'));
+        try {
+            expect(screen.findByTestId('artifact-history:restore')).toBeNull();
+        } finally {
+            await act(async () => { response.resolve(Response.json({ error: 'Artifact not found' }, { status: 404 })); await restore; });
+        }
+        await waitForHomeGovernance(() => expect(screen.findByTestId('artifact-history:restore-failed')).not.toBeNull());
+        expect(screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'artifact-history:restore-failed')?.props.diagnosticCode)
+            .toBe('not_found');
+        expect(screen.getTextContent()).toContain('Notes 1');
+        expect(getStorage().getState().artifacts.document).toBeUndefined();
+    });
+
     it('does not offer Restore for a version whose document is gone', async () => {
         // The document was deleted while History stayed open: the version's bytes answer the Home's typed 404.
         const reference = { blobId: 'dd983306-d7e5-4ce6-a09c-d33f1a4828a2', mime: 'image/png', sizeBytes: 1, sha256: 'b'.repeat(64) };
