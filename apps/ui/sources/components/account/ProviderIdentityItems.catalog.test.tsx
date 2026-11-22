@@ -2,10 +2,13 @@ import React, { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthEntryProjectionV1 } from '@happier-dev/protocol/auth/entry';
 
+import { View } from 'react-native';
+
 import { createDeferred, createRootLayoutFeaturesResponse, renderScreen } from '@/dev/testkit';
+import { collectRenderedTestIds } from '@/dev/testkit/render/collectRenderedTestIds';
 import { profileDefaults, type Profile } from '@/sync/domains/profiles/profile';
 import { installAccountCommonModuleMocks } from './accountTestHelpers';
-import { ProviderIdentityItems } from './ProviderIdentityItems';
+import { ProviderIdentityItems, resetProviderCatalogForTests } from './ProviderIdentityItems';
 
 installAccountCommonModuleMocks();
 // Images are a native rendering boundary; the catalog, transport, registry and rows stay real.
@@ -32,6 +35,7 @@ describe('ProviderIdentityItems catalog recovery', () => {
     let homeId: string;
 
     beforeEach(async () => {
+        resetProviderCatalogForTests();
         readEntry = async () => entryResponse('workforce');
         features = createRootLayoutFeaturesResponse();
         vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
@@ -157,13 +161,15 @@ describe('ProviderIdentityItems catalog recovery', () => {
     });
 });
 
-// Account › Sign-in & security on a return visit (TH-VISUAL-ACCEPT-16 D5): the Home's released methods are already
-// known, so the connections stand from them while the Home's live entry is read, and nothing below them moves.
+// Account sign-in rows while the Home's live entry is read (TH-VISUAL-FIX-19): only the live entry says which
+// connections the Home offers, so nothing is drawn from the released features that the entry may remove, and a
+// return visit starts from the Home's last settled live answer instead of a skeleton.
 describe('ProviderIdentityItems while the live entry is read', () => {
     let methods: unknown[];
     let entry: ReturnType<typeof createDeferred<Response>>;
 
     beforeEach(async () => {
+        resetProviderCatalogForTests();
         entry = createDeferred<Response>();
         const features = () => createRootLayoutFeaturesResponse({ capabilities: { auth: { methods: methods as never } } });
         vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
@@ -176,34 +182,74 @@ describe('ProviderIdentityItems while the live entry is read', () => {
 
     afterEach(() => vi.unstubAllGlobals());
 
-    async function renderOnHome(serverUrl: string) {
+    async function activateHome(serverUrl: string) {
         const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
         await upsertAndActivateServer({ serverUrl, name: 'Northwind Home' });
-        return await renderScreen(<ProviderIdentityItems
-            profile={profileDefaults}
-            credentials={null}
-            applyProfile={() => {}}
-            returnTo="/settings/account"
-        />);
+        // The page opens after the Home's features were read, as in the app.
+        const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        await getServerFeaturesSnapshot();
     }
+
+    async function renderSection() {
+        // The Recovery key row follows the connections in the Account sign-in section.
+        return await renderScreen(<>
+            <ProviderIdentityItems
+                profile={profileDefaults}
+                credentials={null}
+                applyProfile={() => {}}
+                returnTo="/settings/account"
+            />
+            <View testID="recovery-key-row" />
+        </>);
+    }
+
+    const rowsAbove = (screen: Awaited<ReturnType<typeof renderSection>>) => {
+        const ids = collectRenderedTestIds(screen.tree.toJSON());
+        return ids.slice(0, ids.indexOf('recovery-key-row')).filter((id) => id.startsWith('settings-account-identity-'));
+    };
 
     it('reserves no line when the Home offers no sign-in to connect', async () => {
         methods = [{ id: 'key_challenge', actions: [{ id: 'login', enabled: true, mode: 'keyed' }] }];
-        const screen = await renderOnHome('https://reserve-none.example.test');
-        await vi.waitFor(() => expect(screen.findHostByTestId('settings-account-identity-catalog')).toBeNull());
+        await activateHome('https://reserve-none.example.test');
+        const screen = await renderSection();
+        expect(screen.findHostByTestId('settings-account-identity-catalog')).toBeNull();
         await act(async () => { entry.resolve(Response.json({
             v: 1, state: 'ready', scope: { kind: 'home' }, actions: [], autoRedirect: null,
         } satisfies AuthEntryProjectionV1)); });
         expect(screen.findHostByTestId('settings-account-identity-catalog')).toBeNull();
     });
 
-    it('shows the connection the Home already advertises before its live entry answers', async () => {
+    it('never draws a connection the released features advertise but the live entry omits, and nothing above Recovery key changes', async () => {
         methods = [
             { id: 'key_challenge', actions: [{ id: 'login', enabled: true, mode: 'keyed' }] },
             { id: 'github', actions: [{ id: 'connect', enabled: true, mode: 'keyed' }] },
         ];
-        const screen = await renderOnHome('https://reserve-github.example.test');
-        await vi.waitFor(() => expect(screen.findHostByTestId('settings-account-identity-github-connect')).not.toBeNull());
-        expect(screen.findHostByTestId('settings-account-identity-catalog')).toBeNull();
+        await activateHome('https://features-ahead.example.test');
+        const screen = await renderSection();
+        const first = rowsAbove(screen);
+        expect(first).not.toContain('settings-account-identity-github-connect');
+        await act(async () => { entry.resolve(Response.json({
+            v: 1, state: 'ready', scope: { kind: 'home' }, actions: [], autoRedirect: null,
+        } satisfies AuthEntryProjectionV1)); });
+        expect(rowsAbove(screen)).toEqual(first);
+        expect(screen.findHostByTestId('settings-account-identity-github-connect')).toBeNull();
+    });
+
+    it('starts a return visit from the Home\'s last settled live answer, with no skeleton', async () => {
+        methods = [{ id: 'key_challenge', actions: [{ id: 'login', enabled: true, mode: 'keyed' }] }];
+        await activateHome('https://return-visit.example.test');
+        const firstVisit = await renderSection();
+        await act(async () => { entry.resolve(entryResponse('workforce')); });
+        await vi.waitFor(() => expect(firstVisit.findHostByTestId('settings-account-identity-workforce-connect')).not.toBeNull());
+        const settled = rowsAbove(firstVisit);
+        await firstVisit.unmount();
+
+        // Back on the page: the live entry is read again and has not answered yet.
+        entry = createDeferred<Response>();
+        const returnVisit = await renderSection();
+        expect(rowsAbove(returnVisit)).toEqual(settled);
+        expect(returnVisit.findHostByTestId('settings-account-identity-catalog')).toBeNull();
+        await act(async () => { entry.resolve(entryResponse('workforce')); });
+        expect(rowsAbove(returnVisit)).toEqual(settled);
     });
 });

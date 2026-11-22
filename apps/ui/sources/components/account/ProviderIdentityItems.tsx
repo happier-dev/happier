@@ -111,16 +111,6 @@ async function openProviderConnectUrl(params: {
     }
 }
 
-/**
- * Whether this Home can host a managed identity at all.
- *
- * A Home that predates managed integrations answers "no management metadata"
- * correctly, and its members keep the disconnect and profile-publication
- * controls that Home has always enforced server-side. Only a Home that could
- * have sent management metadata and did not is unclassified, and there the
- * destructive and publication controls fail closed rather than guessing
- * "personal".
- */
 /** The connections a catalog offers, one per non-native method, as this list draws them. */
 function providerDescriptorsFrom(methods: AuthenticationMethodCapabilities['catalog']['methods']): readonly ProviderDescriptor[] {
     const descriptors = new Map<string, ProviderDescriptor>();
@@ -139,6 +129,33 @@ function providerDescriptorsFrom(methods: AuthenticationMethodCapabilities['cata
     return [...descriptors.values()];
 }
 
+/**
+ * The last live catalog this client settled, for one Home. The catalog is read into the list's own state, which
+ * ends when the page closes; without this, every return to Account restarted from nothing and redrew its
+ * connections on arrival. Memory-only and one Home at a time: a new read for the Home replaces it, an
+ * authoritative "no entry" clears it, and a failed read leaves it.
+ */
+let lastSettledCatalog: Readonly<{ targetKey: string; catalog: ProviderCatalogState }> | null = null;
+
+function settledCatalogFor(targetKey: string): ProviderCatalogState | null {
+    return lastSettledCatalog?.targetKey === targetKey ? lastSettledCatalog.catalog : null;
+}
+
+/** Test seam: forget the held catalog. */
+export function resetProviderCatalogForTests(): void {
+    lastSettledCatalog = null;
+}
+
+/**
+ * Whether this Home can host a managed identity at all.
+ *
+ * A Home that predates managed integrations answers "no management metadata"
+ * correctly, and its members keep the disconnect and profile-publication
+ * controls that Home has always enforced server-side. Only a Home that could
+ * have sent management metadata and did not is unclassified, and there the
+ * destructive and publication controls fail closed rather than guessing
+ * "personal".
+ */
 function releasedIdentityControlsApply(catalog: ProviderCatalogState): boolean {
     return catalog.kind === 'legacy';
 }
@@ -332,39 +349,49 @@ export const ProviderIdentityItems = React.memo((props: ProviderIdentityItemsPro
     const activeServer = useActiveServerSnapshot();
     const featuresSnapshot = useServerFeaturesRuntimeSnapshot();
     const targetKey = `${activeServer.serverId}\u0000${activeServer.serverUrl}`;
-    const [catalogSnapshot, setCatalogSnapshot] = React.useState<ProviderCatalogSnapshot>(() => ({
-        targetKey,
-        catalog: { kind: 'loading' },
-        requestStatus: 'loading',
-    }));
+    // A return visit starts from the Home's last settled live catalog; the read below refreshes it in place.
+    const [catalogSnapshot, setCatalogSnapshot] = React.useState<ProviderCatalogSnapshot>(() => {
+        const settled = settledCatalogFor(targetKey);
+        return settled
+            ? { targetKey, catalog: settled, requestStatus: 'ready' }
+            : { targetKey, catalog: { kind: 'loading' }, requestStatus: 'loading' };
+    });
     const [retryAttempt, setRetryAttempt] = React.useState(0);
-    const liveCatalog: ProviderCatalogState = catalogSnapshot.targetKey === targetKey
+    const settled = catalogSnapshot.targetKey === targetKey ? null : settledCatalogFor(targetKey);
+    const catalog: ProviderCatalogState = catalogSnapshot.targetKey === targetKey
         ? catalogSnapshot.catalog
-        : { kind: 'loading' };
-    // While the live entry is read, the methods the Home already released (its features, read before this page)
-    // stand for it: the connections draw at once and nothing below them moves when the entry agrees.
-    const releasedCatalog = React.useMemo<ProviderCatalogState | null>(() => {
-        if (liveCatalog.kind !== 'loading' || featuresSnapshot.status !== 'ready') return null;
-        const capabilities = projectAuthenticationMethodCapabilities(featuresSnapshot.features);
-        return capabilities.usesStructuredMethods
-            ? { kind: 'current', descriptors: providerDescriptorsFrom(capabilities.catalog.methods) }
-            : null;
-    }, [featuresSnapshot, liveCatalog.kind]);
-    const catalog = releasedCatalog ?? liveCatalog;
-    const liveRequestStatus = catalogSnapshot.targetKey === targetKey ? catalogSnapshot.requestStatus : 'loading';
-    const requestStatus = releasedCatalog && liveRequestStatus === 'loading' ? 'ready' : liveRequestStatus;
+        : settled ?? { kind: 'loading' };
+    const requestStatus = catalogSnapshot.targetKey === targetKey
+        ? catalogSnapshot.requestStatus
+        : settled ? 'ready' : 'loading';
+    // Only the live entry says which connections a Home offers: its released features may name methods the entry
+    // then omits (Home policy, the provider catalog). So nothing is drawn from them, and on a Home that released
+    // a method list no line is held either, because a held line the entry answers with no rows would leave again.
+    // A Home that released no method list keeps the held line: its live answer always draws the registry's rows.
+    const releasedMethodList = React.useMemo(() => featuresSnapshot.status === 'ready'
+        && projectAuthenticationMethodCapabilities(featuresSnapshot.features).usesStructuredMethods,
+    [featuresSnapshot]);
 
     React.useEffect(() => {
         const abortController = new AbortController();
-        setCatalogSnapshot((previous) => ({
-            targetKey,
-            catalog: previous.targetKey === targetKey ? previous.catalog : { kind: 'loading' },
-            requestStatus: previous.targetKey === targetKey && (previous.requestStatus === 'failed' || previous.requestStatus === 'retrying')
-                ? 'retrying'
-                : 'loading',
-        }));
+        const settle = (snapshot: ProviderCatalogSnapshot) => {
+            lastSettledCatalog = { targetKey: snapshot.targetKey, catalog: snapshot.catalog };
+            setCatalogSnapshot(snapshot);
+        };
+        setCatalogSnapshot((previous) => {
+            const known = previous.targetKey === targetKey ? previous.catalog : settledCatalogFor(targetKey) ?? { kind: 'loading' };
+            const retrying = previous.targetKey === targetKey
+                && (previous.requestStatus === 'failed' || previous.requestStatus === 'retrying');
+            return {
+                targetKey,
+                catalog: known,
+                // A settled catalog stays drawn while it is read again.
+                requestStatus: retrying ? 'retrying' : known.kind === 'loading' ? 'loading' : 'ready',
+            };
+        });
         const fail = (retainCatalog: boolean) => {
             if (abortController.signal.aborted) return;
+            if (!retainCatalog && lastSettledCatalog?.targetKey === targetKey) lastSettledCatalog = null;
             setCatalogSnapshot((previous) => ({
                 targetKey,
                 catalog: retainCatalog && previous.targetKey === targetKey && previous.catalog.kind !== 'loading'
@@ -377,7 +404,7 @@ export const ProviderIdentityItems = React.memo((props: ProviderIdentityItemsPro
             .then((result) => {
                 if (abortController.signal.aborted) return;
                 if (result.kind === 'unsupported') {
-                    setCatalogSnapshot({ targetKey, catalog: { kind: 'legacy' }, requestStatus: 'ready' });
+                    settle({ targetKey, catalog: { kind: 'legacy' }, requestStatus: 'ready' });
                     return;
                 }
                 if (result.kind !== 'ready' || result.projection.state !== 'ready') {
@@ -386,7 +413,7 @@ export const ProviderIdentityItems = React.memo((props: ProviderIdentityItemsPro
                 }
 
                 const capabilities = projectAuthEntryMethodCapabilities(result.projection);
-                setCatalogSnapshot({
+                settle({
                     targetKey,
                     catalog: { kind: 'current', descriptors: providerDescriptorsFrom(capabilities.catalog.methods) },
                     requestStatus: 'ready',
@@ -402,8 +429,8 @@ export const ProviderIdentityItems = React.memo((props: ProviderIdentityItemsPro
             connectAvailable?: boolean | null;
             management: NonNullable<Profile['linkedIdentityManagementV1']>[number] | null;
         }>>();
-        // While the catalog loads nothing is guessed from the registry: a guessed row would vanish
-        // or change on arrival. The loading line below holds the place instead.
+        // While the catalog loads nothing is guessed from the registry or the released features: a guessed
+        // row would vanish or change on arrival.
         if (catalog.kind === 'legacy') {
             for (const provider of authProviderRegistry) {
                 const id = normalizeProviderId(provider.id);
@@ -485,9 +512,9 @@ export const ProviderIdentityItems = React.memo((props: ProviderIdentityItemsPro
 
     return (
         <>
-            {/* The connections line is held while the catalog loads, and a failed read takes that
-                same line with Retry: the sheet never gains or loses a row on arrival. */}
-            {requestStatus !== 'ready' ? (
+            {/* A failed read takes the connections line with Retry; on a Home that released no method list
+                that line is held while the catalog loads. */}
+            {requestStatus !== 'ready' && (requestStatus !== 'loading' || !releasedMethodList) ? (
                 <ItemLoadStateRows
                     testID="settings-account-identity-catalog"
                     state={requestStatus === 'loading'
