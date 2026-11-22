@@ -22,6 +22,7 @@ import { useSettingsReady } from '@/sync/store/hooks';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import {
     deleteSavedSecretResource,
     repairCustodiedSavedSecretResourceEnvelopesBestEffort,
@@ -52,9 +53,13 @@ function alertSavedSecretOperationFailure(reason: string,
 export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen() {
     const router = useRouter();
     const navigation = useNavigation();
-    const catalog = useSavedSecretCatalog();
-    const scope = useAccountSettingsScope();
-    const settingsReady = useSettingsReady();
+    const params = useLocalSearchParams<{ secret?: string; add?: string; serverId?: string }>();
+    const homeId = typeof params.serverId === 'string' ? params.serverId.trim() || null : null;
+    const activeScope = useAccountSettingsScope();
+    const { binding } = useServerCredentialAccountScopeBinding(homeId);
+    const scope = homeId ? binding?.scope ?? null : activeScope;
+    const catalog = useSavedSecretCatalog({ scope });
+    const settingsReady = useSettingsReady() && areServerAccountScopesEqual(activeScope, scope);
     const scopeKey = scope ? `${scope.serverId}:${scope.accountId}` : null;
     const currentScopeKey = React.useRef(scopeKey);
     currentScopeKey.current = scopeKey;
@@ -96,7 +101,6 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
         });
     };
     // Credentials' rail and Secrets section select a secret (`secret`) or open the new-secret draft (`add`).
-    const params = useLocalSearchParams<{ secret?: string; add?: string }>();
     const selectedRef = typeof params.secret === 'string' && params.secret.length > 0 ? params.secret : null;
     const addParam = params.add === '1';
     React.useEffect(() => {
@@ -348,8 +352,8 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
 
     // A secret opens as its own page, the same route the Credentials rail selects.
     const openSecret = React.useCallback((ref: string) => {
-        void runGuardedNavigation(() => router.push(buildCredentialsSecretRoute({ ref }) as never));
-    }, [router]);
+        void runGuardedNavigation(() => router.push(buildCredentialsSecretRoute({ ref, serverId: homeId ?? undefined }) as never));
+    }, [homeId, router]);
 
     const openApproval = approvalId && scope ? () => router.pushRetainingCurrent(
         `/inbox/approvals/${encodeURIComponent(approvalId)}?serverId=${encodeURIComponent(scope.serverId)}`,

@@ -16,6 +16,8 @@ import {
   PluginCollectionSharingResourceV1Schema,
 } from '@happier-dev/protocol/plugins/data/collectionSharingV1';
 import { PluginAccountAvailabilityIntentReadResponseV1Schema } from '@happier-dev/protocol/plugins/availability/v1';
+import { SharedSavedSecretListOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 
 import {
   collectRenderedTestIds,
@@ -137,6 +139,32 @@ afterEach(async () => {
 });
 
 describe('Team shared kind list', () => {
+  it('opens the selected Saved Secret at its own Home after one Team-filtered metadata read', async () => {
+    const serverId = await addHome([]);
+    const ref = formatSharedSavedSecretRefV1(POOL_ID);
+    const list = vi.fn((_input: unknown, request: { url: string }) => {
+      expect(new URL(request.url).searchParams.get('sharedWithTeamId')).toBe('team-1');
+      return {
+        body: SharedSavedSecretListOutputV1Schema.parse({
+          resources: [{ ref, source: 'shared_resource', relationship: 'recipient', name: 'Release key',
+            kind: 'token', revision: 1, materialStatus: 'ready',
+            capabilities: { use: true, rename: false, rotate: false, manageAccess: false, delete: false } }],
+          nextCursor: null,
+        }),
+      };
+    });
+    harness.answer(serverId, '/v1/account/saved-secrets/resources', { select: list });
+    const screen = await renderScreen(<TeamSharedKindScreen serverId={serverId} teamId="team-1" kind="savedSecrets" />);
+    const row = `team-shared-kind-row:${ref}`;
+    await vi.waitFor(() => expect(ids(screen)).toContain(row));
+    await screen.pressByTestIdAsync(row);
+    const destination = new URL(String(routerPush.mock.lastCall?.[0]), HOME_URL);
+    expect(destination.pathname.endsWith('/settings/connected-services/secrets')).toBe(true);
+    expect(destination.searchParams.get('serverId')).toBe(serverId);
+    expect(destination.searchParams.get('secret')).toBe(ref);
+    expect(list).toHaveBeenCalledTimes(1);
+  });
+
   it('opens the exact Collection when two plugins share the same Collection id', async () => {
     const serverId = await addHome([]);
     const kind = TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1;

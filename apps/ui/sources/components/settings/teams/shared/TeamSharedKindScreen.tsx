@@ -20,6 +20,7 @@ import { useTeamSharedDiscussions } from '@/components/discussions/useTeamShared
 import { machinePageHref } from '@/components/machines/page/machinePageHref';
 import { projectSourceRoute } from '@/components/projects/sources/projectSourceNavigation';
 import { useProjectSources } from '@/components/projects/sources/useProjectSources';
+import { buildCredentialsSecretRoute } from '@/components/settings/connectedServices/collection/connectedServicesCollectionRoutes';
 import {
   machinePoolCollectionHref,
   machinePresetCollectionHref,
@@ -394,6 +395,7 @@ function SavedSecretsList({ context, icon }: ListProps) {
     enabled: true,
     pageSize: PAGE_SIZE,
   });
+  const serverId = context.address.serverId;
   const rows = React.useMemo(
     () =>
       list.rows.map((row, index): KindRow => ({
@@ -405,9 +407,9 @@ function SavedSecretsList({ context, icon }: ListProps) {
           'sharedWithTeamScope' in row
             ? scopeLine(row.sharedWithTeamScope)
             : undefined,
-        href: null,
+        href: 'ref' in row ? buildCredentialsSecretRoute({ ref: row.ref, serverId }) : null,
       })),
-    [list.rows],
+    [list.rows, serverId],
   );
   return <KindList icon={icon} state={pagedState(list, rows)} />;
 }
