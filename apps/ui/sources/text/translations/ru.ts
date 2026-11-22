@@ -10072,6 +10072,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
           sessionCreated: 'Сессия создана.',
           approvalTapRequired: 'Этот запрос требует нажатия в Happier. Откройте его, чтобы одобрить или отклонить.',
           actionCanceled: 'Операция отменена.',
+          approvalResultHeld: 'Одобренное действие выполнено. Результат у того, кто его одобрил.',
             reviewCredentials: 'Проверить учётные данные',
             connectAgent: 'Подключить',
             setUpAgent: ({ agent }: { agent: string }) => `Настроить ${agent}`,

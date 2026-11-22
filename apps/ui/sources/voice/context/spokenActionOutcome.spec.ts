@@ -1,11 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import { t } from '@/text';
 import { resolveSpokenActionOutcome } from './spokenActionOutcome';
+import { buildToolResultsFollowUpPrompt } from './buildVoiceToolResultsFollowUp';
 import { completeSpawnActionResult } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { UiActionDispatchResultV1Schema } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { projectVoiceActionExecutionResult, serializeVoiceActionExecuteResult } from '@/voice/tools/voiceActionResult';
 
 describe('spoken Action owner outcomes', () => {
+  it('presents a held approval as an executed Action in speech and tool follow-up', () => {
+    const entry = { t: 'action_execute', args: { actionId: 'daemon.filesystem.copy', input: {} },
+      result: { ok: false, errorCode: 'approval_result_held', error: 'approval_result_held' } };
+    expect(resolveSpokenActionOutcome(entry)).toBeTypeOf('string');
+    const prompt = buildToolResultsFollowUpPrompt([entry], {
+      shareFilePaths: false, shareSessionSummary: false, sharePermissionRequests: false,
+    });
+    expect(prompt).toContain('approval_result_held');
+    expect(prompt).not.toContain('At least one action failed.');
+  });
+
   it.each([
     { canonicalResult: false, boundAgent: false }, { canonicalResult: false, boundAgent: true },
     { canonicalResult: true, boundAgent: false }, { canonicalResult: true, boundAgent: true },

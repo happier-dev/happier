@@ -2,6 +2,7 @@ import type { LocalVoiceAgentToolResultEntry } from '@/voice/tools/localVoiceEff
 import { formatVoiceToolResultsFollowUp, VOICE_TOOL_RESULT_INSTRUCTIONS_PREFIX } from '@happier-dev/protocol/voice/toolResultsChannel';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { resolveVoiceToolResultHumanSummary } from './resolveVoiceToolResultHumanSummary';
+import { isHeldApprovalToolResult } from './spokenActionOutcome';
 import { isVoiceToolResultBlockedByPrivacy, redactVoiceActionExecutionResultForProvider, redactVoiceToolResultForProvider, redactVoiceToolResultValue,
   type VoiceToolResultRedactionPrefs } from './redactVoiceToolResult';
 import { resolveVoiceExecutionToolName, VOICE_ACTION_EXECUTE_TOOL_NAME } from '@/voice/tools/voiceActionExecution';
@@ -43,6 +44,7 @@ export function buildToolResultsFollowUpPrompt(
   prefs: VoiceToolResultRedactionPrefs,
 ): string {
   const hasErrors = toolResults.some(({ result }) => result !== null && typeof result === 'object'
+    && !isHeldApprovalToolResult(result)
     && (('ok' in result && result.ok === false) || ('errorCode' in result && typeof result.errorCode === 'string')));
   const instruction = hasErrors
     ? VOICE_TOOL_RESULT_INSTRUCTIONS_PREFIX + ' At least one action failed. Do not claim success, do not repeat a requested success token, and explain the failure plainly.'

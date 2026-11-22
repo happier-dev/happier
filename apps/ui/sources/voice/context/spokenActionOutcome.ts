@@ -24,6 +24,11 @@ function record(value: unknown): Record<string, unknown> | null {
     ? value as Record<string, unknown> : null;
 }
 
+export function isHeldApprovalToolResult(value: unknown): boolean {
+  const envelope = record(value);
+  return envelope?.ok === false && envelope.errorCode === 'approval_result_held';
+}
+
 /** These Actions have an owner-produced disposition, rather than a model-authored answer. */
 export function readSpokenActionOutcomeOwner(toolName: string, input: unknown) {
   const requestedActionId = toolName === VOICE_ACTION_EXECUTE_TOOL_NAME ? record(input)?.actionId : null;
@@ -42,6 +47,7 @@ export function readSpokenActionOutcomeOwner(toolName: string, input: unknown) {
 export function resolveSpokenActionOutcome(entry: LocalVoiceAgentToolResultEntry, options?: Readonly<{
   resolveSentToLabel?: (input: Readonly<Record<string, unknown>> | null) => string | null;
 }>): SpokenActionOutcome | null {
+  if (isHeldApprovalToolResult(entry.result)) return t('voiceSurface.approvalResultHeld');
   const owner = readSpokenActionOutcomeOwner(entry.t, entry.args);
   if (!owner) return null;
   const envelope = record(entry.result);

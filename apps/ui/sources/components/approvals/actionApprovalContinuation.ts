@@ -1,5 +1,6 @@
 import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { buildActionExecuteResultFromRecordedApprovalExecution } from '@happier-dev/protocol/actions/actionExecutor';
 import { readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
 import { projectApprovalReviewInput, resolveApprovalPresentationInput } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -428,15 +429,24 @@ export function createActionApprovalContinuation(
             const request = nativeOptions?.success && execution ? { ...inspection.request,
                 execution: { ...execution, result: nativeOptions.data } } : inspection.request;
             const failure = readApprovalExecutionFailure(request);
-            if (failure) {
+            if (failure && failure.errorCode !== 'invalid_action_output') {
                 input.onFailed(failure.errorCode, failure);
                 return 'consumed';
             }
 
             const outputSchema = getActionSpec(input.actionId).outputSchema;
-            const output = nativeOptions ?? outputSchema?.safeParse(execution?.result);
+            const output = failure ? null : nativeOptions ?? outputSchema?.safeParse(execution?.result);
             if (!output?.success) {
-                input.onFailed('invalid_action_output');
+                // A durable observation can omit required live fields. Keep
+                // useful typed projections and let Protocol name held results.
+                const recorded = buildActionExecuteResultFromRecordedApprovalExecution(request);
+                if (recorded?.ok === false && recorded.errorCode === 'approval_result_held') {
+                    input.onFailed(recorded.errorCode);
+                } else if (failure) {
+                    input.onFailed(failure.errorCode, failure);
+                } else {
+                    input.onFailed('invalid_action_output');
+                }
                 return 'consumed';
             }
             try {

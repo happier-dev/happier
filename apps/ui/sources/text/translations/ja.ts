@@ -9917,6 +9917,7 @@ localTailscale: {
     sessionCreated: 'セッションを作成しました。',
     approvalTapRequired: 'このリクエストは Happier でのタップが必要です。開いて承認または拒否してください。',
     actionCanceled: '操作がキャンセルされました。',
+    approvalResultHeld: '承認された操作は実行されました。結果は承認した人が受け取りました。',
     reviewCredentials: '認証情報を確認',
     connectAgent: '接続',
     setUpAgent: ({ agent }: { agent: string }) => `${agent} を設定`,

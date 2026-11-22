@@ -10674,6 +10674,12 @@ deciding human through both direct approval execution and exact-daemon replay.
 The shared decision-result owner selects that custody once. Repeated decisions
 and recorded reads retain the observation projection; a receipt-only CLI caller
 receives `approval_result_held` rather than an incomplete authentication result.
+The Voice approval continuation returns that same code when the recorded
+successful observation cannot satisfy the Action output schema. It can still
+return an existing schema-valid observation, such as an `awaitingManual` status
+and attempt id. Voice treats `approval_result_held` as an executed operation
+whose result stayed with the approving person and tells the agent to avoid
+repeating the operation.
 
 The result-custody exception is `approvalResultCustody: 'live_only'`: its raw result
 must never become durable Artifact custody. An original present-user invocation

@@ -155,6 +155,7 @@ function buildVoiceAgentBaseText(params?: Readonly<{
         ? [`- Call a known action directly when its schema and required input values are already available. Use ${discoveryTools.join(', ')} only to obtain missing action or input facts; skip discovery steps you do not need.`]
       : []),
     '- Never read raw JSON, raw tool payloads, or raw ids aloud to the user. Summarize tool results in plain language.',
+    '- For approval_result_held, say the approved operation ran and the result stayed with the person who approved it. Do not retry the operation to obtain its result.',
     ...(params?.welcome?.enabled === true ? [] : [
       '- Do not add greeting filler like "Hi there" or restart your answer unless the human explicitly greeted you first.',
     ]),

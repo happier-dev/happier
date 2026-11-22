@@ -11162,6 +11162,7 @@ const enVoiceSurface = {
   sessionCreated: 'Session created.',
   approvalTapRequired: 'This request needs a tap in Happier. Open it to approve or reject.',
   actionCanceled: 'The operation was canceled.',
+  approvalResultHeld: 'The approved action ran. The person who approved it has the result.',
   reviewCredentials: 'Review credentials',
   connectAgent: 'Connect',
   setUpAgent: ({ agent }: { agent: string }) => `Set up ${agent}`,
