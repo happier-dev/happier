@@ -1,4 +1,5 @@
-import type { DaemonProviderUsageRefreshResponseV1 } from '@happier-dev/protocol/rpc/providers';
+import type { DaemonProviderUsageRefreshResponseV1, ProviderConnectedAccountUsageSourceV1 } from '@happier-dev/protocol/rpc/providers';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ProviderAccountUsageSnapshotV1, ProviderAccountUsageStateV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { ProviderErrorV1Schema, type ProviderErrorCodeV1 } from '@happier-dev/protocol/providers/errors';
 import type { ProviderActionApprovalOptions, refreshProviderConnectionUsage } from '@/providers/actions/client';
@@ -38,6 +39,7 @@ type ResourceInput = Readonly<{
     serverId: string;
     accountId: string;
     connectionId: string;
+    connectedAccountSource?: ProviderConnectedAccountUsageSourceV1;
     machineId: string;
     /** The canonical Action invocation; a mounted caller passes its Action client's bound method, which
      * owns approval continuation and Account retirement. */
@@ -116,8 +118,10 @@ export function createProviderConnectionUsageRefreshResource(input: ResourceInpu
             publish({ view, refreshing: true, failed: false, pendingApproval: null });
             reading = (async () => {
                 try {
-                    const result = await input.invoke({ serverId: input.serverId, accountId: input.accountId,
-                        connectionId: input.connectionId, machineId: input.machineId, signal: invocation.signal },
+                    const selector = input.connectedAccountSource
+                        ? { connectedAccountSource: input.connectedAccountSource } : { connectionId: input.connectionId };
+                    const result = await input.invoke({ serverId: input.serverId, accountId: input.accountId, ...selector,
+                        machineId: input.machineId, signal: invocation.signal },
                     { signal: invocation.signal, retainInvocationSignal: invocation.signal,
                         ...(automatic ? { interactivePresentation: 'unavailable' as const } : {}),
                         onApprovalPending: registration => {
@@ -126,7 +130,7 @@ export function createProviderConnectionUsageRefreshResource(input: ResourceInpu
                             publish({ ...snapshot, pendingApproval: { artifactId, href: buildApprovalHref(artifactId, input.serverId) } });
                         } });
                     if (!current() || invocation.signal.aborted) return null;
-                    view = projectUsageRefresh(result, view);
+                    view = projectUsageRefresh(result, view, Boolean(input.connectedAccountSource));
                     return view;
                 } catch (error) {
                     if (!current() || invocation.signal.aborted) return null;
@@ -161,7 +165,8 @@ export function createProviderConnectionUsageRefreshResource(input: ResourceInpu
 }
 
 type SharedEntry = Readonly<{
-    input: Pick<ResourceInput, 'serverId' | 'accountId' | 'connectionId' | 'machineId'>;
+    input: Pick<ResourceInput, 'serverId' | 'accountId' | 'connectionId' | 'machineId' | 'connectedAccountSource'>;
+    base: string;
     resource: ProviderConnectionUsageRefreshResource;
     demands: Set<Readonly<{ invoke: ResourceInput['invoke'] }>>;
 }>;
@@ -170,10 +175,10 @@ type SharedEntry = Readonly<{
 const shared = new Map<string, SharedEntry>();
 
 export function acquireProviderConnectionUsageRefreshResource(input: Omit<ResourceInput, 'isPresented'> & Readonly<{ identity: string; active?: boolean }>) {
-    const base = JSON.stringify([input.serverId, input.accountId, input.connectionId, input.machineId]);
+    const base = JSON.stringify([input.serverId, input.accountId, input.machineId, input.connectedAccountSource ?? input.connectionId]);
     const key = JSON.stringify([base, input.identity]);
     for (const [otherKey, entry] of shared) {
-        if (otherKey !== key && JSON.stringify([entry.input.serverId, entry.input.accountId, entry.input.connectionId, entry.input.machineId]) === base) {
+        if (otherKey !== key && entry.base === base) {
             entry.resource.dispose();
             shared.delete(otherKey);
         }
@@ -185,7 +190,8 @@ export function acquireProviderConnectionUsageRefreshResource(input: Omit<Resour
     }
     if (!entry) {
         const demands = new Set<Readonly<{ invoke: ResourceInput['invoke'] }>>();
-        entry = { input: { serverId: input.serverId, accountId: input.accountId, connectionId: input.connectionId, machineId: input.machineId },
+        entry = { base, input: { serverId: input.serverId, accountId: input.accountId, connectionId: input.connectionId,
+            machineId: input.machineId, connectedAccountSource: input.connectedAccountSource },
             demands, resource: createProviderConnectionUsageRefreshResource({ ...input,
             onDispose: () => { shared.delete(key); },
             invoke: (request, options) => demands.values().next().value!.invoke(request, options),
@@ -221,7 +227,8 @@ export function acquireProviderConnectionUsageRefreshResource(input: Omit<Resour
 /** A committed request wakes only its exact connection's currently demanded observation. */
 export function invalidateProviderConnectionUsage(input: Readonly<{ serverId: string; accountId: string; connectionId: string; machineId?: string }>): void {
     for (const entry of shared.values()) {
-        if (entry.input.serverId === input.serverId && entry.input.accountId === input.accountId && entry.input.connectionId === input.connectionId
+        if (!entry.input.connectedAccountSource && entry.input.serverId === input.serverId
+            && entry.input.accountId === input.accountId && entry.input.connectionId === input.connectionId
             && (!input.machineId || entry.input.machineId === input.machineId)) entry.resource.invalidate();
     }
 }
@@ -239,7 +246,7 @@ function canRetainSourceSnapshot(code: ProviderErrorCodeV1): boolean {
 }
 
 function projectUsageRefresh(result: DaemonProviderUsageRefreshResponseV1,
-    previous: ProviderConnectionUsageRefreshView | null): ProviderConnectionUsageRefreshView {
+    previous: ProviderConnectionUsageRefreshView | null, retainEqualObservation = false): ProviderConnectionUsageRefreshView {
     const snapshotsBySourceId: Record<string, ProviderAccountUsageSnapshotV1> = {};
     const stateBySourceId: Record<string, ProviderAccountUsageStateV1> = {};
     if (result.status === 'error' && canRetainSourceSnapshot(result.error.code) && previous) {
@@ -248,13 +255,23 @@ function projectUsageRefresh(result: DaemonProviderUsageRefreshResponseV1,
             stateBySourceId[sourceId] = 'error_last_known_good';
         }
     }
-    if (result.status === 'success') for (const source of result.sources) {
-        const snapshot = source.status === 'ok' ? source.snapshot
-            : source.status === 'error' && canRetainSourceSnapshot(source.error.code)
-                ? previous?.snapshotsBySourceId[source.sourceId] : undefined;
-        if (snapshot) snapshotsBySourceId[source.sourceId] = snapshot;
-        stateBySourceId[source.sourceId] = resolveProviderAccountUsageSnapshotState({ snapshot: snapshot ?? null,
-            loading: false, hadError: source.status === 'error', nowMs: Date.now() });
+    if (result.status === 'success') {
+        const sources = result.sources.map(source => {
+            const old = previous?.snapshotsBySourceId[source.sourceId];
+            const snapshot = source.status === 'ok' ? source.snapshot
+                : source.status === 'error' && canRetainSourceSnapshot(source.error.code) ? old : undefined;
+            stateBySourceId[source.sourceId] = resolveProviderAccountUsageSnapshotState({ snapshot: snapshot ?? null,
+                loading: false, hadError: source.status === 'error', nowMs: Date.now() });
+            if (source.status === 'ok' && retainEqualObservation && old
+                && previous?.stateBySourceId[source.sourceId] === stateBySourceId[source.sourceId]
+                && sameStrictJsonValue(old, { ...source.snapshot, observedAtMs: old.observedAtMs, fetchedAtMs: old.fetchedAtMs })) {
+                snapshotsBySourceId[source.sourceId] = old;
+                return { ...source, snapshot: old };
+            }
+            if (snapshot) snapshotsBySourceId[source.sourceId] = snapshot;
+            return source;
+        });
+        result = { ...result, sources };
     }
     return retainDeep(previous ?? undefined, { result, snapshotsBySourceId, stateBySourceId });
 }

@@ -439,6 +439,7 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
                 machineScopeLine={props.machineScopeLine}
                 signInFlow={signInFlow}
                 account={account.ref}
+                providerUsageProfile={accountIsRevisioned && account.kind && account.configurationReady ? account : undefined}
                 serviceLabel={props.title}
                 legacyServiceId={props.legacyServiceId ?? null}
                 presentation={resolveAccountIdentity(account)}

@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { ProviderUsageSourceV1 } from '@happier-dev/protocol/providers/contributions';
+import type { ProviderConnectedAccountUsageSourceV1 } from '@happier-dev/protocol/rpc/providers';
 import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type { SavedSecretSlotBindingsV1 } from '@happier-dev/protocol/providers/settings/v1';
 import { resolveSavedSecretSlotBindingIdV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
@@ -51,6 +52,8 @@ const SOURCE_FAILED_KEY = {
  */
 export const ProviderConnectionUsageSection = React.memo(function ProviderConnectionUsageSection(props: Readonly<{
     connectionId: string;
+    connectedAccountSource?: ProviderConnectedAccountUsageSourceV1;
+    connectedAccountPlanLabel?: string | null;
     identity: string;
     providerName: string;
     serverId: string | null;
@@ -67,17 +70,18 @@ export const ProviderConnectionUsageSection = React.memo(function ProviderConnec
     const router = useRouter();
     const { refreshProviderConnectionUsage } = useProviderActionClient(props.serverId);
     const usage = useProviderConnectionUsage({
-        scope: props.scope, connectionId: props.connectionId, machineId: props.machineId,
+        scope: props.scope, connectionId: props.connectionId, connectedAccountSource: props.connectedAccountSource, machineId: props.machineId,
         identity: props.identity, secretBindings: props.secretBindings, active: props.active, invoke: refreshProviderConnectionUsage,
     });
     const { secretBindings, machineId } = props;
-    const presentation = presentProviderConnectionUsage({
+    const presentation = React.useMemo(() => presentProviderConnectionUsage({
         sources: props.sources,
+        connectedAccountPlanLabel: props.connectedAccountPlanLabel,
         isBillingSlotBound: (slotId) => machineId
             ? resolveSavedSecretSlotBindingIdV1(secretBindings, machineId, slotId) !== null
             : Boolean(secretBindings?.account?.[slotId]),
         view: usage.view,
-    });
+    }), [props.sources, props.connectedAccountPlanLabel, machineId, secretBindings, usage.view]);
     const approvalHref = usage.pendingApproval?.href ?? null;
     return (
         <ProviderConnectionUsageSectionView

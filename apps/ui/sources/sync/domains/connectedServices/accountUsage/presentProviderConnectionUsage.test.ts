@@ -122,6 +122,33 @@ describe('Provider connection usage presentation', () => {
     ]).meters;
     expect(presentConnectedServiceQuotaReportedAmount(meter!)?.amount).toEqual(amount);
   });
+  it.each([
+    { planLabel: 'Enterprise', visible: ['spend'] },
+    { planLabel: 'Flex', visible: ['spend'] },
+    { planLabel: 'Hobby', visible: ['balance', 'spend'] },
+  ])('shows $visible for the selected signed-in $planLabel Account', ({ planLabel, visible }) => {
+    const source = { ...keySource, connectedAccount: {
+      purpose: 'models',
+      headerNames: ['authorization'],
+      omitMetersByPlan: [
+        { planLabel: 'Enterprise', meterIds: ['balance'] },
+        { planLabel: 'Flex', meterIds: ['balance'] },
+      ],
+    } } as const;
+    const usage = snapshot([
+      { ...usd, meterId: 'balance', label: 'Balance', used: null, remaining: 5, limit: null, limitScope: 'account' },
+      { ...usd, meterId: 'spend', label: 'Lifetime spend', used: 12, limit: null, limitScope: 'account' },
+    ]);
+    const facts = {
+      sources: [source], isBillingSlotBound: () => true,
+      view: view({ status: 'success', sources: [{ sourceId: source.id, status: 'ok', snapshot: usage }] },
+        { [source.id]: usage }),
+    };
+    expect(presentProviderConnectionUsage({ ...facts, connectedAccountPlanLabel: planLabel })
+      .groups[0]?.meters.map(meter => meter.meterId)).toEqual(visible);
+    expect(presentProviderConnectionUsage(facts).groups[0]?.meters.map(meter => meter.meterId)).toEqual(['balance', 'spend']);
+  });
+
   it('summarizes the most constrained window in either catalog order', () => {
     const weekly = { ...usd, meterId: 'weekly', label: 'Weekly', used: 10, remaining: 10, limit: 20 };
     const fiveHour = { ...usd, meterId: 'five-hour', label: 'Five hours', used: 80, remaining: 20, limit: 100 };

@@ -405,12 +405,17 @@ do not invent effort tiers. The SDK exposes Protocol's existing effort vocabular
 and builder for bundled and external parser authors alike. Vercel's catalog has
 no structured default; the builder applies Happier's shared selection policy.
 
+The connection detail and Connected Account source use the same credits parser
+and Usage view. Sign-in supplies the selected team as a query parameter on
+`/v1/credits`. The Enterprise and Flex plans show lifetime spend with the balance
+hidden.
+
 Supported brokered guest placement exposes the existing local
 Session endpoint to the remote execution target.
 
 The [published development guide](../apps/docs/content/docs/agents/vercel-ai-gateway.mdx)
 covers setup and limitations. Real keyed and signed-in Agent turns, renewal,
-and Codex model discovery remain tenant-backed release checks. The development path also requires validation on its carrying runtime.
+Codex model discovery and usage remain tenant-backed release checks. The development path also requires validation on its carrying runtime.
 
 ### Cloudflare AI Gateway (0.3 development)
 

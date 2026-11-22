@@ -161,8 +161,9 @@ function presentMeter(
 function scopeOf(
   source: ProviderUsageSourceV1,
   meter: ConnectedServiceQuotaMeterV1,
+  connectedAccount: boolean,
 ): ProviderUsageScope {
-  return source.billingCredential ||
+  return connectedAccount || source.billingCredential ||
     (meter.limitScope && ACCOUNT_LIMIT_SCOPES.has(meter.limitScope))
     ? 'account'
     : 'key';
@@ -176,6 +177,8 @@ function scopeOf(
 export function presentProviderConnectionUsage(
   input: Readonly<{
     sources: readonly ProviderUsageSourceV1[];
+    /** When present, the plan comes from this same selected Connected Account. */
+    connectedAccountPlanLabel?: string | null;
     isBillingSlotBound: (slotId: string) => boolean;
     view: ProviderConnectionUsageRefreshView | null;
   }>,
@@ -200,6 +203,7 @@ export function presentProviderConnectionUsage(
     { key: [], account: [] };
   const sourceErrors: ProviderUsageSourceError[] = [];
   let fetchedAt: number | null = null;
+  const connectedAccount = input.connectedAccountPlanLabel !== undefined;
   if (result) {
     for (const source of input.sources) {
       if (unbound(source)) continue;
@@ -207,8 +211,11 @@ export function presentProviderConnectionUsage(
       if (snapshot) {
         if (snapshot.meters.length > 0)
           fetchedAt = Math.min(fetchedAt ?? snapshot.fetchedAtMs, snapshot.fetchedAtMs);
-        for (const meter of snapshot.meters)
-          byScope[scopeOf(source, meter)].push(presentMeter(meter));
+        const omitted = source.connectedAccount?.omitMetersByPlan
+          ?.find(plan => plan.planLabel === input.connectedAccountPlanLabel)?.meterIds;
+        for (const meter of snapshot.meters) {
+          if (!omitted?.includes(meter.meterId)) byScope[scopeOf(source, meter, connectedAccount)].push(presentMeter(meter));
+        }
       }
       const outcome = result.status === 'success' ? result.sources.find(
         (candidate) => candidate.sourceId === source.id,
@@ -216,7 +223,7 @@ export function presentProviderConnectionUsage(
       if (outcome?.status === 'error') {
         sourceErrors.push({
           sourceId: source.id,
-          scope: source.billingCredential ? 'account' : 'key',
+          scope: connectedAccount || source.billingCredential ? 'account' : 'key',
           billingSlotId: source.billingCredential?.slotId ?? null,
           error: outcome.error,
           lastGood: Boolean(snapshot),

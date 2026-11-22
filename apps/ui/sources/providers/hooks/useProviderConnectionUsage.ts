@@ -16,6 +16,7 @@ import type { SavedSecretSlotBindingsV1 } from '@happier-dev/protocol/providers/
 import { getSavedSecretCatalogSnapshot, readSavedSecretCatalogEntry, subscribeSavedSecretCatalogSnapshots } from '@/sync/store/settings/savedSecretCatalogSnapshot';
 import { observeSavedSecretCatalog } from '@/sync/engine/settings/savedSecretCatalogEngine';
 import type { ProviderUsageSourceV1 } from '@happier-dev/protocol/providers/contributions';
+import type { ProviderConnectedAccountUsageSourceV1 } from '@happier-dev/protocol/rpc/providers';
 import type { AccountProviderDeclarationV1 } from '@happier-dev/protocol/providers/catalog/accountModelProjectionV1';
 import type { ProviderConnectionV1 } from '@happier-dev/protocol/providers/connections/v1';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
@@ -94,6 +95,7 @@ export function useProviderConnectionUsage(
   input: Readonly<{
     scope: ServerAccountScope | null;
     connectionId: string;
+    connectedAccountSource?: ProviderConnectedAccountUsageSourceV1;
     machineId: string | null;
     /** Declaration and selected-credential facts whose change invalidates what was read. */
     identity: string;
@@ -144,6 +146,7 @@ export function useProviderConnectionUsage(
       serverId: scope.serverId,
       accountId: scope.accountId,
       connectionId,
+      connectedAccountSource: input.connectedAccountSource,
       machineId,
       identity,
       active: false,

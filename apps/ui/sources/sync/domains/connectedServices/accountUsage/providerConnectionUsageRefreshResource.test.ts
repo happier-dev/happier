@@ -46,6 +46,37 @@ async function setup() {
 }
 
 describe('Provider connection usage data resource', () => {
+    it('sends only the selected signed-in source and keeps ready data equal on a new observation', async () => {
+        const { serverId } = await account.restore({ waivedActions: ['providers.usage.refresh'] });
+        const connectedAccountSource = {
+            account: { service: { pluginId: 'test.machine', localId: 'identity' }, accountId: 'chosen' },
+            purpose: { consumer: { pluginId: 'test.provider', localId: 'gateway' }, purpose: 'models' },
+            endpointTemplateId: 'gateway',
+            usageSourceId: 'credits',
+        } as const;
+        const resource = createProviderConnectionUsageRefreshResource({
+            serverId, accountId: 'account-a', machineId: 'machine-a', connectionId: 'selected-source', connectedAccountSource,
+            invoke: request => refreshProviderConnectionUsage(request), lifetime: { isCurrent: () => true }, isPresented: () => true,
+        });
+        const now = Date.now();
+        const spend = { meterId: 'spend', label: 'Spend', used: 1, limit: null,
+            unit: 'usd', utilizationPct: null, resetsAt: null, status: 'ok', confidence: 'exact' } as const;
+        const observation = { ...snapshot, observedAtMs: now, fetchedAtMs: now, meters: [spend] };
+        rpc.setResponse(method, { status: 'success', sources: [{ sourceId: 'credits', status: 'ok', snapshot: observation }] });
+        const first = await resource.refresh();
+        expect(requests()[0]?.payload).toEqual({ machineId: 'machine-a', connectedAccountSource });
+        expect(first?.stateBySourceId.credits).toBe('loaded_data');
+        rpc.setResponse(method, { status: 'success', sources: [{ sourceId: 'credits', status: 'ok',
+            snapshot: { ...observation, observedAtMs: observation.observedAtMs + 1, fetchedAtMs: observation.fetchedAtMs + 1 } }] });
+        expect(await resource.refresh()).toBe(first);
+        expect(requests()).toHaveLength(2);
+        rpc.setResponse(method, { status: 'success', sources: [{ sourceId: 'credits', status: 'ok',
+            snapshot: { ...observation, meters: [{ ...spend, used: 2 }] } }] });
+        expect((await resource.refresh())?.snapshotsBySourceId.credits?.meters[0]?.used).toBe(2);
+        expect(requests()).toHaveLength(3);
+        resource.dispose();
+    });
+
     it('retains equal refreshed usage and publishes a real source change once', async () => {
         const { resource } = await setup();
         rpc.setResponse(method, good);

@@ -1,8 +1,10 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { buildProviderAccountUsageRecordId } from '@happier-dev/protocol/connect/account-usage-primitives';
+import { QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { createProviderSettingsAccountHarness, createProviderSettingsHarness,
-    installProviderSettingsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
+    installBundledProviderDeclarationsRpcBoundary, installProviderSettingsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { renderHook, act } from '@/dev/testkit/hooks/renderHook';
@@ -14,6 +16,7 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { installSettingsViewCommonModuleMocks } from '@/components/settings/settingsViewTestHelpers';
 import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, ProviderConnectionsCatalogV1Schema } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { ProviderContributionV1Schema } from '@happier-dev/protocol/providers/contributions';
+import { VERCEL_AI_GATEWAY_PROVIDER_CONTRIBUTION } from '../../../../../packages/plugins/vercel-ai-gateway/src/provider/contribution';
 
 installSettingsViewCommonModuleMocks({ storage: 'real' });
 const account = createProviderSettingsAccountHarness();
@@ -23,6 +26,53 @@ await loadSyncSingletonForTests();
 afterEach(async () => { vi.useRealTimers(); standardCleanup(); await account.reset(); rpc.reset(); });
 
 describe('Provider usage presentation demand', () => {
+    it('opens one Account detail usage source and shows spend for the selected Enterprise Account', async () => {
+        const { serverId } = await account.restore({ waivedActions: ['providers.usage.refresh'] });
+        installProviderSettingsRpcBoundary(rpc);
+        const gateway = 'happier.provider.vercel-ai-gateway/vercel-ai-gateway';
+        installBundledProviderDeclarationsRpcBoundary(rpc, { [gateway]: VERCEL_AI_GATEWAY_PROVIDER_CONTRIBUTION },
+            { contributionKeys: [gateway] });
+        const { QualifiedAccountProviderUsage } = await import('@/components/settings/connectedServices/account/QualifiedAccountProviderUsage');
+        const { ItemList } = await import('@/components/ui/lists/ItemList');
+        const { loadDaemonMergedProjectionCacheEntry } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+        const machineId = 'machine-a';
+        const projection = await loadDaemonMergedProjectionCacheEntry({ machineId, serverId, sections: ['familiesById.providers'] });
+        expect(projection?.kind).toBe('ready');
+        const profile = QualifiedConnectedAccountProfileV4Schema.parse({
+            ref: { service: { pluginId: 'happier.machine.vercel', localId: 'vercel-account' }, accountId: 'signed-in' },
+            status: 'connected', authenticationModeId: 'oauth', kind: 'oauth', configurationReady: true, configurationRevision: 'cfg-1',
+            revisionSemantics: 'revisioned', credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', scopes: [],
+        });
+        const recordKey = { providerId: 'vercel-ai-gateway', accountSubjectId: 'credential-fingerprint', subjectKind: 'account', quotaScope: 'account' } as const;
+        const amountFacts = { unit: 'usd', currency: 'USD', utilizationPct: null, resetsAt: null, limit: null,
+            status: 'ok', confidence: 'exact', limitScope: 'account' } as const;
+        const now = Date.now();
+        const method = RPC_METHODS.DAEMON_PROVIDERS_USAGE_REFRESH;
+        rpc.setResponse(method, { status: 'success', sources: [{ status: 'ok', sourceId: 'credits', snapshot: {
+            v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey, providerId: recordKey.providerId,
+            accountSubject: { kind: 'providerSubject', id: recordKey.accountSubjectId }, observedAtMs: now, fetchedAtMs: now,
+            staleAfterMs: 60_000, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data',
+            meters: [
+                { ...amountFacts, meterId: 'balance', label: 'Balance', used: null, remaining: 2.25 },
+                { ...amountFacts, meterId: 'spend-lifetime', label: 'Lifetime spend', used: 1.75 },
+            ],
+        } }] });
+        const requests = () => rpc.state.requests.filter(request => request.method === method);
+        const screen = await renderScreen(React.createElement(ItemList, null,
+            React.createElement(QualifiedAccountProviderUsage, { profile, machineId, serverId, planLabel: 'Enterprise' })));
+        expect(requests()).toHaveLength(0);
+        await screen.pressByTestIdAsync('connected-account-provider-usage');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('provider-connection-usage:meter:spend-lifetime')).not.toBeNull());
+        expect(screen.findByTestId('provider-connection-usage:meter:balance')).toBeNull();
+        expect(requests().map(request => request.payload)).toEqual([{ machineId, connectedAccountSource: {
+            account: profile.ref, purpose: { consumer: { pluginId: 'happier.provider.vercel-ai-gateway', localId: 'vercel-ai-gateway' },
+                purpose: 'model-inference' }, endpointTemplateId: 'vercel-chat', usageSourceId: 'credits',
+        } }]);
+        await screen.pressByTestIdAsync('connected-account-provider-usage');
+        expect(screen.findByTestId('provider-connection-usage:meter:spend-lifetime')).toBeNull();
+        expect(requests()).toHaveLength(1);
+    });
+
     it('shares the existing settings meter and expanded picker loader and starts no usage requests after both close', async () => {
         const contributionKey = 'happier.provider.vercel-ai-gateway/vercel-ai-gateway';
         const catalog = ProviderConnectionsCatalogV1Schema.parse({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,

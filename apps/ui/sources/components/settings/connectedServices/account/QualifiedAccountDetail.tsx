@@ -3,6 +3,7 @@ import { useConnectedAccountTestConnection } from './useConnectedAccountTestConn
 import { isConnectedAccountSignedOut, parseDisplayableCredentialHealthStatus } from '@/sync/domains/connectedServices/parseDisplayableCredentialHealthStatus';
 import type { ConnectedServiceId} from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
+import type { QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 
 import { useQualifiedConnectedAccountQuota } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountQuota';
 import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
@@ -15,6 +16,7 @@ import { ConnectedAccountActionApprovalNotice } from '../ConnectedAccountActionA
 import { AccountDetailFactsSections, AccountDetailUsedBySection, AccountDetailWorksOnSection } from './AccountDetailSections';
 import { QualifiedAccountDetailView, type QualifiedAccountDetailViewProps } from './QualifiedAccountDetailView';
 import { useConnectedAccountSubscription } from '../usage/AccountUsageFacts';
+import { QualifiedAccountProviderUsage } from './QualifiedAccountProviderUsage';
 import { projectConnectedAccountSubscriptionFacts, resolveConnectedAccountAccessMode } from '../model/resolveConnectedAccountAccessMode';
 
 /**
@@ -45,6 +47,7 @@ export const QualifiedAccountDetail = React.memo(function QualifiedAccountDetail
         serverId?: string;
         testConnectionMachineId?: string;
         machineId?: string | null;
+        providerUsageProfile?: Pick<QualifiedConnectedAccountProfileV4, 'ref' | 'credentialRevision' | 'configurationRevision' | 'kind'>;
     }>,
 ) {
     const connectionTest = useConnectedAccountTestConnection({ serverId: props.serverId, account: props.account, machineId: props.testConnectionMachineId });
@@ -93,14 +96,20 @@ export const QualifiedAccountDetail = React.memo(function QualifiedAccountDetail
             onRefresh={props.machineId !== null && quota.supported !== false ? () => { void quota.refresh(); } : undefined}
             refreshing={quota.refreshing}
             usageSection={(
-                <AccountDetailFactsSections
-                    account={props.account}
-                    accessMode={accessMode}
-                    legacyServiceId={props.legacyServiceId}
-                    serviceLabel={props.serviceLabel}
-                    signedOut={signedOut}
-                    machineId={props.machineId}
-                />
+                <>
+                    <AccountDetailFactsSections
+                        account={props.account}
+                        accessMode={accessMode}
+                        legacyServiceId={props.legacyServiceId}
+                        serviceLabel={props.serviceLabel}
+                        signedOut={signedOut}
+                        machineId={props.machineId}
+                    />
+                    {!signedOut && props.providerUsageProfile && props.serverId ? (
+                        <QualifiedAccountProviderUsage profile={props.providerUsageProfile} machineId={props.machineId ?? null}
+                            serverId={props.serverId} planLabel={quota.snapshot?.planLabel ?? null} />
+                    ) : null}
+                </>
             )}
             renderUsedBy={(slots) => <AccountDetailUsedBySection account={props.account} {...slots} />}
             worksOnSection={<AccountDetailWorksOnSection />}
