@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
-import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -14,7 +13,7 @@ import { settingsParse } from '@/sync/domains/settings/settings';
 import { machinesRailSeenState } from '@/sync/domains/state/machineAdministrationUiState';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { replacePersistentUiStateForTest } from '@/dev/testkit/harness/persistentUiState';
-import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 
 const vitalsRpc = vi.hoisted(() => vi.fn(async (_input: { machineId: string }) => ({ state: 'not_reported', sample: null,
     series5m: { cpu: [], memory: [], networkRx: [], networkTx: [] } })));
@@ -67,6 +66,7 @@ function machine(id: string, overrides: Partial<Machine> = {}): Machine {
         updatedAt: 1000,
         active: true,
         activeAt: Date.now(),
+        presenceProtocolVersion: 1,
         metadata: { host: id, platform: 'darwin', happyCliVersion: '1', happyHomeDir: '.happy', homeDir: '/home' },
         metadataVersion: 1,
         daemonState: null,
@@ -76,18 +76,17 @@ function machine(id: string, overrides: Partial<Machine> = {}): Machine {
     };
 }
 
-function setHomeMachines(machines: readonly Machine[]) {
-    const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim() || 'server-active';
+async function setHomeMachines(machines: readonly Machine[], accountId = 'rail-account') {
+    const activeServerId = servedHome!.homes.rail!.id;
+    const revisions = storage.getState().machines;
     storage.setState((state) => ({
-        ...state,
         settings: settingsParse({ ...state.settings,
             actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } } } }),
-        profileScope: state.profileScope?.serverId === activeServerId && state.profileScope.accountId === 'rail-account'
-            ? state.profileScope : { serverId: activeServerId, accountId: 'rail-account' },
-        machines: {},
-        machineListByServerId: { ...state.machineListByServerId, [activeServerId]: [...machines] },
     }));
-    observeMachinePresenceForTest({ serverId: activeServerId, accountId: 'rail-account' }, machines.map(machine => machine.id));
+    await publishMachineInventoryForTest({ serverId: activeServerId, accountId }, machines.map(machine => ({
+        ...machine,
+        daemonStateVersion: (revisions[machine.id]?.daemonStateVersion ?? 0) + 1,
+    })));
 }
 
 function railScopeKey() {
@@ -95,6 +94,38 @@ function railScopeKey() {
 }
 
 describe('AppRailMachines', () => {
+    it('names the latest reachable Guard event and does no fleet re-read on unrelated Machine arrivals', async () => {
+        const previous = storage.getState();
+        const acted = (id: string, at: number) => machine(id, { daemonState: { resources: { ...published('calm', []),
+            lastAutomaticAction: { kind: 'stopped_session', at, entryId: id, undoable: true,
+                facts: { rule: 'idle_sessions' } },
+        } } });
+        const now = Date.now();
+        const online = acted('reachable-guard', now - 2000);
+        const offline = { ...acted('offline-guard', now - 1000), active: false, activeAt: 1 };
+        const others = Array.from({ length: 146 }, (_, index) => machine(`quiet-${index}`));
+        try {
+            const { AppRailMachines } = await import('./AppRailMachines');
+            const sentences = await import('@/components/machines/summary/machineResourceSentences');
+            const read = vi.spyOn(sentences, 'readMachinePublishedResources');
+            const scope = { serverId: servedHome!.homes.rail!.id, accountId: 'rail-account' };
+            await publishMachineInventoryForTest(scope, [online, offline, ...others]);
+            const screen = await renderScreen(<AppRailMachines />);
+            expect(screen.findByTestId('app-rail-machines-badge')).not.toBeNull();
+            expect.soft(screen.findByTestId('app-rail-machines')?.props.accessibilityLabel).toContain(online.id);
+            read.mockClear();
+            for (let index = 0; index < 20; index += 1) {
+                await act(async () => storage.setState(state => ({ machines: {
+                    ...state.machines, [others[0].id]: { ...others[0], metadataVersion: index + 2 },
+                } })));
+            }
+            expect(read).not.toHaveBeenCalled();
+        } finally {
+            vi.restoreAllMocks();
+            storage.setState(previous);
+        }
+    });
+
     it('keeps guard acknowledgements local to the exact Account and Home without writing settings', async () => {
         const previous = storage.getState();
         const acted = machine('guard-machine', { daemonState: { resources: { ...published('calm', []),
@@ -102,21 +133,18 @@ describe('AppRailMachines', () => {
                 facts: { rule: 'idle_sessions' } },
         } } as never });
         try {
-            setHomeMachines([acted]);
+            await setHomeMachines([acted]);
             const { AppRailMachines } = await import('./AppRailMachines');
             const { SidebarFooterPopoverButton } = await import('../sidebarFooter/SidebarFooterPopoverButton');
             const screen = await renderScreen(<AppRailMachines />);
-            // Cold module restoration can withdraw the retained fixture's
-            // presence; a new ingress, rather than reconnect alone, restores it.
-            await act(async () => observeMachinePresenceForTest(storage.getState().profileScope!, [acted.id]));
             expect(screen.findByTestId('app-rail-machines-badge')).not.toBeNull();
             const before = storage.getState().localSettings;
             await act(async () => screen.root.findByType(SidebarFooterPopoverButton).props.onOpenIntent?.());
             expect(screen.findByTestId('app-rail-machines-badge')).toBeNull();
-            await act(async () => storage.setState(state => ({ profileScope: { ...state.profileScope!, accountId: 'unseen-guard-account' } })));
+            await act(async () => setHomeMachines([acted], 'unseen-guard-account'));
             expect(screen.findByTestId('app-rail-machines-badge')).not.toBeNull();
             expect(storage.getState().localSettings).toBe(before);
-            await act(async () => storage.setState(state => ({ profileScope: { ...state.profileScope!, accountId: 'rail-account' } })));
+            await act(async () => setHomeMachines([acted]));
             expect(screen.findByTestId('app-rail-machines-badge')).toBeNull();
         } finally { storage.setState(previous); }
     });
@@ -126,7 +154,7 @@ describe('AppRailMachines', () => {
             volumeId: 'data', volumeLabel: 'Data', nextStep: 'free_up_space' };
         const look = machine('edge-1', { daemonState: { resources: published('look', [reason]) } as never });
         try {
-            setHomeMachines([look]);
+            await setHomeMachines([look]);
             const key = railScopeKey();
             machinesRailSeenState.set(key, { look: { '["another-home","other"]': ['memory'] }, guardSeenAt: 0 });
             const { AppRailMachines } = await import('./AppRailMachines');
@@ -156,7 +184,7 @@ describe('AppRailMachines', () => {
             volumeId: 'data', volumeLabel: 'Data' };
         const look = machine('edge-1', { daemonState: { resources: published('look', [reason]) } as never });
         try {
-            setHomeMachines([look]);
+            await setHomeMachines([look]);
             const key = railScopeKey();
             const { AppRailMachines } = await import('./AppRailMachines');
             const { SidebarFooterPopoverButton } = await import('../sidebarFooter/SidebarFooterPopoverButton');
@@ -165,9 +193,8 @@ describe('AppRailMachines', () => {
             const seen = machinesRailSeenState.read(key);
             await act(async () => {
                 if (condition === 'account_switch') {
-                    setHomeMachines([machine('edge-1', { daemonState: { resources: published('calm', []) } as never })]);
-                    storage.setState(state => ({ profileScope: { ...state.profileScope!, accountId: 'another-account' } }));
-                } else setHomeMachines([condition === 'offline' ? { ...look, active: false, activeAt: 1 }
+                    await setHomeMachines([machine('edge-1', { daemonState: { resources: published('calm', []) } as never })], 'another-account');
+                } else await setHomeMachines([condition === 'offline' ? { ...look, active: false, activeAt: 1 }
                     : condition === 'missing_publication' ? { ...look, daemonState: null }
                     : { ...look, daemonState: { resources: { ...published('calm', []), vitals: { state: 'unavailable', reason: 'reader_failed', since: 1 } } } as never }]);
             });
@@ -199,7 +226,7 @@ describe('AppRailMachines', () => {
     it('names the counts on the closed icon, draws no badge for machines that are merely offline, and stays still on heartbeats', async () => {
         const previousState = storage.getState();
         try {
-            setHomeMachines([
+            await setHomeMachines([
                 machine('laptop'),
                 machine('devbox'),
                 machine('studio', { active: false, activeAt: Date.now() - 2 * DAY_MS }),
@@ -223,7 +250,7 @@ describe('AppRailMachines', () => {
 
             const commitsBefore = commits;
             await act(async () => {
-                setHomeMachines([
+                await setHomeMachines([
                     machine('laptop', { activeAt: Date.now(), metadataVersion: 2 }),
                     machine('devbox', { activeAt: Date.now() }),
                     machine('studio', { active: false, activeAt: Date.now() - 2 * DAY_MS, updatedAt: 2000 }),
@@ -239,7 +266,7 @@ describe('AppRailMachines', () => {
         const previousState = storage.getState();
         const edge = { resources: published('needs_you', [memoryReason('memory:critical')]) } as never;
         try {
-            setHomeMachines([
+            await setHomeMachines([
                 machine('edge-1', { metadata: { host: 'edge-1', displayName: 'edge-1', platform: 'linux', happyCliVersion: '1', happyHomeDir: '.happy', homeDir: '/home' },
                     daemonState: edge }),
                 machine('laptop', { daemonState: { resources: published('calm', []) } as never }),
@@ -260,7 +287,7 @@ describe('AppRailMachines', () => {
 
             const commitsBefore = commits;
             await act(async () => {
-                setHomeMachines([
+                await setHomeMachines([
                     machine('edge-1', { metadata: { host: 'edge-1', displayName: 'edge-1', platform: 'linux', happyCliVersion: '1', happyHomeDir: '.happy', homeDir: '/home' },
                         daemonState: edge }),
                     // An unrelated machine's state moves on: the closed icon renders nothing.

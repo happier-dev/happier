@@ -6,7 +6,6 @@ import {
     readMachinePublishedResources,
     type MachineAttentionSubject,
 } from '@/components/machines/summary/machineResourceSentences';
-import type { MachineResourceAutomaticActionV1 } from '@happier-dev/protocol/machines/resources/machineResourceSummaryV1';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { useMachineResourceFleetAttention, type MachineResourceFleetAttention } from '@/sync/domains/machines/resources/useMachineResourceFleetAttention';
 import { useHomeMachineCollectionPresence } from '@/components/settings/machines/collection/useMachineCollection';
@@ -38,7 +37,7 @@ export function resolveMachinesRailSignal(input: Readonly<{ fleet: MachineResour
     if (fleet.look.some(entry => !(seen.look[entry.machineKey] ?? []).includes(entry.reasonKey))) {
         return { level: 'look', signal: { kind: 'dot', tone: resolveAppRailBadgeTone({ source: 'machines', level: 'look' }) } };
     }
-    if (fleet.lastAutomaticActionAt !== null && fleet.lastAutomaticActionAt > seen.guardSeenAt) {
+    if (fleet.lastAutomaticAction && fleet.lastAutomaticAction.action.at > seen.guardSeenAt) {
         return { level: 'guard', signal: { kind: 'dot', tone: resolveAppRailBadgeTone({ source: 'machines', level: 'guard' }) } };
     }
     return { level: null, signal: null };
@@ -88,31 +87,27 @@ export function useMachinesRailSignal(): Readonly<{
     const counts = useHomeMachineCollectionPresence();
     const { level, signal } = React.useMemo(() => resolveMachinesRailSignal({ fleet, seen }), [fleet, seen]);
     // The one machine the tooltip names: the headline (needs you or the look shown), or the guard's latest.
-    const namedKey = level === 'guard' ? 'guard' : fleet.needsYou.length === 1 || level === 'look' ? JSON.stringify(fleet.headline?.machineKey ?? null) : null;
+    const guard = level === 'guard' ? fleet.lastAutomaticAction : null;
+    const namedKey = guard?.machineKey ?? (fleet.needsYou.length === 1 || level === 'look' ? fleet.headline?.machineKey : null);
+    const namedServerId = namedKey?.serverId;
+    const namedMachineId = namedKey?.machineId;
     const namedJson = storage(React.useCallback((state: ReturnType<typeof storage.getState>) => {
-        if (!namedKey) return 'null';
-        if (namedKey === 'guard') {
-            let latest: { at: number; name: string; action: unknown } | null = null;
-            for (const machine of Object.values(state.machines)) {
-                const action = readMachinePublishedResources(machine.daemonState)?.lastAutomaticAction;
-                if (action && (!latest || action.at > latest.at)) latest = { at: action.at, name: getMachineDisplayName(machine), action };
-            }
-            return JSON.stringify(latest);
-        }
-        const key = JSON.parse(namedKey) as { serverId?: string; machineId: string } | null;
-        if (!key) return 'null';
-        const machine = resolveServerScopedMachine(state, key.serverId ?? null, key.machineId);
-        const published = machine ? readMachinePublishedResources(machine.daemonState) : null;
-        return machine && published ? JSON.stringify({ name: getMachineDisplayName(machine), attention: published.attention }) : 'null';
-    }, [namedKey]));
+        if (!namedMachineId) return 'null';
+        const machine = resolveServerScopedMachine(state, namedServerId, namedMachineId);
+        if (!machine) return 'null';
+        const name = getMachineDisplayName(machine);
+        if (level === 'guard') return JSON.stringify({ name });
+        const published = readMachinePublishedResources(machine.daemonState);
+        return published ? JSON.stringify({ name, attention: published.attention }) : 'null';
+    }, [level, namedMachineId, namedServerId]));
     const detail = React.useMemo(() => {
-        const named = JSON.parse(namedJson) as Readonly<{ name: string; attention?: MachineAttentionSubject['attention']; action?: MachineResourceAutomaticActionV1 }> | null;
+        const named = JSON.parse(namedJson) as Readonly<{ name: string; attention?: MachineAttentionSubject['attention'] }> | null;
         return describeMachinesRailTooltip({
             needsYouCount: fleet.needsYou.length,
             subject: level !== 'guard' && named?.attention ? { name: named.name, attention: named.attention } : null,
-            guard: level === 'guard' && named?.action ? { action: named.action, machineName: named.name } : null,
+            guard: guard && named ? { action: guard.action, machineName: named.name } : null,
             presence: describeMachinePresenceCounts(counts) || null,
         });
-    }, [counts, fleet.needsYou.length, level, namedJson]);
+    }, [counts, fleet.needsYou.length, guard, level, namedJson]);
     return { signal, level, detail, fleet };
 }

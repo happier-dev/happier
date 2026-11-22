@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { MachineResourceReasonV1 } from '@happier-dev/protocol/machines/resources/machineResourceSummaryV1';
+import type { MachineResourceAutomaticActionV1, MachineResourceReasonV1 } from '@happier-dev/protocol/machines/resources/machineResourceSummaryV1';
 import { storage } from '@/sync/domains/state/storageStore';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { resolveServerScopedMachines } from '@/sync/domains/machines/resolveServerScopedMachines';
@@ -18,7 +18,7 @@ export type MachineResourceFleetAttention = Readonly<{
     failingServices: readonly string[];
     /** Positive sampler evidence: absence from look alone may instead mean offline or unknown. */
     reportingMachineKeys: readonly string[];
-    lastAutomaticActionAt: number | null;
+    lastAutomaticAction: Readonly<{ machineKey: MachineResourceKey; action: MachineResourceAutomaticActionV1 }> | null;
     headline: Readonly<{ machineKey: MachineResourceKey; reason: MachineResourceReasonV1 }> | null;
 }>;
 
@@ -37,7 +37,7 @@ export function useMachineResourceFleetAttention(): MachineResourceFleetAttentio
         const needsYou: MachineResourceKey[] = [];
         const look: { machineKey: string; reasonKey: string }[] = [];
         const failingServices: string[] = [];
-        let lastAutomaticActionAt: number | null = null;
+        let lastAutomaticAction: MachineResourceFleetAttention['lastAutomaticAction'] = null;
         let headline: MachineResourceFleetAttention['headline'] = null;
         for (const entry of attention.entries) {
             const machineKey = { serverId: entry.serverId, machineId: entry.machineId };
@@ -47,9 +47,11 @@ export function useMachineResourceFleetAttention(): MachineResourceFleetAttentio
                 if (reason.level === 'look') look.push({ machineKey: entry.key, reasonKey: reason.key });
                 if (!headline || (headline.reason.level === 'look' && reason.level === 'needs_you')) headline = { machineKey, reason };
             }
-            if (entry.lastAutomaticAction) lastAutomaticActionAt = Math.max(lastAutomaticActionAt ?? 0, entry.lastAutomaticAction.at);
+            if (entry.lastAutomaticAction && (!lastAutomaticAction || entry.lastAutomaticAction.at > lastAutomaticAction.action.at)) {
+                lastAutomaticAction = { machineKey, action: entry.lastAutomaticAction };
+            }
         }
-        return { accountScope: scope, needsYou, look, failingServices, reportingMachineKeys: attention.reportingMachineKeys, lastAutomaticActionAt, headline };
+        return { accountScope: scope, needsYou, look, failingServices, reportingMachineKeys: attention.reportingMachineKeys, lastAutomaticAction, headline };
     }, [readMachines, serverId, scope]);
     const readDemandedInputs = React.useCallback((nowMs: number) => readMachineAttentionInputs([{
         serverId, accountScope: scope, serverName: '', status: 'idle',

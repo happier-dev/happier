@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildMachinesRailSeen, forgetRecoveredMachinesRailReasons, resolveMachinesRailSignal } from './useMachinesRailSignal';
 
-const calm = { accountScope: null, needsYou: [], look: [], failingServices: [], reportingMachineKeys: [], lastAutomaticActionAt: null, headline: null } as const;
+const calm = { accountScope: null, needsYou: [], look: [], failingServices: [], reportingMachineKeys: [], lastAutomaticAction: null, headline: null } as const;
 const NO_SEEN = { look: {}, guardSeenAt: 0 };
 
 describe('the Machines rail badge (R4)', () => {
@@ -41,7 +41,8 @@ describe('the Machines rail badge (R4)', () => {
     });
 
     it('shows a muted dot when the guard acted since the popover was last opened, and nothing when calm', () => {
-        const acted = { ...calm, lastAutomaticActionAt: 50 };
+        const acted = { ...calm, lastAutomaticAction: { machineKey: { serverId: 'a', machineId: 'm3' },
+            action: { at: 50, kind: 'stopped_session', entryId: 'entry', undoable: true, facts: { rule: 'idle_sessions' } } } } as const;
         expect(resolveMachinesRailSignal({ fleet: acted, seen: { look: {}, guardSeenAt: 40 } }).signal).toEqual({ kind: 'dot', tone: 'neutral' });
         expect(resolveMachinesRailSignal({ fleet: acted, seen: { look: {}, guardSeenAt: 60 } }).signal).toBeNull();
         expect(resolveMachinesRailSignal({ fleet: calm, seen: NO_SEEN }).signal).toBeNull();

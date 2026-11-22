@@ -239,7 +239,7 @@ describe('always-on Machine resource attention', () => {
         await vi.waitFor(() => expect(hook.getCurrent().needsYou).toEqual([{ serverId, machineId: 'needs' }]));
         expect(hook.getCurrent().look).toEqual([{ machineKey: JSON.stringify([serverId, 'look']), reasonKey: 'memory' }]);
         expect(hook.getCurrent()).toMatchObject({ reportingMachineKeys: ['acted', 'look', 'needs'].map(id => JSON.stringify([serverId, id])) });
-        expect(hook.getCurrent().lastAutomaticActionAt).toBe(8);
+        expect(hook.getCurrent().lastAutomaticAction).toMatchObject({ machineKey: { serverId, machineId: 'acted' }, action: { at: 8 } });
         expect(hook.getCurrent().headline?.machineKey).toEqual({ serverId, machineId: 'needs' });
         expect(transport.rpc).not.toHaveBeenCalled();
         await hook.unmount();
