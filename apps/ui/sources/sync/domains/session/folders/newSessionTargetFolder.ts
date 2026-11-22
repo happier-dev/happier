@@ -1,5 +1,7 @@
 import { normalizeWorkspaceScopeBase, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 
+import { compareSessionFolderWorkspaceRefs } from './workspaceRefs';
+
 /**
  * The folder a 'New session in folder' launch should file its session into.
  *
@@ -67,9 +69,10 @@ export function resolveCreatedSessionTargetFolder(params: Readonly<{
     });
     const folderScope = normalizeWorkspaceScopeBase(targetFolder.workspace);
     if (!launchScope || !folderScope) return null;
-    return launchScope.serverId === folderScope.serverId
-        && launchScope.machineId === folderScope.machineId
-        && launchScope.rootPath === folderScope.rootPath
+    return compareSessionFolderWorkspaceRefs(
+        { t: 'workspaceScope', ...launchScope },
+        { t: 'workspaceScope', ...folderScope },
+    )
         ? { folderId: targetFolder.folderId, workspace: folderScope }
         : null;
 }
