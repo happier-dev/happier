@@ -55,7 +55,7 @@ export function buildReviewStepsWorkflowV1(reviewInput: ReviewStartInput, review
   const stages = reviewInput.steps ?? [{ kind: 'review' as const, reviewers: reviewInput.reviewers, instructions: reviewInput.instructions }];
   const stageIds: string[] = [];
   const { reviewers: _reviewers, steps: _steps, then: _then, reviewRound: _round,
-    reviewReviewerId: _reviewerId, reviewRoundSettlement: _settlement, ...leafInput } = reviewInput;
+    reviewReviewerId: _reviewerId, reviewRoundSettlement: _settlement, sessionId: _sessionId, ...leafInput } = reviewInput;
   const terminalSchema = PluginJsonSchemaV2Schema.parse(zodSchemaToJsonSchemaObject(ReviewStartNativeTerminalValueV1Schema, { target: 'draft-7' }));
   stages.forEach((stage, stepIndex) => {
     const stageId = `step-${stepIndex + 1}`;
@@ -73,6 +73,8 @@ export function buildReviewStepsWorkflowV1(reviewInput: ReviewStartInput, review
         const reviewerId = reviewReviewerIdForSelectionV1(reviewerIndex, stepIndex);
         const onlyWhen = reviewerLeafRunsWhenV1(reviewerId);
         if (reviewer.kind === 'engine') {
+          // Native Workflow reviewers run in the admitted workspace. The source
+          // Session stays in round preparation and Apply, not their Run target.
           const references = [prepared, ...previous].map((_, index) => {
             const ref = buildMentionRefForKindV1(MENTION_KIND_V1.workflowInput, String(index));
             const label = index === 0 ? 'Prepared Review' : 'Previous step';
@@ -82,7 +84,7 @@ export function buildReviewStepsWorkflowV1(reviewInput: ReviewStartInput, review
             .filter(([, value]) => value !== undefined).map(([key, value]) => [key, literal(StrictJsonValueSchema.parse(value))]));
           return [{ id: `branch-${reviewerId}`, blocks: [{ kind: 'action' as const, id: reviewerId, name: 'Run the selected reviewer', actionId: 'review.start', onlyWhen,
             ...(reviewer.roleId ? { execution: { roleId: reviewer.roleId } } : {}),
-            input: { ...bindings, reviewers: literal([StrictJsonValueSchema.parse(participant)]),
+            input: { ...bindings, target: literal({ kind: 'detached' }), reviewers: literal([StrictJsonValueSchema.parse(participant)]),
               instructions: { kind: 'text' as const,
                 document: { text: `${reviewerInstructions}\n\n${references.map(reference => reference.token).join('\n\n')}`, references },
                 input: [prepared, ...previous] },

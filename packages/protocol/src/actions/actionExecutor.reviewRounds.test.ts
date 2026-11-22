@@ -13,6 +13,7 @@ import { buildReviewStepsWorkflowV1 } from '../workflows/builtins/reviewAndConve
 import { ReviewStartInputSchema } from '../reviews/reviewStart.js';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { readWorkflowActionFieldTextEncodingV1 } from '../workflows/workflowActionTextV1.js';
+import { resolveActionCurrentSessionScopeFailure } from './executor/sessionListAccess.js';
 
 describe('committed Review source admission', () => {
   it.each(['explicit', 'upstream', 'default'] as const)('retains selected branch commits with %s base across Review admission', async baseSelection => {
@@ -58,6 +59,33 @@ describe('committed Review source admission', () => {
 });
 
 describe('Review round preparation', () => {
+  it('admits a detached native reviewer without claiming the source Session as its execution target', async () => {
+    const reviewInput = ReviewStartInputSchema.parse({ sessionId: 'selected-session', scope: 'repository',
+      instructions: 'Review the selected repository.', then: 'fix', reviewers: [{ kind: 'engine', engineId: 'codex' }] });
+    const reviewRound = { reviewId: 'existing-review', roundOrdinal: 1 };
+    const built = buildReviewStepsWorkflowV1(reviewInput, reviewRound);
+    const stage = built.definition.blocks.find(block => block.kind === 'parallel');
+    const leaf = stage?.kind === 'parallel' ? stage.branches[0]?.blocks[0] : undefined;
+    if (leaf?.kind !== 'action') throw new Error('Expected the native reviewer Action');
+    const input = Object.fromEntries(await Promise.all(Object.entries(leaf.input ?? {}).map(async ([key, binding]) =>
+      [key, await resolveWorkflowActionFieldBinding(binding, { inputs: built.inputs,
+        resolveResult: async () => ({ reviewRound, newRoundCostConsent: false }),
+        resolveWorkspace: async () => { throw new Error('No workspace reference'); },
+      }, undefined, readWorkflowActionFieldTextEncodingV1(null, key))])));
+    // Workflow custody supplies an admitted repository and Review round, not a
+    // new Session target. This is the same empty Session corpus as READY296.
+    await expect(resolveActionCurrentSessionScopeFailure('review.start', input,
+      { surface: 'agent', actionCaller: { kind: 'workflowRun', runId: 'review-workflow',
+        authorization: { admittedPermissionCeiling: 'read-only', principal: { kind: 'host' } } } },
+      { sessionId: 'current_session' }, {}, undefined, undefined,
+      { actionRequestId: 'review-workflow/reviewer/0', invocationId: 'reviewer', sessions: [] },
+    )).resolves.toBeNull();
+    expect(input.reviewRound).toEqual(reviewRound);
+    expect(built.inputs.reviewInput).toMatchObject({ sessionId: 'selected-session' });
+    expect(built.definition.blocks.find(block => block.id === 'fix')).toMatchObject({
+      input: { sessionId: { kind: 'literal', value: 'selected-session' } },
+    });
+  });
   it.each([null, false, true, 'retained-graph'] as const)('uses fresh paid consent at the actual Workflow engine leaf (%s)', async choice => {
     const records = createInMemoryReviewRecordPortV1();
     const firstRound = await records.start({ reviewId: 'paid-workflow', title: 'Review', subjectKind: 'repository',
@@ -90,6 +118,8 @@ describe('Review round preparation', () => {
     let inventoryReads = 0;
     const starts: unknown[] = [];
     const executor = createActionExecutor({
+      // The generated reviewer uses the daemon's detached Run protocol.
+      executionRunCheckProtocolV2: async () => ({ ok: true, exactMachineId: 'review-machine' }),
       reviewEnginesList: async input => {
         inventoryReads++;
         expect(input.profileSelections).toEqual([{ engineId: 'codex', profileId: 'paid-profile',
@@ -103,7 +133,10 @@ describe('Review round preparation', () => {
         return { runId: 'engine-run', callId: 'call', sidechainId: 'sidechain' };
       },
     });
-    expect(await executor.execute('review.start', leafInput, { surface: 'ui' })).toMatchObject({ ok: true });
+    const result = await executor.execute('review.start', leafInput, { surface: 'ui',
+      externalActionTarget: { kind: 'machine', machineId: 'review-machine',
+        project: { machineId: 'review-machine', directory: '/review-repo' } } });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
     expect(starts).toHaveLength(1);
     expect(starts[0]).toMatchObject({ profileId: 'paid-profile', intentInput: {
       acceptCharge: choice === null || choice === true,
