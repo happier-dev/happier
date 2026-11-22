@@ -11,26 +11,25 @@ export function isHomeArrivalSettled(): boolean {
     return !motionPending && presentedHomes > 0;
 }
 
-function publishIfChanged(previous: boolean): void {
-    if (previous === isHomeArrivalSettled()) return;
+function publish(): void {
     for (const listener of listeners) listener();
 }
 
 export function setHomeArrivalMotionPending(pending: boolean): void {
-    const previous = isHomeArrivalSettled();
+    if (motionPending === pending) return;
     motionPending = pending;
-    publishIfChanged(previous);
+    publish();
 }
 
 /** Keeps readiness scoped to the lifetime of the focused, successfully presented Home. */
 export function presentReadyHome(): () => void {
     const previous = isHomeArrivalSettled();
     presentedHomes++;
-    publishIfChanged(previous);
+    if (previous !== isHomeArrivalSettled()) publish();
     return () => {
         const previous = isHomeArrivalSettled();
         presentedHomes--;
-        publishIfChanged(previous);
+        if (previous !== isHomeArrivalSettled()) publish();
     };
 }
 

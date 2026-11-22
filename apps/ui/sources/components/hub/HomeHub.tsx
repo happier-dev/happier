@@ -78,7 +78,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { useAtmosphere } from '@/components/atmosphere/useAtmosphere';
 import { atmosphereStageStore, useAtmospherePictureShown, useAtmosphereSending, useAtmosphereSendDissolving } from '@/components/atmosphere/atmosphereStage';
 import { HomePlanet, homePlanetFootFade, useHomePlanetGeometry } from '@/components/atmosphere/HomePlanet';
-import { presentReadyHome } from './homeArrival';
+import { isHomeArrivalMotionPending, presentReadyHome, subscribeHomeArrival } from './homeArrival';
 import { useHomeGlyphArrival } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { StepMotionLayer } from '@/components/ui/motion/stepMotion/StepMotionLayer';
 import { usePersonalHomeBootstrapCovered } from '@/components/personalHome/bootstrap/PersonalHomeBootstrapGate';
@@ -534,15 +534,16 @@ const HomeHubContent = React.memo(function HomeHubContent() {
     const homeLoading = guidance.kind === 'loading' || (!guidanceIsHome && !layout.hasSnapshot && layout.status === 'loading');
     const homeCovered = usePersonalHomeBootstrapCovered();
     const firstArrival = useHomeGlyphArrival();
+    const arrivalMotionPending = React.useSyncExternalStore(subscribeHomeArrival, isHomeArrivalMotionPending, isHomeArrivalMotionPending);
     const arrivalPresented = focused && presented && !homeCovered;
-    const readyForArrival = arrivalPresented && firstArrival === null && !homeUnavailable && !homeLoading
+    const readyForArrival = arrivalPresented && !arrivalMotionPending && firstArrival === null && !homeUnavailable && !homeLoading
         && (guidanceIsHome || layout.hasSnapshot);
     React.useLayoutEffect(() => {
         if (!readyForArrival) return;
         if (Platform.OS !== 'web') return presentReadyHome();
         let withdraw: (() => void) | undefined;
-        // The compact tour sheet blurs Home immediately. Let the settled Home
-        // reach the screen before making it eligible for the sheet.
+        // The compact tour sheet blurs Home immediately. Let Home paint after
+        // the outgoing layer clears, including after the Still crossfade.
         let frame = requestAnimationFrame(() => {
             frame = requestAnimationFrame(() => { withdraw = presentReadyHome(); });
         });

@@ -224,6 +224,9 @@ describe('Home Loading at the RN-web layout boundary', () => {
                 });
                 expect(isHomeArrivalMotionPending()).toBe(false);
                 expect(document.body.textContent).not.toContain('Approved');
+                expect(isHomeArrivalSettled()).toBe(false);
+                await frames(16, () => expect(isHomeArrivalSettled()).toBe(false));
+                await frames(16, () => expect(isHomeArrivalSettled()).toBe(true));
             } finally {
                 await act(async () => root!.render(null));
                 if (originalAnimate) Object.defineProperty(HTMLElement.prototype, 'animate', originalAnimate);

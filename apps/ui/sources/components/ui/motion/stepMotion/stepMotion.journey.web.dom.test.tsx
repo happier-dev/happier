@@ -498,9 +498,9 @@ it('moves between retained standalone routes and restores the opener through the
     }
 });
 
-it('captures the approved step before the renderer is ready and dissolves it when Home paints', async () => {
+it('captures the approved step before the presentation loads and dissolves it when Home paints', async () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-    setReducedMotionPreferenceOverride(false);
+    setReducedMotionPreferenceOverride(true);
     const previousAnimate = HTMLElement.prototype.animate;
     const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(20, 40, 280, 420));
     const paints = new Map<number, FrameRequestCallback>();
@@ -573,7 +573,7 @@ it('captures the approved step before the renderer is ready and dissolves it whe
     try {
         stageRendererWaiting = true;
         await act(async () => root.render(<Journey />));
-        await act(async () => { await vi.dynamicImportSettled(); });
+        setReducedMotionPreferenceOverride(false);
         await act(async () => container.querySelector('button')!.click());
         const copy = document.body.querySelector<HTMLElement>('[aria-hidden="true"][style*="position: fixed"]');
         expect(copy?.isConnected).toBe(true);
@@ -582,6 +582,7 @@ it('captures the approved step before the renderer is ready and dissolves it whe
         expect(copy?.textContent).toContain('Planet');
         expect(copy?.textContent).toContain('Approved');
         expect(container.querySelector('button')?.textContent).toBe('First time here');
+        await act(async () => { await vi.dynamicImportSettled(); });
         await act(async () => land());
         expect(copies).toEqual([copy]);
         expect(applyHome).toHaveBeenCalledTimes(1);

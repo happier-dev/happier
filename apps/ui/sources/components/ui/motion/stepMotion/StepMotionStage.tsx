@@ -104,7 +104,7 @@ function createStepMotionStage(
     let pending: PendingMove | null = null;
     let active: { layer: string; animation?: StepAnimation; endpoints?: StepEndpoints; openingInput?: OpeningInput; stop: () => void } | null = null;
     let commitOrder = 0;
-    let glyphRenderer: GlyphSurfaceReadiness | null = null;
+    let glyphReady = false;
     let buildPrepared = false;
     let reportBuildReady: ((ready: boolean) => void) | undefined;
     let presentation: StepMotionPresentation | null = null;
@@ -113,7 +113,7 @@ function createStepMotionStage(
     function syncPresentation() {
         const firstRunMounted = Array.from(layers).some(layer => layer.warmOnMount);
         if (!pending && !active?.animation && !firstRunMounted && !buildPrepared) {
-            glyphRenderer = null;
+            glyphReady = false;
             requestRenderer(false);
         }
         if (firstRunMounted || active || pending) {
@@ -199,7 +199,7 @@ function createStepMotionStage(
         const incoming = layerRect(layer);
         const duration = presentation?.stepAnimationDuration(animation);
         if (!presentation || !incoming || incoming.width <= 0 || incoming.height <= 0 || !duration ||
-            (animation.grammar !== 'opening' && glyphRenderer !== 'ready')) {
+            (animation.grammar !== 'opening' && !glyphReady)) {
             showIncoming(layer, true, complete, freeze);
             return;
         }
@@ -222,6 +222,8 @@ function createStepMotionStage(
         const web = layer.webElement();
         if (web && focalTarget instanceof HTMLElement) sampleFocalInk(focalTarget);
         const leaves = web ? readStepLeaves(web, grid, animation.grammar !== 'home' && animation.grammar !== 'opening') : null;
+        const outgoingInk = freeze?.ink ?? (animation.grammar === 'home' && freeze?.clone
+            ? readStepLeaves(freeze.clone, grid).ink : undefined);
         const { tertiary, page } = colors();
         const cover = web ? undefined : reversing ? undefined : inkFor(page);
         const scene = createStepMotionScene({
@@ -232,7 +234,7 @@ function createStepMotionStage(
             source: sourceRect,
             target,
             readFocalInk: () => endpoints.focalInk,
-            outgoingInk: reversing ? leaves?.ink : freeze?.ink,
+            outgoingInk: reversing ? leaves?.ink : outgoingInk,
             incomingInk: reversing ? freeze?.ink : leaves?.ink,
             ink: inkFor(tertiary),
             cover,
@@ -438,12 +440,16 @@ function createStepMotionStage(
         if (!move || move.destination !== layer.key) return;
         pending = null;
         move.cancelled = true;
-        if (move.grammar === 'fade' || !move.freeze) {
+        // The backed copy was taken before credentials changed, possibly before
+        // the presentation loaded. Choose its motion once Home has painted.
+        const grammar = move.beforeAuth ? presentation?.resolveMoveGrammar({
+            kind: move.kind, compact: layer.compact, reduced: !glyphReady || readReducedMotionPreference(),
+        }) ?? 'fade' : move.grammar;
+        if (grammar === 'fade' || !move.freeze) {
             showIncoming(layer, move.kind !== 'notice', move.complete, move.freeze);
             return;
         }
         const back = move.kind === 'back';
-        const grammar = move.grammar;
         const animation: StepAnimation = {
             grammar,
             from: back ? move.reverse?.progress ?? 1 : 0,
@@ -564,7 +570,7 @@ function createStepMotionStage(
 
     return {
         attach(layer: StepMotionLayerHandle) {
-            if (layer.warmOnMount && glyphRenderer !== 'ready' && !readReducedMotionPreference()) warm();
+            if (layer.warmOnMount && !glyphReady && !readReducedMotionPreference()) warm();
             layers.add(layer);
             syncPresentation();
             return () => {
@@ -626,7 +632,7 @@ function createStepMotionStage(
             pressed = null;
         },
         glyphReadiness(readiness: GlyphSurfaceReadiness) {
-            glyphRenderer = readiness;
+            glyphReady = readiness === 'ready';
             if (readiness === 'still' && active?.animation) settle();
         },
         loadPresentation(loaded: StepMotionPresentation) {
@@ -635,7 +641,7 @@ function createStepMotionStage(
         },
         prepareBuild(onReady?: (ready: boolean) => void) {
             buildPrepared = true;
-            glyphRenderer = null;
+            glyphReady = false;
             prepareOpeningRenderer(true);
             reportBuildReady = onReady;
             onReady?.(presentation !== null);
@@ -647,7 +653,7 @@ function createStepMotionStage(
                 syncPresentation();
             };
         },
-        isBuildReady: () => buildPrepared ? presentation !== null : glyphRenderer === 'ready',
+        isBuildReady: () => buildPrepared ? presentation !== null : glyphReady,
         holdHomeArrival(): (() => void) | undefined {
             if (Platform.OS !== 'web' || pending?.kind === 'home') return;
             this.run({ kind: 'home', layer: 'workflow', commit: () => {} }, true);
@@ -712,13 +718,9 @@ function createStepMotionStage(
             }
             const reduced = readReducedMotionPreference();
             if (!reduced) warm();
-            // Capture the outgoing ink before adoption. A pending renderer can
-            // finish warming while Home loads; showAnimated checks it at hand-off.
-            const rendererPendingForHome = captureBeforeAdoption && glyphRenderer === null;
-            const still = reduced || (glyphRenderer !== 'ready' && !rendererPendingForHome);
-            const grammar = (!still ? reverse?.grammar : undefined)
-                ?? presentation?.resolveMoveGrammar({ ...move, reduced: still, compact: outgoing.compact })
-                ?? 'fade';
+            const still = reduced || !glyphReady;
+            const grammar = captureBeforeAdoption ? 'fade' : ((!still ? reverse?.grammar : undefined)
+                ?? presentation?.resolveMoveGrammar({ ...move, reduced: still, compact: outgoing.compact }) ?? 'fade');
             const grid = gridForWindow();
             const next: PendingMove = {
                 kind: move.kind, grammar, grid, anchor, returnTo, reverse, complete: move.onSettled,
@@ -756,7 +758,7 @@ function createStepMotionStage(
             const reduced = readReducedMotionPreference();
             if (!reduced) warm();
             return new Promise(resolve => {
-                if (reduced || (build.choreography === 'opening' ? !presentation : glyphRenderer !== 'ready')) {
+                if (reduced || (build.choreography === 'opening' ? !presentation : !glyphReady)) {
                     showIncoming(layer, true, resolve);
                     return;
                 }
