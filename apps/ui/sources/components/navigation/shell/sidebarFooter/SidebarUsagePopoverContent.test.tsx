@@ -72,12 +72,15 @@ function summary(key: string, accountLabel: string | null, remainingPct: number,
     };
 }
 
-async function renderContent() {
+async function renderContent(lastKnown = false) {
     const { SidebarUsagePopoverView, useUsagePopoverHandlers } = await import('./SidebarUsagePopoverContent');
     const { buildUsageSummary, buildUsageSummaryCache } = await import('@/components/hub/usage/useUsageSummary');
     const { presentConnectedAccountIdentity } = await import('@/sync/domains/connectedServices/maskAccountEmail');
     const { useRouter } = await import('expo-router');
-    const usage = buildUsageSummary({ live: buildUsageSummaryCache(state.summaries), saved: null, accountsWithoutUsage: state.withoutUsage });
+    const cache = buildUsageSummaryCache(state.summaries);
+    const { UsageSummaryCacheV1Schema } = await import('@/sync/domains/state/usageSummaryCache');
+    const saved = lastKnown && cache ? UsageSummaryCacheV1Schema.parse(JSON.parse(JSON.stringify(cache))) : null;
+    const usage = buildUsageSummary({ live: lastKnown ? null : cache, saved, accountsWithoutUsage: state.withoutUsage });
     function ContentFixture() {
         const router = useRouter();
         rendered.router = router as unknown as { push: (href: unknown) => unknown };
@@ -151,6 +154,18 @@ describe('SidebarUsagePopoverContent', () => {
         });
         state.summaries = [{ ...summary('claude:a', 'Billing', 0), meters: buildSummaryMeters([meter], [], 'primary') }];
         expect((await renderContent()).getTextContent()).toContain(expected);
+        expect((await renderContent(true)).getTextContent()).toContain(expected);
+    });
+
+    it('reopens an older spend-only observation without guessing which cap the provider reported', async () => {
+        const billing = summary('claude:a', 'Billing', 0);
+        state.summaries = [{ ...billing, meters: [{
+            ...billing.meters[0]!, label: 'On-demand spend', remainingPct: null, utilizationPct: null,
+            reportedAmount: { unit: 'unknown', amount: { kind: 'used', used: 0 } },
+        }] }];
+        const text = (await renderContent(true)).getTextContent();
+        expect(text).toContain('0');
+        expect(text).not.toContain('usage.board.plans.cellNoAllowance');
     });
 
     it('folds several accounts with nothing to show into one line after the accounts that answer', async () => {

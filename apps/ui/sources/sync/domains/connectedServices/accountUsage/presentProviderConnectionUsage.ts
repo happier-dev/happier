@@ -36,6 +36,8 @@ export type ProviderUsageMeterPresentation = Readonly<{
 
 export const ConnectedServiceQuotaReportedAmountSchema = z.object({
   amount: z.nullable(ProviderUsageAmountSchema),
+  // Older device-cache entries have spend-only amounts with no recorded cap evidence.
+  capMissing: z.optional(z.literal(true)),
   unit: ConnectedServiceQuotaMeterV1Schema.shape.unit,
   currency: ConnectedServiceQuotaMeterV1Schema.shape.currency,
 });
@@ -129,6 +131,7 @@ export function presentConnectedServiceQuotaReportedAmount(
   if (!displaysAmount && deriveQuotaMeterValues(meter).remainingPct !== null) return undefined;
   return {
     amount,
+    ...(amount?.kind === 'used' ? { capMissing: true as const } : {}),
     unit: meter.unit,
     ...(meter.currency ? { currency: meter.currency } : {}),
   };

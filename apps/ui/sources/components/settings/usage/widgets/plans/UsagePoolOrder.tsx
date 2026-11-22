@@ -63,6 +63,8 @@ export type UsagePoolMember = Readonly<{
   selected: boolean;
   candidate: Trace['orderedEligibleCandidates'][number] | null;
   evidence: Trace['candidates'][number] | null;
+  /** The selector's account-level quota verdict, when the trace establishes one. */
+  quotaExhausted: boolean | undefined;
   exclusion: Selection['excluded'][number] | null;
 }>;
 
@@ -97,10 +99,13 @@ export function readUsagePoolMembers(
   );
   return [...ordered, ...rest].map((accountId, index) => {
     const exclusion = selection.excluded.find((entry) => entry.profileId === accountId) ?? null;
-    return { accountId, account: readUsagePoolAccount(pool, accounts, accountId), rank: index < ordered.length ? index + 1 : null,
+    const rank = index < ordered.length ? index + 1 : null;
+    const evidence = trace.candidates.find((entry) => entry.profileId === accountId) ?? null;
+    const quotaExhausted = rank !== null ? false : exclusion?.reason === 'quota_exhausted' ? true
+      : evidence?.quotaEvidence.status === 'fresh' ? evidence.quotaEvidence.exhausted : undefined;
+    return { accountId, account: readUsagePoolAccount(pool, accounts, accountId), rank,
       selected: accountId === selectedId && exclusion === null,
-      candidate: trace.orderedEligibleCandidates[index] ?? null,
-      evidence: trace.candidates.find((entry) => entry.profileId === accountId) ?? null, exclusion };
+      candidate: trace.orderedEligibleCandidates[index] ?? null, evidence, quotaExhausted, exclusion };
   });
 }
 

@@ -775,7 +775,7 @@ it('says Limits beside other widgets as the account the next session uses: its f
   const service = { pluginId: 'happier.agent.claude', localId: 'claude-subscription' };
   const query = normalizeUsageQuery({});
   const now = Date.now();
-  const quota = [['work', 40], ['personal', 75], ['spare', 100]].map(([accountId, usedPct]) => {
+  const quota = [['work', 40], ['credit-backed', 100], ['spare', 100]].map(([accountId, usedPct]) => {
     const recordKey = { providerId: 'anthropic', accountSubjectId: accountId as string, subjectKind: 'account', quotaScope: 'account' } as const;
     return ConnectedServiceQuotaGetResultV1Schema.parse({
       source: { ref: { service, accountId }, bindingKind: 'account' },
@@ -784,21 +784,26 @@ it('says Limits beside other widgets as the account the next session uses: its f
         observedAtMs: now, fetchedAtMs: now, staleAfterMs: 600_000,
         source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data', planLabel: null,
         meters: [{ meterId: 'weekly', label: 'Weekly', usedPct, utilizationPct: usedPct, used: null, limit: null,
-          unit: 'count', status: 'ok', resetsAt: now + 86_400_000, resetAtMs: now + 86_400_000, windowDurationMs: 7 * 86_400_000 }] },
+          unit: 'count', status: 'ok', resetsAt: now + 86_400_000, resetAtMs: now + 86_400_000, windowDurationMs: 7 * 86_400_000 },
+          ...(accountId === 'credit-backed' ? [{ meterId: 'credits', label: 'Provider credits', unit: 'credits', status: 'ok',
+            used: null, limit: null, remaining: 4, utilizationPct: null, resetsAt: null, isExhausted: false }] : [])] },
       pace: [], targets: [], waitingWork: { status: 'unavailable', reason: 'unsupported' },
     });
   });
   const base = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: quota },
-    pools: [{ query, value: [{ group: { service, groupId: 'team' }, memberAccountIds: ['work', 'personal'], activeAccountId: 'personal', selection: { status: 'pending' } }] }],
+    pools: [{ query, value: [{ group: { service, groupId: 'team' }, memberAccountIds: ['work', 'credit-backed'], activeAccountId: 'work', selection: { status: 'pending' } }] }],
   }, bundledUsageModelPriceCatalog).results[0]!;
   // The selector's current pick is 'work' (60% left), not the tightest account ('spare', used up).
   const slice = { ...base, pools: base.pools!.map(pool => {
-    const candidates = ['work', 'personal'].map(profileId => ({ profileId, priority: 1, createdAtMs: 1, enabled: true, leastLimitedScore: null }));
+    const candidates = ['work', 'credit-backed'].map(profileId => ({ profileId, priority: 1, createdAtMs: 1, enabled: true, leastLimitedScore: null }));
     return { ...pool, selection: { status: 'available' as const, machineId: 'machine', asOfMs: 200,
       value: ConnectedServicePoolSelectionGetResponseV1Schema.parse({ group: pool.group, observedAtMs: 200,
         selection: { selected: candidates[0], reason: 'selected', excluded: [], decisionTrace: {
           activeProfileId: 'work', reason: 'selected', strategy: 'priority', selectionBasis: 'active_stickiness',
-          sticky: true, orderedEligibleCandidates: candidates, candidates: [],
+          sticky: true, orderedEligibleCandidates: candidates, candidates: [
+            { profileId: 'work', decision: 'selected', quotaEvidence: { status: 'fresh', remainingPercent: 60, exhausted: false } },
+            { profileId: 'credit-backed', decision: 'eligible', quotaEvidence: { status: 'fresh', remainingPercent: 0, exhausted: false } },
+          ],
         } } }) } };
   }) };
   const model = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null,
@@ -827,10 +832,11 @@ it('says Limits beside other widgets as the account the next session uses: its f
   expect(text).toContain('60%');
   expect(screen.findHostByTestId('capacity.tightest')).not.toBeNull();
   expect(text).toMatch(/60%\s*left on /);
-  expect(text).toContain(t('usage.board.plans.limitsOthers', { count: 2, usedUp: 1 }));
+  expect.soft(text).toContain(t('usage.board.plans.limitsOthers', { count: 2, usedUp: 1 }));
+  expect(text).not.toContain(t('usage.board.plans.limitsOthers', { count: 2, usedUp: 2 }));
   // The other accounts are that one line, not a segment or a cell each; the full view (Plans) keeps those.
   expect(screen.findHostByTestId('capacity.pooled')).toBeNull();
-  expect(screen.findHostByTestId('capacity.cell.personal')).toBeNull();
+  expect(screen.findHostByTestId('capacity.cell.credit-backed')).toBeNull();
   expect(screen.findHostByTestId('capacity.cell.spare')).toBeNull();
   expect(text).not.toContain(', the tightest');
   // At full width (Plans, a full-width Home card) the headline means the same; every plan's cell follows it.
@@ -838,8 +844,10 @@ it('says Limits beside other widgets as the account the next session uses: its f
     <UsageCapacityWidget id="usage_capacity" model={model} slice={slice} query={query} serverId="home" testID="capacity" />
   </InjectedAuthProvider>);
   expect(screen.getTextContent()).toMatch(/60%\s*left on /);
-  expect(screen.findHostByTestId('capacity.cell.personal')).not.toBeNull();
-  expect(screen.findHostByTestId('capacity.cell.spare')).not.toBeNull();
+  const creditBacked = screen.findHostByTestId('capacity.cell.credit-backed');
+  expect(creditBacked?.props.accessibilityLabel).toContain('0%');
+  expect(creditBacked?.props.accessibilityLabel).not.toContain(t('usage.board.plans.cellUsedUp'));
+  expect(screen.findHostByTestId('capacity.cell.spare')?.props.accessibilityLabel).toContain(t('usage.board.plans.cellUsedUp'));
 });
 
 it('names the only account in the Limits headline beside other widgets, where no cell names it (owner 11-11)', async () => {

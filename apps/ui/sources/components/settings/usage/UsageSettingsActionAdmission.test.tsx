@@ -228,7 +228,7 @@ describe('Usage settings UI Action admission', () => {
         const action = createUiConnectedServiceAction(captured);
         const initial: UsagePlanAccount = { key: 'subscription', source, service: ref.service, accountId: ref.accountId,
             groupId: null, planLabel: null, accountLabel: null, state: { source: 'quota', status: 'available' }, read: null,
-            windows: [], headline: null, stale: false, observedAtMs: now, subscription: null,
+            windows: [], headline: null, quotaExhausted: false, stale: false, observedAtMs: now, subscription: null,
             prices: { paid: null, list: null, entered: null }, recoveryCredits: undefined };
         let readBack: Promise<void> | undefined;
         function MountedEditor() {
@@ -293,7 +293,7 @@ describe('Usage settings UI Action admission', () => {
         }
         const account: UsagePlanAccount = { key: 'subscription', source: { ref, bindingKind: 'account' },
             service: ref.service, accountId: ref.accountId, groupId: null, planLabel: null, accountLabel: null,
-            state: { source: 'quota', status: 'available' }, read: null, windows: [], headline: null, stale: false,
+            state: { source: 'quota', status: 'available' }, read: null, windows: [], headline: null, quotaExhausted: false, stale: false,
             observedAtMs: null, subscription: { status: 'subscribed', renewal: 'unknown', observedAtMs: 1, staleAfterMs: 1000,
                 enteredMonthlyPrice: { amount: 11, currency: 'EUR', enteredAtMs: 1 } },
             prices: { paid: null, list: null, entered: null }, recoveryCredits: undefined };

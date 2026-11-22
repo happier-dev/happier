@@ -15,6 +15,7 @@ import type { MeterTone } from '@/components/ui/lists/MeterBar';
 import { presentConnectedServiceQuotaReportedAmount, type ConnectedServiceQuotaReportedAmount } from '@/sync/domains/connectedServices/accountUsage/presentProviderConnectionUsage';
 import { deriveQuotaUtilizationPct } from '@/sync/domains/connectedServices/deriveQuotaUtilizationPct';
 import { resolveQuotaMeterTone } from '@/sync/domains/connectedServices/resolveQuotaTone';
+import { isConnectedServiceQuotaProvablyExhausted } from '@/sync/domains/connectedServices/connectedServiceQuotaBadges';
 import { isConnectedServiceQuotaMeterPercentRankable } from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';
 import { projectProviderAccountSubscriptionMonetaryFacts } from '@happier-dev/protocol/connect/accountSubscription';
 
@@ -72,6 +73,8 @@ export type UsagePlanAccount = Readonly<{
   windows: readonly UsagePlanWindow[];
   /** The longest comparable window: "this week" in the lab's every-plan question. */
   headline: UsagePlanWindow | null;
+  /** What the quota read proves about the whole account, before consulting a pool's selector trace. */
+  quotaExhausted: boolean;
   stale: boolean;
   observedAtMs: number | null;
   subscription: Snapshot['subscription'] | null;
@@ -252,6 +255,7 @@ export function projectUsagePlans(
       accountLabel: snapshot?.accountLabel ?? null,
       windows,
       headline: pickHeadline(windows),
+      quotaExhausted: isConnectedServiceQuotaProvablyExhausted(snapshot?.meters ?? []),
       stale: stale || state.status !== 'available',
       observedAtMs: snapshot && wasConnectedServiceQuotaObserved(snapshot) ? snapshot.observedAtMs : null,
       subscription: snapshot?.subscription ?? null,

@@ -41,12 +41,12 @@ export function formatConnectedServiceQuotaReportedAmount(
     return reported === undefined ? undefined : formatProviderUsageAmount(reported.amount, reported.unit, reported.currency);
 }
 
-/** Fresh quota observations with spend alone have no reported allowance. */
+/** Qualify spend when its observation establishes that the provider omitted the cap. */
 export function formatConnectedServiceQuotaAllowance(
     reported: ConnectedServiceQuotaReportedAmount | undefined,
 ): string | null | undefined {
     const amount = formatConnectedServiceQuotaReportedAmount(reported);
-    return reported?.amount?.kind === 'used'
+    return reported?.capMissing === true
         ? `${amount} · ${t('usage.board.plans.cellNoAllowance')}`
         : amount;
 }

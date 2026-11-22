@@ -81,6 +81,7 @@ const POOLED_SIZES: ReadonlySet<string> = new Set(['small', 'medium', 'tall', 'w
 
 type Cell = Readonly<{
   account: UsagePlanAccount;
+  quotaExhausted: boolean;
   rank: number | null;
   selected: boolean;
   excluded: string | null;
@@ -116,7 +117,7 @@ function buildRuns(
     if (memberships.length === 0) {
       runs.push({
         pool: null,
-        cells: [{ account, rank: null, selected: false, excluded: null }],
+        cells: [{ account, quotaExhausted: account.quotaExhausted, rank: null, selected: false, excluded: null }],
       });
       continue;
     }
@@ -128,6 +129,7 @@ function buildRuns(
       if (members.length === 0) continue;
       const unreadCell = (member: UsagePlanAccount): Cell => ({
         account: member,
+        quotaExhausted: member.quotaExhausted,
         rank: null,
         selected: false,
         excluded: null,
@@ -139,7 +141,8 @@ function buildRuns(
         !('status' in selection)
       ) {
         const ordered = readUsagePoolMembers(pool, members, selection.selection, selection.activeAccountRef);
-        cells = ordered.flatMap(member => member.account ? [{ account: member.account, rank: member.rank,
+        cells = ordered.flatMap(member => member.account ? [{ account: member.account,
+          quotaExhausted: member.quotaExhausted ?? member.account.quotaExhausted, rank: member.rank,
           selected: member.selected, excluded: member.exclusion
             ? planExclusionText(member.exclusion.reason, member.exclusion.retryAtMs ?? null, nowMs) : null }] : []);
         const traced = new Set(ordered.map(member => member.accountId));
@@ -213,10 +216,18 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
   // still in flight is said by the reading line.
   const drawn = React.useMemo(() => projection.accounts.filter(isUsagePlanAccountDrawn), [projection.accounts]);
   const unreadNames = projection.accounts.filter(isUsagePlanAccountSettledUnread).map(account => nameOf(account).title);
-  const runs = React.useMemo(
+  const { runs, exhaustedByAccount } = React.useMemo(
     () => {
       const built = buildRuns(drawn, projection.pools, selections, nowMs);
-      return pooled ? built : joinRunsOutsidePools(built);
+      const exhaustedByAccount = new Map<string, boolean>();
+      for (const { cells } of built) {
+        for (const cell of cells) {
+          const key = cell.account.key;
+          // An account may appear in more than one pool. Count it once, and only when every represented pool agrees.
+          exhaustedByAccount.set(key, (exhaustedByAccount.get(key) ?? true) && cell.quotaExhausted);
+        }
+      }
+      return { runs: pooled ? built : joinRunsOutsidePools(built), exhaustedByAccount };
     },
     [drawn, projection.pools, selections, nowMs, pooled],
   );
@@ -261,7 +272,7 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
     const others = projection.accounts.filter((account) => account.key !== lead.key);
     const read = others.filter(isUsagePlanAccountDrawn);
     const notRead = others.filter(isUsagePlanAccountSettledUnread).length;
-    const usedUp = read.filter((account) => account.headline?.remainingFraction != null && account.headline.remainingFraction <= 0).length;
+    const usedUp = read.filter((account) => exhaustedByAccount.get(account.key) === true).length;
     const parts = [
       read.length > 0 ? t('usage.board.plans.limitsOthers', { count: read.length, usedUp }) : null,
       notRead > 0 ? t('usage.board.plans.limitsNotRead', { count: notRead }) : null,
@@ -286,7 +297,7 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
     && runs.every((run) => run.cells.every((cell) => cell.excluded === null));
   // The only plan is used up: one next step, the sign-in Capacity offers when nothing is connected, so work has
   // another account to go to before the reset.
-  const loneUsedUp = lone && tightest !== null && tightest.window.remainingFraction !== null && tightest.window.remainingFraction <= 0;
+  const loneUsedUp = lone && tightest !== null && exhaustedByAccount.get(tightest.account.key) === true;
   const nextStep = useCurrentUiContextLocalCommands(loneUsedUp ? [{ key: 'addAccount',
     title: t('usage.board.plans.capacityAddAccount'),
     invoke: () => router.push(SETTINGS_ROUTES.connectedServicesAgentSignIn as Parameters<typeof router.push>[0]),
@@ -600,7 +611,6 @@ function CapacityCell(
   const otherWindows = cell.account.windows.filter((other) => other !== window
     && !amountWindows.some((entry) => entry.window === other));
   const remaining = window?.remainingFraction ?? null;
-  const usedUp = remaining !== null && remaining <= 0;
   const countdown =
     window?.resetAtMs != null
       ? formatPlanCountdown(window.resetAtMs, nowMs)
@@ -614,7 +624,7 @@ function CapacityCell(
         })
       : null;
   // Red belongs to "used up" alone: a stale read of a used-up plan stays the quiet "last read" note.
-  const usedUpDetail = cell.excluded === null && staleDetail === null && usedUp && countdown
+  const usedUpDetail = cell.excluded === null && staleDetail === null && cell.quotaExhausted && countdown
     ? `${t('usage.board.plans.cellUsedUp')} · ${countdown}`
     : null;
   // An account that answered with no comparable window (a mailbox, a service without an allowance) says

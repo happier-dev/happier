@@ -305,7 +305,6 @@ export function SidebarUsagePopoverView(props: Readonly<{
             service={parseQualifiedPluginContributionKey(entry.provider.key)}
             legacyServiceId={entry.provider.legacyServiceId}
             account={entry.account}
-            lastKnown={usage.source === 'lastKnown'}
             facts={facts.accounts?.[entry.account.key] ?? null}
             name={names.get(entry.account.key)!}
             now={now}
@@ -503,15 +502,12 @@ const UsageAccountGroup = React.memo(function UsageAccountGroup(props: Readonly<
     service?: PluginContributionIdentityV1 | null;
     legacyServiceId: string | null;
     account: UsageAccountRow;
-    lastKnown: boolean;
     facts: UsagePopoverAccountFacts | null;
     name: ConnectedAccountNamePresentation;
     now: number;
 }>) {
     const { account } = props;
     const identity = accountHeaderLine(props.serviceLabel, props.name);
-    // Older warm entries preserved spend alone even when the provider reported a zero cap.
-    const formatAmount = props.lastKnown ? formatConnectedServiceQuotaReportedAmount : formatConnectedServiceQuotaAllowance;
     const stateLabel = account.windows.length > 0
         ? null
         : account.state === 'loading' ? t('common.loading')
@@ -536,7 +532,7 @@ const UsageAccountGroup = React.memo(function UsageAccountGroup(props: Readonly<
                             key={window.meterId}
                             label={window.label}
                             remainingPct={window.remainingPct}
-                            amount={formatAmount(window.reportedAmount)}
+                            amount={formatConnectedServiceQuotaAllowance(window.reportedAmount)}
                             estimated={window.status === 'estimated'}
                             resetsAt={window.resetsAt}
                             tone={window.tone}
