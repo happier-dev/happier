@@ -1823,10 +1823,14 @@ remote serviceability projection does not block retirement of the old local
 evidence. That projection remains untouched. Remote-only recovery without captured
 local custody still refuses a changed target; transport failures remain retryable.
 
-On Linux, startup migration always considers explicitly tracked daemon-owned
-session processes. Sweeping untracked processes from the daemon's cgroup additionally
-requires a service-managed startup in an actual service cgroup; a manually started
-daemon must not transfer unrelated processes from a shared SSH or editor scope.
+On Linux, new daemon-spawned runners use a systemd user scope when the provisioned
+`happier-jobs.slice` policy is available. Otherwise the runner launches directly
+and inherits the launching process's cgroup. The installed daemon service uses
+`KillMode=process` so direct children can survive a daemon restart. Reattachment
+tracks existing sessions in their current cgroups.
+
+The daemon strips the retired self-migration flag from child environments and masks
+it in tmux windows so an older runner snapshot cannot reactivate cgroup writes.
 
 For child-owned same-pane launches, the shared terminal runtime owns the native
 process. Claude unified, runner-managed Codex/OpenCode TUIs, and standalone native

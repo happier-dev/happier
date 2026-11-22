@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { HAPPIER_DAEMON_SPAWN_SELF_MIGRATE_CGROUP_ENV_KEY } from '@/daemon/platform/linux/daemonSpawnedSessionCgroupSelfMigration';
 import { resolveFileLogLevel } from '@/ui/logFileLevel';
 import { buildSpawnChildProcessEnv } from './buildSpawnChildProcessEnv';
 
@@ -122,40 +121,17 @@ describe('buildSpawnChildProcessEnv', () => {
     );
   });
 
-  it('enables self-migration for child runners spawned by a background-service daemon', () => {
+  it('strips the legacy self-migration flag before launching a pinned runner', () => {
     const env = buildOnLinux({
       processEnv: {
         PATH: '/bin',
         HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
+        HAPPIER_DAEMON_SPAWN_SELF_MIGRATE_CGROUP: '1',
       },
-      extraEnv: {},
+      extraEnv: { HAPPIER_DAEMON_SPAWN_SELF_MIGRATE_CGROUP: 'true' },
     });
 
-    expect(env[HAPPIER_DAEMON_SPAWN_SELF_MIGRATE_CGROUP_ENV_KEY]).toBe('1');
-  });
-
-  it('keeps self-migration enabled across an authorized daemon self-restart', () => {
-    const env = buildOnLinux({
-      processEnv: {
-        PATH: '/bin',
-        HAPPIER_DAEMON_STARTUP_SOURCE: 'self-restart',
-      },
-      extraEnv: {},
-    });
-
-    expect(env[HAPPIER_DAEMON_SPAWN_SELF_MIGRATE_CGROUP_ENV_KEY]).toBe('1');
-  });
-
-  it('enables Linux self-migration for child runners spawned by a manual stack daemon', () => {
-    const env = buildOnLinux({
-      processEnv: {
-        PATH: '/bin',
-        HAPPIER_DAEMON_STARTUP_SOURCE: 'manual',
-      },
-      extraEnv: {},
-    });
-
-    expect(env[HAPPIER_DAEMON_SPAWN_SELF_MIGRATE_CGROUP_ENV_KEY]).toBe('1');
+    expect(env.HAPPIER_DAEMON_SPAWN_SELF_MIGRATE_CGROUP).toBeUndefined();
   });
 
   it('does not leak daemon lifecycle ownership env into child runners', () => {
