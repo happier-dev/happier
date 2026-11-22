@@ -27,7 +27,7 @@ it('keeps a mounted Triage declaration quiet across unrelated registry family pu
         pluginUiProjection: inputs.pluginUiProjection, pluginBrowserProjection: null, phase: 'current', interactionEnabled: true,
         machineId: 'machine', serverId: null, platform: 'web', accountLifetime: null,
     });
-    report();
+    await act(async () => { report(); });
     const created = factory.mock.results.at(-1);
     if (created?.type !== 'return') throw new Error('Missing real union publication');
     const recomputes = vi.spyOn(created.value, 'publish');

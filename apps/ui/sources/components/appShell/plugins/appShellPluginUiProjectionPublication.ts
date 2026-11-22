@@ -233,14 +233,12 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
         retirement: ReturnType<ActiveServerAccountScopeLifetime['onRetire']>;
     }>>();
     const listeners = new Map<() => void, 'committed' | undefined>();
-    /**
-     * Origin reporters are one per plugin and report from the same commit, so
-     * one upstream change arrives as a burst of reports. They are derived
-     * together: once in a microtask, or earlier by a synchronous reader. A read
-     * derives without notifying; the snapshot listeners last heard about is
-     * kept so the one deferred notification compares against it.
-     */
+    // React layout effects report a wave of Machine changes. Stage only the
+    // changed subjects and publish the aggregate once, including any origins
+    // reported in the same turn. An exact read can settle the wave early.
+    const pendingMachineReports = new Map<string, PluginUiProjectionCurrentness>();
     let originReportsPending = false;
+    let publicationScheduled = false;
     let unnotifiedPrevious: AppShellPluginUiProjectionSnapshot | null = null;
     const notify = (notifiedPrevious: AppShellPluginUiProjectionSnapshot) => {
         const previous = unnotifiedPrevious ?? notifiedPrevious;
@@ -259,6 +257,7 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
     };
 
     function resetDerived() {
+        pendingMachineReports.clear();
         originReportsPending = false;
         unnotifiedPrevious = null;
         for (const member of mountedActions.values()) member.retirement.dispose();
@@ -299,6 +298,21 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
         // Withdraw the demand now; only its React notification is deferred.
         if (deferNotification) queueMicrotask(() => notify(previous));
         else notify(previous);
+    }
+
+    function schedulePublication() {
+        if (publicationScheduled) return;
+        publicationScheduled = true;
+        queueMicrotask(() => {
+            publicationScheduled = false;
+            derivePendingReports(false);
+            if (unnotifiedPrevious) notify(unnotifiedPrevious);
+        });
+    }
+
+    function scheduleOriginDerivation() {
+        originReportsPending = true;
+        schedulePublication();
     }
 
     function publishConnectedAccounts(targets: readonly AppShellPluginProjectionTarget[], currentness: ReadonlyMap<string, PluginUiProjectionCurrentness>,
@@ -352,12 +366,11 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
         return shallow(snapshot.connectedAccountResolution, failed) ? snapshot.connectedAccountResolution : Object.freeze(failed);
     }
 
-    function deriveOriginReports(quiet: boolean) {
-        if (!originReportsPending) return;
-        if (!quiet) { publishDerived(); return; }
+    function derivePendingReports(quiet: boolean) {
+        if (!originReportsPending && pendingMachineReports.size === 0) return;
         const previous = snapshot;
-        publishDerived(undefined, true);
-        if (snapshot !== previous && unnotifiedPrevious === null) unnotifiedPrevious = previous;
+        publishDerived(quiet);
+        if (quiet && snapshot !== previous && unnotifiedPrevious === null) unnotifiedPrevious = previous;
     }
 
     function updateReportedPluginSupply(before?: PluginUiProjectionCurrentness, after?: PluginUiProjectionCurrentness): boolean {
@@ -386,12 +399,40 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
         return membershipChanged;
     }
 
-    function publishDerived(changedMachineId?: string, quiet = false,
-        machineReports = snapshot.currentnessForActiveAccountByMachineId) {
-        originReportsPending = false;
+    function publishDerived(quiet = false, sourcesChanged = false) {
         if (!sources || !isCurrent(sources.accountLifetime)) return;
         const { accountLifetime, availabilityInputs } = sources;
         const previous = snapshot;
+        const beforeReports = previous.currentnessForActiveAccountByMachineId;
+        const changedMembers = new Set<string>();
+        let reports: Map<string, PluginUiProjectionCurrentness> | undefined;
+        let descriptorsChanged = false;
+        for (const [machineId, report] of pendingMachineReports) {
+            const before = beforeReports.get(machineId);
+            (reports ??= new Map(beforeReports)).set(machineId, report);
+            descriptorsChanged ||= (before?.connectedAccountProjection ?? null) !== (report.connectedAccountProjection ?? null);
+            if ((before?.pluginUiProjection ?? null) !== report.pluginUiProjection
+                || (before?.phase ?? 'establishing') !== report.phase
+                || before?.unavailableReasonCode !== report.unavailableReasonCode
+                || (before?.interactionEnabled ?? false) !== report.interactionEnabled
+                || (before?.installedPackagesProjection ?? null) !== (report.installedPackagesProjection ?? null)
+                || (before?.presentedPluginIds ?? null) !== (report.presentedPluginIds ?? null)
+                || (before?.registrySourcesCurrent ?? false) !== (report.registrySourcesCurrent ?? false)
+                || (before?.skillsCurrent ?? false) !== (report.skillsCurrent ?? false)
+                || (before?.themesCurrent ?? false) !== (report.themesCurrent ?? false)) changedMembers.add(machineId);
+        }
+        pendingMachineReports.clear();
+        const machineReports = reports ?? beforeReports;
+        if (!sourcesChanged && !originReportsPending && changedMembers.size === 0) {
+            if (!reports) return;
+            snapshot = Object.freeze({ ...previous, currentnessForActiveAccountByMachineId: reports,
+                connectedAccountResolution: descriptorsChanged
+                    ? publishConnectedAccounts(previous.projectionTargets, reports, new Set(previous.executionOriginPluginIds), accountLifetime)
+                    : previous.connectedAccountResolution });
+            if (!quiet) notify(previous);
+            return;
+        }
+        originReportsPending = false;
         const previousDeclarations = installedByMachineId;
         const previousReportedHomes = reportedHomeByMachineId;
         if (reportedMachines !== availabilityInputs?.reportedMachines) {
@@ -467,16 +508,16 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
             const removed = [...machineReports].filter(([id]) => !eligible.has(id));
             if (removed.length > 0) {
                 const retained = new Map(machineReports);
-                for (const [id, report] of removed) {
+                for (const [id] of removed) {
                     retained.delete(id);
-                    membershipChanged = updateReportedPluginSupply(report) || membershipChanged;
+                    membershipChanged = updateReportedPluginSupply(beforeReports.get(id)) || membershipChanged;
                 }
                 currentness = retained;
             }
         }
-        if (changedMachineId !== undefined) {
-            membershipChanged = updateReportedPluginSupply(previous.currentnessForActiveAccountByMachineId.get(changedMachineId),
-                currentness.get(changedMachineId)) || membershipChanged;
+        for (const machineId of changedMembers) {
+            if (!currentness.has(machineId)) continue;
+            membershipChanged = updateReportedPluginSupply(beforeReports.get(machineId), currentness.get(machineId)) || membershipChanged;
         }
         if (materializations !== previous.executionOriginMaterializations || installedByMachineId !== previousDeclarations) {
             sourcePluginIds = [...new Set([...materializations.map(value => value.pluginId),
@@ -544,7 +585,7 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
                 && old.selectableExecutionOrigins === selectableExecutionOrigins
                 && reportedHome === previousReportedHomes.get(target.machineId)
                 && (installedByMachineId === previousDeclarations || declaration === previousDeclarations.get(target.machineId))
-                && changedMachineId !== target.machineId) return old;
+                && !changedMembers.has(target.machineId)) return old;
             let merge = machineMerges.get(target.machineId);
             if (!merge) { merge = createInstalledPluginUiProjectionPublication(); machineMerges.set(target.machineId, merge); }
             // Held plugin slices (a mounted surface's, the Session's) present those plugins
@@ -677,40 +718,25 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
                 });
             }
             sources = next;
-            publishDerived();
+            publishDerived(false, true);
         },
         publishMachineCurrentness(machineId: string, accountLifetime: ActiveServerAccountScopeLifetime | null, currentness: PluginUiProjectionCurrentness) {
             if (!sources || sources.accountLifetime !== accountLifetime || !isCurrent(accountLifetime)
                 || currentness.serverId !== sources.activeServerId || !membersByMachineId.has(machineId)) return;
-            const previous = snapshot;
-            const current = previous.currentnessForActiveAccountByMachineId.get(machineId);
-            if (current && shallow(current, currentness)) return;
-            const reports = new Map(previous.currentnessForActiveAccountByMachineId).set(machineId, currentness);
-            if ((current?.pluginUiProjection ?? null) === currentness.pluginUiProjection
-                && (current?.phase ?? 'establishing') === currentness.phase
-                && current?.unavailableReasonCode === currentness.unavailableReasonCode
-                && (current?.interactionEnabled ?? false) === currentness.interactionEnabled
-                && (current?.installedPackagesProjection ?? null) === (currentness.installedPackagesProjection ?? null)
-                && (current?.presentedPluginIds ?? null) === (currentness.presentedPluginIds ?? null)
-                && (current?.registrySourcesCurrent ?? false) === (currentness.registrySourcesCurrent ?? false)
-                && (current?.skillsCurrent ?? false) === (currentness.skillsCurrent ?? false)
-                && (current?.themesCurrent ?? false) === (currentness.themesCurrent ?? false)) {
-                // Missing reports already contribute null/establishing/noninteractive
-                // inputs. Their first matching answer, like Browser and descriptor
-                // arrivals, changes the raw report without changing the catalog.
-                snapshot = Object.freeze({ ...previous, currentnessForActiveAccountByMachineId: reports,
-                    connectedAccountResolution: (current?.connectedAccountProjection ?? null) === (currentness.connectedAccountProjection ?? null)
-                        ? previous.connectedAccountResolution
-                        : publishConnectedAccounts(previous.projectionTargets, reports, new Set(previous.executionOriginPluginIds), accountLifetime) });
-                notify(previous);
+            const current = snapshot.currentnessForActiveAccountByMachineId.get(machineId);
+            if (current && shallow(current, currentness)) {
+                pendingMachineReports.delete(machineId);
                 return;
             }
-            publishDerived(machineId, false, reports);
+            pendingMachineReports.set(machineId, currentness);
+            schedulePublication();
         },
         publishExecutionOrigin(pluginId: string, accountLifetime: ActiveServerAccountScopeLifetime | null, origin: PluginMachineExecutionOriginV1 | null,
             selectableOrigins: readonly PluginMachineExecutionOriginV1[], hasStoredTarget = false) {
-            if (!sources || sources.accountLifetime !== accountLifetime || !isCurrent(accountLifetime)
-                || !snapshot.executionOriginPluginIds.includes(pluginId)) return;
+            if (!sources || sources.accountLifetime !== accountLifetime || !isCurrent(accountLifetime)) return;
+            // The pending Machine wave may introduce this plugin. The shared
+            // derivation filters reports against the resulting admitted set.
+            if (!snapshot.executionOriginPluginIds.includes(pluginId) && pendingMachineReports.size === 0) return;
             const current = originReports.get(pluginId);
             const sameOrigin = current?.origin === origin;
             if (current?.accountLifetime === accountLifetime && sameOrigin && (current.hasStoredTarget === true) === hasStoredTarget
@@ -730,17 +756,11 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
                 else next.delete(pluginId);
                 explicitSelections = next;
             }
-            if (originReportsPending) return;
-            originReportsPending = true;
-            queueMicrotask(() => {
-                deriveOriginReports(false);
-                // A synchronous reader derived the burst already; tell listeners once.
-                if (unnotifiedPrevious) notify(unnotifiedPrevious);
-            });
+            scheduleOriginDerivation();
         },
         getSnapshot: () => {
             if (!sources || !isCurrent(sources.accountLifetime)) return EMPTY_SNAPSHOT;
-            deriveOriginReports(true);
+            derivePendingReports(true);
             return snapshot;
         },
         readActiveServerId: () => (sources && isCurrent(sources.accountLifetime) ? snapshot : EMPTY_SNAPSHOT).activeServerId,

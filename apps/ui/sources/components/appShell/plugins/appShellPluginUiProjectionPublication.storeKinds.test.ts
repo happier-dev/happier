@@ -9,7 +9,7 @@ import { createPluginAccountAvailabilityReader } from '@/sync/domains/plugins/av
 import { normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projection';
 import { createAppShellPluginUiProjectionPublication } from './appShellPluginUiProjectionPublication';
 
-it('retains admitted Machine Store kinds when the installed census contains only UI declarations', () => {
+it('retains admitted Machine Store kinds when the installed census contains only UI declarations', async () => {
     // JQ-R15: the development installation has an admitted Machine candidate,
     // but its complete pluginUi census does not contain its separate Store family.
     const pluginId = 'qa.jq-r15-store';
@@ -68,6 +68,7 @@ it('retains admitted Machine Store kinds when the installed census contains only
         expect.soft(admitted.pluginUiProjection?.registrySourcesById[registrySource.id]?.definition).toEqual(registrySource.definition);
         expect.soft(admitted.pluginUiProjection?.skillsById[skill.id]?.definition).toEqual(skill.definition);
 
+        await Promise.resolve();
         const notifications: unknown[] = [];
         const stop = owner.subscribe(() => notifications.push(owner.getSnapshot()), 'committed');
         try {
@@ -78,6 +79,7 @@ it('retains admitted Machine Store kinds when the installed census contains only
             expect(owner.getSnapshot().pluginUiProjection?.storeKindsById ?? {}).toEqual({});
             expect(owner.getSnapshot().pluginUiProjection?.registrySourcesById ?? {}).toEqual({});
             expect(owner.getSnapshot().pluginUiProjection?.skillsById ?? {}).toEqual({});
+            await Promise.resolve();
             expect(notifications).toHaveLength(1);
         } finally { stop(); }
     } finally { owner.dispose(); }

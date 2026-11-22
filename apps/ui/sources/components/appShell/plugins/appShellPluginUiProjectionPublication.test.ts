@@ -168,7 +168,7 @@ describe('AppShell projection source publication', () => {
             unsubscribe();
         } finally { owner.dispose(); }
     });
-    it('settles Account discovery while passive Machine descriptor observers have no answer', () => {
+    it('settles Account discovery while passive Machine descriptor observers have no answer', async () => {
         const owner = createAppShellPluginUiProjectionPublication();
         const store = createPluginAccountAvailabilityReaderStore();
         const scope = { serverId: 'server-discovery', accountId: 'account-discovery' };
@@ -195,6 +195,7 @@ describe('AppShell projection source publication', () => {
             // Passive Machine coverage does not invalidate Account declarations.
             expect(presentConnectedServiceRegistryReadState(state)).toBeNull();
 
+            await Promise.resolve();
             let publications = 0;
             const stop = owner.subscribe(() => { publications++; });
             for (let cursor = 2; cursor <= 10; cursor++) {
@@ -206,6 +207,7 @@ describe('AppShell projection source publication', () => {
             owner.publishMachineCurrentness('machine', null, { ...report,
                 connectedAccountProjection: { kind: 'ready', descriptors: [] } });
             expect(owner.getSnapshot().connectedAccountResolution.kind).toBe('ready');
+            await Promise.resolve();
             expect(publications).toBe(1);
             stop();
         } finally { owner.dispose(); }
@@ -405,6 +407,48 @@ describe('AppShell projection source publication', () => {
         } finally { owner.dispose(); }
     });
 
+    it('derives a cold wave of 148 Machine reports once and preserves untouched reports on later changes', async () => {
+        const factory = vi.spyOn(projectionUnion, 'createPluginUiProjectionUnionPublication');
+        const owner = createAppShellPluginUiProjectionPublication();
+        const machines = Object.freeze(Array.from({ length: 148 }, (_, index) => `machine-${index}`));
+        owner.publishSources({ accountLifetime: null, availabilityInputs: null, hostBundledUiEnabled: false,
+            activeServerId: null, serverProfilesGeneration: 0, activeInventoryLoaded: true,
+            onlineMachineIds: machines, selectableMachineIds: machines });
+        const created = factory.mock.results.at(-1);
+        if (created?.type !== 'return') throw new Error('Expected real union owner');
+        const derivations = vi.spyOn(created.value, 'publish');
+        const listener = vi.fn();
+        const stop = owner.subscribe(listener);
+        const reports = machines.map(machineId => ({ ...currentness(EMPTY_PLUGIN_UI_PROJECTION), machineId }));
+        try {
+            for (const report of reports) owner.publishMachineCurrentness(report.machineId, null, report);
+            const first = owner.getSnapshot();
+            expect(first.currentnessForActiveAccountByMachineId.size).toBe(machines.length);
+            expect(first.currentnessForActiveAccountByMachineId.get(machines[0]!)).toBe(reports[0]);
+            await Promise.resolve();
+            expect.soft(derivations).toHaveBeenCalledTimes(1);
+            expect.soft(listener).toHaveBeenCalledTimes(1);
+
+            derivations.mockClear();
+            listener.mockClear();
+            for (const report of reports) owner.publishMachineCurrentness(report.machineId, null, { ...report });
+            await Promise.resolve();
+            expect(owner.getSnapshot()).toBe(first);
+            expect(derivations).not.toHaveBeenCalled();
+            expect(listener).not.toHaveBeenCalled();
+
+            const edited = { ...reports[0]!, pluginUiProjection: translationProjection(1, 'Edited') };
+            owner.publishMachineCurrentness(edited.machineId, null, edited);
+            await Promise.resolve();
+            expect(derivations).toHaveBeenCalledTimes(1);
+            expect(listener).toHaveBeenCalledTimes(1);
+            const next = owner.getSnapshot();
+            expect(next.currentnessForActiveAccountByMachineId.get(edited.machineId)).toBe(edited);
+            expect(next.currentnessForActiveAccountByMachineId.get(machines[1]!)).toBe(reports[1]);
+            expect(next.pluginUiProjection?.translationsByPluginId['acme.publication']?.bundles).toEqual({ en: { title: 'Edited' } });
+        } finally { stop(); derivations.mockRestore(); factory.mockRestore(); owner.dispose(); }
+    });
+
     it('publishes no UI union for 148 Machine descriptor arrivals with unchanged plugin facts', () => {
         const factory = vi.spyOn(projectionUnion, 'createPluginUiProjectionUnionPublication');
         const owner = createAppShellPluginUiProjectionPublication();
@@ -420,26 +464,26 @@ describe('AppShell projection source publication', () => {
             activeServerId: null, serverProfilesGeneration: 0, activeInventoryLoaded: true,
             onlineMachineIds: machines, selectableMachineIds: machines });
         for (const machineId of machines) owner.publishMachineCurrentness(machineId, null, { ...currentness(model), machineId });
+        const before = owner.getSnapshot();
         const created = factory.mock.results.at(-1);
         if (created?.type !== 'return') throw new Error('Expected real union owner');
         const publications = vi.spyOn(created.value, 'publish');
-        const before = owner.getSnapshot();
         pluginFactReads = 0;
         try {
             for (const machineId of machines) owner.publishMachineCurrentness(machineId, null, {
                 ...currentness(model), machineId, connectedAccountProjection: { kind: 'ready', descriptors: [] },
             });
+            expect(owner.getSnapshot().projectionUnion).toBe(before.projectionUnion);
             expect.soft(publications).toHaveBeenCalledTimes(0);
             expect.soft(pluginFactReads).toBe(0);
-            expect(owner.getSnapshot().projectionUnion).toBe(before.projectionUnion);
             expect(owner.getSnapshot().pluginUiProjection?.translationsByPluginId['acme.publication'])
                 .toBe(before.pluginUiProjection?.translationsByPluginId['acme.publication']);
             // A real declaration edit still reaches the union and changes its row.
             owner.publishMachineCurrentness(machines[0]!, null, {
                 ...currentness(translationProjection(1, 'Edited')), machineId: machines[0]!,
             });
-            expect(publications).toHaveBeenCalledTimes(1);
             expect(owner.getSnapshot().pluginUiProjection).not.toBe(before.pluginUiProjection);
+            expect(publications).toHaveBeenCalledTimes(1);
         } finally { publications.mockRestore(); factory.mockRestore(); owner.dispose(); }
     });
 
@@ -597,7 +641,7 @@ describe('AppShell projection source publication', () => {
         } finally { stop(); owner.dispose(); }
     });
 
-    it('does not republish equivalent Machine currentness wrappers and still withdraws changed authority', () => {
+    it('does not republish equivalent Machine currentness wrappers and still withdraws changed authority', async () => {
         const owner = createAppShellPluginUiProjectionPublication();
         owner.publishSources({ accountLifetime: null, availabilityInputs: null, hostBundledUiEnabled: false,
             activeServerId: null, serverProfilesGeneration: 0, activeInventoryLoaded: true,
@@ -605,6 +649,7 @@ describe('AppShell projection source publication', () => {
         const report = currentness(translationProjection(1, 'First'));
         owner.publishMachineCurrentness('machine', null, report);
         const first = owner.getSnapshot();
+        await Promise.resolve();
         let publications = 0;
         const stop = owner.subscribe(() => { publications += 1; });
         try {
@@ -616,12 +661,13 @@ describe('AppShell projection source publication', () => {
             owner.publishMachineCurrentness('machine', null, {
                 ...report, phase: 'retainedOffline', interactionEnabled: false,
             });
+            await Promise.resolve();
             expect(publications).toBe(1);
             expect(owner.getSnapshot().projectionUnion.interactionEnabled).toBe(false);
         } finally { stop(); owner.dispose(); }
     });
 
-    it('keeps committed UI quiet across unrelated registry generations and publishes changed declarations and availability', () => {
+    it('keeps committed UI quiet across unrelated registry generations and publishes changed declarations and availability', async () => {
         const owner = createAppShellPluginUiProjectionPublication();
         owner.publishSources({ accountLifetime: null, availabilityInputs: null, hostBundledUiEnabled: false,
             activeServerId: null, serverProfilesGeneration: 0, activeInventoryLoaded: true,
@@ -629,6 +675,7 @@ describe('AppShell projection source publication', () => {
         const model = translationProjection(1, 'First');
         owner.publishMachineCurrentness('machine', null, currentness(model));
         const initial = owner.getSnapshot().pluginUiProjection;
+        await Promise.resolve();
         const detach = publishCommittedAppShellPluginUiProjection(() => owner.getSnapshot().pluginUiProjection,
             id => owner.getSnapshot().candidateFactsByPluginId.get(id) ?? null, listener => owner.subscribe(listener, 'committed'));
         let publications = 0;
@@ -638,6 +685,7 @@ describe('AppShell projection source publication', () => {
         try {
             for (let generation = 2; generation <= 21; generation++) {
                 owner.publishMachineCurrentness('machine', null, currentness({ ...model, generation }));
+                await Promise.resolve();
             }
             expect.soft(publications).toBe(0);
             expect(rawPublications).toBe(20);
@@ -645,29 +693,35 @@ describe('AppShell projection source publication', () => {
             expect.soft(owner.getSnapshot().pluginUiProjection).toBe(initial);
             const changed = translationProjection(21, 'Changed');
             owner.publishMachineCurrentness('machine', null, currentness(changed));
+            await Promise.resolve();
             expect(publications).toBe(1);
             expect(readCurrentAppShellPluginUiProjection()?.translationsByPluginId['acme.publication']?.bundles)
                 .toEqual({ en: { title: 'Changed' } });
             owner.publishMachineCurrentness('machine', null, { ...currentness(changed),
                 phase: 'retainedOffline', interactionEnabled: false });
+            await Promise.resolve();
             expect(publications).toBe(2);
             expect(owner.getSnapshot().projectionUnion.interactionEnabled).toBe(false);
             owner.publishMachineCurrentness('machine', null, currentness(changed));
+            await Promise.resolve();
             expect(publications).toBe(3);
             owner.publishMachineCurrentness('machine', null, { ...currentness({ ...changed, generation: null }),
                 phase: 'establishing', interactionEnabled: false });
+            await Promise.resolve();
             expect(publications).toBe(4);
             expect(owner.getSnapshot().projectionUnion.interactionEnabled).toBe(false);
             owner.publishMachineCurrentness('machine', null, currentness(changed));
+            await Promise.resolve();
             expect(publications).toBe(5);
             expect(owner.getSnapshot().projectionUnion.interactionEnabled).toBe(true);
             owner.publishMachineCurrentness('machine', null, currentness({ ...EMPTY_PLUGIN_UI_PROJECTION, generation: 21 }));
+            await Promise.resolve();
             expect(publications).toBe(6);
             expect(readCurrentAppShellPluginUiProjection()?.translationsByPluginId['acme.publication']).toBeUndefined();
         } finally { stopRaw(); stop(); detach(); owner.dispose(); }
     });
 
-    it('publishes the prepared Skills identity atomically and retains it across runtime generation changes', () => {
+    it('publishes the prepared Skills identity atomically and retains it across runtime generation changes', async () => {
         const owner = createAppShellPluginUiProjectionPublication();
         const pluginId = 'acme.publication';
         const id = `${pluginId}/check`;
@@ -685,12 +739,14 @@ describe('AppShell projection source publication', () => {
         owner.publishMachineCurrentness('machine', null, currentness(generations));
         expect(owner.getSnapshot().skillSourceIdentity).toBe(first);
         expect(owner.getSnapshot().pluginUiProjection).toBe(firstProjection);
+        await Promise.resolve();
         const notifications: Array<ReturnType<typeof owner.getSnapshot>> = [];
         const stop = owner.subscribe(() => { notifications.push(owner.getSnapshot()); });
         try {
             owner.publishMachineCurrentness('machine', null, currentness({ ...generations, skillsById: { [id]: {
                 ...model.skillsById[id]!, definition: { id: 'check', directory: './skills/changed' },
             } } }));
+            await Promise.resolve();
             expect(notifications).toHaveLength(1);
             expect(notifications[0]?.skillSourceIdentity).not.toBe(first);
             expect(notifications[0]?.pluginUiProjection?.skillsById[id]?.definition.directory).toBe('./skills/changed');
@@ -1082,7 +1138,7 @@ describe('AppShell projection source publication', () => {
         } finally { values.mockRestore(); unsubscribe(); owner.dispose(); }
     });
 
-    it('notifies committed candidate readers for native-only changes without replacing the aggregate declaration', () => {
+    it('notifies committed candidate readers for native-only changes without replacing the aggregate declaration', async () => {
         const owner = createAppShellPluginUiProjectionPublication();
         const sources = { accountLifetime: null, availabilityInputs: null, hostBundledUiEnabled: false,
             activeServerId: 'server-1', serverProfilesGeneration: 0, activeInventoryLoaded: true,
@@ -1107,6 +1163,7 @@ describe('AppShell projection source publication', () => {
         const first = owner.getSnapshot();
         expect(first.pluginUiProjection).toBeNull();
         expect(first.candidateFactsByPluginId.get(pluginId)?.sourceCandidates[0]?.source.occurrenceId).toBe(`${pluginId}:occurrence-7`);
+        await Promise.resolve();
         const read = () => owner.getSnapshot().pluginUiProjection;
         let sourceSubscriptions = 0;
         const bind = () => publishCommittedAppShellPluginUiProjection(read,
@@ -1134,6 +1191,7 @@ describe('AppShell projection source publication', () => {
             expect(sourceReads).toBe(0);
             expect(notifications).toBe(0);
             publishNative(8);
+            await Promise.resolve();
             expect(owner.getSnapshot().pluginUiProjection).toBe(first.pluginUiProjection);
             expect(owner.getSnapshot().projectionUnion.phase).toBe(first.projectionUnion.phase);
             expect(notifications).toBe(1);
@@ -1148,6 +1206,7 @@ describe('AppShell projection source publication', () => {
             expect(sourceSubscriptions).toBe(1);
             notifications = 0;
             publishNative(9);
+            await Promise.resolve();
             expect(notifications).toBe(1);
             expect(observed.sourceCandidates[0]?.source.occurrenceId).toBe(`${pluginId}:occurrence-9`);
             currentCleanup();
@@ -1164,7 +1223,7 @@ describe('AppShell projection source publication', () => {
         }
     });
 
-    it('makes repeated reads inert and publishes a changed source without rebuilding on equivalent commits', () => {
+    it('makes repeated reads inert and publishes a changed source without rebuilding on equivalent commits', async () => {
         const owner = createAppShellPluginUiProjectionPublication();
         const sources = { accountLifetime: null, availabilityInputs: null, hostBundledUiEnabled: false,
             activeServerId: null, serverProfilesGeneration: 0, activeInventoryLoaded: true,
@@ -1178,6 +1237,7 @@ describe('AppShell projection source publication', () => {
         owner.publishMachineCurrentness('machine', null, first);
         const ready = owner.getSnapshot();
         expect(ready.pluginUiProjection?.translationsByPluginId['acme.publication']?.bundles).toEqual({ en: { title: 'First' } });
+        await Promise.resolve();
         let notifications = 0;
         const unsubscribe = owner.subscribe(() => { notifications += 1; });
         sourceReads = 0;
@@ -1189,6 +1249,7 @@ describe('AppShell projection source publication', () => {
         expect(notifications).toBe(0);
         expect(sourceReads).toBe(0);
         owner.publishMachineCurrentness('machine', null, currentness(observed(translationProjection(2, 'Second'))));
+        await Promise.resolve();
         expect(sourceReads).toBeGreaterThan(0);
         expect(owner.getSnapshot()).not.toBe(ready);
         expect(owner.getSnapshot().pluginUiProjection?.translationsByPluginId['acme.publication']?.bundles).toEqual({ en: { title: 'Second' } });
