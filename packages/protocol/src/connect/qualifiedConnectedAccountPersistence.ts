@@ -88,9 +88,10 @@ export function isQualifiedConnectedAccountLocalSubjectId(subjectId: string): bo
 }
 
 /**
- * Whether the Account holds any account for `service`, whatever its health. This alone decides whether a purpose that
- * draws on the service needs a connection: a broken account needs a reconnect (its own attention state), never a
- * second connection.
+ * Whether the Account holds any account for `service`, whatever its health. This alone decides whether a credential
+ * choice for the service offers a first connection: a broken account needs a reconnect (its own attention state),
+ * never a second connection. It is not plugin setup's readiness: a plugin's required-account step is done only when
+ * the purpose can run, so it also counts Team credential groups and leaves a signed-out account pending.
  */
 export function holdsConnectedAccountForService(
   accounts: readonly Readonly<{ ref: QualifiedConnectedAccountRef }>[],

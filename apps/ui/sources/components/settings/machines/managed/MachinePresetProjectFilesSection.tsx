@@ -21,7 +21,7 @@ import { t } from '@/text';
 
 import { ManagedFieldRow } from './MachinePresetDetail';
 import { presetGitHostingProviders, selectPresetGitHostingProvider, withPresetGitAccount } from './presetGitAccount';
-import { connectedAccountPurposeServiceTargets } from '@/sync/domains/connectedServices/connectedAccountPurposeTargetChoices';
+import { holdsConnectedAccountForService } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import { storage } from '@/sync/domains/state/storageStore';
 import { SCM_HOSTING_CONNECTED_ACCOUNT_PURPOSE_ID } from '@happier-dev/protocol/plugins/contributions/scmHostingProviders';
 import { useDaemonScmContributionCatalog } from '@/scm/registry/useDaemonScmContributionCatalog';
@@ -175,7 +175,7 @@ function PresetGitAccountRow(props: Readonly<{
   const [chosenHostId, setChosenHostId] = React.useState<string | null>(null);
   const hosts = presetGitHostingProviders(catalog.hostingProviders);
   const provider = selectPresetGitHostingProvider(catalog.hostingProviders, value.gitAccount, chosenHostId,
-    service => connectedAccountPurposeServiceTargets(accounts ?? [], [], service).accounts.length > 0);
+    service => holdsConnectedAccountForService(accounts ?? [], service));
   const firstConnection = useFirstConnection(null, provider?.authService ?? null,
     account => onChange?.(withPresetGitAccount(value, account)));
   if (!provider) return null;
