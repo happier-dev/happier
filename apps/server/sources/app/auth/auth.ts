@@ -746,7 +746,7 @@ class AuthModule {
         let nativeSource: Readonly<{ id: string; revision: number }> | undefined;
         if (nativeAdmission) {
             const { admitDeploymentNativeRootEnvironmentInTx } = await import('@/app/deployments/deploymentRootEnvironmentAdmission');
-            const environment = await admitDeploymentNativeRootEnvironmentInTx(db, input, nativeAdmission, 'authentication' in input
+            const environment = await admitDeploymentNativeRootEnvironmentInTx(db, { ...input, installationId: machine.installationId }, nativeAdmission, 'authentication' in input
                 ? input.authentication.evidence : mintApiTokenPrincipal?.authenticationEvidence);
             if (!environment.ok) {
                 throw refuse(environment.phase ? `native_root_environment.${environment.phase}` : 'native_root_environment', environment.code, { details: environment.placement?.details,

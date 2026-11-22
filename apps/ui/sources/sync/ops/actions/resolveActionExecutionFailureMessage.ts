@@ -9,7 +9,7 @@ import { DiscussionErrorCodeV1Schema } from '@happier-dev/protocol/discussions/a
 import { MachineElevationFailureV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
 import { MachineReachabilityNativeFailureDetailsV1Schema } from '@happier-dev/protocol/machines/reachability/actionsV1';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
-import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { readDeploymentInstallationReplacementRefusalV1, readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { FeatureDecisionSchema } from '@happier-dev/protocol/features/decision';
 import { readTeamCreationPolicyRefusalV1 } from '@happier-dev/protocol/teams';
 import { teamsCreateRefusalText } from '@/components/settings/teams/collection/teamsCreateGuidanceText';
@@ -148,6 +148,8 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
         return resolveSessionSpawnNewResultFailureMessage(childSession);
     }
     const code = record.errorCode ?? record.code ?? record.rpcErrorCode;
+    const installationReplacement = readDeploymentInstallationReplacementRefusalV1(code, record.details);
+    if (installationReplacement) return installationReplacement.remedy;
     const stalePluginViewMessage = typeof code === 'string' ? resolvePluginSurfaceStaleReasonMessage(code) : null;
     if (stalePluginViewMessage) return stalePluginViewMessage;
     const teamCreationRefusal = readTeamCreationPolicyRefusalV1(code, record.details);

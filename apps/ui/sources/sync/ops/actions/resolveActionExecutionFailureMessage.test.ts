@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
+import { ExternalActionHttpErrorSchema, projectExternalActionHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionHttpError';
 import { PluginUiPresentActionFailureRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { completeSpawnActionResult } from '@happier-dev/protocol/actions/executor/resultProjection';
@@ -12,6 +13,17 @@ import { presentActionExecutionFailure, resolveActionExecutionErrorMessage, reso
 import { resolveSessionSpawnNewResultFailureMessage } from './sessionSpawnFailurePresentation';
 
 describe('Action failure presentation', () => {
+    it('presents the deployment installation refusal from the HTTP failure envelope', () => {
+        const details = { reason: 'machine_installation_replaced', requiredFact: 'installationId=retired-installation',
+            remedy: 'This Machine was reinstalled. Create a new Environment on the current installation and add its required secrets.' };
+        const refusal = projectExternalActionHttpFailureV1(ExternalActionHttpErrorSchema.parse({
+            error: 'credential_scope_denied', requestId: 'backup-run', details,
+        }));
+        expect(presentActionExecutionFailure(refusal).reason).toBe(details.remedy);
+        const bare = projectExternalActionHttpFailureV1(ExternalActionHttpErrorSchema.parse({ error: 'credential_scope_denied' }));
+        expect(presentActionExecutionFailure(bare).reason).toBe(t('errors.permissionDenied'));
+    });
+
     it('explains Team creation policy refusals and keeps a bare Team refusal generic', () => {
         const failure = { ok: false, errorCode: 'team_forbidden', error: 'team_forbidden' };
         const fallback = t('teams.errors.forbidden');

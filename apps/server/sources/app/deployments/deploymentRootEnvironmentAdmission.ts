@@ -54,6 +54,7 @@ export async function admitDeploymentNativeRootEnvironmentInTx(
     accountId: string;
     serverIdentityId: string;
     machineId: string;
+    installationId: string;
     actionId: string;
   }>,
   nativeAdmission: DeploymentNativeAdmissionV1,
@@ -197,6 +198,7 @@ export async function admitDeploymentNativeRootEnvironmentInTx(
               owner: environment.admission.owner,
             }
           : undefined,
+        root,
       );
     if (!selected) return { ok: false, phase: 'member_target' };
     if (!selected.ok) return { ...selected, phase: 'member_target_authorization' };

@@ -8,12 +8,13 @@ import type { DeploymentRestartNativeAdmissionV1, DeploymentRestoreNativeAdmissi
 import type { ProjectReadinessActionIdV1 } from '@happier-dev/protocol/actions/projectReadinessActionIdsV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { createDeploymentReadScopeV1 } from '@happier-dev/protocol/actions/specs/deploymentReadScope';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { Tx } from '@/storage/inTx';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { loadDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
 import { loadDeploymentTargetRowsInTx, readCurrentManagedDataTargetLinksInTx } from './deploymentTargetLinkService';
 import { resolveProjectSourceAccessInTx, resolveProjectSourcesAccessInTx } from '@/app/projects/sources/projectSourceService';
-import { canEditDeploymentEnvironmentData, type DeploymentAuthentication } from './deploymentAdmission';
+import { canEditDeploymentEnvironmentData, projectDeploymentRuntimeInstallationReplacedFailure, type DeploymentAuthentication } from './deploymentAdmission';
 import type { DeploymentContentReference } from './deploymentStoredContent';
 import { admitDeploymentStoredContentsInTx } from './deploymentStoredContent';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1,
@@ -24,7 +25,8 @@ import { hasDeploymentReceiptContentV1 } from '@happier-dev/protocol/deployments
 type DeploymentTargetAuthorization = Readonly<{ ok: true; artifactIds: readonly string[];
     deploymentDatabaseEditor?: ExternalActionExecutionAuthorizationBindingV1['deploymentDatabaseEditor'];
     deploymentTelemetryRead?: ExternalActionExecutionAuthorizationBindingV1['deploymentTelemetryRead'] }>
-    | Readonly<{ ok: false; code: 'source_changed' }> | null;
+    | Readonly<{ ok: false; code: 'source_changed' }>
+    | Readonly<{ ok: false; placement: ActionExecuteFailure }> | null;
 
 /** Registry demand selects current metadata only; the Environment remains its private-content authority. */
 export async function readRegistryAppUpdateAuthorizationInTx(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
@@ -142,7 +144,7 @@ export async function readDeploymentReadAuthorizationInTx(tx: Tx, binding: Exter
                     actionId: ACTION_INVOKE_ACTION_ID_V1, environmentId: admission.environmentId,
                     deploymentId: target.deploymentId, targetLinkId: target.targetLinkId,
                     machineId: binding.machineId, installationId: binding.installationId,
-                });
+                }, undefined, binding);
                 return selected?.ok ? { ...selected, ...editor } : selected;
             }
         }
@@ -176,7 +178,7 @@ export async function readDeploymentReadAuthorizationInTx(tx: Tx, binding: Exter
     const loaded = await loadDeploymentEnvironmentInTx(tx, binding.accountId, binding.serverIdentityId,
         admission.environmentId, authentication);
     if (!loaded.ok) return null;
-    return readDeploymentTargetAuthorizationInTx(tx, loaded.row, admission);
+    return readDeploymentTargetAuthorizationInTx(tx, loaded.row, admission, undefined, binding);
 }
 
 /** One metadata selector serves read roots and native member admission after Source authority is decided. */
@@ -189,6 +191,7 @@ export async function readDeploymentTargetAuthorizationInTx(tx: Tx,
         | Readonly<{ actionId: typeof ACTION_INVOKE_ACTION_ID_V1 | typeof deploymentActionIds.DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1; environmentId: string; deploymentId: string;
             targetLinkId: string; machineId: string; installationId: string }>,
     contentAdmission?: Readonly<{ actorAccountId: string; owner: ProjectSourceOwnerV1 }>,
+    installedMachine?: Readonly<{ machineId: string; installationId: string }>,
 ): Promise<DeploymentTargetAuthorization> {
     const scope = admission.actionId === ACTION_INVOKE_ACTION_ID_V1 ? createDeploymentReadScopeV1()
         : getActionSpec(admission.actionId).deploymentReadScope;
@@ -215,12 +218,18 @@ export async function readDeploymentTargetAuthorizationInTx(tx: Tx,
     if (scope.target !== 'historical_receipt') {
         if (environment.deletedAt || environment.runtimeTargetLinkId !== link.id || link.deletedAt || link.detachedAt
             || link.role !== 'runtime' || link.sourceKind !== 'host' || link.targetKind !== 'ownServer'
-            || scope.target !== 'restore_receipt' && link.activeDeploymentId !== receipt.id
-            || !copy && !link.machines.some(member => member.machineId === admission.machineId
-                && member.installationId === admission.installationId && member.state === 'active')) return null;
+            || scope.target !== 'restore_receipt' && link.activeDeploymentId !== receipt.id) return null;
     }
     const receiptContents = !copy && hasDeploymentReceiptContentV1(receipt) ? [receipt] : [];
     if (!copy && !receiptContents.length) return null;
+    if (scope.target !== 'historical_receipt' && !copy) {
+        const member = link.machines.find(member => member.machineId === admission.machineId && member.state === 'active');
+        if (!member) return null;
+        if (member.installationId !== admission.installationId) {
+            if (installedMachine?.machineId !== member.machineId || installedMachine.installationId !== admission.installationId) return null;
+            return { ok: false, placement: projectDeploymentRuntimeInstallationReplacedFailure(member.installationId) };
+        }
+    }
     let artifactIds = [environment.contentArtifactId, link.contentArtifactId, ...receiptContents.map(row => row.contentArtifactId)];
     if (scope.target === 'restore_receipt') {
         const active = link.activeDeploymentId ? await tx.deployment.findFirst({ where: { id: link.activeDeploymentId,

@@ -3,7 +3,7 @@ import type { AutomationEventFilterV1 } from '@happier-dev/protocol/automations/
 import type { PluginEventAutomationSetupResultV1 } from '@happier-dev/protocol/automations/event-setup-result';
 import type { DaemonContributionRegistryProjectionAutomationEligibleEventV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginDiagnosticRemediationV1 } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
-import { PluginUiJsonValueV1Schema, reconstructPluginUiSelectedActionInput } from '@happier-dev/protocol/plugins/ui';
+import { PluginUiJsonValueV1Schema, reconstructPluginUiSelectedActionInput, type PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 import { readInputPath, writeInputPath } from '@happier-dev/protocol/inputs';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -51,6 +51,7 @@ export type PluginEventAutomationSetupFailure = Readonly<{
     reason: string;
     requestId?: string;
     message?: string;
+    details?: PluginUiJsonValueV1;
     failureCause?: ActionFailureCauseV1;
     effectAttempted?: boolean;
     retryable?: boolean;
@@ -485,6 +486,7 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
                 reason: outcome.reason,
                 requestId: outcome.requestId ?? requestId,
                 ...(outcome.message === undefined ? {} : { message: outcome.message }),
+                ...(outcome.details === undefined ? {} : { details: outcome.details }),
                 ...(outcome.failureCause === undefined ? {} : { failureCause: outcome.failureCause }),
                 ...(outcome.effectAttempted === undefined ? {} : { effectAttempted: outcome.effectAttempted }),
                 ...(outcome.retryable === undefined ? {} : { retryable: outcome.retryable }),

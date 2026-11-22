@@ -3920,6 +3920,47 @@ describe('deployment children retain their controller Action authority', () => {
         }, { authentication: 'real' });
     });
 
+    it('explains a replaced runtime installation to the admitted Backup Run caller', async () => {
+        const f = await fixture();
+        await db.deployment.update({ where: { id: f.receipt.id }, data: { state: 'succeeded' } });
+        await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: { activeDeploymentId: f.receipt.id } });
+        const actionId = 'deployments.backups.run';
+        const token = await auth.createToken(f.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const currentInstallationId = crypto.randomUUID();
+        const backup = (installationId: string, machine = f.member, deploymentId = f.receipt.id) =>
+            buildDeploymentBackupActionInputV1(actionId, { serverId, environmentId: f.environment.id, deploymentId,
+                targetLinkId: f.link.id, machineId: machine.id, installationId, expectedRevision: f.environmentRevision, configRevision: 1 });
+
+        await withAuthenticatedTestApp(registerExternalActionRoutes, async app => {
+            const mint = async (input: ReturnType<typeof backup>, machine = f.member) => {
+                const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target: { kind: 'machine' as const, machineId: machine.id }, input };
+                return app.inject({ method: 'POST', url: `/v1/actions/${actionId}/execution-authorization`,
+                    headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: machine.id, envelope } });
+            };
+            const before = await mint(backup(f.member.installationId));
+            expect(before.statusCode, before.body).toBe(200);
+
+            await db.machine.update({ where: { accountId_id: { accountId: f.account.id, id: f.member.id } },
+                data: { installationId: currentInstallationId } });
+            // An arbitrary installation or a different Machine/receipt must not acquire a placement witness.
+            for (const response of [
+                await mint(backup(crypto.randomUUID())),
+                await mint(backup(f.outsider.installationId, f.outsider), f.outsider),
+                await mint(backup(currentInstallationId, f.member, crypto.randomUUID())),
+            ]) {
+                expect(response.json()).toMatchObject({ error: 'credential_scope_denied' });
+                expect(response.json()).not.toHaveProperty('details');
+            }
+
+            const refused = await mint(backup(currentInstallationId));
+            expect(refused.json()).toMatchObject({ error: 'credential_scope_denied', details: {
+                reason: 'machine_installation_replaced', requiredFact: `installationId=${f.member.installationId}`,
+                remedy: expect.any(String),
+            } });
+            expect(refused.json()).not.toHaveProperty('token');
+        }, { authentication: 'real' });
+    });
+
     it('admits backup inventory for an Environment viewer while preserving write and foreign-target refusals', async () => {
         const f = await fixture('team', 'account');
         const foreign = await fixture();

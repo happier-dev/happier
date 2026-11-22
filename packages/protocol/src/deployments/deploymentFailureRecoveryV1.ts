@@ -287,6 +287,15 @@ function recoveryDetails(details: Record<string, unknown>): Record<string, unkno
         ? details.failure : details;
 }
 
+export const DEPLOYMENT_MACHINE_INSTALLATION_REPLACED_REASON_V1 = 'machine_installation_replaced';
+
+export function readDeploymentInstallationReplacementRefusalV1(errorCode: unknown, details: unknown) {
+    if (errorCode !== 'credential_scope_denied' || !isRecord(details)
+        || details.reason !== DEPLOYMENT_MACHINE_INSTALLATION_REPLACED_REASON_V1
+        || typeof details.requiredFact !== 'string' || typeof details.remedy !== 'string') return null;
+    return { reason: DEPLOYMENT_MACHINE_INSTALLATION_REPLACED_REASON_V1, requiredFact: details.requiredFact, remedy: details.remedy };
+}
+
 function readDomainAdminRecoveryMachineId(details: Record<string, unknown>, errorCode?: string): string | undefined {
     if (errorCode !== 'machine_admin_access_required' || details.step !== 'native_execution') return undefined;
     return DeploymentIdentifierV1Schema.safeParse(details.machineId).data;
@@ -294,6 +303,8 @@ function readDomainAdminRecoveryMachineId(details: Record<string, unknown>, erro
 
 function recoveryFor(details: Record<string, unknown>, errorCode?: string, request?: DeploymentRefusalRequestV1) {
     details = recoveryDetails(details);
+    const replacement = readDeploymentInstallationReplacementRefusalV1(errorCode, details);
+    if (replacement) return recovery(replacement.remedy, 'source', 'Open Source details');
     if (details.kind === 'refused') {
         const open = OpenProjectRefusalV1Schema.safeParse(details);
         if (open.success && open.data.remediation?.kind === 'unsupported_provider') {

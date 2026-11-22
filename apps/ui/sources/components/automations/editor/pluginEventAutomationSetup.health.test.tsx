@@ -105,7 +105,8 @@ async function restoreServerAccountForTest(params: Parameters<typeof restoreAcco
         machineId, actionId: 'action.invoke', tokenEpoch: 0, requesterInvocation: 'required',
         failure: value => {
             const result = DaemonPluginStructuredMessageActionExecuteResponseSchema.safeParse(value);
-            return result.success && !result.data.ok ? { errorCode: result.data.code, error: result.data.code } : null;
+            return result.success && !result.data.ok ? { errorCode: result.data.code, error: result.data.code,
+                details: result.data.details } : null;
         },
         execute: async input => {
             rpc.hostActions.push(input);
@@ -1169,12 +1170,14 @@ it.each(['configured', 'refused'] as const)('settles native Add check after show
     const disposeProjection = publishCommittedAppShellPluginUiProjection(() => inputs.pluginUiProjection,
         id => id === pluginId ? sourceFacts : null);
     const actionResponse = createDeferred<void>();
+    const placementRefusal = { reason: 'machine_installation_replaced', requiredFact: 'installationId=previous',
+        remedy: 'This Machine was reinstalled. Create a new Environment on its current installation and add the required secrets.' };
     rpc.respond = request => {
         if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)
             return { protocolVersion: 1, projection, automationEligibleEvents: [event] };
         if (request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE)
             return actionResponse.promise.then(() => outcome === 'refused'
-                ? { ok: false, code: 'deployment_unavailable' }
+                ? { ok: false, code: 'credential_scope_denied', details: placementRefusal }
                 : { ok: true, result: { v: 1, sourceInstanceId, sourceContractVersion: 1,
                     sourceConfig: HealthCheckSetupInputV1ProtocolSchema.parse(Reflect.get(Object(request.payload), 'input')),
                     displayLabel: 'Production Health', observationOnly: { kind: 'observationOnly' } } });
@@ -1211,7 +1214,7 @@ it.each(['configured', 'refused'] as const)('settles native Add check after show
         await act(async () => { actionResponse.resolve(); });
         if (outcome === 'refused') {
             await waitForHomeGovernance(() => expect(renderUnavailable.mock.lastCall?.[2]).toMatchObject({
-                reason: 'deployment_unavailable', requestId: expect.any(String),
+                reason: 'credential_scope_denied', requestId: expect.any(String), details: placementRefusal,
             }));
             expect(onSettled).not.toHaveBeenCalled();
             return;

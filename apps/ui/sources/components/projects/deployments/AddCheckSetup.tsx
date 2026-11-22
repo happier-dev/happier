@@ -102,7 +102,7 @@ export function AddCheckSetup(
             renderUnavailable: (retry, machineName, failure) => {
               const presentation = failure && presentActionExecutionFailure({
                 ok: false, errorCode: failure.reason, requestId: failure.requestId,
-                message: failure.message, effectAttempted: failure.effectAttempted,
+                message: failure.message, details: failure.details, effectAttempted: failure.effectAttempted,
                 failureCause: failure.failureCause, remediation: failure.remediation,
               }, resolveReasonCopy({ kind: 'pluginRuntime', reasonCode: failure.code }).body);
               return <SurfaceStateCard

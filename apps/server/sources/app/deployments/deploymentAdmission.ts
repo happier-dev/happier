@@ -1,6 +1,7 @@
 import type { z } from 'zod/mini';
 import { DeploymentActionFailureV1Schema } from '@happier-dev/protocol';
 import type { DeploymentMachinePlacementDiagnosticV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DEPLOYMENT_MACHINE_INSTALLATION_REPLACED_REASON_V1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import type { ProjectSourceV1, ProjectSourceOwnerV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { resolveProjectSourceAccessInTx, type ProjectSourceAccess } from '@/app/projects/sources/projectSourceService';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
@@ -46,6 +47,11 @@ function projectDeploymentPlacementRefusal(details: Readonly<{ reason: string; r
 export function projectDeploymentControllerPlacementFailure(controllerMachineId: string): ActionExecuteFailure {
     return projectDeploymentPlacementRefusal({ reason: 'controller_placement_mismatch', requiredFact: `controllerMachineId=${controllerMachineId}`,
         remedy: `Run this action on Machine ${controllerMachineId}, or make that controller reachable, then retry` }, 'deployment.controller.placement');
+}
+export function projectDeploymentRuntimeInstallationReplacedFailure(installationId: string): ActionExecuteFailure {
+    return projectDeploymentPlacementRefusal({ reason: DEPLOYMENT_MACHINE_INSTALLATION_REPLACED_REASON_V1, requiredFact: `installationId=${installationId}`,
+        remedy: 'This Machine was reinstalled. Create a new Environment on its current installation and add the required secrets.' },
+    'deployment.runtime.machine_installation');
 }
 /** The Source owner principal cannot use the selected Machine (admitDeploymentMachinesInTx); other Machine failures stay bare. */
 export function projectDeploymentSourceMachinePlacementFailure(failure: DeploymentFailure): ActionExecuteFailure | undefined {

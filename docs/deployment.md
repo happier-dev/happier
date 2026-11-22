@@ -5953,6 +5953,13 @@ reported as unavailable; current health and vitals cannot reconstruct the past.
 
 ## Environment secret recovery and Compose use review (0.3 development)
 
+Reinstalling a runtime Machine can keep its Machine ID while replacing the
+installation and its keys. Deployment admission remains bound to the recorded
+installation. To resume deployment, create a new Environment on the current
+installation and add its required secrets. Existing backup snapshots still
+need their original backup repository credential. Review domain routes and
+private shares explicitly during cutover.
+
 An unavailable Saved Secret keeps its metadata-only binding notice. After withdrawal or
 deletion, Overview and Variables offer the existing Machine service controls for the
 Environment’s recorded native generations. Withdrawal leaves an admitted process running;
