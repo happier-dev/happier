@@ -54,6 +54,8 @@ function isProjectDefaultOpen(target: DestinationRef): boolean {
 // catalog instead of on every lookup: a carry asks "is this already open?" on every pointer frame.
 const normalizedTabTargets = new WeakMap<readonly CompactAppDestination[], WeakMap<DestinationRef, DestinationRef | null>>();
 function normalizedTabTarget(catalog: readonly CompactAppDestination[], target: DestinationRef): DestinationRef | null {
+    // Blank tabs share Home's browser URL but have their own destination identity.
+    if (target.kind === 'newTab') return target;
     let byTarget = normalizedTabTargets.get(catalog);
     if (!byTarget) { byTarget = new WeakMap(); normalizedTabTargets.set(catalog, byTarget); }
     if (byTarget.has(target)) return byTarget.get(target)!;
@@ -229,9 +231,12 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
             const target = resolveOpenTarget(href);
             return target ? findOpenDestination(target) : null;
         },
-        initialize(href: string) {
+        initialize(href: string, unresolvedTabId?: string) {
             const target = resolveOpenTarget(href);
-            const focusedHref = hrefForDestinationRef(input.getCatalog(), focusedEntry().target);
+            const focused = focusedEntry();
+            // A blank preview seeded from an unowned route has no address to retain.
+            const focusedHref = focused.tabId === unresolvedTabId && focused.target.kind === 'newTab'
+                ? null : hrefForDestinationRef(input.getCatalog(), focused.target);
             const focusedTarget = focusedHref ? resolveOpenTarget(focusedHref) : null;
             if (target && focusedTarget && sameDestinationRef(focusedTarget, target)) {
                 // Several retained panes can have the same URL (notably New Tab).

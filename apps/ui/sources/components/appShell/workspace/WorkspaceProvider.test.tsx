@@ -2951,6 +2951,39 @@ describe('consumed workspace navigation owner', () => {
         expect(navigation.state.tabs[group.activeTabId].target.params.id).toBe('A2');
         expect(location.pathname).toBe('/session/A2');
     });
+    it('titles the Home tab when pasted-link restoration enters the workspace from the public route', async () => {
+        boundary.platform = 'web';
+        boundary.pathname = '/restore';
+        boundary.params = { view: 'link' };
+        const location = { pathname: '/restore', search: '?view=link', hash: '' };
+        const history = { state: null as unknown,
+            pushState(data: unknown) { this.state = data; },
+            replaceState(data: unknown) { this.state = data; },
+            go() {},
+        };
+        installBrowserBoundary({ location, history, sessionStorage: { getItem: () => 'main' } });
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+            externalSessions: false, inbox: false, workflows: false, friends: false,
+        } });
+        const app = (enabled: boolean) => <WorkspaceProvider enabled={enabled} catalog={catalog}>{navigation =>
+            navigation.active ? <WorkspaceGroupTabs workspace={navigation} group={navigation.state.groups[navigation.state.focusedGroupId]}
+                catalog={catalog} focused placement="bar" /> : null
+        }</WorkspaceProvider>;
+        const screen = await renderScreen(app(false));
+        try {
+            expect(screen.getTextContent()).not.toContain(t('common.home'));
+
+            // Pairing's post-auth replacement publishes the browser root before Expo's route mirror catches up.
+            location.pathname = '/';
+            location.search = '';
+            await screen.update(app(true));
+
+            expect(screen.getTextContent()).toContain(t('common.home'));
+        } finally {
+            await screen.unmount();
+        }
+    });
+
     it('restores active tabs, focused split and MRU through a durable write and cold reload of an ambiguous URL', async () => {
         const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
             externalSessions: false, inbox: false, workflows: false, friends: false,

@@ -536,7 +536,8 @@ export function WorkspaceProvider(props: Readonly<{
             const state = owner.getState();
             const retainedHref = appWindowRef.current?.record.selectedAddress.kind === 'home'
                 ? hrefForDestinationRef(latest.current.catalog, state.tabs[state.groups[state.focusedGroupId].activeTabId].target) : null;
-            runtime.adapter.initialize(retainedHref ?? routeHref);
+            const unresolvedTabId = !appWindowRef.current && initialTab.target.kind === 'newTab' ? initialTab.id : undefined;
+            runtime.adapter.initialize(retainedHref ?? routeHref, unresolvedTabId);
             runtime.initialized = true;
             // Cold browser admission owns the child before Expo's nested
             // navigator acknowledges it, just like an explicit workspace open.
@@ -549,7 +550,7 @@ export function WorkspaceProvider(props: Readonly<{
             runtime.projectedHref = null;
             runtime.adapter.acceptUrl(routeHref);
         }
-    }, [eligible, owner.isReady, hostsRoute, pathname, routeHref, runtime]);
+    }, [eligible, owner.isReady, hostsRoute, initialTab, pathname, routeHref, runtime]);
 
     React.useLayoutEffect(() => {
         if (!hostsRoute || !owner.isReady || !runtime.browser || typeof window === 'undefined') return;
