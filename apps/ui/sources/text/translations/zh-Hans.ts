@@ -16518,7 +16518,7 @@ settingsSession: {
             historyNotRead: ({ count }: { count: string }) => `${count} 个会话尚未读取`,
             historyReading: ({ done, total }: { done: string; total: string }) => `正在读取会话 · ${done}/${total}`,
             historyFailed: ({ count }: { count: string }) => `无法读取 ${count} 个会话`,
-            viewsReadFailed: "无法读取你保存的视图。正在显示内置视图。",
+            viewsReadFailed: "无法读取你保存的视图。",
             historyReadNow: "立即读取",
             historyReadCommand: "读取未读会话",
             historyCancelCommand: "停止读取会话",

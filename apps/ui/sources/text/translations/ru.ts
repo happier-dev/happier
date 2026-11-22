@@ -16821,7 +16821,7 @@ settingsSession: {
             historyNotRead: ({ count }: { count: string }) => `Не прочитано сессий: ${count}`,
             historyReading: ({ done, total }: { done: string; total: string }) => `Чтение сессий · ${done} из ${total}`,
             historyFailed: ({ count }: { count: string }) => `Не удалось прочитать сессий: ${count}`,
-            viewsReadFailed: "Не удалось прочитать сохранённые представления. Показаны встроенные.",
+            viewsReadFailed: "Не удалось прочитать сохранённые представления.",
             historyReadNow: "Прочитать сейчас",
             historyReadCommand: "Прочитать непрочитанные сессии",
             historyCancelCommand: "Остановить чтение сессий",

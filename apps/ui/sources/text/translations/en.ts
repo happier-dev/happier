@@ -20337,7 +20337,7 @@ const enUsage = {
       historyNotRead: ({ count }: { count: string }) => count === '1' ? '1 session not read yet' : `${count} sessions not read yet`,
       historyReading: ({ done, total }: { done: string; total: string }) => `Reading sessions · ${done} of ${total}`,
       historyFailed: ({ count }: { count: string }) => count === '1' ? '1 session couldn\'t be read' : `${count} sessions couldn't be read`,
-      viewsReadFailed: "Couldn't read your saved views. Showing the built-in ones.",
+      viewsReadFailed: "Couldn't read your saved views.",
       historyReadNow: "Read now",
       historyReadCommand: "Read sessions not read yet",
       historyCancelCommand: "Stop reading sessions",

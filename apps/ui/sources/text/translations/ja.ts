@@ -17153,7 +17153,7 @@ settingsSession: {
             historyNotRead: ({ count }: { count: string }) => `未読のセッション ${count} 件`,
             historyReading: ({ done, total }: { done: string; total: string }) => `セッションを読み込み中 · ${done} / ${total}`,
             historyFailed: ({ count }: { count: string }) => `${count} 件のセッションを読み込めませんでした`,
-            viewsReadFailed: "保存したビューを読み込めませんでした。組み込みのビューを表示しています。",
+            viewsReadFailed: "保存したビューを読み込めませんでした。",
             historyReadNow: "今すぐ読み込む",
             historyReadCommand: "未読のセッションを読み込む",
             historyCancelCommand: "セッションの読み込みを停止",

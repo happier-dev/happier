@@ -16990,7 +16990,7 @@ settingsSession: {
       historyNotRead: ({ count }: { count: string }) => `Sesje jeszcze nieodczytane: ${count}`,
       historyReading: ({ done, total }: { done: string; total: string }) => `Odczytywanie sesji · ${done} z ${total}`,
       historyFailed: ({ count }: { count: string }) => `Nie udało się odczytać sesji: ${count}`,
-      viewsReadFailed: "Nie udało się odczytać zapisanych widoków. Pokazujemy wbudowane.",
+      viewsReadFailed: "Nie udało się odczytać zapisanych widoków.",
       historyReadNow: "Odczytaj teraz",
       historyReadCommand: "Odczytaj nieodczytane sesje",
       historyCancelCommand: "Zatrzymaj odczytywanie sesji",

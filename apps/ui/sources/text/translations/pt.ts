@@ -16984,7 +16984,7 @@ settingsSession: {
             historyNotRead: ({ count }: { count: string }) => `${count} sessões ainda não lidas`,
             historyReading: ({ done, total }: { done: string; total: string }) => `Lendo sessões · ${done} de ${total}`,
             historyFailed: ({ count }: { count: string }) => `Não foi possível ler ${count} sessões`,
-            viewsReadFailed: "Não foi possível ler suas visualizações salvas. Mostrando as integradas.",
+            viewsReadFailed: "Não foi possível ler suas visualizações salvas.",
             historyReadNow: "Ler agora",
             historyReadCommand: "Ler as sessões não lidas",
             historyCancelCommand: "Parar a leitura das sessões",

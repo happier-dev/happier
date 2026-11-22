@@ -17247,7 +17247,7 @@ settingsSession: {
             historyNotRead: ({ count }: { count: string }) => `${count} sessioni non ancora lette`,
             historyReading: ({ done, total }: { done: string; total: string }) => `Lettura sessioni · ${done} di ${total}`,
             historyFailed: ({ count }: { count: string }) => `Impossibile leggere ${count} sessioni`,
-            viewsReadFailed: "Impossibile leggere le viste salvate. Vengono mostrate quelle integrate.",
+            viewsReadFailed: "Impossibile leggere le viste salvate.",
             historyReadNow: "Leggi ora",
             historyReadCommand: "Leggi le sessioni non lette",
             historyCancelCommand: "Interrompi la lettura delle sessioni",
