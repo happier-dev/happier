@@ -65,7 +65,10 @@ export function createSessionStartupProjectSpawn(input: Readonly<{
         if (observeNativeOpen && (!input.awaitAgentSessionOpen || !input.stopSession)) {
             return projectDaemonSpawnUnavailable('session_startup_observation_unavailable', 'Session native startup observation or retirement unavailable');
         }
-        const result = await input.spawnSession({ ...options, ...(startupOperation ? { projectSetupOperation: startupOperation } : {}) });
+        const spawnOptions = startupOperation ? { ...options, projectSetupOperation: startupOperation } : options;
+        const result = context?.signal
+            ? await input.spawnSession(spawnOptions, context.signal)
+            : await input.spawnSession(spawnOptions);
         if (result.type !== 'success' || !result.sessionId || !observeNativeOpen) return result;
         // The native-fork owner awaits this same attestation inside its child
         // cleanup scope. Keep its physical child id available before refusal.
