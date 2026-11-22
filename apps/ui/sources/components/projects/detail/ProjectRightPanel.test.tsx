@@ -154,6 +154,28 @@ describe('ProjectRightPanel', () => {
             expect(await lines()).toEqual(['project-rightpanel-reachability']);
         } finally { vi.useRealTimers(); }
     });
+    it('says only Offline over a managed checkout whose controller is offline: its recovery settles without a presence Retry', async () => {
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const { createMachineFixture } = await import('@/dev/testkit');
+        const { SurfaceFreshnessLine } = await import('@/components/ui/surfaces/SurfaceFreshnessLine');
+        const lastHeartbeat = Date.now();
+        vi.useFakeTimers({ toFake: ['Date'] });
+        try {
+            vi.setSystemTime(lastHeartbeat + 24 * 60 * 60 * 1000);
+            await act(async () => storage.getState().applyMachines([createMachineFixture({ id: 'm1', active: false,
+                activeAt: lastHeartbeat, seq: 2, updatedAt: Date.now() })], true, { sourceServerId: runtime.serverId }));
+            const managedRef: WorkspaceRefV1 = { v: 2, kind: 'managed', id: 'wr_1', serverId: runtime.serverId, managedId: 'guest',
+                controller: { machineId: 'm1', installationId: 'installation' }, rootPath: '/repo', createdAtMs: 1 };
+            for (const phone of [false, true]) {
+                device.phone = phone;
+                const screen = await renderPanel({ workspaceRef: managedRef, onRequestClose: () => {} });
+                const [line] = screen.tree.findAllByType(SurfaceFreshnessLine);
+                expect(line?.props.testID).toBe('project-rightpanel-reachability');
+                expect(line?.props.reason).toBeTruthy();
+                expect(line?.props.action).toBeUndefined();
+            }
+        } finally { vi.useRealTimers(); }
+    });
     it('preserves the selected worktree in the sibling mobile route and pane selection', async () => {
         device.phone = true;
         const screen = await renderPanel({

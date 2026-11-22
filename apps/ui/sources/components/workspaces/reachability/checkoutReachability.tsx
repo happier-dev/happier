@@ -33,15 +33,20 @@ import {
  * nothing while the machine answers.
  */
 export function CheckoutReachabilityLine(
-  props: Readonly<{ scope: CheckoutMachineScope; testID?: string }>,
+  props: Readonly<{
+    scope: CheckoutMachineScope;
+    testID?: string;
+    /** An attached workspace recovers on its own when its controller is back: the line says Offline, with no Retry. */
+    recoversOnItsOwn?: boolean;
+  }>,
 ) {
   const reachability = useCheckoutReachability(props.scope);
-  return <CheckoutReachabilityLineView reachability={reachability} testID={props.testID} />;
+  return <CheckoutReachabilityLineView reachability={reachability} testID={props.testID} recoversOnItsOwn={props.recoversOnItsOwn} />;
 }
 
 /** The same line for a surface that already holds its Machine's reachability. */
 export function CheckoutReachabilityLineView(
-  props: Readonly<{ reachability: CheckoutReachability; testID?: string }>,
+  props: Readonly<{ reachability: CheckoutReachability; testID?: string; recoversOnItsOwn?: boolean }>,
 ) {
   const { reachability } = props;
   // Going offline and coming back are moments, not jumps: the line reveals and folds away with the
@@ -61,7 +66,8 @@ export function CheckoutReachabilityLineView(
         <SurfaceFreshnessLine
           testID={props.testID ?? 'checkout-reachability'}
           reason={shown.runtime.label}
-          action={shown.runtime.nextAction === 'retry' ? { label: t('common.retry'), onPress: retryMachineReachability } : undefined}
+          action={shown.runtime.nextAction === 'retry' && !props.recoversOnItsOwn
+            ? { label: t('common.retry'), onPress: retryMachineReachability } : undefined}
         />
       ) : null}
     </ExpandableItem>
