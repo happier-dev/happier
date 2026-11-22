@@ -109,7 +109,7 @@ import { TriageFixPullRequests } from './fixPullRequests.js';
 import { useTriageDetailFixPullRequest } from './useTriageDetailFixPullRequest.js';
 import { planTriageDetailTabsV1 } from './tabs.js';
 import { TRIAGE_DETAIL_ACTIONS_PANEL_V1, describeTriageSourceFailureV1, formatTriageTimestampV1, isReviewTriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
-import { useReviewWaitsForDecisionV1 } from '../../reviews/decisionPending.js';
+import { useReviewEntryWorkV1 } from '../../reviews/decisionPending.js';
 import { TriageEditTaskScope, type TriageEditTaskPlacementV1 } from './taskFields.js';
 import { TriageTaskStory } from './taskStory.js';
 import { TriageTaskOrigin } from './taskOrigin.js';
@@ -355,8 +355,9 @@ function TriageEntryScopedActionRegion(props: Readonly<{
   const shareSheet = useHostTaskShareSheet();
   const viewerScope = useSurfaceContext().accountScope;
   const shareRef = props.target.kind === 'entry' ? readTriageTaskShareRefV1(props.target.entryRef, viewerScope) : null;
-  // A Review's findings are decided in its summary before any agent fixes them (the Review owner's fact).
-  const decisionFirst = useReviewWaitsForDecisionV1(props.target.kind === 'entry' && isReviewTriageEntryRefV1(props.target.entryRef)
+  // A Review's findings are decided in its summary before any agent fixes them, and a Review with no findings offers
+  // no fix at all (the Review owner's facts).
+  const reviewWork = useReviewEntryWorkV1(props.target.kind === 'entry' && isReviewTriageEntryRefV1(props.target.entryRef)
     ? props.target.entryRef.entryId : undefined);
   const [orchestrationPrompt, setOrchestrationPrompt] = React.useState<string | null>(null);
   const promptFocus = usePluginUiFocusTarget();
@@ -523,7 +524,8 @@ function TriageEntryScopedActionRegion(props: Readonly<{
         actions={props.actions.actions}
         workflowSubject={props.workflowSubject}
         viewerIsAuthor={props.viewerIsAuthor}
-        {...(decisionFirst ? { decisionFirst: true } : {})}
+        {...(reviewWork === 'decide' || reviewWork === 'nothingToFix' ? { decisionFirst: true } : {})}
+        {...(reviewWork === 'nothingToFix' ? { nothingToFix: true } : {})}
         reviewPreparation={props.reviewPreparation}
         {...(props.workflowSubject !== 'errorIssue' || props.target.kind !== 'entry' ? {} : {
           taskDraft: { title: props.presentation.label, originError: { entryRef: props.target.entryRef,

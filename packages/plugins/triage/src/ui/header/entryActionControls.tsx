@@ -116,6 +116,11 @@ export type TriageEntryActionControlsPropsV1 = Readonly<{
    */
   decisionFirst?: boolean;
   /**
+   * The entry has nothing an agent could fix (a Review with no findings): a fix is not offered at all, in the row or
+   * its ⋯, rather than drawn quiet (offer only what the entry can complete, T2).
+   */
+  nothingToFix?: boolean;
+  /**
    * More things this entry can do that are not the one primary action: the header's More menu lists them after the
    * entry's other actions (a walkthrough, orchestration). Rows of the shared menu, never controls or a form.
    */
@@ -316,10 +321,11 @@ export function TriageEntryActionControls(
   const [bandNeed, setBandNeed] = React.useState<number | null>(null);
   const bandControlsWidth = React.useRef(0);
   const makeTask = useTriageMakeTask(props.taskDraft);
-  const offered = React.useMemo(
-    () => planTriageOfferedActionsV1(actions, workflowSubject),
-    [actions, workflowSubject],
-  );
+  const nothingToFix = props.nothingToFix === true;
+  const offered = React.useMemo(() => {
+    const planned = planTriageOfferedActionsV1(actions, workflowSubject);
+    return nothingToFix ? planned.filter((action) => readTriageActionIntentV1(action) !== 'fix') : planned;
+  }, [actions, workflowSubject, nothingToFix]);
   const [refusal, setRefusal] = React.useState<TriageEntryActionRefusalV1 | null>(null);
   // Merge's alternatives join this row's one ⋯ rather than a second ⋯ beside Merge.
   const mergeChoices = useTriageMergeChoicesV1(props.sourceWrite, props.sourceLabel);

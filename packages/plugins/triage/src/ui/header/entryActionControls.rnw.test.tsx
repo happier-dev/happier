@@ -171,6 +171,39 @@ describe('the mounted configured entry action controls', () => {
     expect(requests[1]).toMatchObject({ action: requests[0]!.action, destinationChoice: 'existingSession' });
   });
 
+  it('offers no Fix on an entry with nothing to fix, in its row or its More menu (T2)', async () => {
+    const surface = defineUiSurface(() => (
+      <TriageEntryActionControls
+        target={{ kind: 'entry', sectionId: 'open', entryRef: testkitEntryRef({ entryId: 'review-1', kindId: 'review' }),
+          sourceInstanceId: '11111111-1111-4111-8111-111111111111' }}
+        actions={TRIAGE_DEFAULT_ACTIONS_V1}
+        workflowSubject="issue"
+        viewerIsAuthor
+        reviewPreparation="unsupported"
+        nothingToFix
+        onAction={() => null}
+      />
+    ));
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'fixture-instance-nothing-to-fix', mountNonce: 'fixture-mount-nothing-to-fix' },
+      authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+      surface,
+      surfaceContext: createSurfaceContextFixture(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
+    });
+    mounted.push(fixture);
+    const names = Array.from(document.querySelectorAll('button, [role="button"]'))
+      .map((node) => node.getAttribute('aria-label') ?? node.textContent ?? '');
+    expect(names.some((name) => /^Fix\b/u.test(name))).toBe(false);
+    const more = await fixture.queryByRole('button', { name: 'More actions' });
+    if (more !== undefined) {
+      await fixture.press(more);
+      await expect(fixture.queryByRole('menuitem', { name: 'Fix' })).resolves.toBeUndefined();
+    }
+    // What the entry can do still stands: its question.
+    await expect(fixture.getByRole('button', { name: 'Ask' })).resolves.toBeDefined();
+  });
+
   it('names the settled agent on a row-opened pull request from first paint, while its workspace still reads (F10)', async () => {
     // Opening a row: the next pull request's review preparation is still pending at first paint. The primary already
     // names the agent the last entry settled on, so "Review with Claude Code" never draws as "Review" and grows,
