@@ -235,12 +235,14 @@ describe('the entry detail read', () => {
     it('lets another same-Account plugin load the configured entry detail', async () => {
         const { collections } = await seedTwoConnections();
         const context = createContext({ collections, callerPluginId: OTHER_SOURCE.pluginId });
+        const sourceReads = vi.spyOn(context.services.targetedContributions, 'observeForSelf');
         const state = await readTriageEntryDetailState({ executeAction: async (_action, input) => (
             await createTriageReadEntryDetailActionHandler()(TriageReadEntryDetailInputV1Schema.parse(input), context)
         ) }, { selection: { entryRef: ENTRY_REF, sourceInstanceId: INSTANCE_A }, observation: {
             entryRef: ENTRY_REF, observedAtMs: 2_000, locator: testkitLocator(), snapshot: testkitSnapshot(), viewer: testkitViewer(),
         } });
         expect(state).toMatchObject({ kind: 'ready' });
+        expect(sourceReads).toHaveBeenCalledTimes(1);
     });
 
     it.each(['typed', 'untyped'] as const)('preserves a %s source failure through the real relation and detail owners to the mounted reader', async kind => {

@@ -3887,6 +3887,8 @@ describe('opening a row into the source detail', () => {
         });
         const mountedBody = detailBodyNode();
         const readsBeforeResize = aggregateReads;
+        expect(currentHarness?.readDetailInstanceIds).toEqual([INSTANCE]);
+        const exactReadsBeforeResize = currentHarness?.exactReads.length;
 
         for (const width of [1280, 1920, 390, 1440]) {
             await measureFillRegion(width);
@@ -3901,6 +3903,8 @@ describe('opening a row into the source detail', () => {
         // remain owned by the same mounted source subtree.
         expect(detailBodyNode()).toBe(mountedBody);
         expect(aggregateReads).toBe(readsBeforeResize);
+        expect(currentHarness?.exactReads.length).toBe(exactReadsBeforeResize);
+        expect(currentHarness?.readDetailInstanceIds).toEqual([INSTANCE]);
     });
 
     it('renders the aggregate-owned header beside it', async () => {

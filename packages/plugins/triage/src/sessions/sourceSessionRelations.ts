@@ -91,8 +91,8 @@ export function createTriageSourceSessionRelations(
         services: Pick<TriageDataActionContext['services'], 'actions' | 'targetedContributions'>;
     }>,
     collections: Pick<CorpusCollectionsV1, 'sourceInstances' | 'sessionLinks'>,
-    /** An exact row and optional admitted source view already resolved for this entry. */
-    selected?: Readonly<{ entryRef: TriageEntryRefV1; record: CorpusRowV1<CorpusSourceInstanceRowV1> | null;
+    /** Reuse admitted sources for this read. An explicit record (including null) settles the exact row lookup. */
+    selected?: Readonly<{ entryRef: TriageEntryRefV1; record?: CorpusRowV1<CorpusSourceInstanceRowV1> | null;
         sources?: ReadonlyMap<string, TriageAdmittedSourceV1> }>,
     readTaskList?: () => Promise<TaskList | null>,
 ) {
@@ -152,7 +152,7 @@ export function createTriageSourceSessionRelations(
     function readView(input?: RelationSelection) {
         // This immutable source is already configured by its canonical owner.
         // An exact native record never needs the configured-source inventory.
-        const selectedEntry = input?.entryRef !== undefined && selected !== undefined
+        const selectedEntry = input?.entryRef !== undefined && selected?.record !== undefined
             && renderSourceQualifiedId(input.entryRef.source) === renderSourceQualifiedId(selected.entryRef.source);
         const selectedRecords = selected?.record == null ? [] : [selected.record];
         const configured = selectedEntry

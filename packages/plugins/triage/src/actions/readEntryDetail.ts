@@ -153,18 +153,15 @@ export function createTriageReadEntryDetailActionHandler(): TriageDataActionHand
         const { sourceInstances, sessionLinks, userMarks } = bindCorpusCollections(
             requireTriageAccountStorage(context),
         );
-        let selected: Parameters<typeof createTriageSourceSessionRelations>[2];
-        if (input.sourceInstanceRowId !== undefined) {
-            const sources = indexTriageAdmittedSourcesV1(resolution.callers.map(caller => caller.contribution));
-            selected = {
-                entryRef: input.entryRef, sources,
-                record: await readActiveConfiguredSourceRow(sourceInstances, {
-                    sourceInstanceId: input.sourceInstanceId, configurationRowId: input.sourceInstanceRowId,
-                }, { signal: context.signal, accountDataSources: readAccountDataSourceRecordsV1(sources) }),
-            };
-        }
+        const sources = indexTriageAdmittedSourcesV1(resolution.callers.map(caller => caller.contribution));
+        const record = input.sourceInstanceRowId === undefined ? undefined
+            : await readActiveConfiguredSourceRow(sourceInstances, {
+                sourceInstanceId: input.sourceInstanceId, configurationRowId: input.sourceInstanceRowId,
+            }, { signal: context.signal, accountDataSources: readAccountDataSourceRecordsV1(sources) });
         return await readTriageEntryDetail(input, {
-            sourceRelations: createTriageSourceSessionRelations(context, { sourceInstances, sessionLinks }, selected),
+            sourceRelations: createTriageSourceSessionRelations(context, { sourceInstances, sessionLinks }, {
+                entryRef: input.entryRef, sources, ...(record === undefined ? {} : { record }),
+            }),
             // Portable Account execution has no Session service. These optional
             // display facts stay absent while authoritative links remain present.
             readSessionSummary: async () => null,
