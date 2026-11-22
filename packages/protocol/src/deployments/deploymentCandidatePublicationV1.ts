@@ -18,6 +18,7 @@ import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest
 import { DeploymentBackupRestoreInputV1Schema, DeploymentBackupRestorePrepareInputV1Schema,
   DeploymentBackupRestoreConfirmInputV1Schema, DeploymentBackupRestoreRecoverInputV1Schema } from './deploymentBackupRestoreV1.js';
 import { DeploymentRestartInputV1Schema } from './deploymentRestartV1.js';
+import { MACHINE_SERVICE_ADOPT_ACTION_ID } from '../local/services/actionIdsV1.js';
 import { defineStoredReadProjection } from '../json/storedReadSchema.js';
 import { DeploymentArtifactContentReferenceV1Schema } from './deploymentArtifactContentReferenceV1.js';
 
@@ -241,6 +242,23 @@ export function createDeploymentEnvironmentContentArtifactIdV1(input: Readonly<{
   return publicationArtifactId(computeCanonicalDomainSeparatedHexDigest('happier-deployment-environment-publication-v1',
     [input.serverIdentityId, input.accountId, input.actionId, input.requestId, input.requestEnvelopeDigest,
       ...(input.environmentId === undefined ? [] : [input.environmentId])]));
+}
+
+export type DeploymentPreparationContentSlotV1 = 'environment' | 'runtimeLink' | 'templateMetadata' | 'bindings'
+  | Readonly<{ templateDataTargetLinkId: string }>;
+
+/** One signed Create or Template Apply owns exactly these create-only output identities. */
+export function createDeploymentPreparationContentArtifactIdV1(input: Readonly<{
+  accountId: string; serverIdentityId: string; actionId: string; requestId: string; requestEnvelopeDigest: string;
+}>, slot: DeploymentPreparationContentSlotV1): string {
+  // Every Environment-creating root (Create, adoption) keeps its established root candidate identity.
+  if (slot === 'environment' && (input.actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1
+    || input.actionId === MACHINE_SERVICE_ADOPT_ACTION_ID)) {
+    return createDeploymentEnvironmentContentArtifactIdV1({ ...input, actionId: DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 });
+  }
+  return publicationArtifactId(computeCanonicalDomainSeparatedHexDigest('happier-deployment-preparation-publication-v1',
+    [input.serverIdentityId, input.accountId, input.actionId, input.requestId, input.requestEnvelopeDigest,
+      ...(typeof slot === 'string' ? [slot] : ['previewDataTargetLink', slot.templateDataTargetLinkId])]));
 }
 
 /** Preserve the admitted routing metadata when private content becomes an Artifact reference. */

@@ -45,6 +45,7 @@ import axios from '@/api/client/credentialAxios';
 import { readHttpStatus } from '@/api/client/httpStatusError';
 import { projectHomeAuthorizationHttpFailure } from '@/api/client/homeAuthorizationHttpFailure';
 import { deploymentPreparationOperationForActionV1 } from '@happier-dev/protocol/deployments/deploymentPreparationAdmissionV1';
+import { createDeploymentPreparationContentArtifactIdV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
 import { z } from 'zod/mini';
 import type { MachineVitalsSampleV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsSampleV1';
 import { isDeepStrictEqual } from 'node:util';
@@ -1223,9 +1224,15 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         },
         readEnvironment: targetHostReaders.readEnvironment,
         readCreationDefaultInputs,
-        async createContent(content, kind, context, authority) {
+        async createContent(content, kind, context, authority, slot) {
+            // A signed Template Apply root publishes create-only ids bound to its invocation.
+            const binding = context.externalActionExecutionAuthorization?.binding;
+            const artifactId = binding && deploymentPreparationOperationForActionV1(binding.actionId) === 'template'
+                ? createDeploymentPreparationContentArtifactIdV1(binding, slot) : undefined;
             const created = await atHome(() => createDeploymentArtifactForHost({ artifacts, owner: authority.owner,
-                assertCurrent: async () => { context.signal?.throwIfAborted(); }, content: { header: { kind,
+                ...(artifactId === undefined ? {} : { publication: 'create' as const }),
+                assertCurrent: async () => { context.signal?.throwIfAborted(); }, content: {
+                    ...(artifactId === undefined ? {} : { artifactId }), header: { kind,
                     title: kind === DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 ? DeploymentEnvironmentContentV1Schema.parse(content).name : 'Deployment content' },
                     body: JSON.stringify(content), signal: context.signal, beforeWrite: authority.assertCurrent,
                     authorizationHeaders: artifactAuthorization(context) } }));

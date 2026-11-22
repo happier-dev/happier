@@ -30,8 +30,7 @@ import { admitPreviewEnvironmentForHost } from './previewAdmissionForHost';
 import type { readDeploymentEnvironmentForHost } from './readEnvironmentForHost';
 import { preparePreviewCompanionTemplateCreationForHost, preparePreviewTemplateCreationForHost, type PreviewTemplateCreationPlanForHost } from './templates/previewCreate';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
-import { createDeploymentEnvironmentContentArtifactIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { createDeploymentPreparationContentArtifactIdV1, type DeploymentPreparationContentSlotV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
 import { deploymentPreparationOperationForActionV1 } from '@happier-dev/protocol/deployments/deploymentPreparationAdmissionV1';
 export { resolveEnvironmentCreateCopyForHost, type EnvironmentCreateCopyResolution,
     type EnvironmentCreateCopyHost } from './resolveEnvironmentCreateCopyForHost';
@@ -230,13 +229,11 @@ export function createEnvironmentCreatePlannerForHost(host: EnvironmentCreateHos
             async function publish(context: ActionExecutorContext): Promise<DeploymentEnvironmentCreateInputV1 | ActionExecuteFailure> {
                 try {
                     const createContent = async (kind: typeof DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 | typeof DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
-                        body: unknown) => {
+                        body: unknown, slot: DeploymentPreparationContentSlotV1) => {
                         const binding = context.externalActionExecutionAuthorization?.binding;
-                        // Every Environment-creating root (Create, adoption) publishes its one create-only candidate id.
-                        const artifactId = kind === DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 && binding
-                            && deploymentPreparationOperationForActionV1(binding.actionId) === 'create'
-                            ? createDeploymentEnvironmentContentArtifactIdV1({ ...binding, actionId: DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 })
-                            : undefined;
+                        // Every Environment-creating root (Create, adoption) publishes create-only ids bound to its invocation.
+                        const artifactId = binding && deploymentPreparationOperationForActionV1(binding.actionId) === 'create'
+                            ? createDeploymentPreparationContentArtifactIdV1(binding, slot) : undefined;
                         const created = await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => createDeploymentArtifactForHost({
                             artifacts, owner: projectOwner, publication: 'create', assertCurrent: () => host.assertCurrent(context), content: {
                                 ...(artifactId === undefined ? {} : { artifactId }),
@@ -254,7 +251,7 @@ export function createEnvironmentCreatePlannerForHost(host: EnvironmentCreateHos
                     const previewDataTargetLinks: NonNullable<DeploymentEnvironmentCreateInputV1['previewDataTargetLinks']> = [];
                     for (const data of preview.dataTargetLinks ?? []) previewDataTargetLinks.push({
                         templateDataTargetLinkId: data.targetLink.id, expectedTemplateTargetLinkRevision: data.targetLink.revision,
-                        ...await createContent(DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, data.content),
+                        ...await createContent(DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, data.content, { templateDataTargetLinkId: data.targetLink.id }),
                     });
                     const prepared = DeploymentEnvironmentCreateInputV1Schema.parse({ serverId: input.serverId,
                         projectSourceId: input.projectSourceId, newProject: input.newProject, requestKey: input.requestKey, protection: input.protection,
@@ -272,10 +269,10 @@ export function createEnvironmentCreatePlannerForHost(host: EnvironmentCreateHos
                         ...(input.buildMachineId === undefined ? {} : { buildMachineId: input.buildMachineId }),
                         ...(input.copyFrom === undefined ? {} : { copyFrom: input.copyFrom, copyPlan: copy!.copyPlan,
                             copyIntentCommitment: definitionCommitment }),
-                        ...await createContent(DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, content),
+                        ...await createContent(DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, content, 'environment'),
                         ...(input.firstTargetLink === undefined ? {} : { firstTargetLink: {
                             machines: input.firstTargetLink.machines,
-                            ...await createContent(DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, targetLinkContent),
+                            ...await createContent(DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, targetLinkContent, 'runtimeLink'),
                         } }),
                     });
                     await host.assertCurrent(context);

@@ -11,6 +11,8 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { createDeploymentEnvironmentContentArtifactIdV1, createDeploymentLinkContentArtifactIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { readHostAdmittedReviewedChildV1, readHostAdmittedReviewedChildRoleV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { createDeploymentPreparationContentArtifactIdV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
+import { deploymentPreparationOperationForActionV1 } from '@happier-dev/protocol/deployments/deploymentPreparationAdmissionV1';
 import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_DATABASE_READ_ACCESS_BINDINGS_CHILD_ROLE_V1,
     DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -163,11 +165,15 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                 // after current resource/installation custody has settled.
                 await assertCurrent();
                 const binding = context.externalActionExecutionAuthorization?.binding;
-                const artifactId = binding && (binding.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
-                    || child?.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
-                        && (child.role === 'backup.bindings' || child.role === 'template.bindings' || telemetryChild || databaseReadAccessChild))
-                    ? createDeploymentEnvironmentContentArtifactIdV1({ ...binding, actionId: DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
-                        environmentId: input.environmentId }) : undefined;
+                const bindingsChild = child?.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1;
+                const artifactId = !binding ? undefined
+                    // An Environment-creating root's own bindings child publishes an id bound to that invocation.
+                    : bindingsChild && child.role !== 'backup.bindings' && deploymentPreparationOperationForActionV1(binding.actionId) === 'create'
+                        ? createDeploymentPreparationContentArtifactIdV1(binding, 'bindings')
+                    : binding.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 || bindingsChild
+                        && (child.role === 'backup.bindings' || child.role === 'template.bindings' || telemetryChild || databaseReadAccessChild)
+                        ? createDeploymentEnvironmentContentArtifactIdV1({ ...binding, actionId: DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
+                            environmentId: input.environmentId }) : undefined;
                 const created = await createDeploymentArtifactForHost({ artifacts, owner: loaded.environment.owner, assertCurrent,
                     ...(artifactId ? { publication: 'create' as const } : {}),
                     content: { ...(artifactId ? { artifactId } : {}),

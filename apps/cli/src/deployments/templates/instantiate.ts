@@ -1,3 +1,4 @@
+import type { DeploymentPreparationContentSlotV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
 import { createActionExecuteFailureError, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { carryActionFailureDiagnostic, readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { deploymentOutputValidationFailure } from '../outputValidation';
@@ -115,7 +116,7 @@ type Host = Readonly<{
     createContent(content: unknown, kind: string, context: ActionExecutorContext, authority: Readonly<{
         owner: DeploymentEnvironmentDetailV1['environment']['owner'];
         assertCurrent(): Promise<void>;
-    }>): Promise<DeploymentArtifactContentReferenceV1>;
+    }>, slot: DeploymentPreparationContentSlotV1): Promise<DeploymentArtifactContentReferenceV1>;
 }>;
 
 /** Semantic composition only. P40, P42 and the private template CAS retain every write. */
@@ -353,7 +354,8 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
             const reviewedChild = context.hostReviewedChild;
             if (!reviewedChild) return failure('credential_scope_denied');
             const { input } = plan;
-            const createContent = (content: unknown, kind: string) => host.createContent(content, kind, context, plan.contentAuthority);
+            const createContent = (content: unknown, kind: string, slot: DeploymentPreparationContentSlotV1) =>
+                host.createContent(content, kind, context, plan.contentAuthority, slot);
             const bindings: EnvironmentVariableBindingInputV1[] = [...plan.prepared.bindings];
             const generatedSecretAudience = input.generatedSecretAudience
                 ?? buildCatalogAppTemplateBindings(plan.prepareInput.template).generatedSecretAudience;
@@ -437,13 +439,13 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                 : { ...plan.content, template: { ...finalPrepared.template, definition: candidateDefinition } });
             phase = 'environment';
             effectIssued = true;
-            const artifact = await createContent(content, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1);
+            const artifact = await createContent(content, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, 'environment');
             if (input.environment.kind === 'existing') {
                 await commit('deployments.environments.update', { serverId: input.serverId, environmentId: input.environment.environmentId,
                     expectedRevision: input.environment.expectedRevision, ...artifact });
             } else {
                 const firstTargetLink = input.target ? {
-                    ...await createContent({}, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1),
+                    ...await createContent({}, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, 'runtimeLink'),
                     machines: [{ machineId: input.machineId, installationId: input.target.installationId }],
                 } : undefined;
                 await commit('deployments.environments.create', { serverId: input.serverId, projectSourceId: input.projectSourceId, newProject: input.newProject,
@@ -460,7 +462,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                 const linked = await host.storage('deployments.targets.link', { serverId: input.serverId,
                     environmentId: environmentId!, expectedRevision: revision!, requestKey: context.actionRequestId!,
                     targetId: 'own-server', role: 'runtime', machines: [{ machineId: input.machineId, installationId: input.target.installationId }],
-                    ...await createContent({}, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1) }, context);
+                    ...await createContent({}, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, 'runtimeLink') }, context);
                 if ('ok' in linked && !linked.ok && 'errorCode' in linked) return refuse(linked);
                 const result = DeploymentTargetLinkResultV1Schema.parse(linked);
                 if (!result.ok) return refuse(result.error);
@@ -569,7 +571,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
     async function commitTemplateMetadata(content: DeploymentEnvironmentDetailV1['content'], environmentId: string, revision: number,
         input: TemplatePreparationInput, context: ActionExecutorContext, authority: Parameters<Host['createContent']>[3]) {
         const body = DeploymentEnvironmentTemplateSetInputV1Schema.parse({ serverId: context.externalActionExecutionAuthorization?.binding.serverIdentityId ?? input.serverId,
-            environmentId, expectedRevision: revision, ...await host.createContent(content, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, context, authority) });
+            environmentId, expectedRevision: revision, ...await host.createContent(content, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, context, authority, 'templateMetadata') });
         const path = `/v1/deployments/environments/${encodeURIComponent(body.environmentId)}/template`;
         const headers = await host.headers(context, 'deployments.templates.instantiate', { method: 'POST', path, body });
         const response = await axios.request<unknown>({ method: 'POST', url: `${host.serverHttpBaseUrl}${path}`, headers, data: body,

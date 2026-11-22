@@ -69,7 +69,8 @@ import { redactManagedMachineCredentialReferences, type ManagedMachineV1 } from 
 import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { readExternalActionBindingAuthority } from '@happier-dev/protocol/actions/externalActionBindingAuthority';
 import type { z as Zod } from '@happier-dev/protocol/zodRuntimePolicy';
-import type { DeploymentReviewedCandidateV1Schema } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
+import { createDeploymentPreparationContentArtifactIdV1, type DeploymentPreparationContentSlotV1,
+    type DeploymentReviewedCandidateV1Schema } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
 
 function readDeclaredPreparationScope(binding: ExternalActionExecutionAuthorizationBindingV1, child?: ReviewedActionChildHttpProofV1, effectActionId?: string) {
     const action = ActionIdSchema.safeParse(binding.actionId);
@@ -1478,8 +1479,7 @@ export async function readDeploymentCreateHttpPurposeInTx(tx: Tx, binding: Exter
             // Every Environment-creating root (Create, adoption) owns one create-only candidate id.
             || deploymentPreparationOperationForActionV1(binding.actionId) === 'create'
                 && admission.catalogApp === undefined
-                && artifactId === createDeploymentEnvironmentContentArtifactIdV1({ ...binding,
-                    actionId: DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 })
+                && artifactId === createDeploymentPreparationContentArtifactIdV1(binding, 'environment')
             || admission.preview && await tx.deploymentEnvironment.findFirst({ where: {
                 id: admission.preview.templateEnvironmentId, contentArtifactId: artifactId,
             }, select: { id: true } }))) return admit(true);
@@ -1509,8 +1509,8 @@ export async function readDeploymentCreateHttpPurposeInTx(tx: Tx, binding: Exter
     if (childEffect && await tx.deploymentEnvironment.findFirst({ where: {
         id: { not: environmentId! }, contentArtifactId: artifactId,
     }, select: { id: true } })) return null;
-    return admit(await allowsTeamOwnerArtifactPreparationInTx(tx, binding.accountId,
-        await readCreateAdmissionOwnerInTx(tx, admission), artifactRoute, method, proof));
+    return admit(await allowsTeamOwnerArtifactPreparationInTx(tx, binding, admission,
+        await readCreateAdmissionOwnerInTx(tx, admission), artifactRoute, method, proof, childEffect));
 }
 
 function readDeploymentPreparationArtifactRoute(path: string): Readonly<{ artifactId: string; step: string | undefined }> | null {
@@ -1522,15 +1522,30 @@ function readDeploymentPreparationArtifactRoute(path: string): Readonly<{ artifa
     return { artifactId, step: match[2] };
 }
 
+const PREPARATION_CONTENT_SLOTS: readonly DeploymentPreparationContentSlotV1[] = ['environment', 'runtimeLink', 'templateMetadata'];
+
+// Only this admitted preparation's own outputs: their ids derive from the signed invocation,
+// so another preparation, an unrelated Artifact or a Create candidate can never match.
+async function isPreparationOutputArtifactIdInTx(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
+    admission: CreateAdmission | TemplateAdmission, artifactId: string, bindingsChild: boolean): Promise<boolean> {
+    if (bindingsChild) return artifactId === createDeploymentPreparationContentArtifactIdV1(binding, 'bindings');
+    if (PREPARATION_CONTENT_SLOTS.some(slot => artifactId === createDeploymentPreparationContentArtifactIdV1(binding, slot))) return true;
+    if (admission.operation !== 'create' || !admission.preview) return false;
+    const links = await tx.deploymentTargetLink.findMany({ where: { environmentId: admission.preview.templateEnvironmentId },
+        select: { id: true } });
+    return links.some(link => artifactId === createDeploymentPreparationContentArtifactIdV1(binding, { templateDataTargetLinkId: link.id }));
+}
+
 // The Artifact routes still decide grant eligibility, recipient census and key-envelope fencing.
 // Established deployment writers may leave the stored kind unset.
-async function allowsTeamOwnerArtifactPreparationInTx(tx: Tx, accountId: string, owner: ProjectSourceOwnerV1 | null,
+async function allowsTeamOwnerArtifactPreparationInTx(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
+    admission: CreateAdmission | TemplateAdmission, owner: ProjectSourceOwnerV1 | null,
     { artifactId, step }: NonNullable<ReturnType<typeof readDeploymentPreparationArtifactRoute>>,
-    method: string, proof: Readonly<{ body?: unknown; routeInput?: unknown }>,
+    method: string, proof: Readonly<{ body?: unknown; routeInput?: unknown }>, bindingsChild = false,
 ): Promise<boolean> {
-    if (owner?.kind !== 'team') return false;
+    if (owner?.kind !== 'team' || !await isPreparationOutputArtifactIdInTx(tx, binding, admission, artifactId, bindingsChild)) return false;
     const artifact = await tx.artifact.findUnique({ where: { id: artifactId }, select: { kind: true, accountId: true } });
-    if (!artifact || artifact.accountId !== accountId
+    if (!artifact || artifact.accountId !== binding.accountId
         || artifact.kind !== null && artifact.kind !== DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1
         && artifact.kind !== DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1) return false;
     const matches = (expected: unknown) => proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, expected);
@@ -2018,7 +2033,7 @@ export async function isDeploymentPreparationHttpPurposeInTx(tx: Tx,
             const artifactRoute = readDeploymentPreparationArtifactRoute(proof.path);
             if (artifactRoute?.step !== undefined) {
                 const owner = admission.newProject?.owner ?? (scope.source ? sourceOwner(scope.source) : null);
-                return allowsTeamOwnerArtifactPreparationInTx(tx, binding.accountId, owner, artifactRoute, method, proof);
+                return allowsTeamOwnerArtifactPreparationInTx(tx, binding, admission, owner, artifactRoute, method, proof);
             }
         }
         if (method === 'GET' && proof.body === undefined) {
