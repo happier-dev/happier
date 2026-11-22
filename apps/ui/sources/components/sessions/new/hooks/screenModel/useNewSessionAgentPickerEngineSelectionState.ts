@@ -25,7 +25,7 @@ export function applyNewSessionDraftAgentIntent(params: Readonly<{
     entries: readonly ResolvedBackendCatalogEntry[];
     isSelectable: (entry: ResolvedBackendCatalogEntry) => boolean;
     selectBackendTarget: (entry: ResolvedBackendCatalogEntry) => void;
-    selectEngineSelection: (entry: ResolvedBackendCatalogEntry, selection: SessionAgentPickerSelection) => void;
+    selectEngineSelection: (entry: ResolvedBackendCatalogEntry, selection: SessionAgentPickerSelection) => boolean | void;
     setSessionMode: (sessionModeId: string | null) => void;
     setConfigOption: (configId: string, value: string) => void;
 }>): boolean {
@@ -41,7 +41,7 @@ export function applyNewSessionDraftAgentIntent(params: Readonly<{
     const entry = params.entries.find(candidate => candidate.backendTargetKey === targetKey);
     if (!entry || !params.isSelectable(entry)) return false;
     if (params.intent.kind === 'target') params.selectBackendTarget(entry);
-    else params.selectEngineSelection(entry, params.intent.selection);
+    else if (params.selectEngineSelection(entry, params.intent.selection) === false) return false;
     return true;
 }
 

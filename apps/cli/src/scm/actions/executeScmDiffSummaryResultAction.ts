@@ -12,7 +12,7 @@ import { scmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSu
 import { buildDiffSummaryPrompt, buildDiffSummaryRefinementTask } from '@/agent/runtime/bridges/executionRun/kinds/scmDiffSummary/buildDiffSummaryPrompt';
 import { presentScmDiffSummaryModelContext, scopeScmDiffSummaryComparison } from '@/agent/runtime/bridges/executionRun/kinds/scmDiffSummary/presentScmDiffSummaryModelContext';
 import { findingCitationInstructions } from '@/agent/executionRuns/profiles/review/reviewFindingCitations';
-import { projectSessionModelRefToExecutionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
+import { areConnectedAccountSessionModelRefsEqual, projectSessionModelRefToExecutionModelSelection, readSessionModelRefProviderConnectionId } from '@happier-dev/protocol/providers/selection/v2';
 
 type ExecuteCanonicalAction = Parameters<ScmActionExecute>[0]['executeCanonicalAction'];
 export type ScmDiffSummarySavedActionId = Extract<ScmActionId,
@@ -129,13 +129,20 @@ export async function executeScmDiffSummaryResultAction(params: Readonly<{
     const sameOriginalAgentAndModel = run && originalSelection
       && buildBackendTargetKeyV2(generator.backendTarget) === buildBackendTargetKeyV2(readBackendTargetRefV2(run.backendTarget))
       && savedModelId !== undefined && savedModelId === (originalSelection.modelSelection?.modelId ?? originalSelection.modelId);
-    if (sameOriginalAgentAndModel && originalSelection.teamCredentialModel
+    const originalRef = originalSelection?.modelSelection;
+    const savedRef = executionSelection?.modelSelection;
+    const originalConnectedRef = originalRef && 'source' in originalRef ? originalRef : null;
+    const savedConnectedRef = savedRef && 'source' in savedRef ? savedRef : null;
+    if (sameOriginalAgentAndModel && (originalSelection.teamCredentialModel || originalConnectedRef)
       && generator.modelSelection === undefined && generator.connectedServices === undefined) {
       return { success: false, errorCode: 'discussion_unavailable', error: 'A proven generator selection is unavailable for a new conversation.' };
     }
     const sameOriginalRoute = sameOriginalAgentAndModel && !originalSelection.teamCredentialModel
       && !executionSelection?.teamCredentialModel
-      && (executionSelection?.modelSelection?.providerConnectionId ?? null) === (originalSelection.modelSelection?.providerConnectionId ?? null);
+      && (originalConnectedRef || savedConnectedRef
+        ? areConnectedAccountSessionModelRefsEqual(savedConnectedRef, originalConnectedRef)
+        : (savedRef ? readSessionModelRefProviderConnectionId(savedRef) : null)
+          === (originalRef ? readSessionModelRefProviderConnectionId(originalRef) : null));
     const connectedServices = generator.connectedServices !== undefined ? generator.connectedServices
       : sameOriginalRoute ? originalSelection.connectedServices : undefined;
     const { investigateSurroundingFiles, outputLanguage: _savedLanguage, modelSelection: _savedSelection, ...engine } = generator;

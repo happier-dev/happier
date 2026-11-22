@@ -3,7 +3,7 @@ import { AccountSettingsSchema, DEFAULT_PROVIDER_SETTINGS_V1, ProviderConnection
   ProviderContributionV1Schema, ProviderSettingsV1Schema, splitProviderSettingsV1,
   createProviderConnectionSecurityFingerprintV1 } from '@happier-dev/protocol';
 import { readProviderConnectionSourceFactsV1 } from '@happier-dev/protocol/providers/connections/sourceFactsV1';
-import { createProviderManagedRuntimeBindingFingerprintV1, resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
+import { createProviderManagedRuntimeBindingFingerprintV1, resolveProviderManagedRuntimeFromContributionV1 } from '@happier-dev/protocol/providers/contributions';
 import type { SignedProviderBrokerRouteGrantV2 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { resolveProviderConnectionForMachine } from '@/providers/registry';
 import { createManagedProviderExplicitStartCustody } from '@/providers/connections/publicManagedRuntimeStart';
@@ -22,14 +22,14 @@ describe('personal hub source admission', () => {
     const base = createBrokerProviderRegistry();
     const providersByContributionKey = new Map([...base.providersByContributionKey].map(([key, contribution]) => [key, {
       ...contribution, definition: ProviderContributionV1Schema.parse({ ...contribution.definition,
+        connectedAccounts: changedFact === 'gatewayRefusal' ? contribution.definition.connectedAccounts : [],
         managedRuntime: { ...contribution.definition.managedRuntime, sharing: 'connectionMachine',
-          connectedAccounts: changedFact === 'gatewayRefusal' ? contribution.definition.managedRuntime?.connectedAccounts : [],
           ...(changedFact === 'providerHeaderCollision' ? { sourceEnvelopeTransport: undefined } : {}) } }),
     }]));
     const registry = { providersByContributionKey };
     const gateway = [...providersByContributionKey.values()][0]!;
-    const gatewayPurpose = resolveProviderManagedRuntimeDeclarationV1({ implementationIdentity: gateway.identity,
-      managedRuntime: gateway.definition.managedRuntime! }).connectedAccounts[0];
+    const gatewayPurpose = resolveProviderManagedRuntimeFromContributionV1({ implementationIdentity: gateway.identity,
+      definition: { ...gateway.definition, managedRuntime: gateway.definition.managedRuntime! } }).connectedAccounts[0];
     const connectionId = ProviderConnectionIdSchema.parse('personal-source');
     const initial = ProviderSettingsV1Schema.parse({ ...DEFAULT_PROVIDER_SETTINGS_V1,
       connections: [{ v: 1, id: connectionId, source: { kind: 'contribution', contributionKey: 'happier.provider.cliproxyapi/cliproxyapi' },

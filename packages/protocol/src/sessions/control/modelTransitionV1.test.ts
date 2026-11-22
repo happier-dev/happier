@@ -38,6 +38,15 @@ describe('session model transition host-private control contract', () => {
     }).success).toBe(false);
   });
 
+  it('carries the exact Connected Account ref to the owning runner', () => {
+    const selection = {
+      source: 'connected_account', purpose: { consumer: { pluginId: 'provider.test', localId: 'gateway' }, purpose: 'inference' },
+      endpointTemplateId: 'messages', agentTargetKey: 'backend:claude', modelId: 'anthropic/claude-sonnet',
+    };
+    expect(SessionModelTransitionRequestV1Schema.parse({ v: 1, selection })).toEqual({ v: 1, selection });
+    expect(SessionModelTransitionRequestV1Schema.safeParse({ v: 1, selection, captureBefore: true }).success).toBe(false);
+  });
+
   it('keeps active and requested structured refs in typed failure results', () => {
     const reason = 'é'.repeat(4_000);
     expect(SessionModelTransitionResultV1Schema.parse({

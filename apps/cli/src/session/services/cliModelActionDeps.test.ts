@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
+import { ConnectedAccountSessionModelRefV2Schema } from '@happier-dev/protocol/providers/selection/v2';
 import { SessionModelTransitionResultV1Schema } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 import { normalizeActionExecuteResult } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 
@@ -61,6 +62,20 @@ describe('CLI model transition recovery', () => {
     expect(result).toMatchObject({ ok: false, errorCode: 'owner_unavailable',
       details: { status: 'owner_unavailable', activeSelection: null, requestedSelection,
         failureCause: { phase: 'turn_start', failureReason: 'unknown' } } });
+  });
+
+  it('forwards a Connected Account selection to the active runner without applying the ambient connection', async () => {
+    const modelSelection = ConnectedAccountSessionModelRefV2Schema.parse({
+      source: 'connected_account', purpose: { consumer: { pluginId: 'provider.test', localId: 'gateway' }, purpose: 'inference' },
+      endpointTemplateId: 'responses', agentTargetKey: activeSelection.agentTargetKey, modelId: activeSelection.modelId,
+    });
+    callSessionRpc.mockResolvedValue({ ok: false, status: 'restart_required', activeSelection,
+      requestedSelection: { ...activeSelection, providerConnectionId: null }, reason: 'provider_binding_changed' });
+    const deps = createCliSessionModelActionDeps({
+      token: 'fixture-token', credentials: { token: 'fixture-token', encryption: null }, sessionId: '', mode: 'plain', ctx: null,
+    }, { projectHomeId: 'fixture-home', resolveServerRequestHeaders: () => null });
+    await expect(deps.sessionModelSet!({ sessionId, modelSelection })).resolves.toMatchObject({ ok: false, errorCode: 'restart_required' });
+    expect(callSessionRpc).toHaveBeenCalledWith(expect.objectContaining({ request: { v: 1, selection: modelSelection } }));
   });
 
   it.each(['restart_required', 'unsupported', 'apply_failed'] as const)(

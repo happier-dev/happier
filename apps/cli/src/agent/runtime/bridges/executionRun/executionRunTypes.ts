@@ -1,3 +1,4 @@
+import type { PersonalSessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import type {
   AcpConfigOptionOverridesV1,
   AgentSessionConfigurationSnapshotV1,
@@ -12,7 +13,6 @@ import type {
   ExecutionRunConnectedServicesLaunchV1,
   ExecutionRunResultContractV1,
   HappierStructuredInputV1,
-  ProviderBoundModelRef,
   PortableRuntimeDescriptorV1,
   SessionInputCausalPermissionAuthorityV1,
   SessionCapabilitySelectionV1,
@@ -129,7 +129,7 @@ export type ExecutionRunManagerStartParams = Readonly<{
    */
   modelId?: string;
   /** Exact re-resolvable Agent/Provider/model tuple for this run. */
-  modelSelection?: ProviderBoundModelRef | null;
+  modelSelection?: PersonalSessionModelRef | null;
   /** Exact recipient-safe Team resource/model tuple for this run. */
   teamCredentialModel?: TeamCredentialProviderModelSelectionV1;
   /**
@@ -260,7 +260,7 @@ export type ExecutionRunState = Readonly<{
     runtimeDescriptorV1?: PortableRuntimeDescriptorV1;
     launchOrigin?: ExecutionRunLaunchOrigin;
     modelId?: string;
-    modelSelection?: ProviderBoundModelRef;
+    modelSelection?: PersonalSessionModelRef;
     teamCredentialModel?: TeamCredentialProviderModelSelectionV1;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     connectedServicesSelection?: ConnectedServiceBindingsV2 | null;
@@ -295,8 +295,8 @@ export type ExecutionRunState = Readonly<{
     profileId?: string | null;
     chatModelId: string;
     commitModelId: string;
-    chatModelSelection?: ProviderBoundModelRef;
-    commitModelSelection?: ProviderBoundModelRef;
+    chatModelSelection?: PersonalSessionModelRef;
+    commitModelSelection?: PersonalSessionModelRef;
     chatTeamCredentialModel?: TeamCredentialProviderModelSelectionV1;
     commitTeamCredentialModel?: TeamCredentialProviderModelSelectionV1;
     commitConnectedServices?: ConnectedServiceBindingsV2 | null;

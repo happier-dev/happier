@@ -29,7 +29,7 @@ import {
   createProviderProbeRequestFingerprintV1,
   createProviderUsageRequestFingerprintV1,
   encryptSecretStringV1,
-  resolveProviderManagedRuntimeDeclarationV1,
+  resolveProviderManagedRuntimeFromContributionV1,
   setProviderExperimentalConfirmationV1,
   type AgentProviderRequirementsV1,
   type ProviderSettingsV1,
@@ -247,26 +247,26 @@ const managedContribution: ResolvedProviderContribution = {
       ...definition.catalog,
       sourceRegistryVersion: 'gateway-registry:v1',
     },
+    connectedAccounts: [{
+      purpose: 'upstream',
+      service: {
+        pluginId: 'happier.connected-account.example',
+        localId: 'example',
+      },
+      required: true,
+      materializationKinds: ['httpHeaders'],
+    }],
+    requestAuthUses: [{
+      purpose: 'upstream',
+      materialization: {
+        kind: 'httpHeaders',
+        origin: 'https://api.example.test',
+        headerNames: ['authorization'],
+      },
+    }],
     managedRuntime: {
       kind: 'managed',
       endpointTemplateIds: ['responses'],
-      connectedAccounts: [{
-        purpose: 'upstream',
-        service: {
-          pluginId: 'happier.connected-account.example',
-          localId: 'example',
-        },
-        required: true,
-        materializationKinds: ['httpHeaders'],
-      }],
-      requestAuthUses: [{
-        purpose: 'upstream',
-        materialization: {
-          kind: 'httpHeaders',
-          origin: 'https://api.example.test',
-          headerNames: ['authorization'],
-        },
-      }],
     },
   }),
 };
@@ -1783,7 +1783,7 @@ describe('provider spawn authorization resolver', () => {
     const provider = ProviderContributionV1Schema.parse(CLIPROXYAPI_PROVIDER_CONTRIBUTION);
     if (!('probes' in provider.catalog)) throw new Error('Expected the real managed probe declaration');
     const implementationIdentity = { pluginId: 'happier.provider.cliproxyapi', localId: provider.id };
-    const managedRuntime = resolveProviderManagedRuntimeDeclarationV1({ implementationIdentity, managedRuntime: provider.managedRuntime! });
+    const managedRuntime = resolveProviderManagedRuntimeFromContributionV1({ implementationIdentity, definition: { ...provider, managedRuntime: provider.managedRuntime! } });
     const families = managedRuntime.connectedAccounts;
     // Recorded r1110c shape: /models supplies ids/names/purposes, never effort metadata.
     const rows = families.flatMap(family => (family.purpose === 'meta-upstream'
@@ -1943,10 +1943,10 @@ describe('provider spawn authorization resolver', () => {
       })) : [],
       catalog: { source: 'probe', manualModelPolicy: 'allowed', sourceRegistryVersion: 'gateway-registry:v1',
         probes: [{ endpointTemplateId: 'responses', path: '/models', parser: 'openai-models' }] },
+      connectedAccounts: managedContribution.definition.connectedAccounts!.map(family => ({
+        ...family, staticModels: [{ id: 'model-a', name: 'Model A', capabilities: { toolRoundTrips } }],
+      })),
       managedRuntime: { ...managedContribution.definition.managedRuntime,
-        connectedAccounts: managedContribution.definition.managedRuntime!.connectedAccounts!.map(family => ({
-          ...family, staticModels: [{ id: 'model-a', name: 'Model A', capabilities: { toolRoundTrips } }],
-        })),
       },
     });
     const familyRegistry = { providersByContributionKey: new Map([[canonicalContributionKey,
@@ -3233,9 +3233,9 @@ describe('shared provider probe authorization resolver', () => {
         },
       }],
     };
-    const managedRuntime = resolveProviderManagedRuntimeDeclarationV1({
+    const managedRuntime = resolveProviderManagedRuntimeFromContributionV1({
       implementationIdentity: managedContribution.identity,
-      managedRuntime: managedContribution.definition.managedRuntime!,
+      definition: { ...managedContribution.definition, managedRuntime: managedContribution.definition.managedRuntime! },
     });
     const request = {
       deployment: 'managedLocal' as const,
@@ -3331,9 +3331,9 @@ describe('shared provider probe authorization resolver', () => {
         },
       }],
     };
-    const managedRuntime = resolveProviderManagedRuntimeDeclarationV1({
+    const managedRuntime = resolveProviderManagedRuntimeFromContributionV1({
       implementationIdentity: headerManagedContribution.identity,
-      managedRuntime: headerManagedContribution.definition.managedRuntime!,
+      definition: { ...headerManagedContribution.definition, managedRuntime: headerManagedContribution.definition.managedRuntime! },
     });
     const request = (publicHeaders: Readonly<Record<string, string>>) => ({
       deployment: 'managedLocal' as const,

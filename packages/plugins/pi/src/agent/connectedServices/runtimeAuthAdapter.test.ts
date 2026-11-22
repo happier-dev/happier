@@ -9,7 +9,6 @@ describe('createPiConnectedServiceRuntimeAuthAdapter', () => {
   it.each([
     ['kimi-coding', 'happier.agent.kimi/kimi-code'],
     ['xai', 'happier.agent.grok/xai'],
-    ['meta', 'happier.agent.muse/muse-account'],
     ['google', 'happier.agent.gemini/gemini-account'],
     ['google-vertex', 'happier.agent.gemini/gemini-account'],
     ['github-copilot', 'happier.scm.forge.github/github-account'],
@@ -18,6 +17,12 @@ describe('createPiConnectedServiceRuntimeAuthAdapter', () => {
       target: { agentId: 'pi' }, error: { provider, status: 429 }, selection: {},
     })).toMatchObject({ serviceId, kind: 'rate_limit' });
   });
+  it('does not treat Pi’s ambient Meta provider as a selected Connected Account', () => {
+    expect(createPiConnectedServiceRuntimeAuthAdapter().classifyRuntimeAuthFailure({
+      target: { agentId: 'pi' }, error: { provider: 'meta', status: 429 }, selection: {},
+    })).toBeNull();
+  });
+
   it('does not classify ambiguous Pi runtime errors as provider-id connected services', () => {
     const adapter = createPiConnectedServiceRuntimeAuthAdapter();
 

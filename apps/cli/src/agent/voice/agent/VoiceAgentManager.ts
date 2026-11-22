@@ -1,3 +1,4 @@
+import type { PersonalSessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { waitForChange } from '@/utils/async/waitForChange';
@@ -18,8 +19,9 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/s
 import { VoiceLocalConversationSchema } from '@happier-dev/protocol/voice/settings/localConversation';
 import { ExecutionRunTurnStreamEventErrorSchema } from '@happier-dev/protocol/execution/runs/streaming';
 import { createVoiceAgentOutputTurnV1, fitVoiceAgentOutputTextV1, ingestVoiceAgentOutputEventV1, VOICE_HISTORY_CONTEXT_FIT_STATUS_TEXT, VOICE_OUTPUT_INCOMPLETE_TEXT } from '@happier-dev/protocol/voice/outputEvents';
+import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import type { BackendTargetRefV1, ProviderBoundModelRef, ExecutionRunResumeHandle } from '@happier-dev/protocol';
+import type { BackendTargetRefV1, ExecutionRunResumeHandle } from '@happier-dev/protocol';
 
 import { appendVoiceAgentHistoryContext, appendVoiceAgentHistoryTurn, fitVoiceAgentHistoryPrompt } from './voiceAgentHistory';
 import {
@@ -73,13 +75,17 @@ export type VoiceAgentRuntimeAuthorityV1 = Readonly<{
 }>;
 
 function areVoiceModelSelectionsEqual(
-  left: ProviderBoundModelRef | undefined,
-  right: ProviderBoundModelRef | undefined,
+  left: PersonalSessionModelRef | undefined,
+  right: PersonalSessionModelRef | undefined,
 ): boolean {
   if (!left || !right) return left === right;
-  return areExecutionRunBackendTargetsEqual(left.agentTargetKey, right.agentTargetKey)
-    && left.providerConnectionId === right.providerConnectionId
-    && left.modelId === right.modelId;
+  if (!areExecutionRunBackendTargetsEqual(left.agentTargetKey, right.agentTargetKey) || left.modelId !== right.modelId) return false;
+  if ('source' in left || 'source' in right) {
+    return 'source' in left && 'source' in right
+      && qualifiedPurposeKey(left.purpose) === qualifiedPurposeKey(right.purpose)
+      && left.endpointTemplateId === right.endpointTemplateId;
+  }
+  return left.providerConnectionId === right.providerConnectionId;
 }
 
 function readVoiceCommitConnectedServices(voiceAgent: VoiceAgentInstance) {
@@ -89,7 +95,7 @@ function readVoiceCommitConnectedServices(voiceAgent: VoiceAgentInstance) {
 }
 
 function assertVoiceModelSelectionMatches(
-  selection: ProviderBoundModelRef | undefined,
+  selection: PersonalSessionModelRef | undefined,
   input: Readonly<{ backendTarget: BackendTargetRefV1; modelId: string; role: 'chat' | 'commit' }>,
 ): void {
   if (!selection) return;

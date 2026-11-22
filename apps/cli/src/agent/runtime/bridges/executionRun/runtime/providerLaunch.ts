@@ -1,9 +1,10 @@
+import { createPersonalSessionModelSelection, isSessionModelRefSourceBound, readSessionModelRefProviderConnectionId, type PersonalSessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import { prepareProviderSettingsForCli } from '@/providers/settings/hydrate';
 import { join } from 'node:path';
 
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { projectAgentSessionProviderBindingV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
-import type { AcpConfigOptionOverridesV1, BackendTargetRefV2Input, ConnectedServiceBindingsV2, ProviderBoundModelRef, TeamCredentialProviderModelSelectionV1, ProviderErrorV1 } from '@happier-dev/protocol';
+import type { AcpConfigOptionOverridesV1, BackendTargetRefV2Input, ConnectedServiceBindingsV2, TeamCredentialProviderModelSelectionV1, ProviderErrorV1 } from '@happier-dev/protocol';
 import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
@@ -11,6 +12,7 @@ import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/contro
 import { readLeasedAgentProviderRequirements } from '@/plugins/runtime/providerBindings/adapter';
 import { prepareDirectProviderLaunch, type DirectManagedProviderEndpointPreparer } from '@/providers/lifecycle/prepareDirectLaunch';
 import type { PrepareProviderLaunchInput } from '@/providers/lifecycle/prepareLaunch';
+import type { ManagedPurposeLaunchContext } from '@/providers/lifecycle/managedPurposeLaunch';
 import type { ProviderLaunchCleanup } from '@/providers/lifecycle/resourceScope';
 import { createProviderRuntimeStateStore } from '@/providers/runtimeState';
 import { createRuntimeProviderSpawnAuthorizationAttempt } from '@/providers/spawn/authorize';
@@ -24,9 +26,13 @@ import { hasConnectedExecutionRunBinding } from './connectedServicesEnv';
 
 type Cleanup = (() => void | Promise<void>) | null;
 
+export type ExecutionRunConnectedAccountProviderLaunch = Pick<ManagedPurposeLaunchContext,
+    'purposeBindings' | 'connectedAccountRequestAuth' | 'providerConnectionHttpTransport'
+    | 'observeConnectedAccountSourceModels' | 'resolveProviderAddresses'>;
+
 export type ExecutionRunProviderSelectionInput = Readonly<{
     signal?: AbortSignal;
-    selection: ProviderBoundModelRef;
+    selection: PersonalSessionModelRef;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     backendTarget: BackendTargetRefV2Input;
     machineId?: string;
@@ -41,6 +47,7 @@ export type ExecutionRunProviderSelectionInput = Readonly<{
     resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
     resolveManagedPurposeBindingIntentSelection?: import('@/providers/modelManagement/connectedAccountCatalog').ResolveManagedProviderPurposeBindingIntentSelection;
     managedProviderAccountAuthority?: import('@/plugins/runtime/providerBindings/runtimeTypes').ManagedProviderInvocationAccountAuthority | null;
+    connectedAccountProviderLaunch?: ExecutionRunConnectedAccountProviderLaunch;
     readModelProjection?: ProviderRuntimeModelProjectionReader;
     /** Borrowed from this Run's pinned daemon snapshot; its owner releases it. */
     runtimeRegistryLease?: PluginRuntimeRegistryLease;
@@ -48,7 +55,7 @@ export type ExecutionRunProviderSelectionInput = Readonly<{
 
 /** Only the caller's exact choice crosses the existing snapshot service seam. */
 export type ExecutionRunProviderLaunchRequest = Readonly<{
-    selection?: ProviderBoundModelRef;
+    selection?: PersonalSessionModelRef;
     teamCredentialModel?: TeamCredentialProviderModelSelectionV1;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     backendTarget: BackendTargetRefV2Input;
@@ -98,21 +105,22 @@ function refusal(error: ProviderErrorV1): Error & { code: string } {
 }
 
 function validateExecutionRunProviderSelectionInput(input: ExecutionRunProviderSelectionInput): void {
+    const connectionId = readSessionModelRefProviderConnectionId(input.selection);
     const context = {
-        connectionId: input.selection?.providerConnectionId ?? undefined,
+        connectionId: connectionId ?? undefined,
         ...(input.machineId ? { machineId: input.machineId } : {}),
     };
     if (!input.runId.trim()) throw refusal(createProviderErrorV1('provider_agent_runtime_unsupported', context));
-    if (input.selection.providerConnectionId !== null && !input.accountSettingsSnapshot) throw refusal(createProviderErrorV1('provider_connection_not_found', context));
+    if (connectionId !== null && !input.accountSettingsSnapshot) throw refusal(createProviderErrorV1('provider_connection_not_found', context));
 }
 
 function createExecutionRunProviderPreparation(
-    input: Omit<ExecutionRunProviderSelectionInput, 'selection'> & Readonly<{ selection?: ProviderBoundModelRef }>,
+    input: Omit<ExecutionRunProviderSelectionInput, 'selection'> & Readonly<{ selection?: PersonalSessionModelRef }>,
     lease: Awaited<ReturnType<typeof acquireAuthoritativePluginRuntimeRegistryLease>>,
 ): PrepareProviderLaunchInput {
     const operationContext = input.savedSecretOperationContext;
     return {
-        ...(input.selection ? { selection: { v: 1 as const, ref: input.selection, updatedAt: Date.now() } } : {}),
+        ...(input.selection ? { selection: createPersonalSessionModelSelection(input.selection, Date.now()) } : {}),
         backendTarget: input.backendTarget,
         machineId: input.machineId,
         agentId: input.agentId,
@@ -121,6 +129,7 @@ function createExecutionRunProviderPreparation(
         connectedServices: input.connectedServices ?? null,
         featureEnabled: input.featureEnabled,
         managedPurposeContext: { lease, happyHomeDir: input.happyHomeDir, signal: input.signal,
+            ...input.connectedAccountProviderLaunch,
             readModelProjection: input.readModelProjection,
             readProviderSettings: () => prepareProviderSettingsForCli({
                 readSnapshot: input.readAccountSettingsSnapshot ?? (() => input.accountSettingsSnapshot ?? null),
@@ -133,7 +142,7 @@ function createExecutionRunProviderPreparation(
             return requirements
                 ? { ok: true as const }
                 : { ok: false as const, error: createProviderErrorV1('provider_incompatible_with_agent', {
-                    connectionId: input.selection?.providerConnectionId ?? undefined,
+                    connectionId: input.selection ? readSessionModelRefProviderConnectionId(input.selection) ?? undefined : undefined,
                     ...(input.machineId ? { machineId: input.machineId } : {}),
                 }) };
         },
@@ -173,7 +182,7 @@ const nativeLaunch = Object.freeze({
  */
 export async function prepareExecutionRunProviderLaunch(input: Readonly<{
     signal?: AbortSignal;
-    selection?: ProviderBoundModelRef;
+    selection?: PersonalSessionModelRef;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     teamCredentialModel?: TeamCredentialProviderModelSelectionV1;
     backendTarget: BackendTargetRefV2Input;
@@ -190,6 +199,7 @@ export async function prepareExecutionRunProviderLaunch(input: Readonly<{
     resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
     resolveManagedPurposeBindingIntentSelection?: import('@/providers/modelManagement/connectedAccountCatalog').ResolveManagedProviderPurposeBindingIntentSelection;
     managedProviderAccountAuthority?: import('@/plugins/runtime/providerBindings/runtimeTypes').ManagedProviderInvocationAccountAuthority | null;
+    connectedAccountProviderLaunch?: ExecutionRunConnectedAccountProviderLaunch;
     readModelProjection?: ProviderRuntimeModelProjectionReader;
     prepareManagedEndpoint?: DirectManagedProviderEndpointPreparer;
     retainCleanup?: (cleanup: ProviderLaunchCleanup) => void;
@@ -236,7 +246,7 @@ export async function prepareExecutionRunProviderLaunch(input: Readonly<{
     if (input.teamCredentialModel) {
         throw new SessionTeamCredentialLaunchUnavailableError();
     }
-    if ((!input.selection || input.selection.providerConnectionId === null) && !(input.connectedServices != null && hasConnectedExecutionRunBinding(input.connectedServices))) {
+    if ((!input.selection || !isSessionModelRefSourceBound(input.selection)) && !(input.connectedServices != null && hasConnectedExecutionRunBinding(input.connectedServices))) {
         return nativeLaunch;
     }
     const providerInput = input;
@@ -272,7 +282,8 @@ export async function prepareExecutionRunProviderLaunch(input: Readonly<{
         revalidateBeforeCommit: direct.revalidateBeforeCommit, cleanupOnExit: direct.cleanupOnExit,
     });
     const selection = input.selection;
-    if (!selection || selection.providerConnectionId === null) {
+    const connectionId = selection ? readSessionModelRefProviderConnectionId(selection) : null;
+    if (!selection || connectionId === null) {
         await direct.cleanupOnExit?.();
         throw refusal(createProviderErrorV1('provider_incompatible_with_agent'));
     }
@@ -286,17 +297,17 @@ export async function prepareExecutionRunProviderLaunch(input: Readonly<{
     } catch {
         await direct.cleanupOnExit?.();
         throw refusal(createProviderErrorV1('provider_materialization_failed', {
-            connectionId: selection.providerConnectionId,
+            connectionId,
             ...(input.machineId ? { machineId: input.machineId } : {}),
         }));
     }
     if (
-        projectedProviderBinding.connectionId !== selection.providerConnectionId
+        projectedProviderBinding.connectionId !== connectionId
         || projectedProviderBinding.model.id !== selection.modelId
     ) {
         await direct.cleanupOnExit?.();
         throw refusal(createProviderErrorV1('provider_authorization_changed', {
-            connectionId: selection.providerConnectionId,
+            connectionId,
             ...(input.machineId ? { machineId: input.machineId } : {}),
         }));
     }

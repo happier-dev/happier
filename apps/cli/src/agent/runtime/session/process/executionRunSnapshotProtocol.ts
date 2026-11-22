@@ -11,7 +11,7 @@ import { AgentRuntimeDaemonSessionDescriptorV1Schema } from './agentRuntimeRunne
 import { ReviewScmScopeV1Schema } from '@happier-dev/protocol/reviews/scope';
 import { ExecutionRunScmCommitMessageInputV1Schema, ExecutionRunScmCommitMessageScopeV1Schema } from '@happier-dev/protocol/execution/runs/startRequest';
 import { ScmWorkingSnapshotSchema, ScmCommitOidSchema, ScmCommitExpectedRefSchema, ScmOperationErrorCodeSchema } from '@happier-dev/protocol/scm';
-import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/selection/v1';
+import { PersonalSessionModelRefSchema } from '@happier-dev/protocol/providers/selection/v2';
 import { ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
 import { AgentSessionProviderBindingV1Schema } from '@happier-dev/protocol/providers/sessions/agentSessionProviderBindingV1';
 import { SessionEnvOverlayV1Schema } from '@happier-dev/protocol/spawn/envOverlay';
@@ -28,7 +28,7 @@ const StrictBackendTargetRefV2Schema = lazyZodSchema(() => zMini.pipe(
 ));
 
 const ProviderLaunchRequestShape = {
-  selection: z.optional(asHostProtocolZod(ProviderBoundModelRefSchema)),
+  selection: z.optional(asHostProtocolZod(PersonalSessionModelRefSchema)),
   teamCredentialModel: z.optional(asHostProtocolZod(TeamCredentialProviderModelSelectionV1Schema)),
   sessionConfigOptionOverrides: z.optional(asHostProtocolZod(AcpConfigOptionOverridesV1Schema)),
   backendTarget: asHostProtocolZod(StrictBackendTargetRefV2Schema),

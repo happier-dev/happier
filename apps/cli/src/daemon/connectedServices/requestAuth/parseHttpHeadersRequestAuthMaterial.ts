@@ -24,6 +24,17 @@ export function parseHttpHeadersRequestAuthMaterial(
     const requested = new Set(materialization.headerNames);
     const headers = Object.fromEntries(Object.entries(parsedHeaders.data).map(([name, value]) => [name.toLowerCase(), value]));
     if (Object.keys(headers).some(name => !requested.has(name))) return invalid();
+    if (materialization.queryParameterNames?.some(name => typeof parsedFacts.data[name] !== 'string' || !parsedFacts.data[name])) return invalid();
     return Object.freeze({ headers: Object.freeze(headers), facts: Object.freeze(parsedFacts.data),
         ...(typeof record.expiresAt === 'number' ? { expiresAt: record.expiresAt } : {}) });
+}
+
+/** Only facts admitted as query selectors can leave the request-auth host for an outbound request. */
+export function projectRequestAuthQueryParameters(
+    materialization: QualifiedConnectedAccountRequestAuthUseV1['materialization'],
+    facts: RequestAuthFactsV1,
+): Readonly<Record<string, string>> | undefined {
+    if (!materialization.queryParameterNames?.length) return undefined;
+    // The materialization parser requires a nonempty string for each declared name.
+    return Object.fromEntries(materialization.queryParameterNames.map(name => [name, facts[name] as string]));
 }

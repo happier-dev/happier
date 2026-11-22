@@ -44,7 +44,7 @@ export function buildExistingSessionConfigOptionActionInput<T extends SessionTar
 }
 
 export function buildExistingSessionModelActionInput<T extends SessionTargetV1>(
-    params: Target<T> & Pick<ModelInput, 'modelId' | 'providerConnectionId' | 'teamCredentialModel' | 'teamVisibilityGrantConsent' | 'applyTiming' | 'captureBefore' | 'expected'>,
+    params: Target<T> & Pick<ModelInput, 'modelId' | 'providerConnectionId' | 'modelSelection' | 'teamCredentialModel' | 'teamVisibilityGrantConsent' | 'applyTiming' | 'captureBefore' | 'expected'>,
 ): typeof params {
     return { ...params };
 }

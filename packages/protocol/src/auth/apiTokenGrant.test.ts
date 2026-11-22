@@ -357,10 +357,15 @@ describe('API token grant admission', () => {
     expect(isModelRefGrantedV1(full, 'automatic')).toBe(true);
   });
 
-  it('never grants a Team source through an identically named native model allowlist', () => {
+  it('never grants Team or Connected Account sources through an identically named native model allowlist', () => {
     const native = { agentTargetKey: modelA.agentTargetKey, providerConnectionId: null, modelId: modelA.modelId };
     const team = { source: 'team_resource' as const, agentTargetKey: native.agentTargetKey, modelId: native.modelId,
       teamId: 'team', resourceId: 'resource', expectedResourceRevision: 1, deliveryMode: 'direct' as const };
+    const connectedAccount = { source: 'connected_account' as const, agentTargetKey: native.agentTargetKey, modelId: native.modelId,
+      purpose: { consumer: { pluginId: 'happier.provider.vercel-ai-gateway', localId: 'vercel-ai-gateway' }, purpose: 'gateway-inference' },
+      endpointTemplateId: 'anthropic-messages' };
+    expect(isModelRefGrantedV1(grant({ models: [native] }), connectedAccount)).toBe(false);
+    expect(isModelRefGrantedV1(full, connectedAccount)).toBe(true);
     expect(isModelRefGrantedV1(grant({ models: [native] }), team)).toBe(false);
     expect(isModelRefGrantedV1(full, team)).toBe(true);
     expect(isModelRefGrantedV1(grant({ models: [native] }), { source: 'native', agentTargetKey: native.agentTargetKey, modelId: native.modelId })).toBe(true);

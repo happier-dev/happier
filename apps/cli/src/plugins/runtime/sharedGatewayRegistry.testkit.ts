@@ -90,10 +90,11 @@ export function createSharedGatewayRegistryTestkit(input: Readonly<{
                     endpointTemplates: [{ id: 'api', protocol: 'openai-responses', baseUrl: 'https://example.test/v1',
                         capabilities: { streaming: 'supported', toolRoundTrips: 'supported', statefulResponses: 'unknown', reasoningControls: 'supported' } }],
                     catalog: input.catalog ?? { source: 'static', manualModelPolicy: 'allowed', staticModels: [{ id: 'example', name: 'Example' }] },
+                    connectedAccounts: [{ purpose: 'upstream', title: { key: 'upstream.title', fallback: 'Upstream account' }, service: 'accounts', required: false, materializationKinds: ['httpHeaders'], endpointTemplateIds: ['api'], ...(input.connectedAccountModels ? { staticModels: input.connectedAccountModels } : {}) }],
+                    requestAuthUses: [{ purpose: 'upstream', materialization: { kind: 'httpHeaders', origin: 'https://api.example.test', headerNames: ['authorization'] } }],
                     managedRuntime: { kind: 'managed', sharing: 'connectionMachine', endpointTemplateIds: ['api'],
                         ...(input.sourceEnvelopeTransport ? { sourceEnvelopeTransport: input.sourceEnvelopeTransport } : {}),
-                        connectedAccounts: [{ purpose: 'upstream', title: { key: 'upstream.title', fallback: 'Upstream account' }, service: 'accounts', required: false, materializationKinds: ['httpHeaders'], endpointTemplateIds: ['api'], ...(input.connectedAccountModels ? { staticModels: input.connectedAccountModels } : {}) }],
-                        requestAuthUses: [{ purpose: 'upstream', materialization: { kind: 'httpHeaders', origin: 'https://api.example.test', headerNames: ['authorization'] } }] } }],
+                         } }],
             } : {},
         }));
         if (gateway) {

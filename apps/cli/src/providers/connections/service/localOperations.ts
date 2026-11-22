@@ -3,7 +3,7 @@ import { ProviderSettingsV1Schema } from '@happier-dev/protocol/providers/settin
 import { createProviderDiscoveryCandidateIdV1 } from '@happier-dev/protocol/providers/detection/v1';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type { QualifiedConnectedAccountPurposeBindingsV1, ProviderConnectionV1, ProviderSettingsV1 } from '@happier-dev/protocol';
-import { createProviderManagedRuntimeBindingEqualityKeyV1 } from '@happier-dev/protocol/providers/contributions';
+import { createProviderManagedRuntimeBindingEqualityKeyV1, resolveProviderManagedRuntimeFromContributionV1 } from '@happier-dev/protocol/providers/contributions';
 
 import { buildProviderDiscoveryEndpointOverrides } from '@/providers/discovery/bridge';
 import { resolveProviderContributionRegistryView } from '@/providers/registry';
@@ -273,14 +273,19 @@ export function createProviderLocalOperations(context: ProviderConnectionService
       const snapshot = await deps.loadSnapshot(registryProjection);
       const resolved = resolveProviderContributionRegistryEntry(snapshot.registry, input.contributionKey);
       const contribution = resolved?.contribution;
-      const managedRuntime = contribution?.definition.managedRuntime;
-      if (!resolved || !contribution || managedRuntime?.kind !== 'managed') {
+      const declaration = contribution?.definition.managedRuntime;
+      if (!resolved || !contribution || declaration?.kind !== 'managed') {
         return { status: 'error', error: createProviderErrorV1('provider_connection_invalid', {
           ...(input.connectionId ? { connectionId: input.connectionId } : {}),
           machineId: input.machineId,
         }) };
       }
 
+      const managedRuntime = resolveProviderManagedRuntimeFromContributionV1({
+        implementationIdentity: contribution.identity,
+        definition: { ...contribution.definition, managedRuntime: declaration },
+        connectedAccountDeclarations: contribution.connectedAccountDeclarations,
+      });
       const resolvePurposeBindings = async (
         candidateSnapshot: typeof snapshot,
         candidateResolved: NonNullable<typeof resolved>,
@@ -403,12 +408,12 @@ export function createProviderLocalOperations(context: ProviderConnectionService
           current.registry,
           resolved.contributionKey,
         );
-        const currentRuntime = currentResolved?.contribution.definition.managedRuntime;
+        const currentDeclaration = currentResolved?.contribution.definition.managedRuntime;
         if (
           !currentResolved
           || currentResolved.contribution.identity.pluginId !== contribution.identity.pluginId
           || currentResolved.contribution.identity.localId !== contribution.identity.localId
-          || currentRuntime?.kind !== 'managed'
+          || currentDeclaration?.kind !== 'managed'
         ) {
           authorizationCurrent = false;
           return false;
@@ -417,7 +422,11 @@ export function createProviderLocalOperations(context: ProviderConnectionService
           current,
           currentResolved,
           currentResolved.contribution,
-          currentRuntime,
+          resolveProviderManagedRuntimeFromContributionV1({
+            implementationIdentity: currentResolved.contribution.identity,
+            definition: { ...currentResolved.contribution.definition, managedRuntime: currentDeclaration },
+            connectedAccountDeclarations: currentResolved.contribution.connectedAccountDeclarations,
+          }),
         );
         authorizationCurrent = currentPurposeBindingResolution.status
           === purposeBindingResolution.status

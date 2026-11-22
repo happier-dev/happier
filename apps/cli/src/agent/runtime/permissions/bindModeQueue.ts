@@ -12,7 +12,7 @@ import { fitHappierReplaySeedWithinTotalBudget } from '@happier-dev/agents';
 import { readSessionMessageModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { isModelRefGrantedV1, isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
-import type { ProviderBoundModelRef, SessionModelRef } from '@happier-dev/protocol';
+import type { SessionModelRef } from '@happier-dev/protocol';
 import { readAdmittedHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 
 import { isAbortLikeError } from '@/agent/runtime/lifecycle/classifyAbortLikeError';
@@ -77,9 +77,9 @@ export type InFlightSteerController = Readonly<{
   /** Current turn mode, which may differ from the Session's owner baseline. */
   readActivePermissionMode?: () => PermissionMode;
   /** Exact running-session selection; null means the owner is not yet provable. */
-  readActiveModelSelection?: () => ProviderBoundModelRef | null;
+  readActiveModelSelection?: () => SessionModelRef | null;
   /** The Session transition owner's model for the next ordinary prompt. */
-  readArmedModelSelection?: () => ProviderBoundModelRef | null;
+  readArmedModelSelection?: () => SessionModelRef | null;
   /**
    * Whether the runtime is currently processing a turn (i.e. can accept steer input).
    */
@@ -366,8 +366,9 @@ export function registerPermissionModeMessageQueueBinding(opts: {
       if (!modelOverride || modelOverride.kind === 'invalid_structured') return null;
       if (modelOverride.kind === 'structured') return modelOverride.selection;
       const active = opts.inFlightSteer?.readActiveModelSelection?.() ?? null;
-      return active?.providerConnectionId === null
-        && active.agentTargetKey === opts.agentTargetKey
+      if (!active || active.agentTargetKey !== opts.agentTargetKey) return null;
+      if ('source' in active) return active.modelId === modelOverride.modelId ? active : null;
+      return active.providerConnectionId === null
         ? { ...active, modelId: modelOverride.modelId }
         : null;
     })();

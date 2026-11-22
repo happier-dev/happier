@@ -122,12 +122,15 @@ export async function prepareProviderLaunch<PrerequisiteFailure extends Readonly
 
     return { agentTargetKey, selection: canonicalSelection };
   };
-  if ((!selection || readSessionModelSelectionProviderConnectionId(selection) === null) && input.agentId && input.managedPurposeContext) {
+  if (selection?.v === 2 && selection.ref.source === 'connected_account') {
+    if (!input.agentId || !input.managedPurposeContext) {
+      return { ok: false, error: createProviderErrorV1('provider_endpoint_unavailable') };
+    }
     try {
       const managed = await prepareManagedPurposeLaunch({ ...input.managedPurposeContext,
         agentId: input.agentId, machineId: input.machineId, selection, connectedServices: input.connectedServices,
         featureEnabled: input.featureEnabled, resolveSelectionTarget });
-      if (managed) return managed;
+      return managed ?? { ok: false, error: createProviderErrorV1('provider_model_not_found') };
     } catch (error) {
       const typed = ProviderErrorV1Schema.safeParse(error);
       if (!typed.success) throw error;

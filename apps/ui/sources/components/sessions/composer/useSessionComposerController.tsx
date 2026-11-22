@@ -1,5 +1,5 @@
 import { buildExistingSessionModeActionInput, buildExistingSessionConfigOptionActionInput, buildExistingSessionModelActionInput } from '@happier-dev/protocol/sessions/authoring/existingSessionActionInputs';
-import { projectSessionModelSelectionV2ToV1 } from '@happier-dev/protocol/providers/selection/v2';
+import { isSessionModelRefSourceBound, projectSessionModelSelectionV2ToV1, type PersonalSessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import { followSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import type { SessionSurfacePresenceSignal } from '@/components/sessions/shell/sessionSurfacePresence';
 import { resolveSessionContinuationDaemonGeneration } from '@/components/sessions/agentPicker/resolveSessionAgentContinuationEligibility';
@@ -300,6 +300,7 @@ import { presentSessionProviderBinding } from "@/providers/session/presentation"
 import { useProviderModelProjection } from "@/providers/hooks/useProviderModelProjection";
 import { useConfirmExperimentalProviderModel } from "@/providers/hooks/useConfirmExperimentalProviderModel";
 import { ExistingSessionModelPicker } from "@/components/sessions/modelPicker/ExistingSessionModelPicker";
+import { readSessionConnectedServiceBindings } from '@/sync/domains/connectedServices/readSessionConnectedServiceBindings';
 import { SessionModelNativeSourceLabelContext } from "@/components/sessions/modelPicker/SessionModelSourceBrowseHandoff";
 import { hiddenModelVisibilityKeys, type SessionModelProjectionGroup } from "@/components/sessions/modelPicker/buildSessionModelPickerSections";
 import { isTeamCredentialProviderModelPickerValue, sessionModelSelectionKey, type SessionModelPickerOptionValue } from "@/components/sessions/modelPicker/sessionModelSelectionKey";
@@ -1072,14 +1073,15 @@ export function useSessionComposerController({
         modelSelectionDisposition?.proposedSelectionV2?.updatedAt ?? 0,
     );
     const persistedModelTransitionActionRequired = React.useMemo(() => {
+        const durableRef = modelSelectionDisposition?.proposedSelectionV2?.ref;
         const requestedSelection = selectedTeamCredentialModel
+            ?? (durableRef?.source === 'connected_account' ? durableRef : null)
             ?? providerModelSelectionIntent?.selection
             ?? null;
         if (session.active !== true || !requestedSelection) return null;
         if (
             !isTeamCredentialProviderModelPickerValue(requestedSelection)
-            &&
-            requestedSelection.providerConnectionId !== null
+            && isSessionModelRefSourceBound(requestedSelection)
             && !providersFeatureEnabled
         ) {
             return null;
@@ -1102,7 +1104,7 @@ export function useSessionComposerController({
     const pendingTransitionNeedsProvidersFeature = pendingTransitionSelection === null
         || isTeamCredentialProviderModelPickerValue(pendingTransitionSelection)
         ? false
-        : pendingTransitionSelection.providerConnectionId !== null;
+        : isSessionModelRefSourceBound(pendingTransitionSelection);
     const visibleLocalModelTransitionActionRequired =
         pendingTransitionNeedsProvidersFeature && !providersFeatureEnabled
             ? null
@@ -3917,21 +3919,21 @@ export function useSessionComposerController({
 
     // Resolves whether the Session took the model (applied, armed for the next message, or awaiting
     // its restart), so a card's option value is written only for a model the Session holds.
-    const publishModelSelection = React.useCallback(async (ref: ProviderBoundModelRef | null, modelOptionsContext?: SessionModelOptionsContext): Promise<boolean> => {
+    const publishModelSelection = React.useCallback(async (ref: PersonalSessionModelRef | null, modelOptionsContext?: SessionModelOptionsContext): Promise<boolean> => {
         if (!agentId || !canSelectModel) return false;
         setModelTransitionFailure(null);
-        const failureFallback = t(ref?.providerConnectionId
+        const failureFallback = t(ref && isSessionModelRefSourceBound(ref)
             ? 'settingsProviders.models.connectionUnavailable'
             : 'common.requestFailed');
         const mode = ref?.modelId ?? 'default';
         const intentBaselineUpdatedAt = durableModelSelectionIntentUpdatedAt;
-        if (ref?.providerConnectionId === null
+        if (ref && !('source' in ref) && ref.providerConnectionId === null
             && !isModelSelectableForSession(agentId, composerOptionsInput, mode, modelOptionsContext)) return false;
         try {
             const result = await actionExecutor.execute('session.model.set', buildExistingSessionModelActionInput({
                 sessionId,
-                modelId: mode,
-                providerConnectionId: ref?.providerConnectionId ?? null,
+                ...(ref && 'source' in ref ? { modelSelection: ref }
+                    : { modelId: mode, providerConnectionId: ref?.providerConnectionId ?? null }),
                 applyTiming: session.active === true ? 'next_prompt' : 'immediate',
             }), {
                 surface: 'ui',
@@ -3947,7 +3949,8 @@ export function useSessionComposerController({
                         requestedSelection: 'requestedSelection' in value ? value.requestedSelection : null }
                     : null);
                 if (transition.success && transition.data.status === 'armed') {
-                    setModelTransitionActionRequired({ status: 'armed', requestedSelection: transition.data.requestedSelection, intentBaselineUpdatedAt });
+                    setModelTransitionActionRequired({ status: 'armed',
+                        requestedSelection: ref && 'source' in ref ? ref : transition.data.requestedSelection, intentBaselineUpdatedAt });
                     return true;
                 }
                 setModelTransitionActionRequired(null);
@@ -3968,7 +3971,7 @@ export function useSessionComposerController({
             ) {
                 setModelTransitionActionRequired({
                     status: transition.data.status,
-                    requestedSelection: transition.data.requestedSelection,
+                    requestedSelection: ref && 'source' in ref ? ref : transition.data.requestedSelection,
                     intentBaselineUpdatedAt,
                 });
                 return true;
@@ -4107,17 +4110,24 @@ export function useSessionComposerController({
         ? armedPickerSelection
         : null;
     const pickerTeamCredentialModel = armedModelRef ? null : selectedTeamCredentialModel;
+    const armedConnectedAccountRef = armedModelRef && 'source' in armedModelRef ? armedModelRef : null;
+    const armedLegacyModelRef = armedModelRef && 'providerConnectionId' in armedModelRef ? armedModelRef : null;
     const existingSessionSelectedModelRef = React.useMemo<ProviderBoundModelRef | null>(() => (
-        armedModelRef
+        armedLegacyModelRef
         ?? providerModelSelection?.ref
         ?? (providerAgentTargetKey && modelMode !== 'default'
             ? { agentTargetKey: providerAgentTargetKey, providerConnectionId: null, modelId: modelMode }
             : null)
-    ), [armedModelRef, modelMode, providerAgentTargetKey, providerModelSelection?.ref]);
+    ), [armedLegacyModelRef, modelMode, providerAgentTargetKey, providerModelSelection?.ref]);
     const existingSessionReportedModel = React.useMemo(() => {
         const reportedSelection = modelSelectionDisposition?.reportedSelection ?? null;
         const reportedStatus = modelSelectionDisposition?.reportedSelectionStatus ?? null;
-        if (!reportedSelection || !reportedStatus) return null;
+        if (!reportedStatus) return null;
+        const reportedRoute = modelSelectionDisposition?.lastAppliedRouteSelection;
+        if (reportedRoute && 'source' in reportedRoute && reportedRoute.source === 'connected_account') {
+            return { ref: reportedRoute, status: reportedStatus };
+        }
+        if (!reportedSelection) return null;
         const canonicalReportedSelection = modelSelectionDisposition?.reportedTeamCredentialModel ?? resolveCanonicalNativeModelSelectionRef(
             existingSessionNativeModels,
             reportedSelection,
@@ -4195,17 +4205,23 @@ export function useSessionComposerController({
     }, [publishAcpConfigOptionOverride, publishModelSelection]);
     const existingSessionModelPicker = React.useMemo(() => {
         if (!agentId || !modelPickerAgentTargetKey) return embedded?.allowedModels ? null : undefined;
+        const boundConnectedServices = readSessionConnectedServiceBindings({ metadata: ownerMetadata, agentId });
+        const includeProviderConnectedAccounts = providersFeatureEnabled && !embedded?.allowedModels && boundConnectedServices !== null;
+        const qualifiedSelection = modelSelectionDisposition?.proposedSelectionV2?.ref;
+        const selectedConnectedAccount = armedConnectedAccountRef
+            ?? (qualifiedSelection?.source === 'connected_account' ? qualifiedSelection : null);
         return <SessionModelDiscoveryDetail
             agentId={agentId}
             machineId={controlMachineTarget?.machineId ?? machineId ?? null}
             accountScope={sessionAccountScope}
             composerOptionsInput={composerOptionsInput}
             discovery={resolveSessionModelDiscoveryContext}
-            selectedModelId={existingSessionSelectedModelRef?.providerConnectionId ? undefined : existingSessionSelectedModelRef?.modelId ?? 'default'}
+            selectedModelId={selectedConnectedAccount || existingSessionSelectedModelRef?.providerConnectionId
+                ? undefined : existingSessionSelectedModelRef?.modelId ?? 'default'}
             renderDetail={({ modelOptions: existingSessionNativeModels, modelOptionsContext, canEnterCustomModel, probe, connectedServices }) => {
                 const existingSessionSelectedModelOptionControls = (() => {
                     if (!agentId) return null;
-                    if (existingSessionSelectedModelRef?.providerConnectionId) return null;
+                    if (selectedConnectedAccount || existingSessionSelectedModelRef?.providerConnectionId) return null;
                     return computeSessionModelConfigOptionControls({
                         agentId,
                         metadata: composerOptionsInput,
@@ -4245,7 +4261,8 @@ export function useSessionComposerController({
                         fillAvailableSpace
                         multiColumn
                         agentTargetKey={modelPickerAgentTargetKey}
-                        connectedServices={connectedServices}
+                        connectedServices={includeProviderConnectedAccounts ? boundConnectedServices : connectedServices}
+                        includeProviderConnectedAccounts={includeProviderConnectedAccounts}
                         declarationContext={declarationContext}
                         nativeModels={existingSessionNativeModels}
                         providerGroups={providerGroups}
@@ -4279,7 +4296,7 @@ export function useSessionComposerController({
                             // The model the next message runs on: the Session's own when allowed, else the
                             // first allowed one (the outgoing record applies the same protocol rule).
                             ? readEffectiveAllowedModelRef(embedded.allowedModels, selectedRef, modelPickerAgentTargetKey)
-                            : selectedRef ?? null}
+                            : selectedConnectedAccount ?? selectedRef ?? null}
                         selectedTeamCredentialModel={pickerTeamCredentialModel}
                         reportedModel={existingSessionReportedModel}
                         canEnterCustomNativeValue={canEnterCustomModel}
@@ -4296,7 +4313,12 @@ export function useSessionComposerController({
                                 : { phase: 'idle', onRefresh: () => { void providerModelProjection.refresh(); } }
                             : undefined])}
                         experimentalConfirmation={confirmExperimentalProviderModel}
-                        onSelect={selectModel}
+                        onSelect={(ref, binding) => {
+                            if (ref && 'source' in ref) {
+                                return binding ? publishModelSelection(ref, modelOptionsContext) : false;
+                            }
+                            return selectModel(ref);
+                        }}
                         onSelectTeamCredentialModel={(selection) => {
                             hapticsLight();
                             void publishTeamCredentialModelSelection(selection);
@@ -4321,6 +4343,8 @@ export function useSessionComposerController({
         existingSessionReportedModel,
         existingSessionSelectedModelRef,
         existingSessionSourceBrowse,
+        armedConnectedAccountRef,
+        modelSelectionDisposition?.proposedSelectionV2,
         pickerTeamCredentialModel,
         modelMode,
         modelPickerAgentTargetKey,
@@ -4347,6 +4371,7 @@ export function useSessionComposerController({
         existingSessionModelOptionOverrides,
         canSelectModel,
         publishFavoriteModelSelection,
+        publishModelSelection,
         sessionActionDefaultBackendEntry,
     ]);
 
@@ -5327,7 +5352,7 @@ export function useSessionComposerController({
                 ? requestedTransitionSelection
                 : null;
             const requestedProviderSelection = requestedTransitionSelection !== null
-                && !isTeamCredentialProviderModelPickerValue(requestedTransitionSelection)
+                && 'providerConnectionId' in requestedTransitionSelection
                 ? requestedTransitionSelection
                 : null;
             const requestedProviderGroup = requestedProviderSelection?.providerConnectionId
@@ -5645,7 +5670,9 @@ export function useSessionComposerController({
                 const requested = effectiveModelTransitionActionRequired?.requestedSelection;
                 if (requested && !isTeamCredentialProviderModelPickerValue(requested)) {
                     const result = await actionExecutor.execute('session.model.set', buildExistingSessionModelActionInput({
-                        sessionId, modelId: requested.modelId, providerConnectionId: requested.providerConnectionId,
+                        sessionId,
+                        ...('source' in requested ? { modelSelection: requested }
+                            : { modelId: requested.modelId, providerConnectionId: requested.providerConnectionId }),
                         applyTiming: 'immediate',
                     }), { surface: 'ui', defaultSessionId: sessionId, serverId: sessionRouteServerId, signal: callerSignal });
                     if (callerSignal.aborted) return false;
@@ -5780,7 +5807,7 @@ export function useSessionComposerController({
         const armedModelLabel = React.useMemo(() => {
             if (!routeChangeArmed || !armedRequestedSelection) return null;
             const modelId = armedRequestedSelection.modelId;
-            if (isTeamCredentialProviderModelPickerValue(armedRequestedSelection)) return modelId;
+            if (isTeamCredentialProviderModelPickerValue(armedRequestedSelection) || 'source' in armedRequestedSelection) return modelId;
             if (armedRequestedSelection.providerConnectionId !== null) {
                 return providerModelProjection.data?.groups
                     .find(group => group.connectionId === armedRequestedSelection.providerConnectionId)

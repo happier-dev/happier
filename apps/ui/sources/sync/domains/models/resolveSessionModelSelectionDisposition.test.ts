@@ -40,6 +40,43 @@ function appliedConnectedClaudeMetadata() {
 }
 
 describe('resolveSessionModelSelectionDisposition', () => {
+    it('keeps a Connected Account selection qualified in a retained Session', () => {
+        const ref = {
+            source: 'connected_account', purpose: { consumer: { pluginId: 'provider.test', localId: 'gateway' }, purpose: 'inference' },
+            endpointTemplateId: 'messages', agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'anthropic/claude-sonnet',
+        } as const;
+        const metadata = MetadataSchema.parse({ path: '/workspace', host: 'test', modelSelectionIntentV2: { v: 2, ref, updatedAt: 1 } });
+        expect(resolveSessionModelSelectionDisposition({
+            metadata, agentId: 'claude', agentTargetKey: ref.agentTargetKey,
+            sessionActive: false, currentRunnerProcessIdentity: null,
+        })).toMatchObject({ proposedSelection: null, contextRouteSelection: ref });
+    });
+
+    it.each([
+        ['same endpoint', 'responses', false],
+        ['another endpoint', 'messages', true],
+        ['native', null, true],
+    ] as const)('recovers the current Connected Account route with a %s selection after remount', (_label, endpointTemplateId, pending) => {
+        const agentTargetKey = 'agent:happier.agent.codex/codex';
+        const modelId = 'shared-model';
+        const ref = { source: 'connected_account' as const, agentTargetKey, modelId, endpointTemplateId: 'responses',
+            purpose: { consumer: { pluginId: 'acme.gateway', localId: 'gateway' }, purpose: 'inference' } };
+        const runner = { pid: 42, processStartTimeMs: 10 };
+        const metadata = MetadataSchema.parse({ path: '/workspace', host: 'test',
+            modelSelectionIntentV2: { v: 2, updatedAt: 12, ref: endpointTemplateId
+                ? { ...ref, endpointTemplateId } : { source: 'native', agentTargetKey, modelId } },
+            sessionModelsV1: { v: 1, agentId: 'codex', updatedAt: 11, currentModelId: modelId, availableModels: [],
+                activeSelectionV1: { v: 2, source: 'runtime_readback', selection: { agentTargetKey, modelId, providerConnectionId: null },
+                    runner, connectedAccountSelection: ref } },
+        });
+        expect(resolveSessionModelSelectionDisposition({ metadata, agentId: 'codex', agentTargetKey,
+            sessionActive: true, currentRunnerProcessIdentity: runner,
+        })).toMatchObject({
+            activeRouteSelection: ref, contextRouteSelection: ref, selectionTransitionPending: pending,
+            activeSelection: null, contextSelection: null, reportedSelection: null, reportedSelectionStatus: 'running',
+        });
+    });
+
     it('settles the OpenCode launch selection when its private catalog is withheld', () => {
         const selection = {
             agentTargetKey: 'agent:happier.agent.opencode/opencode',
@@ -71,7 +108,7 @@ describe('resolveSessionModelSelectionDisposition', () => {
                 kind: 'team_credential_provider_model', teamId: 'team', resourceId: 'resource',
                 expectedResourceRevision: 0, deliveryMode: 'brokered', agentTargetKey: selection.agentTargetKey, modelId: selection.modelId,
             } });
-        if (active?.v !== 2) throw new Error('Expected canonical Team runtime fact');
+        if (!active || !('teamCredentialModel' in active)) throw new Error('Expected canonical Team runtime fact');
         const metadata = MetadataSchema.parse({ path: '/workspace', host: 'test',
             modelSelectionIntentV1: { v: 1, updatedAt: 11, selection },
             sessionModelsV1: { v: 1, agentId: 'codex', updatedAt: 0, currentModelId: selection.modelId,

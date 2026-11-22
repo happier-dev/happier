@@ -62,9 +62,12 @@ export async function readSessionReadiness(input: Readonly<{
   const model = invocation?.capabilities.submitAgentInput && input.operation !== 'credential' && !session.active
     ? readSessionModelSelectionV2FromMetadata(metadata)?.ref : null;
   const teamModel = model?.source === 'team_resource' ? model : null;
+  const connectedAccountModel = model?.source === 'connected_account' ? model : null;
   let credential: SessionCredentialReadinessV1 = teamModel
     ? { kind: 'team', teamId: teamModel.teamId, resourceId: teamModel.resourceId, readiness: null, recoveryAction: null }
-    : { kind: input.operation === 'credential' ? 'unknown' : 'not_required' };
+    : connectedAccountModel
+      ? { kind: 'personal', purpose: connectedAccountModel.purpose, usable: null, repair: null }
+      : { kind: input.operation === 'credential' ? 'unknown' : 'not_required' };
   let canReadCredential = false;
   let credentialMachineAccess: AccessibleMachineAccessV1 | null = null;
   const agentId = resolveAgentIdFromSessionMetadata(metadata);
@@ -155,7 +158,7 @@ export async function readSessionReadiness(input: Readonly<{
             }
             const state = facts ? resolveMachineAgentExecutionStateV1({ ...facts,
               signIn: { status: native ? facts.signIn.status : 'unknown', native: facts.signIn },
-              known: !unavailable, ...(native ? {} : { authenticationRequired: !teamProviderAuthReady }) }) : 'unknown';
+              known: !unavailable, ...(native ? {} : { authenticationRequired: !teamProviderAuthReady && !connectedAccountModel }) }) : 'unknown';
             agent = { agentId, ...(definitionId ? { definitionId } : {}), current: Boolean(facts && !unavailable),
               observedAtMs: facts && !unavailable ? Date.now() : null, state,
               repair: state === 'needsSignIn' && native && target.access?.role === 'manage'
@@ -177,7 +180,8 @@ export async function readSessionReadiness(input: Readonly<{
     catch { input.signal?.throwIfAborted(); }
   }
   const readiness = composeSessionReadinessV1({ configured: true, operation: input.operation ?? 'conversation', machine, agent,
-    invocation, credential }, { credentialRequiredForConversation: teamModel !== null, machineUnknownReason, agentUnknownReason });
+    invocation, credential }, { credentialRequiredForConversation: teamModel !== null || connectedAccountModel !== null,
+    machineUnknownReason, agentUnknownReason });
   if (readiness.reason) {
     try {
       logger.infoFile('[SESSION] Readiness unknown', JSON.stringify({

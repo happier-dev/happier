@@ -4,6 +4,7 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
 import { qualifyPluginEventIdV1 } from '@happier-dev/protocol/plugins/events/v1';
 import type { PluginWebhookEndpointAuthoringSetupV1 } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
+import { resolveProviderConnectedAccountDeclarationsV1 } from '@happier-dev/protocol/providers/contributions';
 
 import { buildPluginContributionIntrospectionQualifiedId } from '@/plugins/projection/introspection/project';
 import type { PluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
@@ -183,7 +184,11 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         inputs.composerRegions ?? [],
     );
     const inputAgents = inputs.agents ?? [];
-    const providers = Object.freeze([...(inputs.providers ?? [])].sort((left, right) =>
+    const providers = Object.freeze((inputs.providers ?? []).map(provider => (
+        provider.definition.connectedAccounts?.length
+            ? Object.freeze({ ...provider, connectedAccountDeclarations: resolveProviderConnectedAccountDeclarationsV1(provider) })
+            : provider
+    )).sort((left, right) =>
         buildQualifiedPluginContributionKey(left.identity).localeCompare(buildQualifiedPluginContributionKey(right.identity))
     ));
     const providersByContributionKey = new Map<string, ResolvedProviderContribution>();

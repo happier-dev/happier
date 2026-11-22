@@ -113,6 +113,20 @@ function harness(providersEnabled: boolean | (() => boolean) = true) {
 }
 
 describe('machine provider RPC registration', () => {
+  it('rejects a selected Account usage request for another Machine before dispatch', async () => {
+    const { handlers, services } = harness();
+    const refresh = handlers.get(RPC_METHODS.DAEMON_PROVIDERS_USAGE_REFRESH)!;
+    const connectedAccountSource = {
+      purpose: { consumer: { pluginId: 'test.provider', localId: 'gateway' }, purpose: 'models' },
+      account: { service: { pluginId: 'test.machine', localId: 'identity' }, accountId: 'chosen' },
+      endpointTemplateId: 'chat', usageSourceId: 'credits',
+    };
+    await expect(refresh({ machineId: 'other-machine', connectedAccountSource })).resolves.toMatchObject({
+      status: 'error', error: { code: 'provider_not_enabled_on_machine' },
+    });
+    expect(services.refreshUsage).not.toHaveBeenCalled();
+  });
+
   it.each(['provider_endpoint_unauthorized', 'provider_endpoint_unreachable'] as const)('retains a saved API-key connection with the canonical %s outcome', async code => {
     const h = harness();
     const connection = DaemonProviderConnectionViewV1Schema.parse({

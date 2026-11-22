@@ -69,6 +69,7 @@ import {
 import type { CurrentSessionRunnerProcessIdentity } from '@/sync/domains/models/resolveSessionModelSelectionDisposition';
 import { ReportedModelStatusIcon } from '@/components/sessions/modelPicker/reportedModelPresentation';
 import { buildSessionModelSelectedTriggerPresentation } from '@/components/sessions/modelPicker/buildSessionModelPickerSections';
+import { isSessionModelRefSourceBound } from '@happier-dev/protocol/providers/selection/v2';
 import { Modal } from '@/modal';
 import {
     hapticsLight,
@@ -3256,7 +3257,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         if (props.engineLabel !== undefined) return props.engineLabel;
         if (engineChipMarkAgentId === null) return t('status.unknown');
         const picker = props.modelPickerPresentation;
-        if (picker?.selected?.providerConnectionId && (
+        if (picker?.selected && isSessionModelRefSourceBound(picker.selected) && (
             !armedComposerTarget || armedComposerTarget.backendTargetKey === picker.agentTargetKey
         )) {
             const name = buildSessionModelSelectedTriggerPresentation(picker).subtitle;

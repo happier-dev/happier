@@ -6,6 +6,8 @@ import type { ExecutionRunAppliedParentSelection } from './openInputs';
 import { decodeScmDiffSummaryModelOverride, encodeScmDiffSummaryModelOverride } from '@happier-dev/protocol/actions/settings/scmDiffSummarySettings';
 import { projectExecutionRunResolvedSelection } from '@happier-dev/protocol/execution/runs/requestedConfiguration';
 import { findCatalogEntry } from '@/agent/catalog/registry';
+import { projectRetainedExecutionRunState, RetainedExecutionRunRecordSchema } from '../retainedState';
+import { resolveExecutionRunResumeBackendOptions } from '../resolveExecutionRunResumeBackendOptions';
 
 const codexTarget = { kind: 'builtInAgent', agentId: 'codex' } as const;
 const claudeTarget = { kind: 'builtInAgent', agentId: 'claude' } as const;
@@ -52,6 +54,29 @@ it('delivers a native model keyed by the admitted installed Agent without requir
     });
     expect(() => buildExecutionRunConfiguration({ backendTarget: { ...target, backendId: 'acme.snapshot/parent2' },
         modelSelection: selection, permissionMode: 'read_only', updatedAtMs: 1 })).toThrow();
+});
+
+it('resumes an explicitly selected Connected Account route after losing the Run host', () => {
+    const modelSelection = {
+        source: 'connected_account',
+        purpose: { consumer: { pluginId: 'provider.test', localId: 'gateway' }, purpose: 'inference' },
+        endpointTemplateId: 'messages', agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'anthropic/claude-sonnet',
+    } as const;
+    const resolved = resolveExecutionRunChildSelection({ backendTarget: claudeTarget, lifecycle: 'attached', modelSelection,
+        parent: { status: 'unavailable' } });
+    const state = projectRetainedExecutionRunState({
+        runId: 'run-1', callId: 'call-1', sidechainId: 'sidechain-1', sessionId: 'session-1', depth: 0,
+        backendTarget: claudeTarget, backendId: 'claude', intent: 'task', instructions: 'A task',
+        permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response',
+        status: 'running', startedAtMs: 1,
+        launch: { modelSelection: resolved.modelSelection, modelId: resolved.modelId, selectionSource: resolved.selectionSource },
+    });
+    const recovered = RetainedExecutionRunRecordSchema.parse(JSON.parse(JSON.stringify({ ownerPid: 1, state })));
+    const resumed = resolveExecutionRunResumeBackendOptions({ run: recovered.state });
+    expect(resumed).toMatchObject({ modelSelection, modelId: modelSelection.modelId });
+    expect(buildExecutionRunConfiguration({ backendTarget: claudeTarget, ...resumed,
+        permissionMode: 'read_only', updatedAtMs: 1 })).toMatchObject({ modelSelection });
+    expect(projectExecutionRunResolvedSelection({ ...resolved, source: resolved.selectionSource })).toMatchObject({ modelSelection });
 });
 
 describe('resolveExecutionRunChildSelection', () => {

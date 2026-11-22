@@ -44,11 +44,21 @@ generic [coding-agent endpoint](https://vercel.com/docs/ai-gateway/coding-agents
 Requests identify Happier through Vercel's optional
 [app-attribution headers](https://vercel.com/docs/ai-gateway/ecosystem/app-attribution).
 Vercel owns Gateway billing, budgets, routing and upstream availability.
-This integration uses API keys. OIDC refresh and Sign in with Vercel are not
-included. In 0.3 development, the connection detail's **Usage** section shows
+In 0.3 development, the connection detail's **Usage** section shows eligible
 remaining USD credits and lifetime spend, with the observation date and a
-Refresh control. An unknown spending cap stays unknown; the balance is not a
-per-session allowance. Tenant-backed validation remains outstanding.
+Refresh control. The balance is an observation for the selected Gateway source.
+Tenant-backed validation remains outstanding.
+
+### Connected Account source in development
+
+The 0.3 development source also integrates Vercel sign-in with Gateway model
+selection. Connect Vercel from **Connected services** and select the Vercel team
+for that account. With the Providers feature enabled, open **New session** and
+choose a model from that connected source. The Agent receives a local Session
+credential, and the machine running the broker sends requests under the
+connected Vercel team. This flow is unreleased and awaits validation on the carrying
+development runtime.
+
 These account observations do not establish an actual charge for each Agent
 request. This integration does not record reported per-request charges for
 Vercel AI Gateway or native Claude Code, Codex and OpenCode requests. The separate

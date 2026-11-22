@@ -355,9 +355,10 @@ describe('runtime provider services', () => {
   it('reports an Account-created empty Gateway as configuration requiring review and settles without endpoint requests', async () => {
     const gatewayDefinition = ProviderContributionV1Schema.parse({ ...definition,
       catalog: { ...definition.catalog, sourceRegistryVersion: 'empty-gateway-test:v1' },
+      connectedAccounts: [{ purpose: 'upstream', service: { pluginId: 'acme.accounts', localId: 'upstream' }, required: false }],
       managedRuntime: { kind: 'managed', endpointTemplateIds: ['chat'],
         connectedAccountPurposeBindingPolicy: { minimumBound: 1 },
-        connectedAccounts: [{ purpose: 'upstream', service: { pluginId: 'acme.accounts', localId: 'upstream' }, required: false }] },
+         },
     });
     let catalog = DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1;
     const execute = createAccountProviderActionExecuteV1({ assertCurrent() {}, now: () => 1,

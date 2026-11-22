@@ -71,7 +71,7 @@ export function readExactSessionActiveModelSelection(params: Readonly<{
   return active.data;
 }
 
-/** V1 cannot represent a Team source. Older model-only consumers must not claim native proof. */
+/** V1 readers accept only the sources its model tuple can represent. */
 export function readExactSessionActiveModelSelectionV1(
   params: Parameters<typeof readExactSessionActiveModelSelection>[0],
 ): SessionActiveModelSelectionV1 | null {

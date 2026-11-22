@@ -1,3 +1,4 @@
+import type { PersonalSessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import type {
   ActionExecuteResult,
   ActionExecutorContext,
@@ -10,7 +11,6 @@ import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/a
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';
-import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
 
 type ExecutionRunStartAction = (
   input: unknown,
@@ -107,7 +107,7 @@ export async function runEphemeralExecutionRunTextPrompt(params: Readonly<{
   sessionId: string;
   backendTarget: BackendTargetRefV1;
   modelId?: string;
-  modelSelection?: ProviderBoundModelRef;
+  modelSelection?: PersonalSessionModelRef;
   teamCredentialModel?: TeamCredentialProviderModelSelectionV1;
   permissionMode: string;
   intent: ExecutionRunIntent;

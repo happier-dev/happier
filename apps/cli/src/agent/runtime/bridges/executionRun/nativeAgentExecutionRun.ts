@@ -1023,7 +1023,7 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
         ...(params.options.runtimeDescriptorV1
             ? { runtimeDescriptorV1: params.options.runtimeDescriptorV1 }
             : {}),
-        ...(params.options.modelSelection
+        ...(params.options.modelSelection && 'providerConnectionId' in params.options.modelSelection
             ? { modelSelection: params.options.modelSelection }
             : {}),
         ...(configuration
@@ -2217,7 +2217,9 @@ export function createNativeAgentSessionInteractionHostRuntime(params: Readonly<
                 ...(params.options.runtimeDescriptorV1
                     ? { runtimeDescriptorV1: params.options.runtimeDescriptorV1 }
                     : {}),
-                ...(params.options.modelSelection ? { modelSelection: params.options.modelSelection } : {}),
+                ...(params.options.modelSelection && 'providerConnectionId' in params.options.modelSelection
+                    ? { modelSelection: params.options.modelSelection }
+                    : {}),
                 ...(params.options.configuration ? { configuration: projectNativeAgentProviderBindingConfiguration(params.options.configuration, params.options.providerBinding) } : {}),
                 ...(params.options.providerBinding ? { providerBinding: params.options.providerBinding } : {}),
             };

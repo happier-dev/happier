@@ -2,7 +2,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { parseQualifiedPluginContributionKey, PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
-import { ProviderManagedUnavailableConnectedAccountPurposeV1Schema, resolveProviderManagedRuntimeDeclarationV1 } from './contributions/v1.js';
+import { ProviderManagedUnavailableConnectedAccountPurposeV1Schema, resolveProviderManagedRuntimeFromContributionV1 } from './contributions/v1.js';
 import { projectProviderManagedConnectedAccountPurposeV1 } from './connections/sourceFactsV1.js';
 import { areProviderContributionKeysEqualV1 } from './contributionIdentityV1.js';
 import { ProviderContributionKeySchema, ProviderMachineIdSchema } from './ids.js';
@@ -15,20 +15,20 @@ export const ProviderGatewayContributionV1Schema = lazyZodSchema(() => z.strictO
 }));
 export type ProviderGatewayContributionV1 = z.infer<typeof ProviderGatewayContributionV1Schema>;
 
-/** Resolve declaration-local vendor identities through the managed-runtime owner. */
+/** The existing gateway setup flow configures managed Provider connections. */
 export function readProviderGatewayContributionPurposesV1(contributionKey: string, declarations: readonly AccountProviderDeclarationV1[]) {
     const declaration = declarations.find(row => areProviderContributionKeysEqualV1(row.contributionKey, contributionKey));
     const identity = parseQualifiedPluginContributionKey(contributionKey);
     if (!declaration || !identity) return null;
     if (!declaration.definition.managedRuntime) return [];
-    return resolveProviderManagedRuntimeDeclarationV1({ implementationIdentity: identity,
-        managedRuntime: declaration.definition.managedRuntime }).connectedAccounts
+    return resolveProviderManagedRuntimeFromContributionV1({ implementationIdentity: identity,
+        definition: { ...declaration.definition, managedRuntime: declaration.definition.managedRuntime } }).connectedAccounts
         .map(projectProviderManagedConnectedAccountPurposeV1);
 }
 
 export type ProviderGatewayFamilyAvailabilityV1 =
     | (NonNullable<ReturnType<typeof readProviderGatewayContributionPurposesV1>>[number] & Readonly<{ status: 'available' }>)
-    | (NonNullable<ReturnType<typeof resolveProviderManagedRuntimeDeclarationV1>['unavailableConnectedAccounts']>[number] & Readonly<{ status: 'unavailable' }>);
+    | (NonNullable<ReturnType<typeof resolveProviderManagedRuntimeFromContributionV1>['unavailableConnectedAccounts']>[number] & Readonly<{ status: 'unavailable' }>);
 
 /** Passive family presentation never expands selectable or executable purposes. */
 export function readProviderGatewayFamilyAvailabilityV1(contributionKey: string,
@@ -38,8 +38,8 @@ export function readProviderGatewayFamilyAvailabilityV1(contributionKey: string,
     const identity = parseQualifiedPluginContributionKey(contributionKey);
     if (!declaration || !identity) return null;
     if (!declaration.definition.managedRuntime) return [];
-    const managedRuntime = resolveProviderManagedRuntimeDeclarationV1({ implementationIdentity: identity,
-        managedRuntime: declaration.definition.managedRuntime });
+    const managedRuntime = resolveProviderManagedRuntimeFromContributionV1({ implementationIdentity: identity,
+        definition: { ...declaration.definition, managedRuntime: declaration.definition.managedRuntime } });
     return [
         ...managedRuntime.connectedAccounts.map(purpose => ({ ...projectProviderManagedConnectedAccountPurposeV1(purpose), status: 'available' as const })),
         ...(managedRuntime.unavailableConnectedAccounts ?? []).map(purpose => ({ ...purpose, status: 'unavailable' as const })),

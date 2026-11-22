@@ -18,7 +18,7 @@ import {
   ProviderConnectionIdSchema,
   ProviderContributionV1Schema,
   ProviderSettingsV1Schema,
-  resolveProviderManagedRuntimeDeclarationV1,
+  resolveProviderManagedRuntimeFromContributionV1,
 } from '@happier-dev/protocol';
 
 import type { ResolvedManagedProviderRuntime } from '@/plugins/projection/registry/types';
@@ -79,26 +79,26 @@ describe('managed Provider catalog runtime composition', () => {
           parser: 'openai-models',
         }],
       },
+      connectedAccounts: [{
+        purpose: 'upstream',
+        service: {
+          pluginId: 'happier.connected-account.example',
+          localId: 'example',
+        },
+        required: true,
+        materializationKinds: ['httpHeaders'],
+      }],
+      requestAuthUses: [{
+        purpose: 'upstream',
+        materialization: {
+          kind: 'httpHeaders',
+          origin: 'https://api.example.test',
+          headerNames: ['authorization'],
+        },
+      }],
       managedRuntime: {
         kind: 'managed',
         endpointTemplateIds: ['responses'],
-        connectedAccounts: [{
-          purpose: 'upstream',
-          service: {
-            pluginId: 'happier.connected-account.example',
-            localId: 'example',
-          },
-          required: true,
-          materializationKinds: ['httpHeaders'],
-        }],
-        requestAuthUses: [{
-          purpose: 'upstream',
-          materialization: {
-            kind: 'httpHeaders',
-            origin: 'https://api.example.test',
-            headerNames: ['authorization'],
-          },
-        }],
       },
       discovery: {
         v: 1,
@@ -116,12 +116,12 @@ describe('managed Provider catalog runtime composition', () => {
     if (!definition.managedRuntime) {
       throw new Error('Expected public managed Provider declaration');
     }
-    const managedRuntime = resolveProviderManagedRuntimeDeclarationV1({
+    const managedRuntime = resolveProviderManagedRuntimeFromContributionV1({
       implementationIdentity: {
         pluginId: 'happier.provider.cliproxyapi',
         localId: 'cliproxyapi',
       },
-      managedRuntime: definition.managedRuntime,
+      definition: { ...definition, managedRuntime: definition.managedRuntime },
     });
     const contribution = {
       provenance,

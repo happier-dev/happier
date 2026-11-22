@@ -1,9 +1,10 @@
 import * as React from 'react';
-import { ProviderBoundModelRefSchema, type ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
+import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
 import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
 import type { PluginUiSelectActionInputHostActionV1, PluginUiSelectActionInputResultV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { SessionModelPicker } from '@/components/sessions/modelPicker/SessionModelPicker';
+import type { SessionModelPickerValue } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
 import { useExactModelChoice } from '@/components/sessions/modelPicker/useExactModelChoice';
 import { backendTargetKeysMatch } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
@@ -92,7 +93,8 @@ export function useReviewExecutionRunLaunchOptions(params: Readonly<{
         enabled: chosenBackend !== null && params.modelSelectionEnabled !== false && !params.credentialSelectionOnly,
         teamModelChoice: teamCredential.pickerProps,
     });
-    const onSelectModel = React.useCallback((selection: ProviderBoundModelRef | null) => {
+    const onSelectModel = React.useCallback((selection: SessionModelPickerValue) => {
+        if (selection && !('providerConnectionId' in selection)) return;
         params.onSelectionChange?.();
         params.setActionInput(previous => selection
             ? applyExecutionRunChildSelection(previous, selection) : clearExecutionRunChildSelection(previous));

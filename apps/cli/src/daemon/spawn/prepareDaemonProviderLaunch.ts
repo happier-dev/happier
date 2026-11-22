@@ -19,7 +19,7 @@ import { readLeasedAgentProviderRequirements } from '@/plugins/runtime/providerB
 import { createProviderRuntimeStateStore } from '@/providers/runtimeState';
 import type { ProviderRuntimeModelProjectionReader } from '@/providers/spawn/runtimeCatalog';
 import { prepareProviderLaunch } from '@/providers/lifecycle/prepareLaunch';
-import type { PreparedManagedPurposeLaunch } from '@/providers/lifecycle/managedPurposeLaunch';
+import type { ManagedPurposeLaunchContext, PreparedManagedPurposeLaunch } from '@/providers/lifecycle/managedPurposeLaunch';
 import type { ProviderLaunchResourceScope } from '@/providers/lifecycle/resourceScope';
 import type { ProviderSpawnAuthorizationAttempt } from '@/providers/spawn/authorize';
 import { createRuntimeProviderSpawnAuthorizationAttempt } from '@/providers/spawn/authorize';
@@ -82,7 +82,7 @@ export async function prepareDaemonProviderLaunch(input: Readonly<{
     providerRuntimeHomeDir?: string;
     savedSecretOperationContext?: SavedSecretOperationContextV1;
     readModelProjection?: ProviderRuntimeModelProjectionReader;
-}>): Promise<PreparedDaemonProviderLaunch | DaemonProviderLaunchRefusal> {
+}> & Pick<ManagedPurposeLaunchContext, 'purposeBindings' | 'connectedAccountRequestAuth' | 'providerConnectionHttpTransport' | 'resolveProviderAddresses' | 'observeConnectedAccountSourceModels'>): Promise<PreparedDaemonProviderLaunch | DaemonProviderLaunchRefusal> {
     const sourceModel = input.teamModelRow;
     if (sourceModel && (sourceModel.availability !== 'available'
         || sourceModel.selection.agentTargetKey !== input.modelSelection?.ref.agentTargetKey
@@ -172,6 +172,9 @@ export async function prepareDaemonProviderLaunch(input: Readonly<{
             }),
             happyHomeDir: input.providerRuntimeHomeDir ?? configuration.happyHomeDir, signal: input.signal,
             resolveManagedPurposeBindingIntentSelection: input.resolveManagedPurposeBindingIntentSelection,
+            purposeBindings: input.purposeBindings, connectedAccountRequestAuth: input.connectedAccountRequestAuth,
+            observeConnectedAccountSourceModels: input.observeConnectedAccountSourceModels,
+            providerConnectionHttpTransport: input.providerConnectionHttpTransport, resolveProviderAddresses: input.resolveProviderAddresses,
             accountAuthority: input.managedProviderAccountAuthority },
         resolvePrerequisites: async (providerBindingContext) => {
             const providerPrerequisites = await resolveSpawnChildEnvironment({

@@ -9,7 +9,8 @@ import { validatePluginHookPayloadV1 } from '@happier-dev/protocol/plugins/hooks
 import { ProviderErrorCodeV1Schema, type ProviderErrorCodeV1 } from '@happier-dev/protocol/providers/errors';
 import { formatSessionModelTransitionFailureCode } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 import { isModelRefGrantedV1, isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
-import type { SessionPendingQueueDeliveryTiming, ProviderBoundModelRef, SessionModelTransitionResultV1, AgentSessionStartupInstructionsMarkerV1 } from '@happier-dev/protocol';
+import type { SessionPendingQueueDeliveryTiming, SessionModelTransitionResultV1, AgentSessionStartupInstructionsMarkerV1 } from '@happier-dev/protocol';
+import { projectSessionModelTransitionRequestedSelectionV1 } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 import type { AgentRuntimeDiagnosticDataV1 } from '@happier-dev/protocol/runtime/agentRuntimeDiagnosticV1';
 import type { SessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
@@ -652,8 +653,8 @@ export async function runPermissionModePromptLoop(opts: {
     ) => Promise<void>,
     restartRuntime?: SessionModelTransitionRestart,
   ) => Promise<SessionModelTransitionResultV1>;
-  readActiveModelSelection?: () => ProviderBoundModelRef;
-  readArmedModelSelection?: () => ProviderBoundModelRef | null;
+  readActiveModelSelection?: () => SessionModelRef;
+  readArmedModelSelection?: () => SessionModelRef | null;
   /**
    * Registers replay/Follow effects against the exact localId settled by the host's canonical
    * provider-input outcome normalizer. Transport send completion is never provider acceptance.
@@ -1624,7 +1625,7 @@ export async function runPermissionModePromptLoop(opts: {
               startupInstructions: effectiveAppendSystemPrompt,
               toolSelection: agentComposition ? { managedPluginIds: agentComposition.managedPluginIds,
                 selectedTools: agentComposition.selectedTools, selectedToolBindings: agentComposition.selectedToolBindings } : null,
-              readSelection: opts.readActiveModelSelection } } : {}),
+              readSelection: () => projectSessionModelTransitionRequestedSelectionV1(opts.readActiveModelSelection!()) } } : {}),
             ...(shouldApplyFreshSessionSystemPrompt && transformedDispatchPrompt === providerPrompt
               ? { injectedPromptComponents: opts.readSessionPromptPlanComposition?.()?.components } : {}),
             retainPromptComposition: async composition => {

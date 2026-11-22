@@ -108,6 +108,9 @@ export function useNewSessionWizardProps(params: Readonly<{
     modelSelection?: NewSessionWizardAgentProps['modelSelection'];
     setModelMode: (mode: ModelMode) => void;
     setModelSelection?: NewSessionWizardAgentProps['setModelSelection'];
+    modelSourceBrowse?: NewSessionWizardAgentProps['modelSourceBrowse'];
+    modelCatalogConnectedServices?: NewSessionWizardAgentProps['modelCatalogConnectedServices'];
+    selectedProviderModelGroups?: NewSessionWizardAgentProps['selectedProviderModelGroups'];
     teamCredentialResources?: NewSessionWizardAgentProps['teamCredentialResources'];
     teamCredentialDisplayNames?: NewSessionWizardAgentProps['teamCredentialDisplayNames'];
     teamNameById?: NewSessionWizardAgentProps['teamNameById'];
@@ -413,6 +416,9 @@ export function useNewSessionWizardProps(params: Readonly<{
             modelSelection: params.modelSelection,
             setModelMode: params.setModelMode,
             setModelSelection: params.setModelSelection,
+            modelSourceBrowse: params.modelSourceBrowse,
+            modelCatalogConnectedServices: params.modelCatalogConnectedServices,
+            selectedProviderModelGroups: params.selectedProviderModelGroups,
             teamCredentialResources: params.teamCredentialResources,
             teamCredentialDisplayNames: params.teamCredentialDisplayNames,
             teamNameById: params.teamNameById,
@@ -488,6 +494,9 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.setAcpSessionModeId,
         params.setModelMode,
         params.setModelSelection,
+        params.modelSourceBrowse,
+        params.modelCatalogConnectedServices,
+        params.selectedProviderModelGroups,
         params.teamCredentialResources,
         params.teamCredentialDisplayNames,
         params.teamNameById,

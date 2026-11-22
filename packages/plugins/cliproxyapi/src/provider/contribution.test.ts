@@ -6,7 +6,7 @@ import { CLIPROXYAPI_PROVIDER_CONTRIBUTION } from './contribution.js';
 describe('CLIPROXYAPI_PROVIDER_CONTRIBUTION', () => {
   it('publishes the Gemini key route with its native header and credential-free catalog', () => {
     const parsed = ProviderContributionV1Schema.parse(CLIPROXYAPI_PROVIDER_CONTRIBUTION);
-    expect(parsed.managedRuntime?.connectedAccounts).toEqual(expect.arrayContaining([
+    expect(parsed.connectedAccounts).toEqual(expect.arrayContaining([
       expect.objectContaining({
         purpose: 'gemini-upstream',
         service: { pluginId: 'happier.agent.gemini', localId: 'gemini-account' },
@@ -14,7 +14,7 @@ describe('CLIPROXYAPI_PROVIDER_CONTRIBUTION', () => {
         staticModels: expect.arrayContaining([expect.objectContaining({ id: 'gemini-2.5-flash' })]),
       }),
     ]));
-    expect(parsed.managedRuntime?.requestAuthUses).toEqual(expect.arrayContaining([
+    expect(parsed.requestAuthUses).toEqual(expect.arrayContaining([
       expect.objectContaining({
         purpose: 'gemini-upstream',
         materialization: {
@@ -26,7 +26,7 @@ describe('CLIPROXYAPI_PROVIDER_CONTRIBUTION', () => {
   });
   it('publishes the Muse key route through the same managed account declaration', () => {
     const parsed = ProviderContributionV1Schema.parse(CLIPROXYAPI_PROVIDER_CONTRIBUTION);
-    expect(parsed.managedRuntime?.connectedAccounts).toEqual(expect.arrayContaining([
+    expect(parsed.connectedAccounts).toEqual(expect.arrayContaining([
       expect.objectContaining({
         purpose: 'meta-upstream',
         service: { pluginId: 'happier.agent.muse', localId: 'muse-account' },
@@ -34,7 +34,7 @@ describe('CLIPROXYAPI_PROVIDER_CONTRIBUTION', () => {
         staticModels: expect.arrayContaining([expect.objectContaining({ id: 'muse-spark-1.3' })]),
       }),
     ]));
-    expect(parsed.managedRuntime?.requestAuthUses).toEqual(expect.arrayContaining([
+    expect(parsed.requestAuthUses).toEqual(expect.arrayContaining([
       expect.objectContaining({
         purpose: 'meta-upstream',
         materialization: {
@@ -46,7 +46,7 @@ describe('CLIPROXYAPI_PROVIDER_CONTRIBUTION', () => {
   });
   it('publishes credential-free SDK compatibility models for each managed service without claiming tool support', () => {
     const parsed = ProviderContributionV1Schema.parse(CLIPROXYAPI_PROVIDER_CONTRIBUTION);
-    const families = parsed.managedRuntime?.connectedAccounts ?? [];
+    const families = parsed.connectedAccounts ?? [];
     expect(families).toEqual(expect.arrayContaining([
       expect.objectContaining({
         purpose: 'openai-upstream',
@@ -89,7 +89,7 @@ describe('CLIPROXYAPI_PROVIDER_CONTRIBUTION', () => {
     // Parsing the real contribution exercises the strict descriptor consumer,
     // not a reconstructed copy of its model-option shape.
     const families = ProviderContributionV1Schema.parse(CLIPROXYAPI_PROVIDER_CONTRIBUTION)
-      .managedRuntime?.connectedAccounts ?? [];
+      .connectedAccounts ?? [];
     const codexModels = families.find((family) => family.purpose === 'openai-upstream')?.staticModels ?? [];
     const claudeModels = families.find((family) => family.purpose === 'anthropic-upstream')?.staticModels ?? [];
     const values = (models: typeof codexModels, id: string) => models.find((model) => model.id === id)
@@ -169,22 +169,22 @@ describe('CLIPROXYAPI_PROVIDER_CONTRIBUTION', () => {
           destination: { kind: 'httpHeader', name: 'Authorization', format: 'bearer' },
         }],
       },
+      connectedAccounts: expect.arrayContaining([expect.objectContaining({
+        purpose: 'openai-upstream',
+        title: {
+          key: 'managedPurpose.openai.title',
+          fallback: 'ChatGPT account or pool',
+        },
+      }), expect.objectContaining({
+        purpose: 'anthropic-upstream',
+        title: {
+          key: 'managedPurpose.anthropic.title',
+          fallback: 'Claude account or pool',
+        },
+      })]),
       managedRuntime: {
         kind: 'managed',
         connectedAccountPurposeBindingPolicy: { minimumBound: 1 },
-        connectedAccounts: expect.arrayContaining([expect.objectContaining({
-          purpose: 'openai-upstream',
-          title: {
-            key: 'managedPurpose.openai.title',
-            fallback: 'ChatGPT account or pool',
-          },
-        }), expect.objectContaining({
-          purpose: 'anthropic-upstream',
-          title: {
-            key: 'managedPurpose.anthropic.title',
-            fallback: 'Claude account or pool',
-          },
-        })]),
       },
       catalog: {
         source: 'probe',
@@ -202,7 +202,7 @@ describe('CLIPROXYAPI_PROVIDER_CONTRIBUTION', () => {
   it('does not grant management or Connected Services authority to adopted external instances', () => {
     expect(CLIPROXYAPI_PROVIDER_CONTRIBUTION).not.toHaveProperty('modelLoad');
     expect(CLIPROXYAPI_PROVIDER_CONTRIBUTION).not.toHaveProperty('managedEndpoint');
-    expect(CLIPROXYAPI_PROVIDER_CONTRIBUTION).not.toHaveProperty('connectedAccounts');
+    expect(CLIPROXYAPI_PROVIDER_CONTRIBUTION.discovery).not.toHaveProperty('connectedAccounts');
     expect(CLIPROXYAPI_PROVIDER_CONTRIBUTION.discovery).not.toHaveProperty('managedStart');
     expect(CLIPROXYAPI_PROVIDER_CONTRIBUTION.discovery).not.toHaveProperty('installedCheck');
     expect(CLIPROXYAPI_PROVIDER_CONTRIBUTION.discovery).not.toHaveProperty('presenceCheck');

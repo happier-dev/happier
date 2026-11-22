@@ -228,9 +228,9 @@ export async function dispatchSessionControls1(inv: Pick<CoreInvocation, 'action
           if (!deps.sessionModelSet) {
             return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.model.set' };
           }
-          const teamCredentialModel = input.teamCredentialModel;
-          const modelId = teamCredentialModel === undefined ? readNonBlankOpaqueIdentifier(input.modelId) : null;
-          if (teamCredentialModel === undefined && !modelId) {
+          const { modelSelection, teamCredentialModel } = input;
+          const modelId = readNonBlankOpaqueIdentifier(input.modelId);
+          if (!modelSelection && !teamCredentialModel && !modelId) {
             return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           }
           const providerConnectionId = input.providerConnectionId === null
@@ -251,6 +251,7 @@ export async function dispatchSessionControls1(inv: Pick<CoreInvocation, 'action
               permissionModes: ctx.externalActionCredential.grant.permissionModes,
             } } : {}),
             ...(modelId ? { modelId } : {}),
+            ...(modelSelection !== undefined ? { modelSelection } : {}),
             ...(teamCredentialModel !== undefined ? { teamCredentialModel } : {}),
             ...(input.teamVisibilityGrantConsent !== undefined ? { teamVisibilityGrantConsent: input.teamVisibilityGrantConsent } : {}),
             ...(input.providerConnectionId !== undefined ? { providerConnectionId } : {}),

@@ -15,7 +15,7 @@ import {
   normalizeBackendTargetRefV2InputToV2,
   parseBackendTargetKeyV2,
 } from '../../backends/targets/backendTargetRefV2.js';
-import { ProviderBoundModelRefSchema } from '../../providers/selection/v1.js';
+import { PersonalSessionModelRefSchema } from '../../providers/selection/v2.js';
 import { ConnectedServiceBindingsV2IngressSchema } from '../../connect/connectedServiceBindings.js';
 import { AcpConfigOptionOverridesV1Schema } from '../../sessions/metadata/metadataOverridesV1.js';
 import { SessionCapabilitySelectionAuthoringV1Schema } from '../../reach/sessionCapabilitySelectionV1.js';
@@ -301,7 +301,7 @@ export type ExecutionRunReplaySeedRequest = z.infer<typeof ExecutionRunReplaySee
  * composition stays in the Voice intent input because it creates a second runtime.
  */
 export const ExecutionRunVoiceAgentIntentInputV1Schema = lazyZodSchema(() => z.strictObject({
-  commitModelSelection: zMini.optional(ProviderBoundModelRefSchema),
+  commitModelSelection: zMini.optional(PersonalSessionModelRefSchema),
   commitTeamCredentialModel: zMini.optional(TeamCredentialProviderModelSelectionV1Schema),
   voicePolicy: z.optional(z.strictObject({
     assistantLanguage: z.nullable(z.string().check(z.trim(), z.minLength(1))),
@@ -459,7 +459,7 @@ export const ExecutionRunStartRequestBaseSchema = lazyZodSchema(() => z.looseObj
    * authorization/materialization state for every start or resume.
    * Explicit null requests native settings; omission permits attached inheritance.
    */
-  modelSelection: zMini.optional(zMini.nullable(ProviderBoundModelRefSchema)),
+  modelSelection: zMini.optional(zMini.nullable(PersonalSessionModelRefSchema)),
   /** Explicit Account-default choice after attached inheritance requires a decision. */
   childSelection: z.optional(z.literal('agentDefault')),
   /** Account snapshots are supplied by host admission, never authored Run input. */

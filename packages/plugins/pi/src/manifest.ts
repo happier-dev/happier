@@ -11,7 +11,6 @@ import {
   PI_ANTHROPIC_API_KEY_PURPOSE_ID,
   PI_OPENAI_API_KEY_PURPOSE_ID,
   PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES,
-  PI_NATIVE_CONNECTED_ACCOUNT_PURPOSES,
 } from './agent/auth/services/qualifiedPurposes.js';
 import { AGENT_DEFINITION, AGENT_STATE_SHARING_DESCRIPTOR } from './agent/definition.js';
 import { PI_PREFLIGHT_SESSION_CONTROLS } from './agent/preflight/models.js';
@@ -108,7 +107,6 @@ export const PI_PLUGIN = definePlugin({
           service: { ...declaration.service },
           materializationKinds: [...declaration.materializationKinds],
           credentialKinds: [...declaration.credentialKinds],
-          ...('managedProviderEndpoint' in declaration ? { managedProviderEndpoint: declaration.managedProviderEndpoint } : {}),
         })),
         providerRequirements: {
           supportsReasoningEffort: true,
@@ -187,7 +185,7 @@ export const PI_PLUGIN = definePlugin({
       factory: createPiAgentRuntime,
       providerBinding: PI_PROVIDER_BINDING_ADAPTER,
       connectedAccountLaunch: {
-        environmentUses: PI_NATIVE_CONNECTED_ACCOUNT_PURPOSES.flatMap(row =>
+        environmentUses: PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES.flatMap(row =>
           'environmentKeys' in row.native ? row.native.environmentKeys.map(environmentKey => ({
             purpose: row.purpose, environmentKey,
           })) : []),

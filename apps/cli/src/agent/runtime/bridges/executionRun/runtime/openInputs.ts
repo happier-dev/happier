@@ -1,6 +1,7 @@
 import { AgentSessionConfigurationSnapshotV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
 import { readAgentDefaultModelSelectionV1 } from '@happier-dev/protocol/providers/selection/v1';
+import { isSessionModelRefSourceBound, PersonalSessionModelRefSchema, type PersonalSessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { resolveAgentStartBaselineSelectionV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import { TeamCredentialProviderModelSelectionV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
@@ -36,7 +37,7 @@ export type ExecutionRunAppliedParentSelectionReader = (
 
 export type ResolvedExecutionRunChildSelection = Readonly<{
     modelId?: string;
-    modelSelection?: ProviderBoundModelRef;
+    modelSelection?: PersonalSessionModelRef;
     teamCredentialModel?: TeamCredentialProviderModelSelectionV1;
     connectedServices?: ConnectedServiceBindingsV2 | null;
     selectionSource: 'explicit' | 'inherited' | 'independent' | 'retained';
@@ -96,7 +97,7 @@ export type ExecutionRunChildSelectionInput = Readonly<{
     agentCatalogEntry?: Pick<AgentCatalogEntry, 'connectedAccountServiceIds'> | null;
     lifecycle: 'attached' | 'independent' | 'retained';
     modelId?: string;
-    modelSelection?: ProviderBoundModelRef | null;
+    modelSelection?: PersonalSessionModelRef | null;
     teamCredentialModel?: TeamCredentialProviderModelSelectionV1;
     connectedServices?: ConnectedServiceBindingsV2 | null;
     connectedServicesDefaultServiceIds?: readonly string[];
@@ -112,7 +113,7 @@ export function executionRunChildSelectionNeedsAppliedParent(input: Pick<Executi
     'lifecycle' | 'childSelection' | 'modelSelection' | 'modelId' | 'teamCredentialModel' | 'connectedServices'
     | 'connectedServicesDefaultServiceIds'>): boolean {
     return input.lifecycle === 'attached' && input.childSelection !== 'agentDefault'
-        && input.modelSelection !== null && !input.modelSelection?.providerConnectionId && input.teamCredentialModel === undefined
+        && input.modelSelection !== null && !(input.modelSelection && isSessionModelRefSourceBound(input.modelSelection)) && input.teamCredentialModel === undefined
         && !((input.modelSelection !== undefined || input.modelId !== undefined) && (input.connectedServices !== undefined
             || (input.connectedServicesDefaultServiceIds?.length ?? 0) > 0));
 }
@@ -257,9 +258,9 @@ function resolveExecutionRunChildSelectionInput(input: ExecutionRunChildSelectio
 function resolveExecutionRunModelInput(input: Readonly<{
     backendTarget: BackendTargetRefV2Input;
     modelId?: string;
-    modelSelection?: ProviderBoundModelRef | null;
-}>): Readonly<{ modelSelection?: ProviderBoundModelRef; modelId?: string }> {
-    const modelSelection = input.modelSelection ? ProviderBoundModelRefSchema.parse(input.modelSelection) : undefined;
+    modelSelection?: PersonalSessionModelRef | null;
+}>): Readonly<{ modelSelection?: PersonalSessionModelRef; modelId?: string }> {
+    const modelSelection = input.modelSelection ? PersonalSessionModelRefSchema.parse(input.modelSelection) : undefined;
     if (modelSelection && !areExecutionRunBackendTargetsEqual(modelSelection.agentTargetKey, input.backendTarget)) {
         throw new Error('Execution-run model selection does not target its backend');
     }
@@ -274,7 +275,7 @@ export function buildExecutionRunConfiguration(input: Readonly<{
     backendTarget: BackendTargetRefV2Input;
     modelId?: string;
     modelSelectionSource?: ResolvedExecutionRunChildSelection['modelSelectionSource'];
-    modelSelection?: ProviderBoundModelRef | null;
+    modelSelection?: PersonalSessionModelRef | null;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     acpSessionModeId?: string;
     permissionMode: string;
@@ -284,7 +285,7 @@ export function buildExecutionRunConfiguration(input: Readonly<{
     nativeSandbox?: AgentSessionConfigurationSnapshot['nativeSandbox'];
     updatedAtMs: number;
 }>): Readonly<{
-    modelSelection?: ProviderBoundModelRef;
+    modelSelection?: PersonalSessionModelRef;
     configuration: AgentSessionConfigurationSnapshot;
 }> {
     const { modelSelection, modelId } = resolveExecutionRunModelInput(input);

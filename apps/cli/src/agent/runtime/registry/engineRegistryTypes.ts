@@ -6,7 +6,8 @@ import type {
 import type { ExternalSessionExecutionSurface } from '@/session/external/providerOps';
 import type { HostProviderCliAttachSurface } from '@/session/attach/providerCliAttach';
 import type { AttachSurfaceV1, CheckpointSurfaceV1, ForkSurfaceV1, HandoffSurfaceV1 } from '@happier-dev/agents';
-import type { AccountSettings, AcpConfigOptionOverridesV1, BackendTargetRefV2Input, CodingPromptBehaviorV1, HostSemanticEventV1, PortableRuntimeDescriptorV1, ProviderBoundModelRef, ProviderErrorV1, SessionEnvOverlayV1, SessionInputCausalPermissionAuthorityV1, SessionRunPromptReadActionIdV1, TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol';
+import type { PersonalSessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
+import type { AccountSettings, AcpConfigOptionOverridesV1, BackendTargetRefV2Input, CodingPromptBehaviorV1, HostSemanticEventV1, PortableRuntimeDescriptorV1, ProviderErrorV1, SessionEnvOverlayV1, SessionInputCausalPermissionAuthorityV1, SessionRunPromptReadActionIdV1, TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol';
 import type {
     AgentSessionConfigurationSnapshot,
     AgentSessionOpenRequest,
@@ -232,7 +233,7 @@ export type CreateCliExecutionRunBackendParams = Readonly<{
     backendId: string;
     backendTarget?: BackendTargetRefV2Input;
     modelId?: string;
-    modelSelection?: ProviderBoundModelRef;
+    modelSelection?: PersonalSessionModelRef;
     modelSelectionSource?: 'explicit' | 'inherited';
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     configuration?: AgentSessionConfigurationSnapshot;

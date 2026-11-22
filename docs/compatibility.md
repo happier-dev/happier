@@ -20,6 +20,19 @@ without the field. The inspected 0.2 frontier at `24731ff73c` has no Session
 readiness contract. Earlier strict 0.3 development readers require matching
 sources. There is no persisted format change.
 
+## Provider-qualified Connected Account model selection (unreleased 0.3)
+
+A Connected Account model selection carries the qualified Provider purpose,
+endpoint template and model. The existing connected-service selection supplies
+the Account. Clients and runtimes that author, resume or launch this form use
+matching 0.3 development code. Team sources with a qualified purpose carry it
+with the saved Account and its existing source revision.
+
+The former Agent-managed route and its 0.3 development selection are replaced in
+place. If a pre-cut development selection cannot be resolved, choose the model
+and Account again through the existing picker. This cut preserves the released
+0.2 native model selection path and existing saved Provider connection path.
+
 ## Workflow child completion receipts (unreleased 0.3)
 
 Private Workflow invocation progress retains optional `awaitedWorkflows` from

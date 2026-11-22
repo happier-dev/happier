@@ -4,6 +4,7 @@ import {
   ProviderContributionV1Schema,
   createProviderManagedRuntimeDeclarationEqualityKeyV1,
   resolveProviderManagedRuntimeDeclarationV1,
+  resolveProviderManagedRuntimeFromContributionV1,
 } from './v1.js';
 import * as gatewayContributions from '../gatewayContributionsV1.js';
 
@@ -44,6 +45,24 @@ function validContribution() {
 }
 
 describe('ProviderContributionV1Schema', () => {
+  it('admits connection-scoped request auth on a direct Provider and rejects undeclared purposes and endpoints', () => {
+    const source = { purpose: 'model-inference', service: 'vendor-account',
+      materializationKinds: ['httpHeaders'], endpointTemplateIds: ['responses'] };
+    const use = { purpose: source.purpose, materialization: { kind: 'httpHeaders',
+      origin: 'https://gateway.example', headerNames: ['authorization', 'x-gateway-team'], queryParameterNames: ['teamId'] } };
+    const declaration = { ...validContribution(), connectedAccounts: [source], requestAuthUses: [use] };
+    expect(ProviderContributionV1Schema.parse(declaration)).toMatchObject({
+      connectedAccounts: [source], requestAuthUses: [use],
+    });
+    expect(ProviderContributionV1Schema.safeParse({ ...declaration, connectedAccounts: [] }).success).toBe(false);
+    expect(ProviderContributionV1Schema.safeParse({ ...declaration,
+      connectedAccounts: [{ ...source, endpointTemplateIds: ['undeclared'] }],
+    }).success).toBe(false);
+    expect(ProviderContributionV1Schema.safeParse({ ...declaration,
+      connectedAccounts: [{ ...source, endpointTemplateIds: ['responses', 'responses'] }],
+    }).success).toBe(false);
+  });
+
   it('publishes passive unavailable families without creating executable purposes or changing runtime identity', () => {
     const active = Array.from({ length: 4 }, (_, index) => ({ purpose: `active-${index}`, service: `service-${index}` }));
     const unavailable = Array.from({ length: 4 }, (_, index) => ({
@@ -54,20 +73,22 @@ describe('ProviderContributionV1Schema', () => {
     }));
     const base = { ...validContribution(),
       catalog: { ...validContribution().catalog, sourceRegistryVersion: 'managed-client/v1' },
-      managedRuntime: { kind: 'managed', endpointTemplateIds: ['responses'], connectedAccounts: active },
+      connectedAccounts: active,
+      managedRuntime: { kind: 'managed', endpointTemplateIds: ['responses'] },
     };
     const contribution = ProviderContributionV1Schema.parse({ ...base, managedRuntime: {
       ...base.managedRuntime, unavailableConnectedAccounts: unavailable,
     } });
     const implementationIdentity = { pluginId: 'acme.gateway', localId: 'gateway' };
-    const managedRuntime = resolveProviderManagedRuntimeDeclarationV1({ implementationIdentity, managedRuntime: contribution.managedRuntime! });
+    const managedRuntime = resolveProviderManagedRuntimeFromContributionV1({ implementationIdentity,
+      definition: { ...contribution, managedRuntime: contribution.managedRuntime! } });
     expect(managedRuntime.connectedAccounts.map(row => row.purpose)).toEqual(active.map(row => row.purpose));
     expect(managedRuntime.requestAuthUses).toEqual([]);
     expect(managedRuntime.unavailableConnectedAccounts?.[0]).toMatchObject({
       ...unavailable[0], service: { pluginId: implementationIdentity.pluginId, localId: unavailable[0].service },
     });
     expect(createProviderManagedRuntimeDeclarationEqualityKeyV1({ implementationIdentity, managedRuntime }))
-      .toBe(createProviderManagedRuntimeDeclarationEqualityKeyV1({ implementationIdentity, managedRuntime: ProviderContributionV1Schema.parse(base).managedRuntime! }));
+      .toBe(createProviderManagedRuntimeDeclarationEqualityKeyV1({ implementationIdentity, managedRuntime: resolveProviderManagedRuntimeFromContributionV1({ implementationIdentity, definition: { ...contribution, managedRuntime: ProviderContributionV1Schema.parse(base).managedRuntime! } }) }));
     const declarations = [{ contributionKey: 'acme.gateway/gateway', definition: contribution, provenance: 'first_party' as const }];
     const families = gatewayContributions.readProviderGatewayFamilyAvailabilityV1('acme.gateway/gateway', declarations);
     expect(families?.filter(row => row.status === 'available')).toHaveLength(4);
@@ -93,18 +114,20 @@ describe('ProviderContributionV1Schema', () => {
     const value = {
       ...validContribution(),
       catalog: { ...validContribution().catalog, sourceRegistryVersion: 'managed-client/v1' },
-      managedRuntime: { kind: 'managed', endpointTemplateIds: ['responses'], connectedAccounts: [connectedAccount] },
+      connectedAccounts: [connectedAccount],
+      managedRuntime: { kind: 'managed', endpointTemplateIds: ['responses'] },
     };
     const base = ProviderContributionV1Schema.parse(value);
-    const restricted = ProviderContributionV1Schema.parse({ ...value, managedRuntime: {
-      ...value.managedRuntime, connectedAccounts: [{ ...connectedAccount, operationRestriction }],
-    } });
+    const restricted = ProviderContributionV1Schema.parse({ ...value,
+      connectedAccounts: [{ ...connectedAccount, operationRestriction }],
+    });
     const identity = { pluginId: 'acme.gateway', localId: 'gateway' };
-    const resolve = (managedRuntime: NonNullable<typeof base.managedRuntime>) =>
-      resolveProviderManagedRuntimeDeclarationV1({ implementationIdentity: identity, managedRuntime });
-    expect(resolve(restricted.managedRuntime!).connectedAccounts[0]).toMatchObject({ operationRestriction });
-    expect(createProviderManagedRuntimeDeclarationEqualityKeyV1({ implementationIdentity: identity, managedRuntime: restricted.managedRuntime! }))
-      .toBe(createProviderManagedRuntimeDeclarationEqualityKeyV1({ implementationIdentity: identity, managedRuntime: base.managedRuntime! }));
+    const resolve = (definition: typeof base) =>
+      resolveProviderManagedRuntimeFromContributionV1({ implementationIdentity: identity,
+        definition: { ...definition, managedRuntime: definition.managedRuntime! } });
+    expect(resolve(restricted).connectedAccounts[0]).toMatchObject({ operationRestriction });
+    expect(createProviderManagedRuntimeDeclarationEqualityKeyV1({ implementationIdentity: identity, managedRuntime: resolve(restricted) }))
+      .toBe(createProviderManagedRuntimeDeclarationEqualityKeyV1({ implementationIdentity: identity, managedRuntime: resolve(base) }));
   });
 
   it('preserves an explicit managed client credential requirement without accepting an optional override', () => {
@@ -181,20 +204,21 @@ describe('ProviderContributionV1Schema', () => {
     const value = {
       ...validContribution(),
       catalog: { ...validContribution().catalog, sourceRegistryVersion: 'sdk-v1' },
-      managedRuntime: { kind: 'managed' as const, endpointTemplateIds: ['responses'], connectedAccounts: [{
+      connectedAccounts: [{
         purpose: 'upstream', service: { pluginId: 'acme.service', localId: 'subscription' },
         endpointTemplateIds: ['responses'], staticModels: [model],
-      }] },
+      }],
+      managedRuntime: { kind: 'managed' as const, endpointTemplateIds: ['responses'] },
     };
     const contribution = ProviderContributionV1Schema.parse(value);
-    const resolved = resolveProviderManagedRuntimeDeclarationV1({
+    const resolved = resolveProviderManagedRuntimeFromContributionV1({
       implementationIdentity: { pluginId: 'acme.gateway', localId: 'gateway' },
-      managedRuntime: contribution.managedRuntime!,
+      definition: { ...contribution, managedRuntime: contribution.managedRuntime! },
     });
     expect(resolved.connectedAccounts[0]).toMatchObject({ staticModels: [model] });
-    expect(ProviderContributionV1Schema.safeParse({ ...value, managedRuntime: {
-      ...value.managedRuntime, connectedAccounts: [{ ...value.managedRuntime.connectedAccounts[0], staticModels: [model, model] }],
-    } }).success).toBe(false);
+    expect(ProviderContributionV1Schema.safeParse({ ...value,
+      connectedAccounts: [{ ...value.connectedAccounts[0], staticModels: [model, model] }],
+    }).success).toBe(false);
   });
 
   it('G1 retains explicit connection-machine custody at the declaration normalizer', () => {
@@ -440,7 +464,6 @@ describe('ProviderContributionV1Schema', () => {
     const managedRuntime = {
       kind: 'managed',
       dependencies: ['gateway-runtime'],
-      connectedAccounts: [],
       endpointTemplateIds: ['responses'],
     } as const;
     const value = {
@@ -525,36 +548,27 @@ describe('ProviderContributionV1Schema', () => {
     const value = { ...base, catalog: {
       ...base.catalog,
       sourceRegistryVersion: 'gateway-model-registry/v1',
-    }, managedRuntime: {
+    }, connectedAccounts, managedRuntime: {
       kind: 'managed',
       endpointTemplateIds: ['responses'],
-      connectedAccounts,
     } } as const;
     expect(ProviderContributionV1Schema.safeParse(value).success).toBe(true);
     expect(ProviderContributionV1Schema.safeParse({
       ...value,
-      managedRuntime: {
-        ...value.managedRuntime,
-        connectedAccounts: [...connectedAccounts, {
-          purpose: 'purpose-32', service: 'account-32', materializationKinds: ['httpHeaders'],
-        }],
-      },
+      connectedAccounts: [...connectedAccounts, {
+        purpose: 'purpose-32', service: 'account-32', materializationKinds: ['httpHeaders'],
+      }],
     }).success).toBe(false);
     expect(ProviderContributionV1Schema.safeParse({
       ...value,
-      managedRuntime: {
-        ...value.managedRuntime,
-        connectedAccounts: connectedAccounts.map((entry, index) => index === 31
-          ? { ...entry, purpose: 'purpose-0' }
-          : entry),
-      },
+      connectedAccounts: connectedAccounts.map((entry, index) => index === 31
+        ? { ...entry, purpose: 'purpose-0' }
+        : entry),
     }).success).toBe(false);
   });
 
-  it('binds managed request-auth uses to declared connected-account purposes and materialization kinds', () => {
-    const managedRuntime = {
-      kind: 'managed',
-      endpointTemplateIds: ['responses'],
+  it('binds Provider request-auth uses to declared connected-account purposes and materialization kinds', () => {
+    const source = {
       connectedAccounts: [{
         purpose: 'provider.inference',
         service: 'openai',
@@ -580,34 +594,28 @@ describe('ProviderContributionV1Schema', () => {
         ...base.catalog,
         sourceRegistryVersion: 'gateway-model-registry/v1',
       },
-      managedRuntime,
+      ...source,
     };
 
     expect(ProviderContributionV1Schema.safeParse(value).success).toBe(true);
     expect(ProviderContributionV1Schema.safeParse({
       ...value,
-      managedRuntime: {
-        ...managedRuntime,
-        requestAuthUses: [{
-          ...managedRuntime.requestAuthUses[0],
-          purpose: 'provider.undeclared',
-        }],
-      },
+      requestAuthUses: [{
+        ...source.requestAuthUses[0],
+        purpose: 'provider.undeclared',
+      }],
     }).success).toBe(false);
     expect(ProviderContributionV1Schema.safeParse({
       ...value,
-      managedRuntime: {
-        ...managedRuntime,
-        connectedAccounts: managedRuntime.connectedAccounts.map((entry) => (
-          entry.purpose === 'provider.inference'
-            ? { ...entry, materializationKinds: ['environment'] as const }
-            : entry
-        )),
-      },
+      connectedAccounts: source.connectedAccounts.map((entry) => (
+        entry.purpose === 'provider.inference'
+          ? { ...entry, materializationKinds: ['environment'] as const }
+          : entry
+      )),
     }).success).toBe(false);
   });
 
-  it('bounds managed request-auth uses and rejects duplicate purpose authority', () => {
+  it('bounds Provider request-auth uses and rejects duplicate purpose authority', () => {
     const connectedAccounts = Array.from({ length: 32 }, (_, index) => ({
       purpose: `provider.request-${index}`,
       service: 'openai',
@@ -621,12 +629,6 @@ describe('ProviderContributionV1Schema', () => {
         headerNames: ['authorization'],
       },
     }));
-    const managedRuntime = {
-      kind: 'managed' as const,
-      endpointTemplateIds: ['responses'],
-      connectedAccounts,
-      requestAuthUses,
-    };
     const base = validContribution();
     const value = {
       ...base,
@@ -634,32 +636,26 @@ describe('ProviderContributionV1Schema', () => {
         ...base.catalog,
         sourceRegistryVersion: 'gateway-model-registry/v1',
       },
-      managedRuntime,
+      connectedAccounts, requestAuthUses,
     };
 
     expect(ProviderContributionV1Schema.safeParse(value).success).toBe(true);
     expect(ProviderContributionV1Schema.safeParse({
       ...value,
-      managedRuntime: {
-        ...managedRuntime,
-        requestAuthUses: [...requestAuthUses, {
-          purpose: 'provider.request-32',
-          materialization: {
-            kind: 'httpHeaders',
-            origin: 'https://api-32.example.com',
-            headerNames: ['authorization'],
-          },
-        }],
-      },
+      requestAuthUses: [...requestAuthUses, {
+        purpose: 'provider.request-32',
+        materialization: {
+          kind: 'httpHeaders',
+          origin: 'https://api-32.example.com',
+          headerNames: ['authorization'],
+        },
+      }],
     }).success).toBe(false);
     expect(ProviderContributionV1Schema.safeParse({
       ...value,
-      managedRuntime: {
-        ...managedRuntime,
-        requestAuthUses: requestAuthUses.map((use, index) => index === 31
-          ? { ...use, purpose: 'provider.request-0' }
-          : use),
-      },
+      requestAuthUses: requestAuthUses.map((use, index) => index === 31
+        ? { ...use, purpose: 'provider.request-0' }
+        : use),
     }).success).toBe(false);
   });
 

@@ -16,6 +16,10 @@ import type {
   ProviderContributionRegistryView,
   ProviderEndpointDnsEvidence,
 } from './types';
+export async function resolveProviderAddresses(hostname: string): Promise<readonly string[]> {
+  return (await lookup(hostname, { all: true, verbatim: true })).map(answer => answer.address);
+}
+
 import { getProviderContribution } from './lookup';
 import { resolveEffectiveProviderEndpointV1 } from '@happier-dev/protocol/providers/connections/v1';
 
@@ -121,8 +125,7 @@ export async function collectProviderConnectionsDnsEvidence(input: Readonly<{
     for (const url of urls) hostnamesToResolve.add(url.hostname);
   }
 
-  const resolveAddresses = input.resolveAddresses ?? (async (hostname: string) =>
-    (await lookup(hostname, { all: true, verbatim: true })).map((answer) => answer.address));
+  const resolveAddresses = input.resolveAddresses ?? resolveProviderAddresses;
   const addressesByHostname = new Map<string, readonly string[]>();
   const errorsByHostname = new Map<string, ProviderOperationAbandonedError>();
   const evidenceByConnectionId = new Map<string, ProviderEndpointDnsEvidence>();

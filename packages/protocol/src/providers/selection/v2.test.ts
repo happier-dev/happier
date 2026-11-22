@@ -7,6 +7,7 @@ import {
   SessionActiveModelSelectionSchema,
   SessionModelSelectionV2Schema,
   projectSessionModelSelectionV2ToV1,
+  projectSessionModelRefToExecutionModelSelection,
   sessionModelSelectionV2TeamBindingIntent,
   isSessionModelRefSourceBound,
   readSessionModelRefProviderConnectionId,
@@ -17,6 +18,24 @@ import { SessionActiveModelSelectionV1Schema } from './v1.js';
 import { SessionOwnerMetadataV1Schema, createSessionOwnerMetadataV1, projectSessionOwnerCompatibilityViewV1, projectSessionSharedMetadataV1 } from '../../sessions/metadata/sessionMetadataSchemasV1.js';
 
 describe('SessionModelSelectionV2', () => {
+  it('preserves an authored Connected Account purpose through execution and keeps credential ownership separate', () => {
+    const ref = {
+      source: 'connected_account',
+      purpose: { consumer: { pluginId: 'happier.provider.vercel-ai-gateway', localId: 'vercel-ai-gateway' }, purpose: 'gateway-inference' },
+      endpointTemplateId: 'anthropic-messages',
+      agentTargetKey: 'backend:claude',
+      modelId: 'anthropic/claude-sonnet',
+    };
+    const selection = SessionModelSelectionV2Schema.parse({ v: 2, ref, updatedAt: 1 });
+
+    expect(deserializeSessionModelSelection(serializeSessionModelSelection(selection))).toEqual(selection);
+    expect(projectSessionModelRefToExecutionModelSelection(selection.ref)).toEqual({ modelSelection: ref });
+    expect(projectSessionModelSelectionV2ToV1(selection)).toBeNull();
+    expect(isSessionModelRefSourceBound(selection.ref)).toBe(true);
+    expect(readSessionModelRefProviderConnectionId(selection.ref)).toBeNull();
+    expect(SessionModelSelectionV2Schema.safeParse({ ...selection, ref: { ...ref, accountId: 'another-account' } }).success).toBe(false);
+  });
+
   it('distinguishes credential-backed sources from Account connection identity', () => {
     const selections = [
       { selection: { v: 1, updatedAt: 1, ref: { agentTargetKey: 'backend:codex', providerConnectionId: null, modelId: 'native' } }, bound: false },

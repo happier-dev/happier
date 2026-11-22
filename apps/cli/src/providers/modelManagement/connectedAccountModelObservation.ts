@@ -42,7 +42,7 @@ export function createConnectedAccountModelObserver(input: Readonly<{
     if ('provider' in declared) {
       if (!input.observe) return null;
       const provider = input.registry.providersByContributionKey.get(buildQualifiedPluginContributionKey(declared.provider))?.definition;
-      if (provider?.catalog.source !== 'static+probe' || provider.catalog.probes.length !== 1) return null;
+      if (!provider || (provider.catalog.source !== 'static+probe' && provider.catalog.source !== 'probe') || provider.catalog.probes.length !== 1) return null;
       const probe = provider.catalog.probes[0]!;
       const endpoint = provider.endpointTemplates.find(endpoint => endpoint.id === probe.endpointTemplateId);
       if (typeof endpoint?.baseUrl !== 'string') return null;
@@ -53,7 +53,7 @@ export function createConnectedAccountModelObserver(input: Readonly<{
       const purpose = { consumer: source.provider.identity, purpose: source.family.purpose };
       return input.observe({ machineId, operationId: randomUUID(), consumer: source.provider.identity,
         purpose, binding: source.selection.binding,
-        requestAuthUse: { purpose, materialization: { kind: 'httpHeaders', origin, headerNames: use.materialization.headerNames } },
+        requestAuthUse: { purpose, materialization: use.materialization },
         provider, trigger: refresh ? 'manual_refresh' : 'picker_open', currentOnly,
         ...(input.resolveContributedCatalogParsers ? {
           resolveContributedCatalogParsers: () => input.resolveContributedCatalogParsers!(declared.provider),

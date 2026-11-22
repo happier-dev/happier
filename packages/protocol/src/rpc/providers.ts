@@ -1,4 +1,3 @@
-import { QualifiedConnectedAccountPurposeV1Schema } from '../connect/connectedAccountPurposeIdentity.js';
 import { z } from '../zodRuntimePolicy.js';
 import { ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
 import type { AgentModelsProbeObservation } from '../capabilities/agentProbeObservation.js';
@@ -41,6 +40,7 @@ import {
 } from '../providers/compatibility/v1.js';
 import { ModelVisibilityRefV1Schema, ProviderBoundModelRefSchema, serializeModelVisibilityRefV1 } from '../providers/selection/v1.js';
 import { SessionModelSelectionV1Schema } from '../providers/selection/v1.js';
+import { PersonalSessionModelRefSchema } from '../providers/selection/schemas.js';
 import { SessionProviderBindingMetadataV1Schema } from '../providers/sessions/bindingMetadataV1.js';
 import {
   PROVIDER_WIRE_PROTOCOL_LIMITS_V1,
@@ -48,6 +48,8 @@ import {
 } from '../providers/capabilities/v1.js';
 import { ProviderCatalogProbeModelsV1Schema } from '../providers/catalog/merge.js';
 import { QualifiedConnectedAccountPurposeBindingV1Schema, QualifiedConnectedAccountPurposeBindingTargetV1Schema } from '../connect/connectedAccountPurposeBindings.js';
+import { QualifiedConnectedAccountPurposeV1Schema } from '../connect/connectedAccountPurposeIdentity.js';
+import { QualifiedConnectedAccountRefSchema } from '../connect/qualifiedConnectedAccountPersistence.js';
 import { ProviderManualModelInputV1Schema } from '../providers/settings/v1.js';
 import {
   ProviderDiscoveryCandidateIdV1Schema,
@@ -238,7 +240,21 @@ export const DaemonProviderProbeResponseV1Schema = lazyZodSchema(() => z.discrim
 ]));
 export type DaemonProviderProbeResponseV1 = z.infer<typeof DaemonProviderProbeResponseV1Schema>;
 
-export const DaemonProviderUsageRefreshRequestV1Schema = ProviderRpcIdentityV1Schema;
+export const ProviderConnectedAccountUsageSourceV1Schema = lazyZodSchema(() => z.strictObject({
+  account: asProtocolZod(QualifiedConnectedAccountRefSchema),
+  purpose: QualifiedConnectedAccountPurposeV1Schema,
+  endpointTemplateId: ProviderLocalIdSchema,
+  usageSourceId: ProviderLocalIdSchema,
+}));
+export type ProviderConnectedAccountUsageSourceV1 = z.infer<typeof ProviderConnectedAccountUsageSourceV1Schema>;
+
+export const DaemonProviderUsageRefreshRequestV1Schema = lazyZodSchema(() => z.union([
+  ProviderRpcIdentityV1Schema,
+  z.strictObject({
+    machineId: ProviderMachineIdSchema,
+    connectedAccountSource: ProviderConnectedAccountUsageSourceV1Schema,
+  }),
+]));
 export type DaemonProviderUsageRefreshRequestV1 = z.infer<typeof DaemonProviderUsageRefreshRequestV1Schema>;
 
 export const ProviderUsageSourceResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
@@ -746,6 +762,8 @@ export const DaemonProviderModelProjectionRequestV1Schema = lazyZodSchema(() => 
     expectedConnectionSecurityFingerprint: ProviderConnectionSecurityFingerprintV1Schema,
   })),
   connectedAccountTarget: z.optional(QualifiedConnectedAccountPurposeBindingTargetV1Schema),
+  /** Exact Provider purpose saved with a source or selected from the Agent's bindings. */
+  connectedAccountSourcePurpose: z.optional(QualifiedConnectedAccountPurposeV1Schema),
   /** Selected Agent-declared managed purposes, resolved by the Provider catalog owner. */
   connectedServices: z.optional(ConnectedServiceBindingsV2Schema),
   /** Team source facts do not require the recipient Agent on this Machine. */
@@ -792,6 +810,10 @@ export const DaemonProviderModelProjectionRequestV1Schema = lazyZodSchema(() => 
   }
   if (value.providerConnection && value.connectedAccountTarget) {
     ctx.addIssue({ code: 'custom', path: ['providerConnection'], message: 'Provider and Connected Account source filters are mutually exclusive' });
+  }
+  if (value.connectedAccountSourcePurpose && !value.connectedServices
+    && (!value.sourceCatalog || value.connectedAccountTarget?.kind !== 'account')) {
+    ctx.addIssue({ code: 'custom', path: ['connectedAccountSourcePurpose'], message: 'A qualified purpose requires a selected Agent binding or an exact Connected Account source catalog' });
   }
   if (value.refreshPolicy === 'current_only' && value.forceRefresh) {
     ctx.addIssue({ code: 'custom', path: ['forceRefresh'], message: 'Current-only projection cannot force refresh' });
@@ -911,7 +933,7 @@ export const DaemonProviderNativeSourceV1Schema = lazyZodSchema(() => z.strictOb
 export type DaemonProviderNativeSourceV1 = z.infer<typeof DaemonProviderNativeSourceV1Schema>;
 
 export const DaemonProviderModelProjectionRowV1Schema = lazyZodSchema(() => z.strictObject({
-  ref: ProviderBoundModelRefSchema,
+  ref: PersonalSessionModelRefSchema,
   descriptor: ProviderModelDescriptorV1Schema,
   /** Admitted source slots for grouping, independent of the selected downstream protocol. */
   gatewaySlots: z.optional(z.array(QualifiedConnectedAccountPurposeBindingV1Schema)),

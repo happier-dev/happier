@@ -1,3 +1,4 @@
+import { readSessionModelRefProviderConnectionId, type PersonalSessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import { randomUUID } from 'node:crypto';
 import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { readMachineIsolationPolicyV1, readMachineIsolationV1 } from '@happier-dev/protocol/machines/machineIsolationV1';
@@ -31,7 +32,7 @@ import { buildBackendTargetKey } from '@happier-dev/protocol/backends/targets/ba
 import { buildBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { ExecutionRunApprovalProfileSetInputSchema, ExecutionRunScmDiffSummaryInputV1Schema } from '@happier-dev/protocol/execution/runs/startRequest';
 import { executionRunChildSelectionNeedsAppliedParent, readExecutionRunAppliedParentModelId, resolveExecutionRunAgentDefaultSelection, resolveExecutionRunChildSelection, type ResolvedExecutionRunChildSelection } from './runtime/openInputs';
-import type { AcpConfigOptionOverridesV1, BackendTargetRefV1, ConnectedServiceBindingsV2, ExecutionRunConnectedServicesLaunchV1, ExecutionRunUserTranscriptDirective, ExecutionRunBridgeLifecycleHookEventIdV1, ExecutionRunListRequest, ExecutionRunPublicState, ExecutionRunStartRequest, ExecutionRunResultContractV1, ProviderBoundModelRef, TeamCredentialProviderModelSelectionV1, SessionRunPromptReadActionIdV1, SessionRunPromptContextV1, SessionInputCausalPermissionAuthorityV1, SecretReferenceOverlayV1 } from '@happier-dev/protocol';
+import type { AcpConfigOptionOverridesV1, BackendTargetRefV1, ConnectedServiceBindingsV2, ExecutionRunConnectedServicesLaunchV1, ExecutionRunUserTranscriptDirective, ExecutionRunBridgeLifecycleHookEventIdV1, ExecutionRunListRequest, ExecutionRunPublicState, ExecutionRunStartRequest, ExecutionRunResultContractV1, TeamCredentialProviderModelSelectionV1, SessionRunPromptReadActionIdV1, SessionRunPromptContextV1, SessionInputCausalPermissionAuthorityV1, SecretReferenceOverlayV1 } from '@happier-dev/protocol';
 import { SessionRunPromptContextV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import type { SessionInputAdmissionResultV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { buildTrustedHostSessionInputAdmissionV1, readSessionInputCausalPermissionAuthorityV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
@@ -69,7 +70,7 @@ import {
   type ExecutionRunProfileContributionCatalog,
 } from '@/agent/executionRuns/profiles/intentRegistry';
 import { createExecutionRunBridgeRuntime } from './createExecutionRunBridgeRuntime';
-import type { ExecutionRunProviderLaunchServices, ExecutionRunTeamCredentialProviderBindingPreparer } from './runtime/providerLaunch';
+import type { ExecutionRunConnectedAccountProviderLaunch, ExecutionRunProviderLaunchServices, ExecutionRunTeamCredentialProviderBindingPreparer } from './runtime/providerLaunch';
 import type { ExecutionRunManagedProviderEndpointPreparer } from './runtime/managedProvider';
 import type { ResolveManagedProviderPurposeBindingIntent } from '@/providers/managed/resolvePurposeBindingSnapshot';
 import type { ProviderRuntimeModelProjectionReader } from '@/providers/spawn/runtimeCatalog';
@@ -243,7 +244,7 @@ type ExecutionRunRuntimeCreateOptions = Readonly<{
   permissionMode: string;
   workspaceWrites?: 'allow' | 'deny';
   modelId?: string;
-  modelSelection?: ProviderBoundModelRef;
+  modelSelection?: PersonalSessionModelRef;
   teamCredentialModel?: TeamCredentialProviderModelSelectionV1;
   sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
   modelSelectionSource?: ResolvedExecutionRunChildSelection['modelSelectionSource'];
@@ -378,6 +379,7 @@ export type ExecutionRunHostBridgeOptions = Readonly<{
   resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
   resolveManagedPurposeBindingIntentSelection?: import('@/providers/modelManagement/connectedAccountCatalog').ResolveManagedProviderPurposeBindingIntentSelection;
   managedProviderAccountAuthority?: import('@/plugins/runtime/providerBindings/runtimeTypes').ManagedProviderInvocationAccountAuthority | null;
+  connectedAccountProviderLaunch?: ExecutionRunConnectedAccountProviderLaunch;
   readModelProjection?: ProviderRuntimeModelProjectionReader;
   prepareManagedEndpoint?: ExecutionRunManagedProviderEndpointPreparer;
   resolveVoicePromptPreparation?: (args: Readonly<{
@@ -485,6 +487,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
   private readonly resolveManagedPurposeBindingIntent: ExecutionRunHostBridgeOptions['resolveManagedPurposeBindingIntent'];
   private readonly resolveManagedPurposeBindingIntentSelection: ExecutionRunHostBridgeOptions['resolveManagedPurposeBindingIntentSelection'];
   private readonly managedProviderAccountAuthority: ExecutionRunHostBridgeOptions['managedProviderAccountAuthority'];
+  private readonly connectedAccountProviderLaunch: ExecutionRunHostBridgeOptions['connectedAccountProviderLaunch'];
   private readonly readModelProjection: ExecutionRunHostBridgeOptions['readModelProjection'];
   private readonly prepareManagedEndpoint: ExecutionRunHostBridgeOptions['prepareManagedEndpoint'];
   /** Rebuildable projection of the marker owner's retained terminal completions. Taking never consumes. */
@@ -566,7 +569,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       const accepted = run.launch?.modelSelection;
       if (!accepted || run.backendId !== expected.agentId
         || accepted.agentTargetKey !== expected.agentTargetKey
-        || accepted.providerConnectionId !== expected.providerConnectionId
+        || readSessionModelRefProviderConnectionId(accepted) !== expected.providerConnectionId
         || accepted.modelId !== expected.modelId) return deny('identity_mismatch');
     }
     // The Run's own accepted provider-model selection; null when it selected
@@ -1292,6 +1295,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     this.resolveManagedPurposeBindingIntent = opts.resolveManagedPurposeBindingIntent;
     this.resolveManagedPurposeBindingIntentSelection = opts.resolveManagedPurposeBindingIntentSelection;
     this.managedProviderAccountAuthority = opts.managedProviderAccountAuthority;
+    this.connectedAccountProviderLaunch = opts.connectedAccountProviderLaunch;
     this.readModelProjection = opts.readModelProjection;
     this.prepareManagedEndpoint = opts.prepareManagedEndpoint;
     this.onPublicStateUpdated = typeof opts.onPublicStateUpdated === 'function' ? opts.onPublicStateUpdated : null;
@@ -1473,10 +1477,9 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       : this.bindInvocationAccountSettingsSnapshot(opts.projectLaunchContext?.ingress);
     // The Machine's purpose resolver selects from its installed Account. The
     // admitted requester must own that Account before a detached Run can use it.
-    const resolveManagedPurposeBindingIntentSelection = scope === 'session_owned'
-      || (run && this.runtimeAccountId && resolveExecutionRunRequesterAccountId(run) === this.runtimeAccountId)
-      ? this.resolveManagedPurposeBindingIntentSelection
-      : undefined;
+    const canUseInstalledAccount = scope === 'session_owned'
+      || (run && this.runtimeAccountId && resolveExecutionRunRequesterAccountId(run) === this.runtimeAccountId);
+    const resolveManagedPurposeBindingIntentSelection = canUseInstalledAccount ? this.resolveManagedPurposeBindingIntentSelection : undefined;
     const runtime = createExecutionRunBridgeRuntime({
       nativeSandbox: opts.nativeSandbox,
       ...(opts.functionTools ? { functionTools: opts.functionTools } : {}),
@@ -1573,7 +1576,10 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
                 ...run,
                 launch: {
                   ...(run.launch ?? {}),
-                  connectedServicesSelection: selection.connectedServicesBindings,
+                  connectedServicesSelection: opts.modelSelection && 'source' in opts.modelSelection
+                    ? { v: 2, bindingsByServiceId: { ...opts.connectedServices?.bindingsByServiceId,
+                      ...selection.connectedServicesBindings.bindingsByServiceId } }
+                    : selection.connectedServicesBindings,
                   ...(selection.agentContribution
                     ? { connectedServicesSelectionAgent: selection.agentContribution }
                     : {}),
@@ -1598,7 +1604,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
                   ...run,
                   launch: {
                     ...(run.launch ?? {}),
-                    connectedServicesSelection: registration.connectedServicesBindings,
+                    ...(opts.modelSelection && 'source' in opts.modelSelection
+                      ? {} : { connectedServicesSelection: registration.connectedServicesBindings }),
                     connectedServicesRegistration: registration,
                   },
                 };
@@ -1637,6 +1644,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       ...(this.resolveManagedPurposeBindingIntent ? { resolveManagedPurposeBindingIntent: this.resolveManagedPurposeBindingIntent } : {}),
       ...(resolveManagedPurposeBindingIntentSelection ? { resolveManagedPurposeBindingIntentSelection } : {}),
       managedProviderAccountAuthority: this.managedProviderAccountAuthority,
+      connectedAccountProviderLaunch: canUseInstalledAccount ? this.connectedAccountProviderLaunch : undefined,
       ...(this.readModelProjection ? { readModelProjection: this.readModelProjection } : {}),
       ...(this.prepareManagedEndpoint ? { prepareManagedEndpoint: async (input) => {
         const runId = opts.runId;
@@ -1696,7 +1704,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     permissionMode: string;
     causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;
     modelId?: string;
-    modelSelection?: ProviderBoundModelRef;
+    modelSelection?: PersonalSessionModelRef;
     teamCredentialModel?: TeamCredentialProviderModelSelectionV1;
     modelSelectionSource?: ResolvedExecutionRunChildSelection['modelSelectionSource'];
     accountSettings?: Readonly<Record<string, unknown>> | null;

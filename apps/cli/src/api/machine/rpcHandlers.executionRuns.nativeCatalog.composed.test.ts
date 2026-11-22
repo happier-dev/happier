@@ -28,13 +28,9 @@ it.each([
   onTestFinished(() => vi.restoreAllMocks());
   const installed = await createInstalledProjectAgentLaunchFixture({ prepareProject: false, machineAccess: { custodianAccountId, role } });
   const h = installed.f;
-  const service = { pluginId: 'acme.shared-registry', localId: 'accounts' };
   const fixture = await createManagedRunLaunchFixture({ directory: join(h.directory, 'provider'), happyHomeDir: h.directory,
     controller: pluginReloadController, physicalGateway: true,
-    connectedAccountModels: [{ id: 'example', name: 'Example' }],
-    connectedAccounts: [{ purpose: 'inference', service, materializationKinds: ['httpHeaders'], managedProviderEndpoint: {
-      provider: { pluginId: service.pluginId, localId: 'gateway' }, purpose: 'upstream', modelIdPrefix: 'native/',
-    } }] });
+    connectedAccountModels: [{ id: 'example', name: 'Example' }] });
   onTestFinished(() => fixture.cleanup());
   const daemonHttp = createServer((request, response) => {
     if (request.url !== '/execution-run/admission') { response.writeHead(404).end(); return; }
@@ -80,7 +76,8 @@ it.each([
     sessionId: null, intent: 'agent', instructions: 'Use the selected model.', cwd: h.directory,
     backendTarget: { kind: 'backend', backendId: fixture.agentId }, permissionMode: 'read_only',
     retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
-    modelSelection: { agentTargetKey: fixture.agentTargetKey, providerConnectionId: null, modelId: 'native/missing' },
+    modelSelection: { source: 'connected_account', purpose: fixture.gateway!.purposeBindings.bindings[0]!.purpose,
+      endpointTemplateId: 'api', agentTargetKey: fixture.agentTargetKey, modelId: 'missing' },
     connectedServices: { v: 2, bindingsByServiceId: {
       'acme.shared-registry/accounts': { source: 'connected', selection: 'profile', profileId: 'upstream-account' },
     } },

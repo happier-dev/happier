@@ -1115,7 +1115,7 @@ export const english = {
                 sessionPolicyIncompatible: 'This credential cannot be used in this session under its sharing policy.',
                 brokerUnavailable: 'The broker machine is not reachable right now. Try again once it is back.',
                 sourceOwnerRequired: 'Only the person who owns this source can make this change.',
-                nativeDeliveryUnavailable: 'Native credential delivery is unavailable or could not be verified on this Machine. Choose another Machine or shared credential.',
+                nativeDeliveryUnavailable: 'Native credential delivery is unavailable on this Machine. Choose an eligible API key or another Machine.',
                 sourceMissing: 'This credential no longer points at a source that exists.',
                 invalidAudience: 'Those people or Groups cannot receive this credential.',
                 subjectNotInTeam: 'That person or Group is no longer in this Team.',

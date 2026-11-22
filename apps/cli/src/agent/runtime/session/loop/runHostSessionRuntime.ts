@@ -1,6 +1,6 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { resolvePermissionModeForQueueingUserMessage } from '@/agent/runtime/permissions/modeFromUserMessage';
-import { SessionModelSelectionSchema, readSessionModelSelectionProviderConnectionId, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
+import { areConnectedAccountSessionModelRefsEqual, createPersonalSessionModelSelection, SessionModelSelectionSchema, readSessionModelSelectionProviderConnectionId, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { createProviderErrorV1, ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
 import { resolveSessionMcpNativeLaunchMaterial } from '@/mcp/runtime/sessionMcpNativeLaunchMaterial';
 import { randomUUID } from 'node:crypto';
@@ -2393,7 +2393,7 @@ async function runHostedSessionRuntime(
   const inFlightSteerController: InFlightSteerController = {
     readActivePermissionMode: () => permissionHandler.getPermissionMode(),
     readActiveModelSelection: () =>
-      modelTransitionCoordinator?.readActiveTarget().selection ?? null,
+      modelTransitionCoordinator?.readEffectiveModelSelection() ?? null,
     readArmedModelSelection: () => modelTransitionCoordinator?.readArmedSelection() ?? null,
     supportsInFlightSteer: () => runtimeForInFlightSteer?.supportsInFlightSteer?.() === true,
     isProviderNativeCommand: (prompt) => runtimeForInFlightSteer?.isProviderNativeCommand?.(prompt) === true,
@@ -3457,6 +3457,7 @@ async function runHostedSessionRuntime(
   }
   const initialActiveTargetBasis: AuthorizedSessionModelTransitionTarget = {
     selection: initialActiveSelection,
+    ...(activeProviderBindingHandoff?.selection ? { connectedAccountSelection: activeProviderBindingHandoff.selection } : {}),
     ...(hookRuntime.readAppliedTeamCredentialModel
       ? { readAppliedTeamCredentialModel: hookRuntime.readAppliedTeamCredentialModel.bind(hookRuntime) }
       : {}),
@@ -3486,6 +3487,7 @@ async function runHostedSessionRuntime(
           source,
           runner: runnerProcessIdentity,
           teamCredentialModel: hookRuntime.readAppliedTeamCredentialModel ? hookRuntime.readAppliedTeamCredentialModel() : null,
+          connectedAccountSelection: target.connectedAccountSelection,
         })
       : null;
   let adoptedModelSelection = startupSeed.modelSelection;
@@ -3641,15 +3643,20 @@ async function runHostedSessionRuntime(
       }
       if (evidence !== 'runtime_readback') {
         const retainedTypedIntent = readSessionModelSelectionV2FromMetadata(modelTransitionMetadataSession.getMetadataSnapshot());
-        adoptedModelSelection = retainedTypedIntent
-          && retainedTypedIntent.ref.agentTargetKey === target.selection.agentTargetKey
-          && retainedTypedIntent.ref.modelId === target.selection.modelId
-          && readSessionModelSelectionProviderConnectionId(retainedTypedIntent) === target.selection.providerConnectionId
-          ? retainedTypedIntent : SessionModelSelectionV1Schema.parse({
-          v: 1,
-          updatedAt: lastAcceptedModelIntentUpdatedAt || Date.now(),
-          ref: target.selection,
-        });
+        const ref = retainedTypedIntent?.ref;
+        const matchesAppliedSource = ref?.source === 'connected_account' || target.connectedAccountSelection
+          ? areConnectedAccountSessionModelRefsEqual(
+              ref?.source === 'connected_account' ? ref : null, target.connectedAccountSelection,
+            )
+          : retainedTypedIntent !== null
+            && ref?.agentTargetKey === target.selection.agentTargetKey
+            && ref.modelId === target.selection.modelId
+            && readSessionModelSelectionProviderConnectionId(retainedTypedIntent) === target.selection.providerConnectionId;
+        const updatedAt = lastAcceptedModelIntentUpdatedAt || Date.now();
+        adoptedModelSelection = matchesAppliedSource ? retainedTypedIntent
+          : target.connectedAccountSelection
+            ? createPersonalSessionModelSelection(target.connectedAccountSelection, updatedAt)
+            : SessionModelSelectionV1Schema.parse({ v: 1, updatedAt, ref: target.selection });
         publishRuntimeOverrides();
       }
     },
@@ -3807,6 +3814,11 @@ async function runHostedSessionRuntime(
               === activeTarget.selection.providerConnectionId
             && latestExactActiveSelectionFact.selection.modelId
               === activeTarget.selection.modelId
+            && areConnectedAccountSessionModelRefsEqual(
+              'connectedAccountSelection' in latestExactActiveSelectionFact
+                ? latestExactActiveSelectionFact.connectedAccountSelection : null,
+              activeTarget.connectedAccountSelection,
+            )
               ? latestExactActiveSelectionFact
               : null;
         if (!runtimeModelsPublisher && hookRuntime.models) {
@@ -3816,6 +3828,7 @@ async function runHostedSessionRuntime(
             runnerProcessIdentity,
             initialActiveSelection: activeSelection,
             initialActiveTarget: activeTarget,
+            readAppliedConnectedAccountSelection: () => modelTransitionCoordinator!.readActiveTarget().connectedAccountSelection ?? null,
             ...(hookRuntime.readAppliedTeamCredentialModel
               ? { readAppliedTeamCredentialModel: hookRuntime.readAppliedTeamCredentialModel.bind(hookRuntime) }
               : {}),
@@ -3916,6 +3929,7 @@ async function runHostedSessionRuntime(
     });
     const admittedTarget = authorizeModelTransition.bindCurrentAuthorizationProof({
       selection: activeTarget.selection,
+      ...(handoff.selection ? { connectedAccountSelection: handoff.selection } : {}),
       policy: activeTarget.policy,
       providerBinding: handoff.providerBinding ?? projectAgentSessionProviderBindingV1({
         metadata: handoff.sessionBindingMetadata,
@@ -4083,7 +4097,7 @@ async function runHostedSessionRuntime(
       readPermissionHandler: () => permissionHandler,
       readCodingPromptBehavior: () => resolveFreshSessionSystemPrompt?.readCodingPromptBehavior?.() ?? null,
       readEffectiveInputConfiguration: () => ({
-        modelSelection: modelTransitionCoordinator?.readActiveTarget().selection ?? null,
+        modelSelection: modelTransitionCoordinator?.readEffectiveModelSelection() ?? null,
         permissionMode: permissionModeState.getCurrentPermissionMode() ?? initialPermissionMode,
       }),
       readAppliedChildSelection,
@@ -4353,7 +4367,7 @@ async function runHostedSessionRuntime(
             : {}),
           ...(source === 'prompt' && restartRuntime ? { restartRuntime } : {}),
         }),
-      readActiveModelSelection: () => modelTransitionCoordinator!.readActiveTarget().selection,
+      readActiveModelSelection: () => modelTransitionCoordinator!.readEffectiveModelSelection(),
       readArmedModelSelection: () => modelTransitionCoordinator!.readArmedSelection(),
       deps: {
         ...(deps.sessionLoopLifecycleDeps ?? {}),

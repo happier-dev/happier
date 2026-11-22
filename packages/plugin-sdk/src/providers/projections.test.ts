@@ -537,7 +537,8 @@ describe('final Provider source projection', () => {
         expectTypeOf<ProviderProbeRequest>()
             .toEqualTypeOf<WithoutHostMachineIdentity<DaemonProviderProbeRequestV1>>();
         expectTypeOf<ProviderProbeResult>().toEqualTypeOf<DaemonProviderProbeResponseV1>();
-        expectTypeOf<ProviderUsageRefreshRequest>().toEqualTypeOf<Omit<DaemonProviderUsageRefreshRequestV1, 'machineId'>>();
+        expectTypeOf<ProviderUsageRefreshRequest>()
+            .toEqualTypeOf<WithoutHostMachineIdentity<Extract<DaemonProviderUsageRefreshRequestV1, { connectionId: string }>>>();
         expectTypeOf<ProviderUsageRefreshResult>().toEqualTypeOf<DaemonProviderUsageRefreshResponseV1>();
         expectTypeOf<ProviderModelsRequest>()
             .toEqualTypeOf<WithoutHostMachineIdentity<DaemonProviderModelsRequestV1>>();

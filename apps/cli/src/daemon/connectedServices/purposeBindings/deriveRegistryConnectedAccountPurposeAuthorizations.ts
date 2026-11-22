@@ -28,6 +28,7 @@ import { readResolvedActionContribution } from '@/plugins/projection/registry/ac
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import { projectTeamResourceSelectionToSessionPurposeBinding } from './ConnectedAccountPurposeBindingOwner';
 import type { PluginSystemToolContributionV1 } from '@happier-dev/protocol/plugins/contributions/system-tools';
+import type { ResolvedProviderConnectedAccountDeclarationsV1 } from '@happier-dev/protocol/providers/contributions';
 import { resolveSystemToolLaunchPurposeDeclarations } from '../requestAuth/agentPurposeDeclarations';
 import type {
   ConnectedAccountTeamDirectMaterialOrigin,
@@ -49,11 +50,8 @@ type RegistryAuthorizationAgent = Readonly<{
 type RegistryAuthorizationProvider = Readonly<{
   provenance: 'first_party' | 'external';
   identity: PluginContributionIdentityV1;
-  definition: Readonly<{
-    managedRuntime?: Readonly<{
-      connectedAccounts?: readonly ConnectedAccountPurposeDeclarationV1[];
-    }>;
-  }>;
+  definition: Readonly<{ managedRuntime?: Readonly<{ kind: 'managed' }> }>;
+  connectedAccountDeclarations?: ResolvedProviderConnectedAccountDeclarationsV1;
   managedRuntime?: Readonly<{ runtime: unknown }>;
 }>;
 
@@ -733,13 +731,10 @@ export function deriveRegistryConnectedAccountPurposeAuthorizations(
   }
 
   for (const provider of registry.providers ?? []) {
-    const managedDeclaration = provider.definition.managedRuntime;
-    if (!managedDeclaration || !provider.managedRuntime) continue;
-    addDeclarations(
-      provider.identity,
-      provider.identity.pluginId,
-      managedDeclaration.connectedAccounts ?? [],
-    );
+    if (provider.definition.managedRuntime && !provider.managedRuntime) continue;
+    for (const declaration of provider.connectedAccountDeclarations?.connectedAccounts ?? []) {
+      addPurpose(provider.identity, declaration.purpose, [declaration.service]);
+    }
   }
 
   for (const declaration of resolveSystemToolLaunchPurposeDeclarations(registry)) {

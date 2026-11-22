@@ -2,7 +2,7 @@ import { assessProviderEndpoint, classifyProviderEndpointSyntaxScope } from '@ha
 import { createProviderAccountGrantFingerprintV1, createProviderConnectionSecurityFingerprintV1, createProviderConnectionSecurityFingerprintV2, createProviderEndpointSetFingerprintV1, createProviderEndpointSetFingerprintV2, createProviderMachineGrantFingerprintV1, PROVIDER_CONNECTION_SECURITY_CONTRACT_VERSION_V1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
 import { resolveProviderGrantV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
 import { ProviderConnectionIdSchema, ProviderMachineIdSchema } from '@happier-dev/protocol/providers/ids';
-import { resolveProviderManagedRuntimeDeclarationV1, resolveManagedPurposeBindingIntentsV1 as resolveManagedPurposeBindingIntents } from '@happier-dev/protocol/providers/contributions';
+import { resolveProviderManagedRuntimeFromContributionV1, resolveManagedPurposeBindingIntentsV1 as resolveManagedPurposeBindingIntents } from '@happier-dev/protocol/providers/contributions';
 import type { ProviderConnectionId, ProviderConnectionV1, ProviderEndpointTemplateV1, ProviderManagedSecurityEndpointV1, ProviderSettingsV1 } from '@happier-dev/protocol';
 import type { ProviderConnectionSecurityFingerprintV1 } from '@happier-dev/protocol/providers';
 import { ProviderConnectionSecurityFingerprintV1Schema, isProviderDestinationGrantFingerprintV2,
@@ -239,9 +239,10 @@ function resolveProviderConnectionFromSettings(
           'managed_deployment_unavailable',
         );
       }
-      const managedRuntime = resolveProviderManagedRuntimeDeclarationV1({
+      const managedRuntime = resolveProviderManagedRuntimeFromContributionV1({
         implementationIdentity: resolvedContribution.identity,
-        managedRuntime: declaredManagedRuntime,
+        definition: { ...resolvedContribution.definition, managedRuntime: declaredManagedRuntime },
+        connectedAccountDeclarations: resolvedContribution.connectedAccountDeclarations,
       });
       managedDeployment = {
         kind: 'managedLocal',

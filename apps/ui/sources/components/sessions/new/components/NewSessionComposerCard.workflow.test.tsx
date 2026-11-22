@@ -286,12 +286,22 @@ describe('New workflow entry', () => {
             store.setState(previous, true);
         }
     });
-    it('names the exact Provider model on the real composer chip using picker presentation', async () => {
+    it.each(['saved key', 'connected Account'] as const)('names the exact %s Provider model on the real composer chip', async (source) => {
         const { DaemonProviderModelProjectionGroupV1Schema } = await import('@happier-dev/protocol/rpc');
         const { AgentIcon } = await import('@/agents/registry/AgentIcon');
-        const ref = { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: 'pc_deepseek', modelId: 'deepseek-v4-flash' };
+        const agentTargetKey = 'agent:happier.agent.claude/claude';
+        const modelId = 'deepseek-v4-flash';
+        const ref = source === 'saved key'
+            ? { agentTargetKey, providerConnectionId: 'pc_deepseek', modelId }
+            : { source: 'connected_account' as const, agentTargetKey, modelId, endpointTemplateId: 'api',
+                purpose: { consumer: { pluginId: 'acme.provider', localId: 'gateway' }, purpose: 'inference' } };
         const group = DaemonProviderModelProjectionGroupV1Schema.parse({
-            connectionId: ref.providerConnectionId, providerName: 'DeepSeek', connectionName: 'DeepSeek',
+            ...('source' in ref ? {
+                connectionId: 'connected-source:deepseek', connectedAccountTarget: { kind: 'account', account: {
+                    service: { pluginId: 'acme.provider', localId: 'account' }, accountId: 'deepseek',
+                } },
+            } : { connectionId: ref.providerConnectionId }),
+            providerName: 'DeepSeek', connectionName: 'DeepSeek',
             connectionRole: 'named', connectionDisplayNameMode: 'custom', connectionRevision: 1,
             authorization: { authorized: true }, manualModelPolicy: 'allowed', supportsFreeformModelIds: false,
             suppressedConnectedServiceIds: [], modelLoadAction: 'descriptor_absent', modelLoadPreflightPolicy: null,

@@ -1406,6 +1406,7 @@ export async function startDaemonSessionControlRuntime(
     resolveManagedPurposeBindingIntent?: Parameters<
       typeof executeSpawnSessionRequest
     >[0]['resolveManagedPurposeBindingIntent'];
+    observeConnectedAccountSourceModels?: import('@/providers/lifecycle/managedPurposeLaunch').ManagedPurposeLaunchContext['observeConnectedAccountSourceModels'];
     resolveManagedPurposeBindingIntentSelection?: import('@/providers/modelManagement/connectedAccountCatalog').ResolveManagedProviderPurposeBindingIntentSelection;
     prepareConnectedAccountOperationSelection?: ConnectedAccountPurposeBindingOwner['prepareOperationSelection'];
     activateSessionPurposeBindings?: Parameters<
@@ -1623,6 +1624,9 @@ export async function startDaemonSessionControlRuntime(
     /** Resubmits provider account-usage material the persistence scheduler paused. */
     flushProviderAccountUsagePersistence: (timeoutMs: number) => Promise<void>;
     connectedServiceRuntimeQuotaSnapshots: ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore;
+    connectedAccountProviderRequestAuth: Pick<ReturnType<typeof createConnectedAccountRequestAuthService>,
+      'lookupRequestAuth' | 'refreshAfterAuthFailure'>;
+    connectedAccountUsage?: import('@/daemon/connectedServices/accountUsage/connectedAccountUsageAuthority').ConnectedAccountUsageAuthority;
     createAgentCatalogObservation: (
       infrastructure: Pick<
         Parameters<typeof createAgentProviderCatalogObservationService>[0],
@@ -4587,6 +4591,8 @@ export async function startDaemonSessionControlRuntime(
                 ...(spawnParams.resolveManagedPurposeBindingIntentSelection ? { resolveManagedPurposeBindingIntentSelection: spawnParams.resolveManagedPurposeBindingIntentSelection } : {}),
                 prepareConnectedAccountOperationSelection: spawnParams.prepareConnectedAccountOperationSelection,
                 managedProviderAccountAuthority: spawnParams.managedProviderAccountAuthority,
+                connectedAccountRequestAuth: connectedAccountRequestAuthService,
+                observeConnectedAccountSourceModels: params.observeConnectedAccountSourceModels,
                 ...(spawnParams.activateSessionPurposeBindings
                   ? {
                       activateSessionPurposeBindings:
@@ -6897,6 +6903,10 @@ export async function startDaemonSessionControlRuntime(
                 AbortSignal.any([signal, shutdownCancellationDomains.daemonWorkSignal]), accountSource),
               signal: AbortSignal.any([signal, shutdownCancellationDomains.daemonWorkSignal]),
               isSessionAccountCurrent: isForegroundAccountCurrent,
+              connectedAccountRequestAuth: connectedAccountRequestAuthService,
+              observeConnectedAccountSourceModels: params.observeConnectedAccountSourceModels,
+              resolveManagedPurposeBindingIntentSelection: requester
+                ? requester.resolveManagedPurposeBindingIntentSelection : params.resolveManagedPurposeBindingIntentSelection,
               readModelProjection: createAccountScopedProviderModelProjectionReader({
                 serverUrl: requester?.bootstrap.serverHttpBaseUrl ?? params.serverBaseUrl,
                 readCredentials: async () => requester?.bootstrap.credentials ?? params.credentials,
@@ -6913,7 +6923,6 @@ export async function startDaemonSessionControlRuntime(
                       requester.subscribeAccountSettingsSnapshot,
                     resolveManagedPurposeBindingIntent:
                       requester.resolveManagedPurposeBindingIntent,
-                    resolveManagedPurposeBindingIntentSelection: requester.resolveManagedPurposeBindingIntentSelection,
                     managedProviderAccountAuthority: managedProviderAccountAuthorityFor(requester),
                   }
                 : {}),
@@ -12218,12 +12227,19 @@ export async function startDaemonSessionControlRuntime(
       const isCurrent = async () => await readCurrentnessRefusal() === null;
       const purposeResolver = requester ? requester.resolveManagedPurposeBindingIntent : params.resolveManagedPurposeBindingIntent;
       const purposeSelectionResolver = requester ? requester.resolveManagedPurposeBindingIntentSelection : params.resolveManagedPurposeBindingIntentSelection;
+      const activatePurposeBindings = requester ? requester.activatePurposeBindings : params.activatePurposeBindings;
+      const observeConnectedAccountSourceModels = requester ? undefined : params.observeConnectedAccountSourceModels;
       const reason = await readCurrentnessRefusal();
       if (reason) throw refuse(reason);
       // Returned closures borrow the exact tracked runtime; PID retirement owns it.
       accountReturned = true;
       return { accountId: rootAccountId, credentials, isCurrent, isCurrentPidOwner, readCurrentnessRefusal, readCheckedAccountSnapshot, refuse,
         managedProviderAccountAuthority: managedProviderAccountAuthorityFor(requester),
+        ...(activatePurposeBindings && observeConnectedAccountSourceModels ? { connectedAccountProviderLaunch: {
+          purposeBindings: { activatePurposeBindings },
+          connectedAccountRequestAuth: connectedAccountRequestAuthService,
+          observeConnectedAccountSourceModels,
+        } } : {}),
         ...(requester ? { savedSecretOperationContext: requester.bootstrap.savedSecretOperationContext } : {}),
         release: async () => await releaseSessionAccountContext(requester),
         readCurrentAccountSettingsSnapshot: () => isCurrentPidOwner() ? readSnapshot() : null,
@@ -12406,6 +12422,7 @@ export async function startDaemonSessionControlRuntime(
         ...(account.resolveManagedPurposeBindingIntent ? { resolveManagedPurposeBindingIntent: account.resolveManagedPurposeBindingIntent } : {}),
         ...(account.resolveManagedPurposeBindingIntentSelection ? { resolveManagedPurposeBindingIntentSelection: account.resolveManagedPurposeBindingIntentSelection } : {}),
         managedProviderAccountAuthority: account.managedProviderAccountAuthority,
+        connectedAccountProviderLaunch: account.connectedAccountProviderLaunch,
         readModelProjection: createAccountScopedProviderModelProjectionReader({ serverUrl: params.serverBaseUrl,
           readCredentials: async () => await account.isCurrent() ? account.credentials : null,
           readAccountSettingsSnapshot: account.readAccountSettingsSnapshot,
@@ -12417,7 +12434,7 @@ export async function startDaemonSessionControlRuntime(
             || accepted.teamId !== team.teamId || accepted.deliveryMode !== team.deliveryMode
             || team.deliveryMode !== 'vendor-native' || !team.nativeDelivery
             || !isDeepStrictEqual(accepted.nativeDelivery, team.nativeDelivery)
-            || request.selection?.providerConnectionId !== null
+            || !request.selection || !('providerConnectionId' in request.selection) || request.selection.providerConnectionId !== null
             || request.selection.agentTargetKey !== team.agentTargetKey || request.selection.modelId !== team.modelId) {
             throw new SessionTeamCredentialLaunchUnavailableError();
           }
@@ -16225,6 +16242,17 @@ export async function startDaemonSessionControlRuntime(
     // recorder — so the proactive selection sees the same probed snapshots (matches the
     // single-store design of the monolithic reference).
     connectedServiceRuntimeQuotaSnapshots,
+    connectedAccountProviderRequestAuth: {
+      lookupRequestAuth: connectedAccountRequestAuthService.lookupRequestAuth,
+      refreshAfterAuthFailure: connectedAccountRequestAuthService.refreshAfterAuthFailure,
+    },
+    ...(params.resolveManagedPurposeBindingIntentSelection && params.activatePurposeBindings ? {
+      connectedAccountUsage: {
+        resolveSelection: params.resolveManagedPurposeBindingIntentSelection,
+        activatePurposeBindings: params.activatePurposeBindings,
+        lookupRequestAuth: connectedAccountRequestAuthService.lookupRequestAuth,
+      },
+    } : {}),
     createAgentCatalogObservation: (
       infrastructure: Pick<
         Parameters<typeof createAgentProviderCatalogObservationService>[0],

@@ -50,7 +50,7 @@ describe('packed managed Provider composed-runtime cleanup', () => {
       expect(manifest.contributes.connectedAccountDescriptors).toEqual([
         expect.objectContaining({ id: 'novel-cloud' }),
       ]);
-      expect(manifest.contributes.providers[0].managedRuntime.connectedAccounts).toEqual(
+      expect(manifest.contributes.providers[0].connectedAccounts).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             purpose: 'novel-upstream',

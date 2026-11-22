@@ -81,7 +81,7 @@ import {
   ProviderOperationAbandonedError,
 } from '@/providers/operationLifetime';
 import { selectCurrentProviderEndpointHealthByTemplateId } from '@/providers/connections/runtimeSummary';
-import { projectProviderBrokerApplication } from '@/providers/broker/applicationProjection';
+import { projectProviderBrokerApplication, resolveTeamCredentialPurposeProvider } from '@/providers/broker/applicationProjection';
 import { projectProviderModelLoadCapability, resolveProviderSourceFacts } from '@/providers/registry/sourceFacts';
 import { projectProviderModelReasoningForAgent, readProviderReasoningEffortOption } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 import { activateAgentRuntimeContributionOnDemand } from '@/agent/runtime/registry/activationDemand';
@@ -100,10 +100,11 @@ import {
   resolveTeamCredentialBrokerEligibility,
   resolveTeamCredentialResourceTestCandidate,
 } from '@/providers/broker/resourceTestCandidate';
-import { resolveAgentPurposeSelections } from '@/providers/managed/agentPurposeSelections';
+import { resolveAgentSpawnPurposeDeclarations } from '@/daemon/connectedServices/requestAuth/agentPurposeDeclarations';
+import { projectConnectedServiceBindingsToQualifiedPurposeBindingSnapshot } from '@/daemon/connectedServices/requestAuth/firstPartyConnectedAccountRequestAuthAdapter';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { DaemonProviderModelProjectionGroupV1 } from '@happier-dev/protocol/rpc/providers';
-import { projectConnectedAccountCatalog, readConnectedAccountModelCatalog, readConnectedAccountCatalogSources, type ResolveManagedProviderPurposeBindingIntentSelection } from './connectedAccountCatalog';
+import { projectConnectedAccountCatalog, readConnectedAccountModelCatalog, readConnectedAccountCatalogSources, readProviderConnectedAccountSessionBindings, type ResolveManagedProviderPurposeBindingIntentSelection } from './connectedAccountCatalog';
 import { qualifySessionTeamCredentialProviderModels, selectSessionTeamCredentialProviderModel } from '@/providers/broker/sessionTeamCredentialProviderBinding';
 import { readProviderConnectionSourceCatalog, projectProviderConnectionSourceCatalog, projectCurrentProviderConnectionBrokerCatalogs } from './providerConnectionSourceCatalog';
 import type { ProviderSourceModelCatalogRequest, ProviderSourceModelCatalogResult } from './sourceCatalog';
@@ -271,6 +272,7 @@ export type RuntimeProviderModelManagementServices = Readonly<{
   ): Promise<DaemonProviderBindingStatusResponseV1>;
   runtimeStore: ProviderRuntimeStateStore;
   probeInfrastructure: RuntimeProviderServices['probeInfrastructure'];
+  observeConnectedAccountSourceModels?: ObserveConnectedAccountSourceModels;
   loadModel(input: ProviderModelLoadRequest): Promise<ProviderModelLoadResult>;
   cancelModelLoad(input: ProviderModelLoadRequest): Promise<ProviderModelLoadResult>;
   rpcHandler: ReturnType<typeof createProviderModelLoadRpcHandler>;
@@ -318,8 +320,10 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
   >[0]['managedCatalogRuntime'];
   resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
   resolveManagedPurposeBindingIntentSelection?: ResolveManagedProviderPurposeBindingIntentSelection;
+  connectedAccountUsage?: Parameters<typeof createRuntimeProviderServices>[0]['connectedAccountUsage'];
   invokeConnectedAccountNativeModels?: InvokeConnectedAccountNativeModels;
   observeConnectedAccountSourceModels?: ObserveConnectedAccountSourceModels;
+  listProviderConnectedAccountProfiles?: import('@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime').DaemonConnectedAccountPurposeBindingRuntime['listCoordinatorAccounts'];
   readConnectedAccountCatalogCustodianMachineId?: (signal: AbortSignal) => string | undefined | Promise<string | undefined>;
   readModelProjection?: ProviderRuntimeModelProjectionReader;
   openTeamDirect?: Parameters<typeof createRuntimeProviderServices>[0]['openTeamDirect'];
@@ -368,6 +372,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
         }
       : {}),
     ...(input.openTeamDirect ? { openTeamDirect: input.openTeamDirect } : {}),
+    ...(input.connectedAccountUsage ? { connectedAccountUsage: input.connectedAccountUsage } : {}),
     modelLoadEnabled: () => input.featureGate.isEnabled('providers.localModelManagement'),
 
   });
@@ -664,11 +669,67 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
         if (!resolveSelection || request.providerConnection || request.sourceConnectionId) return unavailable();
         const invokeNative = accountContext ? accountContext.invokeConnectedAccountNativeModels : input.invokeConnectedAccountNativeModels;
         const observe = accountContext ? accountContext.observeConnectedAccountSourceModels : input.observeConnectedAccountSourceModels;
-        const sources = request.connectedServices
-          ? resolveAgentPurposeSelections({ contributions: lease.registry.contributes, agentId: agentId!,
-              connectedServices: request.connectedServices }).map(candidate => ({ target: candidate.binding.target,
-                agentPurpose: candidate.declaration }))
-          : [{ target: request.connectedAccountTarget!, agentPurpose: undefined }];
+        const sources: {
+          target: NonNullable<typeof request.connectedAccountTarget>;
+          agentPurpose?: Parameters<typeof projectConnectedAccountCatalog>[0]['agentPurpose'];
+          provider?: Parameters<typeof projectConnectedAccountCatalog>[0]['provider'];
+          sessionPurpose?: Parameters<typeof projectConnectedAccountCatalog>[0]['sessionPurpose'];
+          catalogPurpose?: string;
+        }[] = [];
+        if (request.connectedServices) {
+          const purpose = request.connectedAccountSourcePurpose;
+          const declared = !purpose && agentId ? resolveAgentSpawnPurposeDeclarations({
+            contributions: lease.registry.contributes, agentId,
+          }) : null;
+          if (declared) {
+            const selected = projectConnectedServiceBindingsToQualifiedPurposeBindingSnapshot({
+              consumer: declared.consumer, declarations: declared.declarations, bindings: request.connectedServices,
+            });
+            for (const binding of selected.bindings) {
+              const agentPurpose = declared.declarations.find(declaration => declaration.purpose === binding.purpose.purpose);
+              if (agentPurpose && (binding.target.kind === 'account' || binding.target.kind === 'group')) {
+                sources.push({ target: binding.target, agentPurpose });
+              }
+            }
+          }
+          for (const { provider, binding } of readProviderConnectedAccountSessionBindings({
+            registry, connectedServices: request.connectedServices, purpose,
+          })) {
+            if (binding.target.kind === 'account' || binding.target.kind === 'group') {
+              sources.push({ target: binding.target, provider, sessionPurpose: binding.purpose });
+            }
+          }
+          if (!purpose && !accountContext && adapter && input.listProviderConnectedAccountProfiles) {
+            const inventories = new Map<string, ReturnType<NonNullable<typeof input.listProviderConnectedAccountProfiles>>>();
+            for (const provider of registry.providersByContributionKey.values()) {
+              for (const declaration of provider.connectedAccountDeclarations?.connectedAccounts ?? []) {
+                if (sources.some(source => source.provider === provider && source.sessionPurpose?.purpose === declaration.purpose)
+                  || !provider.definition.endpointTemplates.some(endpoint =>
+                    declaration.endpointTemplateIds?.includes(endpoint.id) && adapter.support.acceptsProtocols.includes(endpoint.protocol))) continue;
+                const serviceKey = buildQualifiedPluginContributionKey(declaration.service);
+                if (Object.hasOwn(request.connectedServices.bindingsByServiceId, serviceKey)) continue;
+                let inventory = inventories.get(serviceKey);
+                if (!inventory) {
+                  inventory = input.listProviderConnectedAccountProfiles(operationLifetime.signal, declaration.service);
+                  inventories.set(serviceKey, inventory);
+                }
+                const profiles = (await awaitWithinProviderOperation(inventory, operationLifetime)).filter(profile =>
+                  profile.status === 'connected' && profile.configurationReady
+                  && (!declaration.credentialKinds || profile.kind !== undefined && profile.kind !== null
+                    && declaration.credentialKinds.includes(profile.kind)));
+                if (profiles.length === 1) {
+                  sources.push({ provider, sessionPurpose: { consumer: provider.identity, purpose: declaration.purpose },
+                    target: { kind: 'account', account: profiles[0]!.ref } });
+                }
+              }
+            }
+          }
+        } else if (request.connectedAccountTarget) {
+          const purpose = request.connectedAccountSourcePurpose;
+          const provider = purpose ? resolveTeamCredentialPurposeProvider({ registry, purpose, application: request.application }) : undefined;
+          if (purpose && !provider) return { status: 'error', error: createProviderErrorV1('provider_incompatible_with_agent') };
+          sources.push({ target: request.connectedAccountTarget, provider: provider ?? undefined, catalogPurpose: purpose?.purpose });
+        }
         const catalogCustodianMachineId = !accountContext && sources.length > 0 && input.readConnectedAccountCatalogCustodianMachineId
           ? await awaitWithinProviderOperation(
               Promise.resolve(input.readConnectedAccountCatalogCustodianMachineId(operationLifetime.signal)), operationLifetime)
@@ -676,13 +737,11 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
         const groups: DaemonProviderModelProjectionGroupV1[] = [];
         const { connectedServices: _selectedServices, ...sourceRequest } = request;
         for (const source of sources) {
-          const route = source.agentPurpose?.managedProviderEndpoint;
-          const provider = route ? getProviderContribution(registry, buildQualifiedPluginContributionKey(route.provider)) : undefined;
-          if (route && !provider) return unavailable();
           const projection = await awaitWithinProviderOperation(projectConnectedAccountCatalog({
             request: { ...sourceRequest, connectedAccountTarget: source.target }, registry,
-            ...(source.agentPurpose ? { agentPurpose: source.agentPurpose } : {}),
-            ...(route && provider ? { provider, purpose: route.purpose } : {}), ...(adapter ? { support: adapter.support, adapterVersion: adapter.adapter.adapterVersion } : {}),
+            agentPurpose: source.agentPurpose, provider: source.provider,
+            sessionPurpose: source.sessionPurpose, purpose: source.catalogPurpose ?? source.sessionPurpose?.purpose,
+            ...(adapter ? { support: adapter.support, adapterVersion: adapter.adapter.adapterVersion } : {}),
             providerSettings: snapshot?.providerConnectionsCatalog?.status === 'ready'
               ? readProviderSettingsForCli(snapshot).settings
               : snapshot ? composeProviderSettingsV1(DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
@@ -980,7 +1039,8 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
           // A Provider connection's catalog serves only Provider-bound refs; native Agent rows have no connection.
           const rows: Array<Pick<ProviderConnectionCatalogRow, 'ref' | 'descriptor' | 'sources' | 'confidence' | 'gatewaySlots'>
             & Pick<ProviderCatalogRowPresentation, 'catalog' | 'loadState'>> = [...rowsByModelId.values()]
-            .flatMap(row => row.ref.providerConnectionId === null ? [] : [{ ...row, ref: row.ref }]);
+            .flatMap(row => 'providerConnectionId' in row.ref && row.ref.providerConnectionId !== null
+              ? [{ ...row, ref: row.ref }] : []);
           const recoveryRows = projectProviderCatalogCurrentSelectionRecoveryRows({ connection: record,
             agentTargetKey: request.agentTargetKey, modelNameCatalog,
             currentSelectionForRecovery: request.currentSelection,
@@ -1804,6 +1864,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
     resolveBindingStatus,
     runtimeStore: sharedRuntime.runtimeStore,
     probeInfrastructure: sharedRuntime.probeInfrastructure,
+    observeConnectedAccountSourceModels: input.observeConnectedAccountSourceModels,
     loadModel: service.loadNow,
     cancelModelLoad: service.cancelNow,
     rpcHandler,

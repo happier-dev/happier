@@ -1,3 +1,4 @@
+import { resolveProviderConnectedAccountDeclarationsV1 } from '@happier-dev/protocol/providers/contributions';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
@@ -26,13 +27,14 @@ it('replaces static membership with one exact current account observation across
   try {
   const base = createBrokerProviderRegistry();
   const registry = { ...base, agentDefinitionsById: fixture.lease.registry.contributes.agentDefinitionsById,
-    providersByContributionKey: new Map([...base.providersByContributionKey].map(([key, provider]) => [key, {
-    ...provider, definition: ProviderContributionV1Schema.parse({ ...provider.definition, managedRuntime: {
-      ...provider.definition.managedRuntime, connectedAccounts: [{ purpose: 'openai-upstream',
+    providersByContributionKey: new Map([...base.providersByContributionKey].map(([key, provider]) => {
+      const definition = ProviderContributionV1Schema.parse({ ...provider.definition,
+      connectedAccounts: [{ purpose: 'openai-upstream',
         service, catalogObservation: { agent: fixture.lease.registry.contributes.agentDefinitionsById.get(fixture.agentId)!.identity },
         endpointTemplateIds: provider.definition.endpointTemplates.map(endpoint => endpoint.id), staticModels: [{ id: 'gpt-5.5', name: 'GPT-5.5' }] }],
-    } }),
-  }])) };
+    });
+      return [key, { ...provider, definition, connectedAccountDeclarations: resolveProviderConnectedAccountDeclarationsV1({ identity: provider.identity, definition }) }];
+    })) };
   let sourceCurrent = true;
   const unavailable = async (): Promise<never> => { throw new Error('No mutation, delivery or Gateway during browsing'); };
   const purposes = createConnectedAccountPurposeBindingOwner({
@@ -115,18 +117,17 @@ it('replaces static membership with one exact current account observation across
   expect(empty.groups.every(group => group.rows.length === 0 && group.catalogObserved === true)).toBe(true);
   expect(nativeReads).toBe(6);
   models = [{ id: 'source-model', name: 'Managed model' }];
+  const sessionPurpose = { consumer: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' }, purpose: 'openai-upstream' };
+  const endpointTemplateId = 'cliproxyapi-openai-responses';
   const managedInput = { ...input,
     request: { ...request, sourceCatalog: undefined },
-    agentPurpose: { purpose: 'inference', service, managedProviderEndpoint: {
-      provider: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
-      purpose: 'openai-upstream', modelIdPrefix: 'managed/' } },
+    sessionPurpose, endpointTemplateId,
   };
   const managed = await projectConnectedAccountCatalog(managedInput);
-  // One Agent binding consumes the first accepted endpoint, as launch does.
   expect(managed.groups).toHaveLength(1);
-  expect(managed.groups.flatMap(group => group.rows).map(row => row.ref)).toEqual([
-    { agentTargetKey: request.agentTargetKey, providerConnectionId: null, modelId: 'managed/source-model' },
-  ]);
+  const exactRef = { source: 'connected_account' as const, purpose: sessionPurpose,
+    endpointTemplateId, agentTargetKey: request.agentTargetKey, modelId: 'source-model' };
+  expect(managed.groups.flatMap(group => group.rows).map(row => row.ref)).toEqual([exactRef]);
   expect(nativeReads).toBe(7);
   models = [];
   const managedEmpty = await projectConnectedAccountCatalog(managedInput);
@@ -134,6 +135,9 @@ it('replaces static membership with one exact current account observation across
   expect(managedEmpty.groups[0]?.rows).toEqual([]);
   expect(await managedEmpty.isCurrent()).toBe(true);
   expect(nativeReads).toBe(8);
+  const missing = await projectConnectedAccountCatalog({ ...managedInput,
+    request: { ...managedInput.request, currentSelection: exactRef } });
+  expect(missing.error).toMatchObject({ code: 'provider_model_not_found', connectedAccountTarget: request.connectedAccountTarget });
   models = [{ id: 'source-model', name: 'Native namespaced model' }];
   const namespaced = await projectConnectedAccountCatalog({ ...input,
     request: { ...request, sourceCatalog: undefined },
@@ -169,14 +173,13 @@ it('replaces static membership with one exact current account observation across
 it('projects a thousand admitted descriptors without another per-model validation pass', async () => {
   const base = createBrokerProviderRegistry();
   const models = Array.from({ length: 1_000 }, (_, index) => ({ id: `model-${index}`, name: `Model ${index}` }));
-  const registry = { ...base, providersByContributionKey: new Map([...base.providersByContributionKey].map(([key, provider]) => [key, {
-    ...provider,
-    definition: ProviderContributionV1Schema.parse({ ...provider.definition, managedRuntime: {
-      ...provider.definition.managedRuntime,
+  const registry = { ...base, providersByContributionKey: new Map([...base.providersByContributionKey].map(([key, provider]) => {
+      const definition = ProviderContributionV1Schema.parse({ ...provider.definition,
       connectedAccounts: [{ purpose: 'openai-upstream', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
         endpointTemplateIds: ['cliproxyapi-openai-responses'], staticModels: models }],
-    } }),
-  }])) };
+    });
+      return [key, { ...provider, definition, connectedAccountDeclarations: resolveProviderConnectedAccountDeclarationsV1({ identity: provider.identity, definition }) }];
+    })) };
   const unexpected = async (): Promise<never> => { throw new Error('Unexpected credential effect during catalog projection'); };
   // The Home target and binding store are system boundaries; selection/currentness remain real.
   const purposes = createConnectedAccountPurposeBindingOwner({

@@ -423,6 +423,7 @@ export type MachineRpcHandlerDeps = Readonly<{
   openAccountConnectionManagedConsumerSource?: import('@/agent/runtime/bridges/executionRun/runtime/managedProvider').ExecutionRunManagedProviderSourceOpener;
   resolveManagedPurposeBindingIntent?: import('@/providers/managed/resolvePurposeBindingSnapshot').ResolveManagedProviderPurposeBindingIntent;
   resolveManagedPurposeBindingIntentSelection?: Parameters<typeof registerExecutionRunHandlers>[1]['resolveManagedPurposeBindingIntentSelection'];
+  connectedAccountProviderLaunch?: Parameters<typeof registerExecutionRunHandlers>[1]['connectedAccountProviderLaunch'];
   /** Invocation-owned Settings from this daemon's captured Home and authenticated Account. */
   executionRunAccountSettings?: Readonly<{
     serverUrl: string;
@@ -707,6 +708,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
       ? { actionsSettingsProvider: params.deps.actionsSettingsProvider }
       : {}),
     ...(params.deps?.executionRunAccountSettings ?? {}),
+    connectedAccountProviderLaunch: params.deps?.connectedAccountProviderLaunch,
     resolveAgentStartContext: createMachineExecutionRunAgentStartContextResolver({
       machineId: params.deps?.currentMachineId, cwd: params.deps?.workingDirectory ?? process.cwd(),
     }),

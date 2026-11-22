@@ -85,11 +85,13 @@ describe('OpenCode plugin manifest', () => {
     expect(agent?.capabilities.sessions).not.toHaveProperty('usageLimitRecovery');
   });
 
-  it('declares request-time auth and managed Muse inference purposes', () => {
+  it('declares native request-time auth and API-key purposes', () => {
     const agent = PLUGIN_MANIFEST.contributes.agents.find((entry) => entry.id === 'opencode');
 
+    expect(agent?.connectedAccounts?.map(row => row.purpose)).not.toContain('meta-inference');
     expect(agent?.connectedAccounts).toEqual(expect.arrayContaining([{
       purpose: 'anthropic-model-request',
+      nativeModelIdPrefix: 'anthropic/',
       service: {
         pluginId: 'happier.agent.claude',
         localId: 'claude-subscription',
@@ -98,6 +100,7 @@ describe('OpenCode plugin manifest', () => {
       credentialKinds: ['oauth', 'token'],
     }, {
       purpose: 'openai-codex-model-request',
+      nativeModelIdPrefix: 'openai/',
       service: {
         pluginId: 'happier.agent.codex',
         localId: 'openai-codex',
@@ -106,6 +109,7 @@ describe('OpenCode plugin manifest', () => {
       credentialKinds: ['oauth'],
     }, {
       purpose: 'openai-api-key',
+      nativeModelIdPrefix: 'openai/',
       service: {
         pluginId: 'happier.voice.openai',
         localId: 'openai',
@@ -114,21 +118,13 @@ describe('OpenCode plugin manifest', () => {
       credentialKinds: ['token'],
     }, {
       purpose: 'anthropic-api-key',
+      nativeModelIdPrefix: 'anthropic/',
       service: {
         pluginId: 'happier.agent.claude',
         localId: 'anthropic',
       },
       materializationKinds: ['environment'],
       credentialKinds: ['token'],
-    }, {
-      purpose: 'meta-inference',
-      service: { pluginId: 'happier.agent.muse', localId: 'muse-account' },
-      managedProviderEndpoint: {
-        provider: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
-        purpose: 'meta-upstream', modelIdPrefix: 'meta/',
-      },
-      materializationKinds: ['environment'],
-      credentialKinds: ['token', 'oauth'],
     }]));
   });
 });

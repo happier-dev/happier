@@ -12,22 +12,12 @@ import { join } from 'node:path';
 import { extractGitHubReleaseAsset } from '../../../cli-common/src/agents/extractGitHubReleaseAsset.js';
 import { PLUGIN_MANIFEST as KIMI_PLUGIN_MANIFEST } from '../../kimi/src/manifest.js';
 import { PLUGIN_MANIFEST as OPENAI_PLUGIN_MANIFEST } from '../../openai/src/manifest.js';
-import { PLUGIN_MANIFEST as MUSE_PLUGIN_MANIFEST } from '../../muse/src/manifest.js';
 import { CODEX_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 import { CODEX_ACCOUNT_USAGE_PLAN_METADATA } from './connectedAccounts/planLabels.js';
 import { CODEX_PLUGIN, PLUGIN_MANIFEST } from './manifest.js';
 
 describe('Codex plugin manifest', () => {
-  it('offers the Muse account through the shared managed Responses endpoint', async () => {
-    expect(ingestPluginManifestV2(PLUGIN_MANIFEST)).toMatchObject({ ok: true });
-    expect(PLUGIN_MANIFEST.contributes.agents[0]?.connectedAccounts).toEqual(expect.arrayContaining([
-      expect.objectContaining({ purpose: 'meta-inference',
-        service: { pluginId: 'happier.agent.muse', localId: 'muse-account' },
-        credentialKinds: ['token', 'oauth'], managedProviderEndpoint: {
-          provider: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
-          purpose: 'meta-upstream', modelIdPrefix: 'meta/',
-        } }),
-    ]));
+  it('serializes the managed Muse Responses binding with only the local credential', async () => {
     const { CODEX_PROVIDER_BINDING_ADAPTER_V1 } = await import('./agent/providerBinding/adapter.js');
     const agentTargetKey = 'backend:codex:built_in';
     const bindingKey = 'connected_account:muse';
@@ -141,16 +131,11 @@ describe('Codex plugin manifest', () => {
     if (!kimiResult.ok) {
       throw new Error(`Expected the Kimi plugin manifest to ingest: ${JSON.stringify(kimiResult.diagnostics)}`);
     }
-    const museResult = ingestPluginManifestV2(MUSE_PLUGIN_MANIFEST);
-    if (!museResult.ok) {
-      throw new Error(`Expected the Muse plugin manifest to ingest: ${JSON.stringify(museResult.diagnostics)}`);
-    }
     // Resolve each declared connected-account service against its descriptor owner.
     expect(resolvePluginManifestSetReferencesV2([
       result.manifest,
       openAiResult.manifest,
       kimiResult.manifest,
-      museResult.manifest,
     ])).toEqual({ ok: true });
     expect(ingestPluginManifestV2(JSON.stringify(PLUGIN_MANIFEST))).toEqual(result);
     const missingAgentResult = ingestPluginManifestV2({
@@ -244,7 +229,6 @@ describe('Codex plugin manifest', () => {
       credentialKinds: ['oauth'],
       materializationKinds: ['files'],
     },
-    expect.objectContaining({ purpose: 'meta-inference', service: { pluginId: 'happier.agent.muse', localId: 'muse-account' } }),
     expect.objectContaining({ purpose: 'kimi-code-api-key', credentialKinds: ['token'], materializationKinds: ['environment'] }),
     expect.objectContaining({ purpose: 'openai-api-key', credentialKinds: ['token'], materializationKinds: ['environment'] }),
     ]);

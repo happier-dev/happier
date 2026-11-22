@@ -8,8 +8,8 @@ import type {
   ExecutionRunResultContractV1,
   ReviewScmScopeV1,
   ConnectedServiceBindingsV2,
-  ProviderBoundModelRef,
 } from '@happier-dev/protocol';
+import type { PersonalSessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import type { ScmCommitMessageContext, ScmCommitMessageContextInput } from '@/agent/runtime/bridges/executionRun/kinds/scmCommitMessage/loadScmCommitMessageContext';
 import type { CaptureScmComparisonInput } from '@/scm/comparisons/captureScmComparison';
 
@@ -34,7 +34,7 @@ export type ExecutionRunProfileStartParams = Readonly<{
   scmComparisonOperations?: import('@/scm/comparisons/comparisonOperations').ScmComparisonOperations;
   /** Captured launch selection for same-Run profile continuations. */
   modelId?: string;
-  modelSelection?: ProviderBoundModelRef;
+  modelSelection?: PersonalSessionModelRef;
   connectedServices?: ConnectedServiceBindingsV2 | null;
   instructions: string;
   intentInput?: unknown;

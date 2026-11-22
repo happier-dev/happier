@@ -209,10 +209,11 @@ export function registerMachineProviderRpcHandlers(input: Readonly<{
     RPC_METHODS.DAEMON_PROVIDERS_USAGE_REFRESH,
     async (raw, context) => {
       const request = DaemonProviderUsageRefreshRequestV1Schema.parse(raw);
+      const identity = 'connectionId' in request ? request : { machineId: request.machineId };
       const result = !input.featureGate.isEnabled('providers')
-        ? featureDisabled(request)
+        ? featureDisabled(identity)
         : request.machineId !== input.machineId
-          ? { status: 'error' as const, error: createProviderErrorV1('provider_not_enabled_on_machine', request) }
+          ? { status: 'error' as const, error: createProviderErrorV1('provider_not_enabled_on_machine', identity) }
           : await input.services.refreshUsage(request, context?.signal ? {
               signal: context.signal, reportOperationDiagnostics: context.reportOperationDiagnostics,
             } : undefined);

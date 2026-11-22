@@ -10,6 +10,7 @@ import { resolveSavedSecretSlotBindingIdV1 } from '@happier-dev/protocol/provide
 import { t } from '@/text';
 import type { DaemonProviderModelProjectionGroupV1 } from '@happier-dev/protocol/rpc';
 import { presentProviderConnectionIdentity } from '@/providers/connection/presentation';
+import { sessionModelSelectionKey } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
 
 export type RouteSelection = ProviderBoundModelRef | SessionModelRefV2 | null;
 export type ProviderRouteSource = Readonly<{
@@ -72,7 +73,7 @@ export function readProviderConnectionDisclosureSource(input: Readonly<{
         credentialSlotId: credential?.transports.some(transport => transport.uses.includes('runtime')) ? credential.slotId : null };
     const local = !connection.gatewayPlacement || connection.gatewayPlacement.kind === 'sessionMachine'
         || connection.gatewayPlacement.machineId === input.machineId;
-    const managedSignInPurposes = local ? (definition?.managedRuntime?.connectedAccounts ?? []).flatMap(declaration => {
+    const managedSignInPurposes = local ? (definition?.connectedAccounts ?? []).flatMap(declaration => {
         const target = connection.purposeBindingDefaults?.[declaration.purpose];
         if (!target) return [];
         const service = target.kind === 'account' ? target.account.service : target.service;
@@ -186,12 +187,29 @@ export function readProviderRouteConnectionId(selection: RouteSelection): string
         : selection?.providerConnectionId ?? null;
 }
 
+/** Match projected rows by the full authored source, including the Provider purpose and endpoint. */
+export function readProjectedConnectedAccountRoute(selection: Extract<SessionModelRefV2, { source: 'connected_account' }>,
+    sources: readonly ProviderRouteSource[] | undefined) {
+    const key = sessionModelSelectionKey(selection);
+    for (const source of sources ?? []) {
+        const row = source.rows?.find(row => sessionModelSelectionKey(row.ref) === key);
+        if (row) return { source, row };
+    }
+    return null;
+}
+
 export function resolveSessionRoutePresentation(input: SessionRoutePresentationInput): Readonly<{ applied: SessionRoute; pending: SessionRoute | null; reported?: SessionRoute }> {
     const resolve = (selection: RouteSelection, applied: boolean): SessionRoute => {
         if (selection && 'source' in selection && selection.source === 'team_resource') {
             const source = input.teamSources?.find(source => source.teamId === selection.teamId && source.resourceId === selection.resourceId);
             return { kind: 'team', teamId: selection.teamId, resourceId: selection.resourceId,
                 deliveryMode: selection.deliveryMode, modelId: selection.modelId, sourceLabel: source?.displayName ?? null };
+        }
+        if (selection && 'source' in selection && selection.source === 'connected_account') {
+            const projected = readProjectedConnectedAccountRoute(selection, input.sources);
+            return projected ? { kind: 'provider', connectionId: projected.source.connectionId,
+                sourceLabel: providerConnectionSourceLabel(projected.source), modelId: selection.modelId,
+                unavailable: projected.source.authorization?.authorized !== true } : { kind: 'unknown' };
         }
         const connectionId = readProviderRouteConnectionId(selection);
         if (connectionId && selection) {

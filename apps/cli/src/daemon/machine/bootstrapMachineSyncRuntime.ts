@@ -694,12 +694,15 @@ export type BootstrapMachineSyncRuntimeParams = Readonly<{
     typeof createRuntimeProviderModelManagementServices
   >[0]['openTeamDirect'];
   teamCredentialNativeSource?: import('@/providers/modelManagement/nativeProviderSource').TeamCredentialNativeSourceContext;
+  listProviderConnectedAccountProfiles?: Parameters<typeof createRuntimeProviderModelManagementServices>[0]['listProviderConnectedAccountProfiles'];
   createAgentCatalogObservation?: (
     infrastructure: Pick<
       Parameters<typeof createAgentProviderCatalogObservationService>[0],
       'client' | 'scheduler'
     >,
   ) => ReturnType<typeof createAgentProviderCatalogObservationService>;
+  connectedAccountUsage?: Parameters<typeof createRuntimeProviderModelManagementServices>[0]['connectedAccountUsage'];
+  connectedAccountProviderRequestAuth?: import('@/agent/runtime/bridges/executionRun/runtime/providerLaunch').ExecutionRunConnectedAccountProviderLaunch['connectedAccountRequestAuth'];
   triggerLegacyProfileMigration?: typeof triggerLegacyProfileMigrationRuntime;
   persistedTakeoverAdmissionWaiter?: PersistedTakeoverAdmissionWaiter;
   attachPersistedTakeoverAdmissionOwner?: (
@@ -1207,6 +1210,8 @@ export async function bootstrapMachineSyncRuntime(
       machineId: params.machineId,
       happyHomeDir: configuration.happyHomeDir,
       featureGate: providerFeatureGate,
+      listProviderConnectedAccountProfiles: params.listProviderConnectedAccountProfiles,
+      ...(params.connectedAccountUsage ? { connectedAccountUsage: params.connectedAccountUsage } : {}),
       ...(params.createAgentCatalogObservation ? { observeConnectedAccountSourceModels: request =>
         agentCatalogObservation!.observe(request) } : {}),
       ...(connectedApiMachine ? { invokeConnectedAccountNativeModels: (request, signal) =>
@@ -1403,6 +1408,13 @@ export async function bootstrapMachineSyncRuntime(
         ...(params.resolveManagedPurposeBindingIntentSelection
           ? { resolveManagedPurposeBindingIntentSelection: params.resolveManagedPurposeBindingIntentSelection }
           : {}),
+        ...(params.connectedAccountUsage && params.connectedAccountProviderRequestAuth && agentCatalogObservation ? {
+          connectedAccountProviderLaunch: {
+            purposeBindings: { activatePurposeBindings: params.connectedAccountUsage.activatePurposeBindings },
+            connectedAccountRequestAuth: params.connectedAccountProviderRequestAuth,
+            observeConnectedAccountSourceModels: agentCatalogObservation.observe,
+          },
+        } : {}),
         withSessionConfigOptionEnvironment: params.withSessionConfigOptionEnvironment,
         ...(params.resolveExecutionRunLiveBrokerAuthority
           ? { resolveExecutionRunLiveBrokerAuthority: params.resolveExecutionRunLiveBrokerAuthority }

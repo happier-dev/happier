@@ -3878,7 +3878,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
         "happier.agent.claude/anthropic",
         "happier.agent.kimi/kimi-code",
         "happier.agent.grok/xai",
-        "happier.agent.muse/muse-account",
         "happier.agent.gemini/gemini-account",
         "happier.scm.forge.github/github-account"
       ]
@@ -4100,7 +4099,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
         "KIMI_API_KEY",
         "KIMI_CODE_BASE_URL",
         "XAI_API_KEY",
-        "META_API_KEY",
         "GEMINI_API_KEY",
         "GOOGLE_API_KEY",
         "GOOGLE_GENAI_USE_VERTEXAI",
@@ -4108,6 +4106,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
         "GOOGLE_CLOUD_LOCATION",
         "COPILOT_GITHUB_TOKEN",
         "GOOGLE_APPLICATION_CREDENTIALS",
+        "META_API_KEY",
         "OPENROUTER_API_KEY"
       ],
       "loginLaunches": [],
@@ -4168,7 +4167,6 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
         "anthropic",
         "kimi-code",
         "xai",
-        "muse-account",
         "gemini-account",
         "github-account"
       ]

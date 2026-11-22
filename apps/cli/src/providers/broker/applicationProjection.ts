@@ -1,7 +1,8 @@
-import type { ProviderBrokerApplicationBindingV1, ProviderWireProtocol, ResolvedProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol';
+import type { ProviderBrokerApplicationBindingV1, ProviderWireProtocol, QualifiedConnectedAccountPurposeV1, ResolvedProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol';
 import type { ProviderBrokerSourceApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { projectApplicationEndpoint, projectAgentProviderBrokerApplications as projectDeclaredAgentProviderBrokerApplications } from '@happier-dev/protocol/providers/catalog/brokerApplicationProjectionV1';
-import { resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
+import { resolveProviderConnectedAccountDeclarationsV1 } from '@happier-dev/protocol/providers/contributions';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import { getProviderContribution, type ProviderContributionRegistryView, type ResolvedProviderConnectionRecord } from '@/providers/registry';
 import type { ProviderConnectionId } from '@happier-dev/protocol';
@@ -54,7 +55,7 @@ export function projectManagedProviderBrokerApplication(input: ManagedApplicatio
   });
 }
 
-/** Enumerates declared managed applications for the worker's accepted protocols.
+/** Enumerates declared broker applications for the worker's accepted protocols.
  * This is catalog composition only; source projection still owns model
  * membership, compatibility and availability. */
 export function projectAgentProviderBrokerApplications(input: Readonly<{
@@ -80,15 +81,24 @@ export function resolveManagedProviderBrokerPurpose(input: Readonly<{
   })) return null;
   const provider = getProviderContribution(input.registry,
     `${input.application.implementationIdentity.pluginId}/${input.application.implementationIdentity.localId}`)!;
-  const runtime = resolveProviderManagedRuntimeDeclarationV1({
-    implementationIdentity: provider.identity,
-    managedRuntime: provider.definition.managedRuntime!,
-  });
-  const purposes = runtime.connectedAccounts.filter((purpose) =>
+  const declarations = provider.connectedAccountDeclarations ?? resolveProviderConnectedAccountDeclarationsV1(provider);
+  const purposes = declarations.connectedAccounts.filter((purpose) =>
     purpose.service.pluginId === input.service.pluginId
     && purpose.service.localId === input.service.localId
     && purpose.endpointTemplateIds?.includes(input.application.endpointTemplateId));
   return purposes.length === 1 ? purposes[0]! : null;
+}
+
+/** The saved Team purpose identifies the Provider. A requested application can
+ * only narrow it to an endpoint of that same Provider. */
+export function resolveTeamCredentialPurposeProvider(input: Readonly<{
+  registry: ProviderContributionRegistryView;
+  purpose: QualifiedConnectedAccountPurposeV1;
+  application?: ProviderBrokerSourceApplicationBindingV1;
+}>) {
+  const key = buildQualifiedPluginContributionKey(input.purpose.consumer);
+  if (input.application && buildQualifiedPluginContributionKey(input.application.implementationIdentity) !== key) return null;
+  return getProviderContribution(input.registry, key);
 }
 
 /**

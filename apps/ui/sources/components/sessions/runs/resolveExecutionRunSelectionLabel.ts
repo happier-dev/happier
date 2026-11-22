@@ -1,3 +1,4 @@
+import { isSessionModelRefSourceBound, readSessionModelRefProviderConnectionId } from '@happier-dev/protocol/providers/selection/v2';
 import type { ExecutionRunResolvedSelection } from '@happier-dev/protocol/execution/runs/requestedConfiguration';
 
 import { buildBackendTargetKeyV2, readBackendTargetRefV2, type BackendTargetRefV2Input } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
@@ -31,7 +32,7 @@ export function resolveExecutionRunSelectionLabel(
   nativeModelLabel?: (modelId: string) => string | null,
 ): string | null {
   if (!selection) return null;
-  const connectionId = selection.modelSelection?.providerConnectionId ?? null;
+  const connectionId = selection.modelSelection ? readSessionModelRefProviderConnectionId(selection.modelSelection) : null;
   const nativeModelId = connectionId || selection.teamCredentialModel
     ? null
     : selection.modelSelection?.modelId ?? selection.modelId ?? null;
@@ -110,7 +111,7 @@ export function resolveRunNativeModelLabel(
     agentId = null;
   }
   return (modelId: string): string | null => {
-    if (selection?.modelSelection?.providerConnectionId || selection?.teamCredentialModel) return null;
+    if ((selection?.modelSelection && isSessionModelRefSourceBound(selection.modelSelection)) || selection?.teamCredentialModel) return null;
     const observed = targetKey ? catalogProfiles?.find(profile => profile.modelSelector?.backendTargetKey === targetKey
       && profile.modelSelector.modelId === modelId) : null;
     const recorded = agentId && isBundledAgentId(agentId)

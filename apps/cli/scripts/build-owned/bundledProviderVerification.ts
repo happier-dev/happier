@@ -148,6 +148,39 @@ export function collectProviderExecutableFactPathsV1(contribution: unknown): rea
     }
   }
 
+  for (const declaration of readRecordArray(contribution, 'connectedAccounts')) {
+    const purpose = readString(declaration, 'purpose');
+    const service = readContributionReferenceKey(declaration.service);
+    if (!purpose || !service) throw new Error('Provider connected-account purpose is incomplete');
+    const prefix = `connectedAccounts.${purpose}`;
+    addPath(paths, `${prefix}.service.${service}`);
+    addPath(paths, `${prefix}.required`, typeof declaration.required === 'boolean');
+    for (const kind of readOptionalStringArray(
+      declaration,
+      'materializationKinds',
+      `Provider connected-account purpose '${purpose}' materializationKinds`,
+    )) {
+      addPath(paths, `${prefix}.materializationKinds.${kind}`);
+    }
+  }
+  for (const use of readRecordArray(contribution, 'requestAuthUses')) {
+    const purpose = readString(use, 'purpose');
+    const materialization = isRecord(use.materialization) ? use.materialization : null;
+    const kind = materialization ? readString(materialization, 'kind') : null;
+    const origin = materialization ? readString(materialization, 'origin') : null;
+    if (!purpose || !materialization || !kind || !origin) {
+      throw new Error('Provider request-auth use is incomplete');
+    }
+    const prefix = `requestAuthUses.${purpose}.materialization`;
+    addPath(paths, `${prefix}.kind.${kind}`);
+    addPath(paths, `${prefix}.origin.${encodeURIComponent(origin)}`);
+    for (const field of ['headerNames', 'queryParameterNames']) {
+      for (const name of readOptionalStringArray(materialization, field, `Provider request-auth purpose '${purpose}' ${field}`)) {
+        addPath(paths, `${prefix}.${field}.${name}`);
+      }
+    }
+  }
+
   if (isRecord(contribution.managedRuntime)) {
     addPath(paths, 'managedRuntime.kind', typeof contribution.managedRuntime.kind === 'string');
     for (const dependency of readOptionalStringArray(
@@ -156,40 +189,6 @@ export function collectProviderExecutableFactPathsV1(contribution: unknown): rea
       'Managed Provider dependencies',
     )) {
       addPath(paths, `managedRuntime.dependencies.${dependency}`);
-    }
-    for (const declaration of readRecordArray(contribution.managedRuntime, 'connectedAccounts')) {
-      const purpose = readString(declaration, 'purpose');
-      const service = readContributionReferenceKey(declaration.service);
-      if (!purpose || !service) throw new Error('Managed Provider connected-account purpose is incomplete');
-      const prefix = `managedRuntime.connectedAccounts.${purpose}`;
-      addPath(paths, `${prefix}.service.${service}`);
-      addPath(paths, `${prefix}.required`, typeof declaration.required === 'boolean');
-      for (const kind of readOptionalStringArray(
-        declaration,
-        'materializationKinds',
-        `Managed Provider connected-account purpose '${purpose}' materializationKinds`,
-      )) {
-        addPath(paths, `${prefix}.materializationKinds.${kind}`);
-      }
-    }
-    for (const use of readRecordArray(contribution.managedRuntime, 'requestAuthUses')) {
-      const purpose = readString(use, 'purpose');
-      const materialization = isRecord(use.materialization) ? use.materialization : null;
-      const kind = materialization ? readString(materialization, 'kind') : null;
-      const origin = materialization ? readString(materialization, 'origin') : null;
-      if (!purpose || !materialization || !kind || !origin) {
-        throw new Error('Managed Provider request-auth use is incomplete');
-      }
-      const prefix = `managedRuntime.requestAuthUses.${purpose}.materialization`;
-      addPath(paths, `${prefix}.kind.${kind}`);
-      addPath(paths, `${prefix}.origin.${encodeURIComponent(origin)}`);
-      for (const headerName of readOptionalStringArray(
-        materialization,
-        'headerNames',
-        `Managed Provider request-auth purpose '${purpose}' headerNames`,
-      )) {
-        addPath(paths, `${prefix}.headerNames.${headerName}`);
-      }
     }
     const endpointTemplateIds = readOptionalStringArray(
       contribution.managedRuntime,
@@ -247,7 +246,7 @@ function parseCanonicalDate(value: unknown, field: string): string {
 function assertNoExecutableFactCopies(record: JsonRecord): void {
   const forbidden = [
     'endpointTemplates', 'credential', 'catalog', 'discovery', 'modelLoad',
-    'managedRuntime', 'compatibilityOverrides', 'legacyProfileMigrations',
+    'managedRuntime', 'connectedAccounts', 'requestAuthUses', 'compatibilityOverrides', 'legacyProfileMigrations',
     'value', 'expectedValue', 'claim',
   ];
   if (forbidden.some((key) => Object.prototype.hasOwnProperty.call(record, key))) {

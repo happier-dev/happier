@@ -375,27 +375,27 @@ describe('provider spawn runtime catalog bridge', () => {
           parser: 'openai-models',
         }],
       },
+      connectedAccounts: [{
+        purpose: 'upstream',
+        service: {
+          pluginId: 'happier.connected-account.example',
+          localId: 'example',
+        },
+        required: true,
+        materializationKinds: ['httpHeaders'],
+      }],
+      requestAuthUses: [{
+        purpose: 'upstream',
+        materialization: {
+          kind: 'httpHeaders',
+          origin: 'https://api.example.test',
+          headerNames: ['authorization'],
+        },
+      }],
       managedRuntime: {
         kind: 'managed',
         sharing: 'connectionMachine',
         endpointTemplateIds: ['responses'],
-        connectedAccounts: [{
-          purpose: 'upstream',
-          service: {
-            pluginId: 'happier.connected-account.example',
-            localId: 'example',
-          },
-          required: true,
-          materializationKinds: ['httpHeaders'],
-        }],
-        requestAuthUses: [{
-          purpose: 'upstream',
-          materialization: {
-            kind: 'httpHeaders',
-            origin: 'https://api.example.test',
-            headerNames: ['authorization'],
-          },
-        }],
       },
       discovery: {
         v: 1,
@@ -414,7 +414,7 @@ describe('provider spawn runtime catalog bridge', () => {
     if (!managedRuntime) {
       throw new Error('Expected public managed runtime declaration');
     }
-    const connectedAccountService = managedRuntime.connectedAccounts?.[0]?.service;
+    const connectedAccountService = definition.connectedAccounts?.[0]?.service;
     if (!connectedAccountService) {
       throw new Error('Expected public managed connected-account declaration');
     }

@@ -122,6 +122,7 @@ export type ProviderCatalogGetResult = Readonly<{
 type ProviderJsonGetRequest = Omit<ProviderCatalogGetRequest, 'parser' | 'contributedCatalogParsers'>;
 export type ProviderUsageGetRequest = ProviderJsonGetRequest & Readonly<{
   parse(body: unknown): unknown;
+  followRedirects?: false;
 }>;
 
 export type ProviderModelLoadPostRequest = Readonly<{
@@ -521,7 +522,7 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
     }
   }
 
-  async function getProjectedJson<T>(input: ProviderJsonGetRequest, project: (body: unknown) => T,
+  async function getProjectedJson<T>(input: ProviderJsonGetRequest & Readonly<{ followRedirects?: false }>, project: (body: unknown) => T,
     containsSensitiveValue: (value: T, lease: ProviderProbeHttpCredentialLease | undefined,
       publicHeaderValues: readonly string[]) => boolean,
   ): Promise<Readonly<{ value: T; finalUrl: string; compatibilityDiagnostic: boolean }>> {
@@ -556,6 +557,7 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
         try {
           throwIfCancelled(input.signal);
           if ([301, 302, 303, 307, 308].includes(response.status)) {
+            if (input.followRedirects === false) throw new ProviderProbeClientError('provider_probe_response_invalid');
             const location = headerValue(response.headers, 'location');
             if (!location) {
               throw new ProviderProbeClientError('provider_probe_response_invalid');

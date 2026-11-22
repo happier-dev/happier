@@ -9,8 +9,7 @@ import { BackendTargetKeyV2InputSchema, PersistedBackendTargetRefV2Schema, build
 import { normalizeConnectedServiceSelectionInput } from '../../connect/normalizeConnectedServiceSelectionInput.js';
 import { AgentStartBaselineSelectionErrorV1, resolveAgentStartBaselineSelectionV1 } from './agentStartBaselineSelectionV1.js';
 export { resolveAgentStartBaselineSelectionV1 } from './agentStartBaselineSelectionV1.js';
-import { ProviderBoundModelRefSchema } from '../../providers/selection/v1.js';
-import { projectSessionModelRefToExecutionModelSelection, projectSessionModelSelectionV2ToV1, SessionModelSelectionSchema, type SessionModelSelection } from '../../providers/selection/v2.js';
+import { createPersonalSessionModelSelection, PersonalSessionModelRefSchema, projectSessionModelRefToExecutionModelSelection, projectSessionModelSelectionV2ToV1, SessionModelSelectionSchema, type SessionModelSelection } from '../../providers/selection/v2.js';
 import { parseAgentPermissionIntentV1Alias } from '../../runtime/permissionIntentV1.js';
 import { AcpConfigOptionOverridesV1Schema } from '../../sessions/metadata/metadataOverridesV1.js';
 import { SessionSpawnNewInputV2BaseSchema, SessionSpawnNewInputV2Schema } from '../../sessions/creation/sessionSpawnNewInputV2.js';
@@ -504,10 +503,16 @@ function selection<Value>(schema: z.core.$ZodType<Value>, value: unknown) {
     const parsed = z.safeParse(schema, value);
     return parsed.success ? parsed.data : unresolved;
 }
+
+function readExecutionRunPersonalModelSelection(value: unknown): SessionModelSelection | null | Unresolved {
+    if (value === null) return null;
+    const parsed = PersonalSessionModelRefSchema.safeParse(value);
+    return parsed.success ? createPersonalSessionModelSelection(parsed.data, 0) : unresolved;
+}
 /** Selection translation only. All policy, role and depth decisions stay in admitAgentStartV1. */
 export function executionRunStartFactsV1(input: Readonly<Record<string, unknown>>, target: PersistedBackendTargetRefV2 | Unresolved, context: ActionExecutorContext, baseline: AgentStartContextV1['baseline']): AgentStartFactsV1 {
     const modelSelection = input.modelSelection !== undefined
-        ? selection(ProviderBoundModelRefSchema, input.modelSelection)
+        ? readExecutionRunPersonalModelSelection(input.modelSelection)
         : typeof input.modelId === 'string'
             ? target.kind === 'unresolved' ? unresolved : { agentTargetKey: buildBackendTargetKeyV2(target), providerConnectionId: null, modelId: input.modelId }
             : undefined;
@@ -692,15 +697,16 @@ export function projectAgentStartSelectionV1(input: Readonly<Record<string, unkn
             };
     }
     if (stamped.engine.modelId) {
-        const inputSelection = SessionModelSelectionSchema.safeParse(input.modelSelection);
+        const inputSelection = kind === 'execution_run' ? readExecutionRunPersonalModelSelection(input.modelSelection)
+            : SessionModelSelectionSchema.safeParse(input.modelSelection).data;
         const inputTeam = TeamCredentialProviderModelSelectionV1Schema.safeParse(input.teamCredentialModel);
         let explicitTeam: SessionModelSelection | undefined;
         if (inputTeam.success) {
             const { kind: _kind, ...ref } = inputTeam.data;
             explicitTeam = { v: 2, updatedAt: 0, ref: { source: 'team_resource', ...ref } };
         }
-        const inherited = modelSelection ?? (inputSelection.success ? inputSelection.data
-            : explicitTeam ?? baseline.configuration?.modelSelection);
+        const inherited = modelSelection ?? (inputSelection && 'ref' in inputSelection
+            ? inputSelection : explicitTeam ?? baseline.configuration?.modelSelection);
         const selected = readRoleEngineSessionModelSelectionV1(stamped.engine, inherited)!;
         if (kind === 'spawn_new')
             result.modelSelection = selected;

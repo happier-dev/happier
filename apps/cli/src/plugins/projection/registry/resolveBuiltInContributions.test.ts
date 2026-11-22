@@ -409,6 +409,28 @@ describe('resolveBuiltInContributions', () => {
       provenance: 'first_party',
       source: { kind: 'bundled' },
       definition: {
+        connectedAccounts: [{
+          purpose: 'openai-upstream',
+          materializationKinds: ['httpHeaders'],
+        }, {
+          purpose: 'anthropic-upstream',
+          materializationKinds: ['httpHeaders'],
+        }],
+        requestAuthUses: [{
+          purpose: 'openai-upstream',
+          materialization: {
+            kind: 'httpHeaders',
+            origin: 'https://chatgpt.com',
+            headerNames: ['authorization', 'chatgpt-account-id'],
+          },
+        }, {
+          purpose: 'anthropic-upstream',
+          materialization: {
+            kind: 'httpHeaders',
+            origin: 'https://api.anthropic.com',
+            headerNames: ['authorization'],
+          },
+        }],
         managedRuntime: {
           kind: 'managed',
           endpointTemplateIds: expect.arrayContaining([
@@ -416,28 +438,6 @@ describe('resolveBuiltInContributions', () => {
             'cliproxyapi-openai-chat',
             'cliproxyapi-anthropic',
           ]),
-          connectedAccounts: [{
-            purpose: 'openai-upstream',
-            materializationKinds: ['httpHeaders'],
-          }, {
-            purpose: 'anthropic-upstream',
-            materializationKinds: ['httpHeaders'],
-          }],
-          requestAuthUses: [{
-            purpose: 'openai-upstream',
-            materialization: {
-              kind: 'httpHeaders',
-              origin: 'https://chatgpt.com',
-              headerNames: ['authorization', 'chatgpt-account-id'],
-            },
-          }, {
-            purpose: 'anthropic-upstream',
-            materialization: {
-              kind: 'httpHeaders',
-              origin: 'https://api.anthropic.com',
-              headerNames: ['authorization'],
-            },
-          }],
         },
       },
     });

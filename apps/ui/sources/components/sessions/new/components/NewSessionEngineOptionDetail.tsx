@@ -2,7 +2,8 @@ import * as React from 'react';
 
 import { backendTargetKeysMatch } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { isNativeAutomaticModelSelectionInputV1, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
-import { readSessionModelSelectionProviderConnectionId, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
+import { createPersonalSessionModelSelection, isSessionModelRefSourceBound, readSessionModelSelectionProviderConnectionId, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
+import type { QualifiedConnectedAccountPurposeBindingV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import { useProviderSettingsForServer } from '@/providers/hooks/useProviderSettings';
 import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
@@ -83,6 +84,8 @@ export type NewSessionEngineOptionDetailProps = Readonly<{
      * In-session callers omit this and retain the detail pane's local projection.
      */
     providerProjection?: ReturnType<typeof useProviderModelProjection>;
+    connectedServices?: SessionModelPickerProps['connectedServices'];
+    includeProviderConnectedAccounts?: boolean;
     teamModels?: Readonly<Pick<SessionModelPickerProps,
         'teamCredentialResources' | 'teamCredentialDisplayNames' | 'teamNameById' | 'homeNameByTeamId' | 'teamCredentialResourceStatusByKey'
         | 'selectedTeamCredentialModel' | 'onSelectTeamCredentialModel' | 'onRecoverTeamCredentialResource' | 'probe'> & {
@@ -96,6 +99,7 @@ export type NewSessionEngineOptionDetailProps = Readonly<{
     onSelectionChange?: (selection: Readonly<{
         modelId: string;
         modelSelection: SessionModelSelection | null;
+        connectedAccountBinding?: QualifiedConnectedAccountPurposeBindingV1;
         sessionModeId: string;
         configOverrides: Readonly<Record<string, string>>;
         /**
@@ -232,7 +236,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         modelSelection: SessionModelSelection | null;
         sessionModeId: string;
         configOverrides: Readonly<Record<string, string>>;
-    }>) => {
+    }>, connectedAccountBinding?: QualifiedConnectedAccountPurposeBindingV1) => {
         selectionRef.current = nextSelection;
         setSelectedModelId(nextSelection.modelId);
         setSelectedModelSelection(nextSelection.modelSelection);
@@ -240,10 +244,11 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         setSelectedConfigOverrides(nextSelection.configOverrides);
         props.onSelectionChange?.({
             ...nextSelection,
+            ...(connectedAccountBinding ? { connectedAccountBinding } : {}),
             // `default` names the Agent's own automatic model only when no
             // Provider connection is bound; a Provider may serve a model
             // literally named `default`, and that choice keeps its label.
-            modelLabel: !isTeamCredentialProviderModelPickerValue(sessionModelPickerValueFromRef(nextSelection.modelSelection?.ref)) && isNativeAutomaticModelSelectionInputV1({
+            modelLabel: !(nextSelection.modelSelection && isSessionModelRefSourceBound(nextSelection.modelSelection.ref)) && isNativeAutomaticModelSelectionInputV1({
                 providerConnectionId: nextSelection.modelSelection ? readSessionModelSelectionProviderConnectionId(nextSelection.modelSelection) : null,
                 modelId: nextSelection.modelId,
             })
@@ -271,7 +276,9 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         ? false
         : preflightModels?.supportsFreeform === true || providerSupportsFreeform;
     const selectedPickerValue = React.useMemo(() => sessionModelPickerValueFromRef(selectedModelSelection?.ref), [selectedModelSelection]);
-    const sourceModelSelected = connectedAccountSelected || Boolean((isTeamCredentialProviderModelPickerValue(selectedPickerValue) ? true : selectedPickerValue?.providerConnectionId) || props.teamModels?.selectedTeamCredentialModel);
+    const sourceModelSelected = connectedAccountSelected || Boolean(
+        (selectedModelSelection && isSessionModelRefSourceBound(selectedModelSelection.ref)) || props.teamModels?.selectedTeamCredentialModel,
+    );
     const inheritedModel = props.teamModels?.modelAttribution;
     const managedModelSelected = Boolean(inheritedModel
         && backendTargetKeysMatch(inheritedModel.agentTargetKey, formatBackendTargetKeyV2(props.backendTarget)));
@@ -388,7 +395,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
             ? currentSelection?.v === 2 && currentSelection.ref.source === 'native'
                 ? { ...currentSelection, updatedAt: Date.now(),
                     ref: { ...currentSelection.ref, modelId: canonicalSelectedRef.modelId } }
-                : { v: 1, updatedAt: Date.now(), ref: canonicalSelectedRef }
+                : createPersonalSessionModelSelection(canonicalSelectedRef, Date.now())
             : null;
         publishSelection({
             ...selectionRef.current,
@@ -465,10 +472,10 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         />
     ) : undefined;
     const modelAttribution = managedModelSelected ? inheritedModel?.label ?? null : null;
-    const selectModel = (ref: SessionModelPickerValue, savedEffort?: string) => {
+    const selectModel = (ref: SessionModelPickerValue, savedEffort?: string, connectedAccountBinding?: QualifiedConnectedAccountPurposeBindingV1) => {
         props.teamModels?.onSelectOtherModel();
         const selectedId = ref?.modelId ?? 'default';
-        const modelId = ref?.providerConnectionId
+        const modelId = ref && isSessionModelRefSourceBound(ref)
             ? selectedId
             : resolveCanonicalModelOptionId(modelOptions, selectedId);
         const canonicalRef = ref && modelId !== ref.modelId
@@ -482,14 +489,14 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         const configOverrides = sanitizeConfigOverridesForModel(
             modelId,
             savedEffort === undefined ? overrides : { ...overrides, [PROVIDER_REASONING_EFFORT_OPTION_ID]: savedEffort },
-            canonicalRef?.providerConnectionId ? sourceDescriptor?.modelOptions ?? [] : undefined,
+            canonicalRef && isSessionModelRefSourceBound(canonicalRef) ? sourceDescriptor?.modelOptions ?? [] : undefined,
         );
         publishSelection({
             ...selectionRef.current,
             modelId,
-            modelSelection: canonicalRef ? { v: 1, updatedAt: Date.now(), ref: canonicalRef } : null,
+            modelSelection: canonicalRef ? createPersonalSessionModelSelection(canonicalRef, Date.now()) : null,
             configOverrides,
-        });
+        }, connectedAccountBinding);
         return true;
     };
     const providerPicker = (
@@ -497,7 +504,8 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
             fillAvailableSpace
             multiColumn
             agentTargetKey={agentTargetKey}
-            connectedServices={capabilityProbeContext?.capabilityParams?.connectedServices}
+            connectedServices={props.connectedServices ?? capabilityProbeContext?.capabilityParams?.connectedServices}
+            includeProviderConnectedAccounts={props.includeProviderConnectedAccounts}
             nativeModels={modelOptions}
             nativeSourceLabel={props.nativeSourceLabel}
             providerGroups={providerGroups}
@@ -561,7 +569,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
                     } : {}),
                 });
             } : undefined}
-            onSelect={selectModel}
+            onSelect={(ref, binding) => selectModel(ref, undefined, binding)}
             onSelectFavoriteModel={favoriteEntries.length > 0 ? selectModel : undefined}
         />
     );

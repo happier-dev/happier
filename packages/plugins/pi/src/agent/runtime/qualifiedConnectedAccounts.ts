@@ -22,7 +22,6 @@ import {
   PI_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
   PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
   PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES,
-  PI_NATIVE_CONNECTED_ACCOUNT_PURPOSES,
 } from '../auth/services/qualifiedPurposes.js';
 import {
   ensurePiRequestAuthExtensionAsset,
@@ -189,7 +188,7 @@ export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
   };
 
   try {
-    for (const declaration of PI_NATIVE_CONNECTED_ACCOUNT_PURPOSES) {
+    for (const declaration of PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES) {
       let resolveInitial!: () => void;
       initialObservations.push(new Promise<void>((resolve) => {
         resolveInitial = resolve;
@@ -210,7 +209,7 @@ export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
       input.context.signal,
     );
     const bindings = await Promise.all(
-      PI_NATIVE_CONNECTED_ACCOUNT_PURPOSES.map(async (declaration) => {
+      PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES.map(async (declaration) => {
         const binding = await connectedAccounts.getBinding(
           declaration.purpose,
           { signal: input.context.signal, observation: true },
@@ -302,7 +301,7 @@ export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
       requestAuthPurposes['openai-codex'] =
         PI_REQUEST_AUTH_DECLARED_PURPOSES['openai-codex'];
     }
-    for (const declaration of PI_NATIVE_CONNECTED_ACCOUNT_PURPOSES) {
+    for (const declaration of PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES) {
       const binding = bindingFor(declaration.purpose);
       if (!binding) continue;
       const native = declaration.native;

@@ -14,18 +14,18 @@ const gateway = () => createProviderConnectionViewFixture({ connectionId: 'pc_ga
 
 describe('gateway configuration Action request', () => {
     it('presents only declared family restrictions through their contributing plugin translations', () => {
-        const declaration = readAccountProviderDeclarations({ kind: 'account' }).find(entry => entry.definition.managedRuntime?.connectedAccounts?.length);
+        const declaration = readAccountProviderDeclarations({ kind: 'account' }).find(entry => entry.definition.managedRuntime && entry.definition.connectedAccounts?.length);
         if (!declaration?.definition.managedRuntime) throw new Error('Expected the admitted gateway declaration');
         const operationRestriction = {
             summary: { key: 'vendor.summary', fallback: 'Chat only' },
             sentence: { key: 'vendor.sentence', fallback: 'This vendor supports chat only.' },
         };
         const contributionKey = 'example.gateway/gateway';
-        const definition = ProviderContributionV1Schema.parse({ ...declaration.definition, managedRuntime: {
-            ...declaration.definition.managedRuntime, requestAuthUses: [], connectedAccounts: [
+        const definition = ProviderContributionV1Schema.parse({ ...declaration.definition, requestAuthUses: [], connectedAccounts: [
                 { purpose: 'restricted-upstream', service: 'subscription', operationRestriction },
                 { purpose: 'ordinary-upstream', service: 'subscription' },
-            ],
+            ], managedRuntime: {
+            ...declaration.definition.managedRuntime,
         } });
         const purposes = readProviderGatewayContributionPurposes(contributionKey, [{ ...declaration, contributionKey, definition }])!;
         const localize = createPluginLocalizedTextResolver({ locale: 'fr', projection: { translationsByPluginId: {
@@ -102,26 +102,24 @@ describe('gateway configuration Action request', () => {
                 { purpose: 'anthropic-upstream', service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' } },
             ]),
         } });
-        const [gateway] = readAccountProviderDeclarations({ kind: 'account' }).filter(declaration => declaration.definition.managedRuntime?.connectedAccounts?.length);
+        const [gateway] = readAccountProviderDeclarations({ kind: 'account' }).filter(declaration => declaration.definition.managedRuntime && declaration.definition.connectedAccounts?.length);
         expect(chooseProviderGatewayContributionV1([gateway!, { ...gateway!, contributionKey: 'example.other/gateway' }], {}))
             .toMatchObject({ status: 'choice_required', choices: [
                 { contributionKey: gateway!.contributionKey }, { contributionKey: 'example.other/gateway' },
             ] });
     });
     it('qualifies declaration-local gateway services while preserving explicit vendor identities', () => {
-        const [declaration] = readAccountProviderDeclarations({ kind: 'account' }).filter(entry => entry.definition.managedRuntime?.connectedAccounts?.length);
+        const [declaration] = readAccountProviderDeclarations({ kind: 'account' }).filter(entry => entry.definition.managedRuntime && entry.definition.connectedAccounts?.length);
         if (!declaration?.definition.managedRuntime) throw new Error('Expected the admitted gateway declaration');
         const qualified = { pluginId: 'vendor.accounts', localId: 'subscription' };
         const declarations = [{
             ...declaration,
             contributionKey: 'example.gateway/gateway',
-            definition: { ...declaration.definition, managedRuntime: {
-                ...declaration.definition.managedRuntime,
-                requestAuthUses: [],
-                connectedAccounts: [
+            definition: { ...declaration.definition, requestAuthUses: [], connectedAccounts: [
                     { purpose: 'native-upstream', service: 'subscription' },
                     { purpose: 'other-upstream', service: qualified },
-                ],
+                ], managedRuntime: {
+                ...declaration.definition.managedRuntime,
             } },
         }];
         expect(chooseProviderGatewayContributionV1(declarations, {})).toEqual({ status: 'selected', contribution: { contributionKey: 'example.gateway/gateway', purposes: expect.arrayContaining([

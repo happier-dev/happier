@@ -304,7 +304,7 @@ function FavoriteBackendModelsCollector(props: Readonly<{
         const refusedPresentationByValue = new Map<string, FavoriteModelOption>();
         for (const option of sections.flatMap((section) => section.options)) {
             if (option.value === null) continue;
-            if (isTeamCredentialProviderModelPickerValue(option.value)) continue;
+            if (isTeamCredentialProviderModelPickerValue(option.value) || 'source' in option.value) continue;
             if (option.disabled === true) {
                 refusedPresentationByValue.set(sessionModelSelectionKey(option.value), {
                     value: sessionModelSelectionKey(option.value),

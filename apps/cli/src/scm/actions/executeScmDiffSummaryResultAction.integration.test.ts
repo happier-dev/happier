@@ -538,7 +538,8 @@ describe('saved SCM result Action boundary', () => {
     expect(starts).toEqual([expect.objectContaining({ kind: 'scm_diff_summary.v1', backendTarget: generator.backendTarget, modelId: 'chosen-model', modelSelection,
       intentInput: expect.objectContaining({ resultId: created.resultId, comparisonId, expectedRevision: 0, investigateSurroundingFiles: true }) })]);
   });
-  it.each(['matching', 'differentModel', 'differentProvider', 'differentAgent', 'missingGenerator', 'missingGeneratorTeam', 'legacyGeneratorTeam', 'savedTeam'] as const)(
+  it.each(['matching', 'differentModel', 'differentProvider', 'differentAgent', 'missingGenerator', 'missingGeneratorTeam', 'legacyGeneratorTeam',
+    'savedTeam', 'sameConnectedPurpose', 'differentConnectedEndpoint', 'legacyFromConnectedPurpose', 'legacyWithoutConnectedPurpose'] as const)(
     'preserves legacy retained Connected Services only for the same saved route (%s)', async route => {
       return runWithScmAccountScope('account', async () => {
       const backendTarget = { kind: 'backend' as const, backendId: 'codex', sourceKind: 'built_in' as const };
@@ -547,6 +548,13 @@ describe('saved SCM result Action boundary', () => {
       const connectedServices = { v: 2 as const, bindingsByServiceId: {
         'happier.agent.codex/openai-codex': { source: 'connected' as const, selection: 'profile' as const, profileId: 'original-profile' },
       } };
+      const exactSelection = { source: 'connected_account' as const, agentTargetKey: modelSelection.agentTargetKey,
+        modelId: 'chosen-model', endpointTemplateId: 'api',
+        purpose: { consumer: { pluginId: 'acme.gateway', localId: 'provider' }, purpose: 'inference' } };
+      const usesExactOriginal = route === 'sameConnectedPurpose' || route === 'differentConnectedEndpoint'
+        || route === 'legacyFromConnectedPurpose' || route === 'legacyWithoutConnectedPurpose';
+      const savedSelection = route === 'sameConnectedPurpose' ? exactSelection
+        : route === 'differentConnectedEndpoint' ? { ...exactSelection, endpointTemplateId: 'other-api' } : modelSelection;
       const savedTeam = TeamCredentialProviderModelSelectionV1Schema.parse({
         kind: 'team_credential_provider_model', resourceId: 'saved-resource', teamId: 'team', expectedResourceRevision: 3,
         agentTargetKey: modelSelection.agentTargetKey, modelId: modelSelection.modelId, deliveryMode: 'brokered',
@@ -559,7 +567,8 @@ describe('saved SCM result Action boundary', () => {
           ...(route === 'missingGeneratorTeam' || route === 'legacyGeneratorTeam' ? { teamCredentialModel: TeamCredentialProviderModelSelectionV1Schema.parse({
             kind: 'team_credential_provider_model', resourceId: 'resource', teamId: 'team', expectedResourceRevision: 2,
             agentTargetKey: modelSelection.agentTargetKey, modelId: originalModel, deliveryMode: 'brokered',
-          }) } : { modelSelection: { agentTargetKey: buildBackendTargetKeyV2(readBackendTargetRefV2(originalTarget)), modelId: originalModel,
+          }) } : { modelSelection: usesExactOriginal ? exactSelection : {
+            agentTargetKey: buildBackendTargetKeyV2(readBackendTargetRefV2(originalTarget)), modelId: originalModel,
             providerConnectionId: route === 'differentProvider' ? 'other-provider' : modelSelection.providerConnectionId } }) },
       } }).run;
       const comparisonId = 'b'.repeat(64);
@@ -568,7 +577,7 @@ describe('saved SCM result Action boundary', () => {
           metadata: { ...output.metadata, sourceKey: comparisonId }, comparison: { ...output.comparison, id: comparisonId } }),
         ...(route === 'missingGenerator' || route === 'missingGeneratorTeam' ? {} : { generator: { backendTarget, modelId: 'chosen-model',
           ...(route === 'savedTeam' ? { modelSelection: { source: 'team_resource' as const, ...savedTeamRef } }
-            : route === 'legacyGeneratorTeam' ? {} : { modelSelection }) } }) });
+            : route === 'legacyGeneratorTeam' || route === 'legacyWithoutConnectedPurpose' ? {} : { modelSelection: savedSelection }) } }) });
       const starts: Record<string, unknown>[] = [];
       const response = await executeScmActionOperation({ actionId: 'scm.diffSummary.discuss',
         input: { cwd, resultId: saved.resultId, expectedRevision: 0, message: 'Explain this change', startNew: true }, workingDirectory: cwd,
@@ -580,16 +589,16 @@ describe('saved SCM result Action boundary', () => {
           return { ok: true, result: { runId: 'replacement', callId: 'call', sidechainId: 'sidechain' } };
         },
       });
-      if (route === 'missingGeneratorTeam' || route === 'legacyGeneratorTeam') {
+      if (route === 'missingGeneratorTeam' || route === 'legacyGeneratorTeam' || route === 'legacyWithoutConnectedPurpose') {
         expect(response).toMatchObject({ success: false, errorCode: 'discussion_unavailable' });
         expect(starts).toEqual([]);
         return;
       }
       expect(response).toMatchObject({ success: true, runId: 'replacement' });
       expect(starts).toHaveLength(1);
-      expect(starts[0]?.modelSelection).toEqual(route === 'savedTeam' ? undefined : modelSelection);
+      expect(starts[0]?.modelSelection).toEqual(route === 'savedTeam' ? undefined : savedSelection);
       if (route === 'savedTeam') expect(starts[0]?.teamCredentialModel).toEqual(savedTeam);
-      expect(starts[0]?.connectedServices).toEqual(route === 'matching' || route === 'missingGenerator' ? connectedServices : undefined);
+      expect(starts[0]?.connectedServices).toEqual(route === 'matching' || route === 'missingGenerator' || route === 'sameConnectedPurpose' ? connectedServices : undefined);
       });
     });
   it.each([['connected', true], ['native', true], ['connected', false]] as const)(

@@ -10,6 +10,7 @@ import { ComposerRefV1Schema } from '../plugins/ui/composerRef.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { SessionDirectoryIntentV1Schema } from '../sessions/creation/sessionDirectoryIntentV1.js';
 import { SessionModelRefSchema, SessionModelSelectionSchema } from '../providers/selection/v2.js';
+import { QualifiedConnectedAccountPurposeBindingV1Schema } from '../connect/connectedAccountPurposeBindings.js';
 import { PersistedBackendTargetRefV2Schema } from '../backends/targets/backendTargetRefV2.js';
 import { TeamCredentialProviderModelSelectionV1Schema } from '../teams/credentials/providerModelCatalogV1.js';
 import { DiscussionMessageRefV1Schema } from '../discussions/references.js';
@@ -134,13 +135,15 @@ export function projectInboxReadItemV1(item: z.infer<typeof InboxCanonicalItemSc
 }
 export const NewSessionDraftModelIntentSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('mode'), modelId: z.string().check(z.trim(), z.minLength(1)) }),
-  z.strictObject({ kind: z.literal('selection'), ref: z.nullable(SessionModelRefSchema) }),
+  z.strictObject({ kind: z.literal('selection'), ref: z.nullable(SessionModelRefSchema),
+    connectedAccountBinding: z.optional(QualifiedConnectedAccountPurposeBindingV1Schema) }),
   z.strictObject({ kind: z.literal('team'), selection: z.nullable(TeamCredentialProviderModelSelectionV1Schema) }),
 ]));
 export type NewSessionDraftModelIntent = z.infer<typeof NewSessionDraftModelIntentSchema>;
 export const SessionAgentPickerSelectionSchema = lazyZodSchema(() => z.strictObject({
     modelId: z.string().check(z.minLength(1)),
     modelSelection: z.optional(z.nullable(SessionModelSelectionSchema)),
+    connectedAccountBinding: z.optional(QualifiedConnectedAccountPurposeBindingV1Schema),
     modelLabel: z.optional(z.nullable(z.string())),
     sessionModeId: z.nullable(z.string()),
     configOverrides: z.record(z.string(), z.string()),

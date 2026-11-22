@@ -1,7 +1,7 @@
 {
   "v": 1,
   "contributionKey": "happier.provider.vercel-ai-gateway/vercel-ai-gateway",
-  "reviewedAt": "2026-10-28",
+  "reviewedAt": "2026-11-20",
   "sources": [
     { "id": "claude", "kind": "official-doc", "url": "https://vercel.com/docs/ai-gateway/coding-agents/claude-code", "accessedAt": "2026-10-25", "revision": "current-2026-10-25" },
     { "id": "codex", "kind": "official-doc", "url": "https://vercel.com/docs/ai-gateway/coding-agents/openai-codex", "accessedAt": "2026-10-25", "revision": "current-2026-10-25" },
@@ -9,7 +9,8 @@
     { "id": "catalog", "kind": "official-doc", "url": "https://vercel.com/docs/ai-gateway/sdks-and-apis/rest-api", "accessedAt": "2026-10-25", "revision": "current-2026-10-25" },
     { "id": "responses", "kind": "official-doc", "url": "https://vercel.com/docs/ai-gateway/sdks-and-apis/responses", "accessedAt": "2026-10-25", "revision": "current-2026-10-25" },
     { "id": "reasoning", "kind": "official-doc", "url": "https://vercel.com/docs/ai-gateway/models-and-providers/reasoning", "accessedAt": "2026-10-25", "revision": "current-2026-10-25" },
-    { "id": "attribution", "kind": "official-doc", "url": "https://vercel.com/docs/ai-gateway/ecosystem/app-attribution", "accessedAt": "2026-10-25", "revision": "current-2026-10-25" }
+    { "id": "attribution", "kind": "official-doc", "url": "https://vercel.com/docs/ai-gateway/ecosystem/app-attribution", "accessedAt": "2026-10-25", "revision": "current-2026-10-25" },
+    { "id": "vercel-signin", "kind": "product-decision", "locator": ".project/plans/2026-11-18-vercel-signin/PLAN.md", "accessedAt": "2026-11-20", "revision": "r4-approved-provider-purpose-request-auth" }
   ],
   "facts": [
     { "path": "kind", "sourceIds": ["coding-agents"], "status": "verified" },
@@ -44,6 +45,14 @@
     { "path": "endpointTemplates.vercel-chat.capabilities.reasoningControls", "sourceIds": ["reasoning"], "status": "verified" },
     { "path": "endpointTemplates.vercel-chat.publicHeaders.http-referer", "sourceIds": ["attribution"], "status": "verified" },
     { "path": "endpointTemplates.vercel-chat.publicHeaders.x-title", "sourceIds": ["attribution"], "status": "verified" },
-    { "path": "usageSources.credits", "sourceIds": ["catalog"], "status": "verified" }
+    { "path": "usageSources.credits", "sourceIds": ["catalog"], "status": "verified" },
+    { "path": "connectedAccounts.model-inference.service.happier.machine.vercel/vercel-account", "sourceIds": ["vercel-signin"], "status": "verified" },
+    { "path": "connectedAccounts.model-inference.required", "sourceIds": ["vercel-signin"], "status": "verified" },
+    { "path": "connectedAccounts.model-inference.materializationKinds.httpHeaders", "sourceIds": ["vercel-signin"], "status": "verified" },
+    { "path": "requestAuthUses.model-inference.materialization.kind.httpHeaders", "sourceIds": ["vercel-signin"], "status": "verified" },
+    { "path": "requestAuthUses.model-inference.materialization.origin.https%3A%2F%2Fai-gateway.vercel.sh", "sourceIds": ["vercel-signin"], "status": "verified" },
+    { "path": "requestAuthUses.model-inference.materialization.headerNames.authorization", "sourceIds": ["vercel-signin"], "status": "verified" },
+    { "path": "requestAuthUses.model-inference.materialization.headerNames.x-vercel-ai-gateway-team", "sourceIds": ["vercel-signin"], "status": "verified" },
+    { "path": "requestAuthUses.model-inference.materialization.queryParameterNames.teamId", "sourceIds": ["vercel-signin"], "status": "verified" }
   ]
 }

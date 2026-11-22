@@ -39,9 +39,6 @@ describe('execution-run pinned Provider preparation', () => {
         const fixture = await createManagedRunLaunchFixture({ physicalGateway: true, controller: pluginReloadController,
             materializationUrl: 'http://127.0.0.1:' + address.port,
             connectedAccountModels: [{ id: 'example', name: 'Example' }],
-            connectedAccounts: [{ purpose: 'inference', service: { pluginId: 'acme.shared-registry', localId: 'accounts' },
-                materializationKinds: ['httpHeaders'], managedProviderEndpoint: {
-                    provider: { pluginId: 'acme.shared-registry', localId: 'gateway' }, purpose: 'upstream', modelIdPrefix: 'native/' } }],
         });
         const resources = createProviderLaunchResourceScope();
         let runtime: ReturnType<typeof createExecutionRunRuntime> | undefined;
@@ -57,12 +54,13 @@ describe('execution-run pinned Provider preparation', () => {
                 resolvePreparation: async () => ({ machineId: fixture.machineId, happyHomeDir: fixture.happyHomeDir,
                     featureEnabled: true, accountSettingsSnapshot: fixture.snapshot,
                     resolveManagedPurposeBindingIntentSelection: fixture.gateway!.purposeBindingOwner.resolveBindingIntentSelection,
-                    isCurrent: () => true }),
+                    readCurrentnessRefusal: async () => null }),
             });
             runtime = createExecutionRunRuntime({ cwd: fixture.happyHomeDir, happyHomeDir: fixture.happyHomeDir,
                 scope: 'detached', runId: 'managed-purpose-finite-run', backendId: fixture.agentId, backendTarget,
-                modelSelection: { agentTargetKey: fixture.agentTargetKey, providerConnectionId: null, modelId: 'native/example' },
-                modelId: 'native/example', permissionMode: 'default', start: { intent: 'agent' },
+                modelSelection: { source: 'connected_account', purpose: fixture.gateway!.purposeBindings.bindings[0]!.purpose,
+                    endpointTemplateId: 'api', agentTargetKey: fixture.agentTargetKey, modelId: 'example' },
+                modelId: 'example', permissionMode: 'default', start: { intent: 'agent' },
                 machineId: fixture.machineId, engineRegistry: await resolveCliEngineRegistry({ runtimeRegistry: fixture.lease.registry }),
                 connectedServices: { v: 2, bindingsByServiceId: { 'acme.shared-registry/accounts': { source: 'connected', profileId: 'upstream-account' } } },
                 resolveProvidersFeatureEnabled: () => true, resolveAccountSettingsSnapshot: async () => fixture.snapshot, providerLaunch,

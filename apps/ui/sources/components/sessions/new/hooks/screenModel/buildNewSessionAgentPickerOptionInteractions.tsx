@@ -96,6 +96,7 @@ export function buildNewSessionAgentPickerOptionInteractions(
                 modelSummary: params.modelSummary,
                 selection,
                 reconcileSelection: false,
+                includeProviderConnectedAccounts: true,
                 favoriteModelSelections: params.favoriteModelSelections ?? [],
                 onToggleFavoriteModel: params.onToggleFavoriteModel
                     ? (model) => params.onToggleFavoriteModel?.(params.entry, model)

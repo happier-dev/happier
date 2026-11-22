@@ -1,5 +1,6 @@
 import type { TeamCredentialResourceStatusByKey } from '@/sync/domains/teams/teamCredentialResourceStatus';
 import { isNativeAutomaticModelSelectionInputV1, serializeModelVisibilityRefV1, type ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
+import { isSessionModelRefSourceBound, readSessionModelRefProviderConnectionId } from '@happier-dev/protocol/providers/selection/v2';
 import type { ProviderModelDescriptorV1 } from '@happier-dev/protocol/models/descriptor';
 import type { ProviderSettingsV1 } from '@happier-dev/protocol/providers/settings/v1';
 import type { DaemonProviderModelProjectionResponseV1 } from '@happier-dev/protocol/rpc';
@@ -48,9 +49,13 @@ export function resolveSessionModelSourceDescriptor(input: Readonly<{
             && resource.resourceRevision === selected.expectedResourceRevision)
             ?.providerModels.find(row => sessionModelSelectionKey(row.selection) === key)?.descriptor ?? null;
     }
-    for (const group of input.providerGroups) {
+    return findSessionModelProjectionRow(input.providerGroups, key)?.descriptor ?? null;
+}
+
+export function findSessionModelProjectionRow(groups: readonly SessionModelProjectionGroup[], key: string) {
+    for (const group of groups) {
         const row = group.rows.find(row => sessionModelSelectionKey(row.ref) === key);
-        if (row) return row.descriptor;
+        if (row) return row;
     }
     return null;
 }
@@ -322,7 +327,7 @@ export function buildSessionModelPickerSections(input: Readonly<{
     const selectedValue = input.selectedTeamCredentialModel ?? input.selected;
     const selectedProviderProjectionAuthoritative = selectedValue == null
         || isTeamCredentialProviderModelPickerValue(selectedValue)
-        || selectedValue.providerConnectionId == null
+        || !isSessionModelRefSourceBound(selectedValue)
         || input.providerProjectionAuthoritative;
     if (selectedValue && selectedProviderProjectionAuthoritative && input.recoverMissingSelection !== false
         && !sections.some((section) => section.options.some((option) => (
@@ -389,7 +394,7 @@ export function buildSessionModelPickerSections(input: Readonly<{
                     ? t(presentProviderError(recovery.error).descriptionKey)
                     : isTeamCredentialProviderModelPickerValue(selectedValue)
                         ? teamDescription ?? t('teams.credentials.detail.notFound')
-                        : selectedValue.providerConnectionId === null
+                        : readSessionModelRefProviderConnectionId(selectedValue) === null
                             ? t('agentInput.model.unavailable')
                             : t('settingsProviders.detail.deletedDescription'),
                 ...(accessibilityLabel ? { accessibilityLabel } : {}),
@@ -444,14 +449,15 @@ export function buildSessionModelSelectedTriggerPresentation(input: Readonly<{
     const selectedKey = sessionModelSelectionKey(selected);
     const teamSelection = isTeamCredentialProviderModelPickerValue(selected) ? selected : null;
     const providerSelection = isTeamCredentialProviderModelPickerValue(selected) ? null : selected;
-    const nativeModels = providerSelection?.providerConnectionId === null
+    const nativeModels = providerSelection && !isSessionModelRefSourceBound(providerSelection)
         ? input.nativeModels.filter((model) => (
             sessionModelSelectionKey(nativeModelRef(input.agentTargetKey, model.value)) === selectedKey
         ))
         : [];
     const providerGroups = providerSelection
         ? input.providerGroups.flatMap((group): SessionModelProjectionGroup[] => {
-            if (providerSelection.providerConnectionId && group.connectionId !== providerSelection.providerConnectionId) return [];
+            const connectionId = readSessionModelRefProviderConnectionId(providerSelection);
+            if (connectionId && group.connectionId !== connectionId) return [];
             const rows = group.rows.filter((row) => sessionModelSelectionKey(row.ref) === selectedKey);
             return rows.length > 0 ? [{ ...group, rows }] : [];
         }) : [];
@@ -483,7 +489,7 @@ export function buildSessionModelSelectedTriggerPresentation(input: Readonly<{
         // Provider discovery is demanded by the open picker. Until it has an
         // authoritative row, the saved exact id still names the selection;
         // absence of a demanded projection is not a failed machine catalog.
-        return { subtitle: providerSelection?.providerConnectionId && !input.providerProjectionAuthoritative
+        return { subtitle: providerSelection && isSessionModelRefSourceBound(providerSelection) && !input.providerProjectionAuthoritative
             ? selected.modelId
             : input.fallbackLabel };
     }

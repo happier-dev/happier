@@ -392,9 +392,10 @@ The development Provider plugin in `packages/plugins/vercel-ai-gateway` declares
 Anthropic Messages at `/claude-code`, Responses at `/codex/v1` (shared by Codex
 and OpenCode), and Chat Completions at `/coding-agent/v1`. It uses the ordinary
 API-key connection/Saved Secret flow and remains hidden in the model picker by
-default under the shared aggregator policy. The dependency owner has registered
-the package and importer together; generated bundled declarations still await
-the publication owner's integration pass.
+default under the shared aggregator policy. The Provider also declares a
+model-inference purpose for a Vercel OAuth Account. In that path, the selected team
+is used for catalog observation and subsequent requests, and the Agent receives
+only the local broker endpoint and Session credential.
 
 Its public `/v1/models` parser is plugin-supplied through `catalogParsers`, not a
 host Provider-id branch. Only language models enter the chat catalog; context
@@ -404,13 +405,12 @@ do not invent effort tiers. The SDK exposes Protocol's existing effort vocabular
 and builder for bundled and external parser authors alike. Vercel's catalog has
 no structured default; the builder applies Happier's shared selection policy.
 
+Supported brokered guest placement exposes the existing local
+Session endpoint to the remote execution target.
+
 The [published development guide](../apps/docs/content/docs/agents/vercel-ai-gateway.mdx)
-covers setup and limitations. Real keyed Claude Code, Codex and OpenCode turns,
-including Codex model discovery and effort application, remain release checks
-requiring a Vercel tenant. OIDC refresh and Sign in with Vercel are outside this
-integration. The connection detail's Usage section renders credit and
-lifetime-spend observations through the shared usage meters described below.
-Tenant-backed and light/dark/phone acceptance remain separate validation work.
+covers setup and limitations. Real keyed and signed-in Agent turns, renewal,
+and Codex model discovery remain tenant-backed release checks. The development path also requires validation on its carrying runtime.
 
 ### Cloudflare AI Gateway (0.3 development)
 
@@ -1459,36 +1459,38 @@ Native inventories and generated single-model overlays do not establish account
 entitlement. Frozen native model overlays use the same shared next-prompt
 replacement path; their plugins do not own a separate restart controller.
 
-Pi, OpenCode and Codex's qualified-purpose rows own Connected Account delivery in
-0.3 development source. A purpose may declare `managedProviderEndpoint` with an
-exact Provider implementation identity and upstream purpose. Its optional
-`modelIdPrefix` maps an Agent native namespace to the exact Provider catalog id.
-CLI callers may also supply a bare catalog model id; shared admission resolves
-it against the selected Connected Account. Neither form grants models absent
-from that catalog. Shared Provider
-launch admission carries the selected Account or resolved Pool member into the
-existing managed endpoint acquisition and Agent Provider adapter for Sessions
-and finite Runs. It does not create a saved Provider connection. Their shared
-Muse purpose uses CLIProxyAPI's `meta-upstream` route; CLIProxyAPI alone supplies
-the Muse client identity. The adopted source is omitted from native credential
-materialization and follows the existing managed endpoint custody lifecycle.
-Managed-purpose launch requires an explicit model selection when the selected
-source does not supply a native startup model. A missing selection returns
-`model_selection_required` with the existing `choose_model` recovery; an explicit
-selection absent from the source catalog remains `provider_model_not_found`.
-Admission does not choose an arbitrary catalog model.
-Continuation inspection keeps a target without a model selection available so
-the person can open its model picker. The launch owner reports the typed
-required-model refusal if the person continues without choosing one.
+A Provider contribution declares its Connected Account purpose,
+eligible endpoint templates and the HTTP request-auth materialization it can
+consume. The registry qualifies the declaration once. The model picker offers
+a Provider-purpose selection that names the purpose, endpoint and catalog model.
+The Session's qualified purpose binding supplies the selected Account or Pool.
+The same catalog owns membership for browsing and launch. A required but
+missing selection returns `model_selection_required`. An explicit selection
+missing from that source's catalog returns `provider_model_not_found`.
+
+The Agent's Provider adapter receives its model id, an operation-scoped local
+credential and a broker endpoint. For a direct Provider source, the serving
+daemon resolves request-auth material for each upstream request using the
+existing request-auth owner and cache. The vendor bearer stays on the serving
+daemon. The direct transport uses the admitted endpoint and DNS information
+and replaces any caller-supplied values for declared query parameters with
+Account materialization facts. Vercel Gateway uses the configured Team id in
+both the request header and the `teamId` query. The catalog uses that same
+Account fact.
+
+Muse retains its existing managed CLIProxyAPI `meta-upstream` implementation
+and carries the exact Account or resolved Pool member into managed custody.
+Pi's Agent-side adapter maps the source model id into its native
+`meta/` namespace. A Provider-purpose selection creates no saved Provider
+connection. Continuation inspection makes an unresolved target available for
+model selection, and launch reports the typed refusal when the selection is
+required.
 
 In unreleased 0.3 development, the shared Session model picker and
 `agents.models.list` send selected Account or Pool bindings through
-`providers.models.projection` using `connectedServices`. The existing Account
-model observer supplies membership; the Provider catalog owner intersects it
-with the Agent adapter's declared protocols. Managed-purpose refs use the Agent
-declaration's namespace. Native custom refs apply the purpose's optional
-`nativeModelIdPrefix` (for example OpenCode's provider namespace); consumers
-without a namespace retain raw source model ids.
+`providers.models.projection` using `connectedServices`. For native custom
+sources, the Agent purpose still supplies the optional
+`nativeModelIdPrefix` and the Account observer supplies the inventory.
 Descriptors and compatibility confirmation scopes retain the source model id.
 No saved gateway connection or second observer is required. Static source models
 do not establish custom upstream membership. An account kind without an observed
@@ -1497,11 +1499,16 @@ A missing required model returns outer `model_selection_required` from native
 preflight and `agents.models.list`, rather than a successful message-only observation.
 Agents without a selected source retain their existing model discovery path.
 
-In 0.3 development, managed Provider and plugin Fetch transports project headers
-for the decoded response body. Standard compressed responses omit their wire
-`Content-Encoding` and compressed `Content-Length` before forwarding to native
-Agents; identity and unsupported encodings retain their metadata. Direct managed
-Connected Account sources and saved gateway connections share this transport.
+In 0.3 development, the managed-runtime and plugin Fetch transports project
+headers for the decoded response body. Standard compressed responses omit their
+wire `Content-Encoding` and `Content-Length` before forwarding to native Agents.
+The pinned direct transport used by same-protocol Provider connections and
+Provider-qualified Connected Account sources requests identity encoding. It
+refuses redirects and non-identity responses before forwarding the body. Each
+Connected Account turn gets the origin-bound credential lease through the
+request-auth owner. Its configured query parameters replace the caller's values
+for those keys, and the response stream owns the redaction lease through
+completion or cancellation.
 
 The stored native model intent retains its Agent namespace. The shared native
 runtime projection configures the admitted binding's canonical model id and

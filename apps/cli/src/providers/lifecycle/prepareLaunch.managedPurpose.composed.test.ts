@@ -17,12 +17,21 @@ import { prepareDaemonSpawnChildEnvironment } from '@/daemon/spawn/prepareDaemon
 import { createProviderLaunchResourceScope } from './resourceScope';
 import { createProviderRedactionLease } from '@/providers/spawn/redaction';
 import { ProviderContributionV1Schema } from '@happier-dev/protocol';
+import { resolveProviderConnectedAccountDeclarationsV1 } from '@happier-dev/protocol/providers/contributions';
 import { createRuntimeProviderModelManagementServices } from '@/providers/modelManagement/runtimeServices';
 import { serializeProviderBindingLaunchHandoffForEnv, consumeProviderBindingLaunchHandoffFromEnvironments,
   HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY } from '@/plugins/runtime/providerBindings/handoff';
 const service = { pluginId: 'acme.shared-registry', localId: 'accounts' };
 const provider = { pluginId: 'acme.shared-registry', localId: 'gateway' };
-describe('Agent managed Connected Account purpose launch', () => {
+const purpose = { consumer: provider, purpose: 'upstream' };
+const connectedAccountTarget = { kind: 'account' as const, account: { service, accountId: 'upstream-account' } };
+const retainedServices = { v: 2 as const, bindingsByServiceId: {
+  'acme.shared-registry/accounts': { source: 'connected' as const, profileId: 'upstream-account' },
+} };
+const selectSource = (agentTargetKey: string, modelId: string) => ({ v: 2 as const, updatedAt: 1, ref: {
+  source: 'connected_account' as const, purpose, endpointTemplateId: 'api', agentTargetKey, modelId,
+} });
+describe('Provider-managed Connected Account purpose launch', () => {
   it('keeps unbound native Session admission independent of Provider feature acquisition', async () => {
     await withConfiguredDaemonTestHome({ prefix: 'purpose-native-' }, async ({ homeDir }) => {
       const fixture = await createManagedRunLaunchFixture({ directory: join(homeDir, 'fixture'), happyHomeDir: homeDir });
@@ -47,9 +56,7 @@ describe('Agent managed Connected Account purpose launch', () => {
     await withConfiguredDaemonTestHome({ prefix: 'purpose-daemon-' }, async ({ homeDir }) => {
       const fixture = await createManagedRunLaunchFixture({ directory: join(homeDir, 'fixture'), happyHomeDir: homeDir,
         physicalGateway: true, sourceEnvelopeTransport: 'cpx-v1', connectedAccountModels: [
-          { id: 'example', name: 'Example' }, { id: 'key-only', name: 'Key only' }],
-        connectedAccounts: [{ purpose: 'inference', service, materializationKinds: ['httpHeaders'],
-          managedProviderEndpoint: { provider, purpose: 'upstream', modelIdPrefix: 'native/' } }] });
+          { id: 'example', name: 'Example' }, { id: 'key-only', name: 'Key only' }] });
       const resources = createProviderLaunchResourceScope();
       const redaction = createProviderRedactionLease({ values: [] });
       const targetLifetime = new AbortController();
@@ -68,16 +75,17 @@ describe('Agent managed Connected Account purpose launch', () => {
           return channel;
         } } : undefined;
       const backendTarget = { kind: 'backend' as const, backendId: fixture.agentId };
-      const selection = { v: 1 as const, updatedAt: 1, ref: {
-        agentTargetKey: fixture.agentTargetKey, providerConnectionId: null, modelId: 'example' } };
+      const selection = selectSource(fixture.agentTargetKey, 'example');
       const registry = { ...fixture.lease.registry, contributes: { ...fixture.lease.registry.contributes,
-        providersByContributionKey: new Map([...fixture.lease.registry.contributes.providersByContributionKey].map(([key, row]) => [key, {
-          ...row, definition: ProviderContributionV1Schema.parse({ ...row.definition, managedRuntime: {
-            ...row.definition.managedRuntime, connectedAccounts: row.definition.managedRuntime?.connectedAccounts.map(family => ({
+        providersByContributionKey: new Map([...fixture.lease.registry.contributes.providersByContributionKey].map(([key, row]) => {
+          const definition = ProviderContributionV1Schema.parse({ ...row.definition,
+            connectedAccounts: row.definition.connectedAccounts?.map(family => ({
               ...family, catalogObservation: { agent: fixture.lease.registry.contributes.agentDefinitionsById.get(fixture.agentId)!.identity },
             })),
-          } }),
-        }])),
+          });
+          const connectedAccountDeclarations = resolveProviderConnectedAccountDeclarationsV1({ identity: row.identity, definition });
+          return [key, { ...row, definition, connectedAccountDeclarations }];
+        })),
       } };
       const lease = { ...fixture.lease, registry };
       let offeredModels = [{ id: 'example', name: 'Example' }, { id: 'key-only', name: 'Key only' }];
@@ -101,9 +109,8 @@ describe('Agent managed Connected Account purpose launch', () => {
         invokeConnectedAccountNativeModels: async () => { guestObservations++; return { ok: false }; },
       }) : controller;
       try {
-        const connectedAccountTarget = { kind: 'account' as const, account: { service, accountId: 'upstream-account' } };
         const before = await catalogs.projectModels({ machineId: fixture.machineId, agentTargetKey: fixture.agentTargetKey,
-          connectedAccountTarget, ...(guest ? {} : { sourceCatalog: true }) });
+          connectedServices: retainedServices });
         if (before.status !== 'success') throw new Error(JSON.stringify(before));
         expect(before.groups).toMatchObject([expect.objectContaining({ catalogObserved: true })]);
         const group = before.groups[0]!;
@@ -116,8 +123,7 @@ describe('Agent managed Connected Account purpose launch', () => {
           compatibilityFingerprint: oldRow.compatibility.compatibilityFingerprint });
         expect.soft(confirmation).toMatchObject({ status: 'error', error: { code: 'provider_model_not_found' } });
         const prepared = await prepareDaemonProviderLaunch({
-          options: { directory: homeDir, backendTarget, machineId: fixture.machineId,
-            connectedServices: { v: 2, bindingsByServiceId: { 'acme.shared-registry/accounts': { source: 'connected', profileId: 'upstream-account' } } } },
+          options: { directory: homeDir, backendTarget, machineId: fixture.machineId, connectedServices: retainedServices },
           effectiveBackendTarget: backendTarget, catalogAgentId: fixture.agentId, modelSelection: selection,
           profileEnvironmentVariables: {}, daemonSpawnHooks: null, persistedProviderBinding: null,
           normalizedExistingSessionId: '', processEnv: {}, accountSettingsSnapshot: fixture.snapshot,
@@ -150,6 +156,7 @@ describe('Agent managed Connected Account purpose launch', () => {
           launchResourceScope: resources });
         expect(child).toMatchObject({ ok: true });
         if (!child.ok) throw new Error(JSON.stringify(child.result));
+        await expect(child.revalidateManagedProviderBeforeCommit?.()).resolves.toEqual({ ok: true });
         const handoff = child.spawnEnvironment.providerBindingLaunchHandoff;
         if (!handoff) throw new Error('Expected source handoff from late materialization');
         const environment = { [HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY]: serializeProviderBindingLaunchHandoffForEnv(handoff) };
@@ -173,7 +180,16 @@ describe('Agent managed Connected Account purpose launch', () => {
         }
         expect((await readFile(join(homeDir, 'fixture', 'gateway-inputs'), 'utf8')).trim()).toBe('committed Session source');
         expect(guestObservations).toBe(0);
+        if (placed) {
+          targetLifetime.abort();
+          await expect(child.revalidateManagedProviderBeforeCommit?.()).resolves.toMatchObject({
+            ok: false, error: { code: 'provider_authorization_changed' },
+          });
+        }
         await resources.retire();
+        await expect(child.revalidateManagedProviderBeforeCommit?.()).resolves.toMatchObject({
+          ok: false, error: { code: 'provider_authorization_changed' },
+        });
         await expect(fetch(endpoint)).rejects.toThrow();
       } finally { await resources.retire(); targetLifetime.abort(); redaction.close(); await fixture.cleanup(); }
     });
@@ -181,15 +197,13 @@ describe('Agent managed Connected Account purpose launch', () => {
   it('refuses a managed source selected for a mismatched Agent target', async () => {
     await withConfiguredDaemonTestHome({ prefix: 'purpose-target-' }, async ({ homeDir }) => {
       const fixture = await createManagedRunLaunchFixture({ directory: join(homeDir, 'fixture'), happyHomeDir: homeDir,
-        physicalGateway: true, connectedAccountModels: [{ id: 'example', name: 'Example' }],
-        connectedAccounts: [{ purpose: 'inference', service, materializationKinds: ['httpHeaders'],
-          managedProviderEndpoint: { provider, purpose: 'upstream', modelIdPrefix: 'native/' } }] });
+        physicalGateway: true, connectedAccountModels: [{ id: 'example', name: 'Example' }] });
       try {
         const result = await prepareProviderLaunch({
-          selection: { v: 1, updatedAt: 1, ref: { agentTargetKey: 'agent:acme.other/agent', providerConnectionId: null, modelId: 'native/example' } },
+          selection: selectSource('agent:acme.other/agent', 'example'),
           backendTarget: { kind: 'agent', identity: { pluginId: 'acme.managed-run', localId: 'agent' } },
           machineId: fixture.machineId, agentId: fixture.agentId, previousBinding: null, confirmation: null,
-          connectedServices: { v: 2, bindingsByServiceId: { 'acme.shared-registry/accounts': { source: 'connected', profileId: 'upstream-account' } } },
+          connectedServices: retainedServices,
           featureEnabled: true, resolvePrerequisites: async () => ({ ok: true }),
           createAuthorizationAttempt: async () => { throw new Error('Saved connection path'); },
           managedPurposeContext: { lease: fixture.lease, happyHomeDir: homeDir,
@@ -202,18 +216,16 @@ describe('Agent managed Connected Account purpose launch', () => {
   it('refuses an explicit experimental source until its exact catalog source is confirmed', async () => {
     await withConfiguredDaemonTestHome({ prefix: 'purpose-consent-' }, async ({ homeDir }) => {
       const fixture = await createManagedRunLaunchFixture({ directory: join(homeDir, 'fixture'), happyHomeDir: homeDir,
-        physicalGateway: true, experimental: true, connectedAccountModels: [{ id: 'example', name: 'Example' }],
-        connectedAccounts: [{ purpose: 'inference', service, materializationKinds: ['httpHeaders'],
-          managedProviderEndpoint: { provider, purpose: 'upstream', modelIdPrefix: 'native/' } }] });
+        physicalGateway: true, experimental: true, connectedAccountModels: [{ id: 'example', name: 'Example' }] });
       let cleanup: (() => Promise<void>) | undefined;
       try {
         const registry = resolveProviderContributionRegistryView(fixture.lease.registry.contributes, undefined);
         const implementation = getProviderContribution(registry, 'acme.shared-registry/gateway');
         const adapter = readLeasedAgentProviderBindingAdapter({ lease: fixture.lease, agentId: fixture.agentId });
         if (!implementation || !adapter) throw new Error('Missing real catalog fixture declarations');
-        const projected = await projectConnectedAccountCatalog({ registry, provider: implementation, purpose: 'upstream',
+        const projected = await projectConnectedAccountCatalog({ registry, provider: implementation, purpose: 'upstream', sessionPurpose: purpose,
           request: { machineId: fixture.machineId, agentTargetKey: fixture.agentTargetKey, includeDirectMaterialization: true,
-            connectedAccountTarget: { kind: 'account', account: { service, accountId: 'upstream-account' } } },
+            connectedAccountTarget },
           support: adapter.support, adapterVersion: adapter.adapter.adapterVersion,
           providerSettings: fixture.providerSettings,
           resolveSelection: fixture.gateway!.purposeBindingOwner.resolveBindingIntentSelection });
@@ -224,10 +236,10 @@ describe('Agent managed Connected Account purpose launch', () => {
         let settings = fixture.providerSettings;
         let catalogUnavailable = true;
         const launch = () => prepareProviderLaunch({
-          selection: { v: 1, updatedAt: 1, ref: { agentTargetKey: fixture.agentTargetKey, providerConnectionId: null, modelId: 'native/example' } },
+          selection: selectSource(fixture.agentTargetKey, 'example'),
           backendTarget: { kind: 'agent', identity: { pluginId: 'acme.managed-run', localId: 'agent' } },
           machineId: fixture.machineId, agentId: fixture.agentId, previousBinding: null, confirmation: null,
-          connectedServices: { v: 2, bindingsByServiceId: { 'acme.shared-registry/accounts': { source: 'connected', profileId: 'upstream-account' } } },
+          connectedServices: retainedServices,
           featureEnabled: true, resolvePrerequisites: async () => ({ ok: true }),
           createAuthorizationAttempt: async () => { throw new Error('Saved connection path'); },
           managedPurposeContext: { lease: fixture.lease, happyHomeDir: homeDir, readProviderSettings: async () => catalogUnavailable
@@ -261,8 +273,6 @@ describe('Agent managed Connected Account purpose launch', () => {
         resolveAccountTarget: async (target, signal) => { signal.throwIfAborted();
           return { account: { service, accountId: 'upstream-account' }, displayName: 'Selected source',
             ...(target.kind === 'group' ? { group: { groupId: target.groupId, generation: 1 } } : {}) }; },
-        connectedAccounts: [{ purpose: 'inference', service, materializationKinds: ['httpHeaders'],
-          managedProviderEndpoint: { provider, purpose: 'upstream', modelIdPrefix: 'native/' } }],
       });
       const unexpected = async (): Promise<never> => { throw new Error('Persisted Provider connection path must not run'); };
       try {
@@ -271,21 +281,21 @@ describe('Agent managed Connected Account purpose launch', () => {
           'acme.shared-registry/accounts': kind === 'session'
             ? { source: 'connected' as const, profileId: 'upstream-account' }
             : { source: 'connected' as const, selection: 'group' as const, groupId: 'source-pool' } } };
-        const launch = (modelId: string | undefined, featureEnabled = true) => prepareProviderLaunch({
-          selection: modelId === undefined ? undefined : { v: 1, updatedAt: 1, ref: { agentTargetKey: fixture.agentTargetKey, providerConnectionId: null, modelId } },
+        const launch = (modelId: string, featureEnabled = true, retainedSource = true) => prepareProviderLaunch({
+          selection: selectSource(fixture.agentTargetKey, modelId),
           backendTarget: { kind: 'agent', identity: { pluginId: 'acme.managed-run', localId: 'agent' } },
           machineId: fixture.machineId, agentId: fixture.agentId, previousBinding: null, confirmation: null,
-          connectedServices,
+          connectedServices: retainedSource ? connectedServices : null,
           featureEnabled, resolvePrerequisites: unexpected, createAuthorizationAttempt: unexpected,
           managedPurposeContext: { lease: fixture.lease, happyHomeDir: homeDir,
             resolveManagedPurposeBindingIntentSelection: async request => { selections++; return await fixture.gateway!.purposeBindingOwner.resolveBindingIntentSelection(request); } },
         });
-        expect(await launch('native/example', false)).toMatchObject({ ok: false, error: { code: 'provider_feature_disabled' } });
+        expect(await launch('example', false)).toMatchObject({ ok: false, error: { code: 'provider_feature_disabled' } });
         expect(selections).toBe(0);
-        expect(await launch(undefined)).toMatchObject({ ok: false, error: { code: 'model_selection_required' } });
+        expect(await launch('example', true, false)).toMatchObject({ ok: false, error: { code: 'provider_authorization_changed' } });
         expect(selections).toBe(0);
-        expect(await launch('native/missing')).toMatchObject({ ok: false, error: { code: 'provider_model_not_found' } });
-        const admitted = await launch('native/example');
+        expect(await launch('missing')).toMatchObject({ ok: false, error: { code: 'provider_model_not_found' } });
+        const admitted = await launch('example');
         expect(admitted).toMatchObject({ ok: true, kind: 'managedPurpose',
           model: { id: 'example' },
           connectedServices });
@@ -317,16 +327,14 @@ it('retains a real materialization transport cause through declared managed-purp
   await withConfiguredDaemonTestHome({ prefix: 'purpose-cause-' }, async ({ homeDir }) => {
     const fixture = await createManagedRunLaunchFixture({ directory: join(homeDir, 'fixture'), happyHomeDir: homeDir,
       physicalGateway: true, materializationUrl: 'http://127.0.0.1:0',
-      connectedAccountModels: [{ id: 'example', name: 'Example' }],
-      connectedAccounts: [{ purpose: 'inference', service, materializationKinds: ['httpHeaders'],
-        managedProviderEndpoint: { provider, purpose: 'upstream', modelIdPrefix: 'native/' } }] });
+      connectedAccountModels: [{ id: 'example', name: 'Example' }] });
     try {
       const unexpected = async (): Promise<never> => { throw new Error('Persisted Provider connection path must not run'); };
       const admitted = await prepareProviderLaunch({
-        selection: { v: 1, updatedAt: 1, ref: { agentTargetKey: fixture.agentTargetKey, providerConnectionId: null, modelId: 'native/example' } },
+        selection: selectSource(fixture.agentTargetKey, 'example'),
         backendTarget: { kind: 'agent', identity: { pluginId: 'acme.managed-run', localId: 'agent' } },
         machineId: fixture.machineId, agentId: fixture.agentId, previousBinding: null, confirmation: null,
-        connectedServices: { v: 2, bindingsByServiceId: { 'acme.shared-registry/accounts': { source: 'connected', profileId: 'upstream-account' } } },
+        connectedServices: retainedServices,
         featureEnabled: true, resolvePrerequisites: unexpected, createAuthorizationAttempt: unexpected,
         managedPurposeContext: { lease: fixture.lease, happyHomeDir: homeDir,
           resolveManagedPurposeBindingIntentSelection: fixture.gateway!.purposeBindingOwner.resolveBindingIntentSelection },

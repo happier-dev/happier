@@ -70,6 +70,26 @@ describe('useProviderModelProjection', () => {
         } finally { await hook.unmount(); }
     });
 
+    it('reads the selected Provider purpose through a distinct Action query on the same bindings', async () => {
+        const firstPurpose = { consumer: { pluginId: 'acme.provider', localId: 'gateway' }, purpose: 'upstream' };
+        const secondPurpose = { ...firstPurpose, purpose: 'secondary' };
+        const connectedServices = { v: 2 as const, bindingsByServiceId: {} };
+        describeProviderModels.mockImplementation(async (request: { connectedAccountSourcePurpose?: typeof firstPurpose }) =>
+            projection(request.connectedAccountSourcePurpose?.purpose === 'upstream' ? ['pc_selected'] : []));
+        const hook = await renderHook(({ purpose }) => useProviderModelProjection({ enabled: true, machineId: 'machine-a', serverId,
+            agentTargetKey: 'agent:happier.agent.codex/codex', connectedServices, connectedAccountSourcePurpose: purpose }),
+        { initialProps: { purpose: firstPurpose } });
+        try {
+            await vi.waitFor(() => expect(hook.getCurrent().data?.groups).toHaveLength(1));
+            await hook.rerender({ purpose: secondPurpose });
+            await vi.waitFor(() => expect(hook.getCurrent().data?.groups).toEqual([]));
+            expect(projectionRequests.map(({ payload }) => payload)).toMatchObject([
+                { connectedServices, connectedAccountSourcePurpose: firstPurpose },
+                { connectedServices, connectedAccountSourcePurpose: secondPurpose },
+            ]);
+        } finally { await hook.unmount(); }
+    });
+
     describe.each(['projection', 'connection-list'] as const)('%s query retention', kind => {
         type QueryProps = { connectionId: string; active?: boolean };
         type QueryData = ReturnType<typeof useProviderModelProjection>['data'] | ReturnType<typeof useProviderConnectionModels>['models'];

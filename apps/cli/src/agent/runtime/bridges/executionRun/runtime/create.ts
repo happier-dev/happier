@@ -1,10 +1,13 @@
+import type { PersonalSessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { filterSuppressedConnectedServiceBindings } from '@/providers/spawn/authorize';
 import { randomUUID } from 'node:crypto';
 
 import type { AgentId } from '@happier-dev/agents';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { convertBackendTargetRefV2ToV1, readBackendTargetRefV2, writePersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
-import type { AccountSettings, AcpConfigOptionOverridesV1, BackendTargetRefV1, BackendTargetRefV2, BackendTargetRefV2Input, ConnectedServiceBindingsV2, ExecutionRunConnectedServicesLaunchV1, PluginContributionIdentityV1, ProviderBoundModelRef, TeamCredentialProviderModelSelectionV1, SessionInputCausalPermissionAuthorityV1, SecretReferenceOverlayV1 } from '@happier-dev/protocol';
+import type { AccountSettings, AcpConfigOptionOverridesV1, BackendTargetRefV1, BackendTargetRefV2, BackendTargetRefV2Input, ConnectedServiceBindingsV2, ExecutionRunConnectedServicesLaunchV1, PluginContributionIdentityV1, TeamCredentialProviderModelSelectionV1, SessionInputCausalPermissionAuthorityV1, SecretReferenceOverlayV1 } from '@happier-dev/protocol';
 
 import type {
     ExecutionRunHostRuntime,
@@ -56,6 +59,7 @@ import {
 import { cleanupExecutionRunIsolationBundle } from './isolation';
 import { buildExecutionRunConfiguration } from './openInputs';
 import {
+    type ExecutionRunConnectedAccountProviderLaunch,
     type ExecutionRunTeamCredentialProviderBindingPreparer,
     type ExecutionRunProviderLaunchServices,
     type PreparedExecutionRunProviderLaunch,
@@ -171,7 +175,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
     modelId?: string;
     modelSelectionSource?: CreateCliExecutionRunBackendParams['modelSelectionSource'];
     onEffectiveEngine?: (engine: Readonly<{ agentId: string; modelId?: string }>) => void;
-    modelSelection?: ProviderBoundModelRef;
+    modelSelection?: PersonalSessionModelRef;
     teamCredentialModel?: TeamCredentialProviderModelSelectionV1;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     secretReferenceOverlay?: SecretReferenceOverlayV1;
@@ -200,6 +204,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
     resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
     resolveManagedPurposeBindingIntentSelection?: import('@/providers/modelManagement/connectedAccountCatalog').ResolveManagedProviderPurposeBindingIntentSelection;
     managedProviderAccountAuthority?: import('@/plugins/runtime/providerBindings/runtimeTypes').ManagedProviderInvocationAccountAuthority | null;
+    connectedAccountProviderLaunch?: ExecutionRunConnectedAccountProviderLaunch;
     readModelProjection?: ProviderRuntimeModelProjectionReader;
     prepareManagedEndpoint?: DirectManagedProviderEndpointPreparer;
     providerLaunch?: ExecutionRunProviderLaunchServices;
@@ -269,16 +274,16 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                     updatedAtMs: Date.now(),
                 })
                 : null;
-            const connectedServicesSelection =
-                await trace('connected_services_selection', () => resolveExecutionRunConnectedServicesSelection({
+            const resolveConnectedServicesSelection = (connectedServices: ConnectedServiceBindingsV2 | null | undefined) =>
+                trace('connected_services_selection', () => resolveExecutionRunConnectedServicesSelection({
                     backendId: engineResolution.backendId,
                     agentCatalogEntry: engineResolution.agent.catalogEntry ?? null,
                     contributions: opts.engineRegistry?.contributions,
                     signal,
                     backendSourceKind:
                         opts.backendSourceKind ?? 'built_in',
-                    ...(opts.connectedServices !== undefined
-                        ? { connectedServices: opts.connectedServices }
+                    ...(connectedServices !== undefined
+                        ? { connectedServices }
                         : {}),
                     ...(opts.connectedServicesDefaultServiceIds
                         && opts.connectedServicesDefaultServiceIds.length > 0
@@ -288,6 +293,10 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                         }
                         : {}),
                 }));
+            const usesProviderAccount = opts.modelSelection && 'source' in opts.modelSelection;
+            const connectedServicesSelection = usesProviderAccount
+                ? null
+                : await resolveConnectedServicesSelection(opts.connectedServices);
             const prepareRunTeamCredentialProviderBinding = opts.teamCredentialModel
                 ? opts.prepareRunTeamCredentialProviderBinding
                     ?? opts.sessionInteractionHost?.prepareRunTeamCredentialProviderBinding
@@ -309,8 +318,9 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                     machineId: opts.machineId,
                     agentId: engineResolution.agentId,
                     runId: String(opts.runId ?? '').trim(),
-                    connectedServices:
-                        connectedServicesSelection?.bindings ?? null,
+                    connectedServices: usesProviderAccount
+                        ? opts.connectedServices ?? null
+                        : connectedServicesSelection?.bindings ?? null,
                     happyHomeDir:
                         opts.happyHomeDir ?? configuration.happyHomeDir,
                     resolveProvidersFeatureEnabled: opts.resolveProvidersFeatureEnabled,
@@ -318,6 +328,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                     ...(opts.resolveManagedPurposeBindingIntent ? { resolveManagedPurposeBindingIntent: opts.resolveManagedPurposeBindingIntent } : {}),
                     ...(opts.resolveManagedPurposeBindingIntentSelection ? { resolveManagedPurposeBindingIntentSelection: opts.resolveManagedPurposeBindingIntentSelection } : {}),
                     managedProviderAccountAuthority: opts.managedProviderAccountAuthority,
+                    connectedAccountProviderLaunch: opts.connectedAccountProviderLaunch,
                     ...(opts.readModelProjection ? { readModelProjection: opts.readModelProjection } : {}),
                     ...(opts.prepareManagedEndpoint ? { prepareManagedEndpoint: opts.prepareManagedEndpoint } : {}),
                     retainCleanup: providerResources.register,
@@ -326,7 +337,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                         : {}),
                 });
             }
-            const materializedConnectedServicesSelection:
+            let materializedConnectedServicesSelection:
                 ResolvedExecutionRunConnectedServicesSelection | null =
                 providerLaunch?.providerBinding
                 && providerLaunch.connectedServices
@@ -355,6 +366,16 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                 ReturnType<typeof resolveExecutionRunConnectedServicesEnv>
             > = null;
             try {
+                const providerSource = providerLaunch?.providerBinding?.source;
+                if (providerSource?.kind === 'connected_account' && providerLaunch?.connectedServices) {
+                    const remaining = filterSuppressedConnectedServiceBindings({
+                        bindings: providerLaunch.connectedServices,
+                        suppressConnectedServiceIds: [buildQualifiedPluginContributionKey(providerSource.account.service)],
+                    }).bindings;
+                    materializedConnectedServicesSelection = await resolveConnectedServicesSelection(
+                        remaining ?? { v: 2, bindingsByServiceId: {} },
+                    );
+                }
                 if (effectiveBackendTarget && usesExecutionRunProviderModel(opts)) {
                     await assertExecutionRunStructuredAnalysisModelAllowed({
                         backendTarget: convertBackendTargetRefV2ToV1(effectiveBackendTarget),
@@ -683,7 +704,7 @@ export function createExecutionRunRuntime(opts: Readonly<{
     modelId?: string;
     modelSelectionSource?: CreateCliExecutionRunBackendParams['modelSelectionSource'];
     onEffectiveEngine?: (engine: Readonly<{ agentId: string; modelId?: string }>) => void;
-    modelSelection?: ProviderBoundModelRef;
+    modelSelection?: PersonalSessionModelRef;
     teamCredentialModel?: TeamCredentialProviderModelSelectionV1;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     secretReferenceOverlay?: SecretReferenceOverlayV1;
@@ -710,6 +731,7 @@ export function createExecutionRunRuntime(opts: Readonly<{
     resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
     resolveManagedPurposeBindingIntentSelection?: import('@/providers/modelManagement/connectedAccountCatalog').ResolveManagedProviderPurposeBindingIntentSelection;
     managedProviderAccountAuthority?: import('@/plugins/runtime/providerBindings/runtimeTypes').ManagedProviderInvocationAccountAuthority | null;
+    connectedAccountProviderLaunch?: ExecutionRunConnectedAccountProviderLaunch;
     readModelProjection?: ProviderRuntimeModelProjectionReader;
     prepareManagedEndpoint?: DirectManagedProviderEndpointPreparer;
     providerLaunch?: ExecutionRunProviderLaunchServices;
@@ -822,6 +844,7 @@ export function createExecutionRunRuntime(opts: Readonly<{
             ...(opts.resolveManagedPurposeBindingIntent ? { resolveManagedPurposeBindingIntent: opts.resolveManagedPurposeBindingIntent } : {}),
             ...(opts.resolveManagedPurposeBindingIntentSelection ? { resolveManagedPurposeBindingIntentSelection: opts.resolveManagedPurposeBindingIntentSelection } : {}),
             managedProviderAccountAuthority: opts.managedProviderAccountAuthority,
+            connectedAccountProviderLaunch: opts.connectedAccountProviderLaunch,
             ...(opts.readModelProjection ? { readModelProjection: opts.readModelProjection } : {}),
             ...(opts.prepareManagedEndpoint ? { prepareManagedEndpoint: opts.prepareManagedEndpoint } : {}),
             ...(opts.providerLaunch ? { providerLaunch: opts.providerLaunch } : {}),

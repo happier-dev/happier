@@ -154,6 +154,27 @@ describe('createSessionRuntimeModelsPublisher', () => {
       expect(session.getMetadataSnapshot().sessionModelsV1?.availableModels).toContainEqual({ id: 'configured', name: 'Configured' });
     } finally { publisher.dispose(); }
   });
+  it('publishes an admitted Connected Account endpoint only after the runtime confirms its model', async () => {
+    const source = createSource();
+    const session = createSession(createTestMetadata());
+    const connectedAccountSelection = { source: 'connected_account' as const, agentTargetKey: 'backend:codex', modelId: 'shared-model',
+      endpointTemplateId: 'responses', purpose: { consumer: { pluginId: 'acme.gateway', localId: 'gateway' }, purpose: 'inference' } };
+    const runner = { pid: 42, processStartTimeMs: 1 };
+    const publisher = createSessionRuntimeModelsPublisher({ agentId: 'codex', agentTargetKey: 'backend:codex',
+      runnerProcessIdentity: runner, session, source, readAppliedConnectedAccountSelection: () => connectedAccountSelection });
+    try {
+      source.publish({ observedAt: 2, currentModelId: 'shared-model', models: [] });
+      await publisher.flush();
+      expect(session.getMetadataSnapshot().sessionModelsV1?.activeSelectionV1).toEqual({
+        v: 2, selection: { agentTargetKey: 'backend:codex', providerConnectionId: null, modelId: 'shared-model' },
+        source: 'runtime_readback', runner, connectedAccountSelection,
+      });
+      source.publish({ observedAt: 3, currentModelId: 'other-model', models: [] });
+      await publisher.flush();
+      expect(session.getMetadataSnapshot().sessionModelsV1?.activeSelectionV1).toBeUndefined();
+    } finally { publisher.dispose(); }
+  });
+
   it('publishes the accepted Team route and withholds proof for an unknown or mismatched open', async () => {
     const source = createSource();
     const session = createSession(createTestMetadata());

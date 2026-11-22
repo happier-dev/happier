@@ -57,8 +57,7 @@ it.each(['supported', 'unknown', 'unsupported'] as const)(
         reason: 'Expose the selected fixture Account to its native catalog', scope: { keys: ['SCM_NATIVE_ACCOUNT'] } }], optional: [] },
       contributes: {
       agents: [{ id: 'agent', title: 'Native source fixture', runtime: { kind: 'custom' }, primary: 'sessions',
-        connectedAccounts: [{ purpose: 'inference', service: 'accounts', materializationKinds: ['httpHeaders'],
-          managedProviderEndpoint: { provider: { pluginId: service.pluginId, localId: 'gateway' }, purpose: 'upstream', modelIdPrefix: 'meta/' } }],
+        connectedAccounts: [{ purpose: 'inference', service: 'accounts', materializationKinds: ['environment'], nativeModelIdPrefix: 'meta/' }],
         capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true, workspaceWrites: 'deny', executionRunContext: { versions: [1] } } },
         providerRequirements: { acceptsProtocols: ['openai-responses'], required: { streaming: true, toolRoundTrips: true },
           credentialSupport: { supportsNoAuth: true, apiKeyTransports: [{ protocol: 'openai-responses',
@@ -74,10 +73,11 @@ it.each(['supported', 'unknown', 'unsupported'] as const)(
         endpointTemplates: [{ id: 'responses', protocol: 'openai-responses', baseUrl: 'https://source.test/v1',
           capabilities: { streaming: 'supported', toolRoundTrips: 'supported', statefulResponses: 'supported', reasoningControls: 'supported' } }],
         catalog: { source: 'manual', manualModelPolicy: 'allowed' },
-        managedRuntime: { kind: 'managed', endpointTemplateIds: ['responses'], connectedAccounts: [{ purpose: 'upstream', service: 'accounts',
+        managedRuntime: { kind: 'managed', endpointTemplateIds: ['responses'] },
+        connectedAccounts: [{ purpose: 'upstream', service: 'accounts',
           materializationKinds: ['httpHeaders'], endpointTemplateIds: ['responses'],
           catalogObservation: { agent: { pluginId: service.pluginId, localId: 'source' }, modelIdPrefix: 'meta/' },
-          staticModels: [{ id: 'muse-spark-1.3-contributor', name: 'Muse Contributor' }] }] } }],
+          staticModels: [{ id: 'muse-spark-1.3-contributor', name: 'Muse Contributor' }] }] }],
     } }),
     files: { 'agent.mjs': 'export function factory() { throw new Error("Configured by native boundary fixture"); }',
       'daemon.mjs': 'export function activate() {}' },
@@ -259,21 +259,29 @@ it.each(['supported', 'unknown', 'unsupported'] as const)(
       expect(warmed, JSON.stringify(warmed)).toMatchObject({ ok: true, result: {
         items: expect.arrayContaining([expect.objectContaining({ id: modelId })]) } });
     } finally { await picker.dispose(); }
-    expect(publicProjections).toMatchObject([{ status: 'success', groups: [expect.objectContaining({ catalogObserved: true,
-      rows: expect.arrayContaining([expect.objectContaining({ compatibility: expect.objectContaining({ confirmed: true }), descriptor: expect.objectContaining({
-        capabilities: { structuredOutput: support },
-      }) })]),
-    })] }]);
-    expect(boundary.nativeCatalogReads).toBe(1);
+    expect(publicProjections).toMatchObject([{ status: 'success', groups: expect.arrayContaining([
+      expect.objectContaining({ catalogObserved: true,
+        rows: expect.arrayContaining([expect.objectContaining({ ref: expect.objectContaining({ providerConnectionId: null, modelId }),
+          compatibility: expect.objectContaining({ confirmed: true }), descriptor: expect.objectContaining({
+            capabilities: { structuredOutput: support },
+          }) })]),
+      }),
+      expect.objectContaining({ catalogObserved: true,
+        rows: expect.arrayContaining([expect.objectContaining({ ref: expect.objectContaining({ source: 'connected_account',
+          modelId: 'muse-spark-1.3-contributor', purpose: { consumer: { pluginId: service.pluginId, localId: 'gateway' }, purpose: 'upstream' } }) })]),
+      }),
+    ]) }]);
+    const warmedCatalogReads = boundary.nativeCatalogReads;
+    expect(warmedCatalogReads).toBeGreaterThan(0);
     projections.length = 0;
     const result = await admitted.executor.execute('scm.diffSummary.generate', input, context);
-    expect(projections, JSON.stringify(result)).toMatchObject([{ status: 'success', groups: [expect.objectContaining({
-      catalogObserved: true, rows: expect.arrayContaining([expect.objectContaining({ ref: expect.objectContaining({ modelId }),
+    expect(projections, JSON.stringify(result)).toMatchObject([{ status: 'success', groups: expect.arrayContaining([expect.objectContaining({
+      catalogObserved: true, rows: expect.arrayContaining([expect.objectContaining({ ref: expect.objectContaining({ providerConnectionId: null, modelId }),
         descriptor: expect.objectContaining({ capabilities: { structuredOutput: support } }) })]),
-    })] }]);
-    expect(boundary.nativeCatalogReads).toBe(1);
-    // The admitted Run reaches the unavailable external gateway. Catalog
-    // admission itself must never require a model turn in this regression.
+    })]) }]);
+    expect(boundary.nativeCatalogReads).toBe(warmedCatalogReads);
+    // This fixture observes admission before Run materialization. Catalog
+    // admission does not open a native model turn.
     expect(boundary.nativeOpens, JSON.stringify(result)).toBe(0);
     if (support === 'supported') expect(result).toMatchObject({ ok: true, result: { success: true, runId: expect.any(String) } });
     else expect(result).toMatchObject({ ok: true, result: { success: false, error: 'model_structured_output_unsupported',

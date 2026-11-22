@@ -8,7 +8,7 @@ import { ExecutionRunDisplaySchema, ExecutionRunLaunchOriginSchema, ExecutionRun
 import { ExecutionRunStatusSchema, ExecutionRunInputTurnV1Schema, ExecutionRunErrorSchema, ExecutionRunPermissionAttentionSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { PluginSourceCustodyV1Schema } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { PortableRuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
-import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
+import { PersonalSessionModelRefSchema } from '@happier-dev/protocol/providers/selection/v2';
 import { SecretReferenceOverlayV1Schema } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
 import { SessionCapabilitySelectionV1Schema } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
 import { TeamCredentialProviderModelSelectionV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
@@ -43,7 +43,7 @@ const RetainedRunStateSchema = z.strictObject({
     selectionSource: z.optional(z.enum(['explicit', 'inherited', 'independent', 'retained'])),
     cwd: z.optional(z.string()), capabilitySelection: z.optional(SessionCapabilitySelectionV1Schema), acpSessionModeId: z.optional(z.string()),
     runtimeDescriptorV1: z.optional(PortableRuntimeDescriptorV1Schema), launchOrigin: z.optional(ExecutionRunLaunchOriginSchema),
-    modelId: z.optional(z.string()), modelSelection: z.optional(ProviderBoundModelRefSchema),
+    modelId: z.optional(z.string()), modelSelection: z.optional(PersonalSessionModelRefSchema),
     teamCredentialModel: z.optional(TeamCredentialProviderModelSelectionV1Schema),
     sessionConfigOptionOverrides: z.optional(AcpConfigOptionOverridesV1Schema),
     connectedServicesSelection: z.optional(z.nullable(ConnectedServiceBindingsV2Schema)),
@@ -59,7 +59,7 @@ const RetainedRunStateSchema = z.strictObject({
   resumeHandle: z.optional(z.nullable(ExecutionRunResumeHandleSchema)),
   voiceAgentConfig: z.optional(z.strictObject({
     profileId: z.optional(z.nullable(z.string())), chatModelId: z.string(), commitModelId: z.string(),
-    chatModelSelection: z.optional(ProviderBoundModelRefSchema), commitModelSelection: z.optional(ProviderBoundModelRefSchema),
+    chatModelSelection: z.optional(PersonalSessionModelRefSchema), commitModelSelection: z.optional(PersonalSessionModelRefSchema),
     chatTeamCredentialModel: z.optional(TeamCredentialProviderModelSelectionV1Schema),
     commitTeamCredentialModel: z.optional(TeamCredentialProviderModelSelectionV1Schema),
     commitConnectedServices: z.optional(z.nullable(ConnectedServiceBindingsV2Schema)),

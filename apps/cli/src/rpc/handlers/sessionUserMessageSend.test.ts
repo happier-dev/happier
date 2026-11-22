@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { withSessionMessageModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
@@ -63,6 +64,28 @@ const stagedVideoAttachment = {
 };
 
 describe('session user message send', () => {
+  it.each([false, true])('submits a Connected Account model to the queued transition owner (stale source=%s)', async stale => {
+    const { handlers, registrar } = createHarness();
+    const handleUserMessage = vi.fn(async () => ({ handled: true as const, result: { ok: true } }));
+    const enqueueSessionUserMessage = vi.fn(async () => {});
+    registerSessionUserMessageSendHandler(registrar, {
+      workingDirectory: process.cwd(), enqueueSessionUserMessage,
+      sessionRuntimeControls: { handleUserMessage },
+    });
+    const selection = { v: 2, updatedAt: 1, ref: {
+      source: 'connected_account',
+      purpose: { consumer: { pluginId: 'happier.provider.vercel-ai-gateway', localId: 'vercel-ai-gateway' }, purpose: 'gateway-inference' },
+      endpointTemplateId: 'anthropic-messages', agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'anthropic/claude-sonnet',
+    } } as const;
+    const meta = stale
+      ? { modelSelectionV1: { ...selection, ref: { ...selection.ref, endpointTemplateId: null } } }
+      : withSessionMessageModelSelectionV1({}, selection);
+    const send = handlers.get(SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND)!;
+    await expect(send({ text: 'hello', localId: 'connected-account-input', meta })).resolves.toEqual({ ok: true });
+    expect(enqueueSessionUserMessage).toHaveBeenCalledWith(expect.objectContaining({ meta: expect.objectContaining(meta) }));
+    expect(handleUserMessage).not.toHaveBeenCalled();
+  });
+
   it('rejects restricted effective native inputs but allows unrestricted inputs in the same session', async () => {
     const { handlers, registrar } = createHarness();
     // Native input is a provider/process boundary; the host admission remains real.

@@ -4,7 +4,7 @@ import type { HttpResponse } from '@happier-dev/plugin-sdk/http';
 type Quota = Awaited<ReturnType<NonNullable<ConnectedAccountRuntime['quota']>>>;
 
 const ORIGIN = 'https://api.vercel.com';
-const PLAN_LABELS = { hobby: 'Hobby', pro: 'Pro', enterprise: 'Enterprise' } as const;
+const PLAN_LABELS = { hobby: 'Hobby', pro: 'Pro', enterprise: 'Enterprise', flex: 'Flex' } as const;
 
 function object(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);

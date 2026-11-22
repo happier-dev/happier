@@ -75,6 +75,23 @@ describe('existing Session change planner', () => {
     } }]);
   });
 
+  it('preserves Connected Account selection through bulk model change and Send', () => {
+    const ref = {
+      source: 'connected_account',
+      purpose: { consumer: { pluginId: 'happier.provider.vercel-ai-gateway', localId: 'vercel-ai-gateway' }, purpose: 'gateway-inference' },
+      endpointTemplateId: 'anthropic-messages',
+      agentTargetKey: 'backend:claude',
+      modelId: 'anthropic/claude-sonnet',
+    } as const;
+    const selection = { v: 2, updatedAt: 1, ref } as const;
+    const target = targets[0];
+    const plan = planExistingSessionChanges({ modelSelection: selection }, [target], 'hello');
+    expect(plan.stages).toEqual([
+      { actionId: 'session.model.set', input: { modelSelection: ref }, targets: [target.address] },
+      { actionId: 'session.message.send', input: { message: 'hello', modelSelection: selection }, targets: [target.address] },
+    ]);
+  });
+
   it('groups message overrides without losing model-provider identity or cross-Home addresses', () => {
     const plan = planExistingSessionChanges({ permissionMode: 'read-only', modelSelection: {
       v: 1, updatedAt: 1, ref: { agentTargetKey: 'claude', providerConnectionId: 'provider', modelId: 'model' },

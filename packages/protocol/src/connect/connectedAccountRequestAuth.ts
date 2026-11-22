@@ -3,6 +3,7 @@ import { z } from '../zodRuntimePolicy.js';
 
 import { ProviderAccountUsageQuotaScopeV1Schema } from './providerAccountUsageQuotaScopeV1.js';
 import {
+  ConnectedAccountMaterializationDestinationsSchema,
   ConnectedAccountPurposeIdSchema,
   QualifiedConnectedAccountPurposeV1Schema,
 } from './connectedAccountPurposes.js';
@@ -100,6 +101,7 @@ export const ConnectedAccountRequestAuthMaterializationV1Schema = lazyZodSchema(
   kind: z.literal('httpHeaders'),
   origin: ConnectedAccountRequestAuthCanonicalHttpsOriginV1Schema,
   headerNames: z.readonly(z.array(ConnectedAccountRequestAuthHeaderNameV1Schema).check(z.minLength(1), z.maxLength(32))),
+  queryParameterNames: z.optional(ConnectedAccountMaterializationDestinationsSchema),
 }).check(z.superRefine((value, context) => {
   const seen = new Set<string>();
   for (const [index, headerName] of value.headerNames.entries()) {
@@ -292,6 +294,7 @@ export type ConnectedAccountRequestAuthMaterializationV1 = Readonly<{
   kind: 'httpHeaders';
   origin: string;
   headerNames: readonly string[];
+  queryParameterNames?: readonly string[];
 }>;
 export type ConnectedAccountRequestAuthUseV1 = Readonly<{
   purpose: z.infer<typeof ConnectedAccountPurposeIdSchema>;

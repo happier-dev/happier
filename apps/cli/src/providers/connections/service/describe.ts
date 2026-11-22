@@ -1,7 +1,7 @@
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { readOwnRecordValue } from '@happier-dev/protocol/providers/ownRecordValue';
 import { resolveProviderGrantV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
-import { resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
+import { resolveProviderManagedRuntimeFromContributionV1 } from '@happier-dev/protocol/providers/contributions';
 import { providerEndpointPolicySecurityFactsV1 } from '@happier-dev/protocol/providers/contributions';
 import { resolveEffectiveProviderEndpointV1 } from '@happier-dev/protocol/providers/connections/v1';
 import { projectAvailableProviderContributionsV1, readProviderAdditionalCredentialSlotsV1, projectProviderManagedConnectedAccountPurposeV1 as projectManagedConnectedAccountPurpose } from '@happier-dev/protocol/providers/connections/sourceFactsV1';
@@ -116,9 +116,10 @@ export async function describeProviderConnections(
         ? connection.source.template.catalog
         : contribution?.definition.catalog;
       const managedRuntimeDeclaration = contribution?.definition.managedRuntime
-        ? resolveProviderManagedRuntimeDeclarationV1({
+        ? resolveProviderManagedRuntimeFromContributionV1({
             implementationIdentity: contribution.identity,
-            managedRuntime: contribution.definition.managedRuntime,
+            definition: { ...contribution.definition, managedRuntime: contribution.definition.managedRuntime },
+            connectedAccountDeclarations: contribution.connectedAccountDeclarations,
           })
         : null;
       const managedLocalOption =

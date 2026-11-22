@@ -1,6 +1,7 @@
-import { TeamResourceSessionModelSelectionV2Schema, SessionModelSelectionV2Schema, type SessionModelRef, type SessionModelSelectionV2, type SessionModelSelection } from './schemas.js';
-export { NativeSessionModelRefV2Schema, AccountProviderConnectionSessionModelRefV2Schema, TeamResourceSessionModelRefV2Schema, SessionModelRefV2Schema, SessionModelRefSchema, SessionModelSelectionV2Schema, SessionModelSelectionSchema, type SessionModelRefV2, type SessionModelRef, type SessionModelSelectionV2, type SessionModelSelection } from './schemas.js';
+import { ConnectedAccountSessionModelRefV2Schema, TeamResourceSessionModelSelectionV2Schema, SessionModelSelectionV2Schema, type ConnectedAccountSessionModelRefV2, type PersonalSessionModelRef, type SessionModelRef, type SessionModelSelectionV2, type SessionModelSelection } from './schemas.js';
+export { NativeSessionModelRefV2Schema, AccountProviderConnectionSessionModelRefV2Schema, ConnectedAccountSessionModelRefV2Schema, TeamResourceSessionModelRefV2Schema, PersonalSessionModelRefSchema, SessionModelRefV2Schema, SessionModelRefSchema, SessionModelSelectionV2Schema, SessionModelSelectionSchema, type ConnectedAccountSessionModelRefV2, type PersonalSessionModelRef, type SessionModelRefV2, type SessionModelRef, type SessionModelSelectionV2, type SessionModelSelection } from './schemas.js';
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
+import { qualifiedPurposeKey } from '../../connect/connectedAccountPurposeBindings.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
@@ -8,8 +9,7 @@ import { SessionActiveModelSelectionV1Schema, SessionModelSelectionV1Schema, ser
 import { TeamCredentialProviderModelSelectionV1Schema, type TeamCredentialProviderModelSelectionV1 } from '../../teams/credentials/resourceV1.js';
 import { type SessionTeamCredentialBindingIntentV1, type SessionTeamCredentialProviderModelSelectionV1 } from '../../teams/credentials/sessionBindingIntentV1.js';
 
-/** The existing active-model carrier's second epoch retains the runtime-opened Team source. */
-export const SessionActiveModelSelectionV2Schema = lazyZodSchema(() => z.strictObject({
+const TeamSessionActiveModelSelectionV2Schema = lazyZodSchema(() => z.strictObject({
   ...SessionActiveModelSelectionV1Schema.shape,
   v: z.literal(2),
   teamCredentialModel: TeamCredentialProviderModelSelectionV1Schema,
@@ -20,11 +20,37 @@ export const SessionActiveModelSelectionV2Schema = lazyZodSchema(() => z.strictO
     context.addIssue({ code: 'custom', path: ['teamCredentialModel'], message: 'Applied Team source must match the active model' });
   }
 })));
+const ConnectedAccountSessionActiveModelSelectionV2Schema = lazyZodSchema(() => z.strictObject({
+  ...SessionActiveModelSelectionV1Schema.shape,
+  v: z.literal(2),
+  connectedAccountSelection: ConnectedAccountSessionModelRefV2Schema,
+}).check(z.superRefine((fact, context) => {
+  if (fact.selection.providerConnectionId !== null
+    || fact.selection.agentTargetKey !== fact.connectedAccountSelection.agentTargetKey
+    || fact.selection.modelId !== fact.connectedAccountSelection.modelId) {
+    context.addIssue({ code: 'custom', path: ['connectedAccountSelection'], message: 'Applied Connected Account source must match the active model' });
+  }
+})));
+/** The second epoch records exactly one qualified source observed by the runner. */
+export const SessionActiveModelSelectionV2Schema = lazyZodSchema(() => z.union([
+  TeamSessionActiveModelSelectionV2Schema, ConnectedAccountSessionActiveModelSelectionV2Schema,
+]));
 export type SessionActiveModelSelectionV2 = z.infer<typeof SessionActiveModelSelectionV2Schema>;
 export const SessionActiveModelSelectionSchema = lazyZodSchema(() => z.union([
   SessionActiveModelSelectionV2Schema, SessionActiveModelSelectionV1Schema,
 ]));
 export type SessionActiveModelSelection = z.infer<typeof SessionActiveModelSelectionSchema>;
+
+export function areConnectedAccountSessionModelRefsEqual(
+  left: ConnectedAccountSessionModelRefV2 | null | undefined,
+  right: ConnectedAccountSessionModelRefV2 | null | undefined,
+): boolean {
+  if (!left || !right) return !left && !right;
+  return left.agentTargetKey === right.agentTargetKey
+    && left.modelId === right.modelId
+    && left.endpointTemplateId === right.endpointTemplateId
+    && qualifiedPurposeKey(left.purpose) === qualifiedPurposeKey(right.purpose);
+}
 
 /** Only accepted native-open facts can qualify the model tuple; intent never supplies its source. */
 export function createSessionActiveModelSelection(input: Readonly<{
@@ -32,19 +58,23 @@ export function createSessionActiveModelSelection(input: Readonly<{
   source: SessionActiveModelSelectionV1['source'];
   runner: SessionActiveModelSelectionV1['runner'];
   teamCredentialModel: TeamCredentialProviderModelSelectionV1 | null | undefined;
+  connectedAccountSelection?: ConnectedAccountSessionModelRefV2 | null;
 }>): SessionActiveModelSelection | null {
-  const { teamCredentialModel, ...fact } = input;
-  if (teamCredentialModel === undefined) return null;
-  const parsed = SessionActiveModelSelectionSchema.safeParse(teamCredentialModel === null
-    ? { ...fact, v: 1 } : { ...fact, v: 2, teamCredentialModel });
+  const { teamCredentialModel, connectedAccountSelection, ...fact } = input;
+  if (teamCredentialModel === undefined || (teamCredentialModel && connectedAccountSelection)) return null;
+  const candidate = connectedAccountSelection
+    ? { ...fact, v: 2, connectedAccountSelection }
+    : teamCredentialModel ? { ...fact, v: 2, teamCredentialModel } : { ...fact, v: 1 };
+  const parsed = SessionActiveModelSelectionSchema.safeParse(candidate);
   return parsed.success ? parsed.data : null;
 }
 
 /** Native Execution Actions retain their existing split model selectors. */
 export function projectSessionModelRefToExecutionModelSelection(ref: SessionModelRef):
-  | Readonly<{ modelSelection: SessionModelSelectionV1['ref']; teamCredentialModel?: never }>
+  | Readonly<{ modelSelection: PersonalSessionModelRef; teamCredentialModel?: never }>
   | Readonly<{ teamCredentialModel: TeamCredentialProviderModelSelectionV1; modelSelection?: never }> {
   if (!('source' in ref)) return { modelSelection: ref };
+  if (ref.source === 'connected_account') return { modelSelection: ref };
   if (ref.source === 'team_resource') {
     const { source: _source, ...teamRef } = ref;
     return { teamCredentialModel: { kind: 'team_credential_provider_model', ...teamRef } };
@@ -54,6 +84,11 @@ export function projectSessionModelRefToExecutionModelSelection(ref: SessionMode
     providerConnectionId: ref.source === 'native' ? null : ref.providerConnectionId,
     modelId: ref.modelId,
   } };
+}
+
+/** Stamp a personal picker or Execution Action operand with its authored selection version. */
+export function createPersonalSessionModelSelection(ref: PersonalSessionModelRef, updatedAt: number): SessionModelSelection {
+  return 'source' in ref ? { v: 2, ref, updatedAt } : { v: 1, ref, updatedAt };
 }
 
 const modelSelectionEncoder = new TextEncoder();
@@ -89,7 +124,7 @@ export function readSessionModelRefProviderConnectionId(ref: SessionModelRef): S
   return 'providerConnectionId' in ref ? ref.providerConnectionId : null;
 }
 
-/** Team is credential-backed even though it has no Account Provider Connection id. */
+/** Connected Accounts and Team resources are source-bound without a Provider Connection id. */
 export function isSessionModelRefSourceBound(ref: SessionModelRef): boolean {
   return 'source' in ref ? ref.source !== 'native' : ref.providerConnectionId !== null;
 }
@@ -99,7 +134,7 @@ export function projectSessionModelSelectionV2ToV1(
   value: SessionModelSelectionV2,
 ): SessionModelSelectionV1 | null {
   const selection = SessionModelSelectionV2Schema.parse(value);
-  if (selection.ref.source === 'team_resource') return null;
+  if (selection.ref.source === 'team_resource' || selection.ref.source === 'connected_account') return null;
   return SessionModelSelectionV1Schema.parse({
     v: 1,
     ref: {

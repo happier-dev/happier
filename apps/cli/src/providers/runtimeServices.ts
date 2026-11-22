@@ -286,7 +286,11 @@ export function createRuntimeProviderOperationsProducer(input: Readonly<{
           refresh: async (request: ProviderUsageRefreshRequest, options?: PluginCancellationOptions) =>
             await executeRead({
               binding, options,
-              prepare: () => DaemonProviderUsageRefreshRequestV1Schema.parse({ ...request, machineId: input.machineId }),
+              prepare: () => {
+                const parsed = DaemonProviderUsageRefreshRequestV1Schema.parse({ ...request, machineId: input.machineId });
+                if (!('connectionId' in parsed)) throw createProviderErrorV1('provider_authorization_changed');
+                return parsed;
+              },
               dispatch: async parsed => await input.machineServices.refreshUsage(parsed, {
                 signal: composeOperationSignal(binding, options),
                 isCurrent: () => isBindingCurrent(binding) && options?.signal?.aborted !== true,

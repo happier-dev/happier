@@ -1,4 +1,4 @@
-import { SessionModelTransitionRequestV1Schema, SessionModelTransitionResultV1Schema } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
+import { SessionModelTransitionRequestV1Schema, SessionModelTransitionResultV1Schema, projectSessionModelTransitionRequestedSelectionV1 } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 
 import type { RpcHandler } from '@/api/rpc/types';
 import type { StartupSessionPublisherAuthorityClaimResult } from '@/api/session/sessionClient';
@@ -33,7 +33,7 @@ export function createSessionModelTransitionRpc(params: Readonly<{
           ok: false,
           status: 'owner_unavailable',
           activeSelection: null,
-          requestedSelection: 'selection' in request ? request.selection : null,
+          requestedSelection: 'selection' in request ? projectSessionModelTransitionRequestedSelectionV1(request.selection) : null,
           reason: 'session_model_transition_startup_incomplete',
         });
       }

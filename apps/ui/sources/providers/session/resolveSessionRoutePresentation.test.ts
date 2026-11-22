@@ -1,9 +1,52 @@
 import { describe, expect, it } from 'vitest';
 import { t } from '@/text';
 import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
+import { ConnectedAccountSessionModelRefV2Schema } from '@happier-dev/protocol/providers/selection/v2';
+import { projectMachineAgent, projectMachineAgentForCredential } from '@/agents/machineAgents/machineAgentModel';
+import { createProviderModelProjectionGroupFixture } from '@/dev/testkit/harness/providerSettingsHarness';
+import { resolveSelectedProviderRoute } from './resolveSelectedProviderRoute';
 import { presentArmedSessionRouteSource, presentNativeRouteSourceLabel, presentSessionRouteChip, presentSessionRouteSource, resolveSessionRoutePresentation } from './resolveSessionRoutePresentation';
 
 describe('session route presentation', () => {
+    it('names and admits the projected Connected Account route for the exact endpoint and model', () => {
+        const selection = ConnectedAccountSessionModelRefV2Schema.parse({
+            source: 'connected_account', agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'anthropic/test-model',
+            purpose: { consumer: { pluginId: 'happier.provider.vercel-ai-gateway', localId: 'vercel-ai-gateway' }, purpose: 'model-inference' },
+            endpointTemplateId: 'vercel-anthropic',
+        });
+        const target = { kind: 'account', account: { service: { pluginId: 'happier.machine.vercel', localId: 'vercel-account' }, accountId: 'work' } } as const;
+        const source = createProviderModelProjectionGroupFixture({
+            connectionId: 'connected-source:vercel-work',
+            connectedAccountTarget: target, providerName: 'Vercel AI Gateway', connectionName: 'Vercel work',
+            suppressedConnectedServiceIds: ['happier.agent.claude/claude-subscription'],
+            connectionRole: 'named', connectionDisplayNameMode: 'custom',
+            rows: [{ ref: selection, descriptor: { id: selection.modelId, name: 'Test model' },
+                gatewaySlots: [{ purpose: selection.purpose, target }],
+                sources: { manual: false, static: true, probe: false }, confidence: 'verified_static',
+                compatibility: { result: { status: 'verified', selectedProtocol: 'anthropic', evidence: { sourceUrls: ['https://example.test'], verifiedAt: '2026-07-12' } },
+                    compatibilityFingerprint: 'compatibility:v1:vercel-work', confirmed: true },
+                endpointHealth: 'available', catalog: { stale: false }, loadState: 'loaded', visibility: 'visible' }],
+        });
+        expect(resolveSessionRoutePresentation({ phase: 'draft', selection,
+            native: { label: 'Native', authSource: 'native', connectedCount: 0 }, sources: [source] }).applied)
+            .toMatchObject({ sourceLabel: 'Vercel AI Gateway · Vercel work' });
+        const input = { selection, agentTargetKey: selection.agentTargetKey, providerSources: [source],
+            declarationContext: { kind: 'account' }, acceptedConnectedServiceIds: ['happier.agent.claude/claude-subscription'] } as const;
+        const providerRoute = resolveSelectedProviderRoute(input);
+        expect(providerRoute).toMatchObject({ ready: true });
+        const signedOutAgent = projectMachineAgent({ agentId: 'claude', title: 'Claude', checking: false, stale: false, job: null,
+            connectedServices: [], facts: { agentId: 'claude', title: 'Claude', installed: true, version: '1', latestVersion: null,
+                update: { supported: false, command: null }, signIn: { status: 'signedOut', loginSupport: 'login_terminal' },
+                platform: { supported: true }, install: { available: false, mode: 'manual', sizeBytes: null, guideUrl: null }, dependencies: [] } });
+        expect(projectMachineAgentForCredential(signedOutAgent, { modelRef: selection, providerRoute,
+            credentialBindings: { v: 2, bindingsByServiceId: { 'happier.machine.vercel/vercel-account': {
+                source: 'connected', selection: 'profile', profileId: 'work',
+            } } },
+        })).toMatchObject({ state: 'ready', signIn: { status: 'signedOut' } });
+        expect(resolveSelectedProviderRoute({ ...input, selection: { ...selection, endpointTemplateId: 'vercel-chat' } }))
+            .toMatchObject({ ready: false });
+    });
+
     it('names a same-name source once in the model picker route', () => {
         expect(resolveSessionRoutePresentation({ phase: 'draft',
             selection: ProviderBoundModelRefSchema.parse({ agentTargetKey: 'agent:codex', providerConnectionId: 'pc_a', modelId: 'model' }),

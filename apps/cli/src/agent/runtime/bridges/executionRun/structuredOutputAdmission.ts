@@ -1,3 +1,4 @@
+import { isSessionModelRefSourceBound } from '@happier-dev/protocol/providers/selection/v2';
 import { AgentModelsProbeObservationSchema } from '@happier-dev/protocol/capabilities';
 import type { CliProbeDependencies } from '@/capabilities/probes/agentPreflight';
 import { withAgentPreflightCatalog } from '@/capabilities/probes/withAgentPreflightCatalog';
@@ -22,7 +23,7 @@ type ModelAdmissionParams = Pick<ExecutionRunManagerStartParams,
   }>;
 
 export function usesExecutionRunProviderModel(params: Pick<ModelAdmissionParams, 'modelSelection' | 'teamCredentialModel'>): boolean {
-  return Boolean(params.teamCredentialModel || params.modelSelection?.providerConnectionId);
+  return Boolean(params.teamCredentialModel || (params.modelSelection && isSessionModelRefSourceBound(params.modelSelection)));
 }
 
 export async function assertExecutionRunStructuredAnalysisModelAllowed(params: ModelAdmissionParams & Readonly<{ intent?: string }>): Promise<void> {

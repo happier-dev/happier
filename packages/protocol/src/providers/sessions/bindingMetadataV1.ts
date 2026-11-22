@@ -24,7 +24,7 @@ import {
   createProviderBindingSecurityFingerprintV1,
 } from '../securityFingerprintsV1.js';
 import {
-  ProviderManagedRuntimeDeclarationV1Schema,
+  ProviderManagedRuntimeSnapshotV1Schema,
   createProviderManagedPurposeBindingsEqualityKeyV1,
   resolveProviderManagedRuntimeDeclarationV1,
 } from '../contributions/v1.js';
@@ -96,7 +96,7 @@ const ProviderRuntimeManagedBindingBasisV1Schema =
       kind: z.literal('managedLocal'),
       gatewayPlacement: z.optional(ProviderGatewayPlacementV1Schema),
       implementationIdentity: asProtocolZod(PluginContributionIdentityV1Schema),
-      managedRuntime: ProviderManagedRuntimeDeclarationV1Schema,
+      managedRuntime: ProviderManagedRuntimeSnapshotV1Schema,
       purposeBindings: QualifiedConnectedAccountPurposeBindingsV1Schema,
     }), z.transform((deployment) => ({
       ...deployment,

@@ -4,7 +4,7 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readContributedProviderCatalogParserIds } from '@happier-dev/protocol/plugins/contributions/catalog';
 import { readContributedProviderUsageParserIds } from '@happier-dev/protocol/plugins/contributions/catalog';
-import { resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
+import { resolveProviderManagedRuntimeFromContributionV1 } from '@happier-dev/protocol/providers/contributions';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol';
 
 import type {
@@ -155,13 +155,14 @@ export function projectTargetProviderRuntimes(input: Readonly<{
                 refuse(key, identity, `Managed Provider runtime registration '${key}' has no matching current activation target declaration`);
                 continue;
             }
-            const declaration = resolveProviderManagedRuntimeDeclarationV1({
+            const declaration = resolveProviderManagedRuntimeFromContributionV1({
                 implementationIdentity: provider.identity,
-                managedRuntime: provider.definition.managedRuntime,
+                definition: { ...provider.definition, managedRuntime: provider.definition.managedRuntime },
+                connectedAccountDeclarations: provider.connectedAccountDeclarations,
             });
-            const targetDeclaration = resolveProviderManagedRuntimeDeclarationV1({
+            const targetDeclaration = resolveProviderManagedRuntimeFromContributionV1({
                 implementationIdentity: provider.identity,
-                managedRuntime: targetProvider.managedRuntime,
+                definition: { ...targetProvider, managedRuntime: targetProvider.managedRuntime },
             });
             if (!isDeepStrictEqual(declaration, targetDeclaration)) {
                 refuse(key, identity, `Managed Provider runtime registration '${key}' does not match the current activation target declaration`);

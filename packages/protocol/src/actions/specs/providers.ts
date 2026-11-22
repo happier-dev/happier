@@ -273,7 +273,7 @@ function createProviderActionSpecsV1() {
   providerSpec('providers.probe', 'Test Provider connection',
     'Check that a Provider connection, saved or still being set up, can be reached and signs in.', { danger: true, external: true }),
   providerSpec('providers.usage.refresh', 'Refresh Provider usage',
-    'Read current spend and credits from the declared usage sources of a saved Provider connection.', { read: true }),
+    'Read current spend and credits for a saved Provider connection or a selected personal connected account source.', { read: true }),
   providerSpec('providers.binding.status', 'Check agent and Provider pairing',
     'Check the Provider pairing. Supply machineId and sessionId to read the owned Session pairing and, when changed, receive the exact providerBindingSecurityChangeConfirmationV1 for session.runtime.refresh.', { read: true }),
   providerSpec('providers.legacy.prepare', 'Prepare credentials from an earlier version',

@@ -97,6 +97,7 @@ export function resolveDaemonSessionModelTransitionAuthority(params: Readonly<{
     trackedAgentId === null
     || trackedAgentId !== params.requestAgentId
     || trackedSelection === null
+    || !('providerConnectionId' in trackedSelection)
     || trackedSelection.providerConnectionId === null
     || params.requestedSelection.agentTargetKey
       !== trackedSelection.agentTargetKey

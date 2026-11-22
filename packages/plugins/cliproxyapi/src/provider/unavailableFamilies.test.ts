@@ -34,8 +34,8 @@ describe('managed header-only families', () => {
     expect(GROK_MANIFEST.contributes.agents[0]!.connectedAccounts).toEqual(expect.arrayContaining([
       expect.objectContaining({ service: xaiFamily.service.localId }),
     ]));
-    expect(declarations[0]!.definition.managedRuntime!.connectedAccounts).toHaveLength(7);
-    expect(declarations[0]!.definition.managedRuntime!.requestAuthUses).toHaveLength(7);
+    expect(declarations[0]!.definition.connectedAccounts).toHaveLength(7);
+    expect(declarations[0]!.definition.requestAuthUses).toHaveLength(7);
   });
 
   it.each([

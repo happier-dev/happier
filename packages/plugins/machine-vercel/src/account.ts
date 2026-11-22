@@ -11,6 +11,7 @@ import { refreshVercelOAuth, revokeVercelOAuth, vercelOAuthMode, vercelOAuthStat
 export const ACCOUNT_ID = 'vercel-account';
 const gatewayOrigin = 'https://ai-gateway.vercel.sh';
 const gatewayTeamHeader = 'x-vercel-ai-gateway-team';
+const gatewayTeamQueryParameter = 'teamId';
 
 async function health(context: ConnectedAccountReadContext, options?: { signal?: AbortSignal }): Promise<ConnectedAccountHealthResult> {
   const signal = operationSignal(context, options?.signal);
@@ -55,17 +56,19 @@ async function materialize(
     throw new PluginError({ code: 'credential_unavailable' });
   }
   const headerNames = request.headerNames.map(name => name.toLowerCase());
-  const allowsTeamHeader = request.origin === gatewayOrigin;
-  if (headerNames.some(name => name !== 'authorization' && !(allowsTeamHeader && name === gatewayTeamHeader))) {
+  const isGatewayOrigin = request.origin === gatewayOrigin;
+  const queryParameterNames = request.queryParameterNames ?? [];
+  if (headerNames.some(name => name !== 'authorization' && !(isGatewayOrigin && name === gatewayTeamHeader))
+    || queryParameterNames.some(name => !isGatewayOrigin || name !== gatewayTeamQueryParameter)) {
     throw new PluginError({ code: 'credential_unavailable' });
   }
-  if (headerNames.length === 0) return { kind: 'httpHeaders', headers: {} };
+  if (headerNames.length === 0 && queryParameterNames.length === 0) return { kind: 'httpHeaders', headers: {} };
   const headers: Record<string, string> = {};
-  if (headerNames.includes(gatewayTeamHeader)) {
-    const scope = scopeOf(context);
-    if (!scope) throw new PluginError({ code: 'credential_unavailable' });
-    headers[gatewayTeamHeader] = scope.teamId;
-  }
+  const wantsTeamHeader = headerNames.includes(gatewayTeamHeader);
+  const wantsTeamQuery = queryParameterNames.includes(gatewayTeamQueryParameter);
+  const scope = wantsTeamHeader || wantsTeamQuery ? scopeOf(context) : null;
+  if ((wantsTeamHeader || wantsTeamQuery) && !scope) throw new PluginError({ code: 'credential_unavailable' });
+  if (wantsTeamHeader && scope) headers[gatewayTeamHeader] = scope.teamId;
   try {
     const token = await context.credentials.get('token', { signal });
     // Only a sign-in grant expires; personal tokens carry no expiry here.
@@ -76,7 +79,10 @@ async function materialize(
       throw new PluginError({ code: 'credential_unavailable' });
     }
     if (headerNames.includes('authorization')) headers.authorization = `Bearer ${token}`;
-    return { kind: 'httpHeaders', headers, ...(expiresAt === undefined ? {} : { expiresAt }) };
+    return { kind: 'httpHeaders', headers,
+      ...(wantsTeamQuery && scope ? { facts: { [gatewayTeamQueryParameter]: scope.teamId } } : {}),
+      ...(expiresAt === undefined ? {} : { expiresAt }),
+    };
   } catch {
     signal.throwIfAborted();
     throw new PluginError({ code: 'credential_unavailable' });

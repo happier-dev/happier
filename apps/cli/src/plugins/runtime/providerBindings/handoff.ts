@@ -4,7 +4,8 @@ import type { AgentProviderBindingLaunchMaterializationV1, SessionProviderBindin
 import { z } from 'zod/mini';
 import { isDeepStrictEqual } from 'node:util';
 import { AgentSessionProviderBindingV1Schema } from '@happier-dev/protocol/providers/sessions/agentSessionProviderBindingV1';
-import { ProviderBoundModelRefSchema, type ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
+import { ConnectedAccountSessionModelRefV2Schema, type ConnectedAccountSessionModelRefV2 } from '@happier-dev/protocol/providers/selection/v2';
+import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
 
 export const HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY =
@@ -17,7 +18,7 @@ export type ProviderBindingLaunchHandoffV1 = Readonly<{
     materialization: AgentProviderBindingLaunchMaterializationV1;
 }> & (
     | Readonly<{ sessionBindingMetadata: SessionProviderBindingMetadataV1; providerBinding?: never; selection?: never }>
-    | Readonly<{ providerBinding: AgentSessionProviderBinding; selection: ProviderBoundModelRef; sessionBindingMetadata?: never }>
+    | Readonly<{ providerBinding: AgentSessionProviderBinding; selection: ConnectedAccountSessionModelRefV2; sessionBindingMetadata?: never }>
 );
 
 const ProviderBindingLaunchHandoffV1Schema: z.ZodMiniType<ProviderBindingLaunchHandoffV1> = z.union([
@@ -30,9 +31,9 @@ const ProviderBindingLaunchHandoffV1Schema: z.ZodMiniType<ProviderBindingLaunchH
         v: z.literal(1),
         materialization: AgentProviderBindingLaunchMaterializationV1Schema,
         providerBinding: AgentSessionProviderBindingV1Schema,
-        selection: ProviderBoundModelRefSchema,
-    }).check(z.refine(value => value.selection.providerConnectionId === null
-        && 'source' in value.providerBinding && value.providerBinding.source.kind === 'connected_account'
+        selection: ConnectedAccountSessionModelRefV2Schema,
+    }).check(z.refine(value => 'source' in value.providerBinding && value.providerBinding.source.kind === 'connected_account'
+        && qualifiedPurposeKey(value.selection.purpose) === qualifiedPurposeKey(value.providerBinding.source.purpose)
         && isDeepStrictEqual(value.materialization, value.providerBinding.materialization))),
 ]);
 

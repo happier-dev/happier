@@ -1,3 +1,4 @@
+import type { PersonalSessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import { createHash, randomUUID } from 'node:crypto';
 import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { toVoiceAgentStartError } from '@/agent/voice/agent/voiceAgentStartError';
@@ -16,7 +17,7 @@ import { REVIEW_SCM_SCOPE_INPUT_KEY } from '@happier-dev/protocol/reviews/review
 import { ReviewScmScopeV1Schema } from '@happier-dev/protocol/reviews/scope';
 import { ExecutionRunVoiceAgentIntentInputV1Schema } from '@happier-dev/protocol/execution/runs/startRequest';
 import { resolveScmPullRequestReviewScope } from '@happier-dev/protocol/reviews/scmPullRequestScope';
-import type { AcpConfigOptionOverridesV1, BackendTargetRefV1, ConnectedServiceBindingsV2, ProviderBoundModelRef, ExecutionRunResultContractV1, SessionInputAdmissionResultV1, SessionInputCausalPermissionAuthorityV1 } from '@happier-dev/protocol';
+import type { AcpConfigOptionOverridesV1, BackendTargetRefV1, ConnectedServiceBindingsV2, ExecutionRunResultContractV1, SessionInputAdmissionResultV1, SessionInputCausalPermissionAuthorityV1 } from '@happier-dev/protocol';
 import { withExecutionRunStartFailureDetails, projectExecutionRunChildChoiceV1 } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { projectExecutionRunRequestedConfiguration, projectExecutionRunResolvedSelection } from '@happier-dev/protocol/execution/runs/requestedConfiguration';
 import { resolveExecutionRunNotifyParentDefaultV1 } from '@happier-dev/protocol/execution/runs/executionRunNotifyParentDefaultV1';
@@ -304,7 +305,7 @@ type StartExecutionRunArgs = Readonly<{
     causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;
     actionRequestAttributionV1?: import('@happier-dev/protocol/actions/actionRequestAttributionV1').ActionRequestAttributionV1;
     modelId?: string;
-    modelSelection?: ProviderBoundModelRef;
+    modelSelection?: PersonalSessionModelRef;
     modelSelectionSource?: ResolvedExecutionRunChildSelection['modelSelectionSource'];
     teamCredentialModel?: import('@happier-dev/protocol').TeamCredentialProviderModelSelectionV1;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
@@ -1106,7 +1107,7 @@ async function startAdmittedExecutionRunInWorkspace(
         ...(args.params.signal ? { signal: args.params.signal } : {}),
         readHistoryContextWindowTokens: async ({ runtime, signal }) => {
           const selection = childSelection;
-          if (selection?.teamCredentialModel || selection?.modelSelection?.providerConnectionId) {
+          if (selection && usesExecutionRunProviderModel(selection)) {
             return runtime.readModelContextWindowTokens?.();
           }
           return (await readExecutionRunOfferedModel({

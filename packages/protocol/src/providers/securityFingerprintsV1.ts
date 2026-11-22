@@ -23,12 +23,11 @@ import {
   type ProviderCatalogParserV1,
 } from './catalog/descriptorV1.js';
 import type {
-  ProviderManagedRuntimeDeclarationV1,
+  ProviderManagedRuntimeSnapshotV1,
   ProviderModelLoadDescriptorV1,
   ResolvedProviderManagedRuntimeDeclarationV1,
 } from './contributions/v1.js';
 import {
-  ProviderManagedRuntimeDeclarationV1Schema,
   ProviderModelLoadDescriptorV1Schema,
   ProviderInlineCompletionOperationV1Schema,
   ProviderUsageSourceV1Schema,
@@ -145,7 +144,7 @@ function canonicalManagedRequestAuthUsesV1(
 function projectManagedRuntimeDeclarationSecurityFactsV1(input: Readonly<{
   implementationIdentity: Readonly<{ pluginId: string; localId: string }>;
   managedRuntime:
-    | ProviderManagedRuntimeDeclarationV1
+    | ProviderManagedRuntimeSnapshotV1
     | ResolvedProviderManagedRuntimeDeclarationV1;
 }>) {
   const implementationIdentity = PluginContributionIdentityV1Schema.parse(
@@ -239,7 +238,7 @@ export function createProviderConnectionSecurityFingerprintV1(input: Readonly<{
     gatewayPlacement?: ProviderGatewayPlacementV1;
     implementationIdentity: Readonly<{ pluginId: string; localId: string }>;
     managedRuntime:
-      | ProviderManagedRuntimeDeclarationV1
+      | ProviderManagedRuntimeSnapshotV1
       | ResolvedProviderManagedRuntimeDeclarationV1;
     /**
      * The URL-free declared endpoint facts selected by
@@ -387,7 +386,7 @@ type ProviderBindingManagedEndpointIdentityV1 = Readonly<{
     gatewayPlacement?: ProviderGatewayPlacementV1;
     implementationIdentity: Readonly<{ pluginId: string; localId: string }>;
     managedRuntime:
-      | ProviderManagedRuntimeDeclarationV1
+      | ProviderManagedRuntimeSnapshotV1
       | ResolvedProviderManagedRuntimeDeclarationV1;
   }>;
   endpointTemplateId: string;
@@ -685,7 +684,7 @@ export function createProviderUsageRequestFingerprintV1(input: Readonly<{
 export function createProviderManagedProbeRequestFingerprintV1(input: Readonly<{
   implementationIdentity: Readonly<{ pluginId: string; localId: string }>;
   managedRuntime:
-    | ProviderManagedRuntimeDeclarationV1
+    | ProviderManagedRuntimeSnapshotV1
     | ResolvedProviderManagedRuntimeDeclarationV1;
   purposeBindings: QualifiedConnectedAccountPurposeBindingsV1;
   endpointTemplateId: string;

@@ -1,6 +1,7 @@
 import type * as React from 'react';
 import { resolveEffectiveApiTokenModelRefV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { serializeModelVisibilityRefV1, type ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
+import type { PersonalSessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import type { ComposerInputLockSnapshotV1 } from '@happier-dev/protocol/plugins/ui/composer';
 
 import type { PermissionMode } from '@/constants/PermissionModes';
@@ -124,7 +125,7 @@ export function narrowTranscriptInteractionForPresentation(
  * are dropped by the same key. `null` (or no list) means no extra narrowing. Nothing is added.
  */
 export function narrowSessionModelPickerToAllowedModels<
-    TGroup extends Readonly<{ rows: readonly Readonly<{ ref: ProviderBoundModelRef }>[] }>,
+    TGroup extends Readonly<{ rows: readonly Readonly<{ ref: PersonalSessionModelRef }>[] }>,
 >(input: Readonly<{
     allowedModels: readonly ProviderBoundModelRef[] | null | undefined;
     agentTargetKey: string | null | undefined;
@@ -150,7 +151,7 @@ export function narrowSessionModelPickerToAllowedModels<
         if (!allowed.has(key)) hiddenNativeModelKeys.add(key);
     }
     const providerGroups = input.providerGroups.map((group) => {
-        const rows = group.rows.filter((row) => allowed.has(toModelVisibilityKey(row.ref)));
+        const rows = group.rows.filter((row) => 'providerConnectionId' in row.ref && allowed.has(toModelVisibilityKey(row.ref)));
         return rows.length === group.rows.length ? group : { ...group, rows };
     });
     return { hiddenNativeModelKeys, providerGroups, allowAutomatic: false, canEnterCustomValue: false };

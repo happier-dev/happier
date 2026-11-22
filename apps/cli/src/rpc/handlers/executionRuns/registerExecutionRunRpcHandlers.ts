@@ -165,6 +165,7 @@ export type ExecutionRunRpcHandlerContext = Readonly<{
   resolveManagedPurposeBindingIntent?: ConstructorParameters<typeof ExecutionRunHostBridge>[0]['resolveManagedPurposeBindingIntent'];
   resolveManagedPurposeBindingIntentSelection?: ConstructorParameters<typeof ExecutionRunHostBridge>[0]['resolveManagedPurposeBindingIntentSelection'];
   managedProviderAccountAuthority?: ConstructorParameters<typeof ExecutionRunHostBridge>[0]['managedProviderAccountAuthority'];
+  connectedAccountProviderLaunch?: ConstructorParameters<typeof ExecutionRunHostBridge>[0]['connectedAccountProviderLaunch'];
   readModelProjection?: ConstructorParameters<typeof ExecutionRunHostBridge>[0]['readModelProjection'];
   prepareManagedEndpoint?: ConstructorParameters<typeof ExecutionRunHostBridge>[0]['prepareManagedEndpoint'];
   /** Same invocation holder initialized by the Session owner's Settings admission. */
@@ -300,6 +301,7 @@ export function registerExecutionRunRpcHandlers(
     ...(ctx.resolveManagedPurposeBindingIntent ? { resolveManagedPurposeBindingIntent: ctx.resolveManagedPurposeBindingIntent } : {}),
     ...(ctx.resolveManagedPurposeBindingIntentSelection ? { resolveManagedPurposeBindingIntentSelection: ctx.resolveManagedPurposeBindingIntentSelection } : {}),
     managedProviderAccountAuthority: ctx.managedProviderAccountAuthority,
+    connectedAccountProviderLaunch: ctx.connectedAccountProviderLaunch,
     ...(ctx.readModelProjection ? { readModelProjection: ctx.readModelProjection } : {}),
     ...(ctx.prepareManagedEndpoint ? { prepareManagedEndpoint: ctx.prepareManagedEndpoint } : {}),
     ...(ctx.machineId ? { machineId: ctx.machineId } : {}),

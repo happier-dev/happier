@@ -5,22 +5,13 @@ import { PLUGIN_MANIFEST } from './manifest.js';
 import { PI_LAUNCH_ENV_KEYS } from './agent/launchEnvironment.js';
 
 describe('Pi strict plugin manifest', () => {
-  it('projects the managed Muse source route into the admitted Agent declaration', () => {
-    expect(ingestPluginManifestV2(PLUGIN_MANIFEST)).toMatchObject({ ok: true });
-    expect(PLUGIN_MANIFEST.contributes.agents[0]?.connectedAccounts).toEqual(expect.arrayContaining([
-      expect.objectContaining({ purpose: 'meta-inference', managedProviderEndpoint: {
-        provider: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
-        purpose: 'meta-upstream', modelIdPrefix: 'meta/',
-      } }),
-    ]));
-  });
   it('declares only the target custom session runtime contract', () => {
     expect(ingestPluginManifestV2(PLUGIN_MANIFEST)).toMatchObject({ ok: true });
     expect(PLUGIN_MANIFEST.contributes.agents).toEqual([
       expect.objectContaining({ id: 'pi', runtime: { kind: 'custom' }, primary: 'sessions' }),
     ]);
     expect(PLUGIN_MANIFEST).toMatchObject({
-      entrypoints: { daemon: './.happier-plugin/daemon.js' },
+      entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
       hostAccess: {
         required: expect.arrayContaining([
           expect.objectContaining({ id: 'pi-process', capability: 'process' }),

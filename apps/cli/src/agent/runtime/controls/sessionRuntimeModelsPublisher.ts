@@ -7,7 +7,7 @@ import { readExactSessionActiveModelSelection } from '@happier-dev/protocol/prov
 import { readSessionProviderBindingMetadataStateV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import { projectSessionMetadataAgentVocabularyWriteCompatibilityV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import type { ProviderBoundModelRef, TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol';
-import { createSessionActiveModelSelection, type SessionActiveModelSelection } from '@happier-dev/protocol/providers/selection/v2';
+import { createSessionActiveModelSelection, type ConnectedAccountSessionModelRefV2, type SessionActiveModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { isProviderSourceModelCatalogConfidenceUsable } from '@/providers/modelManagement/sourceCatalog';
 import { applyActiveModelFacts } from '@/providers/sessions/applyActiveModelFacts';
 import type { AuthorizedSessionModelTransitionTarget } from '@/providers/sessions/sessionModelTransitionCoordinator';
@@ -199,6 +199,7 @@ export function createSessionRuntimeModelsPublisher(params: Readonly<{
   initialActiveSelection?: SessionActiveModelSelection | null;
   initialActiveTarget?: AuthorizedSessionModelTransitionTarget;
   readAppliedTeamCredentialModel?: () => TeamCredentialProviderModelSelectionV1 | null | undefined;
+  readAppliedConnectedAccountSelection?: () => ConnectedAccountSessionModelRefV2 | null;
   session: ModelPublisherSession;
   source: AgentSessionModelsSource;
 }>): Readonly<{
@@ -335,6 +336,7 @@ export function createSessionRuntimeModelsPublisher(params: Readonly<{
       source: 'runtime_readback',
       runner,
       teamCredentialModel: params.readAppliedTeamCredentialModel ? params.readAppliedTeamCredentialModel() : null,
+      connectedAccountSelection: params.readAppliedConnectedAccountSelection?.(),
     });
     if (!fact) return null;
     return readExactSessionActiveModelSelection({

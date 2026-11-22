@@ -1,3 +1,4 @@
+import type { PersonalSessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import { randomUUID } from 'node:crypto';
 import type { AgentStartupFailureDetails } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
@@ -9,7 +10,6 @@ import {
   type AcpConfigOptionOverridesV1,
   type BackendTargetRefV1,
   type ConnectedServiceBindingsV2,
-  type ProviderBoundModelRef,
   type SessionInputCausalPermissionAuthorityV1,
 } from '@happier-dev/protocol';
 import { createExecutionRunResumeMaterialization, resumeBackendControllerForResumableRun, type ExecutionRunResumeMaterializationHooks } from './resumeBackendController';
@@ -59,7 +59,7 @@ export async function ensureExecutionRun(args: Readonly<{
     causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;
     actionRequestAttributionV1?: import('@happier-dev/protocol/actions/actionRequestAttributionV1').ActionRequestAttributionV1;
     modelId?: string;
-    modelSelection?: ProviderBoundModelRef;
+    modelSelection?: PersonalSessionModelRef;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     accountSettings?: Readonly<Record<string, unknown>> | null;
     connectedServices?: ConnectedServiceBindingsV2 | null;

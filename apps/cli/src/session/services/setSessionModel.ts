@@ -3,8 +3,8 @@ import type { StoredCredentials } from '@/persistence';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { ProviderBoundModelRefSchema, SessionActiveModelSelectionV1Schema, SessionModelSelectionResolutionError } from '@happier-dev/protocol/providers/model-selection';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
-import { SessionModelTransitionResultV1Schema, type SessionModelMutationExpectedV1, type SessionModelMutationReversalV1 } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
-import { SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
+import { SessionModelTransitionResultV1Schema, projectSessionModelTransitionRequestedSelectionV1, type SessionModelMutationExpectedV1, type SessionModelMutationReversalV1 } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
+import { SessionModelSelectionV2Schema, type ConnectedAccountSessionModelRefV2, type PersonalSessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import { isModelRefGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type { CallerInputConstraintsV1, ProviderConnectionId, ProviderBoundModelRef, SessionModelSelectionV2, SessionModelTransitionResultV1 } from '@happier-dev/protocol';
 import { TeamCredentialProviderModelSelectionV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
@@ -63,7 +63,7 @@ type SetSessionModelInactiveResult = Readonly<{
   reversal?: Extract<SessionModelMutationReversalV1, { owner: 'inactive' }>;
 }>;
 
-type SetSessionTeamModelInactiveResult = Readonly<{
+type SetSessionModelV2InactiveResult = Readonly<{
   ok: true;
   status: 'intent_updated';
   sessionId: string;
@@ -86,7 +86,7 @@ export type SetSessionModelResult =
   | SetSessionModelGrantFailure
   | SetSessionModelActiveResult
   | SetSessionModelInactiveResult
-  | SetSessionTeamModelInactiveResult
+  | SetSessionModelV2InactiveResult
   | SetSessionTeamModelFailure;
 
 type ResolvedSessionTransportContext = Extract<
@@ -97,11 +97,12 @@ type ResolvedSessionTransportContext = Extract<
 function resolveRequestedSelection(params: Readonly<{
   sessionTarget: ResolvedSessionTransportContext;
   metadata: ReturnType<typeof tryDecryptSessionOwnerMetadataView>;
-  modelId: string;
+  modelId?: string;
+  modelSelection?: ConnectedAccountSessionModelRefV2;
   hasExplicitProviderConnectionId: boolean;
   explicitProviderConnectionId: ProviderConnectionId | null;
 }>): Readonly<{
-  selection: ProviderBoundModelRef;
+  selection: PersonalSessionModelRef;
   currentSelection: ProviderBoundModelRef;
 }> | null {
   const metadata = params.metadata;
@@ -123,6 +124,12 @@ function resolveRequestedSelection(params: Readonly<{
       providerConnectionId: null,
       modelId: 'default',
     };
+  if (params.modelSelection) {
+    if (params.modelSelection.agentTargetKey !== agentTargetKey) {
+      throw new SessionModelSelectionResolutionError('model_selection_agent_target_unknown');
+    }
+    return { currentSelection, selection: params.modelSelection };
+  }
   let providerConnectionId: string | null;
   if (params.hasExplicitProviderConnectionId) {
     providerConnectionId = params.explicitProviderConnectionId;
@@ -150,7 +157,7 @@ function resolveRequestedSelection(params: Readonly<{
 async function invokeActiveModelTransition(params: Readonly<{
   credentials: StoredCredentials;
   sessionTarget: ResolvedSessionTransportContext;
-  selection: ProviderBoundModelRef;
+  selection: PersonalSessionModelRef;
   currentSelection: ProviderBoundModelRef;
   metadata: ReturnType<typeof tryDecryptSessionOwnerMetadataView>;
   applyTiming?: 'immediate' | 'next_prompt';
@@ -163,8 +170,9 @@ async function invokeActiveModelTransition(params: Readonly<{
     return { ok: false, code: 'model_not_granted', sessionId: params.sessionTarget.sessionId };
   }
   if (params.expected?.owner === 'inactive') {
+    const requestedSelection = projectSessionModelTransitionRequestedSelectionV1(params.selection);
     return { ok: false, status: 'superseded', sessionId: params.sessionTarget.sessionId,
-      activeSelection: params.selection, requestedSelection: params.selection, reason: 'model_mutation_owner_changed' };
+      activeSelection: requestedSelection, requestedSelection, reason: 'model_mutation_owner_changed' };
   }
   // An unconditional reassertion consumes the runner's published applied fact.
   // Intent alone is insufficient; conditional mutations still belong to the live owner.
@@ -173,7 +181,7 @@ async function invokeActiveModelTransition(params: Readonly<{
     catalog && typeof catalog === 'object' && 'activeSelectionV1' in catalog
       ? catalog.activeSelectionV1 : undefined,
   );
-  if (!params.expected && !params.captureBefore
+  if (!('source' in params.selection) && !params.expected && !params.captureBefore
     && params.currentSelection.agentTargetKey === params.selection.agentTargetKey
     && params.currentSelection.providerConnectionId === params.selection.providerConnectionId
     && params.currentSelection.modelId === params.selection.modelId
@@ -209,7 +217,7 @@ async function invokeActiveModelTransition(params: Readonly<{
       status: 'owner_unavailable',
       sessionId: params.sessionTarget.sessionId,
       activeSelection: null,
-      requestedSelection: params.selection,
+      requestedSelection: projectSessionModelTransitionRequestedSelectionV1(params.selection),
       reason: projectPluginFailureText(error),
       failureCause: MODEL_TRANSITION_OWNER_UNAVAILABLE_CAUSE,
     };
@@ -222,6 +230,7 @@ export async function setSessionModel(params: Readonly<{
   /** Captured by the existing exact-Home Action/CLI invocation, never caller input. */
   serverId?: string;
   modelId?: string;
+  modelSelection?: ConnectedAccountSessionModelRefV2;
   applyTiming?: 'immediate' | 'next_prompt';
   captureBefore?: boolean;
   unarm?: true;
@@ -271,7 +280,7 @@ export async function setSessionModel(params: Readonly<{
     accountEncryptionMode: sessionTarget.accountEncryptionCurrentness.mode,
   });
   const teamCredentialModel = params.teamCredentialModel ?? (
-    params.modelId === undefined || Object.prototype.hasOwnProperty.call(params, 'providerConnectionId') ? null
+    params.modelSelection || params.modelId === undefined || Object.prototype.hasOwnProperty.call(params, 'providerConnectionId') ? null
       : resolveAmbientTeamCredentialModelForModelIntent(metadata, params.modelId)
   );
   if (teamCredentialModel) {
@@ -376,9 +385,10 @@ export async function setSessionModel(params: Readonly<{
   }
 
   const modelId = params.modelId;
-  if (modelId === undefined) {
+  if (modelId === undefined && !params.modelSelection) {
     throw new SessionModelSelectionResolutionError('model_selection_agent_target_unknown');
   }
+  if (params.modelSelection && (params.captureBefore || params.expected)) return { ok: false, code: 'unsupported' };
 
   const hasExplicitProviderConnectionId = Object.prototype.hasOwnProperty.call(
     params,
@@ -391,6 +401,7 @@ export async function setSessionModel(params: Readonly<{
     sessionTarget,
     metadata,
     modelId,
+    modelSelection: params.modelSelection,
     hasExplicitProviderConnectionId,
     explicitProviderConnectionId,
   });
@@ -400,6 +411,7 @@ export async function setSessionModel(params: Readonly<{
   if (params.callerInputConstraints && !isModelRefGrantedV1(params.callerInputConstraints, request.selection)) {
     return { ok: false, code: 'model_not_granted', sessionId: sessionTarget.sessionId };
   }
+  const requestedSelection = projectSessionModelTransitionRequestedSelectionV1(request.selection);
 
   return await runModelIntentAtAuthoritativeDisposition({
     observedActive: sessionTarget.rawSession.active === true,
@@ -419,9 +431,12 @@ export async function setSessionModel(params: Readonly<{
     updateInactiveIntent: async () => {
       if (params.expected?.owner === 'active') return { ok: false as const, status: 'superseded' as const,
         sessionId: sessionTarget.sessionId, activeSelection: request.currentSelection,
-        requestedSelection: request.selection, reason: 'model_mutation_owner_changed' };
-      const candidate = createModelIntentMetadataCasCandidate({
-        selection: request.selection,
+        requestedSelection, reason: 'model_mutation_owner_changed' };
+      const qualifiedSelection = 'source' in request.selection
+        ? { v: 2 as const, ref: request.selection, updatedAt: 0 } : null;
+      const candidate = qualifiedSelection ? createModelIntentV2MetadataCasCandidate({ selection: qualifiedSelection })
+        : createModelIntentMetadataCasCandidate({
+        selection: requestedSelection,
         captureBefore: params.captureBefore,
         ...(mutationAccountId ? { ownerScope: { serverId: mutationServerId, accountId: mutationAccountId, sessionId: sessionTarget.sessionId } } : {}),
         ...(params.expected ? { expected: params.expected } : {}),
@@ -440,22 +455,28 @@ export async function setSessionModel(params: Readonly<{
       if (!candidateState.accepted || candidateState.updatedAt === null) {
         return {
           ok: false as const,
-          status: candidateState.refusal === 'unsupported' ? 'unsupported' as const : 'superseded' as const,
+          status: 'refusal' in candidateState && candidateState.refusal === 'unsupported' ? 'unsupported' as const : 'superseded' as const,
           sessionId: sessionTarget.sessionId,
           activeSelection: request.currentSelection,
-          requestedSelection: request.selection,
+          requestedSelection,
           reason: 'accepted_intent_was_superseded',
         };
       }
-      return {
+      const updated = {
         ok: true as const,
         status: 'intent_updated' as const,
         sessionId: sessionTarget.sessionId,
-        selection: request.selection,
         updatedAt: candidateState.updatedAt,
         metadata: result.metadata,
         version: result.version,
-        ...(candidateState.reversal ? { reversal: candidateState.reversal } : {}),
+      };
+      if (qualifiedSelection) {
+        return { ...updated, selection: { ...qualifiedSelection, updatedAt: updated.updatedAt } };
+      }
+      return {
+        ...updated,
+        selection: requestedSelection,
+        ...('reversal' in candidateState && candidateState.reversal ? { reversal: candidateState.reversal } : {}),
       };
     },
     resolveAndInvokeActiveOwnerAfterConflict: async () => {
@@ -472,7 +493,7 @@ export async function setSessionModel(params: Readonly<{
           status: 'owner_unavailable' as const,
           sessionId: sessionTarget.sessionId,
           activeSelection: null,
-          requestedSelection: request.selection,
+          requestedSelection,
           reason: 'session_model_transition_owner_unproven',
           failureCause: MODEL_TRANSITION_OWNER_UNAVAILABLE_CAUSE,
         };
@@ -485,6 +506,7 @@ export async function setSessionModel(params: Readonly<{
         sessionTarget: refreshedTarget,
         metadata: refreshedMetadata,
         modelId,
+        modelSelection: params.modelSelection,
         hasExplicitProviderConnectionId,
         explicitProviderConnectionId,
       });
@@ -494,7 +516,7 @@ export async function setSessionModel(params: Readonly<{
           status: 'owner_unavailable' as const,
           sessionId: sessionTarget.sessionId,
           activeSelection: null,
-          requestedSelection: request.selection,
+          requestedSelection,
           reason: 'session_model_transition_owner_metadata_unavailable',
           failureCause: MODEL_TRANSITION_OWNER_UNAVAILABLE_CAUSE,
         };

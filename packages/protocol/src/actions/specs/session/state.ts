@@ -23,6 +23,7 @@ import { SESSION_LIST_AWARENESS_VIEW_V1, SESSION_LIST_SUMMARY_VIEW_V1, SessionLi
 import { ActionIdSchema } from '../../actionIds.js';
 import { type ActionInputOption } from '../../actionInputHints.js';
 import { ProviderConnectionIdSchema } from '../../../providers/ids.js';
+import { ConnectedAccountSessionModelRefV2Schema } from '../../../providers/selection/v2.js';
 import { SESSION_PERMISSION_INTENT_INPUTS, SessionPermissionModeInputSchema } from '../../../sessions/metadata/sessionPermissionModes.js';
 import { SessionTasksSetInputV1Schema, SessionWorkStateStatusV1Schema, type SessionWorkStateStatusV1 } from '../../../sessions/work/state/sessionWorkStateV1.js';
 import { SESSION_RPC_METHODS } from '../../../rpc/methods.js';
@@ -61,22 +62,26 @@ const SessionModelSetActionInputSchema = lazyZodSchema(() => z.looseObject({
   sessionId: SessionTargetV1Schema,
   modelId: z.optional(NonBlankOpaqueIdentifierSchema),
   providerConnectionId: z.optional(z.nullable(ProviderConnectionIdSchema)),
+  modelSelection: z.optional(ConnectedAccountSessionModelRefV2Schema),
   teamCredentialModel: z.optional(TeamCredentialProviderModelSelectionV1Schema),
   teamVisibilityGrantConsent: z.optional(z.strictObject({ teamId: z.string().check(z.minLength(1)) })),
   captureBefore: z.optional(z.boolean()),
   expected: z.optional(SessionModelMutationExpectedV1Schema),
 }).check(z.superRefine((value, context) => {
-  const hasTeamSelection = value.teamCredentialModel !== undefined;
   const hasLegacySelection = value.modelId !== undefined || value.providerConnectionId !== undefined;
-  if (hasTeamSelection === hasLegacySelection) {
+  const sources = [value.teamCredentialModel !== undefined, value.modelSelection !== undefined, hasLegacySelection];
+  if (sources.filter(Boolean).length !== 1) {
     context.addIssue({
       code: "custom",
       path: ['teamCredentialModel'],
       message: 'Select exactly one model source',
     });
   }
-  if (!hasTeamSelection && value.modelId === undefined) {
+  if (hasLegacySelection && value.modelId === undefined) {
     context.addIssue({ code: "custom", path: ['modelId'], message: 'modelId is required' });
+  }
+  if (value.modelSelection && (value.captureBefore || value.expected)) {
+    context.addIssue({ code: 'custom', path: ['modelSelection'], message: 'Conditional mutations require a flat model selection' });
   }
   if (value.teamVisibilityGrantConsent && value.teamVisibilityGrantConsent.teamId !== value.teamCredentialModel?.teamId) {
     context.addIssue({ code: "custom", path: ['teamVisibilityGrantConsent'], message: 'Consent must match the selected Team' });

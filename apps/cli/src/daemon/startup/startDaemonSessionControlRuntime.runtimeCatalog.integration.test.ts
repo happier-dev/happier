@@ -10336,11 +10336,11 @@ describe('startDaemonSessionControlRuntime', () => {
                             name: retainedModel.name,
                         }],
                     },
+                    connectedAccounts: [],
+                    requestAuthUses: [],
                     managedRuntime: {
                         kind: 'managed',
                         endpointTemplateIds: ['responses'],
-                        connectedAccounts: [],
-                        requestAuthUses: [],
                     },
                 }],
             },

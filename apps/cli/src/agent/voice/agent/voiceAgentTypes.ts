@@ -1,8 +1,8 @@
+import type { PersonalSessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import type {
   AcpConfigOptionOverridesV1,
   BackendTargetRefV1,
-  ProviderBoundModelRef,
   TeamCredentialProviderModelSelectionV1,
   VoiceAgentOutputEventV1,
   VoiceAgentOutputTurnV1,
@@ -28,8 +28,8 @@ export type VoiceAgentStartParams = Readonly<{
   contextSessionId?: string | null;
   chatModelId: string;
   commitModelId: string;
-  chatModelSelection?: ProviderBoundModelRef;
-  commitModelSelection?: ProviderBoundModelRef;
+  chatModelSelection?: PersonalSessionModelRef;
+  commitModelSelection?: PersonalSessionModelRef;
   chatTeamCredentialModel?: TeamCredentialProviderModelSelectionV1;
   commitTeamCredentialModel?: TeamCredentialProviderModelSelectionV1;
   sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
@@ -116,7 +116,7 @@ export type BackendFactory = (opts: {
   modelId: string;
   /** Host-private role of this native model request, including chat replacement. */
   modelRole?: 'chat' | 'commit';
-  modelSelection?: ProviderBoundModelRef;
+  modelSelection?: PersonalSessionModelRef;
   teamCredentialModel?: TeamCredentialProviderModelSelectionV1;
   sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
   permissionIntent: PermissionIntent;
@@ -186,8 +186,8 @@ export type VoiceAgentInstance = {
   verbosity: Verbosity;
   chatModelId: string;
   commitModelId: string;
-  chatModelSelection?: ProviderBoundModelRef;
-  commitModelSelection?: ProviderBoundModelRef;
+  chatModelSelection?: PersonalSessionModelRef;
+  commitModelSelection?: PersonalSessionModelRef;
   chatTeamCredentialModel?: TeamCredentialProviderModelSelectionV1;
   commitTeamCredentialModel?: TeamCredentialProviderModelSelectionV1;
   sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;

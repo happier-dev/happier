@@ -5,7 +5,6 @@ import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js"
 import { canonicalBoundedRecordKeySchema } from '../common/canonicalRecordKey.js';
 import { ConnectedServiceCredentialKindSchema } from './connectedServiceCredentialKind.js';
 import { ConnectedAccountPurposeIdSchema } from './connectedAccountPurposeIdentity.js';
-import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import {
   PluginContributionReferenceV2Schema,
   PluginLocalizedStringV2Schema,
@@ -27,7 +26,7 @@ export type PluginConnectedAccountMaterializationKind = z.infer<
   typeof PluginConnectedAccountMaterializationKindSchema
 >;
 
-const ConnectedAccountMaterializationDestinationsSchema = lazyZodSchema(() => z.readonly(z.array(
+export const ConnectedAccountMaterializationDestinationsSchema = lazyZodSchema(() => z.readonly(z.array(
   canonicalBoundedRecordKeySchema(),
 ).check(z.minLength(1), z.superRefine((destinations, context) => {
   if (new Set(destinations).size !== destinations.length) {
@@ -79,6 +78,7 @@ export const ConnectedAccountHttpHeadersRequestSchema = lazyZodSchema(() => z.st
   kind: z.literal('httpHeaders'),
   origin: ConnectedAccountHttpsOriginSchema,
   headerNames: ConnectedAccountHttpHeaderNamesSchema,
+  queryParameterNames: z.optional(ConnectedAccountMaterializationDestinationsSchema),
 }));
 export type ConnectedAccountHttpHeadersRequest = z.infer<
   typeof ConnectedAccountHttpHeadersRequestSchema
@@ -120,13 +120,6 @@ export const ConnectedAccountPurposeDeclarationV1Schema = lazyZodSchema(() => z.
   service: asProtocolZod(PluginContributionReferenceV2Schema),
   /** Native selector namespace applied to observed Account model ids. */
   nativeModelIdPrefix: z.optional(z.string().check(z.trim(), z.minLength(1))),
-  /** Use the selected binding through this Provider's existing managed endpoint owner. */
-  managedProviderEndpoint: z.optional(z.strictObject({
-    provider: asProtocolZod(PluginContributionIdentityV1Schema),
-    purpose: ConnectedAccountPurposeIdSchema,
-    /** Native model namespace removed before exact Provider catalog admission. */
-    modelIdPrefix: z.optional(z.string().check(z.trim(), z.minLength(1))),
-  })),
   /** Optional human-facing presentation; purpose remains the machine identifier. */
   title: z.optional(PluginLocalizedStringV2Schema),
   required: z.optional(z.boolean()),

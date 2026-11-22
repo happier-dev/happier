@@ -70,6 +70,9 @@ export type NewSessionModelSelectionContentProps = Readonly<{
     favoriteModelSelections?: readonly FavoriteModelSelectionV1[];
     providerGroups?: readonly SessionModelProjectionGroup[];
     declarationContext?: React.ComponentProps<typeof SessionModelPicker>['declarationContext'];
+    sourceBrowse?: React.ComponentProps<typeof SessionModelPicker>['sourceBrowse'];
+    connectedServices?: React.ComponentProps<typeof SessionModelPicker>['connectedServices'];
+    selectedProviderGroups?: readonly SessionModelProjectionGroup[];
     teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
     teamCredentialDisplayNames?: Readonly<Record<string, string | null>>;
     teamNameById?: Readonly<Record<string, string>>;
@@ -87,7 +90,7 @@ export type NewSessionModelSelectionContentProps = Readonly<{
     hiddenNativeModelKeys?: ReadonlySet<string>;
     experimentalConfirmation?: SessionModelPickerExperimentalConfirmationController;
     onSelectModel: (modelId: ModelMode) => void;
-    onSelectSelection?: (selection: SessionModelPickerValue) => void;
+    onSelectSelection?: React.ComponentProps<typeof SessionModelPicker>['onSelect'];
     onSelectTeamCredentialModel?: (selection: TeamCredentialProviderModelSelectionV1) => void;
     onFavoriteModelSelectionsChange?: (favorites: FavoriteModelSelectionV1[]) => void;
 }>;
@@ -167,7 +170,7 @@ export function NewSessionModelSelectionContent(props: NewSessionModelSelectionC
             agentTargetKey: agentTargetKey ?? '',
             declarationContext: props.declarationContext ?? { kind: 'account' },
             nativeModels: agentTargetKey ? props.modelOptions : [],
-            providerGroups,
+            providerGroups: props.selectedProviderGroups ?? providerGroups,
             hiddenNativeModelKeys: props.hiddenNativeModelKeys ?? EMPTY_HIDDEN_NATIVE_MODEL_KEYS,
             providerProjectionAuthoritative: props.providerProjectionAuthoritative,
             selected: isTeamCredentialProviderModelPickerValue(selected) ? null : selected,
@@ -182,6 +185,7 @@ export function NewSessionModelSelectionContent(props: NewSessionModelSelectionC
         props.hiddenNativeModelKeys,
         props.modelOptions,
         props.providerProjectionAuthoritative,
+        props.selectedProviderGroups,
         providerGroups,
         selected,
         selectedFallbackLabel,
@@ -192,16 +196,17 @@ export function NewSessionModelSelectionContent(props: NewSessionModelSelectionC
         props.teamNameById,
     ]);
 
-    const commitSelection = React.useCallback((ref: SessionModelPickerValue) => {
+    const commitSelection = React.useCallback<React.ComponentProps<typeof SessionModelPicker>['onSelect']>((ref, connectedAccountBinding) => {
         const canonicalRef = resolveCanonicalNativeModelSelectionRef(props.modelOptions, ref);
         if (props.onSelectSelection) {
-            props.onSelectSelection(canonicalRef);
+            if (connectedAccountBinding) props.onSelectSelection(canonicalRef, connectedAccountBinding);
+            else props.onSelectSelection(canonicalRef);
             return;
         }
         props.onSelectModel((canonicalRef?.modelId ?? 'default') as ModelMode);
     }, [props.modelOptions, props.onSelectModel, props.onSelectSelection]);
     const toggleFavorite = React.useCallback((ref: NonNullable<SessionModelPickerValue>) => {
-        if (!props.selectedBackendEntry || !props.onFavoriteModelSelectionsChange) return;
+        if (!props.selectedBackendEntry || !props.onFavoriteModelSelectionsChange || !('providerConnectionId' in ref)) return;
         const providerGroup = ref.providerConnectionId
             ? providerGroups.find((group) => group.connectionId === ref.providerConnectionId)
             : null;
@@ -247,6 +252,9 @@ export function NewSessionModelSelectionContent(props: NewSessionModelSelectionC
             probe={props.modelOptionsProbe}
             agentTargetKey={agentTargetKey ?? ''}
             declarationContext={props.declarationContext}
+            sourceBrowse={props.sourceBrowse}
+            connectedServices={props.connectedServices}
+            includeProviderConnectedAccounts={props.onSelectSelection !== undefined}
             nativeModels={agentTargetKey ? props.modelOptions : []}
             providerGroups={providerGroups}
             teamCredentialResources={props.teamCredentialResources}
@@ -276,8 +284,8 @@ export function NewSessionModelSelectionContent(props: NewSessionModelSelectionC
                 : undefined}
             autoFocusInputOnWeb={options.maxHeight !== undefined}
             onRequestClose={options.onRequestClose}
-            onSelect={(ref) => {
-                commitSelection(ref);
+            onSelect={(ref, connectedAccountBinding) => {
+                commitSelection(ref, connectedAccountBinding);
                 if (options.closeAfterSelect && options.onRequestClose) {
                     deferAgentInputPopoverClose(options.onRequestClose);
                 }

@@ -3,6 +3,7 @@ import { encodeProviderBrokerAuthorityV1, type SignedProviderBrokerModelRouteGra
 import { ProviderContributionV1Schema } from '@happier-dev/protocol/providers/contributions';
 import type { ManagedServiceResponse } from '@happier-dev/plugin-sdk/managed-services';
 
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
 import type { ProviderContributionRegistryView } from '@/providers/registry';
 
@@ -38,21 +39,21 @@ export function createBrokerProviderRegistry(): ProviderContributionRegistryView
       capabilities: { streaming: 'supported', toolRoundTrips: 'supported', statefulResponses: 'unknown', reasoningControls: 'supported' },
     })),
     catalog: { source: 'manual', manualModelPolicy: 'allowed' },
+    connectedAccounts: [
+      { purpose: 'openai-upstream', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+        title: { key: 'managedPurpose.openai.title', fallback: 'Use OpenAI upstream account' }, required: false,
+        materializationKinds: ['httpHeaders'], endpointTemplateIds: endpointTemplates.map((endpoint) => endpoint.id) },
+      { purpose: 'anthropic-upstream', service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
+        materializationKinds: ['httpHeaders'], endpointTemplateIds: endpointTemplates.map((endpoint) => endpoint.id) },
+    ],
     managedRuntime: {
       kind: 'managed', sourceEnvelopeTransport: 'cpx-v1', endpointTemplateIds: endpointTemplates.map((endpoint) => endpoint.id),
-      connectedAccounts: [
-        { purpose: 'openai-upstream', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
-          title: { key: 'managedPurpose.openai.title', fallback: 'Use OpenAI upstream account' }, required: false,
-          materializationKinds: ['httpHeaders'], endpointTemplateIds: endpointTemplates.map((endpoint) => endpoint.id) },
-        { purpose: 'anthropic-upstream', service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
-          materializationKinds: ['httpHeaders'], endpointTemplateIds: endpointTemplates.map((endpoint) => endpoint.id) },
-      ],
     },
   });
   const provider: ResolvedProviderContribution = {
     identity, pluginId: identity.pluginId, definition, provenance: 'external', source: { kind: 'path' },
   };
-  return { providersByContributionKey: new Map([[`${identity.pluginId}/${identity.localId}`, provider]]) };
+  return createResolvedContributionRegistry({ providers: [provider] });
 }
 
 export async function requestThroughApplicationTarget(input: Readonly<{

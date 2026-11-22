@@ -34,15 +34,12 @@ it.each([
     const service = { pluginId: 'happier.agent.ohmypi', localId: 'anthropic' };
     const account = { service, accountId: 'selected' };
     const base = createBrokerProviderRegistry();
-    const registry = { ...base, agentDefinitionsById: fixture.registry.contributes.agentDefinitionsById,
-      providersByContributionKey: new Map([...base.providersByContributionKey].map(([key, provider]) => [key, {
-        ...provider, definition: ProviderContributionV1Schema.parse({ ...provider.definition, managedRuntime: {
-          ...provider.definition.managedRuntime,
-          connectedAccounts: [{ purpose: 'native-models', service, catalogObservation: { agent: identity },
+    const providers = [...base.providersByContributionKey.values()].map(provider => ({
+        ...provider, definition: ProviderContributionV1Schema.parse({ ...provider.definition, connectedAccounts: [{ purpose: 'native-models', service, catalogObservation: { agent: identity },
             endpointTemplateIds: provider.definition.endpointTemplates.map(endpoint => endpoint.id),
-            staticModels: [{ id: 'fallback', name: 'Fallback' }] }],
-        } }),
-      }])) };
+            staticModels: [{ id: 'fallback', name: 'Fallback' }] }] }),
+    }));
+    const registry = { ...createResolvedContributionRegistry({ providers }), agentDefinitionsById: fixture.registry.contributes.agentDefinitionsById };
     const unexpected = async (): Promise<never> => { throw new Error('Unexpected credential effect during catalog reading'); };
     // Account metadata and the installed Machine capability transport are IO boundaries.
     const purposes = createConnectedAccountPurposeBindingOwner({
@@ -100,18 +97,15 @@ it('observes a declared service with zero Agents through the shared catalog owne
   expect(fixture.registry.contributes.agentDefinitionsById.size).toBe(0);
   const activationCount = fixture.modulesByPluginId.get(identity.pluginId)!.activationCount;
   if (typeof activationCount !== 'function') throw new Error('Missing fixture activation counter');
-  const registry = { ...base, providersByContributionKey: new Map([
-    [`${gateway.identity.pluginId}/${gateway.identity.localId}`, { ...gateway, definition: ProviderContributionV1Schema.parse({
-      ...gateway.definition, managedRuntime: { ...gateway.definition.managedRuntime,
-        connectedAccounts: [{ purpose: 'service-upstream', service, materializationKinds: ['httpHeaders'],
+  const registry = createResolvedContributionRegistry({ providers: [
+    { ...gateway, definition: ProviderContributionV1Schema.parse({
+      ...gateway.definition, connectedAccounts: [{ purpose: 'service-upstream', service, materializationKinds: ['httpHeaders'],
           endpointTemplateIds: gateway.definition.endpointTemplates.map(row => row.id),
-          catalogObservation: { provider: identity }, staticModels: [{ id: 'compatibility', name: 'Compatibility' }] }],
-        requestAuthUses: [{ purpose: 'service-upstream', materialization: { kind: 'httpHeaders',
+          catalogObservation: { provider: identity }, staticModels: [{ id: 'compatibility', name: 'Compatibility' }] }], requestAuthUses: [{ purpose: 'service-upstream', materialization: { kind: 'httpHeaders',
           origin: 'https://models.example.com', headerNames: ['authorization'] } }],
-      },
-    }) }],
-    [`${identity.pluginId}/${identity.localId}`, fixture.registry.contributes.providersByContributionKey.get(`${identity.pluginId}/${identity.localId}`)!],
-  ]) };
+    }) },
+    fixture.registry.contributes.providersByContributionKey.get(`${identity.pluginId}/${identity.localId}`)!,
+  ] });
   const unexpected = async (): Promise<never> => { throw new Error('Unexpected selection or credential materialization'); };
   const account = { service, accountId: 'selected' };
   const revision = 'csr_0123456789ABCDEFGHJKMNPQRS';

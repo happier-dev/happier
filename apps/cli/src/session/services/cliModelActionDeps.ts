@@ -39,13 +39,13 @@ export function createCliSessionModelActionDeps(
       const { sessionId: _sessionId, ...transition } = result;
       return SessionModelTransitionResultV1Schema.parse(transition);
     },
-    sessionModelSet: async ({ context, callerInputConstraints, sessionId, modelId, providerConnectionId, teamCredentialModel, teamVisibilityGrantConsent, captureBefore, expected, applyTiming }) => {
+    sessionModelSet: async ({ context, callerInputConstraints, sessionId, modelId, providerConnectionId, modelSelection, teamCredentialModel, teamVisibilityGrantConsent, captureBefore, expected, applyTiming }) => {
       const credentials = params.credentials;
       if (!credentials) {
         return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       }
       const normalizedModelId = readNonBlankOpaqueIdentifier(modelId);
-      if (!normalizedModelId && teamCredentialModel === undefined) {
+      if (!normalizedModelId && modelSelection === undefined && teamCredentialModel === undefined) {
         return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
       }
       const externalRequest = Boolean(context?.externalActionCredential || context?.externalActionExecutionAuthorization);
@@ -66,6 +66,7 @@ export function createCliSessionModelActionDeps(
         ...(expected ? { expected } : {}),
         ...(normalizedModelId ? { modelId: normalizedModelId } : {}),
         ...(providerConnectionId !== undefined ? { providerConnectionId } : {}),
+        ...(modelSelection !== undefined ? { modelSelection } : {}),
         ...(teamCredentialModel !== undefined ? { teamCredentialModel } : {}),
         ...(teamVisibilityGrantConsent !== undefined ? { teamVisibilityGrantConsent } : {}),
         ...(callerInputConstraints ? { callerInputConstraints } : {}),

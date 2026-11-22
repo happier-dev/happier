@@ -2,14 +2,14 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
 import type { AcpConfigOptionOverridesV1 } from '../../sessions/metadata/metadataOverridesV1.js';
-import { ProviderBoundModelRefSchema, type ProviderBoundModelRef } from '../../providers/selection/v1.js';
+import { PersonalSessionModelRefSchema, type PersonalSessionModelRef } from '../../providers/selection/v2.js';
 import { TeamCredentialProviderModelSelectionV1Schema, type TeamCredentialProviderModelSelectionV1 } from '../../teams/credentials/resourceV1.js';
 import { ConnectedServiceBindingsV2Schema, type ConnectedServiceBindingsV2 } from '../../connect/connectedServiceBindings.js';
 
 /** Safe projection of the host-admitted child choice, never an input or a credential materialization. */
 export const ExecutionRunResolvedSelectionSchema = lazyZodSchema(() => z.strictObject({
   source: z.enum(['inherited', 'explicit', 'independent', 'retained']),
-  modelSelection: z.optional(ProviderBoundModelRefSchema),
+  modelSelection: z.optional(PersonalSessionModelRefSchema),
   teamCredentialModel: z.optional(TeamCredentialProviderModelSelectionV1Schema),
   modelId: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(1000))),
   connectedServices: z.optional(z.nullable(ConnectedServiceBindingsV2Schema)),
@@ -26,7 +26,7 @@ export type ExecutionRunResolvedSelection = z.infer<typeof ExecutionRunResolvedS
 
 export function projectExecutionRunResolvedSelection(params: Readonly<{
   source?: ExecutionRunResolvedSelection['source'];
-  modelSelection?: ProviderBoundModelRef;
+  modelSelection?: PersonalSessionModelRef;
   teamCredentialModel?: TeamCredentialProviderModelSelectionV1;
   modelId?: string;
   connectedServices?: ConnectedServiceBindingsV2 | null;

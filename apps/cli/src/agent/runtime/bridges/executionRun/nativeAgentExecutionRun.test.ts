@@ -2064,11 +2064,11 @@ describe('createNativeAgentExecutionRunHostRuntime', () => {
         const runtime: AgentRuntime = Object.freeze({
             executionRuns: Object.freeze({ open }),
         });
-        const modelSelection = ProviderBoundModelRefSchema.parse({
-            agentTargetKey: 'agent:happier.agent.codex/codex',
-            providerConnectionId: source === 'saved' ? 'pc_openai' : null,
-            modelId: source === 'saved' ? 'gpt-5.1-codex' : 'native/gpt-5.1-codex',
-        });
+        const agentTargetKey = 'agent:happier.agent.codex/codex';
+        const purpose = { consumer: { pluginId: 'acme.agent', localId: 'agent' }, purpose: 'inference' } as const;
+        const modelSelection = source === 'saved'
+            ? ProviderBoundModelRefSchema.parse({ agentTargetKey, providerConnectionId: 'pc_openai', modelId: 'gpt-5.1-codex' })
+            : { source, purpose, endpointTemplateId: 'api', agentTargetKey, modelId: 'gpt-5.1-codex' };
         const configuration = Object.freeze({
             mode: Object.freeze({ value: null, updatedAtMs: 0 }),
             model: Object.freeze({ value: modelSelection.modelId, updatedAtMs: 5 }),
@@ -2079,7 +2079,7 @@ describe('createNativeAgentExecutionRunHostRuntime', () => {
         });
         const providerBinding = AgentSessionProviderBindingV1Schema.parse({
             ...(source === 'saved' ? { connectionId: 'pc_openai' } : { source: { kind: 'connected_account',
-                purpose: { consumer: { pluginId: 'acme.agent', localId: 'agent' }, purpose: 'inference' },
+                purpose,
                 account: { service: { pluginId: 'acme.accounts', localId: 'accounts' }, accountId: 'selected' } } }),
             model: {
                 id: 'gpt-5.1-codex',
@@ -2135,7 +2135,7 @@ describe('createNativeAgentExecutionRunHostRuntime', () => {
         await host.provisionRuntime({ resumeRuntimeId: 'checkpoint-1' });
 
         expect(open).toHaveBeenCalledWith(expect.objectContaining({
-            modelSelection,
+            ...(source === 'saved' ? { modelSelection } : {}),
             configuration: { ...configuration, model: { ...configuration.model, value: providerBinding.model.id } },
             providerBinding,
             runtimeDescriptorV1: options.runtimeDescriptorV1,
@@ -2145,6 +2145,7 @@ describe('createNativeAgentExecutionRunHostRuntime', () => {
             mcpServers: expect.anything(),
             startupInstructions: expect.anything(),
         }));
+        if (source === 'connected_account') expect(open.mock.calls[0]?.[0]).not.toHaveProperty('modelSelection');
         expect(options.modelSelection).toEqual(modelSelection);
         expect(options.configuration?.model.value).toBe(modelSelection.modelId);
         await host.dispose();

@@ -5928,27 +5928,46 @@ describe('SessionView (direct sessions)', () => {
   });
 
   it.each([
-    ['restart_required', false],
-    ['restart_required', true],
-    ['armed', true],
-    ['reconciliation_required', false],
-  ] as const)('arms %s and applies through Provider runner recovery (empty Continue: %s)', async (status, emptyContinue) => {
+    ['restart_required', false, false],
+    ['restart_required', true, false],
+    ['armed', true, false],
+    ['reconciliation_required', false, false],
+    ['restart_required', false, true],
+  ] as const)('arms %s and applies through Provider runner recovery (empty Continue: %s, Connected Account: %s)', async (status, emptyContinue, connectedAccount) => {
     const { directSessionV1: _direct, ...metadata } = storageState.sessions.s1.metadata;
-    storageState.sessions.s1 = { ...storageState.sessions.s1, metadata: {
-      ...metadata,
-      // This older durable echo must not consume the new local ACK marker.
-      modelSelectionIntentV2: {
-        v: 2, updatedAt: 17,
-        ref: { source: 'native', agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'default' },
+    storageState.sessions.s1 = { ...storageState.sessions.s1,
+      latestTurnStatus: 'completed',
+      latestTurnStatusObservedAt: 18,
+      runtimeActivityState: 'idle',
+      runtimeActivityActiveCount: 0,
+      runtimeActivityObservedAt: 18,
+      runtimeActivityRevision: 1,
+      metadata: {
+        ...metadata,
+        // This older durable echo must not consume the new local ACK marker.
+        modelSelectionIntentV2: {
+          v: 2, updatedAt: 17,
+          ref: { source: 'native', agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'default' },
+        },
       },
-    } };
+    };
     featureEnabledState.providers = true;
+    const agentTargetKey = 'agent:happier.agent.codex/codex';
     const requestedSelection = {
-      agentTargetKey: 'agent:happier.agent.codex/codex',
-      providerConnectionId: ProviderConnectionIdSchema.parse('pc_work'),
+      agentTargetKey,
+      providerConnectionId: connectedAccount ? null : ProviderConnectionIdSchema.parse('pc_work'),
       modelId: 'gpt-5.6-luna',
     };
+    const purpose = { consumer: { pluginId: 'acme.gateway', localId: 'gateway' }, purpose: 'inference' };
+    const service = { pluginId: 'acme.gateway', localId: 'accounts' };
+    const connectedRef = { source: 'connected_account' as const, purpose, endpointTemplateId: 'api', agentTargetKey,
+      modelId: requestedSelection.modelId };
+    if (connectedAccount) storageState.sessions.s1.metadata.connectedServices = { v: 2, bindingsByServiceId: {
+      'acme.gateway/accounts': { source: 'connected', selection: 'profile', profileId: 'fixture-account' },
+    } };
+    const transitions: Extract<SessionModelTransitionRequestV1, { selection: unknown }>[] = [];
     modelTransitionReply = async (request) => {
+      transitions.push(request);
       const immediate = request.applyTiming === 'immediate';
       const transitionStatus = immediate && status !== 'armed' ? 'restart_required' : status;
       return SessionModelTransitionResultV1Schema.parse({ ok: transitionStatus === 'armed', ...{
@@ -5995,8 +6014,8 @@ describe('SessionView (direct sessions)', () => {
     const screen = await renderSessionViewAndSettle({ routeServerId: 'server-route-1' });
     const modelContentOverride = await mountSessionModelPicker(screen);
     await act(async () => {
-      modelContentOverride.props.onSelect(requestedSelection);
-      await Promise.resolve();
+      await modelContentOverride.props.onSelect(connectedAccount ? connectedRef : requestedSelection, connectedAccount
+        ? { purpose, target: { kind: 'account', account: { service, accountId: 'fixture-account' } } } : undefined);
     });
     await settleDirectSessionView();
 
@@ -6004,6 +6023,10 @@ describe('SessionView (direct sessions)', () => {
     expect(findProviderBindingLine(screen)).toBeNull();
     if (!emptyContinue) await act(async () => { findAgentInput(screen).props.onChangeText('Continue on this route'); });
     await act(async () => { await findAgentInput(screen).props.onSend(); });
+    expect(transitions).toContainEqual(expect.objectContaining({
+      applyTiming: 'immediate',
+      selection: connectedAccount ? connectedRef : requestedSelection,
+    }));
     expect(restartProviderBindingSessionRunnerSpy).toHaveBeenCalledWith({
       signal: expect.any(AbortSignal),
       runtimeState: expect.objectContaining({
@@ -6014,11 +6037,11 @@ describe('SessionView (direct sessions)', () => {
       serverId: 'server-route-1',
     });
     expect(restartProviderBindingSessionRunnerSpy).toHaveBeenCalledTimes(1);
-    expect(actionExecuteSpy).toHaveBeenCalledWith('session.model.set', expect.objectContaining({
-      modelId: 'gpt-5.6-luna', providerConnectionId: 'pc_work', applyTiming: 'immediate',
-    }), expect.anything());
-    if (emptyContinue) expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
-    else expect(syncSubmitMessageSpy).toHaveBeenCalled();
+    const sendActions = actionExecuteSpy.mock.calls.filter(([actionId]) => actionId === 'session.message.send');
+    if (emptyContinue) expect(sendActions).toEqual([]);
+    else expect(sendActions).toContainEqual([
+      'session.message.send', expect.objectContaining({ sessionId: 's1', message: 'Continue on this route' }), expect.anything(),
+    ]);
   });
 
   function installBlockedProviderBindingFixture(latestTurnStatus: 'failed' | 'in_progress') {

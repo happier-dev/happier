@@ -1,18 +1,21 @@
-import { readSessionModelSelectionProviderConnectionId, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
+import type { PersonalSessionModelRef, SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { join } from 'node:path';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { createProviderErrorV1, ProviderErrorV1Schema, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { resolveProviderBindingCompatibilityFromSourceFactsV1 } from '@happier-dev/protocol/providers/binding-compatibility';
-import type { ConnectedServiceBindingsV2, PluginExecutionScopeV1, SessionEnvOverlayV1, ProviderBoundModelRef } from '@happier-dev/protocol';
+import type { ConnectedServiceBindingsV2, PluginExecutionScopeV1, SessionEnvOverlayV1 } from '@happier-dev/protocol';
 import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { activateAgentRuntimeContributionOnDemand } from '@/agent/runtime/registry/activationDemand';
-import { resolveAgentManagedPurposeSelections } from '@/providers/managed/agentPurposeSelections';
+import type { ConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import type { ConnectedAccountRequestAuthService } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthService';
+import { openConnectedAccountProviderTransport } from '@/providers/broker/connectedAccountTransport';
+import type { ProviderConnectionHttpTransport } from '@/providers/broker/providerConnectionHttpTransport';
+import type { resolveProviderAddresses } from '@/providers/registry/dnsEvidence';
 import { readLeasedAgentProviderBindingAdapter, prepareLeasedAgentProviderBinding, materializeLeasedAgentProviderBinding, readLeasedAgentProviderNativeHome } from '@/plugins/runtime/providerBindings/adapter';
 import { resolveProviderContributionRegistryView } from '@/providers/registry/contributions';
-import { getProviderContribution } from '@/providers/registry/lookup';
-import { readConnectedAccountModelCatalog, type ResolveManagedProviderPurposeBindingIntentSelection } from '@/providers/modelManagement/connectedAccountCatalog';
-import { resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
+import { readConnectedAccountModelCatalog, readProviderConnectedAccountSessionBindings, type ResolveManagedProviderPurposeBindingIntentSelection } from '@/providers/modelManagement/connectedAccountCatalog';
+import { resolveProviderManagedRuntimeFromContributionV1 } from '@happier-dev/protocol/providers/contributions';
 import { resolveManagedProviderPurposeBindingSnapshot } from '@/providers/managed/resolvePurposeBindingSnapshot';
 import { createManagedProviderExplicitStartCustody } from '@/providers/connections/publicManagedRuntimeStart';
 import { acquireBrokerSourceOperation } from '@/providers/broker/brokerSourceOperationAcquisition';
@@ -23,6 +26,7 @@ import { resolveProviderCompatibilityConfirmation } from '@/providers/catalog/co
 import type { ProviderSettingsV1 } from '@happier-dev/protocol';
 import { createProviderLaunchResourceScope } from './resourceScope';
 import type { ProviderRuntimeModelProjectionReader } from '@/providers/spawn/runtimeCatalog';
+import { createConnectedAccountModelObserver, type ObserveConnectedAccountSourceModels } from '@/providers/modelManagement/connectedAccountModelObservation';
 
 export type ManagedPurposeLaunchContext = Readonly<{
   lease: PluginRuntimeRegistryLease;
@@ -32,6 +36,11 @@ export type ManagedPurposeLaunchContext = Readonly<{
   accountAuthority?: import('@/plugins/runtime/providerBindings/runtimeTypes').ManagedProviderInvocationAccountAuthority | null;
   signal?: AbortSignal;
   resolveManagedPurposeBindingIntentSelection?: ResolveManagedProviderPurposeBindingIntentSelection;
+  purposeBindings?: Pick<ConnectedAccountPurposeBindingOwner, 'activatePurposeBindings'>;
+  connectedAccountRequestAuth?: Pick<ConnectedAccountRequestAuthService, 'lookupRequestAuth' | 'refreshAfterAuthFailure'>;
+  providerConnectionHttpTransport?: ProviderConnectionHttpTransport;
+  observeConnectedAccountSourceModels?: ObserveConnectedAccountSourceModels;
+  resolveProviderAddresses?: typeof resolveProviderAddresses;
 }>;
 
 export type MaterializedManagedPurposeLaunch = Readonly<{
@@ -50,14 +59,13 @@ export type PreparedManagedPurposeLaunch = Readonly<{
   ok: true;
   kind: 'managedPurpose';
   agentTargetKey: string;
-  selection: ProviderBoundModelRef;
+  selection: PersonalSessionModelRef;
   model: AgentSessionProviderBinding['model'];
   connectedServices: ConnectedServiceBindingsV2;
   materialize(scope: Extract<PluginExecutionScopeV1, { kind: 'session' | 'execution_run' }>, exposeEndpoint?: ExposeManagedProviderConsumerEndpoint): Promise<MaterializedManagedPurposeLaunch | Readonly<{ ok: false; error: ProviderErrorV1 }>>;
 }>;
 
-/** Admits an Agent-declared source through the existing catalog, purpose and
- * managed broker custody owners. It never creates a Provider connection. */
+/** Admits the selected Provider source through the shared catalog, purpose and broker custody. */
 export async function prepareManagedPurposeLaunch(input: ManagedPurposeLaunchContext & Readonly<{
   agentId: string;
   featureEnabled: import('./prepareLaunch').PrepareProviderLaunchInput['featureEnabled'];
@@ -66,39 +74,47 @@ export async function prepareManagedPurposeLaunch(input: ManagedPurposeLaunchCon
   resolveSelectionTarget(): Readonly<{ agentTargetKey: string; selection: SessionModelSelection }> | null;
   connectedServices: ConnectedServiceBindingsV2 | null;
 }>): Promise<PreparedManagedPurposeLaunch | Readonly<{ ok: false; error: ProviderErrorV1 }> | null> {
-  if (input.selection?.v === 2 && input.selection.ref.source === 'team_resource') return null;
-  const candidates = resolveAgentManagedPurposeSelections({ contributions: input.lease.registry.contributes,
-    agentId: input.agentId, connectedServices: input.connectedServices, selection: input.selection });
-  if (candidates.length === 0) return null;
+  const requested = input.selection;
+  if (requested?.v !== 2 || requested.ref.source !== 'connected_account') return null;
+  const connectedRef = requested.ref;
   const refuse = (code: Parameters<typeof createProviderErrorV1>[0], cause?: unknown) => ({ ok: false as const,
     error: createProviderErrorV1(code, input.machineId ? { machineId: input.machineId } : {}, cause) });
   if ((typeof input.featureEnabled === 'function' ? await input.featureEnabled() : input.featureEnabled) !== true) return refuse('provider_feature_disabled');
-  if (!input.selection) return refuse('model_selection_required');
   const selectedTarget = input.resolveSelectionTarget();
   if (!selectedTarget) return refuse('provider_incompatible_with_agent');
-  const { agentTargetKey, selection: canonicalSelection } = selectedTarget;
+  const { agentTargetKey } = selectedTarget;
   if (!input.machineId || !input.resolveManagedPurposeBindingIntentSelection) return refuse('provider_endpoint_unavailable');
   const machineId = input.machineId;
   const signal = input.signal ?? new AbortController().signal;
   const registry = resolveProviderContributionRegistryView(input.lease.registry.contributes, undefined);
+  const candidates = readProviderConnectedAccountSessionBindings({
+    registry, connectedServices: input.connectedServices, purpose: connectedRef.purpose,
+  });
+  if (!candidates.length) return refuse('provider_authorization_changed');
   await activateAgentRuntimeContributionOnDemand(input.lease.registry, input.agentId);
   const adapter = readLeasedAgentProviderBindingAdapter(input);
   if (!adapter) return refuse('provider_incompatible_with_agent');
+  const observeModels = input.observeConnectedAccountSourceModels
+    ? createConnectedAccountModelObserver({ registry, observe: input.observeConnectedAccountSourceModels,
+      resolveContributedCatalogParsers: async identity => {
+        const acquired = await input.lease.registry.acquireProviderCatalogParsers?.(identity);
+        return acquired ? { pluginId: identity.pluginId, parsersByFormat: acquired.parsersByFormat } : null;
+      } })
+    : undefined;
   const admitted = [];
   let unconfirmed = false;
   let catalogError: ProviderErrorV1 | undefined;
   for (const candidate of candidates) {
-    const route = candidate.declaration.managedProviderEndpoint!;
-    const provider = getProviderContribution(registry, buildQualifiedPluginContributionKey(route.provider));
-    if (!provider?.definition.managedRuntime) return refuse('provider_contribution_unavailable');
-    const catalog = await readConnectedAccountModelCatalog({ registry, provider, purpose: route.purpose,
-      request: { machineId: input.machineId, agentTargetKey: agentTargetKey,
-        connectedAccountTarget: candidate.binding.target, mode: 'management', includeDirectMaterialization: true },
-      resolveSelection: input.resolveManagedPurposeBindingIntentSelection, readModelProjection: input.readModelProjection, signal });
+    const { provider, binding } = candidate;
+    if (binding.target.kind !== 'account' && binding.target.kind !== 'group') return refuse('provider_authorization_changed');
+    const catalog = await readConnectedAccountModelCatalog({ registry, provider, purpose: binding.purpose.purpose,
+      endpointTemplateId: connectedRef.endpointTemplateId,
+      request: { machineId, agentTargetKey, connectedAccountTarget: binding.target, mode: 'management',
+        includeDirectMaterialization: true, refreshPolicy: 'current_only' },
+      resolveSelection: input.resolveManagedPurposeBindingIntentSelection, readModelProjection: input.readModelProjection,
+      observeModels: provider.definition.managedRuntime ? undefined : observeModels, signal });
     if (catalog.error) { catalogError ??= catalog.error; continue; }
-    const selectedModelId = canonicalSelection.ref.modelId;
-    const modelId = route.modelIdPrefix && selectedModelId.startsWith(route.modelIdPrefix)
-      ? selectedModelId.slice(route.modelIdPrefix.length) : selectedModelId;
+    const modelId = connectedRef.modelId;
     for (const group of catalog.groups) {
       if (!adapter.support.acceptsProtocols.includes(group.application.protocol)) continue;
       const row = group.rows.find(row => row.descriptor.id === modelId || row.descriptor.aliases?.includes(modelId));
@@ -112,7 +128,7 @@ export async function prepareManagedPurposeLaunch(input: ManagedPurposeLaunchCon
         compatibilityOverrides: row.sourceFacts.compatibilityOverrides, model: row.descriptor });
       if (compatibility.result.status === 'incompatible') continue;
       const confirmed = resolveProviderCompatibilityConfirmation({ compatibility,
-        declaredManagedModel: group.source.family.staticModels?.some(model => model.id === row.descriptor.id) === true,
+        declaredManagedModel: group.catalogObserved === true || group.source.family.staticModels?.some(model => model.id === row.descriptor.id) === true,
         providerSettings: compatibility.result.status === 'experimental' ? await input.readProviderSettings?.() : undefined,
         confirmationSource: row.confirmationSource!, agentTargetKey, modelId: row.descriptor.id });
       if (!confirmed.confirmed) { unconfirmed = true; continue; }
@@ -122,42 +138,64 @@ export async function prepareManagedPurposeLaunch(input: ManagedPurposeLaunchCon
   const chosen = admitted[0];
   if (!chosen) return catalogError ? { ok: false, error: catalogError }
     : refuse(unconfirmed ? 'provider_compatibility_unverified' : 'provider_model_not_found');
-  // A single Agent binding consumes one endpoint. Provider endpoint declaration
-  // order resolves equivalent accepted protocols, as it does for catalog routing.
   const { candidate, provider, group, row, selection, catalog, transport, compatibility } = chosen;
   const connectedServices = input.connectedServices!;
-  const selectedModelRef = { agentTargetKey: canonicalSelection.ref.agentTargetKey,
-    providerConnectionId: readSessionModelSelectionProviderConnectionId(canonicalSelection), modelId: canonicalSelection.ref.modelId };
+  const selectedModelRef = { ...connectedRef, agentTargetKey, modelId: row.descriptor.id };
   return { ok: true, kind: 'managedPurpose', agentTargetKey, selection: selectedModelRef,
     model: row.descriptor, connectedServices,
     materialize: async (scope, exposeEndpoint) => {
-  const runtime = resolveProviderManagedRuntimeDeclarationV1({ implementationIdentity: provider.identity,
-    managedRuntime: provider.definition.managedRuntime! });
-  const family = runtime.connectedAccounts.find(family => family.purpose === candidate.declaration.managedProviderEndpoint!.purpose);
-  if (!family) return refuse('provider_contribution_unavailable');
   const exactTarget = { kind: 'account' as const, account: selection.resolved.account };
-  const purpose = { consumer: provider.identity, purpose: family.purpose };
-  const purposeBindings = await resolveManagedProviderPurposeBindingSnapshot({ implementationIdentity: provider.identity,
-    connectedAccounts: [family], purposeBindingIntents: { v: 1, bindings: [{ purpose, target: exactTarget }] },
-    resolveBindingIntent: async () => ({ purpose, target: exactTarget }), signal });
+  const purpose = candidate.binding.purpose;
   const resources = createProviderLaunchResourceScope();
   try {
-    const custody = createManagedProviderExplicitStartCustody({ machineId, happyHomeDir: input.happyHomeDir,
-      runtimeRegistryLease: input.lease, accountAuthority: input.accountAuthority });
-    const source = await acquireBrokerSourceOperation({ custody, identity: provider.identity,
-      contributionKey: buildQualifiedPluginContributionKey(provider.identity), endpointTemplateId: group.application.endpointTemplateId,
-      operationClaim: { kind: 'providerBroker', operation: scope }, purposeBindings,
-      sourceEnvelopeTransport: runtime.sourceEnvelopeTransport,
-      isSourceCurrent: async currentSignal => !currentSignal.aborted && await catalog.isCurrent(),
-      callerSignal: signal });
-    if (!source) return refuse('provider_endpoint_unavailable');
-    if ('unavailable' in source) return refuse('provider_endpoint_unavailable', source.failureCause ? source : undefined);
+    const managedRuntime = provider.definition.managedRuntime;
+    let source: NonNullable<Awaited<ReturnType<ProviderConnectionHttpTransport['open']>>>;
+    const carrierEndpointTemplateId = group.application.endpointTemplateId;
+    if (managedRuntime) {
+      const custody = createManagedProviderExplicitStartCustody({ machineId, happyHomeDir: input.happyHomeDir,
+        runtimeRegistryLease: input.lease, accountAuthority: input.accountAuthority });
+      const runtime = resolveProviderManagedRuntimeFromContributionV1({ implementationIdentity: provider.identity,
+        definition: { ...provider.definition, managedRuntime }, connectedAccountDeclarations: provider.connectedAccountDeclarations });
+      const purposeBindings = await resolveManagedProviderPurposeBindingSnapshot({ implementationIdentity: provider.identity,
+        connectedAccounts: [group.source.family], purposeBindingIntents: { v: 1, bindings: [{ purpose, target: exactTarget }] },
+        resolveBindingIntent: async () => ({ purpose, target: exactTarget }), signal });
+      const acquired = await acquireBrokerSourceOperation({ custody, identity: provider.identity,
+        contributionKey: buildQualifiedPluginContributionKey(provider.identity), endpointTemplateId: carrierEndpointTemplateId,
+        operationClaim: { kind: 'providerBroker', operation: scope }, purposeBindings,
+        sourceEnvelopeTransport: runtime.sourceEnvelopeTransport,
+        isSourceCurrent: async currentSignal => !currentSignal.aborted && await catalog.isCurrent(),
+        callerSignal: signal });
+      if (!acquired) return refuse('provider_endpoint_unavailable');
+      if ('unavailable' in acquired) return refuse('provider_endpoint_unavailable', acquired.failureCause ? acquired : undefined);
+      source = { ...acquired.projection, retire: acquired.retire };
+    } else {
+      const { connectedAccountRequestAuth, purposeBindings } = input;
+      const { endpoint, requestAuthUses, family } = group.source;
+      if (!connectedAccountRequestAuth || !purposeBindings || !endpoint.baseUrl) return refuse('provider_endpoint_unavailable');
+      const use = requestAuthUses.find(use => use.purpose === family.purpose);
+      if (!use) return refuse('provider_authorization_changed');
+      const lease = purposeBindings.activatePurposeBindings({
+        subject: { kind: 'operation', operationId: scope.kind === 'session' ? scope.sessionId : scope.executionRunId,
+          consumer: provider.identity, ...(scope.kind === 'session' ? { sessionId: scope.sessionId } : {}),
+          isCurrent: () => !signal.aborted },
+        purposes: [purpose], bindings: [{ purpose, target: exactTarget }],
+      });
+      resources.register(() => lease.dispose());
+      const opened = await openConnectedAccountProviderTransport({
+        endpoint, purpose, materialization: use.materialization, bindingLease: lease,
+        requestAuth: connectedAccountRequestAuth, signal,
+        isCurrent: async currentSignal => !currentSignal?.aborted && await catalog.isCurrent(),
+        resolveAddresses: input.resolveProviderAddresses, transport: input.providerConnectionHttpTransport,
+      });
+      if (!opened) return refuse('provider_endpoint_unavailable');
+      source = opened;
+    }
     resources.register(source.retire);
-    resources.register(source.projection.cleanup);
-    const endpointUrl = source.projection.access.endpointUrl(group.application.endpointTemplateId);
+    resources.register(source.cleanup);
+    const endpointUrl = source.access.endpointUrl(carrierEndpointTemplateId);
     if (!endpointUrl) return refuse('provider_endpoint_unavailable');
     const consumer = await startManagedProviderConsumerApplication({ signal, endpointUrl, credentialTransport: transport, exposeEndpoint,
-      request: async request => ({ ok: true, response: await source.projection.access.request(request) }) });
+      request: async request => ({ ok: true, response: await source.access.request(request) }) });
     resources.register(consumer.cleanup);
     const bindingKey = 'connected_account:' + JSON.stringify(candidate.binding.purpose);
     const prepared = prepareLeasedAgentProviderBinding({ ...input,
@@ -182,7 +220,7 @@ export async function prepareManagedPurposeLaunch(input: ManagedPurposeLaunchCon
       additionalRedactionValues: [consumer.credential, consumer.renderedCredential, ...composed.additionalRedactionValues],
       connectedServices, cleanup: async () => { await cleanup(); },
       revalidateBeforeCommit: async currentSignal => !currentSignal?.aborted && consumer.isCurrent()
-        && source.isAuthorizationCurrent()
+        && source.isCurrent()
         ? { ok: true } : refuse('provider_authorization_changed') };
   } catch (error) {
     const typed = ProviderErrorV1Schema.safeParse(error);

@@ -31,7 +31,7 @@ describe('Muse managed source to native configurations', () => {
     const adapter = target.registration('agents', agent.id)?.providerBinding;
     expect(adapter, 'selected Provider binding must be registered').toBeDefined();
     if (!adapter || !runtime) throw new Error('Public registration missing');
-    const purpose = gateway.managedRuntime.connectedAccounts.find(row => row.service.pluginId === 'happier.agent.muse');
+    const purpose = gateway.connectedAccounts.find(row => row.service.pluginId === 'happier.agent.muse');
     if (!purpose) throw new Error('Public Muse source missing');
     const endpoint = gateway.endpointTemplates.find(row => row.protocol === 'openai-responses' && purpose.endpointTemplateIds.includes(row.id));
     const model = purpose.staticModels[0];

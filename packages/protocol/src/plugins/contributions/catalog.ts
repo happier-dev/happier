@@ -611,9 +611,9 @@ function extractNestedReferences(family: string, value: Readonly<Record<string, 
     const managedRuntime = value.managedRuntime && typeof value.managedRuntime === 'object'
       ? value.managedRuntime as Readonly<Record<string, unknown>>
       : null;
-    if (managedRuntime?.kind !== 'managed') return [];
-    const dependencies = Array.isArray(managedRuntime.dependencies) ? managedRuntime.dependencies : [];
-    const connectedAccounts = Array.isArray(managedRuntime.connectedAccounts) ? managedRuntime.connectedAccounts : [];
+    const dependencies = managedRuntime?.kind === 'managed' && Array.isArray(managedRuntime.dependencies)
+      ? managedRuntime.dependencies : [];
+    const connectedAccounts = Array.isArray(value.connectedAccounts) ? value.connectedAccounts : [];
     return [
       ...dependencies.map((dependency, index) => ({
         targetFamily: 'managedDependencies',
@@ -624,9 +624,9 @@ function extractNestedReferences(family: string, value: Readonly<Record<string, 
         ? [{
             targetFamily: 'connectedAccountDescriptors',
             reference: (account as Readonly<Record<string, unknown>>).service,
-            path: ['managedRuntime', 'connectedAccounts', index, 'service'],
+            path: ['connectedAccounts', index, 'service'],
             ...((account as Readonly<Record<string, unknown>>).required === false
-              ? { optionalEntryPath: ['managedRuntime', 'connectedAccounts', index] } : {}),
+              ? { optionalEntryPath: ['connectedAccounts', index] } : {}),
           }]
         : []),
     ];

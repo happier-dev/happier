@@ -3,6 +3,7 @@ import type { ParsedPluginEventContributionV1 } from '@happier-dev/protocol/plug
 import type { PluginWebhookEndpointAuthoringSetupV1 } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
 import type { PluginBotTemplateContributionV1 } from '@happier-dev/protocol/plugins/contributions/botTemplates';
 import type { PluginLanguageServerContributionV1 } from '@happier-dev/protocol/plugins/contributions/languageServers';
+import type { ResolvedProviderConnectedAccountDeclarationsV1 } from '@happier-dev/protocol/providers/contributions';
 import type {
     BackendCatalogDefinition,
     BackendDefinitionContractV1,
@@ -287,6 +288,8 @@ type ResolvedProviderContributionBase = Readonly<{
     devDaemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
     definition: ProviderContributionV1;
+    /** Provider-owned purpose declarations with contribution-local service identities resolved. */
+    connectedAccountDeclarations?: ResolvedProviderConnectedAccountDeclarationsV1;
     /** Exact activation-owned public managed Provider runtime for this projected generation. */
     managedRuntime?: ResolvedManagedProviderRuntime;
     /**

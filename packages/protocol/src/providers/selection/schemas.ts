@@ -1,7 +1,8 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { NonBlankOpaqueIdentifierSchema } from '../../strings/opaqueIdentifier.js';
-import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderModelIdSchema } from '../ids.js';
+import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderLocalIdSchema, ProviderModelIdSchema } from '../ids.js';
+import { QualifiedConnectedAccountPurposeV1Schema } from '../../connect/connectedAccountPurposeIdentity.js';
 import { TeamCredentialRouteV1Schema, SessionTeamCredentialNativeDeliveryV1Schema } from '../../teams/credentials/deliveryV1.js';
 
 /** Canonical retained and source-qualified model carriers shared by versioned entry points. */
@@ -38,6 +39,22 @@ export const AccountProviderConnectionSessionModelRefV2Schema = lazyZodSchema(()
   modelId: ProviderModelIdSchema,
 }));
 
+/** The selected model refers to a Session purpose. Its binding owns the Account or Pool. */
+export const ConnectedAccountSessionModelRefV2Schema = lazyZodSchema(() => z.strictObject({
+  source: z.literal('connected_account'),
+  purpose: QualifiedConnectedAccountPurposeV1Schema,
+  endpointTemplateId: ProviderLocalIdSchema,
+  agentTargetKey: ProviderAgentTargetKeySchema,
+  modelId: ProviderModelIdSchema,
+}));
+export type ConnectedAccountSessionModelRefV2 = z.infer<typeof ConnectedAccountSessionModelRefV2Schema>;
+
+/** Model references for actions with a separate Team selection operand. */
+export const PersonalSessionModelRefSchema = lazyZodSchema(() => z.union([
+  ProviderBoundModelRefSchema, ConnectedAccountSessionModelRefV2Schema,
+]));
+export type PersonalSessionModelRef = z.infer<typeof PersonalSessionModelRefSchema>;
+
 export const TeamResourceSessionModelRefV2Schema = lazyZodSchema(() => z.strictObject({
   source: z.literal('team_resource'),
   resourceId: z.string().check(z.minLength(1)),
@@ -56,6 +73,7 @@ export const TeamResourceSessionModelRefV2Schema = lazyZodSchema(() => z.strictO
 export const SessionModelRefV2Schema = lazyZodSchema(() => z.discriminatedUnion('source', [
   NativeSessionModelRefV2Schema,
   AccountProviderConnectionSessionModelRefV2Schema,
+  ConnectedAccountSessionModelRefV2Schema,
   TeamResourceSessionModelRefV2Schema,
 ]));
 export type SessionModelRefV2 = z.infer<typeof SessionModelRefV2Schema>;

@@ -57,7 +57,7 @@ export type SessionRuntimeControls = {
   readCodingPromptBehavior?: () => import('@happier-dev/protocol').CodingPromptBehaviorV1 | null;
   /** Host-owned effective configuration, not caller metadata or provider guesses. */
   readEffectiveInputConfiguration?: () => Readonly<{
-    modelSelection: import('@happier-dev/protocol').ProviderBoundModelRef | null;
+    modelSelection: import('@happier-dev/protocol/providers/selection/v2').SessionModelRef | null;
     permissionMode: import('@happier-dev/protocol').SessionPermissionMode;
   }>;
   /** FIN's coordinator withdraws only an exact prepared workflow step at its Session queue owner. */

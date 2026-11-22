@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 import { ProviderRuntimeBindingBasisV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
-import { createProviderManagedRuntimeDeclarationEqualityKeyV1, resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
+import { createProviderManagedRuntimeDeclarationEqualityKeyV1, resolveProviderManagedRuntimeFromContributionV1 } from '@happier-dev/protocol/providers/contributions';
 import type { PluginContributionIdentityV1, ProviderRuntimeBindingBasisV1 } from '@happier-dev/protocol';
 
 import type { PluginStorePaths } from '../../store/paths';
@@ -22,7 +22,7 @@ export type RetainedManagedProviderAttestation = Readonly<{
             Readonly<{ kind: 'managedLocal' }>
         >;
     }>;
-    declaration: ReturnType<typeof resolveProviderManagedRuntimeDeclarationV1>;
+    declaration: ReturnType<typeof resolveProviderManagedRuntimeFromContributionV1>;
     pluginVersion: string;
     requiredHostAccess: Awaited<ReturnType<typeof attestRetainedPluginSource>>['manifest']['hostAccess']['required'];
     assertStillAvailable(): Promise<void>;
@@ -72,9 +72,9 @@ export async function attestRetainedManagedProvider(input: Readonly<{
         (candidate) => candidate.id === identity.localId,
     );
     if (provider?.managedRuntime?.kind !== 'managed') return null;
-    const declaration = resolveProviderManagedRuntimeDeclarationV1({
+    const declaration = resolveProviderManagedRuntimeFromContributionV1({
         implementationIdentity: identity,
-        managedRuntime: provider.managedRuntime,
+        definition: { ...provider, managedRuntime: provider.managedRuntime },
     });
     const endpoint = provider.endpointTemplates.find(
         (candidate) => candidate.id === runtimeBindingBasis.endpoint.endpointTemplateId,

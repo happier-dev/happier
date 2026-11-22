@@ -418,7 +418,7 @@ function readDeclaredPurposeTitle(purpose: NonNullable<Extract<ApprovalReference
     const contributionKey = purpose.contributionKey ?? (connection?.source.kind === 'contribution' ? connection.source.contributionKey : undefined);
     if (!contributionKey) return undefined;
     const declaration = sources.declarations.find(row => areProviderContributionKeysEqualV1(row.contributionKey, contributionKey));
-    const title = declaration?.definition.managedRuntime?.connectedAccounts?.find(row => row.purpose === purpose.id)?.title;
+    const title = declaration?.definition.connectedAccounts?.find(row => row.purpose === purpose.id)?.title;
     if (!title) return undefined;
     const pluginId = parseProviderContributionIdentityV1(contributionKey)?.identity.pluginId ?? contributionKey;
     return (sources.localizePluginText?.(pluginId, title) ?? (typeof title === 'string' ? title : title.fallback)) || undefined;

@@ -1,4 +1,5 @@
-import type { ProviderBoundModelRef, TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol';
+import { isSessionModelRefSourceBound, type PersonalSessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
+import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol';
 
 import { traceRunPreparationPhase } from '@/providers/diagnostics';
 import type { AccountSettingsSnapshotResolver } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -17,7 +18,7 @@ import {
  * never acquires guest-local preparation or detached Run custody. */
 export function assertExecutionRunProviderLaunchPlacement(input: Readonly<{
     scope: ExecutionRunRetainedInteractionScope;
-    selection?: ProviderBoundModelRef;
+    selection?: PersonalSessionModelRef;
     teamCredentialModel?: Pick<TeamCredentialProviderModelSelectionV1, 'deliveryMode'>;
     providerLaunch?: ExecutionRunProviderLaunchServices;
 }>): void {
@@ -25,7 +26,8 @@ export function assertExecutionRunProviderLaunchPlacement(input: Readonly<{
     if (isNativeTeamDelivery && input.scope === 'detached') {
         throw new SessionTeamCredentialLaunchUnavailableError();
     }
-    if (input.scope === 'session_owned' && (input.selection?.providerConnectionId || isNativeTeamDelivery) && !input.providerLaunch) {
+    const sourceBound = input.selection && isSessionModelRefSourceBound(input.selection);
+    if (input.scope === 'session_owned' && (sourceBound || isNativeTeamDelivery) && !input.providerLaunch) {
         throw executionRunContributionSnapshotUnavailable();
     }
 }
@@ -55,7 +57,8 @@ export async function prepareExecutionRunRuntimeProviderLaunch(
     // The pinned service carries native Team delivery alone; handing it any
     // other Team Run would launch without the Team tuple (own-account fallback).
     const pinnedTeamEligible = !input.teamCredentialModel || nativeTeam;
-    if (providerLaunch && pinnedTeamEligible && (selection?.providerConnectionId || nativeTeam || (input.connectedServices != null && hasConnectedExecutionRunBinding(input.connectedServices)))) {
+    const sourceBound = selection && isSessionModelRefSourceBound(selection);
+    if (providerLaunch && pinnedTeamEligible && (sourceBound || nativeTeam || (input.connectedServices != null && hasConnectedExecutionRunBinding(input.connectedServices)))) {
         const expectedAccountSettingsScopeKey = accountSettingsSnapshot?.scopeKey;
         if (!expectedAccountSettingsScopeKey) {
             if (nativeTeam) throw new SessionTeamCredentialLaunchUnavailableError();

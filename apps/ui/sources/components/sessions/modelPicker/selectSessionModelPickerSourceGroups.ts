@@ -1,4 +1,5 @@
 import type { ProviderModelDescriptorV1 } from '@happier-dev/protocol/models/descriptor';
+import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import type { DaemonProviderModelProjectionHiddenSourceV1, DaemonProviderModelProjectionRowV1 } from '@happier-dev/protocol/rpc';
 
@@ -59,7 +60,9 @@ export function selectSessionModelPickerSourceGroups(
             const providerConnectionId = value !== null && 'providerConnectionId' in value
                 ? value.providerConnectionId : null;
             const routeKey = team ? JSON.stringify(['team', team.teamId, team.resourceId])
-                : connectionRouteKey(providerConnectionId, value?.agentTargetKey ?? null);
+                : value && 'source' in value
+                    ? JSON.stringify([value.source, qualifiedPurposeKey(value.purpose), value.agentTargetKey])
+                    : connectionRouteKey(providerConnectionId, value?.agentTargetKey ?? null);
             const state = option.sourceState ?? (option.availability === 'unavailable' ? 'unavailable' : 'ready');
             const hidden = providerConnectionId !== null && hiddenConnectionIds.has(providerConnectionId);
             const source = group.sources.get(routeKey) ?? { key: routeKey, providerConnectionId, state, hidden, options: [] };

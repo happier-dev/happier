@@ -193,6 +193,8 @@ export type PrepareForegroundAgentRuntimeAdmissionDependencies = Readonly<{
   resolveManagedPurposeBindingIntent?: RequesterSessionRuntimeContext['resolveManagedPurposeBindingIntent'];
   resolveManagedPurposeBindingIntentSelection?: RequesterSessionRuntimeContext['resolveManagedPurposeBindingIntentSelection'];
   readModelProjection?: import('@/providers/spawn/runtimeCatalog').ProviderRuntimeModelProjectionReader;
+  connectedAccountRequestAuth?: import('@/providers/lifecycle/managedPurposeLaunch').ManagedPurposeLaunchContext['connectedAccountRequestAuth'];
+  observeConnectedAccountSourceModels?: import('@/providers/lifecycle/managedPurposeLaunch').ManagedPurposeLaunchContext['observeConnectedAccountSourceModels'];
   managedProviderAccountAuthority?: import('@/plugins/runtime/providerBindings/runtimeTypes').ManagedProviderInvocationAccountAuthority | null;
   isSessionAccountCurrent?: (canonicalSessionId?: string) => Promise<boolean>;
   refreshSavedSecretCatalogForOperation?: typeof refreshSavedSecretCatalogForOperation;
@@ -408,6 +410,7 @@ async function prepareForegroundProviderLaunch(input: Readonly<{
 }>): Promise<DirectProviderLaunchResult<Readonly<{ ok: false; error: ProviderErrorV1 | SessionSpawnLaunchErrorV1 }>> | null> {
   const { request, lease, dependencies } = input;
   if ((!request.selection || readSessionModelSelectionProviderConnectionId(request.selection) === null)
+    && !(request.selection?.v === 2 && request.selection.ref.source === 'connected_account')
     && !request.previousBinding && !request.connectedServices) return null;
   const requester = dependencies.requesterSessionBootstrap;
   const featureEnabled = async () => (
@@ -435,7 +438,10 @@ async function prepareForegroundProviderLaunch(input: Readonly<{
       }),
       happyHomeDir: requester ? dependencies.connectedServicesMaterializationBaseDir! : configuration.happyHomeDir,
       resolveManagedPurposeBindingIntentSelection: dependencies.resolveManagedPurposeBindingIntentSelection,
-      accountAuthority: dependencies.managedProviderAccountAuthority },
+      accountAuthority: dependencies.managedProviderAccountAuthority,
+      purposeBindings: dependencies.activatePurposeBindings ? { activatePurposeBindings: dependencies.activatePurposeBindings } : undefined,
+      connectedAccountRequestAuth: dependencies.connectedAccountRequestAuth,
+      observeConnectedAccountSourceModels: dependencies.observeConnectedAccountSourceModels },
   }, {
     resolvePrerequisites: async (providerBindingContext) => {
       const result = await resolveSpawnChildEnvironment({

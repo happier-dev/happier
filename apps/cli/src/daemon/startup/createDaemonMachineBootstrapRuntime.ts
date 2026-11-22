@@ -263,6 +263,9 @@ export function createDaemonMachineBootstrapRuntime(
     prepareRunTeamCredentialProviderBinding?: ExecutionRunTeamCredentialProviderBindingPreparer;
     openAccountConnectionManagedConsumerSource?: ExecutionRunManagedProviderSourceOpener;
     createAgentCatalogObservation?: BootstrapRuntime['createAgentCatalogObservation'];
+    connectedAccountUsage?: BootstrapRuntime['connectedAccountUsage'];
+    connectedAccountProviderRequestAuth?: BootstrapRuntime['connectedAccountProviderRequestAuth'];
+    listProviderConnectedAccountProfiles?: BootstrapRuntime['listProviderConnectedAccountProfiles'];
     onAutomationWorkerStarted?: (worker: AutomationWorkerHandle) => void;
     onPublicVoiceModelPackRuntimeReady?: (runtime: DaemonPublicVoiceModelPackRuntime | null) => void;
     /** The Machine's role set (P03-ROLES-POLICY). Missing = every core role (today). */
@@ -899,9 +902,12 @@ export function createDaemonMachineBootstrapRuntime(
       ? { resolveManagedPurposeBindingIntentSelection: params.resolveManagedPurposeBindingIntentSelection }
       : {}),
     ...(params.teamCredentialNativeSource ? { teamCredentialNativeSource: params.teamCredentialNativeSource } : {}),
+    listProviderConnectedAccountProfiles: params.listProviderConnectedAccountProfiles,
     ...(params.createAgentCatalogObservation
       ? { createAgentCatalogObservation: params.createAgentCatalogObservation }
       : {}),
+    ...(params.connectedAccountUsage ? { connectedAccountUsage: params.connectedAccountUsage } : {}),
+    connectedAccountProviderRequestAuth: params.connectedAccountProviderRequestAuth,
     ...(params.persistedTakeoverAdmissionWaiter
       ? {
           persistedTakeoverAdmissionWaiter:

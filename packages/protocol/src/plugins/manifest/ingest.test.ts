@@ -2644,14 +2644,14 @@ describe('canonical plugin manifest ingestion', () => {
         },
       }],
       catalog: { source: 'manual', manualModelPolicy: 'allowed' },
+      connectedAccounts: [{
+        purpose: 'upstream',
+        service: 'account',
+        materializationKinds: ['httpHeaders'],
+      }],
       managedRuntime: {
         kind: 'managed',
         dependencies: ['runtime'],
-        connectedAccounts: [{
-          purpose: 'upstream',
-          service: 'account',
-          materializationKinds: ['httpHeaders'],
-        }],
         endpointTemplateIds: ['responses'],
       },
     };
@@ -2662,15 +2662,13 @@ describe('canonical plugin manifest ingestion', () => {
     };
     expect(ingestPluginManifestV2(manifest({ contributes })).ok).toBe(true);
     const optional = ingestPluginManifestV2(manifest({ contributes: {
-      ...contributes, providers: [{ ...provider, managedRuntime: { ...provider.managedRuntime,
-        connectedAccounts: [{ ...provider.managedRuntime.connectedAccounts[0],
-          service: { pluginId: 'com.acme.absent', localId: 'account' }, required: false }],
-      } }],
+      ...contributes, providers: [{ ...provider, connectedAccounts: [{ ...provider.connectedAccounts[0],
+          service: { pluginId: 'com.acme.absent', localId: 'account' }, required: false }] }],
     } }), { mode: 'load', referenceManifests: [] });
     expect(optional).toMatchObject({ ok: true, manifest: { contributes: { providers: [{ id: 'gateway',
-      managedRuntime: { connectedAccounts: [] } }] } }, diagnostics: [{
+      connectedAccounts: [] }] } }, diagnostics: [{
         code: 'plugin_optional_reference_unavailable', contributionId: 'gateway', reason: 'plugin_manifest_dangling_reference',
-        path: ['contributes', 'providers', 0, 'managedRuntime', 'connectedAccounts', 0, 'service'],
+        path: ['contributes', 'providers', 0, 'connectedAccounts', 0, 'service'],
       }] });
     expect(ingestPluginManifestV2(manifest({
       contributes: {
@@ -2689,13 +2687,10 @@ describe('canonical plugin manifest ingestion', () => {
         ...contributes,
         providers: [{
           ...provider,
-          managedRuntime: {
-            ...provider.managedRuntime,
-            connectedAccounts: [{
-              ...provider.managedRuntime.connectedAccounts[0],
-              service: 'missing',
-            }],
-          },
+          connectedAccounts: [{
+            ...provider.connectedAccounts[0],
+            service: 'missing',
+          }],
         }],
       },
     }))).toEqual({

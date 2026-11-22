@@ -125,7 +125,8 @@ import { McpDetectedProviderV1Schema } from '@happier-dev/protocol/mcp/servers/d
 import { normalizePluginAccountCollectionContractsV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
 import { PluginMachineMaterializationRefV1Schema } from '@happier-dev/protocol/plugins/availability/materializationRefV1';
 import { TargetActionApprovalReplayPlacementV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
-import { resolveProviderManagedRuntimeDeclarationV1, createProviderManagedPurposeBindingsEqualityKeyV1, createProviderManagedRuntimeBindingEqualityKeyV1 } from '@happier-dev/protocol/providers/contributions';
+import { resolveProviderManagedRuntimeDeclarationV1,
+    resolveProviderManagedRuntimeFromContributionV1, createProviderManagedPurposeBindingsEqualityKeyV1, createProviderManagedRuntimeBindingEqualityKeyV1 } from '@happier-dev/protocol/providers/contributions';
 import { resolveAttentionDeliveryPolicyDecision } from '@happier-dev/protocol/account/settings/attentionDeliveryPolicyDecision';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { createPluginNativeNotificationDelivery } from '@/notifications/activity/pluginNativeNotificationDelivery';
@@ -5475,8 +5476,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
         if (!inputCurrent) {
             return Object.freeze({ status: 'not_current' as const });
         }
-        const declaration = resolveProviderManagedRuntimeDeclarationV1({
-            implementationIdentity: identity, managedRuntime: provider.definition.managedRuntime,
+        const declaration = resolveProviderManagedRuntimeFromContributionV1({
+            implementationIdentity: identity,
+            definition: { ...provider.definition, managedRuntime: provider.definition.managedRuntime },
+            connectedAccountDeclarations: provider.connectedAccountDeclarations,
         });
         const sharedProvider = input.sharedGateway !== undefined && isSharedProviderAdmission(
             declaration, input.purposeBindings, qualifyManagedProviderRequestAuthUses(identity, declaration),
@@ -5648,13 +5651,12 @@ export async function resolveExecutablePluginRuntimeRegistry(
         const targetProvider = target?.manifest.contributes.providers.find(
             (candidate) => candidate.id === input.identity.localId,
         );
-        const rawDeclaration = input.retained?.declaration
-            ?? targetProvider?.managedRuntime;
-        if (
-            rawDeclaration?.kind !== 'managed'
-            || (!target && !input.retained)
-            || input.signal.aborted
-        ) return null;
+        const declaration = input.retained?.declaration
+            ?? (targetProvider?.managedRuntime ? resolveProviderManagedRuntimeFromContributionV1({
+                implementationIdentity: input.identity,
+                definition: { ...targetProvider, managedRuntime: targetProvider.managedRuntime },
+            }) : null);
+        if (!declaration || input.signal.aborted) return null;
         if (input.sharedGateway) {
             const binding = input.sharedGateway;
             const [origin, credentials] = await Promise.all([
@@ -5684,10 +5686,6 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 ))
             ) return null;
         }
-        const declaration = resolveProviderManagedRuntimeDeclarationV1({
-            implementationIdentity: input.identity,
-            managedRuntime: rawDeclaration,
-        });
         const purposeBindings =
             QualifiedConnectedAccountPurposeBindingsV1Schema.parse(
                 input.purposeBindings,

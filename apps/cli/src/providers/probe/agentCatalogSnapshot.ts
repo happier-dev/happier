@@ -6,13 +6,14 @@ import type { AgentProviderCatalogObservationResult } from './agentCatalogObserv
 /** Both demand and admission project the observation owner's same transition.
  * Missing observations are declarations; successful empty observations stay empty. */
 export function projectAgentCatalogObservationSnapshot(
-  catalog: Extract<ProviderContributionV1['catalog'], { source: 'static+probe' }>,
+  catalog: Extract<ProviderContributionV1['catalog'], { source: 'static+probe' | 'probe' }>,
   transition?: ProviderCatalogTransitionStateV1,
   refreshError = transition?.snapshot?.stale ?? true,
 ): AgentProviderCatalogObservationResult {
+  const staticModels = catalog.source === 'static+probe' ? catalog.staticModels : [];
   if (!transition?.snapshot) return { source: 'static', refreshError: true,
-    models: catalog.staticModels.map(model => ({ ...model })), stale: false };
-  const merged = mergeProviderCatalogV1({ staticModels: catalog.staticModels, manualModels: [],
+    models: staticModels.map(model => ({ ...model })), stale: false };
+  const merged = mergeProviderCatalogV1({ staticModels, manualModels: [],
     probeState: transition, membershipPolicy: catalog.membershipPolicy });
   return { source: 'dynamic', stale: transition.snapshot.stale,
     observedAt: transition.snapshot.observedAt, refreshError,

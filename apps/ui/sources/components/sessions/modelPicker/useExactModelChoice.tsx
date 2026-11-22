@@ -86,6 +86,7 @@ function ExactModelChoiceModal(
       selectedTeamCredentialModel={props.selectedTeamCredentialModel}
       onSelectTeamCredentialModel={props.onSelectTeamCredentialModel}
       onSelect={(selection) => {
+        if (selection && 'source' in selection) return;
         props.onSelect(selection);
         props.onClose();
       }}
@@ -325,5 +326,7 @@ export function ExactModelChoicePicker(props: Parameters<typeof useExactModelCho
   onSelect: (selection: ProviderBoundModelRef | null) => void;
 }>) {
   const { pickerProps } = useExactModelChoice(props);
-  return pickerProps ? <SessionModelPicker {...pickerProps} multiColumn fillAvailableSpace onSelect={props.onSelect} /> : null;
+  return pickerProps ? <SessionModelPicker {...pickerProps} multiColumn fillAvailableSpace onSelect={(selection) => {
+    if (!selection || !('source' in selection)) props.onSelect(selection);
+  }} /> : null;
 }

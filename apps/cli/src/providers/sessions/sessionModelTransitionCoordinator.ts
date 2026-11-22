@@ -1,9 +1,9 @@
 import { isDeepStrictEqual } from 'node:util';
 import { isModelRefGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type { CallerInputConstraintsV1, ModelSelectionApplyPolicy, ProviderBoundModelRef, ProviderRuntimeBindingBasisV1, SessionModelTransitionResultV1, SessionProviderBindingMetadataV1, SessionRuntimeIssueV1 } from '@happier-dev/protocol';
-import { SessionModelRefSchema, readSessionModelRefProviderConnectionId, type SessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
+import { areConnectedAccountSessionModelRefsEqual, SessionModelRefSchema, type ConnectedAccountSessionModelRefV2, type SessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
-import type { SessionModelMutationExpectedV1, SessionModelMutationScopeV1 } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
+import { projectSessionModelTransitionRequestedSelectionV1, type SessionModelMutationExpectedV1, type SessionModelMutationScopeV1 } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
 import { resolveRetainedTeamProviderBindingRevisionV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
@@ -23,6 +23,8 @@ export type AuthorizedSessionModelTransitionTarget = Readonly<{
   providerBinding: AgentSessionProviderBinding | null;
   sessionBindingMetadata: SessionProviderBindingMetadataV1 | null;
   runtimeBindingBasis: ProviderRuntimeBindingBasisV1 | null;
+  /** Exact model route from the runtime's admitted Provider binding handoff. */
+  connectedAccountSelection?: ConnectedAccountSessionModelRefV2;
   /** Custody actually opened by the native runtime, distinct from native auth. */
   readAppliedTeamCredentialModel?: () => TeamCredentialProviderModelSelectionV1 | null | undefined;
   revalidateBeforeEffect: () => Promise<boolean>;
@@ -169,7 +171,8 @@ function sameAuthorizedTarget(
   left: AuthorizedSessionModelTransitionTarget,
   right: AuthorizedSessionModelTransitionTarget,
 ): boolean {
-  if (!sameSelection(left.selection, right.selection) || !sameTeamRoute(left, right)) return false;
+  if (!sameSelection(left.selection, right.selection) || !sameTeamRoute(left, right)
+    || !areConnectedAccountSessionModelRefsEqual(left.connectedAccountSelection, right.connectedAccountSelection)) return false;
   if (left.selection.providerConnectionId === null) return true;
   return left.runtimeBindingBasis !== null
     && right.runtimeBindingBasis !== null
@@ -198,7 +201,8 @@ function runtimeModelIdReadbackCanProveTarget(
   current: AuthorizedSessionModelTransitionTarget,
   candidate: AuthorizedSessionModelTransitionTarget,
 ): boolean {
-  if (!sameTeamRoute(current, candidate)) return false;
+  if (!sameTeamRoute(current, candidate)
+    || !areConnectedAccountSessionModelRefsEqual(current.connectedAccountSelection, candidate.connectedAccountSelection)) return false;
   if (sameSelection(current.selection, candidate.selection)) {
     return samePublishedActiveFacts(current, candidate);
   }
@@ -353,9 +357,10 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     target: AuthorizedSessionModelTransitionTarget,
   ) => Promise<void>;
   readActiveTarget: () => AuthorizedSessionModelTransitionTarget;
+  readEffectiveModelSelection: () => SessionModelRef;
   readReplacementTarget: () => AuthorizedSessionModelTransitionTarget;
   /** Pending command or Team model intent that needs the next prompt's transition custody. */
-  readArmedSelection: () => ProviderBoundModelRef | null;
+  readArmedSelection: () => SessionModelRef | null;
   /** Restore applied intent through this same command queue; callers never guess the active route. */
   unarm: (callerInputConstraints?: CallerInputConstraintsV1) => Promise<SessionModelTransitionResultV1>;
   readAppliedTarget: () => Promise<SessionAppliedModelTransitionTarget>;
@@ -401,7 +406,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
   let stableActiveTargetEffect = false;
   let stableActiveTargetEffectSettled: Promise<void> | null = null;
   let publisherAuthorityUnavailable = false;
-  let armedSelection: ProviderBoundModelRef | null = null;
+  let armedSelection: SessionModelRef | null = null;
   // An accepted configuration owns dispatch, but only runtime evidence owns
   // Running. Retain its prior materialization basis for model-only readback.
   let awaitingRuntimeConfirmation = params.initialActiveTargetConfirmed === false
@@ -1026,6 +1031,16 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     const desiredModel = explicitModel ?? (proposal.source === 'prompt'
       || (proposal.source === 'metadata' && proposal.reuseInitialAdmission === true)
       ? params.readModelSelectionIntent() : null);
+    const connectedAccountSelection = desiredModel?.ref.source === 'connected_account' ? desiredModel.ref : null;
+    const carriesActiveConnectedAccountSelection = connectedAccountSelection !== null
+      && sameSelection(activeTarget.selection, proposal.selection)
+      && areConnectedAccountSessionModelRefsEqual(activeTarget.connectedAccountSelection, connectedAccountSelection);
+    const requiresConnectedAccountRestart = connectedAccountSelection !== null && !carriesActiveConnectedAccountSelection;
+    if (requiresConnectedAccountRestart && proposal.source === 'prompt') {
+      await settleBeforeRuntimeEffect(proposal, failure('restart_required', activeTarget.selection,
+        proposal.selection, 'provider_binding_changed'));
+      return;
+    }
     const activeTeam = readTeamRoute(activeTarget);
     const requiresTeamReopen = explicitModel?.ref.source === 'team_resource'
       && !sameTeamResourceBinding(explicitModel.ref, activeTeam);
@@ -1057,9 +1072,17 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       && sameSelection(activeTarget.selection, proposal.selection)
       && proposal.callerInputConstraints === undefined;
     try {
-      target = (carriesActiveTeamSelection && sameSelection(activeTarget.selection, proposal.selection))
-        || carriesOpenedSelection ? activeTarget
-        : await params.authorize(proposal.selection, proposal.callerInputConstraints);
+      if (requiresConnectedAccountRestart) {
+        target = {
+          selection: proposal.selection, policy: 'restart_session', providerBinding: null,
+          sessionBindingMetadata: null, runtimeBindingBasis: null, revalidateBeforeEffect: async () => false,
+        };
+      } else {
+        target = carriesActiveConnectedAccountSelection
+          || (carriesActiveTeamSelection && sameSelection(activeTarget.selection, proposal.selection))
+          || carriesOpenedSelection ? activeTarget
+          : await params.authorize(proposal.selection, proposal.callerInputConstraints);
+      }
       if ((carriesActiveTeamSelection && target !== activeTarget)
         || requiresTeamReopen) {
         // The broker materialization is model-bound even when the Agent can
@@ -1119,6 +1142,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     // opened binding. Republishing it can send an older revision to Home as
     // a new binding mutation.
     if (proposal.source !== 'metadata'
+      && !(proposal.source === 'prompt' && carriesActiveConnectedAccountSelection)
       && (!carriesActiveTeamSelection || (explicitModel !== null && !carriesRetainedTeamIntent))) {
       // A durable CAS that has started must finish, but it is not the runtime
       // effect boundary. A newer proposal may still supersede this one; the
@@ -1171,6 +1195,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     // previously persisted restart-required proposal.
     if (
       proposal.restartRuntime?.required !== true
+      && !requiresConnectedAccountRestart
       && !requiresTeamReopen
       && sameAuthorizedTarget(activeTarget, target)
       && samePublishedActiveFacts(activeTarget, target)
@@ -1188,7 +1213,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     }
 
     if (target.policy === 'restart_session' && !proposal.restartRuntime) {
-      armedSelection = proposal.selection;
+      armedSelection = proposal.modelRef;
       // The admitted selection itself needs a restart only when its Provider
       // binding changed after admission (endpoint/credential/re-consent). Name
       // that closed Provider refusal so callers present its restart recovery.
@@ -1196,19 +1221,19 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
         'restart_required',
         activeTarget.selection,
         proposal.selection,
-        sameSelection(activeTarget.selection, proposal.selection) ? 'provider_binding_changed' : undefined,
+        requiresConnectedAccountRestart || sameSelection(activeTarget.selection, proposal.selection) ? 'provider_binding_changed' : undefined,
       ));
       return;
     }
 
     if (proposal.applyTiming === 'next_prompt'
-      || (proposal.source === 'metadata' && armedSelection && sameSelection(armedSelection, proposal.selection))) {
-      armedSelection = proposal.selection;
+      || (proposal.source === 'metadata' && armedSelection && isDeepStrictEqual(armedSelection, proposal.modelRef))) {
+      armedSelection = proposal.modelRef;
       await settleBeforeRuntimeEffect(proposal, { ok: true, status: 'armed',
         activeSelection: activeTarget.selection, requestedSelection: proposal.selection });
       return;
     }
-    if (armedSelection && !sameSelection(armedSelection, proposal.selection)) armedSelection = null;
+    if (armedSelection && !isDeepStrictEqual(armedSelection, proposal.modelRef)) armedSelection = null;
 
     const previousTarget = activeTarget;
     if (!activeFenceEpochId) {
@@ -1395,12 +1420,12 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       return;
     }
     if (applied.status !== 'applied' && applied.status !== 'deferred') {
-      if (applied.status === 'requires_restart') armedSelection = proposal.selection;
+      if (applied.status === 'requires_restart') armedSelection = proposal.modelRef;
       let reason = applied.reason;
       let failureCause = applied.failureCause;
       if (applied.status === 'failed' && proposal.source === 'prompt'
         && proposal.committedIntentUpdatedAt !== undefined
-        && (replacementLifetimeEnded || (armedSelection && sameSelection(armedSelection, proposal.selection)))) {
+        && (replacementLifetimeEnded || (armedSelection && isDeepStrictEqual(armedSelection, proposal.modelRef)))) {
         try {
           // This prompt consumed its failed choice. Restore the prior configured
           // intent only while this proposal still owns the durable selection.
@@ -1934,12 +1959,13 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     }>,
   ): Promise<SessionModelTransitionResultV1> => {
     const modelRef = SessionModelRefSchema.parse(rawSelection);
-    const selection = { agentTargetKey: modelRef.agentTargetKey, modelId: modelRef.modelId,
-      providerConnectionId: readSessionModelRefProviderConnectionId(modelRef) };
+    const selection = projectSessionModelTransitionRequestedSelectionV1(modelRef);
     if (context.applyTiming === 'next_prompt' && (context.captureBefore || context.expected)) {
       return Promise.resolve(failure('unsupported', activeTarget.selection, selection, 'exact_model_mutation_requires_immediate_transition'));
     }
-    if (context.callerInputConstraints && !isModelRefGrantedV1(context.callerInputConstraints, modelRef)) {
+    const grantSelection = !('source' in modelRef) && sameSelection(activeTarget.selection, selection)
+      ? activeTarget.connectedAccountSelection ?? modelRef : modelRef;
+    if (context.callerInputConstraints && !isModelRefGrantedV1(context.callerInputConstraints, grantSelection)) {
       return Promise.resolve(failure('unsupported', activeTarget.selection, selection, 'model_not_granted'));
     }
     if (selection.agentTargetKey !== params.agentTargetKey) {
@@ -2094,15 +2120,20 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
   return Object.freeze({
     submit,
     unarm: (callerInputConstraints?: CallerInputConstraintsV1) => submit(
-      awaitingRuntimeConfirmation?.basis.selection ?? activeTarget.selection, {
+      awaitingRuntimeConfirmation?.basis.connectedAccountSelection ?? awaitingRuntimeConfirmation?.basis.selection
+        ?? activeTarget.connectedAccountSelection ?? activeTarget.selection, {
       source: 'command', ...(callerInputConstraints ? { callerInputConstraints } : {}),
     }),
     admitReplacementTarget,
     readActiveTarget: () => activeTarget,
+    readEffectiveModelSelection: () => activeTarget.connectedAccountSelection ?? activeTarget.selection,
     readReplacementTarget: () => runtimeReplacementTarget ?? activeTarget,
     readArmedSelection: () => {
       if (armedSelection) return armedSelection;
       const intent = params.readModelSelectionIntent();
+      if (intent?.ref.source === 'connected_account') {
+        return areConnectedAccountSessionModelRefsEqual(intent.ref, activeTarget.connectedAccountSelection) ? null : intent.ref;
+      }
       if (intent?.ref.source !== 'team_resource') return null;
       const selection = { agentTargetKey: intent.ref.agentTargetKey,
         providerConnectionId: null, modelId: intent.ref.modelId };

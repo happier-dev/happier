@@ -28,7 +28,6 @@ import {
   OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
   OPEN_CODE_NATIVE_CONNECTED_ACCOUNT_PURPOSE_IDS,
   OPEN_CODE_CONNECTED_ACCOUNT_DESCRIPTORS,
-  OPEN_CODE_NATIVE_CONNECTED_ACCOUNT_DESCRIPTORS,
   OPEN_CODE_NATIVE_AUTH_ENV_KEYS,
   OPEN_CODE_NATIVE_ACCOUNT_DESCRIPTORS,
   openCodeAccountProviders,
@@ -269,7 +268,7 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
     // Session/Run launches need a concrete model of the selected Account provider;
     // native saved/default models may target another provider. Catalog observation
     // prepares credentials before the person can choose a model.
-    if (!context.catalogObservation && hasSelectedAccount && (!selectedModel || !OPEN_CODE_NATIVE_CONNECTED_ACCOUNT_DESCRIPTORS.some(
+    if (!context.catalogObservation && hasSelectedAccount && (!selectedModel || !OPEN_CODE_CONNECTED_ACCOUNT_DESCRIPTORS.some(
       (row) => bindings[row.declaration.purpose] && openCodeAccountProviders(row).some(provider => provider === selectedModel.providerID),
     ))) {
       throw modelSelectionRequired();

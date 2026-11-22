@@ -25,7 +25,7 @@ import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents
 import { SessionModelTransitionResultV1Schema } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 import { createModelIntentMetadataCasCandidate, createModelIntentV2MetadataCasCandidate } from '@happier-dev/agents/session/state/metadataWriters';
 import { readSessionModelSelectionV2FromMetadata } from '@happier-dev/agents/session/state/metadataReaders';
-import { SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
+import { ConnectedAccountSessionModelRefV2Schema, SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
 
 import {
   createSessionModelTransitionAuthorizer,
@@ -513,6 +513,31 @@ it.each([
 });
 
 describe('createSessionModelTransitionCoordinator', () => {
+  it('dispatches an exact Connected Account selection and refuses another endpoint for the same model', async () => {
+    const selection = native('anthropic/claude-sonnet');
+    const ref = ConnectedAccountSessionModelRefV2Schema.parse({
+      source: 'connected_account', purpose: {
+        consumer: { pluginId: 'provider.test', localId: 'gateway' }, purpose: 'inference',
+      }, endpointTemplateId: 'messages', agentTargetKey: selection.agentTargetKey, modelId: selection.modelId,
+    });
+    const initialTarget = { ...authorized(selection), connectedAccountSelection: ref };
+    const harness = createHarness({ initialTarget });
+    const dispatch = vi.fn(async () => {});
+    const context = {
+      source: 'prompt' as const,
+      runWithActiveSelection: async (transfer: Parameters<NonNullable<Parameters<typeof harness.coordinator.submit>[1]['runWithActiveSelection']>>[0]) => {
+        await transfer({ abortSignal: new AbortController().signal, dispatch });
+      },
+    };
+    try {
+      await expect(harness.coordinator.submit(ref, context)).resolves.toMatchObject({ ok: true, status: 'already_active' });
+      await expect(harness.coordinator.submit({ ...ref, endpointTemplateId: 'responses' }, context)).resolves.toMatchObject({
+        ok: false, status: 'restart_required', reason: 'provider_binding_changed',
+      });
+      expect(dispatch).toHaveBeenCalledOnce();
+    } finally { await harness.coordinator.dispose(); }
+  });
+
   it('opens a restart-only Provider model after next_prompt intent before checking its materialized binding', async () => {
     const selection = provider('pc_work', 'next');
     const initial = authorized(provider('pc_work', 'old'), 'restart_session');

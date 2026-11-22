@@ -6,7 +6,7 @@ import { resolveProjectedConnectedAccountServiceKeys } from '@/sync/domains/conn
 import { presentProviderModelRow } from '@/providers/models/presentProviderModelRow';
 import { resourceHasAvailableTeamCredentialProviderModel } from '@/components/sessions/teamCredentials/teamCredentialProviderModelCurrentness';
 import type { TeamCredentialResourceStatusByKey } from '@/sync/domains/teams/teamCredentialResourceStatus';
-import { readProviderRouteConnectionId, type ProviderRouteSource, type RouteSelection } from './resolveSessionRoutePresentation';
+import { readProjectedConnectedAccountRoute, readProviderRouteConnectionId, type ProviderRouteSource, type RouteSelection } from './resolveSessionRoutePresentation';
 
 /** Selected model authentication uses the same admitted route for Home and Voice. */
 export function resolveSelectedProviderRoute(input: Readonly<{
@@ -33,10 +33,13 @@ export function resolveSelectedProviderRoute(input: Readonly<{
             acceptedConnectedServiceIds,
         };
     }
+    const connectedAccountSelection = selection && 'source' in selection && selection.source === 'connected_account' ? selection : null;
     const connectionId = readProviderRouteConnectionId(selection && 'kind' in selection ? null : selection);
-    if (!connectionId) return null;
-    const source = input.providerSources?.find(source => source.connectionId === connectionId);
-    const row = source?.rows?.find(row => row.ref.modelId === selection?.modelId);
+    if (!connectionId && !connectedAccountSelection) return null;
+    const accountRoute = connectedAccountSelection && readProjectedConnectedAccountRoute(connectedAccountSelection, input.providerSources);
+    const source = connectedAccountSelection ? accountRoute?.source : input.providerSources?.find(source => source.connectionId === connectionId);
+    const row = connectedAccountSelection ? accountRoute?.row : source?.rows?.find(row =>
+        !('source' in row.ref) && row.ref.modelId === selection?.modelId);
     return {
         ready: source?.authorization?.authorized === true && Boolean(row && !presentProviderModelRow({
             modelId: row.ref.modelId, authorization: source.authorization, compatibility: row.compatibility,

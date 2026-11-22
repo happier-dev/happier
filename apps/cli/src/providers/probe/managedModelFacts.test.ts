@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CLIPROXYAPI_PROVIDER_CONTRIBUTION } from '@happier-dev/plugins-cliproxyapi';
-import { ProviderContributionV1Schema, resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol';
+import { ProviderContributionV1Schema, resolveProviderManagedRuntimeFromContributionV1 } from '@happier-dev/protocol';
 import { projectManagedProviderModelFacts } from './managedModelFacts';
 import type { ProviderManagedCatalogSource } from './catalog';
 
@@ -12,7 +12,7 @@ function gatewaySource(): ProviderManagedCatalogSource {
   const implementationIdentity = { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' };
   return {
     implementationIdentity,
-    managedRuntime: resolveProviderManagedRuntimeDeclarationV1({ implementationIdentity, managedRuntime: definition.managedRuntime }),
+    managedRuntime: resolveProviderManagedRuntimeFromContributionV1({ implementationIdentity, definition: { ...definition, managedRuntime: definition.managedRuntime } }),
     purposeBindings: { v: 1, bindings: [] }, endpointTemplateId: 'cliproxyapi-openai-responses', protocol: 'openai-responses',
     sourceRegistryVersion: definition.catalog && 'sourceRegistryVersion' in definition.catalog
       ? definition.catalog.sourceRegistryVersion ?? '' : '', publicHeaders: {},

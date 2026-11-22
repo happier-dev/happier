@@ -1,3 +1,4 @@
+import type { QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol/connect/connected-account-purposes';
 import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
 import * as React from 'react';
 import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/selection/v1';
@@ -8,7 +9,7 @@ import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions
 import { providerErrorFromRpcFailure } from '@/providers/actions/client';
 import { useProviderActionClient } from '@/providers/actions/useProviderActionClient';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
-import { sessionModelSelectionKey, isTeamCredentialProviderModelPickerValue, type SessionModelPickerOptionValue } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
+import { sessionModelSelectionKey, type SessionModelPickerOptionValue } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
 import { modelProjectionScopeKey } from './modelProjectionScopeKey';
 import { useProviderModelQueryRetention } from './useProviderModelQueryRetention';
 import { beginProviderModelProjectionRead, getProviderModelProjectionSnapshot, subscribeProviderModelProjectionSnapshot } from '@/sync/store/settings/providerCatalogSnapshot';
@@ -39,6 +40,7 @@ export function useProviderModelProjection(input: Readonly<{
     /** Browsing a source is local picker state; it never changes the selected model. */
     sourceConnectionId?: string;
     connectedServices?: ConnectedServiceBindingsV2;
+    connectedAccountSourcePurpose?: QualifiedConnectedAccountPurposeV1;
     favoriteSelections?: readonly ProviderBoundModelRef[];
     /** One gathered Home catalog; only the exact execution Machine resolves delivery. */
     teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
@@ -49,7 +51,7 @@ export function useProviderModelProjection(input: Readonly<{
     // Provider projection accepts Account/native refs. A Team source is already
     // represented by its resource catalog; it must never become a native tuple.
     const currentSelection = input.currentSelection;
-    const providerSelection = currentSelection && !isTeamCredentialProviderModelPickerValue(currentSelection)
+    const providerSelection = currentSelection && 'providerConnectionId' in currentSelection
         ? currentSelection : undefined;
     const { describeProviderModels, ready, pendingApproval, accountScope: { resolution, binding } } = useProviderActionClient(scopeEnabled ? input.serverId : []);
     const accountLifetime = captureActiveServerAccountScopeLifetime();
@@ -63,9 +65,7 @@ export function useProviderModelProjection(input: Readonly<{
     const pendingRead = React.useRef<AbortController | null>(null);
     const activeRef = React.useRef(input.active !== false);
     activeRef.current = input.active !== false;
-    const selectionKey = input.currentSelection
-        ? sessionModelSelectionKey(input.currentSelection)
-        : '';
+    const selectionKey = providerSelection ? sessionModelSelectionKey(providerSelection) : '';
     const scopeKey = modelProjectionScopeKey({ ...input, selectionKey,
         favoriteKeys: input.favoriteSelections?.map(sessionModelSelectionKey) ?? [],
         accountScopeKey: resolution.kind === 'bound' ? serverAccountScopeKeySuffix(resolution.scope) : input.serverId,
@@ -140,6 +140,7 @@ export function useProviderModelProjection(input: Readonly<{
                 ...(providerSelection ? { currentSelection: providerSelection } : {}),
                 ...(input.sourceConnectionId ? { sourceConnectionId: input.sourceConnectionId } : {}),
                 ...(input.connectedServices ? { connectedServices: input.connectedServices } : {}),
+                ...(input.connectedAccountSourcePurpose ? { connectedAccountSourcePurpose: input.connectedAccountSourcePurpose } : {}),
                 ...(input.favoriteSelections ? { favoriteSelections: [...input.favoriteSelections] } : {}),
                 ...(input.teamCredentialResources ? { teamCredentialResources: [...input.teamCredentialResources] } : {}),
             }, { signal: controller.signal });

@@ -35,6 +35,12 @@ describe('Vercel account plan quota', () => {
     expect(requests).toEqual([`https://api.vercel.com/v2/teams/${teamId}`]);
   });
 
+  it('recognizes Flex for an explicitly selected signed-in team', async () => {
+    const { context, requests } = readContext(teamResponse('flex'), 200, { teamId }, undefined, 'oauth');
+    await expect(connectedAccountRuntime.quota?.(context)).resolves.toMatchObject({ planLabel: 'Flex' });
+    expect(requests).toEqual([`https://api.vercel.com/v2/teams/${teamId}`]);
+  });
+
   it('uses a personal account defaultTeamId only after the documented user response supplies it', async () => {
     const { context, requests } = readContext({}, 200, {}, [personalUserResponse, teamResponse('hobby')]);
     await expect(connectedAccountRuntime.quota?.(context)).resolves.toMatchObject({ planLabel: 'Hobby' });

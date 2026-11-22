@@ -2603,6 +2603,8 @@ export async function startDaemon(
       flushProviderAccountUsagePersistence,
       connectedServiceRuntimeQuotaSnapshots,
       createAgentCatalogObservation,
+      connectedAccountProviderRequestAuth,
+      connectedAccountUsage,
       externalActionIngressOwner,
       managedMachinePolicyAdapter,
       readManagedServiceCurrentLogPaths,
@@ -2893,6 +2895,9 @@ export async function startDaemon(
         connectedAccountPurposeBindingRuntime.resolveBindingIntent,
       resolveManagedPurposeBindingIntentSelection: connectedAccountPurposeBindingRuntime.resolveBindingIntentSelection,
       prepareConnectedAccountOperationSelection: connectedAccountPurposeBindingRuntime.owner.prepareOperationSelection,
+      observeConnectedAccountSourceModels: async request =>
+        await (providerOperationsProducer?.machineServices.observeConnectedAccountSourceModels?.(request)
+          ?? Promise.resolve({ source: 'static', models: [], stale: false })),
       projectProviderModels: async (request, signal, context) => {
         const producer = providerOperationsProducer;
         if (!producer) throw new Error('provider_source_projection_unavailable');
@@ -4497,6 +4502,9 @@ export async function startDaemon(
           }),
         },
         createAgentCatalogObservation,
+        connectedAccountProviderRequestAuth,
+        connectedAccountUsage,
+        listProviderConnectedAccountProfiles: connectedAccountPurposeBindingRuntime.listCoordinatorAccounts,
         onAutomationWorkerStarted: (worker: AutomationWorkerHandle) => {
           automationWorker = worker;
           automationActivity.notifyChanged();

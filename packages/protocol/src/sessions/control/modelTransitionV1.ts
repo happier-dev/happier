@@ -1,8 +1,8 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
-import { ProviderBoundModelRefSchema } from '../../providers/selection/v1.js';
-import { SessionModelSelectionV2Schema } from '../../providers/selection/v2.js';
+import { ProviderBoundModelRefSchema, type ProviderBoundModelRef } from '../../providers/selection/v1.js';
+import { PersonalSessionModelRefSchema, SessionModelSelectionV2Schema, readSessionModelRefProviderConnectionId, type SessionModelRef } from '../../providers/selection/v2.js';
 import { SessionRuntimeFailureCauseV1Schema } from './runtimeIssueV1.js';
 
 const intentOrder = lazyZodSchema(() => z.number().check(z.nonnegative()));
@@ -26,14 +26,21 @@ export type SessionModelMutationReversalV1 = z.infer<typeof SessionModelMutation
 
 export const SessionModelTransitionRequestV1Schema = lazyZodSchema(() => z.union([z.strictObject({
   v: z.literal(1),
-  selection: ProviderBoundModelRefSchema,
+  selection: PersonalSessionModelRefSchema,
   applyTiming: z.optional(z.enum(['immediate', 'next_prompt'])),
   captureBefore: z.optional(z.boolean()),
   expected: z.optional(SessionModelMutationExpectedV1Schema),
-}), z.strictObject({ v: z.literal(1), unarm: z.literal(true) })]));
+}).check(z.refine(request => !('source' in request.selection) || (!request.captureBefore && !request.expected))),
+z.strictObject({ v: z.literal(1), unarm: z.literal(true) })]));
 export type SessionModelTransitionRequestV1 = z.infer<
   typeof SessionModelTransitionRequestV1Schema
 >;
+
+/** The V1 transition result reports the model tuple. Admission uses the authored ref. */
+export function projectSessionModelTransitionRequestedSelectionV1(ref: SessionModelRef): ProviderBoundModelRef {
+  return { agentTargetKey: ref.agentTargetKey, modelId: ref.modelId,
+    providerConnectionId: readSessionModelRefProviderConnectionId(ref) };
+}
 
 const SessionModelTransitionSuccessV1Schema = lazyZodSchema(() => z.strictObject({
   ok: z.literal(true),

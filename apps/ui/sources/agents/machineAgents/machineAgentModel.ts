@@ -105,9 +105,18 @@ export function projectMachineAgentForCredential(agent: MachineAgent | null | un
     const acceptedServiceIds = new Set((selection.providerRoute?.acceptedConnectedServiceIds
         ?? agent.signIn.connectedServices.map(service => service.serviceId))
         .map(resolveQualifiedConnectedAccountServiceKey).filter((key): key is string => key !== null));
+    // A Provider-purpose Account binding is admitted by the selected route. Only
+    // bindings in the Agent's declaration belong to native authentication.
+    const credentialBindings = modelRef && 'source' in modelRef && modelRef.source === 'connected_account'
+        && selection.providerRoute?.ready && selection.providerRoute.acceptedConnectedServiceIds !== undefined
+        && selection.credentialBindings
+        ? { ...selection.credentialBindings, bindingsByServiceId: Object.fromEntries(
+            Object.entries(selection.credentialBindings.bindingsByServiceId).filter(([serviceId]) => acceptedServiceIds.has(serviceId)),
+        ) }
+        : selection.credentialBindings;
     // Selected credentials and an admitted Provider route override native policy;
     // the shared execution-state resolver owns native authentication requirements.
-    const authenticationRequired = Object.entries(selection.credentialBindings?.bindingsByServiceId ?? {})
+    const authenticationRequired = Object.entries(credentialBindings?.bindingsByServiceId ?? {})
         .some(([serviceId, binding]) => binding.source !== 'native' && !suppressedServiceIds.has(serviceId))
         ? true : [...acceptedServiceIds].some(serviceId => suppressedServiceIds.has(serviceId))
             ? false : undefined;
@@ -115,6 +124,7 @@ export function projectMachineAgentForCredential(agent: MachineAgent | null | un
         native: agent.signIn.native ?? { status: agent.signIn.via?.kind === 'connected' ? 'unknown' : agent.signIn.status, loginSupport: 'unsupported' },
         connectedServices: agent.signIn.connectedServices,
         ...selection,
+        credentialBindings,
         suppressedServiceIds,
     });
     return { ...agent, signIn: { ...signIn, native: agent.signIn.native }, state: resolveMachineAgentState({ ...agent, signIn,

@@ -57,7 +57,8 @@ import type {
     AcpConfigOptionOverridesV1} from '@happier-dev/protocol/sessions/metadata/overrides';
 import type {
     ProviderErrorV1} from '@happier-dev/protocol/providers/errors';
-import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
+import type { QualifiedConnectedAccountPurposeBindingV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
+import { createPersonalSessionModelSelection, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { DaemonProviderCurrentSelectionRecoveryV1 } from '@happier-dev/protocol/rpc';
 import { useNewSessionAttachmentsController } from '@/components/sessions/new/attachments/useNewSessionAttachmentsController';
@@ -175,7 +176,10 @@ export interface NewSessionWizardAgentProps {
     modelMode: ModelMode | undefined;
     modelSelection?: SessionModelSelection | null;
     setModelMode: (mode: ModelMode) => void;
-    setModelSelection?: (selection: SessionModelSelection | null) => void;
+    setModelSelection?: (selection: SessionModelSelection | null, binding?: QualifiedConnectedAccountPurposeBindingV1) => void;
+    modelSourceBrowse?: React.ComponentProps<typeof NewSessionModelSelectionContent>['sourceBrowse'];
+    modelCatalogConnectedServices?: React.ComponentProps<typeof NewSessionModelSelectionContent>['connectedServices'];
+    selectedProviderModelGroups?: readonly SessionModelProjectionGroup[];
     providerModelGroups?: readonly SessionModelProjectionGroup[];
     declarationContext?: React.ComponentProps<typeof NewSessionModelSelectionContent>['declarationContext'];
     teamCredentialResources?: React.ComponentProps<typeof NewSessionModelSelectionContent>['teamCredentialResources'];
@@ -482,6 +486,9 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         modelSelection,
         setModelMode,
         setModelSelection,
+        modelSourceBrowse,
+        modelCatalogConnectedServices,
+        selectedProviderModelGroups,
         providerModelGroups,
         teamCredentialResources,
         teamCredentialDisplayNames,
@@ -1114,6 +1121,9 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                                     favoriteModelSelections={favoriteModelSelections}
                                                     onFavoriteModelSelectionsChange={setFavoriteModelSelections}
                                                     providerGroups={providerModelGroups}
+                                                    selectedProviderGroups={selectedProviderModelGroups}
+                                                    sourceBrowse={modelSourceBrowse}
+                                                    connectedServices={modelCatalogConnectedServices}
                                                     declarationContext={props.agent.declarationContext}
                                                     teamCredentialResources={teamCredentialResources}
                                                     teamCredentialDisplayNames={teamCredentialDisplayNames}
@@ -1133,12 +1143,10 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                                     hiddenNativeModelKeys={hiddenNativeModelKeys}
                                                     experimentalConfirmation={experimentalModelConfirmation}
                                                     onSelectModel={setModelMode}
-                                                    onSelectSelection={setModelSelection ? (ref) => {
-                                                        setModelSelection(ref ? {
-                                                            v: 1,
-                                                            updatedAt: Date.now(),
-                                                            ref,
-                                                        } : null);
+                                                    onSelectSelection={setModelSelection ? (ref, binding) => {
+                                                        const selection = ref ? createPersonalSessionModelSelection(ref, Date.now()) : null;
+                                                        if (binding) setModelSelection(selection, binding);
+                                                        else setModelSelection(selection);
                                                     } : undefined}
                                                 />
                                             </ItemGroup>

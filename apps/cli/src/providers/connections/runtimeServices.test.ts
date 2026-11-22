@@ -426,9 +426,9 @@ describe('runtime Provider connection composition', () => {
     const definition = ProviderContributionV1Schema.parse({ v: 1, id: 'gateway', name: 'Gateway', kind: 'aggregator',
       endpointTemplates: [{ id: 'chat', protocol: 'openai-chat', baseUrl: 'http://127.0.0.1:9000/v1',
         capabilities: { streaming: 'unknown', toolRoundTrips: 'unknown', statefulResponses: 'unknown', reasoningControls: 'unknown' } }],
-      catalog: { source: 'manual', manualModelPolicy: 'allowed' }, managedRuntime: { kind: 'managed',
-        endpointTemplateIds: ['chat'], connectedAccounts: [{ purpose: 'upstream', required: false,
-          service: { pluginId: 'happier.connected-account.openai', localId: 'openai' } }] } });
+      catalog: { source: 'manual', manualModelPolicy: 'allowed' }, connectedAccounts: [{ purpose: 'upstream', required: false,
+          service: { pluginId: 'happier.connected-account.openai', localId: 'openai' } }], managedRuntime: { kind: 'managed',
+        endpointTemplateIds: ['chat'],  } });
     const { createMachineSharedProviderGatewayResolver } = await import('@/daemon/machine/bootstrapMachineSyncRuntime');
     let accountId: string | null = 'current-account';
     const resolveSharedGateway = createMachineSharedProviderGatewayResolver({ machineId: 'machine-a',

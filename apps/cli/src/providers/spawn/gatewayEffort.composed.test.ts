@@ -13,7 +13,7 @@ import { CLIPROXYAPI_PROVIDER_CONTRIBUTION } from '../../../../../packages/plugi
 describe('gateway SDK effort facts at Agent admission', () => {
   it('offers Claude-applicable Muse effort and serializes every offered tier at native launch', () => {
     const provider = ProviderContributionV1Schema.parse(CLIPROXYAPI_PROVIDER_CONTRIBUTION);
-    const source = provider.managedRuntime?.connectedAccounts?.find(row => row.purpose === 'meta-upstream')
+    const source = provider.connectedAccounts?.find(row => row.purpose === 'meta-upstream')
       ?.staticModels?.find(row => row.id === 'muse-spark-1.3-contributor');
     if (!source) throw new Error('Missing real gateway Muse model');
     const support = AgentProviderRequirementsV1Schema.parse(CLAUDE_PLUGIN_MANIFEST.contributes.agents[0]!.providerRequirements);
@@ -32,7 +32,7 @@ describe('gateway SDK effort facts at Agent admission', () => {
     const localId = agentId === 'pi' ? 'pi' : 'ohmypi';
     const fixture = await createPluginTestkit({ manifest: plugin.PLUGIN_MANIFEST, module: { activate: plugin.activate } });
     const provider = ProviderContributionV1Schema.parse(CLIPROXYAPI_PROVIDER_CONTRIBUTION);
-    const family = provider.managedRuntime?.connectedAccounts
+    const family = provider.connectedAccounts
       ?.find(row => row.purpose === 'meta-upstream');
     const sourceModel = family?.staticModels?.find(row => row.id === 'muse-spark-1.3-contributor');
     const adapter = fixture.registration('agents', localId)?.providerBinding;

@@ -1,4 +1,5 @@
-import type { AcpConfigOptionOverridesV1, ConnectedServiceBindingsV2, ProviderBoundModelRef, SecretReferenceOverlayV1, TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol';
+import type { PersonalSessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
+import type { AcpConfigOptionOverridesV1, ConnectedServiceBindingsV2, SecretReferenceOverlayV1, TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol';
 
 import type { ExecutionRunBackendStartContext } from '@/agent/executionRuns/registry/executionRunBackendTypes';
 import type { ExecutionRunManagerStartParams, ExecutionRunState } from './executionRunTypes';
@@ -24,7 +25,7 @@ export type ExecutionRunResumeBackendOptions = Readonly<{
   workspaceWrites?: 'allow' | 'deny';
   modelId?: string;
   modelSelectionSource?: 'explicit' | 'inherited';
-  modelSelection?: ProviderBoundModelRef;
+  modelSelection?: PersonalSessionModelRef;
   teamCredentialModel?: TeamCredentialProviderModelSelectionV1;
   sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
   connectedServices?: ConnectedServiceBindingsV2 | null;

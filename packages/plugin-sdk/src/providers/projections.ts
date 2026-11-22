@@ -210,7 +210,7 @@ export type ProviderProbeRequest =
 /** @realm daemon */
 export type ProviderProbeResult = DaemonProviderProbeResponseV1;
 /** @realm daemon */
-export type ProviderUsageRefreshRequest = Omit<DaemonProviderUsageRefreshRequestV1, 'machineId'>;
+export type ProviderUsageRefreshRequest = Pick<Extract<DaemonProviderUsageRefreshRequestV1, { connectionId: string }>, 'connectionId'>;
 /** @realm daemon */
 export type ProviderUsageRefreshResult = DaemonProviderUsageRefreshResponseV1;
 /** @realm daemon */

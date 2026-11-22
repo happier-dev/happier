@@ -314,6 +314,25 @@ describe('activated Vercel vendor Connected Account', () => {
     } finally { await h.kit.dispose(); }
   });
 
+  it('returns the configured Gateway query scope and stored grant expiry', async () => {
+    const h = await host({ values: { teamId } });
+    const expiresAt = Date.now() + 3600000;
+    h.retained.set('expiresAtMs', String(expiresAt));
+    const request = { kind: 'httpHeaders' as const, origin: 'https://ai-gateway.vercel.sh',
+      headerNames: ['authorization', 'x-vercel-ai-gateway-team'], queryParameterNames: ['teamId'] };
+    try {
+      expect(await h.runtime.materialize(request, h.read)).toEqual({
+        kind: 'httpHeaders',
+        headers: { authorization: 'Bearer ' + secret, 'x-vercel-ai-gateway-team': teamId },
+        facts: { teamId },
+        expiresAt,
+      });
+      await expect(h.runtime.materialize({ ...request, origin: 'https://api.vercel.com' }, h.read))
+        .rejects.toMatchObject({ code: 'credential_unavailable' });
+      expect(h.requests).toHaveLength(0);
+    } finally { await h.kit.dispose(); }
+  });
+
   it('revokes only the current token and does not replay an ambiguous revocation', async () => {
     const h = await host({ response: { tokenId: 'token_example' } });
     try {

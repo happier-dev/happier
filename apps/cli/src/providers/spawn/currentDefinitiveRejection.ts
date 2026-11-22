@@ -1,5 +1,10 @@
 import { AcpConfigOptionOverridesV1Schema } from '@happier-dev/protocol/sessions/metadata/overrides';
-import { SessionModelRefSchema, projectSessionModelRefToExecutionModelSelection, type SessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
+import {
+  SessionModelRefSchema,
+  isSessionModelRefSourceBound,
+  projectSessionModelRefToExecutionModelSelection,
+  type SessionModelRef,
+} from '@happier-dev/protocol/providers/selection/v2';
 import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol/models/descriptor';
 import type { ProviderModelDescriptorV1 } from '@happier-dev/protocol';
 import type { SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/spawnSession';
@@ -137,7 +142,7 @@ export async function resolveCurrentProviderSpawnDefinitiveRejection(input: Read
   const projected = authoredRef ? projectSessionModelRefToExecutionModelSelection(authoredRef) : undefined;
   const selection = projected?.modelSelection ? { ...input.selection, ...projected.modelSelection } : input.selection;
   const native = resolveAgentNativeSpawnDefinitiveRejection({
-    agentId: projected?.teamCredentialModel ? null : input.agentId,
+    agentId: authoredRef && isSessionModelRefSourceBound(authoredRef) ? null : input.agentId,
     selection,
   });
   if (!native.ok) return { ok: false };

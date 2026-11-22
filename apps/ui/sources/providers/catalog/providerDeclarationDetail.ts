@@ -41,7 +41,7 @@ export function projectProviderDeclarationDetail(
             ...(definition.credential.authorityDescription ? { authorityDescription: definition.credential.authorityDescription } : {}),
             ...(additionalCredentials.length > 0 ? { additionalCredentials } : {}),
         } } : {}),
-        ...(definition.managedRuntime?.connectedAccounts ? { connectedAccounts: definition.managedRuntime.connectedAccounts } : {}),
+        ...(definition.connectedAccounts ? { connectedAccounts: definition.connectedAccounts } : {}),
         worksWith: agents.flatMap(agent => {
             for (const model of models) {
                 const { result } = resolveProviderBindingDeclarationCompatibilityV1({

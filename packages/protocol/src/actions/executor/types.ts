@@ -2703,6 +2703,7 @@ export type ActionExecutorDeps = Readonly<{
     modelId?: string;
     captureBefore?: boolean;
     expected?: SessionModelMutationExpectedV1;
+    modelSelection?: import('../../providers/selection/v2.js').ConnectedAccountSessionModelRefV2;
     providerConnectionId?: string | null;
     teamCredentialModel?: import('../../teams/credentials/resourceV1.js').TeamCredentialProviderModelSelectionV1;
     teamVisibilityGrantConsent?: Readonly<{ teamId: string }>;

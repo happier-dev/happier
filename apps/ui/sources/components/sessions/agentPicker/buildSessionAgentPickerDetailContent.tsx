@@ -42,6 +42,7 @@ type SessionAgentPickerDetailContentParams = Readonly<{
     cwd: string | null;
     settings: Readonly<Record<string, unknown>>;
     connectedServices?: ConnectedServiceBindingsV2 | null;
+    includeProviderConnectedAccounts?: boolean;
     selectedProfileId?: string | null;
     runtimeDescriptorV1?: RuntimeDescriptorV1 | null;
     refreshProbe?: OptionPickerProbeState | null;
@@ -112,6 +113,8 @@ function SessionAgentPickerDetailContent(params: SessionAgentPickerDetailContent
             capabilityServerId={params.capabilityServerId}
             cwd={params.cwd}
             capabilityProbeContext={capabilityProbeContext}
+            connectedServices={'connectedServices' in params ? params.connectedServices : connectedServices}
+            includeProviderConnectedAccounts={params.includeProviderConnectedAccounts}
             refreshProbe={params.refreshProbe}
             modelSummary={params.modelSummary}
             mixedSelection={params.mixedSelection}

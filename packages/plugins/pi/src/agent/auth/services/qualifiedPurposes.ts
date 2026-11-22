@@ -1,7 +1,6 @@
 import { KIMI_CONNECTED_ACCOUNT_SERVICE, KIMI_CODE_API_KEY_ENV, KIMI_CODE_API_BASE_ENV } from '@happier-dev/plugins-kimi/connected-account-service';
 import { GROK_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-grok/connected-account-service';
 import { GEMINI_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-gemini/connected-account-service';
-import { MUSE_ACCOUNT_SERVICE, META_API_KEY_ENV_KEY } from '@happier-dev/plugins-muse/connected-account-service';
 import { GITHUB_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-scm-github/connected-account-service';
 import { CLAUDE_CONNECTED_ACCOUNT_SERVICE, ANTHROPIC_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-claude/connected-account-service';
 import { OPENAI_CODEX_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-codex/connected-account-service';
@@ -63,15 +62,6 @@ export const PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES = Object.freeze([
     materializationKinds: Object.freeze(['environment'] as const), credentialKinds: Object.freeze(['token'] as const),
   }),
   Object.freeze({
-    purpose: 'meta-inference', service: MUSE_ACCOUNT_SERVICE,
-    managedProviderEndpoint: {
-      provider: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
-      purpose: 'meta-upstream', modelIdPrefix: 'meta/',
-    },
-    native: { providerId: 'meta', modelScope: 'meta/*', environmentKeys: [META_API_KEY_ENV_KEY] },
-    materializationKinds: Object.freeze(['environment'] as const), credentialKinds: Object.freeze(['token', 'oauth'] as const),
-  }),
-  Object.freeze({
     purpose: 'gemini', service: GEMINI_CONNECTED_ACCOUNT_SERVICE,
     native: { providerId: 'google', modelScope: 'google/*', apiKeyEnvironmentKey: 'GEMINI_API_KEY',
       environmentKeys: ['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_GENAI_USE_VERTEXAI', 'GOOGLE_CLOUD_PROJECT', 'GOOGLE_CLOUD_LOCATION'],
@@ -87,11 +77,6 @@ export const PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES = Object.freeze([
 ] as const);
 
 type PiQualifiedPurposeRow = (typeof PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES)[number];
-
-export const PI_NATIVE_CONNECTED_ACCOUNT_PURPOSES = Object.freeze(
-  PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES.filter(
-    (row): row is Exclude<PiQualifiedPurposeRow, { managedProviderEndpoint: unknown }> => !('managedProviderEndpoint' in row)),
-);
 
 export const PI_REQUEST_AUTH_PURPOSE_ROWS = Object.freeze(
   PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES.filter(

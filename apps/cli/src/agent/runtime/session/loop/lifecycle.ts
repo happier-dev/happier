@@ -10,7 +10,7 @@ import { SessionCompactRequestV1Schema } from '@happier-dev/protocol/sessions/co
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { ManualCompactionQueue } from '@/agent/runtime/queueSpecialCommands';
 import { validatePluginHookPayloadV1 } from '@happier-dev/protocol/plugins/hooks';
-import type { AgentSessionRuntimeEvent, ProviderBoundModelRef, SessionModelTransitionResultV1, SessionTurnFactsV1, SessionRolePromptContextV1 } from '@happier-dev/protocol';
+import type { AgentSessionRuntimeEvent, SessionModelTransitionResultV1, SessionTurnFactsV1, SessionRolePromptContextV1 } from '@happier-dev/protocol';
 import type { render } from 'ink';
 import type React from 'react';
 
@@ -293,8 +293,8 @@ export type SessionLoopLifecycleParams = Readonly<{
     ) => Promise<void>,
     restartRuntime?: SessionModelTransitionRestart,
   ) => Promise<SessionModelTransitionResultV1>;
-  readActiveModelSelection?: () => ProviderBoundModelRef;
-  readArmedModelSelection?: () => ProviderBoundModelRef | null;
+  readActiveModelSelection?: () => SessionModelRef;
+  readArmedModelSelection?: () => SessionModelRef | null;
   resolveSessionRolePromptContext?: (signal?: AbortSignal) => Promise<SessionRolePromptContextV1 | null>;
   resolveFreshSessionSystemPrompt?: SessionPromptPlanResolver;
   prepareSessionRolePromptPolicy?: () => Promise<void>;

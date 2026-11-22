@@ -902,8 +902,9 @@ describe('shared Provider Account Action producer', () => {
       displayName: 'Gateway', displayNameMode: 'custom', revision: 2, createdAt: 1, updatedAt: 1 });
     const definition = ProviderContributionV1Schema.parse({ ...DEEPSEEK_PROVIDER_CONTRIBUTION,
       catalog: { ...DEEPSEEK_PROVIDER_CONTRIBUTION.catalog, sourceRegistryVersion: 'account-gateway/v1' },
+      connectedAccounts: [{ purpose: 'upstream', service: { pluginId: 'example.auth', localId: 'account' }, required: false }],
       managedRuntime: { kind: 'managed', endpointTemplateIds: DEEPSEEK_PROVIDER_CONTRIBUTION.endpointTemplates.map(endpoint => endpoint.id),
-        connectedAccounts: [{ purpose: 'upstream', service: { pluginId: 'example.auth', localId: 'account' }, required: false }] } });
+         } });
     const row = accountRow({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, connections: [connection] });
     row.setDefinitions([{ contributionKey: 'example.gateway/source', definition, provenance: 'external' }]);
     const managedConnection = { ...connection, deployment: { kind: 'managedLocal' as const } };

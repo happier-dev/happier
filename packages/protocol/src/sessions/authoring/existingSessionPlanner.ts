@@ -69,9 +69,11 @@ export function planExistingSessionChanges(
   const hasMessage = message !== undefined && message.length > 0;
   const model = selection.modelSelection == null ? undefined
     : projectSessionModelRefToExecutionModelSelection(selection.modelSelection.ref);
+  const personalModel = model?.modelSelection;
   const flatModel = selection.modelSelection === null
     ? { modelId: 'default', providerConnectionId: null }
-    : model?.modelSelection;
+    : personalModel && !('source' in personalModel) ? personalModel : undefined;
+  const connectedAccountModel = personalModel && 'source' in personalModel ? personalModel : undefined;
   const selectedAgentId = selection.agentTarget ? buildQualifiedPluginContributionKey(selection.agentTarget.identity) : undefined;
   for (const [index, target] of targets.entries()) {
     const sessionId = target.address.sessionId;
@@ -108,6 +110,9 @@ export function planExistingSessionChanges(
     if (selection.permissionMode !== undefined) add(4, 'session.permission_mode.set',
       buildExistingSessionPermissionModeActionInput({ sessionId, permissionMode: selection.permissionMode ?? 'default' }), target.address);
     if (model?.teamCredentialModel) add(4, 'session.model.set', buildExistingSessionModelActionInput({ sessionId, teamCredentialModel: model.teamCredentialModel }), target.address);
+    else if (connectedAccountModel && !transitioning) add(4, 'session.model.set', buildExistingSessionModelActionInput({
+      sessionId, modelSelection: connectedAccountModel,
+    }), target.address);
     else if (flatModel && !transitioning) add(4, 'session.model.set', buildExistingSessionModelActionInput({
       sessionId, modelId: flatModel.modelId, providerConnectionId: flatModel.providerConnectionId,
     }), target.address);
@@ -115,6 +120,7 @@ export function planExistingSessionChanges(
       add(5, 'session.message.send', buildExistingSessionMessageActionInput({ sessionId, message,
         ...(messageLocalId === undefined ? {} : { localId: messageLocalId }),
         ...(selection.permissionMode === undefined ? {} : { permissionModeOverride: selection.permissionMode ?? 'default' }),
+        ...(connectedAccountModel && selection.modelSelection ? { modelSelection: selection.modelSelection } : {}),
         ...(flatModel ? { modelOverride: selection.modelSelection === null ? null : flatModel.modelId, providerConnectionId: flatModel.providerConnectionId } : {}),
       }), target.address);
     }

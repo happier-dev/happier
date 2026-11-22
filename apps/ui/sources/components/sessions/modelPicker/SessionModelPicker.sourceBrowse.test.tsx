@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { ConnectedAccountSessionModelRefV2Schema } from '@happier-dev/protocol/providers/selection/v2';
 
 import { renderScreen } from '@/dev/testkit';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -95,32 +96,64 @@ beforeEach(async () => {
 });
 
 describe('SessionModelPicker source browsing', () => {
-  it.each(['pi', 'opencode', 'codex', 'claude'])('lists the selected managed Muse catalog for %s through the shared picker', async agentId => {
+  it.each([
+    ['pi', 'openai-responses'], ['opencode', 'openai-responses'], ['codex', 'openai-responses'], ['claude', 'anthropic'],
+  ] as const)('selects a managed Muse model from the CLIProxyAPI purpose for %s', async (agentId, protocol) => {
     const agentTargetKey = `agent:happier.agent.${agentId}/${agentId}`;
-    const selected = { agentTargetKey, providerConnectionId: null, modelId: 'meta/muse-spark-1.3-contributor' };
+    const selected = ConnectedAccountSessionModelRefV2Schema.parse({ source: 'connected_account', agentTargetKey,
+      modelId: 'muse-spark-1.3-contributor', endpointTemplateId: `cliproxyapi-${protocol}`,
+      purpose: { consumer: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' }, purpose: 'meta-upstream' },
+    });
+    const binding = { purpose: selected.purpose, target: { kind: 'account', account: {
+      service: { pluginId: 'happier.agent.muse', localId: 'muse-account' }, accountId: 'my-muse',
+    } } } as const;
+    const row = gatewayRow(selected.modelId, 'Muse Spark');
     describeProviderModels.mockImplementation((payload: { connectedServices?: unknown }) => createProviderModelProjectionFixture({
       agentTargetKey, groups: payload.connectedServices ? [createProviderModelProjectionGroupFixture({
         connectionId: 'connected-source:muse', providerName: 'CLIProxyAPI', connectionName: 'My Muse account',
-        rows: [{ ...gatewayRow('muse-spark-1.3-contributor', 'Muse Spark'), ref: selected }],
+        connectedAccountTarget: binding.target, rows: [{ ...row, ref: selected, gatewaySlots: [binding],
+          compatibility: { ...row.compatibility, result: { ...row.compatibility.result, selectedProtocol: protocol } } }],
       })] : [],
     }));
     const choose = vi.fn();
     const screen = await renderScreen(<SessionModelPicker agentTargetKey={agentTargetKey}
       declarationContext={{ kind: 'account' }} nativeModels={[]} providerGroups={[]}
-      providerProjectionAuthoritative selected={null} onSelect={choose}
-      sourceBrowse={{ machineId: CUSTOM_PROVIDER_MACHINE, serverId }}
-      connectedServices={{ v: 2, bindingsByServiceId: {
-        'happier.agent.muse/muse-account': { source: 'connected', selection: 'profile', profileId: 'my-muse' },
-      } }} />);
-    await flushHookEffects();
-    if (agentId === 'claude') {
-      expect(projectionRequests).toHaveLength(0);
-      expect(screen.findByTestId(`model-picker-overlay-option:${sessionModelSelectionKey(selected)}`)).toBeNull();
-    } else {
-      await screen.pressByTestIdAsync(`model-picker-overlay-option:${sessionModelSelectionKey(selected)}`);
-      expect(choose).toHaveBeenCalledWith(selected);
-      expect(projectionRequests).toHaveLength(1);
-    }
+      providerProjectionAuthoritative selected={null} onSelect={choose} includeProviderConnectedAccounts
+      sourceBrowse={{ machineId: CUSTOM_PROVIDER_MACHINE, serverId }} />);
+    const optionId = `model-picker-overlay-option:${sessionModelSelectionKey(selected)}`;
+    await waitForHomeGovernance(() => expect(screen.findByTestId(optionId)).not.toBeNull());
+    await screen.pressByTestIdAsync(optionId);
+    expect(choose).toHaveBeenCalledWith(selected, binding);
+  });
+  it('reselects an unavailable intermediate tuple as the typed Provider-purpose model and binding', async () => {
+    const modelId = 'openai/gpt-5';
+    const legacy = { agentTargetKey: AGENT, providerConnectionId: ProviderConnectionIdSchema.parse('connected-source:previous-release'), modelId };
+    const exact = ConnectedAccountSessionModelRefV2Schema.parse({ source: 'connected_account', agentTargetKey: AGENT, modelId,
+      purpose: { consumer: { pluginId: 'happier.provider.vercel-ai-gateway', localId: 'vercel-ai-gateway' }, purpose: 'model-inference' },
+      endpointTemplateId: 'vercel-responses',
+    });
+    const binding = { purpose: exact.purpose, target: { kind: 'account', account: {
+      service: { pluginId: 'happier.machine.vercel', localId: 'vercel-account' }, accountId: 'work',
+    } } } as const;
+    describeProviderModels.mockImplementation((payload: { connectedServices?: unknown }) => createProviderModelProjectionFixture({
+      agentTargetKey: AGENT, groups: payload.connectedServices ? [createProviderModelProjectionGroupFixture({
+        connectionId: 'connected-source:vercel-work', providerName: 'Vercel AI Gateway', connectionName: 'Vercel work',
+        connectedAccountTarget: binding.target,
+        rows: [{ ...gatewayRow(modelId, 'Vercel model'), ref: exact, gatewaySlots: [binding] }],
+      })] : [],
+    }));
+    const choose = vi.fn();
+    const screen = await renderScreen(<SessionModelPicker agentTargetKey={AGENT}
+      declarationContext={{ kind: 'account' }} nativeModels={[]} providerGroups={[]}
+      providerProjectionAuthoritative selected={legacy} onSelect={choose} includeProviderConnectedAccounts
+      sourceBrowse={{ machineId: CUSTOM_PROVIDER_MACHINE, serverId }} />);
+    await waitForHomeGovernance(() => {
+      expect(screen.findByType(SelectionList).props.selectedOptionId).toBe(sessionModelSelectionKey(legacy));
+      expect(screen.findByTestId(`model-picker-overlay-option:${sessionModelSelectionKey(exact)}`)).not.toBeNull();
+    });
+    expect(choose).not.toHaveBeenCalled();
+    await screen.pressByTestIdAsync(`model-picker-overlay-option:${sessionModelSelectionKey(exact)}`);
+    expect(choose).toHaveBeenCalledWith(exact, binding);
   });
   it.each(['authorization', 'action'] as const)('shows the typed %s refusal instead of declaring the scoped Provider empty', async (source) => {
     const connectionId = 'pc_ca67d5e0-7dda-481e-a394-a5351ae770b9';

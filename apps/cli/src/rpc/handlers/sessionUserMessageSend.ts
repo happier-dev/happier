@@ -209,20 +209,25 @@ export function registerSessionUserMessageSendHandler(
     }
 
     const deliver = async (): Promise<unknown> => {
+      const explicitModel = readSessionMessageModelSelectionV1(meta);
+      const needsQueuedModelSelection = explicitModel.status === 'invalid'
+        || (explicitModel.status === 'valid'
+          && 'source' in explicitModel.selection.ref && explicitModel.selection.ref.source === 'connected_account');
       const readCallerInputFailure = (): string | null => {
         if (!inputConstraints.length) return null;
         const effective = opts.sessionRuntimeControls?.readEffectiveInputConfiguration?.();
-        const explicit = readSessionMessageModelSelectionV1(meta);
+        const activeModel = effective?.modelSelection;
         const legacyModel = typeof meta.model === 'string' ? meta.model.trim() : '';
-        const model = explicit.status === 'valid'
-          ? explicit.selection.ref
-          : explicit.status !== 'absent'
+        const model = explicitModel.status === 'valid'
+          ? explicitModel.selection.ref
+          : explicitModel.status !== 'absent'
             ? 'automatic'
             : legacyModel
-              ? effective?.modelSelection?.providerConnectionId === null
-                ? { ...effective.modelSelection, modelId: legacyModel }
+              ? activeModel && 'providerConnectionId' in activeModel && activeModel.providerConnectionId === null
+                ? { ...activeModel, modelId: legacyModel }
+                : activeModel && 'source' in activeModel && activeModel.modelId === legacyModel ? activeModel
                 : 'automatic'
-              : effective?.modelSelection ?? 'automatic';
+              : activeModel ?? 'automatic';
         const mode = normalizePermissionModeToIntent(meta.permissionMode) ?? effective?.permissionMode ?? 'default';
         if (!isModelRefGrantedByConstraintsV1(inputConstraints, model)) return 'model_not_granted';
         for (const constraints of inputConstraints) {
@@ -253,12 +258,13 @@ export function registerSessionUserMessageSendHandler(
       // owner; native text handling cannot prove it applied a different model or mode.
       const hasRestrictedConfigurationOverride = inputConstraints.some(constraints => (
         (constraints.models !== null && (
-          readSessionMessageModelSelectionV1(meta).status !== 'absent'
+          explicitModel.status !== 'absent'
           || (typeof meta.model === 'string' && meta.model.trim().length > 0)
         ))
         || (constraints.permissionModes !== null && normalizePermissionModeToIntent(meta.permissionMode) !== null)
       ));
       const runtimeResult = !selectedComposerAttachment
+        && !needsQueuedModelSelection
         && !hasRestrictedConfigurationOverride
         && typeof opts.sessionRuntimeControls?.handleUserMessage === 'function'
         ? await opts.sessionRuntimeControls.handleUserMessage({

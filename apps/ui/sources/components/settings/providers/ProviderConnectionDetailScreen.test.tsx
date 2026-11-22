@@ -950,14 +950,12 @@ describe('ProviderConnectionDetailScreen', () => {
         const declaration = readAccountProviderDeclarations({ kind: 'account' }).find(entry =>
             entry.contributionKey === 'happier.provider.cliproxyapi/cliproxyapi');
         const managedRuntime = declaration?.definition.managedRuntime;
-        const purposes = managedRuntime?.connectedAccounts;
+        const purposes = declaration?.definition.connectedAccounts;
         if (!declaration || !managedRuntime || !purposes?.length) throw new Error('Expected the admitted gateway declaration');
         const operationRestriction = { summary: 'Chat requests only', sentence: 'This family serves chat requests only.' };
         installBundledProviderDeclarationsRpcBoundary(providerHarness, { [declaration.contributionKey]: {
-            managedRuntime: { ...managedRuntime,
-                connectedAccounts: purposes.map((purpose, index) =>
-                    index === 0 ? { ...purpose, operationRestriction } : purpose),
-            },
+            connectedAccounts: purposes.map((purpose, index) =>
+                index === 0 ? { ...purpose, operationRestriction } : purpose),
         } }, { contributionKeys: [declaration.contributionKey] });
         state.connection = connection({ deployment: { kind: 'managedLocal', targetMachineId: 'machine-a', effects: null } });
         installManagedDetailCatalog();
@@ -974,7 +972,7 @@ describe('ProviderConnectionDetailScreen', () => {
         const declaration = readAccountProviderDeclarations({ kind: 'account' }).find(entry =>
             entry.contributionKey === 'happier.provider.cliproxyapi/cliproxyapi');
         const managedRuntime = declaration?.definition.managedRuntime;
-        const purpose = managedRuntime?.connectedAccounts?.[0];
+        const purpose = declaration?.definition.connectedAccounts?.[0];
         if (!declaration || !managedRuntime || !purpose) throw new Error('Expected the admitted gateway declaration');
         const unavailableReason = 'The declared runtime prerequisite is unavailable.';
         installBundledProviderDeclarationsRpcBoundary(providerHarness, { [declaration.contributionKey]: {

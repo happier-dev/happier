@@ -18,6 +18,7 @@ import type {
 import {
   ConnectedAccountRequestAuthError,
 } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthService';
+import { projectRequestAuthQueryParameters } from '@/daemon/connectedServices/requestAuth/parseHttpHeadersRequestAuthMaterial';
 import type { ProviderRedactionLease } from '@/providers/spawn/redaction';
 
 import {
@@ -82,10 +83,11 @@ function requestAuthMaterializationKey(use: QualifiedConnectedAccountRequestAuth
     materialization.kind,
     new URL(materialization.origin).origin,
     [...materialization.headerNames].map((name) => name.trim().toLowerCase()).sort(),
+    ...(materialization.queryParameterNames?.length ? [[...materialization.queryParameterNames].sort()] : []),
   ]);
 }
 
-type StaticProbeCatalog = Extract<ProviderContributionV1['catalog'], { source: 'static+probe' }>;
+type SingleProbeCatalog = Extract<ProviderContributionV1['catalog'], { source: 'static+probe' | 'probe' }>;
 type AgentCatalogScheduledResult =
   | Readonly<{
       status: 'success';
@@ -99,14 +101,14 @@ type AgentCatalogScheduledResult =
       error?: Readonly<{ retryAfterMs?: number }>;
     }>;
 
-function requireSingleStaticProbeCatalog(provider: ProviderContributionV1): StaticProbeCatalog {
-  if (provider.catalog.source !== 'static+probe' || provider.catalog.probes.length !== 1) {
-    throw new TypeError('agent_catalog_observation_requires_one_static_probe');
+function requireSingleProbeCatalog(provider: ProviderContributionV1): SingleProbeCatalog {
+  if ((provider.catalog.source !== 'static+probe' && provider.catalog.source !== 'probe') || provider.catalog.probes.length !== 1) {
+    throw new TypeError('agent_catalog_observation_requires_one_probe');
   }
   return provider.catalog;
 }
 
-function staticResult(catalog: StaticProbeCatalog): AgentProviderCatalogObservationResult {
+function staticResult(catalog: SingleProbeCatalog): AgentProviderCatalogObservationResult {
   return projectAgentCatalogObservationSnapshot(catalog);
 }
 
@@ -143,7 +145,7 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
     input: AgentProviderCatalogObservationInput,
     nativeTarget?: NativeCatalogTarget,
   ): Promise<AgentProviderCatalogObservationResult> => {
-      const catalog = requireSingleStaticProbeCatalog(input.provider);
+      const catalog = requireSingleProbeCatalog(input.provider);
       let lease: ReturnType<ConnectedAccountPurposeBindingOwner['activatePurposeBindings']> | null = null;
       const assertInputCurrent = (): void => {
         let current = false;
@@ -283,11 +285,18 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
               assertSharedWorkCurrent();
               const dispatch = async (current: RequestAuthHeadersV1) => {
                 assertSharedWorkCurrent();
+                const scopedQuery = projectRequestAuthQueryParameters(input.requestAuthUse.materialization, current.facts);
+                let path = probePath;
+                if (scopedQuery) {
+                  const url = new URL(path, endpointUrl);
+                  for (const [name, value] of Object.entries(scopedQuery)) url.searchParams.set(name, value);
+                  path = url.pathname + url.search;
+                }
                 const result = await runtimeDependencies.client.getCatalog({
                   signal,
                   // Shared work outlives an individual waiter; the scheduler cancels it when no callers remain.
                   endpointUrl,
-                  path: probePath,
+                  path,
                   parser: probe.parser,
                   ...(contributedCatalogParsers
                     ? { contributedCatalogParsers: contributedCatalogParsers.parsersByFormat }

@@ -954,17 +954,17 @@ describe('registry Connected Accounts purpose authorization projection', () => {
           manualModelPolicy: 'allowed',
           staticModels: [{ id: 'example', name: 'Example' }],
         },
+        connectedAccounts: [{
+          purpose: 'upstream',
+          service: {
+            pluginId: 'acme.accounts.gateway',
+            localId: 'subscription',
+          },
+          required: true,
+          materializationKinds: ['httpHeaders'],
+        }],
         managedRuntime: {
           kind: 'managed',
-          connectedAccounts: [{
-            purpose: 'upstream',
-            service: {
-              pluginId: 'acme.accounts.gateway',
-              localId: 'subscription',
-            },
-            required: true,
-            materializationKinds: ['httpHeaders'],
-          }],
           endpointTemplateIds: ['api'],
         },
       },
@@ -983,7 +983,7 @@ describe('registry Connected Accounts purpose authorization projection', () => {
     } satisfies ResolvedProviderContribution;
 
     expect(deriveRegistryConnectedAccountPurposeAuthorizations(projection({
-      providers: [provider],
+      providers: createResolvedContributionRegistry({ providers: [provider] }).providers,
     }))).toEqual([{
       consumer: { pluginId: 'acme.provider.gateway', localId: 'gateway' },
       authorizedPurposes: [{
@@ -1025,13 +1025,13 @@ describe('registry Connected Accounts purpose authorization projection', () => {
       providers: [{
         provenance: 'first_party',
         identity: { pluginId: 'happier.provider.openai', localId: 'openai' },
-        definition: {
-          managedRuntime: {
-            connectedAccounts: [{
-              purpose: 'provider-request',
-              service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
-            }],
-          },
+        definition: { managedRuntime: { kind: 'managed' } },
+        connectedAccountDeclarations: {
+          requestAuthUses: [],
+          connectedAccounts: [{
+            purpose: 'provider-request',
+            service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+          }],
         },
         managedRuntime: { runtime: {} },
       }],

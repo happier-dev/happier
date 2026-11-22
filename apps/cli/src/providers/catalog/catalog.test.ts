@@ -21,6 +21,7 @@ import {
 import type { ResolvedProviderConnectionRecord } from '../registry/types';
 import { parseProviderCatalogResponse } from '../probe/parsers';
 import { DaemonProviderModelProjectionRowV1Schema } from '@happier-dev/protocol/rpc/providers';
+import { readSessionModelRefProviderConnectionId } from '@happier-dev/protocol/providers/selection/v2';
 import type { ProviderCatalogCompatibilityPresentation } from './types';
 import {
   assembleProviderConnectionCatalog,
@@ -559,7 +560,8 @@ describe('provider catalog host assembly', () => {
       catalogs: [firstCatalog, secondCatalog],
       modelVisibilityByRef: {},
     });
-    expect(projected.groups.flatMap((group) => group.rows).filter((row) => row.ref.modelId === 'same').map((row) => row.ref.providerConnectionId)).toEqual([
+    expect(projected.groups.flatMap((group) => group.rows).filter((row) => row.ref.modelId === 'same')
+      .map((row) => readSessionModelRefProviderConnectionId(row.ref))).toEqual([
       'pc_b',
       'pc_a',
     ]);

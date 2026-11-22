@@ -13,14 +13,13 @@ import { assertQualifiedPurposeAuthorityForSelections } from './qualifiedPurpose
 import { resolveAgentSpawnPurposeDeclarations } from './agentPurposeDeclarations';
 
 describe('admitted Agent connected-account purpose declarations', () => {
-  it('retains managed purpose intent while suppressing only its raw credential uses', () => {
+  it('qualifies the declared native credential uses', () => {
     const identity = { pluginId: 'acme.agent', localId: 'agent' };
     const service = { pluginId: 'acme.accounts', localId: 'subscription' };
-    const purposes = ['managed', 'native'] as const;
+    const purposes = ['key', 'subscription'] as const;
     const contributions = { agentDefinitionsById: new Map([['agent', { identity,
       richDefinition: { definition: { connectedAccounts: purposes.map(purpose => ({ purpose, service,
         materializationKinds: ['environment', 'files', 'httpHeaders'], credentialKinds: ['token'],
-        ...(purpose === 'managed' ? { managedProviderEndpoint: { provider: { pluginId: 'acme.provider', localId: 'gateway' }, purpose: 'upstream' } } : {}),
       })) } },
       catalogEntry: {
         connectedAccountRequestAuthUses: purposes.map(purpose => ({ purpose, materialization: { kind: 'httpHeaders', origin: 'https://example.test', headerNames: ['authorization'] } })),
@@ -35,7 +34,7 @@ describe('admitted Agent connected-account purpose declarations', () => {
     expect(result?.snapshot.authorizedPurposes.map(scope => scope.purpose.purpose)).toEqual(purposes);
     for (const uses of [result?.snapshot.requestAuthUses, result?.snapshot.fileEnvironmentUses,
       result?.snapshot.environmentUses, result?.snapshot.fileMaterializationPurposes]) {
-      expect(uses?.map(use => use.purpose.purpose)).toEqual(['native']);
+      expect(uses?.map(use => use.purpose.purpose)).toEqual(purposes);
     }
     expect(result?.snapshot.environmentUnsetUses?.map(use => use.purpose.purpose)).toEqual(purposes);
   });

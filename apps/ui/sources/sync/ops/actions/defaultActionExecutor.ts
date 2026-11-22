@@ -178,7 +178,7 @@ import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/acti
 import { resolveExecutorActionsSettingsV1, resolveActionsSettingsV1FromState } from '@/sync/domains/settings/actionsSettings';
 import { PluginWebhookActionHttpPathsV1, type PluginWebhookPresentUserActionIdV1 } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
 import { projectPluginFailureText } from '@happier-dev/protocol/plugins/failureProjection';
-import { SessionModelTransitionRequestV1Schema, SessionModelTransitionResultV1Schema, type SessionModelTransitionRequestV1, type SessionModelTransitionResultV1 } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
+import { SessionModelTransitionRequestV1Schema, SessionModelTransitionResultV1Schema, projectSessionModelTransitionRequestedSelectionV1, type SessionModelTransitionRequestV1, type SessionModelTransitionResultV1 } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema, ActionExecuteResultSchema, isActionOutcomeUnknownErrorCodeV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PendingResetStartWaitingReasonV1Schema } from '@happier-dev/protocol/sessions/pending/pendingResetStartReadinessV1';
@@ -4489,14 +4489,14 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       raw => setModelFavoriteV1(raw, input), { signal: context.signal, observeOutcome: true }),
     } : {}),
     sessionModelSet: async (args) => {
-      const { sessionId, modelId, providerConnectionId, serverId } = args;
+      const { sessionId, modelId, providerConnectionId, modelSelection, serverId } = args;
       if (args.captureBefore || args.expected) accountContext?.assertCurrent();
-      if (args.teamCredentialModel !== undefined && (args.captureBefore || args.expected)) {
+      if ((modelSelection || args.teamCredentialModel) && (args.captureBefore || args.expected)) {
         return { ok: false, errorCode: 'unsupported', error: 'unsupported' };
       }
       const normalizedSessionId = String(sessionId ?? '').trim();
       const normalizedModelId = readNonBlankOpaqueIdentifier(modelId) ?? '';
-      if (!normalizedSessionId || (!normalizedModelId && args.teamCredentialModel === undefined)) {
+      if (!normalizedSessionId || (!normalizedModelId && !modelSelection && args.teamCredentialModel === undefined)) {
         return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
       }
 
@@ -4505,7 +4505,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         return { ok: false, errorCode: 'session_not_found', error: 'session_not_found' };
       }
       const teamCredentialModel = args.teamCredentialModel ?? (
-        Object.prototype.hasOwnProperty.call(args, 'providerConnectionId') ? null
+        modelSelection || Object.prototype.hasOwnProperty.call(args, 'providerConnectionId') ? null
           : resolveAmbientTeamCredentialModelForModelIntent(readSessionOwnerMetadataView(session), normalizedModelId)
       );
       if (teamCredentialModel) {
@@ -4575,8 +4575,10 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           ownerMetadata,
           agentTargetKey,
         );
-        let resolvedProviderConnectionId: string | null;
-        if (hasExplicitProviderConnectionId) {
+        let resolvedProviderConnectionId: string | null = null;
+        if (modelSelection) {
+          if (modelSelection.agentTargetKey !== agentTargetKey) return null;
+        } else if (hasExplicitProviderConnectionId) {
           resolvedProviderConnectionId = providerConnectionId ?? null;
         } else {
           const ambient = resolveAmbientProviderConnectionForModelIntent({
@@ -4594,7 +4596,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           ...(args.applyTiming ? { applyTiming: args.applyTiming } : {}),
           ...(args.captureBefore !== undefined ? { captureBefore: args.captureBefore } : {}),
           ...(args.expected ? { expected: args.expected } : {}),
-          selection: {
+          selection: modelSelection ?? {
             agentTargetKey,
             providerConnectionId: resolvedProviderConnectionId,
             modelId: normalizedModelId,
@@ -4623,6 +4625,10 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           error: 'model_selection_agent_target_unknown',
         };
       }
+      if (args.callerInputConstraints && !isModelRefGrantedV1(args.callerInputConstraints, initialRequest.request.selection)) {
+        return { ok: false, errorCode: 'model_not_granted', error: 'model_not_granted' };
+      }
+      const requestedSelection = projectSessionModelTransitionRequestedSelectionV1(initialRequest.request.selection);
 
       const invokeActiveOwner = async (
         request: Extract<SessionModelTransitionRequestV1, { selection: unknown }>,
@@ -4647,7 +4653,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
             ok: false,
             status: 'owner_unavailable',
             activeSelection: null,
-            requestedSelection: request.selection,
+            requestedSelection: projectSessionModelTransitionRequestedSelectionV1(request.selection),
             reason: projectPluginFailureText(error),
           });
         }
@@ -4669,8 +4675,10 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           if (args.expected?.owner === 'active') {
             return { ok: false, errorCode: 'superseded', error: 'superseded' };
           }
-          const candidate = createModelIntentMetadataCasCandidate({
-            selection: initialRequest.request.selection,
+          const qualifiedSelection = modelSelection ? { v: 2 as const, ref: modelSelection, updatedAt: 0 } : null;
+          const candidate = qualifiedSelection ? createModelIntentV2MetadataCasCandidate({ selection: qualifiedSelection })
+            : createModelIntentMetadataCasCandidate({
+            selection: requestedSelection,
             captureBefore: args.captureBefore,
             ...(accountContext ? { ownerScope: { serverId: accountContext.serverId, accountId: accountContext.accountId, sessionId: normalizedSessionId } } : {}),
             ...(args.expected ? { expected: args.expected } : {}),
@@ -4689,14 +4697,15 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
             },
           );
           const candidateState = candidate.readState();
+          const refusal = 'refusal' in candidateState && candidateState.refusal === 'unsupported' ? 'unsupported' : 'superseded';
           if (
             !candidateState.accepted
             || candidateState.updatedAt === null
           ) {
             return {
               ok: false,
-              errorCode: candidateState.refusal === 'unsupported' ? 'unsupported' : 'superseded',
-              error: candidateState.refusal === 'unsupported' ? 'unsupported' : 'superseded',
+              errorCode: refusal,
+              error: refusal,
               details: {
                 status: 'superseded',
                 activeSelection:
@@ -4705,7 +4714,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
                     providerConnectionId: null,
                     modelId: 'default',
                   },
-                requestedSelection: initialRequest.request.selection,
+                requestedSelection,
                 reason: 'accepted_intent_was_superseded',
               },
             };
@@ -4715,9 +4724,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
             status: 'intent_updated',
             sessionId: normalizedSessionId,
             modelId: initialRequest.request.selection.modelId,
-            selection: initialRequest.request.selection,
+            selection: qualifiedSelection ? { ...qualifiedSelection, updatedAt: candidateState.updatedAt } : requestedSelection,
             updatedAt: candidateState.updatedAt,
-            ...(candidateState.reversal ? { reversal: candidateState.reversal } : {}),
+            ...('reversal' in candidateState && candidateState.reversal ? { reversal: candidateState.reversal } : {}),
           };
         },
         resolveAndInvokeActiveOwnerAfterConflict: async () => {
@@ -4731,7 +4740,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
               details: {
                 status: 'owner_unavailable',
                 activeSelection: null,
-                requestedSelection: initialRequest.request.selection,
+                requestedSelection,
                 reason: 'session_model_transition_owner_unproven',
               },
             };
@@ -4752,7 +4761,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
               details: {
                 status: 'owner_unavailable',
                 activeSelection: null,
-                requestedSelection: initialRequest.request.selection,
+                requestedSelection,
                 reason:
                   'session_model_transition_owner_metadata_unavailable',
               },

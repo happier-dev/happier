@@ -68,6 +68,32 @@ function providerGroup(input: Readonly<{
 }
 
 describe('buildSessionModelPickerSections', () => {
+    it('retains the exact sign-in choice beside the same model from a key or another endpoint', () => {
+        const group = providerGroup({ connectionId: 'gateway-key', modelId: 'openai/gpt-4' });
+        const row = group.rows[0]!;
+        const ref = {
+            source: 'connected_account' as const,
+            purpose: { consumer: { pluginId: 'example.gateway', localId: 'gateway' }, purpose: 'inference' },
+            endpointTemplateId: 'responses',
+            agentTargetKey: row.ref.agentTargetKey,
+            modelId: row.ref.modelId,
+        };
+        const other = { ...ref, endpointTemplateId: 'chat' };
+        const providerGroups = [group,
+            { ...group, connectionId: ProviderConnectionIdSchema.parse('gateway-signed-in'),
+                connectionName: 'Vercel · Studio', rows: [
+                    { ...row, ref: other, descriptor: { ...row.descriptor, name: 'Chat' } },
+                    { ...row, ref, descriptor: { ...row.descriptor, name: 'Responses' } },
+                ] }];
+        const sections = buildSessionModelPickerSections({ declarationContext: { kind: 'account' },
+            agentTargetKey: ref.agentTargetKey, nativeModels: [], providerGroups,
+            hiddenNativeModelKeys: new Set(), providerProjectionAuthoritative: true, selected: ref });
+        const options = sections.flatMap(section => section.options);
+        expect(options).toHaveLength(3);
+        expect(new Set(options.map(option => sessionModelSelectionKey(option.value))).size).toBe(3);
+        expect(resolveSessionModelSourceDescriptor({ selected: ref, providerGroups })?.name).toBe('Responses');
+    });
+
     it('offers credential recovery instead of counting a gateway that rejected its API key', () => {
         const agentTargetKey = 'agent:happier.agent.codex/codex';
         const upstreamRef = { vendor: 'openai', vendorModelId: 'gpt-4' };
@@ -642,7 +668,7 @@ describe('buildSessionModelPickerSections', () => {
             id: 'resource-1', teamId: 'team-1', displayName: { content: { t: 'plain', v: 'Gateway' }, recipientEnvelope: null, legacyPlaintext: true }, resourceRevision: 7,
             readiness: { kind: 'source_unavailable' }, deliveryUnavailableReason: 'provider_credential_transport_unavailable',
             recoveryAction: 'choose_another_resource', mayBroker: false, mayReceiveDirect: false,
-            directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed', providerModels: [],
+            allowedRoutes: ['vendor-native'], directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed', providerModels: [],
             sourcePresentation: { kind: 'provider', provider: { identity: { pluginId: 'provider.gateway', localId: 'gateway' }, definitionRevision: 1 } },
         });
         const sections = buildSessionModelPickerSections({ declarationContext: { kind: 'account' },

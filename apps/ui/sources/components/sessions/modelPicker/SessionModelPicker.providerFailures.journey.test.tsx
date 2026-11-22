@@ -38,6 +38,7 @@ it.each([
         DaemonProviderModelProjectionResponseV1Schema.parse({ status: 'error', error: createProviderErrorV1(code) }));
     const screen = await renderScreen(<SessionModelPicker
         declarationContext={{ kind: 'account' }} agentTargetKey="agent:happier.agent.codex/codex"
+        includeProviderConnectedAccounts
         nativeModels={[]} providerGroups={[]} providerProjectionAuthoritative
         selected={null} onSelect={() => {}} sourceBrowse={{ machineId, serverId }}
         connectedServices={{ v: 2, bindingsByServiceId: {

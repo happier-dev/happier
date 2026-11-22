@@ -463,14 +463,13 @@ it.each(['account', 'group'] as const)('projects real %s reauthentication throug
   const store = kind === 'account' ? selectedStore() : selectedGroupStore();
   const runtime = createSelectionRuntime(store, 'advertised', api);
   const target = store.current().bindings[0]!.target;
-  const base = createBrokerProviderRegistry();
+  const providers = [...createBrokerProviderRegistry().providersByContributionKey.values()].map(provider => ({
+      ...provider, definition: ProviderContributionV1Schema.parse({ ...provider.definition, connectedAccounts: [{ purpose: 'openai-upstream', service: openAiService,
+          endpointTemplateIds: ['cliproxyapi-openai-responses'], staticModels: [{ id: 'gpt-5.5', name: 'GPT-5.5' }] }] }),
+  }));
   const registry = { ...worker.lease.registry, contributes: { ...worker.lease.registry.contributes,
-    providersByContributionKey: new Map([...base.providersByContributionKey].map(([key, provider]) => [key, {
-      ...provider, definition: ProviderContributionV1Schema.parse({ ...provider.definition, managedRuntime: {
-        ...provider.definition.managedRuntime, connectedAccounts: [{ purpose: 'openai-upstream', service: openAiService,
-          endpointTemplateIds: ['cliproxyapi-openai-responses'], staticModels: [{ id: 'gpt-5.5', name: 'GPT-5.5' }] }],
-      } }),
-    }])) } };
+    providersByContributionKey: createResolvedContributionRegistry({ providers }).providersByContributionKey,
+  } };
   const application = { agentTargetKey: worker.agentTargetKey,
     implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
     endpointTemplateId: 'cliproxyapi-openai-responses', protocol: 'openai-responses' as const };

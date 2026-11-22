@@ -348,7 +348,7 @@ export function isApiTokenGrantWithinV1(child: ApiTokenGrantV1, parent: ApiToken
 
 export function isModelRefGrantedV1(constraints: CallerInputConstraintsV1, ref: ProviderBoundModelRef | SessionModelRefV2 | 'automatic'): boolean {
   if (constraints.models === null) return true;
-  if (ref === 'automatic' || 'source' in ref && ref.source === 'team_resource') return false;
+  if (ref === 'automatic' || 'source' in ref && (ref.source === 'team_resource' || ref.source === 'connected_account')) return false;
   const accountOrNative: ProviderBoundModelRef = 'source' in ref
     ? { agentTargetKey: ref.agentTargetKey, modelId: ref.modelId,
       providerConnectionId: ref.source === 'account_provider_connection' ? ref.providerConnectionId : null }

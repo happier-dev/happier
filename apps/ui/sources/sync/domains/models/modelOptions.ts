@@ -458,7 +458,6 @@ export function resolveCanonicalModelOptionId<T extends Readonly<{
 }
 
 type NativeModelSelectionRefLike = Readonly<{
-    providerConnectionId: string | null;
     modelId: string;
 }>;
 
@@ -478,7 +477,7 @@ export function resolveCanonicalNativeModelSelectionRef<Ref extends NativeModelS
     options: readonly Readonly<{ value: string; extendedContextModelId?: string }>[],
     ref: Ref | null,
 ): Ref | null {
-    if (!ref || ref.providerConnectionId !== null) return ref;
+    if (!ref || !('providerConnectionId' in ref) || ref.providerConnectionId !== null) return ref;
     const modelId = resolveCanonicalModelOptionId(options, ref.modelId);
     return modelId === ref.modelId ? ref : { ...ref, modelId };
 }

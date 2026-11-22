@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { buildBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { isSessionModelRefSourceBound } from '@happier-dev/protocol/providers/selection/v2';
 
 import { useNewSessionPreflightModelsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState';
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
@@ -21,7 +22,8 @@ export function useRunAnsweringEngine(params: Omit<Parameters<typeof resolveRunA
     const target = React.useMemo(() => {
         try { return params.backendTarget ? readBackendTargetRefV2(params.backendTarget) : null; } catch { return null; }
     }, [params.backendTarget]);
-    const native = !params.selection?.modelSelection?.providerConnectionId && !params.selection?.teamCredentialModel;
+    const modelSelection = params.selection?.modelSelection;
+    const native = !(modelSelection && isSessionModelRefSourceBound(modelSelection)) && !params.selection?.teamCredentialModel;
     const knownLabel = params.modelId
         ? resolveRunNativeModelLabel(target, params.catalogProfiles, params.selection, sessionModels)(params.modelId) : null;
     const targetKey = React.useMemo(() => target ? buildBackendTargetKeyV2(target) : null, [target]);

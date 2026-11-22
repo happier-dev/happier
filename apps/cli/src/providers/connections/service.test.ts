@@ -200,30 +200,30 @@ function managedContribution(): ResolvedProviderContribution {
           },
         },
       ],
+      connectedAccounts: [{
+        purpose: 'upstream',
+        service: {
+          pluginId: 'happier.connected-account.openai',
+          localId: 'openai',
+        },
+        title: {
+          key: 'plugins.acme.gateway.connectedAccounts.upstream',
+          fallback: 'Use upstream OpenAI account',
+        },
+        required: true,
+        materializationKinds: ['httpHeaders'],
+      }],
+      requestAuthUses: [{
+        purpose: 'upstream',
+        materialization: {
+          kind: 'httpHeaders',
+          origin: 'https://api.openai.com',
+          headerNames: ['authorization'],
+        },
+      }],
       managedRuntime: {
         kind: 'managed',
         connectedAccountPurposeBindingPolicy: { minimumBound: 1 },
-        connectedAccounts: [{
-          purpose: 'upstream',
-          service: {
-            pluginId: 'happier.connected-account.openai',
-            localId: 'openai',
-          },
-          title: {
-            key: 'plugins.acme.gateway.connectedAccounts.upstream',
-            fallback: 'Use upstream OpenAI account',
-          },
-          required: true,
-          materializationKinds: ['httpHeaders'],
-        }],
-        requestAuthUses: [{
-          purpose: 'upstream',
-          materialization: {
-            kind: 'httpHeaders',
-            origin: 'https://api.openai.com',
-            headerNames: ['authorization'],
-          },
-        }],
         endpointTemplateIds: ['responses', 'chat'],
       },
     }),
@@ -246,36 +246,36 @@ function managedContributionWithTwoPurposes(): ResolvedProviderContribution {
     ...value,
     definition: ProviderContributionV1Schema.parse({
       ...value.definition,
+      connectedAccounts: [
+        {
+          purpose: 'upstream',
+          service: {
+            pluginId: 'happier.connected-account.openai',
+            localId: 'openai',
+          },
+          required: true,
+          materializationKinds: ['httpHeaders'],
+        },
+        {
+          purpose: 'secondary',
+          service: {
+            pluginId: 'happier.connected-account.openai',
+            localId: 'openai',
+          },
+          required: true,
+          materializationKinds: ['httpHeaders'],
+        },
+      ],
+      requestAuthUses: [{
+        purpose: 'upstream',
+        materialization: {
+          kind: 'httpHeaders',
+          origin: 'https://api.openai.com',
+          headerNames: ['authorization'],
+        },
+      }],
       managedRuntime: {
         kind: 'managed',
-        connectedAccounts: [
-          {
-            purpose: 'upstream',
-            service: {
-              pluginId: 'happier.connected-account.openai',
-              localId: 'openai',
-            },
-            required: true,
-            materializationKinds: ['httpHeaders'],
-          },
-          {
-            purpose: 'secondary',
-            service: {
-              pluginId: 'happier.connected-account.openai',
-              localId: 'openai',
-            },
-            required: true,
-            materializationKinds: ['httpHeaders'],
-          },
-        ],
-        requestAuthUses: [{
-          purpose: 'upstream',
-          materialization: {
-            kind: 'httpHeaders',
-            origin: 'https://api.openai.com',
-            headerNames: ['authorization'],
-          },
-        }],
         endpointTemplateIds: ['responses', 'chat'],
       },
     }),
@@ -665,9 +665,8 @@ describe('provider connection service', () => {
       const original = managedContributionForSource(source);
       managed.providersByContributionKey.set(
         contributionKey,
-        { ...original, definition: ProviderContributionV1Schema.parse({ ...original.definition, managedRuntime: {
+        { ...original, definition: ProviderContributionV1Schema.parse({ ...original.definition, connectedAccounts: original.definition.connectedAccounts?.map(declaration => ({ ...declaration, operationRestriction })), managedRuntime: {
           ...original.definition.managedRuntime,
-          connectedAccounts: original.definition.managedRuntime?.connectedAccounts?.map(declaration => ({ ...declaration, operationRestriction })),
         } }) },
       );
       managed.setRaw({
@@ -1313,9 +1312,9 @@ describe('provider connection service', () => {
     const otherService = { pluginId: 'happier.connected-account.anthropic', localId: 'anthropic' };
     managed.providersByContributionKey.set(contributionKey, { ...source, definition: ProviderContributionV1Schema.parse({
       ...source.definition,
-      managedRuntime: { ...runtime, connectedAccounts: runtime.connectedAccounts?.map((declaration) => ({
+      connectedAccounts: source.definition.connectedAccounts?.map((declaration) => ({
         ...declaration, required: false, ...(declaration.purpose === 'secondary' ? { service: otherService } : {}),
-      })) },
+      })),
     }) });
     const original = { kind: 'group' as const, service: { pluginId: 'happier.connected-account.openai', localId: 'openai' }, groupId: 'pool-a' };
     const replacement = { ...original, groupId: 'pool-b' };
@@ -1436,31 +1435,31 @@ describe('provider connection service', () => {
       ...managedWithRequiredPurpose,
       definition: ProviderContributionV1Schema.parse({
         ...managedWithRequiredPurpose.definition,
+        connectedAccounts: [
+          ...(managedWithRequiredPurpose.definition.connectedAccounts ?? []),
+          {
+            purpose: 'optional',
+            service: {
+              pluginId: 'happier.connected-account.openai',
+              localId: 'openai',
+            },
+            required: false,
+            materializationKinds: ['httpHeaders'],
+          },
+        ],
+        requestAuthUses: [
+          ...(managedWithRequiredPurpose.definition.requestAuthUses ?? []),
+          {
+            purpose: 'optional',
+            materialization: {
+              kind: 'httpHeaders',
+              origin: 'https://api.openai.com',
+              headerNames: ['authorization'],
+            },
+          },
+        ],
         managedRuntime: {
           ...managedRuntime,
-          connectedAccounts: [
-            ...(managedRuntime.connectedAccounts ?? []),
-            {
-              purpose: 'optional',
-              service: {
-                pluginId: 'happier.connected-account.openai',
-                localId: 'openai',
-              },
-              required: false,
-              materializationKinds: ['httpHeaders'],
-            },
-          ],
-          requestAuthUses: [
-            ...(managedRuntime.requestAuthUses ?? []),
-            {
-              purpose: 'optional',
-              materialization: {
-                kind: 'httpHeaders',
-                origin: 'https://api.openai.com',
-                headerNames: ['authorization'],
-              },
-            },
-          ],
         },
       }),
     });

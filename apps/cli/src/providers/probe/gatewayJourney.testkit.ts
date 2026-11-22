@@ -43,6 +43,113 @@ import type { DisposableCodexAppServerClient } from '../../../../../packages/plu
 type Fixture = Awaited<ReturnType<typeof createManagedRunLaunchFixture>>;
 type Body = Parameters<NonNullable<RuntimeTranscriptProjectionSession['enqueueAgentMessageCommitted']>>[1];
 
+/** Controlled vendor catalog and inference endpoints for Account-authenticated Gateway turns. */
+export async function startGatewayMessagesUpstream(input: Readonly<{ modelId: string; answer: string }>) {
+  const requests: Array<{
+    method: string | undefined;
+    pathAndQuery: string;
+    rawHeaders: string[];
+    body: unknown;
+  }> = [];
+  let resolveCancelledStream!: () => void;
+  const cancelledStream = new Promise<void>(resolve => { resolveCancelledStream = resolve; });
+  const server = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    const method = request.method;
+    const pathAndQuery = request.url ?? '/';
+    const path = new URL(pathAndQuery, 'http://localhost').pathname;
+    const rawBody = Buffer.concat(chunks).toString();
+    let body: unknown;
+    try { body = rawBody ? JSON.parse(rawBody) : null; }
+    catch { response.writeHead(400).end(); return; }
+    requests.push({ method, pathAndQuery, rawHeaders: request.rawHeaders, body });
+    if (method === 'GET' && path.endsWith('/v1/models')) {
+      const models = path === '/codex/v1/models'
+        ? { models: [{ slug: input.modelId, display_name: 'Gateway Codex', supported_reasoning_levels: [] }] }
+        : { object: 'list', data: [{ id: input.modelId, type: 'language', name: 'Gateway Claude', tags: ['tool-use'] }] };
+      response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(models));
+      return;
+    }
+    if (method === 'POST' && (path === '/codex/v1/responses' || path === '/coding-agent/v1/chat/completions')) {
+      const responses = path === '/codex/v1/responses';
+      if (!body || typeof body !== 'object' || !('model' in body) || body.model !== input.modelId
+        || !('stream' in body) || body.stream !== true || !(responses ? 'input' in body : 'messages' in body)) {
+        response.writeHead(400).end();
+        return;
+      }
+      const event = responses ? { type: 'response.output_text.delta', delta: input.answer }
+        : { object: 'chat.completion.chunk', choices: [{ index: 0, delta: { content: input.answer } }] };
+      response.writeHead(200, { 'content-type': 'text/event-stream' }).end(`data: ${JSON.stringify(event)}\n\n`);
+      return;
+    }
+    if (
+      method !== 'POST' || path !== '/claude-code/v1/messages'
+      || !body || typeof body !== 'object' || !('model' in body) || body.model !== input.modelId
+      || !('stream' in body) || body.stream !== true || !('max_tokens' in body) || body.max_tokens !== 32
+      || !('messages' in body) || !Array.isArray(body.messages) || body.messages.length !== 1
+      || body.messages[0]?.role !== 'user' || typeof body.messages[0]?.content !== 'string'
+    ) {
+      response.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({
+        type: 'error', error: { type: 'invalid_request_error', message: 'Expected streaming Claude Messages input' },
+      }));
+      return;
+    }
+    const echoedCredential = request.headers.authorization;
+    const text = body.messages[0].content;
+    if (text === 'vendor invalid auth' || text === 'vendor billing refusal') {
+      const status = text === 'vendor invalid auth' ? 401 : 403;
+      response.writeHead(status, { 'content-type': 'application/json',
+        ...(typeof echoedCredential === 'string' ? { 'x-upstream-echo': echoedCredential } : {}),
+      }).end(JSON.stringify({ type: 'error', error: {
+        type: status === 401 ? 'authentication_error' : 'billing_error',
+        message: `${text}: ${echoedCredential}`,
+      } }));
+      return;
+    }
+    const emit = (event: Record<string, unknown>) => response.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+    response.writeHead(200, {
+      'content-type': 'text/event-stream',
+      ...(typeof echoedCredential === 'string' ? { 'x-upstream-echo': echoedCredential } : {}),
+    });
+    emit({ type: 'message_start', message: { id: 'msg_gateway_fixture', type: 'message', role: 'assistant',
+      content: [], model: input.modelId, stop_reason: null, stop_sequence: null, usage: { input_tokens: 10, output_tokens: 1 } } });
+    emit({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
+    emit({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: input.answer } });
+    if (text === 'cancel while streaming') {
+      response.once('close', resolveCancelledStream);
+      return;
+    }
+    const echoedCompanion = request.headers['x-vercel-ai-gateway-team'];
+    if (typeof echoedCredential === 'string' && typeof echoedCompanion === 'string') {
+      const type = 'content_block_delta';
+      const split = Math.floor(echoedCredential.length / 2);
+      const event = JSON.stringify({ type, index: 0, delta: { type: 'text_delta', text: `${echoedCredential} ${echoedCompanion}` } });
+      const cut = event.indexOf(echoedCredential) + split;
+      response.write(`event: ${type}\ndata: ${event.slice(0, cut)}`);
+      await new Promise<void>(resolve => setImmediate(resolve));
+      response.write(`${event.slice(cut)}\n\n`);
+    }
+    emit({ type: 'content_block_stop', index: 0 });
+    emit({ type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 2 } });
+    emit({ type: 'message_stop' });
+    response.end();
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Missing controlled Gateway upstream');
+  return {
+    origin: `http://127.0.0.1:${address.port}`,
+    requests,
+    cancelledStream,
+    async close() {
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    },
+  };
+}
+
 /** Controlled upstream, behind the existing installed OS gateway fixture.
  * HTTP and durable credential materialization are system boundaries. Purpose
  * leases, subject authentication and request-auth lookup all run for real. */

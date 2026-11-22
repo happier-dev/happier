@@ -7,6 +7,7 @@ import {
 } from '@happier-dev/plugins-cliproxyapi';
 
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
 import { createManagedRunLaunchFixture } from '@/providers/lifecycle/managedRunLaunch.testkit';
 import { createRuntimeProviderModelManagementServices } from './runtimeServices';
@@ -17,7 +18,7 @@ describe('Connected Account runnable model membership', () => {
     const fixture = await createManagedRunLaunchFixture();
     try {
       const definition = CLIPROXYAPI_PROVIDER_CONTRIBUTION;
-      const family = definition.managedRuntime.connectedAccounts.find(row => row.service.pluginId === 'happier.agent.muse');
+      const family = definition.connectedAccounts.find(row => row.service.pluginId === 'happier.agent.muse');
       if (!family || family.staticModels.length === 0) throw new Error('Public Muse catalog missing');
       expect(plugin.registration('providers', definition.id)?.managedRuntime).toBeDefined();
       const provider = {
@@ -25,7 +26,7 @@ describe('Connected Account runnable model membership', () => {
         pluginId: PLUGIN_MANIFEST.id, provenance: 'external', source: { kind: 'path' }, definition,
       } as const satisfies ResolvedProviderContribution;
       const registry = { ...fixture.lease.registry, contributes: { ...fixture.lease.registry.contributes,
-        providersByContributionKey: new Map([[`${PLUGIN_MANIFEST.id}/${definition.id}`, provider]]),
+        providersByContributionKey: createResolvedContributionRegistry({ providers: [provider] }).providersByContributionKey,
       } };
       const unavailable = async (): Promise<never> => { throw new Error('Unexpected account mutation or credential delivery'); };
       const purposes = createConnectedAccountPurposeBindingOwner({

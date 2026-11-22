@@ -43,13 +43,20 @@ it.each([
   { signIn: { status: 'signedOut', loginSupport: 'unsupported', required: true }, state: 'needsSignIn' },
   { signIn: { status: 'signedOut', loginSupport: 'login_terminal' }, state: 'needsSignIn' },
   { signIn: { status: 'signedIn', loginSupport: 'login_terminal' }, state: 'ready' },
+  { signIn: { status: 'signedOut', loginSupport: 'login_terminal' }, state: 'ready', connected: true },
 ])('uses canonical Agent readiness in Session status: $state / $signIn.loginSupport', async ({ signIn, state, ...selection }) => {
   const sessionId = 'c123456789012345678901234';
   const configured = 'configured' in selection && selection.configured;
   const agentId = configured ? 'custom-acp' : 'codex';
   const definitionId = configured ? 'qa-foldseed-acp' : undefined;
-  const row = createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain',
-    metadata: JSON.stringify({ machineId: 'machine-1', flavor: agentId, path: '/workspace', ...(configured ? {
+  const connected = 'connected' in selection && selection.connected;
+  const purpose = { consumer: { pluginId: 'provider.test', localId: 'gateway' }, purpose: 'inference' };
+  const row = createSessionRecordFixture({ id: sessionId, active: false, encryptionMode: 'plain',
+    metadata: JSON.stringify({ machineId: 'machine-1', flavor: agentId, path: '/workspace',
+      ...(connected ? { modelSelectionIntentV2: { v: 2, updatedAt: 10,
+        ref: { source: 'connected_account', purpose, endpointTemplateId: 'route',
+          agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'provider/model' } } } : {}),
+      ...(configured ? {
       runtimeDescriptorV1: { v: 1, agentId, agent: { definitionId } },
       acpConfiguredBackendV1: { v: 1, updatedAt: 1, backendId: definitionId, title: 'Foldseed' } } : {}) }),
     effectiveAccess: { v: 1, level: 'owner', sources: [],
@@ -71,6 +78,10 @@ it.each([
     idOrPrefix: sessionId, live: false, readiness: true,
     readReadinessInventory: async () => inventory });
   expect(result).toMatchObject({ ok: true, readiness: { agent: { agentId, current: true, state } } });
+  if (connected) expect(result).toMatchObject({ ok: true, readiness: {
+    status: 'unknown', cause: 'credential', reason: 'personal_credential_readiness_unknown',
+    credential: { kind: 'personal', purpose, usable: null, repair: null },
+  } });
   if (result.ok) expect(SessionStatusResultSchema.parse(result)).toEqual(result);
 });
 

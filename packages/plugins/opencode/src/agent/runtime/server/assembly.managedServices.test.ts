@@ -881,7 +881,7 @@ describe('OpenCode server managed-service assembly', () => {
     if (!address || typeof address === 'string') throw new Error('Gateway fixture has no TCP address');
     const gatewayBaseUrl = `http://127.0.0.1:${address.port}/v1`;
     const contribution = CLIPROXYAPI_PROVIDER_CONTRIBUTION;
-    const family = contribution.managedRuntime.connectedAccounts.find(row => row.service.pluginId === 'happier.agent.muse');
+    const family = contribution.connectedAccounts.find(row => row.service.pluginId === 'happier.agent.muse');
     const endpoint = contribution.endpointTemplates.find(row => row.protocol === protocol && family?.endpointTemplateIds.includes(row.id));
     const model = family?.staticModels[0];
     const transport = contribution.credential.transports[0]!;

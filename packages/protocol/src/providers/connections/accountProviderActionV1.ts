@@ -3,7 +3,7 @@ import type { ActionExecutorContext } from '../../actions/executor/types.js';
 import type { AgentProviderRequirementsV1 } from '../compatibility/v1.js';
 import { projectAccountProviderConnectionModelsV1, projectAccountProviderModelsV1, type AccountProviderDeclarationV1 } from '../catalog/accountModelProjectionV1.js';
 export type { AccountProviderDeclarationV1 } from '../catalog/accountModelProjectionV1.js';
-import { resolveProviderManagedRuntimeDeclarationV1, resolveManagedPurposeBindingIntentsV1 } from '../contributions/v1.js';
+import { resolveProviderManagedRuntimeFromContributionV1, resolveManagedPurposeBindingIntentsV1 } from '../contributions/v1.js';
 import { areProviderContributionKeysEqualV1, canonicalizeProviderContributionKeyV1, parseProviderContributionIdentityV1 } from '../contributionIdentityV1.js';
 import { createProviderErrorV1, ProviderErrorV1Schema, type ProviderErrorCodeV1 } from '../errors.js';
 import { canonicalizeFingerprintValue, createProviderFingerprintV1, isProviderDestinationGrantFingerprintV2 } from '../fingerprints.js';
@@ -69,7 +69,10 @@ function securityFingerprint(connection: ProviderConnectionV1, source: NonNullab
     ...(facts.inlineCompletion ? { inlineCompletion: facts.inlineCompletion } : {}),
     ...(facts.usageSources ? { usageSources: facts.usageSources } : {}),
     ...(connection.deployment.kind === 'managedLocal' && contribution?.managedRuntime && identity ? {
-      managedDeployment: { implementationIdentity: identity, managedRuntime: contribution.managedRuntime,
+      managedDeployment: { implementationIdentity: identity,
+        managedRuntime: resolveProviderManagedRuntimeFromContributionV1({
+          implementationIdentity: identity, definition: { ...contribution, managedRuntime: contribution.managedRuntime },
+        }),
         gatewayPlacement: connection.gatewayPlacement,
         logicalEndpoints: contribution.endpointTemplates.filter(endpoint => contribution.managedRuntime?.endpointTemplateIds.includes(endpoint.id))
           .map(endpoint => ({ endpointTemplateId: endpoint.id, protocol: endpoint.protocol, publicHeaders: endpoint.publicHeaders })) },
@@ -100,8 +103,8 @@ export function describeAccountProviderConnectionV1(settings: ProviderSettingsV1
         ? { legacyGrantFingerprints: { connectionSecurityFingerprint: securityFingerprint(connection, source, undefined, true), endpointSetFingerprint: '' } } : {}),
     }).state : 'stale';
   const identity = connection.source.kind === 'contribution' ? parseProviderContributionIdentityV1(connection.source.contributionKey)?.identity : null;
-  const managed = contribution?.managedRuntime && identity ? resolveProviderManagedRuntimeDeclarationV1({
-    implementationIdentity: identity, managedRuntime: contribution.managedRuntime,
+  const managed = contribution?.managedRuntime && identity ? resolveProviderManagedRuntimeFromContributionV1({
+    implementationIdentity: identity, definition: { ...contribution, managedRuntime: contribution.managedRuntime },
   }) : null;
   const purposeBindings = connection.deployment.kind === 'managedLocal' && managed && identity
     ? resolveManagedPurposeBindingIntentsV1(connection, { implementationIdentity: identity, managedRuntime: managed }) : undefined;
@@ -244,7 +247,7 @@ export function createAccountProviderActionExecuteV1(host: Readonly<{
       if (input.deployment?.kind === 'managedLocal' && source && 'managedRuntime' in source.definition && source.definition.managedRuntime) {
         const identity = previous.source.kind === 'contribution' ? parseProviderContributionIdentityV1(previous.source.contributionKey)?.identity : null;
         if (!identity || resolveManagedPurposeBindingIntentsV1(connection, { implementationIdentity: identity,
-          managedRuntime: resolveProviderManagedRuntimeDeclarationV1({ implementationIdentity: identity, managedRuntime: source.definition.managedRuntime }) }) === null) refuse('provider_connection_invalid', previous.id);
+          managedRuntime: resolveProviderManagedRuntimeFromContributionV1({ implementationIdentity: identity, definition: { ...source.definition, managedRuntime: source.definition.managedRuntime } }) }) === null) refuse('provider_connection_invalid', previous.id);
       }
       if (changedMode) { const bindings = { ...settings.secretBindingsByConnectionId }; delete bindings[connection.id];
         settings = { ...settings, secretBindingsByConnectionId: bindings, accountGrants: settings.accountGrants.filter(grant => grant.connectionId !== connection.id),

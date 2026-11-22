@@ -11,10 +11,11 @@ import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actio
 import { readOwnRecordValue } from '@happier-dev/protocol/providers/ownRecordValue';
 import { resolveProviderSecretBindingIdV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
 import { readContributedProviderCatalogParserIds } from '@happier-dev/protocol/plugins/contributions/catalog';
-import { createProviderManagedRuntimeDeclarationEqualityKeyV1, resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
+import { createProviderManagedRuntimeDeclarationEqualityKeyV1, resolveProviderManagedRuntimeFromContributionV1 } from '@happier-dev/protocol/providers/contributions';
 import { serializeModelVisibilityRefV1 } from '@happier-dev/protocol/providers/model-selection';
+import { readSessionModelRefProviderConnectionId } from '@happier-dev/protocol/providers/selection/v2';
 import type { ProviderErrorV1, ProviderCatalogRuntimeStateRecordV1, ProviderMergedCatalogRowV1, ProviderObservationAuthorizationFingerprintV1, ProviderProbeObservationIdentityV1, ProviderRuntimeStateFileV1, ProviderSettingsV1 } from '@happier-dev/protocol';
-import type { DaemonProviderDraftProbeRequestV1, DaemonProviderModelProjectionRequestV1, DaemonProviderModelProjectionResponseV1, DaemonProviderUsageRefreshResponseV1 } from '@happier-dev/protocol/rpc/providers';
+import type { DaemonProviderDraftProbeRequestV1, DaemonProviderModelProjectionRequestV1, DaemonProviderModelProjectionResponseV1, DaemonProviderUsageRefreshRequestV1, DaemonProviderUsageRefreshResponseV1 } from '@happier-dev/protocol/rpc/providers';
 
 import { configuration } from '@/configuration';
 import { readStoredCredentials } from '@/persistence';
@@ -103,6 +104,7 @@ import type { ProviderProbeOperationScope } from './authorization';
 import { admitRuntimeProviderSavedSecret } from '@/providers/spawn/runtimeCredential';
 import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
 import { refreshProviderConnectionUsage, type ProviderUsageParserBinding } from '@/daemon/connectedServices/accountUsage/providerConnectionUsage';
+import { readConnectedAccountProviderUsage, type ConnectedAccountUsageAuthority } from '@/daemon/connectedServices/accountUsage/connectedAccountUsageAuthority';
 import { DEFAULT_CONNECTED_SERVICE_QUOTA_FRESHNESS_MS } from '@/daemon/connectedServices/quotas/resolveConnectedServiceQuotasDaemonOptions';
 import type {
   ResolveManagedProviderPurposeBindingIntent,
@@ -195,7 +197,7 @@ export function projectProviderCatalogContextRuntimeState(
 }
 
 export type RuntimeProviderServices = Readonly<{
-  refreshUsage(identity: RuntimeProviderIdentity, waiterLifetime?: ProviderProbeWaiterLifetime): Promise<DaemonProviderUsageRefreshResponseV1>;
+  refreshUsage(request: DaemonProviderUsageRefreshRequestV1, waiterLifetime?: ProviderProbeWaiterLifetime): Promise<DaemonProviderUsageRefreshResponseV1>;
   probe(
     rawInput: unknown,
     trigger?: 'manual_refresh' | 'enable',
@@ -356,6 +358,7 @@ export function createRuntimeProviderServices(input: Readonly<{
   resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
   resolveContributedCatalogParsers?: ResolveContributedProviderCatalogParsers;
   resolveContributedUsageParsers?: (identity: Readonly<{ pluginId: string; localId: string }>) => Promise<ProviderUsageParserBinding | null>;
+  connectedAccountUsage?: ConnectedAccountUsageAuthority;
   openTeamDirect?: Parameters<typeof createRuntimeProviderProbeAuthorizationPort>[0]['openTeamDirect'];
 }>): RuntimeProviderServices {
   const happyHomeDir = input.happyHomeDir ?? configuration.happyHomeDir;
@@ -786,9 +789,10 @@ export function createRuntimeProviderServices(input: Readonly<{
       );
       const contributionManagedRuntime =
         contribution?.definition.managedRuntime
-          ? resolveProviderManagedRuntimeDeclarationV1({
+          ? resolveProviderManagedRuntimeFromContributionV1({
               implementationIdentity: contribution.identity,
-              managedRuntime: contribution.definition.managedRuntime,
+              definition: { ...contribution.definition, managedRuntime: contribution.definition.managedRuntime },
+              connectedAccountDeclarations: contribution.connectedAccountDeclarations,
             })
           : null;
       if (
@@ -1295,7 +1299,7 @@ export function createRuntimeProviderServices(input: Readonly<{
         || connection.deployment.kind !== 'managedLocal'
         || group.sourceAuthority?.provider.identity.pluginId !== connection.deployment.implementationIdentity.pluginId
         || group.sourceAuthority?.provider.identity.localId !== connection.deployment.implementationIdentity.localId
-        || group.rows.some(row => row.ref.providerConnectionId !== identity.connectionId
+        || group.rows.some(row => readSessionModelRefProviderConnectionId(row.ref) !== identity.connectionId
           || row.ref.agentTargetKey !== result.agentTargetKey || row.descriptor.id !== row.ref.modelId)
       ))) {
         return { status: 'error', error: authorizationChanged(identity, 'hub_model_projection_changed') };
@@ -1319,36 +1323,45 @@ export function createRuntimeProviderServices(input: Readonly<{
     }, signal));
   };
 
-  async function refreshUsage(identity: RuntimeProviderIdentity,
+  async function refreshUsage(request: DaemonProviderUsageRefreshRequestV1,
     waiterLifetime?: ProviderProbeWaiterLifetime,
   ): Promise<DaemonProviderUsageRefreshResponseV1> {
-    if (!isProviderFeatureEnabled()) return providerFeatureDisabled(identity);
+    const identity = 'connectionId' in request ? request : { machineId: request.machineId };
+    if (!isProviderFeatureEnabled()) return { status: 'error',
+      error: createProviderErrorV1('provider_feature_disabled', identity) };
     if (identity.machineId !== input.machineId) return { status: 'error',
       error: createProviderErrorV1('provider_not_enabled_on_machine', identity) };
     const scope = withOperationLifetime(undefined, waiterLifetime?.signal);
-    const unavailable = await refreshAmbientCatalog(identity, scope.lifetime);
+    if ('connectedAccountSource' in request) {
+      return readConnectedAccountProviderUsage({ selected: request.connectedAccountSource, machineId: request.machineId,
+        authority: input.connectedAccountUsage, resolveRegistry, resolveParsers: resolveContributedUsageParsers, client,
+        operationScope: scope, staleAfterMs: DEFAULT_CONNECTED_SERVICE_QUOTA_FRESHNESS_MS,
+        isCurrent: () => isProviderFeatureEnabled() && waiterLifetime?.isCurrent?.() !== false });
+    }
+    const identityForConnection = request;
+    const unavailable = await refreshAmbientCatalog(identityForConnection, scope.lifetime);
     if (unavailable) return { status: 'error', error: unavailable };
-    const context = await resolveConnectionContext(identity, scope);
+    const context = await resolveConnectionContext(identityForConnection, scope);
     if (!context.ok) return { status: 'error', error: context.error };
     const { connection, providerSettings, registry, accountSettingsBasis, dnsEvidenceByEndpointUrl } = context.value;
     if (!connection.authorization.authorized) return { status: 'error',
-      error: createProviderErrorV1(connection.authorization.errorCode, identity) };
+      error: createProviderErrorV1(connection.authorization.errorCode, identityForConnection) };
     if (connection.source.kind !== 'contribution' || !(connection.source.definition.usageSources?.length)) return { status: 'not_supported' };
     const parsers = await awaitWithinProviderOperation(resolveContributedUsageParsers({
       pluginId: connection.source.pluginId, localId: connection.source.definition.id,
     }), scope.lifetime);
     if (!parsers) return { status: 'error',
-      error: createProviderErrorV1('provider_contribution_unavailable', identity) };
+      error: createProviderErrorV1('provider_contribution_unavailable', identityForConnection) };
     return refreshProviderConnectionUsage({ connection, providerSettings, parsers, client, authorization,
       staleAfterMs: DEFAULT_CONNECTED_SERVICE_QUOTA_FRESHNESS_MS,
       operationScope: { ...scope, registry, accountSettingsBasis,
-        dnsEvidenceByConnectionId: new Map([[identity.connectionId, dnsEvidenceByEndpointUrl]]),
+        dnsEvidenceByConnectionId: new Map([[identityForConnection.connectionId, dnsEvidenceByEndpointUrl]]),
         isAccountCurrent: isProviderFeatureEnabled,
       },
       admitSource: async usageSourceId => {
         const snapshot = context.value.readSnapshot();
-        if (!snapshot) return { ok: false, error: authorizationChanged(identity, 'account_snapshot_unavailable') };
-        if (!isProviderFeatureEnabled()) return { ok: false, error: authorizationChanged(identity, 'providers_disabled') };
+        if (!snapshot) return { ok: false, error: authorizationChanged(identityForConnection, 'account_snapshot_unavailable') };
+        if (!isProviderFeatureEnabled()) return { ok: false, error: authorizationChanged(identityForConnection, 'providers_disabled') };
         return admitRuntimeProviderSavedSecret({ connection, providerSettings, snapshot,
           getAccountSettingsSnapshot: context.value.readSnapshot, lifetime: scope.lifetime, usageSourceId,
         });

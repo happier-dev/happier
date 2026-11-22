@@ -96,8 +96,9 @@ describe('Provider authoring through the public manifest SDK', () => {
       endpointTemplates: [{ id: 'responses', protocol: 'openai-responses', baseUrl: 'https://gateway.example/v1',
         capabilities: { streaming: 'supported', toolRoundTrips: 'unknown', statefulResponses: 'unknown', reasoningControls: 'unknown' } }],
       catalog: { source: 'manual', manualModelPolicy: 'allowed' },
+      connectedAccounts: [{ purpose: 'upstream', service: { pluginId: 'acme.auth', localId: 'subscription' }, required: false }],
       managedRuntime: { kind: 'managed', sharing: 'connectionMachine', endpointTemplateIds: ['responses'],
-        connectedAccounts: [{ purpose: 'upstream', service: { pluginId: 'acme.auth', localId: 'subscription' }, required: false }] },
+         },
     } satisfies ProviderContribution);
     const manifest = {
       schemaVersion: 2, id: 'acme.gateway', version: '0.1.0', displayName: 'Acme Gateway',
@@ -202,43 +203,43 @@ describe('Provider authoring through the public manifest SDK', () => {
       .not.toHaveProperty('managedRuntime');
     expect(ProviderContributionV1Schema.parse({
       ...ordinaryProvider,
+      connectedAccounts: [{
+        purpose: 'provider.inference',
+        service: 'openai',
+        materializationKinds: ['httpHeaders'],
+      }],
+      requestAuthUses: [{
+        purpose: 'provider.inference',
+        materialization: {
+          kind: 'httpHeaders',
+          origin: 'https://api.openai.com',
+          headerNames: ['authorization'],
+        },
+      }],
       managedRuntime: {
         kind: 'managed',
-        connectedAccounts: [{
-          purpose: 'provider.inference',
-          service: 'openai',
-          materializationKinds: ['httpHeaders'],
-        }],
-        requestAuthUses: [{
-          purpose: 'provider.inference',
-          materialization: {
-            kind: 'httpHeaders',
-            origins: ['https://api.openai.com'],
-            headerNames: ['authorization'],
-          },
-        }],
         endpointTemplateIds: ['responses'],
       },
     })).toMatchObject({
+      requestAuthUses: [{ purpose: 'provider.inference' }],
       managedRuntime: {
         kind: 'managed',
-        requestAuthUses: [{ purpose: 'provider.inference' }],
         endpointTemplateIds: ['responses'],
       },
     });
     expect(ProviderContributionV1Schema.safeParse({
       ...ordinaryProvider,
+      connectedAccounts: [],
+      requestAuthUses: [{
+        purpose: 'provider.inference',
+        materialization: {
+          kind: 'httpHeaders',
+          origin: 'https://api.openai.com',
+          headerNames: ['authorization'],
+        },
+      }],
       managedRuntime: {
         kind: 'managed',
-        connectedAccounts: [],
-        requestAuthUses: [{
-          purpose: 'provider.inference',
-          materialization: {
-            kind: 'httpHeaders',
-            origins: ['https://api.openai.com'],
-            headerNames: ['authorization'],
-          },
-        }],
         endpointTemplateIds: ['responses'],
       },
     }).success).toBe(false);

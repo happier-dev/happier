@@ -1,11 +1,11 @@
-import { readSessionModelSelectionProviderConnectionId } from '@happier-dev/protocol/providers/selection/v2';
+import { readSessionModelRefProviderConnectionId, readSessionModelSelectionProviderConnectionId } from '@happier-dev/protocol/providers/selection/v2';
 import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol/models/descriptor';
 import { projectProviderCatalogProbeModelDescriptorV1 } from '@happier-dev/protocol/providers/catalog/merge';
 import { DaemonProviderModelProjectionResponseV1Schema, type DaemonProviderModelProjectionRequestV1, type DaemonProviderModelProjectionResponseV1 } from '@happier-dev/protocol/rpc/providers';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { createAccountConnectionModelProjectionRequest } from '../broker/applicationProjection';
-import { createProviderManagedRuntimeDeclarationEqualityKeyV1, resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
+import { createProviderManagedRuntimeDeclarationEqualityKeyV1, resolveProviderManagedRuntimeFromContributionV1 } from '@happier-dev/protocol/providers/contributions';
 import { createProviderManagedProbeRequestFingerprintV1, createProviderProbeRequestFingerprintV1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
 import type { ProviderCatalogFingerprintV1, ProviderModelDescriptorV1, ProviderModelLoadStateV1, ProviderObservationAuthorizationFingerprintV1, ProviderRuntimeStateFileV1, ProviderSettingsV1, QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol';
 
@@ -159,7 +159,7 @@ async function readProviderRuntimeCatalogSelectionProjection(
     throw createProviderErrorV1('provider_model_not_found', { connectionId, machineId });
   }
   for (const row of selected) {
-    if (row.ref.agentTargetKey !== input.selection.ref.agentTargetKey || row.ref.providerConnectionId !== connectionId
+    if (row.ref.agentTargetKey !== input.selection.ref.agentTargetKey || readSessionModelRefProviderConnectionId(row.ref) !== connectionId
       || row.descriptor.id !== row.ref.modelId || record.deployment.kind === 'managedLocal' && row.catalog.stale) throw unavailable();
   }
   return {
@@ -212,9 +212,10 @@ export async function resolveProviderRuntimeCatalogSelectionObservation(
         (candidate) => candidate.id === endpointTemplateId,
       ));
     const contributionManagedRuntime = contribution?.definition.managedRuntime
-      ? resolveProviderManagedRuntimeDeclarationV1({
+      ? resolveProviderManagedRuntimeFromContributionV1({
           implementationIdentity: contribution.identity,
-          managedRuntime: contribution.definition.managedRuntime,
+          definition: { ...contribution.definition, managedRuntime: contribution.definition.managedRuntime },
+          connectedAccountDeclarations: contribution.connectedAccountDeclarations,
         })
       : null;
     if (

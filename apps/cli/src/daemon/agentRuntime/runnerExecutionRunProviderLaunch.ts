@@ -1,3 +1,4 @@
+import { readSessionModelRefProviderConnectionId } from '@happier-dev/protocol/providers/selection/v2';
 import { isDeepStrictEqual } from 'node:util';
 import { buildBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
@@ -102,7 +103,7 @@ export function createRunnerExecutionRunProviderLaunchServices(input: Readonly<{
                     }
                     await prepared.cleanupOnExit?.();
                     return { ok: false as const, error: { ...changed(reason),
-                        ...(request.selection?.providerConnectionId ? { connectionId: request.selection.providerConnectionId } : {}),
+                        ...(request.selection ? { connectionId: readSessionModelRefProviderConnectionId(request.selection) ?? undefined } : {}),
                         ...(preparation.machineId ? { machineId: preparation.machineId } : {}),
                     } };
                 },

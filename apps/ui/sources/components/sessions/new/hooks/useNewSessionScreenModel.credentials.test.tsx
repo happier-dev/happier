@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import { AccountProfileSchema} from '@happier-dev/protocol/account/profile';
 import { PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
 import { MachineAgentInventoryItemSchema } from '@happier-dev/protocol/capabilities';
 import { MachinePublishedResourceSummaryV1Schema } from '@happier-dev/protocol/machines/resources/machineResourceSummaryV1';
 import { ConnectedAccountUiProjectionEntryV1Schema } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
@@ -56,7 +57,7 @@ import { randomUUID } from '@/platform/randomUUID';
 import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
 import { createManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import { resolveServerProfileScopeId } from '@/sync/domains/server/serverProfiles';
-import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineReadBatchResponseFixture, createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { teamCapabilitiesFixture, teamPolicyFixture, teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { applyTeamProjection, resetTeamsSnapshotsForTests } from '@/sync/store/teams/teamsSnapshots';
 import { createTeamAddress } from '@/sync/domains/teams/teamAddress';
@@ -185,6 +186,7 @@ describe('New Session selected credential launch gate', () => {
             } } };
             if (method === 'capabilities.invoke' && payload?.method === 'probeModels') return { ok: true, result: {
                 source: 'dynamic', availableModels: [{ id: 'gpt-6-luna', name: 'GPT 6 Luna' }], supportsFreeform: false,
+                runtimeDescriptorV1Accepted: true,
             } };
             if (method === 'capabilities.invoke' && payload?.method === 'probeConfigOptions') return { ok: true, result: {
                 source: 'dynamic', configOptions: [],
@@ -334,6 +336,7 @@ describe('New Session selected credential launch gate', () => {
         { native: 'signedOut' as const, connected: false, selected: 'native', acpReady: true, ready: false },
         { native: 'signedIn' as const, connected: true, selected: 'native', acpReady: false, ready: true },
         { native: 'signedOut' as const, connected: false, selected: 'provider', acpReady: true, ready: true },
+        { native: 'signedOut' as const, connected: false, selected: 'account-provider', acpReady: true, ready: true },
         { native: 'signedOut' as const, connected: false, selected: 'native-with-provider', acpReady: true, ready: false },
         { native: 'signedOut' as const, connected: false, selected: 'provider-unconfirmed', acpReady: true, ready: false },
         { native: 'signedOut' as const, connected: false, selected: 'provider-unavailable', acpReady: true, ready: false },
@@ -346,9 +349,8 @@ describe('New Session selected credential launch gate', () => {
             status: 'connected', kind: 'oauth', authenticationModeId: 'oauth', configurationReady: true, configurationRevision: null,
             displayName: 'Work', providerIdentity: {}, expiresAt: null,
         }] : [] });
-        const http = createHomeHubArtifactHttpBoundary(accountId, profile, {
-            machines: [createPlainMachineRowFixture({ id: 'credential-devbox', accountId })],
-        });
+        const machineRow = createPlainMachineRowFixture({ id: 'credential-devbox', accountId });
+        const http = createHomeHubArtifactHttpBoundary(accountId, profile, { machines: [machineRow] });
         const features = buildServerFeaturesResponse();
         features.features.providers.enabled = true;
         features.capabilities.connectedServices.qualifiedAccounts = { protocolVersion: 4 };
@@ -372,7 +374,9 @@ describe('New Session selected credential launch gate', () => {
         const connection = await restoreServerAccountForTest({ serverUrl: `https://${accountId}.test`, accountId,
             request: (input, init) => {
                 const path = new URL(String(input)).pathname;
-                if (path === '/v1/features') return Promise.resolve(Response.json(features));
+                if (path === '/v1/features' || path === '/v1/features/authenticated') return Promise.resolve(Response.json(features));
+                if (path === '/v1/machines/read-batch' && init?.method === 'POST') return Promise.resolve(createMachineReadBatchResponseFixture(
+                    init.body, id => id === machineRow.id ? machineRow : null));
                 if (lateDraft && path === '/v2/account/settings') return Promise.resolve(Response.json({ version: 1,
                     content: { t: 'plain', v: { useProfiles: true, useEnhancedSessionWizard: false, lastUsedAgent: 'claude' } } }));
                 if (lateDraft && path === PROFILE_ROWS_ROUTE_V1) return Promise.resolve(Response.json(ProfileRowsListResponseV1Schema.parse({
@@ -414,13 +418,14 @@ describe('New Session selected credential launch gate', () => {
         if (!agentRequirements) throw new Error('Expected real first-party Claude Provider requirements');
         const lmstudio = ProviderContributionV1Schema.parse(LMSTUDIO_PROVIDER_CONTRIBUTION);
         const modelDescriptor = { id: 'local-model', name: 'Local model' };
+        const providerRef = ProviderBoundModelRefSchema.parse({ agentTargetKey, providerConnectionId: 'pc_lmstudio', modelId: modelDescriptor.id });
         const providerGroup = createProviderModelProjectionGroupFixture({
             connectionId: 'pc_lmstudio', providerName: lmstudio.name, connectionName: lmstudio.name,
             authorization: scenario.selected === 'provider-unavailable'
                 ? { authorized: false, error: createProviderErrorV1('provider_not_enabled_on_machine') }
                 : { authorized: true },
             suppressedConnectedServiceIds: agentRequirements.authIsolation.suppressConnectedServiceIds,
-            rows: [{ ref: { agentTargetKey, providerConnectionId: 'pc_lmstudio', modelId: modelDescriptor.id },
+            rows: [{ ref: providerRef,
                 descriptor: modelDescriptor, sources: { probe: true, manual: false, static: false }, confidence: 'probe',
                 compatibility: { ...resolveProviderBindingCompatibilityWithFingerprintV1({ agentTargetKey,
                     endpoints: lmstudio.endpointTemplates, credential: lmstudio.credential, agent: agentRequirements,
@@ -428,10 +433,27 @@ describe('New Session selected credential launch gate', () => {
                 endpointHealth: 'available', catalog: { stale: false }, loadState: 'loaded', visibility: 'visible' }],
         });
         const providerProjection = createProviderModelProjectionFixture({ agentTargetKey, groups: [providerGroup] });
+        const accountModel = {
+            source: 'connected_account', agentTargetKey, modelId: 'anthropic/claude-sonnet-4.6',
+            purpose: { consumer: { pluginId: 'happier.provider.vercel-ai-gateway', localId: 'vercel-ai-gateway' }, purpose: 'model-inference' },
+            endpointTemplateId: 'vercel-anthropic',
+        } as const;
+        const accountBinding = { purpose: accountModel.purpose, target: { kind: 'account', account: {
+            service: { pluginId: 'happier.machine.vercel', localId: 'vercel-account' }, accountId: 'vercel-work',
+        } } } as const;
+        const accountProjection = createProviderModelProjectionFixture({ agentTargetKey, groups: [createProviderModelProjectionGroupFixture({
+            ...providerGroup, connectionId: 'connected-source:vercel-work', providerName: 'Vercel AI Gateway', connectionName: 'Vercel work',
+            connectedAccountTarget: accountBinding.target, connectionRole: 'named', connectionDisplayNameMode: 'custom',
+            rows: [{ ...providerGroup.rows[0]!, ref: accountModel, gatewaySlots: [accountBinding],
+                descriptor: { id: accountModel.modelId, name: 'Claude Sonnet' } }],
+        })] });
         let nativeStatus = scenario.native;
-        rpc.mockImplementation(async ({ method }: { method: string }) => {
+        rpc.mockImplementation(async ({ method, payload }: { method: string; payload?: Record<string, unknown> }) => {
             if (method.includes('contributionRegistryProjection.describe')) return { protocolVersion: 1, projection };
-            if (method === RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION) return providerProjection;
+            if (method === RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION) {
+                if (scenario.selected === 'account-provider' && payload?.connectedServices) return accountProjection;
+                return providerProjection;
+            }
             if (method === 'capabilities.detect') return { protocolVersion: 1, results: { 'cli.claude': { ok: true, checkedAt: Date.now(), data: nativeFacts(nativeStatus) } } };
             return { jobs: [] };
         });
@@ -448,6 +470,22 @@ describe('New Session selected credential launch gate', () => {
             } } },
         } satisfies NewSessionDraft;
         if (scenario.selected === 'connected') writeNewSessionDraftToRepository({ scope, draftId, draft: connectedDraft });
+        if (scenario.selected === 'account-provider') {
+            const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+            expect(await getServerFeaturesSnapshot({ serverId: scope.serverId })).toMatchObject({
+                status: 'ready', features: { features: { providers: { enabled: true } } },
+            });
+            writeNewSessionDraftToRepository({ scope, draftId, draft: {
+                ...connectedDraft,
+                agentTarget: { kind: 'agent', identity: consumer },
+                modelSelection: { v: 2, updatedAt: 1, ref: accountModel },
+                backendNewSessionOptionStateByTargetKey: { [agentTargetKey]: { connectedServices: {
+                    v: 2, bindingsByServiceId: { 'happier.machine.vercel/vercel-account': {
+                        source: 'connected', selection: 'profile', profileId: accountBinding.target.account.accountId,
+                    } },
+                } } },
+            } });
+        }
         if (lateDraft) {
             // The route supplies no new folder intent during persisted recovery.
             authoringRoute.directory = undefined;
@@ -458,7 +496,7 @@ describe('New Session selected credential launch gate', () => {
             agentType: 'claude', acpSessionModeId: null, selectedProfileId: null, selectedSecretId: null,
             backendTarget: { kind: 'backend', backendId: 'claude' },
             modelSelection: { v: 1, updatedAt: 1, ref: scenario.selected.startsWith('provider')
-                ? providerGroup.rows[0]!.ref : { agentTargetKey, providerConnectionId: null, modelId: 'default' } },
+                ? providerRef : { agentTargetKey, providerConnectionId: null, modelId: 'default' } },
             permissionMode: 'default', updatedAt: 1,
         } });
         const hook = await renderHook(() => useNewSessionScreenModel({ draftId }));
@@ -541,6 +579,34 @@ describe('New Session selected credential launch gate', () => {
                 expect(current.simpleProps.agentInputExtraActionChips?.some(chip =>
                     chip.collapsedContentPopover?.label?.includes(lmstudio.name))).toBe(true);
             });
+            if (scenario.selected === 'account-provider') {
+                await vi.waitFor(() => {
+                    const current = hook.getCurrent();
+                    if (current.variant !== 'simple') throw new Error('Expected real simple launcher');
+                    expect(current.simpleProps.modelMode).toBe(accountModel.modelId);
+                    expect(current.simpleProps.modelPickerPresentation?.selected).toEqual(accountModel);
+                    const restoredOptions = readNewSessionDraftFromRepository({ scope, draftId })?.backendNewSessionOptionStateByTargetKey;
+                    const projections = rpc.mock.calls.map(([request]) => request).filter(request => request.method === RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION);
+                    expect(projections.find(request => request.payload?.connectedServices)?.payload, JSON.stringify({
+                        restoredOptions, selectedMachineId: current.simpleProps.selectedMachineId,
+                        target: current.simpleProps.modelPickerPresentation?.agentTargetKey,
+                        projections: projections.map(({ payload }) => payload),
+                        rpcMethods: [...new Set(rpc.mock.calls.map(([request]) => request.method))],
+                        projectionFailed: current.simpleProps.modelPickerPresentation?.providerProjectionFailed,
+                        sourceBrowse: current.simpleProps.modelPickerProps?.sourceBrowse,
+                        status: current.simpleProps.connectionStatus?.text,
+                    })).toMatchObject({ connectedAccountSourcePurpose: accountModel.purpose, connectedServices: {
+                        bindingsByServiceId: { 'happier.machine.vercel/vercel-account': {
+                            selection: 'profile', profileId: 'vercel-work',
+                        } },
+                    } });
+                    expect(current.simpleProps.modelPickerPresentation?.providerGroups).toMatchObject([
+                        { connectionName: 'Vercel work', rows: [{ ref: accountModel }] },
+                    ]);
+                    expect(current.simpleProps.canCreate).toBe(true);
+                });
+                return;
+            }
             const model = hook.getCurrent();
             if (model.variant !== 'simple') throw new Error('Expected real simple launcher');
             const observedAdmission = JSON.stringify({

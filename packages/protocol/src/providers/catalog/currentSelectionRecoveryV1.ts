@@ -1,4 +1,5 @@
 import type { ProviderBoundModelRef } from '../selection/v1.js';
+import { readSessionModelRefProviderConnectionId, type PersonalSessionModelRef } from '../selection/v2.js';
 import type { ProviderSettingsV1 } from '../settings/v1.js';
 import type { DaemonProviderCurrentSelectionRecoveryV1 } from '../../rpc/providers.js';
 import { createProviderErrorV1 } from '../errors.js';
@@ -8,13 +9,13 @@ export function resolveProviderCurrentSelectionRecoveryV1(input: Readonly<{
   currentSelection: ProviderBoundModelRef | undefined;
   settings: Pick<ProviderSettingsV1, 'connections' | 'connectionTombstones'>;
   readContribution(contributionKey: string): Readonly<{ name: string }> | null;
-  projectedGroups: readonly Readonly<{ rows: readonly Readonly<{ ref: ProviderBoundModelRef }>[] }>[];
+  projectedGroups: readonly Readonly<{ rows: readonly Readonly<{ ref: PersonalSessionModelRef }>[] }>[];
   machineId?: string;
 }>): DaemonProviderCurrentSelectionRecoveryV1 | null {
   const ref = input.currentSelection;
   if (!ref?.providerConnectionId) return null;
   if (input.projectedGroups.some(group => group.rows.some(row =>
-    row.ref.agentTargetKey === ref.agentTargetKey && row.ref.providerConnectionId === ref.providerConnectionId
+    row.ref.agentTargetKey === ref.agentTargetKey && readSessionModelRefProviderConnectionId(row.ref) === ref.providerConnectionId
     && row.ref.modelId === ref.modelId))) return null;
   const errorContext = { connectionId: ref.providerConnectionId, ...(input.machineId ? { machineId: input.machineId } : {}) };
   const connection = input.settings.connections.find(candidate => candidate.id === ref.providerConnectionId);

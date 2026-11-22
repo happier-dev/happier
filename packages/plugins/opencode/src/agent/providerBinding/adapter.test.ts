@@ -159,6 +159,7 @@ describe('OpenCode provider-binding adapter V1', () => {
     expect(output.env.map((entry) => entry.name).sort()).toEqual(
       [...support.authIsolation.ownedEnvKeys].sort(),
     );
+    expect(output.env).toContainEqual({ name: 'META_API_KEY', value: null, source: 'provider' });
   });
 
   it('keeps an unproven OpenCode provider binding experimental until lifecycle evidence exists', () => {

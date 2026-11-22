@@ -12,8 +12,8 @@ type AvailableManagedGatewayFamily = Readonly<{
     service: Readonly<{ pluginId: string; localId: string }>;
     required: false;
     materializationKinds: readonly ['httpHeaders'];
-    catalogObservation?: NonNullable<NonNullable<ProviderContribution['managedRuntime']>['connectedAccounts']>[number]['catalogObservation'];
-    operationRestriction?: NonNullable<NonNullable<ProviderContribution['managedRuntime']>['connectedAccounts']>[number]['operationRestriction'];
+    catalogObservation?: NonNullable<ProviderContribution['connectedAccounts']>[number]['catalogObservation'];
+    operationRestriction?: NonNullable<ProviderContribution['connectedAccounts']>[number]['operationRestriction'];
   }>;
   requestAuth: Readonly<{ materialization: Readonly<{
     kind: 'httpHeaders'; origin: string; headerNames: readonly string[];

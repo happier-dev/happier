@@ -38,6 +38,7 @@ import {
   type PluginConnectedAccountMaterializationKind,
 } from '../../connect/connectedAccountPurposes.js';
 import {
+  ConnectedAccountRequestAuthMaterializationV1Schema,
   ConnectedAccountRequestAuthUsesV1Schema,
   type ConnectedAccountRequestAuthUseV1,
 } from '../../connect/connectedAccountRequestAuth.js';
@@ -145,20 +146,11 @@ export const ProviderManagedUnavailableConnectedAccountPurposeV1Schema = lazyZod
   unavailableReason: PluginLocalizedStringV2Schema,
 }));
 
-export const ProviderManagedRuntimeDeclarationV1Schema = lazyZodSchema(() => z.strictObject({
-  kind: z.literal('managed'),
-  /** The managed runtime always supplies its declared client credential. */
-  credentialRequired: z.optional(z.literal(true)),
-  /** Opts connected-account request-auth consumers into daemon connection custody. */
-  sharing: z.optional(z.literal('connectionMachine')),
-  /** Implements the private exact-source envelope consumed by the host broker. */
-  sourceEnvelopeTransport: z.optional(z.literal('cpx-v1')),
-  dependencies: z.optional(z.array(asProtocolZod(PluginContributionLocalIdSchema)).check(z.maxLength(16))),
-  unavailableConnectedAccounts: z.optional(z.readonly(z.array(ProviderManagedUnavailableConnectedAccountPurposeV1Schema))),
+const ProviderConnectedAccountDeclarationsV1Schema = lazyZodSchema(() => z.strictObject({
   connectedAccounts: z.optional(z.array(z.extend(ConnectedAccountPurposeDeclarationV1Schema, {
     /** Passive copy for a restriction enforced by the family's operation owner. */
     operationRestriction: z.optional(ProviderManagedPurposeOperationRestrictionV1Schema),
-    /** Exact managed endpoints supported by this upstream purpose; absent means no broker route. */
+    /** Exact Provider endpoints supported by this upstream purpose; absent means no broker route. */
     endpointTemplateIds: z.optional(z.array(ProviderLocalIdSchema).check(z.minLength(1))),
     /** Credential-free compatibility catalog for this exact upstream service, never account entitlement. */
     staticModels: z.optional(z.array(ProviderModelDescriptorV1Schema)),
@@ -185,28 +177,52 @@ export const ProviderManagedRuntimeDeclarationV1Schema = lazyZodSchema(() => z.s
       }));
     });
   }))),
+  requestAuthUses: z.optional(ConnectedAccountRequestAuthUsesV1Schema),
+}));
+
+const ProviderManagedRuntimeV1Fields = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('managed'),
+  /** The managed runtime always supplies its declared client credential. */
+  credentialRequired: z.optional(z.literal(true)),
+  /** Opts connected-account request-auth consumers into daemon connection custody. */
+  sharing: z.optional(z.literal('connectionMachine')),
+  /** Implements the private exact-source envelope consumed by the host broker. */
+  sourceEnvelopeTransport: z.optional(z.literal('cpx-v1')),
+  dependencies: z.optional(z.array(asProtocolZod(PluginContributionLocalIdSchema)).check(z.maxLength(16))),
+  unavailableConnectedAccounts: z.optional(z.readonly(z.array(ProviderManagedUnavailableConnectedAccountPurposeV1Schema))),
   connectedAccountPurposeBindingPolicy:
     z.optional(ProviderManagedConnectedAccountPurposeBindingPolicyV1Schema),
-  requestAuthUses: z.optional(ConnectedAccountRequestAuthUsesV1Schema),
   endpointTemplateIds: z.array(ProviderLocalIdSchema).check(z.minLength(1), z.maxLength(PROVIDER_WIRE_PROTOCOL_LIMITS_V1.maxProtocolsPerDeclaration)),
-}).check(z.superRefine((value, context) => {
+}));
+
+export const ProviderManagedRuntimeDeclarationV1Schema = lazyZodSchema(() => (
+  ProviderManagedRuntimeV1Fields.check(z.superRefine((value, context) =>
+    validateManagedRuntimeV1(value, issue => context.addIssue(issue))))
+));
+export type ProviderManagedRuntimeDeclarationV1 = z.infer<typeof ProviderManagedRuntimeDeclarationV1Schema>;
+
+type AddProviderDeclarationIssue = (issue: { code: 'custom'; path: (string | number)[]; message: string }) => void;
+
+function validateManagedRuntimeV1(
+  value: z.infer<typeof ProviderManagedRuntimeV1Fields>,
+  addIssue: AddProviderDeclarationIssue,
+): void {
   const dependencies = value.dependencies ?? [];
   if (new Set(dependencies).size !== dependencies.length) {
-    context.addIssue({ code: 'custom', path: ['dependencies'], message: 'Managed Provider dependencies must be unique' });
+    addIssue({ code: 'custom', path: ['dependencies'], message: 'Managed Provider dependencies must be unique' });
   }
   if (new Set(value.endpointTemplateIds).size !== value.endpointTemplateIds.length) {
-    context.addIssue({ code: 'custom', path: ['endpointTemplateIds'], message: 'Managed Provider endpoint-template ids must be unique' });
+    addIssue({ code: 'custom', path: ['endpointTemplateIds'], message: 'Managed Provider endpoint-template ids must be unique' });
   }
-  if (
-    value.connectedAccountPurposeBindingPolicy !== undefined
-    && (value.connectedAccounts?.length ?? 0) === 0
-  ) {
-    context.addIssue({
-      code: 'custom',
-      path: ['connectedAccountPurposeBindingPolicy'],
-      message: 'Managed Provider purpose binding policy requires a declared connected-account purpose',
-    });
-  }
+}
+
+type ProviderConnectedAccountDeclarationsV1 = z.infer<typeof ProviderConnectedAccountDeclarationsV1Schema>;
+
+function validateProviderConnectedAccountDeclarationsV1(
+  value: ProviderConnectedAccountDeclarationsV1,
+  allowedEndpointIds: ReadonlySet<string>,
+  addIssue: AddProviderDeclarationIssue,
+): void {
   const declarationsByPurpose = new Map(
     (value.connectedAccounts ?? []).map((declaration) => [
       declaration.purpose,
@@ -216,8 +232,8 @@ export const ProviderManagedRuntimeDeclarationV1Schema = lazyZodSchema(() => z.s
   for (const [index, declaration] of (value.connectedAccounts ?? []).entries()) {
     const purposeEndpoints = new Set<string>();
     for (const endpointTemplateId of declaration.endpointTemplateIds ?? []) {
-      if (!value.endpointTemplateIds.includes(endpointTemplateId) || purposeEndpoints.has(endpointTemplateId)) {
-        context.addIssue({ code: 'custom', path: ['connectedAccounts', index, 'endpointTemplateIds'], message: 'Managed purpose endpoints must be declared and unique within the purpose' });
+      if (!allowedEndpointIds.has(endpointTemplateId) || purposeEndpoints.has(endpointTemplateId)) {
+        addIssue({ code: 'custom', path: ['connectedAccounts', index, 'endpointTemplateIds'], message: 'Provider purpose endpoints must be declared and unique within the purpose' });
       }
       purposeEndpoints.add(endpointTemplateId);
     }
@@ -225,27 +241,52 @@ export const ProviderManagedRuntimeDeclarationV1Schema = lazyZodSchema(() => z.s
   for (const [index, use] of (value.requestAuthUses ?? []).entries()) {
     const declaration = declarationsByPurpose.get(use.purpose);
     if (!declaration) {
-      context.addIssue({
+      addIssue({
         code: 'custom',
         path: ['requestAuthUses', index, 'purpose'],
-        message: 'Managed Provider request-auth purpose must be declared by connectedAccounts',
+        message: 'Provider request-auth purpose must be declared by connectedAccounts',
       });
       continue;
     }
     if (declaration.materializationKinds?.includes(use.materialization.kind) !== true) {
-      context.addIssue({
+      addIssue({
         code: 'custom',
         path: ['requestAuthUses', index, 'materialization', 'kind'],
-        message: 'Managed Provider request-auth materialization kind must be explicitly declared by its connected-account purpose',
+        message: 'Provider request-auth materialization kind must be explicitly declared by its connected-account purpose',
       });
     }
   }
-})));
-export type ProviderManagedRuntimeDeclarationV1 = z.infer<
-  typeof ProviderManagedRuntimeDeclarationV1Schema
->;
+}
 
-export type ResolvedProviderManagedConnectedAccountPurposeDeclarationV1 =
+function validateManagedPurposeBindingPolicyV1(
+  policy: ProviderManagedConnectedAccountPurposeBindingPolicyV1 | undefined,
+  connectedAccounts: ProviderConnectedAccountDeclarationsV1['connectedAccounts'],
+  path: (string | number)[],
+  addIssue: AddProviderDeclarationIssue,
+): void {
+  if (policy && !connectedAccounts?.length) {
+    addIssue({
+      code: 'custom',
+      path: [...path, 'connectedAccountPurposeBindingPolicy'],
+      message: 'Managed Provider purpose binding policy requires a declared connected-account purpose',
+    });
+  }
+}
+
+/** Managed binding metadata stores the derived declarations with the runtime. */
+export const ProviderManagedRuntimeSnapshotV1Schema = lazyZodSchema(() => z.strictObject({
+  ...ProviderManagedRuntimeV1Fields.shape,
+  ...ProviderConnectedAccountDeclarationsV1Schema.shape,
+}).check(z.superRefine((value, context) => {
+  validateManagedRuntimeV1(value, issue => context.addIssue(issue));
+  validateManagedPurposeBindingPolicyV1(value.connectedAccountPurposeBindingPolicy, value.connectedAccounts, [], issue => context.addIssue(issue));
+  validateProviderConnectedAccountDeclarationsV1(value, new Set(value.endpointTemplateIds), issue => context.addIssue(issue));
+})));
+export type ProviderManagedRuntimeSnapshotV1 = z.infer<typeof ProviderManagedRuntimeSnapshotV1Schema>;
+
+export type ProviderConnectedAccountPurposeDeclarationV1 = NonNullable<ProviderConnectedAccountDeclarationsV1['connectedAccounts']>[number];
+
+export type ResolvedProviderConnectedAccountPurposeDeclarationV1 =
   Readonly<{
     purpose: string;
     service: PluginContributionIdentityV1;
@@ -254,12 +295,19 @@ export type ResolvedProviderManagedConnectedAccountPurposeDeclarationV1 =
     materializationKinds?: PluginConnectedAccountMaterializationKind[];
     credentialKinds?: ConnectedServiceCredentialKind[];
     endpointTemplateIds?: string[];
-    staticModels?: NonNullable<ProviderManagedRuntimeDeclarationV1['connectedAccounts']>[number]['staticModels'];
-    catalogObservation?: NonNullable<ProviderManagedRuntimeDeclarationV1['connectedAccounts']>[number]['catalogObservation'];
-    operationRestriction?: NonNullable<ProviderManagedRuntimeDeclarationV1['connectedAccounts']>[number]['operationRestriction'];
+    staticModels?: ProviderConnectedAccountPurposeDeclarationV1['staticModels'];
+    catalogObservation?: ProviderConnectedAccountPurposeDeclarationV1['catalogObservation'];
+    operationRestriction?: ProviderConnectedAccountPurposeDeclarationV1['operationRestriction'];
   }>;
 
-export type ResolvedProviderManagedRuntimeDeclarationV1 = Readonly<{
+export type ResolvedProviderManagedConnectedAccountPurposeDeclarationV1 = ResolvedProviderConnectedAccountPurposeDeclarationV1;
+
+export type ResolvedProviderConnectedAccountDeclarationsV1 = Readonly<{
+  connectedAccounts: ResolvedProviderConnectedAccountPurposeDeclarationV1[];
+  requestAuthUses: ConnectedAccountRequestAuthUseV1[];
+}>;
+
+export type ResolvedProviderManagedRuntimeDeclarationV1 = ResolvedProviderConnectedAccountDeclarationsV1 & Readonly<{
   kind: 'managed';
   credentialRequired?: true;
   sharing?: 'connectionMachine';
@@ -271,11 +319,8 @@ export type ResolvedProviderManagedRuntimeDeclarationV1 = Readonly<{
     title?: PluginLocalizedStringV2;
     unavailableReason: PluginLocalizedStringV2;
   }>>;
-  connectedAccounts:
-    ResolvedProviderManagedConnectedAccountPurposeDeclarationV1[];
   connectedAccountPurposeBindingPolicy?:
     ProviderManagedConnectedAccountPurposeBindingPolicyV1;
-  requestAuthUses: ConnectedAccountRequestAuthUseV1[];
   endpointTemplateIds: string[];
 }>;
 
@@ -327,42 +372,19 @@ export function createProviderManagedPurposeBindingsEqualityKeyV1(
   return JSON.stringify(canonicalProviderManagedPurposeBindingsV1(input));
 }
 
-/**
- * Canonical resolution boundary for a public managed Provider declaration.
- * Contribution-local Connected Account references become immutable qualified
- * identities here so registry, authorization, fingerprints, and invocation
- * custody cannot interpret the same declaration differently.
- */
-export function resolveProviderManagedRuntimeDeclarationV1(input: Readonly<{
-  implementationIdentity: PluginContributionIdentityV1;
-  managedRuntime:
-    | ProviderManagedRuntimeDeclarationV1
-    | ResolvedProviderManagedRuntimeDeclarationV1;
-}>): ResolvedProviderManagedRuntimeDeclarationV1 {
-  const implementationIdentity = PluginContributionIdentityV1Schema.parse(
-    input.implementationIdentity,
-  );
-  const parsed = ProviderManagedRuntimeDeclarationV1Schema.parse(
-    input.managedRuntime,
-  );
-  const dependencies = [...(parsed.dependencies ?? [])].sort(
-    compareProviderCanonicalStringsV1,
-  );
-  const endpointTemplateIds = [...parsed.endpointTemplateIds];
-  const unavailableConnectedAccounts = parsed.unavailableConnectedAccounts?.map(declaration => Object.freeze({
-    ...declaration,
-    service: Object.freeze(PluginContributionIdentityV1Schema.parse(typeof declaration.service === 'string'
-      ? { pluginId: implementationIdentity.pluginId, localId: declaration.service } : declaration.service)),
-  }));
-  if (unavailableConnectedAccounts) Object.freeze(unavailableConnectedAccounts);
+/** Qualify contribution-local Connected Account references at the Provider boundary. */
+export function resolveProviderConnectedAccountDeclarationsV1({ identity, definition }: Readonly<{
+  identity: PluginContributionIdentityV1;
+  definition: ProviderConnectedAccountDeclarationsV1;
+}>): ResolvedProviderConnectedAccountDeclarationsV1 {
   const connectedAccounts:
-    ResolvedProviderManagedConnectedAccountPurposeDeclarationV1[] = (
-      parsed.connectedAccounts ?? []
+    ResolvedProviderConnectedAccountPurposeDeclarationV1[] = (
+      definition.connectedAccounts ?? []
     ).map((declaration) => {
       const service = PluginContributionIdentityV1Schema.parse(
         typeof declaration.service === 'string'
           ? {
-              pluginId: implementationIdentity.pluginId,
+              pluginId: identity.pluginId,
               localId: declaration.service,
             }
           : declaration.service,
@@ -403,25 +425,63 @@ export function resolveProviderManagedRuntimeDeclarationV1(input: Readonly<{
       });
     }).sort((left, right) =>
       compareProviderCanonicalStringsV1(left.purpose, right.purpose));
-  const connectedAccountPurposeBindingPolicy =
-    parsed.connectedAccountPurposeBindingPolicy === undefined
-      ? undefined
-      : Object.freeze({ ...parsed.connectedAccountPurposeBindingPolicy });
   const requestAuthUses: ConnectedAccountRequestAuthUseV1[] = (
-    parsed.requestAuthUses ?? []
+    definition.requestAuthUses ?? []
   ).map((use) => Object.freeze({
     purpose: use.purpose,
     materialization: Object.freeze({
       ...use.materialization,
+      ...(use.materialization.queryParameterNames === undefined ? {} : {
+        queryParameterNames: Object.freeze([...use.materialization.queryParameterNames].sort(compareProviderCanonicalStringsV1)),
+      }),
       headerNames: Object.freeze([
         ...use.materialization.headerNames,
       ].sort(compareProviderCanonicalStringsV1)),
     }),
   })).sort((left, right) =>
     compareProviderCanonicalStringsV1(left.purpose, right.purpose));
-  Object.freeze(dependencies);
   Object.freeze(connectedAccounts);
   Object.freeze(requestAuthUses);
+  return Object.freeze({ connectedAccounts, requestAuthUses });
+}
+
+/** Parse the runtime and its purpose facts from a managed binding snapshot. */
+export function resolveProviderManagedRuntimeDeclarationV1(input: Readonly<{
+  implementationIdentity: PluginContributionIdentityV1;
+  managedRuntime:
+    | ProviderManagedRuntimeSnapshotV1
+    | ResolvedProviderManagedRuntimeDeclarationV1;
+}>): ResolvedProviderManagedRuntimeDeclarationV1 {
+  const implementationIdentity = PluginContributionIdentityV1Schema.parse(
+    input.implementationIdentity,
+  );
+  const parsed = ProviderManagedRuntimeSnapshotV1Schema.parse(
+    input.managedRuntime,
+  );
+  return normalizeProviderManagedRuntimeV1(implementationIdentity, parsed,
+    resolveProviderConnectedAccountDeclarationsV1({ identity: implementationIdentity, definition: parsed }));
+}
+
+function normalizeProviderManagedRuntimeV1(
+  implementationIdentity: PluginContributionIdentityV1,
+  parsed: ProviderManagedRuntimeDeclarationV1,
+  { connectedAccounts, requestAuthUses }: ResolvedProviderConnectedAccountDeclarationsV1,
+): ResolvedProviderManagedRuntimeDeclarationV1 {
+  const dependencies = [...(parsed.dependencies ?? [])].sort(
+    compareProviderCanonicalStringsV1,
+  );
+  const endpointTemplateIds = [...parsed.endpointTemplateIds];
+  const unavailableConnectedAccounts = parsed.unavailableConnectedAccounts?.map(declaration => Object.freeze({
+    ...declaration,
+    service: Object.freeze(PluginContributionIdentityV1Schema.parse(typeof declaration.service === 'string'
+      ? { pluginId: implementationIdentity.pluginId, localId: declaration.service } : declaration.service)),
+  }));
+  if (unavailableConnectedAccounts) Object.freeze(unavailableConnectedAccounts);
+  const connectedAccountPurposeBindingPolicy =
+    parsed.connectedAccountPurposeBindingPolicy === undefined
+      ? undefined
+      : Object.freeze({ ...parsed.connectedAccountPurposeBindingPolicy });
+  Object.freeze(dependencies);
   Object.freeze(endpointTemplateIds);
   return Object.freeze({
     kind: 'managed',
@@ -439,6 +499,18 @@ export function resolveProviderManagedRuntimeDeclarationV1(input: Readonly<{
   });
 }
 
+/** Derive the managed binding snapshot from the single Provider declaration. */
+export function resolveProviderManagedRuntimeFromContributionV1(input: Readonly<{
+  implementationIdentity: PluginContributionIdentityV1;
+  definition: ProviderConnectedAccountDeclarationsV1 & Readonly<{ managedRuntime: ProviderManagedRuntimeDeclarationV1 }>;
+  connectedAccountDeclarations?: ResolvedProviderConnectedAccountDeclarationsV1;
+}>): ResolvedProviderManagedRuntimeDeclarationV1 {
+  return normalizeProviderManagedRuntimeV1(input.implementationIdentity, input.definition.managedRuntime,
+    input.connectedAccountDeclarations ?? resolveProviderConnectedAccountDeclarationsV1({
+      identity: input.implementationIdentity, definition: input.definition,
+    }));
+}
+
 /**
  * Stable equality representation for a managed Provider declaration.
  * Endpoint-template order is intentionally retained: it is the declared
@@ -448,7 +520,7 @@ export function resolveProviderManagedRuntimeDeclarationV1(input: Readonly<{
 export function createProviderManagedRuntimeDeclarationEqualityKeyV1(input: Readonly<{
   implementationIdentity: PluginContributionIdentityV1;
   managedRuntime:
-    | ProviderManagedRuntimeDeclarationV1
+    | ProviderManagedRuntimeSnapshotV1
     | ResolvedProviderManagedRuntimeDeclarationV1;
 }>): string {
   const implementationIdentity = PluginContributionIdentityV1Schema.parse(
@@ -477,7 +549,7 @@ export function createProviderManagedRuntimeDeclarationEqualityKeyV1(input: Read
 export function createProviderManagedRuntimeBindingEqualityKeyV1(input: Readonly<{
   implementationIdentity: PluginContributionIdentityV1;
   managedRuntime:
-    | ProviderManagedRuntimeDeclarationV1
+    | ProviderManagedRuntimeSnapshotV1
     | ResolvedProviderManagedRuntimeDeclarationV1;
   purposeBindings: QualifiedConnectedAccountPurposeBindingsV1;
 }>): string {
@@ -506,6 +578,16 @@ export const ProviderUsageSourceV1Schema = lazyZodSchema(() => z.strictObject({
   endpointTemplateId: ProviderLocalIdSchema,
   path: ProviderOriginRelativePathSchema,
   parser: ProviderLocalIdSchema,
+  /** Reuse the declared purpose's materialization and forward only these headers. */
+  connectedAccount: z.optional(z.strictObject({
+    purpose: ConnectedAccountPurposeDeclarationV1Schema.shape.purpose,
+    headerNames: ConnectedAccountRequestAuthMaterializationV1Schema.shape.headerNames,
+    /** Project only meters that apply to the selected Connected Account's reported plan. */
+    omitMetersByPlan: z.optional(z.readonly(z.array(z.strictObject({
+      planLabel: z.string().check(z.trim(), z.minLength(1)),
+      meterIds: z.readonly(z.array(ProviderLocalIdSchema)),
+    })))),
+  })),
   /** Optional billing access; an unbound slot omits this source. */
   billingCredential: z.optional(z.strictObject({
     slotId: ProviderLocalIdSchema,
@@ -540,6 +622,7 @@ export const ProviderContributionV1Schema = lazyZodSchema(() => z.strictObject({
     endpointTemplateIds: z.array(ProviderLocalIdSchema).check(z.minLength(1)),
   })),
   discovery: z.optional(ProviderDetectionDescriptorV1Schema),
+  ...ProviderConnectedAccountDeclarationsV1Schema.shape,
   managedRuntime: z.optional(ProviderManagedRuntimeDeclarationV1Schema),
   compatibilityOverrides: z.optional(ProviderCompatibilityOverridesV1Schema),
   legacyProfileMigrations: z.optional(z.array(ProviderLegacyProfileMigrationDescriptorV1Schema).check(z.maxLength(8))),
@@ -575,6 +658,16 @@ export const ProviderContributionV1Schema = lazyZodSchema(() => z.strictObject({
       ctx.addIssue({ code: 'custom', path: ['usageSources', index], message: 'Usage source ids must be unique and name a declared endpoint' });
     }
     usageIds.add(source.id);
+    if (source.connectedAccount) {
+      const { purpose, headerNames } = source.connectedAccount;
+      const family = value.connectedAccounts?.find(candidate => candidate.purpose === purpose);
+      const use = value.requestAuthUses?.find(candidate => candidate.purpose === purpose);
+      if (source.billingCredential || !family?.endpointTemplateIds?.includes(source.endpointTemplateId)
+        || !use || headerNames.some(name => !use.materialization.headerNames.includes(name))) {
+        ctx.addIssue({ code: 'custom', path: ['usageSources', index, 'connectedAccount'],
+          message: 'Account usage must use a declared purpose, its endpoint and its materialized headers' });
+      }
+    }
     if (source.billingCredential) {
       const { slotId } = source.billingCredential;
       const descriptor = JSON.stringify(source.billingCredential);
@@ -656,6 +749,11 @@ export const ProviderContributionV1Schema = lazyZodSchema(() => z.strictObject({
       });
     }
   });
+  validateProviderConnectedAccountDeclarationsV1(value,
+    value.managedRuntime ? new Set(value.managedRuntime.endpointTemplateIds) : endpointIds,
+    issue => ctx.addIssue(issue));
+  validateManagedPurposeBindingPolicyV1(value.managedRuntime?.connectedAccountPurposeBindingPolicy, value.connectedAccounts,
+    ['managedRuntime'], issue => ctx.addIssue(issue));
   value.managedRuntime?.endpointTemplateIds.forEach((endpointTemplateId, index) => {
     if (!endpointIds.has(endpointTemplateId)) {
       ctx.addIssue({

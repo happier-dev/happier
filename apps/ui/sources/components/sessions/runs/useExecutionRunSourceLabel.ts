@@ -1,3 +1,4 @@
+import { readSessionModelRefProviderConnectionId } from '@happier-dev/protocol/providers/selection/v2';
 import * as React from 'react';
 import type { ExecutionRunResolvedSelection } from '@happier-dev/protocol/execution/runs/requestedConfiguration';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -13,7 +14,8 @@ export function useExecutionRunSourceLabel(
     serverId: string | null | undefined,
 ): string | null {
     const resolvedServerId = resolveMachineRpcTargetServerId(serverId) ?? null;
-    const connectedServices = !selection?.modelSelection?.providerConnectionId && !selection?.teamCredentialModel
+    const connectionId = selection?.modelSelection ? readSessionModelRefProviderConnectionId(selection.modelSelection) : null;
+    const connectedServices = !connectionId && !selection?.teamCredentialModel
         ? selection?.connectedServices
         : null;
     const targets = React.useMemo(() => {

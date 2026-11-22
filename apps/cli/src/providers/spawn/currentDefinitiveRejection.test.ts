@@ -24,19 +24,17 @@ describe('resolveCurrentProviderSpawnDefinitiveRejection', () => {
       agentId: 'codex', selection: { modelSelection: ref } })).toEqual({ ok: true, ref });
   });
 
-  it('keeps a managed target available so its required model can be chosen', async () => {
+  it('keeps continuation available and preserves the authored Connected Account model', async () => {
     await withConfiguredDaemonTestHome({ prefix: 'continuation-purpose-model-' }, async ({ homeDir }) => {
-      const service = { pluginId: 'acme.shared-registry', localId: 'accounts' };
       const fixture = await createManagedRunLaunchFixture({ directory: join(homeDir, 'fixture'), happyHomeDir: homeDir,
         controller: pluginReloadController, physicalGateway: true, includeBundledDeclarations: true,
-        connectedAccounts: [{ purpose: 'inference', service, materializationKinds: ['httpHeaders'],
-          managedProviderEndpoint: { provider: { pluginId: 'acme.shared-registry', localId: 'gateway' },
-            purpose: 'upstream', modelIdPrefix: 'native/' } }] });
+        connectedAccountModels: [{ id: 'example', name: 'Example' }] });
       try {
-        const purpose = { consumer: { pluginId: 'acme.managed-run', localId: 'agent' }, purpose: 'inference' };
+        const purposeBindings = fixture.gateway!.purposeBindings;
+        const modelSelection = { source: 'connected_account' as const, purpose: purposeBindings.bindings[0]!.purpose,
+          endpointTemplateId: 'api', agentTargetKey: fixture.agentTargetKey, modelId: 'example' };
         const snapshot = { ...fixture.snapshot, connectedPurposeCatalog: { status: 'ready' as const, revision: 1,
-          record: { key: 'purposes' as const, value: { v: 1 as const, bindings: [{ purpose,
-            target: { kind: 'account' as const, account: { service, accountId: 'upstream-account' } } }] } } } };
+          record: { key: 'purposes' as const, value: purposeBindings } } };
         setActiveAccountSettingsSnapshot(snapshot);
         const purposePublication = { scopeKey: snapshot.scopeKey,
           lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(), key: 'purposes' as const };
@@ -58,8 +56,8 @@ describe('resolveCurrentProviderSpawnDefinitiveRejection', () => {
         })).resolves.toEqual({ type: 'available', protocolVersion: 1, sameSessionTransition: true });
         await expect(resolveCurrentProviderSpawnDefinitiveRejection({ ...target, selection: {} }))
           .resolves.toEqual({ ok: true, ref: null });
-        await expect(resolveCurrentProviderSpawnDefinitiveRejection({ ...target, selection: { modelId: 'native/example' } }))
-          .resolves.toMatchObject({ ok: true, ref: { modelId: 'native/example' } });
+        await expect(resolveCurrentProviderSpawnDefinitiveRejection({ ...target, selection: { modelSelection } }))
+          .resolves.toEqual({ ok: true, ref: modelSelection });
         expect(commitActiveConnectedAccountCatalog({ ...purposePublication,
           catalog: { status: 'unavailable', reason: 'unreachable' } })).toBe(true);
         await expect(resolveCurrentProviderSpawnDefinitiveRejection({ ...target, selection: {} }))
@@ -84,6 +82,21 @@ describe('resolveCurrentProviderSpawnDefinitiveRejection', () => {
       } finally { resetActiveAccountSettingsSnapshotForTests(); await fixture.cleanup(); }
     });
   });
+  it('leaves Provider-owned model validation to launch while still rejecting unoffered native models', async () => {
+    const target = { agentId: 'gemini', agentTargetKey: 'agent:happier.agent.gemini/gemini' } as const;
+    const modelId = 'publisher/account-model';
+    const modelSelection = { source: 'connected_account' as const, agentTargetKey: target.agentTargetKey,
+      purpose: { consumer: { pluginId: 'acme.provider', localId: 'gateway' }, purpose: 'inference' },
+      endpointTemplateId: 'gemini', modelId };
+    await expect(resolveCurrentProviderSpawnDefinitiveRejection({ ...target, selection: { modelId } }))
+      .resolves.toEqual({ ok: false });
+    await expect(resolveCurrentProviderSpawnDefinitiveRejection({ ...target, selection: { modelSelection } }))
+      .resolves.toEqual({ ok: true, ref: modelSelection });
+    await expect(resolveCurrentProviderSpawnDefinitiveRejection({ ...target,
+      selection: { modelSelection, sessionConfigOptionOverrides: { v: 0 } } }))
+      .resolves.toEqual({ ok: false });
+  });
+
   it('uses an offered Provider model instead of a static native model catalog while retaining mode and syntax checks', () => {
     const input = { agentId: 'qwen', selection: { modelId: 'team-only-model', providerConnectionId: null },
       sourceModel: { id: 'team-only-model', name: 'Team model' } };

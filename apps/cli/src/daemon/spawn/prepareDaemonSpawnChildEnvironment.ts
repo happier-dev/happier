@@ -9,7 +9,7 @@ import type { DaemonSpawnHooks } from '@/daemon/spawnHooks';
 import { configuration } from '@/configuration';
 import { buildToolIdleTimeoutEnvironmentOverlay, type MachineResourcesPolicyReader } from '@/processes/toolIdleTimeouts';
 import type { ProviderLaunchResourceScope } from '@/providers/lifecycle/resourceScope';
-import type { PreparedManagedPurposeLaunch } from '@/providers/lifecycle/managedPurposeLaunch';
+import type { MaterializedManagedPurposeLaunch, PreparedManagedPurposeLaunch } from '@/providers/lifecycle/managedPurposeLaunch';
 import type {
     ProviderSpawnAuthorizationAttempt,
 } from '@/providers/spawn/authorize';
@@ -78,6 +78,7 @@ export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
     extraEnvForChild: Record<string, string>;
     trackedSpawnOptions: SpawnSessionOptions;
     terminalRequest: ReturnType<typeof resolveTerminalRequestFromSpawnOptions>;
+    revalidateManagedProviderBeforeCommit?: MaterializedManagedPurposeLaunch['revalidateBeforeCommit'];
     sanitizeDiagnosticText: (value: string) => string;
     createStreamingSanitizer?: () => ProviderStreamingSanitizer;
 }>> {
@@ -102,6 +103,7 @@ export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
     const existingSessionMetadata = acceptedModel !== retainedModel && input.existingSessionMetadata
         ? { ...input.existingSessionMetadata, modelSelectionIntentV2: acceptedModel }
         : input.existingSessionMetadata;
+    let revalidateManagedProviderBeforeCommit: MaterializedManagedPurposeLaunch['revalidateBeforeCommit'] | undefined;
     const spawnEnvironment = await resolveSpawnChildEnvironment({
         memberAgentCliLaunch: input.memberAgentCliLaunch,
         savedSecretOperationContext: input.savedSecretOperationContext,
@@ -135,6 +137,9 @@ export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
                         errorMessage: materialized.error.code, providerError: materialized.error };
                     input.launchResourceScope.register(materialized.cleanup);
                     input.providerDiagnosticRedactionLease.add(materialized.additionalRedactionValues);
+                    revalidateManagedProviderBeforeCommit = signal => materialized.revalidateBeforeCommit(
+                        target && signal ? AbortSignal.any([target.lifetime, signal]) : target?.lifetime ?? signal,
+                    );
                     return { ok: true as const, providerEnvironmentOverlay: materialized.environmentOverlay,
                         providerBindingLaunchHandoff: { v: 1 as const, materialization: materialized.providerBinding.materialization,
                             providerBinding: materialized.providerBinding, selection: input.managedPurpose!.selection } };
@@ -300,6 +305,7 @@ export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
         extraEnv,
         extraEnvForChild,
         trackedSpawnOptions,
+        revalidateManagedProviderBeforeCommit,
         terminalRequest: input.admittedTerminalRequest ?? resolveTerminalRequestFromSpawnOptions({
             happyHomeDir: configuration.happyHomeDir,
             terminal: input.terminal,

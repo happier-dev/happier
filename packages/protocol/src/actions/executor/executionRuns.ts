@@ -19,7 +19,8 @@ import { type ActionId } from '../actionIds.js';
 import { carryActionFailureDiagnostic } from './actionFailureDiagnostic.js';
 import { isModelRefGrantedByConstraintsV1, type CallerInputConstraintsV1 } from '../../auth/apiTokenGrant.js';
 import { buildBackendTargetKeyV2, readBackendTargetRefV2, type BackendTargetRefV2Input } from '../../backends/targets/backendTargetRefV2.js';
-import { ProviderBoundModelRefSchema, type ProviderBoundModelRef } from '../../providers/selection/v1.js';
+import type { ProviderBoundModelRef } from '../../providers/selection/v1.js';
+import { PersonalSessionModelRefSchema } from '../../providers/selection/v2.js';
 import type { SessionModelRefV2 } from '../../providers/selection/v2.js';
 import { resolveInheritedApprovalProfileIdV1 } from '../approvalProfiles.js';
 import { actionStartTargetUnavailableV1, stampAgentStartSelectionV1 } from './agentStartAdmission.js';
@@ -69,8 +70,10 @@ function readExecutionRunStartModelRefV1(request: Readonly<Record<string, unknow
     const { kind: _kind, ...teamRef } = team.data;
     return { source: 'team_resource', ...teamRef };
   }
-  const selection = ProviderBoundModelRefSchema.safeParse(request.modelSelection);
-  if (selection.success) return selection.data;
+  if (request.modelSelection != null) {
+    const selection = PersonalSessionModelRefSchema.safeParse(request.modelSelection);
+    return selection.success ? selection.data : 'automatic';
+  }
   const modelId = normalizeId(request.modelId);
   if (!modelId) return 'automatic';
   try {

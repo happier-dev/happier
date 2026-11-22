@@ -8,12 +8,13 @@ import {
 } from './handoff';
 
 describe('provider-binding launch materialization handoff', () => {
-    it('consumes an exact Connected Account binding with its admitted native selection', () => {
+    it('consumes an exact Connected Account binding with its admitted Provider purpose and endpoint', () => {
         const materialization = { v: 1, kind: 'spawnEnv' };
+        const purpose = { consumer: { pluginId: 'acme.provider', localId: 'gateway' }, purpose: 'inference' };
         const handoff = { v: 1, materialization,
-            selection: { agentTargetKey: 'agent:acme.agent/agent', providerConnectionId: null, modelId: 'native/model' },
+            selection: { source: 'connected_account', purpose, endpointTemplateId: 'responses', agentTargetKey: 'agent:acme.agent/agent', modelId: 'model' },
             providerBinding: {
-                source: { kind: 'connected_account', purpose: { consumer: { pluginId: 'acme.agent', localId: 'agent' }, purpose: 'inference' },
+                source: { kind: 'connected_account', purpose,
                     account: { service: { pluginId: 'acme.accounts', localId: 'subscription' }, accountId: 'account-1' } },
                 model: { id: 'model', name: 'Model' },
                 upstream: { protocol: 'openai-responses', normalizedUrl: 'http://127.0.0.1:43123/v1', credential: 'apiKey' }, materialization,

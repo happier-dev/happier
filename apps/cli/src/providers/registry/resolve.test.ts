@@ -83,6 +83,23 @@ function managedContribution(
       ...baseDefinition.catalog,
       sourceRegistryVersion: 'gateway-model-registry/v1',
     },
+    connectedAccounts: [{
+      purpose: 'upstream',
+      service: {
+        pluginId: 'happier.connected-account.example',
+        localId: 'example',
+      },
+      required: options.required ?? true,
+      materializationKinds: ['httpHeaders'],
+    }],
+    requestAuthUses: [{
+      purpose: 'upstream',
+      materialization: {
+        kind: 'httpHeaders',
+        origin: 'https://api.example.test',
+        headerNames: ['authorization'],
+      },
+    }],
     managedRuntime: {
       kind: 'managed',
       dependencies: [dependency],
@@ -90,23 +107,6 @@ function managedContribution(
       ...(options.minimumBound === undefined
         ? {}
         : { connectedAccountPurposeBindingPolicy: { minimumBound: options.minimumBound } }),
-      connectedAccounts: [{
-        purpose: 'upstream',
-        service: {
-          pluginId: 'happier.connected-account.example',
-          localId: 'example',
-        },
-        required: options.required ?? true,
-        materializationKinds: ['httpHeaders'],
-      }],
-      requestAuthUses: [{
-        purpose: 'upstream',
-        materialization: {
-          kind: 'httpHeaders',
-          origin: 'https://api.example.test',
-          headerNames: ['authorization'],
-        },
-      }],
     },
   });
   return {

@@ -2,21 +2,21 @@ import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/cry
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { resolveProviderBindingCompatibilityFromSourceFactsV1 } from '@happier-dev/protocol/providers/binding-compatibility';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
-import type { AgentProviderRequirementsV1, ProviderSettingsV1, ConnectedAccountPurposeDeclarationV1 } from '@happier-dev/protocol';
+import type { AgentProviderRequirementsV1, ProviderSettingsV1, ConnectedAccountPurposeDeclarationV1, ConnectedServiceBindingsV2, QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol';
 import type { DaemonProviderModelProjectionGroupV1, DaemonProviderModelProjectionRequestV1 } from '@happier-dev/protocol/rpc/providers';
 
 import type { ConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { preserveConnectedAccountSourceHealthFailure } from '@/daemon/connectedServices/purposeBindings/sourceHealth';
-import { projectManagedProviderBrokerApplication } from '@/providers/broker/applicationProjection';
-import { isCpxBrokerApplication } from '@/providers/broker/teamCredentialBrokerSourceOwner';
+import { projectApplicationEndpoint } from '@happier-dev/protocol/providers/catalog/brokerApplicationProjectionV1';
 import type { ProviderContributionRegistryView } from '@/providers/registry';
 import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
+import { isCpxBrokerApplication } from '@/providers/broker/teamCredentialBrokerSourceOwner';
 import { providerBrokerLocalCredentialRequirement } from '@/providers/broker/providerBrokerPrivateProtocol';
 import { hasProviderExperimentalConfirmation, resolveProviderCompatibilityConfirmation } from '@/providers/catalog/compatibility';
-import { resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
+import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import { projectConnectedServiceBindingsToQualifiedPurposeBindingSnapshot } from '@/daemon/connectedServices/requestAuth/firstPartyConnectedAccountRequestAuthAdapter';
 import { getProviderExperimentalConfirmationCatalogSourceKeyV1 } from '@happier-dev/protocol/providers/settings/v1';
 import { ProviderModelBindingSourceV1Schema, projectProviderModelSourceStateV1 } from '@happier-dev/protocol/providers/binding-compatibility';
-import { readProviderConnectionBrokerImplementation } from '@/providers/broker/providerConnectionBrokerApplication';
 import { projectProviderModelReasoningForAgent } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 import { observedConnectedAccountDescriptors, type ObserveConnectedAccountModels } from './connectedAccountModelObservation';
 import type { ProviderBrokerSourceApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
@@ -26,6 +26,26 @@ import { createProviderErrorV1, providerErrorFromRpcFailure, type ProviderErrorV
 import { ProviderOperationAbandonedError } from '@/providers/operationLifetime';
 
 export type ResolveManagedProviderPurposeBindingIntentSelection = ConnectedAccountPurposeBindingOwner['resolveBindingIntentSelection'];
+
+/** Project the effective Session choice through the shared purpose-binding writer. */
+export function readProviderConnectedAccountSessionBindings(input: Readonly<{
+  registry: ProviderContributionRegistryView;
+  connectedServices: ConnectedServiceBindingsV2 | null;
+  purpose?: QualifiedConnectedAccountPurposeV1;
+}>) {
+  const { connectedServices, purpose } = input;
+  if (!connectedServices) return [];
+  return [...input.registry.providersByContributionKey.values()].flatMap(provider => {
+    const declarations = provider.connectedAccountDeclarations?.connectedAccounts;
+    if (!declarations?.length) return [];
+    const matching = purpose ? declarations.filter(declaration =>
+      qualifiedPurposeKey({ consumer: provider.identity, purpose: declaration.purpose }) === qualifiedPurposeKey(purpose)) : declarations;
+    if (!matching.length) return [];
+    return projectConnectedServiceBindingsToQualifiedPurposeBindingSnapshot({
+      consumer: provider.identity, declarations: matching, bindings: connectedServices,
+    }).bindings.map(binding => ({ provider, binding }));
+  });
+}
 
 /** One source reader for catalog projection and source-any readiness. No Agent
  * registration, personal Gateway, credential read or compatibility is involved. */
@@ -39,32 +59,31 @@ export async function readConnectedAccountCatalogSources(input: Readonly<{
   provider?: ResolvedProviderContribution;
   purpose?: string;
 }>) {
-  const provider = input.provider ?? readProviderConnectionBrokerImplementation(input.registry);
-  if (!provider?.definition.managedRuntime) return [];
-  const runtime = resolveProviderManagedRuntimeDeclarationV1({ implementationIdentity: provider.identity,
-    managedRuntime: provider.definition.managedRuntime });
+  const providers = input.provider ? [input.provider] : input.registry.providersByContributionKey.values();
   const service = input.target.kind === 'account' ? input.target.account.service : input.target.service;
   const signal = input.signal ?? new AbortController().signal;
   const sources = [];
-  const selectionByPurpose = new Map<string, Awaited<ReturnType<ResolveManagedProviderPurposeBindingIntentSelection>> | null>();
-  for (const endpoint of provider.definition.endpointTemplates) {
-    if (input.protocols && !input.protocols.includes(endpoint.protocol)
-      || input.endpointTemplateId && input.endpointTemplateId !== endpoint.id) continue;
-    if (!provider.definition.managedRuntime.endpointTemplateIds.includes(endpoint.id)) continue;
-    const families = runtime.connectedAccounts.filter(family => (input.purpose === undefined || family.purpose === input.purpose)
-      && family.service.pluginId === service.pluginId
-      && family.service.localId === service.localId && family.endpointTemplateIds?.includes(endpoint.id));
-    const family = families.length === 1 ? families[0] : undefined;
-    if (!family) continue;
-    let selection = selectionByPurpose.get(family.purpose);
-    if (selection === undefined) {
-      selection = await input.resolveSelection({ purpose: { consumer: provider.identity, purpose: family.purpose },
+  for (const provider of providers) {
+    const declarations = provider.connectedAccountDeclarations;
+    if (!declarations) continue;
+    for (const family of declarations.connectedAccounts) {
+      if ((input.purpose !== undefined && family.purpose !== input.purpose)
+        || family.service.pluginId !== service.pluginId || family.service.localId !== service.localId) continue;
+      const endpoints = provider.definition.endpointTemplates.filter(endpoint =>
+        family.endpointTemplateIds?.includes(endpoint.id)
+        && (!input.protocols || input.protocols.includes(endpoint.protocol))
+        && (!input.endpointTemplateId || input.endpointTemplateId === endpoint.id));
+      if (!endpoints.length) continue;
+      const selection = await input.resolveSelection({ purpose: { consumer: provider.identity, purpose: family.purpose },
         target: input.target, serviceRefs: [family.service], signal }).catch(preserveConnectedAccountSourceHealthFailure);
-      if (!selection || signal.aborted || !await selection.isCurrent(signal)) selection = null;
-      selectionByPurpose.set(family.purpose, selection);
+      if (!selection || signal.aborted || !await selection.isCurrent(signal)) continue;
+      const profile = selection.resolved.observation?.profiles.find(profile =>
+        profile.ref.accountId === selection.resolved.account.accountId);
+      if (family.credentialKinds && profile && (!profile.kind || !family.credentialKinds.includes(profile.kind))) continue;
+      for (const endpoint of endpoints) {
+        sources.push({ provider, endpoint, family, selection, requestAuthUses: declarations.requestAuthUses });
+      }
     }
-    if (!selection) continue;
-    sources.push({ provider, endpoint, family, selection, requestAuthUses: runtime.requestAuthUses });
   }
   return sources;
 }
@@ -90,6 +109,8 @@ type ConnectedAccountCatalogInput = Readonly<{
   provider?: ResolvedProviderContribution;
   purpose?: string;
   agentPurpose?: ConnectedAccountPurposeDeclarationV1;
+  sessionPurpose?: QualifiedConnectedAccountPurposeV1;
+  endpointTemplateId?: string;
   signal?: AbortSignal;
 }>;
 
@@ -126,20 +147,19 @@ async function readConnectedAccountModelCatalogFromSource(input: Omit<ConnectedA
   for (const source of await readConnectedAccountCatalogSources({
     registry: input.registry, target, resolveSelection: input.resolveSelection, signal,
     protocols: input.request.application ? [input.request.application.protocol] : undefined,
-    endpointTemplateId: input.request.application?.endpointTemplateId,
+    endpointTemplateId: input.request.application?.endpointTemplateId ?? input.endpointTemplateId,
     provider: input.provider, purpose: input.purpose,
   })) {
       const { provider, endpoint, family, selection } = source;
       const protocol = endpoint.protocol;
-      const application = projectManagedProviderBrokerApplication({
-        registry: input.registry,
+      const application = projectApplicationEndpoint({
+        endpointTemplates: provider.definition.endpointTemplates,
         implementationIdentity: provider.identity,
         agentTargetKey: input.request.agentTargetKey,
         protocol,
         endpointTemplateId: endpoint.id,
       });
       if (!application || (input.request.application && !pluginJsonValuesEqual(application, input.request.application))) continue;
-      if (!input.request.application && !input.provider && !isCpxBrokerApplication(input.registry, application)) continue;
       selections.add(selection);
       const connectionId = connectedAccountCatalogConnectionId(application, target);
       if (!observations.has(selection)) {
@@ -159,6 +179,8 @@ async function readConnectedAccountModelCatalogFromSource(input: Omit<ConnectedA
             agentTargetKey: input.request.agentTargetKey, connectedAccountTarget: observationTarget,
             // `application` was projected from this same request key.
             application: { ...application, agentTargetKey: input.request.agentTargetKey }, sourceCatalog: true, refreshPolicy: input.request.refreshPolicy,
+            ...(input.purpose && observationTarget.kind === 'account'
+              ? { connectedAccountSourcePurpose: { consumer: provider.identity, purpose: family.purpose } } : {}),
             forceRefresh: input.request.forceRefresh }, signal);
           if (projection.status === 'error') return { groups: [], error: { ...projection.error,
             machineId: input.request.machineId, connectedAccountTarget: target }, isCurrent: async () => !signal.aborted };
@@ -248,7 +270,7 @@ export async function projectConnectedAccountCatalog(input: ConnectedAccountCata
   const groups: DaemonProviderModelProjectionGroupV1[] = source.groups.flatMap(group => {
     // A custom native upstream cannot turn gateway compatibility declarations
     // into account membership. Only the source owner's observation admits rows.
-    if (input.agentPurpose && !input.agentPurpose.managedProviderEndpoint && !group.catalogObserved) return [];
+    if (input.agentPurpose && !group.catalogObserved) return [];
     if (input.support && !input.support.acceptsProtocols.includes(group.application.protocol)) return [];
     const brokerCredential = input.support ? providerBrokerLocalCredentialRequirement(group.application.protocol, input.support) : undefined;
     if (input.support && !brokerCredential) return [];
@@ -261,11 +283,14 @@ export async function projectConnectedAccountCatalog(input: ConnectedAccountCata
         : row.compatibility;
       return [{ ...row, descriptor: input.support ? projectProviderModelReasoningForAgent(row.descriptor, input.support) : row.descriptor,
         application: { ...row.application, agentTargetKey: input.request.agentTargetKey },
-        ref: { agentTargetKey: input.request.agentTargetKey, providerConnectionId: input.agentPurpose ? null : group.connectionId,
-          modelId: input.agentPurpose ? (input.agentPurpose.managedProviderEndpoint?.modelIdPrefix ?? input.agentPurpose.nativeModelIdPrefix ?? '') + row.descriptor.id : row.descriptor.id },
-        compatibility: input.agentPurpose ? resolveProviderCompatibilityConfirmation({ compatibility,
-          declaredManagedModel: input.agentPurpose.managedProviderEndpoint
-            ? group.source.family.staticModels?.some(model => model.id === row.descriptor.id) === true : group.catalogObserved === true,
+        ref: input.sessionPurpose ? {
+          source: 'connected_account' as const, purpose: input.sessionPurpose,
+          endpointTemplateId: group.source.endpoint.id, agentTargetKey: input.request.agentTargetKey, modelId: row.descriptor.id,
+        } : { agentTargetKey: input.request.agentTargetKey, providerConnectionId: input.agentPurpose ? null : group.connectionId,
+          modelId: input.agentPurpose ? (input.agentPurpose.nativeModelIdPrefix ?? '') + row.descriptor.id : row.descriptor.id },
+        compatibility: input.agentPurpose || input.sessionPurpose ? resolveProviderCompatibilityConfirmation({ compatibility,
+          declaredManagedModel: group.catalogObserved === true
+            || group.source.family.staticModels?.some(model => model.id === row.descriptor.id) === true,
           providerSettings: input.providerSettings, confirmationSource: row.confirmationSource!,
           agentTargetKey: input.request.agentTargetKey, modelId: row.descriptor.id,
         }) : { ...compatibility, confirmed: !input.request.sourceCatalog && compatibility.result.status === 'experimental'
@@ -279,7 +304,17 @@ export async function projectConnectedAccountCatalog(input: ConnectedAccountCata
     return [{ ...presentation, rows, suppressedConnectedServiceIds: input.support?.authIsolation.suppressConnectedServiceIds ?? [] }];
   });
   const current = input.request.currentSelection;
-  if (!source.error && current?.providerConnectionId
+  if (!source.error && current && 'source' in current && current.source === 'connected_account'
+    && input.sessionPurpose && qualifiedPurposeKey(input.sessionPurpose) === qualifiedPurposeKey(current.purpose)
+    && source.groups.some(group => group.source.endpoint.id === current.endpointTemplateId)
+    && !groups.some(group => group.rows.some(row => 'source' in row.ref && row.ref.source === 'connected_account'
+      && row.ref.endpointTemplateId === current.endpointTemplateId
+      && (row.ref.modelId === current.modelId || row.descriptor.aliases?.includes(current.modelId))))) {
+    return { ...source, groups, error: createProviderErrorV1('provider_model_not_found', {
+      machineId: input.request.machineId, connectedAccountTarget: input.request.connectedAccountTarget,
+    }) };
+  }
+  if (!source.error && current && 'providerConnectionId' in current && current.providerConnectionId
     && groups.some(group => group.connectionId === current.providerConnectionId)
     && !groups.some(group => group.connectionId === current.providerConnectionId
       && group.rows.some(row => row.ref.modelId === current.modelId || row.descriptor.id === current.modelId

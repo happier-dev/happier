@@ -1,7 +1,7 @@
 import { isAbsolute } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
-import { resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
+import { resolveProviderManagedRuntimeFromContributionV1 } from '@happier-dev/protocol/providers/contributions';
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import type { ManagedExecutableRef, PluginSourceCustodyV1 } from '@happier-dev/protocol';
 import { PluginError } from '@happier-dev/plugin-sdk';
@@ -213,9 +213,9 @@ export async function authorizeRunnerManagedProviderServerSupervision(
         pluginId: scope.pluginId,
         localId: scope.providerLocalId,
     });
-    const declaration = resolveProviderManagedRuntimeDeclarationV1({
+    const declaration = resolveProviderManagedRuntimeFromContributionV1({
         implementationIdentity: identity,
-        managedRuntime: provider.managedRuntime,
+        definition: { ...provider, managedRuntime: provider.managedRuntime },
     });
     const endpoint = provider.endpointTemplates.find(
         (candidate) => candidate.id

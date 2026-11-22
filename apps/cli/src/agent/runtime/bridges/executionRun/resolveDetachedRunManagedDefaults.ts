@@ -1,6 +1,6 @@
 import { buildBackendTargetKeyV2, parseBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { parseAgentPermissionIntentV1Alias } from '@happier-dev/protocol/runtime/permissionIntentV1';
-import { projectSessionModelRefToExecutionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
+import { createPersonalSessionModelSelection, projectSessionModelRefToExecutionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import type { ManagedAgentSandboxContext } from '@happier-dev/protocol/teams/managedDefaults';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -39,7 +39,7 @@ export async function resolveDetachedRunManagedDefaults(params: ExecutionRunMana
     ...(params.signal ? { signal: params.signal } : {}) });
   const home = createAccountServerActionDeps({ credentials, token: credentials.token, serverId, serverHttpBaseUrl });
   const accountId = readAccountIdFromToken(credentials.token);
-  const explicitModel = params.modelSelection ? { v: 1 as const, updatedAt: 0, ref: params.modelSelection }
+  const explicitModel = params.modelSelection ? createPersonalSessionModelSelection(params.modelSelection, 0)
     : params.modelId ? { v: 1 as const, updatedAt: 0, ref: {
       agentTargetKey: buildBackendTargetKeyV2(agentTarget), providerConnectionId: null, modelId: params.modelId,
     } } : undefined;

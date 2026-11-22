@@ -13,6 +13,7 @@ export const PI_CONNECTED_ACCOUNT_MODEL_ENV = 'HAPPIER_PI_CONNECTED_ACCOUNT_MODE
 export const PI_DIRECT_AUTH_ENV_KEYS = Object.freeze([
   ...PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES.flatMap((row): readonly string[] => 'environmentKeys' in row.native ? row.native.environmentKeys : []),
   ...PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES.flatMap((row) => 'serviceAccount' in row.native ? [row.native.serviceAccount.environmentKey] : []),
+  'META_API_KEY',
   'OPENROUTER_API_KEY',
 ] as const);
 

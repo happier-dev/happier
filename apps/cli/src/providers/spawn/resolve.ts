@@ -11,7 +11,7 @@ import type { AssessedProviderEndpoint } from '@happier-dev/protocol';
 import { readOwnRecordValue } from '@happier-dev/protocol/providers/ownRecordValue';
 import type { ProviderSettingsReadResultV1 } from '@happier-dev/protocol';
 import { ProviderModelDescriptorV1Schema, resolveModelDisplayName } from '@happier-dev/protocol/models/descriptor';
-import { createProviderManagedRuntimeBindingEqualityKeyV1, resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
+import { createProviderManagedRuntimeBindingEqualityKeyV1, resolveProviderManagedRuntimeFromContributionV1 } from '@happier-dev/protocol/providers/contributions';
 import { ProviderCredentialTransportAmbiguityErrorV1, resolveProviderBindingDeclarationCompatibilityV1, selectProviderRuntimeCredentialTransportV1 } from '@happier-dev/protocol/providers/binding-compatibility';
 import type { AgentProviderRequirementsV1, ProviderBindingAuthorizationTicketV1, ProviderCredentialTransportV1, ProviderErrorV1, ProviderModelLoadDescriptorV1, ProviderModelDescriptorV1, ProviderSettingsV1, ProviderObservationAuthorizationFingerprintV1, ProviderProbeRequestFingerprintV1, ResolvedProviderManagedRuntimeDeclarationV1, QualifiedConnectedAccountPurposeBindingsV1, SessionProviderBindingMetadataV1 } from '@happier-dev/protocol';
 import type {
@@ -406,9 +406,10 @@ export function resolveProviderProbeAuthorization(input: Readonly<{
         ))
       : undefined;
     const contributionManagedRuntime = contribution?.definition.managedRuntime
-      ? resolveProviderManagedRuntimeDeclarationV1({
+      ? resolveProviderManagedRuntimeFromContributionV1({
           implementationIdentity: contribution.identity,
-          managedRuntime: contribution.definition.managedRuntime,
+          definition: { ...contribution.definition, managedRuntime: contribution.definition.managedRuntime },
+          connectedAccountDeclarations: contribution.connectedAccountDeclarations,
         })
       : null;
     if (

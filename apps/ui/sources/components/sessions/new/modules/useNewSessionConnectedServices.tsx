@@ -6,7 +6,7 @@ import { Modal } from '@/modal';
 import { presentSessionSpawnNewConnectedAccountFailure } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
 import type { SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { presentNativeRouteSourceLabel, presentSessionRouteChip, presentSessionRouteSource, resolveSessionRoutePresentation, readProviderRouteConnectionId, projectProviderRouteSignInPurposes, readProviderConnectionDisclosureSource, providerConnectionSourceLabel, type RouteSelection, type ProviderRouteSource, type SessionRoutePresentationInput } from '@/providers/session/resolveSessionRoutePresentation';
+import { presentNativeRouteSourceLabel, presentSessionRouteChip, presentSessionRouteSource, resolveSessionRoutePresentation, readProjectedConnectedAccountRoute, readProviderRouteConnectionId, projectProviderRouteSignInPurposes, readProviderConnectionDisclosureSource, providerConnectionSourceLabel, type RouteSelection, type ProviderRouteSource, type SessionRoutePresentationInput } from '@/providers/session/resolveSessionRoutePresentation';
 
 import { t } from '@/text';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
@@ -191,9 +191,15 @@ export function useNewSessionConnectedServices(params: Readonly<{
     resolveProjectedConnectedAccountServiceKeys(connectedAccounts)
   ), [connectedAccounts]);
   const selectedProviderConnectionId = readProviderRouteConnectionId(params.modelSelection ?? null);
-  const selectedProviderSource = React.useMemo(() => selectedProviderConnectionId
-    ? params.providerSources?.find(source => source.connectionId === selectedProviderConnectionId) ?? null : null,
-  [params.providerSources, selectedProviderConnectionId]);
+  const connectedAccountModel = params.modelSelection && 'source' in params.modelSelection && params.modelSelection.source === 'connected_account';
+  const selectedProviderSource = React.useMemo(() => {
+    const selection = params.modelSelection;
+    if (selection && 'source' in selection && selection.source === 'connected_account') {
+      return readProjectedConnectedAccountRoute(selection, params.providerSources)?.source ?? null;
+    }
+    return selectedProviderConnectionId
+      ? params.providerSources?.find(source => source.connectionId === selectedProviderConnectionId) ?? null : null;
+  }, [params.modelSelection, params.providerSources, selectedProviderConnectionId]);
   const selectedProviderRoute = React.useMemo(() => resolveSelectedProviderRoute({
     selection: params.modelSelection ?? null,
     agentTargetKey: params.nativeAgentTargetKey,
@@ -624,7 +630,8 @@ export function useNewSessionConnectedServices(params: Readonly<{
       ? params.providerSettings?.connections.find(connection => connection.id === route.connectionId) : null;
     const source = connection ? readProviderConnectionDisclosureSource({ connection, projection: params.providerProjection,
       machineId: params.sourceMachineId ?? '', resolveServiceTitle: resolveTitle }) : null;
-    const providerPurposes = source && route.kind === 'provider' ? projectProviderRouteSignInPurposes({
+    const providerPurposes = connectedAccountModel && route.kind === 'provider' && route.sourceLabel
+      ? [route.sourceLabel] : source && route.kind === 'provider' ? projectProviderRouteSignInPurposes({
       route: { ...route, sourceLabel: route.sourceLabel ?? providerConnectionSourceLabel(source.source) },
       machineId: params.sourceMachineId ?? '', secretBindings: connection ? params.providerSettings?.secretBindingsByConnectionId[connection.id] : undefined,
       credentialSlotId: source.credentialSlotId, managedSignInPurposes: source.managedSignInPurposes,
@@ -636,11 +643,11 @@ export function useNewSessionConnectedServices(params: Readonly<{
       suppressedServiceIds: selectedProviderSource?.suppressedConnectedServiceIds,
     });
     return [...new Set([...providerPurposes, ...nativePurposes])];
-  }, [connectedAccountDefaultsStatus, connectedAccounts, connectedServicesBindingsPayload,
+  }, [connectedAccountDefaultsStatus, connectedAccounts, connectedAccountModel, connectedServicesBindingsPayload,
     params.providerProjection, params.providerSettings, selectedProviderSource, params.sourceMachineId, routePresentation, targetServerId]);
 
   const connectedServicesAuthChip = React.useMemo<AgentInputExtraActionChip | null>(() => {
-        if (supportedConnectedServiceIds.length === 0) return null;
+        if (supportedConnectedServiceIds.length === 0 && !(connectedAccountModel && routePresentation.applied.kind === 'provider')) return null;
         // "Runs through …" names the route the draft would start with; while account defaults load,
         // the incumbent loading/unavailable label stays rather than a guessed route.
         const routeChip = presentSessionRouteChip(routePresentation, { label: authLabel.label, authSource: nativeAuthSource });
@@ -658,7 +665,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
             popoverContent: connectedServicesAuthPopoverContent,
             agentId: defaultAuthAgentId,
         });
-    }, [authLabel, connectedAccountDefaultsStatus, connectedServicesAuthPopoverContent, defaultAuthAgentId, nativeAuthSource, routePresentation, supportedConnectedServiceIds, params.placementId, params.placementPending, params.mixedLabel]);
+    }, [authLabel, connectedAccountDefaultsStatus, connectedAccountModel, connectedServicesAuthPopoverContent, defaultAuthAgentId, nativeAuthSource, routePresentation, supportedConnectedServiceIds, params.placementId, params.placementPending, params.mixedLabel]);
 
   const selectedCredentialMachineAgent = React.useMemo(() => projectMachineAgentForCredential(params.machineAgent, {
     credentialBindings: connectedServicesBindingsPayload,

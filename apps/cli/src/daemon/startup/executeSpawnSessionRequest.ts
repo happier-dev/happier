@@ -243,6 +243,8 @@ export type ExecuteSpawnSessionRequestParams = Readonly<{
         'activate' | 'retire'
     >;
     connectedAccountRequestAuthHttpPort?: number;
+    connectedAccountRequestAuth?: import('@/providers/lifecycle/managedPurposeLaunch').ManagedPurposeLaunchContext['connectedAccountRequestAuth'];
+    observeConnectedAccountSourceModels?: import('@/providers/lifecycle/managedPurposeLaunch').ManagedPurposeLaunchContext['observeConnectedAccountSourceModels'];
     resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
     resolveManagedPurposeBindingIntentSelection?: import('@/providers/modelManagement/connectedAccountCatalog').ResolveManagedProviderPurposeBindingIntentSelection;
     prepareConnectedAccountOperationSelection?: ConnectedAccountPurposeBindingOwner['prepareOperationSelection'];
@@ -760,6 +762,9 @@ export async function executeSpawnSessionRequest(
                     : {}),
                 ...(params.resolveManagedPurposeBindingIntentSelection ? { resolveManagedPurposeBindingIntentSelection: params.resolveManagedPurposeBindingIntentSelection } : {}),
                 managedProviderAccountAuthority: params.managedProviderAccountAuthority,
+                connectedAccountRequestAuth: params.connectedAccountRequestAuth,
+                purposeBindings: params.activatePurposeBindings ? { activatePurposeBindings: params.activatePurposeBindings } : undefined,
+                observeConnectedAccountSourceModels: requesterRuntime ? undefined : params.observeConnectedAccountSourceModels,
                 processEnv: params.processEnv ?? process.env,
             });
             recordPreparationPhase('provider_authorization');
@@ -1772,16 +1777,19 @@ export async function executeSpawnSessionRequest(
             recordPreparationPhase('launch_custody');
 
             let providerCleanupTransferred = false;
-            const revalidateProviderBeforeCommit = providerBindingAttempt
+            const revalidateManagedProvider = childEnvironment.revalidateManagedProviderBeforeCommit;
+            const revalidateProviderBeforeCommit = providerBindingAttempt || revalidateManagedProvider
                 ? async (): Promise<SpawnSessionResult | null> => {
-                    const providerCommitAuthorization = await providerBindingAttempt!.revalidateBeforeCommit();
-                    if (!providerCommitAuthorization.ok) {
+                    const providerCommitAuthorization = providerBindingAttempt
+                        ? await providerBindingAttempt.revalidateBeforeCommit()
+                        : await revalidateManagedProvider?.(preparationSignal ?? params.signal);
+                    if (providerCommitAuthorization?.ok === false) {
                         await cleanupSpawnResources();
                         return buildProviderSpawnErrorResult(providerCommitAuthorization.error);
                     }
-                    if (!providerCleanupTransferred) {
+                    if (providerBindingAttempt && !providerCleanupTransferred) {
                         providerCleanupTransferred = true;
-                        const providerCleanupOnExit = providerBindingAttempt!.takeCleanupOnExit();
+                        const providerCleanupOnExit = providerBindingAttempt.takeCleanupOnExit();
                         launchResourceScope.register(providerCleanupOnExit);
                     }
                     return null;

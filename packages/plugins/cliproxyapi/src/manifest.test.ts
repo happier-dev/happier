@@ -74,7 +74,7 @@ describe('CLIProxyAPI plugin manifest', () => {
       ingestPluginManifestV2(JSON.stringify(PLUGIN_MANIFEST)),
     );
     expect(ingestPluginManifestV2(PLUGIN_MANIFEST).ok).toBe(true);
-    expect(PLUGIN_MANIFEST.contributes.providers[0].managedRuntime?.connectedAccounts).toEqual(expect.arrayContaining([
+    expect(PLUGIN_MANIFEST.contributes.providers[0].connectedAccounts).toEqual(expect.arrayContaining([
       expect.objectContaining({
         service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
         staticModels: expect.arrayContaining([expect.objectContaining({ id: 'gpt-6.1-sol' })]),
@@ -110,49 +110,49 @@ describe('CLIProxyAPI plugin manifest', () => {
       allowedRuntimeRegistration: 'providers',
     });
     expect(PLUGIN_MANIFEST.contributes.providers[0]).toMatchObject({
+      connectedAccounts: expect.arrayContaining([expect.objectContaining({
+        purpose: 'openai-upstream',
+        title: {
+          key: 'managedPurpose.openai.title',
+          fallback: 'ChatGPT account or pool',
+        },
+        service: {
+          pluginId: 'happier.agent.codex',
+          localId: 'openai-codex',
+        },
+        required: false,
+        materializationKinds: ['httpHeaders'],
+      }), expect.objectContaining({
+        purpose: 'anthropic-upstream',
+        title: {
+          key: 'managedPurpose.anthropic.title',
+          fallback: 'Claude account or pool',
+        },
+        service: {
+          pluginId: 'happier.agent.claude',
+          localId: 'claude-subscription',
+        },
+        required: false,
+        materializationKinds: ['httpHeaders'],
+      })]),
+      requestAuthUses: expect.arrayContaining([{
+        purpose: 'openai-upstream',
+        materialization: {
+          kind: 'httpHeaders',
+          origin: 'https://chatgpt.com',
+          headerNames: ['authorization', 'chatgpt-account-id'],
+        },
+      }, {
+        purpose: 'anthropic-upstream',
+        materialization: {
+          kind: 'httpHeaders',
+          origin: 'https://api.anthropic.com',
+          headerNames: ['authorization'],
+        },
+      }]),
       managedRuntime: {
         kind: 'managed',
         connectedAccountPurposeBindingPolicy: { minimumBound: 1 },
-        connectedAccounts: expect.arrayContaining([expect.objectContaining({
-          purpose: 'openai-upstream',
-          title: {
-            key: 'managedPurpose.openai.title',
-            fallback: 'ChatGPT account or pool',
-          },
-          service: {
-            pluginId: 'happier.agent.codex',
-            localId: 'openai-codex',
-          },
-          required: false,
-          materializationKinds: ['httpHeaders'],
-        }), expect.objectContaining({
-          purpose: 'anthropic-upstream',
-          title: {
-            key: 'managedPurpose.anthropic.title',
-            fallback: 'Claude account or pool',
-          },
-          service: {
-            pluginId: 'happier.agent.claude',
-            localId: 'claude-subscription',
-          },
-          required: false,
-          materializationKinds: ['httpHeaders'],
-        })]),
-        requestAuthUses: expect.arrayContaining([{
-          purpose: 'openai-upstream',
-          materialization: {
-            kind: 'httpHeaders',
-            origin: 'https://chatgpt.com',
-            headerNames: ['authorization', 'chatgpt-account-id'],
-          },
-        }, {
-          purpose: 'anthropic-upstream',
-          materialization: {
-            kind: 'httpHeaders',
-            origin: 'https://api.anthropic.com',
-            headerNames: ['authorization'],
-          },
-        }]),
         endpointTemplateIds: [
           'cliproxyapi-openai-chat',
           'cliproxyapi-openai-responses',
