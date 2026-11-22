@@ -28,36 +28,25 @@ export function createMachineRecipeReadAction(params: Readonly<{
 }>): NonNullable<ActionExecutorDeps['machineRecipesRead']> {
   return async (input, context) => {
     const unavailable = { ok: false as const, errorCode: 'unavailable', error: 'unavailable' };
-    const matchesReceiver = () => (input.offerings || input.homeId === params.homeId && input.machineId === params.machineId)
+    const matchesReceiver = (input.offerings || input.homeId === params.homeId && input.machineId === params.machineId)
       && (!context.externalActionTarget || context.externalActionTarget.kind === 'machine'
         && context.externalActionTarget.machineId === params.machineId);
-    const isCurrent = async () => {
-      context.signal?.throwIfAborted();
-      if (!matchesReceiver()) return false;
-      const current = await params.isCurrent(context);
-      context.signal?.throwIfAborted();
-      return current && matchesReceiver();
-    };
     try {
-      if (!await isCurrent()) return unavailable;
-      let result: Awaited<ReturnType<NonNullable<ActionExecutorDeps['machineRecipesRead']>>> = unavailable;
-      let lease: PluginRuntimeRegistryLease | undefined;
+      context.signal?.throwIfAborted();
+      if (!matchesReceiver || !await params.isCurrent(context)) return unavailable;
+      context.signal?.throwIfAborted();
+      const lease = await params.acquirePluginRuntimeRegistryLease();
       try {
-        lease = await params.acquirePluginRuntimeRegistryLease();
-        if (await isCurrent() && lease.registry.contributes.machineRecipes !== undefined) {
-          const runtimeRegistry = lease.registry;
-          const family = buildPluginProjectionFamilyV2({ registry: runtimeRegistry.contributes,
-            generation: runtimeRegistry.generation,
-            readPluginBrandAsset: pluginId => runtimeRegistry.getPluginBrandAsset?.(pluginId),
-            ...(input.recipeRefs !== undefined ? { machineRecipeRefs: input.recipeRefs } : {}),
-          }, machineRecipesProjectionFamily);
-          const target = input.offerings ? undefined : projectMachineRecipeReadTarget(params.readMachineMetadataSnapshot?.());
-          result = { entries: Object.values(family.entriesById), ...(target ? { target } : {}) };
-        }
-      } finally { await lease?.release(); }
-      // Release may await retired-registry disposal. No descriptor crosses an
-      // authority change that happened while that existing owner was settling.
-      return await isCurrent() ? result : unavailable;
+        const runtimeRegistry = lease.registry;
+        if (runtimeRegistry.contributes.machineRecipes === undefined) return unavailable;
+        const family = buildPluginProjectionFamilyV2({ registry: runtimeRegistry.contributes,
+          generation: runtimeRegistry.generation,
+          readPluginBrandAsset: pluginId => runtimeRegistry.getPluginBrandAsset?.(pluginId),
+          ...(input.recipeRefs !== undefined ? { machineRecipeRefs: input.recipeRefs } : {}),
+        }, machineRecipesProjectionFamily);
+        const target = input.offerings ? undefined : projectMachineRecipeReadTarget(params.readMachineMetadataSnapshot?.());
+        return { entries: Object.values(family.entriesById), ...(target ? { target } : {}) };
+      } finally { await lease.release(); }
     } catch {
       context.signal?.throwIfAborted();
       return unavailable;

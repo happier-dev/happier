@@ -32,7 +32,8 @@ it.each(['available', 'agent', 'metadata absent', 'empty', 'wrong Home', 'wrong 
     authentication: { kind: 'account' as const, tokenEpoch: 7 }, sessionActionOrigin } : apiPrincipal;
   const actionId = 'action.options.resolve';
   const ref = { pluginId: 'com.example.software', recipeId: 'fonts', revision: '3' };
-  const expectsChoices = scenario === 'available' || scenario === 'agent' || scenario === 'metadata absent';
+  const retiresAfterEntry = scenario === 'retired during acquisition' || scenario === 'retired at settlement';
+  const expectsChoices = scenario === 'available' || scenario === 'agent' || scenario === 'metadata absent' || retiresAfterEntry;
   const envelope = { v: 1 as const, requestId: 'software-options', target, input: {
     actionId: 'machines.setup.plan', fieldPath: 'sources.0.setup.items.0.selection.ref',
     draftInput: { homeId: scenario === 'wrong Home' ? 'another-home' : homeId,
@@ -95,13 +96,14 @@ it.each(['available', 'agent', 'metadata absent', 'empty', 'wrong Home', 'wrong 
     acquirePluginRuntimeRegistryLease: async () => {
       descriptorReads++;
       const lease = await acquireAuthoritativePluginRuntimeRegistryLease({ controller: runtime.controller, happyHomeDir: runtime.happyHomeDir });
+      if (scenario === 'retired during acquisition') receiverCurrent = false;
       return { ...lease, release: async () => {
         await lease.release();
         if (scenario === 'retired at settlement') receiverCurrent = false;
       } };
     },
-    // The receiver's current identity is an environment boundary. Replacement
-    // must prevent disclosure before acquisition, after it and after release.
+    // An admitted catalog read finishes on its lease. The next read must
+    // refuse a receiver that retired during the prior read.
     isCurrent: async (context: Parameters<Parameters<typeof createMachineRecipeReadAction>[0]['isCurrent']>[0]) => {
       expect(context.surface).toBe(scenario === 'agent' ? 'agent' : 'api');
       if (scenario === 'agent') {
@@ -110,7 +112,7 @@ it.each(['available', 'agent', 'metadata absent', 'empty', 'wrong Home', 'wrong 
       } else expect(context.externalActionCredential).toMatchObject({ accountId: principal.accountId });
       expect(context.externalActionExecutionAuthorization?.binding).toMatchObject({ serverIdentityId: homeId, machineId: target.machineId });
       receiverChecks++;
-      return receiverCurrent && !(scenario === 'retired before acquisition' || scenario === 'retired during acquisition' && receiverChecks >= 2);
+      return receiverCurrent && scenario !== 'retired before acquisition';
     },
   };
   const readRecipes = createMachineRecipeReadAction(recipeReaderParams);
@@ -154,14 +156,21 @@ it.each(['available', 'agent', 'metadata absent', 'empty', 'wrong Home', 'wrong 
     if (scenario === 'metadata absent') expect(readResult).not.toHaveProperty('target');
     else expect(readResult).toMatchObject({ target: { platform: 'darwin', arch: 'arm64' } });
   }
-  expect(descriptorReads).toBe(scenario === 'wrong Home' || scenario === 'wrong Machine' || scenario === 'retired before acquisition' ? 0 : 1);
+  const wrongReceiver = scenario === 'wrong Home' || scenario === 'wrong Machine';
+  expect(receiverChecks).toBe(wrongReceiver ? 0 : 1);
+  expect(descriptorReads).toBe(wrongReceiver || scenario === 'retired before acquisition' ? 0 : 1);
   if (expectsChoices) {
     if (!readContext) throw new Error('Missing admitted external recipe read context');
     const emptyRecipeRequest = { homeId, machineId: target.machineId, recipeRefs: [] };
     const noBodies = await readRecipes(emptyRecipeRequest, readContext);
-    expect(noBodies).toMatchObject({ entries: [] });
-    if (scenario === 'metadata absent') expect(noBodies).not.toHaveProperty('target');
-    else expect(noBodies).toMatchObject({ target: { platform: 'darwin', arch: 'arm64' } });
+    if (retiresAfterEntry) {
+      expect(noBodies).toMatchObject({ ok: false, errorCode: 'unavailable' });
+      expect(descriptorReads).toBe(1);
+    } else {
+      expect(noBodies).toMatchObject({ entries: [] });
+      if (scenario === 'metadata absent') expect(noBodies).not.toHaveProperty('target');
+      else expect(noBodies).toMatchObject({ target: { platform: 'darwin', arch: 'arm64' } });
+    }
   }
   expect(networkRequests.filter(path => path.includes('/rpc') || path.includes('/environment'))).toEqual([]);
   } finally { await apiMachine.shutdown(); await runtime.dispose(); }
