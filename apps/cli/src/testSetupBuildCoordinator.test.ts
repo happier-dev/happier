@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE, WORKSPACE_BUNDLE_LOCK_TIMEOUT_ERROR_CODE, withWorkspaceBundleLock } from '../../../packages/cli-common/workspaceBundleLock.mjs';
 
@@ -177,6 +177,61 @@ describe('ensureBuildArtifactsReadyOnce', () => {
     ).rejects.toMatchObject({ code: process.env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED === '0'
       ? WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE : WORKSPACE_BUNDLE_LOCK_TIMEOUT_ERROR_CODE });
 
+    await expect(access(markerPath)).resolves.toBeUndefined();
+  });
+
+  it('waits for a prerequisite publisher before taking the CLI dist lease', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-cli-test-setup-prerequisites-'));
+    tempDirs.push(tempDir);
+    const lockPath = join(tempDir, 'cli-dist-build.lock');
+    const prerequisiteLockPath = join(tempDir, 'iroh-native.lock');
+    const markerPath = join(tempDir, 'cli-dist.marker');
+    const prerequisiteMarker = join(tempDir, 'iroh-native.marker');
+    const { ensureBuildArtifactsReadyOnce } = await import('./testSetupBuildCoordinator');
+
+    const resourceOwner = new URL('../../stack/scripts/utils/proc/workspace_build_admission.mjs', import.meta.url).href;
+    const { withWorkspaceBuildResources } = await import(resourceOwner) as {
+      withWorkspaceBuildResources: (options: {
+        locks: { path: string }[];
+        env: NodeJS.ProcessEnv;
+        admittedResourceWait: boolean;
+      }, run: () => Promise<void>) => Promise<void>;
+    };
+    const prepare = (heldLockValue?: string) => withWorkspaceBuildResources({
+      locks: [{ path: prerequisiteLockPath }],
+      env: { ...process.env, HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: heldLockValue,
+        HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED: '0' },
+      admittedResourceWait: true,
+    }, () => writeFile(prerequisiteMarker, 'prepared'));
+    let waiting!: () => void;
+    const contention = new Promise<void>(resolve => { waiting = resolve; });
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(message => {
+      if (String(message).includes(prerequisiteLockPath)) waiting();
+    });
+    let pending: Promise<void> | undefined;
+    try {
+      await withWorkspaceBundleLock(async () => {
+        pending = ensureBuildArtifactsReadyOnce({
+          lockPath,
+          markerPaths: [markerPath],
+          lockLabel: 'CLI dist build',
+          prepareBuild: () => prepare(),
+          runBuild: async ({ heldLockValue }) => {
+            // The full pnpm lifecycle used to prepare missing prerequisites
+            // inside the CLI dist build, with its lease inherited.
+            const prepared = await access(prerequisiteMarker).then(() => true, () => false);
+            if (!prepared) await prepare(heldLockValue);
+            await writeFile(markerPath, 'built');
+          },
+        });
+        await Promise.race([contention, pending]);
+        await expect(access(lockPath)).rejects.toMatchObject({ code: 'ENOENT' });
+        await expect(access(markerPath)).rejects.toMatchObject({ code: 'ENOENT' });
+      }, { lockPath: prerequisiteLockPath });
+    } finally {
+      diagnostic.mockRestore();
+      await pending;
+    }
     await expect(access(markerPath)).resolves.toBeUndefined();
   });
 

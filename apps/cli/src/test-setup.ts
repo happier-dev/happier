@@ -86,6 +86,27 @@ function spawnPnpmSync(args: readonly string[], cwd: string, env = process.env) 
   })
 }
 
+function runCliTestBuildScript(script: 'prebuild' | 'build:prepared', projectRoot: string, env: NodeJS.ProcessEnv) {
+  const buildResult = spawnPnpmSync(['run', script], projectRoot, env)
+
+  if (buildResult.error) {
+    throw new Error(`CLI test globalSetup failed to run ${script}: ${buildResult.error.message}`)
+  }
+
+  if ((buildResult.status ?? 1) !== 0) {
+    const exitCode = typeof buildResult.status === 'number' ? buildResult.status : 'unknown'
+    const stdout = typeof buildResult.stdout === 'string' ? buildResult.stdout.trim() : ''
+    const stderr = typeof buildResult.stderr === 'string' ? buildResult.stderr.trim() : ''
+    const details = [stdout ? `stdout:\n${stdout}` : '', stderr ? `stderr:\n${stderr}` : '']
+      .filter(Boolean)
+      .join('\n\n')
+
+    throw new Error(
+      `CLI test globalSetup ${script} failed (exit ${exitCode})${details ? `\n\n${details}` : ''}`,
+    )
+  }
+}
+
 async function ensureDistBuiltOnce(projectRoot: string): Promise<void> {
   // Native/source-only preparation imports this module too. Load the compiled
   // dist owners only for a consumer that actually needs the compiled payload.
@@ -104,29 +125,11 @@ async function ensureDistBuiltOnce(projectRoot: string): Promise<void> {
       distEntrypoint,
       await readHappyCliRuntimeInputFreshness(projectRoot),
     ),
+    prepareBuild: () => runCliTestBuildScript('prebuild', projectRoot, createWorkspaceChildBuildEnv({
+      heldLockValue: process.env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD,
+    })),
     runBuild: ({ heldLockValue }) => {
-      const buildResult = spawnPnpmSync(
-        ['run', 'build'],
-        projectRoot,
-        createWorkspaceChildBuildEnv({ heldLockValue }),
-      )
-
-      if (buildResult.error) {
-        throw new Error(`CLI test globalSetup failed to run build: ${buildResult.error.message}`)
-      }
-
-      if ((buildResult.status ?? 1) !== 0) {
-        const exitCode = typeof buildResult.status === 'number' ? buildResult.status : 'unknown'
-        const stdout = typeof buildResult.stdout === 'string' ? buildResult.stdout.trim() : ''
-        const stderr = typeof buildResult.stderr === 'string' ? buildResult.stderr.trim() : ''
-        const details = [stdout ? `stdout:\n${stdout}` : '', stderr ? `stderr:\n${stderr}` : '']
-          .filter(Boolean)
-          .join('\n\n')
-
-        throw new Error(
-          `CLI test globalSetup build failed (exit ${exitCode})${details ? `\n\n${details}` : ''}`,
-        )
-      }
+      runCliTestBuildScript('build:prepared', projectRoot, createWorkspaceChildBuildEnv({ heldLockValue }))
 
       if (!existsSync(distEntrypoint)) {
         throw new Error(`CLI test globalSetup build completed, but dist entrypoint is missing: ${distEntrypoint}`)

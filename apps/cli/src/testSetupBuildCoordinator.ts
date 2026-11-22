@@ -16,6 +16,7 @@ type CliTestBuildLockOptions = {
 
 type EnsureBuildArtifactsReadyOnceOptions = CliTestBuildLockOptions & {
   markerPaths: readonly string[]
+  prepareBuild?: () => Promise<void> | void
   runBuild: (context: BuildLockContext) => Promise<void> | void
   isReady?: () => boolean | Promise<boolean>
 }
@@ -73,6 +74,17 @@ export async function withCliTestBuildLock<T>(
 export async function ensureBuildArtifactsReadyOnce(
   options: EnsureBuildArtifactsReadyOnceOptions,
 ): Promise<void> {
+  if (options.prepareBuild) {
+    const ready = await withCliTestBuildLock(options, () =>
+      buildArtifactsAreReady(options.markerPaths, options.isReady),
+    )
+    if (ready) return
+
+    // Prerequisite publishers can wait for their own leases before CLI dist
+    // publication. Recheck dist readiness after preparation for concurrent builds.
+    await options.prepareBuild()
+  }
+
   await withCliTestBuildLock(options, async ({ heldLockValue }) => {
     // Existing outputs are trustworthy only while the canonical publication lock is held.
     if (await buildArtifactsAreReady(options.markerPaths, options.isReady)) return

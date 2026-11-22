@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -496,8 +496,12 @@ describe('CLI test global setup', () => {
         }
         if (state === 'stale') await writeFile(sourcePath, 'export const version = 2;');
         const inputFingerprint = (await readHappyCliRuntimeInputFreshness(projectRoot)).fingerprint;
-        const spawnSync = vi.fn((_command: string, _args: readonly string[], options: { env?: NodeJS.ProcessEnv }) => {
-            expect(_args).toEqual(['run', 'build']);
+        const spawnSync = vi.fn((_command: string, args: readonly string[], options: { env?: NodeJS.ProcessEnv }) => {
+            if (args[1] === 'prebuild') {
+                expect(() => statSync(lockPath)).toThrow(expect.objectContaining({ code: 'ENOENT' }));
+                return { status: 0, stdout: '', stderr: '' };
+            }
+            expect(args).toEqual(['run', 'build:prepared']);
             const lease: unknown = JSON.parse(options.env?.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD ?? 'null');
             expect(lease).toEqual(expect.objectContaining({ v: 1, path: lockPath, token: expect.any(String) }));
             mkdirSync(dirname(distEntrypoint), { recursive: true });
@@ -520,7 +524,8 @@ describe('CLI test global setup', () => {
             },
         });
 
-        expect(spawnSync).toHaveBeenCalledTimes(state === 'current' ? 0 : 1);
+        expect(spawnSync.mock.calls.map(([, args]) => args)).toEqual(state === 'current'
+            ? [] : [['run', 'prebuild'], ['run', 'build:prepared']]);
         await expect(readFile(distEntrypoint, 'utf8')).resolves.toBe(
             state === 'current' ? 'export const version = 1;' : 'export const version = 2;',
         );
