@@ -4,7 +4,7 @@ import { appendFileSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, 
 import { createConnection, createServer } from 'node:net';
 import { dirname, isAbsolute, join, posix, relative } from 'node:path';
 import { availableParallelism } from 'node:os';
-import { COLD_ADMISSION_CPU_CORES, FOCUSED_TEST_ADMISSION_CLASSES, HEAVYWEIGHT_COMMAND_RESOURCES, SOURCE_RELOAD_ADMISSION_CLASS, SOURCE_WEB_EXPORT_ADMISSION_CLASS, SOURCE_WEB_EXPORT_MEMORY, resolveSourceWebExportMemoryFloorKiB, resolveColdAdmissionCpuCost, usesElasticAdmissionWorkers } from '../dev_targets/command_resources.mjs';
+import { COLD_ADMISSION_CPU_CORES, FOCUSED_TEST_ADMISSION_CLASSES, HEAVYWEIGHT_COMMAND_RESOURCES, SOURCE_RELOAD_ADMISSION_CLASS, SOURCE_WEB_EXPORT_ADMISSION_CLASS, SOURCE_WEB_EXPORT_MEMORY, resolveSourceWebExportMemoryFloorKiB, resolveColdAdmissionCpuCost, usesElasticAdmissionWorkers, isTypeScriptCompilationClass } from '../dev_targets/command_resources.mjs';
 import { createInterface } from 'node:readline';
 import { DURATION_WINDOW, nearestRankP99 } from '../dev_targets/execution_provenance.mjs';
 import { pathToFileURL } from 'node:url';
@@ -278,7 +278,7 @@ export function createAdmissionBroker({ root,
   let sample = { availableMemoryKiB: 0, totalMemoryKiB: 0, reservedMemoryKiB: 0,
     residentMemoryKiB: 0, unreservedMemoryKiB: 0, achievableMemoryKiB: 0 };
   let totalCpuCores;
-  let cpuPressureCores = 0;
+  let cpu = { pressure: 0, overrunCharges: new Map() };
   let sampleCount = 0;
   let arrivalOrder = 0;
   let headPledge;
@@ -476,14 +476,15 @@ export function createAdmissionBroker({ root,
     return slot.p99DurationMs > 0 && Number.isFinite(slot.admittedAt)
       ? slot.admittedAt + slot.p99DurationMs - now : undefined;
   }
-  function slotResourceBudget(now = Date.now(), pressure = cpuPressureCores) {
+  function slotResourceBudget(now = Date.now(), observation = cpu) {
+    const { pressure, overrunCharges } = observation;
     let reservedMemoryKiB = 0;
     let reservedCpuCores = 0;
     let memoryReleasingWithinBoundKiB = 0;
     for (const slot of slots.values()) {
       const chargeKiB = slot.workingSetKiB ?? slot.floorKiB;
       reservedMemoryKiB += chargeKiB;
-      reservedCpuCores += slot.cpuCores;
+      reservedCpuCores += overrunCharges.get(slot) ?? slot.cpuCores;
       const remainingMs = remainingSlotTimeMs(slot, now);
       // Keep the existing release assumption for slots without a duration.
       // A known deadline that passed or lies beyond the bound cannot justify a pledge.
@@ -497,17 +498,37 @@ export function createAdmissionBroker({ root,
       unreservedMemoryKiB: Math.max(0, memoryBalanceKiB),
       memoryWithinBoundKiB: memoryBalanceKiB + memoryReleasingWithinBoundKiB };
   }
-  function readCpuPressureForOffer() {
+  function canRepriceCpu(slot) {
+    return (slot.admitted || slot.recovered) && isTypeScriptCompilationClass(slot.resourceClass ?? slot.className)
+      && slot.p99DurationMs > 0 && Number.isFinite(slot.admittedAt);
+  }
+  function readCpuForOffer() {
+    const overrunCharges = new Map();
     try {
-      const pressure = readCpuPressure();
-      if (!Number.isSafeInteger(pressure) || pressure < 0) {
+      const runnable = readCpuPressure();
+      if (!Number.isSafeInteger(runnable) || runnable < 0) {
         throw Object.assign(new Error('Invalid runnable CPU observation'), { code: 'HSTACK_CPU_OBSERVATION_UNAVAILABLE' });
       }
-      const admittedPids = [...slots.values()].filter(slot => slot.admitted || slot.recovered).map(slot => slot.pid);
-      return pressure - readAdmittedRunnableThreads(admittedPids, pressure);
+      const hardPids = [];
+      const overruns = new Map();
+      const now = Date.now();
+      for (const slot of slots.values()) {
+        if (!slot.admitted && !slot.recovered) continue;
+        if (canRepriceCpu(slot) && remainingSlotTimeMs(slot, now) <= 0) overruns.set(slot.pid, slot);
+        else hardPids.push(slot.pid);
+      }
+      // The original grant still bounds the payload. Past its usual duration,
+      // charge the dedicated scope's live runnable work (at least one core).
+      // Hard scopes go first so a shared scope cannot discount two grants.
+      const onScope = overruns.size ? (pid, cores) => {
+        const slot = overruns.get(pid);
+        if (slot) overrunCharges.set(slot, Math.max(1, cores));
+      } : undefined;
+      const admitted = readAdmittedRunnableThreads([...hardPids, ...overruns.keys()], runnable, undefined, onScope);
+      return { pressure: runnable - admitted, overrunCharges };
     } catch (error) {
       recordFailure(error);
-      return totalCpuCores;
+      return { pressure: totalCpuCores, overrunCharges: new Map() };
     }
   }
   function accountedCpuCores(item, workers) {
@@ -582,7 +603,7 @@ export function createAdmissionBroker({ root,
       cpuCores: pledged ? Math.min(minimumCpuCores(head), headPledge.cpuCores) : 0,
     };
   }
-  function canReserveHead(item, memoryWithinBoundKiB, now, pressure = cpuPressureCores) {
+  function canReserveHead(item, memoryWithinBoundKiB, now, pressure = cpu.pressure) {
     const minimumFloorKiB = item.floorOptions?.at(-1).floorKiB ?? item.floorKiB;
     const aged = now - item.arrivedAt >= HEAD_RESERVATION_DELAY_MS;
     // Keep the waiter's age and earned pledge while its floor cannot fit in
@@ -590,7 +611,7 @@ export function createAdmissionBroker({ root,
     return !item.slot && !item.blocked && !item.socket.destroyed && minimumFloorKiB <= sample.achievableMemoryKiB
       && (!aged || minimumFloorKiB <= memoryWithinBoundKiB) && minimumCpuCores(item) <= totalCpuCores - pressure;
   }
-  function status(pressure = cpuPressureCores) {
+  function status(observation = cpu) {
     const now = Date.now();
     const overruns = [];
     let nextOverrunAt = null;
@@ -608,9 +629,9 @@ export function createAdmissionBroker({ root,
         durationClass: slot.durationClass, ageMs, p99DurationMs: slot.p99DurationMs });
       else nextOverrunAt = nextOverrunAt === null ? thresholdAt + 1 : Math.min(nextOverrunAt, thresholdAt + 1);
     }
-    const { memoryWithinBoundKiB, ...budget } = slotResourceBudget(now, pressure);
+    const { memoryWithinBoundKiB, ...budget } = slotResourceBudget(now, observation);
     orderWaiting();
-    const head = waiting.find(item => canReserveHead(item, memoryWithinBoundKiB, now, pressure));
+    const head = waiting.find(item => canReserveHead(item, memoryWithinBoundKiB, now, observation.pressure));
     const reservation = headReservation(head);
     // Only catalog symbols and numeric resource facts leave this private queue.
     // Never expose request env, paths, PIDs or an arbitrary caller label.
@@ -840,10 +861,14 @@ export function createAdmissionBroker({ root,
       return null;
     }
   }
+  function hasCpuWait() {
+    return waiting.some(item => !item.slot && !item.blocked && item.waitingForCpu)
+      && (cpu.pressure > 0 || [...slots.values()].some(canRepriceCpu));
+  }
   function refreshWatchers() {
     const blocked = waiting.filter(item => item.blocked);
     const memoryWaiting = waiting.some(item => !item.slot && !item.blocked && item.waitingForMemory !== false);
-    const cpuWaiting = cpuPressureCores > 0 && waiting.some(item => !item.slot && !item.blocked && item.waitingForCpu);
+    const cpuWaiting = hasCpuWait();
     // External RAM or CPU recovery, process death and expired leases need not emit
     // filesystem events. Share the lock owner's existing catch-up cadence.
     // Unchanged workspace-only demand still performs no memory observation.
@@ -854,7 +879,7 @@ export function createAdmissionBroker({ root,
         try {
           await resourcesChanged(waiting.filter(item => item.blocked),
             waiting.some(item => !item.slot && !item.blocked && item.waitingForMemory !== false),
-            cpuPressureCores > 0 && waiting.some(item => !item.slot && !item.blocked && item.waitingForCpu));
+            hasCpuWait());
         } finally {
           if (resourceCatchUp === timer) {
             resourceCatchUp = undefined;
@@ -943,7 +968,7 @@ export function createAdmissionBroker({ root,
     // the head. Evaluate on this release, never retroactively or on a new timer.
     if (headReservation(headPledge?.item).active) {
       headPledge.memoryKiB += slot.workingSetKiB ?? slot.floorKiB;
-      headPledge.cpuCores += slot.cpuCores;
+      headPledge.cpuCores += cpu.overrunCharges.get(slot) ?? slot.cpuCores;
     }
     return true;
   }
@@ -1038,7 +1063,7 @@ export function createAdmissionBroker({ root,
   // Only the actual service head may bypass outside CPU pressure. Keep
   // counting live CPU reservations, and carry ownership in the slot address.
   function cpuPressureHead(now) {
-    if (cpuPressureCores === 0) return;
+    if (cpu.pressure === 0) return;
     const head = waiting.find(item => !item.slot && !item.blocked && !item.socket.destroyed
       && (item.floorOptions?.at(-1).floorKiB ?? item.floorKiB) <= sample.totalMemoryKiB
       && minimumCpuCores(item) <= totalCpuCores);
@@ -1048,7 +1073,7 @@ export function createAdmissionBroker({ root,
     return [...slots.values()].some(slot => slot.pressureExempt);
   }
   async function drain({ memoryObserved = false, newArrival } = {}) {
-    cpuPressureCores = readCpuPressureForOffer();
+    cpu = readCpuForOffer();
     orderWaiting();
     const initialBudget = slotResourceBudget();
     const initialPressureHead = cpuPressureHead(Date.now());
@@ -1059,7 +1084,7 @@ export function createAdmissionBroker({ root,
     if (!memoryObserved && (canRefreshForException || waiting.some(item => !item.slot && !item.blocked
       && (item === newArrival || item.waitingForCpu) && minimumCpuCores(item) <= initialBudget.unreservedCpuCores))) {
       await observe();
-      cpuPressureCores = readCpuPressureForOffer();
+      cpu = readCpuForOffer();
       orderWaiting();
     }
     // Capacity already free when a request becomes head remains available to
@@ -1300,6 +1325,7 @@ export function createAdmissionBroker({ root,
           durationClass: metadata.durationClass, p99DurationMs: metadata.p99DurationMs });
         monitorDeclarationComparison(slot);
         refreshStallObservation();
+        refreshWatchers();
       });
     });
     peer.once('close', () => enqueue(() => release(slot)));
@@ -1355,7 +1381,7 @@ export function createAdmissionBroker({ root,
       }
       if (request.kind === 'check') {
         const valid = Number.isSafeInteger(request.floorKiB) && request.floorKiB > 0 && validCpuRequest(request);
-        const available = status(readCpuPressureForOffer());
+        const available = status(readCpuForOffer());
         const probe = { cpuCost: request.cpuCost, className: request.className, floorKiB: request.floorKiB };
         if (valid) sizeWaitingItem(probe);
         const minimumFloorKiB = probe.floorOptions?.at(-1).floorKiB ?? probe.floorKiB;
@@ -1545,7 +1571,7 @@ export function createAdmissionBroker({ root,
             }
           }
           await observe();
-          cpuPressureCores = readCpuPressureForOffer();
+          cpu = readCpuForOffer();
           // A removed root ends this broker: its state, slots and clients are gone with it.
           // Its own socket's removal is the observable part: inotify reports no removal of
           // a directory that still holds a bound socket, only the unlink of the entries in

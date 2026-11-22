@@ -38,8 +38,8 @@ function readJobScopeStat(pid, name, read) {
 
 /** Count runnable threads in admitted per-dispatch scopes. These are leaf
  * scopes created without delegation. Unattributable work stays in host load. */
-export function readAdmittedRunnableThreads(pids, hostRunnable, read = readFileSync) {
-  if (hostRunnable === 0) return 0;
+export function readAdmittedRunnableThreads(pids, hostRunnable, read = readFileSync, onScope) {
+  if (hostRunnable === 0 && !onScope) return 0;
   const ownScope = readProcessCgroup(undefined, read);
   const counted = new Set();
   let runnable = 0;
@@ -51,17 +51,29 @@ export function readAdmittedRunnableThreads(pids, hostRunnable, read = readFileS
       counted.add(scope);
       threads = read(`/sys/fs/cgroup${scope}/cgroup.threads`, 'utf8').trim().split('\n');
     } catch { continue; }
+    let scopeRunnable = 0;
+    let measured = false;
+    let unreadable = false;
     for (const tid of threads) {
       if (!tid) continue;
       try {
         const stat = read(`/proc/${tid}/stat`, 'utf8');
         // comm can contain spaces and parentheses. State follows the last ') '.
         const end = stat.lastIndexOf(') ');
-        if (end >= 0 && stat[end + 2] === 'R' && ++runnable === hostRunnable) return runnable;
-      } catch { /* A thread can exit between the membership and stat reads. */ }
+        if (end < 0) { unreadable = true; continue; }
+        measured = true;
+        if (stat[end + 2] === 'R') {
+          scopeRunnable += 1;
+          if (++runnable === hostRunnable && !onScope) return runnable;
+        }
+      } catch (error) {
+        // Threads can exit between the membership and stat reads.
+        if (error.code !== 'ENOENT' && error.code !== 'ESRCH') unreadable = true;
+      }
     }
+    if (measured && !unreadable) onScope?.(pid, scopeRunnable);
   }
-  return runnable;
+  return Math.min(runnable, hostRunnable);
 }
 
 /** File cache is reclaimable. shmem is separate from anon and stays charged. */

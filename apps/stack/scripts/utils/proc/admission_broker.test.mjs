@@ -737,6 +737,56 @@ test('admitted scope runnable threads leave remaining cores available', linux, a
   assert.equal(outcome.reason, 'HSTACK_CPU_BUSY');
 });
 
+test('overrun compilation grants make room for a fifth compile when their scopes are quiet', { ...linux, timeout: 6000 }, async t => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const uid = process.getuid();
+  const proc = new Map([['/proc/self/cgroup', '0::/\n']]);
+  const pids = [900001, 900002, 900003, 900004];
+  for (const pid of pids) {
+    const scope = `/user.slice/user-${uid}.slice/user@${uid}.service/happier.slice/happier-jobs.slice/happier-jobs-${pid}-fixture.scope`;
+    proc.set(`/proc/${pid}/cgroup`, `0::${scope}\n`);
+    proc.set(`/sys/fs/cgroup${scope}/cgroup.threads`, String(pid));
+    proc.set(`/proc/${pid}/stat`, `${pid} (compiler) S 0 0`);
+  }
+  const read = fs.readFileSync;
+  t.mock.method(fs, 'readFileSync', (path, ...args) => proc.get(path) ?? read(path, ...args));
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+
+  let runnable = 0;
+  const { root } = await fixture(t, { cpuCores: 48, readCpuPressure: () => runnable });
+  const classes = ['compilation-ui-tsrs', 'compilation-ui-tsrs', 'compilation-ui', 'compilation'];
+  for (const [index, className] of classes.entries()) {
+    await (await acquire(root, 10, t, { className, pid: pids[index],
+      p99DurationMs: 1000, durationClass: 'compilation' })).admit();
+  }
+  const fifth = await acquire(root, 10, t, { className: 'compilation' });
+  const before = await requestAdmissionSample(root);
+  assert.equal(before.reservedCpuCores, 46);
+  assert.equal(before.waitingCount, 1);
+
+  now += 1001;
+  // An ordinary queue event samples current CPU and wakes the retained request.
+  const trigger = await acquire(root, 10, t, { className: 'compilation' });
+  const after = await requestAdmissionSample(root);
+  assert.equal(after.waitingCount, 0, 'both waiters must fit once the incumbent scopes are quiet');
+  assert.equal((await fifth.admit()).admitted.cpuCores, 6);
+  await trigger.admit();
+  assert.equal((await requestAdmissionSample(root)).reservedCpuCores, 16);
+
+  const scope = proc.get(`/proc/${pids[0]}/cgroup`).trim().slice(3);
+  const runningThreads = Array.from({ length: 32 }, (_, index) => 910001 + index);
+  proc.set(`/sys/fs/cgroup${scope}/cgroup.threads`, runningThreads.join('\n'));
+  for (const tid of runningThreads) proc.set(`/proc/${tid}/stat`, `${tid} (compiler) R 0 0`);
+  runnable = runningThreads.length;
+  const check = await request(root, { kind: 'check', className: 'compilation', floorKiB: 10 });
+  const busy = await check.next();
+  check.socket.destroy();
+  assert.equal(busy.reservedCpuCores, 47);
+  assert.equal(busy.reason, 'HSTACK_CPU_BUSY', 'the observed burst must consume the available CPU budget');
+});
+
 test('each compilation class passes its cold or exact learned CPU bound to the payload', linux, async t => {
   const memoryKiB = 64 * 1024 * 1024;
   const { root } = await fixture(t, { cpuCores: 48,
