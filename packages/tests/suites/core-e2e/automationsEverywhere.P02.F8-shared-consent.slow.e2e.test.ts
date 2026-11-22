@@ -20,6 +20,9 @@ import { AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1, AutomationActionAdmitRequestV1Sch
   AutomationActionAdmitResultV1Schema } from '@happier-dev/protocol/automations/automationActionOccurrenceV1';
 import { AutomationDefinitionDetailSchema, AutomationDefinitionListResponseSchema,
   buildAccountStoredContentCompatibilityHttpHeadersV1, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol';
+import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1, ConnectedAccountCatalogRowMutationResponseV1Schema,
+  emptyConnectedAccountCatalogRecordV1, sealConnectedAccountCatalogContentV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { openAutomationStoredWorkflowDefinitionV2 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { RoleActionOutputSchemasV1 } from '@happier-dev/protocol/prompts/roles/roleActionsV1';
@@ -258,6 +261,24 @@ describe('AE.P02.F8-shared-consent', () => {
       observeActionRequests: true, serverEnv: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } });
     const author = await fixture.createAccount('author');
     const actor = await fixture.createAccount('actor');
+    // F8 needs the actor's native Agent, with an empty Connected Account purpose catalog.
+    // Provision it before starting the daemon so Session setup doesn't exercise source cutover.
+    const purposeHeaders = { Authorization: `Bearer ${actor.credentials.token}`, 'Content-Type': 'application/json',
+      ...buildAccountStoredContentCompatibilityHttpHeadersV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION) };
+    const settings = await fetchJson<unknown>(`${fixture.server.baseUrl}/v2/account/settings`, { headers: purposeHeaders });
+    expect(settings.status).toBe(200);
+    const { version } = AccountSettingsV2GetResponseSchema.parse(settings.data);
+    const material = actor.credentials.encryption;
+    if (!material) throw new Error('F8 actor requires Account encryption material');
+    const purposes = await fetchJson<unknown>(`${fixture.server.baseUrl}${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/purposes`, {
+      method: 'POST', headers: purposeHeaders, body: JSON.stringify({
+        expectedRevision: 'absent', sourceSettingsVersion: version,
+        content: sealConnectedAccountCatalogContentV1({ mode: 'e2ee', material,
+          record: emptyConnectedAccountCatalogRecordV1('purposes') }),
+      }),
+    });
+    expect(purposes.status).toBe(200);
+    expect(ConnectedAccountCatalogRowMutationResponseV1Schema.parse(purposes.data).status).toBe('updated');
     const reader = await fixture.createAccount('reader');
     const unrelated = await fixture.createAccount('unrelated');
     const pluginId = 'acme.f8-consent';
