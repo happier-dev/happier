@@ -309,6 +309,7 @@ export type WorkflowActionExecutor = Readonly<{
     source?: WorkflowAcceptedSnapshotV1['source'];
     workDepth: number; originSessionId?: string; workspace: WorkflowWorkspaceDescriptorV1;
     origin?: WorkflowAcceptedOriginV1;
+    automationCause?: AutomationRunCause;
     approvalProfileId?: string | null;
     role?: WorkflowMaterializedLeafV1['role'];
     signal?: AbortSignal }>) => Promise<ActionExecutorContext>;
@@ -2022,6 +2023,7 @@ async function executeActionBlock(
       source: context.source,
       workDepth: context.workDepth, workspace: actionWorkspace, ...(context.originSessionId ? { originSessionId: context.originSessionId } : {}),
       ...(context.origin ? { origin: context.origin } : {}),
+      ...(context.automationCause ? { automationCause: context.automationCause } : {}),
       ...(selected.selection.approvalProfileId === undefined ? {} : { approvalProfileId: selected.selection.approvalProfileId }),
       ...(selected.role ? { role: selected.role } : {}),
       ...(context.signal ? { signal: context.signal } : {}) })), actionRequestId,

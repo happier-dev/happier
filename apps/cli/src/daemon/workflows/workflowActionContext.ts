@@ -1,4 +1,5 @@
 import type { ActionExecutorContext, WorkflowAcceptedAuthorizationV1, WorkflowAcceptedOriginV1, WorkflowAcceptedSnapshotV1, WorkflowProjectTargetV1 } from '@happier-dev/protocol';
+import type { AutomationRunCause } from '@happier-dev/protocol/automations/run-cause';
 import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { resolveWorkflowInvocationStructureV1 } from '@happier-dev/protocol/workflows/workflowInvocationStructureV1';
@@ -15,6 +16,7 @@ export function buildWorkflowActionContext(execution: Readonly<{
   workDepth?: number;
   authorization: WorkflowAcceptedAuthorizationV1;
   origin?: WorkflowAcceptedOriginV1;
+  automationCause?: AutomationRunCause;
   approvalProfileId?: string | null;
   workspace?: Readonly<{ machineId: string }>;
   signal?: AbortSignal;
@@ -60,6 +62,7 @@ export function buildWorkflowActionContext(execution: Readonly<{
       ...(starter && !execution.origin?.actionRequestAttributionV1 ? { authenticatedStarterV1: starter } : {}),
     },
     executionRunWorkflowRunId: execution.runId,
+    ...(execution.automationCause ? { workflowAutomationCause: execution.automationCause } : {}),
     ...(execution.invocationRecordId ? { workflowSessionInput: {
       purpose: 'invocation' as const, runId: execution.runId, invocationRecordId: execution.invocationRecordId,
       ...(execution.workDepth === undefined ? {} : { workDepth: execution.workDepth }),
@@ -80,7 +83,7 @@ export async function readWorkflowActionPolicyContext(input: Readonly<{
   context: ActionExecutorContext;
 }> & (Readonly<{ actionId: string; input: unknown; phase?: 'dispatch' }>
   | Readonly<{ phase: 'approval_replay'; resolveContext: ReturnType<typeof createWorkflowActionContextResolver> }>)
-): Promise<Pick<ActionExecutorContext, 'actionCaller' | 'actionRequestAttributionV1' | 'approvalProfileId' | 'approvalProfileTeamOrGroupDerived' | 'approvalProfileChange' | 'callerPermissionMode' | 'workflowSessionInput' | 'agentStartContext'> | null> {
+): Promise<Pick<ActionExecutorContext, 'actionCaller' | 'actionRequestAttributionV1' | 'approvalProfileId' | 'approvalProfileTeamOrGroupDerived' | 'approvalProfileChange' | 'callerPermissionMode' | 'workflowSessionInput' | 'workflowAutomationCause' | 'agentStartContext'> | null> {
   const { admission, context } = input;
   const invocation = await admission.readActionInvocation(input.phase ?? 'dispatch');
   const execution = invocation?.progress.execution;
@@ -100,6 +103,8 @@ export async function readWorkflowActionPolicyContext(input: Readonly<{
   const executionContext = { runId: admission.run.id, source: accepted.source, invocationRecordId: invocation.index.id,
     workDepth: accepted.workDepth, authorization: accepted.authorization,
     workspace: accepted.workspaceTarget.project,
+    ...(admission.run.origin.kind === 'automation' && admission.run.origin.cause
+      ? { automationCause: admission.run.origin.cause } : {}),
     ...(accepted.origin?.originSessionId ? { originSessionId: accepted.origin.originSessionId } : {}),
     ...(selected.role ? { role: selected.role } : {}),
     ...(context.signal ? { signal: context.signal } : {}),
@@ -111,6 +116,7 @@ export async function readWorkflowActionPolicyContext(input: Readonly<{
     approvalProfileId: policy.approvalProfileId, approvalProfileTeamOrGroupDerived: policy.approvalProfileTeamOrGroupDerived,
     approvalProfileChange: policy.approvalProfileChange,
     callerPermissionMode: policy.callerPermissionMode, workflowSessionInput: policy.workflowSessionInput,
+    ...(policy.workflowAutomationCause ? { workflowAutomationCause: policy.workflowAutomationCause } : {}),
     ...(policy.agentStartContext ? { agentStartContext: policy.agentStartContext } : {}) };
 }
 
@@ -128,6 +134,7 @@ export function createWorkflowActionContextResolver(
   workDepth: number;
   originSessionId?: string;
   origin?: WorkflowAcceptedOriginV1;
+  automationCause?: AutomationRunCause;
   approvalProfileId?: string | null;
   role?: import('@happier-dev/protocol').WorkflowMaterializedLeafV1['role'];
   signal?: AbortSignal;

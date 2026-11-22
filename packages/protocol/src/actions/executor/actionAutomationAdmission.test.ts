@@ -14,6 +14,7 @@ import type { AvailableAutomationAccountEncryptionV1 } from '../../automations/a
 import { createAutomaticApprovalContinuation, restoreApprovalAutomaticContextV1, createApprovalAutomaticChecksV1 } from './automaticApprovalContinuation.js';
 import { ApprovalRequestV2Schema } from '../../approvals/approvalRequestV1.js';
 import { automationSubjectKeyV1 } from '../../automations/automationSubjectV1.js';
+import { AutomationRunCauseSchema } from '../../automations/automationRunCause.js';
 
 it('uses the invoking Machine for Account Action checks and visibly skips when it is absent', async () => {
   const rows = (['before', 'after'] as const).map(phase => ({ automationId: 'own', triggerId: phase,
@@ -28,6 +29,27 @@ it('uses the invoking Machine for Account Action checks and visibly skips when i
     code: 'action_automation_skipped', reason: 'machineRequired', automationId: row.automationId,
     triggerId: row.triggerId, workflowId: row.workflowId,
   })) });
+});
+
+it('excludes only the producing Before trigger from an admitted Workflow child', async () => {
+  const actionId = 'machines.command.run';
+  const matching = { automationId: 'checks', triggerRevision: 1, workflowId: 'check', workflowRevision: 1,
+    ownerAccountId: 'actor', actionIds: [actionId] };
+  const producing = { ...matching, triggerId: 'producing', phase: 'before', mode: 'wait', onFailure: 'ask' };
+  const otherBefore = { ...producing, triggerId: 'different-check' };
+  const after = { ...matching, triggerId: 'follow-up', phase: 'after' };
+  const port = createActionAutomationPortV1({ accountId: 'actor', seed: async () => ({
+    v: 1, rows: [producing, otherBefore, after],
+  }), settle: async () => {} });
+  const context = { authority: 'account_automation' as const, defaultSessionMachineId: 'machine',
+    workflowAutomationCause: AutomationRunCauseSchema.parse({
+      kind: 'trigger', triggerKind: 'action', triggerId: producing.triggerId, triggerRevision: 1,
+      occurredAt: 1, occurrenceKey: 'A'.repeat(43),
+      evidence: { actionId, phase: 'before', machineId: 'machine', requestId: 'parent' },
+    }) };
+  const selected = await port.select({ actionId, input: { command: 'exit 7' }, context });
+  expect(selected.before.map(row => row.triggerId)).toEqual([otherBefore.triggerId]);
+  expect(selected.after.map(row => row.triggerId)).toEqual([after.triggerId]);
 });
 
 it('marks an automatic before wait check unavailable when its Machine is missing', async () => {

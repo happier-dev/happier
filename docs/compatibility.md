@@ -359,7 +359,10 @@ the same discriminator with a `consentFor` reference and reviewed Workflow
 revision, rather than another matching trigger. The Account host keeps authored
 subjects in the existing private trigger-definition envelope; the Home index
 receives structural kind/key facts. Action occurrence evidence excludes raw
-input, output, exception text and raw execution-origin objects.
+input, output, exception text and raw execution-origin objects. Reviewed Action
+trigger writes with contributed Actions use the reviewed Machine when the
+approval retains an exact Machine target. That Machine opens its effective
+Action declarations during trigger admission.
 
 The public Action result optionally carries `automationNotices` for unchecked
 automations and skipped triggers. These typed notices preserve the original
@@ -378,7 +381,9 @@ These are unpublished development contracts, with composed validation still in
 progress; they do not establish released availability. Existing trigger kinds
 retain their meanings. The ordinary Automation Run occurrence and cause owners
 admit Action events; an Action declaring deferred completion uses its terminal
-domain event instead of treating its accepted handle as completion.
+domain event instead of treating its accepted handle as completion. A child
+Action uses its accepted Run cause to omit the producing Before trigger from
+matching. Other matching triggers and ordinary approval still apply.
 
 An after-Action trigger remains one row and revision. Existing terminal Event
 declarations name their completed Actions and map their terminal state to the

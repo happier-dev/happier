@@ -322,7 +322,14 @@ export function createActionAutomationPortV1(options: Readonly<{
       const after: ActionAutomationSelectedTriggerV1[] = [];
       const notices: ActionAutomationNoticeV1[] = [];
       // One Action bucket read serves both phases; matching consumes C1 identities.
-      const candidates = [...(buckets.get(args.actionId) ?? [])];
+      const cause = args.context.workflowAutomationCause;
+      const producingBeforeTriggerId = cause?.kind === 'trigger' && cause.triggerKind === 'action' && cause.evidence.phase === 'before'
+        ? cause.triggerId : undefined;
+      const candidates: ActionAutomationTriggerReferenceV1[] = [];
+      for (const row of buckets.get(args.actionId) ?? []) {
+        if (row.phase === 'before' && row.triggerId === producingBeforeTriggerId) continue;
+        candidates.push(row);
+      }
       let additionalSubjects: readonly AutomationSubjectContextV1[] = [];
       if (args.loadSubjectFacts && candidates.some(row => args.includeAfter !== false || row.phase !== 'after')) {
         additionalSubjects = await args.loadSubjectFacts();

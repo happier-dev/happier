@@ -32,6 +32,28 @@ function requestFor(actionId: Parameters<typeof getActionSpec>[0], input: unknow
 }
 
 describe('resolveApprovalExecutor', () => {
+  it.each(['plugin', 'any'] as const)('returns a reviewed %s contributed Action trigger to its admitted Machine', selector => {
+    const machineId = 'ticket-host';
+    const actionId = 'workflow.trigger.add';
+    const input = {
+      workflow: 'builtin:review-and-converge',
+      project: { machineId, directory: '/workspace/tickets' },
+      trigger: {
+        kind: 'action', phase: 'after', enabled: true,
+        actionIds: ['fixture.tickets/actions/review-ticket'],
+        ...(selector === 'plugin' ? { subject: { kind: 'plugin', serverId: 'home',
+          pluginId: 'fixture.tickets', subjectKindId: 'ticket', identity: { ticketId: 'ticket-1' } } } : {}),
+      },
+    };
+    const request = requestFor(actionId, input);
+    const retained = ApprovalRequestV2Schema.parse({ ...request, executionOriginV1: { ...request.executionOriginV1,
+      authority: 'present_user', machineId, target: { kind: 'machine', machineId } } });
+
+    expect(resolveApprovalExecutor(retained)).toEqual({ kind: 'daemon', machineId });
+    expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse(projectApprovalRequestForPublicRead(retained))))
+      .toEqual({ kind: 'daemon', machineId });
+  });
+
   it.each(['cli', 'mcp'] as const)('replays an original %s Home Session read without promoting its contextual Machine to daemon custody', surface => {
     const actionId = 'session.status.get';
     const input = { sessionId: 'session', live: false };

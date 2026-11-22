@@ -13,6 +13,8 @@ import { isPresentUserHostInvocation } from '../actions/invocationAuthority.js';
 import type { ActionExecutionPlacement } from '../actions/metadata.js';
 import { isLocalServiceStopActionIdV1 } from '../actions/actionIds.js';
 import { isDaemonIndependentSessionRead } from '../actions/originalExecution.js';
+import { parseQualifiedPluginActionId } from '../plugins/actions/qualifiedActionId.js';
+import { WORKFLOW_TRIGGER_ADD_ACTION_ID, WORKFLOW_TRIGGER_UPDATE_ACTION_ID } from '../actions/workflowTriggerActionIds.js';
 
 export type ApprovalExecutor =
   | Readonly<{ kind: 'app'; placement: ActionExecutionPlacement }>
@@ -99,6 +101,16 @@ export function resolveApprovalExecutor(request: ApprovalRequest | TargetActionA
       || isMachinePresetFiniteOperationActionIdV1(actionId))
     && origin.target?.kind === 'machine') return { kind: 'daemon', machineId: origin.target.machineId };
   if (placement === 'account' && origin.target?.kind === 'machine') {
+    // Trigger admission opens the exact contributed declaration on the
+    // reviewed Machine, including the private subject-kind contract.
+    if (actionId === WORKFLOW_TRIGGER_ADD_ACTION_ID || actionId === WORKFLOW_TRIGGER_UPDATE_ACTION_ID) {
+      const operands = readRecord(input.data);
+      const trigger = readRecord(actionId === WORKFLOW_TRIGGER_ADD_ACTION_ID ? operands.trigger : readRecord(operands.patch).trigger);
+      if (trigger.kind === 'action' && Array.isArray(trigger.actionIds)
+        && trigger.actionIds.some(id => parseQualifiedPluginActionId(id) !== null)) {
+        return { kind: 'daemon', machineId: origin.target.machineId };
+      }
+    }
     // An effect prepared through required daemon ingress retains that signer
     // after normalization makes its prepared input Account-placed.
     if (origin.externalActionExecutionAuthorization

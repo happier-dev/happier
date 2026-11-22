@@ -669,6 +669,8 @@ export type ActionExecutorContext = Readonly<{
   registryThemeContent?: import('../externalActionApi.js').ExternalActionRequestEnvelopeV1['registryThemeContent'];
   /** Host-private admission shared by direct dispatch, prepared invocation and approved continuation. */
   actionAutomationAdmission?: import('./actionSettlement.js').ActionAutomationInvocationV1;
+  /** Admitted Run cause carried privately to its child Actions. */
+  workflowAutomationCause?: import('../../automations/automationRunCause.js').AutomationRunCause;
   /** Existing invocation's host transport, retained across contributed dispatch; never wire authority. */
   actionAutomationPort?: import('./actionAutomationAdmission.js').ActionAutomationPortV1;
   /** One lazy exact-Session origin projection shared by matching and any subsequent Ask. */
