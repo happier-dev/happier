@@ -10,6 +10,7 @@ import { useUsageOpenView } from '../usageDrill';
 import { useUsageWidgetPageHasCoverageDetail } from './usageWidgetBatch';
 import { MeterBar } from '@/components/ui/lists/MeterBar';
 import { Text } from '@/components/ui/text/Text';
+import { visuallyHiddenStyle } from '@/components/ui/accessibility/visuallyHiddenStyle';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
@@ -329,6 +330,8 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
     : next !== null && (pooled || !lone) ? t('usage.board.plans.limitsNextUnit', { name: tightestName.title })
     : lone ? t('usage.board.plans.capacityLoneUnit')
     : t('usage.board.plans.capacityTightestUnit', { name: tightestName.title });
+  const retryTime = spentRetry ? formatMoment(spentRetry.retryAtMs, nowMs) : null;
+  const heroPercent = tightest ? Math.round(tightest.window.remainingFraction! * 100) : null;
   const shownReset = tightest?.window.resetAtMs ?? null;
   // Equal cells while they fit; a narrow frame (a phone) lists them a row each rather than shrinking them.
   const listed = !pooled && width !== null && width / Math.max(1, cellCount) < CELL_MIN_WIDTH_PX;
@@ -351,14 +354,15 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
         burst={!tile}
         testID={`${props.testID}.resetBurst`}
       />
-      {spentRetry !== null ? (
+      {spentRetry !== null && retryTime !== null ? (
         <View style={styles.hero} testID={`${props.testID}.firstBack`}>
           {/* The hero is the fact (when work can resume), one line at every width; the account is its caption, as
               "4% left on <account>" is (acceptance 11-22 #29). */}
           <View style={styles.heroLine}>
-            <HappierDataMetric testID={`${props.testID}.firstBack.time`} theme={chartTheme} size="hero"
+            <Text style={visuallyHiddenStyle}>{retryTime}</Text>
+            <HappierDataMetric testID={`${props.testID}.firstBack.time`} theme={chartTheme} size="hero" decorative
               label={t('usage.board.plans.capacityNextKnownRetry', { account: nameOf(spentRetry.account).title })}
-              value={formatMoment(spentRetry.retryAtMs, nowMs)} />
+              value={retryTime} />
             <Text style={[styles.heroUnit, text.title]} numberOfLines={2}>
               {t('usage.board.plans.capacityNextKnownRetry', { account: nameOf(spentRetry.account).title })}
             </Text>
@@ -371,9 +375,10 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
             ].filter(Boolean).join(' · ')}
           </Text>
         </View>
-      ) : tightest && tightestName ? (
+      ) : tightest && tightestName && heroPercent !== null ? (
         <View style={styles.hero}>
           <View style={styles.heroLine}>
+            <Text style={visuallyHiddenStyle}>{`${heroPercent}%`}</Text>
             <ChartDatum testID={`${props.testID}.tightest-datum`}
               datum={{ keyboard: false, label: `${tightestName.title} · ${tightest.window.label}`,
                 value: formatHappierDataExactShare(tightest.window.remainingFraction!, getPreferredLanguage()),
@@ -383,7 +388,8 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
               theme={chartTheme}
               size="hero"
               label={heroUnit}
-              value={Math.round(tightest.window.remainingFraction! * 100)}
+              decorative
+              value={heroPercent}
               valueFormatter={(value) => `${value}%`}
             /></ChartDatum>
             <Text style={[styles.heroUnit, text.title]} numberOfLines={2}>

@@ -7,19 +7,30 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { installPopoverCommonModuleMocks } from '@/components/ui/popover/popoverTestHelpers';
 
+const viewport = vi.hoisted(() => ({ width: 390 }));
+
 installPopoverCommonModuleMocks({
-    reactNative: async () => ({
-        ...await vi.importActual<typeof import('react-native-web')>('react-native-web'),
-        useWindowDimensions: () => ({ width: 390, height: 844, scale: 1, fontScale: 1 }),
-    }),
+    reactNative: async () => {
+        const nativeWeb = await vi.importActual<typeof import('react-native-web')>('react-native-web');
+        const dimensions = () => ({ width: viewport.width, height: 844, scale: 1, fontScale: 1 });
+        return {
+            ...nativeWeb,
+            Dimensions: {
+                get: dimensions,
+                addEventListener: nativeWeb.Dimensions.addEventListener.bind(nativeWeb.Dimensions),
+            },
+            useWindowDimensions: dimensions,
+        };
+    },
 });
 
 const { UsageFilterBar } = await import('./UsageFilterBar');
 const { Popover } = await import('@/components/ui/popover');
+const { USAGE_SCOPE_FILTER_ALL } = await import('./useUsageWidgetPageFilters');
 const { SelectionListFilterChip } = await import('@/components/ui/selectionList/SelectionListFilterChips');
 
 const pressKey = (target: HTMLElement, key: string, shiftKey = false) => {
-    target.dispatchEvent(new KeyboardEvent('keydown', { key, shiftKey, bubbles: true, cancelable: true }));
+    return target.dispatchEvent(new KeyboardEvent('keydown', { key, shiftKey, bubbles: true, cancelable: true }));
 };
 
 async function mount(element: React.ReactElement, exercise: () => Promise<void>) {
@@ -41,7 +52,7 @@ function control(id: string) {
     return element!;
 }
 
-async function withOpenFilters(exercise: (trigger: HTMLElement) => Promise<void>) {
+async function readFilter(id: string): Promise<React.ComponentProps<typeof SelectionListFilterChip>['filter']> {
     let bar!: ReactTestRenderer;
     await act(async () => { bar = create(<UsageFilterBar
         period="7days"
@@ -49,7 +60,7 @@ async function withOpenFilters(exercise: (trigger: HTMLElement) => Promise<void>
         coverageIncomplete={false}
         scopeFilters={[
             { field: 'sources', title: 'Sources', selected: [], options: [{ id: 'runtime', label: 'Happier sessions' }], select: () => true },
-            { field: 'agents', title: 'Agents', selected: [], options: [{ id: 'claude', label: 'Claude' }], select: () => true },
+            { field: 'agents', title: 'Agents', selected: [], options: [{ id: USAGE_SCOPE_FILTER_ALL, label: 'All agents' }, { id: 'claude', label: 'Claude' }], select: () => true },
         ]}
         costBasisOptions={['auto']}
         costBasisPending={false}
@@ -61,9 +72,13 @@ async function withOpenFilters(exercise: (trigger: HTMLElement) => Promise<void>
         testID="filters"
     />); });
     const filter: React.ComponentProps<typeof SelectionListFilterChip>['filter'] =
-        bar.root.findAll(node => node.props.filter?.id === 'scope')[0]?.props.filter;
+        bar.root.findAll(node => node.props.filter?.id === id)[0]?.props.filter;
     await act(async () => bar.unmount());
+    return filter;
+}
 
+async function withOpenFilters(exercise: (trigger: HTMLElement) => Promise<void>) {
+    const filter = await readFilter('scope');
     function Harness() {
         const [open, setOpen] = React.useState(false);
         const triggerRef = React.useRef<HTMLButtonElement>(null);
@@ -140,6 +155,34 @@ describe('phone Usage Filters keyboard focus', () => {
             await act(async () => { trigger.click(); });
             await act(async () => { control('popover-sheet.close').click(); });
             expect(document.activeElement).toBe(trigger);
+        });
+    });
+});
+
+describe('desktop Usage Agents picker at 1440px', () => {
+    beforeEach(() => { viewport.width = 1440; });
+    afterEach(() => { viewport.width = 390; });
+
+    it.each([false, true])('closes when the browser traverses out of All agents (shift held: %s)', async shift => {
+        const filter = await readFilter('agents');
+        await mount(<>
+            <button data-testid="before">Add a widget to Overview</button>
+            <SelectionListFilterChip filter={filter} />
+            <button data-testid="after">Home</button>
+        </>, async () => {
+            const trigger = control('filters.agents');
+            await act(async () => { trigger.focus(); trigger.click(); });
+            expect(trigger.getAttribute('aria-expanded')).toBe('true');
+            const option = document.querySelector<HTMLElement>('[role="option"][aria-label="All agents"]')!;
+            expect(option).not.toBeNull();
+            const destination = control(shift ? 'before' : 'after');
+            await act(async () => {
+                option.focus();
+                // JSDOM does not perform the browser's default Tab traversal.
+                if (pressKey(option, 'Tab', shift)) destination.focus();
+            });
+            expect(document.activeElement).toBe(destination);
+            expect(trigger.getAttribute('aria-expanded')).toBe('false');
         });
     });
 });

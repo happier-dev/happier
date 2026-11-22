@@ -1,7 +1,7 @@
 import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import * as React from 'react';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
-import { act } from 'react-test-renderer';
+import { act, type ReactTestInstance } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { collectNodeText, renderScreen as renderScreenAtHost, standardCleanup } from '@/dev/testkit';
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
@@ -363,6 +363,16 @@ async function invokePlanCommand(title: string, input?: string) {
   });
 }
 
+// Project the mounted native host tree in reading order, honoring hidden subtrees and labeled groups.
+function spokenPlanText(node: ReactTestInstance): string[] {
+  if (typeof node.type === 'string') {
+    if (node.props['aria-hidden'] || node.props.accessibilityElementsHidden
+      || node.props.importantForAccessibility === 'no-hide-descendants') return [];
+    if (node.props.accessible && typeof node.props.accessibilityLabel === 'string') return [node.props.accessibilityLabel];
+  }
+  return node.children.flatMap(child => typeof child === 'string' ? [child] : spokenPlanText(child));
+}
+
 async function renderPlanAccessibility(node: React.ReactElement) {
   const { UsageChartInteractions } = await import('../../usageChartInteractions');
   return renderScreen(wrap(<UsageChartInteractions>{node}</UsageChartInteractions>));
@@ -416,6 +426,14 @@ it('exposes all capacity windows through one exact-values disclosure', async () 
     resetAtMs: now + HOUR, windowDurationMs: DAY }]);
   const { UsageCapacityWidget } = await import('../UsageCapacityWidget');
   const screen = await renderPlanAccessibility(<UsageCapacityWidget {...bodyProps([read])} id="usage_capacity" testID="cap" />);
+  const spoken = spokenPlanText(screen.findHostByTestId('cap.capacity')!);
+  const remaining = spoken.findIndex(part => part === '70%');
+  const caption = spoken.findIndex(part => part === t('usage.board.plans.capacityLoneUnit'));
+  const reset = spoken.findIndex(part => part.includes(t('usage.board.plans.capacityResets', { time: formatMoment(now + DAY, now) })));
+  expect(remaining).toBeGreaterThanOrEqual(0);
+  expect(spoken.filter(part => part.includes('70%'))).toEqual(['70%']);
+  expect(caption).toBe(remaining + 1);
+  expect(reset).toBeGreaterThan(caption);
   expect(screen.findByTestId('cap.values-header')?.props.accessibilityLabel).toContain(t('usage.board.charts.showValues'));
   expect(screen.findAllByType(ChartDatum).every(node => node.props.datum.keyboard === false)).toBe(true);
   expect(screen.findAll(node => typeof node.type === 'string' && node.props.testID === 'cap.tightest-datum')[0]?.props.focusable).toBe(false);
@@ -1345,7 +1363,11 @@ it('shows the known retry from the selector for a wholly used-up pool and keeps 
   const headline = screen.findHostByTestId('cap.firstBack');
   const headlineText = headline?.findAllByType('Text').flatMap(collectNodeText).join(' ');
   expect.soft(headlineText).toContain(accountLabel);
-  expect.soft(headlineText?.replace(/\s/g, ' ')).toContain(formatMoment(nextQuotaRetry.retryAtMs, now).replace(/\s/g, ' '));
+  const time = formatMoment(nextQuotaRetry.retryAtMs, now).replace(/\s/g, ' ');
+  expect.soft(headlineText?.replace(/\s/g, ' ')).toContain(time);
+  const spoken = spokenPlanText(headline!).map(part => part.replace(/\s/g, ' '));
+  expect(spoken.slice(0, 2)).toEqual([time, t('usage.board.plans.capacityNextKnownRetry', { account: accountLabel })]);
+  expect(spoken.filter(part => part.includes(time))).toEqual([time]);
   expect(screen.findByTestId('cap.tightest')).toBeFalsy();
   expect(screen.findByTestId('cap.usedFirst.spent.allUsedUp')).toBeTruthy();
   expect(screen.findByTestId('cap.usedFirst.spent.a')).toBeFalsy();

@@ -8,13 +8,20 @@ import { installPopoverCommonModuleMocks } from './popoverTestHelpers';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+const viewport = vi.hoisted(() => ({ width: 390 }));
+
 installPopoverCommonModuleMocks({
     reactNative: async () => {
         const nativeWeb = await vi.importActual<typeof import('react-native-web')>('react-native-web');
+        const dimensions = () => ({ width: viewport.width, height: 844, scale: 1, fontScale: 1 });
         return {
             ...nativeWeb,
-            // Viewport dimensions are a platform boundary; real RNW refs, sheet and focus owners run below it.
-            useWindowDimensions: () => ({ width: 390, height: 844, scale: 1, fontScale: 1 }),
+            // Viewport dimensions are a platform boundary; real RNW refs and focus owners run below it.
+            Dimensions: {
+                get: dimensions,
+                addEventListener: nativeWeb.Dimensions.addEventListener.bind(nativeWeb.Dimensions),
+            },
+            useWindowDimensions: dimensions,
         };
     },
 });
@@ -253,4 +260,46 @@ describe('Popover phone-sheet focus return', () => {
             container.remove();
         }
     });
+});
+
+it('dismisses a desktop anchored popover only on focus departure, including from a portaled submenu', async () => {
+    viewport.width = 1440;
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    const close = vi.fn();
+    function Harness() {
+        const [open, setOpen] = React.useState(true);
+        const [submenuOpen, setSubmenuOpen] = React.useState(false);
+        const trigger = React.useRef<HTMLButtonElement>(null);
+        const submenuTrigger = React.useRef<HTMLButtonElement>(null);
+        return <>
+            <button ref={trigger} data-testid="anchor">Actions</button>
+            <button data-testid="outside">Outside</button>
+            <Popover open={open} anchor={{ kind: 'view', ref: trigger }} portal={{ web: true }}
+                onRequestClose={() => { close(); setOpen(false); }}>
+                {() => <button ref={submenuTrigger} data-testid="submenu-anchor" onClick={() => setSubmenuOpen(true)}>More</button>}
+            </Popover>
+            <Popover open={submenuOpen} anchor={{ kind: 'view', ref: submenuTrigger }} portal={{ web: true }}
+                autoFocusOnOpen onRequestClose={() => setSubmenuOpen(false)}>
+                {() => <button data-testid="submenu-item">Child action</button>}
+            </Popover>
+        </>;
+    }
+    const get = (id: string) => document.querySelector<HTMLButtonElement>(`[data-testid="${id}"]`)!;
+    try {
+        await act(async () => root.render(<Harness />));
+        await act(async () => { get('submenu-anchor').focus(); get('anchor').focus(); });
+        expect(close).not.toHaveBeenCalled();
+        await act(async () => { get('submenu-anchor').focus(); get('submenu-anchor').click(); });
+        expect(document.activeElement).toBe(get('submenu-item'));
+        expect(close).not.toHaveBeenCalled();
+        await act(async () => get('outside').focus());
+        expect(close).toHaveBeenCalledOnce();
+        expect(document.activeElement).toBe(get('outside'));
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+        viewport.width = 390;
+    }
 });

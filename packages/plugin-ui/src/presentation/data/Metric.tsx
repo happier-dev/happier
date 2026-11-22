@@ -34,6 +34,8 @@ export type HappierDataMetricProps = Readonly<{
    * labelled facts; `default` keeps the original metric node.
    */
   size?: 'hero' | 'stat' | 'default';
+  /** Hide the rendered metric from assistive technology when its reading is supplied separately. */
+  decorative?: boolean;
   /** Draw the label above the number (several facts in one widget). */
   showLabel?: boolean;
   /** One quiet line under the number ("plans + pay-as-you-go"). */
@@ -138,7 +140,9 @@ export function HappierDataMetric(props: HappierDataMetricProps) {
   const visual = (
     <View
       testID={props.testID}
-      accessible
+      accessible={!props.decorative}
+      aria-hidden={props.decorative || undefined}
+      importantForAccessibility={props.decorative ? 'no-hide-descendants' : undefined}
       // Never wider than its cell: a value with no space to wrap at (a release name) breaks inside itself instead.
       style={{ gap: size === 'default' ? 0 : 2, minWidth: 0, maxWidth: '100%' }}
       accessibilityLabel={[

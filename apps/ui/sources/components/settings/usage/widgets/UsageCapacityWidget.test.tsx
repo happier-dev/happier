@@ -1,6 +1,6 @@
 import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import * as React from 'react';
-import { act } from 'react-test-renderer';
+import { act, type ReactTestInstance } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup, flushHookEffects } from '@/dev/testkit';
 import * as pageAggregation from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
@@ -16,6 +16,7 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/s
 import { useUsageWidgetModel } from './usageWidgetBatch';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
+import { visuallyHiddenStyle } from '@/components/ui/accessibility/visuallyHiddenStyle';
 import { t } from '@/text';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
@@ -693,6 +694,12 @@ it.each(['pending', 'not_loaded'] as const)('shows an observed headline with fir
   expect(screen.findByTestId('capacity.reading')).toBeNull();
 });
 
+// These checks count what is drawn, excluding the screen-reader-only hero reading.
+function visibleCapacityText(node: ReactTestInstance): string {
+  if (node.props.style === visuallyHiddenStyle) return '';
+  return node.children.map(child => typeof child === 'string' ? child : visibleCapacityText(child)).join(' ');
+}
+
 it('says a lone account once: the headline names it, no cell repeats its figure, name or reset (Home 0% ×2)', async () => {
   const service = { pluginId: 'happier.agent.claude', localId: 'claude-subscription' };
   const query = normalizeUsageQuery({});
@@ -721,14 +728,14 @@ it('says a lone account once: the headline names it, no cell repeats its figure,
   const lone = await render(['solo']);
   expect(lone.findHostByTestId('capacity.tightest')).not.toBeNull();
   // The headline says the figure and reset once; the cell keeps the bar and the account's name, with no figure.
-  expect(lone.getTextContent().split('0%').length - 1).toBe(1);
+  expect(visibleCapacityText(lone.root).split('0%').length - 1).toBe(1);
   expect(lone.getTextContent()).not.toContain(t('usage.board.plans.cellUsedUp'));
   expect(lone.findHostByTestId('capacity.cell.solo')).not.toBeNull();
   // Two accounts still compare: each keeps its cell under the headline.
   const two = await render(['solo', 'work']);
   expect(two.findHostByTestId('capacity.cell.solo')).not.toBeNull();
   expect(two.findHostByTestId('capacity.cell.work')).not.toBeNull();
-  expect(two.getTextContent().split('0%').length - 1).toBe(3);
+  expect(visibleCapacityText(two.root).split('0%').length - 1).toBe(3);
   const precise = await render(['solo'], 99.625);
   expect(precise.findAllByType(ChartDatum).find(node => node.props.testID === 'capacity.tightest-datum')?.props.datum.value).toContain('0.375');
 });
@@ -761,7 +768,7 @@ it('says a lone account read a while ago once too, and a used-up lone plan offer
   };
   const usedUp = await render(100);
   // The headline says the figure; the cell under it names the account without a second, red figure.
-  expect(usedUp.getTextContent().split('0%').length - 1).toBe(1);
+  expect(visibleCapacityText(usedUp.root).split('0%').length - 1).toBe(1);
   expect(usedUp.getTextContent()).not.toContain(t('usage.board.plans.capacityTightestUnit', { name: 'solo' }));
   // Nothing is left: one next step, the same sign-in Capacity offers when nothing is connected.
   expect(usedUp.findAllHostsByTestId('capacity.nextStep')).toHaveLength(1);

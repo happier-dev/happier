@@ -345,6 +345,7 @@ type OpenWebPopoverEntry = Readonly<{
     getContentElement: () => HTMLElement | null;
     getInteractionBoundaryElement: () => HTMLElement | null;
     getAnchorElement: () => HTMLElement | null;
+    getFocusTriggerElement: () => HTMLElement | null;
 }>;
 const OPEN_WEB_POPOVERS: OpenWebPopoverEntry[] = [];
 
@@ -379,6 +380,17 @@ function hasOpenNestedWebPopover(owner: OpenWebPopoverEntry): boolean {
         if (entry === owner) return false;
         const anchor = entry.getAnchorElement();
         return anchor !== null && (content?.contains(anchor) === true || interactionBoundary?.contains(anchor) === true);
+    });
+}
+
+/** A submenu's portal belongs to the same focus interaction as the content that opened it. */
+function isWithinWebPopoverFocus(entry: OpenWebPopoverEntry, target: Node): boolean {
+    const content = entry.getContentElement();
+    if (content?.contains(target) || entry.getAnchorElement()?.contains(target) || entry.getFocusTriggerElement()?.contains(target)) return true;
+    return OPEN_WEB_POPOVERS.some(child => {
+        if (child === entry) return false;
+        const trigger = child.getFocusTriggerElement() ?? child.getAnchorElement();
+        return trigger !== null && content?.contains(trigger) === true && isWithinWebPopoverFocus(child, target);
     });
 }
 
@@ -2274,6 +2286,7 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
             getContentElement: getContentDomElement,
             getInteractionBoundaryElement: () => getDomElementFromNode(props.interactionBoundaryRef?.current),
             getAnchorElement: () => getDomElementFromNode(anchorRef.current),
+            getFocusTriggerElement: () => getDomElementFromNode(resolvedFocusReturnRef?.current),
         };
         OPEN_WEB_POPOVERS.push(openEntry);
         const handlePointerDownCapture = (event: Event) => {
@@ -2319,10 +2332,18 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
             setTimeout(() => requestClose('dismiss'), 0);
         };
 
+        const handleFocusOut = (event: FocusEvent) => {
+            if (closeRequested.current || !(event.target instanceof Node) || !isWithinWebPopoverFocus(openEntry, event.target)) return;
+            if (event.relatedTarget instanceof Node && isWithinWebPopoverFocus(openEntry, event.relatedTarget)) return;
+            requestClose('dismiss');
+        };
+
         if (shouldAttachPointerDownCapture) {
             document.addEventListener('pointerdown', handlePointerDownCapture, true);
         }
+        document.addEventListener('focusout', handleFocusOut, true);
         return () => {
+            document.removeEventListener('focusout', handleFocusOut, true);
             const index = OPEN_WEB_POPOVERS.indexOf(openEntry);
             if (index >= 0) OPEN_WEB_POPOVERS.splice(index, 1);
             if (shouldAttachPointerDownCapture) {
@@ -2339,6 +2360,7 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
         props.closeOnAnchorPress,
         props.interactionBoundaryRef,
         requestClose,
+        resolvedFocusReturnRef,
     ]);
 
     // A repeated native geometry measurement can revisit this component without changing
