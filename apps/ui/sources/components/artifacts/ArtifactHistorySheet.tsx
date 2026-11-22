@@ -151,6 +151,8 @@ function ArtifactHistoryContent(props: HistorySubject & Readonly<{ onClose: () =
     const [selection, setSelection] = React.useState<HistorySelection | null>(null);
     const [restoring, setRestoring] = React.useState(false);
     const [restoreFailure, setRestoreFailure] = React.useState<ArtifactActionFailure | null>(null);
+    // A version whose bytes can no longer be read (the document is gone) has nothing to restore.
+    const [unreadableBodyVersion, setUnreadableBodyVersion] = React.useState<number | null>(null);
     const [refreshIntent, requestRefresh] = React.useReducer((intent: number) => intent + 1, 0);
     const artifactId = props.artifactId;
     const current = artifact?.bodyVersion;
@@ -293,7 +295,8 @@ function ArtifactHistoryContent(props: HistorySubject & Readonly<{ onClose: () =
                     ? <ProseDiffViewer mode="text" testID="artifact-history:changes" oldText={chosen.body} newText={currentBody}
                         prose={{ oldLabel: t('artifacts.browser.history.version', { n: versionNumber(chosen) }), newLabel: t('artifacts.browser.history.now') }} />
                     : typeof chosen.body === 'string' ? <MarkdownView markdown={chosen.body} />
-                    : chosen.body ? <ArtifactBinaryBody artifactId={props.artifactId} reference={chosen.body} name={artifact?.title || t('artifacts.untitled')} readBytes={readBinary} scope={client.scope} />
+                    : chosen.body ? <ArtifactBinaryBody artifactId={props.artifactId} reference={chosen.body} name={artifact?.title || t('artifacts.untitled')} readBytes={readBinary} scope={client.scope}
+                        onReadFailedForGood={() => setUnreadableBodyVersion(chosen.bodyVersion)} />
                         : <Text style={styles.caption}>{t('artifacts.noContent')}</Text>}
             </ScrollView>
         </View>
@@ -328,7 +331,7 @@ function ArtifactHistoryContent(props: HistorySubject & Readonly<{ onClose: () =
                 {sideBySide || chosen === null ? list : null}
                 {preview}
             </View>
-            {chosen && props.canRestore ? (
+            {chosen && props.canRestore && unreadableBodyVersion !== chosen.bodyVersion ? (
                 <View style={[styles.footer, !sideBySide ? styles.footerStacked : null]}>
                     {restoreFailure ? (
                         <SurfaceStateCard

@@ -236,6 +236,17 @@ describe('Artifact History continuity', () => {
         expect(getActiveServerSnapshot().serverId).toBe(served.homes.c!.id);
         expect(served.requests.filter(request => request.path.startsWith('/v1/artifacts/document')).every(request => request.home === 'b')).toBe(true);
     });
+    it('does not offer Restore for a version whose document is gone', async () => {
+        // The document was deleted while History stayed open: the version's bytes answer the Home's typed 404.
+        const reference = { blobId: 'dd983306-d7e5-4ce6-a09c-d33f1a4828a2', mime: 'image/png', sizeBytes: 1, sha256: 'b'.repeat(64) };
+        const { screen } = await setup(request => request.path.endsWith('/revisions') ? Response.json({ retentionCount: 10, revisions: [{ bodyVersion: 1,
+            body: encodePlainArtifactStoredContent({ body: reference }), createdAt: 1, sizeBytes: 1 }] })
+            : request.path.includes('/blobs/') ? Response.json({ error: 'Artifact not found' }, { status: 404 }) : undefined);
+        await screen.pressByTestIdAsync('artifact-history:version:1');
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('artifacts.notFound'));
+        expect(screen.findByTestId('artifact-history:restore')).toBeNull();
+    });
+
     it('requests full-page phone chrome and returns from preview to versions without losing its revision data', async () => {
         const { screen, served } = await setup(request => request.path.endsWith('/revisions') ? Response.json(revisions) : undefined, undefined, 390);
         expect(Modal.show).toHaveBeenLastCalledWith(expect.objectContaining({

@@ -56,6 +56,8 @@ export function ArtifactBinaryBody(props: Readonly<{ artifactId: string; name: s
     /** History retains the original Account even when another Home is focused. */
     scope?: ServerAccountScope | null;
     actions?: Pick<ArtifactActionsClient, 'exportArtifact'>;
+    /** Told once the read owner settles that these bytes cannot be read again (a deleted document). */
+    onReadFailedForGood?: () => void;
 }>) {
     const { theme } = useUnistyles();
     const reference = props.reference;
@@ -101,6 +103,10 @@ export function ArtifactBinaryBody(props: Readonly<{ artifactId: string; name: s
     // The read owner says whether another attempt can succeed; a deleted or refused file stays that way.
     const readFailedForGood = preview.key === key && preview.phase === 'failed'
         && preview.failure instanceof HappyError && !preview.failure.canTryAgain;
+    // Read after commit, so a caller's inline callback never re-runs this effect.
+    const onReadFailedForGood = React.useRef(props.onReadFailedForGood);
+    onReadFailedForGood.current = props.onReadFailedForGood;
+    React.useEffect(() => { if (readFailedForGood) onReadFailedForGood.current?.(); }, [readFailedForGood, key]);
     const previewInput = React.useMemo<UseFilePreviewSourceInput>(() => ({
         enabled: previewable && ready !== null,
         source: ready ? { kind: 'bytes', bytes: ready.bytes, name: props.name } : { kind: 'uri', uri: '' },
