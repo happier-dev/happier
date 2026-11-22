@@ -5,6 +5,7 @@ import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRe
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { isPluginDevLoopActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { APPROVAL_ARTIFACT_KINDS_V1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
+import { MANAGED_POWER_SET_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 
 import type { DecryptedArtifact } from './artifactTypes';
 import { readAdmittedApprovalArtifactBody, readOpenApprovalInboxArtifact,
@@ -119,7 +120,7 @@ export function createProjectServiceStartApprovalArtifactIdsSelector(
  */
 export function readOpenManagedMachineApprovalId(
     entries: Iterable<OpenApprovalInboxEntry>,
-    target: Readonly<{ homeId: string; managedId: string; actionId: string }>,
+    target: Readonly<{ homeId: string; managedId: string; actionId: string; intent?: string }>,
 ): string | null {
     let found: { id: string; createdAtMs: number } | null = null;
     for (const { artifact, parsed } of entries) {
@@ -127,9 +128,21 @@ export function readOpenManagedMachineApprovalId(
         const args = parsed.request.actionArgs;
         if (!args || typeof args !== 'object' || !('managedId' in args) || args.managedId !== target.managedId
             || !('homeId' in args) || args.homeId !== target.homeId) continue;
+        if (target.intent !== undefined && (!('intent' in args) || args.intent !== target.intent)) continue;
         if (!found || parsed.request.createdAtMs > found.createdAtMs) found = { id: artifact.id, createdAtMs: parsed.request.createdAtMs };
     }
     return found?.id ?? null;
+}
+
+/**
+ * "Start waiting for you": the open Start Ask for one created Machine (a Send, Run or Resume to it while asleep
+ * files it). The Session, the Machine page and Resume all read this one fact; none decides it again.
+ */
+export function readOpenManagedMachineStartApprovalId(
+    entries: Iterable<OpenApprovalInboxEntry>,
+    machine: Readonly<{ homeId: string; managedId: string }>,
+): string | null {
+    return readOpenManagedMachineApprovalId(entries, { ...machine, actionId: MANAGED_POWER_SET_ACTION_ID_V1, intent: 'start' });
 }
 
 /** Management links to the ordinary request; its captured operands and Inbox retain decision authority. */

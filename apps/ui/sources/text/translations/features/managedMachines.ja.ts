@@ -862,6 +862,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         unsupported: ({ provider, effect }: { provider: string; effect: string }) => `${provider} はこのリソースの ${effect} に対応していません。`,
         stopPending: "停止をリクエストしました。停止はまだ確認されていません。",
         asleepWakesOnSend: "スリープ中 · 次のメッセージか実行で起動します",
+        asleepStartWaiting: "スリープ中 · 起動があなたの承認を待っています",
         asleepWaitsForController: ({ controller }: { controller: string }) => `スリープ中 · ${controller} がオンラインになると起動します`,
         asleepWaitsForControllerUnnamed: "スリープ中 · 管理しているマシンがオンラインになると起動します",
         asleepNoWake: "スリープ中 · メッセージや実行では起動しません",
@@ -875,6 +876,7 @@ export const managedMachines: ManagedMachinesTranslations = {
     },
     managedWake: {
         startsOnSend: '送信時に起動',
+        startWaitingForYou: "起動の承認を待っています",
         startBeforeSend: '送信するには、このマシンを先に起動する必要があります。',
         waiting: ({ controller }: { controller: string }) => `メッセージをキューに追加しました · ${controller} を待っています`,
         starting: ({ machine }: { machine: string }) => `${machine} を起動しています…`,

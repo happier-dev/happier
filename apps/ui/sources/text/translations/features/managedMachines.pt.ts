@@ -862,6 +862,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         unsupported: ({ provider, effect }: { provider: string; effect: string }) => `${provider} não oferece suporte a ${effect} para este recurso.`,
         stopPending: "Parada solicitada. A parada ainda não foi confirmada.",
         asleepWakesOnSend: "Em repouso · sua próxima mensagem ou execução a inicia",
+        asleepStartWaiting: "Em repouso · uma inicialização está esperando por você",
         asleepWaitsForController: ({ controller }: { controller: string }) => `Em repouso · inicia quando ${controller} estiver online`,
         asleepWaitsForControllerUnnamed: "Em repouso · inicia quando a máquina que a gerencia estiver online",
         asleepNoWake: "Em repouso · mensagens e execuções não a iniciam",
@@ -875,6 +876,7 @@ export const managedMachines: ManagedMachinesTranslations = {
     },
     managedWake: {
         startsOnSend: 'inicia quando você envia',
+        startWaitingForYou: "Aguardando você aprovar a inicialização",
         startBeforeSend: 'Esta máquina precisa ser iniciada antes de você poder enviar.',
         waiting: ({ controller }: { controller: string }) => `Mensagem na fila · aguardando ${controller}`,
         starting: ({ machine }: { machine: string }) => `Iniciando ${machine}…`,

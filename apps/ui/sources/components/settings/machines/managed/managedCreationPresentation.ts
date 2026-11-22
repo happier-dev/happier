@@ -69,6 +69,8 @@ export type ManagedCreationContext = Readonly<{
     guestOnline?: boolean | null;
     /** What starts this machine again once asleep (the wake owner's answer), said on its state row. */
     asleepWake?: ManagedAsleepWake;
+    /** A Start is already waiting for the person (`useOpenManagedMachineStartApprovalId`): asleep says so, never asks again. */
+    startWaiting?: boolean;
 }>;
 
 /** Compare the two identities already published by the controller and enrolled guest. */
@@ -137,7 +139,8 @@ export function managedCreationState(machine: ManagedMachineReadSnapshotV1, cont
         return { kind: 'powerPending', provider: context.provider ?? t('common.machine'), state: t(`managedMachines.actions.${pendingIntent}`) };
     }
     if (machine.observation?.power === 'stopped') return machine.observation.storage === 'retained'
-        ? { kind: 'stoppedStorage', ...(context.asleepWake ? { wake: context.asleepWake } : {}) } : { kind: 'storageUnknown' };
+        ? { kind: 'stoppedStorage', ...(context.asleepWake ? { wake: context.asleepWake } : {}),
+            ...(context.startWaiting ? { startWaiting: true } : {}) } : { kind: 'storageUnknown' };
     if (machine.allocation !== 'unsubmitted') return { kind: 'resourceReady' };
     // Provider calls run where the account lives: an offline controller is what nothing waits on but the user.
     return context.controller && !context.controller.online && context.provider
@@ -173,7 +176,9 @@ export function isManagedCreationStateRowVisible(machine: Pick<ManagedMachineRea
     options?: Readonly<{ offersStart?: boolean }>): boolean {
     // The header says "Asleep" for a joined machine; the row earns its place only by carrying Start.
     // So does one whose wake waits for its offline controller: nothing else on the page says why it can't start.
-    if (state.kind === 'stoppedStorage' && (options?.offersStart === true || state.wake?.kind === 'waitsForController')) return true;
+    // A Start already waiting for the person is said here with its Review: it is what will wake the machine.
+    if (state.kind === 'stoppedStorage' && (options?.offersStart === true || state.startWaiting === true
+        || state.wake?.kind === 'waitsForController')) return true;
     return !machine.enrolledMachineId || state.kind !== 'resourceReady' && state.kind !== 'stoppedStorage'
         && state.kind !== 'powerPending' && state.kind !== 'stopPending';
 }

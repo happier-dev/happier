@@ -275,6 +275,8 @@ import { resolveHomeDisplayLabel } from "@/components/settings/server/homeDispla
 import { machineCollectionHref } from "@/components/settings/machines/collection/machineCollectionModel";
 import { presentMachineAgentStartRefusal } from "@/components/machines/agents/presentMachineAgentStartRefusal";
 import { resumeActionExecutionResult } from "@/components/approvals/actionApprovalContinuation";
+import { buildApprovalHref } from "@/components/approvals/approvalNavigation";
+import { useOpenManagedMachineStartApprovalId } from "@/hooks/inbox/useOpenManagedMachineStartApprovalId";
 import type { ComposerStructuredInputMention } from "@/sync/domains/input/draftValues/sessionDraftValueTypes";
 import type { StorageState } from "@/sync/store/types";
 import { readSessionWorkStatePrimaryItemV1 } from "@happier-dev/protocol/sessions/work/state/sessionWorkStatePrimary";
@@ -1471,6 +1473,13 @@ export function useSessionComposerController({
     const managedPendingMachine = managedWakePresentation.observation.machine;
     const managedWakeController = useServerScopedMachine(sessionAccountScope?.serverId ?? '',
         managedPendingMachine?.controller?.machineId ?? managedWakeAuthorization?.managedWakeTargetV1?.controller?.machineId ?? '');
+    // "Start waiting for you": a stopped Session on a created machine whose Start Ask is open (a Send or Resume filed
+    // it). The approval owner decides it; the line names it with Review, and Resume opens it instead of asking again.
+    const sessionStartApprovalId = useOpenManagedMachineStartApprovalId(session.active === true ? null
+        : managedWakeAuthorization?.managedWakeTargetV1 ?? sessionMachineRecord?.managedMachineRef ?? null);
+    const openSessionStartApproval = React.useCallback(() => {
+        if (sessionStartApprovalId && sessionRouteServerId) router.push(buildApprovalHref(sessionStartApprovalId, sessionRouteServerId));
+    }, [router, sessionRouteServerId, sessionStartApprovalId]);
     // One owner for the managed wake projection, the explicit-stop hold and an in-flight resume: the Inbox's
     // wake row reads the same presentation. A live composer submission owns the moment (`suppressed`).
     const { presentation: pendingActivationPresentation, deliveryFailure: sessionDeliveryFailure, autoResumeAdmission } = useSessionPendingActivationPresentation({
@@ -4489,6 +4498,11 @@ export function useSessionComposerController({
         };
 
         if (sessionMachineAccessRemoved) return false;
+        // Its machine's Start already waits for the person: Resume opens that decision rather than leaving it behind.
+        if (sessionStartApprovalId && !silent) {
+            openSessionStartApproval();
+            return false;
+        }
 
         if (resumeEligibility !== 'unknown' && (!resumeMachineId || !resumeDirectory || !agentId)) {
             maybeAlert(t('session.resumeFailed'));
@@ -4584,7 +4598,7 @@ export function useSessionComposerController({
             maybeAlert(t('session.resumeFailed'), readRpcErrorCode(error));
             return false;
         }
-    }, [resumeActions.execute, resumeActions.executeForCaller, resumeActions.binding, agentId, continueFromTranscript, handlePendingActivationRequest, pendingActivationPresentation, presentResumeFailureRecovery, sessionAccountLifetime, sessionAccountScopeKey, sessionRouteServerId, executionRunsEnabled, isMachineReachable, machineReachability, isResumable, resumeEligibility, reachableMachineTarget, router, session, sessionActionDefaultBackend, sessionId, sessionMachineAccessRemoved]);
+    }, [resumeActions.execute, resumeActions.executeForCaller, resumeActions.binding, agentId, continueFromTranscript, handlePendingActivationRequest, pendingActivationPresentation, presentResumeFailureRecovery, sessionAccountLifetime, sessionAccountScopeKey, sessionRouteServerId, executionRunsEnabled, isMachineReachable, machineReachability, isResumable, resumeEligibility, reachableMachineTarget, router, session, sessionActionDefaultBackend, sessionId, sessionMachineAccessRemoved, sessionStartApprovalId, openSessionStartApproval]);
     handleUsageLimitRecoveryResumeNowRef.current = handleResumeSession;
 
     const withdrawManagedWakeInput = React.useCallback(async (row: PendingMessage) => {
@@ -5485,6 +5499,11 @@ export function useSessionComposerController({
                     color: theme.colors.state.attention.textForeground,
                 };
             }
+            // The machine's Start waits for the person: that is the one cause, with Review opening that exact approval.
+            if (sessionStartApprovalId) {
+                return { text: t('managedWake.startWaitingForYou'), action: 'review_start',
+                    color: theme.colors.state.attention.textForeground };
+            }
             const presentation = pendingActivationPresentation;
             if (!presentation || presentation.managedWakeProjection) return null;
             const action: SessionViewPendingQueueAction | null = presentation.primaryAction && presentation.row
@@ -5499,7 +5518,7 @@ export function useSessionComposerController({
                 color: presentation.kind === 'failed' || presentation.holdReason === 'managed_power_required'
                     ? theme.colors.state.attention.textForeground : sessionStatus.statusColor,
             };
-        }, [connectedServicesAuthRecoveryChip, hasWriteAccess, pendingActivationPresentation, sessionDeliveryFailure, sessionStatus.statusColor, theme.colors.state.attention.textForeground]);
+        }, [connectedServicesAuthRecoveryChip, hasWriteAccess, pendingActivationPresentation, sessionDeliveryFailure, sessionStartApprovalId, sessionStatus.statusColor, theme.colors.state.attention.textForeground]);
         // An agent exchange paused for the person (lab T1): the held input carries its exact original root.
         const exchangeCheckInRoot = React.useMemo(() => findExchangeCheckInRoot(pendingMessages), [pendingMessages]);
         // The main transcript's queue size, said once on the line instead of a header over the queue.
@@ -5533,7 +5552,8 @@ export function useSessionComposerController({
             if (connectedServicesAuthRecoveryChip) requestComposerActionChipOpen(connectedServicesAuthRecoveryChip.key);
         });
         const handlePendingQueueAction = React.useCallback(async (action: SessionViewPendingQueueAction) => {
-            if (action === 'resume' || action === 'retry') await handleResumeSession();
+            if (action === 'review_start') openSessionStartApproval();
+            else if (action === 'resume' || action === 'retry') await handleResumeSession();
             else if (action === 'new_session') {
                 if (!sessionAccountLifetime?.isCurrent() || !sessionAccountScope) return;
                 // The authoring owner shows a refusal or a waiting approval.
@@ -5546,7 +5566,7 @@ export function useSessionComposerController({
             // Signing a refused account in again is the existing Connected services recovery.
             else if (action === 'sign_in_again') router.push('/(app)/settings/connected-services');
             else await handlePendingActivationRequest(action);
-        }, [actionExecutor, handlePendingActivationRequest, handleResumeSession, openSessionAccountChooser, router,
+        }, [actionExecutor, handlePendingActivationRequest, handleResumeSession, openSessionAccountChooser, openSessionStartApproval, router,
             sessionAccountLifetime, sessionAccountScope, sessionId]);
         // The machine's guard is about to stop this Session, stopped it, or the next message is waking it.
         const guardPresentationKey = JSON.stringify(ownerMetadata?.sessionGuardStateV1 ?? null);
@@ -5784,7 +5804,8 @@ export function useSessionComposerController({
                         ? { ...connectionStatus, action: { label: providerBindingBanner.actionLabel, onPress: handleProviderBindingAction } }
                         : connectionStatus.pendingQueueAction
                             ? { ...connectionStatus, action: {
-                                label: connectionStatus.pendingQueueAction === 'sign_in_again' ? t('connectionStatus.summary.signInAgain')
+                                label: connectionStatus.pendingQueueAction === 'review_start' ? t('approvals.review')
+                                    : connectionStatus.pendingQueueAction === 'sign_in_again' ? t('connectionStatus.summary.signInAgain')
                                     : connectionStatus.pendingQueueAction === 'new_session' ? t('sessionInfo.newSessionSameSetup')
                                     : t(`session.pendingActivation.actions.${connectionStatus.pendingQueueAction === 'keep_queued' ? 'keepQueued' : connectionStatus.pendingQueueAction === 'choose_account' ? 'chooseAccount' : connectionStatus.pendingQueueAction}`),
                                 onPress: () => fireAndForget(handlePendingQueueAction(connectionStatus.pendingQueueAction!), { tag: 'SessionView.pendingQueueAction' }),
@@ -5849,7 +5870,8 @@ export function useSessionComposerController({
         ) : undefined, [existingSessionModelPicker, sessionNativeSourceLabel]);
         const sessionCapabilitiesApplyBadge = sessionCapabilities.applyBadge;
         const managedWakeStatusBadge = React.useMemo<AgentInputStatusBadge | null>(() => {
-            if (!pendingActivationPresentation?.managedWakeProjection) return null;
+            // While its Start waits for the person, the line says so with Review; the wake stage would only repeat it.
+            if (!pendingActivationPresentation?.managedWakeProjection || sessionStartApprovalId) return null;
             return {
                 key: 'session-managedWake',
                 testID: `session.managedWake.${pendingActivationPresentation.managedWakeProjection.kind}.badge`,
@@ -5881,7 +5903,7 @@ export function useSessionComposerController({
             };
         }, [pendingActivationPresentation, managedWakeNames, pendingActivationActionBusy, pendingRecoveryApproval.approvalPending,
             managedWakeController, sessionAccountScope, managedWakeAuthorization, managedPendingMachine,
-            router, handleManagedWakeRecovery, t]);
+            router, handleManagedWakeRecovery, sessionStartApprovalId, t]);
         const hasConnectedServicesAuthChip = Boolean(sessionConnectedServicesAuthSwitch.connectedServicesAuthChip);
         const agentInputStatusBadges = React.useMemo<ReadonlyArray<AgentInputStatusBadge>>(() => {
             const agentTransitionOutcomeBadge = armedContinuationNotice

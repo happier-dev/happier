@@ -862,6 +862,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         unsupported: ({ provider, effect }: { provider: string; effect: string }) => `${provider} ne prend pas en charge ${effect} pour cette ressource.`,
         stopPending: "Arrêt demandé. L’arrêt n’a pas encore été confirmé.",
         asleepWakesOnSend: "En veille · votre prochain message ou exécution la démarre",
+        asleepStartWaiting: "En veille · un démarrage vous attend",
         asleepWaitsForController: ({ controller }: { controller: string }) => `En veille · démarre dès que ${controller} est en ligne`,
         asleepWaitsForControllerUnnamed: "En veille · démarre dès que la machine qui la gère est en ligne",
         asleepNoWake: "En veille · les messages et exécutions ne la démarrent pas",
@@ -875,6 +876,7 @@ export const managedMachines: ManagedMachinesTranslations = {
     },
     managedWake: {
         startsOnSend: 'démarre à l’envoi',
+        startWaitingForYou: "En attente de votre accord pour le démarrage",
         startBeforeSend: 'Cette machine doit être démarrée avant de pouvoir envoyer.',
         waiting: ({ controller }: { controller: string }) => `Message en file d’attente · en attente de ${controller}`,
         starting: ({ machine }: { machine: string }) => `Démarrage de ${machine}…`,

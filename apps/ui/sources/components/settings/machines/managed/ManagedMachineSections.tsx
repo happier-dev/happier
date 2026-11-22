@@ -33,7 +33,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useServerScopedMachine, useMachineListForServer } from '@/sync/domains/state/storage';
 import { storage } from '@/sync/domains/state/storageStore';
 import { useInboxArtifactBodyDemand } from '@/hooks/inbox/useInboxArtifactSource';
-import { readOpenManagedMachineApprovalId } from '@/sync/domains/artifacts/approvalArtifacts';
+import { readOpenManagedMachineApprovalId, readOpenManagedMachineStartApprovalId } from '@/sync/domains/artifacts/approvalArtifacts';
 import { resolveActionTitle } from '@/text/actionTitles';
 import { getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
@@ -267,6 +267,9 @@ function ManagedMachineFullSections(props: FullSectionProps) {
     const storedDeleteApprovalId = React.useMemo(() => readOpenManagedMachineApprovalId(Object.values(openApprovals),
         { homeId: machine.homeId, managedId: machine.id, actionId: 'machines.managed.delete' }),
     [openApprovals, machine.homeId, machine.id]);
+    // A Start waiting for you (filed by a Send, Run or Resume while asleep) is named on the state row with its Review.
+    const startApprovalId = React.useMemo(() => readOpenManagedMachineStartApprovalId(Object.values(openApprovals),
+        { homeId: machine.homeId, managedId: machine.id }), [openApprovals, machine.homeId, machine.id]);
     const approvalPresentation = projectManagedMachineApproval({ approvalId: approval.approvalId,
         submittedDeleteApprovalId: submittedDeleteApprovalIdRef.current, storedDeleteApprovalId });
     const pendingDeleteApprovalId = approvalPresentation?.kind === 'delete' ? approvalPresentation.artifactId : null;
@@ -742,7 +745,8 @@ function ManagedMachineFullSections(props: FullSectionProps) {
         providerAvailable: (!machine.controller || requiredController) && provisionerPresentation.projectionReady ? provisionerPresentation.title !== null : undefined,
         ...(controller && controllerPresence && typeof controllerName === 'string' ? { controller: { name: controllerName, online: controllerPresence.online } } : {}),
         asleepWake: resolveManagedAsleepWake({ wakeOnAcceptedMessage: policy.wakeOnAcceptedMessage, availability: wakeAvailability,
-            controllerName: controllerName ?? null }) };
+            controllerName: controllerName ?? null }),
+        ...(startApprovalId ? { startWaiting: true } : {}) };
     // One recovery for a Machine that needs attention (retry, update or restart), decided by the recovery owner from the
     // facts this page already holds; the press runs through this page's dispatch for its pending, approval and failure.
     const recovery = useMachineRecovery({ managed: machine, online: creationContext.enrolledMachine?.online ?? null,
@@ -750,7 +754,8 @@ function ManagedMachineFullSections(props: FullSectionProps) {
     // Asleep with its disk kept, Start is the next step: it moves to the state row that opens the page, the same action
     // and the same offer, so it is one press from where the person looks on every width.
     const startAction = allReceiptActions.find(action => action.testID === 'managed-machine.start' && !action.disabled);
-    const offerStartOnRow = startAction !== undefined && managedCreationState(machine, creationContext).kind === 'stoppedStorage';
+    const asleepWithStorage = managedCreationState(machine, creationContext).kind === 'stoppedStorage';
+    const offerStartOnRow = startAction !== undefined && asleepWithStorage;
     const receiptActions = offerStartOnRow ? allReceiptActions.filter(action => action !== startAction) : allReceiptActions;
     const pageReceipt: ManagedReceiptModel = offerStartOnRow ? { ...receipt, secondary: receiptActions } : receipt;
     const keep: ManagedKeepProps = { policy, inherited: false, defaultPolicy: policyParent?.policy,
@@ -876,12 +881,13 @@ function ManagedMachineFullSections(props: FullSectionProps) {
             ? <AttentionBanner testID="managed-machine.approval" tone="neutral"
                 title={resolveActionTitle('machines.managed.delete', null)} description={t('approvals.waitingForYou')}
                 action={{ label: t('approvals.review'), onPress: () => openApproval(pendingDeleteApprovalId) }} />
-            : approvalPresentation?.kind === 'generic' ? <AttentionBanner testID="managed-machine.approval" tone="neutral"
+            : approvalPresentation?.kind === 'generic' && approvalPresentation.artifactId !== startApprovalId ? <AttentionBanner testID="managed-machine.approval" tone="neutral"
                 title={t('approvals.title')} description={t('approvals.status.open')}
                 action={{ label: t('approvals.details'), onPress: () => openApproval(approvalPresentation.artifactId) }} />
             : null}
         <ManagedCreationProgress machine={machine} operation={operation} setupRecovery={setupRecovery} provider={providerName}
             enrolledMachine={creationContext.enrolledMachine} asleepWake={creationContext.asleepWake} title={machineName}
+            startWaiting={creationContext.startWaiting}
             guestPayloadStale={guestPayloadStale}
             {...(props.staleRead ? { staleRead: props.staleRead } : {})}
             {...(!pendingDeleteApprovalId ? { reviewApproval: (artifactId: string) => router.push(
@@ -892,6 +898,7 @@ function ManagedMachineFullSections(props: FullSectionProps) {
             providerAvailable={creationContext.providerAvailable}
             mark={provisionerPresentation.markAt(MANAGED_PROVISIONER_MARK_SIZE.row)} controller={creationContext.controller} handlers={{ ...(props.current && !resourceConfirmedAbsent ? { checkNow: () => inspect() } : {}),
             ...(offerStartOnRow ? { start: startAction.onPress } : {}),
+            ...(startApprovalId && asleepWithStorage ? { review: () => openApproval(startApprovalId) } : {}),
             ...(canCancelCreation && canRecoverCreation ? { cancel: cancelCreation } : {}),
             ...(recoveryConsoleUrl ? { openProvider: () => {
                 if (!props.binding?.isCurrent()) return;

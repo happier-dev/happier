@@ -398,6 +398,14 @@ describe('created machine resource rows (UIR5)', () => {
     // No handler, nothing to offer: the header stays the only word for the state.
     const noStart = await renderScreen(<ManagedCreationProgress machine={machine} handlers={{}} />);
     expect(testIds(noStart, 'managed-machine.progress')).toHaveLength(0);
+    // A Start already waiting for the person replaces the wake rule and Start: the row names it and Review opens it.
+    const review = vi.fn();
+    const waiting = await renderScreen(<ManagedCreationProgress machine={machine} handlers={{ start, review }} startWaiting
+      asleepWake={{ kind: 'onSend' }} />);
+    expect((await stateRowItem(waiting))?.props.title).toBe(t('managedPower.asleepStartWaiting'));
+    expect(testIds(waiting, 'managed-machine.progress:start')).toHaveLength(0);
+    await waiting.pressByTestIdAsync('managed-machine.progress:review');
+    expect(review).toHaveBeenCalledTimes(1);
   });
 
   it('keeps one freshness when the created-machine list could not be re-read: its time, the reason and Retry', async () => {

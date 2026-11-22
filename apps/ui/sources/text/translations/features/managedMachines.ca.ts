@@ -862,6 +862,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         unsupported: ({ provider, effect }: { provider: string; effect: string }) => `${provider} no admet ${effect} per a aquest recurs.`,
         stopPending: "S’ha sol·licitat l’aturada. Encara no s’ha confirmat.",
         asleepWakesOnSend: "En repòs · el teu proper missatge o execució la inicia",
+        asleepStartWaiting: "En repòs · una posada en marxa t’espera",
         asleepWaitsForController: ({ controller }: { controller: string }) => `En repòs · s’inicia quan ${controller} estigui en línia`,
         asleepWaitsForControllerUnnamed: "En repòs · s’inicia quan la màquina que la gestiona estigui en línia",
         asleepNoWake: "En repòs · els missatges i les execucions no la inicien",
@@ -875,6 +876,7 @@ export const managedMachines: ManagedMachinesTranslations = {
     },
     managedWake: {
         startsOnSend: 's’inicia quan envies',
+        startWaitingForYou: "Esperant que aprovis la posada en marxa",
         startBeforeSend: 'Cal iniciar aquesta màquina abans de poder enviar.',
         waiting: ({ controller }: { controller: string }) => `Missatge a la cua · esperant ${controller}`,
         starting: ({ machine }: { machine: string }) => `Iniciant ${machine}…`,

@@ -32,8 +32,11 @@ export type ManagedLifecycleState =
   | Readonly<{ kind: 'notCreated' }>
   | Readonly<{ kind: 'stopPending' }>
   | Readonly<{ kind: 'powerPending'; provider: string; state: string }>
-  /** Asleep with its storage kept; `wake` says what starts it again, from the wake owner. */
-  | Readonly<{ kind: 'stoppedStorage'; wake?: ManagedAsleepWake }>
+  /**
+   * Asleep with its storage kept; `wake` says what starts it again, from the wake owner. `startWaiting`: a Start is
+   * already waiting for the person (the approval owner's open Start Ask), so the row opens it instead of asking again.
+   */
+  | Readonly<{ kind: 'stoppedStorage'; wake?: ManagedAsleepWake; startWaiting?: boolean }>
   | Readonly<{ kind: 'storageUnknown' }>
   | Readonly<{ kind: 'absent' }>
   | Readonly<{ kind: 'expired' }>
@@ -60,7 +63,7 @@ export type ManagedLifecycleState =
   | Readonly<{ kind: 'mayExist'; name: string }>;
 
 export type ManagedLifecycleAction =
-  /** Opens the Ask already waiting in Inbox for this resource (its cleanup Delete). */
+  /** Opens the Ask already waiting in Inbox for this resource (its cleanup Delete, or a Start waiting for you). */
   | 'review'
   | 'start'
   | 'checkNow'
@@ -222,8 +225,8 @@ export function describeManagedLifecycleState(
     case 'stoppedStorage':
       return { ...present(
         'neutral',
-        { detail: describeAsleepLine(state.wake) },
-        ['start'],
+        { detail: state.startWaiting ? t('managedPower.asleepStartWaiting') : describeAsleepLine(state.wake) },
+        state.startWaiting ? ['review'] : ['start'],
       ), word: t('managedPower.asleep') };
     case 'storageUnknown':
       return present('warning', { cause: t('managedPower.storageUnknown') }, [

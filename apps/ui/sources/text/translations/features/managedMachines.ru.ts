@@ -863,6 +863,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         unsupported: ({ provider, effect }: { provider: string; effect: string }) => `${provider} не поддерживает ${effect} для этого ресурса.`,
         stopPending: "Запрошена остановка. Остановка ещё не подтверждена.",
         asleepWakesOnSend: "Спит · следующее сообщение или запуск разбудит её",
+        asleepStartWaiting: "Спит · запуск ждёт вашего решения",
         asleepWaitsForController: ({ controller }: { controller: string }) => `Спит · запустится, когда ${controller} будет в сети`,
         asleepWaitsForControllerUnnamed: "Спит · запустится, когда управляющая ею машина будет в сети",
         asleepNoWake: "Спит · сообщения и запуски её не будят",
@@ -876,6 +877,7 @@ export const managedMachines: ManagedMachinesTranslations = {
     },
     managedWake: {
         startsOnSend: 'запускается при отправке',
+        startWaitingForYou: "Ждёт, пока вы одобрите запуск",
         startBeforeSend: 'Чтобы отправить сообщение, сначала нужно запустить эту машину.',
         waiting: ({ controller }: { controller: string }) => `Сообщение в очереди · ожидание ${controller}`,
         starting: ({ machine }: { machine: string }) => `Запуск ${machine}…`,

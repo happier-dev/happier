@@ -862,6 +862,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         unsupported: ({ provider, effect }: { provider: string; effect: string }) => `${provider} non supporta ${effect} per questa risorsa.`,
         stopPending: "Arresto richiesto. L’arresto non è ancora stato confermato.",
         asleepWakesOnSend: "In sospensione · il tuo prossimo messaggio o esecuzione la avvia",
+        asleepStartWaiting: "In sospensione · un avvio ti aspetta",
         asleepWaitsForController: ({ controller }: { controller: string }) => `In sospensione · si avvia quando ${controller} è online`,
         asleepWaitsForControllerUnnamed: "In sospensione · si avvia quando la macchina che la gestisce è online",
         asleepNoWake: "In sospensione · messaggi ed esecuzioni non la avviano",
@@ -875,6 +876,7 @@ export const managedMachines: ManagedMachinesTranslations = {
     },
     managedWake: {
         startsOnSend: 'si avvia quando invii',
+        startWaitingForYou: "In attesa che tu approvi l’avvio",
         startBeforeSend: 'Questa macchina deve essere avviata prima di poter inviare.',
         waiting: ({ controller }: { controller: string }) => `Messaggio in coda · in attesa di ${controller}`,
         starting: ({ machine }: { machine: string }) => `Avvio di ${machine}…`,

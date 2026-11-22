@@ -27,6 +27,8 @@ export type SessionViewConnectionStatus = Readonly<{
 }>;
 
 export type SessionViewPendingQueueAction = 'resume' | 'retry' | 'process_when_online' | 'keep_queued'
+    /** The machine's Start waits for the person: open that exact approval. */
+    | 'review_start'
     /** A refused account's recoveries (`presentSessionActivationFailure`). */
     | 'choose_account' | 'sign_in_again' | 'new_session';
 

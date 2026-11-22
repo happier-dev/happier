@@ -862,6 +862,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         unsupported: ({ provider, effect }: { provider: string; effect: string }) => `${provider} 不支援對此資源執行${effect}。`,
         stopPending: "已要求停止。停止尚未確認。",
         asleepWakesOnSend: "休眠 · 下一則訊息或執行會啟動它",
+        asleepStartWaiting: "休眠 · 有一個啟動在等你核准",
         asleepWaitsForController: ({ controller }: { controller: string }) => `休眠 · ${controller} 上線後啟動`,
         asleepWaitsForControllerUnnamed: "休眠 · 管理它的機器上線後啟動",
         asleepNoWake: "休眠 · 訊息和執行不會啟動它",
@@ -875,6 +876,7 @@ export const managedMachines: ManagedMachinesTranslations = {
     },
     managedWake: {
         startsOnSend: '傳送時啟動',
+        startWaitingForYou: "等待你核准啟動",
         startBeforeSend: '必須先啟動此機器才能傳送。',
         waiting: ({ controller }: { controller: string }) => `訊息已排入佇列 · 正在等待 ${controller}`,
         starting: ({ machine }: { machine: string }) => `正在啟動 ${machine}…`,

@@ -871,6 +871,7 @@ export const managedMachinesEn = {
         unsupported: ({ provider, effect }: { provider: string; effect: string }) => `${provider} doesn’t support ${effect} for this resource.`,
         stopPending: "Stop requested. Stopping hasn’t been confirmed.",
         asleepWakesOnSend: "Asleep · your next message or run starts it",
+        asleepStartWaiting: "Asleep · a start is waiting for you",
         asleepWaitsForController: ({ controller }: { controller: string }) => `Asleep · starts once ${controller} is online`,
         asleepWaitsForControllerUnnamed: "Asleep · starts once the machine that manages it is online",
         asleepNoWake: "Asleep · messages and runs don’t start it",
@@ -884,6 +885,7 @@ export const managedMachinesEn = {
     },
     managedWake: {
         startsOnSend: 'starts when you send',
+        startWaitingForYou: "Waiting for you to approve the start",
         startBeforeSend: 'This Machine must be started before you can send.',
         waiting: ({ controller }: { controller: string }) => `Message queued · waiting for ${controller}`,
         starting: ({ machine }: { machine: string }) => `Starting ${machine}…`,

@@ -12,6 +12,7 @@ import {
     listOpenApprovalInboxArtifactHydrationRequests,
     readOpenApprovalDiscussionAttention,
     readOpenManagedMachineApprovalId,
+    readOpenManagedMachineStartApprovalId,
     listOpenApprovalArtifactsForSession,
     listApprovalArtifactIdsNeedingHydrationForSession,
     listTranscriptApprovalArtifactsForSession,
@@ -88,6 +89,19 @@ describe('readOpenManagedMachineApprovalId', () => {
             .toBeNull();
         expect(readOpenManagedMachineApprovalId(entries.slice(0, 1), { homeId: 'home-1', managedId: 'managed-1',
             actionId: 'machines.managed.delete' })).toBeNull();
+    });
+
+    it('names the one Start waiting for the person: an open Start of this machine, never its Stop or a settled Start', () => {
+        const powerBody = (managedId: string, intent: 'start' | 'stop', status = 'open') => ({
+            ...approvalBody('session-1', 'machines.managed.power.set'), status, summary: 'Change machine power.',
+            actionArgs: { homeId: 'home-1', managedId, when: 'now', expectedRevision: 1, intent },
+            ...(status === 'executed' ? { decision: { kind: 'approve', decidedAtMs: 2 }, execution: { executedAtMs: 3, ok: true } } : {}) });
+        const entries = [stored('stop', powerBody('managed-1', 'stop') as never), stored('done', powerBody('managed-1', 'start', 'executed') as never),
+            stored('start', powerBody('managed-1', 'start') as never), stored('other', powerBody('managed-2', 'start') as never)]
+            .flatMap(artifact => { const entry = readOpenApprovalInboxEntry(artifact); return entry ? [entry] : []; });
+        expect(readOpenManagedMachineStartApprovalId(entries, { homeId: 'home-1', managedId: 'managed-1' })).toBe('start');
+        expect(readOpenManagedMachineStartApprovalId(entries.filter(entry => entry.artifact.id !== 'start'),
+            { homeId: 'home-1', managedId: 'managed-1' })).toBeNull();
     });
 });
 
