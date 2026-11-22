@@ -1,5 +1,15 @@
 # Compatibility and version skew
 
+## Workflow wait input facts (unreleased 0.3)
+
+The closed Workflow wait declaration accepts optional `input` value references.
+The existing private invocation input envelope carries the resolved values and
+rendered document; its shape is unchanged. Stored waits without bindings keep
+their prior behavior. Updated readers accept both forms; earlier strict 0.3
+definition readers require matching development sources for bound waits.
+No database migration or wire epoch is introduced. The inspected `../0.2`
+frontier `ce25c7f23218dcdc6db1fee581371e18fd4e186c` has no Workflow source directory.
+
 ## Catalog App authority in Machine Setup (unreleased 0.3)
 
 The signed Setup Apply preparation envelope can include the admitted catalog

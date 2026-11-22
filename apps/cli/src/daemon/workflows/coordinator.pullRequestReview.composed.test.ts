@@ -24,7 +24,8 @@ import { buildWorkflowActionContext } from './workflowActionContext';
 const event = { pluginId: 'example.forge', localId: 'pull-request' };
 const workspace = { machineId: 'machine-a', directory: '/repo', checkoutRootPath: '/repo' };
 
-async function createPrWorkflow(options?: Readonly<{ baseRules?: Record<string, unknown> }>) {
+async function createPrWorkflow(options?: Readonly<{ baseRules?: Record<string, unknown>; standardReview?: Record<string, unknown>;
+  withoutSelectedWorkspace?: boolean }>) {
   const reviews: unknown[] = [];
   const source = await createTriagePullRequestReviewActionTestkit({ baseRules: options?.baseRules, executeReview: async raw => {
     reviews.push(raw);
@@ -55,9 +56,11 @@ async function createPrWorkflow(options?: Readonly<{ baseRules?: Record<string, 
   };
   const definition = createPullRequestReviewWorkflowV1(event);
   const { v: _version, reviewTarget, ...savedInputs } = source.savedInput;
+  const { workspace: _selectedWorkspace, ...unplacedRequest } = savedInputs.request;
   const inputs = Object.fromEntries(Object.entries({ ...savedInputs,
+    ...(options?.withoutSelectedWorkspace ? { request: unplacedRequest } : {}),
     quickReview: { reviewers: [{ kind: 'engine', engineId: 'engine-a' }], instructions: 'Quick composition' },
-    standardReview: { reviewers: [{ kind: 'engine', engineId: 'engine-a' }, { kind: 'engine', engineId: 'engine-b' }], instructions: 'Standard composition' },
+    standardReview: options?.standardReview ?? { reviewers: [{ kind: 'engine', engineId: 'engine-a' }, { kind: 'engine', engineId: 'engine-b' }], instructions: 'Standard composition' },
   }).map(([key, value]) => [key, projectNativeJsonValueForTransport(value)]));
   const admitted = async (runId: string, authorAssociation: string, headSha = TESTKIT_OBSERVED_REVISION.headSha, number = 17,
     action: typeof SCM_HOSTING_PULL_REQUEST_LIFECYCLE_ACTIONS_V1[number] = 'opened') => {
@@ -68,6 +71,7 @@ async function createPrWorkflow(options?: Readonly<{ baseRules?: Record<string, 
     const providerEvent = { ...capturedRepositoryPullRequestEvent, payload: {
       ...capturedRepositoryPullRequestEvent.payload, action: action === 'merged' ? 'closed' : action,
       pull_request: { ...capturedRepositoryPullRequestEvent.payload.pull_request, number,
+        user: { id: 101, login: 'first-contributor', type: 'User' },
         ...(nativeAssociation === undefined ? {} : { author_association: nativeAssociation }),
         merged: action === 'merged',
         head: { ...capturedRepositoryPullRequestEvent.payload.pull_request.head, sha: headSha } },
@@ -124,12 +128,53 @@ describe('PR review automation through the workflow coordinator', () => {
     expect(h.reviews).toEqual([]);
     const hold = h.store.list().find(row => row.blockId === 'approve-pr-setup');
     if (!hold) throw new Error('Missing ordinary workflow hold');
+    expect(hold.input?.input).toEqual([
+      'first-contributor', '101', association, 'acme/widgets', 17, TESTKIT_OBSERVED_REVISION.headSha,
+      h.inputs.standardReview,
+    ]);
+    expect(hold.input?.renderedText).toEqual(expect.stringContaining('first-contributor'));
+    expect(hold.input?.renderedText).toEqual(expect.stringContaining('engine-b'));
     await h.store.commitFact({ key: hold.key, lifecycle: 'completed' });
     const continued = await h.coordinator.run(run);
     expect(continued, JSON.stringify(h.store.list().map(({ blockId, lifecycle, reason }) => ({ blockId, lifecycle, reason })))).toMatchObject({ state: 'succeeded' });
     expect(h.source.prepareInputs).toHaveLength(1);
     expect(h.reviews).toEqual([expect.objectContaining({ instructions: 'Standard composition',
       reviewers: [{ kind: 'engine', engineId: 'engine-a' }, { kind: 'engine', engineId: 'engine-b' }] })]);
+  });
+
+  it('holds an unplaced preparation request without replacing its source-owned workspace decision', async () => {
+    const h = await createPrWorkflow({ withoutSelectedWorkspace: true });
+    const run = await h.admitted('unplaced-approval', 'external');
+    expect(await h.coordinator.run(run)).toMatchObject({ state: 'waiting_for_review' });
+    expect(h.source.events).toEqual([]);
+    expect(h.workspaceReads()).toBe(0);
+  });
+
+  it('captures the complete Standard composition including its review and verification steps', async () => {
+    const h = await createPrWorkflow({ standardReview: { instructions: 'Read then verify',
+      reviewers: [{ kind: 'engine', engineId: 'engine-a' }], steps: [
+        { kind: 'review', reviewers: [{ kind: 'engine', engineId: 'engine-a' }], instructions: 'Review the change' },
+        { kind: 'verify', reviewers: [{ kind: 'engine', engineId: 'engine-b' }], instructions: 'Verify the findings' },
+      ] } });
+    expect(await h.coordinator.run(await h.admitted('steps-approval', 'external'))).toMatchObject({ state: 'waiting_for_review' });
+    expect(h.store.list().find(row => row.blockId === 'approve-pr-setup')?.input?.input[6]).toEqual(h.inputs.standardReview);
+    expect(h.source.events).toEqual([]);
+    expect(h.workspaceReads()).toBe(0);
+  });
+
+  it('retains the admitted approval facts when an unanswered wait is resumed with changed caller inputs', async () => {
+    const h = await createPrWorkflow();
+    const run = await h.admitted('retained-approval', 'external');
+    expect(await h.coordinator.run(run)).toMatchObject({ state: 'waiting_for_review' });
+    const hold = h.store.list().find(row => row.blockId === 'approve-pr-setup');
+    expect(hold?.input?.input).toContain('first-contributor');
+    const original = hold?.input;
+    expect(await h.coordinator.run({ ...run, inputs: { ...run.inputs,
+      standardReview: { reviewers: [{ kind: 'engine', engineId: 'different-reviewer' }] },
+    } })).toMatchObject({ state: 'waiting_for_review' });
+    expect(h.store.list().find(row => row.blockId === 'approve-pr-setup')?.input).toEqual(original);
+    expect(h.source.events).toEqual([]);
+    expect(h.workspaceReads()).toBe(0);
   });
 
   it('stops a refused external-author hold without any preparation or review effects', async () => {

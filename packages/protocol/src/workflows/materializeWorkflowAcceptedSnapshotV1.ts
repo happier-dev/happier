@@ -118,7 +118,7 @@ function usesWorkflowContext(definition: WorkflowDefinitionV1, origin: 'session'
   while (pending.length > 0) {
     const block = pending.pop()!;
     if ('onlyWhen' in block && block.onlyWhen && collectWorkflowConditionValueReferences(block.onlyWhen).some(isContext)) return true;
-    if (block.kind === 'step' && block.input.some(isContext)) return true;
+    if ((block.kind === 'step' || block.kind === 'wait') && block.input?.some(isContext)) return true;
     if (block.kind === 'action' || block.kind === 'workflow') {
       for (const binding of Object.values(block.input)) {
         if (listWorkflowActionFieldReferencesV1(binding)

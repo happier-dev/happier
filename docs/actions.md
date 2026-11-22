@@ -6420,6 +6420,27 @@ health to claim that a backup, Machine setup or certificate recovered.
 
 ## Workflow inputs and complete review reads (0.3 development source)
 
+Wait blocks may bind optional `input` references through the same document and
+value-reference owners as Agent steps. The coordinator captures their values
+before entering the human hold, without preparing a workspace, and publishes
+them in the existing private invocation `progress.input`: `document` retains
+the authored prompt, `input` holds the resolved values, and `renderedText`
+holds the owner-rendered prompt. Readers use that text rather than formatting
+the same facts again. As with Agent steps, absent optional Event references are
+omitted from the resolved-value array; its positions are not a named-fact API.
+An unanswered hold retains its captured input on resume.
+Waits without bindings retain their existing behavior.
+
+The built-in PR setup hold binds the provider's author login/id, association,
+repository, PR number and pinned head, plus the saved Standard composition.
+The Run's existing `acceptedContext.machineId` and `workspaceTarget.project`
+describe Workflow execution placement; they do not assert an optional source
+preparation destination or each reviewer Session's placement. Association is `internal`, `external` or
+`unknown`; it does not establish that someone is a first-time contributor.
+Approval continues the ordinary hold. Denial stops the Run through
+`workflow.run.cancel`, before workspace preparation or review; there is no
+separate PR denial result or approval endpoint.
+
 Workflow and hook pickers use the ordinary admitted `action.spec.search` read.
 Its optional `purpose: 'workflow_step'` selects executable Workflow steps;
 `purpose: 'automation'` includes eligible host-internal effects for before/after

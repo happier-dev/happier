@@ -1780,8 +1780,15 @@ async function executeWaitBlock(
       throw error;
     }
   }
-  if (row.lifecycle === 'pending') row = await enterReview({ key: row.key, lifecycle: 'waiting_for_review',
-    ...(leaf.result ? { resultContract: leaf.result } : {}) }, context);
+  if (row.lifecycle === 'pending') {
+    const input = leaf.input === undefined ? undefined : await materializeWorkflowStepInput({
+      document: leaf.document, references: leaf.input,
+      runtime: createResolutionRuntime(context.inputs, frame, context.deps.store, context.deps.sessionContext),
+    });
+    row = await enterReview({ key: row.key, lifecycle: 'waiting_for_review',
+      ...(input === undefined ? {} : { input: { document: leaf.document, input: [...input.values], renderedText: input.text } }),
+      ...(leaf.result ? { resultContract: leaf.result } : {}) }, context);
+  }
   if (row.lifecycle === 'waiting_for_review') row = await awaitReviewedInvocation(row, context);
   if (holdReadiness(row) === 'generate') throw new WorkflowLeafFailure('interrupted', 'continuation_unavailable');
   const failure = persistedFailure(row, context.automationCause);

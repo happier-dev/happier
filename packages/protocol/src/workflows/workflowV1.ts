@@ -401,6 +401,8 @@ export const WorkflowNestedLeafV1Schema = lazyZodSchema(() => z.strictObject({
 export type WorkflowNestedLeafV1 = z.infer<typeof WorkflowNestedLeafV1Schema>;
 export const WorkflowWaitLeafV1Schema = lazyZodSchema(() => z.strictObject({
   ...workflowLeafFields, kind: z.literal('wait'), document: WorkflowStepComposerDocumentSchema,
+  /** Facts shown for this human decision, captured before entering the hold. */
+  input: z.optional(z.array(WorkflowValueReferenceSchema)),
   result: zMini.optional(WorkflowResultContractSchema),
 }).check(z.overwrite(omitEmptyWorkflowBlockName)));
 export type WorkflowWaitLeafV1 = z.infer<typeof WorkflowWaitLeafV1Schema>;

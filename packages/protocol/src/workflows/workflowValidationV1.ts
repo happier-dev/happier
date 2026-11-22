@@ -736,24 +736,7 @@ function validateStep(
     validateValueReference(state, { kind: 'result', producer: step.discussionReplyTo, path: [] },
       joinPath(path, 'discussionReplyTo'), step.id);
   }
-  const invalidBindings = new Map<number, WorkflowValidationIssue>();
-  step.input.forEach((reference, index) => {
-    const issueCount = state.issues.length;
-    validateValueReference(state, reference, joinPath(path, 'input', index), step.id, { allowOptionalResult: true, allowSessionContext: true });
-    const bindingIssue = state.issues[issueCount];
-    if (bindingIssue) invalidBindings.set(index, bindingIssue);
-  });
-  step.document.references.forEach((mention, index) => {
-    if (mention.kind !== MENTION_KIND_V1.workflowInput) return;
-    const bindingIndex = readWorkflowStepInputIndexV1(mention.ref);
-    const tokenPath = joinPath(path, 'document', 'references', index, 'ref');
-    if (bindingIndex === null || bindingIndex >= step.input.length) {
-      state.issues.push(issue('invalid_input', tokenPath, 'This token has no Workflow input binding.', step.id));
-      return;
-    }
-    const bindingIssue = invalidBindings.get(bindingIndex);
-    if (bindingIssue) state.issues.push({ ...bindingIssue, path: tokenPath });
-  });
+  validateDocumentInputs(state, step, path);
   if (step.onlyWhen !== undefined) {
     validateCondition(state, step.onlyWhen, joinPath(path, 'onlyWhen'), step.id, options?.requireDecisionResult === true);
   }
@@ -776,6 +759,33 @@ function validateStep(
   }
 }
 
+function validateDocumentInputs(
+  state: WalkState,
+  leaf: Readonly<{ id: string; document: WorkflowStep['document']; input?: readonly WorkflowValueReference[] }>,
+  path: string,
+): void {
+  const bindings = leaf.input ?? [];
+  const invalidBindings = new Map<number, WorkflowValidationIssue>();
+  bindings.forEach((reference, index) => {
+    const issueCount = state.issues.length;
+    validateValueReference(state, reference, joinPath(path, 'input', index), leaf.id,
+      { allowOptionalResult: true, allowSessionContext: true });
+    const bindingIssue = state.issues[issueCount];
+    if (bindingIssue) invalidBindings.set(index, bindingIssue);
+  });
+  leaf.document.references.forEach((mention, index) => {
+    if (mention.kind !== MENTION_KIND_V1.workflowInput) return;
+    const bindingIndex = readWorkflowStepInputIndexV1(mention.ref);
+    const tokenPath = joinPath(path, 'document', 'references', index, 'ref');
+    if (bindingIndex === null || bindingIndex >= bindings.length) {
+      state.issues.push(issue('invalid_input', tokenPath, 'This token has no Workflow input binding.', leaf.id));
+      return;
+    }
+    const bindingIssue = invalidBindings.get(bindingIndex);
+    if (bindingIssue) state.issues.push({ ...bindingIssue, path: tokenPath });
+  });
+}
+
 function validateNonAgentLeaf(
   state: WalkState,
   leaf: Exclude<WorkflowLeafV1, WorkflowStep>,
@@ -790,7 +800,10 @@ function validateNonAgentLeaf(
   if (leaf.onlyWhen !== undefined) {
     validateCondition(state, leaf.onlyWhen, joinPath(path, 'onlyWhen'), leaf.id, allowAggregateCondition);
   }
-  if (leaf.kind === 'wait') return;
+  if (leaf.kind === 'wait') {
+    validateDocumentInputs(state, leaf, path);
+    return;
+  }
   validateLeafInputContract(state, leaf, path);
   for (const [field, binding] of Object.entries(leaf.input)) {
     if (binding.kind === 'text') {

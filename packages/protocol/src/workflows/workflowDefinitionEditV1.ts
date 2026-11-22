@@ -364,7 +364,8 @@ export function rewriteWorkflowBlockReferences(block: WorkflowBlock, rewrite: Wo
         mapWorkflowActionFieldReferencesV1(value, (item) => item.kind === 'origin_session_id' ? item : reference(item))])),
     };
     case 'workflow': return { ...block, ...guarded, input: Object.fromEntries(Object.entries(block.input).map(([key, value]) => [key, reference(value)])) };
-    case 'wait': return { ...block, ...guarded };
+    case 'wait': return { ...block, ...guarded,
+      ...(block.input === undefined ? {} : { input: block.input.map(reference) }) };
     case 'parallel': return { ...block, ...guarded, branches: block.branches.map((branch) => ({ ...branch, blocks: branch.blocks.map(rewrite.child) })) };
     case 'if': return { ...block, ...guarded, when: condition(block.when), then: block.then.map(rewrite.child), otherwise: block.otherwise.map(rewrite.child) };
     case 'loop': {

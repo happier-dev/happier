@@ -15,10 +15,13 @@ export function createPullRequestReviewWorkflowV1(
   event: WorkflowTriggerEventIdentityV1 = PULL_REQUEST_REVIEW_SOURCE_EVENT_V1,
   actions: typeof SCM_HOSTING_PULL_REQUEST_ACTIVE_ACTIONS_V1 = SCM_HOSTING_PULL_REQUEST_ACTIVE_ACTIONS_V1,
 ): WorkflowDefinitionV1 {
-  const occurrence = (field: string): WorkflowValueReference => ({ kind: 'trigger_event', event, path: ['pullRequest', field] });
+  const occurrence = (field: string, ...path: string[]): WorkflowValueReference => ({ kind: 'trigger_event', event, path: ['pullRequest', field, ...path] });
   const reviewBranch = (name: 'quick' | 'standard'): WorkflowBlock[] => [
     ...(name === 'standard' ? [{ kind: 'wait' as const, id: 'approve-pr-setup', name: 'Approve pull request setup',
-      document: document('This pull request has an external or unknown author. Continue to prepare its workspace and run the Standard review, or stop this run.') }] : []),
+      document: document('This pull request has an external or unknown author. Review the author, repository and Standard review composition below. Approve to prepare its workspace and run the Standard review. Deny by stopping this Run; no workspace preparation or review will run.'),
+      input: [occurrence('author', 'login'), occurrence('author', 'id'), occurrence('authorAssociation'),
+        occurrence('baseRepository', 'repository'), occurrence('number'), occurrence('headSha'),
+        input('standardReview')] }] : []),
     { kind: 'action', id: `${name}-prepare`, name: 'Prepare the selected pull request',
       actionId: 'happier.triage/actions/entries/prepare-pull-request-review-v1',
       input: { v: literal(1), request: input('request'), prepareReviewWorkspaceSelection: input('prepareReviewWorkspaceSelection'),
