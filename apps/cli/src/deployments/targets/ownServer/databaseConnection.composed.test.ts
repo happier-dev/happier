@@ -27,6 +27,7 @@ import { createScmBackendRegistry } from '@/scm/registry';
 import { sealMachineSecretGrant } from '../../secrets/machineSecretGrant';
 import { createDeploymentDatabasesServiceForHost } from '../createDeploymentDatabasesServiceForHost';
 import { createDeploymentDataSizeActionForHost } from '../../actions/dataSize';
+import { openOwnServerDatabaseConnectionForHost } from './databaseConnection';
 import { DEPLOYMENT_DATA_SIZE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { createDeploymentSourceMaterializationPort } from './exactCommitRelease';
 import { resolveOwnServerDeploymentIdentityForHost } from './paths';
@@ -35,12 +36,15 @@ import { createNativeDatabaseContainerFixture, nativeMysqlImage, nativePostgresq
 
 afterEach(() => vi.restoreAllMocks());
 
-for (const shape of ['acquisition-refusals', 'postgresql', 'postgresql-private', 'mysql'] as const) {
+for (const shape of ['acquisition-refusals', 'held-read', 'postgresql', 'postgresql-private', 'mysql'] as const) {
 const engine = shape === 'mysql' ? 'mysql' : 'postgresql';
 const acquisitionRefusals = shape === 'acquisition-refusals';
-it.skipIf(shape === 'postgresql' ? !nativePostgresqlAvailable : shape === 'mysql' ? !nativeMysqlImage : shape === 'postgresql-private' && !nativePostgresqlImage)(
+const heldRead = shape === 'held-read';
+const localPostgres = shape === 'postgresql' || heldRead;
+it.skipIf(localPostgres ? !nativePostgresqlAvailable : shape === 'mysql' ? !nativeMysqlImage : shape === 'postgresql-private' && !nativePostgresqlImage)(
     acquisitionRefusals ? 'recovers the selected cold database service before enforcing native container custody'
-        : `opens the exact native ${shape} deployment through installed custody and retains exclusion until close`, async () => {
+        : heldRead ? 'commits a bounded writer while an idle Statements reader stays open'
+        : `opens the exact native ${shape} deployment through installed custody and excludes competing effects during operations`, async () => {
     await withConfiguredDaemonTestHome({ prefix: 'happier-native-database-', env: {
         HAPPIER_SERVER_URL: 'https://home.test', HAPPIER_WEBAPP_URL: 'https://home.test',
     } }, async ({ homeDir }) => {
@@ -50,8 +54,8 @@ it.skipIf(shape === 'postgresql' ? !nativePostgresqlAvailable : shape === 'mysql
             homeConnectionDescriptor: { v: 1, homeServerIdentityId: 'srv_native_database', revision: 1,
                 canonicalServerUrl: 'https://home.test', endpoints: [{ kind: 'https', url: 'https://home.test' }] },
         } } });
-        const pg = shape === 'postgresql' ? await createNativePostgresqlFixture(join(homeDir, 'postgres')) : null;
-        const container = shape === 'postgresql' || acquisitionRefusals ? null : await createNativeDatabaseContainerFixture(engine,
+        const pg = localPostgres ? await createNativePostgresqlFixture(join(homeDir, 'postgres')) : null;
+        const container = localPostgres || acquisitionRefusals ? null : await createNativeDatabaseContainerFixture(engine,
             engine === 'mysql' ? nativeMysqlImage! : nativePostgresqlImage!);
         const database = pg ? 'postgres' : 'native_fixture';
         try {
@@ -287,9 +291,67 @@ it.skipIf(shape === 'postgresql' ? !nativePostgresqlAvailable : shape === 'mysql
                         expect((await pg.execute('SELECT count(*) FROM native_items')).stdout).toMatch(/^\s*1\s*$/mu);
                         await pg.execute('DROP FUNCTION public.native_writer()');
                     }
-                    await expect(machineNativeEffectAdmission.run({ operation: { operationId: 'competing-deployment', kind: 'deploy' }, keys }, async () => true))
-                        .rejects.toMatchObject({ code: 'effect_in_progress' });
+                    await expect(machineNativeEffectAdmission.run({ operation: { operationId: 'idle-reader-deployment', kind: 'deploy' }, keys }, async () => true))
+                        .resolves.toBe(true);
                     expect(secretReads).toBe(engine === 'postgresql' ? 2 : 1);
+                    if (heldRead && pg) {
+                        const statistics = { operation: 'stats.read', target, request: {
+                            kind: 'stats.read', group: 'statements', selection: { page: { rows: 10 }, order: 'calls' },
+                        } } as const;
+                        const unavailable = { ok: true, observation: { reason: 'extension_missing' } };
+                        expect(await opened.connection.execute(statistics)).toMatchObject(unavailable);
+                        const bindings = detail.content.bindings;
+                        detail.content.bindings = [...bindings, { ...use, role: 'write' }];
+                        await pg.execute("CREATE ROLE happier_rw LOGIN PASSWORD 'private-native-password'; GRANT SELECT, UPDATE ON native_items TO happier_rw");
+                        const write = { operation: 'statement.run' as const, target, mode: 'write' as const, executionMode: 'transaction' as const,
+                            statements: [{ sql: "UPDATE native_items SET note = 'held-reader' WHERE id = 1", parameters: [] }] };
+                        const writeEnvelope = { ...envelope, requestId: 'native-statistics-writer', input: { action, input: write } };
+                        const writeRoot = ExternalActionExecutionAuthorizationV1Schema.parse({ ...root, token: 'native-write-root',
+                            binding: { ...root.binding, deploymentDatabaseEditor: 'allowed', requestId: writeEnvelope.requestId,
+                                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(writeEnvelope),
+                                deploymentReadAdmission: projectDeploymentReadAdmissionV1(ACTION_INVOKE_ACTION_ID_V1, writeEnvelope.input) } });
+                        const writeAuthorization = await projectExternalActionRequesterHttpAuthorization({ authorization: writeRoot,
+                            serverId: 'home', serverIdentityId: 'home', serverHttpBaseUrl: 'https://home.test', target: machineTarget,
+                            installationId: installation.installationId, privateKey: Buffer.from(installation.privateKey, 'base64url'), rootAdmitted: true });
+                        if (!writeAuthorization) throw new Error('Expected signed native database writer custody');
+                        try {
+                            activeRoot = writeRoot;
+                            const openWriter = (operationId: string) => openOwnServerDatabaseConnectionForHost({
+                                host: { serverId: 'home', machineId: 'machine-a', credentials, serverHttpBaseUrl: 'https://home.test',
+                                    async assertCurrent() {}, async readEnvironment() { return detail; }, async readReceipt() { return receipt; } },
+                                target, environment: detail, installationId: installation.installationId, signal,
+                                context: { authority: 'present_user', signal, externalActionExecutionAuthorization: writeAuthorization,
+                                    externalActionTarget: machineTarget, originalActionEnvelope: writeEnvelope },
+                                operationId, access: 'write',
+                            });
+                            const writable = await openWriter(writeEnvelope.requestId);
+                            try {
+                                expect(await writable.execute(write)).toMatchObject({ ok: true });
+                                const stopWrite = new AbortController();
+                                const writing = writable.execute({ ...write,
+                                    statements: [{ sql: 'SELECT pg_sleep(60)', parameters: [] }] }, stopWrite.signal);
+                                try {
+                                    await vi.waitFor(async () => {
+                                        expect((await pg.execute("SELECT count(*) FROM pg_stat_activity WHERE usename='happier_rw' AND state='active' AND query LIKE '%pg_sleep(60)%'")).stdout)
+                                            .toMatch(/^\s*1\s*$/mu);
+                                    }, { timeout: 60_000 });
+                                    await expect(openWriter('native-competing-writer')).rejects.toMatchObject({
+                                        code: 'effect_in_progress', actionOperationId: writeEnvelope.requestId,
+                                    });
+                                } finally {
+                                    stopWrite.abort();
+                                    expect(await writing).toMatchObject({ ok: false, status: 'cancelled', code: 'database_cancelled' });
+                                }
+                            } finally { await writable.close(); }
+                            expect(await Promise.all([opened.connection.execute(statistics), opened.connection.execute(statistics)]))
+                                .toMatchObject([unavailable, unavailable]);
+                            expect((await pg.execute('SELECT note FROM native_items WHERE id = 1')).stdout).toContain('held-reader');
+                        } finally {
+                            activeRoot = root;
+                            detail.content.bindings = bindings;
+                        }
+                        return;
+                    }
                     const bindings = detail.content.bindings;
                     const readsBeforeMissingRole = secretReads;
                     for (const neighboringRole of [false, true]) {
@@ -306,8 +368,11 @@ it.skipIf(shape === 'postgresql' ? !nativePostgresqlAvailable : shape === 'mysql
                     const sleeping = opened.connection.execute({ operation: 'statement.run', target, mode: 'read', statement: {
                         sql: engine === 'mysql' ? 'SELECT SLEEP(60)' : 'SELECT pg_sleep(60)', parameters: [],
                     } }, signal);
-                    await vi.waitFor(async () => { expect((await executeAdmin(active)).stdout).toMatch(/^\s*1\s*$/mu); }, { timeout: 60_000 });
-                    actionCancellation.abort();
+                    try {
+                        await vi.waitFor(async () => { expect((await executeAdmin(active)).stdout).toMatch(/^\s*1\s*$/mu); }, { timeout: 60_000 });
+                        await expect(machineNativeEffectAdmission.run({ operation: { operationId: 'competing-deployment', kind: 'deploy' }, keys }, async () => true))
+                            .rejects.toMatchObject({ code: 'effect_in_progress', actionOperationId: 'native-real-pg' });
+                    } finally { actionCancellation.abort(); }
                     expect(await sleeping).toMatchObject({ ok: false, status: 'cancelled', code: 'database_cancelled' });
                     expect((await executeAdmin(active)).stdout).toMatch(/^\s*0\s*$/mu);
                 } finally { await opened.connection.close(); }

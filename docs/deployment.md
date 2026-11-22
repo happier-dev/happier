@@ -1149,6 +1149,11 @@ local cancellation govern continuation; a prior deploy receipt does not stand
 in for a bindings review. Query reads likewise retain their exact signed scope
 without repeating Source permissions during the admitted finite operation.
 
+In the 0.3 development Workbench, a watched own-server database keeps its
+verified session while the view is open. The target daemon holds native
+admission during session setup and each database operation through settlement.
+An idle session leaves the native keys available to another operation.
+
 Managed data targets declare their read-only query Action in the plugin's data
 role contribution. The shared UI preserves the recorded credential principal
 and dispatches to the Environment controller with the same result contract.

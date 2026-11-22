@@ -1,3 +1,11 @@
+import type { DatabaseOperationResultV1 } from '@happier-dev/plugin-sdk/database';
+
+/** Wrap a scheduled driver operation at the host's native effect boundary. */
+export type DatabaseConnectionOperationRunner = (
+    execute: () => Promise<DatabaseOperationResultV1>,
+    signal?: AbortSignal,
+) => Promise<DatabaseOperationResultV1>;
+
 export type DatabaseConnection = Readonly<{
     engine: 'postgresql' | 'mysql' | 'sqlite';
     hostname: string;

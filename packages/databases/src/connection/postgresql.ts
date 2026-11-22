@@ -2,7 +2,7 @@ import { Client, Query } from 'pg';
 import type { Duplex } from 'node:stream';
 import type { DatabaseOperationInputV1, DatabaseOperationResultV1 } from '@happier-dev/plugin-sdk/database';
 import { statsOperationResultV1 } from '../stats.js';
-import { databaseConnectionUrlWithoutOptions, type VerifiedDatabaseTls } from '../connection.js';
+import { databaseConnectionUrlWithoutOptions, type DatabaseConnectionOperationRunner, type VerifiedDatabaseTls } from '../connection.js';
 import {
     executePostgresqlOperation, PostgresqlInputError, PostgresqlOperationError, postgresqlFailureCause,
     compilePostgresqlSetupV1, decodePostgresqlSetupV1,
@@ -25,6 +25,7 @@ export interface PostgresqlConnection {
 /** The caller owns this demand's credential and connection. No pool, timer or retry outlives it. */
 export async function openPostgresqlConnection(connectionString: string, signal?: AbortSignal,
     options: Readonly<{ sessionGuardSql?: string; tls?: VerifiedDatabaseTls;
+        runOperation?: DatabaseConnectionOperationRunner;
         openStream?: () => Promise<Readonly<{ stream: Duplex; close(): Promise<void> }>>;
     }> = {}): Promise<PostgresqlConnection & DatabaseReadRoleConnection> {
     signal?.throwIfAborted();
@@ -223,7 +224,9 @@ export async function openPostgresqlConnection(connectionString: string, signal?
         return result.rows[0]?.[0] === 't' ? { ok: true } : readRoleFailure('database_read_role_not_read_only');
     };
     return {
-        execute: (input, operationSignal) => schedule(() => execute(input, operationSignal)),
+        execute: (input, operationSignal) => schedule(() => options.runOperation
+            ? options.runOperation(() => execute(input, operationSignal), operationSignal)
+            : execute(input, operationSignal)),
         prepareReadRole: (role, operationSignal) => readRoleOperation(operationSignal, async nativeQuery => (await prepare(role, nativeQuery)).plan),
         async setupReadRole(reviewed, operationSignal) {
             try {

@@ -12,6 +12,7 @@ import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { environmentSecretBindingIdentityV1, type DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
+import type { DatabaseConnectionOperationRunner } from '@happier-dev/databases/connection';
 import type { StoredCredentials } from '@/persistence';
 import { readEnvironmentDataRoleLaunchAdmissionForHost } from '../../secrets/readEnvironmentSecretLaunchAdmissionForHost';
 import { prepareEnvironmentSecretBindingsForLaunch } from '../../secrets/prepareEnvironmentSecretBindingsForLaunch';
@@ -47,15 +48,14 @@ export async function openOwnServerDatabaseConnectionForHost(input: Readonly<{
         if (target.database !== undefined && scope.definition.database !== target.database) return refuse('target_mismatch');
         const keys = await scope.handle.readNativeEffectKeys?.({ signal: input.signal });
         if (!keys || !scope.handle.readNativeDocker) return refuse('service_admission_unavailable');
-        let opened!: (connection: NativeConnection) => void;
-        let rejected!: (error: unknown) => void;
-        const ready = new Promise<NativeConnection>((resolve, reject) => { opened = resolve; rejected = reject; });
-        let finish!: () => void;
-        const lifetime = new Promise<void>(resolve => { finish = resolve; });
         const signal = AbortSignal.any([input.signal, scope.handle.retirementSignal]);
-        signal.addEventListener('abort', finish, { once: true });
-        ownsScope = false;
-        const work: Promise<void> = machineNativeEffectAdmission.run({ operation: { operationId: input.operationId, kind: 'dataQuery', signal }, keys }, async effect => {
+        // The watched Resource holds the verified session. Native exclusion
+        // covers connection setup and each scheduled database operation.
+        const operation = { operationId: input.operationId, kind: 'dataQuery' };
+        const runOperation: DatabaseConnectionOperationRunner = (execute, requestSignal) =>
+            machineNativeEffectAdmission.run({ operation: { ...operation, signal: requestSignal ?? signal }, keys },
+                effect => machineNativeEffectAdmission.runStage(effect, execute));
+        const connection = await machineNativeEffectAdmission.run({ operation: { ...operation, signal }, keys }, async effect => {
             const docker = await scope.handle.readNativeDocker!({ signal });
             const containerPort = scope.definition.port ?? (scope.definition.engine === 'postgresql' ? 5432 : 3306);
             const endpoint = scope.definition.engine === 'postgresql' ? await machineNativeEffectAdmission.runStage(effect, () => readOwnServerDatabaseEndpointForHost({ docker,
@@ -91,24 +91,30 @@ export async function openOwnServerDatabaseConnectionForHost(input: Readonly<{
                             + 'cat <&3 & reader=$!; cat <&0 >&3 & writer=$!; '
                             + 'wait -n "$reader" "$writer"; kill "$reader" "$writer" 2>/dev/null; wait',
                         ], scope.handle.retirementSignal) };
-                    const connection = await machineNativeEffectAdmission.runStage(effect, () => scope.definition.engine === 'postgresql'
-                        ? openPostgresqlConnection(url.toString(), signal, { ...transport,
+                    return await machineNativeEffectAdmission.runStage(effect, () => scope.definition.engine === 'postgresql'
+                        ? openPostgresqlConnection(url.toString(), signal, { ...transport, runOperation,
                             sessionGuardSql: write ? postgresqlWriteRoleGuardSql : ownServerReadOnlyRoleGuardSql('postgresql') })
-                        : openMysqlConnection(url.toString(), signal, transport)).catch((error: unknown) => {
+                        : openMysqlConnection(url.toString(), signal, { ...transport, runOperation })).catch((error: unknown) => {
                             if (error && typeof error === 'object' && 'code' in error && error.code === '42501') return refuse(write ? 'write_role_unavailable' : 'read_role_unavailable');
                             throw error;
                         });
-                    try {
-                        signal.throwIfAborted();
-                        opened({ engine: scope.definition.engine, database: scope.definition.database, execute: (request, requestSignal) => machineNativeEffectAdmission.runStage(effect,
-                            () => connection.execute(request, requestSignal ?? signal)), close: async () => { finish(); await work; } });
-                        await lifetime;
-                    } finally { await connection.close(); }
                 } finally { prepared.dispose(); }
             } finally { await admission.release?.(); }
-        }).finally(async () => { signal.removeEventListener('abort', finish); await scope.dispose(); });
-        void work.catch(rejected);
-        return await ready;
+        });
+        let closing: Promise<void> | undefined;
+        const close = () => {
+            signal.removeEventListener('abort', onAbort);
+            return closing ??= connection.close().finally(scope.dispose);
+        };
+        const onAbort = () => { void close().catch(() => {}); };
+        ownsScope = false;
+        signal.addEventListener('abort', onAbort, { once: true });
+        if (signal.aborted) { await close(); signal.throwIfAborted(); }
+        return {
+            engine: scope.definition.engine, database: scope.definition.database,
+            execute: (request, requestSignal) => connection.execute(request, requestSignal ? AbortSignal.any([signal, requestSignal]) : signal),
+            close,
+        };
     } catch (error) { if (ownsScope) await scope.dispose(); throw error; }
 }
 

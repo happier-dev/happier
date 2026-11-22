@@ -5,7 +5,7 @@ import type { DatabaseOperationInputV1, DatabaseOperationResultV1 } from '@happi
 import { statsOperationResultV1 } from '../stats.js';
 import { DatabaseStatementError } from '../statement.js';
 import { fitDatabaseOperationResult } from '../resultEnvelope.js';
-import { databaseConnectionUrlWithoutOptions, parseDatabaseConnectionUrl, withDatabaseConnectionUrlOptions, type VerifiedDatabaseTls } from '../connection.js';
+import { databaseConnectionUrlWithoutOptions, parseDatabaseConnectionUrl, withDatabaseConnectionUrlOptions, type DatabaseConnectionOperationRunner, type VerifiedDatabaseTls } from '../connection.js';
 import {
     executeMysqlOperation, mysqlFailureCause, MysqlOperationError, type MysqlCompiledStatement, type MysqlExecutionOptions,
     type MysqlNativeField, type MysqlNativeResult, type MysqlNativeValue,
@@ -64,6 +64,7 @@ export function mysqlNativeResult(result: unknown, fields: ReadonlyArray<{ name:
 /** One connection belongs to one workbench demand, or to the caller's standalone request. */
 export async function openMysqlConnection(connectionString: string, signal?: AbortSignal, options: Readonly<{
     tls?: VerifiedDatabaseTls;
+    runOperation?: DatabaseConnectionOperationRunner;
     openStream?: () => Promise<Readonly<{ stream: Duplex; close(): Promise<void> }>>;
 }> = {}): Promise<MysqlConnection & DatabaseReadRoleConnection> {
     signal?.throwIfAborted();
@@ -259,7 +260,9 @@ export async function openMysqlConnection(connectionString: string, signal?: Abo
             partialRevokes: settings.partialRevokes };
     };
     return {
-        execute: (input, operationSignal) => schedule(() => execute(input, operationSignal)),
+        execute: (input, operationSignal) => schedule(() => options.runOperation
+            ? options.runOperation(() => execute(input, operationSignal), operationSignal)
+            : execute(input, operationSignal)),
         prepareReadRole: (role, operationSignal) => readRoleOperation(operationSignal, async nativeQuery => (await prepare(role, nativeQuery)).plan),
         async setupReadRole(reviewed, operationSignal) {
             try {
