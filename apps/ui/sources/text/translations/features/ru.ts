@@ -16454,6 +16454,7 @@ const sidebarFooterTranslations = { ru: {
         usageNoAccounts: 'Подключите аккаунт, чтобы видеть, сколько осталось от его лимитов.',
         usageUnavailableAccounts: ({ count }: { count: string | number }) => `Аккаунтов без данных об использовании: ${count}`,
         usageSignedOutAccounts: ({ count }: { count: string | number }) => `Аккаунтов без входа: ${count}`,
+        usageRefreshFailedAccounts: ({ count, accounts }) => `Не удалось обновить данные об использовании · аккаунтов: ${count}${accounts ? ` (${accounts})` : ''}.`,
         usageHealthy: 'Во всех лимитах ещё много запаса',
         homeUnreachableTitle: ({ home }) => `Не удаётся подключиться к ${home}`,
         homeUnreachableBody: 'Ваши машины и сессии снова появятся здесь, когда он ответит.',

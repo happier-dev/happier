@@ -16365,6 +16365,7 @@ const sidebarFooterTranslations = { ja: {
         usageNoAccounts: 'アカウントを接続すると、上限の残りを確認できます。',
         usageUnavailableAccounts: ({ count }: { count: string | number }) => `使用量データのないアカウント ${count} 件`,
         usageSignedOutAccounts: ({ count }: { count: string | number }) => `サインアウト中のアカウント ${count} 件`,
+        usageRefreshFailedAccounts: ({ count, accounts }) => `${count} 件のアカウントの利用状況を更新できませんでした${accounts ? `（${accounts}）` : ''}。`,
         usageHealthy: 'すべての上限に十分な余裕があります',
         homeUnreachableTitle: ({ home }) => `${home} に接続できません`,
         homeUnreachableBody: '応答があり次第、マシンとセッションがここに再び表示されます。',

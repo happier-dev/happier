@@ -76,6 +76,7 @@ export const SelectionListFilterChip = React.memo(function SelectionListFilterCh
         sections: [{
             kind: 'static',
             id: `filter:${filter.id}:options`,
+            resultHint: filter.resultHint,
             options: filter.options.map((option) => ({
                 id: option.id,
                 label: option.label,
@@ -86,7 +87,7 @@ export const SelectionListFilterChip = React.memo(function SelectionListFilterCh
                 testID: `${testID}:${option.id}`,
             })),
         }],
-    } : null, [filter.id, filter.options, testID]);
+    } : null, [filter.id, filter.options, filter.resultHint, testID]);
     const { onChange } = filter;
     const multiple = filter.selectedIds !== undefined;
     const handleSelect = React.useCallback((id: string, _option: SelectionListOption, context?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) => {

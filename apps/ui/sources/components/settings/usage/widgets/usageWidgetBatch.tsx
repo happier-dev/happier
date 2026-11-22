@@ -91,6 +91,7 @@ type UsageWidgetBatch = Readonly<{
   register(id: string, registration: BoundRegistration): () => void;
   resource: UsageWidgetResource;
   inventoryQuery: UsageQuery | undefined;
+  inventoryCollecting: boolean;
 }>;
 
 const UsageWidgetBatchContext = React.createContext<UsageWidgetBatch | null>(
@@ -222,9 +223,10 @@ export function UsageWidgetBatchProvider(
     callerQuery: props.callerQuery,
     plan,
   });
+  const inventoryCollecting = collecting && scope !== null && props.enabled !== false && auth.credentials != null;
   const value = React.useMemo(
-    () => ({ clauses: props.clauses, register, resource, inventoryQuery }),
-    [props.clauses, inventoryQuery, register, resource],
+    () => ({ clauses: props.clauses, register, resource, inventoryQuery, inventoryCollecting }),
+    [props.clauses, inventoryQuery, register, resource, inventoryCollecting],
   );
   return (
     <UsageWidgetBatchContext.Provider value={value}>
@@ -489,12 +491,16 @@ export function useUsageWidgetBatchHistory(): UsageHistoryModel {
 }
 
 /** Select inventory facts before React through the page's canonical request, lifetime and Resource owner. */
-export function useUsageWidgetBatchInventorySelection<T>(select: (slice: UsageQueryResultSlice | null) => T,
+export function useUsageWidgetBatchInventorySelection<T>(select: (slice: UsageQueryResultSlice | null, optionsPending: boolean) => T,
     equal: (left: T, right: T) => boolean): T {
     const batch = React.useContext(UsageWidgetBatchContext);
     const query = batch?.inventoryQuery;
     const rows = React.useMemo(() => query ? [{ query, key: getUsageQueryKey(query) }] : [], [query]);
-    return useUsageWidgetQuerySliceSelection(batch?.resource ?? null, 'inventory', rows, select, equal, hasAccounting);
+    const collecting = query !== undefined && batch?.inventoryCollecting === true;
+    const selectInventory = React.useCallback((slice: UsageQueryResultSlice | null, pending: boolean) =>
+        select(slice, collecting || pending), [select, collecting]);
+    return useUsageWidgetQuerySliceSelection(batch?.resource ?? null, 'inventory', rows, selectInventory, equal,
+        hasAccounting, hasAccountingAnswer);
 }
 
 const selectInventorySlice = (slice: UsageQueryResultSlice | null) => slice ?? undefined;

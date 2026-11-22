@@ -248,6 +248,8 @@ export type SelectionListFilter = Readonly<{
     /** The value is a placeholder ("Choose a machine") rather than a choice. */
     muted?: boolean;
     options?: ReadonlyArray<SelectionListFilterOption>;
+    /** Status shown beneath the choice list. */
+    resultHint?: string;
     selectedId?: string | null;
     /** Several choices at once: these rows are checked, the popover stays open, `onChange` gets the toggled id. */
     selectedIds?: ReadonlySet<string>;

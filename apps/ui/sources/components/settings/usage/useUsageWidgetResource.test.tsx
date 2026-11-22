@@ -354,6 +354,49 @@ describe('Usage widget shared Resource selection', () => {
             expect.soft(posts()).toBe(2);
         } finally { storage.setState({ settings }); await hook.unmount(); }
     });
+    it.each(['empty', 'with options', 'failed'] as const)('ends the filter options read once inventory settles %s', async outcome => {
+        const gate = createDeferred<void>();
+        const credentials = await mountHome(async request => {
+            if (request.path !== '/v2/usage/query') return undefined;
+            await gate.promise;
+            if (outcome === 'failed') return Response.json({ error: 'unavailable' }, { status: 503 });
+            return Response.json(outcome === 'empty' ? {
+                ...accounting, totals: { ...accounting.totals, eventCount: 0 },
+            } : { ...accounting, breakdowns: { agent: [{ key: 'codex', ...accounting.totals }] } });
+        });
+        const authority = captureActiveServerAccountScopeLifetime();
+        const query = normalizeUsageQuery({ period: { relative: '7days' }, includeSessionEvidence: false, includeWorkEvidence: false });
+        let filters: ReturnType<typeof useUsageWidgetPageFilters>;
+        function Observe(props: Readonly<{ page: ReturnType<typeof useUsageWidgetPageContext> }>) {
+            filters = useUsageWidgetPageFilters(props.page, [], false, home!.homes.a!.id);
+            return null;
+        }
+        function Page() {
+            const page = useUsageWidgetPageContext({ authority,
+                initialFilters: { period: '7days', metric: 'tokens', costMode: 'auto', focus: null,
+                    queryOverrides: readUsageWidgetQueryOverrides(query) } });
+            return <UsageWidgetBatchProvider clauses={page.queryOverrides} inventoryQuery={query} inventoryOnly>
+                <Observe page={page} />
+            </UsageWidgetBatchProvider>;
+        }
+        const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><Page /></InjectedAuthProvider>);
+        const posts = () => home!.requests.filter(request => request.path === '/v2/usage/query');
+        const fields = ['sources', 'agents', 'machines', 'projects'];
+        try {
+            await expect.poll(() => posts().length).toBe(1);
+            expect(filters!.map(({ field, optionsPending }) => [field, optionsPending]))
+                .toEqual(fields.map(field => [field, true]));
+            expect(filters!.find(filter => filter.field === 'projects')?.options).toHaveLength(1);
+            gate.resolve();
+            await expect.poll(() => filters!.map(({ field, optionsPending }) => [field, optionsPending]))
+                .toEqual(fields.map(field => [field, false]));
+            expect(filters!.find(filter => filter.field === 'agents')?.options.slice(1).map(option => option.id))
+                .toEqual(outcome === 'with options' ? ['codex'] : []);
+        } finally {
+            gate.resolve();
+            await screen.unmount();
+        }
+    });
     it('consumes a same-key page selection before a later independent UI query demand', async () => {
         await mountHome(request => request.path === '/v2/usage/query' ? Response.json(accounting) : undefined);
         const settings = storage.getState().settings;

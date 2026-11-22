@@ -425,7 +425,43 @@ describe('SidebarUsagePopoverContent', () => {
             await screen.pressByTestIdAsync('usage-popover-all-accounts');
             await screen.pressByTestIdAsync('sidebar-usage-refresh');
             expect(scopes).toEqual([['claude:work'], undefined]);
-            expect(screen.getTextContent()).toContain('other_account_failed');
+            expect(screen.getTextContent()).toContain('sidebarFooter.usageRefreshFailedAccounts(count=1,accounts=kevin@gmail.com)');
+        });
+
+        it('names the accounts whose reads failed and keeps the successful reading visible', async () => {
+            const screen = await renderView({
+                hidden: true,
+                refresh: {
+                    keys: ['claude:work', 'claude:personal', 'claude:pending'],
+                    refreshingByKey: {},
+                    errorsByKey: { 'claude:personal': 'provider_refused', 'claude:pending': 'provider_unreachable' },
+                    accountIdentities: [summary('claude:pending', 'Pending', 0)],
+                    run: async () => {},
+                },
+            });
+            const warning = screen.findByTestId('sidebar-usage-refresh-error-text')?.children.join('');
+            expect(warning).toContain('sidebarFooter.usageRefreshFailedAccounts(count=2,accounts=');
+            expect(warning).toContain('ke•••@g•••.com');
+            expect(warning).toContain('Pending');
+            expect(warning).not.toContain('Work');
+            expect(screen.findByTestId('sidebar-usage-as-of')).toBeTruthy();
+            expect(screen.findByTestId('sidebar-usage-account-claude:work')).toBeTruthy();
+            expect(screen.getTextContent()).toContain('connectedServices.quota.remaining(percent=42%)');
+        });
+
+        it('reports a count for a longer set of failed reads', async () => {
+            const screen = await renderView({
+                accountState: 'unavailable',
+                refresh: {
+                    keys: ['claude:work', 'claude:personal', 'claude:pending', 'claude:acct_9f2c8e71'],
+                    refreshingByKey: {},
+                    errorsByKey: { 'claude:work': 'failed', 'claude:personal': 'failed', 'claude:pending': 'failed' },
+                    run: async () => {},
+                },
+            });
+            expect(screen.findByTestId('sidebar-usage-refresh-error-text')?.children.join(''))
+                .toBe('sidebarFooter.usageRefreshFailedAccounts(count=3)');
+            expect(screen.findByTestId('sidebar-usage-account-claude:acct_9f2c8e71')).toBeTruthy();
         });
 
         it('shows pending usage without replacing the last-updated timestamp or meters', async () => {

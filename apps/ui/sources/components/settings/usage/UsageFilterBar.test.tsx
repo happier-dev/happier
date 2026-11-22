@@ -232,6 +232,41 @@ describe('UsageFilterBar', () => {
     await screen.unmount();
   });
 
+  it.each([390, 1280])('shows pending scope choices until inventory settles (%spx)', async width => {
+    Object.assign(viewport, { width, height: 844 });
+    vi.stubGlobal('navigator', { userAgent: width === 390 ? 'Mozilla/5.0 (iPhone)' : 'Mozilla/5.0 (X11; Linux x86_64)', maxTouchPoints: width === 390 ? 1 : 0 });
+    const { Popover } = await import('@/components/ui/popover');
+    const { t } = await import('@/text');
+    const props = barProps([]);
+    const all = { id: USAGE_SCOPE_FILTER_ALL, label: 'All projects' };
+    const inventory = (optionsPending: boolean, options = [all]) =>
+      [{ ...props.scopeFilters[0]!, field: 'projects' as const, title: 'Projects', optionsPending, options }];
+    const screen = await renderBar([], { scopeFilters: inventory(true) });
+    const renderPicker = () => {
+      const chip = screen.findAllByType(SelectionListFilterChip)
+        .find(node => node.props.filter.id === (width === 390 ? 'scope' : 'projects'))!;
+      const popover = chip.findByType(Popover);
+      return popover.props.children({ maxHeight: 600 });
+    };
+    // Invoke the existing popover content in place so no portal or focus behavior is mocked.
+    const picker = await renderScreen(<>{renderPicker()}</>);
+    try {
+      if (width === 390) await picker.pressByTestIdAsync('filters.scope:open:projects');
+      expect(JSON.stringify(picker.tree.toJSON())).toContain('All projects');
+      expect(JSON.stringify(picker.tree.toJSON())).toContain(t('common.loading'));
+      await screen.update(<UsageFilterBar {...props} scopeFilters={inventory(false)} />);
+      await picker.update(<>{renderPicker()}</>);
+      expect(JSON.stringify(picker.tree.toJSON())).toContain('All projects');
+      expect(JSON.stringify(picker.tree.toJSON())).not.toContain(t('common.loading'));
+      await screen.update(<UsageFilterBar {...props} scopeFilters={inventory(false, [all, { id: 'project-a', label: 'Project A' }])} />);
+      await picker.update(<>{renderPicker()}</>);
+      expect(JSON.stringify(picker.tree.toJSON())).toContain('Project A');
+    } finally {
+      await picker.unmount();
+      await screen.unmount();
+    }
+  });
+
   it("keeps one chip per scope on a wide screen, opening from the chip's leading edge", async () => {
     Object.assign(viewport, { width: 1280, height: 900 });
     vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (X11; Linux x86_64)', maxTouchPoints: 0 });

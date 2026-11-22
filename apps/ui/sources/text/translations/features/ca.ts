@@ -16443,6 +16443,7 @@ const sidebarFooterTranslations = { ca: {
         usageNoAccounts: 'Connecta un compte per veure quant li queda dels seus límits.',
         usageUnavailableAccounts: ({ count }: { count: string | number }) => `${count} comptes sense dades d’ús`,
         usageSignedOutAccounts: ({ count }: { count: string | number }) => `${count} comptes sense sessió`,
+        usageRefreshFailedAccounts: ({ count, accounts }) => `No s’ha pogut actualitzar l’ús de ${count} ${count === 1 ? 'compte' : 'comptes'}${accounts ? ` (${accounts})` : ''}.`,
         usageHealthy: 'Queda marge de sobres a tots els límits',
         homeUnreachableTitle: ({ home }) => `No es pot connectar amb ${home}`,
         homeUnreachableBody: 'Les teves màquines i sessions tornaran a aparèixer aquí quan respongui.',

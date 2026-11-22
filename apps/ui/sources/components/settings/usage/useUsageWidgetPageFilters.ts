@@ -43,6 +43,8 @@ export type UsageWidgetPageFilter = Readonly<{
     /** `agentId`: the Agent a source belongs to. `partial`: this source has a coverage gap; its detail is said once, on "All".
      * `section: 'show'`: one of the exclusive Agents / Your apps choices that head the Sources chooser. */
     options: readonly Readonly<{ id: string; label: string; subtitle?: string; agentId?: string; partial?: boolean; section?: 'show' }>[];
+    /** The Usage inventory that supplies these choices is still being read. */
+    optionsPending?: boolean;
     /** Sources only, when the viewer has apps: which side the page shows. */
     shown?: 'agents' | 'apps';
     /** The chip's value when the All / names / count rule cannot say it ("Your apps · billing-api"). */
@@ -52,7 +54,7 @@ export type UsageWidgetPageFilter = Readonly<{
 
 function sameFilter(left: UsageWidgetPageFilter, right: UsageWidgetPageFilter): boolean {
     return left.field === right.field && left.title === right.title && left.shown === right.shown && left.valueLabel === right.valueLabel
-        && sameStrictJsonValue(left.selected, right.selected) && sameStrictJsonValue(left.options, right.options);
+        && left.optionsPending === right.optionsPending && sameStrictJsonValue(left.selected, right.selected) && sameStrictJsonValue(left.options, right.options);
 }
 
 function sameFilters(left: readonly UsageWidgetPageFilter[], right: readonly UsageWidgetPageFilter[]): boolean {
@@ -198,7 +200,7 @@ export function useUsageWidgetPageFilters(page: UsageWidgetPageContextState, fal
     const projectMachineNames = useAllMachines(React.useCallback(machines => sessionScoped ? {} :
         Object.fromEntries(selectProjectChoiceMachineNames(machines)), [sessionScoped]));
     const retained = React.useRef<Readonly<{ setScope: typeof setScope; filters: readonly UsageWidgetPageFilter[] }> | null>(null);
-    const selectFilters = React.useCallback((inventory: UsageQueryResultSlice | null): readonly UsageWidgetPageFilter[] => {
+    const selectFilters = React.useCallback((inventory: UsageQueryResultSlice | null, optionsPending: boolean): readonly UsageWidgetPageFilter[] => {
         const slices = inventory ? [inventory] : fallbackSlices;
         if (sessionScoped) return [];
         const apps = appEnvironments?.length ? appEnvironments : null;
@@ -222,7 +224,7 @@ export function useUsageWidgetPageFilters(page: UsageWidgetPageContextState, fal
                 const selectedKeys = scopeSelected.map(key => [key, groupId(projectAnchorOf.resolve(key))] as const);
                 const selected = [...new Set(selectedKeys.map(([, group]) => group))];
                 const listed = [...groups.keys()];
-                return { field, title, selected, options: [
+                return { field, title, selected, optionsPending, options: [
                     { id: USAGE_SCOPE_FILTER_ALL, label: t('usage.board.page.filterAllOf', { what: title.toLocaleLowerCase() }) },
                     ...listed.map(id => ({ id, label: id === UNNAMED_PROJECT_OPTION ? t(usageUnnamedProjectTitle.labelKey) : titles.get(id)!,
                         subtitle: id === UNNAMED_PROJECT_OPTION ? undefined
@@ -247,7 +249,7 @@ export function useUsageWidgetPageFilters(page: UsageWidgetPageContextState, fal
                         // "All sources", so a source with a gap carries the dot and, failing other facts, the short fact.
                         ...(field === 'sources' ? sourceOptionDetail(slices, id, sourceGap !== undefined) : {}) };
                 })];
-            const filter = { field, title, selected, options, select: createScopeSelection(field, selected, listed, setScope) };
+            const filter = { field, title, selected, options, optionsPending, select: createScopeSelection(field, selected, listed, setScope) };
             return apps && field === 'sources' ? withShowChoice(filter, apps, setScope) : filter;
         });
     }, [machineNames, projectMachineNames, projectAnchorOf, projectFacts, scope, setScope, sessionScoped, fallbackSlices, appEnvironments]);

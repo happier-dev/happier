@@ -135,17 +135,20 @@ export function useUsageWidgetQueryModel(resource: UsageWidgetResource | null, i
 
 /** Select the shown query's consumed facts before React, sharing the body's period and authority owner. */
 export function useUsageWidgetQuerySliceSelection<T>(resource: UsageWidgetResource | null, instanceId: string,
-    rows: readonly UsageWidgetQueryRow[], selectSlice: (slice: UsageQueryResultSlice | null) => T,
-    equal: (left: T, right: T) => boolean, acceptsSlice: (slice: UsageQueryResultSlice) => boolean = acceptsEverySlice): T {
+    rows: readonly UsageWidgetQueryRow[], selectSlice: (slice: UsageQueryResultSlice | null, pending: boolean) => T,
+    equal: (left: T, right: T) => boolean, acceptsSlice: (slice: UsageQueryResultSlice) => boolean = acceptsEverySlice,
+    hasSettledRead?: (slice: UsageQueryResultSlice) => boolean): T {
     const select = React.useCallback((snapshot: UsageWidgetBodySnapshot) =>
-        selectSlice(snapshot.slice ?? snapshot.retained?.slice ?? null), [selectSlice]);
-    return useUsageWidgetQueryModelSelection(resource, instanceId, rows, acceptsSlice, identitySlice, select, equal).selection;
+        selectSlice(snapshot.slice ?? snapshot.retained?.slice ?? null, snapshot.pending && !snapshot.error
+            && !snapshot.authorityLost), [selectSlice]);
+    return useUsageWidgetQueryModelSelection(resource, instanceId, rows, acceptsSlice, identitySlice, select, equal, hasSettledRead).selection;
 }
 
 function useUsageWidgetQueryModelSelection<T>(resource: UsageWidgetResource | null, instanceId: string,
     rows: readonly UsageWidgetQueryRow[], acceptsSlice: (slice: UsageQueryResultSlice) => boolean,
     projectSlice: UsageWidgetSliceProjection, select: (snapshot: UsageWidgetBodySnapshot) => T,
-    equal: (left: T, right: T) => boolean): Readonly<{ model: UsageWidgetBodyModel; selection: T }> {
+    equal: (left: T, right: T) => boolean,
+    hasSettledRead?: (slice: UsageQueryResultSlice) => boolean): Readonly<{ model: UsageWidgetBodyModel; selection: T }> {
     const entry = resource?.entry ?? null;
     const lifetime = resource?.lifetime ?? null;
     const prior = React.useRef<UsageWidgetPrior | null>(null);
@@ -192,7 +195,8 @@ function useUsageWidgetQueryModelSelection<T>(resource: UsageWidgetResource | nu
                 || slice.sources.some(source => source.source === 'accounting' && source.status === 'pending')
                 || slice.comparison?.source.status === 'pending';
             const readActivity = current && snapshot.pending !== 'idle' && shownReadPending;
-            const pending = current && (!presentationReady || slice?.pending === true || readActivity || !slice && snapshot.pending !== 'idle');
+            const pending = current && (!presentationReady || slice?.pending === true || readActivity || !slice && snapshot.pending !== 'idle')
+                && !(hasSettledRead && slices.some(value => value.key === key && hasSettledRead(value)));
             // The Resource retains unchanged slice references. Select before React
             // renders so sibling progress cannot repeat this body's model work.
             if (previous && previous.slice === slice && previous.current === current && previous.authorityLost === authorityLost
@@ -214,7 +218,7 @@ function useUsageWidgetQueryModelSelection<T>(resource: UsageWidgetResource | nu
                 identity, retained, periodContinuity };
             return previous;
         };
-    }, [entry, lifetime, rows, acceptsSlice, projectSlice, instanceId]);
+    }, [entry, lifetime, rows, acceptsSlice, projectSlice, instanceId, hasSettledRead]);
     const getSelectedSnapshot = React.useMemo(() => {
         let previous: { value: T } | undefined;
         return () => {

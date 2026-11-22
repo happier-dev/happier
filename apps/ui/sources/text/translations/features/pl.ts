@@ -16453,6 +16453,7 @@ const sidebarFooterTranslations = { pl: {
         usageNoAccounts: 'Połącz konto, aby zobaczyć, ile zostało z jego limitów.',
         usageUnavailableAccounts: ({ count }: { count: string | number }) => `Konta bez danych użycia: ${count}`,
         usageSignedOutAccounts: ({ count }: { count: string | number }) => `Wylogowane konta: ${count}`,
+        usageRefreshFailedAccounts: ({ count, accounts }) => `Nie udało się odświeżyć danych o użyciu dla ${count} ${count === 1 ? 'konta' : 'kont'}${accounts ? ` (${accounts})` : ''}.`,
         usageHealthy: 'We wszystkich limitach zostało sporo zapasu',
         homeUnreachableTitle: ({ home }) => `Nie można połączyć się z ${home}`,
         homeUnreachableBody: 'Twoje maszyny i sesje pojawią się tu ponownie, gdy odpowie.',

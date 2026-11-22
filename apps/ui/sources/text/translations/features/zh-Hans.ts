@@ -16305,6 +16305,7 @@ const sidebarFooterTranslations = { 'zh-Hans': {
         usageNoAccounts: '连接一个账户即可查看其剩余额度。',
         usageUnavailableAccounts: ({ count }: { count: string | number }) => `${count} 个账户没有用量数据`,
         usageSignedOutAccounts: ({ count }: { count: string | number }) => `${count} 个账户已退出登录`,
+        usageRefreshFailedAccounts: ({ count, accounts }) => `无法刷新 ${count} 个账户的用量${accounts ? `（${accounts}）` : ''}。`,
         usageHealthy: '所有额度都还很充裕',
         homeUnreachableTitle: ({ home }) => `无法连接 ${home}`,
         homeUnreachableBody: '它响应后，你的机器和会话会重新显示在这里。',

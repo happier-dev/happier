@@ -54,6 +54,9 @@ import { formatConnectedServiceQuotaAllowance, formatConnectedServiceQuotaReport
 import type { ConnectedServiceQuotaReportedAmount } from '@/sync/domains/connectedServices/accountUsage/presentProviderConnectionUsage';
 
 import type { SidebarFooterPopoverContentProps } from './SidebarFooterPopoverButton';
+import { summarizeUsagePopoverRefresh, type UsagePopoverRefresh } from './usagePopoverRefresh';
+
+export type { UsagePopoverRefresh } from './usagePopoverRefresh';
 
 /** Text starts where a menu row's text starts, so the heading, accounts and the footer row align. */
 const CONTENT_INSET_PX = MENU_ROW_METRICS.paddingHorizontalPx;
@@ -80,15 +83,6 @@ export type UsagePopoverPrivacy = Readonly<{
     hidden: boolean;
     setHidden: (hidden: boolean) => void;
     present: ConnectedAccountIdentityPresenter;
-}>;
-
-/** Refresh and its state belong to the connected-account quota store, not the popover. */
-export type UsagePopoverRefresh = Readonly<{
-    keys: readonly string[];
-    loadingByKey?: Readonly<Record<string, boolean>>;
-    refreshingByKey: Readonly<Record<string, boolean>>;
-    errorsByKey: Readonly<Record<string, string | null>>;
-    run(keys?: readonly string[]): Promise<void>;
 }>;
 
 /** One window of a group that is not a connected account (a session that signs in on its own). */
@@ -211,8 +205,9 @@ export function useUsagePopoverData(): Readonly<{
         loadingByKey,
         refreshingByKey: quota.refreshingByKey,
         errorsByKey,
+        accountIdentities: quota.accountIdentities,
         run: quota.refresh,
-    }), [loadingByKey, quota.refreshableKeys, quota.refreshingByKey, errorsByKey, quota.refresh]);
+    }), [loadingByKey, quota.refreshableKeys, quota.refreshingByKey, errorsByKey, quota.accountIdentities, quota.refresh]);
     return { usage, facts, privacy, refresh };
 }
 
@@ -288,13 +283,6 @@ export function SidebarUsagePopoverView(props: Readonly<{
     const total = accounts.length + facts.accountsNeedingSignIn.length;
     const nothing = total === 0 && !scoped;
     const refresh = props.refresh;
-    const refreshKeys = scoped
-        ? refresh?.keys.filter((key) => key === session?.accountKey) ?? []
-        : refresh?.keys ?? [];
-    const refreshing = refreshKeys.some((key) => refresh?.refreshingByKey[key] === true || refresh?.loadingByKey?.[key] === true);
-    const refreshError = scoped
-        ? session?.accountKey && refresh?.errorsByKey[session.accountKey]
-        : Object.values(refresh?.errorsByKey ?? {}).find((error) => error != null);
     const shownAsOf = scoped ? sessionAccount?.account.fetchedAt ?? null : usage.asOf;
 
     // Every account shown together is named at once, so two that read as their service's account are
@@ -309,6 +297,10 @@ export function SidebarUsagePopoverView(props: Readonly<{
             email: account.accountEmail, accountId: account.accountId, presentIdentity: privacy.present,
         })),
     ]), [accounts, facts.accountsNeedingSignIn, privacy.present]);
+    const refreshAccountKey = scoped ? session?.accountKey ?? null : undefined;
+    const { keys: refreshKeys, refreshing, error: refreshError } = React.useMemo(() => summarizeUsagePopoverRefresh({
+        refresh, accountKey: refreshAccountKey, names, presentIdentity: privacy.present,
+    }), [refresh, refreshAccountKey, names, privacy.present]);
 
     const renderAccount = (entry: (typeof accounts)[number]) => (
         <UsageAccountGroup

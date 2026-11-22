@@ -89,6 +89,7 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
               ? selected.map(label).join(', ')
               : t('usage.board.page.filterCount', { count: selected.length }));
         const selectedIds = new Set(selected.length === 0 ? [USAGE_SCOPE_FILTER_ALL] : selected);
+        const resultHint = filter.optionsPending ? t('common.loading') : undefined;
         const choices = options.map(({ agentId, partial, section: _section, ...option }) => ({
               ...option,
               // A source reads by its Agent's mark; one amber dot flags a gap (lab d2filter-SRC).
@@ -109,6 +110,7 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
         return {
           id: field,
           label: title,
+          resultHint,
           showLabel: true,
           valueLabel: value,
           // Your apps narrows the page away from its default Agents, so its chip reads as chosen.
@@ -132,7 +134,7 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
           onChange: filter.select,
           // Sources with apps opens one chooser: Show (Agents or Your apps, exclusive), then that side's choices (D33).
           ...(filter.shown ? { renderPopoverContent: ({ close, maxHeight }: Readonly<{ close: () => void; maxHeight: number }>) => (
-            <UsageScopeSections sections={usageFilterSections(filter, choices, selectedIds, filter.select)} onRequestClose={close} maxHeight={maxHeight}
+            <UsageScopeSections sections={usageFilterSections(filter, choices, selectedIds, filter.select, resultHint)} onRequestClose={close} maxHeight={maxHeight}
               testID={`${props.testID}.${field}`} />
           ) } : {}),
           testID: `${props.testID}.${field}`,
@@ -189,7 +191,7 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
               <UsageScopeSections scopes={props.scopeFilters.map((filter, index) => ({
                 id: filter.field, title: filter.title, value: filters[index]?.valueLabel ?? '',
                 sections: usageFilterSections(filter, filters[index]?.options ?? [], filters[index]?.selectedIds ?? new Set(),
-                  (id, context, invocation) => filters[index]?.onChange?.(id, context, invocation)),
+                  (id, context, invocation) => filters[index]?.onChange?.(id, context, invocation), filters[index]?.resultHint),
               }))}
                 onRequestClose={close} maxHeight={maxHeight} testID={`${props.testID}.scope`} />
             ),
@@ -302,14 +304,14 @@ type UsageScopeSection = Readonly<{
  * choices under their own title; Your apps ends with the one line saying the two are never added together.
  */
 function usageFilterSections(filter: UsageWidgetPageFilter, choices: UsageScopeSection['options'], selectedIds: ReadonlySet<string>,
-  onChange: UsageScopeSection['onChange']): UsageScopeSection[] {
-  if (!filter.shown) return [{ id: filter.field, title: filter.title, options: choices, selectedIds, onChange }];
+  onChange: UsageScopeSection['onChange'], resultHint?: string): UsageScopeSection[] {
+  if (!filter.shown) return [{ id: filter.field, title: filter.title, options: choices, selectedIds, onChange, resultHint }];
   const shownId = filter.shown === 'apps' ? USAGE_SOURCES_SHOW_APPS : USAGE_SOURCES_SHOW_AGENTS;
   return [
     { id: `${filter.field}.show`, title: t('usage.board.page.sourcesShow'),
       options: filter.options.filter(option => option.section === 'show'), selectedIds: new Set([shownId]), onChange },
     { id: filter.field, title: filter.shown === 'apps' ? t('usage.board.page.sourcesAppsTitle') : filter.title, options: choices, selectedIds, onChange,
-      ...(filter.shown === 'apps' ? { resultHint: t('usage.board.page.sourcesExclusive') } : {}) },
+      resultHint: filter.shown === 'apps' ? t('usage.board.page.sourcesExclusive') : resultHint },
   ];
 }
 
@@ -366,18 +368,22 @@ function UsageScopeSections(props: Readonly<{
   React.useEffect(() => {
     const previous = previousStepId.current;
     previousStepId.current = activeStepId;
-    if (activeStepId !== ROOT_SCOPE_STEP_ID || previous === ROOT_SCOPE_STEP_ID) return;
+    if (Platform.OS !== 'web' || activeStepId !== ROOT_SCOPE_STEP_ID || previous === ROOT_SCOPE_STEP_ID) return;
     const opener = props.scopes?.find(scope => previous === `${ROOT_SCOPE_STEP_ID}:${scope.id}`);
     if (opener) document.getElementById(`${props.testID}:open:${opener.id}`)?.focus({ preventScroll: true });
   }, [activeStepId, props.scopes, props.testID]);
-  const phoneSheetOnWeb = Platform.OS === 'web' && props.scopes !== undefined;
+  const scopeDestinations = step.sections[0];
+  const activeScopeStep = scopeDestinations?.kind === 'static'
+    ? scopeDestinations.options.find(option => option.openStep?.id === activeStepId)?.openStep ?? null
+    : null;
   return (
     <SelectionList
       testID={`${props.testID}.list`}
       currentUiContextCommandScope={`${props.testID}.filters`}
       currentUiContextForegroundOverlay
       rootStep={step}
-      onActiveStepChange={phoneSheetOnWeb ? handleActiveStepChange : undefined}
+      onActiveStepChange={props.scopes ? handleActiveStepChange : undefined}
+      syncActiveStep={props.scopes ? activeScopeStep : undefined}
       selection={{ kind: 'multiple', selectedIds }}
       onSelect={(id, _option, callerContext, invocation) => {
         const [section, option] = id.split(SECTION_KEY);

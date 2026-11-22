@@ -16415,6 +16415,7 @@ const sidebarFooterTranslations = { pt: {
         usageNoAccounts: 'Ligue uma conta para ver quanto resta dos seus limites.',
         usageUnavailableAccounts: ({ count }: { count: string | number }) => `${count} contas sem dados de uso`,
         usageSignedOutAccounts: ({ count }: { count: string | number }) => `${count} contas sem sessão`,
+        usageRefreshFailedAccounts: ({ count, accounts }) => `Não foi possível atualizar o uso de ${count} ${count === 1 ? 'conta' : 'contas'}${accounts ? ` (${accounts})` : ''}.`,
         usageHealthy: 'Sobra bastante margem em todos os limites',
         homeUnreachableTitle: ({ home }) => `Não foi possível acessar ${home}`,
         homeUnreachableBody: 'Suas máquinas e sessões voltarão a aparecer aqui quando ele responder.',
