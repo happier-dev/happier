@@ -67,7 +67,7 @@ export type HomeGovernanceErrorCodeV1 = z.infer<typeof HomeGovernanceErrorCodeV1
 
 export const AccountErasureDeploymentBlockerV1Schema = lazyZodSchema(() => z.strictObject({
   reason: z.enum(['running_work', 'provider_resource', 'teardown_incomplete',
-    'source_sharing', 'environment_dependencies', 'content_sharing', 'graph_dependencies']),
+    'source_sharing', 'environment_dependencies', 'content_sharing', 'graph_dependencies', 'foreign_automation']),
   environmentId: z.optional(z.string().check(z.minLength(1))),
   targetLinkId: z.optional(z.string().check(z.minLength(1))),
   targetKind: z.optional(z.string().check(z.minLength(1))),

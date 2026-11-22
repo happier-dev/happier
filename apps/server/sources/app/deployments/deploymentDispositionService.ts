@@ -51,14 +51,15 @@ export async function hasCompleteTeardownInTx(tx: Tx, link: Link, teardownDeploy
 }
 
 /** Native absence and released management custody are separate facts. */
-export async function readDeploymentTargetCleanupBlockerInTx(tx: Tx, link: Link, runtimeTargetLinkId: string | null) {
+export async function readDeploymentTargetCleanupBlockerInTx(tx: Tx, link: Link, runtimeTargetLinkId: string | null,
+    hasManagedDomain: boolean) {
     const state = readDeploymentTargetLinkState(link);
     if (state === 'detached') return null;
     const teardown = await readLatestDeploymentTeardownInTx(tx, link);
     const { latest } = teardown;
     if (latest?.operation === 'teardown' && latest.startedAt && latest.state !== 'succeeded') return 'teardown_incomplete' as const;
-    if (state === 'provisioned' || state === 'deployed') return 'provider_resource' as const;
-    return await hasCompleteTeardownProofInTx(tx, link, undefined, runtimeTargetLinkId, teardown) ? null : 'teardown_incomplete' as const;
+    if (hasManagedDomain || state === 'provisioned' || state === 'deployed') return 'provider_resource' as const;
+    return await hasCompleteTeardownProofInTx(tx, link, undefined, runtimeTargetLinkId, teardown) ? null : 'provider_resource' as const;
 }
 
 async function hasCompleteTeardownProofInTx(tx: Tx, link: Link, teardownDeploymentIds: readonly string[] | undefined,

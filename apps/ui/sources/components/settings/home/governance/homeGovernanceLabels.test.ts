@@ -45,13 +45,15 @@ describe('accountErasureFailureNotice', () => {
         expect(notice.body).toBe('homeGovernance.errorErasureDeploymentCleanupRequired');
         expect(accountErasureFailureNotice(new HappyError(code, true, { status: 409, kind: 'server', code }))).toEqual(notice);
     });
-    it('names the target and teardown recovery on both erasure surfaces', () => {
+    it.each([
+        [{ reason: 'provider_resource', targetLinkId: 'target-id', targetKind: 'vercel' }, 'vercel target-id'],
+        [{ reason: 'teardown_incomplete', targetLinkId: 'target-id', targetKind: 'vercel' }, 'vercel target-id'],
+        [{ reason: 'foreign_automation', environmentId: 'environment-id' }, 'environment-id'],
+    ] as const)('presents recovery and the owned reference on both erasure surfaces (%j)', (blocker, reference) => {
         const code = 'account_erasure_deployment_cleanup_required';
-        const details = { error: code, blocker: {
-            reason: 'teardown_incomplete', environmentId: 'environment-id', targetLinkId: 'target-id', targetKind: 'vercel',
-        } };
+        const details = { error: code, blocker };
         const notice = homeGovernanceFailureNotice({ kind: 'conflict', retryable: true, code, details });
-        expect(notice.body).toBe('homeGovernance.erasureDeploymentBlocker.teardown_incomplete (vercel target-id)');
+        expect(notice.body).toBe(`homeGovernance.erasureDeploymentBlocker.${blocker.reason} (${reference})`);
         expect(accountErasureFailureNotice(new HappyError(code, true, { status: 409, kind: 'server', code, details }))).toEqual(notice);
     });
 

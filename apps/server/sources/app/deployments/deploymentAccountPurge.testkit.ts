@@ -3,6 +3,7 @@ import { expect, it, vi } from 'vitest';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { deleteDeploymentEnvironmentInTx, removeAdmittedDeploymentEnvironmentInTx } from './deploymentDispositionService';
+import { deleteAutomation } from '@/app/automations/automationCrudService';
 import { sourceFromRow } from '@/app/projects/sources/projectSourceService';
 import { readDeploymentTargetInTx } from './deploymentTargetLinkService';
 import * as blobFiles from '@/storage/blob/files';
@@ -212,8 +213,9 @@ export function deploymentAccountPurgeCases() {
         if (separateReceiptArtifact) expect(await db.artifact.findUnique({ where: { id: receiptArtifact.id } })).toBeNull();
     });
 
-    it('refuses an active deployment before retirement or partial graph deletion', async () => {
+    it.each(['queued', 'running'] as const)('refuses a %s deployment before retirement or partial graph deletion', async (state) => {
         const f = await fixture(false);
+        await db.deployment.update({ where: { id: f.receipt.id }, data: { state } });
         expect(await deleteAccountForErasure({ accountId: f.account.id })).toMatchObject({ status: 'failed', code: 'account_erasure_deployment_cleanup_required', blocker: { reason: 'running_work', deploymentId: f.receipt.id } });
         expect(await db.account.findUnique({ where: { id: f.account.id }, select: { status: true } })).toEqual({ status: 'active' });
         expect(await db.deployment.count({ where: { id: f.receipt.id } })).toBe(1);
@@ -254,6 +256,58 @@ export function deploymentAccountPurgeCases() {
         expect(await deleteAccountForErasure({ accountId: f.account.id })).toMatchObject({ status: 'failed', code: 'account_erasure_deployment_cleanup_required', blocker: { reason: 'source_sharing', projectSourceId: f.source.id } });
         expect(await db.deploymentEnvironment.findUnique({ where: { id: f.environment.id } })).toEqual(f.environment);
         expect(await db.deployment.findUnique({ where: { id: f.receipt.id } })).toEqual(f.receipt);
+    });
+
+    it('erases an Own-server Environment after successful teardown, with a revoked Machine and the erased grantee’s grant', async () => {
+        const f = await fixture(true);
+        const grantee = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await db.deploymentEnvironmentDeployer.create({ data: {
+            environmentId: f.environment.id, purpose: 'deploy', principalKind: 'account',
+            principalId: grantee.id, createdByAccountId: f.account.id,
+        } });
+        expect(await deleteAccountForErasure({ accountId: grantee.id })).toEqual({ status: 'deleted' });
+        await db.machine.update({ where: { id: f.machine.id }, data: { revokedAt: new Date() } });
+        await db.projectSource.update({ where: { id: f.source.id }, data: { deletedAt: new Date() } });
+        await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: {
+            buildMachineId: f.machine.id, deployerMode: 'chosen',
+        } });
+        expect(await deleteAccountForErasure({ accountId: f.account.id })).toEqual({ status: 'deleted' });
+        expect(await db.deploymentEnvironment.findUnique({ where: { id: f.environment.id } })).toBeNull();
+        expect(await db.machine.findUnique({ where: { id: f.machine.id } })).toBeNull();
+    });
+
+    it('names the managed Worker and erases after Detach when its provider credential is absent', async () => {
+        const f = await fixture(false);
+        await db.machine.update({ where: { id: f.machine.id }, data: {
+            metadata: encodePlainMachineStoredContent({ host: 'Purge', platform: 'linux', happyCliVersion: 'test',
+                homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
+            dataEncryptionKey: new Uint8Array(Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')),
+        } });
+        await db.deployment.update({ where: { id: f.receipt.id }, data: { operation: 'deploy', state: 'succeeded', settledAt: new Date() } });
+        // Persist the Worker as provisioned without a connected Account, as after credential withdrawal.
+        await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: {
+            sourceKind: 'plugin', hostTargetId: null, pluginId: 'cloudflare', contributionLocalId: 'workers',
+            targetKind: 'cloudflare-workers', state: 'provisioned',
+        } });
+        await db.deploymentDomain.create({ data: {
+            targetLinkId: f.link.id, environmentId: f.environment.id, createdByAccountId: f.account.id,
+            state: 'active', contentArtifactId: f.artifact.id, contentBodyVersion: 1, contentHeaderVersion: 1,
+        } });
+        await db.automation.create({ data: {
+            accountId: f.account.id, name: 'Worker cleanup', enabled: true, deploymentEnvironmentId: f.environment.id, templateCiphertext: '{}',
+        } });
+        expect(await deleteAccountForErasure({ accountId: f.account.id })).toEqual({
+            status: 'failed', code: 'account_erasure_deployment_cleanup_required',
+            blocker: { reason: 'provider_resource', environmentId: f.environment.id, targetLinkId: f.link.id, targetKind: 'cloudflare-workers' },
+        });
+        const serverId = await getOrCreateServerIdentityId();
+        expect(await inTx(tx => deleteDeploymentEnvironmentInTx(tx, f.account.id, {
+            serverId, environmentId: f.environment.id, expectedRevision: f.environment.revision,
+            requestKey: randomUUID(), detachKeepRunning: true,
+        }))).toMatchObject({ ok: true, detached: true });
+        expect(await db.deploymentTargetLink.findUnique({ where: { id: f.link.id } })).toMatchObject({ state: 'detached' });
+        expect(await deleteAccountForErasure({ accountId: f.account.id })).toEqual({ status: 'deleted' });
+        expect(await db.deploymentDomain.count({ where: { targetLinkId: f.link.id } })).toBe(0);
     });
 
     it('protects a managed deployment until the owner explicitly detaches after a failed teardown', async () => {
@@ -301,7 +355,7 @@ export function deploymentAccountPurgeCases() {
         const own = await fixture(true);
         const foreign = await fixture(true);
         await db.deployment.update({ where: { id: foreign.receipt.id }, data: { predecessorDeploymentId: own.receipt.id } });
-        expect(await deleteAccountForErasure({ accountId: own.account.id })).toMatchObject({ status: 'failed', code: 'account_erasure_deployment_cleanup_required', blocker: { reason: 'graph_dependencies' } });
+        expect(await deleteAccountForErasure({ accountId: own.account.id })).toMatchObject({ status: 'failed', code: 'account_erasure_deployment_cleanup_required', blocker: { reason: 'graph_dependencies', deploymentId: own.receipt.id } });
         expect(await db.deployment.count({ where: { id: { in: [own.receipt.id, foreign.receipt.id] } } })).toBe(2);
     });
 
@@ -312,16 +366,36 @@ export function deploymentAccountPurgeCases() {
         expect(await deleteAccountForErasure({ accountId: f.account.id })).toEqual({ status: 'deleted' });
     });
 
-    it.each(['machine', 'target lineage'] as const)('refuses an outgoing foreign %s dependency', async (dependency) => {
+    it('names a foreign Automation and allows erasure after its owner deletes it', async () => {
+        const own = await fixture(true);
+        const other = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const automation = await db.automation.create({ data: { accountId: other.id, name: 'Shared Environment',
+            enabled: false, deploymentEnvironmentId: own.environment.id, templateCiphertext: '{}' } });
+        expect(await deleteAccountForErasure({ accountId: own.account.id })).toMatchObject({
+            status: 'failed', code: 'account_erasure_deployment_cleanup_required',
+            blocker: { reason: 'foreign_automation', environmentId: own.environment.id },
+        });
+        expect(await deleteAutomation({ accountId: other.id, automationId: automation.id })).toBeTruthy();
+        expect(await deleteAccountForErasure({ accountId: own.account.id })).toEqual({ status: 'deleted' });
+        expect(await db.automation.findUnique({ where: { id: automation.id } })).toMatchObject({
+            accountId: other.id, deploymentEnvironmentId: null, name: automation.name, deletedAt: expect.any(Date),
+        });
+    });
+
+    it.each(['machine', 'target lineage', 'definition Artifact'] as const)('erases owned history with an outgoing foreign %s reference', async (dependency) => {
         const own = await fixture(true);
         const foreign = await fixture(true);
         if (dependency === 'machine') {
             await db.deploymentEnvironment.update({ where: { id: own.environment.id }, data: { buildMachineId: foreign.machine.id } });
-        } else {
+        } else if (dependency === 'target lineage') {
             await db.deploymentTargetLink.update({ where: { id: own.link.id }, data: { predecessorTargetLinkId: foreign.link.id } });
+        } else {
+            await db.deploymentEnvironment.update({ where: { id: own.environment.id }, data: { contentArtifactId: foreign.artifact.id } });
         }
-        expect(await deleteAccountForErasure({ accountId: own.account.id })).toMatchObject({ status: 'failed', code: 'account_erasure_deployment_cleanup_required', blocker: { reason: dependency === 'machine' ? 'environment_dependencies' : 'graph_dependencies' } });
-        expect(await db.deployment.count({ where: { id: { in: [own.receipt.id, foreign.receipt.id] } } })).toBe(2);
+        expect(await deleteAccountForErasure({ accountId: own.account.id })).toEqual({ status: 'deleted' });
+        expect(await db.deployment.findUnique({ where: { id: own.receipt.id } })).toBeNull();
+        expect(await db.deployment.findUnique({ where: { id: foreign.receipt.id } })).toEqual(foreign.receipt);
         expect(await db.machine.findUnique({ where: { id: foreign.machine.id } })).toEqual(foreign.machine);
+        expect(await db.artifact.findUnique({ where: { id: foreign.artifact.id } })).toEqual(foreign.artifact);
     });
 }

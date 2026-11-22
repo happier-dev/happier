@@ -11,14 +11,15 @@ import { disableAutomationInTx } from './automationCrudService';
 import { acquireWorkflowPublicationLocksInTx } from '@/app/workflows/acquireWorkflowPublicationLocksInTx';
 import { getWorkflowPublicationAudienceInTx, type WorkflowPublicationAudience } from '@/app/workflows/workflowPublicationAudience';
 
-/** Account erasure has admitted its retired graph. Release only that Account's
- * Automation FK; its retained runs still follow ordinary Account erasure.
+/** Erasure removes the Environment from its own Automations and from already
+ * deleted foreign Automations. Foreign Automation history stays with its owner.
  */
 export async function clearErasedAccountDeploymentEnvironmentReferencesInTx(tx: Tx, input: Readonly<{
     accountId: string; environmentIds: readonly string[];
 }>): Promise<void> {
     for (const ids of portableQueryChunks({ values: input.environmentIds, bindingsPerValue: 1, fixedBindings: 4 })) {
-        await tx.automation.updateMany({ where: { accountId: input.accountId, deploymentEnvironmentId: { in: [...ids] } },
+        await tx.automation.updateMany({ where: { deploymentEnvironmentId: { in: [...ids] },
+            OR: [{ accountId: input.accountId }, { deletedAt: { not: null } }] },
             data: { deploymentEnvironmentId: null, deploymentPreviewRole: null } });
     }
 }

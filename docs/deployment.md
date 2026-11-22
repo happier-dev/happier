@@ -7,20 +7,22 @@ erasure. Erasure asks this owner for a read-only precondition before retirement,
 then calls its purge after external blob cleanup and before Artifacts and Machines.
 Erasure itself deletes no deployment rows.
 
-Only a solely Account-owned, dependency-closed graph is purged. Source ownership
-and audience come from the Source owner; receipt occupancy and native absence
-come from the existing receipt and teardown owners. A managed provider resource
-blocks erasure whether its Environment is live or tombstoned. An Environment
-record can be purged with its Account once its dependencies and cleanup
-obligations are resolved. Queued or running work needs cleanup, and an unfinished
-teardown blocks erasure while Happier still manages the target. An explicit
-**Detach and keep running** ends Happier’s custody, including after a failed
-teardown. The detached link and its Receipts are history. The person can erase
-their Account while keeping the resource at its provider. The purge protects foreign and Team-owned
-data, shared content and incoming foreign lineage. The HTTP 409 response
-`account_erasure_deployment_cleanup_required` carries a typed blocker and its
-owned deployment, Environment, target, Source or Artifact reference when
-available. Both erasure surfaces show the next action for that blocker.
+Queued or running work, resources Happier still manages and a started teardown
+that has not finished block deployment cleanup, even after an Environment is
+marked deleted. Successful teardown allows the Account’s Environment and settled
+history to be erased with it, including stale Deploy grants and references to a
+revoked Machine. **Detach and keep running** releases Happier’s custody, including
+after a failed teardown or a disconnected provider credential. Detach works
+without the provider credential and leaves the provider resource running.
+
+The purge deletes the Account’s own deployment records and their access grants.
+It preserves other Accounts’ and Teams’ records and refuses when an independently
+owned record would lose an active Automation binding or a required graph
+reference. The HTTP 409 response `account_erasure_deployment_cleanup_required`
+carries a typed blocker and an owned deployment, Environment, target, Source or
+Artifact reference when available. Both erasure surfaces show the next action.
+For a managed target with no connected credential, choose **Detach and keep running**
+in Deployments before retrying erasure.
 
 Settled Receipts belong to their Environment's history. Erasing the requester
 clears their attribution. Erasing the Account that owns a settled Receipt's
