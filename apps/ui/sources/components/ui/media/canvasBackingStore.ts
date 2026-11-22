@@ -1,6 +1,21 @@
 import * as React from 'react';
 
 type CanvasSurface = { width: number; height: number };
+const replayWebCanvas = new WeakMap<HTMLCanvasElement, () => void>();
+
+/** WebGL clears its drawing buffer after composition. Replay the last painted frame only when captured. */
+export function registerWebCanvasReplay(canvas: HTMLCanvasElement, replay: () => void): () => void {
+    replayWebCanvas.set(canvas, replay);
+    return () => { replayWebCanvas.delete(canvas); };
+}
+
+export function copyWebCanvasPixels(source: HTMLCanvasElement, copy: HTMLCanvasElement): void {
+    if (!source.width || !source.height || source.style.visibility === 'hidden') return;
+    const context = copy.getContext('2d');
+    if (!context) return;
+    replayWebCanvas.get(source)?.();
+    context.drawImage(source, 0, 0);
+}
 
 /** An exact whole-device-pixel box avoids a resampled seam. */
 export function snapCanvasBox(width: number, height: number, dpr: number) {

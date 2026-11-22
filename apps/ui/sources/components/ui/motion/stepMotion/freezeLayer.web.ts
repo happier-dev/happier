@@ -1,7 +1,7 @@
 import { captureElementFlightRect } from '../rectFlight';
 import { findWebStepAnchor } from './capturePressedElement.web';
 import { paintQrInk, paintStepInk } from './paintStepInk.web';
-import { copyRegion, mountPaintCopy } from './stepPaintCopy';
+import { copyRegion, copyStepAtmosphere, mountPaintCopy } from './stepPaintCopy';
 import type { StepAnchor, StepFreeze, StepGrid, StepMotionLayerHandle, StepWebLeaf } from './stepMotionTypes';
 
 const paintedContent = 'h1, h2, h3, [role="heading"], [role="button"], [role="link"], a, button, input, textarea, img, svg';
@@ -86,7 +86,8 @@ export function freezeStepLayer(
     if (rect.width <= 0 || rect.height <= 0) return null;
     const { elements, leaves, ink } = readStepLeaves(root, grid);
     const clone = copyRegion(root, rect);
-    const chrome = layer.webChrome?.() ?? [];
+    const webAtmosphere = copyStepAtmosphere(layer, backdrop);
+    const chrome = layer.webChrome?.(backdrop ? 'shell' : undefined) ?? [];
     const webChrome = chrome.map(region => copyRegion(region, captureElementFlightRect(region)));
     for (const { element, rect } of pressedChrome) {
         if (!chrome.some(region => region === element || region.dataset.testid === element.dataset.testid)) {
@@ -101,5 +102,6 @@ export function freezeStepLayer(
     const cloneElements = clone.querySelectorAll<HTMLElement>('*');
     const webFocal = focal instanceof HTMLElement ? cloneElements[elements.indexOf(focal)] : undefined;
     const webLeaves = leaves.map(({ rect: leafRect, index }) => ({ element: cloneElements[index], rect: leafRect }));
-    return { clone, rect, ink, control, webLeaves, webFocal, webChrome, ...mountPaintCopy([clone, ...webChrome], backdrop) };
+    return { clone, rect, ink, control, webLeaves, webFocal, webChrome, webAtmosphere,
+        ...mountPaintCopy(webAtmosphere ? [webAtmosphere, clone, ...webChrome] : [clone, ...webChrome], backdrop) };
 }

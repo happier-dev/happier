@@ -84,6 +84,7 @@ export type WorkflowPanelProps = Readonly<{
     warmStepMotion?: boolean;
     presentation?: WorkflowPanelPresentation;
     onColumnLayout?: (event: LayoutChangeEvent) => void;
+    webAtmosphere?: () => HTMLElement | undefined;
     /**
      * One trailing control at the pane's bottom right (the signed-out Updates entry): the end of
      * the welcome help row, and a row of its own under every later step, so it never floats over
@@ -304,6 +305,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                                 <StepMotionLayer
                                     layerKey={FIRST_RUN_WORKFLOW_LAYER}
                                     webChrome={readWebChrome}
+                                    webAtmosphere={props.webAtmosphere}
                                     active={focused}
                                     warmOnMount={props.warmStepMotion}
                                     backTestID={UNAUTH_BACK_TEST_ID}
@@ -330,6 +332,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                             <StepMotionLayer
                                 layerKey={FIRST_RUN_WORKFLOW_LAYER}
                                 webChrome={readWebChrome}
+                                webAtmosphere={props.webAtmosphere}
                                 active={focused}
                                 warmOnMount={props.warmStepMotion}
                                 backTestID={UNAUTH_BACK_TEST_ID}
@@ -374,6 +377,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                         <StepMotionLayer
                             layerKey={FIRST_RUN_WORKFLOW_LAYER}
                             webChrome={readWebChrome}
+                            webAtmosphere={props.webAtmosphere}
                             active={focused}
                             warmOnMount={props.warmStepMotion}
                             backTestID={UNAUTH_BACK_TEST_ID}

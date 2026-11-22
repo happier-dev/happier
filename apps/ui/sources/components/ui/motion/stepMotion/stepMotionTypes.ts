@@ -31,6 +31,7 @@ export type StepFreeze = Readonly<{
     rect: WindowFlightRect;
     clone?: HTMLElement;
     webBackdrop?: HTMLElement;
+    webAtmosphere?: HTMLElement;
     image?: SkImage;
     ink?: GlyphInkMap;
     control?: HTMLElement | null;
@@ -48,6 +49,7 @@ export type StepMotionLayerHandle = Readonly<{
     webElement: () => HTMLElement | null;
     /** The shell chrome that leaves with a step; `shell` adds what stays across steps, which the opening also builds. */
     webChrome?: (scope?: 'shell') => readonly HTMLElement[];
+    webAtmosphere?: () => HTMLElement | undefined;
     nativeElement: () => View | null;
     focal: (returnTo?: string) => FocusReturnTarget;
     paintOpacity: (values: readonly number[], durationMs: number, delayMs: number) => () => void;

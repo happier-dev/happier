@@ -33,6 +33,7 @@ type PendingMove = {
     cancelled: boolean;
     layoutReady: boolean;
     homePaintFrame?: number;
+    beforeAuth?: boolean;
 };
 type StagePaint = Readonly<{
     animation: StepAnimation;
@@ -103,7 +104,7 @@ function createStepMotionStage(
     let pending: PendingMove | null = null;
     let active: { layer: string; animation?: StepAnimation; endpoints?: StepEndpoints; openingInput?: OpeningInput; stop: () => void } | null = null;
     let commitOrder = 0;
-    let glyphReady = false;
+    let glyphRenderer: GlyphSurfaceReadiness | null = null;
     let buildPrepared = false;
     let reportBuildReady: ((ready: boolean) => void) | undefined;
     let presentation: StepMotionPresentation | null = null;
@@ -112,7 +113,7 @@ function createStepMotionStage(
     function syncPresentation() {
         const firstRunMounted = Array.from(layers).some(layer => layer.warmOnMount);
         if (!pending && !active?.animation && !firstRunMounted && !buildPrepared) {
-            glyphReady = false;
+            glyphRenderer = null;
             requestRenderer(false);
         }
         if (firstRunMounted || active || pending) {
@@ -198,7 +199,7 @@ function createStepMotionStage(
         const incoming = layerRect(layer);
         const duration = presentation?.stepAnimationDuration(animation);
         if (!presentation || !incoming || incoming.width <= 0 || incoming.height <= 0 || !duration ||
-            (animation.grammar !== 'opening' && !glyphReady)) {
+            (animation.grammar !== 'opening' && glyphRenderer !== 'ready')) {
             showIncoming(layer, true, complete, freeze);
             return;
         }
@@ -358,6 +359,7 @@ function createStepMotionStage(
                 paintOutgoingWeb(freeze.clone, freeze.rect, freeze.webLeaves ?? [], freeze.control,
                     animation.grammar === 'morph' ? undefined : releaseFreeze);
                 for (const chrome of freeze.webChrome ?? []) animate(chrome, frames.map(frame => ({ opacity: frame.chrome })));
+                if (freeze.webAtmosphere) animate(freeze.webAtmosphere, frames.map(frame => ({ opacity: frame.leave })));
                 const backdrop = freeze.webBackdrop;
                 const pageInk = backdrop && inkFor(page);
                 if (backdrop && pageInk) {
@@ -562,7 +564,7 @@ function createStepMotionStage(
 
     return {
         attach(layer: StepMotionLayerHandle) {
-            if (layer.warmOnMount && !glyphReady && !readReducedMotionPreference()) warm();
+            if (layer.warmOnMount && glyphRenderer !== 'ready' && !readReducedMotionPreference()) warm();
             layers.add(layer);
             syncPresentation();
             return () => {
@@ -624,8 +626,8 @@ function createStepMotionStage(
             pressed = null;
         },
         glyphReadiness(readiness: GlyphSurfaceReadiness) {
-            glyphReady = readiness === 'ready';
-            if (!glyphReady && active?.animation) settle();
+            glyphRenderer = readiness;
+            if (readiness === 'still' && active?.animation) settle();
         },
         loadPresentation(loaded: StepMotionPresentation) {
             presentation = loaded;
@@ -633,7 +635,7 @@ function createStepMotionStage(
         },
         prepareBuild(onReady?: (ready: boolean) => void) {
             buildPrepared = true;
-            glyphReady = false;
+            glyphRenderer = null;
             prepareOpeningRenderer(true);
             reportBuildReady = onReady;
             onReady?.(presentation !== null);
@@ -645,8 +647,31 @@ function createStepMotionStage(
                 syncPresentation();
             };
         },
-        isBuildReady: () => buildPrepared ? presentation !== null : glyphReady,
-        run<T>(move: StepMove<T>): T {
+        isBuildReady: () => buildPrepared ? presentation !== null : glyphRenderer === 'ready',
+        holdHomeArrival(): (() => void) | undefined {
+            if (Platform.OS !== 'web' || pending?.kind === 'home') return;
+            this.run({ kind: 'home', layer: 'workflow', commit: () => {} }, true);
+            const held = pending as PendingMove | null;
+            if (!held?.freeze?.webBackdrop) {
+                if (held?.kind === 'home') settle();
+                return;
+            }
+            held.beforeAuth = true;
+            return () => { if (pending === held) settle(); };
+        },
+        cancelHomeArrival() {
+            if (pending?.beforeAuth) settle();
+        },
+        run<T>(move: StepMove<T>, captureBeforeAdoption = false): T {
+            if (move.kind === 'home' && pending?.beforeAuth) {
+                if (move.onSettled) pending.complete = move.onSettled;
+                try {
+                    return move.commit();
+                } catch (error) {
+                    settle();
+                    throw error;
+                }
+            }
             // New notice content joins an already-moving destination through its paint observer.
             if (move.kind === 'notice' && (pending || (active && active.layer !== move.layer))) {
                 const result = move.commit();
@@ -687,7 +712,10 @@ function createStepMotionStage(
             }
             const reduced = readReducedMotionPreference();
             if (!reduced) warm();
-            const still = reduced || !glyphReady;
+            // Capture the outgoing ink before adoption. A pending renderer can
+            // finish warming while Home loads; showAnimated checks it at hand-off.
+            const rendererPendingForHome = captureBeforeAdoption && glyphRenderer === null;
+            const still = reduced || (glyphRenderer !== 'ready' && !rendererPendingForHome);
             const grammar = (!still ? reverse?.grammar : undefined)
                 ?? presentation?.resolveMoveGrammar({ ...move, reduced: still, compact: outgoing.compact })
                 ?? 'fade';
@@ -728,7 +756,7 @@ function createStepMotionStage(
             const reduced = readReducedMotionPreference();
             if (!reduced) warm();
             return new Promise(resolve => {
-                if (reduced || (build.choreography === 'opening' ? !presentation : !glyphReady)) {
+                if (reduced || (build.choreography === 'opening' ? !presentation : glyphRenderer !== 'ready')) {
                     showIncoming(layer, true, resolve);
                     return;
                 }
@@ -820,6 +848,14 @@ export function StepMotionStage({ children }: React.PropsWithChildren) {
 
 export function revealHomeRetryAfterPaint() {
     rootStage?.revealHomeRetry();
+}
+
+export function holdFirstArrivalStep(): (() => void) | undefined {
+    return rootStage?.holdHomeArrival();
+}
+
+export function cancelFirstArrivalStep(): void {
+    rootStage?.cancelHomeArrival();
 }
 
 export function useStepMotionStage() {

@@ -14,7 +14,7 @@ import { isHomeArrivalMotionPending } from '@/components/hub/homeArrival';
 
 import { StepEntranceBody } from './StepEntranceBody';
 import { StepMotionLayer } from './StepMotionLayer';
-import { playBuild, runStepMove, skipStepMotion, StepMotionStage } from './StepMotionStage';
+import { holdFirstArrivalStep, playBuild, runStepMove, skipStepMotion, StepMotionStage } from './StepMotionStage';
 import { stepMotionTiming } from './stepMotionTiming';
 import { useStepFocal } from './useStepFocal';
 
@@ -22,6 +22,8 @@ const desktopEvents = vi.hoisted(() => new Map<string, () => void>());
 let stageScene: GlyphSurfaceProps['scene'] = [];
 let homePaint: GlyphSurfaceProps | undefined;
 let stageMotion: GlyphSurfaceProps['motion'];
+let stageRendererWaiting = false;
+let reportStageRendererReady: (() => void) | undefined;
 let countStageFrame: (() => void) | null = null;
 const paintStageFrame = () => countStageFrame?.();
 
@@ -47,7 +49,13 @@ vi.mock('@/components/atmosphere/glyph/GlyphSurface', () => ({
     GlyphSurface: (props: GlyphSurfaceProps) => {
         const { onReady, scene, motion, testID } = props;
         useGlyphClock(motion ?? null, countStageFrame && testID === 'step-motion-glyphs' ? 'ready' : null, paintStageFrame);
-        React.useEffect(() => { onReady?.('ready'); }, [onReady]);
+        React.useEffect(() => {
+            if (testID === 'step-motion-glyphs' && stageRendererWaiting) {
+                reportStageRendererReady = () => onReady?.('ready');
+                return;
+            }
+            onReady?.('ready');
+        }, [onReady, testID]);
         React.useEffect(() => {
             if (testID === 'home-planet') homePaint = props;
             else { stageScene = scene; stageMotion = motion; }
@@ -490,7 +498,7 @@ it('moves between retained standalone routes and restores the opener through the
     }
 });
 
-it('captures the approved step for one Home landing and holds the tour until the move settles', async () => {
+it('captures the approved step before the renderer is ready and dissolves it when Home paints', async () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     setReducedMotionPreferenceOverride(false);
     const previousAnimate = HTMLElement.prototype.animate;
@@ -532,29 +540,49 @@ it('captures the approved step for one Home landing and holds the tour until the
     });
     observer.observe(document.body, { childList: true });
     const applyHome = vi.fn();
+    let wordmark: HTMLElement | null = null;
+    let atmosphere: HTMLElement | undefined;
+    let land: () => void;
     let presentHome: () => void;
+    const webChrome = (scope?: 'shell') => scope === 'shell' && wordmark ? [wordmark] : [];
+    const webAtmosphere = () => atmosphere;
     function Journey() {
         const [signedIn, setSignedIn] = React.useState(false);
         const [home, setHome] = React.useState(false);
+        const [adopting, setAdopting] = React.useState(false);
+        land = () => resolvePostAuthLanding({ replace: href => {
+            applyHome(href);
+            setSignedIn(true);
+        } });
         presentHome = () => setHome(true);
         return <StepMotionStage>{signedIn ? (
             <main>{home ? <StepMotionLayer key="home" layerKey="home" warmOnMount={false}><h1>Home</h1></StepMotionLayer> : 'Loading Home'}</main>
         ) : (
-            <StepMotionLayer key="workflow" layerKey="workflow"><button onClick={() => {
-                resolvePostAuthLanding({ replace: href => {
-                    applyHome(href);
-                    setSignedIn(true);
-                } });
-            }}>Approved</button></StepMotionLayer>
+            <section>
+                <div ref={node => { atmosphere = node ?? undefined; }}>Planet</div>
+                <header ref={node => { wordmark = node; }}>Happier</header>
+                <StepMotionLayer layerKey="workflow" webChrome={webChrome} webAtmosphere={webAtmosphere}>
+                    <button onClick={() => {
+                        holdFirstArrivalStep();
+                        setAdopting(true);
+                    }}>{adopting ? 'First time here' : 'Approved'}</button>
+                </StepMotionLayer>
+            </section>
         )}</StepMotionStage>;
     }
     try {
+        stageRendererWaiting = true;
         await act(async () => root.render(<Journey />));
         await act(async () => { await vi.dynamicImportSettled(); });
         await act(async () => container.querySelector('button')!.click());
         const copy = document.body.querySelector<HTMLElement>('[aria-hidden="true"][style*="position: fixed"]');
         expect(copy?.isConnected).toBe(true);
         expect(copy?.style.backgroundColor).toBeTruthy();
+        expect(copy?.textContent).toContain('Happier');
+        expect(copy?.textContent).toContain('Planet');
+        expect(copy?.textContent).toContain('Approved');
+        expect(container.querySelector('button')?.textContent).toBe('First time here');
+        await act(async () => land());
         expect(copies).toEqual([copy]);
         expect(applyHome).toHaveBeenCalledTimes(1);
         expect(isHomeArrivalMotionPending()).toBe(true);
@@ -567,9 +595,11 @@ it('captures the approved step for one Home landing and holds the tour until the
         await paintFrame();
         expect(frozenEffects).toHaveLength(0);
         expect(copy?.isConnected).toBe(true);
+        assert(reportStageRendererReady, 'The renderer starts warming while the workflow is mounted');
+        await act(async () => reportStageRendererReady?.());
         await paintFrame();
-        expect(frozenEffects).toHaveLength(1);
-        const [dissolve] = frozenEffects;
+        const dissolve = frozenEffects.find(effect => effect.frames.some(frame => frame.clipPath));
+        assert(dissolve, 'The backed step leaves through the digit dissolve');
         expect(dissolve.frames[0]?.opacity).toBe(1);
         expect(dissolve.frames.at(-1)?.opacity).toBe(0);
         expect(dissolve.duration).toBeLessThan(1_050);
@@ -582,6 +612,8 @@ it('captures the approved step for one Home landing and holds the tour until the
         await act(async () => skipStepMotion());
         expect(isHomeArrivalMotionPending()).toBe(false);
     } finally {
+        stageRendererWaiting = false;
+        reportStageRendererReady = undefined;
         observer.disconnect();
         await act(async () => root.unmount());
         container.remove();

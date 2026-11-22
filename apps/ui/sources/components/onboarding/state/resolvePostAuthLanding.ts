@@ -1,6 +1,6 @@
 import type { Href } from 'expo-router';
 
-import { runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
+import { cancelFirstArrivalStep, runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { setHomeArrivalMotionPending } from '@/components/hub/homeArrival';
 import { getDeviceType } from '@/utils/platform/responsive';
 import { tryAdmitInternalRouteHref } from '@/utils/path/routeUtils';
@@ -29,6 +29,7 @@ export function resolvePostAuthLanding(input: Readonly<{
     if (target === null && input.continuation !== undefined) target = input.continuation;
     if (target === null && typeof input.returnTo === 'string') target = tryAdmitInternalRouteHref(input.returnTo);
     if (target && target !== '/') {
+        cancelFirstArrivalStep();
         input.replace(target);
         return;
     }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useFirstRunRouteMove } from '@/components/ui/motion/stepMotion/StepMotionLayer';
+import { useFirstRunRouteMove, useFirstRunWorkflowMotion } from '@/components/ui/motion/stepMotion/StepMotionLayer';
 import { Platform, View, ScrollView } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -27,6 +27,7 @@ import { RequesterCodeCard } from './RequesterCodeCard';
 import { PairingLinkDisclosure } from '@/components/auth/pairing/PairingLinkDisclosure';
 import type { HomeQrEntryIntent } from '@/auth/pairing/homeQrEntryIntent';
 import { openEnrolledHomeOrReturnToShell } from '@/auth/pairing/openEnrolledHome';
+import { cancelFirstArrivalStep, holdFirstArrivalStep } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { useAuth } from '@/auth/context/AuthContext';
 import { resolveHomeAuthenticationTarget } from '@/auth/flows/resolveHomeAuthenticationTarget';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
@@ -213,12 +214,34 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
     const styles = stylesheet;
     const router = useRouter();
     const moveToRoute = useFirstRunRouteMove();
+    const firstRun = useFirstRunWorkflowMotion();
     const auth = useAuth();
     const params = useLocalSearchParams() as Readonly<Record<string, string | string[] | undefined>>;
     const [providerResetEnabled, setProviderResetEnabled] = useState(false);
     const embedded = props.embedded === true;
     const canOpenScanner = typeof props.onOpenScanQr === 'function' && canUseCurrentDeviceQrScanner();
-    const reversePairing = useReversePairingSession({ enabled: true, targetProfileId: props.targetProfileId ?? null });
+    const approvalPaint = React.useRef<((release?: () => void) => void) | null>(null);
+    const beforeAdoption = React.useCallback((signal: AbortSignal) => {
+        return new Promise<(() => void) | undefined>(resolve => {
+            if (signal.aborted || document.hidden) return resolve(undefined);
+            const abandon = () => finish();
+            const onVisibility = () => { if (document.hidden) abandon(); };
+            const finish = (release?: () => void) => {
+                approvalPaint.current = null;
+                document.removeEventListener('visibilitychange', onVisibility);
+                signal.removeEventListener('abort', abandon);
+                resolve(release);
+            };
+            approvalPaint.current = finish;
+            document.addEventListener('visibilitychange', onVisibility);
+            signal.addEventListener('abort', abandon, { once: true });
+        });
+    }, []);
+    const reversePairing = useReversePairingSession({
+        enabled: true,
+        targetProfileId: props.targetProfileId ?? null,
+        beforeAdoption: firstRun && Platform.OS === 'web' && props.entryIntent === 'enter_home' ? beforeAdoption : undefined,
+    });
     const pairing = reversePairing.presentation;
     const [shellNavigationRequested, setShellNavigationRequested] = React.useState(false);
     const [setupCompletedProfileId, setSetupCompletedProfileId] = React.useState<string | null>(null);
@@ -238,6 +261,12 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
     }, [approvedCode]);
     const approvalVisible = approvedCode !== null;
     const canLeaveApproved = !approvalVisible || approvedCode === settledCode;
+    React.useLayoutEffect(() => {
+        if (pairing.phase === 'adding' && canLeaveApproved && approvalPaint.current) {
+            approvalPaint.current(holdFirstArrivalStep());
+        }
+    }, [canLeaveApproved, pairing.phase]);
+    React.useLayoutEffect(() => () => approvalPaint.current?.(), []);
     const openGenerationRef = React.useRef(0);
     const handledProfileIdRef = React.useRef<string | null>(null);
     const presentation = resolveHomeEnrollmentPresentation({
@@ -293,11 +322,12 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
             isCurrent: () => openGenerationRef.current === generation,
             refreshAuth: auth.refreshFromActiveServer,
         }).then((result) => {
+            if (result !== 'opened' && firstRun) cancelFirstArrivalStep();
             if (result !== 'cancelled' && openGenerationRef.current === generation) {
                 setShellNavigationRequested(true);
             }
         });
-    }, [auth.refreshFromActiveServer, canLeaveApproved, pairing, props.entryIntent, requiresComputerSetup]);
+    }, [auth.refreshFromActiveServer, canLeaveApproved, firstRun, pairing, props.entryIntent, requiresComputerSetup]);
 
     React.useEffect(() => {
         if (!shellNavigationRequested || claimOwnsNavigation) return;

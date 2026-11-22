@@ -34,6 +34,8 @@ export type GlyphSurfaceProps = Readonly<{
     onPaint?: () => void;
     /** The displayed browser backing store is readable during this paint turn. */
     onWebPaint?: (canvas: HTMLCanvasElement | null) => void;
+    /** The browser motion stage can copy this surface's last composited frame. */
+    copyLastWebFrame?: boolean;
     /** Records a native picture with glyphs between any host-owned vector layers. */
     composePicture?: (drawGlyphs: (canvas: SkCanvas) => void, previous: SkPicture | null) => SkPicture;
     /** Draws a frame when a composed moment also owns cover and handoff timing. */

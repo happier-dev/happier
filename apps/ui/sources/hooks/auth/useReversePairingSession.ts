@@ -49,7 +49,11 @@ function isTransientStatus(status: number): boolean {
 }
 
 /** Owns one credentialless, known-target requester-displayed QR lifecycle in memory. */
-export function useReversePairingSession(params: Readonly<{ enabled: boolean; targetProfileId: string | null }>): Readonly<{
+export function useReversePairingSession(params: Readonly<{
+    enabled: boolean;
+    targetProfileId: string | null;
+    beforeAdoption?: (signal: AbortSignal) => Promise<(() => void) | undefined>;
+}>): Readonly<{
     presentation: ReversePairingPresentation;
     canCancel: boolean;
     canRetryRetainedHome: boolean;
@@ -131,6 +135,8 @@ export function useReversePairingSession(params: Readonly<{ enabled: boolean; ta
         attemptRef.current = attempt;
         setPresentation({ phase: 'generating' });
 
+        let releasePresentation: (() => void) | undefined;
+        let adopted = false;
         try {
             // Resolve only the caller-selected stored Home. Ambient focus and fallback profiles
             // are deliberately not enrollment authority.
@@ -281,6 +287,10 @@ export function useReversePairingSession(params: Readonly<{ enabled: boolean; ta
             // local commit boundary.
             attempt.authorityClaimed = true;
             publish(attempt, { phase: 'adding', descriptor, expiresAtMs: material.invite.expiresAtMs });
+            if (attempt.presentationAttached && params.beforeAdoption) {
+                releasePresentation = await params.beforeAdoption(signal);
+                if (!isCurrent(attempt)) return;
+            }
             let adoptionDescriptor = descriptor;
             if (admission.requiresAuthenticatedObservation) {
                 const observation = await observeAuthenticatedServerFeaturesFresh({
@@ -306,6 +316,7 @@ export function useReversePairingSession(params: Readonly<{ enabled: boolean; ta
                     shouldCancel: () => !isCurrent(attempt!),
                 });
                 adoptedProfileId = adoptedProfile.id;
+                adopted = true;
             } catch (error) {
                 if (!isCurrent(attempt)) return;
                 if (error instanceof HomeProfileAdoptionPartialCommitError && error.canRetry) {
@@ -340,9 +351,10 @@ export function useReversePairingSession(params: Readonly<{ enabled: boolean; ta
                 partialCommit: null,
             });
         } finally {
+            if (!adopted || !attempt.presentationAttached) releasePresentation?.();
             await retire(attempt);
         }
-    }, [isCurrent, params.enabled, params.targetProfileId, publish, retire]);
+    }, [isCurrent, params.beforeAdoption, params.enabled, params.targetProfileId, publish, retire]);
 
     React.useEffect(() => {
         if (!params.enabled || startedRef.current) return;

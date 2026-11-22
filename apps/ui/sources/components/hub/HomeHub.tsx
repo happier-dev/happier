@@ -535,9 +535,22 @@ const HomeHubContent = React.memo(function HomeHubContent() {
     const homeCovered = usePersonalHomeBootstrapCovered();
     const firstArrival = useHomeGlyphArrival();
     const arrivalPresented = focused && presented && !homeCovered;
-    const readyForArrival = arrivalPresented && !homeUnavailable && !homeLoading
+    const readyForArrival = arrivalPresented && firstArrival === null && !homeUnavailable && !homeLoading
         && (guidanceIsHome || layout.hasSnapshot);
-    React.useLayoutEffect(() => readyForArrival ? presentReadyHome() : undefined, [readyForArrival]);
+    React.useLayoutEffect(() => {
+        if (!readyForArrival) return;
+        if (Platform.OS !== 'web') return presentReadyHome();
+        let withdraw: (() => void) | undefined;
+        // The compact tour sheet blurs Home immediately. Let the settled Home
+        // reach the screen before making it eligible for the sheet.
+        let frame = requestAnimationFrame(() => {
+            frame = requestAnimationFrame(() => { withdraw = presentReadyHome(); });
+        });
+        return () => {
+            cancelAnimationFrame(frame);
+            withdraw?.();
+        };
+    }, [readyForArrival]);
     const momentTarget = React.useMemo(() => resolveHomeMomentTarget({
         guidanceKind: guidance.kind, heroActive, planetSource, pane: planetPane,
         layer: planetGeometry ? planetGlyphLayer({ geometry: planetGeometry, intensity: planetIntensity, digits: planetDigits, soft: phone,

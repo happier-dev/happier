@@ -15,7 +15,7 @@ import { InboxSummaryProvider } from '@/hooks/inbox/useInboxSummary';
 import { StepMotionStage } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { StepMotionLayer } from '@/components/ui/motion/stepMotion/StepMotionLayer';
 import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
-import { isHomeArrivalMotionPending } from '@/components/hub/homeArrival';
+import { isHomeArrivalMotionPending, isHomeArrivalSettled } from '@/components/hub/homeArrival';
 
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -276,10 +276,12 @@ describe('Home Loading at the RN-web layout boundary', () => {
         }
         await act(async () => read.resolve());
         await flushHookEffects({ cycles: 20, turns: 2 });
+        expect(isHomeArrivalSettled()).toBe(false);
         await deliverLayout();
         await frames(1600, observe);
         expect(assemblyShown).toBe(delay > 250);
         expect(find('home-hub.loading')).toBeNull();
         expect(find('loading-planet')).toBeNull();
+        expect(isHomeArrivalSettled()).toBe(true);
     });
 });

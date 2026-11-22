@@ -20,6 +20,7 @@ export type StepMotionLayerProps = React.PropsWithChildren<Readonly<{
     testID?: string;
     backTestID?: string;
     webChrome?: StepMotionLayerHandle['webChrome'];
+    webAtmosphere?: StepMotionLayerHandle['webAtmosphere'];
     retainContent?: boolean;
     warmOnMount?: boolean;
     shareFocalWithParent?: boolean;
@@ -90,7 +91,7 @@ export function StepMotionLayer(props: StepMotionLayerProps) {
         if (Platform.OS === 'web' && typeof HTMLElement !== 'undefined' && root.current instanceof HTMLElement) return root.current;
         return null;
     }, []);
-    const { layerKey, backTestID, compact = false, warmOnMount = true, webChrome } = props;
+    const { layerKey, backTestID, compact = false, warmOnMount = true, webChrome, webAtmosphere } = props;
     const layer = React.useMemo<StepMotionLayerHandle>(() => ({
         key: layerKey,
         backTestID,
@@ -98,6 +99,7 @@ export function StepMotionLayer(props: StepMotionLayerProps) {
         warmOnMount,
         webElement,
         webChrome,
+        webAtmosphere,
         nativeElement: () => root.current,
         focal(returnTo) {
             const web = webElement();
@@ -158,7 +160,7 @@ export function StepMotionLayer(props: StepMotionLayerProps) {
                 clock.setValue(1);
             };
         },
-    }), [layerKey, backTestID, compact, entrance, fadeOpacity, focals, warmOnMount, webChrome, webElement]);
+    }), [layerKey, backTestID, compact, entrance, fadeOpacity, focals, warmOnMount, webAtmosphere, webChrome, webElement]);
     React.useLayoutEffect(() => active ? stage?.attach(layer) : undefined, [active, stage, layer]);
     React.useLayoutEffect(() => {
         if (active) stage?.commit(layer, !wasActive.current);

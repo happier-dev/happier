@@ -172,6 +172,7 @@ export const WelcomeAtmosphere = React.memo(function WelcomeAtmosphere(
         <GlyphSurface
           width={pane.width}
           height={pane.height}
+          copyLastWebFrame
           scene={scene}
           theme={theme.dark ? 'dark' : 'light'}
           motion={motion}

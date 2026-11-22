@@ -3,7 +3,7 @@ import { StyleSheet, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { createGlyphFrameSampler } from '@happier-dev/brand/glyph-scene';
 
-import { releaseCanvasBackingStore } from '@/components/ui/media/canvasBackingStore';
+import { registerWebCanvasReplay, releaseCanvasBackingStore } from '@/components/ui/media/canvasBackingStore';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 
 import { useGlyphClock } from '../moments/useMomentClock';
@@ -34,7 +34,7 @@ export function warmGlyphSurface(): GlyphSurfaceWarmup {
 }
 
 export const GlyphSurface = React.memo(function GlyphSurface({
-    width, height, scene, motion = null, theme: themeOverride, cell, pixelRatio, style, testID, onReady, onPaint, onWebPaint, drawAtRef, warmWhenHidden, warmup, viewport, digitCadence,
+    width, height, scene, motion = null, theme: themeOverride, cell, pixelRatio, style, testID, onReady, onPaint, onWebPaint, drawAtRef, warmWhenHidden, warmup, viewport, digitCadence, copyLastWebFrame,
 }: GlyphSurfaceProps) {
     const { theme: appTheme } = useUnistyles();
     const theme = themeOverride ?? (appTheme.dark ? 'dark' : 'light');
@@ -93,6 +93,18 @@ export const GlyphSurface = React.memo(function GlyphSurface({
 
     const readiness = reduced && ready ? 'still' : ready;
     const paintedStatus = React.useRef<GlyphSurfaceReadiness | null>(null);
+    const lastWebFrame = React.useRef<ReturnType<ReturnType<typeof createGlyphFrameSampler>> | null>(null);
+    React.useLayoutEffect(() => {
+        if (!copyLastWebFrame || !webgl.current) return;
+        const unregister = registerWebCanvasReplay(webgl.current, () => {
+            const state = prepared.current;
+            if (state && lastWebFrame.current) state.painter.paint(lastWebFrame.current, state.atlas);
+        });
+        return () => {
+            unregister();
+            lastWebFrame.current = null;
+        };
+    }, [copyLastWebFrame, dpr, cellH, cellW]);
     const paint = React.useCallback((seconds: number, digitSeconds = 0) => {
         const state = prepared.current;
         const canvas = webgl.current;
@@ -103,6 +115,7 @@ export const GlyphSurface = React.memo(function GlyphSurface({
         let target: HTMLCanvasElement | null = null;
         if (state) {
             const frame = sample({ view: { w: width, h: height }, dpr, theme, layers, cell: [cellW, cellH] }, { time: seconds });
+            if (copyLastWebFrame) lastWebFrame.current = frame;
             target = state.painter.ready ? canvas : staticCanvas;
             if (target.width !== pixelWidth) target.width = pixelWidth;
             if (target.height !== pixelHeight) target.height = pixelHeight;
@@ -118,7 +131,7 @@ export const GlyphSurface = React.memo(function GlyphSurface({
             onReadyRef.current?.(readiness);
         }
         onPaint?.();
-    }, [cellH, cellW, dpr, height, onPaint, onWebPaint, pixelHeight, pixelWidth, readiness, sample, scene, theme, width]);
+    }, [cellH, cellW, copyLastWebFrame, dpr, height, onPaint, onWebPaint, pixelHeight, pixelWidth, readiness, sample, scene, theme, width]);
     React.useImperativeHandle(drawAtRef, () => readiness ? paint : (() => {}), [paint, readiness]);
     useGlyphClock(motion, readiness, paint, warmWhenHidden, viewport, digitCadence);
 

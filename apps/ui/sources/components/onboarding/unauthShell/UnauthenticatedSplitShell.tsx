@@ -70,6 +70,12 @@ export const UnauthenticatedSplitShell = React.memo(function UnauthenticatedSpli
     const layout = useUnauthShellLayout(props.frameWidth);
     const compact = layout === 'compact';
     const fieldHost = React.useRef<View | null>(null);
+    const readWebAtmosphere = React.useCallback(() => {
+        const root = fieldHost.current;
+        return typeof HTMLElement !== 'undefined' && root instanceof HTMLElement
+            ? root.querySelector<HTMLElement>('[data-testid="welcome-atmosphere"]') ?? undefined
+            : undefined;
+    }, []);
     const { tap, onTouchEnd } = useGlyphFieldTap(fieldHost);
     const [quietColumn, setQuietColumn] = React.useState<Readonly<{ x: number; width: number }> | null>(null);
     const onColumnLayout = React.useCallback((event: LayoutChangeEvent) => {
@@ -100,6 +106,7 @@ export const UnauthenticatedSplitShell = React.memo(function UnauthenticatedSpli
                 warmStepMotion={props.warmStepMotion}
                 presentation={presentation}
                 onColumnLayout={measureColumn ? onColumnLayout : undefined}
+                webAtmosphere={readWebAtmosphere}
                 footerAccessory={props.footerAccessory}
             >
                 {/*

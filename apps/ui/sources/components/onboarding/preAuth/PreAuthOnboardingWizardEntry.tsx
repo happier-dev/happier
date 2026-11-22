@@ -43,6 +43,7 @@ import {
 } from '@/components/settings/account/openAccountSecurityForHome';
 import { readWebServerEntry } from '@/sync/domains/server/serverProfiles';
 import { consumeWebServerUrlOverrideFromLocation } from '@/sync/domains/server/url/bootstrapActiveServerFromWebLocation';
+import { holdFirstArrivalStep } from '@/components/ui/motion/stepMotion/StepMotionStage';
 
 export type PreAuthOnboardingWizardEntryProps = Readonly<{
     testID?: string;
@@ -149,7 +150,19 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
     const continueWithHomeAuthentication = React.useCallback(async function continueWithHomeAuthentication(request: WelcomeAuthenticationMethod, context: WelcomeAuthenticationActionContext) {
         const outcome = await executeHomeAuthentication({
             request,
-            loginWithCredentials: auth.loginWithCredentials,
+            loginWithCredentials: request.execution.kind === 'generated_key'
+                ? async (credentials, options) => {
+                    const release = holdFirstArrivalStep();
+                    try {
+                        const result = await auth.loginWithCredentials(credentials, options);
+                        if (result.kind !== 'completed') release?.();
+                        return result;
+                    } catch (error) {
+                        release?.();
+                        throw error;
+                    }
+                }
+                : auth.loginWithCredentials,
             returnTo: resolveAuthReturnToRoute(),
             ...(authEntryOptions.homeTransport ? { transport: authEntryOptions.homeTransport } : {}),
             signal: context.signal,

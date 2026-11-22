@@ -1,4 +1,5 @@
 import { captureElementFlightRect } from '../rectFlight';
+import { copyWebCanvasPixels, releaseCanvasBackingStore } from '../../media/canvasBackingStore';
 import type { StepFreeze, StepMotionLayerHandle } from './stepMotionTypes';
 
 /** A paint-only copy of a web region, placed where the region stands. */
@@ -14,6 +15,8 @@ export function copyRegion(root: HTMLElement, rect: StepFreeze['rect']) {
     width: `${rect.width}px`,
     height: `${rect.height}px`,
   });
+  const canvasCopies = clone.querySelectorAll('canvas');
+  root.querySelectorAll('canvas').forEach((source, index) => copyWebCanvasPixels(source, canvasCopies[index]));
   return clone;
 }
 
@@ -39,7 +42,15 @@ export function mountPaintCopy(regions: readonly HTMLElement[], backdrop?: strin
       element.removeAttribute(key);
   }
   document.body.append(capture);
-  return { webBackdrop: backdrop ? capture : undefined, release: () => capture.remove() };
+  return { webBackdrop: backdrop ? capture : undefined, release: () => {
+    capture.querySelectorAll('canvas').forEach(canvas => releaseCanvasBackingStore(canvas));
+    capture.remove();
+  } };
+}
+
+export function copyStepAtmosphere(layer: StepMotionLayerHandle, backdrop?: string) {
+  const atmosphere = backdrop ? layer.webAtmosphere?.() : undefined;
+  return atmosphere ? copyRegion(atmosphere, captureElementFlightRect(atmosphere)) : undefined;
 }
 
 /**
@@ -52,13 +63,15 @@ export function copyStepLayer(layer: StepMotionLayerHandle, backdrop?: string): 
   const rect = captureElementFlightRect(root);
   if (rect.width <= 0 || rect.height <= 0) return null;
   const clone = copyRegion(root, rect);
-  const webChrome = (layer.webChrome?.() ?? []).map((region) =>
+  const webAtmosphere = copyStepAtmosphere(layer, backdrop);
+  const webChrome = (layer.webChrome?.(backdrop ? 'shell' : undefined) ?? []).map((region) =>
     copyRegion(region, captureElementFlightRect(region)),
   );
   return {
     clone,
     rect,
     webChrome,
-    ...mountPaintCopy([clone, ...webChrome], backdrop),
+    webAtmosphere,
+    ...mountPaintCopy(webAtmosphere ? [webAtmosphere, clone, ...webChrome] : [clone, ...webChrome], backdrop),
   };
 }

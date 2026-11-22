@@ -121,8 +121,8 @@ async function seedHome(connectionDescriptor: HomeConnectionDescriptorV1 = descr
     }
 }
 
-async function mount() {
-    return renderHook(() => useReversePairingSession({ enabled: true, targetProfileId: profileId }));
+async function mount(beforeAdoption?: (signal: AbortSignal) => Promise<(() => void) | undefined>) {
+    return renderHook(() => useReversePairingSession({ enabled: true, targetProfileId: profileId, beforeAdoption }));
 }
 
 function readyInvite(hook: Awaited<ReturnType<typeof mount>>): HomeQrInviteV2 {
@@ -267,6 +267,22 @@ describe('useReversePairingSession', () => {
         expect(profiles.getServerProfileById(profileId)?.name).toBe('Known Home');
         expect(profiles.getActiveServerSnapshot()).toEqual(focusBefore);
         expect(hook.getCurrent().presentation).toEqual({ phase: 'succeeded', descriptor, profileId });
+        await hook.unmount();
+    });
+
+    it('captures the settled Approved presentation before writing the Home credential', async () => {
+        let captureApproved: () => void = () => {};
+        const painted = new Promise<undefined>(resolve => { captureApproved = () => resolve(undefined); });
+        const hook = await mount(() => painted);
+        await vi.waitFor(() => expect(http.poll).toHaveBeenCalledOnce());
+        const invite = readyInvite(hook);
+        await act(async () => heldResponses[0]!.resolve(authorized(invite, 'known-home-token')));
+        await vi.waitFor(() => expect(hook.getCurrent().presentation.phase).toBe('adding'));
+        const readCredentials = () => TokenStorage.getCredentialsForServerUrl(descriptor.canonicalServerUrl, { serverId: descriptor.homeServerIdentityId });
+        await expect(readCredentials()).resolves.toBeNull();
+        await act(async () => captureApproved());
+        await vi.waitFor(() => expect(hook.getCurrent().presentation.phase).toBe('succeeded'));
+        await expect(readCredentials()).resolves.toEqual({ token: 'known-home-token' });
         await hook.unmount();
     });
 
