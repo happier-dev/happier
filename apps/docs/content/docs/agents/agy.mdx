@@ -14,7 +14,7 @@ composer, context-usage and account-switch validation is still in progress.
 
 ## Requirements and authentication
 
-Install the Antigravity CLI using the [official Antigravity CLI guide](https://antigravity.google/docs/cli/install), and make sure `agy` is available on `PATH` on the machine where Happier runs. Happier needs a CLI that includes the ACP server (Antigravity CLI 1.5.0 or newer); run `agy update` to upgrade an older install.
+For new native-login sessions, install the Antigravity CLI using the [official Antigravity CLI guide](https://antigravity.google/docs/cli/install), and make sure `agy` is available on `PATH` on the machine where Happier runs. Happier needs a CLI that includes the ACP server (Antigravity CLI 1.5.0 or newer); run `agy update` to upgrade an older install.
 
 `agy acp` uses the same Antigravity CLI login as the interactive `agy`, so if you already signed in there, sessions are ready to start. Otherwise run this on the machine where Happier runs:
 
@@ -55,7 +55,8 @@ static list.
 
 Native-login sessions created before Happier used `agy acp` belong to the pinned
 server. Happier keeps resuming them there with the pinned server's earlier login;
-new sessions start on `agy acp`. Resuming them also needs the `agy` CLI installed.
+new native-login sessions start on `agy acp`. The pinned server handles these older
+conversations without a separate `agy` CLI install.
 
 In development builds, choose the machine and project in the new-session composer
 to discover the available modes before launch. The chosen starting mode is applied
