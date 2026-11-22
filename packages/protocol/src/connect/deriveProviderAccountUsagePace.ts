@@ -206,36 +206,45 @@ function exceedsNonRenewingEntitlement(snapshot: ProviderAccountUsageSnapshotV1,
 
 /** Shared pace/reset comparability; cycle dates themselves are checked by the caller. */
 export function readProviderAccountUsageWindowComparabilityReason(input: Readonly<{ previous: ProviderAccountUsageSnapshotV1; current: ProviderAccountUsageSnapshotV1; meterId: string }>, operands = new ProviderAccountUsageDerivationOperands()): 'unknown_window' | 'entitlement_changed' | 'denominator_changed' | null {
-  const { previous, current, meterId } = input;
-  const before = previous.meters.find(value => value.meterId === meterId);
-  const after = current.meters.find(value => value.meterId === meterId);
-  if (previous.recordId !== current.recordId || !before || !after) return 'unknown_window';
-  const currentWindow = resolveProviderAccountUsagePaceWindow(current, meterId, operands);
-  if (currentWindow && exceedsNonRenewingEntitlement(current, currentWindow)) return 'entitlement_changed';
-  const previousFacts = operands.readSnapshot(previous);
-  const currentFacts = operands.readSnapshot(current);
-  const planLabelChanged = previousFacts.planLabel !== null && currentFacts.planLabel !== null
-    && previousFacts.planLabel !== currentFacts.planLabel;
-  if (planLabelChanged || previousFacts.status !== currentFacts.status
-    || previousFacts.renewal !== currentFacts.renewal) return 'entitlement_changed';
-  const previousPeriod = previous.subscription;
-  const currentPeriod = current.subscription;
-  if (previousFacts.periodStartAtMs !== currentFacts.periodStartAtMs || previousFacts.periodEndAtMs !== currentFacts.periodEndAtMs) {
-    const beforeWindow = resolveProviderAccountUsagePaceWindow(previous, meterId, operands);
-    const afterWindow = currentWindow;
-    const beforeIdentity = beforeWindow && deriveProviderAccountUsagePaceWindowIdentity(beforeWindow);
-    const afterIdentity = afterWindow && deriveProviderAccountUsagePaceWindowIdentity(afterWindow);
-    const alignedRollover = beforeIdentity && afterIdentity
-      && beforeIdentity.windowDurationMs === afterIdentity.windowDurationMs
-      && beforeIdentity.resetAtMs === afterIdentity.windowStartAtMs
-      && previousPeriod?.currentPeriodStartAtMs === beforeIdentity.windowStartAtMs
-      && previousPeriod?.currentPeriodEndAtMs === beforeIdentity.resetAtMs
-      && currentPeriod?.currentPeriodStartAtMs === afterIdentity.windowStartAtMs
-      && currentPeriod?.currentPeriodEndAtMs === afterIdentity.resetAtMs;
-    if (!alignedRollover) return 'entitlement_changed';
-  }
-  if (operands.readDenominator(before) !== operands.readDenominator(after)) return 'denominator_changed';
-  return null;
+  return compareWindowObservations(input.current, input.meterId, operands)(input.previous);
+}
+
+function compareWindowObservations(current: ProviderAccountUsageSnapshotV1, meterId: string, operands: ProviderAccountUsageDerivationOperands) {
+  // A missing label is neutral. Keep the first label actually supplied in this comparison.
+  let witnessedPlanLabel: string | null = null;
+  return (previous: ProviderAccountUsageSnapshotV1): 'unknown_window' | 'entitlement_changed' | 'denominator_changed' | null => {
+    const before = previous.meters.find(value => value.meterId === meterId);
+    const after = current.meters.find(value => value.meterId === meterId);
+    if (previous.recordId !== current.recordId || !before || !after) return 'unknown_window';
+    const currentWindow = resolveProviderAccountUsagePaceWindow(current, meterId, operands);
+    if (currentWindow && exceedsNonRenewingEntitlement(current, currentWindow)) return 'entitlement_changed';
+    const previousFacts = operands.readSnapshot(previous);
+    const currentFacts = operands.readSnapshot(current);
+    const observedLabel = witnessedPlanLabel ?? currentFacts.planLabel;
+    const planLabelChanged = previousFacts.planLabel !== null && observedLabel !== null
+      && previousFacts.planLabel !== observedLabel;
+    if (planLabelChanged || previousFacts.status !== currentFacts.status
+      || previousFacts.renewal !== currentFacts.renewal) return 'entitlement_changed';
+    const previousPeriod = previous.subscription;
+    const currentPeriod = current.subscription;
+    if (previousFacts.periodStartAtMs !== currentFacts.periodStartAtMs || previousFacts.periodEndAtMs !== currentFacts.periodEndAtMs) {
+      const beforeWindow = resolveProviderAccountUsagePaceWindow(previous, meterId, operands);
+      const afterWindow = currentWindow;
+      const beforeIdentity = beforeWindow && deriveProviderAccountUsagePaceWindowIdentity(beforeWindow);
+      const afterIdentity = afterWindow && deriveProviderAccountUsagePaceWindowIdentity(afterWindow);
+      const alignedRollover = beforeIdentity && afterIdentity
+        && beforeIdentity.windowDurationMs === afterIdentity.windowDurationMs
+        && beforeIdentity.resetAtMs === afterIdentity.windowStartAtMs
+        && previousPeriod?.currentPeriodStartAtMs === beforeIdentity.windowStartAtMs
+        && previousPeriod?.currentPeriodEndAtMs === beforeIdentity.resetAtMs
+        && currentPeriod?.currentPeriodStartAtMs === afterIdentity.windowStartAtMs
+        && currentPeriod?.currentPeriodEndAtMs === afterIdentity.resetAtMs;
+      if (!alignedRollover) return 'entitlement_changed';
+    }
+    if (operands.readDenominator(before) !== operands.readDenominator(after)) return 'denominator_changed';
+    witnessedPlanLabel = observedLabel ?? previousFacts.planLabel;
+    return null;
+  };
 }
 
 /** A ratio at the witnessed observation, not an assumed extrapolation to now. */
@@ -301,6 +310,7 @@ function deriveWitnessedPace(input: Readonly<{ snapshot: ProviderAccountUsageSna
   if (hasInconsistentCounters(meter)) return unavailable('inconsistent_counters');
   const rates = new Map<string, number>();
   const observedCurve = new Map<number, number>();
+  const compare = compareWindowObservations(snapshot, meterId, operands);
   for (const previous of input.history ?? []) {
     if (previous.recordId !== snapshot.recordId || previous.observedAtMs >= snapshot.observedAtMs || previous.observedAtMs < window.windowStartAtMs) continue;
     const previousMeter = previous.meters.find(value => value.meterId === meterId);
@@ -311,7 +321,7 @@ function deriveWitnessedPace(input: Readonly<{ snapshot: ProviderAccountUsageSna
     const windowIdentity = deriveProviderAccountUsagePaceWindowIdentity(window);
     const previousIdentity = previousWindow && deriveProviderAccountUsagePaceWindowIdentity(previousWindow);
     if (previousIdentity && previousIdentity.resetAtMs <= windowIdentity.windowStartAtMs && previous.observedAtMs <= previousIdentity.resetAtMs) continue;
-    const incompatible = readProviderAccountUsageWindowComparabilityReason({ previous, current: snapshot, meterId }, operands);
+    const incompatible = compare(previous);
     if (incompatible) return unavailable(incompatible);
     if (!previousWindow) return unavailable('unknown_window');
     if (!previousWindow || !sameProviderAccountUsagePaceWindow(previousWindow, window)) return unavailable('reset_changed');
@@ -348,8 +358,9 @@ export function deriveProviderAccountUsageUnusedCapacity(input: Readonly<{ histo
     const sorted = [...samples].sort((a, b) => a.observedAtMs - b.observedAtMs);
     const latest = sorted[sorted.length - 1]!;
     const insufficient = (reason: string) => ({ window, value: { status: 'insufficient_basis' as const, reason } });
+    const compare = compareWindowObservations(latest, window.meterId, operands);
     for (const previous of sorted.slice(0, -1)) {
-      const incompatible = readProviderAccountUsageWindowComparabilityReason({ previous, current: latest, meterId: window.meterId }, operands);
+      const incompatible = compare(previous);
       if (incompatible) return insufficient(incompatible);
     }
     const meter = latest.meters.find(value => value.meterId === window.meterId)!;
@@ -397,7 +408,8 @@ export function deriveProviderAccountUsageEarlierWindowCurves(input: Readonly<{ 
   for (const { window, samples } of [...groups.values()].sort((a, b) => b.window.resetAtMs - a.window.resetAtMs)) {
     const exclude = (reason: (typeof excluded)[number]['reason']) => { excluded.push({ window, reason }); };
     if (window.windowDurationMs !== currentWindow.windowDurationMs) { exclude('reset_changed'); continue; }
-    const incompatible = samples.map(previous => readProviderAccountUsageWindowComparabilityReason({ previous, current: input.current, meterId: input.meterId }, operands)).find(Boolean);
+    const compare = compareWindowObservations(input.current, input.meterId, operands);
+    const incompatible = samples.map(compare).find(Boolean);
     if (incompatible) { exclude(incompatible); continue; }
     const points = new Map<number, number>();
     let previous: number | undefined;

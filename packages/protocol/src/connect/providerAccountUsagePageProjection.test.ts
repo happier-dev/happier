@@ -24,6 +24,47 @@ const range = { startAtMs: 0, endAtMs: 1200 };
 const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
 
 describe('B page projection', () => {
+  it.each([
+    { labels: ['Pro', 'Basic', undefined], conflict: true },
+    { labels: [undefined, 'Pro', 'Basic'], conflict: true },
+    { labels: ['Pro', undefined, 'Basic'], conflict: true },
+    { labels: ['Pro', undefined, 'Pro'], conflict: false },
+    { labels: ['Pro', 'Pro', undefined], conflict: false },
+  ])('keeps the witnessed plan verdict with labels $labels', ({ labels, conflict }) => {
+    const dayMs = 86_400_000;
+    const snapshotAt = (day: number, used: number, planLabel: string | undefined, resetDay = 7) => {
+      const base = sample(day * dayMs, used);
+      return ProviderAccountUsageSnapshotV1Schema.parse({ ...base, planLabel,
+        meters: [{ ...base.meters[0], resetsAt: resetDay * dayMs, windowDurationMs: 7 * dayMs }] });
+    };
+    const snapshots = [10, 34, 40].map((used, i) => snapshotAt(i + 1, used, labels[i]));
+    const current = snapshots[2]!;
+    const source = { ref: { service: { pluginId: 'example.usage', localId: 'usage' }, accountId: 'account' }, bindingKind: 'account' as const };
+    const entries = { entries: snapshots.map((snapshot, i) => ({
+      id: String(i), observedAtMs: snapshot.observedAtMs, snapshot,
+    })), nextCursor: null };
+    const exact = projectProviderAccountUsageQuotaReadV1({ input: { source }, current,
+      recentHistory: entries, nowMs: current.observedAtMs });
+    const retained = projectProviderAccountUsageQuotaReadV1({ input: { source }, current,
+      daySummaries: snapshots.map(snapshot => buildProviderAccountUsageDaySummaryV1({
+        recordId: current.recordId, dayStartAtMs: snapshot.fetchedAtMs, snapshots: [snapshot],
+      })), nowMs: current.observedAtMs });
+    for (const projection of [exact, retained]) {
+      expect.soft(projection.pace).toMatchObject([{ meterId: 'week', value: conflict
+        ? { status: 'unavailable', reason: 'entitlement_changed' }
+        : { status: 'available', sampleCount: 3 } }]);
+    }
+    const next = snapshotAt(8, 10, undefined, 14);
+    const ended = projectProviderAccountUsageQuotaReadV1({ input: { source }, current: next,
+      history: entries, recentHistory: { entries: [], nextCursor: null }, nowMs: next.observedAtMs });
+    expect.soft(ended.unusedCapacity.windows).toMatchObject([{ value: conflict
+      ? { status: 'insufficient_basis', reason: 'entitlement_changed' }
+      : { status: 'available', sampleCount: 3 } }]);
+    expect(ended.pageFacts?.earlierCurves[0]?.value).toMatchObject(conflict
+      ? { status: 'available', curves: [], excluded: [{ reason: 'entitlement_changed' }] }
+      : { status: 'available', curves: [{ points: [{ usedFraction: 0.1 }, { usedFraction: 0.34 }, { usedFraction: 0.4 }] }], excluded: [] });
+  });
+
   it('joins retained and exact reset witnesses without dropping the next second or rounding display clocks', () => {
     const previous = sample(1100, 20, 2100);
     const current = sample(2200, 10, 3100);
