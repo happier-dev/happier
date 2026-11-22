@@ -561,7 +561,7 @@ export const AGENTS: ReadonlyArray<AgentRecord> = [
         vendorSetupGuide: 'https://opencode.ai/docs',
         happierDocsPath: '/agents/opencode',
         installKind: 'happier-managed-package',
-        managedSource: 'opencode-ai',
+        managedSource: '@opencode/cli',
         runtime: {
             localControl: { kind: 'provider-attach', topology: 'shared' },
             toolsDelivery: 'native-mcp',
@@ -583,7 +583,7 @@ export const AGENTS: ReadonlyArray<AgentRecord> = [
         faq: [
             {
                 q: 'Do I need OpenCode installed already?',
-                a: 'Not necessarily. Happier prefers the `opencode` on your PATH, and can install the `opencode-ai` package into its own directory if there is not one. Your own install is never replaced or upgraded behind your back.',
+                a: 'Not necessarily. Happier prefers the `opencode` on your PATH, and can install the `@opencode/cli` package into its own directory if there is not one. Your own install is never replaced or upgraded behind your back.',
             },
             {
                 q: 'Does Happier change which provider OpenCode talks to?',
