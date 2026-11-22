@@ -16560,7 +16560,6 @@ settingsSession: {
     discardChangesDescription:
       "Tu as des modifications non enregistrées. Veux-tu vraiment les abandonner ?",
     deleteConfirm: ({ name }: { name: string }) => `Supprimer « ${name} » ?`,
-    deleteConfirmDescription: "Cette action est irréversible",
     noContent: "Aucun contenu",
     untitled: "Sans titre",
     titlePlaceholder: "Saisis un titre pour ton artefact",

@@ -84,7 +84,7 @@ export function useArtifactOperations(artifact: DecryptedArtifact | null, onDele
             }
         }
         const confirmed = dashboard ? await confirmDashboardDelete(name)
-            : await Modal.confirm(t('artifacts.deleteConfirm', { name }), t('artifacts.deleteConfirmDescription'), {
+            : await Modal.confirm(t('artifacts.deleteConfirm', { name }), t('approvals.irreversibleNote'), {
                 confirmText: t('artifacts.delete'), destructive: true,
             });
         if (!confirmed || !mounted.isCurrent()) return;

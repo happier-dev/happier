@@ -16686,7 +16686,6 @@ settingsSession: {
     discardChangesDescription:
       "Tienes cambios sin guardar. ¿Estás seguro de que quieres descartarlos?",
     deleteConfirm: ({ name }: { name: string }) => `¿Eliminar “${name}”?`,
-    deleteConfirmDescription: "Esta acción no se puede deshacer",
     noContent: "Sin contenido",
     untitled: "Sin título",
     titlePlaceholder: "Ingresa un título para tu artefacto",

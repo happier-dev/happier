@@ -20140,7 +20140,6 @@ const enArtifacts = {
   discardChangesDescription:
     'You have unsaved changes. Are you sure you want to discard them?',
   deleteConfirm: ({ name }: { name: string }) => `Delete “${name}”?`,
-  deleteConfirmDescription: 'This action cannot be undone',
   noContent: 'No content',
   untitled: 'Untitled',
   titlePlaceholder: 'Enter a title for your artifact',

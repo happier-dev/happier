@@ -13662,7 +13662,6 @@ settingsSession: {
         discardChanges: '放棄更改？',
         discardChangesDescription: '您有未儲存的更改。確定要放棄它們嗎？',
         deleteConfirm: ({ name }: { name: string }) => `刪除「${name}」？`,
-        deleteConfirmDescription: '此工件將被永久刪除。',
         titlePlaceholder: '工件標題',
         bodyPlaceholder: '在此輸入內容...',
         save: '儲存',

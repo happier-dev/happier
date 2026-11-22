@@ -16526,7 +16526,6 @@ settingsSession: {
     discardChangesDescription:
       "Masz niezapisane zmiany. Czy na pewno chcesz je odrzucić?",
     deleteConfirm: ({ name }: { name: string }) => `Usunąć „${name}”?`,
-    deleteConfirmDescription: "Tej operacji nie można cofnąć",
     noContent: "Brak treści",
     untitled: "Bez tytułu",
     titlePlaceholder: "Wprowadź tytuł dla swojego artefaktu",

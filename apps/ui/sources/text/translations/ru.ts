@@ -16633,7 +16633,6 @@ settingsSession: {
     discardChangesDescription:
       "У вас есть несохраненные изменения. Вы уверены, что хотите их отменить?",
     deleteConfirm: ({ name }: { name: string }) => `Удалить «${name}»?`,
-    deleteConfirmDescription: "Это действие нельзя отменить",
     noContent: "Нет содержимого",
     untitled: "Без названия",
     titlePlaceholder: "Введите заголовок для вашего артефакта",

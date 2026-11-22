@@ -16964,7 +16964,6 @@ settingsSession: {
     discardChangesDescription:
       "保存されていない変更があります。破棄してもよろしいですか？",
     deleteConfirm: ({ name }: { name: string }) => `「${name}」を削除しますか？`,
-    deleteConfirmDescription: "この操作は取り消せません",
     noContent: "内容がありません",
     untitled: "無題",
     titlePlaceholder: "アーティファクトのタイトルを入力",
