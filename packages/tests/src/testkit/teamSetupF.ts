@@ -1,5 +1,3 @@
-import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1, ConnectedAccountCatalogRowReadResponseV1Schema,
-  ConnectedAccountCatalogRowMutationResponseV1Schema, sealConnectedAccountCatalogContentV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { randomUUID } from 'node:crypto';
 
 import { AutomationDefinitionDetailsRequestSchema, AutomationDefinitionDetailsResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
@@ -52,33 +50,7 @@ export async function startTeamSetupFFixture(params: Readonly<{
   });
   const { server, serverId, sourceOptions, requestProxy } = core;
 
-  // Fresh Accounts have no migrated purpose row. Seed the real encrypted catalog
-  // before Session-default admission; an unavailable catalog correctly fails closed.
-  async function createAccount(name: string) {
-    const account = await core.createAccount(name);
-    const headers = { authorization: `Bearer ${account.credentials.token}` };
-    const rowUrl = `${server.baseUrl}${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/purposes`;
-    const existingResponse = await fetch(rowUrl, { headers });
-    if (!existingResponse.ok) throw new Error(`Purpose catalog read failed: ${existingResponse.status}`);
-    const existing = ConnectedAccountCatalogRowReadResponseV1Schema.parse(await existingResponse.json());
-    if (existing.status === 'present') return account;
-    if (existing.status !== 'absent') throw new Error(`Purpose catalog seed found ${existing.status}`);
-    const settingsResponse = await fetch(`${server.baseUrl}/v2/account/settings`, { headers });
-    if (!settingsResponse.ok) throw new Error(`Account settings read failed: ${settingsResponse.status}`);
-    const settings: unknown = await settingsResponse.json();
-    if (!settings || typeof settings !== 'object' || Array.isArray(settings) || !('version' in settings)
-      || typeof settings.version !== 'number') throw new Error('Account settings seed version missing');
-    if (!account.credentials.encryption) throw new Error('Purpose catalog seed requires Account encryption material');
-    const content = sealConnectedAccountCatalogContentV1({ mode: 'e2ee', material: account.credentials.encryption,
-      record: { key: 'purposes', value: { v: 1, bindings: [] } } });
-    const mutationResponse = await fetch(rowUrl, { method: 'POST', headers: { ...headers, 'content-type': 'application/json' },
-      body: JSON.stringify({ expectedRevision: 'absent', sourceSettingsVersion: settings.version, content }) });
-    if (!mutationResponse.ok) throw new Error(`Purpose catalog seed failed: ${mutationResponse.status}`);
-    const seeded = ConnectedAccountCatalogRowMutationResponseV1Schema.parse(await mutationResponse.json());
-    if (seeded.status !== 'updated') throw new Error(`Purpose catalog seed refused: ${seeded.status}`);
-    return account;
-  }
-
+  const { createAccount } = core;
 
   async function enrollDaemon(account: Awaited<ReturnType<typeof createAccount>>,
     options: Parameters<typeof core.enrollDaemon>[1] = {}) {
@@ -112,7 +84,7 @@ export async function startTeamSetupFFixture(params: Readonly<{
     }
 
     return { ...core,
-      createAccount, enrollDaemon, assertKnownGoodMachineControl, assertSessionAgentOutput,
+      enrollDaemon, assertKnownGoodMachineControl, assertSessionAgentOutput,
       prepareSessionControl(account: Awaited<ReturnType<typeof createAccount>>,
         options: Parameters<typeof enrollDaemon>[1]) {
         let prepared: ReturnType<typeof enrollDaemon> | undefined;
