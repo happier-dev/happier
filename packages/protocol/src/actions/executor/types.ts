@@ -2404,7 +2404,9 @@ export type ActionExecutorDeps = Readonly<{
    * The Account's opened checkouts as complete refs, for the typed Checkout input's choices. It reads the same
    * private Project rows and admission as `projectsList`, and answers a failure envelope when they are not admitted.
    */
-  projectWorkspaceRefs?: (args: Readonly<{ serverId?: string }>, context?: ActionExecutorContext) => Promise<unknown>;
+  projectWorkspaceRefs?: (args: Readonly<{ serverId?: string; includeUsageProjects?: boolean }>, context?: ActionExecutorContext) => Promise<
+    Readonly<{ workspaceRefs: readonly unknown[]; usageProjects?: import('../../usage/usageFilterOptions.js').UsageProjectOptionFacts }>
+    | Readonly<{ ok: false; errorCode: string; error: string }>>;
   /**
    * The Account's saved Checks named as its Checks list names them, for the Check widget's choices. Only a host that
    * opens the Account's private Check definitions supplies it; the read decides nothing about results.

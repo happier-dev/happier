@@ -1870,7 +1870,7 @@ describe('usage query captured Resource adapter', () => {
           const id = `${dimension}-${index}`;
           if (!expected.has(id)) expected.set(id, id);
         }
-        expected.set(selected, selected);
+        expected.set(selected, field === 'projects' ? 'No project name' : selected);
         expect(result).toMatchObject({ ok: true, result: { options: [...expected].map(([value, label]) => ({ value, label })) } });
       }
       expect(calls).toHaveBeenCalledTimes(4);

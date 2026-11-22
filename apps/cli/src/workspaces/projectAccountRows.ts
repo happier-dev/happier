@@ -51,6 +51,7 @@ function payloadHasKind<K extends ProjectAccountRowKeyV1['kind']>(payload: Proje
 }
 export type ActiveProjectAccountRowsSnapshot = ProjectAccountSnapshotV1 & Readonly<{
   source: 'network';
+  accountMode: 'plain' | 'e2ee';
   organizations: readonly Readonly<{
     key: Extract<ProjectAccountRowKeyV1, { kind: 'project-organization' }>;
     revision: number;
@@ -384,7 +385,7 @@ async function fetchRows(input: ReadInput, mode: 'plain' | 'e2ee', selection: Pr
   return selectedRows.map(row => ({ key: row.key, revision: row.revision, payload: row.content === null ? null : openRow(row.key, row.content, mode, input) }));
 }
 async function fetchSnapshot(input: ReadInput, mode: 'plain' | 'e2ee', selection: ProjectAccountRowListRequestV1 | Readonly<{ key: ProjectAccountRowKeyV1 }>): Promise<ActiveProjectAccountRowsSnapshot> {
-  return projectSnapshotFromRows(await fetchRows(input, mode, selection), scopeKey(input));
+  return projectSnapshotFromRows(await fetchRows(input, mode, selection), scopeKey(input), mode);
 }
 async function fetchChangedSnapshot(input: ProjectAccountRowsReadInput, mode: 'plain' | 'e2ee', keys: readonly ProjectAccountRowKeyV1[]): Promise<ActiveProjectAccountRowsSnapshot> {
   if (input.publication !== 'installed' || !canPublish(input) || input.selection) throw rowError('project_requester_authority_unavailable');
@@ -402,9 +403,10 @@ async function fetchChangedSnapshot(input: ProjectAccountRowsReadInput, mode: 'p
   // Keep the fetched delta separate until publication merges it into the
   // then-current admitted projection, preserving concurrent winning revisions.
   if (active?.scopeKey !== scopeKey(input)) throw rowError('project_requester_authority_unavailable');
-  return projectSnapshotFromRows(batches.flat(), scopeKey(input));
+  return projectSnapshotFromRows(batches.flat(), scopeKey(input), mode);
 }
-function projectSnapshotFromRows(rows: readonly OpenedProjectAccountRow[], scopeKey: string, previous?: ActiveProjectAccountRowsSnapshot): ActiveProjectAccountRowsSnapshot {
+function projectSnapshotFromRows(rows: readonly OpenedProjectAccountRow[], scopeKey: string,
+  accountMode: ActiveProjectAccountRowsSnapshot['accountMode'], previous?: ActiveProjectAccountRowsSnapshot): ActiveProjectAccountRowsSnapshot {
   const workspaceRefs: ProjectAccountSnapshotV1['workspaceRefs'][number][] = [];
   const relationships: ProjectAccountSnapshotV1['relationships'][number][] = [];
   const organizations: ActiveProjectAccountRowsSnapshot['organizations'][number][] = [];
@@ -429,13 +431,13 @@ function projectSnapshotFromRows(rows: readonly OpenedProjectAccountRow[], scope
       if (payloadHasKind(payload, 'project-organization')) organizations.push({ key: row.key, revision: row.revision, value: payload.value });
     }
   }
-  const snapshot: ActiveProjectAccountRowsSnapshot = { workspaceRefs, relationships, source: 'network', organizations, rows, graphRevision,
+  const snapshot: ActiveProjectAccountRowsSnapshot = { workspaceRefs, relationships, source: 'network', accountMode, organizations, rows, graphRevision,
     loadedAtMs: Date.now(), scopeKey };
   return previous ? mergeProjectSnapshots(previous, snapshot)
     : { ...snapshot, ...parseProjectAccountSnapshotV1({ workspaceRefs, relationships }) };
 }
 function applyAcknowledgedRows(snapshot: ActiveProjectAccountRowsSnapshot, rows: readonly OpenedProjectAccountRow[]): ActiveProjectAccountRowsSnapshot {
-  return projectSnapshotFromRows(rows, snapshot.scopeKey, snapshot);
+  return projectSnapshotFromRows(rows, snapshot.scopeKey, snapshot.accountMode, snapshot);
 }
 /**
  * Private Session reads held per Account and Home while a live Session owner receives the Account
@@ -662,10 +664,10 @@ export async function mutateProjectAccountOrganization(input: ReadInput & Readon
 }> & Readonly<{
   /** Pure edits may inspect a held row; an async content producer needs an explicit CAS basis. */
   expectedRevision?: number | 'absent';
-  mutate(value: ProjectAccountOrganizationV1): ProjectAccountOrganizationV1;
+  mutate(value: ProjectAccountOrganizationV1, mode: ActiveProjectAccountRowsSnapshot['accountMode']): ProjectAccountOrganizationV1;
 } | {
   expectedRevision: number | 'absent';
-  mutate(value: ProjectAccountOrganizationV1): ProjectAccountOrganizationV1 | Promise<ProjectAccountOrganizationV1>;
+  mutate(value: ProjectAccountOrganizationV1, mode: ActiveProjectAccountRowsSnapshot['accountMode']): ProjectAccountOrganizationV1 | Promise<ProjectAccountOrganizationV1>;
 }>): Promise<Readonly<{ status: 'updated'; key: Extract<ProjectAccountRowKeyV1, { kind: 'project-organization' }>; revision: number; value: ProjectAccountOrganizationV1 }> | Readonly<{ status: 'conflict'; revision: number }>> {
   return await runWithServerHttpBaseUrl(resolveServerHttpBaseUrl(), async () => {
     const key = { kind: 'project-organization' as const, serverId: input.serverId, projectKey: input.projectKey };
@@ -675,7 +677,7 @@ export async function mutateProjectAccountOrganization(input: ReadInput & Readon
       // A held organization row this mutation would not change publishes nothing.
       const heldIdentity = buildProjectAccountRowPhysicalKeyV1(key);
       const heldRow = heldSnapshot.organizations.find(value => buildProjectAccountRowPhysicalKeyV1(value.key) === heldIdentity);
-      if (heldRow && isDeepStrictEqual(await input.mutate(heldRow.value), heldRow.value)) {
+      if (heldRow && isDeepStrictEqual(await input.mutate(heldRow.value, heldSnapshot.accountMode), heldRow.value)) {
         await assertRequesterCurrent(input);
         return { status: 'updated', key, revision: heldRow.revision, value: heldRow.value };
       }
@@ -688,7 +690,7 @@ export async function mutateProjectAccountOrganization(input: ReadInput & Readon
     const row = snapshot.organizations.find(value => buildProjectAccountRowPhysicalKeyV1(value.key) === identity);
     const observedRevision = snapshot.rows.find(value => buildProjectAccountRowPhysicalKeyV1(value.key) === identity)?.revision ?? 'absent';
     if (input.expectedRevision !== undefined && input.expectedRevision !== observedRevision) return { status: 'conflict', revision: observedRevision === 'absent' ? -1 : observedRevision };
-    const value = await input.mutate(row?.value ?? {});
+    const value = await input.mutate(row?.value ?? {}, mode);
     if (row && isDeepStrictEqual(value, row.value)) {
       if (active?.scopeKey === snapshot.scopeKey) acceptSnapshot(input, snapshot);
       heldSlot?.store(snapshot);

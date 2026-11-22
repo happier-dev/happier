@@ -435,6 +435,7 @@ import {
 } from '@/voice/tools/actionImpl/sessionRecentMessages';
 import { listRecentPathsForVoiceTool } from '@/voice/tools/actionImpl/pathsListRecent';
 import { projectProjectListV1 } from '@happier-dev/protocol/workspaces';
+import { projectUsageOptionFacts } from '@happier-dev/protocol/usage/usageFilterOptions';
 import { listProjectsForActions } from './listProjects';
 import { createUiProjectPagesList } from './projectPagesAction';
 import { createProjectSourceActionDeps } from '@/sync/api/projects/projectSourceActions';
@@ -3630,9 +3631,11 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       }
       const rows = await createUiProjectAccountRowsClient(accountContext).read(context?.signal);
       if (rows.status !== 'ready') return { ok: false, errorCode: 'project_account_rows_unavailable', error: 'project_account_rows_unavailable' };
-      // The same visible, ordered checkouts the Projects list shows.
-      return { workspaceRefs: projectProjectListV1({ serverId: accountContext.serverId, workspaceRefs: rows.workspaceRefs,
-        organizations: rows.organizations, normalizeServerId: resolveServerProfileScopeIdForIdentifier }).items.map(item => item.ref) };
+      const projected = projectProjectListV1({ serverId: accountContext.serverId, workspaceRefs: rows.workspaceRefs,
+        organizations: rows.organizations, normalizeServerId: resolveServerProfileScopeIdForIdentifier, includeHidden: args.includeUsageProjects });
+      return { workspaceRefs: projected.items.map(item => item.ref), ...(args.includeUsageProjects && {
+        usageProjects: projectUsageOptionFacts([...projected.projectGroups, ...projected.hiddenProjectGroups], rows.organizations),
+      }) };
     },
     // The Check widget's choices: the Account's saved Checks named as its Checks list names them.
     savedHealthChecksList: async (args, context) => {

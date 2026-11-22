@@ -40,6 +40,8 @@ export const ProjectAccountOrganizationV1Schema = lazyDefinition(() => z.strictO
     atmosphere: z.optional(z.union([z.literal('home'), ProjectAtmosphereSchema])),
     hidden: z.optional(z.boolean()), pinned: z.optional(z.boolean()),
     label: z.optional(z.string().check(z.minLength(1), z.refine(value => value === value.trim()))),
+    /** Native accounting display place, carried only inside an E2EE organization envelope. */
+    nativeUsageRootPath: z.optional(z.string().check(z.minLength(1))),
     environmentBindings: z.optional(SecretReferenceOverlayV1Schema),
     setupSelection: z.optional(ProjectSetupSelectionV1Schema),
     setupContent: z.optional(ProjectSetupContentRefV1Schema),
@@ -48,6 +50,14 @@ export const ProjectAccountOrganizationV1Schema = lazyDefinition(() => z.strictO
     }))),
 }));
 export type ProjectAccountOrganizationV1 = z.infer<typeof ProjectAccountOrganizationV1Schema>;
+export const ProjectAccountOrganizationActionViewV1Schema = lazyDefinition(() =>
+    z.omit(ProjectAccountOrganizationV1Schema, { nativeUsageRootPath: true }));
+
+export function projectProjectAccountOrganizationActionViewV1(value: ProjectAccountOrganizationV1):
+    z.infer<typeof ProjectAccountOrganizationActionViewV1Schema> {
+    const { nativeUsageRootPath: _nativeUsageRootPath, ...view } = value;
+    return view;
+}
 /** Pinned services, newest first: the Environments the person keeps at the top of the Services column. */
 export const ProjectAccountServicesOrganizationV1Schema = lazyDefinition(() => z.strictObject({
     pinnedEnvironmentIds: z.array(IdSchema).check(z.refine(ids => new Set(ids).size === ids.length, 'Duplicate pinned Environment')),

@@ -1,5 +1,5 @@
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
-import type { ProjectAccountOrganizationV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { projectProjectAccountOrganizationActionViewV1, type ProjectAccountOrganizationV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import type { WorkspaceAddressV1, WorkspaceAddressV2, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { ProjectRepositoryObservationV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
@@ -89,7 +89,10 @@ export function createUiProjectAccountRowsClient(account: Account) {
     },
     updateWorkspace: async (input: Readonly<{ serverId: string; workspaceId: string; label?: string | null; pinned?: boolean; projectKey?: string; signal?: AbortSignal }>, context?: Caller) => {
       if (!canUsePrivateProjectAccountAction(account, context)) return refused('project_account_access_denied');
-      try { return { ok: true as const, ...await (await getOwner()).mutateWorkspaceMetadata(input) }; }
+      try {
+        const { organization, workspaceRef } = await (await getOwner()).mutateWorkspaceMetadata(input);
+        return { ok: true as const, organization: projectProjectAccountOrganizationActionViewV1(organization), workspaceRef };
+      }
       catch (error) { return mutationFailure(error, input.signal); }
     },
     recordWorkspaceSource: async (address: WorkspaceAddressV2, source: NonNullable<WorkspaceRefV1['source']>, signal?: AbortSignal, context?: Caller) => {

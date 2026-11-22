@@ -215,11 +215,24 @@ export function* prepareUsageAnalyticsProjectionSteps(snapshot: UsageAnalyticsPr
     const dimensionCounts = new Map<UsageAnalyticsBreakdownDimension, number>();
     const scopeKeys: NonNullable<UsageAnalyticsQueryResponse['scopeKeys']> = [];
     for (const dimension of new Set([...rankedDimensions, ...(request.includeModelTimeline ? ['model' as const] : [])])) {
-        const keys = new Set(totalContributions.map(row => resolveUsageContributionDimensionKey(row, dimension) ?? 'unknown'));
+        const includeScope = !publicPopulation && request.breakdowns?.includes(dimension) && scopeDimensions.has(dimension);
+        const projectMachines = includeScope && dimension === 'project' ? new Map<string, Set<string>>() : undefined;
+        const keys = new Set<string>();
+        for (const row of totalContributions) {
+            const key = resolveUsageContributionDimensionKey(row, dimension) ?? 'unknown';
+            keys.add(key);
+            if (projectMachines && row.projectKey && row.machineId) {
+                let ids = projectMachines.get(key);
+                if (!ids) projectMachines.set(key, ids = new Set());
+                ids.add(row.machineId);
+            }
+        }
         dimensionCounts.set(dimension, keys.size);
         // The private filter inventory needs all identities, never a ranked frontier or rich event rows.
-        if (!publicPopulation && request.breakdowns?.includes(dimension) && scopeDimensions.has(dimension)) {
-            scopeKeys.push({ dimension, keys: [...keys] });
+        if (includeScope) {
+            scopeKeys.push({ dimension, keys: [...keys], ...(projectMachines && {
+                projectMachines: Array.from(projectMachines, ([key, ids]) => ({ key, machineIds: [...ids] })),
+            }) });
         }
         yield;
     }

@@ -3,8 +3,8 @@ import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePriva
 import { normalizeNonEmptyString, resolveVoiceMachineLabel } from './shared';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveServerScopedMachines } from '@/sync/domains/machines/resolveServerScopedMachines';
-import { getMachineDisplayName, isMachineDisplayHydrating, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
-import { isMachineVisibleForSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
+import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
+import { selectProjectChoiceMachineNames } from '@/sync/domains/machines/identity/projectChoiceMachineNames';
 import { resolveMachineReachability } from '@/sync/domains/machines/reachability/machineReachability';
 import { resolveServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
 import { readTeamSharedMachineRows } from '@/sync/api/machines/machineRowsApi';
@@ -44,7 +44,7 @@ export async function listMachinesForVoiceTool(params: Readonly<{ serverId?: str
   const limit = typeof params.limit === 'number' && Number.isFinite(params.limit) ? Math.max(1, Math.floor(params.limit)) : undefined;
   // The machines the Projects list and its widgets name are the ones selection shows; an input row says whether its label
   // is such a name, so a consumer never presents a hidden or still-loading machine's placeholder as one.
-  const names = params.purpose === 'input' ? resolveMachineDisplayNames(entries.flatMap(entry => entry.machine && isMachineVisibleForSelection(entry.machine) ? [entry.machine] : [])) : null;
+  const names = params.purpose === 'input' ? selectProjectChoiceMachineNames(entries.flatMap(entry => entry.machine ? [entry.machine] : [])) : null;
 
   // Host inputs read the already-loaded Home inventory, not the voice disclosure projection or launch readiness.
   const items = (params.purpose === 'input' || limit === undefined ? entries : entries.slice(0, limit))
@@ -53,7 +53,7 @@ export async function listMachinesForVoiceTool(params: Readonly<{ serverId?: str
       machineId: normalizeNonEmptyString(row.id),
       installationId: normalizeNonEmptyString(row.installationId),
       label: m ? names?.get(m.id) ?? resolveVoiceMachineLabel(m) : getMachineDisplayName({ absence: 'unlisted' }),
-      ...(params.purpose === 'input' ? { named: !!m && isMachineVisibleForSelection(m) && !isMachineDisplayHydrating(m),
+      ...(params.purpose === 'input' ? { named: !!m && names?.has(m.id) === true,
         presence: (() => {
           if (!m) return 'unknown';
           const verdict = resolveMachineReachability(scope, m);

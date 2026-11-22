@@ -36,6 +36,7 @@ import { CurrentUiContextProvider, useOptionalCurrentUiContextReader, type Curre
 import { createCurrentUiContextVoiceToolPort } from '@/components/appShell/currentUiContext/currentUiContextVoiceToolPort';
 import { executeCurrentUiContextAction, registerCurrentUiContextActionPort } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 import { SelectionListFilterChip } from '@/components/ui/selectionList/SelectionListFilterChips';
+import { Text } from '@/components/ui/text/Text';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { WidgetAreaLayoutBar } from '@/components/widgets/area/WidgetAreaLayoutBar';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
@@ -448,6 +449,80 @@ describe('mounted Usage page scope commands', () => {
             await waitForHomeGovernance(() => expect(ledger()).toHaveLength(unfilteredProjectCount));
         }
     });
+    it('I-B5 renders the same Project titles as the Usage Action for the same accounting and checkout facts', async () => {
+        const { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } = await import('@happier-dev/protocol/projects/projectAccountRowsV1');
+        const { createProjectAccountRowCipherV1 } = await import('@happier-dev/protocol/projects/projectAccountRowCipherV1');
+        const { WorkspaceRefV1Schema } = await import('@happier-dev/protocol/workspaces/workspaceRefV1');
+        const dev = '3ca2700f-c0a8-440f-be06-cb4f3f51cb01';
+        const build = 'eadc2422-b42b-478d-97b1-af9b530d5f08';
+        const machines = [[dev, 'Dev'], [build, 'Build']].map(([id, displayName]) => {
+            const machine = createMachineFixture({ id });
+            return createPlainMachineRowFixture({ id, accountId: 'account-a', machine: {
+                ...machine, metadata: machine.metadata && { ...machine.metadata, displayName },
+            } });
+        });
+        const unnamed = 'unknown';
+        const projectKeys = ['tmp-dev', 'tmp-build-dev', 'tmp-build-other', 'app', unnamed];
+        const value: UsageAnalyticsQueryResponse = { v: 1, totals,
+            scopeKeys: [{ dimension: 'project', keys: projectKeys, projectMachines: [
+                { key: projectKeys[0]!, machineIds: [dev] }, { key: projectKeys[1]!, machineIds: [build] },
+                { key: projectKeys[2]!, machineIds: [build] }, { key: projectKeys[3]!, machineIds: [dev] },
+            ] }], breakdowns: { project: projectKeys.map((key, index) => ({ key, ...totals,
+                label: index < 3 ? 'tmp' : key === 'app' ? 'App' : 'Unknown project',
+            })) } };
+        const cipher = createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: length => new Uint8Array(length) });
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-project-titles.test', accountId: 'account-a' }],
+            route: request => {
+                if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+                if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
+                if (request.path === '/v1/machines') return Response.json(machines);
+                if (request.path === '/v2/usage/query') return Response.json(value);
+                if (request.path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) {
+                    const serverId = home!.homes.a!.id;
+                    const rows = [[projectKeys[1], build, '/work/Dev/tmp'], [projectKeys[2], build, '/work/Other/tmp'], ['app', dev, '/work/repo']]
+                        .map(([projectKey, machineId, rootPath]) => {
+                            const ref = WorkspaceRefV1Schema.parse({ id: `checkout-${projectKey}`, projectKey, serverId, machineId, rootPath, createdAtMs: 1 });
+                            const key = { kind: 'workspace-ref' as const, serverId, id: ref.id };
+                            return { key, revision: 1, content: cipher.seal({ key, value: ref }) };
+                        });
+                    return Response.json({ status: 'listed', coverage: 'complete', rows });
+                }
+                return createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+            } });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+        const screen = await renderMeasuredPage(<InjectedAuthProvider credentials={credentials}>
+            <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
+                <CurrentContextPort /><RoutedUsagePage />
+            </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
+        </InjectedAuthProvider>);
+        const { sync } = await import('@/sync/sync');
+        await sync.awaitBootstrapForegroundAcquisition();
+        const chip = () => screen.findAllByType(SelectionListFilterChip).map(node => node.props.filter).find(filter => filter.id === 'projects')!;
+        await waitForHomeGovernance(() => {
+            expect(chip().options).toHaveLength(projectKeys.length + 1);
+            expect(getStorage().getState().projectAccountRows?.workspaceRefs).toHaveLength(3);
+            expect(getStorage().getState().machines[dev]?.metadata?.displayName).toBe('Dev');
+        });
+        await screen.pressByTestIdAsync(chip().testID);
+        await flushHookEffects({ cycles: 10 });
+        const pageTitles = chip().options.slice(1).map((option: { id: string }) => {
+            const row = screen.findHostByTestId(`${chip().testID}:${option.id}`)!;
+            return React.Children.toArray(row.findAllByType(Text)[0]!.props.children).join('');
+        });
+        const action = await createDefaultActionExecutor().execute('action.options.resolve',
+            { actionId: 'usage.query', optionsSourceId: 'usage.filters.projects' },
+            { surface: 'agent', authority: 'account_automation', serverId: server.id });
+        expect(action.ok).toBe(true);
+        if (!action.ok) throw new Error(action.error);
+        const choices = (action.result as { options: { value: string; label: string }[] }).options;
+        expect.soft(pageTitles).toEqual(['tmp · Dev', 'tmp · /work/Dev/tmp', 'tmp · Other', 'App', t('usage.board.work.unknownProject')]);
+        expect.soft(choices.map(choice => choice.label)).toEqual(pageTitles);
+        expect(choices.map(choice => choice.value)).toEqual(projectKeys);
+    });
+
     it('applies foreground cost-basis choices to the page query through route feedback', async () => {
         home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-cost-basis-selection.test', accountId: 'account-a' }],
             route: request => {

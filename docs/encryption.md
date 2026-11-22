@@ -1381,6 +1381,14 @@ create a Workspace reference merely to label native usage, because that row
 would also carry a root path. The collector retains its local project witness
 in sealed pending custody while Account Project admission is unavailable.
 
+The compact Usage filter inventory includes opaque Project-to-Machine
+associations from the same authorized accounting read. The page filter and
+the Usage Action share the Project title projection. An E2EE Account's daemon
+can save a native checkout path with its label in the same encrypted Project
+organization row. Authorized clients open the path to tell same-named
+checkouts apart. Organization Action receipts omit the path, and the row
+cipher drops it when sealing a plain row.
+
 Owner Session usage publication uses that same Project resolver when launch
 metadata has no Project identity. Its witness is the Session's exact execution
 root on its own Machine, including an explicit agent-to-machine path mapping;

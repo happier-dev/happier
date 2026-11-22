@@ -1,7 +1,7 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ActionExecuteFailureSchema } from '../actions/actionExecutionResult.js';
-import { ProjectAccountOrganizationV1Schema } from './projectAccountRowsV1.js';
+import { ProjectAccountOrganizationActionViewV1Schema } from './projectAccountRowsV1.js';
 import { ManagedWorkspaceRefV2WriteSchema, WorkspaceRefV2MachineWriteSchema } from '../workspaces/workspaceRefV1.js';
 
 const IdSchema = lazyZodSchema(() => z.string().check(z.minLength(1), z.refine(value => value === value.trim())));
@@ -28,7 +28,7 @@ export const ProjectWorkspaceUpdateInputV1Schema = lazyZodSchema(() => z.strictO
 export type ProjectWorkspaceUpdateInputV1 = z.infer<typeof ProjectWorkspaceUpdateInputV1Schema>;
 export const ProjectWorkspaceUpdateOutputV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ ok: z.literal(true), workspaceRef: WorkspaceAcknowledgementV1Schema,
-    organization: z.optional(ProjectAccountOrganizationV1Schema) }),
+    organization: z.optional(ProjectAccountOrganizationActionViewV1Schema) }),
   ActionExecuteFailureSchema,
 ]));
 export type ProjectWorkspaceUpdateOutputV1 = z.infer<typeof ProjectWorkspaceUpdateOutputV1Schema>;

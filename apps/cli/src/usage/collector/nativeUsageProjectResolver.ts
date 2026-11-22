@@ -47,7 +47,10 @@ export function createNativeUsageProjectResolver(input: NativeUsageProjectResolv
                     input.authority.machineId, normalizeWorkspaceRootPathV1(project.rootPath)]) });
             const label = project.label?.trim() || resolveWorkspacePathBasenameV1(project.rootPath)?.trim() || undefined;
             const accepted = await mutateProjectAccountOrganization({ ...rowInput, projectKey,
-                mutate: value => value.label !== undefined || label === undefined ? value : { ...value, label } });
+                mutate: (value, mode) => ({ ...value,
+                    ...(value.label === undefined && label !== undefined && { label }),
+                    ...(mode === 'e2ee' && value.nativeUsageRootPath === undefined && { nativeUsageRootPath: project.rootPath }),
+                }) });
             signal.throwIfAborted();
             if (accepted.status !== 'updated') throw refusal(`usage_project_${accepted.status}`);
             return { projectKey };

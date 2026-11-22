@@ -164,6 +164,13 @@ describe('captured usage query projection', () => {
             project: ['named', 'unknown', 'unnamed-a', 'unnamed-b'],
             agent: ['claude', 'codex'], machine: ['machine', 'other-machine'], source: ['native', 'runtime'],
         });
+        expect(compact.scopeKeys?.find(entry => entry.dimension === 'project')).toMatchObject({
+            projectMachines: expect.arrayContaining([
+                { key: 'named', machineIds: ['machine'] },
+                { key: 'unnamed-a', machineIds: ['machine'] },
+                { key: 'unnamed-b', machineIds: ['other-machine'] },
+            ]),
+        });
         const narrow = UsageAnalyticsQueryRequestSchema.parse({ ...query, breakdowns: ['agent'] });
         expect(prepareUsageAnalyticsProjection(snapshot, query, resolveCapturedUsageModelPriceCatalog(snapshot.priceCatalog),
             projectUsageAnalyticsPopulation(snapshot, query)).select(narrow, snapshot).scopeKeys)

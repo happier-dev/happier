@@ -139,12 +139,18 @@ describe('native accounting Account Project resolution', () => {
             expect(rows).toHaveLength(1);
             expect(rows[0].content).toMatchObject({ t: 'encrypted', c: expect.any(String) });
             const cipher = createProjectAccountRowCipherV1({ mode: 'e2ee', material: { type: 'legacy', secret }, randomBytes: size => new Uint8Array(size) });
-            expect(cipher.open(rows[0].key, rows[0].content!)).toEqual({
-                key: { kind: 'project-organization', serverId: 'home', projectKey: result.projectKey }, value: { label: 'Private repository' },
+            const opened = cipher.open(rows[0].key, rows[0].content!);
+            expect(opened).toEqual({
+                key: { kind: 'project-organization', serverId: 'home', projectKey: result.projectKey },
+                value: { label: 'Private repository', nativeUsageRootPath: '/private/native' },
             });
             const requests = JSON.stringify(transport.mock.calls.map(([, request]) => request));
             expect(requests).not.toContain('/private/native');
             expect(requests).not.toContain('Private repository');
+            const plainCipher = createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: size => new Uint8Array(size) });
+            expect(plainCipher.seal(opened)).toEqual({ t: 'plain', v: {
+                key: opened.key, value: { label: 'Private repository' },
+            } });
         }, { type: 'legacy', secret });
     });
     it('keeps real Pi cwd facts sealed until canonical Account Project acceptance, then publishes opaque IDs only', async () => {

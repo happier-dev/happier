@@ -6914,6 +6914,10 @@ export type UsageActionResultById = {
                 scopeKeys?: undefined | {
                     dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
                     keys: string[];
+                    projectMachines?: undefined | {
+                        key: string;
+                        machineIds: string[];
+                    }[];
                 }[];
                 insights?: undefined | {
                     activeDays: number;
@@ -11727,6 +11731,10 @@ export type UsageActionResultById = {
                     scopeKeys?: undefined | {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
                         keys: string[];
+                        projectMachines?: undefined | {
+                            key: string;
+                            machineIds: string[];
+                        }[];
                     }[];
                     insights?: undefined | {
                         activeDays: number;

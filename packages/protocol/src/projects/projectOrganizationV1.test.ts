@@ -66,6 +66,15 @@ describe('Project organization reference bindings', () => {
     expect(ProjectOrganizationUpdateInputV1Schema.safeParse({ ...input, label: 'Project', env: { API_KEY: 'secret' } }).success).toBe(false);
   });
 
+  it('preserves the native Usage place in the stored row and omits it from the Action receipt', async () => {
+    const nativeUsageRootPath = '/work/project';
+    const fixture = harness({ label: 'Project', nativeUsageRootPath });
+    const receipt = await updateProjectOrganizationV1(fixture.deps, { projectRef, expectedRevision: 3, label: 'Renamed' });
+
+    expect(receipt).toEqual({ ok: true, row: { label: 'Renamed' }, revision: 4 });
+    expect(fixture.current().value).toEqual({ label: 'Renamed', nativeUsageRootPath });
+  });
+
   it('retains the existing exact CAS and Account-scope protections for binding edits', async () => {
     const fixture = harness({ pinned: true });
     const input = ProjectOrganizationUpdateInputV1Schema.parse({ projectRef, expectedRevision: 2,

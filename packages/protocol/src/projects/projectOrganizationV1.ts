@@ -4,7 +4,7 @@ import { isActionOutcomeUnknownErrorCodeV1 } from '../actions/actionExecutionRes
 import { QualifiedProjectKeyV1Schema } from '../workspaces/workspaceRefV1.js';
 import { EnvVarRequirementSchema } from '../profiles/environmentVariables.js';
 import { SavedSecretReferenceV1Schema } from '../profiles/secretReferenceOverlayV1.js';
-import { ProjectAccountOrganizationV1Schema, ProjectAccountRowExpectedRevisionV1Schema } from './projectAccountRowsV1.js';
+import { ProjectAccountOrganizationActionViewV1Schema, ProjectAccountOrganizationV1Schema, ProjectAccountRowExpectedRevisionV1Schema, projectProjectAccountOrganizationActionViewV1 } from './projectAccountRowsV1.js';
 import { captureProjectContextAccountScopeV1, type ProjectContextActionOwnerDepsV1 } from './projectContextV1.js';
 
 export const ProjectOrganizationUpdateInputV1Schema = lazyZodSchema(() => z.strictObject({
@@ -20,7 +20,7 @@ export const ProjectOrganizationUpdateInputV1Schema = lazyZodSchema(() => z.stri
 export type ProjectOrganizationUpdateInputV1 = z.infer<typeof ProjectOrganizationUpdateInputV1Schema>;
 
 export const ProjectOrganizationUpdateOutputV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ ok: z.literal(true), row: ProjectAccountOrganizationV1Schema,
+  z.strictObject({ ok: z.literal(true), row: ProjectAccountOrganizationActionViewV1Schema,
     revision: z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER)) }),
   z.strictObject({ ok: z.literal(false), errorCode: z.enum(['invalid_parameters', 'project_organization_conflict',
     'project_organization_access_denied', 'project_organization_unavailable']),
@@ -70,7 +70,7 @@ export async function updateProjectOrganizationV1(
     if (result.status === 'conflict') return { ok: false, errorCode: 'project_organization_conflict',
       currentRevision: result.revision < 0 ? 'absent' : result.revision };
     // A validated receipt belongs to this captured write even after focus changes.
-    return { ok: true, row: result.value, revision: result.revision };
+    return { ok: true, row: projectProjectAccountOrganizationActionViewV1(result.value), revision: result.revision };
   } catch (error) {
     const code: unknown = error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined;
     if (isActionOutcomeUnknownErrorCodeV1(code)) throw error;

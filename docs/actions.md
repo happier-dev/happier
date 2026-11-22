@@ -4191,6 +4191,8 @@ its mode/material admission and canonical encryption-invalidation fences.
 The mounted Usage toolbar and current-context commands share the same supported
 Sources, Agents, Machines and Projects filter inventory. Each choice toggles
 that field's selection; its All choice resets that field to unrestricted.
+When Project titles collide, the toolbar and the Action's Project choices use
+the same Machine or checkout place in their titles, where one is available.
 The inventory comes from admitted displayed facts and current selections, not
 guessed ids, and Session-scoped pages do not publish these scope toggles.
 Mounted commands refuse after unmount, cancellation, stale surface or

@@ -1,7 +1,7 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { isActionOutcomeUnknownErrorCodeV1 } from '../actions/actionExecutionResult.js';
-import { ProjectAccountOrganizationV1Schema, ProjectAccountRowExpectedRevisionV1Schema } from './projectAccountRowsV1.js';
+import { ProjectAccountOrganizationActionViewV1Schema, ProjectAccountRowExpectedRevisionV1Schema, projectProjectAccountOrganizationActionViewV1 } from './projectAccountRowsV1.js';
 import { captureProjectContextAccountScopeV1, ProjectContextTargetV1Schema, type ProjectContextActionOwnerDepsV1 } from './projectContextV1.js';
 
 export const ProjectVisibilitySetInputV1Schema = lazyZodSchema(() => z.strictObject({
@@ -11,7 +11,7 @@ export const ProjectVisibilitySetInputV1Schema = lazyZodSchema(() => z.strictObj
 }));
 export type ProjectVisibilitySetInputV1 = z.infer<typeof ProjectVisibilitySetInputV1Schema>;
 export const ProjectVisibilitySetOutputV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ ok: z.literal(true), row: ProjectAccountOrganizationV1Schema, revision: z.number().check(z.int(), z.nonnegative()) }),
+  z.strictObject({ ok: z.literal(true), row: ProjectAccountOrganizationActionViewV1Schema, revision: z.number().check(z.int(), z.nonnegative()) }),
   z.strictObject({ ok: z.literal(false), errorCode: z.enum(['invalid_parameters', 'project_visibility_conflict',
     'project_visibility_access_denied', 'project_visibility_unavailable']),
     currentRevision: z.optional(ProjectAccountRowExpectedRevisionV1Schema) }),
@@ -42,7 +42,7 @@ export async function setProjectVisibilityV1(
       signal: options?.signal, mutate(value) { assertCurrent(); return { ...value, hidden: request.data.hidden }; } });
     if (result.status === 'conflict') return { ok: false, errorCode: 'project_visibility_conflict',
       currentRevision: result.revision < 0 ? 'absent' : result.revision };
-    return { ok: true, row: result.value, revision: result.revision };
+    return { ok: true, row: projectProjectAccountOrganizationActionViewV1(result.value), revision: result.revision };
   } catch (error) {
     const code: unknown = error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined;
     if (isActionOutcomeUnknownErrorCodeV1(code)) throw error;

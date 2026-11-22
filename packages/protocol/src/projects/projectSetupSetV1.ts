@@ -3,7 +3,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { QualifiedProjectKeyV1Schema, WorkspaceAddressV1Schema } from '../workspaces/workspaceRefV1.js';
 import { ProjectManifestV1Schema } from '../workspaces/projectSetup/projectManifestV1.js';
 import { ProjectEffectiveDefinitionV1Schema, resolveProjectDefinitionV1 } from '../workspaces/projectSetup/projectDefinitionCompositionV1.js';
-import { ProjectAccountOrganizationV1Schema, ProjectAccountRowExpectedRevisionV1Schema } from './projectAccountRowsV1.js';
+import { ProjectAccountOrganizationActionViewV1Schema, ProjectAccountOrganizationV1Schema, ProjectAccountRowExpectedRevisionV1Schema, projectProjectAccountOrganizationActionViewV1 } from './projectAccountRowsV1.js';
 import { ProjectSetupContentV1Schema, ProjectSetupSelectionV1Schema, projectSetupSelectionV1,
   PROJECT_SETUP_ARTIFACT_KIND_V1, readAcceptedProjectSetupV1 } from './projectSetupV1.js';
 import { readPublishedProjectSetupV1 } from './projectSetupChangeV1.js';
@@ -29,7 +29,7 @@ export const ProjectSetupSetInputV1Schema = lazyZodSchema(() => z.strictObject({
 }));
 export type ProjectSetupSetInputV1 = z.infer<typeof ProjectSetupSetInputV1Schema>;
 export const ProjectSetupSetOutputV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ ok: z.literal(true), row: ProjectAccountOrganizationV1Schema,
+  z.strictObject({ ok: z.literal(true), row: ProjectAccountOrganizationActionViewV1Schema,
     revision: z.number().check(z.int(), z.nonnegative()), effectiveDefinition: ProjectEffectiveDefinitionV1Schema }),
   z.strictObject({ ok: z.literal(false), errorCode: z.string().check(z.minLength(1)),
     currentRevision: z.optional(ProjectAccountRowExpectedRevisionV1Schema), details: ActionExecuteFailureSchema.shape.details, failureCause: z.optional(ActionFailureCauseV1Schema) }),
@@ -139,7 +139,7 @@ export async function setProjectSetupV1(deps: ProjectSetupSetOwnerDepsV1, input:
     if (result.status === 'conflict') return { ok: false, errorCode: 'project_setup_conflict',
       currentRevision: result.revision < 0 ? 'absent' : result.revision };
     if (!effectiveDefinition) return fail('project_setup_review_unavailable');
-    return { ok: true, row: result.value, revision: result.revision, effectiveDefinition };
+    return { ok: true, row: projectProjectAccountOrganizationActionViewV1(result.value), revision: result.revision, effectiveDefinition };
   } catch (error) {
     options?.signal?.throwIfAborted();
     const code: unknown = error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined;

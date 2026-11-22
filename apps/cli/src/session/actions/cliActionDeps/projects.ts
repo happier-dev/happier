@@ -10,6 +10,7 @@ import type { readProjectAccountRows, createProjectAccountSnapshotMutation, muta
 import type { readProjectLastOpenedMemoryMap } from '@/workspaces/projectLastOpenedMemory';
 import { buildProjectLastOpenedMemoryKeyV1 } from '@happier-dev/protocol/account/authoringMemory';
 import { projectProjectListV1 } from '@happier-dev/protocol/workspaces';
+import { projectUsageOptionFacts } from '@happier-dev/protocol/usage/usageFilterOptions';
 import { setProjectVisibilityV1 } from '@happier-dev/protocol/projects/projectVisibilityV1';
 import { updateProjectOrganizationV1 } from '@happier-dev/protocol/projects/projectOrganizationV1';
 import { setProjectSetupV1 } from '@happier-dev/protocol/projects/projectSetupSetV1';
@@ -22,7 +23,7 @@ import { randomUUID } from 'node:crypto';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { readHostAdmittedReviewedRootV1 } from '@happier-dev/protocol/actions/actionExecutor';
-import { ProjectAccountWorkspaceRefV1Schema, type ProjectAccountRowPayloadV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { ProjectAccountWorkspaceRefV1Schema, projectProjectAccountOrganizationActionViewV1, type ProjectAccountRowPayloadV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { resolveProjectAccountWorkspaceRefRemovalV1 } from '@happier-dev/protocol/projects/projectAccountSnapshotV1';
 import type { ProjectWorkspaceUpdateInputV1, ProjectWorkspaceUpdateOutputV1, ProjectWorkspaceForgetInputV1, ProjectWorkspaceForgetOutputV1 } from '@happier-dev/protocol/projects/projectWorkspaceActionsV1';
 import { configuration } from '@/configuration';
@@ -167,7 +168,7 @@ export function createCliProjectActionDeps(
             }
           }
         }
-        return { ok: true, workspaceRef: acknowledgedWorkspaceRef, organization: acknowledgedOrganization };
+        return { ok: true, workspaceRef: acknowledgedWorkspaceRef, organization: projectProjectAccountOrganizationActionViewV1(acknowledgedOrganization) };
       } catch (error) {
         if (isExecutionRunActionAbort(error, operationSignal)) return executionRunActionFailure('cancelled');
         return executionRunActionFailure(readRpcErrorCode(error) ?? 'project_account_rows_unavailable');
@@ -441,12 +442,15 @@ export function createCliProjectActionDeps(
         return { items, truncated: projected.truncated, coverage: projected.coverage };
       });
     },
-    projectWorkspaceRefs: async (_args, context) => {
+    projectWorkspaceRefs: async (args, context) => {
       const rows = await readAdmittedProjectRows({ kinds: ['workspace-ref', 'project-organization'], serverId: await resolveProjectHomeIdentity() },
         context?.signal, context, 'action.options.resolve');
       if (!rows) return { ok: false, errorCode: 'project_account_access_denied', error: 'project_account_access_denied' };
-      const projected = projectProjectListV1({ serverId: widgetHomeId, workspaceRefs: rows.workspaceRefs, organizations: rows.organizations });
-      return { workspaceRefs: projected.items.map(item => item.ref) };
+      const projected = projectProjectListV1({ serverId: widgetHomeId, workspaceRefs: rows.workspaceRefs, organizations: rows.organizations,
+        includeHidden: args.includeUsageProjects });
+      return { workspaceRefs: projected.items.map(item => item.ref), ...(args.includeUsageProjects && {
+        usageProjects: projectUsageOptionFacts([...projected.projectGroups, ...projected.hiddenProjectGroups], rows.organizations),
+      }) };
     },
     projectWorkerAction: async (args) => {
       const { actionId, input, context, signal } = args;

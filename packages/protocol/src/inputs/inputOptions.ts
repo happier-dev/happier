@@ -43,7 +43,8 @@ import { resolveSessionControlTarget } from '../actions/executor/sessionScope.js
 import { normalizeUsageQuery, readUsageGroupByOptions, readUsagePeriodOptions } from './usageQuery.js';
 import { DEPLOYMENT_TELEMETRY_ENVIRONMENTS_OPTIONS_SOURCE_ID_V1, DEPLOYMENT_TELEMETRY_ROUTES_OPTIONS_SOURCE_ID_V1,
   resolveDeploymentTelemetryEnvironmentOptionsV1, resolveDeploymentTelemetryRouteOptionsV1 } from './deploymentTelemetryEnvironmentOptions.js';
-import { readUsageScopeOptions } from '../usage/usageFilterOptions.js';
+import { readUsageProjectScopeMachines, readUsageScopeOptions, type UsageProjectOptionFacts } from '../usage/usageFilterOptions.js';
+import { readRpcErrorCode } from '../rpc/errors.js';
 import { SAVED_HEALTH_CHECKS_OPTIONS_SOURCE_ID_V1, resolveSavedHealthCheckOptionsV1 } from './savedHealthCheckOptions.js';
 import { resolveMachineSetupSoftwareOptions } from './machineSetupSoftwareOptions.js';
 import { DesktopDisplaysListResultSchema } from '../actions/specs/desktopShell.js';
@@ -445,12 +446,14 @@ export async function resolveInputOptions(params: Readonly<{
     const selected = Array.isArray(draft[usageField]) ? draft[usageField].filter((value): value is string => typeof value === 'string') : [];
     // Usage a checkout was stamped with before it joined a Project is offered under that Project (owner 11-08).
     let anchorOf: ((key: string) => string) | undefined;
+    let projectFacts: UsageProjectOptionFacts | undefined;
     const projectHome = readNonEmptyString(ctx.serverId);
     if (usageField === 'projects' && projectHome && deps.projectWorkspaceRefs) {
-      const census = await deps.projectWorkspaceRefs({ serverId: projectHome }, ctx);
+      const census = await deps.projectWorkspaceRefs({ serverId: projectHome, includeUsageProjects: true }, ctx);
       ctx.signal?.throwIfAborted();
-      if (!params.readFailure(census)) {
-        const refs = readRecordListProperty(census, 'workspaceRefs').flatMap(row => {
+      if ('workspaceRefs' in census) {
+        projectFacts = census.usageProjects;
+        const refs = census.workspaceRefs.flatMap(row => {
           const ref = WorkspaceRefV1Schema.safeParse(row);
           return ref.success ? [ref.data] : [];
         });
@@ -458,19 +461,27 @@ export async function resolveInputOptions(params: Readonly<{
         anchorOf = key => resolve(projectHome, key);
       }
     }
-    const labels = readUsageScopeOptions(batch.results, usageField, selected, anchorOf);
-    if (usageField === 'machines' && deps.machinesList) {
+    const projectMachines = usageField === 'projects' ? readUsageProjectScopeMachines(batch.results, anchorOf, projectFacts) : undefined;
+    const machineNames: Record<string, string> = Object.create(null);
+    if (deps.machinesList && (usageField === 'machines' || (serverId && projectMachines?.size))) {
       if (!serverId) return { ok: false, errorCode: 'server_not_selected', error: 'server_not_selected' };
-      const machines = await deps.machinesList({ serverId, purpose: 'input' }, ctx);
+      const machines = await deps.machinesList({ serverId, purpose: 'input' }, ctx).catch(error => {
+        if (usageField === 'projects' && readRpcErrorCode(error) === 'machine_inventory_unavailable') return null;
+        throw error;
+      });
       const failure = params.readFailure(machines);
-      if (failure) return failure;
+      if (failure && usageField === 'machines') return failure;
       ctx.signal?.throwIfAborted();
       // This catalog names only the existing accounting identities; it cannot add choices.
       for (const machine of readRecordListProperty(machines, 'items')) {
         const id = readNonEmptyString(machine.machineId) ?? readNonEmptyString(machine.id);
         const label = readNonEmptyString(machine.label);
-        if (id && label && labels.has(id)) labels.set(id, label);
+        if (id && label && (usageField === 'machines' || (label !== id && machine.named !== false))) machineNames[id] = label;
       }
+    }
+    const labels = readUsageScopeOptions(batch.results, usageField, selected, anchorOf, { projectFacts, projectMachines, machineNames });
+    if (usageField === 'machines') for (const key of labels.keys()) {
+      if (machineNames[key]) labels.set(key, machineNames[key]);
     }
     return { ok: true, result: [...labels]
       .map(([value, label]) => ({ value, label })) };

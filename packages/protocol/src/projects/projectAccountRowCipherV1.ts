@@ -31,7 +31,12 @@ export function createProjectAccountRowCipherV1(options: Readonly<{
     return {
         seal(input: ProjectAccountRowPayloadV1): ProjectAccountRowContentV1 {
             const payload = ProjectAccountRowPayloadV1Schema.parse(input);
-            return options.mode === 'plain' ? { t: 'plain', v: payload } : { t: 'encrypted', c: sealAccountScopedBlobCiphertext({
+            if (options.mode === 'plain') {
+                // An E2EE-to-plain Account transition must not publish the native checkout root.
+                if ('nativeUsageRootPath' in payload.value) delete payload.value.nativeUsageRootPath;
+                return { t: 'plain', v: payload };
+            }
+            return { t: 'encrypted', c: sealAccountScopedBlobCiphertext({
                 kind: PROJECT_ACCOUNT_ROW_BLOB_KIND_V1, material: material(), payload, randomBytes: options.randomBytes,
             }) };
         },

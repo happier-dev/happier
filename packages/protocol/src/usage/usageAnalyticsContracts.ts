@@ -552,6 +552,11 @@ export const UsageAnalyticsQueryResponseSchema = lazyZodSchema(() => z.strictObj
   scopeKeys: z.optional(z.array(z.strictObject({
     dimension: UsageAnalyticsBreakdownDimensionSchema,
     keys: z.array(z.string().check(z.trim(), z.minLength(1))),
+    /** Unique observed Machine ids per Project in the private filter inventory. */
+    projectMachines: z.optional(z.array(z.strictObject({
+      key: z.string().check(z.trim(), z.minLength(1)),
+      machineIds: z.array(z.string().check(z.trim(), z.minLength(1))),
+    }))),
   }))),
   insights: z.optional(UsageAnalyticsInsightsSchema),
   activity: z.optional(UsageAnalyticsActivitySchema),

@@ -1,7 +1,7 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { PromptStackEntryAuthoringV1Schema, PromptStackSetEnabledIntentV1Schema, applyPromptStackIntentV1, type PromptStackEntryV1, type PromptStackMutationV1 } from '../prompts/library/promptStacksV1.js';
-import { ProjectAccountOrganizationKeyV1Schema, ProjectAccountOrganizationV1Schema, ProjectAccountRowExpectedRevisionV1Schema, type ProjectAccountOrganizationV1 } from './projectAccountRowsV1.js';
+import { ProjectAccountOrganizationActionViewV1Schema, ProjectAccountOrganizationKeyV1Schema, ProjectAccountOrganizationV1Schema, ProjectAccountRowExpectedRevisionV1Schema, projectProjectAccountOrganizationActionViewV1, type ProjectAccountOrganizationV1 } from './projectAccountRowsV1.js';
 import type { PromptLibraryStoredArtifact } from '../prompts/library/promptLibraryActionOperations.js';
 import { PromptArtifactRefV1Schema, type PromptArtifactRefV1 } from '../prompts/library/promptArtifactRefsV1.js';
 import { getArtifactUseTargetV1 } from '../artifacts/artifactSharingV1.js';
@@ -39,7 +39,7 @@ export const ProjectContextUpdateInputV1Schema = lazyZodSchema(() => z.strictObj
 export type ProjectContextUpdateInputV1 = z.infer<typeof ProjectContextUpdateInputV1Schema>;
 
 export const ProjectContextUpdateOutputV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ ok: z.literal(true), row: ProjectAccountOrganizationV1Schema, revision: z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER)) }),
+  z.strictObject({ ok: z.literal(true), row: ProjectAccountOrganizationActionViewV1Schema, revision: z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER)) }),
   z.strictObject({ ok: z.literal(false), errorCode: z.enum(['invalid_parameters', 'entry_conflict', 'entry_not_found',
     'project_context_conflict', 'project_context_unavailable', 'project_context_access_denied', 'artifact_unavailable', 'artifact_wrong_kind']),
     currentRevision: z.optional(ProjectAccountRowExpectedRevisionV1Schema) }),
@@ -115,7 +115,7 @@ export async function updatePersonalProjectContextV1(
     // Account retires while the external mutation returns its effect receipt.
     if (result.status === 'conflict') return { ok: false, errorCode: 'project_context_conflict',
       currentRevision: result.revision < 0 ? 'absent' : result.revision };
-    return { ok: true, row: result.value, revision: result.revision };
+    return { ok: true, row: projectProjectAccountOrganizationActionViewV1(result.value), revision: result.revision };
   } catch (error) {
     const code: unknown = error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined;
     if (isActionOutcomeUnknownErrorCodeV1(code)) throw error;
