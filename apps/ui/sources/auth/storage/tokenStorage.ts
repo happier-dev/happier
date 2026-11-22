@@ -2371,13 +2371,25 @@ export async function readEmailPasswordSignInCustody(target: Readonly<{
     credentialTarget?: 'account_directory';
 }>): Promise<AccountE2eeCustody> {
     // A contact endpoint can differ from the saved Home's address.
-    const homeUrl = findServerProfileForIdentifier(target.serverIdentityId)?.serverUrl ?? target.endpointUrl;
+    const homeProfile = findServerProfileForIdentifier(target.serverIdentityId);
+    const homeUrl = homeProfile?.serverUrl ?? target.endpointUrl;
     const credentials = await readHomeCredentials(homeUrl, {
         serverId: target.serverIdentityId,
         storageReadFailure: 'surface',
     });
     const homeCustody = credentials ? readAccountE2eeCustody(credentials) : 'absent';
-    if (homeCustody === 'active' || target.credentialTarget !== 'account_directory') return homeCustody;
+    if (homeCustody === 'active') return homeCustody;
+
+    // A descriptor's claimed identity cannot clear an active pin at the contact address.
+    for (const profile of listProfilesClaimingUrl(normalizeUrl(target.endpointUrl))) {
+        if (profile.id === homeProfile?.id) continue;
+        const addressCredentials = await readHomeCredentials(profile.serverUrl, {
+            serverId: profile.id,
+            storageReadFailure: 'surface',
+        });
+        if (addressCredentials && readAccountE2eeCustody(addressCredentials) === 'active') return 'active';
+    }
+    if (target.credentialTarget !== 'account_directory') return homeCustody;
 
     const directory = await getAccountDirectoryCredentialRecordForTarget({
         endpoint: target.endpointUrl,

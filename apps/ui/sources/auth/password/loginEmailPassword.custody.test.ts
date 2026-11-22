@@ -17,6 +17,7 @@ import { describeEmailPasswordFailure } from '@/components/account/auth/emailPas
 import { countTransportRequests } from '@/dev/testkit';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import { encodeBase64 } from '@/encryption/base64';
+import { setServerProfileIdentityForUrl, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 import { loginEmailPassword } from './loginEmailPassword';
@@ -28,11 +29,23 @@ const target = {
     serverId: 'local-password-home',
     serverIdentityId: 'srv_password_home',
 };
+const claimedTarget = { ...target, serverId: 'srv_claimed_home', serverIdentityId: 'srv_claimed_home' };
 const input = { target, email: 'person@example.test', password: 'a valid test password' };
 const storedKeys = {
     token: 'stored-test-token',
     secret: encodePasswordCredentialFieldV1(new Uint8Array(32).fill(4)),
 };
+
+async function saveHomeWithKeys(serverUrl: string, serverIdentityId: string, custody: 'active' | 'historical' = 'active') {
+    await upsertServerProfile({ serverUrl, source: 'manual' });
+    const saved = await setServerProfileIdentityForUrl(serverUrl, serverIdentityId);
+    expect(saved).toMatchObject({ serverUrl, serverIdentityId });
+    expect(await TokenStorage.setCredentialsForServerUrl(
+        serverUrl,
+        { serverId: serverIdentityId },
+        withAccountE2eeCustody(storedKeys, custody),
+    )).toBe(true);
+}
 
 function offerPlainPasswordSignIn() {
     const requests = countTransportRequests(async (url: RequestInfo | URL) => {
@@ -49,9 +62,9 @@ function offerPlainPasswordSignIn() {
     return requests;
 }
 
-async function expectRefusalBeforeLogin(credentialTarget?: 'account_directory') {
+async function expectRefusalBeforeLogin(credentialTarget?: 'account_directory', signInTarget = target) {
     const requests = offerPlainPasswordSignIn();
-    const outcome = await loginEmailPassword({ ...input, credentialTarget }).catch((error: unknown) => error);
+    const outcome = await loginEmailPassword({ ...input, target: signInTarget, credentialTarget }).catch((error: unknown) => error);
     expect.soft(requests.read()).toEqual({ [NATIVE_AUTH_EMAIL_PRELOGIN_PATH_V1]: 1 });
     expect(outcome).toBeInstanceOf(AccountModeDowngradeUnverifiedError);
     expect(outcome).toMatchObject({ code: ACCOUNT_MODE_DOWNGRADE_UNVERIFIED });
@@ -70,6 +83,11 @@ describe('plain password prelogin custody', () => {
         await expectRefusalBeforeLogin(credentialTarget);
     });
 
+    it('does not POST a password when a new identity claims the address of a saved Home with active keys', async () => {
+        await saveHomeWithKeys(target.endpointUrl, target.serverIdentityId);
+        await expectRefusalBeforeLogin(undefined, claimedTarget);
+    });
+
     it('does not POST a password while the target Account Service has its own active content key', async () => {
         const encryption = await createEncryptionFromAuthCredentials(storedKeys);
         expect(await TokenStorage.accountDirectoryAuthCredentials.set(
@@ -85,22 +103,17 @@ describe('plain password prelogin custody', () => {
         await expectRefusalBeforeLogin('account_directory');
     });
 
-    it('allows plain sign-in with historical keys for the target Home', async () => {
-        expect(await TokenStorage.setCredentialsForServerUrl(
-            target.endpointUrl,
-            { serverId: target.serverIdentityId },
-            withAccountE2eeCustody(storedKeys, 'historical'),
-        )).toBe(true);
+    it.each([
+        { signInTarget: target, identity: 'the saved identity' },
+        { signInTarget: claimedTarget, identity: 'a different identity at the saved address' },
+    ])('allows plain sign-in with historical keys and $identity', async ({ signInTarget }) => {
+        await saveHomeWithKeys(target.endpointUrl, target.serverIdentityId, 'historical');
         offerPlainPasswordSignIn();
-        await expect(loginEmailPassword(input)).resolves.toEqual({ token: 'plain-test-token' });
+        await expect(loginEmailPassword({ ...input, target: signInTarget })).resolves.toEqual({ token: 'plain-test-token' });
     });
 
-    it('allows first sign-in when only a different Home has active keys', async () => {
-        expect(await TokenStorage.setCredentialsForServerUrl(
-            'https://other-home.example.test',
-            { serverId: 'srv_other_home' },
-            storedKeys,
-        )).toBe(true);
+    it('allows first sign-in when a saved Home at a different address has active keys', async () => {
+        await saveHomeWithKeys('https://other-home.example.test', 'srv_other_home');
         offerPlainPasswordSignIn();
         await expect(loginEmailPassword(input)).resolves.toEqual({ token: 'plain-test-token' });
     });
