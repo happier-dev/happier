@@ -24,8 +24,10 @@ export function resolveResumeFailurePresentation(result: Readonly<{
     const cause = detail?.kind === 'connected_service_ux_diagnostic' ? detail.uxDiagnostic.code
         : detail?.kind === 'launch_error' ? detail.code : undefined;
     // The Agent can no longer reopen this conversation: Resume cannot recover it, Continue from its transcript can.
-    if (isSessionNativeConversationUnreachable(cause)) return { kind: 'alert', message: t('session.resumeConversationUnavailable'),
-        errorCode: errorCode || cause, reasonCode: cause, recovery: 'continue_from_transcript' };
+    if (isSessionNativeConversationUnreachable(detail ?? cause)) return { kind: 'alert', message: t('session.resumeConversationUnavailable'),
+        errorCode: errorCode || cause,
+        reasonCode: detail?.kind === 'connected_service_resume_unreachable' ? detail.reason : cause,
+        recovery: 'continue_from_transcript' };
     const startupRecovery = presentSessionStartupFailureRecovery([cause, errorCode]);
     if (startupRecovery) return { kind: 'alert', message: startupRecovery.message,
         errorCode: cause || errorCode, recovery: startupRecovery.recovery };

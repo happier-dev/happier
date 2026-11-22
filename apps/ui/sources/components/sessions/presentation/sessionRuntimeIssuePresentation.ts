@@ -1,4 +1,4 @@
-import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
+import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionErrorDetail } from '@happier-dev/protocol/spawnSession';
 import {
     readAgentStartupFailureCode,
     readRequesterSessionRuntimeRefusalCode,
@@ -254,7 +254,11 @@ export type SessionActivationFailurePresentation = Readonly<{
  * The Agent can no longer reopen this Session's native conversation; retrying it cannot recover.
  * The one typed decision read by blocked queued input and by a failed explicit Resume.
  */
-export function isSessionNativeConversationUnreachable(code: unknown): boolean {
+export function isSessionNativeConversationUnreachable(cause: string | SpawnSessionErrorDetail | null | undefined): boolean {
+    const code = typeof cause === 'string' ? cause
+        : cause?.kind === 'launch_error' ? cause.code
+        : cause?.kind === 'connected_service_resume_unreachable' ? cause.reason
+        : cause?.kind === 'connected_service_ux_diagnostic' ? cause.uxDiagnostic.code : undefined;
     return code === 'codex_continuation_unreachable';
 }
 

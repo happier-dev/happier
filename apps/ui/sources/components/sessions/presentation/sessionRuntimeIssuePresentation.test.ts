@@ -11,7 +11,7 @@ import { resolveSessionStartFailureNotice } from '@/components/sessions/startFai
 import { resolveSessionSpawnNewResultFailureMessage } from '@/sync/ops/actions/sessionSpawnNewAction';
 import { SUPPORTED_LANGUAGE_CODES, preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text';
 
-import { presentSessionActivationFailure, presentSessionRuntimeIssue, presentSessionStartupFailureCause } from './sessionRuntimeIssuePresentation';
+import { isSessionNativeConversationUnreachable, presentSessionActivationFailure, presentSessionRuntimeIssue, presentSessionStartupFailureCause } from './sessionRuntimeIssuePresentation';
 import { SESSION_MODEL_TRANSITION_FAILURE_STATUSES, formatSessionModelTransitionFailureCode } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 import { getPendingMessageVisualState, pendingMessageStatesBlockedReason, resolveSessionDeliveryFailure } from '@/components/sessions/pending/pendingMessageVisualState';
 import { resolvePendingActivationBanner } from '@/components/sessions/pending/resolvePendingActivationBanner';
@@ -392,6 +392,20 @@ describe('a Session whose Agent account refused queued input: one message and on
     const blockedFirstInput = { id: 'row-1', localId: 'first-input', createdAt: 10, updatedAt: 10, text: 'hello', rawRecord: {},
         messageRole: 'user' as const, source: 'server_pending' as const,
         pendingDeliveryStatus: 'blocked' as const, pendingDeliveryBlockedReason: 'runtime_config_blocked' as const };
+
+    it('recognizes both native-loss arrivals without treating failed inspection as permanent loss', () => {
+        const detail = { kind: 'connected_service_resume_unreachable' as const,
+            continuityErrorCode: 'provider_session_state_unavailable_for_resume' as const,
+            failurePhase: 'continuity' as const, agentId: 'claude' as const,
+            uxDiagnostic: { code: 'provider_session_state_unavailable_for_resume' as const,
+                failurePhase: 'continuity' as const, source: 'spawn_resume' as const, retryable: false,
+                suggestedActions: ['start_fresh_under_selected_account' as const] } };
+        expect(isSessionNativeConversationUnreachable({ ...detail, reason: 'resume_reachability_check_failed' })).toBe(false);
+        expect(isSessionNativeConversationUnreachable({ ...detail, reason: 'claude_session_file_not_found' })).toBe(false);
+        expect(isSessionNativeConversationUnreachable({ ...detail, reason: 'codex_continuation_unreachable' })).toBe(true);
+        expect(isSessionNativeConversationUnreachable({ kind: 'launch_error', code: 'codex_continuation_unreachable', message: 'Native conversation gone' })).toBe(true);
+        expect(isSessionNativeConversationUnreachable({ kind: 'launch_error', code: 'SESSION_WEBHOOK_TIMEOUT', message: 'Startup pending' })).toBe(false);
+    });
 
     it('keeps a non-retryable native continuation refusal distinct from a failed wake or temporary provider outage', async () => {
         await useLanguage('en');

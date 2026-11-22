@@ -145,6 +145,30 @@ describe('session resume failure presentation', () => {
         });
     });
 
+    it.each(['action', 'wake'] as const)('offers Continue only for a completed Claude lookup miss on %s, retaining Technical details codes', source => {
+        const present = (reason: string) => {
+            const errorDetail = { kind: 'connected_service_resume_unreachable',
+                continuityErrorCode: 'provider_session_state_unavailable_for_resume', failurePhase: 'continuity',
+                agentId: 'claude', reason, uxDiagnostic: {
+                    code: 'provider_session_state_unavailable_for_resume', failurePhase: 'continuity',
+                    source: 'spawn_resume', retryable: false, suggestedActions: ['start_fresh_under_selected_account'],
+                    diagnostics: { reason },
+                } };
+            return resolveResumeFailurePresentation({ errorCode: 'SPAWN_VALIDATION_FAILED',
+                errorMessage: 'Private native path /private/account',
+                ...(source === 'action' ? { details: { errorDetail } } : { errorDetail }),
+            }, 'Resume failed');
+        };
+        const failedLookup = present('resume_reachability_check_failed');
+        expect(failedLookup).toMatchObject({ kind: 'alert', errorCode: 'provider_session_state_unavailable_for_resume' });
+        expect(failedLookup).not.toHaveProperty('recovery');
+        expect(present('claude_session_file_not_found')).not.toHaveProperty('recovery');
+        expect(present('codex_continuation_unreachable')).toEqual({
+            kind: 'alert', message: t('session.resumeConversationUnavailable'), errorCode: 'SPAWN_VALIDATION_FAILED',
+            reasonCode: 'codex_continuation_unreachable', recovery: 'continue_from_transcript',
+        });
+    });
+
     it.each(['action', 'wake'] as const)('offers Continue from the transcript when the %s Resume finds the native conversation gone', source => {
         const errorDetail = { kind: 'launch_error', code: 'codex_continuation_unreachable', message: 'Agent native Session construction failed',
             failureCause: { phase: 'client_start', failureReason: 'unclassified_provider_error', providerErrorCode: 'codex_continuation_unreachable' } };
