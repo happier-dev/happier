@@ -1177,10 +1177,11 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         if (draft === null) return { status: 'unavailable' };
         if (savePending) return { status: 'refused', reason: 'save_pending' };
         history.commit();
+        if (!triggers.complete) return { status: 'refused', reason: 'workflow_trigger_setup_required' };
         const definitionChanged = canEditDefinition && (copying || saved === null
             || definitionHasChanges(draft) || description !== savedDescriptionRef.current);
         const validation = validateWorkflowEditorDraft(draft, { triggerEvents: triggers.triggerEvents });
-        if (!triggers.complete || (definitionChanged && (!validation.valid || validation.normalizedDefinition === undefined))) return { status: 'refused', reason: 'invalid_workflow' };
+        if (definitionChanged && (!validation.valid || validation.normalizedDefinition === undefined)) return { status: 'refused', reason: 'invalid_workflow' };
         const lifetime = accountLifetime;
         if (!lifetime?.isCurrent()) return { status: 'unavailable' };
         // Same Account is not the same workflow: a save that resolves after this
@@ -1302,11 +1303,18 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         })();
     }, [accountLifetime, canEditDefinition, canManagePersonalTriggers, captureSourceGeneration, definitionDraftDirty, descriptionDraftDirty, description, saved, savePending, sourceKind, triggers, rememberAuthoringMemory, rememberedProject]);
 
-    const saveFromUi = React.useCallback(() => { void handleSave(); }, [handleSave]);
-
-    const handleSaveAsCopy = React.useCallback(() => {
-        void handleSave(undefined, true);
-    }, [handleSave]);
+    const presentSaveResult = React.useCallback((asCopy: boolean) => {
+        const sourceIsCurrent = captureSourceGeneration();
+        void handleSave(undefined, asCopy).then(result => {
+            if (result.status !== 'refused' || result.reason !== 'workflow_trigger_setup_required' || !sourceIsCurrent()) return;
+            setView('steps');
+            editorCommandsRef.current?.schedule();
+            void Modal.alert(t('workflows.save.failedTitle'), t('workflows.triggers.card.incomplete'),
+                [{ text: t('common.ok'), style: 'cancel' }]);
+        });
+    }, [captureSourceGeneration, handleSave]);
+    const saveFromUi = React.useCallback(() => presentSaveResult(false), [presentSaveResult]);
+    const handleSaveAsCopy = React.useCallback(() => presentSaveResult(true), [presentSaveResult]);
 
 
     /**

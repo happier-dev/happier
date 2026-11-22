@@ -260,7 +260,7 @@ async function renderScreen(element: React.ReactElement, options: Parameters<typ
     editorScreen = await renderHostScreen(element, { ...options,
         wrapper: ({ children }) => <AuthProvider initialCredentials={editorCredentials}><RealModalProvider><ObserveModals /><PaneWrapper>{children}</PaneWrapper></RealModalProvider></AuthProvider>,
         createNodeMock: options.createNodeMock ?? ((node) => ({
-            focus: () => focusPromptSpy(node.props), blur: () => {}, setNativeProps: () => {},
+            focus: () => focusPromptSpy(node.props), blur: () => {}, setNativeProps: () => {}, scrollTo: () => {},
             getBoundingClientRect: () => ({ left: 600, top: 100, width: 160, height: 40 }),
             ownerDocument: new EventTarget(),
             addEventListener: () => {}, removeEventListener: () => {},
@@ -278,7 +278,7 @@ function renderRunEditor(element: React.ReactElement) {
         wrapper: ({ children }) => <AppPaneProvider>{children}</AppPaneProvider>,
         // Physical anchor geometry is the platform boundary; the Popover and composer stay real.
         createNodeMock: () => ({
-            focus: () => {}, blur: () => {},
+            focus: () => {}, blur: () => {}, scrollTo: () => {},
             // Native selection restoration is an input-platform boundary too.
             setNativeProps: () => {},
             offsetTop: 0, offsetHeight: 40, offsetWidth: 160,
@@ -885,7 +885,7 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
 } }), includeSavedArtifact = true, serverIdentityId?: string, settings?: Readonly<Record<string, unknown>>, accountMode: 'plain' | 'e2ee' = 'plain',
     triggerEvents: readonly Readonly<{ event: { pluginId: string; localId: string }; payloadSchema: PluginJsonSchemaV2 }>[] = [],
     sourceRuns: readonly ReturnType<typeof createWorkflowRunSummaryFixture>[] = [],
-    actionIndex?: ReturnType<typeof ActionAutomationIndexV1Schema.parse>) {
+    actionIndex?: ReturnType<typeof ActionAutomationIndexV1Schema.parse> | 'unavailable') {
     // The memory writer has a prepared HTTP boundary as well as the Home's
     // ordinary transport. Both consume this fixture's same explicit policy.
     if (settings) preparedMemorySettings = AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: settings }, version: 1 });
@@ -943,7 +943,11 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
         if (memoryResponse) return memoryResponse;
         const sessionResponse = await sessionBoundary.handle(request);
         if (sessionResponse) return sessionResponse;
-        if (request.path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 && actionIndex) return Response.json(actionIndex);
+        if (request.path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 && actionIndex) {
+            return actionIndex === 'unavailable'
+                ? Response.json({ error: 'temporarily_unavailable' }, { status: 503 })
+                : Response.json(actionIndex);
+        }
         if (request.path === '/v3/automations/runs/workflow-storage' && request.method === 'POST'
             && request.body !== null && typeof request.body === 'object' && 'operation' in request.body
             && request.body.operation === 'get' && 'runId' in request.body) {
@@ -1243,6 +1247,68 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(readBodyProps()!.saveStatus).toEqual({ kind: 'unsaved' });
         expect(boundary.creates).toHaveLength(0);
         expect(boundary.automationCreates).toHaveLength(0);
+    });
+
+    it('explains a refused Save after Machine Event Add and preserves the draft for setup', async () => {
+        const eventRef = { pluginId: 'com.acme.events', localId: 'machine-online' };
+        const boundary = await serveMountedDraftActionHome(undefined, true, undefined, undefined, 'plain', [
+            { event: eventRef, payloadSchema: { type: 'object', properties: {} } },
+        ]);
+        await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        const nativeEvent = { kind: 'machine', key: 'online-to-save', machineId: 'machine-a', event: 'online',
+            sourceRevision: 1, occurredAt: 10, coverage: 'retained' } as const;
+        let clientId = '';
+        await act(async () => {
+            clientId = readBodyProps()!.onAddTriggerWhen!({ kind: 'pluginEvent', value: null }, { nativeEvent });
+        });
+        await act(async () => { readBodyProps()!.history!.undo(); });
+        await act(async () => { readBodyProps()!.history!.redo(); });
+        await act(async () => {
+            expect(await readBodyProps()!.mountedDraftActions!.execute('workflow.authoring.draft.save', {})).toEqual({
+                status: 'refused', reason: 'workflow_trigger_setup_required',
+            });
+        });
+        await saveDirectlyFromUi();
+        expect(readAlert()?.message).toBe(t('workflows.triggers.card.incomplete'));
+        expect(readBodyProps()!.hasTriggerRow!(clientId)).toBe(true);
+        expect(boundary.updates).toHaveLength(0);
+        expect(boundary.automationCreates).toHaveLength(0);
+        await pressAlertButton('cancel');
+
+        // The ordinary trigger control supplies the configuration it gets from Event setup.
+        const section = readBodyProps()!.triggersSection;
+        if (!React.isValidElement<React.ComponentProps<typeof WorkflowTriggerSection>>(section)) throw new Error('Missing trigger editor');
+        const { commitWorkflowTriggerWhen } = await import('../triggers/workflowTriggerStarts');
+        const configured = commitWorkflowTriggerWhen({ draft: section.props.draft, row: { kind: 'new', clientId }, enabled: true,
+            when: { kind: 'pluginEvent', value: { kind: 'pluginEvent', enabled: true, eventRef,
+                sourceInstanceId: 'machine-online', sourceContractVersion: 1, sourceConfig: {}, displayLabel: 'Machine online',
+                filter: null, maximumObservationAgeMs: null, observationTransport: { kind: 'checkpointedPull',
+                    watcherMaterializationRef: { machineId: 'machine-a', pluginId: eventRef.pluginId, materializationId: 'configured-event' } } } } });
+        if (!configured) throw new Error('Expected a configured Event trigger');
+        await act(async () => {
+            readBodyProps()!.onChangeProjectTarget!({ machineId: 'machine-a', directory: '/repo' });
+        });
+        await act(async () => {
+            section.props.incomplete!.onChange(current => ({ ...current, pending: current.pending.filter(row => row.clientId !== clientId) }));
+            section.props.onChangeDraft(configured);
+        });
+        await saveDirectlyFromUi();
+        expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saved' });
+        expect(boundary.automationCreates).toMatchObject([{ triggers: [{ trigger: { eventRef, sourceInstanceId: 'machine-online' } }] }]);
+    });
+
+    it('shows the Action warning after a mounted Save proceeds with a failed automation index', async () => {
+        const boundary = await serveMountedDraftActionHome(undefined, true, 'srv_workflow-index-unavailable', undefined, 'plain', [], [], 'unavailable');
+        await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        await act(async () => { readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: 'Saved after an index failure' }); });
+        await saveDirectlyFromUi();
+        expect(boundary.requests.filter(request => request.method === 'GET' && request.path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1)).toHaveLength(1);
+        expect(boundary.updates).toHaveLength(1);
+        expect(WorkflowDefinitionArtifactHeaderV1Schema.parse(decodePlainArtifactStoredContent(boundary.artifact.header)).metadata.title)
+            .toBe('Saved after an index failure');
+        expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saved' });
+        expect(visibleModals().filter(modal => modal.type === 'alert')).toHaveLength(1);
+        expect(readAlert()?.message).toBe(t('workflows.triggers.checks.notChecked'));
     });
 
     it('adds an event and Only-when through the mounted Action without losing edits or splitting undo', async () => {
