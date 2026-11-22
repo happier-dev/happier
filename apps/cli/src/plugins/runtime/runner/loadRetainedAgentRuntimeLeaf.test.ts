@@ -8,7 +8,7 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises';
-import { createRequire } from 'node:module';
+import { createRequire, registerHooks } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -42,6 +42,7 @@ import { publishPinnedRunnerSnapshotFixture } from '@/testkit/process/spawnHappy
 import { readCliNodeWorkspaceRuntimeIdentityFromRuntimeRoot } from '@happier-dev/cli-common/componentArtifacts/copyCliNodeRuntimePayload';
 import { createBundledActivationSourceResolver } from '../bundledActivationSource';
 import { bindPluginRuntimeSourceAuthority } from '../sourceAuthority';
+import { loadVerifiedPluginModule } from '../loadPluginModule';
 import { resolveBuiltInContributions } from '../../projection/registry/resolveBuiltInContributions';
 import { projectManifestAgentContribution } from '../../projection/registry/projectManifestAgentContribution';
 import { createRunnerManagedServiceInvocationOwner } from '../invocation/services/createRunnerManagedServiceInvocationOwner';
@@ -931,6 +932,26 @@ describe('loadRetainedAgentRuntimeLeaf', () => {
         provenance: agent.provenance,
         definition: agent.richDefinition.definition,
       });
+      const sdkBarrelImports: string[] = [];
+      const hooks = registerHooks({
+        resolve(specifier, context, nextResolve) {
+          const result = nextResolve(specifier, context);
+          if (result.url.endsWith('/packages/plugin-sdk/dist/index.js')) sdkBarrelImports.push(result.url);
+          return result;
+        },
+      });
+      try {
+        await loadVerifiedPluginModule({
+          entryPath: join(attested.rootPath, 'src', 'agent', 'runtime', 'factory.ts'),
+          loadMode: 'source-ts',
+          generationScope: binding,
+          cacheKey: `${attested.cacheIdentity}:src/agent/runtime/factory.ts`,
+          nativeFileUrlMode: 'canonical',
+        });
+        expect(sdkBarrelImports).toEqual([]);
+      } finally {
+        hooks.deregister();
+      }
       // The production source loader shares Node's module cache. Constructing a native
       // Session runtime does not need Claude's historical transcript or accounting readers.
       const leaf = await loadRetainedAgentRuntimeLeaf({

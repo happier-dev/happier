@@ -1,4 +1,4 @@
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type {
   AgentProviderBindingAdapter,
   AgentProviderBindingMaterializeInput,

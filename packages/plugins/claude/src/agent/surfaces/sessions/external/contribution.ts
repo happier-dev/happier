@@ -1,4 +1,4 @@
-import { isPluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import type {
     AgentExternalSessionCandidate,
     AgentExternalSessionLinkData,

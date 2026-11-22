@@ -1,4 +1,4 @@
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { AgentLaunchEnvironment, AgentPreflightSessionControlsContributionV1, AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
 import { KIMI_CONNECTED_ACCOUNT_SERVICE, KIMI_CODE_API_KEY_ENV, KIMI_CODE_ANTHROPIC_BASE_ENV } from '@happier-dev/plugins-kimi/connected-account-service';
 import { buildClaudeNativeUpstreamEnvironment, isClaudeProviderOwnedEnvName } from '../providerBinding/adapter.js';
