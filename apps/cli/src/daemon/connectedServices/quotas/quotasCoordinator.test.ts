@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
 import credentialAxios from '@/api/client/credentialAxios';
 import { deriveProviderAccountUsagePace } from '@happier-dev/protocol/connect/deriveProviderAccountUsagePace';
-import { isConnectedServiceQuotaObservationFresh } from '@happier-dev/protocol/connect/quotaObservationTime';
 import { buildProviderAccountUsageDaySummaryV1, ProviderAccountUsageDaySummaryWriteV1Schema } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
 import { ApiClient } from '@/api/api';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -183,7 +182,6 @@ async function createQualifiedQuotaRuntimeFixture(profile: QualifiedConnectedAcc
           const scripted = ${options?.scriptedObservation
             ? `JSON.parse(await (await import('node:fs/promises')).readFile(${JSON.stringify(observationScript)}, 'utf8'))`
             : 'null'};
-          if (scripted?.retryAfterMs) throw Object.assign(new Error('Provider quota backoff'), { status: 429, retryAfterMs: scripted.retryAfterMs, quotaFetchErrorCode: 'provider_backoff' });
           return { observedAtMs: scripted?.observedAtMs ?? ${now}, ${options?.failQuota ? `...(() => { throw new Error('Provider quota unavailable'); })(),` : ''} ${options?.organizationQuota ? `providerOrganizationId: await context.credentials.get('organizationUuid'),` : ''} limits: ${JSON.stringify(options?.quotaLimitsByProfileId ?? {})}[context.account.accountId] ?? [{ id: 'weekly', used: 100 - (${JSON.stringify(options?.remainingByProfileId ?? {})}[context.account.accountId] ?? 75), remaining: ${JSON.stringify(options?.remainingByProfileId ?? {})}[context.account.accountId] ?? 75 }] };
         }
       });
@@ -413,15 +411,15 @@ it.each([1, 2])('reads one day index per record after processing two due profile
   if (recordCount === 1) expect(detailsAtDayIndex[0]).toEqual(recordIds);
   expect(trace).toEqual([...new Set(recordIds)].map(recordId => ({
     record: createHash('sha256').update(recordId).digest('hex').slice(0, 10),
-    due: true, reason: 'poll', nextDueDelayMs: null,
-    providerOutcome: 'ok', retryAfterMs: null, writeResult: 'written',
+    reason: 'due:poll', nextDueDelayMs: null,
+    providerOutcome: 'ok', writeResult: 'written',
   })));
   trace.length = 0;
   await runWithServerHttpBaseUrl('https://quota-work.test', () => coordinator.tickOnce());
   expect(trace).toEqual([...new Set(recordIds)].map(recordId => ({
     record: createHash('sha256').update(recordId).digest('hex').slice(0, 10),
-    due: false, reason: 'parked', nextDueDelayMs: null,
-    providerOutcome: null, retryAfterMs: null, writeResult: null,
+    reason: 'not-due:parked', nextDueDelayMs: null,
+    providerOutcome: null, writeResult: null,
   })));
 });
 
@@ -696,166 +694,79 @@ it.each(['usable', 'partial_usable', 'partial_active', 'partial_unknown', 'no_us
   }
 });
 
-it.each([
-  { name: 'active', resetDelayMs: 3_600_000, active: true },
-  { name: 'parked until reset', resetDelayMs: 3_600_000 },
-  { name: 'parked without a reset', resetDelayMs: null },
-  { name: 'parked beyond the Int range', resetDelayMs: 2_592_000_000 },
-  { name: 'active to parked and back', resetDelayMs: 3_600_000, active: true, transition: true },
-])('keeps the published clock valid through the scheduled replacement for thirteen accounts ($name)', async ({
-  active = false, resetDelayMs, transition = false,
-}) => {
-  const startedAt = 1_000_000;
-  const intervalMs = DEFAULT_CONNECTED_SERVICE_QUOTA_FRESHNESS_MS;
-  const maxLifetimeMs = 2_147_483_647;
-  const resetAt = resetDelayMs === null ? null : startedAt + resetDelayMs;
-  let now = startedAt;
-  const profiles: QualifiedConnectedAccountProfileV4[] = Array.from({ length: 13 }, (_, index) => ({
-    ref: { service: { pluginId: 'example.pool-freshness', localId: 'account' }, accountId: `member-${index}` },
+it('lets a parked quota reading expire without polling or writing until its reset', async () => {
+  const observedAt = 1_000_000;
+  const lifetimeMs = 2 * DEFAULT_CONNECTED_SERVICE_QUOTA_FRESHNESS_MS;
+  const resetAt = observedAt + 3_600_000;
+  let now = observedAt;
+  const profile: QualifiedConnectedAccountProfileV4 = {
+    ref: { service: { pluginId: 'example.pool-freshness', localId: 'account' }, accountId: 'parked-member' },
     status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
     credentialRevision: 'csr_abcdefghijklmnopqrstuv', configurationRevision: null, configurationReady: true,
-    providerIdentity: { accountId: `provider-${index}` }, scopes: [],
-  }));
-  const accountIds = profiles.map(profile => profile.ref.accountId);
-  const fixture = await createQualifiedQuotaRuntimeFixture(profiles[0]!, now, {
-    profiles,
+    providerIdentity: { accountId: 'provider-member' }, scopes: [],
+  };
+  const fixture = await createQualifiedQuotaRuntimeFixture(profile, now, {
     scriptedObservation: true,
-    quotaLimitsByProfileId: Object.fromEntries(accountIds.map(id => [id, [{
-      id: 'weekly', used: 25, remaining: 75, limit: 100, ...(resetAt === null ? {} : { resetsAtMs: resetAt }), windowDurationMs: 4_000_000,
-    }]])),
+    quotaLimitsByProfileId: { [profile.ref.accountId]: [
+      { id: 'weekly', used: 25, remaining: 75, limit: 100, resetsAtMs: resetAt, windowDurationMs: 4_000_000 },
+    ] },
   });
-  const publishClock = (failure = false) => writeFile(fixture.observationScript, JSON.stringify({
-    observedAtMs: now, ...(failure ? { retryAfterMs: 2 * intervalMs } : {}),
-  }));
-  await publishClock();
   const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
-    if (new URL(String(url)).pathname !== '/v4/connect/qualified/provider-account-usage/day-summaries') {
-      throw new Error('Unexpected scheduled quota fixture route');
-    }
+    expect(new URL(String(url)).pathname).toBe('/v4/connect/qualified/provider-account-usage/day-summaries');
     return { status: 200, data: { summaries: [], missingDays: [] } };
   });
   onTestFinished(() => get.mockRestore());
-  const published = new Map<string, ProviderAccountUsageSnapshotV1>();
-  let observationWrites = 0;
-  let refreshRequestedAt: number | undefined;
-  const saved = async ({ ref }: Readonly<{ ref: QualifiedConnectedAccountProfileV4['ref'] }>) => {
-    const snapshot = published.get(ref.accountId);
-    if (!snapshot) return null;
-    const timing = { fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs };
-    return {
-      ref,
-      sourceResolution: { source: { ref, bindingKind: 'account' as const }, recordId: snapshot.recordId,
-        providerAccountId: snapshot.recordKey.accountSubjectId, ...timing },
-      content: { t: 'plain' as const, v: projectProviderAccountUsageSnapshotToQualifiedConnectedAccountQuotaSnapshotV4({ snapshot, ref }) },
-      metadata: { ...timing, status: snapshot.state === 'error_last_known_good' ? 'error' as const : 'ok' as const, refreshRequestedAt },
-    };
-  };
-  const runtimeRegistry = new ConnectedServiceRuntimeRegistry();
+  const admitted: ProviderAccountUsageSnapshotV1[] = [];
   const coordinator = new ConnectedServiceQuotasCoordinator({
-    runtimeRegistry,
     api: { getAccountEncryptionMode: async () => 'plain', getConnectedServiceQuotaSnapshotSealed: async () => null,
       getConnectedServiceCredentialSealed: async () => null } satisfies QuotaApi,
     credentials: fixture.credentials, quotaFetchers: [], now: () => now, randomBytes: length => new Uint8Array(length),
-    quotaPersistenceMinFreshnessMs: intervalMs,
     qualifiedConnectedAccountRuntime: {
       resolvePeerClass: () => 'advertised_v4', establishedRuntimeOwner: fixture.owner,
-      listScheduledAccounts: async () => profiles,
-      listGroupQuotaTargets: async () => profiles.map(profile => ({ profile, groupGeneration: 1 })),
-      readQuota: saved,
+      listScheduledAccounts: async () => [profile],
+      readQuota: async () => {
+        const snapshot = admitted.at(-1);
+        if (!snapshot) return null;
+        const timing = { fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs };
+        return {
+          ref: profile.ref, metadata: { ...timing, status: 'ok' },
+          sourceResolution: { source: { ref: profile.ref, bindingKind: 'account' }, recordId: snapshot.recordId,
+            providerAccountId: snapshot.recordKey.accountSubjectId, ...timing },
+          content: { t: 'plain', v: projectProviderAccountUsageSnapshotToQualifiedConnectedAccountQuotaSnapshotV4({
+            snapshot, ref: profile.ref,
+          }) },
+        };
+      },
       writeProviderAccountUsage: async ({ write }) => {
-        const snapshot = QualifiedProviderAccountUsageWriteV4Schema.parse(write).snapshot;
-        if (snapshot && snapshot.fetchedAtMs > 0) {
-          published.set(write.source.ref.accountId, snapshot);
-          observationWrites++;
-        }
+        const parsed = QualifiedProviderAccountUsageWriteV4Schema.parse(write);
+        if (parsed.snapshot && parsed.snapshot.fetchedAtMs > 0) admitted.push(parsed.snapshot);
         return { success: true };
       },
     },
   });
   onTestFinished(() => coordinator.disposeInBandQuotaPersistence());
-  const registerRunningPool = () => {
-    const serviceId = buildQualifiedPluginContributionKey(profiles[0]!.ref.service);
-    coordinator.registerSpawnTarget({
-      pid: 61, sessionId: 'pool-session',
-      connectedServicesBindingsRaw: { v: 1, bindingsByServiceId: { [serviceId]: {
-        source: 'connected', selection: 'group', groupId: 'team',
-      } } },
-      connectedServiceSelectionsEnv: { [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
-        kind: 'group', serviceId, groupId: 'team', activeProfileId: accountIds[0], fallbackProfileId: accountIds[1], generation: 1,
-      }]) },
-    });
-  };
-  if (active) registerRunningPool();
-  const deadlineMs = active ? intervalMs : resetDelayMs;
-  await expect(coordinator.tickOnce()).resolves.toEqual({ nextAutomaticRunAfterMs: deadlineMs });
-  expect([...published.keys()]).toEqual(accountIds);
-  const attempts = async () => (await readFile(fixture.marker, 'utf8')).trim().split('\n');
-  expect(await attempts()).toEqual(accountIds);
-  const assertPublished = (expectedLifetimeMs: number) => {
-    for (const snapshot of published.values()) {
-      expect(snapshot.staleAfterMs, 'Home lifetime through one missed scheduled poll').toBe(expectedLifetimeMs);
-      expect(snapshot.meters[0]?.resetsAt ?? null).toBe(resetAt);
-    }
-  };
-  assertPublished(deadlineMs === null ? maxLifetimeMs : Math.min(maxLifetimeMs, deadlineMs + intervalMs));
-  now += active ? intervalMs : 2 * intervalMs + 1;
-  await publishClock();
+
+  await writeFile(fixture.observationScript, JSON.stringify({ observedAtMs: observedAt }));
+  await expect(coordinator.tickOnce()).resolves.toEqual({ nextAutomaticRunAfterMs: resetAt - now });
+  const [first] = admitted;
+  expect(first).toMatchObject({ observedAtMs: observedAt, meters: [{ resetsAt: resetAt }] });
+
+  now = observedAt + lifetimeMs + 1;
+  expect(deriveProviderAccountUsagePace({ snapshot: first!, history: admitted, meterId: 'weekly', nowMs: now }))
+    .toEqual({ status: 'unavailable', reason: 'stale' });
+  expect(first!.staleAfterMs).toBe(lifetimeMs);
+  await expect(coordinator.tickOnce()).resolves.toEqual({ nextAutomaticRunAfterMs: resetAt - now });
+  now = resetAt - 1;
+  await expect(coordinator.tickOnce()).resolves.toEqual({ nextAutomaticRunAfterMs: 1 });
+  expect(admitted).toEqual([first]);
+  await expect(readFile(fixture.marker, 'utf8')).resolves.toBe('parked-member\n');
+
+  now = resetAt;
+  await writeFile(fixture.observationScript, JSON.stringify({ observedAtMs: now }));
   await coordinator.tickOnce();
-  expect(await attempts()).toEqual(active ? [...accountIds, ...accountIds] : accountIds);
-  expect(observationWrites).toBe(active ? 26 : 13);
-  if (transition) {
-    runtimeRegistry.unregisterPid(61);
-    now += 1;
-    await expect(coordinator.tickOnce()).resolves.toEqual({ nextAutomaticRunAfterMs: resetAt! - now });
-    expect(await attempts()).toHaveLength(26);
-    expect(observationWrites).toBe(26);
-    // The already supported Home Refresh supplies the next parked publication.
-    refreshRequestedAt = now;
-    coordinator.invalidateInventory({ quotaRefreshRecordIds: [...published.values()].map(row => row.recordId) });
-    await publishClock();
-    await expect(coordinator.tickOnce()).resolves.toEqual({ nextAutomaticRunAfterMs: resetAt! - now });
-    expect(await attempts()).toHaveLength(39);
-    expect(observationWrites).toBe(39);
-    assertPublished(resetAt! - now + intervalMs);
-
-    refreshRequestedAt = undefined;
-    registerRunningPool();
-    now += 1;
-    await expect(coordinator.tickOnce()).resolves.toEqual({ nextAutomaticRunAfterMs: intervalMs - 1 });
-    expect(observationWrites).toBe(39);
-    now += intervalMs - 1;
-    await publishClock();
-    await expect(coordinator.tickOnce()).resolves.toEqual({ nextAutomaticRunAfterMs: intervalMs });
-    expect(await attempts()).toHaveLength(52);
-    expect(observationWrites).toBe(52);
-    assertPublished(2 * intervalMs);
-  } else if (!active && resetDelayMs === 3_600_000) {
-    const snapshot = published.values().next().value!;
-    expect(deriveProviderAccountUsagePace({ snapshot, history: [snapshot], meterId: 'weekly', nowMs: now }))
-      .toMatchObject({ status: 'available' });
-    now = resetAt!;
-    await publishClock(true);
-    await expect(coordinator.tickOnce()).resolves.toEqual({ nextAutomaticRunAfterMs: 2 * intervalMs });
-    expect(await attempts()).toEqual([...accountIds, ...accountIds]);
-    expect(observationWrites).toBe(13);
-    const freshAt = (nowMs: number) => isConnectedServiceQuotaObservationFresh({
-      observedAtMs: snapshot.observedAtMs, maxAgeMs: snapshot.staleAfterMs, nowMs,
-    });
-    expect(freshAt(now)).toBe(true);
-    expect(freshAt(now + intervalMs - 1)).toBe(true);
-    expect(freshAt(now + intervalMs)).toBe(false);
-    expect(published.values().next().value).toBe(snapshot);
-
-    refreshRequestedAt = now;
-    coordinator.invalidateInventory({ quotaRefreshRecordIds: [snapshot.recordId] });
-    await coordinator.tickOnce();
-    const failed = published.values().next().value!;
-    expect(failed).toMatchObject({ state: 'error_last_known_good', observedAtMs: snapshot.observedAtMs,
-      staleAfterMs: resetDelayMs + 3 * intervalMs,
-      diagnostics: [{ code: 'provider_backoff', retryAtMs: now + 2 * intervalMs }] });
-    expect(await attempts()).toHaveLength(26);
-    expect(observationWrites).toBe(14);
-  }
+  expect(admitted.map(snapshot => snapshot.observedAtMs)).toEqual([observedAt, resetAt]);
+  expect(admitted.map(snapshot => snapshot.staleAfterMs)).toEqual([lifetimeMs, lifetimeMs]);
+  await expect(readFile(fixture.marker, 'utf8')).resolves.toBe('parked-member\nparked-member\n');
 });
 
 it('carries the qualified provider Retry-After through current-member observation to the recovery timer', async () => {
@@ -3491,7 +3402,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
             unit: 'requests' as const, utilizationPct: 25, resetsAt: null, status: 'ok' as const, details: {} }] };
         const expectedCompletionSnapshot: ProviderAccountUsageSnapshotV1 = { ...completionObservation,
           recordId: previous.recordId, recordKey: previous.recordKey, accountSubject: previous.accountSubject,
-          staleAfterMs: 2_147_483_647, accountLabel: profile.displayName };
+          staleAfterMs: 2 * 60_000, accountLabel: profile.displayName };
         const settlementRequest = {
           intent: 'connect', service: profile.ref.service, accountId: profile.ref.accountId,
           authenticationModeId: profile.authenticationModeId!,

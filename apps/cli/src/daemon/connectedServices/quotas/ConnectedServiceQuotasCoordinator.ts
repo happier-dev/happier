@@ -167,39 +167,29 @@ type ScheduledQuotaRecordTrace = {
   due: boolean;
   reason: 'parked' | 'scheduled' | 'backoff' | 'read' | 'unavailable' | 'current' | 'poll';
   nextDueDelayMs: number | null;
-  providerOutcome: 'ok' | 'failed' | 'retry-after' | null;
-  retryAfterMs: number | null;
+  providerOutcome: 'ok' | 'failed' | `retry-after:${number}` | null;
   writeResult: 'written' | 'unchanged' | 'refused' | null;
 };
 
-// Home stores a signed Int. This maximum represents a read with no earlier representable deadline.
-const MAX_PROVIDER_ACCOUNT_USAGE_LIFETIME_MS = 2_147_483_647;
-
-function quotaPublicationLifetimeMs(fetchedAt: number, nextProbeAt: number, toleranceMs: number): number {
-  return Math.max(1, Math.min(MAX_PROVIDER_ACCOUNT_USAGE_LIFETIME_MS, Math.trunc(nextProbeAt - fetchedAt + toleranceMs)));
-}
-
+/**
+ * The replacement read starts one refresh interval before the reading's freshness deadline, so a
+ * reading is called old only when its replacement is late. A window no longer than one interval
+ * keeps its own deadline, so no producer's reading is refreshed later than before.
+ */
 function quotaObservationProbeAt(input: Readonly<{
   fetchedAt: number;
-  staleAfterMs?: number;
+  staleAfterMs: number;
   refreshIntervalMs: number;
   resetsAt: readonly (number | null | undefined)[];
-  refreshWhenStale: boolean;
+  refreshWhenStale?: boolean;
 }>): number {
-  const nextResetAt = Math.min(...input.resetsAt.filter(
-    (value): value is number => typeof value === 'number' && Number.isInteger(value) && value > input.fetchedAt,
-  ));
-  if (!input.refreshWhenStale) return nextResetAt;
-
-  // A parked stamp describes its reset deadline. New active demand uses the active cadence.
-  // Other retained readings keep their producer's replacement deadline.
-  const parkedLifetime = quotaPublicationLifetimeMs(input.fetchedAt, nextResetAt, input.refreshIntervalMs);
-  const retainedLifetime = input.staleAfterMs === parkedLifetime ? undefined : input.staleAfterMs;
-  const refreshAfterMs = retainedLifetime === undefined ? input.refreshIntervalMs : Math.max(
-    Math.min(retainedLifetime, input.refreshIntervalMs),
-    retainedLifetime - input.refreshIntervalMs,
+  const refreshAfterMs = Math.max(
+    Math.min(input.staleAfterMs, input.refreshIntervalMs),
+    input.staleAfterMs - input.refreshIntervalMs,
   );
-  return Math.min(input.fetchedAt + refreshAfterMs, nextResetAt);
+  return Math.min(...(input.refreshWhenStale === false ? [] : [input.fetchedAt + refreshAfterMs]), ...input.resetsAt.filter(
+    (value): value is number => typeof value === 'number' && Number.isFinite(value) && value > input.fetchedAt,
+  ));
 }
 
 type PluginConnectedAccountQuotaSnapshot = NonNullable<ConnectedAccountRuntimeEstablishedResult<Readonly<{ kind: 'quota' }>>>;
@@ -887,6 +877,7 @@ export class ConnectedServiceQuotasCoordinator {
   private quotaSnapshotFingerprintKey: QuotaSnapshotFingerprintKey;
   private readonly quotaPersistenceMinFreshnessMs: number;
   /** Polled readings are refreshed every freshness interval and stay current through one missed refresh. */
+  private readonly polledQuotaStaleAfterMs: number;
   private readonly runtimeRegistry: ConnectedServiceRuntimeRegistry;
   private readonly resolveRequiredModelIds?: (input: Readonly<{ serviceId: ConnectedAccountServiceKey; groupId: string }>) => ReadonlyArray<string>;
   private readonly qualifiedConnectedAccountRuntime:
@@ -1047,6 +1038,7 @@ export class ConnectedServiceQuotasCoordinator {
       typeof params.quotaPersistenceMinFreshnessMs === 'number' && Number.isFinite(params.quotaPersistenceMinFreshnessMs)
         ? Math.max(0, Math.trunc(params.quotaPersistenceMinFreshnessMs))
         : DEFAULT_CONNECTED_SERVICE_QUOTA_FRESHNESS_MS;
+    this.polledQuotaStaleAfterMs = 2 * this.quotaPersistenceMinFreshnessMs;
     this.onQuotaLifecycleTransition = params.onQuotaLifecycleTransition ?? null;
     this.onAccountUsageSnapshotAccepted = params.onAccountUsageSnapshotAccepted ?? null;
     this.onAutomaticQuotaResetConsumed = params.onAutomaticQuotaResetConsumed ?? null;
@@ -1703,8 +1695,9 @@ export class ConnectedServiceQuotasCoordinator {
           inventorySettlement = this.settleRecoveryCreditFromInventory(receipt, refreshed.result.recoveryCredits, attempt.grantExpiresAtMs);
           if (inventorySettlement?.receipt) receipt = pendingReceipt = inventorySettlement.receipt;
         }
-        const { snapshot } = this.buildQualifiedPluginQuotaObservation({
-          profile: refreshed.profile, quota: refreshed.result, usageIdentity: refreshed.usageIdentity,
+        const snapshot = buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({
+          profile: refreshed.profile, quota: refreshed.result, staleAfterMs: this.polledQuotaStaleAfterMs,
+          usageIdentity: refreshed.usageIdentity,
         });
         if (!await this.persistQualifiedConnectedAccountQuota({ accountMode, profile, snapshot, basis: refreshed.basis })) {
           return { ...unavailable('refresh_unavailable'), receipt };
@@ -3681,8 +3674,11 @@ export class ConnectedServiceQuotasCoordinator {
               retainRetryBoundary(profile);
               continue;
             }
-            const { snapshot } = this.buildQualifiedPluginQuotaObservation({
-              profile: invocation.profile, quota: invocation.result, usageIdentity: invocation.usageIdentity,
+            const snapshot = buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({
+              profile: invocation.profile,
+              quota: invocation.result,
+              staleAfterMs: this.polledQuotaStaleAfterMs,
+              usageIdentity: invocation.usageIdentity,
             });
             await this.recordQualifiedPolledAccountUsageLocally({
               signal,
@@ -3930,29 +3926,6 @@ export class ConnectedServiceQuotasCoordinator {
       accountScopeFingerprintMaterial(this.quotaPersistenceAccountScope), qualifiedAccountQuotaKey(ref)]);
   }
 
-  private resolveQualifiedQuotaObservationTiming(
-    fetchedAt: number,
-    resetsAt: readonly (number | null | undefined)[],
-    refreshWhenStale = this.listCurrentQualifiedGroupQuotaTargets().length > 0,
-  ) {
-    const refreshIntervalMs = this.quotaPersistenceMinFreshnessMs;
-    const nextProbeAt = quotaObservationProbeAt({ fetchedAt, refreshIntervalMs, resetsAt, refreshWhenStale });
-    return { nextProbeAt, staleAfterMs: quotaPublicationLifetimeMs(fetchedAt, nextProbeAt, refreshIntervalMs) };
-  }
-
-  private buildQualifiedPluginQuotaObservation(
-    input: Omit<Parameters<typeof buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota>[0], 'staleAfterMs'>,
-    refreshWhenStale?: boolean,
-  ) {
-    const { nextProbeAt, staleAfterMs } = this.resolveQualifiedQuotaObservationTiming(
-      Math.trunc(input.quota.observedAtMs), input.quota.limits.map(limit => limit.resetsAtMs), refreshWhenStale,
-    );
-    return {
-      nextProbeAt,
-      snapshot: buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({ ...input, staleAfterMs }),
-    };
-  }
-
   private buildUnloadedQualifiedAccountQuotaSnapshot(
     profile: QualifiedConnectedAccountProfileV4,
     usageIdentity?: PluginConnectedAccountDescriptorContributionV2['usageIdentity'],
@@ -3960,7 +3933,7 @@ export class ConnectedServiceQuotasCoordinator {
     return { ...buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({
       profile, quota: { observedAtMs: 0, limits: [],
         ...(profile.providerIdentity?.organizationId ? { providerOrganizationId: profile.providerIdentity.organizationId } : {}) },
-      staleAfterMs: MAX_PROVIDER_ACCOUNT_USAGE_LIFETIME_MS,
+      staleAfterMs: this.polledQuotaStaleAfterMs,
       usageIdentity,
     }), state: 'not_loaded' as const, confidence: 'unknown' as const };
   }
@@ -4014,13 +3987,10 @@ export class ConnectedServiceQuotasCoordinator {
     if (!basis || !await basis.isCurrent()) return null;
     if (input.completionObservation) {
       const usageIdentity = await runtime.resolveUsageIdentity?.(profile.ref.service, input.signal);
-      const { staleAfterMs } = this.resolveQualifiedQuotaObservationTiming(
-        input.completionObservation.fetchedAtMs, input.completionObservation.meters.map(meter => meter.resetsAt),
-      );
       const owned = buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({
         profile, quota: { observedAtMs: input.completionObservation.observedAtMs, limits: [],
           ...(profile.providerIdentity?.organizationId ? { providerOrganizationId: profile.providerIdentity.organizationId } : {}) },
-        staleAfterMs,
+        staleAfterMs: this.polledQuotaStaleAfterMs,
         usageIdentity: usageIdentity ?? undefined,
       });
       const snapshot: ProviderAccountUsageSnapshotV1 = { ...owned, ...input.completionObservation,
@@ -4271,8 +4241,7 @@ export class ConnectedServiceQuotasCoordinator {
         this.applyFailureBackoff({ now, key, error });
         const retry = this.failureStateByBindingKey.get(key);
         if (input.trace?.providerOutcome === 'failed' && retry?.providerDirected) {
-          input.trace.providerOutcome = 'retry-after';
-          input.trace.retryAfterMs = Math.max(0, retry.nextAllowedAt - now);
+          input.trace.providerOutcome = `retry-after:${Math.max(0, retry.nextAllowedAt - now)}`;
         }
       }
       // A missed background poll leaves the last Home observation intact.
@@ -4288,16 +4257,11 @@ export class ConnectedServiceQuotasCoordinator {
       // Keep the producer's typed cause. The usage diagnostic schema owns validation;
       // provider messages and response content are never copied into publication.
       const safeCode = typeof code === 'string' ? code : undefined;
-      const retryAtMs = this.failureStateByBindingKey.get(key)?.nextAllowedAt;
-      const snapshot: ProviderAccountUsageSnapshotV1 = {
-        ...lastKnown,
-        staleAfterMs: quotaPublicationLifetimeMs(lastKnown.fetchedAtMs || now, retryAtMs ?? Infinity, this.quotaPersistenceMinFreshnessMs),
-        state: 'error_last_known_good',
-        diagnostics: [{
-          kind: 'provider_http', ...(safeCode ? { code: safeCode } : {}),
-          ...(status === undefined ? {} : { status }), observedAtMs: now, retryAtMs,
-        }],
-      };
+      const snapshot: ProviderAccountUsageSnapshotV1 = { ...lastKnown, state: 'error_last_known_good', diagnostics: [{
+        kind: 'provider_http', ...(safeCode ? { code: safeCode } : {}),
+        ...(status === undefined ? {} : { status }), observedAtMs: now,
+        retryAtMs: this.failureStateByBindingKey.get(key)?.nextAllowedAt,
+      }] };
       try {
         await this.persistQualifiedConnectedAccountQuota({
           accountMode: input.accountMode, profile: input.profile, snapshot, basis: admittedBasis,
@@ -4648,7 +4612,7 @@ export class ConnectedServiceQuotasCoordinator {
       }
       const trace: ScheduledQuotaRecordTrace = {
         due: true, reason: 'read', nextDueDelayMs: null,
-        providerOutcome: null, retryAfterMs: null, writeResult: null,
+        providerOutcome: null, writeResult: null,
       };
       if (schedule.at === null || schedule.at > input.now) {
         if (schedule.at !== null) input.scheduleAt(schedule.at);
@@ -4801,9 +4765,13 @@ export class ConnectedServiceQuotasCoordinator {
           continue;
         }
         profile = invocation.profile;
-        const { snapshot: incomingSnapshot, nextProbeAt: observedProbeAt } = this.buildQualifiedPluginQuotaObservation({
-          profile: invocation.profile, quota: invocation.result, usageIdentity: invocation.usageIdentity,
-        }, refreshWhenStale);
+        const incomingSnapshot =
+          buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({
+            profile: invocation.profile,
+            quota: invocation.result,
+            staleAfterMs: this.polledQuotaStaleAfterMs,
+            usageIdentity: invocation.usageIdentity,
+          });
         const subscription = mergeProviderAccountSubscription(
           existing?.sourceResolution.recordId === incomingSnapshot.recordId
             ? existingSnapshot?.subscription
@@ -4815,6 +4783,8 @@ export class ConnectedServiceQuotasCoordinator {
           ...(subscription ? { subscription } : {}),
         };
         recordId = snapshot.recordId;
+        const observedProbeAt = quotaObservationProbeAt({ fetchedAt: snapshot.observedAtMs, refreshIntervalMs: this.quotaPersistenceMinFreshnessMs,
+          staleAfterMs: snapshot.staleAfterMs, resetsAt: snapshot.meters.map(meter => meter.resetsAt), refreshWhenStale });
         if (observedProbeAt > input.now) nextProbeAt = observedProbeAt;
         const written = await this.persistQualifiedConnectedAccountQuota({
           signal: input.signal,
@@ -4899,7 +4869,10 @@ export class ConnectedServiceQuotasCoordinator {
     for (const [recordId, trace] of traceByRecord) {
       logger.infoFile('[DAEMON RUN] Scheduled quota record', {
         record: createHash('sha256').update(recordId).digest('hex').slice(0, 10),
-        ...trace,
+        reason: trace.due ? `due:${trace.reason}` : `not-due:${trace.reason}`,
+        nextDueDelayMs: trace.nextDueDelayMs,
+        providerOutcome: trace.providerOutcome,
+        writeResult: trace.writeResult,
       });
     }
 
