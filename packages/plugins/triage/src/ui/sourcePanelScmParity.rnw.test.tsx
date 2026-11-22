@@ -117,6 +117,32 @@ describe('SCM mounted source controls', () => {
     expect(document.body.textContent).toContain('github-body-2');
   });
 
+  it('reveals the three earlier issue comments when the visible continuation is pressed', async () => {
+    const cursors: (JsonValue | undefined)[] = [];
+    const fixture = await mountProvider('github', 'activity', (id, request) => {
+      if (id === GH.listTimeline) return pageResult('timeline', []);
+      if (id !== GH.readFeedback || request.connection !== 'comments') return unavailable;
+      cursors.push(request.cursor);
+      const older = request.cursor === 'before-comment-04';
+      const rows = Array.from({ length: older ? 3 : 10 }, (_, index) => {
+        const number = index + (older ? 1 : 4);
+        return { id: String(number), body: `Fixture comment ${number}.`, createdAtMs: number * 1000 };
+      });
+      return { ...pageResult('comments', rows), ...(older ? {} : { previousCursor: 'before-comment-04' }) };
+    }, 'issue');
+
+    await expect(fixture.page.getByText('Fixture comment 4.')).resolves.toBeDefined();
+    await expect(fixture.page.queryByText('Fixture comment 1.')).resolves.toBeUndefined();
+    const continuation = await fixture.page.getByRole('button', { name: 'Show earlier comments' });
+    await act(async () => { await fixture.page.press(continuation); });
+
+    expect(cursors).toEqual([undefined, 'before-comment-04']);
+    for (const number of [1, 2, 3, 4]) {
+      await expect(fixture.page.getByText(`Fixture comment ${number}.`)).resolves.toBeDefined();
+    }
+    await expect(fixture.page.queryByRole('button', { name: 'Show earlier comments' })).resolves.toBeUndefined();
+  });
+
   it('pages GitHub nested replies independently of the activity collections', async () => {
     let pages = 0;
     const fixture = await mountProvider('github', 'activity', (id, request) => {
