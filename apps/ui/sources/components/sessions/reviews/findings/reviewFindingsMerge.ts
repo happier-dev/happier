@@ -55,8 +55,8 @@ export function mergeReviewFindings(members: readonly ReviewMember[]): readonly 
 }
 
 /** Most severe first (the most severe of a merged row's sources); report order within a severity. */
-export function sortReviewFindingRows(rows: readonly ReviewFindingRowModel[]): readonly ReviewFindingRowModel[] {
-    const rank = (row: ReviewFindingRowModel) => Math.min(...row.sources.map((source) => REVIEW_SEVERITY_RANK[source.finding.severity] ?? 9));
+export function sortReviewFindingRows<Row extends Pick<ReviewFindingRowModel, 'finding'>>(rows: readonly Row[]): readonly Row[] {
+    const rank = (row: Row) => REVIEW_SEVERITY_RANK[row.finding.severity];
     return rows
         .map((row, index) => ({ row, index, rank: rank(row) }))
         .sort((left, right) => left.rank - right.rank || left.index - right.index)
