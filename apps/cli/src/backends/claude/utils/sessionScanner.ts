@@ -12,6 +12,7 @@ import { resolveClaudeSubagentJsonlPath } from '../remote/sidechains/resolveClau
 import { normalizeClaudeToolUseNamesInRawJsonLines } from './normalizeClaudeToolUseNames';
 import { createClaudeTeamInboxCollector } from './teamInbox/claudeTeamInboxCollector';
 import { readClaudeSessionJsonlMessages } from './readClaudeSessionJsonlMessages';
+import { readClaudeTranscriptRecordSessionId } from './readClaudeTranscriptRecordSessionId';
 import { createEventShapeLoggerForLog } from '@/diagnostics/eventShapeForLog';
 import { buildClaudeJsonlMessageKey } from './claudeJsonlMessageKey';
 import { createJsonlFollowController, type JsonlFollowController } from '@/agent/localControl/jsonlFollowController';
@@ -57,6 +58,7 @@ export async function createSessionScanner(opts: {
         value: unknown,
         observation: Readonly<{ historicalReplay: boolean }>,
     ) => void) | undefined
+    onMainTranscriptMaterialized?: ((input: Readonly<{ sessionId: string; transcriptPath: string }>) => void) | undefined
     onLiveJsonlValue?: ((input: Readonly<{ sessionId: string; value: unknown }>) => void) | undefined
     onLiveJsonlObservationLost?: ((input: Readonly<{ sessionId: string; reason: string }>) => void) | undefined
     onTranscriptMissing?: (info: { sessionId: string; filePath: string }) => void
@@ -173,8 +175,8 @@ export async function createSessionScanner(opts: {
     /** Session JSONLs that already existed at scanner start — never discoverable (see pid-14419 guard). */
     const sessionDiscoveryBaselines = new Set<string>();
     let boundSessionId: string | null = opts.bindToFirstSession && opts.sessionId ? opts.sessionId : null;
-    const trustedRawTranscriptSessionIds = new Set<string>();
-    if (opts.sessionId) trustedRawTranscriptSessionIds.add(opts.sessionId);
+    const reportedTranscriptPathByTrustedSession = new Map<string, string | null>();
+    if (opts.sessionId) reportedTranscriptPathByTrustedSession.set(opts.sessionId, null);
     let closed = false;
     const initialLiveTranscriptStartOffsets = new Map<string, number>();
     if (opts.sessionId && opts.initialLiveTranscriptStartOffsetBytes !== undefined) {
@@ -212,15 +214,34 @@ export async function createSessionScanner(opts: {
     }
 
     function trustRawTranscriptSession(sessionId: string): void {
-        trustedRawTranscriptSessionIds.add(sessionId);
+        if (!reportedTranscriptPathByTrustedSession.has(sessionId)) {
+            reportedTranscriptPathByTrustedSession.set(sessionId, null);
+        }
     }
 
     function observeRawJsonlValueForTrustedSession(
         sessionId: string,
+        transcriptPath: string,
         value: unknown,
         observation: Readonly<{ historicalReplay: boolean }>,
     ): void {
-        if (!trustedRawTranscriptSessionIds.has(sessionId)) return;
+        const reportedPath = reportedTranscriptPathByTrustedSession.get(sessionId);
+        if (reportedPath === undefined) return;
+        // Startup replay can be the first read after SessionStart reports a path that does not yet exist.
+        // A record from a superseded file cannot trigger proof for the new path.
+        if (
+            opts.onMainTranscriptMaterialized
+            && reportedPath !== transcriptPath
+            && transcriptPath === getSessionFilePath(sessionId)
+            && readClaudeTranscriptRecordSessionId(value) === sessionId
+        ) {
+            reportedTranscriptPathByTrustedSession.set(sessionId, transcriptPath);
+            try {
+                opts.onMainTranscriptMaterialized({ sessionId, transcriptPath });
+            } catch (error) {
+                logger.debug('[SESSION_SCANNER] onMainTranscriptMaterialized callback threw:', error);
+            }
+        }
         observeRawJsonlValue(value, observation);
     }
 
@@ -234,11 +255,12 @@ export async function createSessionScanner(opts: {
 
     function observeReplayableRawJsonlValueForTrustedSession(
         sessionId: string,
+        transcriptPath: string,
         value: unknown,
         replayOpts?: Readonly<{ suppressBeforeMs?: number | null; suppressSideEffects?: boolean | undefined }>,
     ): void {
         if (shouldSuppressReplaySideEffects(value, replayOpts)) return;
-        observeRawJsonlValueForTrustedSession(sessionId, value, { historicalReplay: true });
+        observeRawJsonlValueForTrustedSession(sessionId, transcriptPath, value, { historicalReplay: true });
     }
 
     function isMainSessionAllowed(sessionId: string): boolean {
@@ -410,15 +432,17 @@ export async function createSessionScanner(opts: {
 
     // Mark existing messages as processed and start watching the initial session
     if (opts.sessionId) {
+        const transcriptPath = getSessionFilePath(opts.sessionId);
         const initialReplayOpts = {
             suppressBeforeMs: opts.replaySuppressRowsBeforeMs ?? null,
             suppressSideEffects: true,
         };
         let messages = await readClaudeSessionJsonlMessages({
-            sessionFilePath: getSessionFilePath(opts.sessionId),
+            sessionFilePath: transcriptPath,
             logLabel: 'SESSION_SCANNER',
             onJsonValue: opts.replayInitialMessages ? undefined : (value) => observeReplayableRawJsonlValueForTrustedSession(
                 opts.sessionId!,
+                transcriptPath,
                 value,
                 initialReplayOpts,
             ),
@@ -541,6 +565,7 @@ export async function createSessionScanner(opts: {
 
     async function processSessionJsonValue(
         session: string,
+        transcriptPath: string,
         value: unknown,
         replayOpts?: Readonly<{ suppressBeforeMs?: number | null; suppressSideEffects?: boolean | undefined }>,
     ): Promise<boolean> {
@@ -548,22 +573,22 @@ export async function createSessionScanner(opts: {
         if (shouldSuppressReplaySideEffects(value, replayOpts)) {
             return false;
         }
-        observeRawJsonlValueForTrustedSession(session, value, { historicalReplay: false });
+        observeRawJsonlValueForTrustedSession(session, transcriptPath, value, { historicalReplay: false });
         const parsed = parseClaudeJsonlValue(value);
         if (!parsed) return false;
         return await processSessionMessage(parsed, replayOpts);
     }
 
-    async function readSnapshotStartOffsetBytes(session: string): Promise<number> {
+    async function readSnapshotStartOffsetBytes(transcriptPath: string): Promise<number> {
         try {
-            return (await stat(getSessionFilePath(session))).size;
+            return (await stat(transcriptPath)).size;
         } catch {
             return 0;
         }
     }
 
-    async function processSessionSnapshot(session: string): Promise<number> {
-        const startOffsetBytes = await readSnapshotStartOffsetBytes(session);
+    async function processSessionSnapshot(session: string, transcriptPath: string): Promise<number> {
+        const startOffsetBytes = await readSnapshotStartOffsetBytes(transcriptPath);
         const replayOpts = {
             suppressBeforeMs: opts.replaySuppressRowsBeforeMs ?? null,
             suppressSideEffects: true,
@@ -571,7 +596,7 @@ export async function createSessionScanner(opts: {
         const liveStartOffsetBytes = initialLiveTranscriptStartOffsets.get(session);
         const rows: Array<Readonly<{ value: unknown; lineStartOffsetBytes: number }>> = [];
         await readClaudeSessionJsonlMessages({
-            sessionFilePath: getSessionFilePath(session),
+            sessionFilePath: transcriptPath,
             logLabel: 'SESSION_SCANNER',
             onJsonValue: (value, source) => { rows.push({ value, ...source }); },
         });
@@ -583,7 +608,7 @@ export async function createSessionScanner(opts: {
             // Leave startup appends to the one live follower, beginning at the captured boundary.
             // It observes raw queue evidence only after prior visible messages have committed.
             if (liveStartOffsetBytes !== undefined && row.lineStartOffsetBytes >= liveStartOffsetBytes) continue;
-            observeReplayableRawJsonlValueForTrustedSession(session, row.value, replayOpts);
+            observeReplayableRawJsonlValueForTrustedSession(session, transcriptPath, row.value, replayOpts);
             const parsed = parseClaudeJsonlValue(row.value);
             if (parsed && await processSessionMessage(parsed, replayOpts)) sent += 1;
             else skipped += 1;
@@ -610,7 +635,7 @@ export async function createSessionScanner(opts: {
             resetReplaySuppressorBySession.delete(session);
         }
 
-        const startOffsetBytes = await processSessionSnapshot(session);
+        const startOffsetBytes = await processSessionSnapshot(session, desiredPath);
         if (closed) return;
         let liveJsonlObservationEnabled = true;
         let controller!: JsonlFollowController;
@@ -649,7 +674,7 @@ export async function createSessionScanner(opts: {
                 if (liveJsonlObservationEnabled && isCurrentLiveFollower()) {
                     observeLiveJsonlValue(session, value);
                 }
-                await processSessionJsonValue(session, value);
+                await processSessionJsonValue(session, desiredPath, value);
             },
             onError: (error) => {
                 logger.debug('[SESSION_SCANNER] Follower error:', error);
@@ -800,7 +825,7 @@ export async function createSessionScanner(opts: {
             finishedSessions.clear();
             discoveredSessions.clear();
             resetReplaySuppressorBySession.clear();
-            trustedRawTranscriptSessionIds.clear();
+            reportedTranscriptPathByTrustedSession.clear();
             currentSessionId = null;
             for (const timeoutId of missingTranscriptTimers.values()) {
                 clearTimeout(timeoutId);

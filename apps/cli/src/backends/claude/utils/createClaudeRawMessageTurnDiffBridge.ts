@@ -6,7 +6,7 @@ import { resolveCanonicalTurnDiffSyntheticMessageUuid } from '@/agent/tools/diff
 
 import { ClaudeTurnChangeTracker } from './ClaudeTurnChangeTracker';
 import { isClaudeExplicitDiffToolInput } from './isClaudeExplicitDiffToolInput';
-import { isClaudeInternalTranscriptMessage } from './isClaudeInternalTranscriptMessage';
+import { isClaudeHiddenTranscriptMessage } from './isClaudeInternalTranscriptMessage';
 
 type SendRawMessage = (message: RawJSONLines) => void;
 type AssistantRawJSONLine = Extract<RawJSONLines, { type: 'assistant' }>;
@@ -217,7 +217,7 @@ export function createClaudeRawMessageTurnDiffBridge(params: Readonly<{
             }
 
             if (message.type === 'assistant') {
-                if (isClaudeInternalTranscriptMessage(message)) {
+                if (isClaudeHiddenTranscriptMessage(message)) {
                     return null;
                 }
                 const nextMessage = filterAssistantContent({
@@ -235,7 +235,7 @@ export function createClaudeRawMessageTurnDiffBridge(params: Readonly<{
             }
 
             if (message.type === 'user') {
-                if (isClaudeInternalTranscriptMessage(message)) {
+                if (isClaudeHiddenTranscriptMessage(message)) {
                     return null;
                 }
                 return filterUserContent({

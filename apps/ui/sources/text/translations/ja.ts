@@ -6359,6 +6359,7 @@ localTailscale: {
 	        waitingForRuntimeActivityNotice: 'ランタイムの処理完了を待っています',
 	        runtimeActivityUnknownNotice: 'ランタイムのアクティビティ状態を待っています',
 	        waitingForRuntimeNotice: 'ランタイムの再接続を待っています',
+	        steerUnavailableWaitingForTurnNotice: '今はこのターンに参加できません · 終了後に送信されます',
 	        nonSteerableNotice: "このモード変更後、現在のターンには挿入できません。次に実行されます。すぐに処理するには「今すぐ送信」を使って中断してください。",
 	        steerBlockedTerminalDraftNotice: '待機中: ターミナルの入力欄に未送信の下書きがあり配信できません。ターミナルで消去するか、ターンを中断してください。',
 	        clearTerminalComposer: {
@@ -6859,7 +6860,7 @@ localTailscale: {
 
   sessionDrafts: {
     sectionTitle: '下書き', badge: '下書き', untitled: '無題の下書き', continueEditing: '編集を続ける', startAnother: '別の下書きを開始', startedOpen: "セッションを開始しました · 開く",
-    status: { offline: 'オフライン', syncing: '同期中', conflict: '競合', machineUnavailable: 'マシンを利用できません', attachmentNeedsAttention: '添付ファイルの確認が必要です', startInterrupted: '開始が中断されました' },
+    status: { offline: 'オフライン', syncing: '同期中', conflict: '競合', machineUnavailable: 'マシンを利用できません', attachmentNeedsAttention: '添付ファイルの確認が必要です', starting: '開始中', startFailed: '開始できませんでした' },
     error: { title: '下書きのエラー', storageDescription: 'この下書きをこのデバイスに保存できませんでした。離れる前にテキストを安全な場所にコピーしてください。次に編集したときに保存を再試行します。', encryptionDescription: "このデバイスで下書きを同期できませんでした。", showDetailsHint: 'この下書きにエラーがある理由を表示します' },
     new: { action: '新しい下書き' }, delete: { action: '下書きを削除', confirmTitle: '下書きを削除しますか？', confirmDescription: 'この下書きはデバイスから削除されます。' },
     conflict: { title: '下書きの競合', description: 'このフィールドは別のデバイスで変更されました。', mine: 'このデバイス', synced: '同期済み', useSynced: '同期版を使用', keepDevice: 'デバイス版を保持', copyMine: '自分の版をコピー', copied: 'コピーしました', copyFailed: 'コピーできませんでした', field: { text: 'テキスト', mentions: 'メンション', attachments: '添付ファイル', recipient: '受信者', agentContinuation: 'エージェント継続', executionRunDelivery: '実行配信' } },
@@ -8835,16 +8836,17 @@ settingsSession: {
         manualSubtitle: "セッションを再開するまで、常にメッセージをキューに残します。",
       },
       title: "メッセージ送信",
-      footer:
-        "エージェント実行中にメッセージを送信したときの挙動を設定します。",
-        queueInAgentTitle: "エージェントにキュー（現在）",
-        queueInAgentSubtitle:
-          "すぐにトランスクリプトに書き込み、エージェントが準備できたら処理します。",
-        interruptTitle: "中断して送信",
-        interruptSubtitle: "現在のターンを中断し、すぐに送信します。",
-        pendingTitle: "準備できるまで保留",
-        pendingSubtitle:
-          "メッセージを保留キューに保持し、準備ができたらエージェントが取り込みます。",
+      footer: 'エージェントの作業中にメッセージを送ったときの動作を選びます。',
+      busySend: {
+        addToTurnTitle: '現在のターンに追加',
+        addToTurnSubtitle: 'エージェントがすぐに読み取り、作業を続けます。ターミナルに直接入力するのと同じです。ターンの途中で受け取れない場合は、ターンが終わるまで保留中で待機します。',
+        waitForTurnTitle: 'ターンの終了を待つ',
+        waitForTurnSubtitle: 'メッセージを保留中に置き、編集や並べ替えをしたうえで、ターンが終わったら送信します。',
+        interruptTitle: 'ターンを止めて送信',
+        interruptSubtitle: 'エージェントの作業を止めて、すぐにメッセージを送信します。',
+      },
+      inactiveSessionsTitle: '非アクティブなセッション',
+      inactiveSessionsFooter: 'エージェントが停止している、またはマシンがオフラインのセッションに送信したときに適用されます。',
         pendingDrainModeTitle: "保留キューの処理",
         pendingDrainModeFooter:
           "エージェントが準備できるたびに1件だけ処理するか、保留キュー全体をまとめて処理するかを選びます。",
@@ -8866,17 +8868,6 @@ settingsSession: {
           afterRuntimeIdleTitle: "ランタイムがアイドルになったら",
           afterRuntimeIdleSubtitle:
             "追跡中のランタイム活動が続いている間は、保留メッセージを待機させます。",
-        },
-        busySteerPolicyTitle: "エージェントが忙しいとき（ステア可能）",
-        busySteerPolicyFooter:
-          "エージェントが実行中ステアリングをサポートしている場合、すぐにステアするか、先に保留へ送るかを選びます。",
-        busySteerPolicy: {
-          steerImmediatelyTitle: "すぐにステア",
-          steerImmediatelySubtitle:
-            "すぐに送信して現在のターンをステアします（中断なし）。",
-          queueForReviewTitle: "保留にキュー",
-          queueForReviewSubtitle:
-            "まず保留に入れ、後で「今すぐステア」で送信します。",
         },
         nonSteerablePromptTitle: 'メッセージがアクティブなターンに反映できないとき',
         nonSteerablePromptFooter: '権限モードの変更や /clear・/compact はターンの途中では適用できません。エージェントが処理中のとき、こうしたメッセージをどう扱うか選択します。',

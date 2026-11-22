@@ -24,8 +24,8 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
 
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => true) }));
 
-vi.mock('@/utils/sessions/sessionUtils', () => ({
-    getSessionName: () => 'Session',
+vi.mock('@/utils/sessions/sessionUtils', async (importOriginal) => ({
+    getSessionName: (await importOriginal<typeof import('@/utils/sessions/sessionUtils')>()).getSessionName,
     getSessionSubtitle: () => 'Subtitle',
     getSessionAvatarId: () => 'avatar',
     useSessionStatus: () => ({
@@ -391,6 +391,7 @@ describe('SessionItem context menu press suppression', () => {
             id: 'sess_debug_full',
             active: false,
             metadata: {
+                name: 'Full session title',
                 path: '/workspace/repo',
                 homeDir: '/Users/agent',
                 host: 'host',
@@ -435,6 +436,7 @@ describe('SessionItem context menu press suppression', () => {
         expect(Clipboard.setStringAsync).toHaveBeenLastCalledWith('claude-session-1');
 
         expect(Clipboard.setStringAsync).toHaveBeenCalledWith([
+            'Session name: Full session title',
             'Happier session ID: sess_debug_full',
             'agentInput.agent.claude session ID: claude-session-1',
             'Happier logs: /tmp/happier/session.log',

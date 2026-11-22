@@ -2,6 +2,30 @@ import { classifyProcessByPid } from './doctor';
 import { hashProcessCommand } from './sessionRegistry';
 import type { ProcessRunState } from './processRunState';
 import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
+import type { TrackedSession } from './types';
+
+export function readTrackedSessionRunner(tracked: TrackedSession) {
+  return {
+    pid: tracked.sessionRunnerPid ?? tracked.pid,
+    processCommandHash: tracked.processCommandHash,
+    processInstanceFingerprint: tracked.processInstanceFingerprint,
+  };
+}
+
+/** A distinct reported PID needs its own witness before it can receive a signal. */
+export function resolveTrackedSessionRunnerSignalTarget(tracked: TrackedSession): ReturnType<typeof readTrackedSessionRunner> | null {
+  const runner = readTrackedSessionRunner(tracked);
+  return runner.pid === tracked.pid || runner.processInstanceFingerprint || isValidProcessCommandHash(runner.processCommandHash)
+    ? runner
+    : null;
+}
+
+export function isTrackedSessionRunnerCurrent(tracked: TrackedSession, expected: ReturnType<typeof readTrackedSessionRunner>): boolean {
+  const current = readTrackedSessionRunner(tracked);
+  return current.pid === expected.pid
+    && current.processInstanceFingerprint === expected.processInstanceFingerprint
+    && (Boolean(expected.processInstanceFingerprint) || expected.processCommandHash === current.processCommandHash);
+}
 
 export type SessionRunnerProcessIdentity =
   | Readonly<{ kind: 'happy'; processCommandHash: string; processInstanceFingerprint?: string }>

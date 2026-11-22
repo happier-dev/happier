@@ -8,6 +8,7 @@ import {
 } from '@/daemon/spawn/spawnExplicitEnvKeysMarker';
 import { isValidEnvVarKey } from '@/terminal/runtime/envVarSanitization';
 import { isAllowedExactEnvKey } from '@/utils/env/isAllowedExactEnvKey';
+import { DBUS_SESSION_BUS_ADDRESS_ENV_KEY } from '@/utils/env/linuxUserSessionEnv';
 import { isWindowsSystemEnvKey } from '@/utils/env/windowsSystemEnv';
 
 import { resolveClaudeConfigDirEnvOverlay } from '../utils/resolveClaudeConfigDirEnvOverlay';
@@ -47,6 +48,7 @@ export function buildClaudeSubprocessEnv(params?: Readonly<{
     'TEMP',
     'TMP',
     'SSH_AUTH_SOCK',
+    DBUS_SESSION_BUS_ADDRESS_ENV_KEY,
     'HTTP_PROXY',
     'HTTPS_PROXY',
     'NO_PROXY',

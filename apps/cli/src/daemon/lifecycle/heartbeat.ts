@@ -25,8 +25,11 @@ import type { TrackedSession } from '../types';
 import { cleanupPidSessionResources } from '../sessions/cleanupPidSessionResources';
 import { createOnChildExited } from '../sessions/onChildExited';
 import { readSessionMarkerForPid } from '../sessionRegistry';
+import { readProcessRunState } from '../processRunState';
 import {
+  isTrackedSessionRunnerCurrent,
   isValidProcessCommandHash,
+  readTrackedSessionRunner,
   readSessionRunnerProcessIdentity as readSessionRunnerProcessIdentityDefault,
   storedProcessIdentityProvesPidReuse,
   type SessionRunnerProcessIdentity,
@@ -212,13 +215,24 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
 
       // Prune stale sessions
       for (const [pid, tracked] of pidToTrackedSession.entries()) {
+        const runner = readTrackedSessionRunner(tracked);
         const isPidAlive = isPidAliveBestEffort(pid);
-        const currentIdentity = isPidAlive && (
-          isValidProcessCommandHash(tracked.processCommandHash)
-          || Boolean(tracked.processInstanceFingerprint)
+        if (isPidAlive && runner.pid !== pid) {
+          const runState = await readProcessRunState(runner.pid);
+          if (pidToTrackedSession.get(pid) !== tracked || !isTrackedSessionRunnerCurrent(tracked, runner)) continue;
+          if (runState === 'dead' || runState === 'zombie') {
+            await onChildExitedForPrune(pid, { reason: 'process-missing', code: null, signal: null });
+            continue;
+          }
+        }
+        // A still-running launcher has a different identity from its reported runner.
+        const currentIdentity = isPidAlive && runner.pid === pid && (
+          isValidProcessCommandHash(runner.processCommandHash)
+          || Boolean(runner.processInstanceFingerprint)
         )
           ? await readSessionRunnerProcessIdentityForHeartbeat({ pid }).catch(() => ({ kind: 'unknown' as const }))
           : undefined;
+        if (pidToTrackedSession.get(pid) !== tracked || !isTrackedSessionRunnerCurrent(tracked, runner)) continue;
         const pruneReason = getTrackedSessionHeartbeatPruneReason({
           isPidAlive,
           trackedSession: tracked,

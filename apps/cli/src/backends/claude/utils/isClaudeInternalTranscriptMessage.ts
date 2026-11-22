@@ -1,6 +1,7 @@
 import type { RawJSONLines } from '../types';
 import { isClaudeLocalCommandTranscriptMessage } from './isClaudeLocalCommandTranscriptMessage';
 import { isCompactHookLocalCommandStdout } from './isCompactHookLocalCommandStdout';
+import { isClaudeInternalUserTextMessage } from './readClaudeUserMessageText';
 
 function readBooleanFlag(value: unknown, key: string): boolean {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value) && (value as Record<string, unknown>)[key] === true);
@@ -20,4 +21,9 @@ export function isClaudeInternalTranscriptMessage(message: RawJSONLines): boolea
     }
   }
   return isCompactHookLocalCommandStdout(message);
+}
+
+/** Apply when publishing conversation rows, keeping lifecycle observations available. */
+export function isClaudeHiddenTranscriptMessage(message: RawJSONLines): boolean {
+  return isClaudeInternalTranscriptMessage(message) || isClaudeInternalUserTextMessage(message);
 }

@@ -4,6 +4,7 @@ import { readSessionRunnerLockStatus, type SessionRunnerLockStatus } from '../se
 import {
   classifySessionRunnerProcessPresence,
   isValidProcessCommandHash,
+  readTrackedSessionRunner,
   readSessionRunnerProcessIdentity,
   type SessionRunnerProcessCommandHashReader,
   type SessionRunnerProcessInstanceFingerprintReader,
@@ -88,14 +89,13 @@ export async function classifyTrackedSessionRunnerPresence(params: {
     && !params.tracked.sessionRunnerPid
     && !params.tracked.happySessionMetadataFromLocalWebhook
     && params.tracked.stopRequestedAtMs === undefined) return 'unknown';
-  const childPid = typeof params.tracked.childProcess?.pid === 'number' ? params.tracked.childProcess.pid : null;
-  const pidToCheck = params.tracked.sessionRunnerPid ?? childPid ?? params.tracked.pid;
+  const runner = readTrackedSessionRunner(params.tracked);
   const readProcessRunState = params.readProcessRunState ?? readProcessRunStateDefault;
-  const runState = await readProcessRunState(pidToCheck).catch(() => null);
+  const runState = await readProcessRunState(runner.pid).catch(() => null);
   return await classifyStoredProcessPresence({
-    storedProcessCommandHash: params.tracked.processCommandHash,
-    storedProcessInstanceFingerprint: params.tracked.processInstanceFingerprint,
-    pid: pidToCheck,
+    storedProcessCommandHash: runner.processCommandHash,
+    storedProcessInstanceFingerprint: runner.processInstanceFingerprint,
+    pid: runner.pid,
     runState,
     getProcessCommandHash: params.getProcessCommandHash,
     getProcessInstanceFingerprint: params.getProcessInstanceFingerprint,

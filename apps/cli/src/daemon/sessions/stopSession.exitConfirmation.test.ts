@@ -1,8 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 import { readProcessRunState } from '../processRunState';
+import type { TrackedSession } from '../types';
+import { createOnChildExited } from './onChildExited';
+import { adoptReportedSessionRunnerIdentity } from './onHappySessionWebhook';
 import { createStopSession } from './stopSession';
+import { waitForExistingSessionExitIfStopRequested } from './waitForExistingSessionExitIfStopRequested';
 import { waitForTrackedRunnerProcessesExit } from './waitForTrackedRunnerProcessesExit';
 
 const procfsGate = vi.hoisted(() => ({
@@ -20,6 +25,54 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 afterEach(() => { procfsGate.beforeRead = null; });
 
 describe.skipIf(process.platform !== 'linux')('Stop exit confirmation', () => {
+  it('stops the reported runner and settles its launcher-keyed custody while the launcher is still alive', async () => {
+    const idle = "process.send('ready'); setInterval(() => {}, 1000)";
+    const launcher = spawn(process.execPath, ['-e', idle], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+    const runner = spawn(process.execPath, ['-e', idle, '--', '@happier-dev/cli', '--started-by', 'daemon'],
+      { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+    const exited = [once(launcher, 'exit'), once(runner, 'exit')];
+    try {
+      await Promise.all([once(launcher, 'message'), once(runner, 'message')]);
+      const launcherPid = launcher.pid!;
+      const runnerPid = runner.pid!;
+      const runnerFingerprint = readProcessInstanceFingerprintSync(runnerPid);
+      expect(runnerFingerprint).toBeTruthy();
+      const sessionId = `PID-${launcherPid}`;
+      const session: TrackedSession = { pid: launcherPid, startedBy: 'daemon', happySessionId: sessionId };
+      adoptReportedSessionRunnerIdentity(session, runnerPid, 'wrong-process-instance');
+      const tracked = new Map([[launcherPid, session]]);
+      const onExitObserved = createOnChildExited({
+        pidToTrackedSession: tracked, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+        getApiMachineForSessions: () => null,
+        removeSessionMarkerFn: async () => {},
+      });
+      const stop = createStopSession({
+        pidToTrackedSession: tracked,
+        readAttachmentState: async () => ({ status: 'absent' }),
+        waitForTrackedRunnersExit: async ({ trackedPids }) => {
+          await waitForExistingSessionExitIfStopRequested({
+            sessionId, pidToTrackedSession: tracked, trackedPids, timeoutMs: 1_000, pollIntervalMs: 10, onExitObserved,
+          });
+          return !tracked.has(launcherPid);
+        },
+      });
+      await expect(stop(sessionId)).resolves.toEqual({ status: 'incomplete', reason: 'runner_signal_incomplete' });
+      expect(await readProcessRunState(runnerPid)).toBe('servable');
+      expect(tracked.get(launcherPid)).toBe(session);
+
+      adoptReportedSessionRunnerIdentity(session, runnerPid, runnerFingerprint!);
+      await expect(stop(sessionId)).resolves.toEqual({ status: 'stopped' });
+      expect(await readProcessRunState(runnerPid)).toBe('dead');
+      expect(await readProcessRunState(launcherPid)).toBe('servable');
+      expect(tracked.size).toBe(0);
+    } finally {
+      for (const child of [launcher, runner]) {
+        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      }
+      await Promise.all(exited);
+    }
+  });
+
   it('confirms runner death during guarded escalation without signaling an unverified PID', async () => {
     // Development-only owned child. It ignores graceful Stop until the identity probe starts.
     const child = spawn(process.execPath, ['-e', "process.on('SIGTERM', () => {}); process.send('ready'); setInterval(() => {}, 1000)"],

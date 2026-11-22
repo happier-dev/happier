@@ -37,14 +37,18 @@ describe('session sockets transports', () => {
 
   it('uses polling-first transports by default (upgrade to websocket when available)', async () => {
     const mod = await import('./sockets');
-    mod.createUserScopedSocket({ token: 'fake-token' });
+    mod.createUserScopedSocket({ token: 'fake-token', sessionUpdateInterest: 'session-1' });
 
     const opts = mockIo.mock.calls[0]?.[1] as any;
     expect(opts.path).toBe('/v1/updates');
     expect(opts.transports).toEqual(['polling', 'websocket']);
     expect(opts.reconnection).toBe(false);
     expect(opts.autoConnect).toBe(false);
-    expect(opts.auth).toMatchObject({ connectedServiceIds: ConnectedServiceIdSchema.options });
+    expect(opts.auth).toMatchObject({
+      clientType: 'user-scoped',
+      connectedServiceIds: ConnectedServiceIdSchema.options,
+      sessionUpdateInterest: 'session-1',
+    });
   });
 
   it('can force websocket-only via config flag', async () => {
@@ -59,5 +63,6 @@ describe('session sockets transports', () => {
     expect(opts.transports).toEqual(['websocket']);
     expect(opts.reconnection).toBe(false);
     expect(opts.autoConnect).toBe(false);
+    expect(opts.auth).not.toHaveProperty('sessionUpdateInterest');
   });
 });

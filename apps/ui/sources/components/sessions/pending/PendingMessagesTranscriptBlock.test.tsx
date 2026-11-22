@@ -1,7 +1,7 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-import { createDeferred, invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
+import { createDeferred, createSessionFixture, invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 import {
@@ -1750,6 +1750,28 @@ describe('PendingMessagesTranscriptBlock', () => {
         expect(screen.findByTestId('pendingMessages.nonSteerableNotice')).toBeNull();
         expect(screen.findByTestId('pendingMessages.steerBlockedTerminalDraftNotice')).toBeNull();
         expect(screen.findByTestId('pendingMessages.clearTerminalComposer')).toBeNull();
+    });
+
+    it('keeps a draft-blocked message queued without offering to clear an inactive session', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        sessionValue = createSessionFixture({
+            id: 's1',
+            active: false,
+            presence: 0,
+            agentState: {
+                controlledByUser: false,
+                capabilities: { terminalComposerClearSupported: true, terminalComposerDraftPresent: true },
+            },
+        });
+        const pending = terminalDraftBlockedPendingMessage();
+        const screen = await renderScreen(<PendingMessagesTranscriptBlock
+            sessionId="s1"
+            pendingMessages={[pending]}
+            discardedMessages={[]}
+        />);
+
+        expect(screen.getTextContent()).toContain(`${t('session.pendingMessages.title')} (1)`);
+        expect(Boolean(screen.findByTestId('pendingMessages.clearTerminalComposer'))).toBe(false);
     });
 
     it('does not invoke clear-composer when confirmation is cancelled', async () => {

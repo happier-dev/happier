@@ -4,6 +4,8 @@ import {
   type ResolveManagedSessionMcpSelectionV1Result,
 } from '@happier-dev/protocol';
 
+import { resolveManagedMcpDirectEndpoint } from '../servers/managedMcpDirectEndpoint';
+
 function resolveManagedScopeKind(item: ResolveManagedSessionMcpSelectionV1Result['itemsByName'][string]): ManagedMcpPreviewEntryV1['scopeKind'] {
   if (item.bindingTargetKind === 'allMachines' || item.bindingTargetKind === 'machine' || item.bindingTargetKind === 'workspace') {
     return item.bindingTargetKind;
@@ -22,6 +24,9 @@ export function buildManagedMcpPreviewEntries(
       ...(item.title ? { title: item.title } : {}),
       transport: item.transport,
       authMode: inferMcpServerAuthModeV1(item.effectiveConfig),
+      ...(item.transport !== 'stdio' ? {
+        acpDelivery: resolveManagedMcpDirectEndpoint(item.effectiveConfig) ? 'direct_if_supported' as const : 'bridge' as const,
+      } : {}),
       selected: item.selected,
       selectable: item.selectable,
       availability: item.availability,

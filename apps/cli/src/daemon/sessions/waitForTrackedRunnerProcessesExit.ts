@@ -28,6 +28,7 @@ export async function waitForTrackedRunnerProcessesExit(params: Readonly<{
   const pollIntervalMs = Math.max(0, Math.trunc(params.pollIntervalMs));
   const startedAtMs = Date.now();
   const deadlineMs = startedAtMs + timeoutMs;
+  const exitedPids: number[] = [];
   do {
     for (const pid of remaining.keys()) {
       const probeStartedAtMs = Date.now();
@@ -36,23 +37,30 @@ export async function waitForTrackedRunnerProcessesExit(params: Readonly<{
         logger.infoFile('[DAEMON STOP] Tracked runner physical exit observed', {
           pid, runState, elapsedMs: Date.now() - startedAtMs, probeElapsedMs: Date.now() - probeStartedAtMs,
         });
-        if (params.onExitObserved) {
-          const lifecycleStartedAtMs = Date.now();
-          await params.onExitObserved(pid, { reason: 'process-missing', code: null, signal: null });
-          logger.infoFile('[DAEMON STOP] Tracked runner exit lifecycle completed', {
-            pid, elapsedMs: Date.now() - lifecycleStartedAtMs,
-          });
-        }
+        exitedPids.push(pid);
         remaining.delete(pid);
       }
     }
-    if (remaining.size === 0) return true;
+    if (remaining.size === 0) break;
     if (Date.now() >= deadlineMs) break;
     await sleep(Math.min(pollIntervalMs, Math.max(0, deadlineMs - Date.now())));
   } while (Date.now() <= deadlineMs);
 
-  logger.infoFile('[DAEMON STOP] Physical runner exit wait expired', {
-    remainingRunnerCount: remaining.size, elapsedMs: Date.now() - startedAtMs, timeoutMs,
-  });
-  return false;
+  if (remaining.size > 0) {
+    logger.infoFile('[DAEMON STOP] Physical runner exit wait expired', {
+      remainingRunnerCount: remaining.size, elapsedMs: Date.now() - startedAtMs, timeoutMs,
+    });
+    return false;
+  }
+  // Settle custody after every runner has exited so cleanup cannot delay the decision to escalate another runner.
+  if (params.onExitObserved) {
+    for (const pid of exitedPids) {
+      const lifecycleStartedAtMs = Date.now();
+      await params.onExitObserved(pid, { reason: 'process-missing', code: null, signal: null });
+      logger.infoFile('[DAEMON STOP] Tracked runner exit lifecycle completed', {
+        pid, elapsedMs: Date.now() - lifecycleStartedAtMs,
+      });
+    }
+  }
+  return true;
 }

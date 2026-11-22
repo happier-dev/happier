@@ -87,6 +87,7 @@ export async function callBuiltInHappierTool(params: Readonly<{
       ctx,
       mode,
       rawSession,
+      invocation: params.invocation,
     },
     createDaemonMemoryActionDeps({
       invoke: async ({ machineId, method, request }) => await callMachineRpc({

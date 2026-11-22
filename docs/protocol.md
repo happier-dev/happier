@@ -46,7 +46,8 @@ auth: {
   token: "<bearer token>",
   clientType: "user-scoped" | "session-scoped" | "machine-scoped",
   sessionId?: "<session id>",
-  machineId?: "<machine id>"
+  machineId?: "<machine id>",
+  sessionUpdateInterest?: "<session id>"
 }
 ```
 
@@ -59,6 +60,14 @@ Rules enforced server-side:
 - `user-scoped`: receives account-wide updates.
 - `session-scoped`: receives updates for a specific session only.
 - `machine-scoped`: used by daemons; receives machine updates and emits machine state.
+
+In 0.2 development, a session runner's `user-scoped` connection declares
+`sessionUpdateInterest` for its Session. The relay continues to deliver account
+updates on that connection and limits session-targeted delivery to the named
+Session. The declaration only narrows delivery within the authenticated account.
+Omitted or malformed declarations keep the broad audience, and older relays
+ignore the optional field. During a rolling relay upgrade, older publishers can
+still send the broad audience the pre-upgrade payloads.
 
 ### Server -> client events
 The server emits two event types:

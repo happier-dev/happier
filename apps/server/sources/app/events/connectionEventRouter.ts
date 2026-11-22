@@ -1,6 +1,6 @@
 import { Server } from "socket.io";
 import { RELEASED_CONNECTED_SERVICE_IDS, readConnectedServiceReaderSupport } from "@happier-dev/protocol";
-import { CURRENT_CONNECTED_SERVICE_READER_ROOM, RELEASED_CONNECTED_SERVICE_READER_ROOM } from "../api/socketRooms";
+import { CURRENT_CONNECTED_SERVICE_READER_ROOM, getSessionUpdateTargets, getSocketRooms, RELEASED_CONNECTED_SERVICE_READER_ROOM } from "../api/socketRooms";
 import { projectConnectedServiceUpdateForReader } from "./projectConnectedServiceUpdateForReader";
 import { type HappierSocketData } from "../api/socket/socketData";
 import {
@@ -145,17 +145,14 @@ class EventRouter {
         filter: RecipientFilter
     ): boolean {
         switch (filter.type) {
-            case 'all-interested-in-session':
-                // Send to session-scoped with matching session + all user-scoped
-                if (connection.connectionType === 'session-scoped') {
-                    if (connection.sessionId !== filter.sessionId) {
-                        return false;  // Wrong session
-                    }
-                } else if (connection.connectionType === 'machine-scoped') {
-                    return false;  // Machines don't need session updates
-                }
-                // user-scoped always gets it
-                return true;
+            case 'all-interested-in-session': {
+                const rooms = getSocketRooms({
+                    ...connection,
+                    clientType: connection.connectionType,
+                });
+                return getSessionUpdateTargets(connection.userId, filter.sessionId).some(target =>
+                    (!target.except || !rooms.includes(target.except)) && target.rooms.some(room => rooms.includes(room)));
+            }
 
             case 'user-scoped-only':
                 return connection.connectionType === 'user-scoped';
@@ -204,25 +201,25 @@ class EventRouter {
 
         if (this.io) {
             const skipSocketId = params.skipSenderConnection?.socket?.id;
-            const emitter = this.getEmitterForFilter(params.userId, params.recipientFilter);
+            const emitters = this.getEmittersForFilter(params.userId, params.recipientFilter);
             if (params.eventName === "update") {
                 const legacyPayload = projectConnectedServiceUpdateForReader(params.payload, RELEASED_CONNECTED_SERVICE_IDS);
                 if (legacyPayload !== params.payload) {
                     // Intersect the existing recipient rooms with reader support
                     // through exclusion, retaining distributed adapter fanout.
                     const emitToReaders = (excludedRoom: string, payload: UpdatePayload) => {
-                        const readerEmitter = emitter.except(excludedRoom);
-                        (skipSocketId ? readerEmitter.except(skipSocketId) : readerEmitter).emit(params.eventName, payload);
+                        for (const emitter of emitters) {
+                            const readerEmitter = emitter.except(excludedRoom);
+                            (skipSocketId ? readerEmitter.except(skipSocketId) : readerEmitter).emit(params.eventName, payload);
+                        }
                     };
                     emitToReaders(CURRENT_CONNECTED_SERVICE_READER_ROOM, legacyPayload);
                     emitToReaders(RELEASED_CONNECTED_SERVICE_READER_ROOM, params.payload);
                     return;
                 }
             }
-            if (skipSocketId && typeof (emitter as any).except === "function") {
-                (emitter as any).except(skipSocketId).emit(params.eventName, params.payload);
-            } else {
-                emitter.emit(params.eventName, params.payload);
+            for (const emitter of emitters) {
+                (skipSocketId ? emitter.except(skipSocketId) : emitter).emit(params.eventName, params.payload);
             }
             return;
         }
@@ -259,32 +256,30 @@ class EventRouter {
         }
     }
 
-    private getEmitterForFilter(userId: string, filter: RecipientFilter): any {
-        if (!this.io) {
-            throw new Error("EventRouter.getEmitterForFilter called without io");
+    private getEmittersForFilter(userId: string, filter: RecipientFilter): ReadonlyArray<ReturnType<Server["to"]>> {
+        const io = this.io;
+        if (!io) {
+            throw new Error("EventRouter.getEmittersForFilter called without io");
         }
 
         switch (filter.type) {
-            case "all-interested-in-session": {
-                // `update` containers are per-account (cursor + possibly recipient-specific data).
-                // Never emit them to the shared `session:${sessionId}` room. Use the per-account session room instead.
-                const rooms = [`session:${filter.sessionId}:${userId}`, `user-scoped:${userId}`];
-                return this.io.to(rooms);
-            }
+            case "all-interested-in-session":
+                return getSessionUpdateTargets(userId, filter.sessionId).map(target =>
+                    target.except ? io.to(target.rooms).except(target.except) : io.to(target.rooms));
             case "user-scoped-only":
-                return this.io.to(`user-scoped:${userId}`);
+                return [io.to(`user-scoped:${userId}`)];
             case "machine-scoped-only": {
                 const rooms = [`machine:${filter.machineId}:${userId}`, `user-scoped:${userId}`];
-                return this.io.to(rooms);
+                return [io.to(rooms)];
             }
             case "machine-only":
-                return this.io.to(`machine:${filter.machineId}:${userId}`);
+                return [io.to(`machine:${filter.machineId}:${userId}`)];
             case "user-machine-scoped-only":
-                return this.io.to(`user-machines:${userId}`);
+                return [io.to(`user-machines:${userId}`)];
             case "all-user-authenticated-connections":
-                return this.io.to(`user:${userId}`);
+                return [io.to(`user:${userId}`)];
             default:
-                return this.io.to(`user:${userId}`);
+                return [io.to(`user:${userId}`)];
         }
     }
 }

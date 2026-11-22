@@ -2,6 +2,7 @@ import type { ToolCall } from '@/sync/domains/messages/messageTypes';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 
 import { knownTools } from '@/components/tools/catalog';
+import { asRecord, firstNonEmptyString } from '@/components/tools/normalization/normalize/_shared';
 import { inferToolNameForRendering } from '@/components/tools/normalization/policy/toolNameInference';
 import { formatMCPSubtitle, formatMCPTitle } from '@/components/tools/renderers/system/MCPToolView';
 import { t } from '@/text';
@@ -16,17 +17,12 @@ export type ToolHeaderTextPresentation = Readonly<{
     statusText: string | null;
 }>;
 
-function asObject(value: unknown): Record<string, unknown> | null {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-    return value as Record<string, unknown>;
-}
-
 function parseJsonLikeSubtitle(subtitle: string): Record<string, unknown> | null {
     const trimmed = subtitle.trim();
     if (!trimmed) return null;
 
     const parseAsObject = (value: unknown): Record<string, unknown> | null => {
-        if (typeof value !== 'string') return asObject(value);
+        if (typeof value !== 'string') return asRecord(value);
         const inner = value.trim();
         if (!inner) return null;
         if (inner[0] !== '{' && inner[0] !== '[' && inner[0] !== '"') return null;
@@ -48,7 +44,7 @@ function compactSubAgentRunSubtitle(subtitle: string | null, normalizedToolName:
     const summary = typeof parsed.summary === 'string' ? parsed.summary.trim() : '';
     if (summary) return summary;
 
-    const errorObj = asObject(parsed.error);
+    const errorObj = asRecord(parsed.error);
     const errorMessage = typeof errorObj?.message === 'string' ? errorObj.message.trim() : '';
     if (errorMessage) return errorMessage;
 
@@ -100,6 +96,11 @@ export function resolveToolHeaderTextPresentation(params: {
 
     if (usedInferenceFallback && !knownTool && typeof tool.description === 'string' && tool.description.trim().length > 0) {
         title = tool.description.trim();
+    }
+
+    if (!knownTool && normalizedToolName.toLowerCase() === 'skill') {
+        const skillName = firstNonEmptyString(asRecord(tool.input)?.skill);
+        if (skillName) title = `Skill: ${skillName}`;
     }
 
     let subtitle: string | null = null;

@@ -6431,6 +6431,7 @@ export const it: TranslationStructure = {
 	          waitingForRuntimeActivityNotice: 'In attesa che termini l’attività del runtime',
 	          runtimeActivityUnknownNotice: 'In attesa dello stato di attività del runtime',
 	          waitingForRuntimeNotice: 'In attesa che il runtime si riconnetta',
+	          steerUnavailableWaitingForTurnNotice: 'Non può unirsi a questo turno ora · verrà inviato alla fine',
 	          nonSteerableNotice: "Il turno corrente non può accettare inserimenti dopo questo cambio di modalità. Verrà eseguito dopo, oppure usa Invia ora per interrompere.",
 	          steerBlockedTerminalDraftNotice: 'In attesa: una bozza nel compositore del terminale blocca la consegna. Cancellala nel terminale o interrompi il turno.',
 	          clearTerminalComposer: {
@@ -6938,7 +6939,7 @@ export const it: TranslationStructure = {
 
   sessionDrafts: {
     sectionTitle: 'Bozze', badge: 'Bozza', untitled: 'Bozza senza titolo', continueEditing: 'Continua a modificare', startAnother: 'Iniziane un’altra', startedOpen: "Sessione avviata · Apri",
-    status: { offline: 'Non in linea', syncing: 'Sincronizzazione', conflict: 'Conflitto', machineUnavailable: 'Computer non disponibile', attachmentNeedsAttention: 'Allegato da controllare', startInterrupted: 'Avvio interrotto' },
+    status: { offline: 'Non in linea', syncing: 'Sincronizzazione', conflict: 'Conflitto', machineUnavailable: 'Computer non disponibile', attachmentNeedsAttention: 'Allegato da controllare', starting: 'Avvio in corso', startFailed: 'Avvio non riuscito' },
     error: { title: 'Errore della bozza', storageDescription: 'Non è stato possibile salvare questa bozza su questo dispositivo. Copia il testo in un posto sicuro prima di uscire; il salvataggio verrà ritentato alla prossima modifica.', encryptionDescription: "Questo dispositivo non è riuscito a sincronizzare la bozza.", showDetailsHint: 'Mostra perché questa bozza ha un errore' },
     new: { action: 'Nuova bozza' }, delete: { action: 'Elimina bozza', confirmTitle: 'Eliminare la bozza?', confirmDescription: 'Questa bozza verrà rimossa dai tuoi dispositivi.' },
     conflict: { title: 'Conflitto della bozza', description: 'Questo campo è cambiato su un altro dispositivo.', mine: 'Su questo dispositivo', synced: 'Sincronizzato', useSynced: 'Usa sincronizzato', keepDevice: 'Mantieni dispositivo', copyMine: 'Copia il mio', copied: 'Copiato', copyFailed: 'Impossibile copiare', field: { text: 'Testo', mentions: 'Menzioni', attachments: 'Allegati', recipient: 'Destinatario', agentContinuation: 'Continuazione agente', executionRunDelivery: 'Consegna esecuzione' } },
@@ -8914,16 +8915,17 @@ settingsSession: {
           manualSubtitle: "Mantieni sempre i messaggi in coda finché non riprendi la sessione.",
         },
         title: "Invio messaggi",
-        footer:
-          "Controlla cosa succede quando invii un messaggio mentre l'agente è in esecuzione.",
-        queueInAgentTitle: "Accoda nell'agente (attuale)",
-        queueInAgentSubtitle:
-          "Scrivi subito nella trascrizione; l'agente elabora quando è pronto.",
-        interruptTitle: "Interrompi e invia",
-        interruptSubtitle: "Interrompi il turno corrente, poi invia subito.",
-        pendingTitle: "In attesa finché pronto",
-        pendingSubtitle:
-          "Mantieni i messaggi in una coda in attesa; l'agente li prende quando è pronto.",
+        footer: 'Scegli cosa succede quando invii un messaggio mentre l’agente lavora.',
+        busySend: {
+          addToTurnTitle: 'Aggiungilo al turno corrente',
+          addToTurnSubtitle: 'L’agente lo legge subito e continua a lavorare, come scrivere nel suo terminale. Se non può accettarlo a metà turno, il messaggio attende in In sospeso fino alla fine del turno.',
+          waitForTurnTitle: 'Attendi la fine del turno',
+          waitForTurnSubtitle: 'Tiene il messaggio in In sospeso, dove puoi modificarlo o riordinarlo, e lo invia a fine turno.',
+          interruptTitle: 'Ferma il turno e invia',
+          interruptSubtitle: 'Ferma ciò che l’agente sta facendo e invia subito il messaggio.',
+        },
+        inactiveSessionsTitle: 'Sessioni inattive',
+        inactiveSessionsFooter: 'Si applica quando invii a una sessione il cui agente si è fermato o la cui macchina è offline.',
         pendingDrainModeTitle: "Elaborazione della coda in attesa",
         pendingDrainModeFooter:
           "Scegli se l'agente prende un messaggio per ogni punto di disponibilità o raggruppa tutta la coda in attesa.",
@@ -8945,17 +8947,6 @@ settingsSession: {
           afterRuntimeIdleTitle: "Quando il runtime è inattivo",
           afterRuntimeIdleSubtitle:
             "Mantieni i messaggi in attesa finché l'attività runtime tracciata è ancora attiva.",
-        },
-        busySteerPolicyTitle: "Quando l'agente è occupato (con steering)",
-        busySteerPolicyFooter:
-          "Se l'agente supporta lo steering in corso, scegli se i messaggi devono fare steering subito o passare prima in In attesa.",
-        busySteerPolicy: {
-          steerImmediatelyTitle: "Steering immediato",
-          steerImmediatelySubtitle:
-            "Invia subito e fai steering del turno corrente (senza interruzione).",
-          queueForReviewTitle: "Accoda in In attesa",
-          queueForReviewSubtitle:
-            "Metti i messaggi prima in In attesa; inviali dopo con \"Guida ora\".",
         },
         nonSteerablePromptTitle: 'Quando un messaggio non può guidare il turno attivo',
         nonSteerablePromptFooter: 'Le modifiche alla modalità permessi e /clear o /compact non possono essere applicate a metà turno. Scegli cosa fa Happier con questi messaggi mentre l\'agente è occupato.',

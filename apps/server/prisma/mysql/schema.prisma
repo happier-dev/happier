@@ -279,6 +279,7 @@ model AccountPushToken {
     account   Account  @relation(fields: [accountId], references: [id])
     token     String
     clientServerUrl String?
+    androidActionPresentationV1 Boolean @default(false)
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
 

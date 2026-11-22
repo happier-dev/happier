@@ -233,11 +233,13 @@ describe('requestPlannedRunnerRestart completion lifecycle', () => {
       requestSignal: async ({ shouldSignal }) => await shouldSignal() ? { status: 'requested' } : { status: 'skipped_stale_owner' },
       // Outbound notification boundary: a failing transcript transport must remain nonfatal.
       onRestartSignaled: () => { throw new Error('notification_transport_unavailable'); },
-      observeRunnerRetirement: (tracked) => waitForExistingSessionExitIfStopRequested({
-        sessionId: 'sess-1', pidToTrackedSession: harness.pidToTrackedSession, trackedPids: [tracked.pid],
-        timeoutMs: 60_000, pollIntervalMs: 100, readRunState: async () => 'dead',
-        onExitObserved: () => harness.completionWaiters.settle('sess-1', tracked.pid, { ok: true }),
-      }),
+      observeRunnerRetirement: async (tracked) => {
+        await waitForExistingSessionExitIfStopRequested({
+          sessionId: 'sess-1', pidToTrackedSession: harness.pidToTrackedSession, trackedPids: [tracked.pid],
+          timeoutMs: 60_000, pollIntervalMs: 100, readRunState: async () => 'dead',
+          onExitObserved: () => harness.completionWaiters.settle('sess-1', tracked.pid, { ok: true }),
+        });
+      },
       logDebug: () => {}, logWarn: (_message, error) => { warnings.push(error); },
     });
     await expect(restart).resolves.toEqual({ signaled: true, completion: { ok: true } });
@@ -254,12 +256,14 @@ describe('requestPlannedRunnerRestart completion lifecycle', () => {
       restartRequestedPids: harness.restartRequestedPids, pidToTrackedSession: harness.pidToTrackedSession,
       isProcessSafeToSignal: async () => true,
       requestSignal: async ({ shouldSignal }) => await shouldSignal() ? { status: 'requested' } : { status: 'skipped_stale_owner' },
-      observeRunnerRetirement: (tracked) => waitForExistingSessionExitIfStopRequested({
-        sessionId: 'sess-1', pidToTrackedSession: harness.pidToTrackedSession, trackedPids: [tracked.pid],
-        timeoutMs: 60_000, pollIntervalMs: 100,
-        readRunState: async () => Date.now() - startedAt >= 10_000 ? 'dead' : 'servable',
-        onExitObserved: () => harness.completionWaiters.settle('sess-1', tracked.pid, { ok: true }),
-      }),
+      observeRunnerRetirement: async (tracked) => {
+        await waitForExistingSessionExitIfStopRequested({
+          sessionId: 'sess-1', pidToTrackedSession: harness.pidToTrackedSession, trackedPids: [tracked.pid],
+          timeoutMs: 60_000, pollIntervalMs: 100,
+          readRunState: async () => Date.now() - startedAt >= 10_000 ? 'dead' : 'servable',
+          onExitObserved: () => harness.completionWaiters.settle('sess-1', tracked.pid, { ok: true }),
+        });
+      },
       logDebug: () => {},
     });
     await vi.advanceTimersByTimeAsync(10_100);

@@ -295,7 +295,7 @@ import {
 import {
     resolveSessionActivityComposerTranslate,
     resolveSessionActivityStatusBadgePresentation,
-    shouldRetainSessionActivityStatusBadge,
+    shouldDismissSessionActivityStatusBadge,
 } from '@/components/sessions/workState/sessionActivityPresentation';
 import { isSessionGoalEditingAvailable } from '@/components/sessions/workState/sessionGoalEditingAvailability';
 import { SessionWorkStatePopover } from '@/components/sessions/workState/SessionWorkStatePopover';
@@ -3736,13 +3736,14 @@ function SessionViewLoaded({
         // the question the chip above already answers, and on a run whose named agents have all
         // finished the two disagreed — this effect closed the open work-state popover while the chip
         // stayed on screen naming the workflow (FIX-F1).
-        if (shouldRetainSessionActivityStatusBadge({
+        if (shouldDismissSessionActivityStatusBadge({
             activeStatusBadgeKey,
             hasPrimaryWorkStateItem: Boolean(primaryWorkStateItem),
             canShowEmptyGoalControls: canEditSessionGoals,
             agentActivityCounts,
-        })) return;
-        setActiveStatusBadgeKey(null);
+        })) {
+            setActiveStatusBadgeKey(null);
+        }
     }, [activeStatusBadgeKey, agentActivityCounts, canEditSessionGoals, primaryWorkStateItem]);
     const isVoiceConversationSession = isVoiceConversationSystemSessionMetadata(session.metadata ?? null);
     const isHiddenSystemSessionSession = isHiddenSystemSession({ metadata: session.metadata ?? null });
@@ -3801,10 +3802,10 @@ function SessionViewLoaded({
     const connectedServiceQuotaProfileRef = React.useMemo(() => (
         resolveConnectedServiceQuotaProfileRefForSession({
             metadata: session.metadata,
-            agentId,
+            agentId: liveComposerState.agentId,
             accountProfileConnectedServicesV2: accountProfile?.connectedServicesV2 ?? [],
         })
-    ), [accountProfile?.connectedServicesV2, agentId, session.metadata]);
+    ), [accountProfile?.connectedServicesV2, liveComposerState.agentId, session.metadata]);
     const connectedServiceQuotaGroupService = React.useMemo(() => (
         connectedServiceQuotaProfileRef?.groupId
             ? accountProfile?.connectedServicesV2.find((service) => (
@@ -4029,6 +4030,7 @@ function SessionViewLoaded({
     }, [connectedServiceQuotaProfileRef?.credentialHealthStatus]);
     const connectedServiceQuotaSnapshots = useConnectedServiceQuotaSnapshots(
         connectedServiceQuotaProfileRef ? [connectedServiceQuotaProfileRef] : [],
+        { fetchPolicy: surfaceFocused ? 'poll' : 'cache_only' },
     );
     const connectedServiceQuotaProfileKey = connectedServiceQuotaProfileRef
         ? connectedServiceProfileKey(connectedServiceQuotaProfileRef)
@@ -4037,11 +4039,15 @@ function SessionViewLoaded({
         ? connectedServiceQuotaSnapshots.snapshotsByKey[connectedServiceQuotaProfileKey] ?? null
         : null;
     const connectedServiceQuotaDisplaySnapshot = connectedServiceQuotaSnapshot;
+    // A direct link identifies the Session, but its native login needs a record published for it.
     const providerAccountUsageRecordIds = React.useMemo(
         () => readProviderAccountUsageRecordIdsFromMetadata(session.metadata),
         [session.metadata],
     );
-    const providerAccountUsageSnapshotsByRecordId = useProviderAccountUsageSnapshots(providerAccountUsageRecordIds);
+    const providerAccountUsageSnapshotsByRecordId = useProviderAccountUsageSnapshots(
+        providerAccountUsageRecordIds,
+        { fetchEnabled: surfaceFocused },
+    );
     const connectedServiceQuotaActiveAccountLabel = React.useMemo(() => {
         if (!connectedServiceQuotaProfileRef) return connectedServiceQuotaDisplaySnapshot?.accountLabel ?? null;
         return resolveConnectedServiceProfileLabel({
@@ -4075,6 +4081,7 @@ function SessionViewLoaded({
         return selectConnectedServiceSessionProviderUsageGaugeSource({
             providerId: liveComposerState.agentId,
             connectedServiceSnapshot: providerUsageDisplaySnapshotSource?.snapshot ?? null,
+            connectedServiceProfileRef: connectedServiceQuotaProfileRef,
             connectedServiceRefProvenance: providerUsageDisplaySnapshotSource?.connectedServiceRefProvenance ?? null,
             sessionCheckNowSupported: usageLimitRecoveryCheckNowSupported,
             recoveryCredits: usageLimitRecoveryCredits,
@@ -4083,6 +4090,7 @@ function SessionViewLoaded({
     }, [
         connectedServiceQuotasEnabled,
         connectedServiceQuotaProfileCredentialUsable,
+        connectedServiceQuotaProfileRef,
         liveComposerState.agentId,
         providerUsageDisplaySnapshotSource,
         session.lastRuntimeIssue,

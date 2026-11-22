@@ -1,4 +1,5 @@
 import type { TrackedSession } from '@/daemon/types';
+import { readTrackedSessionRunner } from '@/daemon/sessionRunnerProcessIdentity';
 import type { SessionRunnerDaemonEntrypointSourceV1 } from '@happier-dev/protocol';
 
 import {
@@ -99,7 +100,7 @@ export function resolveSessionRunnerRuntimeState(params: Readonly<{
     daemonId: normalizeString(params.daemonId) || null,
     observedAtMs: params.observedAtMs ?? Date.now(),
     runner: {
-      pid: tracked?.pid ?? null,
+      pid: tracked ? readTrackedSessionRunner(tracked).pid : null,
       runtimeId: runnerIdentity.status === 'known' ? runnerIdentity.comparableId : null,
       cliVersion: runnerIdentity.status === 'known' ? runnerIdentity.entrypointVersion ?? null : null,
       entrypointVersion: runnerIdentity.status === 'known' ? runnerIdentity.entrypointVersion ?? null : null,

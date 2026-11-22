@@ -3,7 +3,7 @@ import { rmSync } from 'node:fs';
 import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { EventEmitter } from 'node:events';
 import * as childProcess from 'node:child_process';
 
@@ -361,10 +361,6 @@ vi.mock('@/agent/runtime/permission/startupPermissionModeSeed', () => ({
   resolveStartupPermissionModeFromSession: vi.fn(async () => null),
 }));
 
-vi.mock('@/agent/runtime/runnerTerminationOutcome', () => ({
-  computeRunnerTerminationOutcome: vi.fn(() => ({ exitCode: 0, terminationReason: 'Exited normally' })),
-}));
-
 vi.mock('@/backends/claude/sdk/metadataExtractor', () => ({
   extractSDKMetadataAsync: vi.fn(),
 }));
@@ -533,11 +529,14 @@ describe('runClaude fast-start', () => {
     } finally {
       releaseMcp.resolve();
       releaseFlush.resolve();
-      await run;
-      vi.mocked(loop).mockReset().mockImplementation(originalLoop);
-      vi.mocked(childProcess.spawn).mockImplementation(originalSpawn);
-      environment.restore();
-      await rm(root, { recursive: true, force: true });
+      try {
+        await run;
+      } finally {
+        vi.mocked(loop).mockReset().mockImplementation(originalLoop);
+        vi.mocked(childProcess.spawn).mockImplementation(originalSpawn);
+        environment.restore();
+        await rm(root, { recursive: true, force: true });
+      }
     }
   });
 
@@ -565,7 +564,10 @@ describe('runClaude fast-start', () => {
     const { runClaude } = await import('./runClaude');
     const run = runClaude(createLegacyCredentials(), { startedBy: 'terminal', startingMode: 'local' });
     try {
-      await waitFor(loopStarted.promise, loopStartWaitMs);
+      await waitFor(Promise.race([
+        loopStarted.promise,
+        run.then(() => { throw new Error('Runner ended before the provider loop started'); }),
+      ]), loopStartWaitMs);
       loopExit.resolve(0);
       await expect(run).resolves.toBeUndefined();
       expect(exitSpy).toHaveBeenCalledWith(0);
@@ -576,8 +578,11 @@ describe('runClaude fast-start', () => {
       }));
     } finally {
       loopExit.resolve(0);
-      await run;
-      sessionSyncClientSpy.mockImplementation(previousSessionImpl);
+      try {
+        await run;
+      } finally {
+        sessionSyncClientSpy.mockImplementation(previousSessionImpl);
+      }
     }
   });
 
@@ -1561,6 +1566,65 @@ describe('runClaude fast-start', () => {
     }
 
     if (testError) throw testError;
+  });
+
+  it.each(['online', 'offline fast-start'])('appends the Happier coding prompt once to a fresh unified terminal launch (%s)', async (connection) => {
+    vi.resetModules();
+    loopStarted = createDeferred<void>();
+    loopExit = createDeferred<number>();
+    lastLoopOpts = null;
+    backendInitDelayMs = 0;
+    getOrCreateSessionSpy.mockImplementation(async () => ({ id: 'sess_1', metadataVersion: 1 }));
+    if (connection === 'offline fast-start') getOrCreateSessionSpy.mockResolvedValueOnce(null);
+
+    const codingPrompt = 'Happier coding instructions';
+    const { resolveEffectiveCodingPromptText } = await import('@/agent/prompting/coding/resolveEffectiveCodingPrompt');
+    const resolvePrompt = vi.mocked(resolveEffectiveCodingPromptText);
+    const previousResolvePrompt = resolvePrompt.getMockImplementation()!;
+    resolvePrompt.mockResolvedValue(codingPrompt);
+    const { runClaude } = await import('./runClaude');
+    const { buildClaudeUnifiedTerminalSpawn } = await import('./unifiedTerminal/buildClaudeUnifiedTerminalSpawn');
+    const run = runClaude(createLegacyCredentials(), {
+      startedBy: 'daemon',
+      startingMode: 'remote',
+      terminalRuntime: { mode: 'plain', requested: 'tmux', tmuxTarget: 'happy' },
+      claudeRemoteMetaDefaults: { claudeUnifiedTerminalEnabled: true, claudeRemoteDisableTodos: true },
+    });
+
+    try {
+      await waitFor(Promise.race([
+        loopStarted.promise,
+        run.then(() => { throw new Error('Runner exited before terminal launch'); }),
+      ]), loopStartWaitMs);
+      const opts: Parameters<typeof import('./loop').loop>[0] = lastLoopOpts;
+      const mode = opts.initialClaudeUnifiedTerminalMode;
+      if (!mode) throw new Error('Unified terminal launch mode is missing');
+      const spawn = await buildClaudeUnifiedTerminalSpawn({
+        path: opts.path,
+        first: { message: '', mode },
+        systemPromptText: opts.defaultSystemPromptText,
+        deps: {
+          resolveClaudeCliPath: () => '/fixture/claude',
+          isClaudeCliJavaScriptFile: () => false,
+          ensureClaudeJsRuntimeExecutable: async () => process.execPath,
+        },
+      });
+      const launchSpecPath = spawn.spawnArgv.at(-1)!;
+      try {
+        const { args } = JSON.parse(await readFile(launchSpecPath, 'utf8')) as { args: string[] };
+        const promptIndex = args.indexOf('--append-system-prompt');
+        expect(promptIndex).toBeGreaterThanOrEqual(0);
+        const prompt = args[promptIndex + 1];
+        expect(prompt.split(codingPrompt)).toHaveLength(2);
+        expect(prompt).toContain('Do not create TODO');
+      } finally {
+        await rm(dirname(launchSpecPath), { recursive: true, force: true });
+      }
+    } finally {
+      loopExit.resolve(0);
+      resolvePrompt.mockImplementation(previousResolvePrompt);
+      await run;
+    }
   });
 
   it('sends the tmux fallback message when the daemon fell back to plain outside the unified terminal runtime', async () => {

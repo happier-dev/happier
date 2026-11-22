@@ -24,12 +24,15 @@ const SCREEN = [
 describe('native Claude permission presentation', () => {
     it('separates Claude’s permission explanation from a clipped command block without dropping its visible identity', () => {
         const explanation = "A variable in this command can't be checked before it runs\n Permission rule Bash(cat *) requires confirmation for this command.\n /permissions to update rules\n\n Do you want to proceed?";
-        const screen = ` │ synthetic command tail\n╌╌╌╌╌╌╌\n ${explanation}\n ❯ 1. Yes\n   2. No\n\n Esc to cancel · Tab to amend`;
+        // Claude Code 2.1.328 puts the overflow indicator below the last choice.
+        const screen = ` │ synthetic command tail\n╌╌╌╌╌╌╌\n ${explanation}\n ❯ 1. Yes\n   2. No\n ↑ 76 more lines\n Esc to cancel · Tab to amend`;
         expect(parseClaudeNativePermissionScreen(screen)).toMatchObject({
             context: expect.stringContaining('synthetic command tail'), explanation,
             options: [{ label: 'Yes', focused: true }, { label: 'No', focused: false }],
             amended: false,
         });
+        expect(parseClaudeNativePermissionScreen(screen.replace('↑ 76 more lines', 'Unknown control'))).toBeNull();
+        expect(parseClaudeNativePermissionScreen(screen.replace('   2. No\n ↑ 76 more lines', ' ↑ 76 more lines\n   2. No'))).toBeNull();
     });
     it.each([
         ['claude-2.1.310-read-outside.txt', 0],

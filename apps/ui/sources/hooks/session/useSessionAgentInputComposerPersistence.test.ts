@@ -348,6 +348,26 @@ describe('useSessionAgentInputComposerPersistence', () => {
         vi.useRealTimers();
     });
 
+    it('keeps the composer persistence projection stable when the editor repeats the same selection', async () => {
+        const { useSessionAgentInputComposerPersistence } = await importHook();
+        const hook = await renderHook(() => useSessionAgentInputComposerPersistence({
+            sessionId: 'session-a',
+            textLength: 20,
+            fontScale: 1,
+        }));
+
+        await act(async () => {
+            hook.getCurrent().inputPersistence.onSelectionChangePersist({ start: 2, end: 5 }, 20);
+        });
+        const selectionProjection = hook.getCurrent().inputPersistence;
+        expect(selectionProjection.initialSelection).toEqual({ start: 2, end: 5 });
+
+        await act(async () => {
+            hook.getCurrent().inputPersistence.onSelectionChangePersist({ start: 2, end: 5 }, 20);
+        });
+        expect(hook.getCurrent().inputPersistence).toBe(selectionProjection);
+    });
+
     it('flushes pending scroll and selection before adopting another session owner', async () => {
         vi.useFakeTimers();
         const { useSessionAgentInputComposerPersistence } = await importHook();

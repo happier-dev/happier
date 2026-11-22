@@ -45,7 +45,7 @@
   "agents.AGENTS.opencode.whatItDoes.0": "OpenCode is SST’s terminal coding agent, and it brings its own provider layer: you point it at a model you already have access to and it drives that model against your repository. `happier opencode` runs the same binary with the same `opencode auth` credentials, in the same directory.",
   "agents.AGENTS.opencode.whatItDoes.1": "Happier supplies the devices. A session you started in a terminal in one room is readable and answerable from a phone in another, and the transcript is encrypted on your computer before it goes anywhere.",
   "agents.AGENTS.opencode.faq.0.q": "Do I need OpenCode installed already?",
-  "agents.AGENTS.opencode.faq.0.a": "Not necessarily. Happier prefers the `opencode` on your PATH, and can install the `opencode-ai` package into its own directory if there is not one. Your own install is never replaced or upgraded behind your back.",
+  "agents.AGENTS.opencode.faq.0.a": "Not necessarily. Happier prefers the `opencode` on your PATH, and can install the `@opencode/cli` package into its own directory if there is not one. Your own install is never replaced or upgraded behind your back.",
   "agents.AGENTS.opencode.faq.1.q": "Does Happier change which provider OpenCode talks to?",
   "agents.AGENTS.opencode.faq.1.a": "No. OpenCode keeps its own provider configuration and its own credentials; Happier starts it and reads the conversation. If you have several providers set up in `opencode auth`, that is still what decides where the request goes.",
   "agents.AGENTS.opencode.faq.2.q": "Can I self-host the part that carries my sessions?",

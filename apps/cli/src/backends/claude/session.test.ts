@@ -1752,11 +1752,11 @@ describe('Session', () => {
     }
   });
 
-  it('publishes direct-session metadata when transcript storage is direct', async () => {
+  it('replaces the Direct startup marker with the proven transcript link', async () => {
     const transcript = createTempClaudeTranscript('sess_1', { projectId: 'proj-a' });
     vi.stubEnv('HAPPIER_TRANSCRIPT_STORAGE', 'direct');
     vi.stubEnv('CLAUDE_CONFIG_DIR', transcript.configDir);
-    let metadata: Metadata = createMetadataStub({ machineId: 'machine-1' } as Partial<Metadata>);
+    let metadata: Metadata = { ...createMetadataStub({ machineId: 'machine-1' }), directTranscriptPendingV1: true };
 
     const client = createSessionClientStub({
       updateMetadata: (updater) => {
@@ -1776,6 +1776,7 @@ describe('Session', () => {
         remoteSessionId: 'sess_1',
         source: { kind: 'claudeConfig', configDir: transcript.tempDir, projectId: 'proj-a' },
       });
+      expect(metadata).not.toHaveProperty('directTranscriptPendingV1');
     } finally {
       session.cleanup();
       vi.unstubAllEnvs();

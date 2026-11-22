@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
     resolveSessionActivityStatusBadgePresentation,
-    shouldRetainSessionActivityStatusBadge,
+    shouldDismissSessionActivityStatusBadge,
 } from './sessionActivityPresentation';
 import type { SessionWorkStateItem, SessionWorkStateSnapshot } from './sessionWorkStateTypes';
 import type { AgentActivityCounts } from '@/sync/domains/session/agentActivity/deriveAgentActivityCounts';
@@ -239,9 +239,9 @@ describe('resolveSessionActivityStatusBadgePresentation', () => {
     });
 });
 
-describe('shouldRetainSessionActivityStatusBadge', () => {
-    function retain(over: Partial<Parameters<typeof shouldRetainSessionActivityStatusBadge>[0]> = {}): boolean {
-        return shouldRetainSessionActivityStatusBadge({
+describe('shouldDismissSessionActivityStatusBadge', () => {
+    function dismiss(over: Partial<Parameters<typeof shouldDismissSessionActivityStatusBadge>[0]> = {}): boolean {
+        return shouldDismissSessionActivityStatusBadge({
             activeStatusBadgeKey: 'work-state',
             hasPrimaryWorkStateItem: false,
             canShowEmptyGoalControls: false,
@@ -251,11 +251,15 @@ describe('shouldRetainSessionActivityStatusBadge', () => {
     }
 
     it('keeps the activity popover open for activity-only sessions with no work-state item', () => {
-        expect(retain({ agentActivityCounts: counts({ live: 3, total: 3, liveSubagents: 3 }) })).toBe(true);
+        expect(dismiss({ agentActivityCounts: counts({ live: 3, total: 3, liveSubagents: 3 }) })).toBe(false);
+    });
+
+    it('preserves a draft error popover when no represented activity remains', () => {
+        expect(dismiss({ activeStatusBadgeKey: 'draft-sync-status' })).toBe(false);
     });
 
     it('closes the activity popover when no represented activity remains', () => {
-        expect(retain()).toBe(false);
+        expect(dismiss()).toBe(true);
     });
 
     /**
@@ -270,7 +274,7 @@ describe('shouldRetainSessionActivityStatusBadge', () => {
     it('keeps the popover open on a run whose named agents have all finished', () => {
         const betweenPhases = counts({ live: 0, total: 2, liveWorkflowRuns: 1 });
         expect(resolve({ agentActivityCounts: betweenPhases })?.label).toBe('1 workflow running');
-        expect(retain({ agentActivityCounts: betweenPhases })).toBe(true);
+        expect(dismiss({ agentActivityCounts: betweenPhases })).toBe(false);
     });
 
     /**
@@ -291,7 +295,7 @@ describe('shouldRetainSessionActivityStatusBadge', () => {
         ];
         for (const over of cases) {
             const value = counts(over);
-            expect([JSON.stringify(over), retain({ agentActivityCounts: value })])
+            expect([JSON.stringify(over), !dismiss({ agentActivityCounts: value })])
                 .toEqual([JSON.stringify(over), resolve({ agentActivityCounts: value })?.label != null]);
         }
     });

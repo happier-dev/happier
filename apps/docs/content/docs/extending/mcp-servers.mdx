@@ -135,6 +135,17 @@ For remote servers, you provide:
 - optional headers
 - optional environment variables
 
+In current development source, ACP agents can connect directly to managed
+HTTP or SSE endpoints when they advertise support for that transport during
+session setup. Use a credential-free URL and leave the headers and environment
+empty for direct delivery. Happier uses its stdio bridge when the agent lacks
+support or when the server has configured headers, environment values, or a URL
+with credentials, a query string, or a fragment.
+
+Before the agent starts, the spawn preview can show whether an ACP connection
+is eligible for direct delivery. The running agent confirms transport support
+when the session opens.
+
 ### Import JSON
 
 Use this when a README or another tool gives you a host MCP JSON snippet.

@@ -103,12 +103,8 @@ function RenderTextBlock(props: { spans: MarkdownSpan[], first: boolean, last: b
             <MarkdownSpansView
                 spans={props.spans}
                 baseStyle={baseStyle}
-                linkStyle={style.link}
                 onLinkPress={props.onLinkPress}
-                resolveSpanStyle={(s) => {
-                    if (props.variant === 'thinking' && s === 'code') return style.thinkingInlineCode;
-                    return (style as any)[s];
-                }}
+                variant={props.variant}
                 inlineTextSelectable={false}
                 streamingReveal={props.streamingReveal}
                 streamingRevealPreset={props.streamingRevealPreset}
@@ -125,12 +121,8 @@ function RenderHeaderBlock(props: { level: 1 | 2 | 3 | 4 | 5 | 6, spans: Markdow
             <MarkdownSpansView
                 spans={props.spans}
                 baseStyle={headerStyle}
-                linkStyle={style.link}
                 onLinkPress={props.onLinkPress}
-                resolveSpanStyle={(sn) => {
-                    if (props.variant === 'thinking' && sn === 'code') return style.thinkingInlineCode;
-                    return (style as any)[sn];
-                }}
+                variant={props.variant}
                 inlineTextSelectable={false}
                 streamingReveal={props.streamingReveal}
                 streamingRevealPreset={props.streamingRevealPreset}
@@ -151,12 +143,8 @@ function RenderListBlock(props: { items: { depth: number, spans: MarkdownSpan[] 
                             <MarkdownSpansView
                                 spans={item.spans}
                                 baseStyle={listStyle}
-                                linkStyle={style.link}
                                 onLinkPress={props.onLinkPress}
-                                resolveSpanStyle={(sn) => {
-                                    if (props.variant === 'thinking' && sn === 'code') return style.thinkingInlineCode;
-                                    return (style as any)[sn];
-                                }}
+                                variant={props.variant}
                                 inlineTextSelectable={false}
                                 streamingReveal={props.streamingReveal}
                                 streamingRevealPreset={props.streamingRevealPreset}
@@ -181,12 +169,8 @@ function RenderNumberedListBlock(props: { items: { depth: number, number: number
                             <MarkdownSpansView
                                 spans={item.spans}
                                 baseStyle={listStyle}
-                                linkStyle={style.link}
                                 onLinkPress={props.onLinkPress}
-                                resolveSpanStyle={(sn) => {
-                                    if (props.variant === 'thinking' && sn === 'code') return style.thinkingInlineCode;
-                                    return (style as any)[sn];
-                                }}
+                                variant={props.variant}
                                 inlineTextSelectable={false}
                                 streamingReveal={props.streamingReveal}
                                 streamingRevealPreset={props.streamingRevealPreset}
@@ -312,8 +296,6 @@ function MarkdownOptionButton(props: {
     );
 }
 
-// NOTE: span rendering extracted into MarkdownSpansView for unit-testable link hardening.
-
 const style = StyleSheet.create((theme) => ({
 
     // Plain text
@@ -325,31 +307,6 @@ const style = StyleSheet.create((theme) => ({
         marginTop: 8,
         marginBottom: 8,
         color: theme.colors.text.primary,
-        fontWeight: '400',
-    },
-
-    italic: {
-        ...Typography.default('italic'),
-    },
-    bold: {
-        ...Typography.default('semiBold'),
-    },
-    semibold: {
-        ...Typography.default('semiBold'),
-    },
-    code: {
-        ...Typography.mono(),
-        fontSize: 14,
-        lineHeight: 20,
-        backgroundColor: theme.colors.surface.selected,
-    },
-    thinkingInlineCode: {
-        ...Typography.mono(),
-        backgroundColor: 'transparent',
-    },
-    link: {
-        ...Typography.default(),
-        color: theme.colors.text.link,
         fontWeight: '400',
     },
 

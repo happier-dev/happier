@@ -151,6 +151,40 @@ describe('MarkdownView (tables)', () => {
         ].join('\n'));
     }, 60_000);
 
+    it('renders inline formatting and opens external links the transcript handler declines', async () => {
+        mockPlatform('web');
+        const openWindow = vi.fn();
+        vi.stubGlobal('open', openWindow);
+        try {
+            const { MarkdownView } = await import('./MarkdownView');
+            const onLinkPress = vi.fn(() => false);
+            const markdown = '| **Item** | Link |\n| --- | --- |\n| **Website** | [Happier](https://happier.dev) |';
+            const screen = await renderScreen(<MarkdownView markdown={markdown} profile="transcript" onLinkPress={onLinkPress} />);
+            const texts = screen.findAllByType('Text');
+            const website = texts.find((node) => node.props.children === 'Website');
+            const link = texts.find((node) => node.props.children === 'Happier');
+
+            expect(website).toBeDefined();
+            expect(flattenTestStyle(website?.props.style)).toMatchObject({ fontFamily: 'Inter-SemiBold' });
+            expect(texts.some((node) => node.props.children === 'Item')).toBe(true);
+            expect(link?.props.accessibilityRole).toBe('link');
+            await pressTestInstanceAsync(link, 'external table link');
+            expect(onLinkPress).toHaveBeenCalledWith('https://happier.dev');
+            expect(openWindow).toHaveBeenCalledWith('https://happier.dev', '_blank', 'noopener,noreferrer');
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    }, 60_000);
+
+    it('keeps unmatched inline delimiters visible inside a finished table cell', async () => {
+        mockPlatform('web');
+        const { MarkdownView } = await import('./MarkdownView');
+        const screen = await renderScreen(<MarkdownView markdown={'| Expression |\n| --- |\n| 2 * 4 |\n| 2 * 4 * 6 |\n| Use one ` delimiter |'} />);
+
+        const visibleText = screen.findAllByType('Text').map((node) => node.props.children);
+        expect(visibleText).toEqual(expect.arrayContaining(['2 * 4', '2 * 4 * 6', 'Use one ` delimiter']));
+    }, 60_000);
+
     it('renders math table cells through the enriched renderer without losing horizontal scrolling', async () => {
         mockPlatform('android');
         const { MarkdownView } = await import('./MarkdownView');

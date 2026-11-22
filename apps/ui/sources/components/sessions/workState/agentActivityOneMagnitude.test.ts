@@ -25,7 +25,7 @@ import { en } from '@/text/translations/en';
 
 import {
     resolveSessionActivityStatusBadgePresentation,
-    shouldRetainSessionActivityStatusBadge,
+    shouldDismissSessionActivityStatusBadge,
     type ResolveSessionActivityPresentationInput,
     type SessionActivityComposerTranslate,
 } from './sessionActivityPresentation';
@@ -387,12 +387,12 @@ describe('RULING-12 — the chip and the live tally state one magnitude', () => 
             expect({ chip: chipFor(scenario, counts), live: counts.live })
                 .toEqual({ chip: scenario.chip, live: scenario.live });
 
-            expect(shouldRetainSessionActivityStatusBadge({
+            expect(shouldDismissSessionActivityStatusBadge({
                 activeStatusBadgeKey: SESSION_WORK_STATE_STATUS_BADGE_KEY,
                 hasPrimaryWorkStateItem: (scenario.workStateSnapshot?.items.length ?? 0) > 0,
                 canShowEmptyGoalControls: false,
                 agentActivityCounts: counts,
-            })).toBe(scenario.retained);
+            })).toBe(!scenario.retained);
 
             // FIX-F1's two answers are now one number by construction: the tally IS the sum of the
             // three populations a surface can name, so "there is live work" and "the tally is

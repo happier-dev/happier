@@ -132,7 +132,7 @@ describe('Session settings (Permissions entry)', () => {
         const screen = await renderSettingsView(React.createElement(SessionSettingsScreen));
 
         expect(screen.findRowByTitle('settingsFeatures.enterToSend')).toBeNull();
-        expect(screen.findRowByTitle('settingsSession.messageSending.queueInAgentTitle')).toBeNull();
+        expect(screen.findRowByTitle('settingsSession.messageSending.busySend.addToTurnTitle')).toBeNull();
         expect(screen.findRowByTitle('settingsSession.usageLimitRecovery.modeTitle')).toBeNull();
         expect(screen.findRowByTitle('settingsSession.providerUsageGauge.visibilityTitle')).toBeNull();
         expect(screen.findRowByTitle('settingsSession.replayResume.enabledTitle')).toBeNull();

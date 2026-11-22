@@ -25,7 +25,7 @@ import type { StreamedTranscriptWriterSession } from '@/api/session/streamedTran
 
 export type DeferredApiSessionTarget = Readonly<{
   sessionTurnLifecycle?: SessionClientPort['sessionTurnLifecycle'];
-  subscribeToSessionConnectionState?: StreamedTranscriptWriterSession['subscribeToSessionConnectionState'];
+  subscribeToTranscriptReplayReady?: StreamedTranscriptWriterSession['subscribeToTranscriptReplayReady'];
   sessionId: string;
   rpcHandlerManager: RpcHandlerManagerLike;
   setSessionRuntimeControls?: (controls: SessionRuntimeControls | null) => void;
@@ -251,13 +251,13 @@ export class DeferredApiSessionClient {
     return this.target?.hasPendingProviderInputAcceptance?.(localId) ?? false;
   }
 
-  subscribeToSessionConnectionState(
-    listener: Parameters<NonNullable<StreamedTranscriptWriterSession['subscribeToSessionConnectionState']>>[0],
+  subscribeToTranscriptReplayReady(
+    listener: Parameters<NonNullable<StreamedTranscriptWriterSession['subscribeToTranscriptReplayReady']>>[0],
   ): () => void {
     if (this.cancelled) return () => {};
     let disposeTarget: (() => void) | undefined;
     const bind = (target: DeferredApiSessionTarget) => {
-      disposeTarget = target.subscribeToSessionConnectionState?.(listener);
+      disposeTarget = target.subscribeToTranscriptReplayReady?.(listener);
     };
     if (this.target) bind(this.target);
     else this.pendingSessionBindings.add(bind);
