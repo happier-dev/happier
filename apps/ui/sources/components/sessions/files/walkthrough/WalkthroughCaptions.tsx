@@ -9,6 +9,7 @@ import type { DiffViewerBaseProps } from '@/components/ui/code/diff/diffViewerTy
 import { buildCodeLinesFromUnifiedDiff } from '@/components/ui/code/model/buildCodeLinesFromUnifiedDiff';
 import type { CodeLine } from '@/components/ui/code/model/codeLineTypes';
 import { CODE_LINE_BASE_HEIGHT } from '@/components/ui/code/view/CodeLineRow';
+import { reserveScrollerBottomRoom } from '@/components/ui/code/view/scrollCodeLineIntoView';
 import { CODE_GUTTER_METRICS } from '@/components/ui/code/editor/codeEditorFontMetrics';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
@@ -588,6 +589,7 @@ export function WalkthroughCaptionLane(
               <CaptionSheetBody
                 caption={caption}
                 path={path}
+                anchorRef={anchorRef}
                 onShown={revealAboveSheet}
                 position={index + 1}
                 total={placed.length}
@@ -653,7 +655,9 @@ function CaptionSheetBody(
   props: Readonly<{
     caption: WalkthroughLetteredCaption;
     path: string;
-    /** The sheet is showing this caption: its lines go above the sheet. */
+    /** The marker the sheet opened from: its scroller gets the sheet's room while the sheet is open. */
+    anchorRef: React.RefObject<View | null>;
+    /** The sheet is showing this caption, with room under the page for it: its lines go above the sheet. */
     onShown: (key: string) => void;
     /** Its place among the file's drawn captions, the ones previous and next step through. */
     position: number;
@@ -663,10 +667,22 @@ function CaptionSheetBody(
     onReadInWalkthrough?: () => void;
   }>,
 ) {
-  const { caption, onShown } = props;
-  React.useEffect(() => onShown(caption.key), [caption.key, onShown]);
+  const { anchorRef, caption, onShown } = props;
+  const [height, setHeight] = React.useState(0);
+  // A caption among the last lines has no page left below it to scroll into, so it would stay under the sheet: the
+  // scroller gets the sheet's measured height as room at its end while the sheet is open, then the line lands.
+  React.useEffect(() => {
+    if (height <= 0) return;
+    const release = reserveScrollerBottomRoom(anchorRef.current, height);
+    onShown(caption.key);
+    return release;
+  }, [anchorRef, caption.key, height, onShown]);
   return (
-    <View testID="walkthrough-caption-sheet" style={styles.sheet}>
+    <View
+      testID="walkthrough-caption-sheet"
+      style={styles.sheet}
+      onLayout={(event) => setHeight(Math.round(event.nativeEvent.layout.height))}
+    >
       <CaptionHeading
         caption={caption}
         path={props.path}

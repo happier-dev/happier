@@ -1,4 +1,6 @@
+// @vitest-environment jsdom
 import * as React from 'react';
+import { act } from 'react';
 import { expect, it, vi } from 'vitest';
 
 import type { ScmComparison } from '@happier-dev/protocol/scm/comparison';
@@ -134,7 +136,10 @@ it('on a phone, opening a caption\u2019s sheet brings its lines into view above 
     && String(candidate.props.unifiedDiff).includes('staging: preview only'))!;
   expect(viewer().props.scrollToLineId).toBeUndefined();
   await screen.pressByTestIdAsync('walkthrough-caption-marker-A');
-  await vi.waitFor(() => expect(screen.findByTestId('walkthrough-caption-sheet')).not.toBeNull());
+  await vi.waitFor(() => expect(screen.findHostByTestId('walkthrough-caption-sheet')).not.toBeNull());
+  await act(async () => {
+    screen.findHostByTestId('walkthrough-caption-sheet')!.props.onLayout?.({ nativeEvent: { layout: { x: 0, y: 0, width: 390, height: 312 } } });
+  });
   // The sheet covers the bottom of the screen: the code view lands the caption's first line at its reading line, above it.
   await vi.waitFor(() => {
     const target = viewer().props.scrollToLineId as string | undefined;
@@ -142,4 +147,44 @@ it('on a phone, opening a caption\u2019s sheet brings its lines into view above 
       .find((entry) => entry.id === target);
     expect(line?.newLine).toBe(21);
   });
+});
+
+it('on a phone, a caption among the last lines still clears the sheet: the scroller gets the sheet\u2019s room until it closes', async () => {
+  const { Popover } = await import('@/components/ui/popover');
+  const reading = buildWalkthroughReading({ comparison: COMPARISON, walkthrough: { state: 'complete', value: WALKTHROUGH },
+    analysis: null, reviewed: null });
+  // The page's scroller is at its end when the caption's line is one of the last: the host layout boundary gives
+  // every mounted node a real element inside a scrolled page, so the room the sheet needs is observable on it.
+  const scroller = document.createElement('div');
+  scroller.style.overflowY = 'auto';
+  Object.defineProperty(scroller, 'clientHeight', { value: 844 });
+  Object.defineProperty(scroller, 'scrollHeight', { value: 2000 });
+  document.body.appendChild(scroller);
+  const screen = await renderScreen(<WalkthroughView reading={reading} scopeLabel="Pending changes" layout="phone" />, {
+    createNodeMock: () => {
+      const node = document.createElement('div');
+      scroller.appendChild(node);
+      return Object.assign(node, {
+        measure: (callback: (...values: number[]) => void) => callback(0, 0, 22, 22, 0, 0),
+        measureInWindow: (callback: (...values: number[]) => void) => callback(0, 0, 22, 22),
+        measureLayout: (_relative: unknown, onSuccess: (...values: number[]) => void) => onSuccess(0, 0, 22, 22),
+      });
+    },
+  });
+  await vi.waitFor(() => expect(screen.findByTestId('walkthrough-caption-marker-A')).not.toBeNull());
+  expect(scroller.style.paddingBottom).toBe('');
+  await screen.pressByTestIdAsync('walkthrough-caption-marker-A');
+  await vi.waitFor(() => expect(screen.findHostByTestId('walkthrough-caption-sheet')).not.toBeNull());
+  // The sheet lays out at its measured height.
+  await act(async () => {
+    screen.findHostByTestId('walkthrough-caption-sheet')!.props.onLayout?.({ nativeEvent: { layout: { x: 0, y: 0, width: 390, height: 312 } } });
+  });
+  await vi.waitFor(() => expect(scroller.style.paddingBottom).toBe('312px'));
+  // Closing the sheet gives the room back.
+  await act(async () => {
+    screen.findAllByType(Popover).find((popover) => popover.props.phonePresentation === 'sheet')!.props.onRequestClose();
+  });
+  await vi.waitFor(() => expect(screen.findByTestId('walkthrough-caption-sheet')).toBeNull());
+  expect(scroller.style.paddingBottom).toBe('');
+  scroller.remove();
 });

@@ -38,6 +38,22 @@ export function scrollCodeLineIntoView(
     }
 }
 
+/**
+ * Room at the end of `anchor`'s vertical scroller while a sheet covers `coveredBottom` of its bottom, so a row among
+ * the last ones can still land above the sheet instead of staying under it at the scroller's end. Returns the release
+ * that gives the room back. Web only; elsewhere, and outside a scroller, it reserves nothing.
+ */
+export function reserveScrollerBottomRoom(anchor: unknown, coveredBottom: number): () => void {
+    if (coveredBottom <= 0 || typeof HTMLElement === 'undefined' || !(anchor instanceof HTMLElement)) return () => {};
+    const scroller = findVerticalScroller(anchor);
+    if (!scroller) return () => {};
+    const previous = scroller.style.paddingBottom;
+    scroller.style.paddingBottom = previous ? `calc(${previous} + ${coveredBottom}px)` : `${coveredBottom}px`;
+    return () => {
+        scroller.style.paddingBottom = previous;
+    };
+}
+
 /** A mounted row can still be clamped by partially measured content. Real layout continues the
  * same landing until the reader takes over; Find keeps that position through later row resizing. */
 export function retainCodeLineLanding(

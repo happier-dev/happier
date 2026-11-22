@@ -1,6 +1,6 @@
 import * as React from 'react';
 import {
-  Banner, Button, Form, ReviewPublicationSheet, reviewPublicationDefaultSelection, reviewPublicationPublish, Stack, Status,
+  Banner, Button, Form, MarkdownEditor, ReviewPublicationSheet, reviewPublicationDefaultSelection, reviewPublicationPublish, Stack, Status,
   useHappierReviewPublicationEvidence, usePluginTranslation, type ReviewCommentProposalReadV1,
 } from '@happier-dev/plugin-ui';
 import {
@@ -290,10 +290,9 @@ export function PullRequestReviewPublicationWrite({
           if (next !== undefined) setVerdict(next);
         },
       }}
-      summary={<Form.TextField
-        label={text('plugins.github.ui.mutations.review.summary', 'Summary')}
+      summary={<MarkdownEditor
+        accessibilityLabel={text('plugins.github.ui.mutations.review.summary', 'Summary')}
         value={verdictBody}
-        required
         onChange={setVerdictBody}
       />}
       notices={<>

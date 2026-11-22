@@ -1,7 +1,7 @@
 import * as React from 'react';
 import {
   Button,
-  Form,
+  MarkdownEditor,
   ReviewPublicationSheet,
   reviewPublicationDefaultSelection,
   reviewPublicationPublish,
@@ -126,14 +126,7 @@ export function ReviewPublicationSheetSpecimen() {
           if (next !== undefined) setVerdict(next);
         },
       }}
-      summary={
-        <Form.TextField
-          label="Summary"
-          value={summary}
-          required
-          onChange={setSummary}
-        />
-      }
+      summary={<MarkdownEditor accessibilityLabel="Summary" value={summary} onChange={setSummary} />}
       proposals={PROPOSALS}
       selectedIds={selectedIds}
       onSelectedIdsChange={setSelectedIds}

@@ -1023,6 +1023,27 @@ describe('the mounted GitHub write controls', () => {
     expect(recorded.filter((entry) => typeof entry.action === 'object')).toHaveLength(0);
   });
 
+  it('takes a multi-line Markdown summary in the shared Publish sheet and posts it as written', async () => {
+    const detail = await mountDetail(
+      { presentation: 'active', nativeLabel: 'Open' },
+      'pull-request',
+      [{ sessionId: 'session-review-1', displayTitle: 'Review this pull request' }],
+    );
+    await waitForPublicationProposalRead(detail);
+    // The same Markdown editor GitLab's sheet uses: a multi-line text area, not a one-line field.
+    const box = [...document.querySelectorAll('textarea')].find((area) => area.getAttribute('aria-label') === 'Summary');
+    expect(box).toBeDefined();
+    const markdown = 'Two notes before merging.\n\n- Keep the retry state\n- Name the owner';
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(box, markdown);
+      box!.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => { await actionHost(detail).press('Publish 1 comment'); });
+    const submitted = recorded.filter((entry) => typeof entry.action === 'object').at(-1);
+    expect(submitted?.action).toMatchObject({ localId: GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestSubmitReview });
+    expect(JSON.stringify(submitted?.input)).toContain(JSON.stringify(markdown).slice(1, -1));
+  });
+
   it('renders exact partial comment counts and the verdict outcome', async () => {
     const detail = await mountDetail(
       { presentation: 'active', nativeLabel: 'Open' },
