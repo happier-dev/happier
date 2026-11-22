@@ -78,6 +78,11 @@ Use this when you want Happier to avoid setting a native model override and let 
 
 When you choose a specific model, Happier stores its Agent target, exact Provider connection (or `null` for native), and model id. Apply behavior depends on the Agent runtime: some can change models for the next prompt, while others require a restart or fork. Happier never guesses another connection or silently falls back to a native model.
 
+In unreleased 0.3, if the Agent refuses a model change before receiving the
+prompt that triggered it, the Session shows the failure for that prompt. Later
+queued messages can continue on the current model when you have no newer model
+choice pending. You can choose another model and resend the failed prompt.
+
 For running-session apply timing, see [Permissions](/sessions/permissions).
 
 ## Account-only browsing in 0.3 development

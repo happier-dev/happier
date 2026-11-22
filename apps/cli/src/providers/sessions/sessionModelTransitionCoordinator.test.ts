@@ -1265,14 +1265,14 @@ describe('createSessionModelTransitionCoordinator', () => {
     expect(harness.readCurrent()).toEqual(native('old'));
     await harness.coordinator.dispose();
   });
-  it('consumes a refused armed model so the next prompt can use the active target', async () => {
+  it.each(['failed', 'unsupported'] as const)('consumes an armed model after a %s apply so the next prompt can use the active target', async status => {
     const harness = createNativeHarness();
     const next = native('next');
     await harness.coordinator.submit(next, { source: 'command', applyTiming: 'next_prompt' });
-    harness.applyRuntime.mockResolvedValueOnce({ status: 'failed', reason: 'acp_model_not_available' });
+    harness.applyRuntime.mockResolvedValueOnce({ status, reason: 'acp_model_not_available' });
     expect(await harness.coordinator.submit(next, { source: 'prompt', runWithActiveSelection: async transfer => {
       await transfer({ abortSignal: new AbortController().signal, dispatch: async () => { harness.events.push('refused-send'); } });
-    } })).toMatchObject({ ok: false, status: 'apply_failed' });
+    } })).toMatchObject({ ok: false, status: 'apply_failed', promptInputRejectedBeforeDispatch: true });
     await vi.waitFor(async () => expect((await harness.coordinator.runWithStableActiveTarget(async () => { harness.events.push('later-send'); })).status).toBe('completed'));
     expect(harness.coordinator.readArmedSelection()).toBeNull();
     expect(harness.readCurrent()).toEqual(native('old'));

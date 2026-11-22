@@ -99,6 +99,7 @@ import { registerPermissionModeMessageQueueBinding } from '../../../../../cli/sr
 import { combinePermissionModeQueuedPrompts, type PermissionModeQueuedPrompt, type PermissionModeQueuedPromptMode } from '../../../../../cli/src/agent/runtime/permissions/queuedPrompt';
 import { createSessionProviderInputOutcomeBinding } from '../../../../../cli/src/agent/runtime/session/input/providerInputOutcome';
 import { waitForSessionInputResult } from '../../../../../cli/src/session/services/sendSessionMessage';
+import { runWithServerHttpBaseUrl } from '../../../../../cli/src/api/client/serverHttpBaseUrl';
 import * as cliSessionSockets from '../../../../../cli/src/api/session/sockets';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
@@ -535,7 +536,8 @@ describe("pendingMessageService (shared sessions)", () => {
         } })).resolves.toBeNull();
     });
 
-    it('settles an encrypted shared editor permission refusal and delivers the following input', async () => {
+    it.each(['permission_mode_not_granted', 'session_model_transition_apply_failed'] as const)(
+        'settles an encrypted shared editor input refused before dispatch (%s) and delivers the following input', async refusal => {
         const ownerKey = tweetnacl.box.keyPair();
         const editorKey = tweetnacl.box.keyPair();
         const owner = await db.account.create({ data: createSignedAccountContentBinding(ownerKey.publicKey), select: { id: true } });
@@ -572,7 +574,8 @@ describe("pendingMessageService (shared sessions)", () => {
             registerAccountEncryptionRoutes(app);
             registerAccountProfileRoute(app);
         }, async app => {
-            for (const [localId, permissionMode] of [[refused, 'yolo'], [allowed, 'default']] as const) {
+            const refusedPermission = refusal === 'permission_mode_not_granted' ? 'yolo' : 'default';
+            for (const [localId, permissionMode] of [[refused, refusedPermission], [allowed, 'default']] as const) {
                 const original = buildTrustedHostSessionInputAdmissionV1('cli');
                 const replyIntent = { mode: 'wait' } as const;
                 const record = buildProtectedSessionInputTextRecordV1({ text: localId, meta: { permissionMode },
@@ -630,18 +633,29 @@ describe("pendingMessageService (shared sessions)", () => {
             try {
                 await new Promise<void>(resolve => client.once('session-sync-server-contract', resolve));
                 await expect(client.materializeNextPendingMessageSafely()).resolves.toMatchObject({ localId: refused });
+                if (refusal === 'session_model_transition_apply_failed') {
+                    expect((await queue.waitForMessagesAndGetAsString()).message.localId).toBe(refused);
+                    await client.observeProviderInputSettlement({
+                        kind: 'rejected_before_effect', localId: refused, userMessageSeq: null,
+                        reason: refusal, retryable: false,
+                        diagnostic: { code: refusal, severity: 'error' },
+                    });
+                }
                 expect(queue.size()).toBe(0);
                 await vi.waitFor(async () => {
                     const response = await app.inject({ method: 'GET', url: `${basePath}?includeDiscarded=true`, headers: senderHeaders });
                     expect(response.statusCode).toBe(200);
                     const pending = response.json().pending as Array<{ localId: string; deliveryStatus: unknown }>;
                     expect(pending.find(row => row.localId === refused)?.deliveryStatus)
-                        .toEqual({ status: 'discarded', reason: 'permission_mode_not_granted' });
+                        .toEqual({ status: 'discarded', reason: refusal });
                 });
-                const result = await waitForSessionInputResult({ credentials: { token: 'editor-fixture', encryption: {
+                const editorToken = `header.${Buffer.from(JSON.stringify({ sub: editor.id })).toString('base64url')}.signature`;
+                const sender = { credentials: { token: editorToken, encryption: {
                     type: 'dataKey', machineKey: editorKey.secretKey, publicKey: editorKey.publicKey,
-                } }, idOrPrefix: session.id, localId: refused, observeReply: true, timeoutMs: 1000 });
-                expect(result, JSON.stringify(senderReads)).toEqual({ ok: false, code: 'permission_mode_not_granted' });
+                } } as const, idOrPrefix: session.id };
+                const result = await runWithServerHttpBaseUrl('https://permission-home.example.test', () =>
+                    waitForSessionInputResult({ ...sender, localId: refused, observeReply: true, timeoutMs: 1000 }));
+                expect(result, JSON.stringify(senderReads)).toEqual({ ok: false, code: refusal });
                 await expect(client.materializeNextPendingMessageSafely()).resolves.toMatchObject({ localId: allowed });
                 expect(queue.size()).toBe(1);
                 expect(await queue.waitForMessagesAndGetAsString()).toMatchObject({ message: { text: allowed, localId: allowed } });

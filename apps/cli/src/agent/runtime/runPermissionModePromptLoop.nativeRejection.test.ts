@@ -150,6 +150,7 @@ describe('native prompt loop non-admission recovery', () => {
         const oldSelection: ProviderBoundModelRef = { agentTargetKey, providerConnectionId: null, modelId: 'old' };
         const nextSelection: ProviderBoundModelRef = { ...oldSelection, modelId: 'next' };
         const scope = { serverId: 'home', accountId: 'account', sessionId: 'model-replacement-recovery' };
+        const observeProviderInputSettlement = vi.fn(async () => true);
         const queue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(
             mode => `${mode.permissionMode}:${mode.modelSelection?.modelId ?? ''}`, { batcher: combinePermissionModeQueuedPrompts });
         const session = createMutableApiSessionClientFixture({ sessionId: scope.sessionId,
@@ -157,6 +158,7 @@ describe('native prompt loop non-admission recovery', () => {
                 modelSelectionIntentV1: { v: 1, updatedAt: 1, selection: oldSelection } }), overrides: {
                 // Home transport is the boundary; queue, metadata CAS, model
                 // authorization, coordinator and native replacement stay real.
+                observeProviderInputSettlement,
                 enqueueSessionEventCommitted: async () => ({ persisted: true, delivered: false }),
                 enqueueAgentMessageCommitted: async () => ({ persisted: true, delivered: false }),
             } });
@@ -300,6 +302,13 @@ describe('native prompt loop non-admission recovery', () => {
                 details: expect.objectContaining({ failureCause: expect.objectContaining({ code: 'agent_startup_failed', phase: 'client_start' }) }),
             }) })]);
             expect(publishedActive).not.toContain('next');
+            expect(observeProviderInputSettlement).toHaveBeenCalledWith(expect.objectContaining({
+                kind: 'rejected_before_effect',
+                localId: 'failed',
+                reason: scenario.proofPublication === 'unavailable'
+                    ? 'runtime_config_blocked' : 'session_model_transition_apply_failed',
+                retryable: scenario.proofPublication === 'unavailable',
+            }));
         } finally { abort.abort(); await created.operations.resetOrDisposeRuntime(); await coordinator.dispose(); }
     });
 

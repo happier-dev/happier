@@ -199,10 +199,15 @@ Main-runner input is committed to the transcript at receiver admission, before
 provider acceptance. This includes legacy input without protected admission
 metadata; it retains its exact original content and does not acquire fabricated
 permission authority. Execution Run input keeps its separate sidechain settlement.
-Provider acceptance retires Pending custody. A refusal before acceptance instead
-keeps the original blocked input available for explicit retry, even though its
-user transcript anchor already exists. The transcript projection places those
-Pending controls at that anchor, before the corresponding failure.
+Provider acceptance retires Pending custody. A provider input refusal before
+acceptance can retain the original blocked input for explicit retry. The
+transcript projection places those Pending controls at the user anchor, before
+the corresponding failure. In 0.3 development, when the transition owner
+confirms a native model apply refusal before prompt dispatch, the current runner
+settles the exact primary Pending input via pre-dispatch rejection. Home retains
+the original content and records `session_model_transition_apply_failed` for
+the sender's exact result. Later Pending input becomes eligible at that
+settlement.
 
 In 0.3 development, blocked custody invalidates an otherwise idle CLI Session
 projection. The existing message-page reader accepts `projection=activity` for

@@ -2,8 +2,11 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 import type { SessionAccessErrorCodeV1 } from '../access/sessionAccessOperationsV1.js';
 
+export const SESSION_MODEL_TRANSITION_APPLY_FAILED_CODE = 'session_model_transition_apply_failed';
+
 const PRE_DISPATCH_INPUT_REJECTION_CODES = [
   'permission_mode_not_granted',
+  SESSION_MODEL_TRANSITION_APPLY_FAILED_CODE,
   'attachment_unavailable',
 ] as const;
 export type PreDispatchInputRejectionCodeV1 = (typeof PRE_DISPATCH_INPUT_REJECTION_CODES)[number];

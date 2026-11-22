@@ -110,6 +110,11 @@ export function mapRuntimeConfigUpdateOutcomeToSessionModelTransitionApplyResult
   };
 }
 
+export type HostedSessionModelTransitionResult = SessionModelTransitionResultV1 & Readonly<{
+  /** A completed native refusal can retire this exact prompt from Pending. */
+  promptInputRejectedBeforeDispatch?: true;
+}>;
+
 type Proposal = {
   modelRef: SessionModelRef;
   restartRuntime?: SessionModelTransitionRestart;
@@ -133,9 +138,9 @@ type Proposal = {
   ) => Promise<void>) | null;
   effectStarted: boolean;
   superseded: boolean;
-  resolve: (result: SessionModelTransitionResultV1) => void;
+  resolve: (result: HostedSessionModelTransitionResult) => void;
   reject: (error: unknown) => void;
-  promise: Promise<SessionModelTransitionResultV1>;
+  promise: Promise<HostedSessionModelTransitionResult>;
 };
 
 function sameSelection(
@@ -1423,8 +1428,8 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       if (applied.status === 'requires_restart') armedSelection = proposal.modelRef;
       let reason = applied.reason;
       let failureCause = applied.failureCause;
-      if (applied.status === 'failed' && proposal.source === 'prompt'
-        && proposal.committedIntentUpdatedAt !== undefined
+      const promptRefused = applied.status !== 'requires_restart' && proposal.source === 'prompt';
+      if (promptRefused && proposal.committedIntentUpdatedAt !== undefined
         && (replacementLifetimeEnded || (armedSelection && isDeepStrictEqual(armedSelection, proposal.modelRef)))) {
         try {
           // This prompt consumed its failed choice. Restore the prior configured
@@ -1468,13 +1473,14 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
         ));
         return;
       }
-      proposal.resolve(failure(
+      const result = failure(
         applied.status === 'requires_restart' ? 'restart_required' : 'apply_failed',
         activeTarget.selection,
         proposal.selection,
         reason,
         failureCause,
-      ));
+      );
+      proposal.resolve(promptRefused ? { ...result, promptInputRejectedBeforeDispatch: true } : result);
       return;
     }
 
@@ -1957,7 +1963,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       runWithActiveSelection?: NonNullable<Proposal['runWithActiveSelection']>;
       restartRuntime?: SessionModelTransitionRestart;
     }>,
-  ): Promise<SessionModelTransitionResultV1> => {
+  ): Promise<HostedSessionModelTransitionResult> => {
     const modelRef = SessionModelRefSchema.parse(rawSelection);
     const selection = projectSessionModelTransitionRequestedSelectionV1(modelRef);
     if (context.applyTiming === 'next_prompt' && (context.captureBefore || context.expected)) {
@@ -2041,9 +2047,9 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       current.superseded = true;
     }
 
-    let resolve!: (result: SessionModelTransitionResultV1) => void;
+    let resolve!: (result: HostedSessionModelTransitionResult) => void;
     let reject!: (error: unknown) => void;
-    const promise = new Promise<SessionModelTransitionResultV1>((settle, fail) => {
+    const promise = new Promise<HostedSessionModelTransitionResult>((settle, fail) => {
       resolve = settle;
       reject = fail;
     });

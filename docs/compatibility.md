@@ -1167,6 +1167,16 @@ admission, persistence field or migration. The inspected `../0.2` frontier
 `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has no Team binding contract or
 scoped working change at the corresponding paths.
 
+## Pending model transition refusals (unreleased 0.3)
+
+The existing Pending input admission rejection enum includes
+`session_model_transition_apply_failed` for a confirmed native model apply
+refusal before dispatch. The runner, Home and UI carry this under the 0.3
+development direct cut. Earlier strict 0.3 readers require the corresponding
+reload. Existing stored Pending records retain their format and reason.
+The inspected `../0.2` frontier (`24731ff73c`) has neither the settlement
+socket nor this V1 rejection contract.
+
 ## Team broker job activity (unreleased 0.3)
 
 The existing opaque V1 `brokerPlacementFingerprint` in a signed Team broker

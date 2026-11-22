@@ -24,7 +24,7 @@ import { SESSION_MESSAGE_PROVENANCE_META_KEY, SessionInputRequestSchema, Session
 import { withSessionMessageModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 import type { ProviderErrorV1, SessionInputRequest, SessionMessageProvenance, SessionInputAdmissionRejectionCodeV1, SessionMessageSendResultV1, SessionPendingEnqueueByMachineRequestV1, SessionPendingExecutionRunEnqueueByMachineRequestV2, PendingRequestedActionV1, ParticipantRecipientV1, ExecutionRunInputTurnV1, ExecutionRunPublicState } from '@happier-dev/protocol';
 import type { PendingDeliveryStatusV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
-import { SessionInputAdmissionRejectionCodeV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
+import { isPreDispatchInputRejectionCodeV1, SessionInputAdmissionRejectionCodeV1Schema, type PreDispatchInputRejectionCodeV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
 import { normalizeParticipantRecipientRoutingIdentityV1, withParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
 import { ExecutionRunGetResponseSchema, ExecutionRunInputTurnV1Schema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
@@ -162,7 +162,7 @@ export type WaitForSessionInputResult =
         | 'encryption_material_unavailable'
         | 'invalid_local_id'
         | 'cancelled'
-        | 'permission_mode_not_granted'
+        | PreDispatchInputRejectionCodeV1
         | 'session_reply_timeout'
         | Extract<SessionMessageReplyMutationResultV1, { ok: false }>['error']
         | 'result_read_failed';
@@ -643,7 +643,7 @@ type CurrentPromptDeliveryOutcome =
   | Readonly<{ kind: 'missing' }>
   | Readonly<{ kind: 'materialized'; message: TranscriptMessageLookupResult }>
   | Readonly<{ kind: 'blocked'; reason: PendingQueueDeliveryBlockedReason; inputDeliveryIssue?: SessionRuntimeIssueV1 }>
-  | Readonly<{ kind: 'rejected'; code: 'permission_mode_not_granted' }>
+  | Readonly<{ kind: 'rejected'; code: PreDispatchInputRejectionCodeV1 }>
   | Readonly<{ kind: 'cancelled' }>;
 
 type FulfilledReplyObservation = Readonly<{ kind: 'fulfilled'; outcome: SessionMessageReplyOutcomeV1 }>;
@@ -776,7 +776,7 @@ async function waitForCurrentPromptDelivery(params: CurrentPromptDeliveryObserva
       // cannot be observed as a generic failed reply before its discard reason.
       const deliveryStatus = await readPromptDeliveryStatus(params);
       params.signal?.throwIfAborted();
-      if (deliveryStatus?.status === 'discarded' && deliveryStatus.reason === 'permission_mode_not_granted') {
+      if (deliveryStatus?.status === 'discarded' && isPreDispatchInputRejectionCodeV1(deliveryStatus.reason)) {
         return { kind: 'rejected', code: deliveryStatus.reason };
       }
       if (terminalReply) {

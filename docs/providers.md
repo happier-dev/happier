@@ -1111,6 +1111,11 @@ without applying them, including their metadata echoes. Ordinary queued input
 reads that arm from the transition owner when it has no explicit message-level
 model selection. An arm also keeps ordinary mid-turn input in the queue until
 the next prompt rather than steering the active turn through the previous model.
+A definite native apply refusal settles the prompt that triggered the model
+change with `session_model_transition_apply_failed`. The transition owner
+restores the incumbent intent if it still owns the selection. Pending can then
+deliver later input using the incumbent model when there is no newer selection.
+An unproven native outcome remains subject to reconciliation.
 Send asks that same owner to apply the selection; only a restart-required result enters the existing
 provider-binding restart, then sends through the ordinary path. A replacement
 runner alone does not arm an unchanged model selection: the disposition owner

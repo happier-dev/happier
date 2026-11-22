@@ -10,7 +10,7 @@ import { SessionCompactRequestV1Schema } from '@happier-dev/protocol/sessions/co
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { ManualCompactionQueue } from '@/agent/runtime/queueSpecialCommands';
 import { validatePluginHookPayloadV1 } from '@happier-dev/protocol/plugins/hooks';
-import type { AgentSessionRuntimeEvent, SessionModelTransitionResultV1, SessionTurnFactsV1, SessionRolePromptContextV1 } from '@happier-dev/protocol';
+import type { AgentSessionRuntimeEvent, SessionTurnFactsV1, SessionRolePromptContextV1 } from '@happier-dev/protocol';
 import type { render } from 'ink';
 import type React from 'react';
 
@@ -131,7 +131,7 @@ import type {
   HostSessionTerminalRemoteModeLoop,
 } from './terminalRemoteModeRuntime';
 import { stampTurnFacts } from '@/agent/runtime/session/turn/stampTurnFacts';
-import type { SessionModelTransitionRestart } from '@/providers/sessions/sessionModelTransitionCoordinator';
+import type { HostedSessionModelTransitionResult, SessionModelTransitionRestart } from '@/providers/sessions/sessionModelTransitionCoordinator';
 import { createRuntimeFailureTranscriptProjector } from '@/agent/runtime/session/transcripts/runtimeFailureTranscript';
 
 export const HOST_SESSION_RUNTIME_PLAN_KIND = 'hostSessionRuntimePlan' as const;
@@ -292,7 +292,7 @@ export type SessionLoopLifecycleParams = Readonly<{
       >,
     ) => Promise<void>,
     restartRuntime?: SessionModelTransitionRestart,
-  ) => Promise<SessionModelTransitionResultV1>;
+  ) => Promise<HostedSessionModelTransitionResult>;
   readActiveModelSelection?: () => SessionModelRef;
   readArmedModelSelection?: () => SessionModelRef | null;
   resolveSessionRolePromptContext?: (signal?: AbortSignal) => Promise<SessionRolePromptContextV1 | null>;

@@ -8,8 +8,9 @@ import { AgentSessionStartupInstructionsV1Schema } from '@happier-dev/protocol/r
 import { validatePluginHookPayloadV1 } from '@happier-dev/protocol/plugins/hooks';
 import { ProviderErrorCodeV1Schema, type ProviderErrorCodeV1 } from '@happier-dev/protocol/providers/errors';
 import { formatSessionModelTransitionFailureCode } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
+import { SESSION_MODEL_TRANSITION_APPLY_FAILED_CODE } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
 import { isModelRefGrantedV1, isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
-import type { SessionPendingQueueDeliveryTiming, SessionModelTransitionResultV1, AgentSessionStartupInstructionsMarkerV1 } from '@happier-dev/protocol';
+import type { SessionPendingQueueDeliveryTiming, AgentSessionStartupInstructionsMarkerV1 } from '@happier-dev/protocol';
 import { projectSessionModelTransitionRequestedSelectionV1 } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 import type { AgentRuntimeDiagnosticDataV1 } from '@happier-dev/protocol/runtime/agentRuntimeDiagnosticV1';
 import type { SessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
@@ -90,7 +91,7 @@ import type { HostPreparedContext } from '@/agent/runtime/session/contextOnly/ho
 import { createPromptCompositionScope, type PromptPlanComposition } from '@/agent/prompting/promptComposition';
 import type { SessionPromptPlanResolver } from '@/agent/prompting/coding/sessionPromptPlan';
 import type { ReadyNotificationTurnContext } from '@/agent/runtime/notifications/createReadyNotificationDispatcher';
-import type { SessionModelTransitionRestart } from '@/providers/sessions/sessionModelTransitionCoordinator';
+import type { HostedSessionModelTransitionResult, SessionModelTransitionRestart } from '@/providers/sessions/sessionModelTransitionCoordinator';
 
 export { projectSessionComposerAttachmentDispatchInput } from '@/agent/runtime/turns/prepareSessionInputForProviderDispatch';
 export type { ComposerAttachmentDispatchResolver } from '@/agent/runtime/turns/prepareSessionInputForProviderDispatch';
@@ -322,13 +323,16 @@ class PreTurnPromptFailure extends Error {
 }
 
 function createModelTransitionPreTurnFailure(
-  transition: Pick<Extract<SessionModelTransitionResultV1, { ok: false }>, 'status' | 'reason' | 'failureCause'>,
+  transition: Pick<Extract<HostedSessionModelTransitionResult, { ok: false }>,
+    'status' | 'reason' | 'failureCause' | 'promptInputRejectedBeforeDispatch'>,
 ): PreTurnPromptFailure {
   const reason = transition.status === 'owner_unavailable'
-    ? 'provider_unavailable_before_acceptance' as const
+    ? 'provider_unavailable_before_acceptance'
     : transition.status === 'reconciliation_required'
-      ? 'runtime_config_blocked' as const
-      : 'provider_rejected_before_acceptance' as const;
+      ? 'runtime_config_blocked'
+      : transition.promptInputRejectedBeforeDispatch
+        ? SESSION_MODEL_TRANSITION_APPLY_FAILED_CODE
+        : 'provider_rejected_before_acceptance';
   const providerCode = ProviderErrorCodeV1Schema.safeParse(transition.reason);
   const code = providerCode.success ? providerCode.data : formatSessionModelTransitionFailureCode(transition.status);
   const message = transition.reason ?? `Structured model transition failed: ${transition.status}`;
@@ -338,7 +342,7 @@ function createModelTransitionPreTurnFailure(
   const error = new PreTurnPromptFailure({
     code,
     message,
-    retryable: reason !== 'provider_rejected_before_acceptance',
+    retryable: reason === 'provider_unavailable_before_acceptance' || reason === 'runtime_config_blocked',
     reason,
     ...(diagnostic ? { diagnostic } : {}),
   }, providerCode.success ? providerCode.data : undefined);
@@ -653,7 +657,7 @@ export async function runPermissionModePromptLoop(opts: {
       >,
     ) => Promise<void>,
     restartRuntime?: SessionModelTransitionRestart,
-  ) => Promise<SessionModelTransitionResultV1>;
+  ) => Promise<HostedSessionModelTransitionResult>;
   readActiveModelSelection?: () => SessionModelRef;
   readArmedModelSelection?: () => SessionModelRef | null;
   /**
