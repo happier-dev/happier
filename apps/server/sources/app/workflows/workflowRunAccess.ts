@@ -236,7 +236,7 @@ function projectKeys(input: Readonly<{ actorAccountId: string; runId: string }>,
         recipients };
 }
 
-async function projectKeysInTx(tx: Tx, input: Readonly<{ actorAccountId: string; runId: string }>, row: RunFacts, access: WorkflowRunAccess): Promise<WorkflowRunRecipientCensusResponseV1> {
+async function projectKeysInTx(tx: Tx, input: Readonly<{ actorAccountId: string; runId: string }>, row: Pick<RunFacts, "accountId" | "sourceArtifactId" | "visibleTeamId">, access: WorkflowRunAccess): Promise<WorkflowRunRecipientCensusResponseV1> {
     // A read projects a witness; only mutations acquire the Account writer fence.
     const audience = await audienceFromFactsInTx(tx, row);
     const [accounts, envelopes] = await Promise.all([
@@ -303,11 +303,26 @@ export function createWorkflowRunKeyProjectionReader(actorAccountId: string):
     };
 }
 
+/** The exact read admits the same retained parent row that its caller projects. */
+export async function readWorkflowRunWithKeyProjectionInTx<S extends Prisma.AutomationRunSelect>(
+    tx: Tx,
+    input: Readonly<{ actorAccountId: string; runId: string; requireAcceptedSnapshot?: true }>,
+    select: S,
+) {
+    const run = await tx.automationRun.findUnique({
+        where: { id: input.runId, workflowCustodyState: { not: null },
+            ...(input.requireAcceptedSnapshot ? { workflowAcceptedSnapshotEnvelope: { not: null } } : {}) },
+        select: { ...select, ...runAccessFactsSelect },
+    });
+    if (!run || run.workflowCustodyState === null) throw new WorkflowRunAccessError("run_not_found");
+    const access = await accessFromFactsInTx(tx, run, input.actorAccountId);
+    if (!access) throw new WorkflowRunAccessError("run_not_found");
+    return { run, keyCensus: await projectKeysInTx(tx, input, run, access) };
+}
+
 /** Authorized reads retain missing/stale keys as a truthful locked projection. */
 export async function readWorkflowRunKeyProjectionInTx(tx: Tx, input: Readonly<{ actorAccountId: string; runId: string }>): Promise<WorkflowRunRecipientCensusResponseV1> {
-    const projection = (await readWorkflowRunKeyProjectionsInTx(tx, { actorAccountId: input.actorAccountId, runIds: [input.runId] })).get(input.runId);
-    if (!projection) throw new WorkflowRunAccessError("run_not_found");
-    return projection;
+    return (await readWorkflowRunWithKeyProjectionInTx(tx, input, {})).keyCensus;
 }
 
 /** Before first sealing, the starter can census the chosen saved-source audience. */

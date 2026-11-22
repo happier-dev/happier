@@ -182,9 +182,11 @@ function sameBinding(left: WorkflowStoredContentBindingV1, right: WorkflowStored
   return createCanonicalJsonSigningInput(left) === createCanonicalJsonSigningInput(right);
 }
 
+type WorkflowStoredEnvelopeInputV1 = Readonly<{ envelope: unknown }> | Readonly<{ serializedEnvelope: string }>;
+
 export function validateWorkflowStoredEnvelopeOuterForModeV1(params: Readonly<{
-  mode: 'plain' | 'e2ee'; binding: WorkflowStoredContentBindingV1; envelope: unknown;
-}>): WorkflowStoredContentOuterValidationV1 {
+  mode: 'plain' | 'e2ee'; binding: WorkflowStoredContentBindingV1;
+}> & WorkflowStoredEnvelopeInputV1): WorkflowStoredContentOuterValidationV1 {
   const validated = readWorkflowStoredEnvelopeOuterForModeV1(params);
   return validated.kind === 'available'
     ? { kind: 'available', envelope: validated.envelope }
@@ -199,24 +201,26 @@ type ReadWorkflowStoredEnvelopeOuterV1 =
 // Keep the validated ciphertext with this read so opening does not decode and
 // re-encode it again. The public outer-only validator still returns no bytes.
 function readWorkflowStoredEnvelopeOuterForModeV1(params: Readonly<{
-  mode: 'plain' | 'e2ee'; binding: WorkflowStoredContentBindingV1; envelope: unknown; listing?: boolean;
-}>): ReadWorkflowStoredEnvelopeOuterV1 {
+  mode: 'plain' | 'e2ee'; binding: WorkflowStoredContentBindingV1; listing?: boolean;
+}> & WorkflowStoredEnvelopeInputV1): ReadWorkflowStoredEnvelopeOuterV1 {
   const binding = WorkflowStoredContentBindingV1Schema.safeParse(params.binding);
-  const envelope = createStoredReadSchema(WorkflowStoredContentEnvelopeV1Schema).safeParse(params.envelope);
-  if (!binding.success || !envelope.success) return { kind: 'contentInvalid' };
-  if ((params.mode === 'plain' && envelope.data.t !== 'plain')
-    || (params.mode === 'e2ee' && envelope.data.t !== 'encrypted')) {
+  const envelope = 'serializedEnvelope' in params
+    ? parseWorkflowStoredContentEnvelopeV1(params.serializedEnvelope)
+    : parseWorkflowStoredEnvelopeValueV1(params.envelope);
+  if (!binding.success || !envelope) return { kind: 'contentInvalid' };
+  if ((params.mode === 'plain' && envelope.t !== 'plain')
+    || (params.mode === 'e2ee' && envelope.t !== 'encrypted')) {
     return { kind: 'modeMismatch' };
   }
-  if (envelope.data.t === 'encrypted') {
-    const bytes = readWorkflowRunCiphertext(envelope.data.c);
+  if (envelope.t === 'encrypted') {
+    const bytes = readWorkflowRunCiphertext(envelope.c);
     return bytes
-      ? { kind: 'available', envelope: envelope.data, bytes, binding: binding.data } : { kind: 'contentInvalid' };
+      ? { kind: 'available', envelope: envelope, bytes, binding: binding.data } : { kind: 'contentInvalid' };
   }
-  const payload = parsePayloadForBinding(binding.data, envelope.data.v, true, params.listing);
+  const payload = parsePayloadForBinding(binding.data, envelope.v, true, params.listing);
   if (!payload) return { kind: 'payloadInvalid' };
   return sameBinding(payload.payload.binding, binding.data)
-    ? { kind: 'available', envelope: envelope.data, bytes: null, payload }
+    ? { kind: 'available', envelope: envelope, bytes: null, payload }
     : { kind: 'bindingMismatch' };
 }
 
@@ -433,11 +437,15 @@ export function serializeWorkflowStoredContentEnvelopeV1(envelope: unknown): str
   return JSON.stringify(WorkflowStoredContentEnvelopeV1Schema.parse(envelope));
 }
 
+function parseWorkflowStoredEnvelopeValueV1(value: unknown): WorkflowStoredContentEnvelopeV1 | null {
+  const parsed = createStoredReadSchema(WorkflowStoredContentEnvelopeV1Schema).safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
 export function parseWorkflowStoredContentEnvelopeV1(serialized: unknown): WorkflowStoredContentEnvelopeV1 | null {
   if (typeof serialized !== 'string') return null;
   try {
-    const parsed = createStoredReadSchema(WorkflowStoredContentEnvelopeV1Schema).safeParse(JSON.parse(serialized));
-    return parsed.success ? parsed.data : null;
+    return parseWorkflowStoredEnvelopeValueV1(JSON.parse(serialized));
   } catch {
     return null;
   }

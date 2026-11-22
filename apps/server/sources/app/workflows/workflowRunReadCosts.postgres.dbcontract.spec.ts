@@ -300,6 +300,10 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Workflow narrow
         statements.length = 0;
         const slot = await listWorkflowRunInvocations({ ...base, parentRecordId: rootId, memberOrdinal: "7" });
         const slotCosts = costs();
+        const parentReads = statements.filter(event => /^SELECT\b/i.test(event.query.trimStart())
+            && /FROM\s+"public"\."AutomationRun"(?:\s|$)/.test(event.query));
+        console.info("WORKFLOW_SLOT_PARENT_READS", parentReads.length);
+        expect(parentReads).toHaveLength(1);
         expect(slot.invocations.map(row => row.id)).toEqual([latestId]);
         expect(slot.progressEnvelopesByInvocationId).toEqual({ [latestId]: envelopes.get(latestId) });
         expect(exactCosts.invocationSelects).toBe(1);
@@ -350,7 +354,10 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Workflow narrow
                 const contentReads = selected.filter(event => /SELECT[^;]*"workflowAcceptedSnapshotEnvelope"[^;]*FROM/s.test(event.query));
                 expect(contentReads).toHaveLength(0);
                 expect(selected.filter(event => event.query.includes('"WorkflowRunInvocation"'))).toHaveLength(projection === "control" ? 1 : 0);
-                console.info("WORKFLOW_CONTROL_READ_SQL", JSON.stringify({ projection, acceptedProgramReads: contentReads.length, ...costs() }));
+                const parentReads = selected.filter(event => /FROM\s+"public"\."AutomationRun"(?:\s|$)/.test(event.query));
+                console.info("WORKFLOW_CONTROL_READ_SQL", JSON.stringify({ projection, parentReads: parentReads.length,
+                    acceptedProgramReads: contentReads.length, ...costs() }));
+                expect(parentReads).toHaveLength(1);
             }
             expect((await read("control", stranger.id)).statusCode).not.toBe(200);
             await db.workflowRunInvocation.update({ where: { id: rootId }, data: { contentEnvelope: envelopes.get(children[0]!)! } });

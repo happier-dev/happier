@@ -53,7 +53,7 @@ import { workflowRunAttentionWhere, workflowRunSqlIdentifier, workflowRunFailure
     readWorkflowRunInvocationAttentionInTx, workflowRunAttentionSql, workflowRunFailureUnseenSql, workflowRunInvocationAttentionSql } from "./workflowRunAttention";
 import { admitWorkflowRunLifecycleAutomationRunsTx } from "@/app/automations/automationRunLifecycleAdmission";
 import {
-    WorkflowRunAccessError, resolveWorkflowRunAccessInTx, readWorkflowRunKeyProjectionInTx,
+    WorkflowRunAccessError, resolveWorkflowRunAccessInTx, readWorkflowRunKeyProjectionInTx, readWorkflowRunWithKeyProjectionInTx,
     createWorkflowRunKeyProjectionReader,
     resolveWorkflowRunVisibilityScopesInTx, type WorkflowRunAccess,
 } from "./workflowRunAccess";
@@ -933,10 +933,9 @@ export function workflowRunIdentityWhere(params: Readonly<{ accountId: string; r
 /** Control observes only the Run token and, when requested, the original root. */
 export async function getWorkflowRunControl(params: Readonly<{ accountId: string; runId: string; projection: 'control' | 'revision' }>) {
     return inTx(async tx => {
-        const census = await withWorkflowRunAccess(() => readWorkflowRunKeyProjectionInTx(tx, { actorAccountId: params.accountId, runId: params.runId }));
-        const run = await tx.automationRun.findFirst({ where: workflowRunIdentityWhere({ accountId: census.ownerAccountId, runId: params.runId }),
-            select: { state: true, revision: true } });
-        if (!run) throw new WorkflowRunServiceError('run_not_found');
+        const { run: parent, keyCensus: census } = await withWorkflowRunAccess(() => readWorkflowRunWithKeyProjectionInTx(tx,
+            { actorAccountId: params.accountId, runId: params.runId, requireAcceptedSnapshot: true }, { state: true, revision: true }));
+        const run = { state: parent.state, revision: parent.revision };
         if (params.projection === 'revision') return { run };
         const root = await tx.workflowRunInvocation.findFirst({ where: { runId: params.runId,
             parentRecordId: null, sequence: 0n, memberOrdinal: 0n, attempt: 0n }, select: invocationSelect });
@@ -946,12 +945,9 @@ export async function getWorkflowRunControl(params: Readonly<{ accountId: string
 
 export async function getWorkflowRun(params: Readonly<{ accountId: string; runId: string }>) {
     return await inTx(async (tx) => {
-        const keyCensus = await withWorkflowRunAccess(() => readWorkflowRunKeyProjectionInTx(tx, { actorAccountId: params.accountId, runId: params.runId }));
+        const { run: row, keyCensus } = await withWorkflowRunAccess(() => readWorkflowRunWithKeyProjectionInTx(tx,
+            { actorAccountId: params.accountId, runId: params.runId }, workflowRunSelect));
         const mode = keyCensus.encryptionMode;
-        const row = await tx.automationRun.findFirst({ where: {
-            id: params.runId, accountId: keyCensus.ownerAccountId, workflowCustodyState: { not: null },
-        }, select: workflowRunSelect });
-        if (!row) throw new WorkflowRunServiceError("run_not_found");
         if (row.workflowAcceptedSnapshotEnvelope === null) {
             throw new WorkflowRunServiceError(row.workflowCustodyState === "pending" ? "custody_pending" : "content_unavailable");
         }
@@ -1867,10 +1863,9 @@ export async function listWorkflowRunInvocations(params: PageOptions & Readonly<
     const afterId = decoded?.status === "ok" ? readKeysetCursorIdV1(decoded.parts[1]) : null;
     if (params.cursor && (!afterSequence || !afterId || !/^(0|[1-9][0-9]*)$/.test(afterSequence) || BigInt(afterSequence) > MAX_DATABASE_BIGINT)) throw new WorkflowRunServiceError("invalid_input");
     return await inTx(async (tx) => {
-        const keyCensus = await withWorkflowRunAccess(() => readWorkflowRunKeyProjectionInTx(tx, { actorAccountId: params.accountId, runId: params.runId }));
+        const { run, keyCensus } = await withWorkflowRunAccess(() => readWorkflowRunWithKeyProjectionInTx(tx,
+            { actorAccountId: params.accountId, runId: params.runId }, { revision: true }));
         const mode = keyCensus.encryptionMode;
-        const run = await tx.automationRun.findFirst({ where: { id: params.runId, accountId: keyCensus.ownerAccountId, workflowCustodyState: { not: null } }, select: { revision: true } });
-        if (!run) throw new WorkflowRunServiceError("run_not_found");
         // Both history and newest-member windows disclose the same admitted
         // progress sidecar and spend the same exact response-byte budget.
         const discloseProgressEnvelope = (row: InvocationRow): [string, string] => {
@@ -2069,10 +2064,9 @@ async function readCurrentWorkflowRunInvocationRowInTx(tx: Tx, params: Readonly<
 
 export async function getWorkflowRunInvocation(params: Readonly<{ accountId: string; runId: string; invocationId: string }>) {
     return await inTx(async (tx) => {
-        const keyCensus = await withWorkflowRunAccess(() => readWorkflowRunKeyProjectionInTx(tx, { actorAccountId: params.accountId, runId: params.runId }));
+        const { run, keyCensus } = await withWorkflowRunAccess(() => readWorkflowRunWithKeyProjectionInTx(tx,
+            { actorAccountId: params.accountId, runId: params.runId }, { revision: true }));
         const mode = keyCensus.encryptionMode;
-        const run = await tx.automationRun.findFirst({ where: { id: params.runId, accountId: keyCensus.ownerAccountId, workflowCustodyState: { not: null } }, select: { revision: true } });
-        if (!run) throw new WorkflowRunServiceError("run_not_found");
         const row = await tx.workflowRunInvocation.findFirst({ where: { id: params.invocationId, runId: params.runId }, select: invocationSelect }) as InvocationRow | null;
         if (!row) throw new WorkflowRunServiceError("run_not_found");
         assertWorkflowStoredEnvelopeOuterForMode({ raw: row.contentEnvelope, mode, binding: { v: 1, purpose: "invocation_progress", accountId: keyCensus.ownerAccountId, runId: params.runId, recordId: row.id, sequence: row.sequence.toString(), parentRecordId: row.parentRecordId, memberOrdinal: row.memberOrdinal.toString(), attempt: row.attempt.toString() } });
@@ -2091,13 +2085,9 @@ export async function getCurrentWorkflowRunInvocation(params: Readonly<{
         throw new WorkflowRunServiceError("invalid_input");
     }
     return await inTx(async (tx) => {
-        const keyCensus = await withWorkflowRunAccess(() => readWorkflowRunKeyProjectionInTx(tx, { actorAccountId: params.accountId, runId: params.runId }));
+        const { run, keyCensus } = await withWorkflowRunAccess(() => readWorkflowRunWithKeyProjectionInTx(tx,
+            { actorAccountId: params.accountId, runId: params.runId }, { revision: true }));
         const mode = keyCensus.encryptionMode;
-        const run = await tx.automationRun.findFirst({
-            where: { id: params.runId, accountId: keyCensus.ownerAccountId, workflowCustodyState: { not: null } },
-            select: { revision: true },
-        });
-        if (!run) throw new WorkflowRunServiceError("run_not_found");
         const row = await readCurrentWorkflowRunInvocationRowInTx(tx, params);
         if (!row) return { invocation: null, parentRevision: run.revision, keyCensus };
         assertWorkflowStoredEnvelopeOuterForMode({
@@ -2657,16 +2647,8 @@ const workflowRunWaitSelect = {
 
 async function readWorkflowRunWaitObservation(accountId: string, runId: string) {
     return await inTx(async (tx) => {
-        const keyCensus = await withWorkflowRunAccess(() => readWorkflowRunKeyProjectionInTx(tx, { actorAccountId: accountId, runId }));
-        const row = await tx.automationRun.findFirst({
-            where: {
-                id: runId,
-                accountId: keyCensus.ownerAccountId,
-                workflowCustodyState: { not: null },
-            },
-            select: workflowRunWaitSelect,
-        });
-        if (!row) throw new WorkflowRunServiceError("run_not_found");
+        const { run: row, keyCensus } = await withWorkflowRunAccess(() => readWorkflowRunWithKeyProjectionInTx(tx,
+            { actorAccountId: accountId, runId }, workflowRunWaitSelect));
         const resultEnvelope = decodeStoredText(row.resultEnvelope, row.resultEnvelopeBytes);
         if (resultEnvelope !== null) {
             const mode = keyCensus.encryptionMode;

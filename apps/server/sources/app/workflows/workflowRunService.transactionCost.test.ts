@@ -1,4 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
+import { WorkflowStoredContentEnvelopeV1Schema } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows';
 
 const boundary = await vi.hoisted(async () => {
@@ -20,7 +22,7 @@ vi.mock('@/storage/db', async original => ({
 vi.mock('@/storage/prisma', async original => ({
     ...await original<typeof import('@/storage/prisma')>(), withSqliteReadSnapshot: transactions.readSnapshot,
 }));
-import { commitWorkflowInvocationFact } from './workflowRunService';
+import { commitWorkflowInvocationFact, getCurrentWorkflowRunInvocation, getWorkflowRunControl, getWorkflowRunInvocation } from './workflowRunService';
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -78,4 +80,78 @@ it('commits an idempotent invocation fact with constant query cost across assign
     }
     console.info('INVOCATION_FACT_COMMIT_QUERIES', counts);
     expect(counts[1]).toBe(counts[0]);
+});
+
+function retainedInvocationFixture() {
+    const accountId = 'owner';
+    const runId = '11111111-1111-4111-8111-111111111111';
+    const invocationId = '22222222-2222-4222-8222-222222222222';
+    const parentRecordId = '33333333-3333-4333-8333-333333333333';
+    const contentEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({
+        mode: 'plain',
+        binding: { v: 1, purpose: 'invocation_progress', accountId, runId,
+            recordId: invocationId, sequence: '1', parentRecordId, memberOrdinal: '0', attempt: '0' },
+        progress: { kind: 'happier.workflow-progress.v1', invocationPath: { blockId: 'step', scope: [] },
+            blockKind: 'step', attempt: '0', logicalInvocationRecordId: invocationId },
+    }));
+    const now = new Date();
+    const account = { id: accountId, seq: 1, publicKey: 'ab'.repeat(32), encryptionMode: 'plain',
+        contentPublicKey: null, contentPublicKeySig: null, settings: null, settingsVersion: 0 };
+    const run = { id: runId, accountId, account, sourceArtifactId: null, visibleTeamId: null,
+        workflowCustodyState: 'pending', workflowAcceptedSnapshotEnvelope: 'accepted' as string | null, state: 'running', revision: 7 };
+    const invocation = { id: invocationId, runId, sequence: 1n, parentRecordId, memberOrdinal: 0n,
+        attempt: 0n, contentRevision: 1n, lifecycle: 'running', contentEnvelope, createdAt: now, updatedAt: now };
+    const parentRead = vi.fn(async ({ select, where }: {
+        select: Record<string, unknown>;
+        where?: { workflowCustodyState?: { not: null }; workflowAcceptedSnapshotEnvelope?: { not: null } };
+    }) => {
+        if (where?.workflowAcceptedSnapshotEnvelope && run.workflowAcceptedSnapshotEnvelope === null) return null;
+        return Object.fromEntries(Object.entries(run).filter(([key]) => select[key]));
+    });
+    boundary.tx = {
+        automationRun: { findMany: async (args: Parameters<typeof parentRead>[0]) => [await parentRead(args)],
+            findFirst: parentRead, findUnique: parentRead },
+        account: { findMany: async () => [account] },
+        workflowRunDataKeyEnvelope: { findMany: async () => [] },
+        workflowRunInvocation: { findFirst: async () => invocation },
+    };
+    return { invocation, parentRead, run, accountId, runId, invocationId, parentRecordId };
+}
+
+it('reads the admitted Workflow parent once per exact control or invocation intent', async () => {
+    const { parentRead, run, accountId, runId, invocationId, parentRecordId } = retainedInvocationFixture();
+    const exact = await getWorkflowRunInvocation({ accountId, runId, invocationId });
+    expect(exact.invocation.parentRevision).toBe(7);
+    const exactReads = parentRead.mock.calls.length;
+    parentRead.mockClear();
+    const current = await getCurrentWorkflowRunInvocation({ accountId, runId, parentRecordId, memberOrdinal: 0n });
+    expect(current).toMatchObject({ parentRevision: 7, invocation: { index: { id: invocationId } } });
+    const currentReads = parentRead.mock.calls.length;
+    parentRead.mockClear();
+    const control = await getWorkflowRunControl({ accountId, runId, projection: 'revision' });
+    expect(control).toEqual({ run: { state: 'running', revision: 7 } });
+    console.info('RETAINED_WORKFLOW_PARENT_READS', { exact: exactReads, current: currentReads, control: parentRead.mock.calls.length });
+    expect([exactReads, currentReads, parentRead.mock.calls.length]).toEqual([1, 1, 1]);
+    run.workflowAcceptedSnapshotEnvelope = null;
+    await expect(getWorkflowRunControl({ accountId, runId, projection: 'revision' }))
+        .rejects.toMatchObject({ code: 'run_not_found' });
+    await expect(getWorkflowRunInvocation({ accountId: 'other', runId, invocationId }))
+        .rejects.toMatchObject({ code: 'run_not_found' });
+});
+
+it('validates the stored outer envelope schema once per disclosed invocation', async () => {
+    const { invocation, accountId, runId, invocationId } = retainedInvocationFixture();
+    const outer = vi.spyOn(createStoredReadSchema(WorkflowStoredContentEnvelopeV1Schema)._zod, 'run');
+    try {
+        const result = await getWorkflowRunInvocation({ accountId, runId, invocationId });
+        expect(result.invocation.contentEnvelope).toBe(invocation.contentEnvelope);
+        console.info('RETAINED_WORKFLOW_OUTER_ENVELOPE_PARSES', outer.mock.calls.length);
+        expect(outer).toHaveBeenCalledTimes(1);
+        invocation.contentEnvelope = '{"t":"encrypted","c":3}';
+        await expect(getWorkflowRunInvocation({ accountId, runId, invocationId })).rejects.toMatchObject({ code: 'invalid_input' });
+        invocation.contentEnvelope = '{';
+        await expect(getWorkflowRunInvocation({ accountId, runId, invocationId })).rejects.toMatchObject({ code: 'invalid_input' });
+    } finally {
+        outer.mockRestore();
+    }
 });

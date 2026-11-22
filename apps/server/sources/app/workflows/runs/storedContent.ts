@@ -1,4 +1,4 @@
-import { parseWorkflowStoredContentEnvelopeV1, validateWorkflowStoredEnvelopeOuterForModeV1, type WorkflowStoredContentBindingV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
+import { validateWorkflowStoredEnvelopeOuterForModeV1, type WorkflowStoredContentBindingV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 
 export class WorkflowStoredContentError extends Error {
     readonly code: "content_unavailable" | "invalid_input";
@@ -16,9 +16,9 @@ export function assertWorkflowStoredEnvelopeOuterForMode(params: Readonly<{
     mode: "plain" | "e2ee";
     binding: WorkflowStoredContentBindingV1;
 }>): void {
-    const envelope = parseWorkflowStoredContentEnvelopeV1(params.raw);
-    if (!envelope) throw new WorkflowStoredContentError("invalid_input");
-    const result = validateWorkflowStoredEnvelopeOuterForModeV1({ mode: params.mode, binding: params.binding, envelope });
+    const result = validateWorkflowStoredEnvelopeOuterForModeV1({
+        mode: params.mode, binding: params.binding, serializedEnvelope: params.raw,
+    });
     if (result.kind === "available") return;
     throw new WorkflowStoredContentError(result.kind === "modeMismatch" ? "content_unavailable" : "invalid_input");
 }
