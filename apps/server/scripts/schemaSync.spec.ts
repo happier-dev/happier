@@ -122,6 +122,7 @@ describe("schemaSync", () => {
         const mysql = generateMySqlSchemaFromPostgres(postgres);
         const turn = mysql.match(/model SessionTurn\s*\{([\s\S]*?)^\}/mu)?.[1] ?? "";
         expect(turn).toMatch(/workflowInvocationJson\s+String\?\s+@db\.LongText/u);
+        expect(turn).toMatch(/automationLifecycleFactsJson\s+String\?\s+@db\.LongText/u);
     });
     it("keeps scoped governance enums and projects invitation and Team presentation storage without narrowing it", () => {
         const postgres = readFileSync(join(serverRoot, "prisma/schema.prisma"), "utf8");

@@ -6,7 +6,7 @@ import { createPlannedSessionTeamCredentialFixture } from '@/app/teams/credentia
 import { encodeSessionTeamCredentialSlotKeyV1 } from '@happier-dev/protocol/teams';
 
 import { db } from '@/storage/db';
-import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
+import { createDatabaseIntegrationHarness } from '@/testkit/databaseIntegrationHarness';
 import { createAuthenticatedTestApp } from '../../testkit/sqliteFastify';
 import { registerSessionTurnMutationRoute } from './registerSessionTurnMutationRoute';
 import { createRuntimeSessionClientDurableMutationOutbox } from '../../../../../../cli/src/api/session/client/transport/mutations/createRuntimeSessionClientDurableMutationOutbox';
@@ -15,10 +15,10 @@ import { loadSessionClientDurableMutationOutbox, loadSessionClientDurableMutatio
 import { SessionTurnsProjectionV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 
 describe('Session turn outbox → real HTTP admission', () => {
-    let harness: LightSqliteHarness;
+    let harness: Awaited<ReturnType<typeof createDatabaseIntegrationHarness>>;
 
     beforeAll(async () => {
-        harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-turnend-', initAuth: false, env: { HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED: '1' } });
+        harness = await createDatabaseIntegrationHarness({ tempDirPrefix: 'happier-turnend-', initAuth: false, env: { HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED: '1' } });
         harness.resetEnv({ HAPPIER_HOME_DIR: harness.baseDir, HAPPIER_ACTIVE_SERVER_ID: 'turnend' });
         reloadConfiguration();
     }, 120_000);
@@ -96,6 +96,62 @@ describe('Session turn outbox → real HTTP admission', () => {
             const projection = SessionTurnsProjectionV1Schema.parse(response.json());
             expect(projection.turns).toEqual([expect.objectContaining({ ...facts,
                 status: action === 'complete' ? 'completed' : action === 'fail' ? 'failed' : 'cancelled' })]);
+        } finally {
+            await outbox.close();
+            await app.close();
+        }
+    });
+
+    it('retains each completed turn lifecycle fact through a cold read without accepting terminal overwrites', async () => {
+        const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
+        const session = await db.session.create({ data: {
+            accountId: account.id, tag: randomUUID(), encryptionMode: 'plain', metadata: '{}',
+        } });
+        const app = createAuthenticatedTestApp();
+        app.addHook('onRequest', async (request: FastifyRequest) => { request.headers['x-test-user-id'] = account.id; });
+        registerSessionTurnMutationRoute(app);
+        const serverUrl = await app.listen({ host: '127.0.0.1', port: 0 });
+        const outbox = createRuntimeSessionClientDurableMutationOutbox({ token: 'fixture', serverUrl,
+            sessionId: session.id, getSocket: () => null, requestReconnect: () => undefined });
+        const cases = [
+            { changedFiles: true, launchProfileId: 'a'.repeat(64) },
+            { changedFiles: false },
+            { changedFiles: null },
+            {},
+            undefined,
+        ];
+        try {
+            await outbox.awaitReady();
+            for (const [index, automationLifecycleFacts] of cases.entries()) {
+                const base = { v: 1 as const, sessionId: session.id, turnId: `facts-${index}` };
+                await outbox.enqueueSessionTurnMutation({ ...base, action: 'begin', mutationId: `begin-${index}`,
+                    observedAt: index * 100 + 100, automationLifecycleFacts: { changedFiles: true } });
+                await outbox.enqueueSessionTurnMutation({ ...base, action: 'complete', mutationId: `complete-${index}`,
+                    observedAt: index * 100 + 150,
+                    ...(automationLifecycleFacts !== undefined ? { automationLifecycleFacts } : {}),
+                });
+                await outbox.flush('flush');
+            }
+            // Retry the original receipt with different facts, then a distinct late
+            // terminal mutation. Neither may replace the admitted completion fact.
+            for (const mutationId of ['complete-0', 'late-complete-0']) {
+                await outbox.enqueueSessionTurnMutation({ v: 1, sessionId: session.id, turnId: 'facts-0',
+                    action: 'complete', mutationId, observedAt: 999,
+                    automationLifecycleFacts: { changedFiles: false } });
+                await outbox.flush('flush');
+            }
+            expect(await loadSessionClientDurableMutationDeadLetters(session.id)).toEqual([]);
+            const response = await app.inject({ method: 'GET', url: `/v1/sessions/${session.id}/turns` });
+            expect(response.statusCode).toBe(200);
+            const projection = SessionTurnsProjectionV1Schema.parse(response.json());
+            expect(projection.latestTurnId).toBe('facts-4');
+            expect(projection.turns).toHaveLength(cases.length);
+            for (const [index, automationLifecycleFacts] of cases.entries()) {
+                const turn = projection.turns.find((candidate) => candidate.turnId === `facts-${index}`);
+                expect(turn?.status).toBe('completed');
+                expect(turn?.automationLifecycleFacts).toEqual(automationLifecycleFacts);
+                if (automationLifecycleFacts === undefined) expect(turn).not.toHaveProperty('automationLifecycleFacts');
+            }
         } finally {
             await outbox.close();
             await app.close();

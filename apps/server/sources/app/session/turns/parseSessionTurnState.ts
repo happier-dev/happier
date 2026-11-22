@@ -1,6 +1,7 @@
 import { PrimaryTurnStatusV1Schema, sanitizeSessionRuntimeIssueV1, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { SessionTurnFactsV1Schema, type SessionTurnFactsV1, SessionTurnMutationActionV1Schema, SessionTurnMutationDecisionV1Schema, SessionTurnRollbackStateV1Schema, SessionTurnTranscriptAnchorsV1Schema, type SessionTurnMutationReceiptV1, type SessionTurnTranscriptAnchorsV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
 import { type SessionTurnV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
+import { AutomationSessionLifecycleFactsSchema } from '@happier-dev/protocol/automations/automationSessionLifecycle';
 
 type StoredBigInt = bigint | number | null | undefined;
 
@@ -12,6 +13,7 @@ export type SessionTurnStoredRow = Readonly<{
     initiator?: string;
     workDepth?: number;
     workflowInvocationJson?: string | null;
+    automationLifecycleFactsJson?: string | null;
     startedAt: StoredBigInt;
     updatedAt: StoredBigInt;
     terminalAt?: StoredBigInt;
@@ -91,6 +93,7 @@ export function parseStoredSessionTurn(row: SessionTurnStoredRow): SessionTurnV1
     const rollbackState = SessionTurnRollbackStateV1Schema.safeParse(row.rollbackState);
     const transcriptAnchors = parseStoredSessionTurnTranscriptAnchors(row.transcriptAnchorsJson);
     const lastRuntimeIssue = parseStoredSessionRuntimeIssue(row.lastRuntimeIssueJson);
+    const automationLifecycleFacts = AutomationSessionLifecycleFactsSchema.safeParse(parseJsonObject(row.automationLifecycleFactsJson));
 
     return {
         turnId: row.turnId,
@@ -101,6 +104,7 @@ export function parseStoredSessionTurn(row: SessionTurnStoredRow): SessionTurnV1
         ...(row.agentId ? { agentId: row.agentId } : {}),
         ...(row.agentTurnId ? { agentTurnId: row.agentTurnId } : {}),
         status: status.data,
+        ...(automationLifecycleFacts.success ? { automationLifecycleFacts: automationLifecycleFacts.data } : {}),
         startedAt,
         updatedAt,
         ...(terminalAt !== null ? { terminalAt } : {}),

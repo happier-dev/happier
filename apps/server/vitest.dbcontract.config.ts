@@ -25,6 +25,7 @@ export default defineConfig({
             "sources/startServer.s3Availability.integration.spec.ts",
             "scripts/**/*.dbcontract.spec.ts",
             "sources/app/api/routes/session/sessionRoutes.sessionTurns.recent.integration.spec.ts",
+            "sources/app/api/routes/session/sessionRoutes.sessionTurns.outbox.composed.integration.spec.ts",
             "sources/app/deployments/environmentSecretGrantRepository.db.contract.test.ts",
             "sources/app/deployments/deploymentPromotion.sqlite.integration.spec.ts",
             "sources/app/deployments/deploymentAppEnrollment.sqlite.integration.spec.ts",

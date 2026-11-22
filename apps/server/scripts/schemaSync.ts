@@ -170,7 +170,7 @@ function generateProviderSchemaFromPostgres(
 	        body = body.replace(/^(\s*workflowAcceptedSnapshotEnvelope\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
 	        body = body.replace(/^(\s*workflowCheckpointEnvelope\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
 	        body = body.replace(/^(\s*workflowDisplaySummaryEnvelope\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
-	        body = body.replace(/^(\s*workflowInvocationJson\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
+	        body = body.replace(/^(\s*(?:workflowInvocationJson|automationLifecycleFactsJson)\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
 	        body = body.replace(/^(\s*contentEnvelope\s+String\b)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
 
         body = annotateMySqlRepeatKeyFields(body);

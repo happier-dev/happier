@@ -1654,6 +1654,8 @@ model SessionTurn {
     initiator               String   @default("user")
     workDepth               Int      @default(0)
     workflowInvocationJson  String? @db.LongText
+    /// Accepted terminal lifecycle evidence; null remains unknown for older turns.
+    automationLifecycleFactsJson String? @db.LongText
     id                      String   @id @default(cuid())
     sessionId               String
     session                 Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)

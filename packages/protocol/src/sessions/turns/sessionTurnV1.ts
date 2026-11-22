@@ -14,6 +14,7 @@ import {
 import { normalizeLegacySessionTurnAgentIdentity } from './compat/agentIdentity.js';
 import { AgentIdV1Schema } from '../../agents/agentIdV1.js';
 import { SessionWorkDepthV1Schema } from '../creation/sessionCreateOriginV1.js';
+import { AutomationSessionLifecycleFactsSchema } from '../../automations/automationSessionLifecycle.js';
 
 const SessionTurnIdentifierV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(SessionIndexedIdentifierMaxLengthV1)));
 const SessionTurnAgentIdV1Schema = AgentIdV1Schema;
@@ -36,6 +37,7 @@ export const SessionTurnV1Schema = lazyZodSchema(() => (<I extends z.core.$ZodTy
     initiator: z.optional(SessionTurnInitiatorV1Schema),
     workDepth: z.optional(SessionWorkDepthV1Schema),
     workflowInvocation: z.optional(SessionTurnWorkflowInvocationV1Schema),
+    automationLifecycleFacts: z.optional(AutomationSessionLifecycleFactsSchema),
     startedAt: SessionTurnTimestampV1Schema,
     updatedAt: SessionTurnTimestampV1Schema,
     terminalAt: z.optional(SessionTurnTimestampV1Schema),

@@ -594,6 +594,14 @@ Waiting requests and observed stalls remain separate source facts. Hydration
 opens only the selected Turn's anchored final message and cannot reclassify its
 outcome from a later Session or review-Run state.
 
+The typed Turn read also retains the accepted terminal mutation's optional
+`automationLifecycleFacts`, using the same lifecycle producer schema as automation
+admission. Its `changedFiles` evidence is per Turn: `false`, `null`, and omission
+remain distinct; older rows have no evidence. Begin-time facts never substitute
+for terminal facts, and rejected duplicate or stale terminal writes cannot replace
+the accepted fact. Consumers select the matching Turn identity rather than
+inferring changed work from retained transcript or accumulated file changes.
+
 Current policy is rechecked at the effect boundary. A private rule's exact
 selected delivery vote stays with its pinned-version admission witness; the
 server combines surviving votes with current ordinary/manager policies without

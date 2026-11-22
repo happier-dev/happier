@@ -2670,6 +2670,7 @@ type SessionTurnApplicationRow = Readonly<{
     initiator: string;
     workDepth: number;
     workflowInvocationJson: string | null;
+    automationLifecycleFactsJson: string | null;
     startedAt: bigint | number;
     updatedAt: bigint | number;
     terminalAt: bigint | number | null;
@@ -3383,6 +3384,9 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
                     updatedAt: observedAt,
                     ...(terminalStatus ? { terminalAt: observedAt } : {}),
                     ...(terminalStatus ? { lastRuntimeIssueJson } : {}),
+                    ...(terminalStatus ? { automationLifecycleFactsJson: 'automationLifecycleFacts' in params.turnMutation
+                        && params.turnMutation.automationLifecycleFacts !== undefined
+                        ? JSON.stringify(params.turnMutation.automationLifecycleFacts) : null } : {}),
                     ...(transcriptAnchorsJson !== undefined ? { transcriptAnchorsJson } : {}),
                     ...transcriptAnchorProjection,
                     ...(params.turnMutation.action === "mark_rollback_eligible"

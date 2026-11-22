@@ -10268,6 +10268,15 @@ schema. No predecessor data or published SDK epoch changes.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 `SessionTurnV1` reads optionally expose the accepted terminal
+mutation's `automationLifecycleFacts` through the existing closed lifecycle-facts
+schema. The surrounding read projection keeps its existing additive policy.
+An additive nullable `SessionTurn.automationLifecycleFactsJson` column preserves
+the original evidence; existing rows and older writers leave it unavailable,
+without a backfill or inferred clean result. Matching development Home and Protocol
+sources provide the new field; older read consumers can ignore it. No mutation
+input, socket event, authority rule or wire epoch changes.
+
 Unreleased 0.3 Session replay source context carries optional `continuation: true`.
 The replay recipe writer retains it in the existing owner `forkV1` lineage,
 and its owner display projection carries it to the divider. Omission keeps fork
