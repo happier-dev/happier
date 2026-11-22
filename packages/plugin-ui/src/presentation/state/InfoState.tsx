@@ -191,7 +191,8 @@ export function HappierStateLine(props: Readonly<{
           // sentence's edge once the sentence takes the row.
           <View style={{ flexShrink: 1, minWidth: 0, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: metrics.gapPx }}>
             <View style={{ flexShrink: 1, minWidth: 0 }}>{props.children}</View>
-            <View style={{ flexShrink: 0 }}>{props.action}</View>
+            {/* One text line tall, so the run stays on the sentence's first line and the glyph stays centred on it. */}
+            <View style={{ flexShrink: 0, height: props.textLineHeightPx ?? metrics.text.lineHeight, justifyContent: 'center' }}>{props.action}</View>
           </View>
         ) : <View style={{ flexShrink: 1, minWidth: 0 }}>{props.children}</View>}
       </View>
