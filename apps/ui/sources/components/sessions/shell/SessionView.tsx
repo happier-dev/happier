@@ -3802,10 +3802,10 @@ function SessionViewLoaded({
     const connectedServiceQuotaProfileRef = React.useMemo(() => (
         resolveConnectedServiceQuotaProfileRefForSession({
             metadata: session.metadata,
-            agentId,
+            agentId: liveComposerState.agentId,
             accountProfileConnectedServicesV2: accountProfile?.connectedServicesV2 ?? [],
         })
-    ), [accountProfile?.connectedServicesV2, agentId, session.metadata]);
+    ), [accountProfile?.connectedServicesV2, liveComposerState.agentId, session.metadata]);
     const connectedServiceQuotaGroupService = React.useMemo(() => (
         connectedServiceQuotaProfileRef?.groupId
             ? accountProfile?.connectedServicesV2.find((service) => (
@@ -4030,6 +4030,7 @@ function SessionViewLoaded({
     }, [connectedServiceQuotaProfileRef?.credentialHealthStatus]);
     const connectedServiceQuotaSnapshots = useConnectedServiceQuotaSnapshots(
         connectedServiceQuotaProfileRef ? [connectedServiceQuotaProfileRef] : [],
+        { fetchPolicy: surfaceFocused ? 'poll' : 'cache_only' },
     );
     const connectedServiceQuotaProfileKey = connectedServiceQuotaProfileRef
         ? connectedServiceProfileKey(connectedServiceQuotaProfileRef)
@@ -4042,7 +4043,10 @@ function SessionViewLoaded({
         () => readProviderAccountUsageRecordIdsFromMetadata(session.metadata),
         [session.metadata],
     );
-    const providerAccountUsageSnapshotsByRecordId = useProviderAccountUsageSnapshots(providerAccountUsageRecordIds);
+    const providerAccountUsageSnapshotsByRecordId = useProviderAccountUsageSnapshots(
+        providerAccountUsageRecordIds,
+        { fetchEnabled: surfaceFocused },
+    );
     const connectedServiceQuotaActiveAccountLabel = React.useMemo(() => {
         if (!connectedServiceQuotaProfileRef) return connectedServiceQuotaDisplaySnapshot?.accountLabel ?? null;
         return resolveConnectedServiceProfileLabel({
@@ -4076,6 +4080,7 @@ function SessionViewLoaded({
         return selectConnectedServiceSessionProviderUsageGaugeSource({
             providerId: liveComposerState.agentId,
             connectedServiceSnapshot: providerUsageDisplaySnapshotSource?.snapshot ?? null,
+            connectedServiceProfileRef: connectedServiceQuotaProfileRef,
             connectedServiceRefProvenance: providerUsageDisplaySnapshotSource?.connectedServiceRefProvenance ?? null,
             sessionCheckNowSupported: usageLimitRecoveryCheckNowSupported,
             recoveryCredits: usageLimitRecoveryCredits,
@@ -4084,6 +4089,7 @@ function SessionViewLoaded({
     }, [
         connectedServiceQuotasEnabled,
         connectedServiceQuotaProfileCredentialUsable,
+        connectedServiceQuotaProfileRef,
         liveComposerState.agentId,
         providerUsageDisplaySnapshotSource,
         session.lastRuntimeIssue,

@@ -158,6 +158,24 @@ describe('useProviderAccountUsageSnapshots', () => {
     await hook.unmount();
   });
 
+  it('keeps the cached reading while hidden without requesting a stale record', async () => {
+    const snapshot = makeUsageSnapshot();
+    const { writeProviderAccountUsageSnapshotToCache } = await import('@/sync/domains/connectedServices/accountUsage/cache');
+    writeProviderAccountUsageSnapshotToCache({
+      credentialScope: resolveAuthCredentialsScopeKey(stableCredentials),
+      snapshot,
+    });
+
+    const { useProviderAccountUsageSnapshots } = await import('./useProviderAccountUsageSnapshots');
+    const hook = await renderHook(() => useProviderAccountUsageSnapshots([snapshot.recordId], { fetchEnabled: false }));
+    await flushHookEffects({ cycles: 5, turns: 5 });
+
+    expect(hook.getCurrent()[snapshot.recordId]).toBe(snapshot);
+    expect(getProviderAccountUsageSnapshotPlainSpy).not.toHaveBeenCalled();
+    expect(getProviderAccountUsageSnapshotSealedSpy).not.toHaveBeenCalled();
+    await hook.unmount();
+  });
+
   it('prefers newer shared-cache provider account usage over a mounted local entry', async () => {
     const first = makeUsageSnapshotWith({ accountSubjectId: 'provider-account-1', fetchedAtMs: Date.now() });
     const newer = makeUsageSnapshotWith({ accountSubjectId: 'provider-account-1', fetchedAtMs: Date.now() + 10_000 });

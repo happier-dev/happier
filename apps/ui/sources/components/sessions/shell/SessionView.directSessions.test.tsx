@@ -2567,7 +2567,7 @@ describe('SessionView (direct sessions)', () => {
     expect(findAgentInput(screen).props.connectionStatus?.isPulsing).toBe(true);
   });
 
-  it('uses runtime quota evidence for the provider usage account label when it overrides launch-time profile quota', async () => {
+  it('keeps the fixed profile when this and other sessions report a different login', async () => {
     featureEnabledState['connectedServices.quotas'] = true;
     storageState.sessions.s1 = {
       ...storageState.sessions.s1,
@@ -2614,26 +2614,53 @@ describe('SessionView (direct sessions)', () => {
       },
     };
 
-    settingByKeyState.current.sessionProviderUsageGaugeWindowModes = ['weekly'];
-    settingByKeyState.current.connectedServicesQuotaPinnedMeterIdsByKey = {
-      'openai-codex/launch-profile': ['daily'],
-      'openai-codex/backup-profile': ['five_hour'],
+    quotaSnapshotsState.current = {
+      'openai-codex/launch-profile': {
+        ...buildOpenAiCodexWorkQuotaSnapshot({ fetchedAt: 12_000, used: 18 }),
+        profileId: 'launch-profile',
+      },
+    };
+    const issue = storageState.sessions.s1.lastRuntimeIssue!;
+    const sessions = storageState.sessions as Record<string, any>;
+    sessions.s2 = {
+      ...storageState.sessions.s1,
+      id: 's2',
+      lastRuntimeIssue: {
+        ...issue, occurredAt: 20_000,
+        usageLimit: { ...issue.usageLimit!,
+          quotaSnapshotRef: { serviceId: 'openai-codex', profileId: 'backup-profile', fetchedAtMs: 20_000 },
+          allWindows: [{ meterId: 'weekly', scope: 'Weekly', remainingPct: 30 }],
+          effectiveMeterId: 'weekly', effectiveRemainingPct: 30,
+        },
+      },
+    };
+    sessions.s3 = {
+      ...sessions.s2,
+      id: 's3',
+      lastRuntimeIssue: {
+        ...issue, occurredAt: 30_000,
+        usageLimit: { ...issue.usageLimit!,
+          quotaSnapshotRef: { serviceId: 'openai-codex', profileId: 'other-login', fetchedAtMs: 30_000 },
+        },
+      },
     };
     const screen = await renderSessionViewAndSettle();
 
+    expect(quotaSnapshotsState.requestedProfiles).toEqual([
+      expect.objectContaining({ serviceId: 'openai-codex', profileId: 'launch-profile' }),
+    ]);
     expect(findAgentInput(screen).props.providerUsageGauge).toEqual(expect.objectContaining({
       serviceId: 'openai-codex',
-      providerDisplayName: 'connectedServices.serviceNames.openaiCodex',
-      activeAccountDisplayLabel: 'backup-account',
+      ringValueLabel: '82',
     }));
-    expect(findAgentInput(screen).props.providerUsageGauge.usageRings.map((ring: { meterId: string }) => ring.meterId))
-      .toEqual(['weekly', 'five_hour']);
   });
 
   it('uses runtime quota evidence for provider usage title when no launch-time profile binding exists', async () => {
     featureEnabledState['connectedServices.quotas'] = true;
     storageState.sessions.s1 = {
       ...storageState.sessions.s1,
+      // The evidence is Claude's, so the composer must be on Claude to show it.
+      metadata: { ...storageState.sessions.s1.metadata, flavor: 'claude' },
       lastRuntimeIssue: {
         v: 1,
         scope: 'primary_session',
@@ -2959,6 +2986,57 @@ describe('SessionView (direct sessions)', () => {
     }));
     expect(findAgentInput(screen).props.onProviderUsageRecoveryCreditPress).toBeUndefined();
     expect(screen.findByTestId('session-usageLimit-recovery-consumeResetCredit')).toBeNull();
+  });
+
+  it('does not show the default connected login\'s quota for a session bound to its native login', async () => {
+    featureEnabledState['connectedServices.quotas'] = true;
+    storageState.profile = {
+      connectedServicesV2: [{
+        serviceId: 'openai-codex',
+        profiles: [{ profileId: 'work', status: 'connected', kind: 'oauth' }],
+      }],
+    };
+    storageState.sessions.s1 = {
+      ...storageState.sessions.s1,
+      metadata: {
+        ...storageState.sessions.s1.metadata,
+        connectedServices: { bindingsByServiceId: { 'openai-codex': { source: 'native' } } },
+      },
+    };
+    quotaSnapshotsState.current = {
+      'openai-codex/work': buildOpenAiCodexWorkQuotaSnapshot({ fetchedAt: 2_000, used: 82 }),
+    };
+
+    const screen = await renderSessionViewAndSettle();
+
+    expect(quotaSnapshotsState.requestedProfiles).toEqual([]);
+    expect(findAgentInput(screen).props.providerUsageGauge ?? null).toBeNull();
+  });
+
+  it('keeps usage unavailable when the session has no login evidence', async () => {
+    featureEnabledState['connectedServices.quotas'] = true;
+    storageState.profile = {
+      connectedServicesV2: [{
+        serviceId: 'openai-codex',
+        profiles: [{ profileId: 'work', status: 'connected', kind: 'oauth' }],
+      }],
+    };
+    const unrelated = buildProviderAccountUsageSnapshot({ accountSubjectId: 'different-login', used: 99 });
+    providerAccountUsageSnapshotsState.current = { [unrelated.recordId]: unrelated };
+    const sessions = storageState.sessions as Record<string, typeof storageState.sessions.s1>;
+    sessions.s2 = {
+      ...sessions.s1,
+      id: 's2',
+      metadata: {
+        ...sessions.s1.metadata,
+        providerAccountUsageRefsV1: { v: 1, recordIds: [unrelated.recordId], updatedAtMs: 2_000 },
+      },
+    };
+    const screen = await renderSessionViewAndSettle();
+
+    expect(quotaSnapshotsState.requestedProfiles).toEqual([]);
+    expect(providerAccountUsageSnapshotsState.requestedRecordIds).toEqual([]);
+    expect(findAgentInput(screen).props.providerUsageGauge ?? null).toBeNull();
   });
 
   it('combines global windows with the active connected account favorites', async () => {
