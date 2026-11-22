@@ -361,10 +361,6 @@ vi.mock('@/agent/runtime/permission/startupPermissionModeSeed', () => ({
   resolveStartupPermissionModeFromSession: vi.fn(async () => null),
 }));
 
-vi.mock('@/agent/runtime/runnerTerminationOutcome', () => ({
-  computeRunnerTerminationOutcome: vi.fn(() => ({ exitCode: 0, terminationReason: 'Exited normally' })),
-}));
-
 vi.mock('@/backends/claude/sdk/metadataExtractor', () => ({
   extractSDKMetadataAsync: vi.fn(),
 }));
@@ -533,11 +529,14 @@ describe('runClaude fast-start', () => {
     } finally {
       releaseMcp.resolve();
       releaseFlush.resolve();
-      await run;
-      vi.mocked(loop).mockReset().mockImplementation(originalLoop);
-      vi.mocked(childProcess.spawn).mockImplementation(originalSpawn);
-      environment.restore();
-      await rm(root, { recursive: true, force: true });
+      try {
+        await run;
+      } finally {
+        vi.mocked(loop).mockReset().mockImplementation(originalLoop);
+        vi.mocked(childProcess.spawn).mockImplementation(originalSpawn);
+        environment.restore();
+        await rm(root, { recursive: true, force: true });
+      }
     }
   });
 
@@ -565,7 +564,10 @@ describe('runClaude fast-start', () => {
     const { runClaude } = await import('./runClaude');
     const run = runClaude(createLegacyCredentials(), { startedBy: 'terminal', startingMode: 'local' });
     try {
-      await waitFor(loopStarted.promise, loopStartWaitMs);
+      await waitFor(Promise.race([
+        loopStarted.promise,
+        run.then(() => { throw new Error('Runner ended before the provider loop started'); }),
+      ]), loopStartWaitMs);
       loopExit.resolve(0);
       await expect(run).resolves.toBeUndefined();
       expect(exitSpy).toHaveBeenCalledWith(0);
@@ -576,8 +578,11 @@ describe('runClaude fast-start', () => {
       }));
     } finally {
       loopExit.resolve(0);
-      await run;
-      sessionSyncClientSpy.mockImplementation(previousSessionImpl);
+      try {
+        await run;
+      } finally {
+        sessionSyncClientSpy.mockImplementation(previousSessionImpl);
+      }
     }
   });
 
