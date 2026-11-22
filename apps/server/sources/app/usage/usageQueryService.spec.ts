@@ -820,7 +820,8 @@ describe('captured usage query projection', () => {
             queries, false, false, timing);
             batchMs = performance.now() - startedAt;
             for (const values of sort.mock.contexts) {
-                const first: unknown = Array.isArray(values) ? values[0] : undefined;
+                if (!Array.isArray(values)) continue;
+                const first: unknown = values[0];
                 if (first && typeof first === 'object' && 'id' in first &&
                     String(first.id).startsWith('batch-order-') && 'observedAt' in first && !('tokens' in first)) {
                     orderPasses++;

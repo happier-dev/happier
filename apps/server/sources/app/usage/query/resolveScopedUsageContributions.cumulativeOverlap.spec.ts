@@ -11,6 +11,7 @@ function checkpoint(id: string, time: number, input: number, cacheRead: number |
         id, sessionId: 'session', agentId: 'claude', source: 'native', scope: 'session_cumulative',
         observedAt: new Date(time), createdAt: new Date(time), isCumulative: true,
         backendMode: null, modelId: null, projectKey: null, workspaceId: null, machineId: null, turnId: null,
+        contextUsedTokens: null, contextWindowTokens: null,
         tokens: { ...createEmptyUsageTokens(), input, cacheRead }, cost: createEmptyUsageCost(),
         metadata: { usageAccounting: { historyComplete: true, counterEpoch,
             ...(inputIncludesCache === undefined ? {} : { inputIncludesCache }) } },
