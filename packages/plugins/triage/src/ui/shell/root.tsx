@@ -1268,6 +1268,12 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     return summary ?? null;
   }, [surface.selection, window.snapshot.configuredSources]);
   const selectedConnectionLabel = selectedSourceSummary?.displayLabel ?? null;
+  const selectedConfiguredInstance = React.useMemo(() => {
+    const selection = surface.selection;
+    if (selection === null || selectedSourceSummary?.available !== true) return undefined;
+    return configuredSources.sources.find(candidate => candidate.sourceInstanceId === selection.sourceInstanceId
+      && sameTriageSourceIdentity(candidate.configured.instance.source, selection.entryRef.source))?.configured;
+  }, [configuredSources.sources, selectedSourceSummary?.available, surface.selection]);
 
   /**
    * The last row this window published for the selection the reader is holding
@@ -2463,6 +2469,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     detailRow !== null ? (
       <TriagePublishedDetail
         exactRead={exactRead}
+        admittedInstance={selectedConfiguredInstance}
         {...(readFailed ? { exactReadFailure: {
           ...(selectedReadFailure === undefined ? {} : { failure: selectedReadFailure }),
         } } : {})}

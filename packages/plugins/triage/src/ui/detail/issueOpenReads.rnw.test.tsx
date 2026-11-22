@@ -147,6 +147,9 @@ describe('one opened GitHub issue read owner', () => {
     const lanes = Object.freeze([]);
     let availableSessions: readonly TriageLinkedSessionProjectionV1[] = [];
     const publishSessions = (sessions: readonly TriageLinkedSessionProjectionV1[]) => { availableSessions = sessions; };
+    const entryDetail = Promise.withResolvers<void>();
+    const fixAnswer = Promise.withResolvers<void>();
+    let fixReads = 0;
     function OpenIssue() {
       const detail = useTriagePostMutationRow(null, lanes, selection);
       const [tab, setTab] = React.useState('overview');
@@ -154,6 +157,7 @@ describe('one opened GitHub issue read owner', () => {
       if (detail.row === null) return <Text value="Opening issue" />;
       return <TriageDetailRegion row={detail.row} rows={[detail.row]} lanes={lanes}
         completePostMutation={detail.completePostMutation} exactRead={detail.exactRead} connectionLabel="GitHub fixture"
+        admittedInstance={instance}
         target={{ kind: 'entry', ...selection }} actions={catalog} originComposer={null}
         pin={{ row: projectTriageWindowRow(detail.row, new Map()), handlers: { busyKey: null, unavailableReason: null, onSetPinned() {} } }}
         tabSelection={{ value: tab, onChange: setTab }}
@@ -210,16 +214,28 @@ describe('one opened GitHub issue read owner', () => {
             const { entryRef: ref, ...observation } = result.observation;
             return { ...result, entryRef: ref, observation: toTriageWireObservation(observation) };
           }
-          if (id === TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1) return readTriageEntryDetail(TriageReadEntryDetailInputV1Schema.parse(request.input),
-            { sourceRelations: relations, readSessionSummary: async () => ({ title: 'Linked issue work', updatedAtMs: 3 }), signal: request.signal });
-          if (id === TRIAGE_READ_FIX_PULL_REQUESTS_ACTION_LOCAL_ID_V1) return createTriageReadFixPullRequestsActionHandler()(
-            TriageReadFixPullRequestsInputV1Schema.parse(request.input), accountContext);
+          if (id === TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1) {
+            await entryDetail.promise;
+            return readTriageEntryDetail(TriageReadEntryDetailInputV1Schema.parse(request.input),
+              { sourceRelations: relations, readSessionSummary: async () => ({ title: 'Linked issue work', updatedAtMs: 3 }), signal: request.signal });
+          }
+          if (id === TRIAGE_READ_FIX_PULL_REQUESTS_ACTION_LOCAL_ID_V1) {
+            fixReads++;
+            await fixAnswer.promise;
+            return createTriageReadFixPullRequestsActionHandler()(
+              TriageReadFixPullRequestsInputV1Schema.parse(request.input), accountContext);
+          }
           if (id === TRIAGE_TASKS_READ_ORIGIN_ERROR_ACTION_LOCAL_ID_V1) return createTriageReadTaskOriginErrorActionHandler()(
             TriageReadTaskOriginErrorInputV1Schema.parse(request.input), accountContext);
           throw new Error(`Unexpected composed issue Action: ${id}`);
         } } });
       });
       await vi.waitFor(() => expect(document.body.textContent).toContain('One composed issue'));
+      await vi.waitFor(() => expect(fixReads).toBe(1));
+      await expect(shell!.getByText('Looking for a fix pull request…')).resolves.toBeDefined();
+      await act(async () => { fixAnswer.resolve(); });
+      await vi.waitFor(() => expect(document.body.textContent).toContain('No pull request is linked as the fix yet.'));
+      await act(async () => { entryDetail.resolve(); });
       await vi.waitFor(() => expect(document.body.textContent).toContain('Complete issue body retained by Overview.'));
       expect(document.body.textContent?.includes('End of complete issue notes.')).toBe(true);
       await vi.waitFor(() => expect(document.body.textContent).toContain('issue-open-proof'));
@@ -230,6 +246,7 @@ describe('one opened GitHub issue read owner', () => {
       expect(document.body.textContent).toContain(route);
       expect(availableSessions).toMatchObject([{ sessionId: 'session-composed-issue', updatedAtMs: 3 }]);
       const paths = transport.requests.map(request => new URL(request.url).pathname).sort();
+      expect(fixReads).toBe(1);
       expect(paths).toEqual([`/repos/${route}`, `/repos/${route}/assignees`, `/repos/${route}/labels`,
         `/repos/${route}/issues/7`, `/repos/${route}/issues/7/parent`,
         `/repos/${route}/issues/7/sub_issues`, `/repos/${route}/issues/7/dependencies/blocked_by`].sort());

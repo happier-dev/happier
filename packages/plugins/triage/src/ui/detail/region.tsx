@@ -35,6 +35,7 @@ import {
 } from '@happier-dev/plugin-ui';
 import type {
   SessionPullRequestNativeStatusV1,
+  TriageConfiguredSourceInstanceV1,
   TriageDetailSurfaceInputV1,
   TriageLinkedSessionProjectionV1,
   TriageSourceWorkflowSubjectV1,
@@ -146,6 +147,8 @@ export type TriageDetailRegionProps = Readonly<{
   /** Opening and subsequent exact reads belong to the shell's one read owner. */
   exactRead?: import('./postMutationReobservation.js').TriageExactEntryReadV1 | null;
   exactReadFailure?: Readonly<{ failure?: PluginError }>;
+  /** The mounted Account's configured instance for this exact selection. */
+  admittedInstance?: TriageConfiguredSourceInstanceV1;
   availabilityFailure?: TriageSourceFailureV1;
   sourcePanelActions?: TriageSourcePanelActionsV1;
   tabSelection: TriageDetailTabSelectionV1;
@@ -1006,7 +1009,8 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
     rows: props.rows,
     workflowSubject,
     display: fixDisplay,
-    instance: detail?.kind === 'ready' ? detail.input.instance : undefined,
+    instance: detail?.kind === 'ready' ? detail.input.instance
+      : detail?.kind === 'reading' && props.exactRead != null ? props.admittedInstance : undefined,
     refreshGeneration: props.refreshGeneration,
   });
   const fixRetry = fixPullRequest.state?.kind === 'unreachable' ? fixPullRequest.state.retry : null;
@@ -1091,6 +1095,13 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
         }
       : null
   ), [admittedSurface, detail, row.entryRef]);
+  const fixPullRequestStep = fixPullRequest.state === null ? null : (
+    <TriageFixPullRequests state={fixPullRequest.state} pickable={fixPullRequest.pickable}
+      {...(props.onRetryFixPullRequests === undefined ? {} : { onRetry: props.onRetryFixPullRequests })}
+      {...(fixChecksSummary === undefined ? {} : { checksSummary: fixChecksSummary })}
+      {...(workflowSubject === 'issue' ? { chapter: 2 } : {})}
+      {...(fixPullRequest.navigation === null ? {} : { onOpenPrimary: () => { void fixPullRequest.navigation?.open(); } })} />
+  );
   const repository = selected?.repository;
   const actionPresentation = React.useMemo(() => (
     snapshot === undefined
@@ -1244,7 +1255,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
                 entry={null}
                 reading={readingLines}
                 fixPullRequest={null}
-                overviewTail={null}
+                overviewTail={fixPullRequestStep}
                 fallback={null}
               />
             </TriageEvidenceDisclosureProvider>
@@ -1306,13 +1317,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
                       source's own chapters, as sections. */}
                   {task.relations.blockedBy?.list('section') ?? null}
                   {task.relations.subTasks?.list('section') ?? null}
-                  {fixPullRequest.state !== null ? (
-                    <TriageFixPullRequests state={fixPullRequest.state} pickable={fixPullRequest.pickable}
-                      {...(props.onRetryFixPullRequests === undefined ? {} : { onRetry: props.onRetryFixPullRequests })}
-                      {...(fixChecksSummary === undefined ? {} : { checksSummary: fixChecksSummary })}
-                      {...(header.workflowSubject === 'issue' ? { chapter: 2 } : {})}
-                      {...(fixPullRequest.navigation === null ? {} : { onOpenPrimary: () => { void fixPullRequest.navigation?.open(); } })} />
-                  ) : null}
+                  {fixPullRequestStep}
                   <TriageAgentStep
                     onSelectSession={selectInlineSession}
                     sessions={header.linkedSessions}

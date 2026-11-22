@@ -281,7 +281,10 @@ export function TriageDetailTabbedBody(props: Readonly<{
           <TriageDetailPanelNavigationProvider navigation={navigation}>
             <Tabs value={slot} onValueChange={() => {}} ariaLabel="" tabList="host" layout="fill">
               <Tabs.Item value="entry" title="" retention="retain">
-                {props.entry === null ? props.reading : <SourceDetailInstance
+                {props.entry === null ? <>
+                  {props.reading}
+                  {selectedTab?.id === 'overview' ? props.overviewTail : null}
+                </> : <SourceDetailInstance
                   key={props.entry.instanceKey}
                   mount={props.entry}
                   panel={slot === 'entry' ? selectedTab?.id ?? null : null}
