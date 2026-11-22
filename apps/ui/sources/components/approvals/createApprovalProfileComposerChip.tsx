@@ -23,14 +23,14 @@ type ChipParams = Readonly<{
     ready: boolean;
     displayReady?: boolean;
     requestCatalog?: () => Promise<void>;
-    onChange: (value: string | null) => void;
+    onChange: (value: string | null | undefined) => void;
 }>;
 
 const CHIP_KEY = 'new-session-approval-profile';
 
 /** The field's own choices (ApprovalProfileSelect's list) as the chip row's one selection step. */
 function buildRootStep(params: ChipParams): SelectionListStep {
-    const choices = buildApprovalProfileChoices('session', params.profiles, CHIP_KEY, params.machineDefault);
+    const choices = buildApprovalProfileChoices('draft', params.profiles, CHIP_KEY, params.machineDefault);
     return {
         id: `${CHIP_KEY}-root`,
         title: t('workflows.triggers.guided.profile.title'),
@@ -67,7 +67,7 @@ const ApprovalProfileChip = React.memo(function ApprovalProfileChip(props: ChipP
             </AgentInputRailChip>
         </View>
         <AgentInputSelectionListPopover open={open} anchorRef={anchorRef} rootStep={rootStep}
-            selectedOptionId={approvalProfileChoiceId('session', props.value)}
+            selectedOptionId={approvalProfileChoiceId('draft', props.value)}
             // Each option's own onSelect applies the choice; the popover owns closing (see the storage chip).
             onSelect={() => {}} onRequestClose={() => setOpen(false)} maxHeightCap={320} />
     </>;
@@ -89,7 +89,7 @@ export function createApprovalProfileComposerChip(params: ChipParams): AgentInpu
             presentation: 'list', title, label: chipLabel(params).label,
             icon: (tint) => normalizeNodeForView(<Icon name="list-checks" size={AGENT_INPUT_MENU_ICON_SIZE_PX} color={tint} />),
             rootStep: buildRootStep(params),
-            selectedOptionId: approvalProfileChoiceId('session', params.value),
+            selectedOptionId: approvalProfileChoiceId('draft', params.value),
             onSelect: () => {},
             maxHeightCap: 320,
         },

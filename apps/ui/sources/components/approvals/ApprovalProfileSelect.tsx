@@ -12,17 +12,16 @@ import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import type { ApprovalProfileV1 } from '@happier-dev/protocol/actions';
 
-export const APPROVAL_PROFILE_MACHINE_DEFAULT_OPTION_ID = 'machine_default';
 export const APPROVAL_PROFILE_ACCOUNT_OPTION_ID = 'account_settings';
 export const APPROVAL_PROFILE_INHERIT_OPTION_ID = 'inherit';
 export const APPROVAL_PROFILE_NONE_OPTION_ID = 'none';
 
 /**
- * `session`: a Session's own reference; null or absent follows its Machine's default, which falls back to the
- * Account settings. `machine`: a Machine's default for my Sessions there; null uses the Account settings.
+ * `session`: a stored Session profile; null uses Account settings. `draft`: absent inherits at creation.
+ * `machine`: a Machine's default for new Sessions; null uses Account settings.
  * `default`: a Team, Group or project default; absent inherits the layer above, null deliberately sets no profile.
  */
-export type ApprovalProfileChoiceMode = 'session' | 'machine' | 'default';
+export type ApprovalProfileChoiceMode = 'session' | 'draft' | 'machine' | 'default';
 
 /** The words of a `default` choice's first two rows; the host owns whose default is inherited. */
 export type ApprovalProfileDefaultChoices = Readonly<{
@@ -39,13 +38,6 @@ type Choice =
     | Readonly<{ mode: 'default'; value: string | null | undefined; onChange: (value: string | null | undefined) => void;
         defaultChoices: ApprovalProfileDefaultChoices }>;
 
-function machineDefaultTitle(machineDefault: ApprovalProfileMachineDefault): string {
-    if (machineDefault === null) return t('workflows.triggers.guided.profile.machineDefault');
-    return t('workflows.triggers.guided.profile.machineDefaultNamed', {
-        profile: machineDefault.profile?.name ?? t('workflows.triggers.guided.profile.accountSettings'),
-    });
-}
-
 /**
  * The one approval-profile choice list: the field's menu, the composer chip and the Machine row offer the same rows.
  * Given the current choice, it marks that row checked, so every menu showing the list says which one is chosen.
@@ -60,25 +52,32 @@ export function buildApprovalProfileChoices(mode: ApprovalProfileChoiceMode, pro
             title: defaultChoices.inherit.title, subtitle: defaultChoices.inherit.subtitle });
         result.push({ id: APPROVAL_PROFILE_NONE_OPTION_ID, testID: `${testID}:${APPROVAL_PROFILE_NONE_OPTION_ID}`,
             title: defaultChoices.none.title, subtitle: defaultChoices.none.subtitle });
-    } else result.push(mode === 'session'
-        ? { id: APPROVAL_PROFILE_MACHINE_DEFAULT_OPTION_ID, testID: `${testID}:${APPROVAL_PROFILE_MACHINE_DEFAULT_OPTION_ID}`,
-            title: machineDefaultTitle(machineDefault) }
-        : { id: APPROVAL_PROFILE_ACCOUNT_OPTION_ID, testID: `${testID}:${APPROVAL_PROFILE_ACCOUNT_OPTION_ID}`,
+    } else {
+        if (mode === 'draft') result.push({ id: APPROVAL_PROFILE_INHERIT_OPTION_ID,
+            testID: `${testID}:${APPROVAL_PROFILE_INHERIT_OPTION_ID}`, title: t('common.default') });
+        result.push({ id: APPROVAL_PROFILE_ACCOUNT_OPTION_ID, testID: `${testID}:${APPROVAL_PROFILE_ACCOUNT_OPTION_ID}`,
             title: t('workflows.triggers.guided.profile.accountSettings') });
-    for (const profile of profiles) result.push({ id: profile.id, testID: `${testID}:${profile.id}`, title: profile.name });
+    }
+    for (const profile of profiles) {
+        const title = machineDefault?.profile?.id === profile.id
+            ? t('workflows.triggers.guided.profile.machineDefaultNamed', { profile: profile.name }) : profile.name;
+        result.push({ id: profile.id, testID: `${testID}:${profile.id}`, title });
+    }
     return selectedId == null ? result : result.map((choice) => ({ ...choice, checked: choice.id === selectedId }));
 }
 
-/** The choice row a stored value selects: no profile follows the Machine (a Session) or the Account (a Machine). */
+/** The choice row a stored or authored value selects. */
 export function approvalProfileChoiceId(mode: ApprovalProfileChoiceMode, value: string | null | undefined): string {
     if (typeof value === 'string') return value;
     if (mode === 'default') return value === null ? APPROVAL_PROFILE_NONE_OPTION_ID : APPROVAL_PROFILE_INHERIT_OPTION_ID;
-    return mode === 'session' ? APPROVAL_PROFILE_MACHINE_DEFAULT_OPTION_ID : APPROVAL_PROFILE_ACCOUNT_OPTION_ID;
+    if (mode === 'draft' && value === undefined) return APPROVAL_PROFILE_INHERIT_OPTION_ID;
+    return APPROVAL_PROFILE_ACCOUNT_OPTION_ID;
 }
 
-/** The stored value a chosen row means: a profile id, or null for "no profile of its own". */
-export function approvalProfileChoiceValue(id: string): string | null {
-    return id === APPROVAL_PROFILE_MACHINE_DEFAULT_OPTION_ID || id === APPROVAL_PROFILE_ACCOUNT_OPTION_ID
+/** An omitted draft value inherits. An explicit null uses Account settings. */
+export function approvalProfileChoiceValue(id: string): string | null | undefined {
+    if (id === APPROVAL_PROFILE_INHERIT_OPTION_ID) return undefined;
+    return id === APPROVAL_PROFILE_ACCOUNT_OPTION_ID
         || id === APPROVAL_PROFILE_NONE_OPTION_ID ? null : id;
 }
 
@@ -105,7 +104,8 @@ export function approvalProfileChipLabel(params: Readonly<{
     inherited?: boolean;
 }>): Readonly<{ label: string; chosen: boolean }> {
     const fieldName = t('workflows.triggers.guided.profile.title');
-    if (typeof params.value !== 'string') {
+    if (params.value === null) return { label: t('workflows.triggers.guided.profile.accountSettings'), chosen: true };
+    if (params.value === undefined) {
         const profile = params.machineDefault?.profile;
         if (params.inherited === true) return { label: profile
             ? t('workflows.triggers.guided.profile.machineDefaultChip', { profile: profile.name })
@@ -156,8 +156,9 @@ export function ApprovalProfileSelect(props: Choice & Readonly<{
     const select = (id: string) => {
         if (disabled || !props.source.ready) return;
         setOpen(false);
-        if (props.mode === 'default') props.onChange(id === APPROVAL_PROFILE_INHERIT_OPTION_ID ? undefined : approvalProfileChoiceValue(id));
-        else props.onChange(approvalProfileChoiceValue(id));
+        const value = approvalProfileChoiceValue(id);
+        if (props.mode === 'default') props.onChange(value);
+        else if (value !== undefined) props.onChange(value);
     };
     const selectAnchorRef = React.useRef<React.ComponentRef<typeof View> | null>(null);
     const chip = props.presentation === 'chips' || props.presentation === 'selects' ? approvalProfileChipLabel({ value: props.value,
@@ -190,8 +191,7 @@ export function ApprovalProfileSelect(props: Choice & Readonly<{
                     ? { accessibilityHint: props.changedAccessibilityHint } : {})}
                 open={open} disabled={disabled} onPress={toggle} testID={`${props.testID}-chip`} /> : row ? ({ toggle }) => <Item testID={`${props.testID}-row`}
                 title={t('workflows.triggers.guided.profile.title')} icon={props.icon}
-                // The short choice ("Machine default", a profile's name) keeps the value beside its label; the menu names
-                // the Machine's own profile.
+                // Keep the profile's short name beside the field label.
                 detail={displayReady || typeof props.value !== 'string'
                     ? approvalProfileChoiceTitle(props.mode, props.value, displayProfiles, null, defaultChoices)
                     : t(props.source.unavailable ? 'common.unavailable' : 'common.loading')}

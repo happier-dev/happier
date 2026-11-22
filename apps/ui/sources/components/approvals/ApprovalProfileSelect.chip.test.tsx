@@ -18,24 +18,23 @@ const source = {
   unavailable: false,
 } as const;
 
-it('shows the Session’s Machine default before the Approval profile catalog has been opened', async () => {
+it('shows a Session with explicit null uses Account settings before the profile catalog opens', async () => {
   const screen = await renderScreen(<ApprovalProfileSelect mode="session" presentation="row"
-    testID="profile" value={null} source={{ ...source, ready: false }} onChange={() => {}} />);
-  expect(screen.getTextContent()).toMatch(/workflows\.triggers\.guided\.profile\.machineDefault|Machine default/);
+    testID="profile" value={null} source={{ ...source, ready: false }}
+    machineDefault={{ profile: { id: 'custom:careful', name: 'Careful agent' } }} onChange={() => {}} />);
+  expect(screen.getTextContent()).toMatch(/workflows\.triggers\.guided\.profile\.accountSettings|Account settings/);
 });
 
 // A composer chip with nothing chosen names its field ("Approval profile"), the filter-chip convention; it never shows a
 // sentence about inheriting from a Session a fresh draft doesn't have (QA-SHELL-1114 F3: Home showed "Inherit the
 // Session profile" as a full-width bar above every new Session).
-it.each([undefined, null])(
-  'names the field on the composer chip while no profile is chosen (%s)',
-  async (value) => {
+it('names the field on the composer chip while no profile is chosen', async () => {
     const screen = await renderScreen(
       <ApprovalProfileSelect
         mode="session"
         presentation="chips"
         testID="profile"
-        value={value}
+        value={undefined}
         source={source}
         onChange={() => {}}
       />,
@@ -47,8 +46,7 @@ it.each([undefined, null])(
     expect(text).not.toMatch(
       /machineDefault|Machine default/,
     );
-  },
-);
+});
 
 it('shows the chosen profile on the composer chip', async () => {
   const screen = await renderScreen(
