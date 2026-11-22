@@ -1285,6 +1285,13 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         remedyAction]
         .filter((element) => element !== null && element !== primaryElement);
     const sourceFolded = phonePage;
+    // The open Wait-for-you card offers Stop beside Continue, so the run's own Stop waits in ⋯ meanwhile: the page
+    // shows Stop once (U8 R5 A6). With no card open the header keeps it.
+    const stopAvailable = props.run.availability.cancel && props.onCancel !== undefined;
+    const stopFolded = stopAvailable && props.renderReviewCard !== undefined && selectedInvocation != null
+        && selectedInvocation.lifecycle === 'waiting_for_review' && attentionWaitsForYou(selectedInvocation);
+    const stopLabel = props.pendingControl === 'cancel' ? t('workflows.run.stopping')
+        : props.cancelRequested === true ? t('workflows.run.stopAgain') : t('workflows.run.stop');
     const stateMenuActions: ItemAction[] = [
         ...(runAgainFolded && onRunAgain ? [{ id: `${testIDPrefix}-run-again`, title: t('workflows.run.runAgain'),
             icon: 'play' as const, onPress: onRunAgain }] : []),
@@ -1292,6 +1299,8 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             icon: 'arrows-clockwise' as const, disabled: operationPending, onPress: onAnotherRound }] : []),
         ...(pauseFolded && props.onPause ? [{ id: `${testIDPrefix}-pause`, title: t('workflows.run.pauseAtBoundary'),
             icon: 'pause-circle' as const, disabled: operationPending, onPress: props.onPause }] : []),
+        ...(stopFolded && props.onCancel ? [{ id: `${testIDPrefix}-cancel`, title: stopLabel, icon: 'stop' as const,
+            destructive: true, disabled: operationPending, onPress: props.onCancel }] : []),
         ...(sourceFolded && props.sourceAction ? [{ id: `${testIDPrefix}-${props.sourceAction.kind}-workflow`,
             title: props.sourceAction.kind === 'edit' ? t('workflows.run.editWorkflow') : t('workflows.run.openWorkflow'),
             icon: props.sourceAction.kind === 'edit' ? 'pencil-simple' as const : 'tree-structure' as const,
@@ -1305,7 +1314,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         <>{phonePage ? [primaryElement, ...secondaryElements] : [...secondaryElements, primaryElement]}</>
     );
 
-    const stopControl = props.run.availability.cancel && props.onCancel !== undefined ? (
+    const stopControl = stopAvailable && !stopFolded ? (
         // Stop is bordered and neutral: a healthy run is never tinted (07 §3).
         <ToolbarButton
             key="stop"
@@ -1317,11 +1326,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             {...(primaryAction === 'stop' ? { tone: 'primary' as const } : {})}
             icon={<Icon name="stop" size={ICON_SIZE.sm}
                 color={primaryAction === 'stop' ? theme.colors.button.primary.tint : theme.colors.text.secondary} />}
-            label={props.pendingControl === 'cancel'
-                ? t('workflows.run.stopping')
-                : props.cancelRequested === true
-                    ? t('workflows.run.stopAgain')
-                    : t('workflows.run.stop')}
+            label={stopLabel}
             size="md"
         />
     ) : null;
@@ -1362,7 +1367,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         || (onRunAgain !== undefined && !runAgainFolded) || (onAnotherRound !== undefined && !anotherRoundFolded)
         || (terminalOutcome !== null && (terminalOutcome.kind !== 'result_absent' || props.view !== 'steps'))
         || (props.run.availability.pause && props.onPause !== undefined)
-        || (props.run.availability.cancel && props.onCancel !== undefined);
+        || (stopAvailable && !stopFolded);
     const pageStateControls = phone && props.embedded !== true && hasStateControls;
     const runControls = (
         <View style={[styles.headerControls, outcomeUndecided ? styles.headerControlsHeld : null]}>

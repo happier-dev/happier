@@ -13264,6 +13264,7 @@ const pt: ReviewWalkthroughTranslations = {
         reviewHabitOffDescription: 'Você ainda pode iniciar uma a qualquer momento.',
         reviewHabitReviewers: 'Quem revisa',
         reviewHabitReviewersDetail: 'As descobertas chegam em Revisões',
+        reviewHabitReviewersOn: ({ reviewer }: { reviewer: string }) => `${reviewer} · as descobertas chegam em Revisões`,
         reviewAfterEachTurn: 'Revisar após cada turno',
         reviewSuggestionUnreviewed: ({ count }: Count) => count === 1 ? '1 arquivo alterado não foi revisado.' : `${count} arquivos alterados não foram revisados.`,
         reviewSuggestionReviewThem: ({ count }: Count) => count === 1 ? 'Revisá-lo' : 'Revisá-los',

@@ -13298,6 +13298,7 @@ const pl: ReviewWalkthroughTranslations = {
         reviewHabitOffDescription: 'Nadal możesz rozpocząć go w dowolnym momencie.',
         reviewHabitReviewers: 'Kto przegląda',
         reviewHabitReviewersDetail: 'Uwagi trafiają do Przeglądów',
+        reviewHabitReviewersOn: ({ reviewer }: { reviewer: string }) => `${reviewer} · uwagi trafiają do Przeglądów`,
         reviewAfterEachTurn: 'Przeglądaj po każdej turze',
         reviewSuggestionUnreviewed: ({ count }: Count) => count === 1 ? '1 zmieniony plik nie został przejrzany.' : `Zmienione pliki (${count}) nie zostały przejrzane.`,
         reviewSuggestionReviewThem: ({ count }: Count) => count === 1 ? 'Przejrzyj go' : 'Przejrzyj je',

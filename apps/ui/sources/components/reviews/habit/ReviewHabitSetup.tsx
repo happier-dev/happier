@@ -190,12 +190,13 @@ function ReviewHabitReviewersRow(
   }>,
 ) {
   const who = useExecutableParticipantLabel(props.reviewers, props.serverId, props.reviewers.length > 0);
-  const where = t('reviewWalkthrough.detail.reviewHabitReviewersDetail');
   return (
     <Item
       testID="review-habit-reviewers"
       title={t('reviewWalkthrough.detail.reviewHabitReviewers')}
-      subtitle={who ? `${who} \u00b7 ${where}` : where}
+      // Who and where it lands read as one sentence (lab `session-habit`).
+      subtitle={who ? t('reviewWalkthrough.detail.reviewHabitReviewersOn', { reviewer: who })
+        : t('reviewWalkthrough.detail.reviewHabitReviewersDetail')}
       onPress={props.onPress}
     />
   );

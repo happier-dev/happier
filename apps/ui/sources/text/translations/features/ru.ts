@@ -13298,6 +13298,7 @@ const ru: ReviewWalkthroughTranslations = {
         reviewHabitOffDescription: 'Вы всегда можете начать обзор вручную.',
         reviewHabitReviewers: 'Кто проверяет',
         reviewHabitReviewersDetail: 'Замечания попадают в Обзоры',
+        reviewHabitReviewersOn: ({ reviewer }: { reviewer: string }) => `${reviewer} · замечания попадают в Обзоры`,
         reviewAfterEachTurn: 'Проверять после каждого хода',
         reviewSuggestionUnreviewed: ({ count }: Count) => count === 1 ? '1 изменённый файл не проверен.' : `Изменённые файлы не проверены: ${count}.`,
         reviewSuggestionReviewThem: (_: Count) => 'Проверить',

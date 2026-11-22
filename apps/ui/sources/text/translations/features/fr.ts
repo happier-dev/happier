@@ -13289,6 +13289,7 @@ const fr: ReviewWalkthroughTranslations = {
         reviewHabitOffDescription: 'Vous pouvez toujours en lancer une à tout moment.',
         reviewHabitReviewers: 'Qui relit',
         reviewHabitReviewersDetail: 'Les constats arrivent dans Revues',
+        reviewHabitReviewersOn: ({ reviewer }: { reviewer: string }) => `${reviewer} · les constats arrivent dans Revues`,
         reviewAfterEachTurn: 'Relire après chaque tour',
         reviewSuggestionUnreviewed: ({ count }: Count) => count === 1 ? '1 fichier modifié n\'a pas été relu.' : `${count} fichiers modifiés n\'ont pas été relus.`,
         reviewSuggestionReviewThem: ({ count }: Count) => count === 1 ? 'Le relire' : 'Les relire',

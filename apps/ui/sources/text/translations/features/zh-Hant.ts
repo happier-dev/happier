@@ -13162,6 +13162,7 @@ const zhHant: ReviewWalkthroughTranslations = {
         reviewHabitOffDescription: '你仍可隨時手動開始審查。',
         reviewHabitReviewers: '由誰審查',
         reviewHabitReviewersDetail: '發現會出現在審查中',
+        reviewHabitReviewersOn: ({ reviewer }: { reviewer: string }) => `${reviewer} · 發現會出現在審查中`,
         reviewAfterEachTurn: '每輪後審查',
         reviewSuggestionUnreviewed: ({ count }: Count) => `${count} 個變更的檔案尚未審查。`,
         reviewSuggestionReviewThem: (_: Count) => '審查它們',

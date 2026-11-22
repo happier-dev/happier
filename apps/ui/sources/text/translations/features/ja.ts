@@ -13222,6 +13222,7 @@ const ja: ReviewWalkthroughTranslations = {
         reviewHabitOffDescription: 'いつでも手動で開始できます。',
         reviewHabitReviewers: 'レビュー担当',
         reviewHabitReviewersDetail: '結果はレビューに届きます',
+        reviewHabitReviewersOn: ({ reviewer }: { reviewer: string }) => `${reviewer} · 結果はレビューに届きます`,
         reviewAfterEachTurn: 'ターンごとにレビュー',
         reviewSuggestionUnreviewed: ({ count }: Count) => `変更された ${count} 個のファイルがまだレビューされていません。`,
         reviewSuggestionReviewThem: (_: Count) => 'レビューする',

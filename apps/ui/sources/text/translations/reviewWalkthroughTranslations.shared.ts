@@ -168,6 +168,7 @@ export type ReviewWalkthroughTranslations = {
         reviewHabitOffDescription: string;
         reviewHabitReviewers: string;
         reviewHabitReviewersDetail: string;
+        reviewHabitReviewersOn: (params: Readonly<{ reviewer: string }>) => string;
         reviewAfterEachTurn: string;
         reviewSuggestionUnreviewed: (params: Count) => string;
         reviewSuggestionReviewThem: (params: Count) => string;
@@ -449,6 +450,7 @@ export const en: ReviewWalkthroughTranslations = {
         reviewHabitOffDescription: 'You can still start one any time.',
         reviewHabitReviewers: 'Who reviews',
         reviewHabitReviewersDetail: 'Findings land in Reviews',
+        reviewHabitReviewersOn: ({ reviewer }: { reviewer: string }) => `${reviewer} · findings land in Reviews`,
         reviewAfterEachTurn: 'Review after each turn',
         reviewSuggestionUnreviewed: ({ count }: Count) => count === 1 ? '1 changed file hasn\'t been reviewed.' : `${count} changed files haven\'t been reviewed.`,
         reviewSuggestionReviewThem: ({ count }: Count) => count === 1 ? 'Review it' : 'Review them',

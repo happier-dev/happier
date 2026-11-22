@@ -2627,6 +2627,35 @@ describe('WorkflowRunContent', () => {
     expect(listed).not.toContain('workflows.run.attentionWaitRow');
   });
 
+  it('moves the header Stop into ⋯ while the open Wait-for-you card offers Stop beside Continue (U8 R5 A6)', async () => {
+    const definition = createWorkflowDefinitionFixture({
+      blocks: [{ kind: 'wait', id: 'approve', name: 'Approve pull request setup',
+        document: { text: 'Continue to prepare the PR, or stop this run.', references: [], attachments: [] } }],
+    });
+    const onCancel = vi.fn();
+    const base = {
+      definition,
+      run: createWorkflowRunSummaryFixture({ id: 'run-1', state: 'waiting_for_review' }),
+      invocations: [
+        createWorkflowInvocationIndexFixture({ id: 'root', parentRecordId: null, memberOrdinal: '0', sequence: '0' }),
+        createWorkflowInvocationIndexFixture({
+          id: 'held', parentRecordId: 'root', memberOrdinal: '0', sequence: '1', lifecycle: 'waiting_for_review',
+        }),
+      ],
+      onCancel,
+      renderReviewCard: () => React.createElement('ReviewSlot'),
+    } as const;
+    const open = await renderContent({ ...base, selectedInvocationId: 'held' });
+    // One Stop on the page: the card's, beside Continue. The run's own Stop is still one press away in ⋯.
+    expect(open.findByTestId('workflow-run-cancel')).toBeNull();
+    const menu = open.findAllByType(ItemRowActions).flatMap((node) => node.props.actions as readonly { id: string }[]);
+    expect(menu.map((action) => action.id)).toContain('workflow-run-cancel');
+    await open.unmount();
+    // With no card open the header keeps its Stop.
+    const closed = await renderContent({ ...base, selectedInvocationId: null });
+    expect(closed.findByTestId('workflow-run-cancel')).toBeTruthy();
+  });
+
   it.each([
     ['running', 'running', 'runningStepSentence'],
     ['running', 'waiting_for_review', 'attentionReviewSentence'],

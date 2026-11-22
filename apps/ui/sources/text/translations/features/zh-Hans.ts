@@ -13162,6 +13162,7 @@ const zhHans: ReviewWalkthroughTranslations = {
         reviewHabitOffDescription: '你仍可随时手动开始审查。',
         reviewHabitReviewers: '由谁审查',
         reviewHabitReviewersDetail: '发现会出现在审查中',
+        reviewHabitReviewersOn: ({ reviewer }: { reviewer: string }) => `${reviewer} · 发现会出现在审查中`,
         reviewAfterEachTurn: '每轮后审查',
         reviewSuggestionUnreviewed: ({ count }: Count) => `${count} 个更改的文件尚未审查。`,
         reviewSuggestionReviewThem: (_: Count) => '审查它们',
