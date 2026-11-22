@@ -386,7 +386,7 @@ export function DeploymentDatabasePage(
       const inventory = await actions.backupInventory(factsInput);
       const dump = backupConfiguration?.sources.find((source) => source.kind === 'dump' && source.service === database.data.service);
       return deploymentBackupCaptureChoices({ inventory, target, deploymentId: activeId,
-        sourceId: dump?.sourceId ?? null,
+        sourceId: dump?.sourceId ?? null, backupSources: backupConfiguration?.sources,
         service: database.data.service, database: retainedBackup?.service === database.data.service ? retainedBackup.database : '', retainedChoice });
     } catch (error) {
       // The kept capture is still restorable through its own receipt when the inventory can't be read.

@@ -1,4 +1,4 @@
-import { DeploymentRestorePreparationV1Schema, type DeploymentRestorePreparationV1 } from '@happier-dev/deployments/contracts/v1';
+import { DeploymentRestorePreparationV1Schema, type DeploymentBackupSourceV1, type DeploymentRestorePreparationV1 } from '@happier-dev/deployments/contracts/v1';
 import { DeploymentNativeSnapshotOfferV1Schema, DeploymentNativeSnapshotUnavailableV1Schema, type DeploymentNativeSnapshotOfferV1, type DeploymentNativeSnapshotUnavailableV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentBackupRestoreResultV1 } from '@happier-dev/protocol';
 import type { DeploymentBackupInventoryResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
@@ -123,8 +123,10 @@ export function deploymentBackupCaptureChoices(input: Readonly<{
   sourceId: string | null;
   service: string;
   database: string;
+  backupSources?: readonly DeploymentBackupSourceV1[];
   retainedChoice?: DeploymentRestoreChoice | null;
 }>): readonly DeploymentBackupCaptureChoice[] {
+  const sources = new Map(input.backupSources?.map(source => [source.sourceId, source]));
   const listed = input.inventory.snapshots.map((entry): DeploymentBackupCaptureChoice => {
     const snapshotId = entry.snapshot.snapshotId;
     const takenAtMs = Date.parse(entry.snapshot.time);
@@ -134,7 +136,10 @@ export function deploymentBackupCaptureChoices(input: Readonly<{
       deploymentId: input.deploymentId, snapshotId, backupOperationId: run,
     } : null;
     if (snapshotId === input.retainedChoice?.snapshotId) return { ...input.retainedChoice, copyFrom };
-    return { snapshotId, takenAtMs, kind: 'scheduled', copyFrom, restore: run ? {
+    const source = entry.source ? sources.get(entry.source.sourceId) : undefined;
+    return { snapshotId, takenAtMs, kind: 'scheduled', copyFrom,
+      ...(source && source.kind === entry.source?.kind ? { backupSource: source } : {}),
+      restore: run ? {
       backup: { deploymentId: input.deploymentId, restoreBackupId: snapshotId, takenAtMs,
         service: input.service, database: input.database, versionLabel: null },
       operands: { ...input.target, deploymentId: input.deploymentId,

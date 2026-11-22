@@ -30,6 +30,7 @@ import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { randomUUID } from '@/platform/randomUUID';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 
+import type { DeploymentBackupSourceV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentUiRestoreInput } from './deploymentActions';
 import { readDeploymentActionError } from './deploymentActionOutcome';
 import {
@@ -76,6 +77,7 @@ export type DeploymentRestoreChoice = Readonly<{
   snapshotId: string;
   takenAtMs: number;
   kind: 'beforeMigration' | 'scheduled';
+  backupSource?: DeploymentBackupSourceV1;
   restore: Readonly<{ backup: DeploymentRetainedBackup; operands: DeploymentRestoreOperands }> | null;
 }>;
 type Choices =
@@ -409,13 +411,19 @@ function DeploymentRestoreSheet(
             ) : choices.choices.map((choice) => {
               const kind = choice.kind === 'beforeMigration'
                 ? t('projects.deployments.restorePointBeforeMigration') : t('projects.deployments.restorePointScheduled');
+              const source = choice.backupSource;
+              const label = source?.kind === 'dump'
+                ? t('projects.deployments.backupSourceDump', { service: source.service })
+                : source?.kind === 'volume'
+                  ? t('projects.deployments.backupSourceVolume', { service: source.service, volume: source.volume })
+                  : kind;
               const chosen = choice.restore;
               return (
                 <Item
                   key={choice.snapshotId}
                   testID={`project-deployments.restore.choice.${choice.snapshotId}`}
                   title={formatAsOfTime(choice.takenAtMs)}
-                  subtitle={chosen ? kind : t('projects.deployments.restorePointNotYet', { kind })}
+                  subtitle={chosen ? label : t('projects.deployments.restorePointNotYet', { kind: label })}
                   disabled={!chosen}
                   {...(chosen ? { onPress: () => { setTarget(chosen); setStep({ kind: 'check' }); } } : { mode: 'info' as const })}
                 />

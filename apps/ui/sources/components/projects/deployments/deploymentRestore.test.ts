@@ -72,9 +72,14 @@ describe('database backup capture choices', () => {
     const retainedChoice = { snapshotId: backup.restoreBackupId, takenAtMs: backup.takenAtMs,
       kind: 'beforeMigration' as const, restore: { backup, operands: { ...target,
         deploymentId: backup.deploymentId, source: { kind: 'repository' as const, snapshotId: backup.restoreBackupId } } } };
+    const dump = { kind: 'dump', sourceId: 'shop', service: 'postgres', consistency: 'logical' } as const;
+    const volume = { kind: 'volume', sourceId: 'files', service: 'postgres', volume: 'postgres-data', consistency: 'stopDuringCopy' } as const;
     const choices = deploymentBackupCaptureChoices({ inventory, target, deploymentId: 'current-deploy',
-      sourceId: 'shop', service: 'postgres', database: 'shop', retainedChoice });
+      sourceId: 'shop', service: 'postgres', database: 'shop', backupSources: [dump, volume], retainedChoice });
     expect(choices.map(choice => choice.snapshotId)).toEqual(['c'.repeat(64), 'b'.repeat(64), 'a'.repeat(64), 'e'.repeat(64), 'd'.repeat(64)]);
+    expect(choices.find(choice => choice.snapshotId === 'c'.repeat(64))).toMatchObject({ backupSource: volume });
+    expect(choices.find(choice => choice.snapshotId === 'a'.repeat(64))).toMatchObject({ backupSource: dump });
+    expect(choices.find(choice => choice.snapshotId === 'e'.repeat(64))).not.toHaveProperty('backupSource');
     expect(choices.find(choice => choice.snapshotId === 'a'.repeat(64))?.copyFrom).toEqual({
       environmentId: target.environmentId, targetLinkId: target.targetLinkId, deploymentId: 'current-deploy',
       snapshotId: 'a'.repeat(64), backupOperationId: 'exact-source-run',
