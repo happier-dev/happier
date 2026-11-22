@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { areSameAgentRoutingIdentity } from '@happier-dev/agents';
 import { HappierDataMetric, UsageSourceCoverageBody } from '@happier-dev/plugin-ui/presentation';
-import type { UsageAnalyticsCoverage, UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import type { UsageAnalyticsCoverage } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { addUsageMeasurements } from '@happier-dev/protocol/usage/usageAggregation';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { usageSourceAgentId } from '@/sync/domains/usage/usageLabels';
@@ -19,18 +19,10 @@ import { UsageBodyInsufficient, UsageBodyNoUsage, UsageCoverageLine, UsageShowAl
   usageCoverageDescription, usageCoverageSummary, usagePeriodPhrase, usageSourceTitle, useUsagePluginTheme, type UsageBodyProps } from './usageBodyKit';
 
 const statusKeys = {
-  available: 'usage.board.sources.coverageAvailable', partial: 'usage.board.page.factIncomplete',
+  available: 'usage.board.coach.coverage_complete', partial: 'usage.board.page.factIncomplete',
   unknown: 'usage.board.sources.coverageUnknown', unsupported: 'usage.board.sources.unsupported',
   pending: 'usage.board.page.loading', error: 'usage.board.sources.failed',
 } as const;
-type AgentCostBasis = NonNullable<UsageAnalyticsQueryResponse['agentCostBasis']>;
-const costBasisKeys = {
-  reported: 'usage.board.sources.coverageHowMeasured',
-  estimated: 'usage.board.sources.coverageHowEstimated',
-  invoice: 'usage.board.page.kindInvoice',
-  unpriced: 'usage.board.page.kindUnpriced',
-} as const satisfies Record<AgentCostBasis[number]['kinds'][number], string>;
-
 /** Witnessed accounting coverage, never a guessed Agent support table or a second discovery read. */
 export function UsageSourceCoverageWidget(props: UsageBodyProps) {
   const theme = useUsagePluginTheme();
@@ -42,7 +34,7 @@ export function UsageSourceCoverageWidget(props: UsageBodyProps) {
   const summary = props.slice.accounting ? usageCoverageSummary(props.slice, ['accounting']) : null;
   // A status every row shares is said once, by the caveat line under the rows, never again on each row.
   const rows = React.useMemo(() => groupCoverageRows(props.slice.accounting?.coverage?.sources ?? [],
-    props.slice.accounting?.agentCostBasis ?? [], summary === usagePartialHistoryLabel()),
+    summary === usagePartialHistoryLabel()),
     [props.slice.accounting, summary]);
   const led = leadingUsageRows(rows, expanded);
   // Which captures each Agent's usage comes from is secondary detail: one disclosure under the rows, reachable by
@@ -76,10 +68,9 @@ type CoverageGroup = { agentId: string | null; title: string; captures: Set<stri
 
 /**
  * Coverage shows one row per Agent (its routing identity, through the source's declaration; the title is display
- * only). Its line describes the accounting population's cost basis. A
- * capture that names no Agent keeps its own row. Several capture paths can share an Agent and a Machine.
+ * only). A capture that names no Agent keeps its own row. Several capture paths can share an Agent and a Machine.
  */
-function groupCoverageRows(sources: readonly UsageAnalyticsCoverage['sources'][number][], costBasis: AgentCostBasis, partialSaid: boolean) {
+function groupCoverageRows(sources: readonly UsageAnalyticsCoverage['sources'][number][], partialSaid: boolean) {
   const groups: CoverageGroup[] = [];
   for (const source of sources) {
     const agentId = usageSourceAgentId(source.source);
@@ -101,16 +92,12 @@ function groupCoverageRows(sources: readonly UsageAnalyticsCoverage['sources'][n
   }
   // One status per row, the most limiting one.
   const shared = partialSaid && groups.every(group => group.status === 'partial');
-  return groups.map(({ agentId, title, captures, status, machines, unbound }) => {
-    const kinds = agentId === null ? [] : [...new Set(costBasis
-      .filter(basis => areSameAgentRoutingIdentity(agentId, basis.agentId)).flatMap(basis => basis.kinds))];
-    const how = kinds.length ? kinds.map(kind => t(costBasisKeys[kind])).join(' · ')
-      : t('usage.board.sources.coverageHowUnknown');
-    return { title,
-      label: [how, !unbound && machines.size > 1 ? t('usage.board.page.machinesCount', { count: machines.size }) : null,
-        shared ? null : t(statusKeys[status])].filter(Boolean).join(' · '),
-      ...(captures.size > 0 ? { captures: [...captures].join(', ') } : {}) };
-  });
+  return groups.map(({ title, captures, status, machines, unbound }) => ({
+    title,
+    label: [!unbound && machines.size > 1 ? t('usage.board.page.machinesCount', { count: machines.size }) : null,
+      shared ? null : t(statusKeys[status])].filter(Boolean).join(' · '),
+    ...(captures.size > 0 ? { captures: [...captures].join(', ') } : {}),
+  }));
 }
 
 type CoverageStatus = 'error' | 'unsupported' | 'partial' | 'unknown' | 'pending' | 'available';

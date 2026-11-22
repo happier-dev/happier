@@ -12,7 +12,7 @@ import { repriceUsageAnalyticsResponse} from '@happier-dev/protocol/usage/usageC
 import { type UsageAnalyticsContribution } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { addUsageMeasuredTokens, createEmptyUsageTokens } from '@happier-dev/protocol/usage/usageAggregation';
 import { allocateUsageOutcomes } from '@happier-dev/protocol/usage/usageOutcomeAllocation';
-import { UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { UsageAnalyticsQueryRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { resolveUsageTokenCategories } from '@happier-dev/protocol/usage/usageTokenCategories';
 import { projectUsageAnalyticsSummary } from '@happier-dev/protocol/usage/usageCost';
 import { ScmPullRequestWorkEvidenceSchema } from '@happier-dev/protocol/scm/pullRequests';
@@ -509,50 +509,22 @@ describe('one selected money basis across Usage bodies', () => {
     await screen.update(<UsageUnpricedWidget {...props} slice={{ ...props.slice, costFactTotals: [] }} id="usage_unpriced" testID="unpriced" />);
     expect(screen.findAllByType(HappierDataMetric).find(metric => metric.props.testID === 'unpriced.tokens')?.props.value).toBe(0);
   });
-  it.each(['rich', 'compact'] as const)('explains the witnessed money basis in %s Sources coverage', async (delivery) => {
+  it.each([
+    { historyComplete: true, rowStatus: t('usage.board.coach.coverage_complete') },
+    { historyComplete: false, rowStatus: '' },
+    { historyComplete: undefined, rowStatus: t('usage.board.sources.coverageUnknown') },
+  ])('uses only capture coverage in Sources when historyComplete=$historyComplete', async ({ historyComplete, rowStatus }) => {
     const props = mountedCosts();
-    const { coverage: _coverage, ...accounting } = props.slice.accounting!;
-    const source = 'runtime:codex';
-    const row = { ...accounting.contributions![0]!, agentId: 'codex', source,
-      cost: { reportedUsd: null, estimatedUsd: null, currency: 'USD', costSource: 'none' as const } };
-    const priced = { ...row, modelId: 'gpt-5.4' };
-    const reported = { ...priced, id: 'provider-reported', cost: { ...row.cost, reportedUsd: 1, costSource: 'provider_reported' as const } };
-    const unpriced = { ...row, id: 'no-price', modelId: 'no-known-test-tariff' };
-    const raw = { v: 1 as const, totals: accounting.totals, coverage: {
-      status: 'complete' as const, reasons: [], missingDimensions: [], ranked: [],
-      range: { startMs: 0, endMs: day, complete: true },
-      sources: [{ source, path: 'runtime' as const, status: 'available' as const,
-        eventCount: 1, captureKind: 'measured' as const, historyComplete: true }],
-    } };
-    const renderBasis = async (contributions: UsageAnalyticsContribution[]) => {
-      const input = { ...raw, contributions };
-      const query = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 0, endMs: day } });
-      const prepared = delivery === 'rich' ? input : projectUsageAnalyticsSummary(input, query);
-      const wire = UsageAnalyticsQueryResponseSchema.parse(JSON.parse(JSON.stringify(prepared)));
-      const value = repriceUsageAnalyticsResponse(wire, bundledUsageModelPriceCatalog);
-      const slice = resolveUsagePageAggregation({ queries: [props.query], accounting: [
-        { query: props.query, status: 'available', value },
-      ] }, bundledUsageModelPriceCatalog).results[0]!;
-      return (await renderScreen(<UsageSourceCoverageWidget {...props} slice={slice} id="usage_source_coverage"
-        testID="coverage" />)).findByType(HappierDataRows).props.rows[0][1] as string;
-    };
-    const estimatedLabel = t('usage.board.sources.coverageHowEstimated');
-    const reportedLabel = t('usage.board.sources.coverageHowMeasured');
-    const estimateOnly = await renderBasis([priced]);
-    expect(estimateOnly).toContain(estimatedLabel);
-    expect(estimateOnly).not.toContain(reportedLabel);
-    const reportOnly = await renderBasis([reported]);
-    expect(reportOnly).toContain(reportedLabel);
-    expect(reportOnly).not.toContain(estimatedLabel);
-    const noPrice = await renderBasis([unpriced]);
-    expect(noPrice).toContain(t('usage.board.page.kindUnpriced'));
-    expect(noPrice).not.toContain(reportedLabel);
-    expect(await renderBasis([])).toContain(t('usage.board.sources.coverageHowUnknown'));
-    expect(await renderBasis([{ ...reported, agentId: 'claude', source: 'runtime:claude' }]))
-      .toContain(t('usage.board.sources.coverageHowUnknown'));
-    const mixed = await renderBasis([priced, reported]);
-    expect(mixed).toContain(reportedLabel);
-    expect(mixed).toContain(estimatedLabel);
+    const accounting = { ...props.slice.accounting!, coverage: { status: 'complete' as const,
+      reasons: [], missingDimensions: [], range: { startMs: 0, endMs: day, complete: true }, ranked: [],
+      sources: [{ source: 'claude-sdk-result', path: 'runtime' as const, status: 'available' as const,
+        eventCount: 1, captureKind: 'measured' as const, historyComplete }] } };
+    const slice = resolveUsagePageAggregation({ queries: [props.query], accounting: [
+      { query: props.query, status: 'available', value: accounting },
+    ] }, bundledUsageModelPriceCatalog).results[0]!;
+    const screen = await renderScreen(<UsageSourceCoverageWidget {...props} slice={slice} id="usage_source_coverage" testID="coverage" />);
+    expect(screen.findByType(HappierDataRows).props.rows).toEqual([[usageAgentTitle('claude'), rowStatus]]);
+    if (historyComplete === false) expect(screen.getTextContent()).toContain(usagePartialHistoryLabel());
   });
   it('renders witnessed source coverage and the canonical incomplete-range reasons instead of claiming a complete inventory', async () => {
     const props = mountedCosts();
@@ -563,7 +535,6 @@ describe('one selected money basis across Usage bodies', () => {
     const slice = resolveUsagePageAggregation({ queries: [props.query], accounting: [{ query: props.query, status: 'available', value: accounting }] }, bundledUsageModelPriceCatalog).results[0]!;
     const screen = await renderControls(<UsageSourceCoverageWidget {...props} slice={slice} id="usage_source_coverage" testID="coverage" />);
     expect(screen.findByType(HappierDataRows).props.rows).toHaveLength(1);
-    expect(screen.getTextContent()).toContain(t('usage.board.sources.coverageHowUnknown'));
     // Every row's status is the one the caveat line under the rows already says: it is said once, there (USAGE-ACCEPT 1118 #14).
     expect(screen.findByType(HappierDataRows).props.rows[0][1]).not.toContain(t('usage.board.page.factIncomplete'));
     // The caveat is one compact line; its reasons are one press away, never a paragraph under the rows.
@@ -606,11 +577,10 @@ describe('one selected money basis across Usage bodies', () => {
     const summaries = await mount([{ ...source, source: 'claude-sdk-result' }]);
     await summaries.pressByTestIdAsync('coverage.captures-header');
     expect(summaries.getTextContent()).toContain(`${usageAgentTitle('claude')}: ${usageSourceTitle('claude-sdk-result')}`);
-    // Without monetary evidence, both captures have an unknown cost basis.
     const unknown = await rowsOf([{ ...source, source: 'acp-usage-update', captureKind: undefined }]);
-    expect(unknown[0]![1]).toContain(t('usage.board.sources.coverageHowUnknown'));
+    expect(unknown[0]![1]).toBe(t('usage.board.coach.coverage_complete'));
     const logs = await rowsOf([{ ...source, source: 'codex-native-accounting', captureKind: 'from_logs' }]);
-    expect(logs[0]![1]).toContain(t('usage.board.sources.coverageHowUnknown'));
+    expect(logs[0]![1]).toBe(t('usage.board.coach.coverage_complete'));
   });
   it('lists source coverage as a short led list: identical captures across machines say so once with a count, distinct ones fold behind Show all', async () => {
     const props = mountedCosts();
@@ -623,8 +593,7 @@ describe('one selected money basis across Usage bodies', () => {
       slice={coverageOf([...Array.from({ length: 30 }, (_, index) => ({ ...source, source: 'claude-assistant-usage', machineId: `machine-${index}` })), { ...source, source: 'codex-token-count' }])} />);
     expect(twins.findByType(HappierDataRows).props.rows).toHaveLength(2);
     expect(twins.getTextContent()).toContain('30');
-    // The Claude fixture has reported money even though its capture coverage is uncertain.
-    expect(twins.getTextContent()).toContain(t('usage.board.sources.coverageHowMeasured'));
+    expect(twins.getTextContent()).toContain(t('usage.board.sources.coverageUnknown'));
     const runtime = await renderScreen(<UsageSourceCoverageWidget {...props} id="usage_source_coverage" testID="coverage"
       slice={coverageOf([
         { ...source, source: 'runtime:codex', machineId: 'codex-machine' },

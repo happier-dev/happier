@@ -1,5 +1,5 @@
 import { bundledUsageModelPriceCatalog } from './usageModelPriceCatalog.js';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { UsageAnalyticsBreakdownDimensionSchema, UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema, UsagePricingPopulationSchema, type UsageAnalyticsContribution, type UsageAnalyticsQueryRequest, type UsageAnalyticsQueryResponse } from './usageAnalyticsContracts.js';
 import * as usageCost from './usageCost.js';
 import { projectUsageAgentAccountingCalendar, projectUsageAgentCalendar, UsageAgentCalendarSchema } from './usageAgentCalendar.js';
@@ -13,6 +13,7 @@ import { projectUsageAccountingSnapshotPrices } from './resolveUsagePageAggregat
 import type { UsageModelPriceOverridesV1 } from './usageModelPriceCatalog.js';
 import { readUsageMoney, withUsageMoney } from './usageMoney.js';
 import { projectUsagePageCost, resolveUsageCostFacts } from './usageCostFacts.js';
+import * as usageCostFacts from './usageCostFacts.js';
 import { buildUsagePricedPartition, buildUsagePricingPopulation, mergeUsagePricingPopulations, priceUsagePricingPopulation, resolveUsagePricingPopulationStates } from './usagePricingPopulation.js';
 import { projectUsageAnalyticsResponseDemand } from './usageAnalyticsDemandProjection.js';
 import * as usageSummary from './usageSummary.js';
@@ -38,6 +39,25 @@ function response(rows: UsageAnalyticsContribution[]): UsageAnalyticsQueryRespon
         coverage: { status: 'complete', reasons: [], missingDimensions: [], ranked: [], range: { startMs: 0, endMs: 86_400_000, complete: true },
             sources: [{ source: 'runtime', path: 'runtime', machineId: 'machine', status: 'available', eventCount: rows.length, historyComplete: true }] } }, catalog);
 }
+
+it.each([128, 256])('keeps the pricing fact extraction budget for %i rich rows with Sources coverage', rowCount => {
+    const rows = Array.from({ length: rowCount }, (_, index) => contribution(index));
+    const raw: UsageAnalyticsQueryResponse = { v: 1, contributions: rows, totals: { eventCount: rowCount,
+        tokens: rows.reduce((sum, row) => addUsageTokens(sum, row.tokens), createEmptyUsageTokens()),
+        cost: aggregateUsageContributionCosts(rows, 'auto') },
+        coverage: { status: 'complete', reasons: [], missingDimensions: [], ranked: [],
+            range: { startMs: 0, endMs: 86_400_000, complete: true },
+            sources: [{ source: 'runtime', path: 'runtime', status: 'available', eventCount: rowCount, historyComplete: true }] } };
+    // 2e29b28d034^ observed two calls per rich row: source facts and tariff grouping.
+    const reads = vi.spyOn(usageCostFacts, 'resolveUsageCostFacts');
+    try {
+        const result = usageCost.repriceUsageAnalyticsResponse(raw, catalog);
+        expect(result.totals.eventCount).toBe(rowCount);
+        expect(reads).toHaveBeenCalledTimes(2 * rowCount);
+    } finally {
+        reads.mockRestore();
+    }
+});
 
 it.each(UsageAnalyticsBreakdownDimensionSchema.options)('conserves admitted report money across %s groups through compact JSON repricing', dimension => {
     const covered = contribution(1, { cost: { ...cost, reportedTotalId: 'report' } });

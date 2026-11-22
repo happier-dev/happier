@@ -4037,8 +4037,6 @@ contract consumes them. Comparisons deliver their projected facts without raw
 rows. Explicit `usage.export` section selections still read the complete admitted
 accounting input. Private repricing consumes grouped tariff operands through the
 same exact arithmetic owner as rich pricing, without acquiring event rows.
-The optional `agentCostBasis` lists each Agent's witnessed monetary bases in the
-selected population and period, independent of ranking and display mode.
 Coach retains its explicitly demanded evidence inside the existing read owner
 before delivery. Public-profile preparation consumes bounded
 numeric facts and locally composed private projections. The external Action

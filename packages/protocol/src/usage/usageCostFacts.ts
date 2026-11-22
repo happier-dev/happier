@@ -46,30 +46,6 @@ export function resolveUsageCostFactForMode<Fact extends { kind: UsageAnalyticsC
   return undefined;
 }
 
-/** Keep only the basis used for each accounting operand, then retain every witnessed kind per Agent. */
-export function createUsageAgentCostBasis() {
-  type Basis = NonNullable<UsageAnalyticsQueryResponse['agentCostBasis']>[number];
-  const kindsByAgent = new Map<string, Set<Basis['kinds'][number]>>();
-  return {
-    add(agentIds: readonly string[], facts: readonly UsageCostBasis[]) {
-      if (agentIds.length === 0) return;
-      // Synthetic zero for a money-only operand proves no tariff and contributes no unpriced tokens.
-      const witnessed = resolveUsageCostFactForMode(facts.filter(fact => fact.source !== 'no_tokens'), 'auto');
-      if (!witnessed && facts.some(fact => fact.source === 'no_tokens')) return;
-      const kind = witnessed?.kind === 'api_equivalent' ? 'estimated' : witnessed?.kind ?? 'unpriced';
-      for (const agentId of agentIds) {
-        const kinds = kindsByAgent.get(agentId);
-        if (kinds) kinds.add(kind);
-        else kindsByAgent.set(agentId, new Set([kind]));
-      }
-    },
-    values(): Basis[] {
-      return [...kindsByAgent].map(([agentId, kinds]) => ({ agentId, kinds: [...kinds].sort() }))
-        .sort((a, b) => a.agentId.localeCompare(b.agentId));
-    },
-  };
-}
-
 /** Currency stays fixed; best available resolves witnessed kinds independently within each row. */
 export type UsagePageCostSelection = Readonly<Pick<UsageSelectedCostBasis, 'kind' | 'currency'> & { mode?: UsageCostMode }>;
 export type UsagePageCostProjection = Readonly<{

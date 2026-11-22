@@ -3,7 +3,7 @@ import { addUsageMeasuredTokens, addUsageTokens, createEmptyUsageCost, createEmp
 import { resolveUsageBucketBounds, resolveUsageCalendarInstant } from './usageCalendar.js';
 import { mergeUsageAccountingSessionMembership, projectUsageAccountingSessionIds, projectUsageAccountingSessionMembership, type UsageAccountingSessionMembership } from './usageAccountingMembership.js';
 import { projectUsageAgentAccountingCalendar, projectUsageCalendarAccountingFacts, resolveUsageAccountingCalendarPeriod, type UsageAgentAccountingHourFacts } from './usageAgentCalendar.js';
-import { buildUsageAdmittedPricingPopulation, mergeUsagePricingPopulations, withoutUsagePricingAgentIds, projectUsagePricingOperandSelections, type UsagePricingOperandSelection } from './usagePricingPopulation.js';
+import { buildUsageAdmittedPricingPopulation, mergeUsagePricingPopulations, projectUsagePricingOperandSelections, type UsagePricingOperandSelection } from './usagePricingPopulation.js';
 import { hasCompleteUsageCostEvidence } from './usageAnalyticsDemandProjection.js';
 import { BUNDLED_USAGE_MODEL_PRICE_REVISION } from './usageModelPriceSchemas.js';
 import { summarizeUsageExecutionSources } from './usageSourceSummary.js';
@@ -156,7 +156,7 @@ export function projectUsageActivityProjectionDayFacts(operands: readonly UsageA
         sessionIds: projectUsageAccountingSessionIds(rows), sessionMembership: projectUsageAccountingSessionMembership(rows),
         hours: [...hourly].sort(([a], [b]) => a - b).map(([startMs, agents]) => ({ startMs,
             agents: [...agents].map(([agentId, selected]) => ({ agentId, facts: projectUsageCalendarAccountingFacts(selected) })) })),
-        pricing: buildUsageAdmittedPricingPopulation(rows, selections, true, true), hourPricing: [...hourly].flatMap(([startMs, agents]) => [...agents].map(([agentId, selected]) => ({ startMs, agentId, population: population(selected) }))) };
+        pricing: population(rows), hourPricing: [...hourly].flatMap(([startMs, agents]) => [...agents].map(([agentId, selected]) => ({ startMs, agentId, population: population(selected) }))) };
 }
 
 /** Merge admitted dated operands, then use the existing calendar and repricing owners for presentation. */
@@ -184,7 +184,6 @@ export function mergeUsageActivityProjectionFacts(parts: readonly UsageActivityP
     const complete = hasCompleteUsageCostEvidence(value);
     const totalPricing = mergeUsagePricingPopulations(parts.map(part => part.pricing));
     const pricing: Record<string, UsagePricingPopulation> = { totals: complete ? totalPricing : { groups: totalPricing.groups.map(group => ({ ...group, complete: false })) } };
-    const calendarTotalPricing = withoutUsagePricingAgentIds(pricing.totals!);
     const contributionCount = parts.reduce((sum, part) => sum + part.contributionCount, 0);
     const endMs = query.dateRange?.endMs ?? coverage.range.endMs;
     const period = endMs === undefined ? undefined : resolveUsageAccountingCalendarPeriod({ accounting: value,
@@ -197,13 +196,12 @@ export function mergeUsageActivityProjectionFacts(parts: readonly UsageActivityP
         observationRange, catalogRevision: BUNDLED_USAGE_MODEL_PRICE_REVISION,
         ...(calendar && period ? { accountingCalendar: { value: calendar, pricing: Object.fromEntries(parts.flatMap(part => part.hourPricing)
             .map(hour => [usageSummaryCalendarHourPricingKey(Math.max(period.startMs, hour.startMs), hour.agentId),
-                resolveUsageSummaryCalendarWholePopulation(calendarTotalPricing, contributionCount,
+                resolveUsageSummaryCalendarWholePopulation(pricing.totals, contributionCount,
                     hour.population.groups.reduce((sum, group) => sum + group.contributionCount, 0)) ?? hour.population])) } } : {}),
         accounts: { unknownContributionCount: parts.reduce((sum, part) => sum + part.unknownAccountCount, 0),
             values: accountGroups.map(group => ({ ref: group.ref, contributionCount: group.contributionCount, pricedContributionCount: 0, apiEquivalentUsd: 0, pricingSources: [] })) },
         execution: { ...execution, groups: execution.groups.map(({ contributions: _rows, ...group }) => group) } },
         // The existing full projection appends the selected presentation before delivery admits membership.
-        agentCostBasis: undefined,
         costPresentation: undefined,
         sessionIds: [...new Set(parts.flatMap(part => part.sessionIds))],
         sessionMembership: mergeUsageAccountingSessionMembership(parts.map(part => part.sessionMembership)) };

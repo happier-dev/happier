@@ -522,8 +522,6 @@ const UsagePricingSelectionStateSchema = lazyZodSchema(() => z.enum(['plain', 'c
 /** Tariff-linear sufficient statistics, never observation or Session identities. */
 export const UsagePricingPopulationSchema = lazyZodSchema(() => z.strictObject({ groups: z.array(z.strictObject({
   modelId: z.nullable(z.string()), categories: z.nullable(UsageObservationTokensSchema),
-  /** Only the totals partition carries Agent identity for the cost evidence projection. */
-  agentIds: z.optional(z.array(z.string().check(z.minLength(1)))),
   categoryUnits: z.record(z.string(), UsageExactDecimalSchema), cost: UsageObservationCostSchema,
   costUnits: z.record(z.string(), UsageExactDecimalSchema),
   tokens: UsageAnalyticsTokensSchema,
@@ -583,11 +581,6 @@ export const UsageAnalyticsQueryResponseSchema = lazyZodSchema(() => z.strictObj
   messageStats: z.optional(UsageAnalyticsMessageStatsSchema),
   costPresentation: z.optional(UsageAnalyticsCostPresentationSchema),
   costFacts: z.optional(z.array(UsageAnalyticsCostFactSchema)),
-  /** Best available monetary evidence per Agent in the admitted period, independent of rank and display mode. */
-  agentCostBasis: z.optional(z.array(z.strictObject({
-    agentId: z.string().check(z.minLength(1)),
-    kinds: z.array(z.enum(['reported', 'estimated', 'invoice', 'unpriced'])).check(z.minLength(1)),
-  }))),
   priceCatalog: zMini.optional(UsageModelPriceCatalogSchema),
   coverage: z.optional(UsageAnalyticsCoverageSchema),
   contributions: z.optional(z.array(UsageAnalyticsContributionSchema)),
