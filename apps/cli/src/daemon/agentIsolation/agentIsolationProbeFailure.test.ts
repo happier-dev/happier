@@ -4,13 +4,26 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { Readable } from 'node:stream';
-import { expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { execFileWithDeadline } from '@happier-dev/cli-common/process';
 import { resolveBunCompilerCommand } from '../../../../../packages/cli-common/src/componentArtifacts/commands';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { encodeAgentLaunchFrame, readAgentLaunchFrame } from './agentLaunchFrame';
 import { deriveAgentIsolationMemberIdentity } from './provisioning';
 import { observeAgentIsolationMemberLaunchReadiness, type AgentIsolationReadinessSystem } from './agentIsolationReadiness';
+
+const scopeBoundary = vi.hoisted(() => ({ systemdRunPath: '' }));
+// Only user-manager discovery is substituted; the native frame and physical
+// readiness command below retain the real parser, material owner and capture.
+vi.mock('@happier-dev/cli-common/process', async importOriginal => {
+  const actual = await importOriginal<typeof import('@happier-dev/cli-common/process')>();
+  return { ...actual, execFileWithDeadline: async (...request: Parameters<typeof actual.execFileWithDeadline>) => {
+    if (scopeBoundary.systemdRunPath && request[0] === scopeBoundary.systemdRunPath) return { stdout: '--expand-environment=', stderr: '' };
+    if (scopeBoundary.systemdRunPath && request[1].includes('--property=ControlGroup')) return { stdout: 'ControlGroup=/user.slice/user@1001.service\n', stderr: '' };
+    return actual.execFileWithDeadline(...request);
+  } };
+});
+afterEach(() => { vi.unstubAllEnvs(); scopeBoundary.systemdRunPath = ''; });
 
 const current = userInfo();
 const bunCommand = (() => {
@@ -26,18 +39,25 @@ it.skipIf(process.platform !== 'linux' || current.uid <= 0 || current.gid <= 0).
   ...(bunCommand ? [{ runtime: 'Bun', command: bunCommand,
     sourceArgs: ['--conditions=happier-source'], preload: '--preload' },
     { runtime: 'Bun shell', command: bunCommand, sourceArgs: [], preload: '--preload' }] : []),
-])('preserves the exact native probe marker through the $runtime finite command boundary', async runtime => {
+])('preserves the exact native probe marker and jobs placement through the $runtime finite command boundary', async runtime => {
   await withTempDir('member-probe-entry-', async directory => {
     const home = join(directory, 'member');
     await mkdir(home, { mode: 0o700 });
+    scopeBoundary.systemdRunPath = join(directory, 'systemd-run');
+    await writeFile(scopeBoundary.systemdRunPath, '#!/bin/sh\n', { mode: 0o755 });
+    vi.stubEnv('PATH', `${directory}:${process.env.PATH ?? ''}`);
+    vi.stubEnv('DBUS_SESSION_BUS_ADDRESS', 'unix:path=/fixture/user-bus');
+    vi.stubEnv('XDG_RUNTIME_DIR', '/fixture/user-runtime');
     let nativeFrame: Awaited<ReturnType<typeof readAgentLaunchFrame>> | undefined;
+    let nativeLaunch: Readonly<{ command: string; args: readonly string[] }> | undefined;
     await observeAgentIsolationMemberLaunchReadiness({ installedCli: '/usr/bin/true',
       memberIdentity: { ...deriveAgentIsolationMemberIdentity({ homeServerIdentityId: 'home',
         requester: { serverId: 'profile', accountId: 'member', machineId: 'machine', installationId: 'installation' } }),
         username: 'happier-agent', agentUid: current.uid, agentGid: current.gid, home },
       // Capture the canonical host-authored command at its OS launch boundary.
       // The temporary account below uses the existing shared RunAs identity.
-      system: { run: async (_command, _args, options) => {
+      system: { run: async (command, args, options) => {
+        nativeLaunch = { command, args };
         nativeFrame = await readAgentLaunchFrame(Readable.from([options!.inputBytes!], { objectMode: false }));
         return { stdout: Buffer.from('member-native-ready\n'), stderr: Buffer.alloc(0) };
       } },
@@ -82,7 +102,7 @@ syncBuiltinESMExports();\n`);
           os.userInfo = () => ({ ...current, username: 'happier-agent', homedir: ${JSON.stringify(home)} });
         ` },
       });
-      entryArgs = [entry];
+      entryArgs = [...runtime.sourceArgs, entry];
     }
     // A native daemon also captures the shim with Bun's child_process adapter.
     // Keep that outer capture real instead of testing only a Bun child of Node.
@@ -109,6 +129,8 @@ process.stdout.write(JSON.stringify({ exitCode: error.code, stdoutLength: Buffer
     if (runtime.runtime === 'Node') expect(Buffer.from(result.stdout)).toEqual(Buffer.from('member-native-ready\n'));
     else expect(JSON.parse(String(result.stdout))).toEqual({ exitCode: 0, stdoutLength: 20, marker: true, stderrLength: 0 });
     expect(Buffer.from(result.stderr)).toEqual(Buffer.alloc(0));
+    expect(nativeLaunch?.command).toBe(scopeBoundary.systemdRunPath);
+    expect(nativeLaunch?.args).toContain('--slice=happier-jobs.slice');
   });
 // The real finite command owns completion. Cold source entry loading alone
 // exceeded the unit fixture's cutoff on the shared checkout; it is not a

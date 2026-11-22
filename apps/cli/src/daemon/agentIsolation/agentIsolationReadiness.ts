@@ -15,6 +15,7 @@ import { logger } from '@/ui/logger';
 import { createUnixAgentIdentityLaunch } from './unixAgentIdentityAdapter';
 import { isAgentIsolationMemberCliCurrent, resolveAgentIsolationSharedLaunchCli, type AgentIsolationMemberCliRuntime } from './memberCliRuntime';
 import { readAgentIsolationNativeIdentity, type AgentIsolationMemberNativeIdentity } from './agentIsolationNativeIdentity';
+import { buildCgroupProcessLaunchSpec, prepareCgroupProcessLaunchScope } from '@/daemon/platform/linux/buildCgroupSelfMigratingHappyCliLaunchSpec';
 
 /** Explicit launch preparation may qualify a successor's unknown shared-user
  * fact. Reads never call this port, and classified failures remain terminal. */
@@ -178,8 +179,11 @@ export async function observeAgentIsolationMemberLaunchReadiness(input: Readonly
       environment: { PATH: '/usr/bin:/bin', LC_ALL: 'C', READINESS_EXPECTED_USER: identity.username,
         READINESS_ALLOWED_GROUPS: String(identity.agentGid) },
       selectedEnvironmentKeys: ['READINESS_EXPECTED_USER', 'READINESS_ALLOWED_GROUPS'], selectedMaterials: [] });
-    const result = await (input.system?.run ?? execFileWithDeadline)(launch.command, launch.args,
-      { env: launch.env, inputBytes: launch.stdinPreamble, signal: input.signal, terminateOnAbort: terminateProcessTree });
+    const launchSpec = { filePath: launch.command, args: [...launch.args], env: launch.env };
+    const scope = await prepareCgroupProcessLaunchScope();
+    const scopedLaunch = scope ? buildCgroupProcessLaunchSpec({ launchSpec, scope }) : launchSpec;
+    const result = await (input.system?.run ?? execFileWithDeadline)(scopedLaunch.filePath, scopedLaunch.args,
+      { env: scopedLaunch.env, inputBytes: launch.stdinPreamble, signal: input.signal, terminateOnAbort: terminateProcessTree });
     input.signal?.throwIfAborted();
     return Buffer.from(result.stdout).equals(Buffer.from('member-native-ready\n'))
       ? { kind: 'member_native_ready', status: { kind: 'effective', platform: 'linux' },
