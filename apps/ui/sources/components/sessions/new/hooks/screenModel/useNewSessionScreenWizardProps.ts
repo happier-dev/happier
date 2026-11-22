@@ -101,6 +101,7 @@ export function useNewSessionScreenWizardProps(params: Readonly<{
         | 'providerModelGroups'
         | 'declarationContext'
         | 'providerModelProjectionAuthoritative'
+        | 'providerModelProjectionResolving'
         | 'providerModelProjectionError'
         | 'providerModelProjectionFailures'
         | 'retryProviderModelProjection'

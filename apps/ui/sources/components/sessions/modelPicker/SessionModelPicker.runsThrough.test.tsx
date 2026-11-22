@@ -213,14 +213,18 @@ describe('SessionModelPicker Runs through', () => {
         ...row,
         descriptor: { ...row.descriptor, description: 'A balanced coding model.' },
         compatibility: { ...row.compatibility, confirmed: false, result: {
-          status: 'experimental', selectedProtocol: 'anthropic-messages', evidence: row.compatibility.result.evidence,
+          status: 'experimental',
+          selectedProtocol: 'anthropic-messages',
+          reasons: ['compatibility_override_experimental'],
+          confirmationScope: { kind: 'connection' },
+          evidence: row.compatibility.result.evidence,
         } },
       }] }],
     }));
     try {
       const overlay = screen.findByType(OptionPickerOverlay);
       const option = overlay.props.sections.flatMap((section: { options: { label: string; description?: string }[] }) =>
-        section.options).find((candidate: { label: string }) => candidate.label === 'Sonnet 5.5'
+        section.options).find((candidate: { label: string; description?: string }) => candidate.label === 'Sonnet 5.5'
           && candidate.description?.includes('A balanced coding model.'));
       expect(option?.description).toMatch(/^A balanced coding model\.( · [^.·]+)?$/);
     } finally {

@@ -1001,8 +1001,8 @@ describe('NewSessionFavoriteModelsDetail', () => {
         expect(latestPickerProps?.probe?.phase).toBe('idle');
         expect(latestPickerProps?.favoriteOptions?.shortcutSlotByKey?.get(favoriteOptionValue('agent:happier.agent.codex/codex', 'gpt-6.2-sol'))).toBe(1);
         const shortcut = latestPickerProps?.quickActionShortcuts?.find(({ shortcut }) => shortcut === 'cmd+1');
-        expect(shortcut).toBeDefined();
-        shortcut?.onActivate();
+        expect(shortcut?.shortcut).toBe('cmd+1');
+        if (shortcut?.shortcut === 'cmd+1') shortcut.onActivate();
 
         expect(onSelectFavoriteModel).toHaveBeenCalledWith(codexEntry, expectedNativeSelection('agent:happier.agent.codex/codex', 'gpt-6.2-sol'), {});
     });
