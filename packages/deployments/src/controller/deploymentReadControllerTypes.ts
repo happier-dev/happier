@@ -164,6 +164,8 @@ export type DeploymentReadControllerV1 = Readonly<{
     acquireDomainPage(query: DeploymentAccountPageQueryV1, demand: DeploymentReadDemandV1): DeploymentReadPageLeaseV1<DeploymentAccountDomainReadPageV1>;
     acquireDataServicePage(query: DeploymentDataServiceQueryV1, demand: DeploymentReadDemandV1): DeploymentReadPageLeaseV1<DeploymentDataServiceReadPageV1>;
     acquireDomains(environmentId: string, query: DeploymentHistoryQueryV1, demand: DeploymentReadDemandV1): DeploymentReadPageLeaseV1<DeploymentDomainReadPageV1>;
+    /** The admitted initial page of the exact query, without borrowing demand. */
+    getCollectionSnapshot(query: DeploymentCollectionQueryV1): DeploymentReadSnapshotV1<DeploymentEnvironmentReadCollectionV1> | null;
     acquireCollection(query: DeploymentCollectionQueryV1, demand: DeploymentReadDemandV1):
         DeploymentReadPageLeaseV1<DeploymentEnvironmentReadCollectionV1, 'includeTotal'>;
     acquireActivity(demand: DeploymentReadDemandV1): DeploymentReadLeaseV1<DeploymentActivityV1>;

@@ -39,14 +39,16 @@ export function projectDeploymentEnvironmentTabResult<T>(snapshot: Pick<Deployme
 /** The controller spends private continuation state only for explicit navigation intent. */
 function useDeploymentPage<T extends DeploymentReadPageFactsV1, PageOption extends string>(
     acquire: (() => DeploymentReadPageLeaseV1<T, PageOption>) | null, demand: DeploymentReadDemandV1,
+    readRetained?: () => DeploymentReadSnapshotV1<T> | null,
 ) {
     const lease = useDeploymentLeaseBinding(acquire);
-    const read = useDeploymentSnapshot<T>(lease, demand);
+    const read = useDeploymentSnapshot<T>(lease, demand, readRetained);
     // Button callers may pass a native press event. Only the explicit page option is navigation state.
     const nextPage = React.useCallback((option?: PageOption) => lease?.nextPage(typeof option === 'string' ? option : undefined), [lease]);
     const previousPage = React.useCallback(() => lease?.previousPage(), [lease]);
-    return { ...read, hasNextPage: read.snapshot.status === 'ready' && (read.snapshot.value?.hasNextPage ?? false),
-        hasPreviousPage: read.snapshot.value?.hasPreviousPage ?? false, nextPage, previousPage };
+    const { snapshot } = read;
+    return { ...read, hasNextPage: snapshot.status === 'ready' && (snapshot.value?.hasNextPage ?? false),
+        hasPreviousPage: snapshot.value?.hasPreviousPage ?? false, nextPage, previousPage };
 }
 
 function useDeploymentLeaseBinding<L extends DeploymentReadLeaseV1<unknown>>(acquire: (() => L) | null) {
@@ -64,13 +66,14 @@ function useDeploymentLeaseBinding<L extends DeploymentReadLeaseV1<unknown>>(acq
 }
 
 /** React owns presentation demand; the shared controller owns all records and reads. */
-function useDeploymentSnapshot<T>(lease: DeploymentReadLeaseV1<T> | null, demand: DeploymentReadDemandV1) {
+function useDeploymentSnapshot<T>(lease: DeploymentReadLeaseV1<T> | null, demand: DeploymentReadDemandV1,
+    readRetained?: () => DeploymentReadSnapshotV1<T> | null) {
     const { mounted, visible, focused, healthEnvironmentIds } = demand;
     React.useEffect(() => {
         lease?.setDemand({ mounted, visible, focused, healthEnvironmentIds });
     }, [lease, mounted, visible, focused, healthEnvironmentIds]);
     const subscribe = React.useCallback((listener: () => void) => lease?.subscribe(listener) ?? (() => {}), [lease]);
-    const getSnapshot = React.useCallback((): DeploymentReadSnapshotV1<T> => lease?.getSnapshot() ?? IDLE, [lease]);
+    const getSnapshot = React.useCallback(() => lease?.getSnapshot() ?? readRetained?.() ?? IDLE, [lease, readRetained]);
     const snapshot = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
     const refresh = React.useCallback(() => lease?.refresh({ supersede: true }) ?? Promise.resolve(), [lease]);
     return { snapshot, refresh };
@@ -91,16 +94,22 @@ export function useDeploymentCollection(controller: DeploymentReadControllerV1 |
     const environmentIdsKey = JSON.stringify(environmentIds);
     const previewPullRequestIds = query.previewPullRequestIds === undefined ? undefined : [...new Set(query.previewPullRequestIds)].sort();
     const previewPullRequestIdsKey = JSON.stringify(previewPullRequestIds);
-    const acquire = React.useMemo(() => controller ? () =>
-        controller.acquireCollection({ cursor: query.cursor, machineId: query.machineId, environmentIds,
+    const read = React.useMemo(() => {
+        if (!controller) return null;
+        const position: DeploymentCollectionQueryV1 = { cursor: query.cursor, machineId: query.machineId, environmentIds,
             includeTotal: query.includeTotal, includeDatabaseMoveCandidates: query.includeDatabaseMoveCandidates,
             previewRepositoryId: query.previewRepositoryId, previewPullRequestIds,
-            previewTemplateEnvironmentId: query.previewTemplateEnvironmentId }, INACTIVE) : null,
+            previewTemplateEnvironmentId: query.previewTemplateEnvironmentId };
+        return {
+            acquire: () => controller.acquireCollection(position, INACTIVE),
+            readRetained: () => controller.getCollectionSnapshot(position),
+        };
         // The canonical set key preserves the lease across equivalent inline vectors.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-        [controller, query.cursor, query.machineId, query.includeTotal, query.includeDatabaseMoveCandidates, environmentIdsKey,
-            query.previewRepositoryId, previewPullRequestIdsKey, query.previewTemplateEnvironmentId]);
-    const page = useDeploymentPage(acquire, visibleHealthOnly ? { ...demand, healthEnvironmentIds } : demand);
+    }, [controller, query.cursor, query.machineId, query.includeTotal, query.includeDatabaseMoveCandidates, environmentIdsKey,
+        query.previewRepositoryId, previewPullRequestIdsKey, query.previewTemplateEnvironmentId]);
+    const page = useDeploymentPage(read?.acquire ?? null,
+        visibleHealthOnly ? { ...demand, healthEnvironmentIds } : demand, read?.readRetained);
     return { ...page, setHealthEnvironmentIds };
 }
 

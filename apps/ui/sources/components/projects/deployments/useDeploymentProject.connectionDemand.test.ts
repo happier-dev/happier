@@ -8,7 +8,8 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
-const { useDeploymentProject, useDeploymentInventory, useDeploymentAccountController } = await import('./useDeploymentProject');
+const { useDeploymentProject, useDeploymentProjectRoute, useDeploymentInventory, useDeploymentAccountController } = await import('./useDeploymentProject');
+const { useDeploymentCollection, useDeploymentEnvironmentRecord } = await import('./useDeploymentReads');
 const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
 const { getHomeAccountChangeDemandedServerIds, publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
 
@@ -64,6 +65,53 @@ describe('deployment Home connection demand', () => {
             await right.unmount();
             expect(demanded()).toBe(false);
         } finally { await left.unmount(); await right.unmount(); account.dispose(); }
+    });
+
+    it('shows the admitted Project inventory on the first render of the next Environment without another list read', async () => {
+        const serverId = await homes.addHome({ name: 'Project Home', serverUrl: 'https://deployment-project-navigation.test', accountId: 'alice' });
+        const account = await captureLazyActionAccountContext(serverId);
+        const rows = ['staging', 'production'].map(id => createDeploymentEnvironmentHeaderV1({
+            id, serverId, projectSourceId: 'bakery', contentArtifactId: `artifact-${id}`, owner: { kind: 'account', accountId: 'alice' },
+        }));
+        for (const environment of rows) {
+            await account.createArtifactDocument({ artifactId: environment.contentArtifactId,
+                header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: environment.id }, body: '{}' });
+            homes.answer(serverId, `/v1/deployments/environments/${environment.id}`, {
+                body: { ok: true, environment, targetLinks: [] },
+            });
+        }
+        homes.answer(serverId, '/v1/deployments/environments', { body: { ok: true, items: rows, nextCursor: null } });
+        const shown: DeploymentReadDemandV1 = { mounted: true, visible: true, focused: true };
+        const reads = (path: string) => homes.requests.filter(request => request.path.split('?')[0] === path);
+        const rendered: (readonly string[] | 'loading')[] = [];
+        const open = (environmentId: string) => renderHook(() => {
+            const { controller, demand } = useDeploymentProjectRoute(serverId, 'bakery', shown);
+            const { snapshot } = useDeploymentCollection(controller, demand);
+            useDeploymentEnvironmentRecord(controller, environmentId, demand);
+            rendered.push(controller && snapshot.value ? snapshot.value.items.map(item => item.environment.id) : 'loading');
+            return snapshot;
+        });
+        let page = await open('staging');
+        try {
+            await vi.waitFor(() => expect(page.getCurrent().status).toBe('ready'));
+            expect(rendered).toContain('loading');
+            expect(reads('/v1/deployments/environments')).toHaveLength(1);
+            await page.unmount();
+            expect(getHomeAccountChangeDemandedServerIds()).not.toContain(serverId);
+
+            rendered.length = 0;
+            page = await open('production');
+            await vi.waitFor(() => expect(reads('/v1/deployments/environments/production')).toHaveLength(1));
+            expect(reads('/v1/deployments/environments')).toHaveLength(1);
+            expect(rendered).not.toHaveLength(0);
+            expect(rendered).not.toContain('loading');
+            expect(rendered.at(0)).toEqual(rows.map(row => row.id));
+
+            await page.unmount();
+            await act(async () => publishHomeAccountChange(serverId, ['projects:sources'], { changeKinds: ['account'] }));
+            expect(getHomeAccountChangeDemandedServerIds()).not.toContain(serverId);
+            expect(reads('/v1/deployments/environments')).toHaveLength(1);
+        } finally { await page.unmount(); account.dispose(); }
     });
 
     it('retains cached collection rows and passive invalidation without holding Home demand across navigation', async () => {

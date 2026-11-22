@@ -1,3 +1,4 @@
+import type { DeploymentCollectionQueryV1 } from './deploymentReadControllerTypes.js';
 import { withActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { DeploymentEnvironmentDetailV1Schema, DeploymentEnvironmentCollectionV1Schema, DeploymentReceiptPresentationV1Schema, DeploymentReceiptHistoryV1Schema, type DeploymentEnvironmentHeaderV1, type DeploymentEnvironmentDetailV1, type DeploymentEnvironmentCollectionV1, type DeploymentReceiptDetailV1, type DeploymentReceiptPresentationV1 } from '@happier-dev/deployments/contracts/v1';
 import { createDeploymentProjectionV1 } from '../projection/deploymentStore.js';
@@ -58,6 +59,18 @@ function collectionRowHealthBasis(row: DeploymentEnvironmentCollectionV1['items'
         link?.id, link?.revision, link?.targetKind, link?.activeDeploymentId,
         link?.members.filter(member => member.state === 'active')
             .map(member => JSON.stringify([member.machineId, member.installationId])).sort()]);
+}
+
+function collectionReadPosition(query: DeploymentCollectionQueryV1) {
+    const { cursor: initialCursor, environmentIds: suppliedEnvironmentIds,
+        previewPullRequestIds: suppliedPreviewPullRequestIds, ...filters } = query;
+    const environmentIds = suppliedEnvironmentIds === undefined ? undefined : [...new Set(suppliedEnvironmentIds)].sort();
+    const previewPullRequestIds = suppliedPreviewPullRequestIds === undefined ? undefined : [...new Set(suppliedPreviewPullRequestIds)].sort();
+    const key = (cursor: string | undefined, option?: 'includeTotal') => JSON.stringify(['collection', cursor ?? null,
+        filters.machineId ?? null, environmentIds ?? null, filters.previewRepositoryId ?? null, previewPullRequestIds ?? null,
+        filters.previewTemplateEnvironmentId ?? null, filters.previewRepository ?? null, filters.allPages ?? false, filters.limit ?? null,
+        filters.includeDeleted ?? false, filters.includeTotal ?? option ?? false, filters.includeDatabaseMoveCandidates ?? false]);
+    return { initialCursor, filters, environmentIds, previewPullRequestIds, key };
 }
 
 /** One authenticated Home/Account, optionally narrowed to a Source; no persistence or timer owner. */
@@ -436,16 +449,15 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
                     admit: value => value,
                 }, pageDemand) });
         },
+        getCollectionSnapshot(query) {
+            if (retired) return retiredSnapshot;
+            const { initialCursor, key } = collectionReadPosition(query);
+            const entry = entries.get(key(initialCursor));
+            return entry ? entry.projection.getSnapshot() as DeploymentReadSnapshotV1<DeploymentEnvironmentReadCollectionV1> : null;
+        },
         acquireCollection(query, demand) {
-            const { cursor: initialCursor, environmentIds: suppliedEnvironmentIds,
-                previewPullRequestIds: suppliedPreviewPullRequestIds, ...filters } = query;
-            const environmentIds = suppliedEnvironmentIds === undefined ? undefined : [...new Set(suppliedEnvironmentIds)].sort();
-            const previewPullRequestIds = suppliedPreviewPullRequestIds === undefined ? undefined : [...new Set(suppliedPreviewPullRequestIds)].sort();
+            const { initialCursor, filters, environmentIds, previewPullRequestIds, key } = collectionReadPosition(query);
             const previewIds = new Set(previewPullRequestIds);
-            const key = (cursor: string | undefined, option?: 'includeTotal') => JSON.stringify(['collection', cursor ?? null,
-                filters.machineId ?? null, environmentIds ?? null, filters.previewRepositoryId ?? null, previewPullRequestIds ?? null,
-                filters.previewTemplateEnvironmentId ?? null, filters.previewRepository ?? null, filters.allPages ?? false, filters.limit ?? null,
-                filters.includeDeleted ?? false, filters.includeTotal ?? option ?? false, filters.includeDatabaseMoveCandidates ?? false]);
             return createDeploymentReadPageLease<DeploymentEnvironmentReadCollectionV1, 'includeTotal'>({
                 initialCursor, demand,
                 nextCursor: (cursor, option) => entries.get(key(cursor, option))?.nextCursor ?? null,

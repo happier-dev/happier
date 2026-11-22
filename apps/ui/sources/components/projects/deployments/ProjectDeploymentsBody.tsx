@@ -34,7 +34,6 @@ import { useCollectionRailWidth } from '@/components/ui/lists/collection/useColl
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { usePageSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
 import { PageLoadingRows } from '@/components/ui/layout/PageLoadingRows';
-import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
@@ -59,7 +58,7 @@ import { PLUGINS_APP_ROUTE } from '@/components/settings/plugins/model/pluginsSu
 import { DeploymentDatabasePage } from './DeploymentDatabasePage';
 import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import { buildDeploymentEnvironmentHref, DEPLOYMENT_NEW_REPOSITORY_DRAFT, ENVIRONMENT_AUTOMATIONS_DESTINATION } from './deploymentNavigation';
-import { useDeploymentProject } from './useDeploymentProject';
+import { useDeploymentProjectRoute, type useDeploymentProject } from './useDeploymentProject';
 import { useDeploymentCollection } from './useDeploymentReads';
 import { deploymentReadIssue } from './deploymentPresentation';
 import { useProjectSource } from '../sources/useProjectSources';
@@ -98,26 +97,23 @@ export const ProjectDeploymentsBody = React.memo(
     )>,
   ) {
     const serverId = 'workspaceRef' in props ? props.workspaceRef.serverId : props.serverId;
-    const { binding, resolution } = useServerCredentialAccountScopeBinding(
-      serverId,
-    );
     const sourceId = 'workspaceRef' in props ? props.workspaceRef.source?.sourceId ?? null : props.projectSourceId;
-    const demand = useDeploymentPresentationDemand(props.isFocused);
-    const { controller, actions } = useDeploymentProject(binding, sourceId, demand);
+    const presentation = useDeploymentPresentationDemand(props.isFocused);
+    const { controller, actions, lifetime, scope, demand, resolution } = useDeploymentProjectRoute(serverId, sourceId, presentation);
 
     if (!sourceId) {
       return <>{props.header}<ProjectDeploymentsNoSource checkout={'workspaceRef' in props ? props.workspaceRef : null} /></>;
     }
     // A settled non-bound Home (a link without its Home, a signed-out or unreadable credential) says so and
     // offers its next step; only a Home still resolving, or a bound one whose reads are starting, loads.
-    if (!binding && resolution.kind !== 'resolving' && resolution.kind !== 'bound') {
+    if (!lifetime && resolution.kind !== 'resolving' && resolution.kind !== 'bound') {
       return (<>{props.header}
         <ItemList testID="project-deployments.homeUnavailable">
           <UnboundSessionHomeScopeCard resolution={resolution} serverId={serverId ?? ''} testIDPrefix="project-deployments" />
         </ItemList></>
       );
     }
-    if (!binding || !controller) {
+    if (!scope || !controller) {
       return (<>{props.header}
         <PageLoadingRows testID="project-deployments.loading" header /></>
       );
@@ -127,9 +123,9 @@ export const ProjectDeploymentsBody = React.memo(
         controller={controller}
         actions={actions}
         demand={demand}
-        accountId={binding.scope.accountId}
-        serverId={binding.scope.serverId}
-        lifetime={binding}
+        accountId={scope.accountId}
+        serverId={scope.serverId}
+        lifetime={lifetime}
         sourceId={sourceId}
         workspaceRef={'workspaceRef' in props ? props.workspaceRef : null}
         header={props.header}
