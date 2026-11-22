@@ -263,8 +263,10 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
       deploymentTitle: [currentDeployment?.commitSubject, currentDeployment?.title, liveVersionTitle]
         .find((candidate): candidate is string => !!candidate && !isSameDeploymentName(candidate, title)) ?? null,
       state: latest,
-      // The State column: the state that speaks, else the latest deploy's own settled word, quiet; never deployed has none.
-      stateWord: latest ?? (currentDeployment ? { tone: 'quiet' as const, text: deploymentStateLabel(currentDeployment.state) } : null),
+      // The State column: the state that speaks, else the latest deploy's own settled word, quiet; never deployed says so,
+      // quietly, in the word its filter uses (PAGE-ACCEPT-176 R12-D8: it read "—").
+      stateWord: latest ?? { tone: 'quiet' as const, text: currentDeployment ? deploymentStateLabel(currentDeployment.state)
+        : t('projects.deployments.services.filterNotDeployed') },
       steps,
       stepCaption: steps ? deploymentStepCaption(steps) : null,
       // The state word is the leading state mark's (`subtitleLeading`), so the line never repeats it: a running deploy's

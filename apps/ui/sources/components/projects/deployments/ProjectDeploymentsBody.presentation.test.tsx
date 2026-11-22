@@ -249,3 +249,25 @@ describe('Environment detail in a split pane', () => {
         } finally { await screen.unmount(); controller.retire(); }
     });
 });
+
+describe('Project page State column', () => {
+    // PAGE-ACCEPT-176 R12-D8: a never-deployed Environment's State said "—"; it says it is not deployed, quietly.
+    it('says "Not deployed" for an Environment that has never deployed', async () => {
+        const detail = createDeploymentEnvironmentDetailV1();
+        const controller = createDeploymentReadControllerV1({ scope: { serverId: 'home', accountId: 'account-owner', projectSourceId: 'source-app' },
+            transport: {
+                listEnvironments: async () => ({ ok: true, value: { items: [{ environment: detail.environment, title: 'Staging' }], nextCursor: null } }),
+                readEnvironment: async () => ({ ok: true, value: detail }),
+                readReceipt: async () => ({ ok: false, error: 'not_found' }) as never,
+                listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+            } });
+        const screen = await renderScreen(<AccountNoticeInvestigationBoundary><ProjectDeploymentsView controller={controller}
+            demand={{ mounted: true, visible: true, focused: true }} lifetime={null} serverId="home" accountId="account-owner" sourceId="source-app" />
+        </AccountNoticeInvestigationBoundary>);
+        try {
+            const word = stateWord(screen, detail.environment.id) as { tone?: string; text?: string } | undefined;
+            expect(word?.text).toBe('Not deployed');
+            expect(word?.tone ?? 'quiet').toBe('quiet');
+        } finally { await screen.unmount(); controller.retire(); }
+    });
+});
