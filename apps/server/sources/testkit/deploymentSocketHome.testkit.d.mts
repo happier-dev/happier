@@ -33,4 +33,5 @@ export function createDeploymentSocketHome(options?: Readonly<{
     serverId?: string;
     prepareMachineContent?: (key: Uint8Array, metadata: Readonly<Record<string, unknown>>) => string | Promise<string>;
     configureApp?: (app: Fastify) => void | Promise<void>;
+    socketOrigin?: Readonly<{ hostname: string; listenHost: string; port: number }>;
 }>): Promise<DeploymentSocketHomeFixture>;

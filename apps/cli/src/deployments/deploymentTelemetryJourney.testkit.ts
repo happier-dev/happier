@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { promisify } from 'node:util';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import dns from 'node:dns';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -68,6 +69,8 @@ import { applyMachineRoleAdmission } from '@/plugins/projection/registry/builtIn
 import { resolveBundledPluginEnablement } from '@/plugins/projection/registry/builtIn/enablement';
 import { createOwnServerNativeRuntime } from './targets/ownServer/nativeRuntime';
 import * as nativeRuntimeBoundary from './targets/ownServer/nativeRuntime';
+import { acquirePrivateServiceContainerBridge } from './targets/ownServer/privateServiceContainerBridge';
+import { parseNativeDockerEngineInfo } from '@happier-dev/cli-common/machineSetup';
 import { authorizePluginExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
 import {
     DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1, DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1,
@@ -80,6 +83,35 @@ import {
 // native leg uses the actual OS API, including execFile's promisify contract.
 const { execFile } = await vi.importActual<typeof import('node:child_process')>('node:child_process');
 const execute = promisify(execFile);
+
+async function createCollectorHomeSocketOrigin(cleanup: Array<() => Promise<void>>) {
+    const engine = parseNativeDockerEngineInfo((await execute('docker', ['info', '--format', '{{json .}}'])).stdout);
+    if (!engine) throw new Error('F14 requires observable native Docker engine facts');
+    const key = randomUUID();
+    const networkId = (await execute('docker', ['network', 'create', `happier-f14-home-${key}`])).stdout.trim();
+    cleanup.push(async () => { await execute('docker', ['network', 'rm', networkId]); });
+
+    // Docker uses the admitted relay's DNS name. The controller resolves that
+    // same HTTPS origin to its local test server, preserving TLS and discovery.
+    const listenHost = `127.${Array.from(randomBytes(3)).join('.')}`;
+    let port = 0;
+    const bridge = await acquirePrivateServiceContainerBridge({
+        docker: { engineId: engine.id, async run(args, signal) {
+            return { exitCode: 0, ...await execute('docker', [...args], { signal }) };
+        } },
+        engine,
+        networkId,
+        forward: { host: listenHost, get port() { return port; } },
+        route: { key },
+    });
+    port = bridge.port;
+    cleanup.push(() => bridge.close());
+    const lookup = dns.lookup;
+    dns.lookup = ((hostname, ...args) => Reflect.apply(lookup, dns, [hostname === bridge.host ? listenHost : hostname, ...args])) as typeof lookup;
+    cleanup.push(async () => { dns.lookup = lookup; });
+    return { hostname: bridge.host, listenHost, port, networkName: bridge.networkName };
+}
+
 type Invoke = (name: string, input: unknown, machineId?: string) => Promise<ActionExecuteResult>;
 function createInvoke(
     executor: ReturnType<typeof createCliActionExecutorFromCredentials>,
@@ -138,6 +170,7 @@ export type ProductionTelemetryCollectorAppJourney = (context: Readonly<{
     cleanup: Array<() => Promise<void>>;
     signal: AbortSignal;
     nativeDockerEngineId: string;
+    collectorHomeNetwork: string;
     nativeDocker(args: readonly string[]): Promise<Readonly<{ stdout: string; stderr: string }>>;
     initiator: TelemetryJourneyActor & Readonly<{
         projectSourceId: string;
@@ -197,22 +230,32 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
             const dockerEnvironmentNames = ['DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG', 'XDG_RUNTIME_DIR']
                 .filter(name => process.env[name] !== undefined);
             const setupRequests = { bindings: 0, secretCreate: 0, secretUpdate: 0 };
-            const home = await createDeploymentSocketHome({ encryptionMode, dbProvider: 'postgres', serverId,
-                configureApp: app => {
-                    if (process.env.HAPPIER_RUN_DBW_COSTS_F17 === '1') sessionRoutes(app);
-                    app.addHook('onResponse', async (request, reply) => {
-                        if (request.method !== 'POST' || reply.statusCode !== 200) return;
-                        const route = request.routeOptions.url;
-                        if (route === '/v1/deployments/environments/:environmentId/bindings') setupRequests.bindings += 1;
-                        if (route === SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.create']) setupRequests.secretCreate += 1;
-                        if (route === SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.update']) setupRequests.secretUpdate += 1;
-                    });
-                },
-                ...(encryptionMode === 'e2ee' ? { prepareMachineContent: (key: Uint8Array, metadata: Readonly<Record<string, unknown>>) =>
-                    createMachineContentCodec({ encryptionMode: 'e2ee', encryptionKey: key, encryptionVariant: 'dataKey' }).encodeStored(metadata) } : {}) });
-            const cleanup: Array<() => Promise<void>> = [() => home.close()];
+            const cleanup: Array<() => Promise<void>> = [];
             const lifetime = new AbortController();
             try {
+                const collectorHome = await createCollectorHomeSocketOrigin(cleanup);
+                const home = await createDeploymentSocketHome({ encryptionMode, dbProvider: 'postgres', serverId, socketOrigin: collectorHome,
+                    configureApp: app => {
+                        if (process.env.HAPPIER_RUN_DBW_COSTS_F17 === '1') sessionRoutes(app);
+                        app.addHook('onResponse', async (request, reply) => {
+                            if (request.method !== 'POST' || reply.statusCode !== 200) return;
+                            const route = request.routeOptions.url;
+                            if (route === '/v1/deployments/environments/:environmentId/bindings') setupRequests.bindings += 1;
+                            if (route === SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.create']) setupRequests.secretCreate += 1;
+                            if (route === SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.update']) setupRequests.secretUpdate += 1;
+                        });
+                    },
+                    ...(encryptionMode === 'e2ee' ? { prepareMachineContent: (key: Uint8Array, metadata: Readonly<Record<string, unknown>>) =>
+                        createMachineContentCodec({ encryptionMode: 'e2ee', encryptionKey: key, encryptionVariant: 'dataKey' }).encodeStored(metadata) } : {}) });
+                cleanup.push(() => home.close());
+                const featuresUrl = `${home.baseUrl}/v1/features`;
+                expect((await fetch(featuresUrl)).ok).toBe(true);
+                const caPath = process.env.NODE_EXTRA_CA_CERTS;
+                if (!caPath) throw new Error('The native Home fixture must publish its public CA certificate path');
+                await execute('docker', ['run', '--rm', '--network', collectorHome.networkName,
+                    '--mount', `type=bind,src=${caPath},dst=/home-ca.pem,readonly`, '--env', 'NODE_EXTRA_CA_CERTS=/home-ca.pem',
+                    'node:22', 'node', '-e',
+                    'fetch(process.argv[1]).then(result => { if (!result.ok) throw Error(String(result.status)) })', featuresUrl]);
                 vi.stubEnv('HAPPIER_DEV_GUEST_CLI_EXPORT', '1');
                 vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', guestCliPayloadRoot);
                 vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA', guestCliPayloadMetadata);
@@ -777,6 +820,7 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                 // native Compose owner and credentialed Action executor.
                 const secondCollector = await support.collectorAppJourney?.({ home, daemon, credentials, invoke, accepted,
                     prepare, createEnvironment, readEnvironment, cleanup, signal: lifetime.signal, nativeDockerEngineId,
+                    collectorHomeNetwork: collectorHome.networkName,
                     nativeDocker: args => execute('docker', [...args]),
                     initiator: { ...collectorOperator, projectSourceId: operatorSource.source.id, teamId: operatorTeam.id,
                         grantHostManage: async () => {

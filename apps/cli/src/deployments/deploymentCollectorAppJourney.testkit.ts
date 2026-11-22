@@ -23,7 +23,7 @@ import type { ProductionTelemetryCollectorAppJourney } from './deploymentTelemet
 
 const ListedMachines = z.looseObject({ items: z.array(z.looseObject({ machineId: z.string(),
     deploymentApp: z.optional(z.nullable(DeploymentAppMachineAssociationV1Schema)) })) });
-const ComposeDocument = z.looseObject({ services: z.record(z.string(), z.looseObject({
+const ComposeDocument = z.looseObject({ networks: z.record(z.string(), z.unknown()).optional(), services: z.record(z.string(), z.looseObject({
     environment: z.record(z.string(), z.unknown()), volumes: z.optional(z.array(z.unknown())),
 })) });
 
@@ -76,6 +76,7 @@ export const runCollectorAppJourney: ProductionTelemetryCollectorAppJourney = as
     const definition = opened.content.definition;
     if (definition.kind !== 'stored') throw new Error('The collector template must create a stored definition');
     const document = ComposeDocument.parse(await parseDeploymentComposeSourceV1(definition.document));
+    document.networks = { ...document.networks, default: { external: true, name: context.collectorHomeNetwork } };
     const serviceName = selected.payload.app.compose.primaryService;
     const service = serviceName ? document.services[serviceName] : undefined;
     if (!serviceName || !service) throw new Error('The collector template must select its native service');

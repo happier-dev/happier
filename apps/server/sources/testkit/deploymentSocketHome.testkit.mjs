@@ -34,7 +34,7 @@ import { readHomeConnectionDescriptor } from '../app/features/homeConnectionDesc
 import { createEphemeralTlsServerFixture } from '../../../../packages/tests/src/testkit/tls/ephemeralTlsServerFixture.mjs';
 
 /** Real storage/auth/Socket boundary. No CLI source is imported into the server. */
-export async function createDeploymentSocketHome({ encryptionMode = 'plain', credentialVariant = 'dataKey', dbProvider = 'sqlite', prepareMachineContent, configureApp,
+export async function createDeploymentSocketHome({ encryptionMode = 'plain', credentialVariant = 'dataKey', dbProvider = 'sqlite', prepareMachineContent, configureApp, socketOrigin,
     serverId = readCachedServerIdentityIdForHotPath() ?? `srv_${randomUUID().replaceAll('-', '')}` } = {}) {
     if (dbProvider === 'postgres' && (process.env.HAPPIER_DB_PROVIDER !== 'postgres' || !process.env.HAPPIER_DB_CONTRACT_CONTAINER_ID)) {
         throw new Error('The PostgreSQL deployment journey requires the disposable DB-contract runner');
@@ -67,10 +67,11 @@ export async function createDeploymentSocketHome({ encryptionMode = 'plain', cre
         // Qualification happens before guest effects. Give the source guest a
         // real remote-capable HTTPS route instead of exempting this fixture's
         // controller-only loopback address from the production guard.
-        const host = Object.values(networkInterfaces()).flat()
+        const host = socketOrigin?.listenHost ?? Object.values(networkInterfaces()).flat()
             .find(address => address?.family === 'IPv4' && !address.internal)?.address;
         if (!host) throw new Error('The deployment journey requires a non-loopback IPv4 interface');
-        tls = await createEphemeralTlsServerFixture({ additionalIpAddresses: [host] });
+        tls = await createEphemeralTlsServerFixture({ additionalIpAddresses: [host],
+            ...(socketOrigin ? { additionalDnsNames: [socketOrigin.hostname] } : {}) });
         const [cert, key, ca] = await Promise.all([
             readFile(tls.leafCertificatePath), readFile(tls.privateKeyPath), readFile(tls.caCertificatePath, 'utf8'),
         ]);
@@ -122,10 +123,10 @@ export async function createDeploymentSocketHome({ encryptionMode = 'plain', cre
         registerExternalActionRoutes(home);
         registerPluginAvailabilityRoutes(home);
         await configureApp?.(home);
-        await home.listen({ host, port: 0 });
+        await home.listen({ host, port: socketOrigin?.port ?? 0 });
         const address = home.server.address();
         if (!address || typeof address === 'string') throw new Error('Home listener unavailable');
-        const baseUrl = `https://${host}:${address.port}`;
+        const baseUrl = `https://${socketOrigin?.hostname ?? host}:${address.port}`;
         process.env.HAPPIER_CANONICAL_SERVER_URL = baseUrl;
         process.env.HAPPIER_PUBLIC_SERVER_URL = baseUrl;
         // The real server startup publishes this durable fact before accepting
