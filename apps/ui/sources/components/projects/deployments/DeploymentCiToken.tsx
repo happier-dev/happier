@@ -91,7 +91,7 @@ function DeploymentCiStep(props: Readonly<{ input: DeploymentCiInput; controller
 function DeploymentCiSummary(props: Readonly<{ input: DeploymentCiInput; controller: ApiTokenSettingsController;
   tokens: readonly ApiTokenSettingsToken[]; onCreate(): void }> & CustomModalInjectedProps) {
   const state = useApiTokenSettingsControllerState(props.controller);
-  const names = useApiTokenGrantNames();
+  const names = useApiTokenGrantNames(props.tokens.some(token => token.grant.automationIds?.length === 1));
   const nowMs = useApiTokenSettingsClock(props.tokens, true);
   const router = useRouter();
   const onOpen = React.useCallback((token: ApiTokenSettingsToken) => {

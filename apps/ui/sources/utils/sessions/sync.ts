@@ -119,6 +119,10 @@ export class InvalidateSync {
         this._doSync();
     }
 
+    hasPendingWork(): boolean {
+        return this._invalidated && !this._stopped;
+    }
+
     /**
      * A user-initiated recovery (Retry) for a queue that is failing: when it sleeps out a retry backoff,
      * its next attempt starts now. An idle or running queue is left alone. Returns whether a backoff ended.
@@ -143,8 +147,8 @@ export class InvalidateSync {
     }
 
     async invalidateAndAwait(opts: { timeoutMs: number; signal?: AbortSignal }): Promise<SyncQueueWaitOutcome>;
-    async invalidateAndAwait(opts?: { settleOnFirstAttempt?: boolean; signal?: AbortSignal }): Promise<void>;
-    async invalidateAndAwait(opts?: SyncQueueWaitOptions & { settleOnFirstAttempt?: boolean }): Promise<void | SyncQueueWaitOutcome> {
+    async invalidateAndAwait(opts?: { settleOnFirstAttempt?: boolean; signal?: AbortSignal; coalesce?: boolean }): Promise<void>;
+    async invalidateAndAwait(opts?: SyncQueueWaitOptions & { settleOnFirstAttempt?: boolean; coalesce?: boolean }): Promise<void | SyncQueueWaitOutcome> {
         if (opts?.signal?.aborted) throw new SupersededOperationError();
         if (opts?.timeoutMs !== undefined) return this._invalidateAndAwaitQueue(opts);
         if (this._stopped) {
@@ -171,13 +175,14 @@ export class InvalidateSync {
                     resolve();
                 },
             };
-            if (this._invalidated && this._hasStartedCommandThisCycle) {
+            if (!opts?.coalesce && this._invalidated && this._hasStartedCommandThisCycle) {
                 this._nextCyclePendings.push(pending);
             } else {
                 this._cyclePendings.push(pending);
             }
             opts?.signal?.addEventListener('abort', cancel, { once: true });
-            this.invalidate();
+            if (opts?.coalesce) this.invalidateCoalesced();
+            else this.invalidate();
         });
     }
 

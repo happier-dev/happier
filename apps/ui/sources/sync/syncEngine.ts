@@ -1489,7 +1489,6 @@ class Sync {
     private bootstrapForegroundReady: Promise<void> | null = null;
     private readonly initialChangesCursor = new InitialChangesCursor();
     private managedTargetBackfillLifetime: ServerAccountScopeLifetime | null = null;
-    private consumeBootstrapAutomationPage: NonNullable<Parameters<typeof fetchAndApplyAutomations>[0]['onDefinitionsRead']> | null = null;
       private sessionByIdHydrationInFlight = new Map<string, SessionReadInFlightEntry>();
       private readonly hostedSystemSessionEnsurer = createHostedSystemSessionEnsurer({
           fetchAccountEncryptionCurrentness: (credentials, request) =>
@@ -3603,6 +3602,7 @@ class Sync {
         storage.getState().resetAuthoringMemory();
         apiSocket.invalidateRequests('server-switch');
         this.automationRunTraversalTokensByAutomationId.clear();
+        this.automationsReadForCredentials = null;
         this.automationRunRefreshPending = false;
         this.changesCatchUpQueuedAfterResume = false;
         this.postSubscriptionChangesCatchUpPending = false;
@@ -8902,25 +8902,6 @@ class Sync {
           await routeReady;
           if (!isCurrent()) return;
 
-          // Bootstrap can also run during reconnect recovery. The existing
-          // admitted Account lifetime owns exactly one retained-row attempt.
-          const backfillLifetime = captureActiveServerAccountScopeLifetime();
-          if (backfillLifetime && this.managedTargetBackfillLifetime !== backfillLifetime) {
-              this.managedTargetBackfillLifetime = backfillLifetime;
-              // The existing reader applies the canonical Automation decision before
-              // delivering its current response. Complete known rows prove no work;
-              // an incomplete page cannot prove anything about the unobserved tail.
-              this.consumeBootstrapAutomationPage = page => {
-                  if (!backfillLifetime.isCurrent()) return;
-                  if (page.nextCursor === null && page.automations.every(row => row.managedTarget !== undefined)) return;
-                  fireAndForget(import('@/sync/engine/automations/backfillAutomationManagedTargets')
-                      .then(({ backfillAutomationManagedTargetsForAccount }) => backfillAutomationManagedTargetsForAccount(backfillLifetime)), {
-                      tag: 'Sync.automationManagedTargetBackfill',
-                      logError: false,
-                  });
-              };
-          }
-
           // Home and runtime inventories remain eager. Peripheral views acquire
           // their existing queues only while they consume them.
           this.selectMachineRefresh();
@@ -8929,7 +8910,6 @@ class Sync {
           for (const syncUnit of [
               this.machinesSync, this.artifactsSync, this.pluginAvailabilitySync,
           ]) syncUnit.invalidateCoalesced();
-          this.requestAutomationsRefresh();
           this.teamLabelEnvelopeSync.invalidateCoalesced();
 
           await this.refreshSessionDraftRepositoryForSync();
@@ -9028,8 +9008,9 @@ class Sync {
           const remaining = await runTasksWithLimit(
               [
                   () => invalidateBounded(this.artifactsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
-                  () => {
-                      if (isCurrent()) this.automationRunRefreshPending = true;
+                  async () => {
+                      if (!isCurrent() || !this.automationCatalogRequested()) return { status: 'completed' } as const;
+                      this.automationRunRefreshPending = true;
                       return invalidateBounded(this.automationsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs);
                   },
                   () => invalidateBounded(this.todosSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
@@ -9179,16 +9160,25 @@ class Sync {
      * pending pass instead. Writers that just changed a definition use refreshAutomations.
      */
     public ensureAutomationsRead = async (): Promise<void> => {
-        const privatePageNeeded = readAutomationDefinitionDetailsDemand(captureActiveServerAccountScopeLifetime())
-            && Object.values(storage.getState().automations).some(definition => definition.detail.kind === 'unloaded');
-        if (!privatePageNeeded && this.automationsReadForCredentials !== null && this.automationsReadForCredentials === this.credentials) {
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (this.automationsReadForCredentials === this.credentials && this.credentials !== null) {
             await this.automationsSync.awaitQueue();
-            return;
+        } else {
+            await this.automationsSync.invalidateAndAwait({ coalesce: true });
         }
-        await this.refreshAutomationsAndAwait();
+        // A private reader can join a summary request already on the wire.
+        const privatePageNeeded = readAutomationDefinitionDetailsDemand(lifetime)
+            && Object.values(storage.getState().automations).some(definition => definition.detail.kind === 'unloaded');
+        if (privatePageNeeded) await this.automationsSync.invalidateAndAwait({ coalesce: true });
+    }
+
+    private automationCatalogRequested(): boolean {
+        return (this.automationsReadForCredentials !== null && this.automationsReadForCredentials === this.credentials)
+            || this.automationsSync.hasPendingWork();
     }
 
     private requestAutomationsRefresh(options?: AutomationRefreshOptions, coalesced = false): void {
+        if (!this.automationCatalogRequested()) return;
         if (!options?.summariesOnly) this.automationRunRefreshPending = true;
         // A Run wake during a summary-only HTTP read requires the existing trailing
         // pass; coalescing it into that weaker read would silently lose freshness.
@@ -10240,20 +10230,27 @@ class Sync {
         const target = this.getAppliedTransportTarget();
         if (!credentials || !target) return;
         const shouldContinue = this.createAppliedTransportScopeGuard(target);
-        // Only bootstrap installs this continuation. Take it once, even if
-        // admission/read fails; later refreshes and arrivals never restart it.
-        const onDefinitionsRead = this.consumeBootstrapAutomationPage ?? undefined;
-        this.consumeBootstrapAutomationPage = null;
         const refreshRuns = this.automationRunRefreshPending;
         this.automationRunRefreshPending = false;
         const historyLifetime = captureActiveServerAccountScopeLifetime();
+        const backfillLifetime = historyLifetime && this.managedTargetBackfillLifetime !== historyLifetime ? historyLifetime : null;
+        if (backfillLifetime) this.managedTargetBackfillLifetime = backfillLifetime;
         try {
             const result = await fetchAndApplyAutomations({
                 credentials,
                 includePrivateDefinitions: readAutomationDefinitionDetailsDemand(historyLifetime),
                 requestContext: this.createAppliedAutomationRequestContext(target),
                 shouldContinue,
-                onDefinitionsRead,
+                onDefinitionsRead: backfillLifetime ? page => {
+                    if (!backfillLifetime.isCurrent()) return;
+                    // A complete, indexed page proves there is no retained work.
+                    if (page.nextCursor === null && page.automations.every(row => row.managedTarget !== undefined)) return;
+                    fireAndForget(import('@/sync/engine/automations/backfillAutomationManagedTargets')
+                        .then(({ backfillAutomationManagedTargetsForAccount }) => backfillAutomationManagedTargetsForAccount(backfillLifetime)), {
+                        tag: 'Sync.automationManagedTargetBackfill',
+                        logError: false,
+                    });
+                } : undefined,
                 applyAutomations: (automations, nextCursor) =>
                     storage.getState().applyAutomations(automations, nextCursor),
                 appendAutomations: (cursor, traversalToken, automations, nextCursor) =>
@@ -13864,7 +13861,9 @@ class Sync {
                             artifacts: artifactIds => this.refreshArtifactsByIds(artifactIds),
                             friends: () => invalidateForResume(this.friendsSync),
                             feed: () => invalidateForResume(this.feedSync),
-                            automations: options => this.refreshAutomationsAndAwait(options, opts.signal),
+                            automations: async options => {
+                                if (this.automationCatalogRequested()) await this.refreshAutomationsAndAwait(options, opts.signal);
+                            },
                             pets: () => this.fetchAccountPets(),
                             savedSecretResources: () => {
                                 const scope = storage.getState().settingsScope;

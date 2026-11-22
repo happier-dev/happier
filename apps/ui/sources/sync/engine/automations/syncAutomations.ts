@@ -132,7 +132,7 @@ export async function fetchAndApplyAutomations(params: {
     /** The incumbent Sync binding supplies both HTTP and feature identity. */
     requestContext?: AutomationRequestContext;
     shouldContinue?: () => boolean;
-    /** One startup continuation may consume this feature-admitted response, never a default store snapshot. */
+    /** A first-read continuation can consume the feature-admitted response. */
     onDefinitionsRead?: (page: AutomationDefinitionListResponse) => void;
 }): Promise<{ nextCursor: string | null; traversalToken: number | null }> {
     const shouldContinue = params.shouldContinue ?? (() => true);

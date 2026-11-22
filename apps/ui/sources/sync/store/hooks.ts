@@ -3654,7 +3654,16 @@ export function useAllArtifacts(): DecryptedArtifact[] {
   );
 }
 
-export function useAutomations(): AutomationDefinition[] {
+function useAutomationCatalogRead(enabled: boolean, serverId?: string | null): void {
+  const lifetime = useActiveServerAccountScopeLifetime(enabled);
+  React.useEffect(() => {
+    if (!lifetime?.isCurrent() || (serverId !== undefined && !areServerProfileIdentifiersEquivalent(serverId ?? '', lifetime.scope.serverId))) return;
+    void sync.ensureAutomationsRead().catch(() => {});
+  }, [lifetime, serverId]);
+}
+
+export function useAutomations(options: Readonly<{ read?: boolean }> = {}): AutomationDefinition[] {
+  useAutomationCatalogRead(options.read === true);
   // An Account can hold a high-cardinality Automation catalog with no aggregate
   // definition ceiling, and a selector runs on every store mutation. Subscribe
   // to the stable record instead and order it once per actual Automation change
@@ -3677,10 +3686,11 @@ export function useAutomationDefinitionNextCursor(): string | null {
 
 export function useEnabledAutomationsCountForSession(
   sessionId: string | null | undefined,
-  options: Readonly<{ enabled?: boolean }> = {},
+  options: Readonly<{ enabled?: boolean; serverId?: string | null }> = {},
 ): number {
   const normalizedSessionId = normalizeSessionId(sessionId);
   const enabled = options.enabled !== false;
+  useAutomationCatalogRead(enabled && !!normalizedSessionId, options.serverId);
   const selector = React.useMemo(() => {
     let previousIsDataReady: boolean | null = null;
     let previousAutomations: StorageState['automations'] | null = null;
@@ -3716,6 +3726,7 @@ export function useAutomation(
   options: Readonly<{ serverId?: string | null }> = {},
 ): AutomationDefinition | null {
   const activeScope = useActiveServerAccountScope(options.serverId);
+  useAutomationCatalogRead(Boolean(automationId), options.serverId);
   return getStorage()(useShallow((state) => (
     options.serverId === undefined || activeScope
       ? state.automations[automationId] ?? null

@@ -193,7 +193,8 @@ const ApiTokenGrantAccessSection = React.memo(function ApiTokenGrantAccessSectio
     /** Automatic deploys were just turned off by an edit that widened this token. */
     automaticCleared: boolean;
 }>) {
-    const names = useApiTokenGrantNames();
+    const offersAutomations = apiTokenGrantOffersAutomations(props.value);
+    const names = useApiTokenGrantNames(offersAutomations && Boolean(props.value.automationIds?.length));
     const environmentIds = props.value.targets?.environments ?? [];
     const environment = useApiTokenGrantEnvironmentName(environmentIds.length === 1 ? environmentIds[0]! : null);
     const issues = resolveApiTokenGrantDraftIssues(props.value);
@@ -217,7 +218,6 @@ const ApiTokenGrantAccessSection = React.memo(function ApiTokenGrantAccessSectio
                     ? environment.name ?? t('settingsApiTokens.summary.environments', { count: environmentIds.length })
                     : null,
             ].filter(Boolean).join(' · ');
-    const offersAutomations = apiTokenGrantOffersAutomations(props.value);
     const automationIds = props.value.automationIds ?? null;
     const automationsSummary = automationIds === null
         ? t('settingsApiTokens.grant.automations.any')
@@ -433,7 +433,7 @@ export const ApiTokenGrantWebsitesSection = React.memo(function ApiTokenGrantWeb
 
 function ApiTokenGrantReview(props: Readonly<{ value: ApiTokenGrantV1; label: string; expiresAt: string | null }>) {
     const styles = stylesheet;
-    const names = useApiTokenGrantNames();
+    const names = useApiTokenGrantNames(props.value.automationIds?.length === 1);
     const summary = formatApiTokenAccessSummary(buildApiTokenAccessSummaryParts({
         token: { grant: props.value, expiresAt: props.expiresAt, hasEncryptionAccess: false },
         nowMs: Date.now(),
@@ -618,9 +618,9 @@ function describeGrantAutomation(automation: ReturnType<typeof useAutomations>[n
 }
 
 export const ApiTokenGrantAutomationsPicker = React.memo(function ApiTokenGrantAutomationsPicker(props: GrantPartProps) {
-    const automations = useAutomations();
-    const pagination = useAutomationDefinitionPagination();
     const automationIds = props.value.automationIds ?? null;
+    const automations = useAutomations({ read: automationIds !== null });
+    const pagination = useAutomationDefinitionPagination();
     const listed = React.useMemo(() => new Set(automations.map((automation) => automation.id)), [automations]);
     const unlisted = automationIds ? automationIds.filter((id) => !listed.has(id)) : [];
 

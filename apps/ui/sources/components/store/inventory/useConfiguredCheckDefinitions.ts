@@ -26,7 +26,7 @@ export const CONFIGURED_CHECK_DEFINITION_LOADING: ConfiguredCheckDefinitionFacts
 const UNAVAILABLE: ConfiguredCheckDefinitionFacts = Object.freeze({ kind: 'unavailable' });
 const NO_DOMAINS = Object.freeze([]);
 export type ConfiguredCheckSelection = Readonly<{ automationId: string; triggerId: string }>;
-type SelectedDefinitionRead =
+type DefinitionRead =
     | Readonly<{ kind: 'available' | 'missing' }>
     | Readonly<{ kind: 'unavailable'; reason: Readonly<{ code: string; status?: number; failureCause?: HappyError['failureCause'] }> }>;
 export function configuredCheckDefinitionKey(automationId: string, triggerId: string): string {
@@ -58,38 +58,40 @@ export function useConfiguredCheckDefinitions(lifetime: ServerAccountScopeLifeti
     const reader = usePluginAccountAvailabilityReader(lifetime?.scope ?? null, HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, { enabled: presented });
     const automationId = selection?.automationId;
     const [attempt, setAttempt] = React.useState(0);
-    const [selectedRead, setSelectedRead] = React.useState<Readonly<{
-        lifetime: ServerAccountScopeLifetime; automationId: string; value: SelectedDefinitionRead;
+    const [definitionRead, setDefinitionRead] = React.useState<Readonly<{
+        lifetime: ServerAccountScopeLifetime; automationId: string | undefined; value: DefinitionRead;
     }> | null>(null);
-    const retrySelected = React.useCallback(() => setAttempt(value => value + 1), []);
+    const retry = React.useCallback(() => setAttempt(value => value + 1), []);
     React.useEffect(() => {
         if (!presented || !lifetime) return;
         const active = captureActiveServerAccountScopeLifetime();
         if (!active || !areServerAccountScopesEqual(active.scope, lifetime.scope)) return;
-        if (automationId !== undefined) {
-            let alive = true;
-            const publish = (value: SelectedDefinitionRead) => {
-                if (alive && lifetime.isCurrent()) setSelectedRead({ lifetime, automationId, value });
-            };
-            void import('@/sync/sync').then(async ({ sync }) => {
-                if (!alive || !lifetime.isCurrent()) return;
+        let alive = true;
+        const publish = (value: DefinitionRead) => {
+            if (alive && lifetime.isCurrent()) setDefinitionRead({ lifetime, automationId, value });
+        };
+        const release = automationId === undefined ? retainAutomationDefinitionDetailsDemand(active) : undefined;
+        void import('@/sync/sync').then(async ({ sync }) => {
+            if (!alive || !lifetime.isCurrent()) return;
+            if (automationId === undefined) {
+                await (attempt === 0 ? sync.ensureAutomationsRead() : sync.refreshAutomations());
+                publish({ kind: 'available' });
+            } else {
                 const definition = await sync.refreshAutomationDefinitionDetail(automationId);
                 publish(definition ? { kind: 'available' }
                     : { kind: 'unavailable', reason: { code: 'automation_stored_content_unavailable' } });
-            }).catch((error: unknown) => {
-                publish(error instanceof AutomationApiError && error.status === 404 ? { kind: 'missing' }
-                    : { kind: 'unavailable', reason: error instanceof HappyError
-                        ? { code: error.code ?? 'action_failed', ...(error.status === undefined ? {} : { status: error.status }),
-                            ...(error.failureCause ? { failureCause: error.failureCause } : {}) }
-                        : { code: 'action_failed' } });
-            });
-            return () => { alive = false; };
-        }
-        const release = retainAutomationDefinitionDetailsDemand(active);
-        void import('@/sync/sync').then(({ sync }) => sync.ensureAutomationsRead()).catch(() => {});
-        return release;
+            }
+        }).catch((error: unknown) => {
+            publish(automationId !== undefined && error instanceof AutomationApiError && error.status === 404 ? { kind: 'missing' }
+                : { kind: 'unavailable', reason: error instanceof HappyError
+                    ? { code: error.code ?? 'action_failed', ...(error.status === undefined ? {} : { status: error.status }),
+                        ...(error.failureCause ? { failureCause: error.failureCause } : {}) }
+                    : { code: 'action_failed' } });
+        });
+        return () => { alive = false; release?.(); };
     }, [lifetime, presented, automationId, attempt]);
-    const needsContent = presented && automations.some(definition => definition.triggers.some(trigger =>
+    const read = definitionRead?.lifetime === lifetime && definitionRead.automationId === automationId ? definitionRead.value : null;
+    const needsContent = presented && read?.kind === 'available' && automations.some(definition => definition.triggers.some(trigger =>
         isPluginEventAutomationTrigger(trigger) && isHealthCheckEventSourceV1(trigger)));
     const [opened, setOpened] = React.useState<Readonly<{
         lifetime: ServerAccountScopeLifetime; access: PluginEventAutomationStoredContentAccess | null;
@@ -104,7 +106,7 @@ export function useConfiguredCheckDefinitions(lifetime: ServerAccountScopeLifeti
         return () => { controller.abort(); retirement.dispose(); setOpened(null); };
     }, [lifetime, needsContent]);
     const sources = React.useMemo(() => {
-        if (!presented || !lifetime?.isCurrent()) return [];
+        if (!presented || read?.kind !== 'available' || !lifetime?.isCurrent()) return [];
         return automations.flatMap(definition => definition.triggers.flatMap(trigger => {
             if (!isPluginEventAutomationTrigger(trigger) || !isHealthCheckEventSourceV1(trigger)) return [];
             const privateDetail = opened?.lifetime === lifetime && opened.access
@@ -114,7 +116,7 @@ export function useConfiguredCheckDefinitions(lifetime: ServerAccountScopeLifeti
                 observation: privateDetail?.trigger.observation ?? null,
                 loading: definition.detail.kind === 'unloaded' || opened?.lifetime !== lifetime }];
         }));
-    }, [presented, lifetime, automations, opened]);
+    }, [presented, read, lifetime, automations, opened]);
     const base = React.useMemo(() => sources.map(entry => ({ ...entry,
         checks: entry.source ? readServiceCheckDefinitions(entry.source) : null })), [sources]);
     const needsDomains = base.some(entry => entry.checks?.some(check => check.domainId !== null));
@@ -145,7 +147,6 @@ export function useConfiguredCheckDefinitions(lifetime: ServerAccountScopeLifeti
                 observerMachineId: entry.observation?.kind === 'durablePush' ? null : entry.observation?.watcher?.machineId ?? null } : UNAVAILABLE];
         }));
     }, [base, domains, reader]);
-    const selected = selectedRead?.lifetime === lifetime && selectedRead.automationId === automationId ? selectedRead.value : null;
-    return { byTrigger, selected, retrySelected, domainsPending: needsDomains && domainPage.snapshot.status !== 'ready',
+    return { byTrigger, read, retry, domainsPending: needsDomains && domainPage.snapshot.status !== 'ready',
         domainContinuation: needsDomains && domainPage.hasNextPage ? domainPage.nextPage : undefined };
 }

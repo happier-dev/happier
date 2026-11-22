@@ -335,7 +335,7 @@ function ApiTokenTargetRows(props: Readonly<{ sessions: readonly string[]; machi
 
 /** Mounted only while the token can run an Automation now, so other tokens' pages never read Automations. */
 function ApiTokenAutomationFacts(props: Readonly<{ automationIds: readonly string[] | null }>) {
-    const automations = useAutomations();
+    const automations = useAutomations({ read: Boolean(props.automationIds?.length) });
     const byId = new Map(automations.map((automation) => [automation.id, automation]));
     return (
         <ItemGroup

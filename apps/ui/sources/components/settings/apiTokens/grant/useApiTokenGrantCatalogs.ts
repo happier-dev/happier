@@ -171,10 +171,10 @@ export type ApiTokenGrantNames = Readonly<{
 }>;
 
 /** Names for access summaries: Action families and titles, model names from the catalog, and Automation names. */
-export function useApiTokenGrantNames(): ApiTokenGrantNames {
+export function useApiTokenGrantNames(readAutomations = false): ApiTokenGrantNames {
     const actionGroups = useApiTokenGrantActionGroups();
     const modelGroups = useApiTokenGrantModelGroups(null);
-    const automations = useAutomations();
+    const automations = useAutomations({ read: readAutomations });
     return React.useMemo(() => {
         const modelNames = new Map(modelGroups.flatMap((group) => group.models.map((model) => [model.key, model.name] as const)));
         const automationNames = new Map(automations.map((automation) => [automation.id, automation.name] as const));

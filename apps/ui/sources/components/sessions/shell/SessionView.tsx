@@ -1346,7 +1346,8 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
     const shouldShowSubagentsButton = subagentCounts.total > 0 || sessionExecutionRunsSupported || hasSessionSubagentLaunchCards(session);
 
     const sessionAutomationsEnabledCount = useEnabledAutomationsCountForSession(sessionId, {
-        enabled: showAutomations,
+        enabled: showAutomations && acceptedSessionId !== '',
+        serverId: currentSessionRouteServerId ?? undefined,
     });
     const paneRef = React.useRef(pane);
     paneRef.current = pane;

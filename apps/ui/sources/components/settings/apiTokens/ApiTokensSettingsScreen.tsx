@@ -155,7 +155,7 @@ const ApiTokensListPage = React.memo(function ApiTokensListPage(props: Readonly<
     const state = useApiTokenSettingsControllerState(controller);
     const presentation = resolveApiTokenListPresentation(state);
     const hostActivelyViewed = useHostActivelyViewed();
-    const names = useApiTokenGrantNames();
+    const names = useApiTokenGrantNames(state.tokens.some(token => token.grant.automationIds?.length === 1));
     const operations = useApiTokenOperations(controller);
     const tokenListTransitionKey = state.tokens.map((token) => token.tokenId).join(',') || 'empty';
     const showsTokenList = presentation === 'list' || presentation === 'listWithRetry';

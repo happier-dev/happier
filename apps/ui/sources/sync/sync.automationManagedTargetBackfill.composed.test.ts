@@ -2,7 +2,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import './syncEngine';
 import { formatWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionRefV1';
 import type { Socket } from 'socket.io-client';
-import { createDeferred } from '@/dev/testkit';
+import { createDeferred, renderHook } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
@@ -10,6 +10,7 @@ import { configureConnectedServerSocketBoundary, installDisconnectedServerSocket
     restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
+import { storage } from '@/sync/domains/state/storageStore';
 import { createWorkflowAutomationDetailFixture, createWorkflowAutomationHttpBoundary } from '@/dev/testkit/harness/workflowAutomationHttpBoundary';
 
 vi.mock('socket.io-client', async importOriginal =>
@@ -19,13 +20,13 @@ beforeAll(loadSyncSingletonForTests);
 let disposeHome: (() => Promise<void>) | undefined;
 afterEach(async () => { await disposeHome?.(); disposeHome = undefined; });
 
-describe('Automation managed target migration at authenticated UI startup', () => {
-    it.each(['missing', 'disabled', 'complete-known'] as const)('does no migration work for %s bootstrap admission', async admission => {
+describe('First-use Automation catalog and retained managed targets', () => {
+    it.each(['missing', 'disabled', 'complete-known'] as const)('does no migration work for %s first-read admission', async admission => {
         let selections = 0;
         let definitionReads = 0;
         let listReads = 0;
         const automations = createWorkflowAutomationHttpBoundary();
-        const known = createWorkflowAutomationDetailFixture({ id: 'known-bootstrap-row', revision: 1 });
+        const known = createWorkflowAutomationDetailFixture({ id: 'known-catalog-row', revision: 1 });
         automations.rows.set(known.id, { ...known, managedTarget: null });
         const home = await restoreServerAccountForTest({
             serverUrl: `https://automation-backfill-${admission}.example.test`, accountId: `backfill-${admission}`,
@@ -34,9 +35,9 @@ describe('Automation managed target migration at authenticated UI startup', () =
                 const url = new URL(String(input));
                 const path = url.pathname;
                 if (path.startsWith('/v1/features')) {
-                    const response = createRootLayoutFeaturesResponse({ features: { automations: { enabled: admission === 'complete-known' } } });
+                    const response = createRootLayoutFeaturesResponse({ features: { workflows: { enabled: admission === 'complete-known' } } });
                     if (admission !== 'missing') return Response.json(response);
-                    const { automations: _omitted, ...features } = response.features;
+                    const { workflows: _omitted, ...features } = response.features;
                     return Response.json({ ...response, features });
                 }
                 if (path === '/v1/account/profile') return Response.json({ ...profileDefaults, id: `backfill-${admission}` });
@@ -53,7 +54,7 @@ describe('Automation managed target migration at authenticated UI startup', () =
         disposeHome = home.dispose;
         const { sync } = await import('@/sync/sync');
         // Settle the real reader, not an empty default store or a guessed delay.
-        await sync.refreshAutomations();
+        await sync.ensureAutomationsRead();
         await sync.resumeSync('manual');
         expect(selections).toBe(0);
         expect(definitionReads).toBe(0);
@@ -62,9 +63,11 @@ describe('Automation managed target migration at authenticated UI startup', () =
         else expect(listReads).toBeGreaterThan(0);
     });
 
-    it('lets a mounted reader use the Account Automations already read instead of reading the list again', async () => {
-        let listReads = 0;
+    it('leaves the Automation catalog unread without a consumer and shares its first read', async () => {
+        const catalogRequests: string[] = [];
         const automations = createWorkflowAutomationHttpBoundary();
+        const definition = createWorkflowAutomationDetailFixture({ id: 'presented-automation', revision: 1 });
+        automations.rows.set(definition.id, { ...definition, managedTarget: null });
         const home = await restoreServerAccountForTest({
             serverUrl: 'https://automation-read-once.example.test', accountId: 'read-once',
             configureSocket: configureConnectedServerSocketBoundary,
@@ -72,25 +75,42 @@ describe('Automation managed target migration at authenticated UI startup', () =
                 const url = new URL(String(input));
                 const path = url.pathname;
                 if (path.startsWith('/v1/features')) {
-                    return Response.json(createRootLayoutFeaturesResponse({ features: { automations: { enabled: true } } }));
+                    return Response.json(createRootLayoutFeaturesResponse());
                 }
                 if (path === '/v1/account/profile') return Response.json({ ...profileDefaults, id: 'read-once' });
                 if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
                 if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
                 if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
-                if (path === '/v3/automations') listReads++;
+                if (path === '/v3/automations' || path === '/v3/automations/query') {
+                    catalogRequests.push(`${init?.method ?? 'GET'} ${path}`);
+                }
                 const reply = await automations.handle(url, init);
                 return reply ?? createEmptyAccountBootstrapHttpResponse(path, init);
             },
         });
         disposeHome = home.dispose;
         const { sync } = await import('@/sync/sync');
-        await sync.refreshAutomations();
-        const read = listReads;
-        expect(read).toBeGreaterThan(0);
-        // Two widgets mount (Home latest runs, a picker) after the Account list is read.
-        await Promise.all([sync.ensureAutomationsRead(), sync.ensureAutomationsRead()]);
-        expect(listReads - read).toBe(0);
+        // Drive the authenticated shell's startup and recovery with no mounted
+        // Automation catalog consumer, as on a cold Services or Overview page.
+        await sync.resumeSync('manual');
+        expect(catalogRequests).toEqual([]);
+
+        const { useAutomations } = await import('@/sync/store/hooks');
+        // The picker and an explicit widget read can overlap on first use.
+        const [picker] = await Promise.all([
+            renderHook(() => useAutomations({ read: true })),
+            sync.ensureAutomationsRead(),
+            sync.ensureAutomationsRead(),
+        ]);
+        try {
+            await vi.waitFor(() => expect(picker.getCurrent().map(row => row.id)).toEqual([definition.id]));
+            expect(catalogRequests).toEqual(['GET /v3/automations']);
+            expect(storage.getState().automations[definition.id]?.id).toBe(definition.id);
+            await sync.ensureAutomationsRead();
+            expect(catalogRequests).toEqual(['GET /v3/automations']);
+        } finally {
+            await picker.unmount();
+        }
     });
 
     it('uses the exact selector when an all-known first page hides an unknown later row', async () => {
@@ -116,7 +136,9 @@ describe('Automation managed target migration at authenticated UI startup', () =
                 if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
                 if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
                 if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
-                if (path === '/v3/automations/query') selected.push(JSON.parse(String(init?.body)));
+                if (path === '/v3/automations/query') {
+                    selected.push(JSON.parse(String(init?.body)));
+                }
                 else if (path === '/v3/automations') {
                     ordinaryPages++;
                     expect(url.searchParams.has('cursor')).toBe(false);
@@ -126,8 +148,15 @@ describe('Automation managed target migration at authenticated UI startup', () =
             },
         });
         disposeHome = home.dispose;
+        const { sync } = await import('@/sync/sync');
+        await sync.resumeSync('manual');
+        expect(ordinaryPages).toBe(0);
+        expect(selected).toHaveLength(0);
+        await sync.ensureAutomationsRead();
         await vi.waitFor(() => expect(automations.patches).toHaveLength(1));
-        expect(selected).toEqual([expect.objectContaining({ managedTargetUnindexed: true })]);
+        expect(selected.filter(query => typeof query === 'object' && query !== null && 'managedTargetUnindexed' in query))
+            .toEqual([expect.objectContaining({ managedTargetUnindexed: true })]);
+        const initialSelections = selected.length;
         expect(detailIds).toEqual([]);
         // A committed PATCH may legitimately refresh the ordinary projection;
         // it must never traverse that inventory or repeat the migration query.
@@ -135,9 +164,8 @@ describe('Automation managed target migration at authenticated UI startup', () =
         expect(automations.rows.get(unknown.id)?.managedTarget).toBeNull();
         const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
         for (let index = 0; index < 12; index++) publishHomeAccountChange(home.serverId);
-        const { sync } = await import('@/sync/sync');
         await sync.resumeSync('manual');
-        expect(selected).toHaveLength(1);
+        expect(selected).toHaveLength(initialSelections);
         expect(automations.patches).toHaveLength(1);
     });
 
@@ -158,8 +186,6 @@ describe('Automation managed target migration at authenticated UI startup', () =
                 if (path.startsWith('/v1/features')) return Response.json(createRootLayoutFeaturesResponse());
                 if (path === '/v1/account/profile') return Response.json({ ...profileDefaults, id: 'backfill-account' });
                 if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
-                if (path === '/v2/cursor') return Response.json({ cursor: 0 });
-                if (path === '/v2/changes') return Response.json({ changes: [], nextCursor: 1 });
                 if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
                 if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
                 if (path === '/v3/automations/query') {
@@ -180,6 +206,8 @@ describe('Automation managed target migration at authenticated UI startup', () =
             },
         });
         disposeHome = home.dispose;
+        const { sync } = await import('@/sync/sync');
+        await sync.ensureAutomationsRead();
         await selectionEntered.promise;
         expect(selections).toBe(1);
         await vi.waitFor(() => expect(automations.patches).toHaveLength(1));
@@ -194,15 +222,13 @@ describe('Automation managed target migration at authenticated UI startup', () =
         socket.connect();
         const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
         for (let index = 0; index < 12; index++) publishHomeAccountChange(home.serverId);
-        const { sync } = await import('@/sync/sync');
         await sync.resumeSync('manual');
         expect(selections).toBe(1);
         expect(automations.patches).toHaveLength(1);
         expect(automations.reconciles).toHaveLength(0);
     });
 
-    it('cancels a held startup select when its credentials retire', async () => {
-        const entered = createDeferred<void>();
+    it('cancels a held first-use migration select when its credentials retire', async () => {
         const release = createDeferred<void>();
         let selectionSignal: AbortSignal | null | undefined;
         let detailReads = 0;
@@ -216,8 +242,11 @@ describe('Automation managed target migration at authenticated UI startup', () =
                 if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
                 if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
                 if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
-                if (path === '/v3/automations/query' && JSON.parse(String(init?.body)).managedTargetUnindexed === true) {
-                    selectionSignal = init?.signal; entered.resolve(); await release.promise;
+                if (path === '/v3/automations/query') {
+                    if (JSON.parse(String(init?.body)).managedTargetUnindexed === true) {
+                        selectionSignal = init?.signal;
+                        await release.promise;
+                    }
                     return Response.json({ automations: [], nextCursor: null });
                 }
                 if (path.startsWith('/v3/automations/')) detailReads++;
@@ -228,13 +257,16 @@ describe('Automation managed target migration at authenticated UI startup', () =
         });
         disposeHome = home.dispose;
         try {
-            await entered.promise;
-            expect(selectionSignal).toBeDefined();
+            const { sync } = await import('@/sync/sync');
+            await sync.resumeSync('manual');
+            await sync.ensureAutomationsRead();
+            await vi.waitFor(() => expect(selectionSignal).toBeDefined());
             const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+            const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
             await TokenStorage.removeCredentialsForServerUrl(home.home.serverUrl, { serverId: home.serverId });
-            expect(selectionSignal?.aborted).toBe(true);
+            await disconnectActiveServerConnection();
+            await vi.waitFor(() => expect(selectionSignal?.aborted).toBe(true));
         } finally { release.resolve(); }
-        await entered.promise;
         expect(detailReads).toBe(0);
     });
 });

@@ -533,9 +533,12 @@ it.each(['plain', 'e2ee'] as const)('reads never-observed Check definition facts
     await vi.waitFor(() => expect(hook.getCurrent().operationalFamilies.configuredCheck.rows[0]?.definitionFacts.kind).toBe('unavailable'));
     query = { ...query, presented: false };
     await hook.rerender(); await flushHookEffects();
-    await account.restore({ accountId: 'other-account', serverIdentityId: 'srv_inventory_check_facts', machines: [] });
+    await account.restore({ accountId: 'other-account', serverIdentityId: 'srv_inventory_check_facts', machines: [], httpAnswers: {
+        'POST /v3/automations/query': { body: { automations: [], nextCursor: null } },
+    } });
     query = { ...query, scope: storage.getState().settingsScope!, presented: true };
     await hook.rerender(); await flushHookEffects();
+    await vi.waitFor(() => expect(hook.getCurrent().operationalFamilies.configuredCheck.coverage).toBe('available'));
     expect(hook.getCurrent().operationalFamilies.configuredCheck.rows).toEqual([]);
     expect(readAutomationDefinitionDetailsDemand(lifetime)).toBe(false);
 });

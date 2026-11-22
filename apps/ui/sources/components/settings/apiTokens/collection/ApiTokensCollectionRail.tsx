@@ -30,7 +30,7 @@ export const ApiTokensCollectionRail = React.memo(function ApiTokensCollectionRa
     const router = useRouter();
     const pathname = usePathname().replace(/\/+$/, '');
     const selectedId = resolveSelectedApiTokenId(pathname);
-    const names = useApiTokenGrantNames();
+    const names = useApiTokenGrantNames(state.tokens.some(token => token.grant.automationIds?.length === 1));
     const nowMs = useApiTokenSettingsClock(state.tokens, useHostActivelyViewed());
     const operations = useApiTokenOperations(controller);
     const busy = state.phase === 'loading' || state.createPending || state.operation !== null;

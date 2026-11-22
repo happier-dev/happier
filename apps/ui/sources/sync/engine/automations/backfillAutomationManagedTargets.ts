@@ -10,7 +10,7 @@ import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domain
 import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 
-/** One Account-bootstrap adapter; recipe semantics and CAS remain on the Protocol owner. */
+/** One adapter for the first Account catalog read; recipe semantics and CAS stay in Protocol. */
 export async function backfillAutomationManagedTargetsForAccount(lifetime: ServerAccountScopeLifetime) {
     const controller = new AbortController();
     const retirement = lifetime.onRetire(() => controller.abort());

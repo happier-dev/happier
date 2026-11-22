@@ -220,11 +220,11 @@ export function useManagedConfiguredChecks(input: StoreInstalledInput, demand: S
             if (checksIn(Object.values(getStorage().getState().automations)) > before) return;
         }
     }, [nextCursor]);
-    const healthResults = useConfiguredHealthResults(scope, listed && automations.some(native => native.triggers.some(trigger =>
+    const healthResults = useConfiguredHealthResults(scope, listed && definitions.read?.kind === 'available' && automations.some(native => native.triggers.some(trigger =>
         isPluginEventAutomationTrigger(trigger) && isHealthCheckEventSourceV1(trigger))), complete);
     const previous = React.useRef(EMPTY_CHECK_ROWS);
     const rows = React.useMemo(() => {
-        if (!listed || !scope || definitions.selected?.kind === 'missing') return EMPTY_CHECK_ROWS;
+        if (!listed || !scope || definitions.read?.kind !== 'available') return EMPTY_CHECK_ROWS;
         const byKey = new Map(previous.current.map(row => [row.key, row]));
         const next = automations.flatMap(native => native.triggers.flatMap((trigger): ManagedConfiguredCheckRow[] => {
             if ((triggerId !== undefined && trigger.id !== triggerId) || !isPluginEventAutomationTrigger(trigger) || !isHealthCheckEventSourceV1(trigger)) return [];
@@ -239,13 +239,13 @@ export function useManagedConfiguredChecks(input: StoreInstalledInput, demand: S
         }));
         if (next.length !== previous.current.length || next.some((row, index) => row !== previous.current[index])) previous.current = next.length === 0 ? EMPTY_CHECK_ROWS : next;
         return previous.current;
-    }, [automations, listed, scope, healthResults, definitions.byTrigger, definitions.selected, triggerId]);
+    }, [automations, listed, scope, healthResults, definitions.byTrigger, definitions.read, triggerId]);
     return React.useMemo<ConfiguredCheckResult>(() => {
         if (!scope) return { rows: EMPTY_CHECK_ROWS, coverage: admitted.coverage };
         if (input.projectKey || input.machine) return { rows: EMPTY_CHECK_ROWS, coverage: 'available' };
         if (!demand.presented || !ready) return { rows: EMPTY_CHECK_ROWS, coverage: 'loading' };
-        if (selection && !definitions.selected) return { rows, coverage: 'loading' };
-        if (definitions.selected?.kind === 'unavailable') return { rows, coverage: { unavailable: definitions.selected.reason }, continuation: definitions.retrySelected };
+        if (!definitions.read) return { rows, coverage: 'loading' };
+        if (definitions.read.kind === 'unavailable') return { rows, coverage: { unavailable: definitions.read.reason }, continuation: definitions.retry };
         if (!selection && nextCursor !== null) {
             if (!complete) return { rows, coverage: { partial: 'automation_page' }, continuation: loadAutomations };
             return loadMoreFailed
@@ -260,5 +260,5 @@ export function useManagedConfiguredChecks(input: StoreInstalledInput, demand: S
         const partial = healthResults.value.preceding || healthResults.value.nextCursor !== undefined;
         return { rows, coverage: partial ? { partial: 'health_result_page' } : 'available',
             ...(partial ? { continuation: healthResults.loadNext } : {}) };
-    }, [scope, admitted.coverage, input.projectKey, input.machine, demand.presented, ready, rows, nextCursor, complete, loadMoreFailed, requestPage, healthResults, loadAutomations, definitions.domainsPending, definitions.domainContinuation, definitions.selected, definitions.retrySelected, selection]);
+    }, [scope, admitted.coverage, input.projectKey, input.machine, demand.presented, ready, rows, nextCursor, complete, loadMoreFailed, requestPage, healthResults, loadAutomations, definitions.domainsPending, definitions.domainContinuation, definitions.read, definitions.retry, selection]);
 }
