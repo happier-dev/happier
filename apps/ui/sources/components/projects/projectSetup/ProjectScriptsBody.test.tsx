@@ -734,6 +734,45 @@ describe('ProjectScriptsBody setup affordance', () => {
     expect(shared.calls.filter(call => call.actionId === 'projects.inspect' && call.input.read.kind === 'detail')).toHaveLength(detailReads);
   });
 
+  it('keeps the first saved repository names while its retained inspection refreshes', async () => {
+    isolateManifestDrafts();
+    shared.inspection = { definition: { basis: { kind: 'absent' }, document: null }, detection,
+      importCandidates: [], environmentImport: { kind: 'environment', file: '.env.example', diagnostics: [],
+        requirements: [{ name: 'APP_PORT', kind: 'config', required: false }] } };
+    const screen = await render('page', 'scripts.create');
+    await screen.pressByTestIdAsync('scripts.create');
+    await vi.waitFor(() => expect(screen.findByTestId('project-manifest-editor.environment.import')).toBeTruthy());
+    await screen.pressByTestIdAsync('project-manifest-editor.environment.import');
+    await vi.waitFor(() => expect(screen.findByTestId('project-manifest-editor.environment:APP_PORT')).toBeTruthy());
+    await screen.pressByTestIdAsync('project-manifest-editor.mode:raw');
+    const bytes = screen.findByTestId('project-manifest-editor.code')?.props.value;
+    expect(typeof bytes).toBe('string');
+    const document = readProjectManifestDocument(bytes);
+    expect(document.status).toBe('valid');
+    const definition = { basis: { kind: 'present' as const, hash: 'b'.repeat(64) }, document };
+    await screen.pressByTestIdAsync('project-manifest-editor.mode:form');
+    shared.responses['projects.manifest.update'] = { status: 'saved', ...definition };
+    const refresh = createDeferred<unknown>();
+    shared.inspectionPending = refresh.promise;
+    const readsBeforeSave = shared.calls.filter(call => call.actionId === 'projects.inspect').length;
+    try {
+      await screen.pressByTestIdAsync('project-manifest-editor.save');
+      await vi.waitFor(() => expect(shared.calls.filter(call => call.actionId === 'projects.inspect').length).toBeGreaterThan(readsBeforeSave));
+      // Refresh still carries the old absent file; it must not replace the successfully saved draft.
+      expect(screen.findByTestId('project-manifest-editor.environment:APP_PORT')).toBeTruthy();
+      expect(screen.findByTestId('project-manifest-editor.save')?.props.disabled).toBe(true);
+      expect(screen.findByTestId('project-manifest-editor.conflict')).toBeNull();
+      shared.inspection = { definition, detection, importCandidates: [] };
+      await act(async () => refresh.resolve(shared.inspection));
+      await vi.waitFor(() => expect(screen.findByTestId('project-manifest-editor.environment:APP_PORT')).toBeTruthy());
+      expect(screen.findByTestId('project-manifest-editor.save')?.props.disabled).toBe(true);
+      expect(screen.findByTestId('project-manifest-editor.conflict')).toBeNull();
+    } finally {
+      await act(async () => refresh.resolve(shared.inspection));
+      shared.inspectionPending = null;
+    }
+  });
+
   it('edits a setup just for you and imports .env.example names into it, never writing the repository file (A U2)', async () => {
     isolateManifestDrafts();
     shared.organizations = [{ key: { kind: 'project-organization', serverId: workspace.serverId, projectKey: 'w1' },

@@ -169,6 +169,10 @@ export function ProjectScriptsBody({
     ? { kind: editor?.key === key ? editor.seed ? 'create' : 'editor' : 'scripts' }
     : { kind: presentation === 'widget' ? 'overview' : 'rail', detectedRows }, [detectedRows, editor?.key, editor?.seed, key, presentation]);
   const { read, retry } = useProjectDefinitionInspection(workspace, binding, selection);
+  const definition = read && 'value' in read ? read.value.definition : null;
+  // Refresh retains its old definition; do not replay those pre-save bytes into the editor.
+  const editorDefinition = React.useMemo(() => definition && editor?.key === key
+    ? ProjectManifestFileSnapshotSchema.parse(definition) : null, [definition, editor?.key, key]);
   const runChoiceKeys = React.useMemo(() => {
     if (!read || !('value' in read)) return undefined;
     const document = read.value.definition.document;
@@ -273,7 +277,7 @@ export function ProjectScriptsBody({
         workspace={workspace}
         accountId={accountId}
         client={controller.client!}
-        definition={ProjectManifestFileSnapshotSchema.parse(read.value.definition)}
+        definition={editorDefinition!}
         detection={read.value.detection}
         importCandidates={read.value.importCandidates}
         commands={read.value.commands}
