@@ -21,7 +21,9 @@ import { PageHeaderMenu } from '@/components/ui/layout/PageHeaderEntityParts';
  * `⋯`, unless it has a `⋯` of its own and puts them there (`drawsMenuRows`, {@link useLentHeaderMenuRows}).
  */
 /** One row a pane lends to the header of what it shows, drawn in that header's `⋯`. */
-export type LentHeaderMenuRow = Readonly<{ id: string; title: string; testID: string; iconName: IconName; disabled?: boolean; onSelect: () => void }>;
+export type LentHeaderMenuRow = Readonly<{ id: string; title: string; testID: string; iconName: IconName; disabled?: boolean; onSelect: () => void;
+    /** `close`: the row closes the page the header shows (its tab), so that page's own close goes with it. */
+    role?: 'close' }>;
 
 /**
  * A hosted page's primary, lent to the header above it as data: the header draws it as its own `+`, named by

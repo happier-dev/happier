@@ -301,7 +301,7 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
                 : null;
         const close: LentHeaderMenuRow = { id: 'details-tab-close', title: t('session.detailsPanel.closeTabA11y'),
             // Closing the last page ends the pane; with others held, the next one takes the screen.
-            testID: 'details-tab-menu-close', iconName: 'x', onSelect: () => { void closePresentedTab(foldedTabKey); } };
+            testID: 'details-tab-menu-close', iconName: 'x', role: 'close', onSelect: () => { void closePresentedTab(foldedTabKey); } };
         return [...show, ...(pin ? [pin] : []), ...(paneLendsClose ? [] : [close])];
     }, [closePresentedTab, foldedTabKey, foldedTabPin, otherTabs, presentedTitles, paneLendsClose, pinDetailsTab, resolveTabIconName, setActiveDetailsTab, unpinDetailsTab]);
     // The rows travel with the lent controls, so whichever header draws those controls offers them too (a Details

@@ -673,10 +673,13 @@ export function BrowserShell(props: Readonly<{
         if (!rows || rows.length === 0) return pageMenuItems;
         // A lending group always lends a close (its own row, or the pane's close among its controls), and that
         // close also ends the pane with its last page: it stands in for the page's own Close tab.
+        // Close means the page goes with its tab: a launchpad tab's page lives in the launchpad's own Browser session,
+        // so a page left open there came back tab-less (no pin, no close) the next time the Browser opened.
         return [...pageMenuItems.filter(item => item.id !== 'close-tab'), ...rows.map((row): BrowserToolbarOverflowItem => ({
-            id: row.id, iconName: row.iconName, label: row.title, disabled: row.disabled, onPress: row.onSelect,
+            id: row.id, iconName: row.iconName, label: row.title, disabled: row.disabled,
+            onPress: row.role === 'close' && activeView ? () => { void closeView(); row.onSelect(); } : row.onSelect,
         }))];
-    }, [lentRows, pageMenuItems, phoneChrome]);
+    }, [activeView, closeView, lentRows, pageMenuItems, phoneChrome]);
     // While the agent drives its own (daemon) browser the page is moving under it: the page tools
     // step out of the chrome until the person has the page (lab `browser` A/H). The controller is the
     // daemon's, already in the view state.

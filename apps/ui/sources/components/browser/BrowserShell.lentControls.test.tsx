@@ -33,7 +33,7 @@ const pin = vi.fn();
 const close = vi.fn();
 const ROWS: readonly LentHeaderMenuRow[] = [
     { id: 'details-tab-pin', title: 'Pin tab', testID: 'details-tab-menu-pin', iconName: 'push-pin', onSelect: pin },
-    { id: 'details-tab-close', title: 'Close tab', testID: 'details-tab-menu-close', iconName: 'x', onSelect: close },
+    { id: 'details-tab-close', title: 'Close tab', testID: 'details-tab-menu-close', iconName: 'x', role: 'close', onSelect: close },
 ];
 const renderNothing = () => null;
 
@@ -54,9 +54,10 @@ describe('BrowserShell takes a lending Details group\'s controls on a phone (DES
         windowSize.width = 390;
         const { BrowserShell } = await import('./BrowserShell');
         const state = mode === 'page' ? await pageState() : reducer.createBrowserControlState();
+        const onCommand = vi.fn();
         const screen = await renderScreen(
             <LendingGroup>
-                <BrowserShell browserSessionId="browser_session_1" platform="web" state={state} onCommand={vi.fn()}
+                <BrowserShell browserSessionId="browser_session_1" platform="web" state={state} onCommand={onCommand}
                     onOpenNewTab={vi.fn()} onCloseTab={vi.fn()} testID="browser-shell" />
             </LendingGroup>,
         );
@@ -71,6 +72,9 @@ describe('BrowserShell takes a lending Details group\'s controls on a phone (DES
             expect(items.map((item) => item.id)).not.toContain('close-tab');
             items.find((item) => item.id === 'details-tab-close')!.onPress();
             expect(close).toHaveBeenCalled();
+            // Close means the page closes with its tab: a launchpad tab's page lives in the launchpad's own Browser
+            // session, so leaving it open showed it again, tab-less, on the empty phone Browser (DESIGN-ACCEPT-142 3).
+            if (mode === 'page') expect(onCommand).toHaveBeenCalledWith(expect.objectContaining({ kind: 'closeView', viewId: 'view_1' }));
         } finally {
             await screen.unmount();
         }
