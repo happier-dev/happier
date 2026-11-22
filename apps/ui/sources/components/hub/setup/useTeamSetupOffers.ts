@@ -7,6 +7,7 @@ import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/
 import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 import { teamSetupStepId, type TeamAddress } from '@/sync/domains/teams/teamAddress';
 
+import { useHasHomeArrived } from '../homeArrival';
 import { useHomeSetupDismissals } from '../layout/useHomeSetupDismissals';
 
 export type TeamSetupOffer = Readonly<{
@@ -21,8 +22,9 @@ export function useTeamSetupOffers(): Readonly<{
     offers: readonly TeamSetupOffer[];
     dismiss(address: TeamAddress): Promise<void>;
 }> {
-    const directory = useTeamsDirectory();
+    const arrived = useHasHomeArrived();
     const { hasSnapshot, hidden, dismiss: dismissStep } = useHomeSetupDismissals();
+    const directory = useTeamsDirectory({ enabled: arrived && hasSnapshot });
     const dismiss = React.useCallback(async (address: TeamAddress) => {
         const account = await resolveServerCredentialAccountScope(address.serverId);
         if (account.kind !== 'bound') throw Object.assign(new Error(account.kind), { code: account.kind });

@@ -24,15 +24,43 @@ const { bindPresentUserActionConfirmation } = await import('@/sync/ops/actions/p
 const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
 const { useTeamSetupPlan } = await import('@/components/teams/setup/useTeamSetupPlan');
 const { useTeamSetupOffers } = await import('./useTeamSetupOffers');
+const { presentReadyHome } = await import('../homeArrival');
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 let restoreActions: (() => void) | undefined;
+let withdrawHome: (() => void) | undefined;
 afterEach(async () => {
     standardCleanup();
+    withdrawHome?.();
+    withdrawHome = undefined;
     restoreActions?.();
     restoreActions = undefined;
     await connection?.dispose();
     connection = undefined;
     await homes.reset();
+});
+
+it('starts reading Team setup offers after Home arrives', async () => {
+    const serverUrl = 'https://team-setup-arrival.test';
+    const serverId = await homes.addHome({ name: 'Studio', serverUrl, accountId: 'member', teamsEnabled: true, active: true });
+    await homes.selectHomes([serverId]);
+    homes.answer(serverId, '/v1/teams/list', { body: { items: [
+        teamSummaryFixture({ id: 'team-a', name: 'Studio Team', viewerJoinedAt: 100, hasSetup: true, capabilities: teamCapabilitiesFixture({}) }),
+    ], nextCursor: null } });
+    connection = await restoreServerAccountForTest({ serverUrl, accountId: 'member', request: homes.request });
+    installHomeGovernanceBoundaries(homes);
+    const scope = { serverId, accountId: 'member' };
+    storage.setState({ isDataReady: true, profileScope: scope, settingsScope: scope });
+    const wrapper = ({ children }: React.PropsWithChildren) =>
+        <InjectedAuthProvider credentials={connection!.credentials}>{children}</InjectedAuthProvider>;
+    const hook = await renderHook(useTeamSetupOffers, { wrapper });
+
+    expect(hook.getCurrent().offers).toEqual([]);
+    expect(homes.requests.filter(request => request.path === '/v1/teams/list')).toEqual([]);
+    await act(async () => { withdrawHome = presentReadyHome(); });
+    await vi.waitFor(() => expect(hook.getCurrent().offers.map(offer => offer.address.teamId)).toEqual(['team-a']));
+    expect(homes.requests.filter(request => request.path === '/v1/teams/list')).toHaveLength(1);
+
+    await hook.unmount();
 });
 
 it('offers the latest eligible join per Home and retires it after an Action dismissal or completed setup', async () => {
@@ -60,6 +88,7 @@ it('offers the latest eligible join per Home and retires it after an Action dism
     storage.setState({ isDataReady: true, profileScope: scope, settingsScope: scope });
     const wrapper = ({ children }: React.PropsWithChildren) =>
         <InjectedAuthProvider credentials={connection!.credentials}>{children}</InjectedAuthProvider>;
+    withdrawHome = presentReadyHome();
     let hook = await renderHook(useTeamSetupOffers, { wrapper });
     await vi.waitFor(() => expect(hook.getCurrent().offers).toHaveLength(2));
     const a = hook.getCurrent().offers.find(row => row.address.serverId === serverId)!;
