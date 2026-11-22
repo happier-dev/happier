@@ -82,13 +82,24 @@ it.skipIf(process.platform !== 'linux').each(['leaf', 'parent'] as const)('does 
         .rejects.toMatchObject({ code: 'ENOENT' });
 });
 
-it.skipIf(process.platform !== 'linux')('refuses an existing symlink in every ACL ancestor before executing a command', async () => {
-    const { parent, victim } = await fixture();
-    await mkdir(join(victim, 'payload'));
-    const alias = join(parent, 'alias'); symlinkSync(victim, alias);
-    await expect(access.grantExactUidPathAccess({ path: join(alias, 'payload'), uid: 994, access: 'rwx', directory: true }))
+it.skipIf(process.platform !== 'linux')('refuses an ACL ancestor swapped for a symlink before opening that component', async () => {
+    const { root, parent, victim } = await fixture();
+    const intermediate = join(parent, 'intermediate');
+    const target = join(victim, 'payload');
+    await mkdir(join(intermediate, 'payload'), { recursive: true });
+    await mkdir(target, { mode: 0o700 });
+    const parentInode = (await stat(parent)).ino;
+    boundary.afterOpen = async (_path, handle) => {
+        if ((await handle.stat()).ino !== parentInode) return;
+        boundary.afterOpen = undefined;
+        renameSync(intermediate, join(root, 'displaced'));
+        symlinkSync(victim, intermediate);
+    };
+    await expect(access.grantExactUidPathAccess({ path: join(intermediate, 'payload'), uid: 994, access: 'rwx', directory: true }))
         .rejects.toThrow();
     expect(boundary.inodes).toEqual([]);
+    expect(boundary.acls.has(inodeKey(target))).toBe(false);
+    expect((await stat(target)).mode & 0o777).toBe(0o700);
 });
 
 it.skipIf(process.platform !== 'linux').each(['leaf', 'parent'] as const)(

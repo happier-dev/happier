@@ -118,6 +118,21 @@ describe.skipIf(process.platform !== 'linux')('finite native operation runtime',
     } finally { await chmod(parent, 0o700); }
   });
 
+  it('launches and retires an operation when the agent cannot use procfs file descriptors', async () => {
+    const agentHome = await home();
+    const open = filesystem.open;
+    vi.spyOn(filesystem, 'open').mockImplementation(async (...args) => {
+      if (String(args[0]).startsWith('/proc/')) throw Object.assign(new Error('procfs unavailable'), { code: 'EACCES' });
+      return open(...args);
+    });
+    const lease = await operation(agentHome, 'without-procfs');
+    const input = launch(agentHome, 'without-procfs', '');
+    expect(await executeAgentLaunchPayload(input, io(agentHome))).toEqual({ code: 0, signal: null });
+    expect((await stat(join(agentHome, '.cache'))).mode & 0o777).toBe(0o700);
+    await lease.dispose();
+    await expect(stat(input.runtimeHome)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('separates two native identity caches while concurrent operations of one identity share theirs', async () => {
     const first = await home(); const second = await home();
     const script = `const fs=require('node:fs');fs.mkdirSync(process.env.XDG_CACHE_HOME,{recursive:true});process.stdout.write(process.env.XDG_CACHE_HOME);`;
@@ -204,17 +219,20 @@ describe.skipIf(process.platform !== 'linux')('finite native operation runtime',
       ? join(agentHome, 'runtime/session') : launch(agentHome, 'foreign', '').runtimeHome;
     await mkdir(runtimeHome, { recursive: true, mode: 0o700 });
     await writeFile(join(runtimeHome, 'sentinel'), 'untouched');
-    const actualStat = filesystem.stat;
-    const metadata = vi.spyOn(filesystem, 'stat').mockImplementation(async path => {
+    const metadataOwner = vi.spyOn(filesystem, 'stat');
+    const actualStat = filesystem.lstat;
+    const override = async (path: Parameters<typeof actualStat>[0]) => {
       const entry = await actualStat(path);
       return kind === 'foreign owner' && await filesystem.realpath(path) === runtimeHome
         ? Object.assign(entry, { uid: 99997 }) : entry;
-    });
+    };
+    metadataOwner.mockImplementation(override);
+    const metadata = vi.spyOn(filesystem, 'lstat').mockImplementation(override);
     try {
       await expect(executeAgentLaunchPayload({ v: 1, action: 'retire_operation', runtimeHome }, io(agentHome))).rejects.toBeDefined();
       expect(await readFile(join(runtimeHome, 'sentinel'), 'utf8')).toBe('untouched');
       await expect(stat(join(agentHome, '.cache'))).rejects.toMatchObject({ code: 'ENOENT' });
-    } finally { metadata.mockRestore(); }
+    } finally { metadata.mockRestore(); metadataOwner.mockRestore(); }
   });
 
   it('disposes member A and B through their exact native identities without retiring the other member', async () => {
