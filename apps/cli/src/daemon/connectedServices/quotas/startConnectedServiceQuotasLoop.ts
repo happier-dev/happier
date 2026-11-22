@@ -1,6 +1,11 @@
 import type { RequesterConnectedAccountObservation } from '@/api/client/accountEncryptionCurrentnessObservation';
 import { startSingleFlightIntervalLoop, type SingleFlightLoopSchedule } from '@/daemon/lifecycle/singleFlightIntervalLoop';
 
+type ConnectedServiceQuotaStartupWakeReason = 'daemon-startup' | 'requester-startup';
+type ConnectedServiceQuotaSubscribedWakeReason = 'registration' | 'invalidation';
+type ConnectedServiceQuotaWakeReason = ConnectedServiceQuotaStartupWakeReason | ConnectedServiceQuotaSubscribedWakeReason
+  | 'record-refresh' | 'reconnect' | 'scheduled';
+
 export type ConnectedServiceQuotasLoopHandle = Readonly<{
   stop: () => Promise<void>;
   pause: () => void;
@@ -13,9 +18,10 @@ export function startConnectedServiceQuotasLoop(params: Readonly<{
   enabled: boolean;
   tickMs: number;
   coordinator: Readonly<{ tickOnce: (signal?: AbortSignal) => Promise<void | SingleFlightLoopSchedule> }>;
-  subscribeWake?: (listener: (event?: RequesterConnectedAccountObservation) => void) => () => void;
+  subscribeWake?: (listener: (event?: RequesterConnectedAccountObservation, wakeReason?: ConnectedServiceQuotaSubscribedWakeReason) => void) => () => void;
   runImmediately?: boolean;
-  onTickError: (error: unknown) => void;
+  startupWakeReason?: ConnectedServiceQuotaStartupWakeReason;
+  onTickError: (error: unknown, wakeReason: ConnectedServiceQuotaWakeReason) => void;
   setTimeoutFn?: (fn: () => void, ms: number) => unknown;
   clearTimeoutFn?: (handle: unknown) => void;
 }>): ConnectedServiceQuotasLoopHandle | null {
@@ -23,7 +29,7 @@ export function startConnectedServiceQuotasLoop(params: Readonly<{
 
   let stopped = false;
   const settledTickListeners = new Set<(signal?: AbortSignal) => void | Promise<void>>();
-  const loop = startSingleFlightIntervalLoop({
+  const loop = startSingleFlightIntervalLoop<ConnectedServiceQuotaWakeReason>({
     intervalMs: params.tickMs,
     task: async signal => {
       const schedule = await params.coordinator.tickOnce(signal);
@@ -31,17 +37,19 @@ export function startConnectedServiceQuotasLoop(params: Readonly<{
       if (!stopped) await Promise.all([...settledTickListeners].map(listener => listener(signal)));
       return schedule;
     },
-    onError: params.onTickError,
+    onError: (error, wakeReason) => params.onTickError(error, wakeReason ?? 'scheduled'),
     unref: true,
     respectFailureDeadlineForTriggers: true,
     setTimeoutFn: params.setTimeoutFn,
     clearTimeoutFn: params.clearTimeoutFn,
   });
   // A durable request identifies a person's Refresh even on a mixed change page.
-  const unsubscribeWake = params.subscribeWake?.(event => {
-    loop.trigger(event?.quotaRefreshRecordIds?.length ? { bypassFailureDeadline: true } : undefined);
+  const unsubscribeWake = params.subscribeWake?.((event, wakeReason = 'invalidation') => {
+    loop.trigger(event?.quotaRefreshRecordIds?.length
+      ? { bypassFailureDeadline: true, wakeReason: 'record-refresh' }
+      : { wakeReason });
   });
-  if (params.runImmediately) loop.trigger();
+  if (params.runImmediately) loop.trigger({ wakeReason: params.startupWakeReason ?? 'daemon-startup' });
 
   return {
     stop: async () => {
@@ -51,8 +59,8 @@ export function startConnectedServiceQuotasLoop(params: Readonly<{
       await loop.stop();
     },
     pause: loop.pause,
-    resume: () => { loop.trigger(); loop.resume(); },
-    wake: loop.trigger,
+    resume: () => { loop.trigger({ wakeReason: 'reconnect' }); loop.resume(); },
+    wake: () => loop.trigger({ wakeReason: 'invalidation' }),
     subscribeAfterTick: listener => {
       if (!stopped) settledTickListeners.add(listener);
       return () => { settledTickListeners.delete(listener); };

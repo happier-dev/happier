@@ -469,11 +469,11 @@ export async function startDaemonConnectedServiceRuntime(
       true,
     );
   const connectedServiceRuntimeRegistry = params.connectedServiceRuntimeRegistry ?? new ConnectedServiceRuntimeRegistry();
-  const subscribeCoordinatorWake = (listener: (event?: RequesterConnectedAccountObservation) => void, settingsKeys: readonly string[],
-    invalidateInventory?: (event?: RequesterConnectedAccountObservation) => void): (() => void) => {
-    const onInventoryChanged = (event?: RequesterConnectedAccountObservation) => { invalidateInventory?.(event); listener(event); };
+  const subscribeCoordinatorWake = (listener: (event: RequesterConnectedAccountObservation | undefined, wakeReason: 'registration' | 'invalidation') => void,
+    settingsKeys: readonly string[], invalidateInventory?: (event?: RequesterConnectedAccountObservation) => void): (() => void) => {
+    const onInventoryChanged = (event?: RequesterConnectedAccountObservation) => { invalidateInventory?.(event); listener(event, 'invalidation'); };
     const cleanups = [
-      connectedServiceRuntimeRegistry.subscribeTargetRegistrations(() => listener()),
+      connectedServiceRuntimeRegistry.subscribeTargetRegistrations(() => listener(undefined, 'registration')),
       params.subscribeConnectedAccountInvalidations?.(onInventoryChanged),
       params.subscribeAccountSettingsSnapshot?.(onInventoryChanged, { settings: settingsKeys })
         ?? (!params.accountSettingsSnapshot ? subscribeActiveAccountSettingsKeys({ settings: settingsKeys }, () => onInventoryChanged()) : undefined),
@@ -996,8 +996,12 @@ export async function startDaemonConnectedServiceRuntime(
         subscribeWake: listener => subscribeCoordinatorWake(listener, ['usageQuotaNotificationsV1'], event => coordinator.invalidateInventory(event)),
         coordinator: createConnectedServiceQuotaLoopCoordinator({ coordinator,
           isAccountRuntimeCurrent: params.isAccountRuntimeCurrent, runAccountOperation: params.runAccountOperation }),
-        onTickError: (error) => {
-          params.logger.debug('[DAEMON RUN] Connected services quotas tick failed (non-fatal)', summarizeConnectedServiceTickError(error));
+        startupWakeReason: params.accountSettingsSnapshot ? 'requester-startup' : 'daemon-startup',
+        onTickError: (error, wakeReason) => {
+          params.logger.debug('[DAEMON RUN] Connected services quotas tick failed (non-fatal)', {
+            ...summarizeConnectedServiceTickError(error),
+            ...(error instanceof Error && error.name === 'AbortError' ? { wakeReason } : {}),
+          });
         },
       }),
       onActivationError: (error) => {

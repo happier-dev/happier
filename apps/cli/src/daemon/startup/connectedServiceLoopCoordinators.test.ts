@@ -85,7 +85,7 @@ it('coalesces startup quota wakes until the failed Home admission is due again',
   const credentials = { token: 'startup-quota-wake-fixture', encryption: null };
   const registry = new ConnectedServiceRuntimeRegistry();
   const attempts: number[] = [];
-  const errors: unknown[] = [];
+  const failures: Array<{ error: unknown; wakeReason: unknown }> = [];
   let rejectFirstAdmission!: (reason: unknown) => void;
   const firstAdmission = new Promise<never>((_, reject) => { rejectFirstAdmission = reject; });
   const api = await ApiClient.create(credentials);
@@ -103,8 +103,9 @@ it('coalesces startup quota wakes until the failed Home admission is due again',
   const quota = new ConnectedServiceQuotasCoordinator({ api, credentials, quotaFetchers: [], discoveryEnabled: false,
     now: Date.now, randomBytes: length => new Uint8Array(length) });
   const loop = startConnectedServiceQuotasLoop({
-    enabled: true, tickMs, runImmediately: true, onTickError: error => { errors.push(error); },
-    subscribeWake: listener => registry.subscribeTargetRegistrations(listener),
+    enabled: true, tickMs, runImmediately: true, startupWakeReason: 'requester-startup',
+    onTickError: (error, wakeReason) => { failures.push({ error, wakeReason }); },
+    subscribeWake: listener => registry.subscribeTargetRegistrations(() => listener(undefined, 'registration')),
     coordinator: createConnectedServiceQuotaLoopCoordinator({ coordinator: quota,
       isAccountRuntimeCurrent: async (signal?: AbortSignal) => {
         await fetchAccountEncryptionCurrentness({ token: credentials.token, signal });
@@ -121,7 +122,10 @@ it('coalesces startup quota wakes until the failed Home admission is due again',
     await vi.advanceTimersByTimeAsync(100);
     for (let pid = 120; pid < 140; pid++) registerTarget(pid);
     await vi.advanceTimersByTimeAsync(900);
-    expect(errors).toHaveLength(1);
+    expect(failures).toEqual([{
+      error: expect.objectContaining({ code: 'account_encryption_currentness_unavailable' }),
+      wakeReason: 'requester-startup',
+    }]);
     expect(attempts, 'one startup attempt in the first second despite forty wakes').toEqual([0]);
     loop.pause();
     registerTarget(140);

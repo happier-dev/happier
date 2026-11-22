@@ -167,7 +167,7 @@ type ScheduledQuotaRecordTrace = {
   due: boolean;
   reason: 'parked' | 'scheduled' | 'backoff' | 'read' | 'unavailable' | 'current' | 'poll';
   nextDueDelayMs: number | null;
-  providerOutcome: 'ok' | 'failed' | `retry-after:${number}` | null;
+  providerOutcome: 'ok' | 'failed' | 'retry-after' | null;
   writeResult: 'written' | 'unchanged' | 'refused' | null;
 };
 
@@ -4241,7 +4241,7 @@ export class ConnectedServiceQuotasCoordinator {
         this.applyFailureBackoff({ now, key, error });
         const retry = this.failureStateByBindingKey.get(key);
         if (input.trace?.providerOutcome === 'failed' && retry?.providerDirected) {
-          input.trace.providerOutcome = `retry-after:${Math.max(0, retry.nextAllowedAt - now)}`;
+          input.trace.providerOutcome = 'retry-after';
         }
       }
       // A missed background poll leaves the last Home observation intact.

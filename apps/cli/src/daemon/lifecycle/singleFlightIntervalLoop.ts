@@ -1,29 +1,29 @@
-type SingleFlightTrigger = Readonly<{ bypassFailureDeadline?: true }>;
+type SingleFlightTrigger<WakeReason extends string> = Readonly<{ bypassFailureDeadline?: true; wakeReason?: WakeReason }>;
 
-export type SingleFlightIntervalLoopHandle = Readonly<{
+export type SingleFlightIntervalLoopHandle<WakeReason extends string = never> = Readonly<{
   stop: () => Promise<void>;
-  trigger: (options?: SingleFlightTrigger) => void;
+  trigger: (options?: SingleFlightTrigger<WakeReason>) => void;
   pause: () => void;
   resume: () => void;
 }>;
 
 export type SingleFlightLoopSchedule = Readonly<{ nextAutomaticRunAfterMs: number | null }>;
 
-export function startSingleFlightIntervalLoop(args: Readonly<{
+export function startSingleFlightIntervalLoop<WakeReason extends string = never>(args: Readonly<{
   intervalMs: number;
   task: (signal: AbortSignal) => void | SingleFlightLoopSchedule | Promise<void | SingleFlightLoopSchedule>;
-  onError?: (error: unknown) => void;
+  onError?: (error: unknown, wakeReason: WakeReason | undefined) => void;
   unref?: boolean;
   failureBackoffMs?: number;
   maxFailureBackoffMs?: number;
   respectFailureDeadlineForTriggers?: boolean;
   setTimeoutFn?: (fn: () => void, ms: number) => unknown;
   clearTimeoutFn?: (handle: unknown) => void;
-}>): SingleFlightIntervalLoopHandle {
+}>): SingleFlightIntervalLoopHandle<WakeReason> {
   let stopped = false;
   let inFlight = false;
   let paused = false;
-  let pendingForcedRerun: SingleFlightTrigger | undefined;
+  let pendingForcedRerun: SingleFlightTrigger<WakeReason> | undefined;
   let failureCount = 0;
   let nextAutomaticRunAtMs: number | null = Date.now() + Math.max(1, Math.floor(args.intervalMs));
   let timer: unknown = null;
@@ -54,7 +54,7 @@ export function startSingleFlightIntervalLoop(args: Readonly<{
     if (args.unref) (timer as { unref?: () => void } | null)?.unref?.();
   };
 
-  const runOnce = (trigger?: SingleFlightTrigger) => {
+  const runOnce = (trigger?: SingleFlightTrigger<WakeReason>) => {
     if (stopped) return;
     if (paused || inFlight) {
       // Keep one rerun. An ordinary trigger cannot erase a queued explicit bypass.
@@ -68,6 +68,7 @@ export function startSingleFlightIntervalLoop(args: Readonly<{
       return;
     }
     clearTimer();
+    const wakeReason = trigger?.wakeReason ?? pendingForcedRerun?.wakeReason;
     pendingForcedRerun = undefined;
     inFlight = true;
     let result: ReturnType<typeof args.task>;
@@ -89,7 +90,7 @@ export function startSingleFlightIntervalLoop(args: Readonly<{
           nextAutomaticRunAtMs = Date.now() + delayMs;
         } else nextAutomaticRunAtMs = Date.now() + intervalMs;
         failureCount += 1;
-        args.onError?.(error);
+        args.onError?.(error, wakeReason);
       })
       .finally(() => {
         inFlight = false;
