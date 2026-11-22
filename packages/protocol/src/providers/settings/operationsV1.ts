@@ -321,6 +321,15 @@ export function resolveSavedSecretSlotBindingIdV1(
     ?? null;
 }
 
+export function removeProviderMachineGrantV1(
+  settings: ProviderSettingsV1,
+  connectionId: string,
+  machineId: string,
+): ProviderSettingsV1 {
+  const machineGrants = settings.machineGrants.filter(grant => grant.connectionId !== connectionId || grant.machineId !== machineId);
+  return machineGrants.length === settings.machineGrants.length ? settings : { ...settings, machineGrants };
+}
+
 export function removeProviderMachineStateV1(
   settings: ProviderSettingsV1,
   machineIdInput: string,

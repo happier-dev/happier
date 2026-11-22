@@ -12,7 +12,7 @@ import { createProviderConnectionSecurityFingerprintV1, createProviderConnection
 import { addProviderConnectionV1, bindProviderConnectionSecretV1,
   addOrUpdateProviderManualModelsV1, removeProviderManualModelV1, deleteProviderConnectionV1,
   setProviderModelVisibilityV1, resetProviderModelVisibilityV1, setProviderModelPickerVisibilityV1,
-  setProviderExperimentalConfirmationV1, resolveProviderGrantV1 } from '../settings/operationsV1.js';
+  setProviderExperimentalConfirmationV1, removeProviderMachineGrantV1, resolveProviderGrantV1 } from '../settings/operationsV1.js';
 import type { ProviderSettingsV1 } from '../settings/v1.js';
 import { ProviderConnectionV1Schema, type ProviderConnectionV1 } from './v1.js';
 import { prepareProviderConnectionCreationV1 } from './creationV1.js';
@@ -398,8 +398,16 @@ export function createAccountProviderActionExecuteV1(host: Readonly<{
           output = { status: 'success', action: request.input.action, deletedConnectionId: request.input.connectionId }; break;
         }
         case 'providers.connections.enabled.set': {
-          const input = request.input; const connection = find(input.connectionId); enable(connection, input.enabled);
-          if (!input.enabled && input.scope === 'connection') settings = { ...settings, machineGrants: settings.machineGrants.filter(grant => grant.connectionId !== connection.id) };
+          const input = request.input; const connection = find(input.connectionId);
+          if (input.scope === 'machine') {
+            const machineId = input.machineId ?? refuse('provider_connection_invalid', connection.id);
+            const next = removeProviderMachineGrantV1(settings, connection.id, machineId);
+            mutation = next !== settings;
+            settings = next;
+          } else {
+            enable(connection, input.enabled);
+            if (!input.enabled && input.scope === 'connection') settings = { ...settings, machineGrants: settings.machineGrants.filter(grant => grant.connectionId !== connection.id) };
+          }
           output = { status: 'success', action: input.action, connection: describeAccountProviderConnectionV1(settings, connection, definitions) }; break;
         }
         case 'providers.connections.secrets.bind': {

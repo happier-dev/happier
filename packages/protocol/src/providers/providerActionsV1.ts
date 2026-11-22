@@ -176,8 +176,8 @@ function resolveProviderActionOwnershipV1(
     case 'providers.models.list':
     case 'providers.models.projection': return { owner: request.input?.machineId !== undefined ? 'machine' : 'accountCatalog', placements: ['account', 'machine'] };
     case 'providers.connections.create_contribution': return { owner: request.input?.authoringReview?.candidateId != null ? 'machine' : 'accountCatalog', placements: ['account', 'machine'] };
+    case 'providers.connections.enabled.set': return { owner: request.input?.scope === 'machine' && request.input.enabled ? 'machine' : 'accountCatalog', placements: ['account', 'machine'] };
     case 'providers.connections.endpoint.set':
-    case 'providers.connections.enabled.set':
     case 'providers.connections.secrets.bind': return { owner: request.input?.scope === 'machine' ? 'machine' : 'accountCatalog', placements: ['account', 'machine'] };
     case 'providers.connections.enable_detected':
     case 'providers.connections.start_local':

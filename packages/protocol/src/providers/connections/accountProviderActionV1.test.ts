@@ -56,6 +56,27 @@ function accountRow(catalog: ProviderConnectionsCatalogV1 = DEFAULT_PROVIDER_CON
 }
 
 describe('shared Provider Account Action producer', () => {
+  it('removes only the selected Machine grant without reaching the Machine', async () => {
+    const connection = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_gateway', source: { kind: 'contribution',
+      contributionKey: 'happier.provider.deepseek/deepseek' }, role: 'named', displayName: 'Gateway',
+      displayNameMode: 'custom', revision: 0, createdAt: 1, updatedAt: 1 });
+    const accountGrant = { v: 1 as const, connectionId: connection.id, connectionSecurityFingerprint: 'account-fingerprint', confirmedAt: 1 };
+    const machineGrant = { ...accountGrant, machineId: 'retired', endpointSetFingerprint: 'endpoint-fingerprint' };
+    const standingGrant = { ...machineGrant, machineId: 'standing' };
+    const row = accountRow({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, connections: [connection],
+      accountGrants: [accountGrant], machineGrants: [machineGrant, standingGrant] });
+    const execute = createProviderActionExecuteV1({ assertCurrent() {}, account: row.execute,
+      rpc: async () => { throw new Error('target_unavailable'); }, setDefault: async () => ({ status: 'unchanged' }) });
+    const request = parseProviderActionRequestV1('providers.connections.enabled.set', {
+      action: 'setEnabled', enabled: false, scope: 'machine', machineId: 'retired', connectionId: connection.id,
+    });
+    for (const _ of [0, 1]) {
+      expect(await execute(request, {})).toMatchObject({ ok: true, result: { status: 'success' } });
+      expect(row.catalog).toMatchObject({ accountGrants: [accountGrant], machineGrants: [standingGrant] });
+    }
+    expect(row.writes).toBe(1);
+  });
+
   describe.each(['createContribution', 'createCustom'] as const)('saved %s credential verification', action => {
     it.each(['unauthorized', 'network', 'success', 'no_machine'] as const)('retains the saved connection and canonical %s outcome', async scenario => {
       const row = accountRow();

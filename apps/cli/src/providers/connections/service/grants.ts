@@ -1,4 +1,5 @@
 import { ProviderSettingsV1Schema } from '@happier-dev/protocol/providers/settings/v1';
+import { removeProviderMachineGrantV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
 import type { ProviderSettingsV1 } from '@happier-dev/protocol';
 
 export { bindProviderConnectionSecretV1 as bindProviderConnectionSecret } from '@happier-dev/protocol/providers/settings/operationsV1';
@@ -13,6 +14,7 @@ export function setProviderConnectionGrant(input: Readonly<{
   endpointSetFingerprint: string;
   now: number;
 }>): ProviderSettingsV1 {
+  if (!input.enabled && input.scope === 'machine') return removeProviderMachineGrantV1(input.settings, input.connectionId, input.machineId);
   const accountGrants = input.scope === 'account' || input.scope === 'connection'
     ? input.settings.accountGrants.filter((entry) => entry.connectionId !== input.connectionId)
     : input.settings.accountGrants;
