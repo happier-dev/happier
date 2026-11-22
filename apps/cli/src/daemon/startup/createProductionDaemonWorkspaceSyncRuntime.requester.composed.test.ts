@@ -39,6 +39,8 @@ import { createWorkspaceSyncRelationshipCredentialCustody } from '@/daemon/sessi
 import { recoverPrivateWorkspaceSyncExecutions } from './recoverPrivateWorkspaceSyncExecutions';
 import { workspaceCheckoutNativeBoundary as native } from '@/workspaces/activation/workspaceCheckoutNative.testkit';
 import { createRequesterWorkspaceSyncFixture } from './createRequesterWorkspaceSyncFixture.testkit';
+import { prepareProjectServiceMoveChildren } from '@/daemon/local/services/actions/projectServiceMoveChildren';
+import { ProjectServiceRelocateInputV1Schema } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { registerMachineWorkspaceSyncRpcHandlers, resolvePrivateWorkspaceSyncTargetExecution } from '@/api/machine/rpcHandlers.workspaceSync';
 import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
@@ -1323,4 +1325,75 @@ it.skipIf(process.platform !== 'linux')('reports a Home refusal before a Session
   expect(result).toMatchObject({ ok: false, errorCode: 'peer_unavailable', failureCause });
   expect(warning.mock.calls.filter(([message]) => message === '[Workspace Sync] Target preflight refused'))
     .toEqual([['[Workspace Sync] Target preflight refused', { requestId, failureCause: expect.objectContaining(failureCause) }]]);
+});
+
+// A Session root carries transport custody only. Only the installed Account's
+// own root reads its own rows and Sync statuses; changing a relationship still
+// needs the private capture, and every other root keeps the typed refusal.
+function withTransportOnlyRequester(authorization: ExternalActionExecutionAuthorizationV1,
+  value: Readonly<Record<string, unknown>>, binding: Partial<ExternalActionExecutionAuthorizationV1['binding']> = {}) {
+  const projectionDescriptors = Object.getOwnPropertyDescriptors(authorization.requesterAccountProjection!);
+  Reflect.deleteProperty(projectionDescriptors, requesterActionContext);
+  const projection = Object.defineProperties({}, projectionDescriptors);
+  const carrierDescriptors = Object.getOwnPropertyDescriptors(authorization);
+  Reflect.deleteProperty(carrierDescriptors, 'requesterAccountProjection');
+  Reflect.deleteProperty(carrierDescriptors, 'binding');
+  const carrier = Object.defineProperties({}, carrierDescriptors) as ExternalActionExecutionAuthorizationV1;
+  Object.defineProperty(carrier, 'binding', { value: { ...authorization.binding, ...binding }, enumerable: true });
+  Object.defineProperty(carrier, 'requesterAccountProjection', { value: projection, enumerable: false });
+  Object.defineProperty(projection, requesterActionContext, { value: Object.freeze({ ...value, authorization: carrier }), enumerable: false });
+  return carrier;
+}
+
+it.skipIf(process.platform !== 'linux')('refuses a Move preparation for another Account\'s Session root or stale requester custody with its typed reason', async () => {
+  executionBoundary.member = false;
+  // The installed Account is 'requester'; the asking root belongs to 'member-a'.
+  const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', socketIo });
+  const full = readRequesterAccountActionContext(setup.account.authorization)!;
+  const workspace = { serverId: setup.installed.homeServerIdentityId, refId: setup.sourceRef.id };
+  const destination = { kind: 'workers' as const, destination: { kind: 'machine' as const, machineId: 'worker-machine' } };
+  const request = ProjectServiceRelocateInputV1Schema.parse({ workspace, sourceMachineId: setup.installed.machineId,
+    serviceName: 'web', requestId: 'agent-move', currentTarget: { kind: 'managed_service', machineId: setup.installed.machineId,
+      managedServiceId: 'native-web', workspaceId: setup.sourceRef.id, cwd: setup.sourcePath,
+      declaration: { workspaceRefId: setup.sourceRef.id, selection: { kind: 'manifest', name: 'web' } } },
+    destination, selectedTarget: { machineId: 'worker-machine' }, desiredPlacement: { workspace, serviceName: 'web',
+      expectedRevision: 'absent', expected: { kind: 'absent' }, value: { runsOn: destination, unavailable: 'fail' } } });
+  const reads: string[] = [];
+  const prepare = (root: ExternalActionExecutionAuthorizationV1) => prepareProjectServiceMoveChildren({ request,
+    context: { externalActionExecutionAuthorization: root, signal: new AbortController().signal },
+    credentials: setup.installed.bootstrap.credentials, serverBaseUrl: setup.installed.serverHttpBaseUrl,
+    readRelationshipStatuses: async () => { reads.push('statuses'); return []; },
+    inspectSetup: async () => { reads.push('inspect'); return null; } });
+  expect(await prepare(withTransportOnlyRequester(setup.account.authorization, { credentials: full.credentials,
+    serverHttpBaseUrl: full.serverHttpBaseUrl, isCurrent: full.isCurrent, resolveEncryption: full.resolveEncryption })))
+    .toMatchObject({ ok: false, errorCode: 'project_requester_authority_unavailable', details: { reason: 'transport_only_root' } });
+  expect(await prepare(withTransportOnlyRequester(setup.account.authorization, { ...full, isCurrent: async () => false })))
+    .toMatchObject({ ok: false, errorCode: 'project_requester_authority_unavailable', details: { reason: 'requester_not_current' } });
+  expect(reads).toEqual([]);
+});
+
+it.skipIf(process.platform !== 'linux')('lets an installed Agent Session root read its own Sync view but not pause or flush a relationship', async () => {
+  executionBoundary.member = false;
+  // The asking root's Account 'member-a' is the installed Account here.
+  const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', socketIo, sourceCustodianAccountId: 'member-a' });
+  const full = readRequesterAccountActionContext(setup.account.authorization)!;
+  const sessionActionOrigin = SessionActionRpcOriginV1Schema.parse({ v: 1,
+    caller: { kind: 'session', sessionId: 'agent-session', starterDepth: 0, turnDepth: 0 },
+    sourceTurnId: 'agent-turn', requestId: 'agent-sync-list', callerPermissionMode: 'default' });
+  const root = withTransportOnlyRequester(setup.account.authorization, { credentials: full.credentials,
+    serverHttpBaseUrl: full.serverHttpBaseUrl, isCurrent: full.isCurrent, resolveEncryption: full.resolveEncryption },
+  { sessionActionOrigin, sessionActionSource: { machineId: setup.installed.machineId,
+    installationId: setup.installed.installation.installationId } });
+  const service = setup.fixture.parent.workspaceSync as unknown as { forRequester(context: RpcHandlerContext): Promise<{
+    controller: { list(signal: AbortSignal): Promise<readonly unknown[]>;
+      pause(id: string, signal: AbortSignal): Promise<unknown>; flush(id: string, signal: AbortSignal): Promise<unknown> } }> };
+  const signal = new AbortController().signal;
+  const view = await service.forRequester({ signal, callerAuthority: 'account_automation', callerInputAuthorization: root,
+    sessionActionOrigin, verifyMachineAdmissionCurrent: async () => true,
+    machineAdmission: { actorAccountId: 'member-a', custodianAccountId: 'member-a', machineId: setup.installed.machineId,
+      installationId: setup.installed.installation.installationId, role: 'manage', encryptionMode: setup.sourceResourceMode } });
+  await expect(view.controller.list(signal)).resolves.toEqual(expect.any(Array));
+  const code = (error: unknown) => readRpcErrorCode(error) ?? (error as { code?: string }).code;
+  expect(await view.controller.pause('member-sync', signal).then(() => null, code)).toBe('relationship_not_owned');
+  expect(await view.controller.flush('member-sync', signal).then(() => null, code)).toBe('relationship_not_owned');
 });

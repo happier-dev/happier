@@ -626,9 +626,13 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
   it.each([
     { originalCli: 'default', retained: false }, { originalCli: 'source', retained: false },
     { originalCli: 'mcp', retained: false }, { originalCli: 'mcp', retained: true },
+    // An Agent in a Session on the SOURCE asks as the installed Account on a Machine
+    // that does not separate Agents; the person approves and the Move completes.
+    { originalCli: 'session_agent', retained: false },
   ] as const)('routes original CLI or MCP Move through SOURCE and passes pre-Stop admission ($originalCli, retained=$retained)', async ({ originalCli, retained }) => {
     const h = await createHarness('projects.service.relocate', 'allowed', false, 'srv_portableHome', undefined, true, false,
-      { authentication: 'terminal', requireMoveChild: true });
+      { authentication: 'terminal', requireMoveChild: true,
+        ...(originalCli === 'session_agent' ? { agentIsolation: 'disabled' as const } : {}) });
     const service = await h.seedMoveService();
     try {
       expect(await h.ensureWorkerLink()).toMatchObject({ state: 'watching' });
@@ -672,6 +676,24 @@ describe('Machine filesystem approval continuity from UI and paired terminal', (
     } finally {
       service.finishStop();
       await Promise.all(h.serviceInstances().filter(service => service.workspace.rootPath === h.workerRef.rootPath).map(service => service.stop()));
+      await h.close();
+    }
+  });
+  it('refuses an approved Agent-asked Move at its copy step when the Machine separates Agents', async () => {
+    const h = await createHarness('projects.service.relocate', 'allowed', false, 'srv_portableHome', undefined, true, false,
+      { authentication: 'terminal', requireMoveChild: true, agentIsolation: 'separated' });
+    const service = await h.seedMoveService();
+    try {
+      expect(await h.ensureWorkerLink()).toMatchObject({ state: 'watching' });
+      service.finishStop();
+      const terminal = ActionOperationGetV1ResponseSchema.parse(await h.prepareSignedMove({ sourceCoordinator: true,
+        executeMove: service.request, originalCli: 'session_agent', approveRequiredChild: true }));
+      expect(terminal, JSON.stringify({ terminal, outcomes: h.rpcOutcomes })).toMatchObject({ kind: 'found', operation: {
+        state: 'failed', progress: { phase: 'copying' }, error: { errorCode: 'agent_isolation_unavailable' } } });
+      expect(h.serviceInstances().filter(instance => instance.workspace.rootPath === h.workerRef.rootPath)).toHaveLength(0);
+    } finally {
+      service.finishStop();
+      await Promise.all(h.serviceInstances().filter(instance => instance.workspace.rootPath === h.workerRef.rootPath).map(instance => instance.stop()));
       await h.close();
     }
   });

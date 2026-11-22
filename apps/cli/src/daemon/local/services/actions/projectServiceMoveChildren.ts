@@ -10,7 +10,8 @@ import type { ActionExecutorContext, HostReviewedChildrenPlanV1, HostReviewedChi
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import type { StoredCredentials } from '@/persistence';
-import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { readRequesterAccountActionContext, readRequesterAccountActionTransportContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { readWorkspaceSyncWorkerTargetSnapshot, resolveWorkspaceSyncWorkerTarget } from '@/workspaces/sync/workspaceSyncPreparation';
 
 /** One producer for the operands reviewed at SOURCE and later executed by Move. */
@@ -83,12 +84,25 @@ export async function prepareProjectServiceMoveChildren(input: Readonly<{
     readRelationshipStatuses?: Parameters<typeof readWorkspaceSyncWorkerTargetSnapshot>[0]['readRelationshipStatuses'];
     inspectSetup(workspace: WorkspaceRefV1): Promise<unknown>;
 }>) {
-    const fail = (code: string) => ({ ok: false as const, errorCode: code, error: code });
+    const fail = (code: string, reason?: 'transport_only_root' | 'requester_not_current') =>
+        ({ ok: false as const, errorCode: code, error: code, ...(reason ? { details: { reason } } : {}) });
     const { request, context } = input;
-    const requester = readRequesterAccountActionContext(context.externalActionExecutionAuthorization);
-    if (context.externalActionExecutionAuthorization && !requester) return fail('project_requester_authority_unavailable');
+    const root = context.externalActionExecutionAuthorization;
+    const requester = readRequesterAccountActionContext(root);
+    // An installed Session's root carries transport custody only. When its Account
+    // is this executor's own Account, that Account's rows are the asker's rows:
+    // prepare from them with this executor's credentials, without a requester read.
+    // The person's approval replays the retained plan through the full ingress.
+    const ownAccountRoot = Boolean(root && !requester && input.credentials
+        && readRequesterAccountActionTransportContext(root)
+        && root.binding.accountId === readAccountIdFromToken(input.credentials.token));
+    if (root && !requester && !ownAccountRoot) {
+        return fail('project_requester_authority_unavailable',
+            readRequesterAccountActionTransportContext(root) ? 'transport_only_root' : undefined);
+    }
     const credentials = requester?.credentials ?? input.credentials;
-    if (!credentials || requester && !await requester.isCurrent()) return fail('project_requester_authority_unavailable');
+    if (!credentials) return fail('project_requester_authority_unavailable');
+    if (requester && !await requester.isCurrent()) return fail('project_requester_authority_unavailable', 'requester_not_current');
     // The approval owner retained this exact parent plan. Replay consumes its
     // selected copy; it must not select again from native availability.
     const retained = context.approvedActionReplay?.hostReviewedChildren;
@@ -98,7 +112,7 @@ export async function prepareProjectServiceMoveChildren(input: Readonly<{
         serverHttpBaseUrl: input.serverBaseUrl, sourceWorkspaceRefId: request.workspace.refId,
         targetMachineId: request.selectedTarget.machineId, credentials,
         readRelationshipStatuses: input.readRelationshipStatuses,
-        ...(context.externalActionExecutionAuthorization ? { authorization: context.externalActionExecutionAuthorization } : {}),
+        ...(root && !ownAccountRoot ? { authorization: root } : {}),
         ...(context.signal ? { signal: context.signal } : {}) });
     const basis = resolveWorkspaceSyncWorkerTarget({ serverId: request.workspace.serverId,
         sourceWorkspaceRefId: request.workspace.refId, targetMachineId: request.selectedTarget.machineId,
