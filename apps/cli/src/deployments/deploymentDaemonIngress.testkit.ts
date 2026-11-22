@@ -88,7 +88,9 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
     home: DeploymentSocketHomeFixture;
     createDeploymentActionDeps?(requester: RequesterAccountActionContext | undefined,
         operations: ReturnType<typeof createHostActionOperationRuntime>): Pick<ActionExecutorDeps,
-        'deploymentAction' | 'deploymentTelemetrySet' | 'prepareDeploymentAction' | 'prepareDeploymentTeardown' | 'prepareDeploymentEnvironmentCreate' | 'prepareHostReviewedChildren'>;
+        'deploymentAction' | 'deploymentTelemetrySet' | 'prepareDeploymentAction' | 'prepareDeploymentTeardown'
+        | 'prepareDeploymentEnvironmentCreate' | 'prepareHostReviewedChildren'
+        | 'deploymentTemplateInstantiate' | 'prepareDeploymentTemplateInstantiation'>;
     projectManagedServices?: NonNullable<NonNullable<Parameters<typeof registerDaemonLocalServicesMachineRpcHandlers>[1]>['projectManagedServices']>;
     managedMachineAction?: ActionExecutorDeps['managedMachineAction'];
     createExternalActionExecutor?(input: Readonly<{
@@ -180,6 +182,8 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
             runActionOperation: actionOperations.runActionOperation,
             deploymentAction: deployment?.deploymentAction,
             deploymentTelemetrySet: deployment?.deploymentTelemetrySet,
+            deploymentTemplateInstantiate: deployment?.deploymentTemplateInstantiate,
+            prepareDeploymentTemplateInstantiation: deployment?.prepareDeploymentTemplateInstantiation,
             prepareDeploymentAction: deployment?.prepareDeploymentAction,
             prepareDeploymentTeardown: deployment?.prepareDeploymentTeardown,
             prepareDeploymentEnvironmentCreate: deployment?.prepareDeploymentEnvironmentCreate,

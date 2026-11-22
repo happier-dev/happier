@@ -92,7 +92,11 @@ export async function createDeploymentSocketHome({ encryptionMode = 'plain', cre
         const machineEncryptionKey = contentKeys ? nacl.randomBytes(32) : null;
         // This fixture creates only the already paired acquisition controller.
         // The journey obtains its deployment target through public enrollment.
-        const metadata = { host: 'S0 acquisition controller', platform: 'linux', happyCliVersion: 'test', homeDir: harness.baseDir, happyHomeDir: harness.baseDir };
+        const metadata = {
+            host: 'S0 acquisition controller', platform: 'linux', happyCliVersion: 'test',
+            homeDir: harness.baseDir, happyHomeDir: harness.baseDir,
+            installationPublicKey: Buffer.from(keys.publicKey).toString('base64url'),
+        };
         let controllerProvisionerManifest;
         if (machineEncryptionKey && !prepareMachineContent) throw new Error('E2EE fixture requires the owning client Machine codec');
         const machine = await db.machine.create({ data: {
