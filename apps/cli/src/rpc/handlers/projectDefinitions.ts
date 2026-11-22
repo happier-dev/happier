@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { realpath } from 'node:fs/promises';
 import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { PROJECT_DEFINITION_ACTION_IDS, PROJECT_DEFINITION_ACTION_INPUT_SCHEMAS, type ProjectDefinitionActionId, type ProjectDefinitionWorkspace } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
 import type { ProjectDefinitionDetectionV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
@@ -10,6 +9,7 @@ import { readProjectManifest, updateProjectManifest } from '@/workspaces/project
 import type { ProjectNativeCommandIo } from '@/workspaces/projectSetup/projectNativeResolution';
 import { projectNativeSystemIo } from '@/workspaces/projectSetup/projectNativeSystemIo';
 import { getHostWorktreePortsOwner } from '@/workspaces/execution/worktreePorts';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import type { TerminalPtySessionManager } from '@/terminal/pty/sessions';
 import { PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
 import { canonicalAbsolutePathsEqual, isCanonicalAbsolutePathInsideRoot, expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
@@ -132,13 +132,14 @@ export function createProjectDefinitionAction(params: Readonly<{
       // Admission consumes installed lifetime facts once. The port owner receives the decision.
       let runtime: NativeInspectionRuntimeLease | undefined;
       try {
-        const physicalRoot = await realpath(root);
+        const source = currentWorkspaceSource();
+        const physicalRoot = await source.realpath(root);
         const commands = params.readActiveProjectCommands?.();
         if (!commands) return { kind: 'unavailable' as const, code: 'project_worktree_ports_unavailable' as const, reason: 'activity_unavailable' as const };
         for (const command of commands) {
           // The attachment starts at the accepted root, then follows the current native step's cwd.
           if (command.machineId === params.machineId
-            && isCanonicalAbsolutePathInsideRoot(physicalRoot, await realpath(command.cwd))) {
+            && isCanonicalAbsolutePathInsideRoot(physicalRoot, await source.realpath(command.cwd))) {
             return await getHostWorktreePortsOwner().reassign({ rootPath: physicalRoot, isActive: true });
           }
         }
@@ -149,7 +150,7 @@ export function createProjectDefinitionAction(params: Readonly<{
         for (const terminal of terminals.readGuardResources()) {
           if (!terminal.custody || terminal.custody.kind !== undefined
             || !terminalActivity.items.some(item => item.ownerRef === terminal.terminalId && item.state !== 'settled')) continue;
-          if (canonicalAbsolutePathsEqual(physicalRoot, await realpath(terminal.custody.rootPath))) {
+          if (canonicalAbsolutePathsEqual(physicalRoot, await source.realpath(terminal.custody.rootPath))) {
             return await getHostWorktreePortsOwner().reassign({ rootPath: physicalRoot, isActive: true });
           }
         }

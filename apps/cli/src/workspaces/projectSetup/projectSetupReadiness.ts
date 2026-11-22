@@ -20,8 +20,8 @@ import { canonicalAbsolutePathsEqual } from '@/utils/path/expandHomeDirPath';
 import { resolvePrivateProjectCheckoutRoot } from '@/workspaces/activation/privateProjectCheckout';
 import { readProjectAsMember } from '@/workspaces/activation/memberProjectInspection';
 
-/** The requester Account and native invocation enclose every passive Project-file read. */
-export async function inspectProjectAsMember<T>(input: Readonly<{
+/** The requester Account and native invocation supply the accepted checkout's filesystem facts. */
+export async function withProjectMemberWorkspaceSource<T>(input: Readonly<{
     runtime: ProjectRuntimeAccountAccess & Pick<ProjectFiniteActionRuntime, 'serverId' | 'serverHttpBaseUrl' | 'requesterIdentity'> & Readonly<{
         nativeOperationRuntime?: Pick<NonNullable<ProjectFiniteActionRuntime['nativeOperationRuntime']>, 'prepareNativeOperation'>;
     }>;

@@ -34,7 +34,7 @@ import { NpmRegistryProfileActionOutputSchemasV1 } from '@happier-dev/protocol/a
 import { resolveExternalActionExecutionMachineAdmissionInTx } from '@/app/auth/externalActionExecutionAuthorization';
 import { storedPlainPrivateLabel } from '@/testkit/privateLabelFixture';
 import { SESSION_MESSAGE_SEND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
-import { PROJECT_DEFINITION_INSPECT_ACTION_ID, PROJECT_DEFINITION_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
+import { PROJECT_DEFINITION_INSPECT_ACTION_ID, PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID, PROJECT_DEFINITION_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
 import { DEPLOYMENT_ACTION_IDS_V1, isStoredDeploymentExecutionActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 describe('Machine current access (real SQLite)', () => {
@@ -153,12 +153,12 @@ describe('Machine current access (real SQLite)', () => {
             .toMatchObject({ kind: 'denied', code: 'unsupported_operation' });
     });
 
-    it('admits requester Project inspection while retaining private raw RPC custody', async () => {
+    it.each([PROJECT_DEFINITION_INSPECT_ACTION_ID, PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID])('admits requester %s while retaining private raw RPC custody', async actionId => {
         const f = await fixture();
         const requester = await account();
         const outsider = await account();
         await grant(f.owner.id, f.machine.id, requester.id, 'view');
-        const input = { machineId: f.machine.id, actionId: PROJECT_DEFINITION_INSPECT_ACTION_ID };
+        const input = { machineId: f.machine.id, actionId };
         expect(await access.resolveMachineAdmission({ ...input, actorAccountId: f.owner.id }))
             .toMatchObject({ kind: 'admitted', role: 'manage' });
         expect(await access.resolveMachineAdmission({ ...input, actorAccountId: requester.id }))
@@ -166,7 +166,7 @@ describe('Machine current access (real SQLite)', () => {
         expect(await access.resolveMachineAdmission({ ...input, actorAccountId: outsider.id }))
             .toMatchObject({ kind: 'denied', code: 'access_denied' });
         expect(await access.resolveMachineAdmission({ ...input, actorAccountId: requester.id,
-            rpcMethod: PROJECT_DEFINITION_ACTION_RPC_METHODS_V1[PROJECT_DEFINITION_INSPECT_ACTION_ID] }))
+            rpcMethod: PROJECT_DEFINITION_ACTION_RPC_METHODS_V1[actionId] }))
             .toMatchObject({ kind: 'denied', code: 'custodian_only' });
     });
 

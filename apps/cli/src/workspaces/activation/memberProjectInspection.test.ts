@@ -6,13 +6,15 @@ import { withTempDir } from '@/testkit/fs/tempDir';
 import { deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
 import { readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
 import { createProjectDefinitionAction } from '@/rpc/handlers/projectDefinitions';
-import { inspectProjectAsMember } from '@/workspaces/projectSetup/projectSetupReadiness';
 import { prepareRequesterNativeOperation } from '@/daemon/agentIsolation/prepareNativeOperation';
 import { createPlainProjectAccountRefRow, mockProjectAccountRowsHttpBoundary } from '@/workspaces/projectAccountRows.testkit';
 import type { RpcHandlerContext } from '@/api/rpc/types';
+import { ApiMachineClient } from '@/api/apiMachine';
 import { readProjectAsMember } from './memberProjectInspection';
 import { runWorkspaceEffectWorker } from './workspaceEffectWorker';
 import { workspaceCheckoutNativeBoundary as boundary } from './workspaceCheckoutNative.testkit';
+import { createActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
+import { PROJECT_DEFINITION_INSPECT_ACTION_ID, PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
 
 // Only OS permissions and process launch are replaced. The framed worker,
 // read port, source lifetime and canonical Project inspection remain real.
@@ -58,8 +60,9 @@ vi.mock('@happier-dev/cli-common/process', async importOriginal => {
 });
 afterEach(() => { boundary.reset(); vi.restoreAllMocks(); });
 
-it.skipIf(process.platform !== 'linux').each(['own', 'foreign', 'symlink'] as const)(
-    'inspects an accepted member checkout through its native read lifetime (%s)', async mode => {
+it.skipIf(process.platform !== 'linux').each([PROJECT_DEFINITION_INSPECT_ACTION_ID, PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID].flatMap(actionId =>
+    (['own', 'foreign', 'symlink'] as const).map(mode => ({ actionId, mode }))))(
+    'runs $actionId through the accepted member checkout native lifetime ($mode)', async ({ actionId, mode }) => {
     await withTempDir('member-project-inspect-', async directory => {
         const workspaceRoot = join(directory, 'member');
         const ownRoot = join(workspaceRoot, 'accepted');
@@ -86,11 +89,15 @@ it.skipIf(process.platform !== 'linux').each(['own', 'foreign', 'symlink'] as co
             await runWorkspaceEffectWorker([], { input, output, signal: new AbortController().signal, currentDirectory: () => workspaceRoot });
         };
         const signal = new AbortController().signal;
+        const operations = createActionOperationStore();
+        operations.create({ operationId: 'preparing', scope: { accountId: 'member', machineId: 'machine' },
+            actionId: 'projects.prepare', title: 'Prepare', cancellation: 'supported', inputIdentity: '{}',
+            domainRef: { kind: 'projectCommand', purpose: 'setup', serverId: 'home', machineId: 'machine', workspaceRefId: 'accepted', cwd: root } });
         const inspect = () => createProjectDefinitionAction({ serverId: 'home', machineId: 'machine', workingDirectory: root,
-            accessPolicy: { kind: 'restrictedRoots', roots: [root] } })({ actionId: 'projects.inspect',
+            accessPolicy: { kind: 'restrictedRoots', roots: [root] }, readActiveProjectCommands: operations.readActiveProjectCommands })({ actionId,
             input: { workspace: { serverId: 'home', machineId: 'machine', workspaceId: 'accepted', rootPath: root },
-                read: { kind: 'editor', target: 'repository' } }, context: { surface: 'cli' } });
-        if (mode === 'own') {
+                ...(actionId === PROJECT_DEFINITION_INSPECT_ACTION_ID ? { read: { kind: 'editor', target: 'repository' } } : {}) }, context: { surface: 'cli' } });
+        if (mode === 'own' && actionId === PROJECT_DEFINITION_INSPECT_ACTION_ID) {
             await expect(inspect()).rejects.toMatchObject({ code: 'EACCES' });
             expect(boundary.phases).toContain('daemon_definition_read');
             boundary.phases.length = 0;
@@ -102,10 +109,13 @@ it.skipIf(process.platform !== 'linux').each(['own', 'foreign', 'symlink'] as co
                 workspaceRoot, root, signal, read: inspect });
         } catch (error) { failure = error; }
         expect(boundary.phases).not.toContain('daemon_definition_read');
+        expect(boundary.phases).not.toContain('daemon_private_readback_denied');
         if (mode === 'own') {
             expect(failure).toBeUndefined();
-            expect(result).toMatchObject({ definition: { document: { bytes } } });
-            expect(boundary.phases).toContain('member_definition_read');
+            if (actionId === PROJECT_DEFINITION_INSPECT_ACTION_ID) {
+                expect(result).toMatchObject({ definition: { document: { bytes } } });
+                expect(boundary.phases).toContain('member_definition_read');
+            } else expect(result).toMatchObject({ kind: 'unavailable', code: 'project_worktree_ports_active', reason: 'active' });
         } else {
             expect(failure).toMatchObject({ data: { code: 'project_workspace_unavailable' } });
             expect(result).toBeUndefined();
@@ -115,7 +125,8 @@ it.skipIf(process.platform !== 'linux').each(['own', 'foreign', 'symlink'] as co
     });
 });
 
-it.skipIf(process.platform !== 'linux')('keeps requester Account reads and native allocation around the complete accepted-checkout inspection', async () => {
+it.skipIf(process.platform !== 'linux').each([PROJECT_DEFINITION_INSPECT_ACTION_ID, PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID])(
+    'keeps requester Account reads and native allocation around the installed %s action', async actionId => {
     await withTempDir('accepted-member-project-', async directory => {
         const requesterIdentity = { kind: 'isolated' as const, separationRequired: true,
             requester: { serverId: 'home', accountId: 'member', machineId: 'machine', installationId: 'installation' } };
@@ -141,21 +152,34 @@ it.skipIf(process.platform !== 'linux')('keeps requester Account reads and nativ
         const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'member' })).toString('base64url')}.signature`, encryption: null };
         const snapshot = { enabled: true, memberProvisioning: 'linuxUsersV1' as const,
             status: { kind: 'effective' as const, platform: 'linux' as const }, workspaceRoots: [] };
-        const result = await inspectProjectAsMember({ runtime: { credentials, serverId: 'home', serverHttpBaseUrl: 'https://member-home.test',
-            requesterIdentity, nativeOperationRuntime: { prepareNativeOperation: input => prepareRequesterNativeOperation(input, {
+        const runtime = { credentials, serverId: 'home', serverHttpBaseUrl: 'https://member-home.test',
+            requesterIdentity, nativeOperationRuntime: { prepareNativeOperation: (input: Parameters<typeof prepareRequesterNativeOperation>[0]) => prepareRequesterNativeOperation(input, {
                 homeServerIdentityId: 'home', machineId: 'machine', installationId: 'installation',
                 machine: { read: () => snapshot, managedHappierBinaryPath: '/opt/happier/cli/current/happier',
                     readMember: async () => ({ identity: memberIdentity, daemonObservation: {
                         daemonIdentity: 'nonRoot', daemonUid: 2400, daemonUsername: 'daemon', daemonPrimaryGroup: 'daemon',
                     } }) },
-            }) } }, ingress, workspace: { serverId: 'home', machineId: 'machine', workspaceId: 'accepted', rootPath: root }, context: {},
-            read: capturedRoot => createProjectDefinitionAction({ serverId: 'home', machineId: 'machine', workingDirectory: capturedRoot,
-                accessPolicy: { kind: 'restrictedRoots', roots: [capturedRoot] } })({ actionId: 'projects.inspect',
-                    input: { workspace: { serverId: 'home', machineId: 'machine', workspaceId: 'accepted', rootPath: root },
-                        read: { kind: 'editor', target: 'repository' } }, context: {} }) });
-        expect(result).toMatchObject({ definition: { document: { bytes } } });
-        expect(boundary.phases).toContain('member_definition_read');
+            }) } };
+        const operations = createActionOperationStore();
+        operations.create({ operationId: 'preparing', scope: { accountId: 'member', machineId: 'machine' },
+            actionId: 'projects.prepare', title: 'Prepare', cancellation: 'supported', inputIdentity: '{}',
+            domainRef: { kind: 'projectCommand', purpose: 'setup', serverId: 'home', machineId: 'machine', workspaceRefId: 'accepted', cwd: root } });
+        const client: ApiMachineClient = Object.assign(Object.create(ApiMachineClient.prototype), {
+            machine: { id: 'machine' }, machineRpcWorkingDirectory: directory,
+            filesystemAccessPolicy: { kind: 'restrictedRoots', roots: [directory] },
+            lifecycleDependencies: { agentIsolation: { read: () => snapshot } },
+            rpcLifecycleRegistrations: [{ resolveProjectFiniteRuntime: async () => runtime,
+                readActiveProjectCommands: operations.readActiveProjectCommands }],
+        });
+        const result = await client.createProjectDefinitionAction('home', ingress)({ actionId,
+            input: { workspace: { serverId: 'home', machineId: 'machine', workspaceId: 'accepted', rootPath: root },
+                ...(actionId === PROJECT_DEFINITION_INSPECT_ACTION_ID ? { read: { kind: 'editor', target: 'repository' } } : {}) }, context: {} });
+        if (actionId === PROJECT_DEFINITION_INSPECT_ACTION_ID) {
+            expect(result).toMatchObject({ definition: { document: { bytes } } });
+            expect(boundary.phases).toContain('member_definition_read');
+        } else expect(result).toMatchObject({ kind: 'unavailable', code: 'project_worktree_ports_active', reason: 'active' });
         expect(boundary.phases).not.toContain('daemon_definition_read');
+        expect(boundary.phases).not.toContain('daemon_private_readback_denied');
         expect(boundary.phases.at(-1)).toBe('native_retired');
         expect(accountHttp.mock.calls.every(call => call[2]?.headers?.Authorization === `Bearer ${credentials.token}`)).toBe(true);
         expect(rows).toHaveLength(1);

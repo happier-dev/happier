@@ -247,6 +247,7 @@ import { canExecuteRequesterWorkspaceOnDaemonForHost, isHostRequesterUnrestricte
 import { resolveServerRoutedTransferMaxBytes } from '@/transfers/policy/serverRoutedTransferPolicy';
 import { createProjectDefinitionAction, registerProjectDefinitionHandlers } from '@/rpc/handlers/projectDefinitions';
 import { PROJECT_DEFINITION_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
+import { isRequesterProjectDefinitionActionIdV1 } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
 import type { ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
 import { projectNativeSystemIo } from '@/workspaces/projectSetup/projectNativeSystemIo';
 import { executeFilesystemMutationAction } from '@/rpc/handlers/fileSystem/pathMutationHandlers';
@@ -380,7 +381,7 @@ import { authorizeMachineRpcRequest,
 import type { MachineTerminalAccountReadRuntime, MachineTerminalOwnSessionReadRuntime } from './machine/rpcHandlers.terminal';
 import { resolvePrivateWorkspaceSyncTargetExecution } from './machine/rpcHandlers.workspaceSync';
 import { resolveAdmittedRequesterAccountReadRuntime } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
-import { inspectProjectAsMember, inspectProjectSetupFromRuntime, readProjectEffectiveDefinitionFromRuntime } from '@/workspaces/projectSetup/projectSetupReadiness';
+import { withProjectMemberWorkspaceSource, inspectProjectSetupFromRuntime, readProjectEffectiveDefinitionFromRuntime } from '@/workspaces/projectSetup/projectSetupReadiness';
 import type { ManagedActivityRpcOwner } from './machine/rpcHandlers.managedActivity';
 import type { MachineWorkSummaryRpcOwner } from './machine/rpcHandlers.machineWorkSummary';
 import { createAccountServerActionDeps } from './accountServerActionDeps';
@@ -2746,8 +2747,8 @@ export class ApiMachineClient {
         });
         const ordinary = create();
         return async request => {
-            if (!ingress || request.actionId !== 'projects.inspect') return ordinary(request);
-            const parsed = PROJECT_DEFINITION_ACTION_INPUT_SCHEMAS['projects.inspect'].safeParse(request.input);
+            if (!ingress || !isRequesterProjectDefinitionActionIdV1(request.actionId)) return ordinary(request);
+            const parsed = PROJECT_DEFINITION_ACTION_INPUT_SCHEMAS[request.actionId].safeParse(request.input);
             if (!parsed.success) return ordinary(request);
             const runtime = await this.resolveProjectFiniteRuntime(ingress);
             if (!runtime) throw Object.assign(new Error('project_setup_runtime_unavailable'), { code: 'project_setup_runtime_unavailable' });
@@ -2755,7 +2756,7 @@ export class ApiMachineClient {
             if (!identity || identity.kind === 'unknown') throw Object.assign(new Error('agent_isolation_unavailable'), { code: 'agent_isolation_unavailable' });
             if (canExecuteRequesterWorkspaceOnDaemonForHost(identity,
                 () => this.lifecycleDependencies.agentIsolation?.read() ?? { enabled: false })) return ordinary(request);
-            return inspectProjectAsMember({ runtime, ingress, workspace: parsed.data.workspace, context: request.context,
+            return withProjectMemberWorkspaceSource({ runtime, ingress, workspace: parsed.data.workspace, context: request.context,
                 read: root => create({ root, runtime })(request) });
         };
     }
