@@ -19,10 +19,8 @@ import { sourceKindLabel } from './teamCredentialPresentation';
  *
  * It is one `SelectionList` over the Home's candidate answer, not a second
  * source model: search, virtualization, keyboard movement and the mobile sheet
- * all belong to that owner, and every fact on a row — the pinned lifetime, the
- * Pool's enabled member count, whether this Team already holds this exact
- * source — arrives in the same answer, so opening the picker costs no request
- * per row.
+ * all belong to that owner. Home supplies the pin, Pool size and existing
+ * offers in one answer. Bundled declarations supply the Provider purpose.
  *
  * Rows carry no credential value and no "a secret is present" claim: what a
  * source *is* is the whole of what this decision needs.
@@ -65,6 +63,7 @@ function candidateSubtitle(row: TeamCredentialSourceCandidatePresentationV1): st
     const candidate = row.candidate;
     return [
         sourceKindLabel(candidate.source),
+        row.providerPurposeLabel ?? null,
         row.providerSourceOffer?.machineDisplayName ?? null,
         candidate.memberCount === null
             ? null

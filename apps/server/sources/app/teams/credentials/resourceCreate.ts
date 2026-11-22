@@ -109,7 +109,8 @@ export async function createTeamCredentialResourceInTx(tx: Tx, input: CreateTeam
     }
     const source = await resolveTeamCredentialResourceSourceInTx(tx, { custodianAccountId: input.actorAccountId, source: body.source });
     if (source.status !== "current") return { ok: false, error: "source_replaced_or_missing" };
-    const requestsDirect = [
+    const requestsDirect = (body.source.kind === 'connected_account' && body.source.providerPurpose !== undefined
+        && body.deliveryPolicy.preferredAllowedModes.includes('direct')) || [
         body.allMembersAllowedRoutes,
         ...body.groupGrants.map(grant => grant.allowedRoutes),
         ...body.memberGrants.map(grant => grant.allowedRoutes),

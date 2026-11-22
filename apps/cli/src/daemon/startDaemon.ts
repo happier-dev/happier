@@ -3949,6 +3949,8 @@ export async function startDaemon(
                     withRegistry: withBrokerProviderRegistry,
                     readResource,
                     resolveBindingIntentSelection: connectedAccountPurposeBindingRuntime.resolveBindingIntentSelection,
+                    purposeBindings: connectedAccountPurposeBindingRuntime,
+                    requestAuth: connectedAccountProviderRequestAuth,
                     custody: brokerManagedProviderCustody,
                     readModelProjection: async (request, signal) => providerOperationsProducer
                       ? await providerOperationsProducer.machineServices.readSourceModelCatalogs(request, signal)

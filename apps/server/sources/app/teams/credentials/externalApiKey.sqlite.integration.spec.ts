@@ -191,6 +191,27 @@ describe("Team credential external API key owner", () => {
         expect(await db.usageEvent.count({ where: { teamCredentialResourceId: resource.id } })).toBe(0);
         expect((await db.teamCredentialExternalApiKey.findUniqueOrThrow({ where: { id: created.key.keyId } })).lastUsedAt)
             .toEqual(new Date("2026-09-07T12:30:00.000Z"));
+        const qualifiedSource = await db.teamCredentialResource.update({ where: { id: resource.id }, data: {
+            sourceBindingJson: JSON.stringify({ v: 1, kind: "connected_account", credentialIncarnation: "vercel-row",
+                target: { kind: "account", account: { service: { pluginId: "happier.machine.vercel", localId: "vercel-account" }, accountId: "vercel" } },
+                providerPurpose: { consumer: { pluginId: "happier.provider.vercel-ai-gateway", localId: "vercel-ai-gateway" }, purpose: "model-inference" } }),
+        } });
+        await expect(inTx(tx => verifyTeamCredentialExternalApiKeyInTx(tx, { token: created.token })))
+            .resolves.toEqual({ ok: false, reason: "invalid_token" });
+        await expect(inTx(tx => authorizeTeamCredentialExternalProviderModelCatalogInTx(tx, {
+            authenticatedBrokerAccountId: manager.id,
+            request: { ...modelAuthorization, binding: { ...modelAuthorization.binding,
+                brokerPlacementFingerprint: resolveTeamCredentialBrokerPlacementFingerprint(qualifiedSource) } },
+            observedAt: new Date("2026-09-07T12:33:00.000Z"),
+        }))).resolves.toEqual({ ok: false, reasonCode: "resource_forbidden" });
+        await expect(inTx(tx => createTeamCredentialExternalApiKeyInTx(tx, {
+            authentication: TEST_AUTHENTICATION,
+            actorAccountId: manager.id, resourceId: resource.id, teamMembershipId: membership.id,
+            keyId: crypto.randomUUID(), label: plainPrivateLabel("Qualified source key"), expiresAt: null,
+        }))).resolves.toEqual({ ok: false, error: "resource_forbidden" });
+        expect((await db.teamCredentialExternalApiKey.findUniqueOrThrow({ where: { id: created.key.keyId } })).lastUsedAt)
+            .toEqual(new Date("2026-09-07T12:30:00.000Z"));
+        await db.teamCredentialResource.update({ where: { id: resource.id }, data: { sourceBindingJson: resource.sourceBindingJson } });
         const admittedAt = new Date("2026-09-07T12:34:56.000Z");
         const expectedSourceMemberKey = computeTeamCredentialSourceMemberKeyV1({
             kind: "provider_credential_slot",

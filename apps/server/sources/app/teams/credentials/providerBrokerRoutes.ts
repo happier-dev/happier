@@ -43,6 +43,7 @@ import { admitResponse } from '@/app/api/utils/enableSchemaValidation';
 import { reportBrokerAdmissionFailure } from '@/app/providers/brokerRefusalDiagnostic';
 import { PluginInstallationPublisherProofError, verifyPluginInstallationPublisherHeader } from '@/app/plugins/installations/publisherProof';
 import { openTeamCredentialWatcherBroker, refreshTeamCredentialWatcherBroker } from './providerBrokerWatcherOpen';
+import { projectTeamCredentialSourceCatalogQuery } from './providerModelProjection';
 
 export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, personalApp: Fastify = app): void {
     const resolveExecutionRunCurrentness = createExecutionRunBrokerCurrentnessResolver({
@@ -359,12 +360,7 @@ export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, persona
                         agentTargetKey: projection.agentTargetKey,
                         application: projection.application,
                         sourceCatalog: true,
-                        ...(projection.source.kind === 'provider_connection'
-                            ? { providerConnection: {
-                                connectionId: projection.source.connectionId,
-                                expectedConnectionSecurityFingerprint: projection.source.connectionSecurityFingerprint,
-                            } }
-                            : { connectedAccountTarget: projection.source.target }),
+                        ...projectTeamCredentialSourceCatalogQuery(projection.source),
                     },
                 });
                 if (!rpcResult.ok) throw new Error('Provider projection unavailable');

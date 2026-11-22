@@ -679,6 +679,12 @@ describe('buildSessionModelPickerSections', () => {
         expect(sections[0]?.options[0]?.disabled).toBe(true);
         expect(sections[0]?.options[0]?.description).toContain(t('teams.credentials.errors.nativeDeliveryUnavailable'));
         expect(sections[0]?.options[0]?.description).not.toContain(t('teams.credentials.errors.sourceMissing'));
+
+        const unselected = buildSessionModelPickerSections({ declarationContext: { kind: 'account' },
+            agentTargetKey: selection.agentTargetKey, nativeModels: [], providerGroups: [], hiddenNativeModelKeys: new Set(),
+            providerProjectionAuthoritative: true, teamCredentialResources: [resource], teamCredentialDisplayNames: { [resource.id]: 'Gateway' },
+        });
+        expect(unselected[0]?.options[0]?.description).toContain(t('teams.credentials.errors.nativeDeliveryUnavailable'));
     });
 
     it.each([undefined, 'connected_service_credential_reconnect_required'] as const)(

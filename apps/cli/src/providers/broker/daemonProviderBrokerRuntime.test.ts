@@ -1848,7 +1848,7 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
     source,
     sourcePresentation: { kind: 'connected_service', service: source.target.account.service },
     directExportSupport: 'unsupported', activeUsageLimitCount: 0,
-    requestPolicy: null,
+    requestPolicy: { allowedProtocolKinds: null, allowedModelIds: ['gpt-5'], reasoningEffort: null },
     brokerPlacement: { kind: 'machine', machineId: 'broker-machine' },
     allMembersAllowedRoutes: null,
     groupGrants: [], memberGrants: [], readiness: { kind: 'available' }, recoveryAction: null,
@@ -1899,12 +1899,13 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
     // policy and source adapter consume their real production owners below.
     const readRawCatalog = (): ProviderSourceModelCatalogResult => ({
       status: 'success', catalogs: [{ application: authority.payload.application, sourceRevision: catalogRevision,
-        rows: [{ application: authority.payload.application, descriptor: { id: 'gpt-5', name: 'GPT' },
+        rows: [{ id: 'gpt-5', name: 'GPT' }, { id: 'denied-model' }].map(descriptor => ({
+          application: authority.payload.application, descriptor,
           sources: { manual: false, static: true, probe: false }, confidence: 'verified_static',
           compatibility: { result: { status: 'verified', selectedProtocol: 'openai-responses',
             evidence: { sourceUrls: ['https://example.test'], verifiedAt: '2026-10-09' } },
             compatibilityFingerprint: 'compatibility:v1:retained', confirmed: false },
-          endpointHealth: 'not_checked', catalog: { stale: false }, loadState: 'unknown', visibility: 'visible' }],
+          endpointHealth: 'not_checked', catalog: { stale: false }, loadState: 'unknown', visibility: 'visible' })),
       }],
     });
     // The source custody port uses the real managed semantic/join owner. The
@@ -1970,7 +1971,8 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
       const base = createBrokerProviderRegistry();
       const registry = { providersByContributionKey: new Map([...base.providersByContributionKey].map(([key, contribution]) => [key, {
         ...contribution, definition: ProviderContributionV1Schema.parse({ ...contribution.definition,
-          managedRuntime: { ...contribution.definition.managedRuntime, sharing: 'connectionMachine', connectedAccounts: [] } }),
+          connectedAccounts: [],
+          managedRuntime: { ...contribution.definition.managedRuntime, sharing: 'connectionMachine',  } }),
       }])) };
       const connectionId = ProviderConnectionIdSchema.parse('personal-retained-source');
       const initial = ProviderSettingsV1Schema.parse({ ...DEFAULT_PROVIDER_SETTINGS_V1, connections: [{
@@ -2270,12 +2272,16 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
       expect(target.child()).toMatchObject({ starts: 1, current: true });
     });
 
-    it('lists admitted Team models again on one stream after source publication changes', async () => {
+    it('lists only admitted Codex models in the Responses envelope after source publication changes', async () => {
       const target = await startRetainedTarget();
       const request = { method: 'GET' as const, path: '/v1/models', body: '' };
       const responses = await target.requestsOnOneStream([request,
         { ...request, before: () => target.changeCatalogRevision('later-provider-publication') }]);
-      for (const response of responses) expect(response).toContain('HTTP/1.1 200');
+      for (const response of responses) {
+        expect(response).toContain('HTTP/1.1 200');
+        expect(response).toContain('"models":[{"slug":"gpt-5","display_name":"GPT","supported_reasoning_levels":[]}]');
+        expect(response).not.toContain('denied-model');
+      }
       expect(target.catalogReads()).toBe(1);
       expect(target.catalogAuthorizations()).toBe(2);
     });

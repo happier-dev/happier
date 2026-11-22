@@ -3803,14 +3803,41 @@ describe('Team credential Provider broker admission', () => {
         expect(await usage()).toBe(5);
     });
 
-    it('admits a broker job once at its open and serves each later request through the active-job lookup only', async () => {
+    it.each(['provider_connection', 'qualified_connected_account'] as const)(
+        'admits a %s broker job once at its open and serves each later request through the active-job lookup only', async sourceKind => {
         // Owner rulings 10-29/10-30: check once at admission; each later call
         // is a cheap "this admitted job is still active" lookup. Revocation
         // withdraws the custodian's route (the Team-change wake below), so the
         // NEXT request cannot reach the source; the Home does not re-run the
         // requester's permission evaluation per model request.
-        const fixture = await createBrokerFixture('admitted-job');
-        const resource = await fixture.createResource('connection-admitted-job');
+        const application = sourceKind === 'qualified_connected_account' ? {
+            ...FIXTURE_APPLICATION,
+            implementationIdentity: { pluginId: 'happier.provider.vercel-ai-gateway', localId: 'vercel-ai-gateway' },
+            endpointTemplateId: 'vercel-responses',
+        } : FIXTURE_APPLICATION;
+        const fixture = await createBrokerFixture(`admitted-job-${sourceKind}`, { application });
+        const initial = await fixture.createResource('connection-admitted-job');
+        let resource = initial;
+        let sourceMemberKey = providerSourceMemberKey('connection-admitted-job', 'apiKey');
+        if (sourceKind === 'qualified_connected_account') {
+            const service = { pluginId: 'happier.machine.vercel', localId: 'vercel-account' };
+            const ref = { service, accountId: 'admitted-job-source' };
+            const credential = await db.serviceAccountToken.create({ data: {
+                accountId: fixture.custodian.id,
+                ...createServiceAccountTokenIdentityFields({ ref, authenticationModeId: 'oauth' }),
+                token: Buffer.from('constructed-private-token'),
+                metadata: { v: 4, storage: 'stored_envelope_v1', credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa', values: {} },
+            } });
+            resource = await db.teamCredentialResource.update({ where: { id: initial.id }, data: {
+                sourceBindingJson: JSON.stringify({ v: 1, kind: 'connected_account', target: { kind: 'account', account: ref },
+                    credentialIncarnation: credential.id,
+                    providerPurpose: { consumer: application.implementationIdentity, purpose: 'model-inference' },
+                }),
+            } });
+            sourceMemberKey = computeTeamCredentialSourceMemberKeyV1({
+                kind: 'connected_account', service, connectedAccountId: ref.accountId,
+            });
+        }
         const session = await fixture.createSession();
         await fixture.selectForSession(session.id, resource, TEST_AUTHENTICATION);
         const statements: string[] = [];
@@ -3847,7 +3874,7 @@ describe('Team credential Provider broker admission', () => {
             const usage = () => db.usageEvent.count({ where: { teamCredentialResourceId: resource.id } });
             const perRequest = [];
             for (const requestId of ['job-1', 'job-2', 'job-3']) {
-                const { result, ...counts } = await authorityReads(() => fixture.admit({ authority, resource, requestId }));
+                const { result, ...counts } = await authorityReads(() => fixture.admit({ authority, resource, sourceMemberKey, requestId }));
                 expect(result).toMatchObject({ ok: true, operation: { kind: 'session', sessionId: session.id } });
                 expect(counts).toMatchObject({ activeJobReads: 1, reads: 0, policyReads: 0 });
                 perRequest.push(counts);
@@ -3859,7 +3886,7 @@ describe('Team credential Provider broker admission', () => {
             const wrongRoute = await authorityReads(() => admitTeamCredentialProviderBrokerRequest({
                 authenticatedBrokerAccountId: fixture.custodian.id,
                 request: { v: 1, authority, expectedResourceRevision: resource.revision,
-                    sourceMemberKey: providerSourceMemberKey('connection-admitted-job', 'apiKey'), requestId: 'admitted-job-wrong-route',
+                    sourceMemberKey, requestId: 'admitted-job-wrong-route',
                     requestFacts: { generation: true, routeKind: 'anthropic_messages', modelId: 'model-1', reasoningEffort: null } },
                 observedAt: new Date(),
                 verifyAuthority: () => true,
@@ -3872,7 +3899,7 @@ describe('Team credential Provider broker admission', () => {
             await expect(admitTeamCredentialProviderBrokerRequest({
                 authenticatedBrokerAccountId: fixture.requester.id,
                 request: { v: 1, authority, expectedResourceRevision: resource.revision,
-                    sourceMemberKey: providerSourceMemberKey('connection-admitted-job', 'apiKey'), requestId: 'admitted-job-wrong-account',
+                    sourceMemberKey, requestId: 'admitted-job-wrong-account',
                     requestFacts: { generation: false, routeKind: 'openai_responses', modelId: 'model-1', reasoningEffort: null } },
                 observedAt: new Date(),
                 verifyAuthority: () => true,
@@ -3880,7 +3907,7 @@ describe('Team credential Provider broker admission', () => {
             await expect(admitTeamCredentialProviderBrokerRequest({
                 authenticatedBrokerAccountId: fixture.custodian.id,
                 request: { v: 1, authority, expectedResourceRevision: resource.revision,
-                    sourceMemberKey: providerSourceMemberKey('connection-admitted-job', 'apiKey'), requestId: 'admitted-job-foreign-home',
+                    sourceMemberKey, requestId: 'admitted-job-foreign-home',
                     requestFacts: { generation: false, routeKind: 'openai_responses', modelId: 'model-1', reasoningEffort: null } },
                 observedAt: new Date(),
                 verifyAuthority: () => false,
@@ -3902,7 +3929,7 @@ describe('Team credential Provider broker admission', () => {
             await expect(fixture.catalog({ authority, resource: current })).resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
             await expect(fixture.open({ resource: current, sessionId: session.id, authentication: TEST_AUTHENTICATION }))
                 .resolves.toMatchObject({ ok: false });
-            await expect(fixture.admit({ authority, resource: current, requestId: 'job-after-audience-withdrawal' }))
+            await expect(fixture.admit({ authority, resource: current, sourceMemberKey, requestId: 'job-after-audience-withdrawal' }))
                 .resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
             expect(await usage()).toBe(3);
 
@@ -3911,7 +3938,7 @@ describe('Team credential Provider broker admission', () => {
                 actorAccountId: fixture.custodian.id, resourceId: resource.id, expectedRevision: current.revision,
                 authentication: { authenticationAuthority: 'present_user', authenticationEvidence: [] },
             }))).resolves.toEqual({ ok: true });
-            await expect(fixture.admit({ authority, resource: current, requestId: 'job-after-delete' }))
+            await expect(fixture.admit({ authority, resource: current, sourceMemberKey, requestId: 'job-after-delete' }))
                 .resolves.toMatchObject({ ok: false });
             expect(await usage()).toBe(3);
         } finally {

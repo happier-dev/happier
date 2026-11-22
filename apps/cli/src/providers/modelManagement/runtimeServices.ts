@@ -14,7 +14,7 @@ import { selectProviderRuntimeCredentialTransportV1 } from '@happier-dev/protoco
 import { resolveProviderCurrentSelectionRecoveryV1 } from '@happier-dev/protocol/providers/catalog/currentSelectionRecoveryV1';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import type { ProviderCatalogDeclarationV1, ProviderBoundModelRef, ProviderConnectionId, ProviderCredentialTransportV1, ProviderBrokerApplicationBindingV1, ProviderModelDescriptorV1, ProviderWireProtocol, PersistedBackendTargetRefV2, ProviderRuntimeStateFileV1, ProviderSettingsV1 } from '@happier-dev/protocol';
-import { projectProviderConnectionBrokerApplication } from '@/providers/broker/providerConnectionBrokerApplication';
+import { projectProviderConnectionBrokerApplication, readProviderConnectionBrokerImplementation } from '@/providers/broker/providerConnectionBrokerApplication';
 import { isRemoteProviderGatewayPlacement } from '@/providers/managed/gatewayPlacement';
 import type { DaemonProviderBindingStatusRequestV1, DaemonProviderBindingStatusResponseV1, DaemonProviderModelProjectionRefreshFailureV1, DaemonProviderModelProjectionRequestV1, DaemonProviderModelProjectionResponseV1, DaemonProviderTeamCredentialRequestPolicySupportV1, DaemonProviderTeamCredentialRequestPolicySupportRequestV1, DaemonProviderTeamCredentialRequestPolicySupportResponseV1, DaemonProviderModelSettingsMutationRequestV1, DaemonProviderModelSettingsMutationResponseV1, DaemonProviderTeamCredentialResourceTestCandidateRequestV1, DaemonProviderTeamCredentialResourceTestCandidateResponseV1, DaemonProviderTeamCredentialBrokerEligibilityRequestV1, DaemonProviderTeamCredentialBrokerEligibilityResponseV1 } from '@happier-dev/protocol/rpc/providers';
 import type { TeamCredentialSourceBindingV1 } from '@happier-dev/protocol/teams';
@@ -82,6 +82,7 @@ import {
 } from '@/providers/operationLifetime';
 import { selectCurrentProviderEndpointHealthByTemplateId } from '@/providers/connections/runtimeSummary';
 import { projectProviderBrokerApplication, resolveTeamCredentialPurposeProvider } from '@/providers/broker/applicationProjection';
+import { isCpxBrokerApplication } from '@/providers/broker/teamCredentialBrokerSourceOwner';
 import { projectProviderModelLoadCapability, resolveProviderSourceFacts } from '@/providers/registry/sourceFacts';
 import { projectProviderModelReasoningForAgent, readProviderReasoningEffortOption } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 import { activateAgentRuntimeContributionOnDemand } from '@/agent/runtime/registry/activationDemand';
@@ -440,9 +441,17 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
       }
       const resolveSelection = input.resolveManagedPurposeBindingIntentSelection;
       if (!resolveSelection) return { status: 'error', error: createProviderErrorV1('provider_catalog_unavailable') };
+      const savedPurpose = request.source.kind === 'connected_account' ? request.source.providerPurpose : undefined;
+      const provider = savedPurpose
+        ? resolveTeamCredentialPurposeProvider({ registry, purpose: savedPurpose, application: request.application })
+        : readProviderConnectionBrokerImplementation(registry, request.application?.implementationIdentity);
+      if (!provider || (!savedPurpose && request.application && !isCpxBrokerApplication(registry, request.application))) {
+        return { status: 'error', error: createProviderErrorV1('provider_incompatible_with_agent') };
+      }
       const invoke = input.invokeConnectedAccountNativeModels;
       const observe = input.observeConnectedAccountSourceModels;
       const projection = await awaitWithinProviderOperation(readConnectedAccountModelCatalog({ registry, resolveSelection, signal,
+        provider, purpose: savedPurpose?.purpose,
         request: { machineId: request.machineId, connectedAccountTarget: request.source.target, sourceCatalog: true,
           application: request.application, agentTargetKey: request.application?.agentTargetKey,
           refreshPolicy: request.refreshPolicy, forceRefresh: request.forceRefresh },
@@ -1436,8 +1445,12 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
                 : { status: 'unavailable' as const, reason: 'source_unavailable' as const };
             }
             if (!sourceSelection) return { status: 'unavailable' as const, reason: 'source_unavailable' as const };
+            const purpose = request.source.kind === 'connected_account' ? request.source.providerPurpose : undefined;
+            const provider = purpose ? resolveTeamCredentialPurposeProvider({ registry, purpose })
+              : readProviderConnectionBrokerImplementation(registry);
+            if (!provider) return { status: 'unavailable' as const, reason: 'source_unavailable' as const };
             const sources = await readConnectedAccountCatalogSources({
-              registry,
+              registry, provider, purpose: purpose?.purpose,
               target: request.source.target, resolveSelection: sourceSelection, signal,
             });
             return sources.length > 0 && (await Promise.all([...new Set(sources.map(source => source.selection))].map(selection => selection.isCurrent(signal)))).every(Boolean)

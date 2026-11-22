@@ -408,14 +408,19 @@ no structured default; the builder applies Happier's shared selection policy.
 The connection detail and Connected Account source use the same credits parser
 and Usage view. Sign-in supplies the selected team as a query parameter on
 `/v1/credits`. The Enterprise and Flex plans show lifetime spend with the balance
-hidden.
+hidden. Team member model access carries scope for inference only.
 
-Supported brokered guest placement exposes the existing local
+A Team admin can select the qualified Gateway purpose for brokered model access.
+The broker uses the purpose on the saved Team source. Use a separate Gateway API
+key in Saved Secrets for an eligible direct share or a Sandbox requiring native
+credential delivery. The Team audience and source owners enforce export
+eligibility. Supported brokered guest placement exposes the existing local
 Session endpoint to the remote execution target.
 
 The [published development guide](../apps/docs/content/docs/agents/vercel-ai-gateway.mdx)
 covers setup and limitations. Real keyed and signed-in Agent turns, renewal,
-Codex model discovery and usage remain tenant-backed release checks. The development path also requires validation on its carrying runtime.
+Codex model discovery, usage and Team withdrawal remain tenant-backed release
+checks. The development path also requires validation on its carrying runtime.
 
 ### Cloudflare AI Gateway (0.3 development)
 

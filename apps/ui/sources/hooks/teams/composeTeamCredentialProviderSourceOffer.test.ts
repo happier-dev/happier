@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ProviderConnectionIdSchema} from '@happier-dev/protocol/providers/ids';
 import { ProviderConnectionSecurityFingerprintV1Schema } from '@happier-dev/protocol/providers/fingerprints';
+import { teamCredentialSourceCandidateIdV1, type TeamCredentialSourceCandidateV1 } from '@happier-dev/protocol/teams';
 
 import {
     composeTeamCredentialProviderSourceOffer,
@@ -27,6 +28,33 @@ function providerOffer(input: Readonly<{
 }
 
 describe('composeTeamCredentialProviderSourceOffer', () => {
+    it('offers the Gateway purpose using the Home Account pin and disclosure decision', () => {
+        const source = {
+            v: 1, kind: 'connected_account', credentialIncarnation: 'home-current-row',
+            target: { kind: 'account', account: {
+                service: { pluginId: 'happier.machine.vercel', localId: 'vercel-account' },
+                accountId: 'vercel-team-one',
+            } },
+        } as const;
+        const candidate: TeamCredentialSourceCandidateV1 = {
+            source, candidateId: teamCredentialSourceCandidateIdV1(source), label: 'Vercel team one',
+            memberCount: null, directExportSupport: 'unsupported', offeredByResourceId: 'existing-resource',
+        };
+        const result = composeTeamCredentialProviderSourceOffer([candidate], []);
+        expect(result).toContainEqual(expect.objectContaining({
+            candidate: {
+                ...candidate,
+                source: { ...source, providerPurpose: {
+                    consumer: { pluginId: 'happier.provider.vercel-ai-gateway', localId: 'vercel-ai-gateway' },
+                    purpose: 'model-inference',
+                } },
+            },
+            providerSourceOffer: null,
+            providerPurposeLabel: 'Vercel AI Gateway',
+        }));
+        expect(new Set(result.map(row => row.selectionId)).size).toBe(result.length);
+    });
+
     it('projects only the exact content-free Provider source witness', () => {
         const result = composeTeamCredentialProviderSourceOffer([], [providerOffer({
             machineId: 'machine-work',

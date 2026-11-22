@@ -2,11 +2,19 @@ import { describe, expect, it, vi } from 'vitest';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol';
 import type { TeamCredentialResourceSummaryV1 } from '@happier-dev/protocol/teams';
 import { PrivateLabelReadV1Schema } from '@happier-dev/protocol/crypto/privateLabelV1';
+import { ProviderContributionV1Schema } from '@happier-dev/protocol/providers/contributions';
 
 import type { ManagedProviderExplicitStartCustody } from '@/providers/connections/publicManagedRuntimeStart';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import { createConnectedAccountRequestAuthService } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthService';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import {
+  VERCEL_AI_GATEWAY_PROVIDER_CONTRIBUTION,
+  VERCEL_GATEWAY_PROVIDER_IDENTITY,
+} from '../../../../../packages/plugins/vercel-ai-gateway/src/provider/contribution.js';
 import { createConnectedServicesBrokerSourceMemberSelect, createConnectedServicesBrokerSourceOpen } from './connectedServicesSource';
-import { createBrokerProviderRegistry } from './providerBroker.testkit';
+import { createBrokerProviderRegistry, readProviderBrokerResponseBody } from './providerBroker.testkit';
+import { createProviderConnectionHttpTransport } from './providerConnectionHttpTransport';
 
 const source = Object.freeze({
   v: 1 as const,
@@ -96,12 +104,12 @@ function request(signal = new AbortController().signal) {
   };
 }
 
-function bindingSelectionResolver(account: QualifiedConnectedAccountRef = source.target.account, pool?: Readonly<{
+function bindingOwner(account: QualifiedConnectedAccountRef, pool?: Readonly<{
   group: { groupId: string; generation: number };
   isCurrent(): boolean;
 }>) {
   const unusedBoundary = (): never => { throw new Error('Unexpected effect boundary'); };
-  const owner = createConnectedAccountPurposeBindingOwner({
+  return createConnectedAccountPurposeBindingOwner({
     store: { read: async () => ({ v: 1, bindings: [] }), update: unusedBoundary, subscribe: () => ({ dispose() {} }) },
     selectTarget: unusedBoundary,
     resolveTarget: async () => pool?.isCurrent() === false ? null : ({
@@ -111,10 +119,106 @@ function bindingSelectionResolver(account: QualifiedConnectedAccountRef = source
     projectTargetAccounts: unusedBoundary,
     assertTargetAccountMaterializable: unusedBoundary,
   });
-  return vi.fn(owner.resolveBindingIntentSelection);
+}
+
+function bindingSelectionResolver(account: QualifiedConnectedAccountRef = source.target.account, pool?: Parameters<typeof bindingOwner>[1]) {
+  return vi.fn(bindingOwner(account, pool).resolveBindingIntentSelection);
 }
 
 describe('Connected Services Team credential broker source', () => {
+  it('forwards only the saved Account purpose and never accepts a second Provider for that Account', async () => {
+    const provider = VERCEL_GATEWAY_PROVIDER_IDENTITY;
+    const otherProvider = { pluginId: 'example.provider.other', localId: 'other' };
+    const definition = ProviderContributionV1Schema.parse(VERCEL_AI_GATEWAY_PROVIDER_CONTRIBUTION);
+    const account = { service: { pluginId: 'happier.machine.vercel', localId: 'vercel-account' }, accountId: 'vercel-team-one' };
+    const qualified = {
+      ...source, target: { ...source.target, account },
+      providerPurpose: { consumer: provider, purpose: 'model-inference' },
+    };
+    const registry = createResolvedContributionRegistry({ providers: [provider, otherProvider].map(identity => ({
+      identity, pluginId: identity.pluginId, definition: { ...definition, id: identity.localId },
+      provenance: 'external', source: { kind: 'path' },
+    })) });
+    const purposeBindings = bindingOwner(account);
+    const materialize = vi.fn(async () => ({
+      headers: { authorization: 'Bearer test-account-credential', 'x-vercel-ai-gateway-team': 'team_from_account' },
+      facts: { teamId: 'team_from_account' },
+    }));
+    const requestAuth = createConnectedAccountRequestAuthService({
+      resolveCurrentBinding: ({ binding }) => binding.target.kind === 'account'
+        ? { account: binding.target.account, credentialRevision: 'revision-1' } : null,
+      materializeHeaders: materialize,
+      refreshAfterAuthFailure: async () => ({ status: 'current_unchanged' }),
+      reportQuotaFailure: async () => ({ status: 'current_unchanged' }),
+    });
+    const openHttp = vi.fn(async () => {
+      const chunks = ['echo test-account-', 'credential'];
+      return { status: 200, headers: { 'x-vendor-echo': 'test-account-credential' }, contentLength: null,
+        read: async () => chunks.length ? new TextEncoder().encode(chunks.shift()!) : null, cancel() {} };
+    });
+    const readResource = vi.fn(async () => resource({ source: qualified }));
+    const custody = { acquire: vi.fn(async () => null), retire: async () => true, retireExternalApiKey: async () => true,
+      revalidateRetainedClaims: async () => 0, retireAll: async () => 0 };
+    const open = createConnectedServicesBrokerSourceOpen({
+      withRegistry: async read => await read(registry),
+      readResource, resolveBindingIntentSelection: purposeBindings.resolveBindingIntentSelection, purposeBindings, requestAuth, custody,
+      resolveAddresses: async () => ['93.184.215.14'],
+      transport: createProviderConnectionHttpTransport({ openHttp }),
+    });
+    const input = request();
+    const application = { ...input.application, implementationIdentity: provider, endpointTemplateId: 'vercel-responses' };
+    await expect(open({ ...input, source: qualified, application: { ...application, implementationIdentity: otherProvider } }))
+      .resolves.toEqual({ unavailable: 'source_selection_unavailable' });
+    expect(openHttp).not.toHaveBeenCalled();
+    expect(materialize).not.toHaveBeenCalled();
+    const result = await open({ ...input, source: qualified, application });
+    if ('unavailable' in result) throw new Error(result.unavailable);
+    try {
+      const response = await result.projection.access.request({
+        method: 'POST', pathAndQuery: '/v1/responses?teamId=caller-one&teamId=caller-two&beta=true',
+        headers: { authorization: 'Bearer caller', 'x-api-key': 'caller-key', 'x-vercel-ai-gateway-team': 'caller-team' },
+      });
+      expect(openHttp).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        url: 'https://ai-gateway.vercel.sh/codex/v1/responses?teamId=team_from_account&beta=true',
+        validatedAddresses: ['93.184.215.14'],
+        headers: {
+          authorization: 'Bearer test-account-credential', 'x-vercel-ai-gateway-team': 'team_from_account',
+          'http-referer': 'https://happier.dev', 'x-title': 'Happier', 'accept-encoding': 'identity',
+        },
+      }));
+      expect(response.status).toBe(200);
+      expect(response.headers).toEqual({});
+      expect(new TextDecoder().decode(await readProviderBrokerResponseBody(response.body))).not.toContain('test-account-credential');
+      expect(materialize).toHaveBeenCalledOnce();
+      expect(readResource).not.toHaveBeenCalled();
+      expect(custody.acquire).not.toHaveBeenCalled();
+    } finally {
+      await result.projection.cleanup();
+    }
+  });
+
+  it('refuses an application that declares the Account but not the saved Provider purpose', async () => {
+    const input = request();
+    const qualified = {
+      ...source,
+      providerPurpose: { consumer: input.application.implementationIdentity, purpose: 'anthropic-upstream' },
+    };
+    const acquire = vi.fn(async () => ({
+      access: { endpointUrl: () => 'http://127.0.0.1:43120/v1', request: vi.fn() },
+      isCurrent: () => true,
+      cleanup: async () => {},
+    }));
+    const open = createConnectedServicesBrokerSourceOpen({
+      readResource: async () => resource({ source: qualified }),
+      resolveBindingIntentSelection: bindingSelectionResolver(),
+      withRegistry: async read => await read(createBrokerProviderRegistry()),
+      custody: { acquire, retire: async () => true, retireExternalApiKey: async () => true,
+        revalidateRetainedClaims: async () => 0, retireAll: async () => 0 },
+    });
+    expect(await open({ ...input, source: qualified })).toEqual({ unavailable: 'source_selection_unavailable' });
+    expect(acquire).not.toHaveBeenCalled();
+  });
+
   it('selects the signed exact member when the connected target changes after admission', async () => {
     const unusedBoundary = (): never => { throw new Error('Unexpected effect boundary'); };
     const owner = createConnectedAccountPurposeBindingOwner({

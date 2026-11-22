@@ -6,6 +6,7 @@ import {
   QualifiedConnectedAccountPurposeBindingGroupTargetV1Schema,
 } from '../../connect/connectedAccountPurposeBindings.js';
 import { QualifiedConnectedAccountGroupIncarnationV4Schema } from '../../connect/qualifiedConnectedAccountProjectionsV4.js';
+import { QualifiedConnectedAccountPurposeV1Schema } from '../../connect/connectedAccountPurposes.js';
 import { ProviderConnectionSecurityFingerprintV1Schema } from '../../providers/fingerprints.js';
 import { ProviderConnectionIdSchema, ProviderLocalIdSchema } from '../../providers/ids.js';
 
@@ -19,6 +20,7 @@ export const TeamCredentialSourceBindingV1Schema = lazyZodSchema(() => z.discrim
     kind: z.literal('connected_account'),
     target: QualifiedConnectedAccountPurposeBindingAccountTargetV1Schema,
     credentialIncarnation: TeamCredentialSourceCredentialIncarnationV1Schema,
+    providerPurpose: z.optional(QualifiedConnectedAccountPurposeV1Schema),
   }),
   z.strictObject({
     v: z.literal(1),

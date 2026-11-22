@@ -1,4 +1,6 @@
-import { resolveManagedProviderBrokerPurpose } from './applicationProjection';
+import { randomUUID } from 'node:crypto';
+import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import { resolveManagedProviderBrokerPurpose, resolveTeamCredentialPurposeProvider } from './applicationProjection';
 import type { ProviderConnectionRegistryReader } from './providerConnectionSource';
 import {
   type TeamCredentialResourceSummaryV1,
@@ -7,13 +9,16 @@ import {
 } from '@happier-dev/protocol/teams';
 
 import { resolveManagedProviderPurposeBindingSnapshot } from '@/providers/managed/resolvePurposeBindingSnapshot';
+import { readConnectedAccountCatalogSources } from '@/providers/modelManagement/connectedAccountCatalog';
 import type { ConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import type { ConnectedAccountRequestAuthService } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthService';
 import { preserveBrokerSourceHealthFailure } from './sourceFailure';
 import type { ManagedProviderExplicitStartCustody } from '@/providers/connections/publicManagedRuntimeStart';
 import type { TeamCredentialBrokerSourceOpenInput, TeamCredentialBrokerOpenedSource, TeamCredentialBrokerSourceOpenFailureReason } from './teamCredentialBrokerSourceOwner';
 import { acquireBrokerSourceOperation } from './brokerSourceOperationAcquisition';
 import { readConnectedAccountBrokerModelCatalog, type ReadConnectedAccountBrokerModelProjection } from './connectedAccountModelCatalog';
 import { observeCurrentConnectedServiceMaterializationPhase as observeMaterializationPhase } from '@/daemon/connectedServices/materialize/materializationPhase';
+import { openConnectedAccountProviderTransport } from './connectedAccountTransport';
 import {
   isCpxBrokerApplication,
   sameTeamCredentialBrokerSource,
@@ -33,7 +38,7 @@ type ConnectedSelectionInput = Pick<ConnectedOpenInput, 'source' | 'application'
 
 /**
  * The one current Connected Account/Pool choice for a broker source: the
- * CLIProxyAPI upstream purpose the signed source and application admit, and the member the
+ * Provider purpose the signed source admits, and the member the
  * canonical purpose-binding owner selects for it. A pure read — it neither
  * starts nor joins managed custody — so the Home can attribute and admit a
  * request before anything is materialized; acquisition then resolves exactly
@@ -44,19 +49,6 @@ async function resolveConnectedServicesBrokerSelection(
   resolveBindingIntentSelection: ConnectedAccountPurposeBindingOwner['resolveBindingIntentSelection'],
   request: ConnectedSelectionInput,
 ) {
-  const service = request.source.target.kind === 'account'
-    ? request.source.target.account.service
-    : request.source.target.service;
-  const family = await withRegistry((registry) => (
-    isCpxBrokerApplication(registry, request.application)
-      ? resolveManagedProviderBrokerPurpose({ registry, application: request.application, service })
-      : null
-  ));
-  if (!family) return null;
-  const purpose = {
-    consumer: request.application.implementationIdentity,
-    purpose: family.purpose,
-  };
   // An admitted request materializes exactly its admitted member; only a
   // fresh selection reads the Pool's current choice.
   const admitted = request.admittedSourceMember?.kind === 'connected_account'
@@ -64,19 +56,38 @@ async function resolveConnectedServicesBrokerSelection(
   const target = admitted
     ? { kind: 'account' as const, account: { service: admitted.service, accountId: admitted.connectedAccountId } }
     : request.source.target;
-  const selection = await resolveBindingIntentSelection({
-    purpose,
-    target,
-    serviceRefs: [family.service],
-    signal: request.signal,
+  const chosen = await withRegistry(async (registry) => {
+    if (request.source.kind === 'connected_account' && request.source.providerPurpose) {
+      const savedPurpose = request.source.providerPurpose;
+      if (target.kind !== 'account' || !sameQualifiedConnectedAccountRef(target.account, request.source.target.account)) return null;
+      const provider = resolveTeamCredentialPurposeProvider({ registry, purpose: savedPurpose, application: request.application });
+      if (!provider) return null;
+      const [source] = await readConnectedAccountCatalogSources({ registry, provider, purpose: savedPurpose.purpose,
+        target, protocols: [request.application.protocol], endpointTemplateId: request.application.endpointTemplateId,
+        signal: request.signal, resolveSelection: resolveBindingIntentSelection });
+      if (!source) return null;
+      if (provider.definition.managedRuntime) {
+        return isCpxBrokerApplication(registry, request.application) ? { ...source, purpose: savedPurpose, direct: null } : null;
+      }
+      const direct = source.requestAuthUses.find(use => use.purpose === savedPurpose.purpose);
+      return direct ? { ...source, purpose: savedPurpose, direct } : null;
+    }
+    const service = request.source.target.kind === 'account' ? request.source.target.account.service : request.source.target.service;
+    if (!isCpxBrokerApplication(registry, request.application)) return null;
+    const family = resolveManagedProviderBrokerPurpose({ registry, application: request.application, service });
+    if (!family) return null;
+    const purpose = { consumer: request.application.implementationIdentity, purpose: family.purpose };
+    const selection = await resolveBindingIntentSelection({ purpose, target, serviceRefs: [family.service], signal: request.signal });
+    return selection ? { family, purpose, selection, endpoint: null, direct: null } : null;
   }).catch(preserveBrokerSourceHealthFailure);
-  if (!selection) return null;
+  if (!chosen) return null;
+  const { selection } = chosen;
   const sourceMember: TeamCredentialSourceMemberV1 = Object.freeze({
     kind: 'connected_account' as const,
     service: Object.freeze({ ...selection.resolved.account.service }),
     connectedAccountId: selection.resolved.account.accountId,
   });
-  return { family, purpose, selection, sourceMember };
+  return { ...chosen, sourceMember };
 }
 
 /** Selects the current source member without acquiring anything. */
@@ -100,8 +111,8 @@ export function createConnectedServicesBrokerSourceMemberSelect(input: Readonly<
 }
 
 /**
- * Captures one admitted Connected Account/Pool source for operation-scoped
- * CLIProxyAPI custody. Rejoining uses that capture; the purpose-binding owner
+ * Captures one admitted Connected Account/Pool source for its declared carrier.
+ * Rejoining uses that capture; the purpose-binding owner
  * still acquires credentials at each natural materialization boundary.
  */
 export function createConnectedServicesBrokerSourceOpen(input: Readonly<{
@@ -113,6 +124,10 @@ export function createConnectedServicesBrokerSourceOpen(input: Readonly<{
   resolveBindingIntentSelection: ConnectedAccountPurposeBindingOwner['resolveBindingIntentSelection'];
   custody: ManagedProviderExplicitStartCustody;
   readModelProjection?: ReadConnectedAccountBrokerModelProjection;
+  purposeBindings?: Pick<ConnectedAccountPurposeBindingOwner, 'activatePurposeBindings'>;
+  requestAuth?: Pick<ConnectedAccountRequestAuthService, 'lookupRequestAuth' | 'refreshAfterAuthFailure'>;
+  resolveAddresses?: Parameters<typeof openConnectedAccountProviderTransport>[0]['resolveAddresses'];
+  transport?: Parameters<typeof openConnectedAccountProviderTransport>[0]['transport'];
 }>): (request: ConnectedOpenInput) => Promise<TeamCredentialBrokerOpenedSource
   | Readonly<{ unavailable: TeamCredentialBrokerSourceOpenFailureReason }>> {
   return async (request) => {
@@ -133,7 +148,6 @@ export function createConnectedServicesBrokerSourceOpen(input: Readonly<{
       request,
     ));
     if (!chosen) return { unavailable: 'source_selection_unavailable' };
-    if (!await readsResourceCurrent(request.signal)) return { unavailable: 'resource_not_current' };
     const { family, purpose, selection, sourceMember } = chosen;
     const exactTarget = Object.freeze({
       kind: 'account' as const,
@@ -142,6 +156,40 @@ export function createConnectedServicesBrokerSourceOpen(input: Readonly<{
         accountId: selection.resolved.account.accountId,
       }),
     });
+    if (chosen.direct && chosen.endpoint) {
+      const { requestAuth, purposeBindings } = input;
+      if (!requestAuth || !purposeBindings) return { unavailable: 'purpose_binding_unavailable' };
+      const { endpoint, direct: { materialization } } = chosen;
+      const reopen = async (signal: AbortSignal): Promise<TeamCredentialBrokerOpenedSource
+        | Readonly<{ unavailable: TeamCredentialBrokerSourceOpenFailureReason }>> => {
+        if (signal.aborted) return { unavailable: 'projection_not_current' };
+        // Each carrier stream owns its own exact binding lease. Server-side job
+        // admission has already selected this source and authorizes every request.
+        const bindingLease = purposeBindings.activatePurposeBindings({
+          subject: { kind: 'operation', operationId: randomUUID(), consumer: purpose.consumer, isCurrent: () => !signal.aborted },
+          purposes: [purpose], bindings: [{ purpose, target: exactTarget }],
+        });
+        try {
+          const projection = await openConnectedAccountProviderTransport({ endpoint, purpose, materialization,
+            bindingLease, requestAuth, signal, isCurrent: async currentSignal => !signal.aborted && !currentSignal?.aborted,
+            resolveAddresses: input.resolveAddresses, transport: input.transport });
+          if (!projection) {
+            bindingLease.dispose();
+            return { unavailable: 'projection_not_current' };
+          }
+          const cleanup = async () => {
+            bindingLease.dispose();
+            await projection.cleanup();
+          };
+          return { projection: { ...projection, cleanup }, sourceMember, reopen, retire: cleanup };
+        } catch (error) {
+          bindingLease.dispose();
+          throw error;
+        }
+      };
+      return await reopen(request.signal);
+    }
+    if (!await readsResourceCurrent(request.signal)) return { unavailable: 'resource_not_current' };
     const purposeBindings = await resolveManagedProviderPurposeBindingSnapshot({
       implementationIdentity: request.application.implementationIdentity,
       connectedAccounts: [{

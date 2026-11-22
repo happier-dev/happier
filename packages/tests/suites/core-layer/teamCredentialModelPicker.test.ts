@@ -3,6 +3,7 @@ import { DEFAULT_PROVIDER_SETTINGS_V1, ProviderContributionV1Schema } from '@hap
 import { TeamCredentialResourceCatalogEntryV1Schema, TeamCredentialSourceBindingV1Schema } from '@happier-dev/protocol/teams';
 
 import { createBrokerProviderRegistry } from '../../../../apps/cli/src/providers/broker/providerBroker.testkit';
+import { createResolvedContributionRegistry } from '../../../../apps/cli/src/plugins/projection/registry/createResolvedContributionRegistry';
 import { createConnectedAccountPurposeBindingOwner } from '../../../../apps/cli/src/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { projectConnectedAccountCatalog } from '../../../../apps/cli/src/providers/modelManagement/connectedAccountCatalog';
 import { projectTeamCredentialProviderModels } from '../../../../apps/server/sources/app/teams/credentials/providerModelProjection';
@@ -16,14 +17,11 @@ import { readConnectedAccountBrokerModelCatalog } from '../../../../apps/cli/src
 import { readSessionTeamCredentialResourceCatalog } from '../../../../apps/cli/src/session/services/sessionTeamCredentialCatalog';
 
 it.each(['static', 'dynamic'] as const)('carries the real %s source catalog through Home, picker, Test and broker admission', async source => {
-  const base = createBrokerProviderRegistry();
-  const registry = { ...base, providersByContributionKey: new Map([...base.providersByContributionKey].map(([key, provider]) => [key, {
-    ...provider, definition: ProviderContributionV1Schema.parse({ ...provider.definition, managedRuntime: {
-      ...provider.definition.managedRuntime,
-      connectedAccounts: [{ purpose: 'openai-upstream', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
-        endpointTemplateIds: ['cliproxyapi-openai-responses'], staticModels: [{ id: 'gpt-5.5', name: 'GPT-5.5' }] }],
-    } }),
-  }])) };
+  const providers = [...createBrokerProviderRegistry().providersByContributionKey.values()].map(provider => ({
+    ...provider, definition: ProviderContributionV1Schema.parse({ ...provider.definition, connectedAccounts: [{ purpose: 'openai-upstream', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+        endpointTemplateIds: ['cliproxyapi-openai-responses'], staticModels: [{ id: 'gpt-5.5', name: 'GPT-5.5' }] }] }),
+  }));
+  const registry = createResolvedContributionRegistry({ providers });
   const target = { kind: 'account', account: {
     service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'upstream',
   } } as const;

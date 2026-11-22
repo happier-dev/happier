@@ -4,6 +4,11 @@ import {
     teamCredentialSourceCandidateIdV1,
     type TeamCredentialSourceCandidateV1,
 } from '@happier-dev/protocol/teams';
+import { projectProviderRequestAuthBrokerPurposes } from '@happier-dev/protocol/providers/catalog/brokerApplicationProjectionV1';
+import { parseProviderContributionIdentityV1 } from '@happier-dev/protocol/providers/contribution-identity';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+
+import { readAccountProviderDeclarations } from '@/providers/catalog/accountProviderDeclarations';
 
 import type { TeamCredentialProviderSourceOfferV1 } from './useTeamCredentialProviderSourceOffers';
 
@@ -13,7 +18,19 @@ export type TeamCredentialSourceCandidatePresentationV1 = Readonly<{
     candidate: TeamCredentialSourceCandidateV1;
     /** Exact daemon route witness; never written into the Protocol source binding. */
     providerSourceOffer: TeamCredentialProviderSourceOfferV1 | null;
+    providerPurposeLabel?: string;
 }>;
+
+const accountProviderPurposes = readAccountProviderDeclarations({ kind: 'account' }).flatMap(declaration => {
+    const provider = parseProviderContributionIdentityV1(declaration.contributionKey);
+    if (!provider) return [];
+    return projectProviderRequestAuthBrokerPurposes({ definition: declaration.definition, identity: provider.identity })
+        .map(family => ({
+            serviceKey: buildQualifiedPluginContributionKey(family.service),
+            purpose: { consumer: provider.identity, purpose: family.purpose },
+            label: family.title?.fallback ?? declaration.definition.name,
+        }));
+});
 
 function providerOfferSelectionId(offer: TeamCredentialProviderSourceOfferV1): string {
     return JSON.stringify([
@@ -78,10 +95,19 @@ export function composeTeamCredentialProviderSourceOffer(
     const homeRows = candidates
         .filter((candidate) => candidate.source.kind !== 'provider_connection'
             && !offeredCandidateIds.has(candidate.candidateId))
-        .map((candidate) => Object.freeze({
-            selectionId: homeCandidateSelectionId(candidate),
-            candidate,
-            providerSourceOffer: null,
-        }));
+        .flatMap((candidate) => {
+            const selectionId = homeCandidateSelectionId(candidate);
+            const homeRow = { selectionId, candidate, providerSourceOffer: null };
+            if (candidate.source.kind !== 'connected_account' || candidate.source.providerPurpose) return [homeRow];
+            const source = candidate.source;
+            const serviceKey = buildQualifiedPluginContributionKey(source.target.account.service);
+            const qualifiedRows = accountProviderPurposes.filter(family => family.serviceKey === serviceKey).map(family => ({
+                selectionId: JSON.stringify([selectionId, family.purpose]),
+                candidate: { ...candidate, source: { ...source, providerPurpose: family.purpose } },
+                providerSourceOffer: null,
+                providerPurposeLabel: family.label,
+            }));
+            return [...qualifiedRows, homeRow];
+        }).map(row => Object.freeze(row));
     return Object.freeze([...homeRows, ...providerRows]);
 }

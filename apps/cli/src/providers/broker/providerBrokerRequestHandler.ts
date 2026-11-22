@@ -349,21 +349,27 @@ export function createProviderBrokerRequestHandler(input: Readonly<{
     const modelListResponse = (
         catalog: TeamCredentialRequestModelCatalog,
         policy: TeamCredentialRequestPolicyV1 | null,
+        protocol?: ProviderBrokerSourceApplicationBindingV1['protocol'],
     ): ManagedServiceResponse => {
         const allowed = policy?.allowedModelIds === null || policy?.allowedModelIds === undefined
             ? null
             : new Set(policy.allowedModelIds);
-        const body = new TextEncoder().encode(JSON.stringify({
+        const models = catalog.models.filter(model => allowed === null || allowed.has(model.id));
+        const body = new TextEncoder().encode(JSON.stringify(protocol === 'openai-responses' ? {
+            models: models.map(model => ({
+                slug: model.id,
+                display_name: model.name ?? model.id,
+                supported_reasoning_levels: [],
+            })),
+        } : {
             object: 'list',
-            data: catalog.models
-                .filter((model) => allowed === null || allowed.has(model.id))
-                .map((model) => ({
-                    id: model.id,
-                    object: 'model',
-                    created: 0,
-                    owned_by: 'happier',
-                    ...(model.name ? { name: model.name } : {}),
-                })),
+            data: models.map(model => ({
+                id: model.id,
+                object: 'model',
+                created: 0,
+                owned_by: 'happier',
+                ...(model.name ? { name: model.name } : {}),
+            })),
         }));
         return {
             ok: true,
@@ -643,7 +649,8 @@ export function createProviderBrokerRequestHandler(input: Readonly<{
                 }));
             if (!authorized.ok) return authorized;
             if (!request.signal?.aborted) input.retainAdmittedRequestPolicy?.(authority.payload, policySnapshot);
-            return { ok: true, response: modelListResponse(policySnapshot.modelCatalog, policySnapshot.policy) };
+            return { ok: true, response: modelListResponse(policySnapshot.modelCatalog, policySnapshot.policy,
+                policySnapshot.application.protocol) };
         }
         const policy = policySnapshot.policy ?? {
             allowedProtocolKinds: null,

@@ -32,7 +32,10 @@ export function teamCredentialUnavailableReason(
     deliveryMode?: TeamCredentialProviderModelSelectionV1['deliveryMode'],
     short = false,
 ): string | null {
-    if (resource.deliveryUnavailableReason) return teamCredentialDeliveryUnavailableReason(resource.deliveryUnavailableReason, deliveryMode, short);
+    if (resource.deliveryUnavailableReason) {
+        const unavailableMode = deliveryMode ?? (resource.allowedRoutes?.includes('vendor-native') ? 'vendor-native' : undefined);
+        return teamCredentialDeliveryUnavailableReason(resource.deliveryUnavailableReason, unavailableMode, short);
+    }
     const readiness = deliveryMode ? readTeamCredentialDeliveryReadinessV1(resource.readiness, deliveryMode) : resource.readiness;
     if (short) return readiness.kind === 'available' ? null : resourceShortUnavailableLabel(readiness);
     switch (readiness.kind) {

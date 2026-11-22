@@ -4,7 +4,7 @@ import { DaemonProviderModelProjectionResponseV1Schema, type TeamCredentialSourc
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { Fastify } from '@/app/api/types';
 import type { TeamCredentialCatalogReadinessProjection } from './brokerReadiness';
-import { projectTeamCredentialProviderModels, selectPoolBackedTeamCredentialProviderModels } from './providerModelProjection';
+import { projectTeamCredentialProviderModels, projectTeamCredentialSourceCatalogQuery, selectPoolBackedTeamCredentialProviderModels } from './providerModelProjection';
 import { readManagedNativeCredentialQualification } from '@/app/machines/managed/credentialDeliveryAdmission';
 
 export async function projectTeamCredentialCatalogModels(
@@ -85,12 +85,7 @@ export async function projectTeamCredentialCatalogModels(
                 ...(projectionRequest.deliveryMode === 'direct'
                     ? { includeDirectMaterialization: true as const }
                     : {}),
-                ...(projectionRequest.source.kind === 'provider_connection'
-                    ? { providerConnection: {
-                        connectionId: projectionRequest.source.connectionId,
-                        expectedConnectionSecurityFingerprint: projectionRequest.source.connectionSecurityFingerprint,
-                    } }
-                    : { connectedAccountTarget: projectionRequest.source.target }),
+                ...projectTeamCredentialSourceCatalogQuery(projectionRequest.source),
                 },
                 });
                 projectionRpcByKey.set(rpcKey, rpc);

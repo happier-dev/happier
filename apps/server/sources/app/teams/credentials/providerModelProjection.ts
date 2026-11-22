@@ -1,11 +1,26 @@
 import { TeamCredentialRequestPolicyModelSupportV1Schema, TeamCredentialProviderModelCatalogEntryV1Schema, type TeamCredentialRequestPolicyModelSupportV1, type TeamCredentialProviderModelCatalogEntryV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { type ProviderBrokerApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { type TeamCredentialSourceBindingV1 } from '@happier-dev/protocol/teams/credentials/sourceBindingV1';
-import { admitTeamCredentialSourceModelRowsV1, DaemonProviderTeamCredentialRequestPolicySupportResponseV1Schema, type TeamCredentialSourceModelProjectionFailureV1, type DaemonProviderTeamCredentialRequestPolicySupportV1 } from '@happier-dev/protocol/rpc/providers';
+import { admitTeamCredentialSourceModelRowsV1, DaemonProviderTeamCredentialRequestPolicySupportResponseV1Schema, type TeamCredentialSourceModelProjectionFailureV1, type DaemonProviderTeamCredentialRequestPolicySupportV1, type DaemonProviderModelProjectionRequestV1 } from '@happier-dev/protocol/rpc/providers';
 import {
     selectMachinePoolCandidate,
     type MachinePoolSelectableMemberV1,
 } from "@happier-dev/protocol/machines/pools";
+
+/** Project the already resolved Home source into the custodian's catalog request. */
+export function projectTeamCredentialSourceCatalogQuery(source: TeamCredentialSourceBindingV1): Pick<
+    DaemonProviderModelProjectionRequestV1, 'providerConnection' | 'connectedAccountTarget' | 'connectedAccountSourcePurpose'
+> {
+    if (source.kind === 'provider_connection') return { providerConnection: {
+        connectionId: source.connectionId,
+        expectedConnectionSecurityFingerprint: source.connectionSecurityFingerprint,
+    } };
+    return {
+        connectedAccountTarget: source.target,
+        ...(source.kind === 'connected_account' && source.providerPurpose
+            ? { connectedAccountSourcePurpose: source.providerPurpose } : {}),
+    };
+}
 
 function providerModelCandidateKey(model: TeamCredentialProviderModelCatalogEntryV1): string {
     return JSON.stringify([

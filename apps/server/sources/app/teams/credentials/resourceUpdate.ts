@@ -203,7 +203,8 @@ async function applyResourceReplacementInTx(
     if (nextDeliveryPolicy.preferredAllowedModes.includes('direct') && source.directExportFailure) {
         return { ok: false, error: source.directExportFailure.code, message: source.directExportFailure.message };
     }
-    if (!storedDelivery.data.policy.preferredAllowedModes.includes('direct')
+    if ((!storedDelivery.data.policy.preferredAllowedModes.includes('direct')
+            || (nextSource.kind === 'connected_account' && nextSource.providerPurpose !== undefined))
         && nextDeliveryPolicy.preferredAllowedModes.includes('direct')
         && source.directExportSupport === "unsupported") {
         return { ok: false, error: "disclosure_not_allowed" };

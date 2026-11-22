@@ -70,7 +70,12 @@ as charged Gateway spend.
 Native Claude subscription routing is a separate
 authentication flow and is not configured by this API-key connection.
 
-## Team cloud-provider delivery in development
+## Team credentials in development
+
+A Team admin can offer brokered use of the signed-in Gateway source to members.
+Members receive model access through the Team's broker. For direct delivery or a
+Sandbox that requires a native credential, use a separate Gateway API key in
+Saved Secrets.
 
 The separate [Team credential delivery contract](/accounts/team-credentials#cloud-provider-delivery)
 is being integrated for company-managed Vercel sandboxes. The custodian explicitly

@@ -362,6 +362,110 @@ describe("Team credential resource routes (SQLite integration)", () => {
         expect(widened.json()).toEqual({ error: directExportFailure.code, message });
     });
 
+    it('pins a brokered Provider purpose to the custodian Account and advances its revision on replacement', async () => {
+        const owner = await createAccount();
+        const outsider = await createAccount();
+        const team = await db.team.create({ data: { name: 'Brokered model purpose' } });
+        await db.teamMembership.createMany({ data: [
+            { teamId: team.id, accountId: owner.id, role: 'owner' },
+            { teamId: team.id, accountId: outsider.id, role: 'member' },
+        ] });
+        const service = { pluginId: 'happier.machine.vercel', localId: 'vercel-account' };
+        const account = { service, accountId: 'granted-team' };
+        const created = await mutateQualifiedConnectedServiceCredential({
+            accountId: owner.id, ref: account, authenticationModeId: 'oauth', expectedCredentialRevision: null,
+            content: { t: 'plain', v: { accessToken: 'synthetic-credential' } }, metadata: { kind: 'oauth', scopes: [] },
+        });
+        expect(created).toMatchObject({ status: 'written' });
+        const credential = await db.serviceAccountToken.findFirstOrThrow({ where: { accountId: owner.id } });
+        const source = {
+            v: 1, kind: 'connected_account', target: { kind: 'account', account }, credentialIncarnation: credential.id,
+        };
+        const qualified = { ...source, providerPurpose: {
+            consumer: { pluginId: 'happier.provider.vercel-ai-gateway', localId: 'vercel-ai-gateway' },
+            purpose: 'model-inference',
+        } };
+        const resourceId = `brokered-purpose-${owner.id}`;
+        const draft = { teamId: team.id, resourceId, displayName: plainPrivateLabel('Gateway models'), source: qualified,
+            deliveryPolicy: { preferredAllowedModes: ['brokered'] }, sessionUsePolicy: 'personal_allowed',
+            brokerPlacement: null, requestPolicy: null, allMembersAllowedRoutes: null,
+            groupGrants: [], memberGrants: [], usageLimits: [] };
+        for (const preferredAllowedModes of [['direct'], ['brokered', 'direct']]) {
+            const refused = await post('/v1/teams/credential-resources/create', owner.id, {
+                ...draft, deliveryPolicy: { preferredAllowedModes },
+            });
+            expect.soft(refused.json(), refused.body).toEqual({ error: 'disclosure_not_allowed' });
+        }
+        const foreign = await post('/v1/teams/credential-resources/create', outsider.id, draft);
+        expect.soft(foreign.json(), foreign.body).toEqual({ error: 'source_replaced_or_missing' });
+
+        const brokered = await post('/v1/teams/credential-resources/create', owner.id, draft);
+        expect(brokered.statusCode, brokered.body).toBe(200);
+        const resource = await post('/v1/teams/credential-resources/get', owner.id, { resourceId });
+        expect(resource.json()).toMatchObject({ source: qualified, directExportSupport: 'unsupported' });
+        const revision = resource.json().revision;
+        const directAudience = await post('/v1/teams/credential-resources/audience/set', owner.id, {
+            resourceId, expectedRevision: revision, allMembersAllowedRoutes: ['direct'], groupGrants: [], memberGrants: [],
+        });
+        expect(directAudience.json()).toEqual({ error: 'disclosure_not_allowed' });
+        const directUpdate = await post('/v1/teams/credential-resources/update', owner.id, {
+            resourceId, expectedRevision: revision, deliveryPolicy: { preferredAllowedModes: ['brokered', 'direct'] },
+        });
+        expect(directUpdate.json()).toEqual({ error: 'disclosure_not_allowed' });
+
+        const replacement = await post('/v1/teams/credential-resources/update', owner.id, {
+            resourceId, expectedRevision: revision, replacement: { custodian: { source,
+                deliveryPolicy: draft.deliveryPolicy, brokerPlacement: draft.brokerPlacement } },
+        });
+        expect(replacement.statusCode, replacement.body).toBe(200);
+        expect(replacement.json()).toEqual({ resourceId, revision: revision + 1 });
+        const stale = await post('/v1/teams/credential-resources/update', owner.id, {
+            resourceId, expectedRevision: revision, replacement: { custodian: { source: qualified,
+                deliveryPolicy: draft.deliveryPolicy, brokerPlacement: draft.brokerPlacement } },
+        });
+        expect(stale.json()).toEqual({ error: 'resource_changed' });
+        const retained = await post('/v1/teams/credential-resources/get', owner.id, { resourceId });
+        expect(retained.json().source).toEqual(source);
+    });
+
+    it('refuses native Gateway sign-in before forwarding any native source request', async () => {
+        const f = await createNativeSessionTeamCredentialFixture();
+        const account = { service: { pluginId: 'happier.machine.vercel', localId: 'vercel-account' }, accountId: 'gateway-team' };
+        const purpose = { consumer: { pluginId: 'happier.provider.vercel-ai-gateway', localId: 'vercel-ai-gateway' },
+            purpose: 'model-inference' };
+        await expect(mutateQualifiedConnectedServiceCredential({ accountId: f.custodian.id, ref: account,
+            authenticationModeId: 'oauth', expectedCredentialRevision: null,
+            content: { t: 'plain', v: { accessToken: 'synthetic-credential' } }, metadata: { kind: 'oauth', scopes: [] },
+        })).resolves.toMatchObject({ status: 'written' });
+        const credential = await db.serviceAccountToken.findFirstOrThrow({ where: { accountId: f.custodian.id } });
+        const resourceId = `native-signin-${f.custodian.id}`;
+        const created = await post('/v1/teams/credential-resources/create', f.custodian.id, {
+            teamId: f.team.id, resourceId, displayName: plainPrivateLabel('Gateway sign-in'),
+            source: { v: 1, kind: 'connected_account', target: { kind: 'account', account },
+                credentialIncarnation: credential.id, providerPurpose: purpose },
+            deliveryPolicy: { preferredAllowedModes: ['vendor-native'] }, sessionUsePolicy: 'personal_allowed',
+            brokerPlacement: null, requestPolicy: null, allMembersAllowedRoutes: null,
+            groupGrants: [], memberGrants: [{ teamMembershipId: f.membership.id, allowedRoutes: ['vendor-native'] }], usageLimits: [],
+        });
+        expect(created.statusCode, created.body).toBe(200);
+        const priorForward = app.forwardRpcForUser;
+        const forward = vi.fn<typeof priorForward>(async () => ({ ok: false, error: 'offline' }));
+        app.forwardRpcForUser = forward;
+        try {
+            const catalog = await post('/v1/teams/credential-resources/entitled/list', f.creator.id, {
+                teamId: f.team.id, resourceId, executionMachineId: f.guest.id,
+                application: { ...f.application, implementationIdentity: purpose.consumer, endpointTemplateId: 'vercel-codex' },
+            });
+            expect(catalog.statusCode, catalog.body).toBe(200);
+            expect(catalog.json().resources).toMatchObject([{ id: resourceId, allowedRoutes: ['vendor-native'],
+                providerModels: [], deliveryUnavailableReason: 'provider_credential_transport_unavailable',
+                recoveryAction: 'choose_another_resource' }]);
+            expect(forward).not.toHaveBeenCalled();
+        } finally {
+            app.forwardRpcForUser = priorForward;
+        }
+    });
+
     it("discovers an Account's admitted Teams in one request while retaining per-Team refusals", async () => {
         const actor = await createAccount();
         const teams = await Promise.all(Array.from({ length: 6 }, (_, index) => db.team.create({

@@ -13,9 +13,11 @@ const SOURCE_LABEL = projectPrivateLabelForRecipientV1({
     recipientAccountId: 'recipient',
 });
 
-it.each(['storage_failure', 'application_mismatch'] as const)('preserves the source RPC failure reason (%s)', async failure => {
+it.each(['storage_failure', 'application_mismatch', 'saved_provider_purpose'] as const)('preserves the source RPC failure reason (%s)', async failure => {
+    const providerPurpose = { consumer: { pluginId: 'example.provider.source', localId: 'source' }, purpose: 'models' };
     const source = TeamCredentialSourceBindingV1Schema.parse({ v: 1, kind: 'connected_account', credentialIncarnation: 'incarnation',
-        target: { kind: 'account', account: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'source' } } });
+        target: { kind: 'account', account: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'source' } },
+        ...(failure === 'saved_provider_purpose' ? { providerPurpose } : {}) });
     const application = { agentTargetKey: 'agent:happier.agent.codex/codex',
         implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
         endpointTemplateId: 'cliproxyapi-openai-responses', protocol: 'openai-responses' as const };
@@ -29,20 +31,25 @@ it.each(['storage_failure', 'application_mismatch'] as const)('preserves the sou
             deliveryMode: 'brokered', directMaterialReferences: [] }],
         brokerReadiness: { unavailable: new Map(), poolSnapshots: new Map(), presenceByAccount: new Map() } };
     let requests = 0;
+    let requestedSource: unknown;
     // RPC is the network boundary; the real projector must not turn a rejected
     // observation into an available empty catalog. No database is opened.
-    const app: Pick<Fastify, 'forwardRpcForUser'> = { forwardRpcForUser: async () => {
+    const app: Pick<Fastify, 'forwardRpcForUser'> = { forwardRpcForUser: async request => {
         requests++;
-        if (failure === 'application_mismatch') return { ok: true, result: {
+        requestedSource = request.params;
+        if (failure !== 'storage_failure') return { ok: true, result: {
             status: 'error', error: createProviderErrorV1('provider_incompatible_with_agent'),
         } };
         throw Object.assign(new Error('Synthetic missing storage column'), { code: 'P2022' });
     } };
     expect(await projectTeamCredentialCatalogModels(app, result, application)).toMatchObject({ resources: [{
-        providerModels: [], readiness: { kind: 'broker_unavailable', reason: failure === 'application_mismatch' ? 'incompatible' : 'projection_unavailable' },
-        recoveryAction: failure === 'application_mismatch' ? 'source_owner_action' : 'retry',
+        providerModels: [], readiness: { kind: 'broker_unavailable', reason: failure === 'storage_failure' ? 'projection_unavailable' : 'incompatible' },
+        recoveryAction: failure === 'storage_failure' ? 'retry' : 'source_owner_action',
     }] });
     expect(requests).toBe(1);
+    if (failure === 'saved_provider_purpose') {
+        expect(requestedSource).toMatchObject({ connectedAccountSourcePurpose: providerPurpose, application });
+    }
 });
 
 it.each([0, 1, 2])('keeps Direct declaration discovery separate from broker observation with %s material references', async count => {

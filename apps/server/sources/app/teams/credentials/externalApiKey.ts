@@ -31,6 +31,7 @@ import {
 import { createSha256SecretDigest, sha256SecretDigestMatches } from "../../auth/secretDigest";
 import { qualifyTeamCredentialOperationInTx } from "./resourceRead";
 import { admitTeamCredentialWithdrawalInTx } from "./resourceWithdrawalAdmission";
+import { readTeamCredentialSourceBinding } from "./sourceBindingRead";
 import {
     prepareTeamCredentialExternalApiKeyLabelForWriteInTx,
     projectTeamCredentialExternalApiKeyLabelForRecipient,
@@ -151,7 +152,14 @@ type ManagedTeamCredentialResource = Readonly<{
     teamId: string;
     custodianAccountId: string;
     sessionUsePolicy: string;
+    sourceBindingJson: string;
 }>;
+
+/** Qualified Provider purposes are available to admitted Team Sessions and Runs. */
+function isConnectedAccountProviderPurposeSource(sourceBindingJson: string): boolean {
+    const source = readTeamCredentialSourceBinding(sourceBindingJson);
+    return source.success && source.data.kind === "connected_account" && source.data.providerPurpose !== undefined;
+}
 
 /**
  * Outcome of the shared manager-authority preflight. Tagged so callers narrow a
@@ -223,6 +231,7 @@ export async function createTeamCredentialExternalApiKeyInTx(
         throw new TransactionReplayRequiredError("transaction-account-audience-changed");
     }
     if (resource.sessionUsePolicy !== "personal_allowed") return { ok: false, error: "session_policy_incompatible" };
+    if (isConnectedAccountProviderPurposeSource(resource.sourceBindingJson)) return { ok: false, error: "resource_forbidden" };
 
     const membership = await tx.teamMembership.findFirst({
         where: { id: parsed.data.teamMembershipId, teamId: resource.teamId },
@@ -506,7 +515,8 @@ export async function resolveCurrentTeamCredentialExternalApiKeyAuthorityInTx(
         || row.membership.account.status !== AccountStatus.active) {
         return { ok: false, reason: "operation_not_current" };
     }
-    if (!row.resource.enabled || row.resource.sessionUsePolicy !== "personal_allowed") {
+    if (!row.resource.enabled || row.resource.sessionUsePolicy !== "personal_allowed"
+        || isConnectedAccountProviderPurposeSource(row.resource.sourceBindingJson)) {
         return { ok: false, reason: "resource_forbidden" };
     }
     const entitlement = await resolveTeamCredentialEntitlementInTx(tx, { resourceId: row.resourceId, accountId: row.membership.accountId });
