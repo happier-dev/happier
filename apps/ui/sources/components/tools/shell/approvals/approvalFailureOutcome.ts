@@ -1,5 +1,6 @@
 import type { ActionExecuteFailure} from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readDeploymentRefusalRecovery } from '@/components/projects/deployments/deploymentPresentation';
 import { readActionFailurePresentationV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { listActionSpecs } from '@happier-dev/protocol/actions';
@@ -14,7 +15,7 @@ import { DeploymentTeardownEnvironmentPartialDetailsV1Schema, DeploymentBackupFa
     readDeploymentBackupMaintenanceFailureEvidenceV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTemplateInstantiationPartialV1Schema } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { DeploymentFailureRecoveryV1Schema, DeploymentImageResolutionFailureV1Schema, describeDeploymentImageResolutionFailureV1,
-    projectDeploymentFailureRecoveryV1, readDeploymentFailureRecoveryV1, readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+    projectDeploymentFailureRecoveryV1, readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { isDeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentMissingRequiredSecretsV1Schema } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { FiniteCommandFailureDetailsV1Schema, MachineSetupFailureDetailsV1Schema } from '@happier-dev/protocol/actions/operations/v1';
@@ -158,7 +159,7 @@ export function presentActionFailureOutcome(failure: ApprovalFailureDiagnostics,
     const technicalDetails = presentActionFailureTechnicalDetails(failure, scope);
     const retiredDomain = technicalDetails.find(line => line.key === 'failure-domain')?.value;
     const remedy = technicalDetails.find(line => line.key === 'failure-remedy')?.value;
-    const deploymentRecovery = scope === 'deployment' ? readDeploymentRefusalRecoveryV1(failure.errorCode, failure.details) : null;
+    const deploymentRecovery = scope === 'deployment' ? readDeploymentRefusalRecovery(failure.errorCode, failure.details) : null;
     // A deploy refused before review names the required secrets that have no value (names only, never values).
     const missingSecrets = scope === 'deployment' && failure.errorCode === 'secret_missing'
         ? DeploymentMissingRequiredSecretsV1Schema.safeParse(failure.details) : null;

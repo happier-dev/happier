@@ -9,6 +9,9 @@ import { t } from '@/text';
 import type { DeploymentActorPresentation } from './useDeploymentActorPresentations';
 import { readDeploymentRefusal } from './deploymentActionOutcome';
 import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
+import { getStorage } from '@/sync/domains/state/storageStore';
+import { getSettledMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { DEPLOYMENT_TARGET_REQUIRES_REPOSITORY_DEFINITION } from '@happier-dev/protocol/deployments/resolvePublishTargetRecommendation';
 import { deploymentRevisionLabelV1 as deploymentRevisionLabel } from '@happier-dev/deployments';
 export { deploymentRevisionLabel };
@@ -478,4 +481,18 @@ export function deploymentActorLabel(
 /** The viewer acted in person (not an agent or workflow acting for them): the "by you" facts read this, never the requester. */
 export function deploymentActorIsViewer(actor: ActionActorV1 | null | undefined, viewerAccountId: string | null): boolean {
   return actor?.actorKind === 'person' && actor.accountId === viewerAccountId;
+}
+
+/**
+ * A refusal's recovery from its one owner, with the Machine it points at named as the person sees it everywhere else
+ * ("NLDW3-5-36-33 · a729"), never by its raw id (QA-SWEEP-172 #201). The protocol owner names only the id it carries.
+ */
+export function readDeploymentRefusalRecovery(...args: Parameters<typeof readDeploymentRefusalRecoveryV1>) {
+  const recovery = readDeploymentRefusalRecoveryV1(...args);
+  const machineId = recovery?.nextAction.kind === 'navigate' ? recovery.nextAction.machineId : undefined;
+  if (!recovery || !machineId || !recovery.remedy.includes(machineId)) return recovery;
+  const state = getStorage().getState();
+  // The refusal belongs to the Account in view; its Machine resolves in that Home's inventory.
+  const name = getSettledMachineDisplayName(resolveServerScopedMachine(state, state.profileScope?.serverId ?? null, machineId));
+  return name ? { ...recovery, remedy: recovery.remedy.split(machineId).join(name) } : recovery;
 }

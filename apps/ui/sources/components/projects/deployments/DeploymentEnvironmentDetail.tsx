@@ -97,6 +97,7 @@ import {
   deploymentAttentionLeaves,
   deploymentPreviewAvailability,
   deploymentReadIssue,
+  readDeploymentRefusalRecovery,
 } from './deploymentPresentation';
 import {
   useDeploymentPress,
@@ -169,7 +170,7 @@ import { Collection, useHappierCollection, type CollectionAnatomy } from '@happi
 import { machineServiceColumnFields, machineServiceStateField } from '@/components/machines/services/machineServiceColumns';
 import { machineServiceIcon, machineServiceStateLabel } from '@/components/machines/services/machineServicesPresentation';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
-import { readDeploymentRefusalRecoveryV1, type DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { type DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { showServiceCommandSheet } from '@/components/machines/services/command/ServiceCommandSheet';
 import type { MachineServiceRowV1 } from '@happier-dev/protocol';
 import { DeploymentAdminLogin } from './DeploymentAdminLogin';
@@ -1476,10 +1477,10 @@ export function DeployOutcomeBanner(
   const unsupported = outcome.reason === 'unsupported' && !cancel && !domain;
   const failure = outcome.failure ? presentActionFailureOutcome(outcome.failure, 'deployment') : null;
   // The recovery owner's remedy and route for this refusal (E4): a stored generic remedy never hides a typed cause.
-  const typedRecovery = readDeploymentRefusalRecoveryV1(outcome.code, outcome.failure?.details, outcome.request);
+  const typedRecovery = readDeploymentRefusalRecovery(outcome.code, outcome.failure?.details, outcome.request);
   // The press's own request (an exact pull-request head) chose a more specific remedy than the refusal's stored one.
   const requestSpecific = outcome.request !== undefined
-    && typedRecovery?.remedy !== readDeploymentRefusalRecoveryV1(outcome.code, outcome.failure?.details)?.remedy;
+    && typedRecovery?.remedy !== readDeploymentRefusalRecovery(outcome.code, outcome.failure?.details)?.remedy;
   // A failed step's logs are on the receipt the refusal names. Without one, this attempt left no step to inspect:
   // no action, and the sentence says why instead.
   const failedDeploymentId = DeploymentExecutionFailureDetailsV1Schema.safeParse(outcome.failure?.details).data?.deploymentId;

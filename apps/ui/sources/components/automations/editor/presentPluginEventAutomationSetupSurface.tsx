@@ -24,7 +24,8 @@ import type { BoundPluginSurfaceBinding } from '@/components/plugins/surfaces/bo
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
 import { useUnistyles } from 'react-native-unistyles';
-import { useServerScopedMachineLabel } from '@/sync/store/hooks';
+import { useMachineListForServer, useServerScopedMachineLabel } from '@/sync/store/hooks';
+import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
 import { PluginMachineExecutionOriginPickerProvider } from '@/components/settings/machines/PluginMachineExecutionOriginSelector';
 import { Modal } from '@/modal';
 import type { CustomModalInjectedProps } from '@/modal';
@@ -218,7 +219,7 @@ function PluginEventAutomationSetupSurfaceModal(
 }
 
 /** Where the setup runs, as the sheet's first field (the composer preselects the surface's Machine). */
-function SetupOriginRow(props: Readonly<{
+export function SetupOriginRow(props: Readonly<{
     label: string;
     machineId: string;
     serverId: string | null;
@@ -227,6 +228,17 @@ function SetupOriginRow(props: Readonly<{
 }>) {
     const { theme } = useUnistyles();
     const machine = useServerScopedMachineLabel(props.serverId, props.machineId);
+    const all = useMachineListForServer(props.serverId);
+    // The composer's usable watchers (21fe08b30ac): choosing another moves the open form there with what was typed.
+    const choices = props.watcherChoices;
+    const machines = React.useMemo(() => !choices || choices.length < 2 ? null
+        : (all ?? []).filter(candidate => choices.some(choice => choice.machineId === candidate.id)), [all, choices]);
+    if (machines && machines.length > 1 && props.serverId) {
+        const selected = choices?.find(choice => choice.selected)?.machineId ?? props.machineId;
+        return <SessionMachineField testID="plugin-event-automation-setup-surface-origin" serverId={props.serverId}
+            machines={machines} machineId={selected} title={props.label}
+            onSelectMachine={next => { if (next.id !== selected) props.chooseWatcher(next.id); }} />;
+    }
     // It stands on the form's own edge and rhythm, as the plugin's fields below it do: a label over its value.
     return (
         <View testID="plugin-event-automation-setup-surface-origin" style={{ gap: theme.space.s4, paddingBottom: theme.space.s16 }}>

@@ -22,7 +22,7 @@ import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { DeploymentNoticeRecoveryChoices } from '@/components/inbox/cards/AccountNoticeRecoveryChoices';
 import { InvestigationOutcomeBanner } from '@/components/inbox/detail/InvestigationOutcomeBanner';
 import { InvestigationAgentActionButtons } from '@/components/inbox/detail/InvestigationAgentActionButtons';
-import { readDeploymentRefusalRecoveryV1, type DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { type DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { useInvestigateFailure } from '@/hooks/inbox/useInvestigateFailure';
 import { useAccountNoticeInvestigation } from '@/hooks/inbox/AccountNoticeInvestigationProvider';
 import { useInvestigationSessionResult } from '@/hooks/inbox/useInvestigationSessionResult';
@@ -67,6 +67,7 @@ import {
   deploymentWorkStatus,
   deploymentActorIsViewer,
   deploymentActorLabel,
+  readDeploymentRefusalRecovery,
 } from './deploymentPresentation';
 import { useDeploymentActorPresentations } from './useDeploymentActorPresentations';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -296,7 +297,7 @@ export const DeploymentReceiptDetail = React.memo(
     const platform = facts.placement === 'platform';
     // The canonical remedy and next action for the recorded cause (RECOVERY-COPY); no page-local copy.
     const recovery = deployment.state === 'failed' && facts.failure
-      ? readDeploymentRefusalRecoveryV1(facts.failure.code, facts.failure) : null;
+      ? readDeploymentRefusalRecovery(facts.failure.code, facts.failure) : null;
     const failureCode = facts.failure?.failureCause?.errorCode ?? facts.failure?.code;
     const recordedCause = deployment.state !== 'failed' ? null : facts.failure
       ? resolveActionExecutionErrorMessage(facts.failure, recovery ? '' : (failureCode ?? ''))
