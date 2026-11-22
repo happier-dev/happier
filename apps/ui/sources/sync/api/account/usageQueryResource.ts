@@ -2744,9 +2744,11 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                         // take the previous progress as a successful terminal answer.
                         throw failure;
                     }
-                    // A retainable failure settles the sources still being read
-                    // while keeping their last admitted facts visible.
-                    if (!options?.signal?.aborted && sharedContext.accountLifetime.isCurrent()) {
+                    // Malformed wire settles as a typed Resource error. Publishing a
+                    // progress value here would let a one-shot Action return an empty
+                    // successful result before it sees the rejected wire.
+                    // Other retainable failures settle their pending sources in place.
+                    if (code !== 'usage_query_result_invalid' && !options?.signal?.aborted && sharedContext.accountLifetime.isCurrent()) {
                         await Promise.resolve(progressContent).catch(() => undefined);
                         const shown = entry.getSnapshot().value;
                         const batch = shown ? decodeUsageQueryResource(shown) : undefined;
