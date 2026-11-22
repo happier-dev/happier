@@ -25,7 +25,7 @@ import { ProjectsTreeEnvironmentReads, useProjectsTreeEnvironmentChildren } from
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useProjectsTreeCheckoutFactsFor, useProjectsTreeCheckoutFactsSource, type ProjectsTreeCheckoutFactsSource } from './useProjectsTreeCheckoutFacts';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces';
+import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces';
 import { useCollectionTreeKeyboard } from '@/components/ui/lists/collection/useCollectionTreeKeyboard';
 import { ProjectsTree, openProjectsTreeRow } from './ProjectsTree';
 import { DeploymentEnvironmentStateMark } from './deployments/rows/DeploymentEnvironmentRow';
@@ -59,7 +59,7 @@ export const ProjectsListView = React.memo(() => {
     const [hiddenOpen, setHiddenOpen] = React.useState(false);
 
     const refsById = React.useMemo(() => new Map(
-        groups.projectGroups.flatMap((group) => group.items.map((ref) => [JSON.stringify(workspaceAddressFromRefV1(ref)), ref] as const)),
+        groups.projectGroups.flatMap((group) => group.items.map((ref) => [JSON.stringify(workspaceAddressFromRefV2(ref)), ref] as const)),
     ), [groups.projectGroups]);
     // The list keeps membership, order and disclosure; each row reads its own checkouts' live facts.
     const factsSource = useProjectsTreeCheckoutFactsSource(model.checkoutRefs);

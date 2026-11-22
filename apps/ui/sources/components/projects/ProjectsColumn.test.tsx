@@ -191,6 +191,19 @@ function workspaceRef(id: string, machineId: string, rootPath: string): Workspac
 }
 
 describe('ProjectsColumn', () => {
+    it('renders a managed Project from the admitted Home census', async () => {
+        machinesMock = [createMachine({ id: 'machine', host: 'Controller', activeAt: Date.now() })];
+        workspaceRefsV1Mock = [{ v: 2, kind: 'managed', id: 'managed-checkout', serverId,
+            managedId: 'guest', controller: { machineId: 'machine', installationId: 'installation' },
+            rootPath: '/repo', projectKey: 'managed-project', label: 'Managed Project', createdAtMs: 1, lastOpenedAtMs: 1 }];
+        const { ProjectsColumn } = await import('./ProjectsColumn');
+        storage.getState().applyMachines(machinesMock, true);
+        storage.setState({ isDataReady: true });
+        const { applyProjectAccountRowsFixture } = await import('@/dev/testkit/fixtures/projectAccountRows');
+        applyProjectAccountRowsFixture(storage, { workspaceRefs: workspaceRefsV1Mock, status: 'ready', coverage: 'complete' });
+        const screen = await renderScreen(<ProjectsColumn />);
+        expect(screen.findByTestId('projects-column:tree-row-managed-project')).not.toBeNull();
+    });
     it('keeps 150 unchanged Project rows quiet when a refresh failure re-renders the real column', async () => {
         machinesMock = [createMachine({ id: 'machine', host: 'Machine', activeAt: Date.now() })];
         workspaceRefsV1Mock = Array.from({ length: 150 }, (_, index) => ({

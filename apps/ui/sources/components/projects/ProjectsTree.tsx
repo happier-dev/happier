@@ -41,13 +41,13 @@ import {
     type ProjectsTreeRow,
 } from './projectsTreeRows';
 import { useProjectsTreeCheckoutFactsFor, type ProjectsTreeCheckoutFactsSource } from './useProjectsTreeCheckoutFacts';
-import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 /**
  * Opens a checkout; with an Environment, that Environment on the checkout's Project Deployments page; with a database
  * too, that database in its Environment.
  */
-export type ProjectsTreeOpenRef = (refId: string, address?: WorkspaceAddressV1, environmentId?: string, database?: string) => void;
+export type ProjectsTreeOpenRef = (refId: string, address?: WorkspaceAddressV2, environmentId?: string, database?: string) => void;
 
 /**
  * Where a row's press (or Enter) lands: a leaf opens its exact checkout, a Project opens on its lead checkout, an

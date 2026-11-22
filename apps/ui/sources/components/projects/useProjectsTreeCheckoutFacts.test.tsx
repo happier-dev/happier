@@ -43,6 +43,31 @@ function arrange() {
 }
 
 describe('Projects tree checkout fact demand', () => {
+    it('opens managed checkout facts and keeps a same-path controller snapshot separate', async () => {
+        arrange();
+        const { projectManager } = await import('@/sync/runtime/orchestration/projectManager');
+        const { workspaceScopeFromProject } = await import('@/sync/domains/workspaces/workspaceScope');
+        const { workspaceAddressFromRefV2 } = await import('@happier-dev/protocol/workspaces');
+        const guest = { v: 2 as const, kind: 'managed' as const, id: 'guest-checkout', serverId: 'home-a',
+            managedId: 'guest', controller: { machineId: 'machine', installationId: 'installation' },
+            rootPath: '/repo', createdAtMs: 1 };
+        const controller = { id: 'controller-checkout', serverId: 'home-a', machineId: 'machine', rootPath: '/repo', createdAtMs: 1 };
+        const snapshot = (head: string): import('@/sync/domains/state/storageTypes').ScmWorkingSnapshot => ({
+            projectKey: 'runtime-only', fetchedAt: 1, repo: { isRepo: true, rootPath: '/repo' },
+            branch: { head, upstream: null, ahead: 0, behind: 0, detached: false }, hasConflicts: false, entries: [],
+            totals: { includedFiles: 0, pendingFiles: 0, untrackedFiles: 0, includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 },
+        });
+        projectManager.updateWorkspaceScmSnapshot(workspaceScopeFromProject(guest, guest.rootPath),
+            snapshot('guest-branch'));
+        projectManager.updateWorkspaceScmSnapshot(controller,
+            snapshot('controller-branch'));
+        const hook = await renderHook(() => useProjectsTreeCheckoutFacts([guest, controller]));
+        const key = (ref: WorkspaceRefV1) => projectsTreeCheckoutKey({ refId: ref.id, workspaceAddress: workspaceAddressFromRefV2(ref) });
+        expect(hook.getCurrent().get(key(guest))?.branch).toBe('guest-branch');
+        expect(hook.getCurrent().get(key(controller))?.branch).toBe('controller-branch');
+        await hook.unmount();
+        projectManager.clear();
+    });
     it('clears viewed arrival memory live and ignores navigation state for an unrelated Project', async () => {
         const refs = arrange();
         storage.setState({ sessionListRowsByServerId: { 'home-a': { session: createSessionListRenderableSessionFixture({

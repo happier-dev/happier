@@ -1,5 +1,5 @@
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 
 import type { StorageState } from '@/sync/store/types';
 import { areSessionMachineTargetInputsEqual, resolveDisplayIdentityForSessionFromState } from '@/sync/domains/session/resolveMachineTargetForSessionFromState';
@@ -15,7 +15,7 @@ import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatu
 import { readSessionWorkStatusFacts } from '@/components/work/status/sessionWorkStatusFacts';
 import { resolveProjectMobileSurfaceStorageKeys } from '@/sync/domains/settings/mobileSurfacePersistence';
 import { projectLastMobileSurfaceState } from '@/sync/domains/state/navigationUiState';
-import { buildWorkspaceCacheKey, normalizeWorkspaceRootPath } from '@/sync/domains/workspaces/workspaceScope';
+import { buildWorkspaceCacheKey, normalizeWorkspaceRootPath, workspaceScopeFromProject } from '@/sync/domains/workspaces/workspaceScope';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 
 import { projectsTreeCheckoutKey, type ProjectsTreeCheckoutFacts } from './projectsTreeRows';
@@ -37,7 +37,7 @@ export type ProjectsTreeCheckoutFactsChange = Readonly<{
 }>;
 
 function checkoutKey(ref: WorkspaceRefV1): string {
-    return projectsTreeCheckoutKey({ refId: ref.id, workspaceAddress: workspaceAddressFromRefV1(ref) });
+    return projectsTreeCheckoutKey({ refId: ref.id, workspaceAddress: workspaceAddressFromRefV2(ref) });
 }
 
 function readScmFacts(snapshot: ScmWorkingSnapshot | null, rootPath: string) {
@@ -67,7 +67,7 @@ export function createProjectsTreeCheckoutFactsSelector(refs: readonly Workspace
     let nextWakeAtMs: number | null = null;
     const checkoutsByScope = new Map<string, { ref: WorkspaceRefV1; key: string; index: number }[]>();
     refs.forEach((ref, index) => {
-        const scope = buildWorkspaceCacheKey(ref);
+        const scope = buildWorkspaceCacheKey(workspaceScopeFromProject(ref, ref.rootPath));
         let checkouts = checkoutsByScope.get(scope);
         if (!checkouts) checkoutsByScope.set(scope, checkouts = []);
         checkouts.push({ ref, key: checkoutKey(ref), index });
@@ -230,7 +230,7 @@ export function createProjectsTreeCheckoutFactsSelector(refs: readonly Workspace
                     nextWakeAtMs = Math.min(nextWakeAtMs ?? Infinity, scopeWakeAtMs);
                 }
             }
-            const workspaceSnapshot = state.getWorkspaceScmSnapshot(ref);
+            const workspaceSnapshot = state.getWorkspaceScmSnapshot(workspaceScopeFromProject(ref, ref.rootPath));
             const snapshot = !workspaceSnapshot || (memberSnapshot && memberSnapshot.fetchedAt > workspaceSnapshot.fetchedAt)
                 ? memberSnapshot : workspaceSnapshot;
             const surfaceKey = mobileSurfaceKeys[index];

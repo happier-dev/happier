@@ -1,3 +1,4 @@
+import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import * as React from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
@@ -108,7 +109,7 @@ export function useProjectsTreeCheckoutFactsSource(refs: readonly WorkspaceRefV1
     // Labels, grouping and ordering do not change checkout facts or subscriptions.
     // Opening a checkout does affect its arrival marker, so retain that input too.
     const checkoutInputs = React.useMemo(() => JSON.stringify(refs.map(ref => JSON.stringify([
-        ref.serverId, ref.id, ref.machineId, ref.rootPath, ref.lastOpenedAtMs != null,
+        workspaceAddressFromRefV2(ref), ref.lastOpenedAtMs != null,
     ])).sort()), [refs]);
     return React.useMemo(() => createProjectsTreeCheckoutFactsSource(refs, store), [checkoutInputs, store]);
 }

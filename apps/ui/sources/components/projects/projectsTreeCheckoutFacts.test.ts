@@ -39,6 +39,14 @@ afterEach(() => {
 });
 
 describe('Projects tree checkout facts', () => {
+    it('keeps uncached native guest roots separate from Machine SCM and Session scopes', () => {
+        const native = { v: 2 as const, kind: 'managed' as const, id: 'guest-root', serverId: 'home-a',
+            managedId: 'guest', controller: { machineId: 'machine-1', installationId: 'installation' },
+            rootPath: '/repo', createdAtMs: 1 };
+        const select = createProjectsTreeCheckoutFactsSelector([native]);
+        expect([...select(state(), 1_100).values()]).toEqual([{ branch: null, isWorktree: null, attention: null, newFromSession: false }]);
+        expect([...select.getScmScopeKeys()]).toHaveLength(1);
+    });
     it('does not enumerate this Home for five row and Machine inventory arrivals on another Home', () => {
         const source = state();
         let scans = 0;

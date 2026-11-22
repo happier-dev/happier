@@ -28,7 +28,7 @@ import { buildProjectsTreeRows, filterProjectsTreeByQuery, type ProjectsTreeRow 
 import { useProjectsTreeCheckoutFactsSource } from './useProjectsTreeCheckoutFacts';
 import { useProjectsTreeOpenEnvironmentId } from './useProjectsTreeEnvironments';
 import { ProjectsTreeEnvironmentReads, useProjectsTreeEnvironmentChildren } from './ProjectsTreeEnvironmentReads';
-import { projectWorkspaceRefV1, workspaceAddressFromRefV1, type WorkspaceAddressV1, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces';
+import { projectWorkspaceRefV1, workspaceAddressFromRefV2, type WorkspaceAddressV2, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces';
 
 const NO_KEYS: ReadonlySet<string> = new Set();
 
@@ -106,7 +106,7 @@ export const ProjectsColumn = React.memo(function ProjectsColumn() {
     const [expandedKeys, setExpandedKeys] = React.useState<ReadonlySet<string>>(NO_KEYS);
     const [collapsedKeys, setCollapsedKeys] = React.useState<ReadonlySet<string>>(NO_KEYS);
     const refsById = React.useMemo(() => new Map(
-        [...model.groups.projectGroups, ...model.groups.hiddenProjectGroups].flatMap((group) => group.items.map((ref) => [JSON.stringify(workspaceAddressFromRefV1(ref)), ref] as const)),
+        [...model.groups.projectGroups, ...model.groups.hiddenProjectGroups].flatMap((group) => group.items.map((ref) => [JSON.stringify(workspaceAddressFromRefV2(ref)), ref] as const)),
     ), [model.groups.hiddenProjectGroups, model.groups.projectGroups]);
     // The title row's magnifier narrows the tree with the phone page's own filter (F4, owner 1538 #01).
     const [query, setQuery] = React.useState('');
@@ -137,7 +137,7 @@ export const ProjectsColumn = React.memo(function ProjectsColumn() {
         setCollapsedKeys((current) => (open ? withKey(current) : without(current)));
     }, [rows]);
     const openRef = model.openTreeRef;
-    const hrefForRef = React.useCallback((refId: string, address?: WorkspaceAddressV1) => address
+    const hrefForRef = React.useCallback((refId: string, address?: WorkspaceAddressV2) => address
         ? `/projects/${encodeURIComponent(refId)}?serverId=${encodeURIComponent(address.serverId)}` : null, []);
     const projectRefByKey = React.useMemo(() => new Map(
         [...model.groups.projectGroups, ...model.groups.hiddenProjectGroups].flatMap((group) => group.items[0] ? [[group.projectKey.projectKey, group] as const] : []),
