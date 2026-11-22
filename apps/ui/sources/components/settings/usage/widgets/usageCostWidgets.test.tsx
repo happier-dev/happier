@@ -977,6 +977,14 @@ describe('one selected money basis across Usage bodies', () => {
     expect(metrics.slice(2).map(metric => [metric.props.value, metric.props.caption]))
       .toEqual([['—', t('usage.board.page.notMeasuredYet')]]);
   });
+  it('omits the per-merged-PR figure for one Session while keeping its applicable ratios', async () => {
+    const props = mountedCosts();
+    const query = normalizeUsageQuery({ ...props.query, session: 's1', period: { relative: 'all' } });
+    const screen = await renderScreen(<UsageEfficiencyWidget {...props} query={query}
+      slice={{ ...props.slice, shownQuery: query, requestedQuery: query }} id="usage_efficiency" testID="efficiency" />);
+    const metrics = screen.findAllByType(HappierDataMetric).filter(metric => String(metric.props.testID).startsWith('efficiency.'));
+    expect(metrics.map(metric => metric.props.testID)).toEqual(['efficiency.cacheHit', 'efficiency.perMtok']);
+  });
   it('uses the common reported basis rather than mixing one invoice with another reported charge', async () => {
     const props = mountedCosts();
     const screen = await renderScreen(<>

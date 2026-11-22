@@ -113,7 +113,7 @@ export function resolveUsageWidgetPageInitialQuery(input: Readonly<{
 }>): UsageQuery & Readonly<{ metric: UsageFilterState['metric'] }> {
     const filters = input.initialFilters;
     const metric = filters?.metric ?? 'tokens';
-    // A Session's own page reads that Session over its whole life unless its route narrowed the period (a Work autopsy link).
+    // A Session's own page reads its whole life until a period is explicitly selected.
     const period = filters?.period ?? resolveUsagePageDefaultPeriod(input.sessionId);
     const query = usageAnalyticsRequestToQuery({
         granularity: getUsagePeriodDefinition(period).granularity,

@@ -56,6 +56,13 @@ const WAFFLE_BELOW_PX = 360;
 /** From this width the figures share one row (a full-width band); narrower, they pair up two a row. */
 const ALL_ACROSS_FROM_PX = 720;
 
+function selectEfficiencyPerMergedPr({ query, slice }: Pick<UsageBodyProps, 'query' | 'slice'>, costUsd: number | null) {
+  const session = query.session;
+  if (typeof session === 'string' || session?.length === 1) return null;
+  const merged = slice.workSummary?.mergedPrCount ?? null;
+  return { merged, costUsd: merged !== null && merged > 0 && costUsd !== null ? costUsd / merged : null };
+}
+
 /**
  * "Efficiency": cache hit rate and cost per million tokens beside the token mix they come from.
  * Ratios need their basis; without one the fact is absent rather than a misleading zero.
@@ -107,9 +114,7 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
   const unpriced = view.pageCost.selection != null && view.pageCost.amountUsd === null;
   const hasRatios =
     efficiency.cacheHitRatePct !== null || efficiency.costPerMtokUsd !== null;
-  const merged = props.slice.workSummary?.mergedPrCount ?? null;
-  const perMergedPrUsd = merged !== null && merged > 0 && view.pageCost.amountUsd !== null
-    ? view.pageCost.amountUsd / merged : null;
+  const perMergedPr = selectEfficiencyPerMergedPr(props, view.pageCost.amountUsd);
   const segments = usageCompositionSegments(composition, (index) =>
     usageSeriesColor(theme, index),
   );
@@ -175,24 +180,24 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
                 : {})}
           />
         </View>
-        <View style={cellStyle}>
+        {perMergedPr && <View style={cellStyle}>
           <HappierDataMetric
             testID={`${props.testID}.perMergedPr`}
             theme={chartTheme}
             size="stat"
             showLabel
             label={t('usage.board.page.perMergedPr')}
-            value={perMergedPrUsd ?? unknownFigure}
+            value={perMergedPr.costUsd ?? unknownFigure}
             valueFormatter={(value) => formatUsageCost(value, efficiency.currency)}
             caption={
-              merged === null
+              perMergedPr.merged === null
                 ? t('usage.board.page.notMeasuredYet')
-                : merged === 0
+                : perMergedPr.merged === 0
                   ? t('usage.board.page.noneLinkedByEvidence')
                   : t('usage.board.page.linkedByEvidence')
             }
           />
-        </View>
+        </View>}
       </View>
       {segments.length > 0 ? (
         <View style={styles.mixSlot}>

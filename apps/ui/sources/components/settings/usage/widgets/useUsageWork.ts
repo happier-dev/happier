@@ -18,7 +18,6 @@ import {
   type UsageWorkSessionIdentity,
 } from './usageWorkPresentation';
 import { useUsageAnalyticsView, useUsageProjectAnchorOf, useUsageProjectNames, usageMachinePlace } from './usageBodyKit';
-import { readUsageWidgetPageScope, readUsageWidgetQueryOverrides } from '../usageWidgetPageContext';
 import { buildUsageRouteParams } from '../usageRouteParams';
 import { usageCostKindPhrase } from '../usageCostPresentation';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
@@ -157,8 +156,7 @@ export function useUsageWorkSessionNavigation(
     (sessionId: string) => {
       router.push(
         buildScopedSessionRouteHref({ sessionId, serverId, suffix: '/usage', query: buildUsageRouteParams({
-          scope: { ...readUsageWidgetPageScope(query), session: sessionId }, metric,
-          queryOverrides: readUsageWidgetQueryOverrides(query),
+          metric,
           costMode: query.costBasis === 'estimated' ? 'estimated' : query.costBasis === 'reported' ? 'reported' : 'auto',
         }) }) as Parameters<
           typeof router.push

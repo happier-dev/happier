@@ -11,6 +11,9 @@ import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration
 import { executeCurrentUiContextAction } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 import { useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 import { useUsageWork } from './useUsageWork';
+import { resolveUsagePageInitialFilters } from '../usageRouteParams';
+import { resolveUsageWidgetPageInitialQuery } from '../usageWidgetPageContext';
+import { usagePeriodPhrase } from './usageBodyKit';
 import { router } from 'expo-router';
 import { getPreferredLanguage, preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text';
 import { ChartDatum, HappierDataTable, HappierDataMetric, HappierDataRows, IntervalTimeline, OutcomeFunnel, OutcomeScatter, RankedRows } from '@happier-dev/plugin-ui/presentation';
@@ -18,6 +21,7 @@ import { DEFAULT_USAGE_COACH_PREFERENCES_V1 } from '@happier-dev/protocol/accoun
 import {
   getUsageQueryKey,
   normalizeUsageQuery,
+  usageQueryToAnalyticsRequest,
 } from '@happier-dev/protocol/inputs/usageQuery';
 import {
   allocateUsageOutcomes,
@@ -208,7 +212,17 @@ describe('Work and Coach widget bodies', () => {
       expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke', input: { commandId: command!.id },
         context: { surface: 'agent' } })).toMatchObject({ ok: true });
     });
-    expect(vi.mocked(router.push).mock.calls.at(-1)?.[0]).toContain('/session/s1/usage');
+    const href = new URL(String(vi.mocked(router.push).mock.calls.at(-1)?.[0]), 'https://usage-work-controls.test');
+    expect(href.pathname).toBe('/session/s1/usage');
+    const openedQuery = resolveUsageWidgetPageInitialQuery({
+      initialFilters: resolveUsagePageInitialFilters(Object.fromEntries(href.searchParams)),
+      sessionId: 's1', nowMs: 1000, timeZoneOffsetMinutes: 0,
+    });
+    const actionQuery = normalizeUsageQuery({ session: 's1' });
+    const openedRead = usageQueryToAnalyticsRequest(openedQuery, 1000);
+    expect(openedRead.dateRange).toEqual(usageQueryToAnalyticsRequest(actionQuery, 1000).dateRange);
+    expect(openedRead.filters?.sessionIds).toEqual(['s1']);
+    expect(usagePeriodPhrase(openedQuery)).toBe(t('usage.board.page.thisSession'));
     const reader = hook.getCurrent().reader!;
     await hook.unmount();
     expect(reader.resolveCurrentUiCommand(command!.id)).toBeNull();
@@ -1122,8 +1136,9 @@ describe('Work and Coach widget bodies', () => {
       const route = new URL(String(destination), 'https://usage.test');
       expect(route.pathname).toBe('/session/s3/usage');
       expect(route.searchParams.get('serverId')).toBe('home');
-      expect(JSON.parse(route.searchParams.get('scope')!)).toMatchObject({ period: query.period, session: 's3', costBasis: 'reported' });
-      expect(JSON.parse(route.searchParams.get('queryOverrides')!)).toMatchObject({ timeZoneOffsetMinutes: query.timeZoneOffsetMinutes });
+      expect(resolveUsagePageInitialFilters(Object.fromEntries(route.searchParams))).toMatchObject({ costMode: 'reported' });
+      expect(route.searchParams.has('scope')).toBe(false);
+      expect(route.searchParams.has('queryOverrides')).toBe(false);
     } finally { navigation.mockRestore(); }
   });
 

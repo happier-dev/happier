@@ -80,6 +80,10 @@ export function normalizeUsageQuery(value: unknown): UsageQuery {
   const query = UsageQuerySchema.parse(value);
   const sessions = query.session === null ? [] : typeof query.session === 'string' ? [query.session] : query.session;
   const normalized: UsageQuery = { ...query,
+    // Match a Session page's whole-life read, including its upper bound at read time.
+    period: sessions.length === 1 && query.period.relative === undefined
+      && query.period.startMs === undefined && query.period.endMs === undefined
+      ? { relative: resolveUsageScopeDefaultPeriod(sessions) } : query.period,
     population: query.population ?? 'all_personal_history',
     agents: sortedSet(query.agents), machines: sortedSet(query.machines), projects: sortedSet(query.projects),
     sources: sortedSet(query.sources), session: sessions.length ? sortedSet(sessions) : null,
