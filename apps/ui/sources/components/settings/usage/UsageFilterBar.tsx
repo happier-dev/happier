@@ -46,7 +46,7 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
     costBasisOptions: readonly UsageWidgetPageScope['costBasis'][];
     /** The usage read that tells which cost bases exist has not answered yet. */
     costBasisPending: boolean;
-    onPeriodChange(period: UsagePeriod): Promise<boolean>;
+    onPeriodChange(period: UsagePeriod, callerContext?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation): Promise<boolean>;
     onCostBasisChange(costBasis: UsageWidgetPageScope['costBasis'], callerContext?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation): Promise<boolean>;
     /** The metrics offered, in order; the account page's are `usageTokensCostMetricOptions()`. */
     metricOptions: readonly Readonly<{ id: M; label: string }>[];
@@ -209,8 +209,9 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
             valueLabel: periodTabs.find((tab) => tab.id === props.period)?.label ?? props.period,
             options: periodTabs,
             selectedId: props.period,
-            onChange: (id: string) => {
-              void props.onPeriodChange(id as UsagePeriod);
+            // The chooser's caller and foreground invocation travel with the choice, as the basis and scopes do.
+            onChange: (id: string, callerContext?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) => {
+              void props.onPeriodChange(id as UsagePeriod, callerContext, invocation);
             },
             testID: `${props.testID}.period`,
           }

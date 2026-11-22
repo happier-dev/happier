@@ -157,7 +157,7 @@ export function usePublishUsageWidgetPageContext(input: UsageWidgetPagePublicati
     /** Render beside page content; descendant command publication does not redraw that content. */
     publication: React.ReactElement;
     selectLayout(layoutId: string, callerContext?: ActionExecutorContext): Promise<boolean>;
-    selectPeriod(period: UsagePeriod): Promise<boolean>;
+    selectPeriod(period: UsagePeriod, callerContext?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation): Promise<boolean>;
     selectCostBasis(costBasis: UsageWidgetPageScope['costBasis'], callerContext?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation): Promise<boolean>;
     selectFilter(field: string, id: string, callerContext?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation): Promise<boolean>;
     retryRead(): Promise<boolean>;
@@ -238,16 +238,22 @@ export function usePublishUsageWidgetPageContext(input: UsageWidgetPagePublicati
     // The current-context owner retires commands when their declaration or authority changes.
     const selectLayout = React.useCallback((id: string, callerContext?: ActionExecutorContext) => callerContext?.signal?.aborted ? Promise.resolve(false)
         : invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('layout', id))?.command), [invoke]);
-    const selectPeriod = React.useCallback((id: UsagePeriod) => invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('period', id))?.command), [invoke]);
     // A foreground chooser has already admitted its command and withholds the page's
     // descriptors. Apply its intent through the same state owner with that caller;
-    // asking for the hidden page command again would silently refuse the selection.
-    const selectCostBasis = React.useCallback((id: UsageWidgetPageScope['costBasis'], context?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) => invocation
-        ? Promise.resolve(latest.current.page.setScope({ costBasis: id }, context))
-        : invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('cost', id))?.command), [invoke]);
-    const selectFilter = React.useCallback((field: string, id: string, context?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) => invocation
-        ? Promise.resolve(latest.current.filterCommands?.find(row => row.field === field && row.id === id)?.invoke(context) ?? false)
-        : invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('filter', field, id))?.command), [invoke]);
+    // asking for the hidden page command again would silently refuse the selection
+    // (the phone period chooser did: USAGE-JOURNEY H "Phone Filters period selection").
+    // Every chooser-driven page choice takes this one path.
+    const select = React.useCallback((key: string, apply: (context?: ActionExecutorContext) => boolean | Promise<boolean>,
+        context?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation): Promise<boolean> => invocation
+        ? Promise.resolve(apply(context))
+        : invoke(currentPublication.current?.definitions.find(row => row.key === key)?.command), [invoke]);
+    const selectPeriod = React.useCallback((id: UsagePeriod, context?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) =>
+        select(pageCommandKey('period', id), caller => latest.current.page.setPeriod(id, caller), context, invocation), [select]);
+    const selectCostBasis = React.useCallback((id: UsageWidgetPageScope['costBasis'], context?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) =>
+        select(pageCommandKey('cost', id), caller => latest.current.page.setScope({ costBasis: id }, caller), context, invocation), [select]);
+    const selectFilter = React.useCallback((field: string, id: string, context?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) =>
+        select(pageCommandKey('filter', field, id), caller => latest.current.filterCommands?.find(row => row.field === field && row.id === id)?.invoke(caller) ?? false,
+            context, invocation), [select]);
     const retryRead = React.useCallback(() => invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('retry', 'read'))?.command), [invoke]);
     const retryLayouts = React.useCallback(() => invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('retry', 'layouts'))?.command), [invoke]);
     const historyOperation = historyRead?.operation;

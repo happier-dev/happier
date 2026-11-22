@@ -174,9 +174,9 @@ describe('UsageFilterBar', () => {
   // USAGE-ACCEPT 1121 #14: a phone stacked the six-way period, then Filters and the basis. Six periods are a chooser
   // (more than four short options), so the period, Filters and the basis share one row (lab uframe-Rp).
   it('puts the period on the phone row as one chooser beside Filters and the basis', async () => {
-    const periods: string[] = [];
+    const periods: unknown[][] = [];
     const { t } = await import('@/text');
-    const screen = await renderBar([], { costBasisOptions: ['auto', 'reported'], onPeriodChange: async (period) => { periods.push(period); return true; } });
+    const screen = await renderBar([], { costBasisOptions: ['auto', 'reported'], onPeriodChange: async (...args) => { periods.push(args); return true; } });
     try {
       expect(screen.findHostByTestId('filters.period:7days')).toBeFalsy();
       const chips = screen.findAllByType(SelectionListFilterChip).map((chip) => chip.props.filter);
@@ -184,8 +184,12 @@ describe('UsageFilterBar', () => {
       const period = chips[0]!;
       expect(period).toMatchObject({ selectedId: '7days', valueLabel: t('usage.period7dShort') });
       expect(period.options.map((option: { id: string }) => option.id)).toEqual(['today', '7days', '30days', '90days', 'year', 'all']);
-      await act(async () => { period.onChange?.('30days'); });
-      expect(periods).toEqual(['30days']);
+      // The chooser's caller and foreground invocation travel with the choice, as the basis and scopes do: dropped, the
+      // page looked up a page command the open chooser withholds and kept "Today" (USAGE-JOURNEY H, phone period).
+      const caller = { source: 'ui' } as never;
+      const invocation = { foreground: true } as never;
+      await act(async () => { period.onChange?.('30days', caller, invocation); });
+      expect(periods).toEqual([['30days', caller, invocation]]);
     } finally {
       await screen.unmount();
     }
