@@ -1594,20 +1594,19 @@ describe('opening a row into the source detail', () => {
         expect(currentHarness?.readDetailInstanceIds).toEqual([INSTANCE]);
     });
 
-    it('settles a cold pin with no qualified connection once without reading through another source', async () => {
+    it('keeps a cold pin in its routed detail when no connection can qualify it', async () => {
         const entryRef = { source: SOURCE, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '657' };
         const subPath = buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1, selection: entryRef });
         const requestedLocations: string[] = [];
-        const shell = await mountShell({ subPath, pinnedEntryIds: ['657'], activeSurface: true,
+        const shell = await mountShell({ subPath, pinnedEntryIds: ['657'], activeSurface: true, hostedDetail: true,
             noActiveSource: true, otherSourceEntry: true,
             onPageLocationRequest: location => { requestedLocations.push(location); } });
-        await expect(shell.getByRole('button', { name: 'Pinned change 657' })).resolves.toBeDefined();
-        await expect.poll(() => requestedLocations).toEqual([subPath, buildTriageRouteSubPathV1(TRIAGE_ROUTE_DEFAULT_LENS_V1)]);
+        await expect(shell.getByText('These details are not loaded')).resolves.toBeDefined();
         await act(async () => { await shell.updateSurface(surfaceContext()); });
-        await expect(shell.queryByRole('group', { name: 'Details pane' })).resolves.toBeUndefined();
+        await expect(shell.getByRole('heading', { name: 'Pinned change 657' })).resolves.toBeDefined();
         expect(currentHarness?.exactReads).toEqual([]);
         expect(currentHarness?.readDetailInstanceIds).toEqual([]);
-        expect(requestedLocations).toEqual([subPath, buildTriageRouteSubPathV1(TRIAGE_ROUTE_DEFAULT_LENS_V1)]);
+        expect(requestedLocations).toEqual([subPath]);
     });
 
     it('keeps an unsynchronized pin open when the host publishes its location before acknowledging the write', async () => {
@@ -3473,7 +3472,7 @@ describe('opening a row into the source detail', () => {
         expect(lastPageLocation?.subPath ?? subPath).not.toBe('');
     });
 
-    it('clears an unobservable routed entry while retaining its valid source facet', async () => {
+    it('keeps an unobservable routed entry and its valid source facet', async () => {
         const filters = { ...TRIAGE_ROUTE_DEFAULT_LENS_V1.filters, sources: [{ source: SOURCE }] };
         const subPath = buildTriageRouteSubPathV1({
             ...TRIAGE_ROUTE_DEFAULT_LENS_V1,
@@ -3482,16 +3481,15 @@ describe('opening a row into the source detail', () => {
                 kindId: 'change', collisionScope: 'qa/absent', entryId: 'ghost' },
         });
         const hostTarget = { ready: false, pending: true, executionReady: false };
-        const shell = await mountShell({ subPath, hostTarget, activeSurface: true, automaticDemandOnly: true });
+        const shell = await mountShell({ subPath, hostTarget, activeSurface: true, automaticDemandOnly: true, hostedDetail: true });
         // Missing admission is still pending, not a settled noActiveInstance.
         expect(lastPageLocation).toBeNull();
         expect(currentHarness?.getEntryIds).toEqual([]);
         hostTarget.ready = true;
         await act(async () => { await shell.updateSurface(surfaceContext()); });
-        await expect.poll(() => lastPageLocation?.subPath).toBe(buildTriageRouteSubPathV1({
-            ...TRIAGE_ROUTE_DEFAULT_LENS_V1, filters,
-        }));
-        await expect(shell.queryByRole('group', { name: 'Details pane' })).resolves.toBeUndefined();
+        await expect(shell.getByText('These details are not loaded')).resolves.toBeDefined();
+        await expect(shell.getByRole('group', { name: 'Details pane' })).resolves.toBeDefined();
+        expect(lastPageLocation).toBeNull();
         expect(currentHarness?.getEntryIds).toEqual([]);
     });
 
@@ -3502,8 +3500,9 @@ describe('opening a row into the source detail', () => {
         try {
             const subPath = buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1,
                 selection: { source: SOURCE, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' } });
-            await mountShell({ subPath, activeSurface: true, unavailableSourceCode: 'plugin_disabled', explicitOpen: true });
-            await expect.poll(() => lastPageLocation?.subPath).toBe(buildTriageRouteSubPathV1(TRIAGE_ROUTE_DEFAULT_LENS_V1));
+            const shell = await mountShell({ subPath, activeSurface: true, unavailableSourceCode: 'plugin_disabled', explicitOpen: true });
+            await expect(shell.getByText('These details are not loaded')).resolves.toBeDefined();
+            expect(lastPageLocation).toBeNull();
             expect(consoleError.mock.calls.map(call => String(call[0])).filter(text => text.includes('Maximum update depth')))
                 .toEqual([]);
             expect(currentHarness?.exactReads).toEqual([]);
@@ -3578,6 +3577,8 @@ describe('opening a row into the source detail', () => {
             await expect(shell.getByRole('heading', { name: 'Replace the duplicated normalizer' })).resolves.toBeDefined();
         });
         expect(findRegion()).toBe(initialRegion);
+        expect(lastPageLocation).toBeNull();
+        expect(currentHarness?.readDetailInstanceIds).toEqual([SECOND_INSTANCE]);
     });
 
     it('opens an unloaded restored link exactly and leaves further pages to visible Load more', async () => {
@@ -3721,7 +3722,7 @@ describe('opening a row into the source detail', () => {
     it.each([true, false])('shows source absence after one exact read of an identity-only link (explicit: %s)', async (explicitOpen) => {
         const subPath = buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1,
             selection: { source: SOURCE, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '532' } });
-        const shell = await mountShell({ subPath, explicitOpen, absentEntryIds: ['532'], activeSurface: true });
+        const shell = await mountShell({ subPath, explicitOpen, absentEntryIds: ['532'], activeSurface: true, secondInstance: true });
         await act(async () => {
             await vi.waitFor(async () => {
                 await expect(shell.getByText('This entry is no longer at the source.')).resolves.toBeDefined();
@@ -3730,6 +3731,7 @@ describe('opening a row into the source detail', () => {
         expect(currentHarness?.getEntryIds).toEqual(['532']);
         expect(currentHarness?.exactReads).toHaveLength(1);
         expect(currentHarness?.readDetailInstanceIds).toEqual([]);
+        expect(lastPageLocation).toBeNull();
         await expect(shell.queryByText(DETAIL_BODY_TEXT)).resolves.toBeUndefined();
         await expect(shell.queryByText('No connection to open this through')).resolves.toBeUndefined();
     });

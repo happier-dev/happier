@@ -152,8 +152,6 @@ export function useTriageSettledLocation(input: Readonly<{
     windowSettled,
   } = input;
   const selection = surface.selection;
-  /** A refused routed entry has already received its answer at this location. */
-  const refusedLocation = React.useRef<string | undefined>(undefined);
   const adoptedLaunch = React.useRef<TriageEntryDetailLaunchInputV1 | RenderContext['launch']>(undefined);
 
   React.useEffect(() => {
@@ -161,10 +159,8 @@ export function useTriageSettledLocation(input: Readonly<{
     const pendingOpen = open !== undefined && adoptedLaunch.current !== open ? open : null;
     const pendingLaunch = pendingOpen !== null && 'entryRef' in pendingOpen ? pendingOpen : null;
     const currentSubPath = observeRoute(subPath, pendingOpen !== null, surface);
-    if (currentSubPath !== undefined && currentSubPath !== refusedLocation.current) refusedLocation.current = undefined;
     const located = pendingLaunch?.entryRef ?? (
-      currentSubPath === undefined || currentSubPath === refusedLocation.current
-        ? null : parseTriageRouteSubPathV1(currentSubPath).selection
+      currentSubPath === undefined ? null : parseTriageRouteSubPathV1(currentSubPath).selection
     );
     if (located === null) return;
 
@@ -235,13 +231,6 @@ export function useTriageSettledLocation(input: Readonly<{
         // it is retired here too. Left pending, it would keep this route
         // unsettled and re-run the refusal on every render it causes.
         adoptedLaunch.current = open;
-        // A settled admission refusal answers this route; absence from a
-        // filtered/partial window does not. Keep every valid lens field and
-        // retire only the entry no active configured connection can observe.
-        if (action.reason === 'noActiveInstance') {
-          refusedLocation.current = currentSubPath;
-          applyLensEdit({ kind: 'settledRouteApplied', state: { ...surface, selection: null } }, 'selection');
-        }
       } else if (action !== null) applyLensEdit(action, 'selection');
       return;
     }

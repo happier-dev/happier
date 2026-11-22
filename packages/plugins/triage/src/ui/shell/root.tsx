@@ -5,7 +5,7 @@ import { createTriageListPublicationV1 } from '../list/publication.js';
 import { assignTriageTaskStatusGroup } from '../list/taskGroupMembership.js';
 import { useTriageTaskGroupDisclosure } from './taskGroupDisclosure.js';
 import { readPluginErrorRequestIdV1 } from '@happier-dev/plugin-sdk';
-import type { TriageListWindowStoreV1 } from '../../projection/listWindowStore.js';
+import type { TriageListWindowSnapshotV1, TriageListWindowStoreV1 } from '../../projection/listWindowStore.js';
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
 import type { CurrentUiCommandDeclarationV1, RenderContext } from '@happier-dev/plugin-sdk/ui';
 import type { TriageSourceWorkflowSubjectV1, TriageLinkedSessionProjectionV1, TriageEntryRefV1, TriageSourceInstanceIdV1, TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
@@ -147,7 +147,6 @@ import { TriageActionsEditor } from '../actions/ActionsEditor.js';
 import { TriageCreateTaskFields, TriageTaskControlsPlacementContext } from '../detail/taskFields.js';
 import { useTriageTaskWriteState } from '../detail/taskWrite.js';
 import { readTriageSelectedObservationV1 } from '../window/selectedObservation.js';
-import { readTriageAbsentRouteV1 } from './absentRoute.js';
 import {
   applyTriageSettledSubPathV1,
   canonicalTriageSubPathV1,
@@ -795,8 +794,11 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     optimistic: boolean,
   ): Promise<TriageSettledRouteV1 | null> | null => {
     const next = reduceSurface(surface, action);
-    const lens = readTriageRouteLensV1(next);
-    const unchanged = next === surface || (action.kind === 'savedViewApplied'
+    const nextLens = readTriageRouteLensV1(next);
+    const located = nextLens.selection === null ? parseTriageRouteSubPathV1(route.intent.subPath).selection : null;
+    // An unrelated lens edit may settle while the route still owns an unqualified entry.
+    const lens = refusal === 'lens' && located !== null ? { ...nextLens, selection: located } : nextLens;
+    const unchanged = (next === surface && !(action.kind === 'detailDismissed' && located !== null)) || (action.kind === 'savedViewApplied'
       && surface.selectedViewId === next.selectedViewId && surface.search.composing === next.search.composing
       && sameTriageSavedViewLensV1(readTriageRouteLensV1(surface), lens));
     if (unchanged && route.intent === route.settled) return Promise.resolve(route.settled);
@@ -875,13 +877,15 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
    * connection through the retained owner, or the Corpus selector for an unseen entry;
    * rendering pins performs no read.
    */
-  const [entryOpenFailure, setEntryOpenFailure] = React.useState<(Extract<CorpusExplicitOpenSelectionV1, { kind: 'none' }> & { failure?: TriageSourceFailureV1 }) | null>(null);
+  const [entryOpenFailure, setEntryOpenFailure] = React.useState<(Extract<CorpusExplicitOpenSelectionV1, { kind: 'none' }> & { entryRef: TriageEntryRefV1; routed: boolean; failure?: TriageSourceFailureV1 }) | null>(null);
   const openAdmission = React.useRef({ configuredSources: window.snapshot.configuredSources, selection: surface.selection, readOwner: window.readOwner, entryOpenFailure });
   openAdmission.current = { configuredSources: window.snapshot.configuredSources, selection: surface.selection, readOwner: window.readOwner, entryOpenFailure };
   // Read at press time through the ref: a callback rebuilt with every window/session update made the row
   // environment every row reads a new value each time, re-rendering every row for nothing.
-  const readEntryActivation = React.useCallback((entryRef: TriageEntryRefV1,
-    configuredSources = openAdmission.current.configuredSources, beforeFirstPass = false) => {
+  const readEntryActivation = React.useCallback((entryRef: TriageEntryRefV1, routeAdmission?: Readonly<{
+    configuredSources: TriageListWindowSnapshotV1['configuredSources'];
+    settled: boolean;
+  }>) => {
     const key = triageEntryRowKey(entryRef);
     const hit = rowsByKeyRef.current.get(key);
     const current = openAdmission.current;
@@ -893,11 +897,12 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     if (sourceInstanceId === null) {
       // The list owner already published source admission. A delayed local descriptor
       // catalog cannot withdraw that connection; the source owns entry-kind validation.
-      const candidates = configuredSources.filter(source => sameTriageSourceIdentity(source.source, entryRef.source));
-      // A sole connection needs no row to disambiguate it. With several,
-      // preserve the observed connection instead of guessing on a cold link.
-      if (beforeFirstPass && candidates.length > 1) return null;
+      const candidates = (routeAdmission?.configuredSources ?? current.configuredSources)
+        .filter(source => sameTriageSourceIdentity(source.source, entryRef.source));
       const active = candidates.filter(source => source.available).map(source => source.sourceInstanceId);
+      // A sole available connection needs no row to disambiguate it. Otherwise
+      // let the first pass answer before qualifying or refusing the route.
+      if (routeAdmission?.settled === false && (candidates.length > 1 || active.length === 0)) return null;
       const selected = selectObservationInstance([], active, null, {
         allowUnobserved: true,
         ...(existingSelection === null ? {} : { overrideSourceInstanceId: existingSelection.sourceInstanceId }),
@@ -907,8 +912,10 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         // Route settlement asks again whenever its inputs are re-derived. An unchanged refusal sets no
         // state, so asking again renders nothing and cannot feed that effect back into itself.
         const previous = current.entryOpenFailure;
-        if (previous === null || previous.reason !== selected.reason || !sameTriageSourceFailureFacts(previous.failure, failure)) {
-          setEntryOpenFailure({ ...selected, ...(failure === undefined ? {} : { failure }) });
+        const routed = routeAdmission !== undefined;
+        if (previous === null || previous.reason !== selected.reason || previous.routed !== routed
+          || !sameTriageEntryRefV1(previous.entryRef, entryRef) || !sameTriageSourceFailureFacts(previous.failure, failure)) {
+          setEntryOpenFailure({ ...selected, entryRef, routed, ...(failure === undefined ? {} : { failure }) });
         }
         return selected;
       }
@@ -939,7 +946,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     // The lens effect can invalidate the rendered roster earlier in this commit.
     const current = window.readOwner?.getSnapshot();
     return current?.configuredSourcesReady === true
-      ? readEntryActivation(entryRef, current.configuredSources, !windowSettled) : null;
+      ? readEntryActivation(entryRef, { configuredSources: current.configuredSources, settled: windowSettled }) : null;
   }, [configuredSourcesReady, window.readOwner, readEntryActivation]);
 
   /**
@@ -2030,18 +2037,8 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     applyLensEdit,
   });
 
-  /**
-   * A settled window that does not hold the location's entry says so without
-   * requiring an inventory walk (`ui/shell/absentRoute.ts`).
-   */
-  const absentRoute = readTriageAbsentRouteV1({
-    subPath: props.subPath,
-    windowSettled: state.kind === 'window',
-    selected: surface.selection !== null,
-    pending: window.snapshot.pending,
-    loadMore: window.snapshot.loadMore,
-    rowsByKey,
-  });
+  const absentRoute = routedEntry !== null && surface.selection === null && entryOpenFailure?.routed === true
+    && sameTriageEntryRefV1(entryOpenFailure.entryRef, routedEntry) ? entryOpenFailure : null;
 
   const { minListWidth, minDetailWidth } = useTriagePaneMinimumWidthsV1();
 
@@ -2500,7 +2497,17 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         {headerHosted ? null : <TriageInlineDetailIdentity identity={routeDetailHeader(openEntry)}
           controls={<IconButton icon={<Icon name="close" tone="secondary" />}
             accessibilityLabel={text('plugins.triage.surface.close', 'Close')} onPress={dismissDetail} />} />}
-        {readFailed ? <TriageDetailReadFailure failure={selectedReadFailure} retry={completePostMutation} />
+        {absentRoute !== null ? <>
+          <Status
+            tone="warning"
+            label={text('plugins.triage.surface.entryNotLoaded.heading', 'These details are not loaded')}
+            value={text('plugins.triage.surface.entryNotLoaded.description', 'This page has not loaded details for this entry.')}
+            action={<Button titleKey="plugins.triage.surface.absentRoute.retry" title="Check again" variant="plain" size="small"
+              busy={refreshState.kind === 'running'} disabled={refreshState.kind === 'blocked'} onPress={refreshPage} />}
+          />
+          {absentRoute.failure === undefined ? null : <ActionFailureDetails code={absentRoute.failure.code}
+            detail={absentRoute.failure.detail} requestId={absentRoute.failure.requestId} showReason={false} />}
+        </> : readFailed ? <TriageDetailReadFailure failure={selectedReadFailure} retry={completePostMutation} />
           : <LoadingState titleKey="plugins.triage.surface.detail.reading" title="Reading this entry" />}
       </Stack>
     )
@@ -2614,7 +2621,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   return (
     <Screen safeArea style={TRIAGE_FILL_STYLE_V1}>
       <Stack gap="small" style={TRIAGE_FILL_STYLE_V1}>
-      {entryOpenFailure === null ? null : <>
+      {entryOpenFailure === null || entryOpenFailure.routed ? null : <>
         <Banner tone="warning"
           title={text('plugins.triage.surface.detail.noConnection.title', 'No connection to open this through')}
           description={text('plugins.triage.surface.detail.noActiveConnection', 'No active connection is available for this entry’s source. Configure or reconnect a source, then open the entry again.')}
@@ -2639,17 +2646,6 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                 'plugins.triage.surface.routeWriteFailed.rejected',
                 'Happier refused the location change, so the last settled view was restored. Try again.',
               )}
-        />
-      )}
-      {absentRoute === null ? null : (
-        <Status
-          tone="warning"
-          label={text('plugins.triage.surface.entryNotLoaded.heading', 'These details are not loaded')}
-          value={text('plugins.triage.surface.entryNotLoaded.description', 'This page has not loaded details for this entry.')}
-          action={(
-            <Button titleKey="plugins.triage.surface.absentRoute.retry" title="Check again" variant="plain" size="small"
-              busy={refreshState.kind === 'running'} disabled={refreshState.kind === 'blocked'} onPress={refreshPage} />
-          )}
         />
       )}
       <TriageEntryPublicationContext.Provider value={entryPublication}>
