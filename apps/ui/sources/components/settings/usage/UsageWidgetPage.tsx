@@ -50,6 +50,8 @@ import { UsageAppsNothingRecorded } from './UsageAppsNothingRecorded';
 import { UsageDrillProvider, usageDrillFromPageFilters } from './usageDrill';
 import { SessionRetentionNotice } from '@/components/sessions/info/SessionRetentionNotice';
 import { useSessionDisplayTitles } from '@/utils/sessions/sessionDisplayTitle';
+import { useSessionSelector } from '@/sync/store/hooks';
+import { isSessionAccessRecipient } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 import {
   USAGE_SESSION_WIDGET_PRESET_ID,
   USAGE_WIDGET_PRESET_IDS,
@@ -478,7 +480,8 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
       <UsagePageHeader facts={facts} retry={pageReadRetry ? retryRead : null} history={history}
         appsShown={appsShown}
         homeUnavailable={homeUnavailable} phone={phone}
-        layouts={layoutsFact} {...(props.sessionId ? { sessionId: props.sessionId } : {})} />
+        layouts={layoutsFact} {...(props.sessionId
+          ? { sessionId: props.sessionId, serverId: props.authority?.scope.serverId } : {})} />
       {/* One Session is one view: the Account's named views (Plans, Sources…) mean nothing here. A phone chooses a
           view through the bar's folded picker, which also names the current one (USAGE-ACCEPT 1122 #30: without it the
           other views were unreachable); arranging (+ and ⋯: create, rename, reorder, delete) stays desktop work (D23). */}
@@ -641,6 +644,7 @@ function UsagePageHeader(
     layouts?: Readonly<{ retry: () => void }> | null;
     /** A session's own usage: the page is about that session, so it opens with its name (`surf-SES`). */
     sessionId?: string;
+    serverId?: string;
     phone?: boolean;
     /** Your apps is shown: an empty period is the apps' own fact, and starting a session is not its next step. */
     appsShown?: boolean;
@@ -652,6 +656,11 @@ function UsagePageHeader(
   // Which notice is open, by its identity: a new notice (Views Retry turning into the ownership refusal) opens closed.
   const [openNotice, setOpenNotice] = React.useState<string | null>(null);
   const sessionTitle = useSessionDisplayTitles(React.useMemo(() => props.sessionId ? [{ sessionId: props.sessionId }] : [], [props.sessionId]))[0] ?? null;
+  const isRecipient = useSessionSelector(props.sessionId ?? '', props.serverId,
+    session => session !== null && isSessionAccessRecipient(session.access, session.accessLevel));
+  const subtitle = isRecipient
+    ? t('usage.board.page.sessionRecipientSubtitle')
+    : t(props.sessionId ? 'usage.board.page.sessionSubtitle' : 'usage.board.page.subtitle');
   const { observedAtMs, olderReadAtMs, olderSource, machines, agents } = props.facts;
   const openNewSession = useOpenNewSession();
   const startSession = React.useCallback(() => { openNewSession(); }, [openNewSession]);
@@ -721,7 +730,7 @@ function UsagePageHeader(
     <View style={styles.headerBleed}>
       <PageHeader
         title={props.sessionId ? sessionTitle ?? t('usage.sessionUsage') : t('usage.board.page.title')}
-        description={t(props.sessionId ? 'usage.board.page.sessionSubtitle' : 'usage.board.page.subtitle')}
+        description={subtitle}
         details={notice ?? undefined}
         meta={notice ? undefined : facts}
         alwaysShowTitle

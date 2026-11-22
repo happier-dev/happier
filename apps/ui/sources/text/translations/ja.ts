@@ -17355,6 +17355,7 @@ settingsSession: {
             addTo: ({ view }: { view: string | number }) => `${view} に追加`,
             asOf: ({ time }: { time: string | number }) => `${time} 時点`,
             sessionSubtitle: "このセッションの使用量とコスト。",
+            sessionRecipientSubtitle: "このセッションでのあなたのアカウントの使用量。",
             machinesCount: ({ count }: { count: string | number }) => `${count} 台のマシン`,
             agentsCount: ({ count }: { count: string | number }) => `${count} エージェント`,
             purposeDaily: "日ごとの使用量（エージェント別）。",

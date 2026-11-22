@@ -16720,6 +16720,7 @@ settingsSession: {
             addTo: ({ view }: { view: string | number }) => `添加到 ${view}`,
             asOf: ({ time }: { time: string | number }) => `截至 ${time}`,
             sessionSubtitle: "此会话的用量和花费。",
+            sessionRecipientSubtitle: "你的账号在此会话中的用量。",
             machinesCount: ({ count }: { count: string | number }) => `${count} 台机器`,
             agentsCount: ({ count }: { count: string | number }) => `${count} 个代理`,
             purposeDaily: "每天的用量，按代理划分。",

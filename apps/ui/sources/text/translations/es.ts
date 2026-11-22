@@ -17078,6 +17078,7 @@ settingsSession: {
             addTo: ({ view }: { view: string | number }) => `Añadir a ${view}`,
             asOf: ({ time }: { time: string | number }) => `A las ${time}`,
             sessionSubtitle: "Lo que usó esta sesión y lo que costó.",
+            sessionRecipientSubtitle: "Uso de tu cuenta en esta sesión.",
             machinesCount: ({ count }: { count: string | number }) => `${count} ${plural({ count: Number(count), singular: 'máquina', plural: 'máquinas' })}`,
             agentsCount: ({ count }: { count: string | number }) => `${count} ${plural({ count: Number(count), singular: 'agente', plural: 'agentes' })}`,
             purposeDaily: "Cuánto usaste cada día, por agente.",

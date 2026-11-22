@@ -13797,6 +13797,7 @@ settingsSession: {
             emptyScopedTitle: '此範圍內沒有原生來源',
             emptyScopedReason: '選擇已連線的機器並包含原生用量，即可查看其來源清單。期間和指標不會篩選清單。',
         }, page: {
+            sessionRecipientSubtitle: "你的帳號在此工作階段中的用量。",
             noneLinkedByEvidence: "尚未連結",
             oldestSourceUpdate: ({ time }: { time: string }) => `最早的來源更新：${time}`,
             sourceClaudeResponses: "Claude 回覆",

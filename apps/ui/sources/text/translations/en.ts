@@ -20553,6 +20553,7 @@ const enUsage = {
       addTo: ({ view }: { view: string | number }) => `Add to ${view}`,
       asOf: ({ time }: { time: string | number }) => `As of ${time}`,
       sessionSubtitle: "What this session used and what it cost.",
+      sessionRecipientSubtitle: "Your account’s usage in this session.",
       machinesCount: ({ count }: { count: string | number }) => `${count} ${plural({ count: Number(count), singular: 'machine', plural: 'machines' })}`,
       agentsCount: ({ count }: { count: string | number }) => `${count} ${plural({ count: Number(count), singular: 'agent', plural: 'agents' })}`,
       purposeDaily: "How much you used each day, by agent.",

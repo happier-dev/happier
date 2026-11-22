@@ -17193,6 +17193,7 @@ settingsSession: {
       addTo: ({ view }: { view: string | number }) => `Dodaj do ${view}`,
       asOf: ({ time }: { time: string | number }) => `Stan na ${time}`,
       sessionSubtitle: "Zużycie i koszt tej sesji.",
+      sessionRecipientSubtitle: "Użycie na Twoim koncie w tej sesji.",
       machinesCount: ({ count }: { count: string | number }) => `Maszyny: ${count}`,
       agentsCount: ({ count }: { count: string | number }) => `Agenci: ${count}`,
       purposeDaily: "Dzienne użycie z podziałem na agentów.",

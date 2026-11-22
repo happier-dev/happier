@@ -17256,6 +17256,7 @@ settingsSession: {
             addTo: ({ view }: { view: string | number }) => `Zu ${view} hinzufügen`,
             asOf: ({ time }: { time: string | number }) => `Stand ${time}`,
             sessionSubtitle: "Was diese Sitzung verbraucht und gekostet hat.",
+            sessionRecipientSubtitle: "Nutzung deines Kontos in dieser Sitzung.",
             machinesCount: ({ count }: { count: string | number }) => `${count} Rechner`,
             agentsCount: ({ count }: { count: string | number }) => `${count} ${plural({ count: Number(count), singular: 'Agent', plural: 'Agenten' })}`,
             purposeDaily: "Wie viel du an jedem Tag genutzt hast, nach Agent.",

@@ -109,6 +109,7 @@ async function renderUsagePage(
   layoutId = 'overview',
   response = accounting,
   beforeRender?: (serverId: string) => Promise<void>,
+  sessionId?: string,
 ) {
   const artifacts = createArtifactStoreBoundary({
     ownerAccountId: () => 'account-a',
@@ -157,6 +158,7 @@ async function renderUsagePage(
         <AppPaneProvider>
           <CurrentUiContextProvider>
             <UsageWidgetPage
+              sessionId={sessionId}
               initialFilters={{
                 layoutId,
                 period: '7days',
@@ -234,6 +236,25 @@ it('gives the phone read-failure notice the short form with Details and its Retr
   expect(line()!.props.reason).not.toBe(t('usage.board.charts.coveragePartialShort'));
   expect((line()!.props.actions as readonly { testID?: string }[]).map(action => action.testID))
     .toEqual(['usage-page.header.failed.detail', 'usage-page.header.retry']);
+});
+
+it.each(['view', 'owner'] as const)('qualifies the scope of the Session Usage page for %s access', async level => {
+  const sessionId = 'session-usage-scope';
+  const { createSessionAccessFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+  const screen = await renderUsagePage('overview', {
+    ...accounting,
+    totals: { ...totals, eventCount: 0, tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+  }, async serverId => {
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    storage.getState().applySessions([createSessionFixture({
+      id: sessionId, serverId, access: createSessionAccessFixture(level),
+    })]);
+  }, sessionId);
+  const sharedCaption = 'Your account’s usage in this session.';
+  const ownerCaption = t('usage.board.page.sessionSubtitle');
+  const text = screen.getTextContent();
+  expect(text.split(sharedCaption).length - 1).toBe(level === 'view' ? 1 : 0);
+  expect(text.includes(ownerCaption)).toBe(level === 'owner');
 });
 
 it('shows offline Work in the Usage header without Retry', async () => {

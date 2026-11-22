@@ -4136,6 +4136,9 @@ Session filters admit the captured caller's current transcript-read access,
 including a Can-view grant. Accounting totals and message counts remain scoped
 to that caller's Account: sharing a Session does not share its owner's Usage.
 An unrelated or revoked reader is refused by the canonical Session access owner.
+For a Session shared with you, the Session Usage page caption and the Usage Read
+Action description identify the figures as usage from your own account in that
+Session.
 
 Relative periods retain their relative request identity. The shared accounting
 read planner resolves them at one captured read clock; accounting, the preceding

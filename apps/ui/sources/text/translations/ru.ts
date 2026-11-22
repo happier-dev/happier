@@ -17023,6 +17023,7 @@ settingsSession: {
             addTo: ({ view }: { view: string | number }) => `Добавить в «${view}»`,
             asOf: ({ time }: { time: string | number }) => `На ${time}`,
             sessionSubtitle: "Что использовала эта сессия и сколько это стоило.",
+            sessionRecipientSubtitle: "Использование вашего аккаунта в этой сессии.",
             machinesCount: ({ count }: { count: string | number }) => `Машин: ${count}`,
             agentsCount: ({ count }: { count: string | number }) => `Агентов: ${count}`,
             purposeDaily: "Сколько вы использовали за каждый день, по агентам.",

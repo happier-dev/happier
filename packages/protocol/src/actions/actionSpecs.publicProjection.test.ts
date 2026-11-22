@@ -62,6 +62,7 @@ describe('Action public projection', () => {
   it('admits the same strict personal Usage query on public and plugin surfaces', () => {
     expect(PublicActionIdSchema.safeParse('usage.query').success).toBe(true);
     const spec = getActionSpec('usage.query' as PublicActionId);
+    expect(spec.description).toContain('For a Session you can view but do not own, the figures show usage from your own account in that Session.');
     expect(spec.safety).toBe('safe');
     expect(spec.surfaces).toMatchObject({ ui: true, agent: true, mcp: true, cli: true, plugin: true });
     expect(spec.pluginCallerPolicy).toEqual({ kind: 'caller' });
