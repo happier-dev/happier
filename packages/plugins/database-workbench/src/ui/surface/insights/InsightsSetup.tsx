@@ -83,7 +83,6 @@ function EnableStatistics({ target, onRetry }: Readonly<{ target: DatabaseTarget
       action={databaseActionLocalIdV1(DATABASE_STATS_ENABLE_ACTION_ID_V1)}
       title={t('plugins.database.insights.setup.enable', 'Enable statistics')}
       disabled={notice?.pending === true}
-      reviewedInput={input}
       controller={{
         prepare: async () => ({ input }),
         onSettled(execution) {

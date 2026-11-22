@@ -23,6 +23,8 @@ import {
   type PluginUiTestkitExecuteActionInput,
 } from '@happier-dev/plugin-sdk/testing';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
+import { PluginUiHostPresentationScope, type PluginUiPresentationHost } from '@happier-dev/plugin-ui/advanced';
+import { projectHappierUiEnvironment } from '@happier-dev/plugin-ui/environment';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { renderSurface as renderPage } from '../WorkbenchPage.js';
 import { renderSurface as renderRail } from '../DatabaseRailTab.js';
@@ -260,10 +262,24 @@ describe('Database Insights surfaces', () => {
     const actionControl = createPluginUiActionControlTestHost(enable);
     const resource = resourceHandlers(selected);
     const watchResource = vi.fn(resource.watchResource);
+    const renderActionControl = vi.fn<NonNullable<PluginUiPresentationHost['renderActionControl']>>(() => null);
     const page = await createPluginUiTestkit({
       identity: { instanceId: 'enable', mountNonce: 'enable' },
       authorPlugin: { id: 'happier.database', version: '0.0.0' },
-      surface: renderPage,
+      surface: (context: Parameters<typeof renderPage>[0]) => (
+        <PluginUiHostPresentationScope
+          environment={projectHappierUiEnvironment(context.surface)}
+          presentationHost={{
+            renderActionControl,
+            renderCodeBlock: () => null,
+            renderIcon: () => null,
+            renderMarkdown: () => null,
+            renderPopover: () => null,
+          }}
+        >
+          {renderPage(context)}
+        </PluginUiHostPresentationScope>
+      ),
       launchInput: projectNativeJsonValueForTransport({ scope: { kind: 'environment', environment }, descriptor: selected }),
       subPath: 'insights',
       surfaceContext: pageContext(),
@@ -276,6 +292,10 @@ describe('Database Insights surfaces', () => {
       expect(statementsReads()).toHaveLength(1);
       expect(watchResource).toHaveBeenCalledTimes(1);
       expect(enable).not.toHaveBeenCalled();
+      expect(renderActionControl).toHaveBeenCalledWith(expect.objectContaining({
+        presentation: expect.objectContaining({ title: 'Enable statistics' }),
+        reviewedInput: undefined,
+      }));
       await act(async () => actionControl.press('Enable statistics'));
       await settle();
       expect(enable).toHaveBeenCalledOnce();
