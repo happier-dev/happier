@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { getActionSpec } from '../actionSpecs.js';
+import { getActionSpec, listActionSpecs } from '../actionSpecs.js';
 import { buildApprovalPreviewSummary } from '../executor/approvalPreparation.js';
 
 it('says the address host a Browser open or navigate decides, never its path, query or fragment', () => {
@@ -29,4 +29,13 @@ it('falls back to the title when a Browser open has no readable address', () => 
 
 it('keeps workspace routing ids in technical approval facts', () => {
   expect(getActionSpec('browser.workspace.open').approvalPresentation?.technicalInputPaths).toContain('scopeId');
+});
+
+it('keeps Browser command routing ids out of the deciding approval facts', () => {
+  const exposedRoutingIds = listActionSpecs().filter((spec) => spec.id.startsWith('browser.')).flatMap((spec) =>
+    (spec.inputHints?.fields ?? [])
+      .filter((field) => ['commandId', 'browserSessionId', 'viewId'].includes(field.path))
+      .filter((field) => !spec.approvalPresentation?.technicalInputPaths?.includes(field.path))
+      .map((field) => `${spec.id}:${field.path}`));
+  expect(exposedRoutingIds).toEqual([]);
 });

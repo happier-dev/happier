@@ -659,9 +659,12 @@ const summarizeBrowserOpen = (input: unknown): string | null => {
   return host ? `Open ${host} in the Browser` : null;
 };
 
-const BROWSER_VIEW_COMMAND_TECHNICAL_INPUT_PATHS = ['commandId', 'browserSessionId', 'viewId', 'kind'] as const;
+const BROWSER_ROUTING_TECHNICAL_INPUT_PATHS = ['commandId', 'browserSessionId', 'viewId'] as const;
+const BROWSER_VIEW_COMMAND_TECHNICAL_INPUT_PATHS = [...BROWSER_ROUTING_TECHNICAL_INPUT_PATHS, 'kind'] as const;
 const BROWSER_TARGETED_COMMAND_TECHNICAL_INPUT_PATHS = [...BROWSER_VIEW_COMMAND_TECHNICAL_INPUT_PATHS, 'target.targetId'] as const;
 const BROWSER_APPROVAL_TECHNICAL_INPUT_PATHS = {
+  ...Object.fromEntries(Object.keys(BROWSER_RUNTIME_ACTION_INPUT_SCHEMAS).map((id) =>
+    [id, BROWSER_ROUTING_TECHNICAL_INPUT_PATHS])),
   'browser.view.openDevtools': ['commandId', 'browserSessionId', 'viewId'],
   'browser.view.open': [...BROWSER_TARGETED_COMMAND_TECHNICAL_INPUT_PATHS, 'platform', 'focus', 'openerViewId', 'currentUrlExpiresAt'],
   'browser.target.set': BROWSER_TARGETED_COMMAND_TECHNICAL_INPUT_PATHS,
