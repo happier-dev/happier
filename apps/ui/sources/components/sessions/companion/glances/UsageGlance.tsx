@@ -12,6 +12,7 @@ import {
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
+import { formatMoment } from '@/utils/datetime/formatMoment';
 
 import { readSessionAgentLabel, useSessionContextUsageFacts } from '../summary/useSessionSummaryModel';
 
@@ -45,6 +46,9 @@ export function UsageGlance(
     session: props.session,
     serverId: props.serverId ?? props.session.serverId ?? '',
   });
+  const expiredAsOf = gauge?.expiredAsOf;
+  const quotaAsOf = quotaRefreshFailedAsOf ?? expiredAsOf;
+  const resetAt = gauge?.effectiveMeter.resetAtMs ?? gauge?.effectiveMeter.resetsAt;
   const usage = useSessionContextUsageFacts(props.session, props.serverId);
   const contextPercent = usage?.contextPercent ?? null;
   if (!gauge && !quotaReadFailed && contextPercent === null) return null;
@@ -75,19 +79,21 @@ export function UsageGlance(
                 icon={glyph('speedometer')}
                 title={gauge.providerDisplayName ?? readSessionAgentLabel(props.session) ?? gauge.badgeLabel}
                 titleQualifier={gauge.scopePrefix}
-                {...(quotaRefreshFailedAsOf !== null ? {
-                  subtitle: `${t('connectedServices.errors.quotaRefreshFailed')} · ${t('settingsOverview.asOf', { time: formatAsOfTime(quotaRefreshFailedAsOf) })}`,
+                {...(quotaAsOf !== undefined ? {
+                  subtitle: `${t(quotaRefreshFailedAsOf !== null ? 'connectedServices.errors.quotaRefreshFailed' : 'usage.board.plans.paceStale')} · ${t('settingsOverview.asOf', { time: formatAsOfTime(quotaAsOf) })}`,
                   subtitleTestID: `${props.testID}.quota.reason`,
                   // The failure and its as-of wrap under the name; the value keeps the trailing column (acceptance 1122 #35).
                   subtitleLines: 0,
                   subtitleAccessory: retry,
                 } : {})}
                 detail={
-                  gauge.resetLabel && gauge.tone !== 'neutral'
-                    ? `${gauge.valueLabel} · ${gauge.resetLabel}`
-                    : gauge.valueLabel
+                  expiredAsOf !== undefined && resetAt != null
+                    ? `${gauge.valueLabel} · ${t('usage.board.plans.capacityResets', { time: formatMoment(resetAt, Date.now()) })}`
+                    : gauge.resetLabel && gauge.tone !== 'neutral'
+                      ? `${gauge.valueLabel} · ${gauge.resetLabel}`
+                      : gauge.valueLabel
                 }
-                {...(gauge.tone === 'neutral'
+                {...(gauge.tone === 'neutral' || expiredAsOf !== undefined
                   ? {}
                   : {
                       detailStyle:

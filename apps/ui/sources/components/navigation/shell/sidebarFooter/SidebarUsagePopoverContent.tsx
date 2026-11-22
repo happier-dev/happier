@@ -26,6 +26,8 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { ActionListSection } from '@/components/ui/lists/ActionListSection';
 import { MENU_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { Text } from '@/components/ui/text/Text';
+import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListRuntimeClock';
+import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 import { Typography } from '@/constants/Typography';
 import {
     useConnectedServiceQuotaSummaries,
@@ -521,6 +523,11 @@ const UsageAccountGroup = React.memo(function UsageAccountGroup(props: Readonly<
     now: number;
 }>) {
     const { account } = props;
+    const staleAt = account.staleAt;
+    const activelyViewed = useHostActivelyViewed();
+    const readExpiry = React.useCallback((nowMs: number) => staleAt !== null && staleAt > nowMs ? staleAt : null, [staleAt]);
+    const clockNow = useSessionListRuntimeDeadlineNowMs(readExpiry, activelyViewed && staleAt !== null && staleAt > props.now);
+    const expired = staleAt !== null && Math.max(props.now, clockNow) >= staleAt;
     const identity = accountHeaderLine(props.serviceLabel, props.name);
     const stateLabel = account.windows.length > 0
         ? null
@@ -549,11 +556,15 @@ const UsageAccountGroup = React.memo(function UsageAccountGroup(props: Readonly<
                             amount={formatConnectedServiceQuotaAllowance(window.reportedAmount)}
                             estimated={window.status === 'estimated'}
                             resetsAt={window.resetsAt}
-                            tone={window.tone}
+                            tone={expired ? 'neutral' : window.tone}
                         />
                     ))}
                 </UsageMeterStack>
             )}
+            {expired && account.windows.length > 0 ? (
+                <SurfaceFreshnessLine testID={`sidebar-usage-account-${account.key}.freshness`} presentation="inline"
+                    asOf={account.fetchedAt} reason={t('usage.board.plans.paceStale')} />
+            ) : null}
             {account.accountId ? (
                 <AccountUsageResetsLine
                     testID={`sidebar-usage-resets-${account.key}`}

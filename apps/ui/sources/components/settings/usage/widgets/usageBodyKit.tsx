@@ -84,7 +84,8 @@ export function usagePeriodPhrase(query: Pick<UsageQuery, 'period' | 'timeZoneOf
   // One Session read over its whole life: the period is the Session itself.
   const oneSession = typeof query.session === 'string' || (Array.isArray(query.session) && query.session.length === 1);
   if (oneSession && 'relative' in query.period && query.period.relative === 'all') return t('usage.board.page.thisSession');
-  return formatUsageCalendarPeriod({ ...query.period, timeZoneOffsetMinutes: query.timeZoneOffsetMinutes });
+  const period = formatUsageCalendarPeriod({ ...query.period, timeZoneOffsetMinutes: query.timeZoneOffsetMinutes });
+  return oneSession ? `${t('usage.board.page.thisSession')} · ${period}` : period;
 }
 
 // One projection per admitted accounting response and presentation; bodies share it, never rebuild it.

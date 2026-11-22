@@ -4,6 +4,7 @@ import { formatHappierDataValue, UsageFootprintBody } from '@happier-dev/plugin-
 import { Typography } from '@/constants/Typography';
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { formatTokenCount } from '@/utils/format/usageNumbers';
+import { resolveUsageMeasuredTokens } from '@/sync/api/account/usageMeasuredTokens';
 import { getPreferredLanguage, t } from '@/text';
 import {
   UsageBodyInsufficient,
@@ -32,7 +33,7 @@ export function UsageFootprintWidget(props: UsageBodyProps) {
       />
     );
   }
-  const tokens = footprint.coverage.accountedTokens.total;
+  const tokens = resolveUsageMeasuredTokens(footprint.coverage.accountedTokens).total;
   const accountedTokens = formatTokenCount(tokens);
   const exact = tokens === null ? null : formatHappierDataValue(tokens, getPreferredLanguage());
   return (

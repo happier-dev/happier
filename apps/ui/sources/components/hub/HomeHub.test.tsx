@@ -872,7 +872,10 @@ describe('HomeHub', () => {
 describe('HomeHub plugin widgets', () => {
     it('shows Capacity through the canonical widget frame only for a missing layout, without writing it on mount', async () => {
         const screen = await renderHome(artifact.request, 'missing');
-        expect(screen.findByTestId('home-hub.section.default:builtin:usage_capacity')).toBeTruthy();
+        const limits = screen.findByTestId('home-hub.section.default:builtin:usage_capacity');
+        expect(limits).toBeTruthy();
+        expect(holdsText(limits!, 'usage.board.plans.capacityCaption')).toBe(true);
+        expect(holdsText(limits!, 'widgetAdd.inputLabels.bestAvailableCost')).toBe(false);
         expect(screen.findByTestId('home-hub.section.usage')).toBeNull();
         expect(artifact.writes).toEqual([]);
     });

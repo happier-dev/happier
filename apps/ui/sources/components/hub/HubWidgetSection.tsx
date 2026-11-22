@@ -87,6 +87,10 @@ export const HubWidgetSection = React.memo(function HubWidgetSection(props: Read
     const { title: frameTitle, onDefinitionRead } = useWidgetFrameTitle(props.instance, descriptor);
     // Copies are named by what they are bound to, in the source slot (lab dbind H, N1).
     const bindingLabel = useWidgetInstanceBindingLabel(props.instance, descriptor);
+    const definition = props.instance.definition;
+    const defaultCaption = definition.kind === 'builtin' && definition.id === 'usage_capacity'
+        ? t('usage.board.plans.capacityCaption')
+        : bindingLabel;
     // The body may name what it shows ("Tokens by agent · last 7 days"), as it does in every area.
     const [bodyCaption, setBodyCaption] = React.useState<string | null>(null);
     // …and may say its one live fact in the header's meta slot ("1 needs you").
@@ -101,7 +105,7 @@ export const HubWidgetSection = React.memo(function HubWidgetSection(props: Read
             ? bodyCaption ?? undefined
             : widgetGroupFollowSource(props.followSource.value, props.followSource.wide || phone)
         // A widget whose plugin is not here says that once, in its body; the source slot does not repeat it.
-        : bodyCaption ?? bindingLabel ?? (descriptor ? pluginName : undefined);
+        : bodyCaption ?? defaultCaption ?? (descriptor ? pluginName : undefined);
     const savedSize = props.size ?? 'medium';
     // Carried, the card keeps its mark and says its source and the size it keeps (lab wgdnd 1).
     const carried = useWidgetCarriedIdentity({ kind: 'widget', mark: descriptor?.icon ?? 'squares-four',

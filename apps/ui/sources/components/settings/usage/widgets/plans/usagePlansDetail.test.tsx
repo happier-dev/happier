@@ -45,6 +45,7 @@ import { formatUsageCalendarDate } from '@/sync/domains/usage/usageCalendarPrese
 import { getUsagePeriodDefinition } from '@/sync/api/account/usagePeriods';
 import { recordMachineRequestSucceeded } from '@/sync/domains/machines/reachability/machineReachability';
 import { formatMoment } from '@/utils/datetime/formatMoment';
+import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { formatUsageCost } from '@/utils/format/usageNumbers';
 
 // Machine RPC, native confirmation and the served Home's HTTP transport are external boundaries.
@@ -804,11 +805,39 @@ it('keeps the reported reset when pace has no window and labels a truly expired 
   </WidgetPresentationProvider>));
   const expiredText = t('usage.board.plans.paceStale');
   expect.soft(screen.getTextContent()).toContain(expiredText);
-  expect.soft(screen.findHostByTestId('proj.window.expired.weekly')?.props.accessibilityLabel).toContain(expiredText);
+  expect.soft(screen.findByTestId('proj.window.expired.weekly.freshness')).toBeTruthy();
   expect.soft(screen.findByTestId('proj.usedUp')).toBeFalsy();
   expect.soft(screen.getTextContent()).toContain(t('connectedServicesCollection.meterResetsIn', { time: '' }).trim());
   expect.soft(screen.getTextContent()).not.toContain(t('usage.board.plans.paceUnknownWindow'));
   expect(screen.findAllByType(BurnUpChart)).toHaveLength(0);
+});
+
+it('keeps the old value and reset after a retained comparison expires', async () => {
+  const now = Date.now();
+  const observedAt = now - 4 * 60_000;
+  const resetAtMs = now + DAY;
+  const expired = quotaRead('expired', observedAt, [
+    { meterId: 'weekly', label: 'Weekly', usedPct: 99, resetAtMs, windowDurationMs: 7 * DAY },
+    { meterId: 'rolling', label: 'Rolling', usedPct: 1, resetAtMs, windowDurationMs: DAY },
+  ], { pace: [
+    { meterId: 'weekly', value: { status: 'unavailable', reason: 'reset_changed' } },
+    { meterId: 'rolling', value: { status: 'unavailable', reason: 'entitlement_changed' } },
+  ] }, { staleAfterMs: 120_000 });
+
+  const { UsageProjectionsWidget } = await import('../UsageProjectionsWidget');
+  const screen = await renderScreen(wrap(<WidgetPresentationProvider value={{ size: 'medium',
+    footprint: { columns: 2, columnSpan: 1, rowSpan: 2, width: 'half', height: 'regular' }, geometry: { width: 520, height: 260 } }}>
+    <UsageProjectionsWidget {...bodyProps([expired])} id="usage_projections" testID="proj" />
+  </WidgetPresentationProvider>));
+
+  const text = screen.getTextContent();
+  expect.soft(text).toContain(t('usage.board.plans.paceStale'));
+  expect.soft(text).not.toContain(t('usage.board.plans.paceResetMoved'));
+  expect.soft(text).not.toContain(t('usage.board.plans.pacePlanChanged'));
+  expect.soft(text).toContain(formatAsOfTime(observedAt, now));
+  expect.soft(text).toContain(t('connectedServicesCollection.meterResetsIn', { time: '' }).trim());
+  expect.soft(text).toContain('1%');
+  expect(text).toContain('99%');
 });
 
 it('does not materialize curve points for the meter-list presentation', async () => {

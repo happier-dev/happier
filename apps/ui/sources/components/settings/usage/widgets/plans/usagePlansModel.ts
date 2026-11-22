@@ -235,13 +235,14 @@ export function projectUsagePlans(
       source.bindingKind === 'group_member' ? source.groupId : null;
     if (accounts.some((account) => account.key === key)) continue;
     const snapshot = read?.current;
-    const paceByMeter = new Map(
+    const expired = snapshot?.state === 'loaded_data' && nowMs >= snapshot.observedAtMs + snapshot.staleAfterMs;
+    const paceByMeter = expired ? null : new Map(
       (read?.pace ?? []).map((entry) => [entry.meterId, entry.value]),
     );
-    const stale = !snapshot || snapshot.state !== 'loaded_data' || nowMs >= snapshot.observedAtMs + snapshot.staleAfterMs;
+    const stale = snapshot?.state !== 'loaded_data' || expired;
     const state: UsageQuerySourceState = states.get(key)?.state ?? { source: 'quota', status: !snapshot ? 'not_loaded' : stale ? 'stale' : 'available' };
     const windows = (snapshot?.meters ?? []).map((meter) =>
-      projectWindow(key, meter, paceByMeter.get(meter.meterId)),
+      projectWindow(key, meter, paceByMeter ? paceByMeter.get(meter.meterId) : { status: 'unavailable', reason: 'stale' }),
     );
     const account: UsagePlanAccount = {
       key,

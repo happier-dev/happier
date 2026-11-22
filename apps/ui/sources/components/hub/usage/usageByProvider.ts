@@ -34,6 +34,7 @@ export type UsageAccountInput = Readonly<{
     planLabel: string | null;
     /** This account's reading time, never another account's or a combined timestamp. */
     fetchedAt?: number | null;
+    staleAt?: number | null;
     /** `ready`: windows read; `loading`: being read; `unavailable`: the provider reported nothing. */
     /** `no_usage_observed` is a valid observation-only state before the first Session. */
     state: 'ready' | 'loading' | 'unavailable' | 'no_usage_observed';
@@ -59,6 +60,7 @@ export type UsageAccountRow = Readonly<{
     accountId: string | null;
     planLabel: string | null;
     fetchedAt: number | null;
+    staleAt: number | null;
     state: UsageAccountInput['state'];
     windows: readonly UsageWindowRow[];
     /** Every window was read and has comfortable room left. */
@@ -118,6 +120,7 @@ export function groupUsageByProvider(accounts: readonly UsageAccountInput[]): Us
                         accountId: account.accountId,
                         planLabel: account.planLabel,
                         fetchedAt: account.fetchedAt ?? null,
+                        staleAt: account.staleAt ?? null,
                         state: account.state,
                         windows,
                         healthy: account.state === 'ready'

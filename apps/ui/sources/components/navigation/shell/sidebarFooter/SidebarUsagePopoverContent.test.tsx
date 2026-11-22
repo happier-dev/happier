@@ -179,6 +179,18 @@ describe('SidebarUsagePopoverContent', () => {
         expect(screen.getTextContent()).toContain('sidebarFooter.usageUnavailableAccounts(count=3)');
         expect(screen.getTextContent()).not.toContain('common.unavailable');
     });
+    it('keeps a dated quota reading and reset after it expires without a read failure', async () => {
+        const reading = summary('claude:a', 'Work', 40);
+        state.summaries = [{ ...reading, fetchedAt: Date.now() - 5 * 60_000, staleAfterMs: 120_000,
+            meters: reading.meters.map(meter => ({ ...meter, resetsAt: Date.now() + 60 * 60_000 })) }];
+        const screen = await renderContent();
+        expect.soft(screen.getTextContent()).toMatch(/40%/);
+        expect.soft(screen.getTextContent()).toMatch(/reset/i);
+        const freshness = screen.findByTestId('sidebar-usage-account-claude:a.freshness');
+        expect(freshness).toBeTruthy();
+        expect(screen.findByTestId('sidebar-usage-refresh-error')).toBeFalsy();
+    });
+
     it('shows every account with what is left in each window, and an account with nothing to show', async () => {
         state.summaries = [summary('claude:a', null, 73, 'kevin@gmail.com'), summary('claude:b', 'Work', 40)];
         state.withoutUsage = [{

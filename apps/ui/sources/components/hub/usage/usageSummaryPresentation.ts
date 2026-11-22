@@ -33,6 +33,7 @@ function toAccount(entry: UsageSummaryEntry): UsageAccountInput {
         accountId: entry.accountId ?? null,
         planLabel: entry.planLabel,
         fetchedAt: entry.fetchedAt ?? null,
+        staleAt: readUsageSummaryEntryStaleAt(entry),
         state: 'ready',
         meters: entry.meters,
     };
@@ -99,12 +100,15 @@ export function buildUsageSummary(input: Readonly<{
     };
 }
 
+function readUsageSummaryEntryStaleAt(entry: UsageSummaryEntry): number | null {
+    return entry.fetchedAt == null || entry.staleAfterMs === undefined ? null : entry.fetchedAt + entry.staleAfterMs;
+}
+
 function resolveStaleAt(entries: readonly UsageSummaryEntry[]): number | null {
     let staleAt: number | null = null;
     for (const entry of entries) {
-        if (entry.fetchedAt == null || entry.staleAfterMs === undefined) continue;
-        const at = entry.fetchedAt + entry.staleAfterMs;
-        staleAt = staleAt === null ? at : Math.min(staleAt, at);
+        const at = readUsageSummaryEntryStaleAt(entry);
+        if (at !== null) staleAt = staleAt === null ? at : Math.min(staleAt, at);
     }
     return staleAt;
 }

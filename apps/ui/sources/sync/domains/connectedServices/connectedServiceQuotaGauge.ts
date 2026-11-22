@@ -92,6 +92,8 @@ export type ConnectedServiceQuotaGaugeViewModel = Readonly<{
     resetLabel: string | null;
     tone: ConnectedServiceQuotaGaugeTone;
     isStale: boolean;
+    /** When the shown observation was read, once its provider lifetime expires. */
+    expiredAsOf?: number;
     effectiveMeter: ConnectedServiceQuotaMeterV1;
     allMeterRows: readonly ConnectedServiceQuotaGaugeMeterRow[];
     /** Global windows followed by reliable favorites of the active account. */
@@ -426,7 +428,7 @@ export function computeConnectedServiceQuotaGaugeViewModel(_params: Readonly<{
     const roundedRemaining = Math.round(effectiveRemainingPct);
     const remainingValueLabel = params.formatter.remaining({ percent: `${roundedRemaining}%` });
     const staleAt = params.snapshot.fetchedAt + params.snapshot.staleAfterMs;
-    const isStale = params.nowMs > staleAt;
+    const isStale = params.nowMs >= staleAt;
     return {
         serviceId: params.snapshot.serviceId ?? null,
         providerDisplayName: params.providerDisplayName ?? null,
@@ -443,6 +445,7 @@ export function computeConnectedServiceQuotaGaugeViewModel(_params: Readonly<{
         resetLabel: selectedRow.resetLabel,
         tone: selectedRow.tone,
         isStale,
+        ...(isStale ? { expiredAsOf: params.snapshot.fetchedAt } : {}),
         effectiveMeter: effectiveMeter.label === selectedRow.label
             ? effectiveMeter
             : { ...effectiveMeter, label: selectedRow.label },

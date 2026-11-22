@@ -22,6 +22,7 @@ import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFram
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon } from '@/components/ui/icons/Icon';
 import { NoticeLine } from '@/components/ui/lists/NoticeLine';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { MeterBar } from '@/components/ui/lists/MeterBar';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { Text } from '@/components/ui/text/Text';
@@ -320,6 +321,7 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
                 key={row.window.key}
                 name={row.name}
                 window={row.window}
+                observedAtMs={row.account.observedAtMs}
                 nowMs={nowMs}
                 stacked={stacked}
                 statement={row.statement}
@@ -478,6 +480,7 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
               key={row.window.key}
               name={row.name}
               window={row.window}
+              observedAtMs={row.account.observedAtMs}
               nowMs={nowMs}
               stacked={stacked}
               statement={planWindowStatement(row.window, nowMs)}
@@ -491,7 +494,7 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
         title={t('usage.board.plans.unreportedWindows', { count: unreported.length })}>
         <UsageMeterStack testID={`${props.testID}.unreported.windows`}>
           {unreported.map(row => <ProjectionRow key={row.window.key} name={row.name}
-            window={row.window} nowMs={nowMs} stacked={stacked}
+            window={row.window} observedAtMs={row.account.observedAtMs} nowMs={nowMs} stacked={stacked}
             statement={planWindowStatement(row.window, nowMs)}
             testID={`${props.testID}.window.${row.account.accountId}.${row.window.meterId}`} />)}
         </UsageMeterStack>
@@ -711,6 +714,7 @@ function ProjectionRow(
   props: Readonly<{
     name: UsagePlanAccountName;
     window: UsagePlanWindow;
+    observedAtMs: number | null;
     nowMs: number;
     stacked: boolean;
     statement: ReturnType<typeof planWindowStatement>;
@@ -720,6 +724,7 @@ function ProjectionRow(
   }>,
 ) {
   const { window, statement } = props;
+  const expired = window.paceUnavailable === 'stale';
   const statusText = !props.resetOnly && statement.kind === 'unavailable' ? statement.text : null;
   const visual = (
     <UsageMeterRow
@@ -731,14 +736,14 @@ function ProjectionRow(
           : window.remainingFraction * 100
       }
       resetsAt={window.resetAtMs}
-      tone={window.tone}
+      tone={expired ? 'neutral' : window.tone}
       now={props.nowMs}
       estimated={window.estimated}
       size={props.stacked ? 'default' : 'wide'}
       layout={props.stacked ? 'stacked' : 'inline'}
       // A used-up window's "0% left" already says it is spent; its reset column counts down to its return, which
       // fits the row's countdown column where "used up · back Sat 03:02 AM" was cut at the row end (R8 #7).
-      {...(props.resetOnly || statement.kind === 'used_up' || statement.kind === 'reset_only' ? {} : { resetText: statement.text })}
+      {...(props.resetOnly || expired || statement.kind === 'used_up' || statement.kind === 'reset_only' ? {} : { resetText: statement.text })}
       {...(window.pace
         ? {
             pace: {
@@ -751,7 +756,7 @@ function ProjectionRow(
     />
   );
   const exact = window.remainingFraction === null ? null : formatHappierDataExactShare(window.remainingFraction, getPreferredLanguage());
-  return exact === null || !window.pace && formatPlanPercent(window.remainingFraction!).includes(exact) ? visual
+  const row = exact === null || !window.pace && formatPlanPercent(window.remainingFraction!).includes(exact) ? visual
     : <ChartDatum testID={`${props.testID}.datum`} datum={{ keyboard: false, label: `${props.name.title} · ${window.label}`,
       value: t('usage.board.plans.cellLeft', { percent: exact }),
       subtitle: [window.pace ? t('usage.board.plans.estimatedFrom', { count: window.pace.sampleCount }) : null,
@@ -761,6 +766,11 @@ function ProjectionRow(
         t('usage.board.plans.cellLeft', { percent: exact }), window.pace ? `${t('usage.board.plans.projectionUsedAtReset')} · ${formatHappierDataExactShare(window.pace.projectedUsedFraction, getPreferredLanguage())}` : null,
         window.resetAtMs === null ? null : formatMoment(window.resetAtMs, props.nowMs), statusText].filter(Boolean).join(' · ')}>{visual}</View>
     </ChartDatum>;
+  return expired ? <View>
+    {row}
+    <SurfaceFreshnessLine testID={`${props.testID}.freshness`} presentation="inline"
+      asOf={props.observedAtMs} reason={props.resetOnly ? '' : statement.text} />
+  </View> : row;
 }
 
 const styles = StyleSheet.create((theme) => ({
