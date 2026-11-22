@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ReviewReviewerSelectionV1Schema, ReviewStartInputSchema, reviewReviewersForEngineIdsV1 } from '@happier-dev/protocol/reviews/reviewStart';
 
-import { buildReviewStartWithWalkthroughInput, resolveReviewWalkthroughPlan, type ReviewWalkthroughEngine } from './reviewWalkthroughPlan';
+import { applyReviewWalkthroughNarrator, buildReviewStartWithWalkthroughInput, resolveReviewWalkthroughPlan, type ReviewWalkthroughEngine } from './reviewWalkthroughPlan';
 
 const CLAUDE: ReviewWalkthroughEngine = { engineId: 'claude', label: 'Claude Code', enabled: true, structuredNarration: true };
 const CODEX: ReviewWalkthroughEngine = { engineId: 'codex', label: 'Codex', enabled: true, structuredNarration: true };
@@ -29,7 +29,8 @@ describe('resolveReviewWalkthroughPlan', () => {
         const plan = resolveReviewWalkthroughPlan({ engines, reviewers: reviewReviewersForEngineIdsV1(engines.map(engine => engine.engineId)),
             walkthrough: true, narratorEngineId: engines[0]!.engineId });
         expect(plan.selected.map(engine => engine.engineId)).toEqual(['acme.review/second']);
-        expect(plan.narrator).toBeNull();
+        expect(plan.narrator).toMatchObject({ reason: 'own', engineId: 'acme.review/second' });
+        expect(plan.narrator?.candidates.map(engine => engine.engineId)).toEqual(['acme.review/second']);
     });
     it('uses a continuing inventory candidate to narrate an ephemeral reviewer', () => {
         const plan = resolveReviewWalkthroughPlan({ engines: [{ ...CODEX, retentionPolicy: 'ephemeral' }, CLAUDE],
@@ -38,11 +39,24 @@ describe('resolveReviewWalkthroughPlan', () => {
         expect(plan.narrator?.engineId).toBe('claude');
         expect(plan.canStart).toBe(true);
     });
-    it('lets one capable engine write its own walkthrough with no narrator to choose', () => {
+    it('lets one capable engine write its own walkthrough, still naming it as the narrator a person can change', () => {
         const plan = resolveReviewWalkthroughPlan({ engines: ENGINES, reviewers: reviewReviewersForEngineIdsV1(['codex']), walkthrough: true, narratorEngineId: null });
-        expect(plan.narrator).toBeNull();
+        expect(plan.narrator).toMatchObject({ reason: 'own', engineId: 'codex' });
+        expect(plan.narrator?.candidates.map(engine => engine.engineId)).toEqual(['claude', 'codex']);
         expect(plan.footer).toEqual({ kind: 'review_then_walkthrough' });
         expect(plan.canStart).toBe(true);
+        const changed = resolveReviewWalkthroughPlan({ engines: ENGINES, reviewers: reviewReviewersForEngineIdsV1(['codex']), walkthrough: true, narratorEngineId: 'claude' });
+        expect(changed.narrator).toMatchObject({ reason: 'own', engineId: 'claude' });
+    });
+
+    it('offers the narrator for a roster with no engine while the walkthrough is on, choosing none for the person', () => {
+        const reviewer = ReviewReviewerSelectionV1Schema.parse({ kind: 'session', session: { serverId: 'home', sessionId: 'reviewer-session' } });
+        const plan = resolveReviewWalkthroughPlan({ engines: ENGINES, reviewers: [reviewer], walkthrough: true, narratorEngineId: null });
+        expect(plan.narrator).toMatchObject({ reason: 'own', engineId: null });
+        expect(plan.narrator?.candidates.map(engine => engine.engineId)).toEqual(['claude', 'codex']);
+        expect(plan.canStart).toBe(true);
+        const nobody = resolveReviewWalkthroughPlan({ engines: ENGINES, reviewers: [], walkthrough: true, narratorEngineId: 'codex' });
+        expect(nobody).toMatchObject({ canStart: false, blocked: 'no_engine', narrator: { reason: 'own', engineId: 'codex' } });
     });
 
     it('asks for one narrator when several engines review, defaulting to the first capable one in list order', () => {
@@ -104,5 +118,24 @@ describe('buildReviewStartWithWalkthroughInput', () => {
         expect(buildReviewStartWithWalkthroughInput({ sessionId: 's1', plan, instructions: 'x', comparisonId: 'cmp-1', pending: false })).toEqual({
             sessionId: 's1', reviewers: [{ kind: 'engine', engineId: 'codex' }], instructions: 'x', comparisonId: 'cmp-1', changeType: 'all',
         });
+    });
+});
+
+describe('applyReviewWalkthroughNarrator', () => {
+    it('sends the narrator the plan names when the person chose none, so a findings-only engine is narrated', () => {
+        const reviewers = reviewReviewersForEngineIdsV1(['coderabbit']);
+        const plan = resolveReviewWalkthroughPlan({ engines: ENGINES, reviewers, walkthrough: true, narratorEngineId: null });
+        const input = { reviewers, outputs: ['walkthrough'] };
+        expect(applyReviewWalkthroughNarrator(input, plan)).toEqual({ ...input, narrator: { engineId: 'claude' } });
+    });
+
+    it('keeps an explicit narrator and adds none without a walkthrough', () => {
+        const reviewers = reviewReviewersForEngineIdsV1(['coderabbit']);
+        const plan = resolveReviewWalkthroughPlan({ engines: ENGINES, reviewers, walkthrough: true, narratorEngineId: 'codex' });
+        const chosen = { reviewers, outputs: ['walkthrough'], narrator: { engineId: 'codex', modelId: 'fast' } };
+        expect(applyReviewWalkthroughNarrator(chosen, plan)).toBe(chosen);
+        const off = resolveReviewWalkthroughPlan({ engines: ENGINES, reviewers, walkthrough: false, narratorEngineId: null });
+        const input = { reviewers };
+        expect(applyReviewWalkthroughNarrator(input, off)).toBe(input);
     });
 });

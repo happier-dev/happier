@@ -2,7 +2,7 @@ import * as React from 'react';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import type { DetailsTab } from '@/components/appShell/panes/model/appPaneReducer';
-import { resolveReviewWalkthroughPlan, type ReviewWalkthroughEngine } from '@/sync/domains/reviews/reviewWalkthroughPlan';
+import { applyReviewWalkthroughNarrator, resolveReviewWalkthroughPlan, type ReviewWalkthroughEngine } from '@/sync/domains/reviews/reviewWalkthroughPlan';
 import type { ScmReviewComparisonSelector } from '@/sync/domains/scm/diffSummary/selection';
 import { projectReviewWalkthroughEngines, startReviewOfComparison } from '@/sync/ops/reviews/reviewWalkthrough';
 import { t } from '@/text';
@@ -42,16 +42,18 @@ export function useComparisonReviewDraft(params: Readonly<{
     const narratorEngineId = narrator && typeof narrator === 'object' && 'engineId' in narrator && typeof narrator.engineId === 'string'
         ? narrator.engineId : null;
     const enabled = params.comparisonReview !== null;
-    // The retained draft uses [] to remember an explicit findings-only choice.
-    // The Action represents that choice by omitting outputs.
-    const launchInput = React.useMemo(() => {
-        if (!enabled || !Array.isArray(params.actionInput.outputs) || params.actionInput.outputs.length > 0) return params.actionInput;
-        const { outputs: _outputs, ...input } = params.actionInput;
-        return input;
-    }, [enabled, params.actionInput]);
     const engines = React.useMemo(() => inventory ? projectReviewWalkthroughEngines(inventory) : EMPTY_ENGINES, [inventory]);
     const plan = React.useMemo(() => resolveReviewWalkthroughPlan({ engines, reviewers: readReviewLauncherReviewers(params.actionInput),
         walkthrough, narratorEngineId }), [engines, params.actionInput, walkthrough, narratorEngineId]);
+    // The retained draft uses [] to remember an explicit findings-only choice.
+    // The Action represents that choice by omitting outputs. A walkthrough carries the narrator the sheet names.
+    const launchInput = React.useMemo(() => {
+        if (!enabled || !Array.isArray(params.actionInput.outputs) || params.actionInput.outputs.length > 0) {
+            return applyReviewWalkthroughNarrator(params.actionInput, plan);
+        }
+        const { outputs: _outputs, ...input } = params.actionInput;
+        return input;
+    }, [enabled, params.actionInput, plan]);
     const submit = React.useCallback(async (submission: Readonly<{
         start: (actionId: 'review.start', input: Record<string, unknown>, operationId: string) => Promise<ActionExecuteResult>;
         input: Record<string, unknown>;

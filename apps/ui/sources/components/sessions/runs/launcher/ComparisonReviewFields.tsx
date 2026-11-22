@@ -90,7 +90,8 @@ export function ComparisonWalkthroughChoice(
   >,
 ) {
   const { theme } = useUnistyles();
-  const narrator = props.plan.narrator;
+  // The chip asks only when a narrator is needed (lab WT5-R4, R7); the Start sheet's Advanced always offers it.
+  const narrator = props.plan.narrator?.reason === 'own' ? null : props.plan.narrator;
   const narratorWhy =
     narrator?.reason === 'findings_only'
       ? t('reviewWalkthrough.dialog.narratorFindingsOnly', {

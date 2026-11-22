@@ -400,7 +400,8 @@ function sameReachability(left: Readonly<{ reachability: string }>, right: Reado
 }
 
 function withOutcome(outcomeLine: React.ReactNode, row: React.ReactElement): React.ReactElement {
-  return outcomeLine ? <View>{row}{outcomeLine}</View> : row;
+  // The pair shrinks like the bare row would, so a host's row (a start sheet's Where) wraps the chips inside its inset.
+  return outcomeLine ? <View style={styles.withOutcome}>{row}{outcomeLine}</View> : row;
 }
 
 /**
@@ -673,4 +674,5 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 1,
     minWidth: 0,
   },
+  withOutcome: { flexShrink: 1, minWidth: 0 },
 }));

@@ -32,7 +32,7 @@ type Props = Readonly<{
         whoAccessory?: React.ComponentProps<typeof ContextualStartComposerBody>['whoAccessory'];
     }>;
     children?: React.ReactNode;
-    narrator?: React.ReactNode;
+    narrator?: ReviewStartOptionsProps['narrator'];
     credentials?: React.ReactNode;
     onSaveAsWorkflow?: () => void;
     /**

@@ -16,9 +16,12 @@ export type ReviewWalkthroughEngine = Readonly<{
 }>;
 
 export type ReviewWalkthroughNarrator = Readonly<{
-    /** several: one model writes from every engine's findings · findings_only: the reviewer writes no prose. */
-    reason: 'several' | 'findings_only';
-    /** The narrator the start will name; null when no capable engine is available. */
+    /**
+     * several: one model writes from every engine's findings · findings_only: the reviewer writes no prose ·
+     * own: no separate narrator is needed (the reviewer writes its own), yet a person may still name one.
+     */
+    reason: 'several' | 'findings_only' | 'own';
+    /** The narrator the start will name; null when no capable engine is available or none is needed and chosen. */
     engineId: string | null;
     candidates: readonly ReviewWalkthroughEngine[];
 }>;
@@ -31,7 +34,10 @@ export type ReviewWalkthroughPlan = Readonly<{
     selected: readonly ReviewWalkthroughEngine[];
     reviewers: readonly ReviewReviewerSelectionV1[];
     walkthrough: boolean;
-    /** Shown only when several engines review or the one reviewer writes no prose (lab WT5-R4, R7). */
+    /**
+     * Present whenever a walkthrough is requested (Start sheet › Advanced › Narrator, U8 R3 E2); `reason` says
+     * whether one is needed, and a comparison chip asks only when it is (lab WT5-R4, R7).
+     */
     narrator: ReviewWalkthroughNarrator | null;
     footer: ReviewWalkthroughFooter | null;
     canStart: boolean;
@@ -56,11 +62,9 @@ export function resolveReviewWalkthroughPlan(params: Readonly<{
 }>): ReviewWalkthroughPlan {
     const selected = params.engines.filter((engine) => engine.enabled && params.reviewers.some(reviewer => reviewer.kind === 'engine' && reviewer.engineId === engine.engineId));
     const reviewers = params.reviewers.filter(reviewer => reviewer.kind !== 'engine' || selected.some(engine => engine.engineId === reviewer.engineId));
-    if (reviewers.length === 0) {
-        return { selected, reviewers, walkthrough: params.walkthrough, narrator: null, footer: null, canStart: false, blocked: 'no_engine' };
-    }
     if (!params.walkthrough) {
-        return { selected, reviewers, walkthrough: false, narrator: null, footer: null, canStart: true, blocked: null };
+        return { selected, reviewers, walkthrough: false, narrator: null, footer: null, canStart: reviewers.length > 0,
+            blocked: reviewers.length > 0 ? null : 'no_engine' };
     }
     const policy = resolveReviewNarratorPolicy({
         selectedEngineIds: selected.map((engine) => engine.engineId),
@@ -71,10 +75,16 @@ export function resolveReviewWalkthroughPlan(params: Readonly<{
             capabilities: { structuredNarration: engine.structuredNarration },
         })),
     });
-    if (!policy.requiresSeparateNarrator) {
-        return { selected, reviewers, walkthrough: true, narrator: null, footer: { kind: 'review_then_walkthrough' }, canStart: true, blocked: null };
-    }
     const candidates = params.engines.filter(isNarrationCapable);
+    if (!policy.requiresSeparateNarrator) {
+        // The reviewer writes its own walkthrough unless the person names a narrator.
+        const own = candidates.find((engine) => engine.engineId === params.narratorEngineId)
+            ?? candidates.find((engine) => engine.engineId === policy.defaultNarratorEngineId) ?? null;
+        const narrator = { reason: 'own' as const, engineId: own?.engineId ?? null, candidates };
+        // Nobody chosen yet: nothing can start, but the narrator stays offered while the walkthrough is on.
+        if (reviewers.length === 0) return { selected, reviewers, walkthrough: true, narrator, footer: null, canStart: false, blocked: 'no_engine' };
+        return { selected, reviewers, walkthrough: true, narrator, footer: { kind: 'review_then_walkthrough' }, canStart: true, blocked: null };
+    }
     const chosen = candidates.find((engine) => engine.engineId === params.narratorEngineId)
         ?? candidates.find((engine) => engine.engineId === policy.defaultNarratorEngineId)
         ?? candidates[0]
@@ -119,4 +129,14 @@ export function buildReviewStartWithWalkthroughInput(params: Readonly<{
         ...(params.plan.walkthrough && narratorEngineId ? { narrator: { engineId: narratorEngineId } } : {}),
         changeType: params.pending ? 'uncommitted' : 'all',
     };
+}
+
+/**
+ * A start's own launch input with the narrator its plan names when the person chose none, so the walkthrough the
+ * sheet shows is the one the host is asked for (a findings-only reviewer otherwise has no narrator to fall back on).
+ */
+export function applyReviewWalkthroughNarrator(input: Record<string, unknown>, plan: ReviewWalkthroughPlan): Record<string, unknown> {
+    const engineId = plan.walkthrough ? plan.narrator?.engineId ?? null : null;
+    if (engineId === null || input.narrator !== undefined) return input;
+    return { ...input, narrator: { engineId } };
 }

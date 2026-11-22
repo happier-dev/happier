@@ -1338,6 +1338,9 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
             rightElement={<Switch testID="review-start-report-switch" value={reportToSession} disabled={!editable}
                 onValueChange={next => onPatch({ notifyParentOnCompletion: next })} accessibilityLabel={t('agentStart.reportToSession')} />} /> : null}
     </> : null;
+    // Every review start asks who writes its walkthrough, from the one walkthrough plan (U8 R3 E2).
+    const reviewNarrator = React.useMemo(() => ({ plan: comparisonReview.fields.plan,
+        onSelect: comparisonReview.fields.onSelectNarrator }), [comparisonReview.fields]);
     const sheetFooterChange = props.sheet?.onFooterChange;
     const sheetCancel = props.sheet?.onCancel;
     // A global start chooses its Machine and folder first, above what it reviews (the changes live there); a start
@@ -1446,7 +1449,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                 disabled={!editable} details={agentDetails}
                 credentials={reviewOptions.controls} onSaveAsWorkflow={sheetHosted ? undefined : saveReviewAsWorkflow}
                 subject={reviewSubject} more={sheetMore}
-                narrator={props.comparisonReview ? <ComparisonWalkthroughChoice {...comparisonReview.fields} /> : null}>
+                narrator={reviewNarrator}>
                 {startQuestion}
             </ReviewStartBody> : <ContextualStartComposerBody model={contextualComposer}
                 whoAccessory={{ label: roleItem?.name ?? (rolesStatus === 'loading' ? t('common.loading') : roleValue ?? t('roles.rail.title')),

@@ -7,7 +7,7 @@ import type {
 } from '@happier-dev/protocol/reviews/reviewStart';
 
 import { ReviewStartOptions } from '@/components/reviews/start/ReviewStartOptions';
-import { ReviewStartSubject } from '@/components/reviews/start/ReviewStartSubject';
+import { ReviewStartSubject, type ReviewStartSubjectValue } from '@/components/reviews/start/ReviewStartSubject';
 import {
   ReviewStartSteps,
   type ReviewStartReviewerPresentation,
@@ -20,6 +20,7 @@ import {
 } from '@/components/sessions/authoring/ContextualStartComposer';
 import { SessionAgentCatalogIdentityIcon } from '@/components/sessions/presentation/SessionAgentCatalogIdentityIcon';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { resolveReviewWalkthroughPlan } from '@/sync/domains/reviews/reviewWalkthroughPlan';
 import type { SelectionListOption } from '@/components/ui/selectionList';
 import { t } from '@/text';
 
@@ -38,6 +39,11 @@ type Fixture = Readonly<{
   mark: () => React.ReactNode;
   warning?: string;
 }>;
+
+const SPECIMEN_NARRATORS = [
+  { engineId: 'claude', label: 'Claude', enabled: true, structuredNarration: true },
+  { engineId: 'codex', label: 'Codex', enabled: true, structuredNarration: true },
+] as const;
 
 const engineMark = (name: 'shield' | 'bug') => () => (
   <Icon name={name} size={ICON_SIZE.sm} />
@@ -253,9 +259,14 @@ export function ReviewStartSpecimen(props: Readonly<{ scene: string | null }>) {
     SCENES[scene]!,
   );
   const [then, setThen] = React.useState<'report' | 'fix'>('report');
-  const [subject, setSubject] = React.useState<'uncommitted' | 'committed' | 'all'>('uncommitted');
+  const [subject, setSubject] = React.useState<ReviewStartSubjectValue>('uncommitted');
   const [walkthrough, setWalkthrough] = React.useState(false);
   const [accepted, setAccepted] = React.useState(false);
+  const [narratorEngineId, setNarratorEngineId] = React.useState<string | null>(null);
+  // Two model engines review, so one writes the walkthrough (Advanced › Narrator).
+  const narrationPlan = React.useMemo(() => resolveReviewWalkthroughPlan({ engines: SPECIMEN_NARRATORS,
+    reviewers: [{ kind: 'engine', engineId: 'claude' }, { kind: 'engine', engineId: 'codex' }], walkthrough, narratorEngineId }),
+  [narratorEngineId, walkthrough]);
   const latest = React.useRef(steps);
   latest.current = steps;
   const toggleReviewer = React.useCallback(
@@ -317,6 +328,7 @@ export function ReviewStartSpecimen(props: Readonly<{ scene: string | null }>) {
           onThenChange={setThen}
           walkthrough={walkthrough}
           onWalkthroughChange={setWalkthrough}
+          narrator={{ plan: narrationPlan, onSelect: setNarratorEngineId }}
           costs={
             scene === 'deep' && hasDeepSec
               ? [{

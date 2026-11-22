@@ -9,6 +9,8 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
+import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
+import type { ReviewWalkthroughPlan } from '@/sync/domains/reviews/reviewWalkthroughPlan';
 import { t } from '@/text';
 
 import { ReviewLabel } from '../ReviewLabel';
@@ -21,8 +23,11 @@ export type ReviewStartOptionsProps = Readonly<{
   onThenChange: (then: 'report' | 'fix') => void;
   walkthrough: boolean;
   onWalkthroughChange: (walkthrough: boolean) => void;
-  /** The host's narrator field select ("Summary written by"). */
-  narrator?: React.ReactNode;
+  /**
+   * Who writes the walkthrough, from the host's walkthrough plan: asked in Advanced whenever Walk me through it is
+   * on, whatever the roster (U8 R3 E2).
+   */
+  narrator?: Readonly<{ plan: ReviewWalkthroughPlan; onSelect: (engineId: string) => void }> | null;
   /** The host's keys and accounts control (Secret / Team credential selection). */
   credentials?: React.ReactNode;
   costs: readonly ReviewStartCostConsent[];
@@ -134,14 +139,9 @@ export function ReviewStartOptions(props: ReviewStartOptionsProps) {
           />
         )}
       >
-        {props.narrator ? (
-          <Item
-            title={t('reviewWalkthrough.dialog.narrator')}
-            mode="info"
-            showChevron={false}
-            accessoryLayout="adaptive"
-            rightElement={props.narrator}
-          />
+        {props.walkthrough && props.narrator?.plan.narrator ? (
+          <ReviewStartNarratorRow narrator={props.narrator.plan.narrator} selected={props.narrator.plan.selected}
+            onSelect={props.narrator.onSelect} disabled={props.disabled} />
         ) : null}
         {props.credentials ? (
           <Item
@@ -172,6 +172,41 @@ export function ReviewStartOptions(props: ReviewStartOptionsProps) {
       <ReviewCostConsentRows costs={costs} disabled={props.disabled} />
     </View>
     </HappierBodyEdgeContext.Provider>
+  );
+}
+
+/** Advanced › Narrator (lab `start-sheet`): a field select over the engines that can write a walkthrough. */
+function ReviewStartNarratorRow(props: Readonly<{ narrator: NonNullable<ReviewWalkthroughPlan['narrator']>;
+  selected: ReviewWalkthroughPlan['selected']; onSelect: (engineId: string) => void; disabled?: boolean }>) {
+  const { narrator } = props;
+  const items = React.useMemo(() => narrator.candidates.map(engine => ({ id: engine.engineId, title: engine.label,
+    ...(engine.description ? { subtitle: engine.description } : {}) })), [narrator.candidates]);
+  // Why a narrator is needed; a reviewer that writes its own needs no line.
+  const why = narrator.candidates.length === 0 ? t('reviewWalkthrough.dialog.noNarrator')
+    : narrator.reason === 'several' ? t('reviewWalkthrough.dialog.narratorSeveral', { count: props.selected.length })
+    : narrator.reason === 'findings_only'
+      ? t('reviewWalkthrough.dialog.narratorFindingsOnly', { engine: props.selected[0]?.label ?? '' }) : undefined;
+  return (
+    <Item
+      testID="review-start-narrator-row"
+      title={t('reviewWalkthrough.dialog.narrator')}
+      subtitle={why}
+      mode="info"
+      showChevron={false}
+      accessoryLayout="adaptive"
+      rightElement={items.length > 0 ? (
+        <ValueFieldSelect
+          testID="review-start-narrator"
+          label={t('reviewWalkthrough.dialog.narrator')}
+          items={items}
+          selectedId={narrator.engineId}
+          placeholder={t('reviewWalkthrough.dialog.chooseNarrator')}
+          onSelect={props.onSelect}
+          disabled={props.disabled}
+          compact
+        />
+      ) : undefined}
+    />
   );
 }
 
