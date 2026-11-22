@@ -175,9 +175,10 @@ const visibleGeometry = {
 };
 
 async function mountUsagePageWithApps(items: readonly ReturnType<typeof operand>[]) {
+    const serverIdentityId = 'srv_usage_apps_page';
     const callCount = items.reduce((sum, item) => sum + item.callCount, 0);
     const collector = createTelemetryCollectorActionBoundary({ machineId: 'collector-1', accountId: 'account-a',
-      serverIdentityId: 'srv_usage_apps_page', readCosts: (input) => ({ ok: true, source: input.source, since: input.since,
+      serverIdentityId, readCosts: (input) => ({ ok: true, source: input.source, since: input.since,
         until: input.until, items: [...items],
         coverage: { callCount, tokenCategoryCallCount: callCount, reportedCostCallCount: 0, lostObservations: 0, reason: null } }) });
     daemonRpc.mockImplementation(collector.answerDaemonRpc);
@@ -187,7 +188,7 @@ async function mountUsagePageWithApps(items: readonly ReturnType<typeof operand>
           key: 'a',
           serverUrl: 'https://usage-your-apps-page.test',
           accountId: 'account-a',
-          serverIdentityId: 'srv_usage_apps_page',
+          serverIdentityId,
           currentAccount: true,
         },
       ],
@@ -213,6 +214,7 @@ async function mountUsagePageWithApps(items: readonly ReturnType<typeof operand>
               {
                 ...createDeploymentEnvironmentHeaderV1({
                   id: 'env-prod',
+                  serverId: serverIdentityId,
                   projectSourceId: 'source-billing',
                   telemetryMachineId: 'collector-1',
                 }),
@@ -275,7 +277,7 @@ async function mountUsagePageWithApps(items: readonly ReturnType<typeof operand>
       filters().find((filter) => filter.field === 'sources');
     const costFacts = () =>
       screen.findAllByType(UsageCostFactsWidget)[0]?.props.slice;
-    return { screen, collector, filters, sources, costFacts };
+    return { screen, collector, filters, sources, costFacts, mountedHome };
 }
 
 const frameTitles = (screen: Awaited<ReturnType<typeof mountUsagePageWithApps>>['screen']) =>
@@ -283,7 +285,7 @@ const frameTitles = (screen: Awaited<ReturnType<typeof mountUsagePageWithApps>>[
 
 describe('Usage Sources: Agents or Your apps', () => {
   it("switches the same Costs widgets to the apps' collector calls at the viewer's prices and back, never summing the two", async () => {
-    const { screen, collector, filters, sources, costFacts } = await mountUsagePageWithApps(
+    const { screen, collector, filters, sources, costFacts, mountedHome } = await mountUsagePageWithApps(
       [operand('gpt-5-mini', 3), operand('llama-3.3-70b', 1)]);
 
     // Agents lead; the one Sources chooser offers Your apps once the viewer has an app with a collector.
