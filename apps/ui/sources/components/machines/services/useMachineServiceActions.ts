@@ -11,7 +11,8 @@ import { useServerScopedMachine } from '@/sync/store/hooks';
 /** A project-level watch's own Compose members, only when there is a choice to make; one member needs no selector. */
 const NO_MEMBERS: readonly string[] = Object.freeze([]);
 
-type UnwatchOutcome = Readonly<{ kind: 'unwatched' | 'conflict' }>
+type UnwatchOutcome = Readonly<{ kind: 'unwatched' }>
+  | Readonly<{ kind: 'conflict' }>
   | Readonly<{ kind: 'failed'; code: string; failure?: ActionExecuteFailure }>;
 
 
