@@ -18,7 +18,7 @@ import { projectMachineSetupStepChecklist, projectProjectCommandStepChecklist, r
  * With `stepOutput`, a step with retained output opens it in place (the detail shows its own output pane).
  */
 export function MachineSetupStepsChecklist(props: Readonly<{
-  operation: ActionOperationProjection;
+  operation: ActionOperationProjection | null;
   attachment: MachineSetupOutputAttachment | ProjectCommandAttachmentV1;
   title?: string | null;
   header?: React.ReactNode;
@@ -30,12 +30,12 @@ export function MachineSetupStepsChecklist(props: Readonly<{
   const { operation, stepOutput } = props;
   const [expandedIds, setExpandedIds] = React.useState<readonly string[]>([]);
   const steps = React.useMemo(() => {
-    const question = readActionOperationSudoPrompt(operation.snapshot);
+    const question = operation ? readActionOperationSudoPrompt(operation.snapshot) : null;
     const projected = props.attachment.kind === 'projectCommand'
-      ? projectProjectCommandStepChecklist(props.attachment, operation.observation)
-      : projectMachineSetupStepChecklist(props.attachment, (label) => localize('', label), question, operation.observation,
-        readMachineSetupRunFailure(operation.snapshot));
-    if (!projected || !stepOutput) return projected;
+      ? projectProjectCommandStepChecklist(props.attachment, operation?.observation)
+      : projectMachineSetupStepChecklist(props.attachment, (label) => localize('', label), question, operation?.observation,
+        operation ? readMachineSetupRunFailure(operation.snapshot) : null);
+    if (!projected || !stepOutput || !operation) return projected;
     const items = projected.items.map((item): PlanChecklistItem => {
       const output = item.output;
       if (!output) return item;

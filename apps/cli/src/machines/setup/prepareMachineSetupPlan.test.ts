@@ -1,5 +1,6 @@
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { describe, expect, it, vi } from 'vitest';
+import type { ActionOperationOwnerUpdate } from '@/daemon/actionOperations/actionOperationTypes';
 import { createActionExecutor, createEmptyMachineSetupDesiredV1, getMachineSetupDesiredV1, mutateMachineSetupDesiredV1,
   type MachineMetadataFieldPortV1, type MachineSetupDesiredV1 } from '@happier-dev/protocol';
 import { createMachineSetupPlanAction } from './machineSetupAction';
@@ -494,9 +495,18 @@ describe('Machine setup current-copy plan entry', () => {
     };
     expect(await prepareMachineSetupPlanV1(params)).not.toHaveProperty('recipePlans');
     expect([catalogReads, nativeReads]).toEqual([0, 0]);
-    expect(await prepareMachineSetupPlanV1({ ...params, input: { ...params.input, mode: 'effects' } }))
+    const effects = await prepareMachineSetupPlanV1({ ...params, input: { ...params.input, mode: 'effects' } });
+    expect(effects)
       .toMatchObject({ desiredRevision: 0, sources, recipePlans: [{ sourceIndex: 0, itemIndex: 0,
         plan: { basis: { kind: 'setup', machineId: 'guest', desiredRevision: 0, selection: sources[0]!.setup.items[0]!.selection } } }] });
+    if ('errorCode' in effects || !effects.recipePlans) throw new Error('Expected native effects');
+    const { createSetupOperationSnapshot } = await import('./setupOperationSnapshot');
+    const steps = vi.fn<(update: ActionOperationOwnerUpdate) => void>();
+    createSetupOperationSnapshot({ kind: 'machineSetup', serverId: 'home', machineId: 'guest' },
+      effects.recipePlans.map(entry => entry.plan), steps);
+    const domainRef = steps.mock.calls[0]?.[0]?.domainRef;
+    if (domainRef?.kind !== 'machineSetup' || !domainRef.steps?.length) throw new Error('Expected native operation rows');
+    expect(effects.review).toMatchObject({ steps: domainRef.steps.map(({ planIndex, stepId, label }) => ({ planIndex, stepId, label })) });
     expect(catalogReads).toBe(1);
     expect(nativeReads).toBeGreaterThan(0);
     const empty = await getMachineSetupDesiredV1({

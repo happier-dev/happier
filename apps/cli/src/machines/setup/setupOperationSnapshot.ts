@@ -4,6 +4,7 @@ import type { InteractiveSystemTaskContext } from '@happier-dev/cli-common/syste
 import type { ActionOperationOwnerUpdate } from '@/daemon/actionOperations/actionOperationTypes';
 import type { MachineSetupScriptV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { MachineSetupReviewedStepV1 } from '@happier-dev/protocol/machines/setup/machineSetupOperationV1';
 
 type SetupReference = Extract<ActionOperationDomainRefV1, { kind: 'machineSetup' }>;
 
@@ -32,16 +33,21 @@ function describeUntitledSetupStep(step: SetupStep): string {
   }
 }
 
+export function projectMachineSetupReviewedSteps(plans: readonly MachineSetupEffectPlanV1[],
+  scripts: readonly MachineSetupScriptV1[]): MachineSetupReviewedStepV1[] {
+  return [
+    ...plans.flatMap((plan, planIndex) => plan.steps.map(step => ({ planIndex, stepId: step.id,
+      label: step.review?.title ?? { key: step.id, fallback: describeUntitledSetupStep(step) } }))),
+    ...scripts.flatMap((script, index) => script.body ? [{ planIndex: plans.length, stepId: machineSetupScriptStepId(index),
+      label: { key: 'machinePresets.setup.scriptNumbered', fallback: 'Script {index}', params: { index: index + 1 } } }] : []),
+  ];
+}
+
 /** One projection for local and elevated setup, shared by apply, remove and updates. */
 export function createSetupOperationSnapshot(reference: SetupReference, plans: readonly MachineSetupEffectPlanV1[],
   publish: (update: ActionOperationOwnerUpdate) => void, scripts: readonly MachineSetupScriptV1[] = []) {
-  const initialSteps: NonNullable<SetupReference['steps']> = [
-    ...plans.flatMap((plan, planIndex) => plan.steps.map(step => ({ planIndex, stepId: step.id,
-      label: step.review?.title ?? { key: step.id, fallback: describeUntitledSetupStep(step) }, state: 'pending' as const }))),
-    ...scripts.flatMap((script, index) => script.body ? [{ planIndex: plans.length, stepId: machineSetupScriptStepId(index),
-      label: { key: 'machinePresets.setup.scriptNumbered', fallback: 'Script {index}', params: { index: index + 1 } },
-      state: 'pending' as const }] : []),
-  ];
+  const initialSteps: NonNullable<SetupReference['steps']> = projectMachineSetupReviewedSteps(plans, scripts)
+    .map(step => ({ ...step, state: 'pending' }));
   let attachment: SetupReference = { ...reference, ...(initialSteps.length ? {
     steps: initialSteps,
   } : {}) };

@@ -9,8 +9,9 @@ export function machineSetupSourceName(
     | { kind: 'accountPreset' | 'accountPresetOpaque'; presetId: string }>,
   presets: readonly (Pick<ManagedMachinePresetListEntryV1, 'id'> & Partial<Pick<OpenedManagedMachinePresetV1, 'name'>>
     & { ref?: Extract<MachineSetupSourceEntryV1, { kind: 'bundledPreset' }>['ref'] })[],
+  accountPresetFallback = t('machinePresets.setup.tab.presetUnreadable'),
 ): string {
   if (source.kind === 'bundledPreset') return presets.find(preset => preset.ref?.pluginId === source.ref.pluginId
     && preset.ref.localId === source.ref.localId)?.name ?? t('machinePresets.setup.tab.bundledPreset');
-  return presets.find((entry) => entry.id === source.presetId)?.name ?? t('machinePresets.setup.tab.presetUnreadable');
+  return presets.find((entry) => entry.id === source.presetId)?.name ?? accountPresetFallback;
 }

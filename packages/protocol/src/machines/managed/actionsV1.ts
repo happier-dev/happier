@@ -36,7 +36,7 @@ import { MachineSetupObservationStatusV1Schema, MachineSetupObservationReasonV1S
 import { MachineSetupEffectPlanV1Schema, MachineRecipeSelectionV1Schema } from '../setup/machineRecipeV1.js';
 import { MachineRecipeReferenceV1Schema } from '../setup/machineRecipeReferenceV1.js';
 import { MachineSetupBackupReceiverResultV1Schema } from '../setup/backupReceiverV1.js';
-import { MachineSetupApplyResultV1Schema } from '../setup/machineSetupOperationV1.js';
+import { MachineSetupApplyResultV1Schema, MachineSetupReviewedStepV1Schema } from '../setup/machineSetupOperationV1.js';
 export { MachineSetupApplyResultV1Schema } from '../setup/machineSetupOperationV1.js';
 import { ManagedMachineEnrollmentIdentityV1Schema } from './enrollmentIdentityV1.js';
 import * as workflowDefinitions from '../../workflows/workflowV1.js';
@@ -234,6 +234,7 @@ export const MachineSetupPlanReviewV1Schema = lazyZodSchema(() => z.strictObject
   /** The receiving Plan's known prerequisite; presentation only, never an Apply operand. */
   administratorUnavailable: z.optional(z.strictObject({ reasonCode: z.literal('mode_none') })),
   downtime: z.enum(['none', 'possible', 'unknown']),
+  steps: z.optional(z.array(MachineSetupReviewedStepV1Schema)),
   /** Native effect addresses within the opened copies; command bodies stay in their recipient projection. */
   presetUpdateEffects: z.optional(z.strictObject({ toolchain: z.boolean(),
     scripts: z.array(z.strictObject({ sourceIndex: revision(), scriptIndex: revision() })) })),

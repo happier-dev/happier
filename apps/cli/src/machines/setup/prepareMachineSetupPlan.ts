@@ -13,6 +13,7 @@ import type { MachineAdminAccessObservationV1 } from '@happier-dev/protocol/mach
 import { createMachineSetupNativeBackend, findMachineSetupBlockingObservationV1, machineSetupPlansRequireAdministratorV1,
   type MachineSetupNativeCommand, type MachineSetupNativeCommandResult } from '@happier-dev/cli-common/machineSetup';
 import { readMachineSetupStepImpact } from './machineSetupImpacts';
+import { projectMachineSetupReviewedSteps } from './setupOperationSnapshot';
 import { readMachineSetupNativeImpact } from './machineSetupNativeEffects';
 import { resolveMachineSetupRecipeProgramV1 } from './prepareMachineSetupPreparation';
 import { prepareMachineRecipeProgramV1 } from './prepareMachineRecipeProgram';
@@ -247,6 +248,9 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
     return { target: { homeId: input.homeId, machineId: input.machineId },
       // This is the execution owner's existing gate, not an OS/user guess.
       administratorRequired: machineSetupPlansRequireAdministratorV1(selectedPlans) ? true : incomplete ? null : false,
+      ...(input.mode === 'effects' ? {
+        steps: projectMachineSetupReviewedSteps(selectedPlans, executingSetups.flatMap(setup => setup.scripts ?? [])),
+      } : {}),
       ...(params.candidate === undefined ? {} : { presetUpdateEffects: {
         toolchain: executingSetups.some(setup => setup.toolchain !== undefined),
         scripts: executingSetups.flatMap((setup, sourceIndex) => (setup.scripts ?? [])

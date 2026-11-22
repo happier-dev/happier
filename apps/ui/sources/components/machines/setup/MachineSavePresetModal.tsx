@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
-import type { ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
-import type { MachineSetupSourceEntryV1, MachineSetupSourceV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
+import { machineSetupSourceOriginKeyV1, type MachineSetupSourceEntryV1, type MachineSetupSourceV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
@@ -26,7 +25,6 @@ import { randomUUID } from '@/platform/randomUUID';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 
-import { machineSetupSourceName } from './machineSetupSourceName';
 import { projectMachineSetupCapture, type MachineSetupCaptureInclude, type MachineSetupCaptureRow } from './machineSetupCapture';
 
 export type MachineSavePresetProps = Readonly<{
@@ -35,7 +33,7 @@ export type MachineSavePresetProps = Readonly<{
   scope: ServerAccountScope;
   machineName: string;
   sources: MachineSetupSourceV1;
-  presets: readonly ManagedMachinePresetListEntryV1[];
+  presetNames: ReadonlyMap<string, string>;
   /** The preset exists: the Machine has not changed. Opens its editor. */
   onSaved: (presetId: string) => void;
 }>;
@@ -54,7 +52,7 @@ const KIND_GROUPS = [
 const NO_TICKS: ReadonlySet<string> = new Set();
 
 function MachineSavePresetModal(props: MachineSavePresetProps & CustomModalInjectedProps) {
-  const { onClose, onSaved, scope, homeId, machineName, presets, sources, serverId, setChrome } = props;
+  const { onClose, onSaved, scope, homeId, machineName, presetNames, sources, serverId, setChrome } = props;
   const { theme } = useUnistyles();
   const [name, setName] = React.useState(() => t('machinePresets.setup.tab.captureNameDefault', { machine: machineName }));
   const [include, setInclude] = React.useState<MachineSetupCaptureInclude>('everything');
@@ -63,7 +61,9 @@ function MachineSavePresetModal(props: MachineSavePresetProps & CustomModalInjec
   const [failure, setFailure] = React.useState<string | null>(null);
 
   const attached = sources.filter((source): source is Exclude<MachineSetupSourceEntryV1, { kind: 'direct' }> => source.kind !== 'direct');
-  const nameOf = (source: MachineSetupSourceEntryV1) => source.kind === 'direct' ? t('machinePresets.setup.tab.captureAddedHere') : machineSetupSourceName(source, presets);
+  const nameOf = (source: MachineSetupSourceEntryV1) => source.kind === 'direct'
+    ? t('machinePresets.setup.tab.captureAddedHere')
+    : presetNames.get(machineSetupSourceOriginKeyV1(source)) ?? t('machinePresets.setup.tab.attachedPreset');
   const capture = React.useMemo(() => projectMachineSetupCapture(sources, include, unticked), [include, sources, unticked]);
   const recipes = capture.rows.some((row) => row.item.kind !== 'app');
   const target = React.useMemo(() => ({ scope, machine: null }), [scope]);

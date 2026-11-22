@@ -138,7 +138,11 @@ function MachineSetupRoot(
   const projection = useAppShellPluginUiDeclarationProjection();
   const localize = usePluginLocalizedTextResolver({ projection });
   const serverIds = React.useMemo(() => [props.serverId], [props.serverId]);
-  const presets = useMachinePresets(serverIds);
+  const [attachMenuOpen, setAttachMenuOpen] = React.useState(false);
+  const browsePresets = editable && setup.plan !== null && setup.plan.sources.every(source => source.kind === 'direct');
+  const locateMissingAddress = editable && setup.failure?.code === 'template_domain_required'
+    && (setup.observation?.attachedPresets?.length ?? 0) > 0;
+  const presets = useMachinePresets(serverIds, undefined, { demandContent: browsePresets || attachMenuOpen || locateMissingAddress });
   const presetCatalog = presets.presetsByServerId[props.serverId] ?? NO_PRESETS;
   const presetList = React.useMemo(
     () => readMachineSetupPresetChoices(presetCatalog, projection, localize),
@@ -163,9 +167,25 @@ function MachineSetupRoot(
     (recipe) => recipe.status === 'drifted',
   ).length;
   const machine = props.machineName;
+  const attention = <MachineSetupAttention
+    serverId={props.serverId}
+    machineId={props.machineId}
+    setup={setup}
+    machineName={machine}
+    drifted={drifted}
+    editable={editable}
+    localize={localize}
+    presets={presetList}
+  />;
 
   if (setup.review) {
-    return <MachineSetupReviewInPlace setup={setup} machineId={props.machineId} machineName={machine} />;
+    return (
+      <View testID="machine-setup-review">
+        <MachineSetupReviewHeading setup={setup} machineName={machine} />
+        {attention}
+        <MachineSetupReviewInPlace setup={setup} machineId={props.machineId} machineName={machine} />
+      </View>
+    );
   }
 
   const attachedKeys = new Set(attached.map((source) => source.sourceKey));
@@ -174,7 +194,8 @@ function MachineSetupRoot(
   );
   // A bodyless Check still identifies the preset. The Account catalog supplies its opened name.
   const nameOf = (source: AttachedSetupSource) => source.opened?.presetName
-    ?? machineSetupSourceName(source.reference, source.reference.kind === 'bundledPreset' ? presetList : presetCatalog);
+    ?? machineSetupSourceName(source.reference, source.reference.kind === 'bundledPreset' ? presetList : presetCatalog,
+      t('machinePresets.setup.tab.attachedPreset'));
   const nothingSetUp =
     setup.plan !== null && attached.length === 0 && recipes.length === 0;
   const firstLoad = setup.plan === null && setup.failure?.during !== 'check';
@@ -257,16 +278,7 @@ function MachineSetupRoot(
       >
         {null}
       </ItemGroup>
-      <MachineSetupAttention
-        serverId={props.serverId}
-        machineId={props.machineId}
-        setup={setup}
-        machineName={machine}
-        drifted={drifted}
-        editable={editable}
-        localize={localize}
-        presets={presetList}
-      />
+      {attention}
       <MachineSignInsSection
         serverId={props.serverId}
         machineId={props.machineId}
@@ -288,8 +300,11 @@ function MachineSetupRoot(
                   : undefined
               }
               action={
-                editable && attached.length > 0 && presetList.length > 0 ? (
+                editable && attached.length > 0 ? (
                   <AttachPresetMenu
+                    open={attachMenuOpen}
+                    onOpenChange={setAttachMenuOpen}
+                    loading={presets.statesByServerId[props.serverId]?.loading === true}
                     presets={attachable}
                     disabled={setup.pending !== null}
                     onChoose={(choice) => {
@@ -479,7 +494,7 @@ function MachineSetupRoot(
                     scope: saveScope,
                     machineName: machine,
                     sources: openedSources.map(({ source }) => source),
-                    presets: presetCatalog,
+                    presetNames: new Map(attached.map(source => [source.sourceKey, nameOf(source)])),
                     onSaved: (presetId) => router.push(machinePresetCollectionHref({ serverId: props.serverId, presetId }) as never),
                   });
                 }}
@@ -516,6 +531,10 @@ function MachineSetupAttention(
   const router = useRouter();
   const { binding } = useServerCredentialAccountScopeBinding(props.serverId);
   const homeId = getServerProfileById(props.serverId)?.serverIdentityId ?? null;
+  if (setup.review) {
+    return <MachineSetupRunProgress serverId={props.serverId} machineId={props.machineId} setup={setup}
+      machineName={props.machineName} localize={localize} onRetry={null} />;
+  }
   if (setup.operationId) {
     // A stopped run offers its own proposal again (the native child carries it for a combined Apply).
     const snapshot = setup.progressOperation?.snapshot ?? setup.operation?.snapshot;
@@ -523,7 +542,7 @@ function MachineSetupAttention(
     const { removeItemKeys, ...retry } = recovery.retry;
     const edit = recovery.edit;
     return (
-      <MachineSetupRunProgress serverId={props.serverId} setup={setup} machineName={props.machineName} localize={localize}
+      <MachineSetupRunProgress serverId={props.serverId} machineId={props.machineId} setup={setup} machineName={props.machineName} localize={localize}
         onRetry={props.editable && setup.operation ? () => {
           void setup.prepare({ ...retry, ...(snapshot?.state === 'failed' ? { previousRunFailed: true } : {}) }, removeItemKeys);
         } : null}
@@ -603,20 +622,14 @@ function MachineSetupAttention(
   return null;
 }
 
-/** The review replaces the sections in place (MR3): the shared review card, then its closing row. */
-function MachineSetupReviewInPlace(
-  props: Readonly<{ setup: MachineSetupState; machineId: string; machineName: string }>,
+function MachineSetupReviewHeading(
+  props: Readonly<{ setup: MachineSetupState; machineName: string }>,
 ) {
   const { setup } = props;
   const review = setup.review!;
-  const nameOf = React.useCallback(
-    () => props.machineName,
-    [props.machineName],
-  );
   const removing = review.intent.kind === 'remove';
   const stopping = review.intent.kind === 'stop' ? review.intent.name : null;
   return (
-    <View testID="machine-setup-review">
       <MachineTabSubHead
         title={
           stopping !== null
@@ -641,6 +654,19 @@ function MachineSetupReviewInPlace(
           testID: 'machine-setup-review-back',
         }}
       />
+  );
+}
+
+function MachineSetupReviewInPlace(
+  props: Readonly<{ setup: MachineSetupState; machineId: string; machineName: string }>,
+) {
+  const { setup } = props;
+  const review = setup.review!;
+  const nameOf = React.useCallback(() => props.machineName, [props.machineName]);
+  const removing = review.intent.kind === 'remove';
+  const stopping = review.intent.kind === 'stop' ? review.intent.name : null;
+  return (
+    <>
       {review.prepared ? (
         <MachineSetupPlanReview
           testID="machine-setup-plan-review"
@@ -692,7 +718,7 @@ function MachineSetupReviewInPlace(
           />
         </BareSectionContent>
       </ItemGroup>
-    </View>
+    </>
   );
 }
 
@@ -917,12 +943,14 @@ function AttachedPresetRow(
 /** Attach a preset (q/attach): setup presets this Machine doesn't use yet; choosing one reviews it in place. */
 function AttachPresetMenu(
   props: Readonly<{
+    open: boolean;
+    onOpenChange: (open: boolean) => void;
+    loading: boolean;
     presets: readonly MachineSetupPresetChoice[];
     disabled: boolean;
     onChoose: (preset: MachineSetupPresetChoice) => void;
   }>,
 ) {
-  const [open, setOpen] = React.useState(false);
   const items = React.useMemo(
     () =>
       props.presets.map((preset) => ({
@@ -935,14 +963,14 @@ function AttachPresetMenu(
   return (
     <DropdownMenu
       testID="machine-setup-attach-menu"
-      open={open}
-      onOpenChange={setOpen}
+      open={props.open}
+      onOpenChange={props.onOpenChange}
       items={items}
       search={items.length > 6}
       matchTriggerWidth={false}
-      emptyLabel={t('machinePresets.setup.tab.attachNone')}
+      emptyLabel={props.loading ? t('common.loading') : t('machinePresets.setup.tab.attachNone')}
       onSelect={(id) => {
-        setOpen(false);
+        props.onOpenChange(false);
         const preset = props.presets.find((entry) => entry.id === id);
         if (preset) props.onChoose(preset);
       }}

@@ -20,8 +20,7 @@ export function machineAttachedPresetsLabel(names: readonly string[]): string {
 
 /**
  * The header's "set up from" chip: the daemon's published attachment list, named from the Account's current
- * catalog (never a snapshot), opening Setup. It stays absent until those names are known, so nothing arrives
- * and then renames itself.
+ * catalog when already opened, with an attachment label while the names are unopened. It opens Setup.
  */
 export function MachineAttachedPresetsChip(
   props: Readonly<{
@@ -32,9 +31,8 @@ export function MachineAttachedPresetsChip(
 ) {
   const { theme } = useUnistyles();
   const serverIds = React.useMemo(() => [props.serverId], [props.serverId]);
-  const catalog = useMachinePresets(serverIds).presetsByServerId[props.serverId];
-  if (!catalog) return null;
-  const names = props.attached.map((source) => machineSetupSourceName(source, catalog));
+  const catalog = useMachinePresets(serverIds, undefined, { demandContent: false }).presetsByServerId[props.serverId];
+  const names = props.attached.map((source) => machineSetupSourceName(source, catalog ?? [], t('machinePresets.setup.tab.attachedPreset')));
   return (
     <RoundButton
       testID="machine-detail-attached-presets"

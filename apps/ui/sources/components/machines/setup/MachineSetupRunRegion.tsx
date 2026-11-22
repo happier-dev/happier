@@ -9,7 +9,7 @@ import { ActionOperationRows } from '@/components/inbox/actionOperations/ActionO
 import { ActionOperationSudoQuestion } from '@/components/inbox/actionOperations/ActionOperationSudoQuestion';
 import { MachineSetupStepsChecklist } from '@/components/inbox/actionOperations/MachineSetupStepsChecklist';
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
-import { projectMachineSetupStepChecklist, readMachineSetupRunFailure, type MachineSetupStepChecklist } from '@/components/inbox/actionOperations/actionOperationDetailPresentation';
+import { projectMachineSetupStepChecklist, readMachineSetupRunFailure, type MachineSetupOutputAttachment, type MachineSetupStepChecklist } from '@/components/inbox/actionOperations/actionOperationDetailPresentation';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Item } from '@/components/ui/lists/Item';
@@ -113,6 +113,7 @@ export function MachineSetupRunProgress(
   props: Readonly<{
     serverId: string;
     setup: MachineSetupState;
+    machineId: string;
     machineName: string;
     localize: (pluginId: string, value: unknown) => string;
     onRetry: (() => void) | null;
@@ -120,27 +121,34 @@ export function MachineSetupRunProgress(
   }>,
 ) {
   const { setup, localize } = props;
-  const operations = React.useMemo(() => (setup.operation ? [setup.operation] : []), [setup.operation]);
-  const progressOperation = setup.progressOperation;
+  const reviewing = setup.review !== null;
+  const operation = reviewing ? null : setup.operation;
+  const operations = React.useMemo(() => (operation ? [operation] : []), [operation]);
+  const progressOperation = reviewing ? null : setup.progressOperation;
   const domainRef = progressOperation?.snapshot.domainRef;
   const observation = progressOperation?.observation;
+  const reviewedAttachment = React.useMemo<MachineSetupOutputAttachment | null>(() => setup.reviewedSteps?.length
+    ? { kind: 'machineSetup', machineId: props.machineId, serverId: props.serverId,
+      steps: setup.reviewedSteps.map(step => ({ ...step, state: 'pending' })) }
+    : null, [props.machineId, props.serverId, setup.reviewedSteps]);
+  const attachment = domainRef?.kind === 'machineSetup' && domainRef.steps?.length ? domainRef : reviewedAttachment;
   // A stopped run explains its stopped step with its own typed failure (the root run or its native child settles it).
-  const runFailure = readMachineSetupRunFailure(progressOperation?.snapshot) ?? readMachineSetupRunFailure(setup.operation?.snapshot);
+  const runFailure = readMachineSetupRunFailure(progressOperation?.snapshot) ?? readMachineSetupRunFailure(operation?.snapshot);
   // The operation's own reviewed steps, in place; their labels carry their own fallback words.
   const steps = React.useMemo(
-    () => (domainRef?.kind === 'machineSetup'
-      ? projectMachineSetupStepChecklist(domainRef, (label) => localize('', label), null, observation, runFailure) : null),
-    [domainRef, localize, observation, runFailure],
+    () => attachment ? projectMachineSetupStepChecklist(attachment, (label) => localize('', label), null, observation, runFailure) : null,
+    [attachment, localize, observation, runFailure],
   );
   const operationId = setup.operationId;
-  if (!operationId) return null;
-  if (steps && domainRef?.kind === 'machineSetup' && progressOperation) {
+  if (steps && attachment) {
     return (
-      <MachineSetupRunRegion serverId={props.serverId} operation={setup.operation} progressOperation={progressOperation}
+      <MachineSetupRunRegion serverId={props.serverId} operation={operation} progressOperation={progressOperation}
+        attachment={attachment} reviewing={reviewing}
         steps={steps} machineName={props.machineName} onRetry={props.onRetry} onEdit={props.onEdit ?? null}
         checkedAfter={setup.checkedAfterOperationId === operationId} />
     );
   }
+  if (reviewing || !operationId) return null;
   return (
     <ItemGroup testID="machine-setup-operation" title={t('machinePresets.setup.tab.applying')}>
       {operations.length > 0 ? (
@@ -167,7 +175,9 @@ export function MachineSetupRunRegion(
     /** The run the person started: its row heads the checklist and its settlement offers Retry. */
     operation: ActionOperationProjection | null;
     /** The operation whose machineSetup attachment carries the reviewed steps (the run itself or its child). */
-    progressOperation: ActionOperationProjection;
+    progressOperation: ActionOperationProjection | null;
+    attachment?: MachineSetupOutputAttachment;
+    reviewing?: boolean;
     steps: MachineSetupStepChecklist;
     machineName: string;
     onRetry: (() => void) | null;
@@ -178,14 +188,15 @@ export function MachineSetupRunRegion(
 ) {
   const { theme } = useUnistyles();
   const { progressOperation, steps } = props;
-  const domainRef = progressOperation.snapshot.domainRef;
+  const snapshot = progressOperation?.snapshot;
+  const domainRef = props.attachment ?? snapshot?.domainRef;
   const operations = React.useMemo(
     () => (props.operation ? [props.operation] : []),
     [props.operation],
   );
   if (domainRef?.kind !== 'machineSetup') return null;
-  const sudoPrompt = readActionOperationSudoPrompt(progressOperation.snapshot);
-  const stopped = isActionOperationTerminal(progressOperation.snapshot.state)
+  const sudoPrompt = snapshot ? readActionOperationSudoPrompt(snapshot) : null;
+  const stopped = snapshot && isActionOperationTerminal(snapshot.state)
     ? (steps.items.find(
         (item) => steps.executionById[item.id]?.status === 'error',
       ) ?? null)
@@ -195,7 +206,7 @@ export function MachineSetupRunRegion(
   const runSettled = props.operation
     ? isActionOperationTerminal(props.operation.snapshot.state)
     : true;
-  const position = readRunPosition(steps);
+  const position = progressOperation ? readRunPosition(steps) : null;
   const positionText = position
     ? t(stopped ? 'machinePresets.setup.tab.stoppedAtStepOf' : 'machinePresets.setup.tab.stepOf', {
         current: position.current, total: position.total, machine: props.machineName,
@@ -203,7 +214,7 @@ export function MachineSetupRunRegion(
     : null;
   // A finished run says what is now on the Machine and when it finished (lab L7-done), from the preset
   // identity and settlement the operation carries; a run that names no preset keeps its own title.
-  const finished = progressOperation.snapshot.state === 'succeeded' ? progressOperation.snapshot : null;
+  const finished = snapshot?.state === 'succeeded' ? snapshot : null;
   const finishedPreset = finished && domainRef.preset?.name ? domainRef.preset : null;
   const finishedTitle = finishedPreset?.name
     ? t('machinePresets.setup.tab.presetIsOn', { preset: finishedPreset.name, revision: finishedPreset.revision, machine: props.machineName })
@@ -221,8 +232,8 @@ export function MachineSetupRunRegion(
   return (
     <ItemGroup
       surface="none"
-      testID="machine-setup-operation"
-      title={t('machinePresets.setup.tab.applying')}
+      testID={props.reviewing ? 'machine-setup-reviewed-steps' : 'machine-setup-operation'}
+      title={props.reviewing ? undefined : t('machinePresets.setup.tab.applying')}
     >
       <MachineSetupStepsChecklist
         testID="machine-setup-steps"
@@ -233,17 +244,17 @@ export function MachineSetupRunRegion(
         header={
           <>
             {/* What needs the person opens the run card, once: the password question, or where it stopped. */}
-            {!sudoPrompt && stoppedTitle ? (
+            {!sudoPrompt && stoppedTitle && snapshot ? (
               <MachineSetupStoppedNotice
                 serverId={props.serverId}
-                operation={progressOperation.snapshot}
+                operation={snapshot}
                 step={stoppedTitle}
                 cause={typeof stopped?.subtitle === 'string' ? stopped.subtitle : undefined}
                 onRetry={runSettled ? props.onRetry : null}
                 onEdit={runSettled ? props.onEdit ?? null : null}
               />
             ) : null}
-            {sudoPrompt ? (
+            {sudoPrompt && progressOperation ? (
               <ActionOperationSudoQuestion
                 key={sudoPrompt.id}
                 operation={progressOperation}

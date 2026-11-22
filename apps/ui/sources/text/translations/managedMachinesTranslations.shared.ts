@@ -709,6 +709,7 @@ export const managedMachinesEn = {
                 checkAgain: "Check again",
                 preset: "Preset",
                 bundledPreset: "Happier preset",
+                attachedPreset: "Attached preset",
                 presetUnreadable: "A preset you can’t open",
                 attachedRevision: ({ revision }: { revision: number }) => `Revision ${revision}`,
                 presetFacts: ({ revision, count }: { revision: number; count: number }) => `Revision ${revision} · ${count === 1 ? '1 recipe' : `${count} recipes`}`,

@@ -291,15 +291,21 @@ it('names an attached encrypted preset from the owner’s opened catalog on a bo
   } });
   const { machineSetupSourceApplyOriginKeyV1 } = await import('@happier-dev/protocol/machines/managed/actionsV1');
   const { ItemList } = await import('@/components/ui/lists/ItemList');
+  const { readMachinePresetsSnapshot, retainMachinePresets } = await import('@/sync/engine/machines/machinePresetsResource');
+  const { captureServerCredentialAccountScopeLifetime, resolveServerCredentialAccountScope } = await import('@/sync/domains/scope/serverCredentialAccountScope');
+  const account = await resolveServerCredentialAccountScope(serverId);
+  if (account.kind !== 'bound') throw new Error('Expected the opened owner catalog');
+  const release = retainMachinePresets(captureServerCredentialAccountScopeLifetime(account), homeId);
+  try {
+    await waitForHomeGovernance(() => expect(readMachinePresetsSnapshot(serverId, homeId, 'owner').value)
+      .toEqual([expect.objectContaining({ id: presetId, name })]));
+  } finally { release(); }
   const screen = await renderScreen(<ItemList>
     <MachineSetupTab serverId={serverId} machineId="devbox" machineName="devbox" online
       params={{ id: 'setup' }} setParams={vi.fn()} />
   </ItemList>);
   onTestFinished(() => screen.unmount());
   const testID = `machine-setup-source:${machineSetupSourceApplyOriginKeyV1(source)}`;
-  const { readMachinePresetsSnapshot } = await import('@/sync/engine/machines/machinePresetsResource');
-  await waitForHomeGovernance(() => expect(readMachinePresetsSnapshot(serverId, homeId, 'owner').value)
-    .toEqual([expect.objectContaining({ id: presetId, name })]));
   await waitForHomeGovernance(() => expect(harness.requests.map(request => request.path)).toContain('/v1/actions/machines.setup.plan'));
   await waitForHomeGovernance(() => expect(screen.tree.findAll(node => node.props?.testID === testID
     && typeof node.props.title === 'string')[0]?.props.title).toBe(name));
@@ -341,6 +347,9 @@ it('reads bodyless setup notices and preserves the attached copy until candidate
   const reads: unknown[] = [];
   harness.answer(home, '/v1/machines/presets/list', { select: input => {
     reads.push(input);
+    if (!input || typeof input !== 'object' || !('projection' in input) || input.projection !== 'revisions') {
+      return { body: { kind: 'listed', presets: [] } };
+    }
     return { body: { kind: 'revisions', presets: [
       { id: 'changed', homeId: 'srv_preset_headers', revision: 5, setupRevision: 2 },
       { id: 'renamed', homeId: 'srv_preset_headers', revision: 8, setupRevision: 1 },
@@ -393,6 +402,30 @@ it('reads bodyless setup notices and preserves the attached copy until candidate
   await act(async () => { hook.getCurrent().cancelReview(); });
   expect(hook.getCurrent().plan).toEqual(plan);
   expect(harness.requests.some(request => request.path === '/v1/actions/machines.setup.apply')).toBe(false);
+  const { MachineSetupTab } = await import('./MachineSetupTab');
+  const { ItemList } = await import('@/components/ui/lists/ItemList');
+  const screen = await renderScreen(<ItemList>
+    <MachineSetupTab serverId={serverId} machineId="devbox" machineName="devbox" online
+      params={{ id: 'setup' }} setParams={vi.fn()} />
+  </ItemList>);
+  onTestFinished(() => screen.unmount());
+  const { machineSetupSourceApplyOriginKeyV1 } = await import('@happier-dev/protocol/machines/managed/actionsV1');
+  const changedKey = machineSetupSourceApplyOriginKeyV1(plan.sources[0]!);
+  await waitForHomeGovernance(() => expect(screen.findByTestId(`machine-setup-source-again:${changedKey}`)).not.toBeNull());
+  const headerReadsBeforeInvalidation = reads.length;
+  await act(async () => { invalidateMachinePresets(serverId); });
+  await waitForHomeGovernance(() => expect(reads).toHaveLength(headerReadsBeforeInvalidation + 1));
+  await waitForHomeGovernance(() => expect(readMachinePresetRevisionsSnapshot(serverId, 'srv_preset_headers', 'owner'))
+    .toMatchObject({ loading: false, error: null }));
+  expect(reads.every(input => input && typeof input === 'object' && 'projection' in input && input.projection === 'revisions')).toBe(true);
+  const mountedPlansBeforeReview = harness.requests.filter(request => request.path === '/v1/actions/machines.setup.plan').length;
+  await screen.pressByTestIdAsync(`machine-setup-source-again:${changedKey}`);
+  await waitForHomeGovernance(() => expect(screen.findByTestId('machine-setup-plan-review.target.devbox')).not.toBeNull());
+  expect(harness.requests.filter(request => request.path === '/v1/actions/machines.setup.plan')).toHaveLength(mountedPlansBeforeReview + 1);
+  await screen.pressByTestIdAsync('machine-setup-review-cancel');
+  expect(screen.findByTestId(`machine-setup-source-again:${changedKey}`)).not.toBeNull();
+  expect(harness.requests.some(request => request.path === '/v1/machines/presets/get'
+    || request.path === '/v1/actions/machines.setup.apply')).toBe(false);
 });
 it('keeps the retained recipe rows across a Home-free Check after the preset is archived', async () => {
   const home = await harness.addHome({ name: 'Retained setup', serverUrl: 'https://retained-setup.example',
@@ -1270,6 +1303,7 @@ describe('Machine → Setup tab (P-M1)', () => {
     const proposedSources = () => currentPlan.sources.map(source => source.kind === 'accountPresetOpaque' && source.presetId === 'build'
       ? { ...source, presetRevision: 2, setupRevision: 2 } : source);
     const candidatePreset = { presetId: 'build', presetRevision: 2 };
+    const reviewedStep = { planIndex: 0, stepId: 'script:0', label: { key: 'setup', fallback: 'Set up workspace' } };
     const expectedInput = () => MachineSetupApplyInputV1Schema.parse({ homeId: 'srv_build', machineId: 'devbox',
       targets: [{ homeId: 'srv_build', machineId: 'devbox', sources: proposedSources(), candidatePreset,
         desiredRevision: currentPlan.desiredRevision, recipePlans: [], exclusions: [] }],
@@ -1290,7 +1324,7 @@ describe('Machine → Setup tab (P-M1)', () => {
             ? { ...source, presetContent: source.presetId === 'build' ? projectManagedMachinePresetForRecipientV1({ ...presetWire(preset('build', 'Build box', creation)), recipientAccountId: 'owner' })
               : currentPlan.resolvedSources!.find((resolved): resolved is Extract<typeof resolved, { kind: 'accountPresetOpaque' }> => resolved?.kind === 'accountPresetOpaque' && resolved.presetId === source.presetId)!.presetContent } : source), recipePlans: [],
             ...(candidate ? { candidatePreset: candidate, review: { target: { homeId: planInput.homeId, machineId: planInput.machineId },
-              administratorRequired: null, downtime: 'unknown', presetUpdateEffects: { toolchain: true,
+              administratorRequired: null, downtime: 'unknown', steps: [reviewedStep], presetUpdateEffects: { toolchain: true,
                 scripts: [{ sourceIndex: 1, scriptIndex: 0 }] } } } : {}),
           } : currentPlan;
       },
@@ -1299,6 +1333,8 @@ describe('Machine → Setup tab (P-M1)', () => {
         const output = { operationId: context.operationAcceptance.operationId, terminalId: 'environment-output' };
         applied.push(input);
         context.operationAcceptance.accept(output);
+        context.operationOwnerUpdate.update({ domainRef: { kind: 'machineSetup', serverId: 'srv_build', machineId: 'devbox',
+          steps: [{ ...reviewedStep, state: 'succeeded' }] } });
         return output;
       },
       approvalsCreate: async ({ request }) => ({
@@ -1451,6 +1487,9 @@ describe('Machine → Setup tab (P-M1)', () => {
     await waitForHomeGovernance(() => expect(answer('machine-setup-plan-review.administrator')).toContain(t('machinePresets.setup.review.unknown')));
     expect(answer('machine-setup-plan-review.downtime')).toContain(t('machinePresets.setup.review.unknown'));
     expect(mounted.findByTestId('machine-setup-review')).not.toBeNull();
+    const stepRowId = 'machine-setup-steps-row-0:script:0';
+    const reviewedRow = mounted.findByTestId(stepRowId);
+    expect(reviewedRow).not.toBeNull();
     // The review names what gets applied and where.
     expect(mounted.getTextContent()).toContain(t('machinePresets.setup.tab.reviewApplyPreset', { preset: rowName, machine: 'devbox' }));
     expect(applied).toEqual([]);
@@ -1475,6 +1514,7 @@ describe('Machine → Setup tab (P-M1)', () => {
     // The review becomes the Apply's own operation, followed by its read-only check.
     phase = 'operation rows in place';
     await waitForHomeGovernance(() => expect(mounted.findByTestId('machine-setup-operation')).not.toBeNull());
+    await waitForHomeGovernance(() => expect(mounted.findByTestId(stepRowId)).toBe(reviewedRow));
     expect(mounted.findByTestId('machine-setup-review')).toBeNull();
     // Review uses the held baseline, and Apply prepares its effects once.
     // The UI checks again when it observes the settled operation.
@@ -1496,11 +1536,11 @@ describe('Machine → Setup tab (P-M1)', () => {
       name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true,
     });
     const serverId = resolveServerProfileScopeIdForIdentifier(home);
-    await publishManagedDevbox(serverId, undefined, { setup: { version: 1, desiredRevision: 4, status: 'satisfied', recipes: [],
+    await harness.setActionPolicy(home, 'machines.presets.list', 'ui', 'allowed');
+    const machine = await publishManagedDevbox(serverId, undefined, { setup: { version: 1, desiredRevision: 4, status: 'satisfied', recipes: [],
       attachedPresets: [{ kind: 'accountPreset', presetId: 'other', presetRevision: 3, setupRevision: 1 },
         { kind: 'accountPreset', presetId: 'build', presetRevision: 1, setupRevision: 1 }] } });
-    await harness.requireUiApproval(home, 'machines.presets.list');
-    harness.answer(home, '/v1/machines/devbox', { body: { machine: createPlainMachineRowFixture({ id: 'devbox', accountId: 'owner' }) } });
+    harness.answer(home, '/v1/machines/devbox', { body: { machine: createPlainMachineRowFixture({ id: 'devbox', accountId: 'owner', machine }) } });
     harness.answer(home, '/v1/machines/presets/list', { select: input => (input as { projection?: string }).projection === 'revisions'
       // Build box's setup changed since this Machine took it; Other box only got a new title.
       ? { body: { kind: 'revisions', presets: [{ id: 'build', homeId: 'srv_build', revision: 2, setupRevision: 2 },
@@ -1569,13 +1609,16 @@ describe('Machine → Setup tab (P-M1)', () => {
     expect([inGroup('machine-setup-recipes-software', 'machine-setup-recipe:1.0'), inGroup('machine-setup-recipes-setup', 'machine-setup-recipe:1.1'),
       inGroup('machine-setup-recipes-software', 'machine-setup-recipe:1.1')]).toEqual([true, true, false]);
     // Attach lists only setup presets that aren't attached yet.
-    await waitForHomeGovernance(() => expect(screen.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
-    expect(harness.artifacts(home).list()).toEqual([]);
-    expect(harness.requests.filter(request => request.path === '/v1/machines/presets/list')).toHaveLength(0);
-    await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
-    await waitForHomeGovernance(() => expect(withProp('machine-setup-attach-menu', 'items')).toBeDefined());
+    const { withPopoverWebGlobals } = await import('@/dev/testkit/harness/popoverHarness');
+    onTestFinished(withPopoverWebGlobals());
+    await waitForHomeGovernance(() => expect(withProp('machine-setup-source-again:account:build', 'onPress')).toBeDefined());
     expect(harness.requests.filter(request => request.path === '/v1/machines/presets/list')).toHaveLength(1);
-    expect((withProp('machine-setup-attach-menu', 'items')!.props.items as { id: string }[]).map(item => item.id)).toEqual(['web']);
+    await screen.pressByTestIdAsync('machine-setup-attach-preset');
+    await waitForHomeGovernance(() => {
+      const items = withProp('machine-setup-attach-menu', 'items')?.props.items as { id: string }[] | undefined;
+      expect(items?.map(item => item.id)).toEqual(['web']);
+    });
+    expect(harness.requests.filter(request => request.path === '/v1/machines/presets/list')).toHaveLength(2);
     // Only the preset whose setup changed since this Machine took it offers Review changes; a title-only revision doesn't.
     await waitForHomeGovernance(() => expect(withProp('machine-setup-source-again:account:build', 'onPress')).toBeDefined());
     expect(withProp('machine-setup-source-again:account:other', 'onPress')).toBeUndefined();

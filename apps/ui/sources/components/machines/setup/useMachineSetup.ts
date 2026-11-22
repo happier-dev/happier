@@ -11,6 +11,7 @@ import type { MachineSetupPresetChoice } from '@/components/settings/machines/ma
 import { isMachineSetupRecipeItemV1, type MachinePresetItemV1, type MachineSetupRecipeItemV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import type { MachineSetupPresetReferenceV1, MachineSetupSourceEntryV1, MachineSetupSourceApplyV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { MachineSetupReviewedStepV1 } from '@happier-dev/protocol/machines/setup/machineSetupOperationV1';
 
 import { createActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
@@ -137,7 +138,9 @@ export function useMachineSetup(
     operationId: string;
     actionId: 'machines.setup.apply' | 'machines.setup.remove';
     runId?: string;
-  }> | Readonly<{ scopeKey: string; operationId: null; actionId?: never; runId?: never }> | null>(null);
+    reviewedSteps?: readonly MachineSetupReviewedStepV1[];
+  }> | Readonly<{ scopeKey: string; operationId: null; actionId?: never; runId?: never; reviewedSteps?: never }> | null>(null);
+  const reviewedSteps = review?.prepared?.facts.find(fact => fact.machineId === machineId && fact.homeId === homeId)?.review?.steps;
   const retainedOperation = useMachineSetupActionOperation(binding ? { serverId, machineId, accountId: binding.accountId } : null);
   const currentAccepted = accepted?.scopeKey === scopeKey ? accepted : null;
   const operationId = currentAccepted ? currentAccepted.operationId : retainedOperation?.snapshot.operationId ?? null;
@@ -260,6 +263,7 @@ export function useMachineSetup(
     (
       actionId: 'machines.setup.apply' | 'machines.setup.remove',
       result: unknown,
+      steps?: readonly MachineSetupReviewedStepV1[],
     ) => {
       const output =
         ManagedMachineActionOutputSchemasV1[actionId].safeParse(result);
@@ -270,6 +274,7 @@ export function useMachineSetup(
       }
       setReview(null);
       setAccepted({ scopeKey, operationId: output.data.operationId, actionId,
+        ...(steps ? { reviewedSteps: steps } : {}),
         ...('runId' in output.data && typeof output.data.runId === 'string' ? { runId: output.data.runId } : {}) });
     },
     [scopeKey],
@@ -428,17 +433,17 @@ export function useMachineSetup(
             actionId,
             scope: binding.scope,
             expectedInput: prepared.input,
-            onSucceeded: (value: unknown) => opened(actionId, value),
+            onSucceeded: (value: unknown) => opened(actionId, value, reviewedSteps),
             onFailed: settleFailed,
           }),
         );
         return;
       }
-      opened(actionId, outcome.result);
+      opened(actionId, outcome.result, reviewedSteps);
     } catch {
       if (binding.isCurrent()) settleFailed('managed_request_failed');
     }
-  }, [approval, binding, context, opened, pending, review]);
+  }, [approval, binding, context, opened, pending, review, reviewedSteps]);
 
   const cancelReview = React.useCallback(() => {
     setReview(null);
@@ -458,6 +463,7 @@ export function useMachineSetup(
     pending,
     approvalId: approval.approvalId,
     operationId, operation: operationId ? operation : null,
+    reviewedSteps: review ? reviewedSteps : currentAccepted?.reviewedSteps,
     progressOperation: operationId ? progressOperation : null,
     check,
     prepare,
