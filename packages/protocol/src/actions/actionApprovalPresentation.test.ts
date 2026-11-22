@@ -326,6 +326,19 @@ describe('approval field presentation', () => {
     expect(admission).toMatchObject({ status: 'unavailable', reason: 'context_unavailable' });
   });
 
+  it('keeps the actual operands readable when all declared review fields are absent', () => {
+    const presentation = describeApprovalRequestFields({
+      kind: 'plugin_target_action',
+      input: { source: 'default-source' },
+      secretInputPaths: [],
+      inputFields: [{ path: 'override.source', title: 'Source override' }],
+    });
+    expect(presentation.unrepresentable).toBeNull();
+    expect(presentation.rows.filter(row => row.kind === 'value' && !row.technical)).toEqual([
+      { kind: 'value', path: 'input.source', title: 'Source', value: '"default-source"' },
+    ]);
+  });
+
   it('discloses Saved Secret identity and every effect operand regardless of diagnostic key spelling', () => {
     const input = { savedSecret: SharedSavedSecretRefV1Schema.parse({ kind: 'shared_resource', resourceId: 'saved-key-1' }),
       credentials: { repository: '/work/effect' }, token: 'source-routing-token' };

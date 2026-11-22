@@ -1394,6 +1394,7 @@ function describeTargetActionApprovalFields(request: TargetActionApprovalFieldsR
     : [{ key: '', value: redacted }];
   try {
     const rows = confidentialRows.concat(projectTargetActionApprovalOperandRows(projection, request.inputFields ?? []));
+    const hasDeclaredFacts = rows.length > confidentialPaths.length;
     for (const { key, value } of fields) {
       if (confidentialPaths.includes('') || confidentialPaths.includes(key)) continue;
       // The built-in formatter deliberately trims and joins values. Arbitrary
@@ -1402,7 +1403,7 @@ function describeTargetActionApprovalFields(request: TargetActionApprovalFieldsR
       if (literal === undefined) return unavailable();
       rows.push({ kind: 'value', path: key ? `input.${key}` : 'input',
         title: key ? humanizeApprovalKey(key) : 'Arguments', value: literal,
-        ...(request.inputFields?.length ? { technical: true as const } : {}) });
+        ...(hasDeclaredFacts ? { technical: true as const } : {}) });
     }
     // Only the original admitted invocation can supply the hidden operands.
     return { rows, unrepresentable: confidentialPaths.length && request.approvalInputCustody !== 'live_only'
