@@ -86,7 +86,7 @@ export function projectReviewActivity(
         state: round.state,
       });
     for (const reviewer of projectReviewRoundReviewers(round, input.runReads)) {
-      if (reviewer.outcome === 'running' || reviewer.finishedAt === undefined) continue;
+      if (reviewer.outcome === null || reviewer.outcome === 'running' || reviewer.finishedAt === undefined) continue;
       events.push({ id: `reviewer:${round.ordinal}:${reviewer.reviewerId}`, at: reviewer.finishedAt,
         actor: { kind: 'reviewer', name: reviewer.name }, kind: 'reviewerFinished', outcome: reviewer.outcome });
     }

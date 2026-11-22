@@ -6,6 +6,7 @@ import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { standardCleanup } from '@/dev/testkit';
 import { EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE } from '@/dev/testkit/fixtures/executionRunCapabilitiesDescribe';
 import settledRound from '@/dev/testkit/fixtures/settledReviewRound.json';
+import historicalRound from '@/dev/testkit/fixtures/historicalReviewRound.json';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import {
   createSessionFilesViewFixture,
@@ -26,7 +27,7 @@ afterEach(async () => {
   fixture = undefined;
 });
 
-it('keeps a historical settled round aggregate-only when no individual outcome was persisted', async () => {
+it('keeps captured historical Review A names with no individual state or timing and retains its aggregate notice', async () => {
   fixture = await createSessionFilesViewFixture({
     serverUrl: 'https://review-round-reviewers.test',
     request: async (url) =>
@@ -45,28 +46,7 @@ it('keeps a historical settled round aggregate-only when no individual outcome w
       reviewId: 'review-round-reviewers',
       title: 'Retry reconnect with backoff',
     },
-    body: JSON.stringify({
-      v: 1,
-      rounds: [
-        {
-          ordinal: 1,
-          state: 'partial',
-          startedAt: 1,
-          finishedAt: 2,
-          reviewerIds: ['step-1-reviewer-1', 'step-1-reviewer-2'],
-          reviewerDisplayNames: { 'step-1-reviewer-1': 'Codex' },
-          reviewerQuality: [
-            {
-              reviewerId: 'step-1-reviewer-1',
-              displayName: 'Codex',
-              score: 4,
-              rationale: 'Clean.',
-            },
-          ],
-          runs: [],
-        },
-      ],
-    }),
+    body: JSON.stringify(historicalRound),
     ownerAccountId: 'alice',
     access: 'owner',
     storageMode: 'plain',
@@ -97,10 +77,13 @@ it('keeps a historical settled round aggregate-only when no individual outcome w
       .join(' ') ?? '';
   try {
     await vi.waitFor(() => expect(screen.findHostByTestId('review-detail:partial')).not.toBeNull());
-    expect(screen.findHostByTestId('review-detail:group:reviewers')).toBeNull();
+    expect(textOf('review-detail:participant:step-1-reviewer-1').trim()).toBe('Claude');
+    expect(textOf('review-detail:partial')).toContain(t('reviewWalkthrough.detail.qualityPartial'));
     const { ReviewDetailView } = await import('./ReviewDetailView');
     await act(async () => screen.findByType(ReviewDetailView).props.onSelectTab('runs'));
-    expect(textOf('review-detail:runs:empty')).toContain(t('reviewWalkthrough.collection.statePartial'));
+    expect(textOf('review-detail:run:step-1-reviewer-1').trim()).toBe('Claude');
+    await act(async () => screen.findByType(ReviewDetailView).props.onSelectTab('activity'));
+    expect(screen.findHostByTestId('review-activity:reviewer:1:step-1-reviewer-1')).toBeNull();
   } finally {
     await screen.unmount();
   }

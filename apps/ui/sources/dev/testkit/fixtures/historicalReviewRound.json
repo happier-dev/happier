@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "rounds": [{
+    "ordinal": 1,
+    "state": "partial",
+    "startedAt": 1795245775139,
+    "finishedAt": 1795245783669,
+    "reviewerIds": ["step-1-reviewer-1"],
+    "reviewerDisplayNames": { "step-1-reviewer-1": "Claude" },
+    "runs": [{
+      "kind": "execution",
+      "runId": "run_request_348f81b4586b3f9b946fce9383072762ee4522ef873352cb3d1e6cc4b383435f",
+      "machineId": "78107177-fb20-4ebc-bdcd-b1f162791537"
+    }]
+  }]
+}

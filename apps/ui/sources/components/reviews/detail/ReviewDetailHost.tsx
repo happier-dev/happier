@@ -146,7 +146,7 @@ export function projectRound(round: ReviewRecordRound, reads?: ReadonlyMap<strin
           id: reviewer.reviewerId,
           label: reviewer.name,
           mark: reviewer.run ? <ReviewerRunMark run={reviewer.run} /> : null,
-          state: reviewer.outcome === 'completed' && reviewer.findingsCount !== null
+          state: reviewer.outcome === null ? null : reviewer.outcome === 'completed' && reviewer.findingsCount !== null
               ? t('reviewWalkthrough.detail.findingsCount', { count: reviewer.findingsCount })
               : reviewRoundReviewerOutcomeLabel(reviewer.outcome),
           tone: reviewer.outcome === 'failed' || reviewer.outcome === 'partial' ? 'failed' : null,
@@ -349,7 +349,7 @@ export function ReviewDetailHost(props: Readonly<{
     return people ? { ...projected, groups: [...projected.groups, people] } : projected;
   }) ?? [], [human, names, questionRuns.runs, record, round?.ordinal, scope?.accountId]);
   const unfinishedReviewers = React.useMemo(() => round?.state !== 'partial' ? [] : projectReviewRoundReviewers(round, questionRuns.runs)
-    .filter(reviewer => reviewer.outcome !== 'completed'), [questionRuns.runs, round]);
+    .filter(reviewer => reviewer.outcome !== null && reviewer.outcome !== 'completed'), [questionRuns.runs, round]);
   const findings = useReviewFindingsModel({ members: questionRuns.members, record: findingRound,
     reviewerCount: round?.reviewerIds.length ?? 0, scope, accountLifetime: binding,
     serverId: scope?.serverId ?? null, sessionId: null, canAct: canEdit, pending: comments.pending,
@@ -729,7 +729,8 @@ export function ReviewRoundRuns(props: Readonly<{
         const duration = reviewer.startedAt !== undefined && reviewer.finishedAt !== undefined
           ? formatElapsedDuration(reviewer.finishedAt - reviewer.startedAt) : null;
         return <Item key={reviewer.reviewerId} testID={`review-detail:run:${reviewer.runId ?? reviewer.reviewerId}`}
-          title={reviewer.name} subtitle={joinHappierFacts(reviewRoundReviewerOutcomeLabel(reviewer.outcome), duration)}
+          title={reviewer.name} subtitle={joinHappierFacts(reviewer.outcome === null ? null
+            : reviewRoundReviewerOutcomeLabel(reviewer.outcome), duration) || undefined}
           {...(href ? { onPress: () => router.push(href as never) } : {})} />;
       }) : null}
       {runs.map((run, index) => {

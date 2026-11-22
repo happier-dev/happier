@@ -16,8 +16,8 @@ export type ReviewRoundReviewerOutcome =
 export type ReviewRoundReviewer = Readonly<{
   reviewerId: string;
   name: string;
-  /** Settled result from the round, or progress from its execution while the round remains open. */
-  outcome: ReviewRoundReviewerOutcome;
+  /** Settled result, open-round execution progress, or unknown for older rounds without individual results. */
+  outcome: ReviewRoundReviewerOutcome | null;
   runId?: string;
   startedAt?: number;
   finishedAt?: number;
@@ -63,17 +63,22 @@ export function reviewRoundReviewerName(
 
 /**
  * Settlement owns individual results and timing. Continued executions can outlive a round, so their current state
- * supplies progress only while the round is open. Historical settled rounds without individual records stay aggregate-only.
+ * supplies progress only while the round is open. Older settled rounds keep names without inventing individual facts.
  */
 export function projectReviewRoundReviewers(
   round: Pick<ReviewRound, 'state' | 'reviewerIds' | 'reviewerDisplayNames' | 'reviewerOutcomes' | 'runs'>,
   reads: ReadonlyMap<string, ReviewRoundReviewerRead> | undefined,
 ): readonly ReviewRoundReviewer[] {
-  if (round.state !== 'running') return (round.reviewerOutcomes ?? []).map(reviewer => ({
-    reviewerId: reviewer.reviewerId, name: reviewer.displayName ?? reviewRoundReviewerName(round, reviewer.reviewerId),
-    outcome: reviewer.outcome, runId: reviewer.runId, startedAt: reviewer.startedAt, finishedAt: reviewer.finishedAt,
-    findingsCount: null, run: null,
-  }));
+  if (round.state !== 'running') {
+    if (round.reviewerOutcomes === undefined) return round.reviewerIds.map(reviewerId => ({
+      reviewerId, name: reviewRoundReviewerName(round, reviewerId), outcome: null, findingsCount: null, run: null,
+    }));
+    return round.reviewerOutcomes.map(reviewer => ({
+      reviewerId: reviewer.reviewerId, name: reviewer.displayName ?? reviewRoundReviewerName(round, reviewer.reviewerId),
+      outcome: reviewer.outcome, runId: reviewer.runId, startedAt: reviewer.startedAt, finishedAt: reviewer.finishedAt,
+      findingsCount: null, run: null,
+    }));
+  }
   return round.reviewerIds.map((reviewerId, index) => {
     const reference = round.runs[index];
     const read = reference?.kind === 'execution' ? reads?.get(reference.runId) ?? null : null;
