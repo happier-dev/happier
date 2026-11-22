@@ -4039,6 +4039,7 @@ function SessionViewLoaded({
         ? connectedServiceQuotaSnapshots.snapshotsByKey[connectedServiceQuotaProfileKey] ?? null
         : null;
     const connectedServiceQuotaDisplaySnapshot = connectedServiceQuotaSnapshot;
+    // A direct link identifies the Session, but its native login needs a record published for it.
     const providerAccountUsageRecordIds = React.useMemo(
         () => readProviderAccountUsageRecordIdsFromMetadata(session.metadata),
         [session.metadata],
