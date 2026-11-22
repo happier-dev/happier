@@ -1,5 +1,5 @@
 import { bundledUsageModelPriceCatalog } from '../../usage/usageModelPriceCatalog.js';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { SessionInputAdmissionResultV1Schema } from '../../sessions/messages/sessionInputAdmission.js';
 import { createSessionMembershipReadFixture } from '../../sessions/read/sessionReadBatchV1.testkit.js';
 import { AutomationTriggerIdSchema } from '../../automations/automationTriggerIdentity.js';
@@ -260,8 +260,9 @@ function fixture(savedDefinition = definition) {
           if (item.kind === 'new' && item.trigger.kind === 'action') return actionDetail(id, item.triggerId, item.trigger);
           if (item.kind === 'new') return toTrigger(item.triggerId, item.trigger.enabled);
           const old = current.triggers.find((value) => value.id === item.triggerId)!;
-          if (current.executionRecipe?.v === 2 && current.executionRecipe.placement === 'action_invocation'
-            && old.kind === 'action' && !('consentFor' in old) && (item.enabled !== undefined || item.trigger !== undefined)) {
+          const invocationPlacement = current.executionRecipe?.v === 2 && current.executionRecipe.placement === 'action_invocation';
+          if (old.kind === 'action' && !('consentFor' in old)
+            && (item.trigger?.kind === 'action' || invocationPlacement && (item.enabled !== undefined || item.trigger !== undefined))) {
             const definition = item.trigger ?? await deps.openActionTrigger!(current, old);
             if (definition.kind !== 'action') throw new Error('Unsupported fixture replacement');
             return actionDetail(id, old.id, { ...definition, enabled: item.enabled ?? old.enabled }, old.revision + 1);
@@ -3713,6 +3714,61 @@ describe('workflow trigger Automation composition', () => {
   });
 });
 
+
+describe('Round 12 Workflow trigger admission', () => {
+  it('reopens Current Turn and distinct lifetimes from one exact Workflow list', async () => {
+    const f = fixture();
+    const listDetails = vi.fn(f.deps.automations.listDetails);
+    const owner = createWorkflowTriggerActions({ ...f.deps,
+      automations: { ...f.deps.automations, listDetails },
+      resolveSession: async () => ({ project, nativeGoalOwner: false }) });
+    const saveTurn = (sessionId: string, sourceTurnId: string) => owner.add({
+      workflow, lifetimeSession: { sessionId }, trigger: { kind: 'sessionLifecycle', enabled: true,
+        subject: { kind: 'session', serverId: 'portable-home', sessionId }, events: ['parentTurnCompleted'],
+        policy: { kind: 'currentTurn', sourceTurnId } },
+    });
+    const first = await saveTurn('session-one', 'turn-one');
+    const second = await saveTurn('session-two', 'turn-two');
+    const account = await owner.add({ workflow, project, trigger });
+
+    expect((await owner.list({ workflow })).sets).toEqual(expect.arrayContaining([
+      expect.objectContaining({ automationId: first.set.automationId, scopeSessionId: 'session-one',
+        triggers: [expect.objectContaining({ policy: { kind: 'currentTurn', sourceTurnId: 'turn-one' } })] }),
+      expect.objectContaining({ automationId: second.set.automationId, scopeSessionId: 'session-two' }),
+      expect.objectContaining({ automationId: account.set.automationId, scopeSessionId: null }),
+    ]));
+    expect(listDetails.mock.calls).toEqual([[{ workflowDefinitionId: workflow }]]);
+
+    const agent = { ...ownCaller, actionCaller: ownCaller.agentStartContext.caller };
+    expect((await owner.list({ workflow }, agent)).sets.map(set => set.automationId))
+      .toEqual([first.set.automationId, account.set.automationId]);
+    expect((await owner.list({ lifetimeSession: { sessionId: 'session-one' } })).sets.map(set => set.automationId))
+      .toEqual([first.set.automationId]);
+  });
+
+  it('admits an Any Ticket Action only from the Run placement catalog on Save and update', async () => {
+    const f = fixture();
+    const actionId = 'fixture.qa-c-r15-tickets/actions/review-ticket';
+    const descriptor = { ...actionSpecToActionDefinitionV1(getActionSpec('scm.commit.create')), id: actionId };
+    const owner = createWorkflowTriggerActions({ ...f.deps,
+      listContributedActionDefinitions: (_selection, _caller, placement?: typeof project) =>
+        placement?.machineId === project.machineId ? [descriptor] : [] });
+    const caller = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
+    const ticket = { kind: 'action' as const, phase: 'after' as const, actionIds: [actionId] };
+    await expect(owner.add(WorkflowTriggerAddRequestV1Schema.parse({
+      workflow, project: { ...project, machineId: 'ambient-machine' }, trigger: { ...ticket, enabled: true },
+    }), caller)).rejects.toMatchObject({ code: 'target_unavailable' });
+    const saved = await owner.add(WorkflowTriggerAddRequestV1Schema.parse({
+      workflow, project, trigger: { ...ticket, enabled: true },
+    }), caller);
+    expect(saved.set.triggers).toMatchObject([{ ...ticket, enabled: true }]);
+    expect(saved.set.triggers[0]).not.toHaveProperty('subject');
+    const updated = await owner.update({ automationId: saved.set.automationId, triggerId: saved.triggerId!,
+      expectedRevision: saved.set.revision, patch: { trigger: ticket } }, caller);
+    expect(updated.set.triggers).toMatchObject([{ ...ticket, enabled: true }]);
+    expect(f.rows.size).toBe(1);
+  });
+});
 
 describe('declared plugin Action subject authoring', () => {
   it('accepts the declared identity and refuses schema-invalid or missing kind metadata', async () => {

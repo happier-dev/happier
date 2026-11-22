@@ -144,7 +144,8 @@ export type WorkflowTriggerWorkflowContentV1 = Readonly<{
 }>;
 export type WorkflowTriggerActionsDependencies = Readonly<{
   automations: WorkflowTriggerAutomationOperations;
-  listContributedActionDefinitions?: (selection: Readonly<{ id: QualifiedPluginActionId }>, caller?: Caller) =>
+  listContributedActionDefinitions?: (selection: Readonly<{ id: QualifiedPluginActionId }>, caller?: Caller,
+    placement?: WorkflowProjectTargetV1) =>
     readonly ActionDefinitionSummaryV1[] | Promise<readonly ActionDefinitionSummaryV1[]>;
   nativeAccount?: WorkflowApprovedOperationNativeAccountV1;
   deploymentAction?: ActionExecutorDeps['deploymentAction'];
@@ -388,28 +389,36 @@ export async function removeWorkflowTriggersForDefinition(
 
 /** Trigger semantics compose the one Automation owner; no trigger storage or claim policy lives here. */
 export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDependencies): WorkflowTriggerActions {
-  const assertSessionAdmission = async (
-    sessionId: string, caller?: Caller, removalTriggerId?: string,
-  ): Promise<Readonly<{ authority?: AgentStartContextV1;
+  type SessionAdmission = Readonly<{ authority?: AgentStartContextV1;
     firingTrigger?: NonNullable<Awaited<ReturnType<NonNullable<WorkflowTriggerActionsDependencies['resolveRunTrigger']>>>>;
-  }>> => {
+  }>;
+  const readSessionAdmission = async (
+    sessionId: string, caller?: Caller, removalTriggerId?: string,
+  ): Promise<{ ok: true; admission: SessionAdmission } | { ok: false; code: string; details?: unknown }> => {
     caller?.signal?.throwIfAborted();
-    if (!isWorkflowTriggerAgentCallerV1(caller)) return {};
+    if (!isWorkflowTriggerAgentCallerV1(caller)) return { ok: true, admission: {} };
     const admission = caller?.workflowTriggerMutationAdmission;
     const exact = admission?.actionId === WORKFLOW_TRIGGER_REMOVE_ACTION_ID ? admission.exactFiringCleanup : undefined;
     if (exact && exact.lifetimeSessionId === sessionId && exact.triggerId === removalTriggerId) {
-      return { firingTrigger: { automationId: exact.automationId, triggerId: exact.triggerId, sessionId: exact.lifetimeSessionId } };
+      return { ok: true, admission: { firingTrigger: {
+        automationId: exact.automationId, triggerId: exact.triggerId, sessionId: exact.lifetimeSessionId,
+      } } };
     }
-    if (isActionCallerOwnSessionV1(caller, sessionId)) return {};
+    if (isActionCallerOwnSessionV1(caller, sessionId)) return { ok: true, admission: {} };
     const authority = caller ? await resolveActionAgentStartContextV1(deps, caller, sessionId) : null;
     caller?.signal?.throwIfAborted();
     const policy = SessionAgentSpawnPolicyV1StrictSchema.safeParse(caller?.sessionAgentSpawnPolicyV1);
-    if (authority && 'ok' in authority) refuse(authority.errorCode, authority.details);
-    if (!authority || !policy.success) refuse('target_unavailable');
-    if (authority.caller.kind === 'originless') refuse('run_access_denied');
+    if (authority && 'ok' in authority) return { ok: false, code: authority.errorCode, details: authority.details };
+    if (!authority || !policy.success) return { ok: false, code: 'target_unavailable' };
+    if (authority.caller.kind === 'originless') return { ok: false, code: 'run_access_denied' };
     const admitted = admitAgentStartV1(policy.data, { kind: 'session_target', targetSessionId: sessionId }, authority);
-    if (!admitted.ok) refuse(admitted.refusal.code, admitted.refusal);
-    return { authority };
+    if (!admitted.ok) return { ok: false, code: admitted.refusal.code, details: admitted.refusal };
+    return { ok: true, admission: { authority } };
+  };
+  const assertSessionAdmission = async (sessionId: string, caller?: Caller, removalTriggerId?: string) => {
+    const admitted = await readSessionAdmission(sessionId, caller, removalTriggerId);
+    if (!admitted.ok) refuse(admitted.code, admitted.details);
+    return admitted.admission;
   };
   const session = async (sessionId: string, caller?: Caller, removalTriggerId?: string) => {
     const admission = await assertSessionAdmission(sessionId, caller, removalTriggerId);
@@ -496,7 +505,8 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
   };
   type TriggerWrite = Readonly<{ triggerId: string; trigger: AutomationTriggerDefinition | AutomationTriggerDefinitionInput }>;
   const assertTargetAccess = async (target: TriggerTargetV1, context: WorkflowTriggerContextV1,
-    triggerEvents?: readonly WorkflowTriggerEventDeclarationV1[], triggerWrites: readonly TriggerWrite[] = [], caller?: Caller) => {
+    triggerEvents?: readonly WorkflowTriggerEventDeclarationV1[], triggerWrites: readonly TriggerWrite[] = [],
+    caller?: Caller, targetProject?: WorkflowProjectTargetV1) => {
     for (const { trigger } of triggerWrites) {
       if (trigger.kind !== 'action' || 'consentFor' in trigger) continue;
       // Structural headers are host output. A caller cannot author admission facts.
@@ -508,7 +518,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         const core = ActionIdSchema.safeParse(actionId);
         const contributed = core.success ? null : parseQualifiedPluginActionId(actionId);
         const contributedDefinition = contributed
-          ? (await deps.listContributedActionDefinitions?.({ id: formatQualifiedPluginActionId(contributed) }, caller))
+          ? (await deps.listContributedActionDefinitions?.({ id: formatQualifiedPluginActionId(contributed) }, caller, targetProject))
             ?.find(definition => definition.id === actionId) : undefined;
         caller?.signal?.throwIfAborted();
         const spec = core.success ? getActionSpec(core.data) : contributedDefinition;
@@ -541,7 +551,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     return resolved;
   };
   const assertWrite = async (target: TriggerTargetV1, context: WorkflowTriggerContextV1, targetProject: WorkflowProjectTargetV1 | undefined, caller?: Caller, sessionId?: string, creatingSession = false, runNow = false, admittedSession?: AdmittedSessionWrite, triggerEvents?: readonly WorkflowTriggerEventDeclarationV1[], triggerWrites?: readonly TriggerWrite[]) => {
-    const source = await assertTargetAccess(target, context, triggerEvents, triggerWrites, caller);
+    const source = await assertTargetAccess(target, context, triggerEvents, triggerWrites, caller, targetProject);
     const managed = readManagedMachineTriggerAction(target);
     if (managed) {
       if (!targetProject) refuse('invalid_input');
@@ -1195,13 +1205,23 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       const rows = await automationRows(deps.automations.listDetails, managedTarget
         ? { managedTarget, includeUnindexedManagedTargets: true } : all ? {} : 'workflow' in input
           ? { workflowDefinitionId: input.workflow } : { scope: 'account_inline' });
-      const selectedRows = all ? rows : rows.filter(row => (row.scopeSessionId ?? null) === null
-        && ('workflow' in input ? row.workflowDefinitionId === input.workflow : row.workflowDefinitionId == null));
+      const selectedRows = all ? rows : 'workflow' in input
+        ? rows.filter(row => row.workflowDefinitionId === input.workflow)
+        : rows.filter(row => row.scopeSessionId == null && row.workflowDefinitionId == null);
       // Pages can overlap while the Account changes. Project each Automation once,
       // preserving census order.
       const uniqueRows = [...new Map(selectedRows.map((row) => [row.id, row])).values()];
-      const projected = await Promise.allSettled(uniqueRows.map(async (item) => {
-        const row = item;
+      const sessionAdmissions = new Map<string, ReturnType<typeof readSessionAdmission>>();
+      const authorizeExactScopes = 'workflow' in input && isWorkflowTriggerAgentCallerV1(caller);
+      const projected = await Promise.allSettled(uniqueRows.map(async (row) => {
+        if (authorizeExactScopes && row.scopeSessionId) {
+          let admission = sessionAdmissions.get(row.scopeSessionId);
+          if (!admission) {
+            admission = readSessionAdmission(row.scopeSessionId, caller);
+            sessionAdmissions.set(row.scopeSessionId, admission);
+          }
+          if (!(await admission).ok) return null;
+        }
         if (deploymentBackup || deploymentBackupEnvironment) {
           if (deploymentBackupEnvironment && (!row.enabled || !row.triggers.some(trigger => trigger.enabled))) return null;
           const { set, definition, children } = await projectedDefinition(row);
@@ -1459,7 +1479,9 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         && !current.context.actionApprovals?.some(approval => input.triggerId === undefined
           || approval.triggerId === input.triggerId || disabledSiblings.has(approval.triggerId))
         && Object.keys(input.patch).every((key) => key === 'enabled' || key === 'trigger')) {
-        const admittedSource = await assertTargetAccess(current.target, { ...current.context }, triggerEvents, triggerWrites, caller);
+        const placement = !usesInvocationPlacement && row.assignments.length === 1 && current.context.workspace
+          ? project(row, current.context) : undefined;
+        const admittedSource = await assertTargetAccess(current.target, { ...current.context }, triggerEvents, triggerWrites, caller, placement);
         const prepared = await prepareTriggerProjection(current, row.scopeSessionId, admittedSource);
         // The Automation owner advances the outer revision while retaining
         // the private recipe and complete placement census verbatim.

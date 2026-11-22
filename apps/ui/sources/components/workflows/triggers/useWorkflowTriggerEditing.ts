@@ -110,8 +110,8 @@ export function useWorkflowTriggerEditing(params: Readonly<{
         ? { workflow: params.definitionId } : { lifetimeSession: { sessionId: lifetimeSessionId } },
     [params.definitionId, lifetimeSessionId]);
     const { sets, status, retry, acknowledge } = useWorkflowTriggerSets(request, params.accountLifetime);
-    // The Account workflow query excludes Session-lifetime rows. Its admitted lifetime page can
-    // contain other workflows and Account destinations, so select this workflow within its lifetime.
+    // A Session-lifetime page can contain other workflows and Account destinations,
+    // so select this workflow within the admitted lifetime when one was supplied.
     const workflowQueryKey = params.definitionId === null ? null : workflowTriggerQueryKey({ workflow: params.definitionId });
     const listedSet = workflowQueryKey === null ? null : lifetimeSessionId === undefined ? sets[0] ?? null
         : sets.find(candidate => candidate.scopeSessionId === lifetimeSessionId

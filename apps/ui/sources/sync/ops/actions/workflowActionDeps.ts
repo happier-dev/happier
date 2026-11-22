@@ -71,7 +71,11 @@ import { workflowRunStoreKey } from '@/sync/store/domains/workflowRuns';
 import { invalidateAutomationReadAcquisitions } from '@/sync/api/automations/apiAutomationHttp';
 import { AutomationRunStateV3Schema } from '@happier-dev/protocol/automations/automationRunStateV3';
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
-import { loadDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { loadDaemonMergedProjectionCacheEntry, loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { projectedActionToDefinition } from '@/components/appShell/currentUiContext/contributedActionDefinition';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { createPluginUiProjectedActionResolver, isPluginProjectedActionExecutable } from '@/sync/domains/plugins/ui/projection';
+import { PLUGIN_UI_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
 import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { readSessionByIdHttp } from '@/sync/engine/sessions/sessionByIdHttp';
@@ -345,7 +349,21 @@ export function createUiWorkflowAction(params: Readonly<{
         randomBytes: getRandomBytes,
     });
     const triggers = createAccountWorkflowTriggerActions({
-        ...(params.listContributedActionDefinitions ? { listContributedActionDefinitions: params.listContributedActionDefinitions } : {}),
+        listContributedActionDefinitions: async (selection, caller, placement) => {
+            if (!placement) return await params.listContributedActionDefinitions?.(selection) ?? [];
+            const identity = parseQualifiedPluginActionId(selection.id);
+            if (!identity) return [];
+            account.assertCurrent();
+            const inputs = await loadDaemonMergedProjectionInputs({
+                machineId: placement.machineId, serverId: account.serverId, accountLifetime: account.accountLifetime,
+                signal: caller?.signal ?? account.invocationSignal, sections: PLUGIN_UI_SECTIONS,
+            });
+            account.assertCurrent();
+            const projection = inputs?.pluginUiProjection;
+            if (!projection) return [];
+            const action = createPluginUiProjectedActionResolver(projection.actionsById)(identity);
+            return action && isPluginProjectedActionExecutable(action) ? [projectedActionToDefinition(action, projection)] : [];
+        },
         workflowRequesterCustody,
         sessionRead: createUiSessionRead(account),
         automations,
