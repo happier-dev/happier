@@ -4,6 +4,8 @@ import type { PermissionMode } from '@/api/types';
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
 import type { ConnectedServiceBindingsV2, ProviderBoundModelRef, SessionCapabilitySelectionV1 } from '@happier-dev/protocol';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { deriveSessionCreationTagV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 
 type RuntimeSnapshotValue<T> = Readonly<{ value: T; updatedAt: number }>;
 
@@ -78,6 +80,28 @@ const persistedProviderBinding = {
 } as const;
 
 describe('resolveSessionRuntimeSnapshot', () => {
+  it.each([false, true])('recovers original secret selections from retained Session correspondence without replacing retained options (%s)', async retainedOptions => {
+    const { resolveSessionRuntimeSnapshot } = await import('./resolveSessionRuntimeSnapshot');
+    const secretReferenceOverlay = { v: 1 as const, bindings: { TOKEN: { ref: 'original-secret' } } };
+    const correspondence = SessionCreationCorrespondenceV1Schema.parse({ v: 1,
+      sessionCreationTag: deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey: 'secret-recovery' }),
+      recipe: { execution: { machineId: 'machine', directory: { kind: 'path', path: '/repo' } },
+        organization: { folderId: null, tagIds: [] },
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+        modelSelection: null, profileId: 'original-profile', secretReferenceOverlay, requestedPermissionMode: null,
+        agentModeId: null, configuration: null, connectedServices: null, capabilitySelection: null, transcriptStorage: null,
+        terminal: null, agentSessionStartupInstructionsMarkerV1: null, checkout: null },
+    });
+    const retainedOverlay = { v: 1 as const, bindings: { TOKEN: { ref: 'retained-secret' } } };
+    const recovered = resolveSessionRuntimeSnapshot({ resolutionMode: 'retained_live_process',
+      incomingOptions: { directory: '/repo', existingSessionId: 'session', ...(retainedOptions
+        ? { profileId: 'retained-profile', secretReferenceOverlay: retainedOverlay } : {}) },
+      persistedMetadata: { sessionCreationCorrespondenceV1: correspondence },
+    }).spawnOptions;
+    expect(recovered.profileId).toBe(retainedOptions ? 'retained-profile' : 'original-profile');
+    expect(recovered.secretReferenceOverlay).toEqual(retainedOptions ? retainedOverlay : secretReferenceOverlay);
+  });
+
   it('restores the persisted launch profile for resume and preserves an explicit no-profile choice', async () => {
     const { resolveSessionRuntimeSnapshot } = await import('./resolveSessionRuntimeSnapshot');
     const incomingOptions: SpawnSessionOptions = { directory: '/repo', existingSessionId: 'session' };

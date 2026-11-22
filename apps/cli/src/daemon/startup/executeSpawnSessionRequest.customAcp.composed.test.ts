@@ -9,6 +9,13 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { ChildProcess, execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { createHash } from 'node:crypto';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { AIBackendProfileSchema } from '@happier-dev/protocol/profiles/backendProfileSchema';
+import { ProfileRecordV1Schema, sealProfileRecordContentV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
+import { artifactListResponse } from '@/testkit/http/artifactHome';
 import { startSessionHost } from '@/agent/runtime/lifecycle/sessionHost';
 import { sessionProcessEnvironment, readHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { registerRunnerTerminationHandlers } from '@/agent/runtime/lifecycle/runnerTerminationHandlers';
@@ -2343,12 +2350,23 @@ describe('Custom ACP fresh daemon launch composition', () => {
     { definitionId: 'claude-ui', failure: null },
     { definitionId: 'alpha', failure: null, ordinaryPlacement: 'unassociated' },
     { definitionId: 'alpha', failure: null, ordinaryPlacement: 'associated' },
+    { definitionId: 'alpha', failure: null, ordinaryPlacement: 'associated', secretPrecedence: 'project' },
+    { definitionId: 'alpha', failure: null, ordinaryPlacement: 'associated', secretPrecedence: 'profile' },
+    { definitionId: 'alpha', failure: null, ordinaryPlacement: 'associated', secretPrecedence: 'invocation' },
     { definitionId: 'alpha', failure: 'registry_miss' },
     { definitionId: 'alpha', failure: 'custody_mismatch' },
     { definitionId: 'alpha', failure: 'authority_refusal' },
-  ] as const)('carries qualified $definitionId runner preparation through the real daemon route ($failure, $ordinaryPlacement)', async scenario => {
+  ] as const)('carries qualified $definitionId runner preparation through the real daemon route ($failure, $ordinaryPlacement; secret precedence: $secretPrecedence)', async scenario => {
     const { definitionId, failure } = scenario;
     const ordinaryPlacement = 'ordinaryPlacement' in scenario ? scenario.ordinaryPlacement : undefined;
+    const secretPrecedence = 'secretPrecedence' in scenario ? scenario.secretPrecedence : undefined;
+    const secretSources = ['project', 'profile', 'invocation'] as const;
+    const secretRef = (source: typeof secretSources[number]) => formatSharedSavedSecretRefV1(`native-${source}-secret`);
+    const secretValue = (source: typeof secretSources[number]) => `private-${source}-value`;
+    const profile = ProfileRecordV1Schema.parse({ v: 1, id: 'native-profile', enabled: true, promptStack: [],
+      secretBindings: { TOKEN: secretRef('profile') }, definition: { kind: 'legacy', profile: AIBackendProfileSchema.parse({
+        id: 'native-profile', name: 'Native Profile', envVarRequirements: [{ name: 'TOKEN', kind: 'secret', required: true }],
+      }) } });
     const originalCredentials = storage.credentials;
     storage.credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'df38-owner', session: 'ordinary-owner-terminal' })).toString('base64url')}.fixture`, encryption: null };
     storage.persistedToken = storage.credentials.token;
@@ -2358,7 +2376,8 @@ describe('Custom ACP fresh daemon launch composition', () => {
     setActiveAccountSettingsSnapshot({ ...originalSnapshot, scopeKey: resolveAccountSettingsScopeKey(storage.credentials) });
     if (ordinaryPlacement === 'associated') {
       await mkdir(join(storage.home, '.happier'), { recursive: true });
-      await writeFile(join(storage.home, '.happier/project.json'), JSON.stringify({ version: 1 }));
+      await writeFile(join(storage.home, '.happier/project.json'), JSON.stringify({ version: 1,
+        ...(secretPrecedence ? { environmentVariables: [{ name: 'TOKEN', kind: 'secret', required: true }] } : {}) }));
     }
     const spawnApi = await ApiClient.create(storage.credentials);
     const builtInClaude = definitionId.startsWith('claude-');
@@ -2578,6 +2597,21 @@ describe('Custom ACP fresh daemon launch composition', () => {
       networkSpies.push(vi.spyOn(axios, 'get').mockImplementation(async url => {
         const path = new URL(String(url)).pathname;
         homeObservations.push({ method: 'GET', path });
+        if (secretPrecedence) {
+          if (path === '/v1/account/entity-rows/profiles/reference-guard') return homeResponse({ status: 'ready', revision: 1 });
+          if (path === '/v1/account/entity-rows/profiles/transfer') return homeResponse({ status: 'absent' });
+          if (path === '/v1/account/entity-rows/profiles') return homeResponse({ status: 'listed',
+            rows: [{ id: profile.id, revision: 1, content: sealProfileRecordContentV1({ mode: 'plain', material: null, record: profile }) }],
+            nextCursor: null, complete: true, diagnostics: [], referenceGuardRevision: 1, transferControl: { status: 'absent' } });
+          if (path === '/v1/account/authoring-memory/lastUsedProfile') return homeResponse({ status: 'absent' });
+          if (path === '/v1/account/saved-secrets/resources/materials') return homeResponse(SavedSecretResourceMaterialsResponseV1Schema.parse({
+            resources: secretSources.map(source => ({ resourceId: `native-${source}-secret`, encryptionMode: 'plain', recipientEnvelope: null,
+              storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: `native-${source}-secret`, mode: 'plain',
+                content: { v: 1, name: source, kind: 'token', value: secretValue(source) } }),
+              entry: { ref: secretRef(source), source: 'shared_resource', relationship: 'owner', ownerAccountId: 'df38-owner',
+                name: source, kind: 'token', revision: 1, materialStatus: 'ready',
+                capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } } })) }));
+        }
         const catalog = readFixtureCatalogResponse(path);
         if (catalog) return catalog;
         if (path === '/v1/auth/ping') return homeResponse({ ok: true });
@@ -2590,7 +2624,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
         if (path === '/v1/account/encryption/currentness') return homeResponse(createAccountEncryptionCurrentnessFixture({ mode: 'plain' }));
         if (path === `/v2/sessions/${sessionId}`) return homeResponse(V2SessionByIdResponseSchema.parse({ session: sessionRow }));
         if (path.startsWith('/v1/access-keys/')) return homeResponse({ accessKey: 'df41-machine-control' });
-        if (path === '/v1/artifacts') return homeResponse([]);
+        if (path === '/v1/artifacts') return homeResponse(artifactListResponse(String(url), []));
         if (path.endsWith('/messages')) return homeResponse({ messages: [], hasMore: false });
         throw new Error(`Unexpected Home GET ${path}`);
       }));
@@ -2626,6 +2660,10 @@ describe('Custom ACP fresh daemon launch composition', () => {
         }
         if (parsedUrl.pathname === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/read`) {
           const { key } = ProjectAccountRowReadRequestV1Schema.parse(body);
+          if (secretPrecedence && key.kind === 'project-organization') return homeResponse(ProjectAccountRowReadResponseV1Schema.parse({
+            status: 'present', row: { key, revision: 1, content: { t: 'plain', v: { key, value: {
+              environmentBindings: { v: 1, bindings: { TOKEN: { ref: secretRef('project'), revision: 1 } } },
+            } } } } }));
           return homeResponse(ProjectAccountRowReadResponseV1Schema.parse(ordinaryPlacement !== 'unassociated'
             && key.kind === 'workspace-ref' && key.serverId === 'df38-home' && key.id === 'df41-workspace'
             ? { status: 'present', row: workspaceRow } : { status: 'absent' }));
@@ -2684,6 +2722,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
         const observedPath = join(storage.home, `${definitionId}-first-model.json`);
         const script = writeAcpTestAgentScript({ dir: storage.home, fileName: `${definitionId}.mjs`, source: `
           import { writeFileSync } from 'node:fs';
+          import { createHash } from 'node:crypto';
           let buffer = '';
           process.stdin.on('data', chunk => {
             buffer += chunk;
@@ -2693,7 +2732,8 @@ describe('Custom ACP fresh daemon launch composition', () => {
               const request = JSON.parse(line);
               if (request.method === 'session/set_model') {
                 writeFileSync(${JSON.stringify(observedPath)}, JSON.stringify({ definitionId: process.env.DF38_SELECTION,
-                  agentTargetKey: process.env.DF41_TARGET_KEY, pid: process.pid, request }));
+                  agentTargetKey: process.env.DF41_TARGET_KEY, pid: process.pid, request,
+                  secretSha256: createHash('sha256').update(process.env.TOKEN ?? '').digest('hex') }));
                 process.exit(0);
               }
               const result = request.method === 'initialize' ? { protocolVersion: 1, agentCapabilities: { loadSession: true }, authMethods: [] }
@@ -2848,6 +2888,9 @@ describe('Custom ACP fresh daemon launch composition', () => {
             directory: { kind: 'path', path: storage.home }, agentTarget: spawnInput.options.agentTarget,
             connectedServices: { v: 2, bindingsByServiceId: {} },
             permissionMode: spawnInput.options.permissionMode, modelSelection: spawnInput.options.modelSelection,
+            ...(secretPrecedence && secretPrecedence !== 'project' ? { profileId: profile.id } : {}),
+            ...(secretPrecedence === 'invocation' ? { secretReferenceOverlay: { v: 1,
+              bindings: { TOKEN: { ref: secretRef('invocation'), revision: 1 } } } } : {}),
             ...(builtInClaude ? { environmentVariables: spawnInput.options.environmentVariables } : {}),
           }), { surface: definitionId === 'claude-ui' ? 'rpc' : 'cli', authority: 'present_user', actionCaller: { kind: 'host' } });
           expect(action, JSON.stringify(action)).toMatchObject({ ok: true });
@@ -2899,6 +2942,8 @@ describe('Custom ACP fresh daemon launch composition', () => {
         // The real selected definition's environment qualifies the physical
         // vendor process receiving that first model request.
         const firstModel = JSON.parse(observed!);
+        if (secretPrecedence) expect(firstModel.secretSha256, 'The native child must receive Project < Profile < invocation secret precedence')
+          .toBe(createHash('sha256').update(secretValue(secretPrecedence)).digest('hex'));
         if (builtInClaude) expect(firstModel.args).toContain('--output-format');
         else expect(firstModel).toMatchObject({ definitionId, agentTargetKey: buildBackendTargetKeyV2(admittedTarget), request: {
           method: 'session/set_model', params: { modelId: 'ollama/qwen2.5:3b' } } });

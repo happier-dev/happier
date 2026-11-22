@@ -365,6 +365,8 @@ export async function promoteForegroundDaemonServiceAuthority(input: Readonly<{
     runnerManagedDependencyRetentionV1;
   tracked.runnerAgentInvocationContext = Object.freeze({
     cwd: input.invocationContext.cwd,
+    ...(input.invocationContext.profileId ? { profileId: input.invocationContext.profileId } : {}),
+    ...(input.invocationContext.secretReferenceOverlay ? { secretReferenceOverlay: input.invocationContext.secretReferenceOverlay } : {}),
     environment: Object.freeze({}),
     ...(input.invocationContext.agentCliLaunch
       ? { agentCliLaunch: input.invocationContext.agentCliLaunch }

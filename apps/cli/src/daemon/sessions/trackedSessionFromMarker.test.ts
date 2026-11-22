@@ -6,7 +6,8 @@ import type { TrackedSession } from '../types';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('buildTrackedSessionFromMarker', () => {
-  it('restores the non-secret invocation context for an exact daemon runner marker', () => {
+  it.each([false, true])('restores the non-secret invocation context for an exact daemon runner marker (retained selection: %s)', retainedSelection => {
+    const secretReferenceOverlay = { v: 1 as const, bindings: { TOKEN: { ref: 'original-secret' } } };
     const marker = {
       trackingKey: legacyPidSessionTrackingKey(123), pid: 123,
       happySessionId: 'session-1',
@@ -22,8 +23,11 @@ describe('buildTrackedSessionFromMarker', () => {
       marker,
       startedByFallback: 'reattached',
       reattachedFromDiskMarker: true,
+      ...(retainedSelection ? { spawnOptions: { profileId: 'original-profile',
+        secretReferenceOverlay, environmentVariables: { TOKEN: 'not-retained' } } } : {}),
     }).runnerAgentInvocationContext).toEqual({
       cwd: '/tmp/project',
+      ...(retainedSelection ? { profileId: 'original-profile', secretReferenceOverlay } : {}),
       environment: {},
       providerBindingActive: false,
     });

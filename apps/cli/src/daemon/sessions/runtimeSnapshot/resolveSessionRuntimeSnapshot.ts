@@ -19,6 +19,7 @@ import { readAppliedSessionCapabilitySelectionFromMetadataV1, readSessionCapabil
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
+import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { projectSessionModelSelectionV2ToV1, sessionModelSelectionV2TeamBindingIntent, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import type { ProviderBoundModelRef, ConnectedServiceMaterializationIdentityV1, SessionModelSelectionV2, ConnectedServiceBindingsV2, SessionCapabilitySelectionV1, SessionTeamCredentialBindingIntentV1 } from '@happier-dev/protocol';
 import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
@@ -527,10 +528,21 @@ export function resolveSessionRuntimeSnapshot(
     explicitResumeId,
     retainedLiveRuntimeOptions,
   );
+  // Live recovery has the same immutable launch provenance as inactive resume;
+  // recover references from that record without acquiring current defaults.
+  const retainedCorrespondence = params.resolutionMode === 'retained_live_process'
+    ? SessionCreationCorrespondenceV1ReadSchema.safeParse(params.persistedMetadata?.sessionCreationCorrespondenceV1)
+    : null;
+  const retainedRecipe = retainedCorrespondence?.success ? retainedCorrespondence.data.recipe : undefined;
   const profileId = params.incomingOptions.profileId
     ?? (typeof params.persistedMetadata?.profileId === 'string' ? params.persistedMetadata.profileId : undefined)
-    ?? params.trackedSpawnOptions?.profileId;
+    ?? params.trackedSpawnOptions?.profileId
+    ?? retainedRecipe?.profileId ?? undefined;
   if (profileId !== undefined) spawnOptions.profileId = profileId;
+  const secretReferenceOverlay = params.incomingOptions.secretReferenceOverlay
+    ?? params.trackedSpawnOptions?.secretReferenceOverlay
+    ?? retainedRecipe?.secretReferenceOverlay;
+  if (secretReferenceOverlay) spawnOptions.secretReferenceOverlay = secretReferenceOverlay;
   // Only the tracked launch of this exact Session can supply missing facts.
   // Server metadata is never a producer of admitted requester attribution.
   const sessionId = readSessionId(params.incomingOptions);

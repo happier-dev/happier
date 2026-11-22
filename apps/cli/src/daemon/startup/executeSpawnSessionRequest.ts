@@ -1618,6 +1618,8 @@ export async function executeSpawnSessionRequest(
                 runnerAgentSessionBootstrap
                     ? Object.freeze({
                         cwd: directory,
+                        ...(options.profileId ? { profileId: options.profileId } : {}),
+                        ...(options.secretReferenceOverlay ? { secretReferenceOverlay: options.secretReferenceOverlay } : {}),
                         environment: Object.freeze({}),
                         ...(spawnEnvironment.agentCliLaunchSpec
                             ? {

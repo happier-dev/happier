@@ -441,7 +441,7 @@ async function recoverMarkerlessDaemonSpawnedSessions(params: Readonly<{
           incompleteMarker?.agentRuntimeDaemonServiceAuthorityFilePath,
         runnerManagedDependencyRetentionV1:
           incompleteMarker?.runnerManagedDependencyRetentionV1,
-      });
+      }, spawnOptions);
     const trackingKey = incompleteMarker?.trackingKey ?? mintSessionTrackingKey();
     trackSession(trackedSessionsByKey, {
       trackingKey,

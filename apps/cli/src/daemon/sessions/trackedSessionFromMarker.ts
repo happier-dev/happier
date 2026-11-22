@@ -32,6 +32,7 @@ export function resolveReattachedRunnerAgentInvocationContext(
     | 'agentRuntimeDaemonServiceAuthorityFilePath'
     | 'runnerManagedDependencyRetentionV1'
   >,
+  spawnOptions?: Pick<SpawnSessionOptions, 'profileId' | 'secretReferenceOverlay'>,
 ): TrackedSession['runnerAgentInvocationContext'] {
   if (
     marker.startedBy !== 'daemon'
@@ -42,6 +43,8 @@ export function resolveReattachedRunnerAgentInvocationContext(
 
   return Object.freeze({
     cwd: marker.cwd,
+    ...(spawnOptions?.profileId ? { profileId: spawnOptions.profileId } : {}),
+    ...(spawnOptions?.secretReferenceOverlay ? { secretReferenceOverlay: spawnOptions.secretReferenceOverlay } : {}),
     environment: Object.freeze({}),
     providerBindingActive: Boolean(
       marker.runnerManagedDependencyRetentionV1
@@ -65,7 +68,7 @@ export function buildTrackedSessionFromMarker(params: Readonly<{
   const processStartTimeMs = params.processStartTimeMs ?? marker.processStartTimeMs;
   const processCommand = params.processCommand ?? marker.processCommand;
   const runnerAgentInvocationContext =
-    resolveReattachedRunnerAgentInvocationContext(marker);
+    resolveReattachedRunnerAgentInvocationContext(marker, params.spawnOptions);
 
   return {
     startedBy: marker.startedBy ?? params.startedByFallback,

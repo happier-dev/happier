@@ -208,7 +208,9 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
         capabilityDigest: fixture.published.capabilityDigest,
         invocationContext: {
           cwd: '/workspace',
-          environment: {},
+          profileId: 'original-profile',
+          secretReferenceOverlay: { v: 1, bindings: { TOKEN: { ref: 'original-secret' } } },
+          environment: { TOKEN: 'not-retained' },
           providerBindingActive: false,
         },
         persistAuthorityPath: async () => true,
@@ -218,6 +220,10 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
         readPluginImmutableGenerationIntegrityCurrentness,
       })).resolves.toBe(true);
 
+      expect(tracked.runnerAgentInvocationContext).toEqual({
+        cwd: '/workspace', profileId: 'original-profile', secretReferenceOverlay: { v: 1, bindings: { TOKEN: { ref: 'original-secret' } } },
+        environment: {}, providerBindingActive: false,
+      });
       expect(readPluginImmutableGenerationIntegrityCurrentness)
         .toHaveBeenCalledWith(
           retained.pluginId,
