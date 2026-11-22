@@ -9,6 +9,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { ModalProvider } from '@/modal';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { t } from '@/text';
+import { APPROVAL_PROFILE_ACCOUNT_OPTION_ID } from '@/components/approvals/ApprovalProfileSelect';
 import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
@@ -73,8 +74,8 @@ describe('Session setup approval profile', () => {
                 expect(screen.findByTestId('session-approval-profile:release-profile')).toBeNull();
                 await screen.pressByTestIdAsync('session-approval-profile-row');
                 await vi.waitFor(() => expect(screen.findByTestId('session-approval-profile:release-profile')).not.toBeNull());
-                // "Machine default" clears the Session's own choice (null): it follows its Machine, then the Account.
-                await screen.pressByTestIdAsync('session-approval-profile:machine_default');
+                // Clearing the stored choice uses Account settings at later admissions.
+                await screen.pressByTestIdAsync(`session-approval-profile:${APPROVAL_PROFILE_ACCOUNT_OPTION_ID}`);
                 await vi.waitFor(() => expect(screen.tree.root.findAllByProps({ testID: 'session-approval-profile-conflict' }).length).toBeGreaterThan(0));
                 // The boundary counts attempted PATCHes, including independent projection
                 // maintenance. The owner's persisted profile must retain the refused intent.

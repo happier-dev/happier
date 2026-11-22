@@ -6,7 +6,7 @@ import { ActionPolicyInputSchemas, ActionPolicyOutputSchemas } from './actionPol
 import { applyActionPolicyMutation } from './actionAudiencePolicy.js';
 import { accountSettingsParse } from '../account/settings/accountSettings.js';
 import { applyAccountSettingMutationV1 } from '../account/settings/accountSettingMutationV1.js';
-import { ApprovalProfileV1Schema } from './approvalProfiles.js';
+import { ApprovalProfileV1Schema, resolveSessionApprovalProfileReferenceV1 } from './approvalProfiles.js';
 import { bindApprovalProfileV1 } from './approvalProfileArtifactV1.js';
 import { createActionExecutor, invokeHostReviewedChildV1 } from './actionExecutor.js';
 import { DeploymentReceiptAcceptedResultV1Schema } from '../deployments/deploymentReceiptResultV1.js';
@@ -131,6 +131,46 @@ describe('Account approval profiles at Action admission', () => {
     expect(effects).toBe(3);
     expect(reads).toBe(3);
   });
+
+  it.each(['reviewed-deploys', null, 'deleted'] as const)(
+    'uses the captured %s choice without a Machine-default lookup during admission', async storedProfileId => {
+      let machineDefaultReads = 0;
+      let metadataReads = 0;
+      let effects = 0;
+      const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 3, requestKey: 'captured-profile',
+        targetLinkId: 'link', expectedTargetLinkRevision: 4, contentArtifactId: 'definition', contentHeaderVersion: 1, contentBodyVersion: 1 };
+      const machineApprovalProfiles = {
+        get ['machine-a']() { machineDefaultReads++; return 'off'; },
+      };
+      const metadata = { machineId: 'machine-a', approvalProfileId: storedProfileId };
+      const executor = createActionExecutor({
+        // Session metadata and the deployment effect are process boundaries.
+        // The selector, Artifact binder and admission execute their real logic.
+        readActionApprovalProfileId: async () => {
+          metadataReads++;
+          return { approvalProfileId: resolveSessionApprovalProfileReferenceV1(metadata),
+            approvalProfileTeamOrGroupDerived: false };
+        },
+        readApprovalProfile: id => bindApprovalProfileV1(profiles, id),
+        resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId: 'environment' } }),
+        prepareDeploymentAction: async () => ({ input, preview: { sourceMethod: 'gitIntegration' } }),
+        deploymentAction: async () => {
+          effects++;
+          return DeploymentReceiptAcceptedResultV1Schema.parse({ ok: true, environmentId: 'environment',
+            revision: 4, kind: 'pending', actionOperationId: 'operation' });
+        },
+      });
+      const result = await executor.execute('deployments.deploy', input, {
+        surface: 'agent', authority: 'account_automation', serverId: 'home',
+        actionCaller: { kind: 'session', sessionId: 'cmvbeu0ig0040m203zcysq5v8' },
+        actionsSettings: { ...settings, machineApprovalProfiles }, interactivePresentation: 'unavailable',
+      });
+      expect(result).toMatchObject(storedProfileId === 'reviewed-deploys'
+        ? { ok: false, errorCode: 'action_interactive_review_required' } : { ok: true });
+      expect(effects).toBe(storedProfileId === 'reviewed-deploys' ? 0 : 1);
+      expect(metadataReads).toBe(1);
+      expect(machineDefaultReads).toBe(0);
+    });
 
   it('keeps profile changes separate from the broad Run control waiver', () => {
     const spec = getActionSpec('execution.run.action');
