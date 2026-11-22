@@ -29,6 +29,7 @@ import type { ActionExecutorContext, ActionExecutorDeps, ApprovalRequestV1, Appr
 import * as persistence from '@/persistence';
 
 import { consumeDeferredCliApprovalResult, createCliActionExecutorHarness } from './createCliActionExecutorHarness';
+import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
 import { createCliApprovalsArtifactStore } from './approvals/artifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
@@ -821,6 +822,51 @@ describe('createCliActionExecutorHarness', () => {
     expect(requiresApproval()).toBe(false);
     settings = normalizeActionsSettingsV1({ ...settings, actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } });
     expect(requiresApproval()).toBe(true);
+  });
+
+  it('observes a managed child approval under the admitted operation after the invocation reader ended (L12 Main r196)', async () => {
+    const tokenFor = (accountId: string) => `fixture.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+    const credentials = { token: tokenFor('requester'), encryption: null };
+    const expectedOrigin = { actionId: 'machines.setup.adminAccess.set' as const, requestId: 'acquire-request',
+      accountId: 'requester', serverIdentityId: 'srv_home', machineId: 'guest' };
+    const result = { status: 'applied', policy: { version: 1, mode: 'none' }, metadataVersion: 1 };
+    const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'executed', createdAtMs: 1, updatedAtMs: 3,
+      createdBy: { surface: 'mcp' }, requestedSurface: 'mcp',
+      executionOriginV1: { v: 1, authority: 'account_automation', surface: 'mcp', caller: { kind: 'host' },
+        serverId: 'requester-home', ...expectedOrigin, target: { kind: 'machine', machineId: 'guest' } },
+      approval: { flow: 'deferred', result: 'none' }, actionId: expectedOrigin.actionId, actionArgs: {}, summary: 'Set admin access',
+      decision: { kind: 'approve', decidedAtMs: 2, authority: 'present_user' },
+      execution: { executedAtMs: 3, ok: true, result } });
+    // Artifact HTTP and Socket.IO are the transport boundaries; credential
+    // selection, subject matching and the recorded-result projection stay real.
+    vi.spyOn(axios, 'post').mockRejectedValue(new Error('observation_must_not_execute'));
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      if (String(url).endsWith('/v1/account/encryption')) return { status: 200,
+        data: AccountEncryptionModeResponseSchema.parse({ mode: 'plain', updatedAt: 1 }) };
+      return { status: 200, data: { id: 'child-approval', ownerAccountId: 'requester', access: 'owner', encryptionMode: 'plain',
+        publicAudience: 'none', header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(request)),
+        body: encodePlainArtifactStoredContent({ body: JSON.stringify(request) }),
+        dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 3 } };
+    });
+    // The controller factory's reader belongs to the invocation that admitted
+    // the long-running Create; that invocation has ended (QA 107 / r196).
+    const observerFor = (captured: typeof credentials) => createCliActionExecutorFromCredentials({ credentials: captured,
+      serverId: 'requester-home', serverApiUrl: 'https://requester-home.example', readCredentials: async () => null });
+    let operationCurrent = true;
+    const observe = (captured: typeof credentials, isCurrent?: () => Promise<boolean>) => observerFor(captured)
+      .observeRecordedApprovalExecution({ artifactId: 'child-approval', expectedOrigin, signal: new AbortController().signal,
+        ...(isCurrent ? { isCurrent } : {}) });
+    await expect(observe(credentials, async () => operationCurrent)).resolves.toEqual({ ok: true, result });
+    // The admitted operation's own currentness still withdraws the observation.
+    operationCurrent = false;
+    await expect(observe(credentials, async () => operationCurrent))
+      .resolves.toMatchObject({ ok: false, errorCode: 'approval_stale' });
+    // Without an admitted operation owner, an absent profile still refuses, and
+    // custody of another Account never observes this Account's approval.
+    await expect(observe(credentials)).resolves.toMatchObject({ ok: false, errorCode: 'account_mismatch',
+      failureCause: { nativeErrorReason: 'current_credentials_unavailable' } });
+    await expect(observe({ ...credentials, token: tokenFor('other') }, async () => true))
+      .resolves.toMatchObject({ ok: false, errorCode: 'account_mismatch', failureCause: { nativeErrorReason: 'captured_account_differs' } });
   });
 
   it.each([{ explicitTarget: true, mode: 'plain' }, { explicitTarget: false, mode: 'plain' },

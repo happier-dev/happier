@@ -2387,7 +2387,12 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         return await executor.resolveReviewServices?.(signal ? { ...routing.context, signal } : routing.context) ?? {};
       },
       observeRecordedApprovalExecution: async args => {
-        const selection = await readApprovalReplayCredentials(args.expectedOrigin.accountId);
+        // An admitted operation supplies its own retained currentness, which the
+        // observer rechecks before every read. The invocation reader may have
+        // ended with the request that admitted it; captured custody still has
+        // to name the expected Account.
+        const selection = selectApprovalReplayCredentials(params.credentials,
+          await readCurrentCredentials() ?? (args.isCurrent ? params.credentials : null), args.expectedOrigin.accountId);
         if (!selection.ok) return selection;
         const { credentials } = selection;
         const executor = await resolveExecutor(credentials);
