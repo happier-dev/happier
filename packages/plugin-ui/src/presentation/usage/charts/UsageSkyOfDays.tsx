@@ -398,15 +398,16 @@ export function UsageSkyOfDays(props: UsageSkyOfDaysProps) {
                 ? null
                 : svgText.draw(
                     {
-                      x: small ? 0 : width,
-                      y: small ? guide.y - 4 : guide.y + 4,
+                      // The guide labels hold the right-hand gutter at every width, as Daily usage does (USAGE-ACCEPT 1121
+                      // #23: on a phone they moved inside the plot and the first star sat on "$3.88").
+                      x: width,
+                      y: guide.y + 4,
                       text: ordinal
                         ? guide.label === 4
                           ? labels.levels.busiest
                           : labels.levels.quiet
                         : labels.formatValue(guide.label),
-                      anchor: small ? 'start' : 'end',
-                      halo: small ? props.paint.paper : undefined,
+                      anchor: 'end',
                     },
                     `gl${index}`,
                   ),
@@ -649,11 +650,11 @@ function layoutSky(
   const days = model.days;
   const count = Math.max(2, days.length);
   const ordinal = model.encoding === 'ordinal';
-  // A phone draws its guide labels inside the plot above their line, so the top guide's label needs the streak
-  // bracket to sit clear above it (USAGE-ACCEPT #11: the label ran through the bracket).
-  const top = small ? 40 : 38;
+  const top = 38;
   const bottom = height - 20;
-  const right = width - (small ? 6 : ordinal ? 64 : 78);
+  // The guide labels' gutter: level words need more room than an amount; a phone's amounts take the narrower gutter
+  // Daily usage gives them at that width.
+  const right = width - (ordinal ? 64 : small ? 44 : 78);
   // A short period (a day, a week, a fortnight) gives each day its own column with the star at its centre and a larger
   // star, so a few days read as days rather than marks stranded at the edges of a long field.
   const sparse = days.length <= SPARSE_MAX_DAYS;

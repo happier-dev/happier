@@ -96,6 +96,25 @@ describe('Sky of days', () => {
       for (const node of top) expect(Number(node.getAttribute('y')) - 11).toBeGreaterThan(legsEnd);
     } finally { mount.unmount(); }
   });
+  it('keeps the guide labels in the right-hand gutter on a phone, clear of the stars (acceptance 1121 #23)', () => {
+    const start = Date.UTC(2026, 10, 7);
+    const days = Array.from({ length: 7 }, (_, index) => ({
+      date: new Date(start + index * 86_400_000).toISOString().slice(0, 10),
+      state: 'active' as const, value: index === 0 ? 36 : 10 + index, leader: null,
+    }));
+    const mount = mountThroughReactNativeWeb(<UsageSkyOfDays theme={SURFACE_CONTEXT_THEME_FIXTURE} paint={paint} agents={agents}
+      model={{ encoding: 'amount', colourBy: 'leadingAgent', days }} labels={labels} label="Sky of days" width={340} testID="sky-phone" />);
+    try {
+      const guides = [...mount.container.querySelectorAll('svg text')].filter(node => node.textContent === '36 min');
+      expect(guides.length).toBeGreaterThan(0);
+      for (const node of guides) {
+        expect(node.getAttribute('text-anchor')).toBe('end');
+        expect(Number(node.getAttribute('x'))).toBe(340);
+      }
+      const starsX = [...mount.container.querySelectorAll('svg circle')].map(node => Number(node.getAttribute('cx')));
+      expect(Math.max(...starsX)).toBeLessThan(340 - 44);
+    } finally { mount.unmount(); }
+  });
   it('says each day exactly, keeps unknown apart from no activity, and names a tie by both Agents', () => {
     const model: UsageSkyModel = { encoding: 'amount', colourBy: 'leadingAgent', days: [
       { date: '2026-09-01', state: 'active', value: 90, leader: { kind: 'agent', agentId: 'claude' } },

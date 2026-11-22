@@ -192,6 +192,7 @@ describe('UsageFilterBar', () => {
   });
 
   it('collapses every scope filter into one Filters chooser on a phone, keeping each choice and the narrowed count', async () => {
+    const { t } = await import('@/text');
     const selections: string[] = [];
     const screen = await renderBar(selections);
     const chips = screen
@@ -207,10 +208,15 @@ describe('UsageFilterBar', () => {
       </>,
     );
     const list = content.findAllByType(SelectionList)[0]!;
+    // USAGE-ACCEPT 1121 #19: the sheet is one row per scope with its current value, each pushing its own list, so
+    // Projects never sits below every machine and the sheet keeps its height when the lists settle.
     const sections = list.props.rootStep.sections;
-    expect(
-      sections.map((section: { title?: string }) => section.title),
-    ).toEqual(['sources', 'agents']);
+    expect(sections).toHaveLength(1);
+    const rows = sections[0].options as readonly { id: string; label: string; subtitle?: string; openStep?: { sections: readonly { title?: string; options: readonly { id: string }[] }[] } }[];
+    expect(rows.map(row => [row.label, row.subtitle])).toEqual([['sources', t('usage.board.page.filterAll')], ['agents', 'Claude']]);
+    expect(rows.every(row => row.openStep !== undefined)).toBe(true);
+    expect(rows[1]!.openStep!.sections.flatMap(section => section.options.map(option => option.id)))
+      .toEqual([`agents\u0001${USAGE_SCOPE_FILTER_ALL}`, 'agents\u0001claude', 'agents\u0001codex']);
     expect([...list.props.selection.selectedIds].sort()).toEqual(
       ['agents\u0001claude', `sources\u0001${USAGE_SCOPE_FILTER_ALL}`].sort(),
     );

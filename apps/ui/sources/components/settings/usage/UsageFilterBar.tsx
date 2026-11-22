@@ -182,10 +182,15 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
               : {}),
             reservePresence: true,
             ...(coverageIncomplete ? { presence: 'attention' as const } : {}),
+            // One row per scope with its current value, each pushing its own list (phones recompose: destinations are a
+            // value and a chevron). Projects never sits below every machine, and the sheet keeps its four rows' height
+            // when the lists settle (USAGE-ACCEPT 1121 #19).
             renderPopoverContent: ({ close, maxHeight }) => (
-              <UsageScopeSections sections={props.scopeFilters.flatMap((filter, index) => usageFilterSections(filter,
-                filters[index]?.options ?? [], filters[index]?.selectedIds ?? new Set(),
-                (id, context, invocation) => filters[index]?.onChange?.(id, context, invocation)))}
+              <UsageScopeSections scopes={props.scopeFilters.map((filter, index) => ({
+                id: filter.field, title: filter.title, value: filters[index]?.valueLabel ?? '',
+                sections: usageFilterSections(filter, filters[index]?.options ?? [], filters[index]?.selectedIds ?? new Set(),
+                  (id, context, invocation) => filters[index]?.onChange?.(id, context, invocation)),
+              }))}
                 onRequestClose={close} maxHeight={maxHeight} testID={`${props.testID}.scope`} />
             ),
             testID: `${props.testID}.scope`,
@@ -306,16 +311,19 @@ function usageFilterSections(filter: UsageWidgetPageFilter, choices: UsageScopeS
   ];
 }
 
-/** Every scope as one section of a chooser; a row toggles exactly what its own chip would. */
+/**
+ * A chooser's scope sections; a row toggles exactly what its own chip would. Given `scopes` (the phone's one Filters
+ * sheet), the chooser opens on one row per scope with its current value and pushes that scope's sections.
+ */
 function UsageScopeSections(props: Readonly<{
-  sections: readonly UsageScopeSection[];
+  sections?: readonly UsageScopeSection[];
+  scopes?: readonly Readonly<{ id: string; title: string; value: string; sections: readonly UsageScopeSection[] }>[];
   onRequestClose: (callerContext?: ActionExecutorContext) => void;
   maxHeight: number;
   testID: string;
 }>) {
-  const step = React.useMemo((): SelectionListStep => ({
-    id: 'usage-scope',
-    sections: props.sections.map(section => ({
+  const step = React.useMemo((): SelectionListStep => {
+    const listed = (sections: readonly UsageScopeSection[]) => sections.map(section => ({
       kind: 'static' as const,
       id: section.id,
       title: section.title,
@@ -328,10 +336,24 @@ function UsageScopeSections(props: Readonly<{
         ...(option.accessory ? { rightAccessory: option.accessory } : {}),
         testID: `${props.testID}:${section.id}:${option.id}`,
       })),
-    })),
-  }), [props.sections, props.testID]);
-  const selectedIds = React.useMemo(() => new Set(props.sections.flatMap(section =>
-    [...section.selectedIds].map(id => `${section.id}${SECTION_KEY}${id}`))), [props.sections]);
+    }));
+    if (!props.scopes) return { id: 'usage-scope', sections: listed(props.sections ?? []) };
+    // The search row carries the back chip of a pushed list (the shared header shows only with an input) and finds a
+    // machine or project among many.
+    const search = t('common.search');
+    return { id: 'usage-scope', inputPlaceholder: search, sections: [{ kind: 'static' as const, id: 'scopes', options: props.scopes.map(scope => ({
+      id: `scopes${SECTION_KEY}${scope.id}`,
+      label: scope.title,
+      subtitle: scope.value,
+      testID: `${props.testID}:open:${scope.id}`,
+      openStep: { id: `usage-scope:${scope.id}`, title: scope.title, backLabel: t('usage.board.page.filtersLabel'), inputPlaceholder: search,
+        sections: listed(scope.sections) },
+    })) }] };
+  }, [props.sections, props.scopes, props.testID]);
+  const allSections = React.useMemo(() => [...(props.sections ?? []), ...(props.scopes ?? []).flatMap(scope => scope.sections)],
+    [props.sections, props.scopes]);
+  const selectedIds = React.useMemo(() => new Set(allSections
+    .flatMap(section => [...section.selectedIds].map(id => `${section.id}${SECTION_KEY}${id}`))), [allSections]);
   return (
     <SelectionList
       testID={`${props.testID}.list`}
@@ -341,7 +363,7 @@ function UsageScopeSections(props: Readonly<{
       selection={{ kind: 'multiple', selectedIds }}
       onSelect={(id, _option, callerContext, invocation) => {
         const [section, option] = id.split(SECTION_KEY);
-        void props.sections.find(candidate => candidate.id === section)?.onChange(option ?? '', callerContext, invocation);
+        void allSections.find(candidate => candidate.id === section)?.onChange(option ?? '', callerContext, invocation);
       }}
       onRequestClose={props.onRequestClose}
       listAccessibilityLabel={t('usage.board.page.filtersLabel')}
