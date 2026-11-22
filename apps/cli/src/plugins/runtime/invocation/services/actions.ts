@@ -11,6 +11,7 @@ import { isPluginActionHandlerInvocationNotStartedAdvisory } from '@happier-dev/
 import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
 import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { createConfirmedSessionSendClaimV1 } from '@happier-dev/protocol/actions/invocationAuthority';
 import type {
     AdmittedTargetedOperationExecutionOptions,
     AdmittedTargetedOperationExecutionWithOriginOptions,
@@ -424,6 +425,14 @@ export function createPluginInvocationActionsService(params: Readonly<{
     // This is invocation-local transit state, not a registry or durable
     // receipt. A fresh outer Action invocation receives a fresh service seed.
     const selectedActionInputClaimed = { current: false };
+    const confirmedSource = params.seed.approvalContext;
+    const confirmedTargets = confirmedSource?.sessionTargetsV1?.targets;
+    const claimSend = params.seed.presentUserIntent === 'confirmed' && confirmedTargets?.length === 1
+        ? createConfirmedSessionSendClaimV1(confirmedTargets[0], (admitted, destination) =>
+            areServerProfileIdentifiersEquivalent(admitted, destination, identifier =>
+                identifier === confirmedSource?.serverId || identifier === confirmedSource?.serverIdentityId
+                    ? confirmedSource?.serverIdentityId : undefined))
+        : undefined;
     const actionExecutor = params.actionExecutor.bindInvocation?.(params.seed.signal)
         ?? params.actionExecutor;
     const workflowActionContext = params.seed.workflowActionContext;
@@ -745,6 +754,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
             }
         };
         const source: RpcActionExecutorContext | undefined = readApprovalContext();
+        const executionMachineId = source ? readActionAutomationExecutionMachineV1(source) : undefined;
         // A Discussion publication or an Event occurrence admission belongs to
         // this invocation through approval and native settlement, even without
         // local upload sources. Returning only an approval receipt makes a
@@ -770,15 +780,9 @@ export function createPluginInvocationActionsService(params: Readonly<{
             }) ?? actionExecutor
             : actionExecutor;
         const executionRunWorkflowRunId = readWorkflowRunId();
-        const pressedTargets = source?.sessionTargetsV1?.targets;
-        const pressedSession = actionId === SESSION_MESSAGE_SEND_ACTION_ID_V1 && params.seed.presentUserIntent === 'confirmed'
-            && pressedTargets?.length === 1 ? pressedTargets[0] : undefined;
-        const sendHome = sessionAddress?.serverId ?? source?.serverId;
-        const pressedSend = pressedSession && parsedPluginInput.data && typeof parsedPluginInput.data === 'object'
-            && 'sessionId' in parsedPluginInput.data && parsedPluginInput.data.sessionId === pressedSession.sessionId
-            && areServerProfileIdentifiersEquivalent(pressedSession.serverId, sendHome,
-                identifier => identifier === source?.serverId || identifier === source?.serverIdentityId ? source?.serverIdentityId : undefined)
-            ? pressedSession.sessionId : undefined;
+        const pressedSend = actionId === SESSION_MESSAGE_SEND_ACTION_ID_V1 && isJsonObject(parsedPluginInput.data)
+            ? claimSend?.(parsedPluginInput.data.sessionId, sessionAddress?.serverId ?? source?.serverId)
+            : undefined;
         const executionContext = {
             ...(workspaceOperation ? { operationOwnerUpdate: { update: update => {
                 workspaceOperation.operationOwnerUpdate.update(update);

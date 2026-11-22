@@ -309,6 +309,46 @@ describe('plugin invocation ActionsService', () => {
         expect(sends).toBe(0);
     });
 
+    it('spends the confirmed daemon Session Send authority only once', async () => {
+        const address = { serverId: 'bound-home', sessionId: 'pressed-session' };
+        const pluginId = 'example.session-author';
+        const resolveSessionReference: NonNullable<ActionExecutorDeps['resolveSessionReference']> = async ({ sessionId }) => ({
+            kind: 'unique', address: { ...address, sessionId: sessionId! },
+        });
+        const sessionTargetsV1 = await resolveActionSessionTargets({
+            ...createUnavailableActionTransportDeps(), resolveSessionReference,
+        }, {
+            actionId: 'session.message.send', declaration: { field: 'sessionId', cardinality: 'one' },
+            input: { sessionId: address.sessionId }, context: { surface: 'plugin', authority: 'account_automation',
+                serverId: address.serverId, expectedSessionAddress: address },
+        });
+        if (!sessionTargetsV1 || 'ok' in sessionTargetsV1) throw new Error('Expected a host-admitted Session');
+        const service = createPluginInvocationActionsService({
+            seed: {
+                plugin: { id: pluginId, version: '1.0.0' },
+                contribution: { id: 'send', qualifiedId: `${pluginId}/actions/send` },
+                occurrenceId: 'confirmed-session-send',
+                sourceCustody: { kind: 'development', registeredRootId: 'session-send-root' },
+                resolveCurrentPluginMaterializationRef: createPluginActionCallerMaterializationFixture(pluginId).resolveCurrentPluginMaterializationRef,
+                surface: 'ui', signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+                presentUserIntent: 'confirmed',
+                approvalContext: { serverId: address.serverId, runtimeAccountId: 'bound-account', sessionTargetsV1 },
+            },
+            actionExecutor: createActionExecutorForTest({
+                resolveSessionReference,
+                sessionSendMessage: async ({ context }) => context.presentUserSessionSend === address.sessionId
+                    ? { status: 'accepted', localId: 'first-send' }
+                    : { status: 'held', code: 'session_input_target_unavailable', localId: 'second-send' },
+            }),
+            invokeContributedAction: async () => { throw new Error('Unexpected contributed dispatch'); },
+        });
+        const send = (idempotencyKey: string) => service.execute('session.message.send', {
+            sessionId: address.sessionId, message: 'Continue this Session', idempotencyKey,
+        }, { sessionAddress: address });
+        await expect(send('daemon-first-send')).resolves.toMatchObject({ status: 'accepted' });
+        await expect(send('daemon-second-send')).resolves.toMatchObject({ status: 'held' });
+    });
+
     it('retains exact Session address scope on bound host Actions and refuses unsupported routing before effects', async () => {
         const sent: Parameters<NonNullable<ActionExecutorDeps['sessionSendMessage']>>[0][] = [];
         const controller = new AbortController();

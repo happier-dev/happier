@@ -6477,20 +6477,30 @@ async function runMountedHomeApproval(custody: PluginSourceCustodyV1, retireBefo
 }
 
 describe('plugin-surface action branch selection', () => {
-    it.each(['exact press', 'automation', 'another Session', 'another Home', 'another Action'] as const)(
+    it.each(['exact press', 'automation', 'another Session', 'another Home', 'another Action', 'no send access', 'repeat Send'] as const)(
         'projects person authority only on the exact nested Session Send (%s)', async scenario => {
             const automation = scenario === 'automation';
             const otherAction = scenario === 'another Action';
             const sessionId = scenario === 'another Session' ? 'other-session' : 'pressed-session';
             const serverId = rpcHomes.get('server-client-action')!.id;
             const admittedHome = scenario === 'another Home' ? rpcHomes.get('server-wire')!.id : serverId;
+            const confirm = scenario === 'no send access' || scenario === 'repeat Send';
+            let confirmations = 0;
             const attempts: (ActionExecutorContext | undefined)[] = [];
-            const activation = createClientActionActivation({ dangerLevel: 'safe',
+            const activation = createClientActionActivation({ dangerLevel: confirm ? 'writesLocal' : 'safe',
                 sessionTarget: { field: 'sessionId', cardinality: 'one' },
-                handler: (_input, context) => otherAction
-                    ? context.ui.executeAction('notifications.notify_me', { message: 'A different Action' })
-                    : context.ui.executeAction('session.message.send', { sessionId, message: 'Continue this Session',
-                        idempotencyKey: 'composed-pressed-send' }),
+                handler: async (_input, context) => {
+                    if (otherAction) return await context.ui.executeAction('notifications.notify_me', { message: 'A different Action' });
+                    const send = (idempotencyKey: string) => context.ui.executeAction('session.message.send', {
+                        sessionId, message: 'Continue this Session', idempotencyKey,
+                    });
+                    if (scenario === 'repeat Send') {
+                        // Distinct messages within one confirmed invocation, both eligible for the same Session.
+                        const [first, second] = await Promise.all([send('first-pressed-send'), send('second-pressed-send')]);
+                        return { first, second };
+                    }
+                    return await send('composed-pressed-send');
+                },
             });
             const createPort = (invocationSurface: Parameters<typeof createCurrentUiContextVoiceToolPort>[0]['invocationSurface'],
                 hostAction?: Parameters<typeof createCurrentUiContextVoiceToolPort>[0]['hostAction']) => createCurrentUiContextVoiceToolPort({
@@ -6502,6 +6512,10 @@ describe('plugin-surface action branch selection', () => {
                 resolveSessionReference: async ({ sessionId }) => ({ kind: 'unique', address: { sessionId: sessionId!, serverId: admittedHome } }),
                 sessionSendMessage: async request => {
                     attempts.push(request.context);
+                    // The Home rejects a viewer's authenticated Send at the transport boundary.
+                    if (scenario === 'no send access') return {
+                        ok: false, errorCode: 'session_input_unauthorized', error: 'session_input_unauthorized',
+                    };
                     return request.context?.presentUserSessionSend === request.sessionId
                         ? { status: 'accepted', localId: 'admitted-message' }
                         : { status: 'held', code: 'session_input_target_unavailable', localId: 'held-message' };
@@ -6520,14 +6534,29 @@ describe('plugin-surface action branch selection', () => {
                 const result = await dispatchPluginSurfaceAction({
                     action: { pluginId: activation.action.pluginId, localId: activation.action.id },
                     input: { sessionId: 'pressed-session' }, clientAction: {},
+                    ...(confirm ? { requestCurrentIntent: async request => {
+                        confirmations += 1;
+                        return { status: 'approved' as const, fingerprint: request.fingerprint };
+                    } } : {}),
                     resolveContributedAction: resolveExactClientAction(activation.action),
                     hostAction: { execute: Object.assign(executor.execute, { prepare: executor.prepare }), context: {
                         serverId, authority: automation ? 'account_automation' : 'present_user', actionCaller: { kind: 'host' },
                     } },
                 });
-                expect(attempts, JSON.stringify(result)).toHaveLength(1);
+                expect(confirmations).toBe(confirm ? 1 : 0);
+                expect(attempts, JSON.stringify(result)).toHaveLength(scenario === 'repeat Send' ? 2 : 1);
                 expect(attempts[0]).toMatchObject({ authority: 'account_automation', actionCaller: { kind: 'plugin' } });
-                if (scenario === 'exact press') {
+                if (scenario === 'no send access') {
+                    expect(attempts[0]?.presentUserSessionSend).toBe('pressed-session');
+                    expect(result).toMatchObject({ ok: true, result: { status: 'rejected', code: 'session_input_unauthorized' } });
+                } else if (scenario === 'repeat Send') {
+                    expect(result.ok).toBe(true);
+                    if (!result.ok) throw new Error('Expected two settled Send results');
+                    expect(Object.values(result.result ?? {}).map(send =>
+                        send && typeof send === 'object' && 'status' in send ? send.status : undefined,
+                    ).sort()).toEqual(['accepted', 'held']);
+                    expect(attempts.filter(context => context?.presentUserSessionSend === 'pressed-session')).toHaveLength(1);
+                } else if (scenario === 'exact press') {
                     expect(attempts[0]?.presentUserSessionSend).toBe('pressed-session');
                     expect(result).toMatchObject({ ok: true, result: { status: 'accepted' } });
                 } else {

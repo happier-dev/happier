@@ -1,6 +1,7 @@
 import type { ActionRequiredAuthority, ActionSurfaces } from './metadata.js';
 import { ACTION_INVOKE_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1, type ActionId } from './actionIds.js';
 import type { ActionExecutorContext } from './executor/types.js';
+import type { ActionSessionAddressV1 } from './sessionTargetV1.js';
 import type { ApprovalExecutionOriginV1 } from '../approvals/approvalRequestV1.js';
 import { AUTH_TOKEN_KIND_AUTHORITIES, type AuthTokenAuthority, type AuthTokenKind } from '../auth/authToken.js';
 
@@ -110,6 +111,19 @@ export function resolveInvocationAuthority(
   )
     return 'present_user';
   return 'account_automation';
+}
+
+/** Spend a host-admitted press on one exact nested Session Send in this invocation. */
+export function createConfirmedSessionSendClaimV1(
+  target: ActionSessionAddressV1,
+  sameHome: (admitted: string, destination: string) => boolean,
+): (sessionId: unknown, serverId: string | undefined) => string | undefined {
+  let pending = true;
+  return (sessionId, serverId) => {
+    if (!pending || sessionId !== target.sessionId || serverId === undefined || !sameHome(target.serverId, serverId)) return undefined;
+    pending = false;
+    return target.sessionId;
+  };
 }
 
 /** Private consent for one Plugin Account relay never raises the caller's authority. */

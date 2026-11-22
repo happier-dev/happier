@@ -22,7 +22,7 @@ import { projectMarkdownFindText } from '@/components/markdown/rendering/markdow
 import { bindActionSessionTargetOperands, readActionSessionReadSetOperand, readActionSessionTargetField, readActionSessionTargetOperands, registerHostSelectedActionSessionAddressV1, validateActionSessionAddressV1, validateContributedActionSessionAddressV1 } from '@happier-dev/protocol/actions/executor/sessionTargets';
 import { isActionSessionReadSetV1, normalizeSessionTargetV1, type ActionSessionAddressV1, type ActionResolvedSessionTargetsV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
 import { ACTION_INVOKE_ACTION_ID_V1, SESSION_MESSAGE_SEND_ACTION_ID_V1, isSessionListActionId, type ActionId } from '@happier-dev/protocol/actions/actionIds';
-import { isPresentUserHostInvocation, resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
+import { createConfirmedSessionSendClaimV1, isPresentUserHostInvocation, resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
 import { resolveActionApprovalRouting } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import type { ActionEnvironmentApprovalScopeAdmissionV1 } from '@happier-dev/protocol/actions/actionApprovalPolicy';
@@ -329,10 +329,10 @@ export type PluginSurfaceActionCurrentIntentPresenter = (
     request: PluginActionCurrentIntentRequest<PluginUiActionProjection>,
 ) => Promise<PluginActionCurrentIntentResult>;
 
-const pressedSendTarget = Symbol('pressedSendTarget');
+const claimPressedSessionSend = Symbol('claimPressedSessionSend');
 
 export type DispatchPluginSurfaceActionInput = Readonly<{
-    [pressedSendTarget]?: ActionSessionAddressV1;
+    [claimPressedSessionSend]?: ReturnType<typeof createConfirmedSessionSendClaimV1>;
     /** Containing Action admission proof; routing custody only, never child execution context. */
     admittedParentSessionTargetsV1?: ActionResolvedSessionTargetsV1;
     /** Existing host Account admission, independent of a selected Machine. */
@@ -794,8 +794,8 @@ function clientActionExecuteAction(
                     selectedActionInput: selected.carrier.result,
                 } : {}),
                 action,
-                ...(action === SESSION_MESSAGE_SEND_ACTION_ID_V1 && input[pressedSendTarget]
-                    ? { [pressedSendTarget]: input[pressedSendTarget] } : {}),
+                ...(action === SESSION_MESSAGE_SEND_ACTION_ID_V1 && input[claimPressedSessionSend]
+                    ? { [claimPressedSessionSend]: input[claimPressedSessionSend] } : {}),
                 ...(actionInput === undefined ? {} : { input: actionInput }),
                 ...(options?.sessionAddress === undefined ? {} : { sessionAddress: options.sessionAddress }),
                 ...(hostAction === undefined ? {} : { hostAction }),
@@ -1826,8 +1826,8 @@ async function executeClientContributedAction(
                 const ownUiPress = invocationSurface === 'ui' && isPresentUserHostInvocation(hostContext);
                 const reviewedInput = confirmedInvocation?.input ?? (ownUiPress ? { action: identity, input: actionInput } : undefined);
                 const targets = hostContext.sessionTargetsV1?.targets;
-                const sendTarget = (ownUiPress || invocationSurface === 'ui' && confirmedInvocation) && targets?.length === 1
-                    ? targets[0] : undefined;
+                const claimSend = (ownUiPress || invocationSurface === 'ui' && confirmedInvocation) && targets?.length === 1
+                    ? createConfirmedSessionSendClaimV1(targets[0], areServerProfileIdentifiersEquivalent) : undefined;
                 const nestedHostAction = accountOrigin && reviewedInput && input.hostAction ? {
                     ...input.hostAction,
                     context: { ...input.hostAction.context,
@@ -1861,7 +1861,7 @@ async function executeClientContributedAction(
                             ...(options.sessionAddress !== undefined && nestedHostAction?.context?.sessionTargetsV1
                                 ? { admittedParentSessionTargetsV1: nestedHostAction.context.sessionTargetsV1 } : {}),
                             action, input: value,
-                            ...(action === SESSION_MESSAGE_SEND_ACTION_ID_V1 && sendTarget ? { [pressedSendTarget]: sendTarget } : {}),
+                            ...(action === SESSION_MESSAGE_SEND_ACTION_ID_V1 && claimSend ? { [claimPressedSessionSend]: claimSend } : {}),
                             machineAvailability: options.machineAvailability ?? input.machineAvailability,
                             ...(options.sessionAddress === undefined ? {} : { sessionAddress: options.sessionAddress }),
                             ...(hostAction === undefined ? {} : { hostAction }),
@@ -1961,7 +1961,7 @@ async function executeClientContributedAction(
                     } : undefined;
                 const clientCapability = accountCapability && input.readObservation ? undefined
                     : createClientActionUi({ ...input, hostAction: nestedHostAction,
-                        [pressedSendTarget]: sendTarget }, current, signal, accountUiContext);
+                        [claimPressedSessionSend]: claimSend }, current, signal, accountUiContext);
                 const releaseCapability = () => {
                     try { clientCapability?.dispose(); } finally {
                         if (accountCapability) {
@@ -2392,10 +2392,9 @@ async function executeHostAction(
         if (!routedContext) return failure('unavailable', 'action_scope_restricted');
         context = routedContext;
     }
-    const pressed = actionId === SESSION_MESSAGE_SEND_ACTION_ID_V1 ? input[pressedSendTarget] : undefined;
-    if (pressed && isPluginActionInputRecord(input.input) && input.input.sessionId === pressed.sessionId
-        && context.serverId && areServerProfileIdentifiersEquivalent(pressed.serverId, context.serverId)) {
-        context = { ...context, presentUserSessionSend: pressed.sessionId };
+    if (actionId === SESSION_MESSAGE_SEND_ACTION_ID_V1 && isPluginActionInputRecord(input.input)) {
+        const pressed = input[claimPressedSessionSend]?.(input.input.sessionId, context.serverId);
+        if (pressed) context = { ...context, presentUserSessionSend: pressed };
     }
     const reviewedParent = readHostAdmittedReviewedParentV1(context.hostReviewedChild);
     const result = reviewedParent ? await invokeHostReviewedChildV1({
