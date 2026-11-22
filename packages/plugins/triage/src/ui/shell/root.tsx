@@ -2022,6 +2022,10 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     applyLensEdit,
   });
 
+  // A direct link can name an entry before the initial window qualifies its connection.
+  const waitingForRoutedEntry = window.snapshot.pending === 'initial'
+    && surface.selection === null
+    && parseTriageRouteSubPathV1(props.subPath).selection !== null;
   /**
    * A settled window that does not hold the location's entry says so without
    * requiring an inventory walk (`ui/shell/absentRoute.ts`).
@@ -2618,6 +2622,9 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
               )}
         />
       )}
+      {waitingForRoutedEntry && entryOpenFailure === null && routeWriteFailure === null ? (
+        <Status tone="neutral" labelKey="plugins.triage.surface.detail.reading" label="Reading this entry" />
+      ) : null}
       {absentRoute === null ? null : (
         <Status
           tone="warning"

@@ -3520,6 +3520,28 @@ describe('opening a row into the source detail', () => {
         expect(currentHarness?.exactReads.every(read => read.sourceInstanceId === SECOND_INSTANCE)).toBe(true);
     });
 
+    it('shows reading feedback on a cold deep link before selecting the entry', async () => {
+        let release!: () => void;
+        const secondInitialScan = new Promise<void>(resolve => { release = resolve; });
+        const subPath = buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1,
+            selection: { source: SOURCE, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' } });
+        const shell = await mountShell({ subPath, activeSurface: true, automaticDemandOnly: true,
+            secondInstance: true, firstInstanceObservesEntry: false, secondInitialScan });
+        try {
+            await act(async () => {
+                await vi.waitFor(() => { expect(currentHarness?.initialScanInstanceIds).toContain(SECOND_INSTANCE); });
+            });
+            await expect(shell.getByText('Reading this entry')).resolves.toBeDefined();
+            await expect(shell.queryByRole('heading', { name: 'Replace the duplicated normalizer' })).resolves.toBeUndefined();
+        } finally {
+            await act(async () => { release(); });
+        }
+        await vi.waitFor(async () => {
+            await expect(shell.getByRole('heading', { name: 'Replace the duplicated normalizer' })).resolves.toBeDefined();
+        });
+        await expect(shell.queryByText('Reading this entry')).resolves.toBeUndefined();
+    });
+
     it('opens an unloaded restored link exactly and leaves further pages to visible Load more', async () => {
         const subPath = buildTriageRouteSubPathV1({
             ...TRIAGE_ROUTE_DEFAULT_LENS_V1,
