@@ -903,6 +903,25 @@ describe('session browser recording runtime', () => {
         expect(screen.findByTestId('active-recording-id')?.props.children).toBe('recording_1');
     });
 
+    it('says a stop whose save failed stopped and kept the file in the Session, not that it may still record', async () => {
+        const screen = await renderActiveRecordingProbe();
+        machineRpcMock.stop.mockResolvedValueOnce({
+            ok: true,
+            result: {
+                status: 'failed', reason: 'media_persistence_failed', saveFailure: 'transcript_attach_failed',
+                recording: recording({ status: 'failed', stoppedAtMs: 11_000, outcomeReason: 'media_persistence_failed' }),
+            },
+        });
+
+        await screen.pressByTestIdAsync('stop-recording');
+
+        const { t } = await import('@/text');
+        expect(modalSpies.alert).toHaveBeenCalledExactlyOnceWith(
+            t('browserRecording.failure.notSavedTitle'), t('browserRecording.failure.notSavedInFiles'),
+        );
+        expect(screen.findByTestId('active-recording-id')?.props.children).toBe('none');
+    });
+
     it('tells the user when discarding a recording is refused by the daemon', async () => {
         const screen = await renderActiveRecordingProbe();
         machineRpcMock.cancel.mockResolvedValueOnce({

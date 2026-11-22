@@ -1,3 +1,4 @@
+import { RecordingSaveFailureV1Schema } from '@happier-dev/protocol/recording/results';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 
@@ -16,8 +17,30 @@ function describeRecordingStartRefusal(reasonCode: string): string {
         case 'browser_recording_policy_denied': return t('browserRecording.status.notAllowed');
         case 'encoder_unavailable': return t('browserRecording.failure.encoderUnavailable');
         case 'encoder_failed': return t('browserRecording.failure.encoderFailed');
+        case 'recording_session_not_owned': return t('browserRecording.failure.sessionNotOwned');
+        case 'recording_session_unavailable': return t('browserRecording.failure.sessionUnavailable');
         default: return t('browserRecording.failure.startBody');
     }
+}
+
+/**
+ * What a Stop answered, for Browser and Computer alike (the shared recording result shape). A saved recording
+ * says nothing. A `failed` stop ended the capture, so it says the recording stopped and what became of it;
+ * only a stop with no answer keeps "it may still be recording".
+ */
+export function presentRecordingStopOutcome(answer: unknown): void {
+    const status = answer && typeof answer === 'object' ? (answer as { status?: unknown }).status : undefined;
+    if (status === 'finalized') return;
+    if (status !== 'failed') {
+        presentBrowserRecordingActionFailure('stop');
+        return;
+    }
+    const saveFailure = RecordingSaveFailureV1Schema.safeParse((answer as { saveFailure?: unknown }).saveFailure).data;
+    Modal.alert(t('browserRecording.failure.notSavedTitle'), saveFailure === 'workspace_write_failed'
+        ? t('browserRecording.failure.notSavedGone')
+        : saveFailure === 'transcript_attach_failed'
+            ? t('browserRecording.failure.notSavedInFiles')
+            : t('browserRecording.failure.notSavedBody'));
 }
 
 export function presentBrowserRecordingActionFailure(action: 'start' | 'stop' | 'discard'): void {

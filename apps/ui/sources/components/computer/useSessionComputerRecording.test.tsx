@@ -126,6 +126,19 @@ describe('useSessionComputerRecording', () => {
         expect(hook.getCurrent()?.recording).toBeNull();
     });
 
+    it('says a stop whose save failed stopped and was not saved, and shows no running recording', async () => {
+        alert.mockClear();
+        const { t } = await import('@/text');
+        const failed = { ...base, status: 'failed', stoppedAtMs: 2_000, outcomeReason: 'media_persistence_failed' } as const;
+        const machine = createMachine({ [ids.list]: [recording],
+            [ids.stop]: { status: 'failed', recording: failed, reason: 'media_persistence_failed', saveFailure: 'workspace_write_failed' } });
+        const hook = await mount(machine);
+        await act(async () => { hook.getCurrent()?.onStop(hook.getCurrent()!.recording!); await flushHookEffects(); });
+        expect(alert).toHaveBeenCalledTimes(1);
+        expect(alert.mock.calls[0]?.slice(0, 2)).toEqual([t('browserRecording.failure.notSavedTitle'), t('browserRecording.failure.notSavedGone')]);
+        expect(hook.getCurrent()?.recording).toBeNull();
+    });
+
     it('forgets a recording when the shared source changes', async () => {
         const machine = createMachine({ [ids.list]: [recording] });
         const hook = await mount(machine);

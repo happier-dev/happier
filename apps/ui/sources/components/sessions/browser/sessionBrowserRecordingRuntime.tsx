@@ -21,7 +21,7 @@ import { useInPlaceApprovalReview } from '@/components/approvals/ApprovalReviewI
 
 import type { BrowserShellRecordingState } from '@/components/browser/BrowserShell';
 import type { BrowserRecordingStartControlRequest } from '@/components/browser/recording';
-import { presentBrowserRecordingActionFailure, presentRecordingStartRefusal } from '@/components/browser/recording/recordingActions';
+import { presentBrowserRecordingActionFailure, presentRecordingStartRefusal, presentRecordingStopOutcome } from '@/components/browser/recording/recordingActions';
 import { randomUUID } from '@/platform/randomUUID';
 import {
     applyBrowserRecordingSessionSnapshot,
@@ -299,11 +299,9 @@ export function useSessionBrowserRecordingRuntime(
             if (updated) {
                 setState((current) => applyBrowserRecordingSessionSnapshot(current, updated));
             }
-            if (!parsed?.success || parsed.data.status === 'unavailable' || parsed.data.status === 'failed') {
-                presentBrowserRecordingActionFailure('stop');
-            }
+            presentRecordingStopOutcome(parsed?.success ? parsed.data : null);
         } catch {
-            if (!signal.aborted && isCurrent()) presentBrowserRecordingActionFailure('stop');
+            if (!signal.aborted && isCurrent()) presentRecordingStopOutcome(null);
         }
     }, [enabled, execute, isCurrent, machineId, nowMs, sessionId]);
 

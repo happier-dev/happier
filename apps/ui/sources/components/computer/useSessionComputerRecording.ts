@@ -6,7 +6,7 @@ import { DaemonBrowserRecordingUnavailableReasonV1Schema } from '@happier-dev/pr
 
 import { useInPlaceApprovalReview } from '@/components/approvals/ApprovalReviewInPlace';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
-import { presentBrowserRecordingActionFailure, presentRecordingStartRefusal } from '@/components/browser/recording/recordingActions';
+import { presentBrowserRecordingActionFailure, presentRecordingStartRefusal, presentRecordingStopOutcome } from '@/components/browser/recording/recordingActions';
 import { randomUUID } from '@/platform/randomUUID';
 import type { ComputerActionExecute } from '@/sync/domains/computer/computerControlClient';
 
@@ -128,7 +128,8 @@ export function useSessionComputerRecording(input: Readonly<{
             if (signal.aborted) return;
             const recording = readRecording(result);
             if (recording) setOwned({ sourceId, recording: isRunning(recording) ? recording : null });
-            if (!recording || recording.status === 'failed') presentBrowserRecordingActionFailure(failure);
+            if (failure === 'stop') presentRecordingStopOutcome(result.ok ? result.result : null);
+            else if (!recording || recording.status === 'failed') presentBrowserRecordingActionFailure(failure);
         } catch {
             if (!signal.aborted) presentBrowserRecordingActionFailure(failure);
         }
