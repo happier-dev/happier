@@ -68,6 +68,46 @@ function createLongLivedResumableRun(overrides?: Partial<ExecutionRunState>): Ex
 }
 
 describe('sendBackendLongLivedRun (resume)', () => {
+  it.each(['matching', 'other'] as const)('settles detached continuation activity with a %s input claim', async (claim) => {
+    let finishTurn!: () => void;
+    const completed = new Promise<void>(resolve => { finishTurn = resolve; });
+    const { runtime } = createTestExecutionRunHostRuntime({
+      deliverInput: async () => ({ status: 'admitted' }),
+      waitForTurnCompletion: async () => await completed,
+    });
+    const run = createLongLivedResumableRun({ sessionId: null, status: 'running' });
+    const controller: ExecutionRunBackendController = {
+      kind: 'backend', controllerOccurrenceId: 'detached-continuation', backend: runtime, backendSupportsResume: true,
+      runtimeId: 'native', buffer: '', sidechainStreamBuffer: '', sidechainStreamKey: '', streamWriter: null,
+      cancelled: false, turnCount: 1, turnEpoch: 1, turnInFlight: false, turnCancelReason: null, turnCancelEpoch: null,
+      admittedLiveInterventions: [], admittedLiveInterventionsSignal: null, lastMarkerWriteAtMs: 0,
+      pendingHostBarrier: Promise.resolve(), terminalPromise: Promise.resolve(), resolveTerminal: () => {},
+      // The profile publisher retains this exact input across continuation preparation/admission.
+      pendingHostInput: claim === 'matching' ? 'walkthrough-input' : 'another-input',
+    };
+    const runs = new Map([[run.runId, run]]);
+    try {
+      await expect(sendBackendLongLivedRun({ runId: run.runId,
+        params: { message: 'Continue', localInputId: 'walkthrough-input' }, runs,
+        controllers: new Map([[run.runId, controller]]), budgetRegistry: null,
+        createRuntime: () => runtime, maxTurns: null, getNowMs: () => 9_000, finishRun: async () => {},
+        sendAcp: async () => {}, parentProvider: 'codex', streamedTranscriptSession: null, writeActivityMarker: async () => {},
+      })).resolves.toEqual({ ok: true });
+      expect(projectExecutionRunPublicState(runs.get(run.runId)!, controller)).toMatchObject({
+        status: 'running', runClass: 'long_lived', turnInFlight: true,
+      });
+      finishTurn();
+      await vi.waitFor(() => expect(controller.lastInputTurn).toMatchObject({ state: 'completed' }));
+      expect(projectExecutionRunPublicState(runs.get(run.runId)!, controller)).toMatchObject({
+        status: 'running', runClass: 'long_lived', turnInFlight: claim !== 'matching', lifecycle: { state: 'current' },
+      });
+      expect(controller.pendingHostInput).toBe(claim === 'matching' ? undefined : 'another-input');
+    } finally {
+      finishTurn();
+      await runtime.dispose();
+    }
+  });
+
   it('resumes a terminal Run through a new occurrence while the previous controller is settling', async () => {
     let releaseMarker!: () => void;
     const terminalMarker = new Promise<void>((resolve) => { releaseMarker = resolve; });

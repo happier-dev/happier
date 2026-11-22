@@ -640,6 +640,8 @@ export async function sendBackendLongLivedRun(args: Readonly<{
       }
       return { ok: false, errorCode: admission.diagnostic.code, error: admission.diagnostic.message ?? admission.status };
     }
+    // Direct detached delivery owns native admission instead of the Session Pending subscriber.
+    if (localInputId && ctrl2.pendingHostInput === localInputId) ctrl2.pendingHostInput = undefined;
     const initialHostBarrier = readExecutionRunControllerHostBarrier(ctrl2);
     if (initialHostBarrier) {
       await initialHostBarrier;
