@@ -5,7 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useAtmosphereBandBoundary } from '@/components/atmosphere/atmosphereBandBoundary';
 import { AgentInputNewSessionRestingBox } from '@/components/sessions/agentInput/components/AgentInputNewSessionRestingBox';
 import { ComposerBannerCollapseProvider } from '@/components/sessions/composerBanners/ComposerBannerCollapseProvider';
-import { NewSessionScreen } from '@/components/sessions/new/NewSessionScreen';
+import { NewSessionScreenEntry } from '@/components/sessions/new/NewSessionScreenEntry';
 import { useNewSessionDraftDockPresentation } from '@/components/sessions/new/hooks/useNewSessionDraftPresentation';
 import { focusNewSessionComposerWhenPresented } from '@/components/sessions/new/navigation/newSessionComposerFocus';
 import { NewSessionEmbeddedHostProvider } from '@/components/sessions/new/navigation/newSessionHost';
@@ -186,9 +186,11 @@ function HubComposerSectionContent(props: HubComposerSectionProps & Readonly<{ c
         >
             <NewSessionEmbeddedHostProvider host={host}>
                 {host.demanded ? (
-                    <ComposerBannerCollapseProvider key={draftId ?? 'home-composer'}>
-                        <NewSessionScreen presentation="embedded" />
-                    </ComposerBannerCollapseProvider>
+                    <React.Suspense fallback={<HubComposerClosed draftId={draftId} onOpen={open} />}>
+                        <ComposerBannerCollapseProvider key={draftId ?? 'home-composer'}>
+                            <NewSessionScreenEntry presentation="embedded" />
+                        </ComposerBannerCollapseProvider>
+                    </React.Suspense>
                 ) : <HubComposerClosed draftId={draftId} onOpen={open} />}
             </NewSessionEmbeddedHostProvider>
         </View>

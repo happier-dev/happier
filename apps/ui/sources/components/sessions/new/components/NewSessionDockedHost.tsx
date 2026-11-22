@@ -9,7 +9,7 @@ import { useFloatingBackdropPicture } from '@/components/atmosphere/atmosphereBa
 import { AtmosphereBandBoundary } from '@/components/atmosphere/atmosphereBandBoundary';
 import { useAtmosphereStageSnapshot } from '@/components/atmosphere/atmosphereStage';
 import { ComposerBannerCollapseProvider } from '@/components/sessions/composerBanners/ComposerBannerCollapseProvider';
-import { NewSessionScreen } from '../NewSessionScreen';
+import { NewSessionScreenEntry } from '../NewSessionScreenEntry';
 import { NewSessionEmbeddedHostProvider, type NewSessionEmbeddedHost } from '../navigation/newSessionHost';
 import { useNewSessionShellHost } from '../navigation/newSessionEntry';
 import { resolveNewSessionDockPaneElement } from './newSessionDockPane';
@@ -170,7 +170,11 @@ export function NewSessionDockedHost(props: React.PropsWithChildren) {
             aria-hidden={shell.visible ? undefined : true}
             importantForAccessibility={shell.visible ? 'auto' : 'no-hide-descendants'}
             style={[StyleSheet.absoluteFillObject, styles.layer, pointer.webStyle, shell.visible ? null : styles.hidden]}>
-            {shell.collapsed ? <DockedPill /> : <PopoverScope><DockedComposer /></PopoverScope>}
+            {shell.collapsed ? <DockedPill /> : (
+                <React.Suspense fallback={null}>
+                    <PopoverScope><DockedComposer /></PopoverScope>
+                </React.Suspense>
+            )}
         </View>
         </PluginSurfaceFocusEligibilityProvider> : null}
     </View>;
@@ -307,7 +311,7 @@ function DockedComposer() {
         <NewSessionEmbeddedHostProvider host={host}>
             <AgentInputPopoverWidthContext.Provider value="window">
                 <ComposerBannerCollapseProvider key={draftId}>
-                    <NewSessionScreen presentation="embedded" />
+                    <NewSessionScreenEntry presentation="embedded" />
                 </ComposerBannerCollapseProvider>
             </AgentInputPopoverWidthContext.Provider>
         </NewSessionEmbeddedHostProvider>
