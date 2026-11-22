@@ -299,12 +299,15 @@ async function compareSelectedEntryLoads({ repo, base, tree, installDir, root, s
   });
   // Non-CLI graphs keep reporting the delta for checks such as manifest generation and route composition.
   const failing = candidate.failures.map(failure => failure.graph);
-  const baseFindings = failing.length
-    ? new Set((await loadTreeGraphs({ repo, tree: base, ids: failing, installDir, root, env, signal, timings: {}, waitForDependencies })).failures.map(failure => failure.finding))
+  const baseFailures = failing.length
+    ? new Set((await loadTreeGraphs({ repo, tree: base, ids: failing, installDir, root, env, signal, timings: {}, waitForDependencies })).failures.map(failure => failure.key))
     : new Set();
-  const findings = candidate.failures.map(failure => failure.finding);
-  return finish({ findings: findings.filter(finding => !baseFindings.has(finding)), preexisting: findings.filter(finding => baseFindings.has(finding)),
-    results: candidate.results });
+  const findings = [];
+  const preexisting = [];
+  for (const { key, finding } of candidate.failures) {
+    (baseFailures.has(key) ? preexisting : findings).push(finding);
+  }
+  return finish({ findings, preexisting, results: candidate.results });
 }
 
 /** One tree: extract, derive its generated inputs, mount the installation, load the graphs. */
@@ -349,7 +352,9 @@ async function loadTreeGraphs({ repo, tree, ids, installDir, root, env, signal, 
     const failures = results.filter(result => result.status === 'failed').map(result => {
       const module = result.firstFailingModule ? relative(dir, resolve(dir, result.firstFailingModule)) : result.entry;
       const message = String(result.loadError?.message ?? 'failed').split('\n')[0].replaceAll(`${dir}/`, '').slice(0, 300);
-      return { graph: result.graph, finding: `${result.graph}: ${module}: ${message}` };
+      const phase = /(?:^|\s)phase=([a-z][\w-]*)\b/u.exec(message)?.[1] ?? null;
+      return { graph: result.graph, key: JSON.stringify([result.graph, module, phase]),
+        finding: `${result.graph}: ${module}: ${message}` };
     });
     return { failures, results: results.map(({ graph, status, elapsedMs }) => ({ graph, status, elapsedMs: Math.round(elapsedMs) })) };
   } finally {

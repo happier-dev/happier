@@ -235,3 +235,33 @@ test('the synchronous scope ignores a UI-only packet for CLI and daemon and keep
   const cli = commit('apps/cli/src/index.ts', 'export const cli = 1;\n');
   assert.deepEqual((await selectCommitTreeEntryGraphs({ repo, base: ui, tree: cli, phase: 'commit' })).selected, ['cli', 'daemon']);
 });
+
+test('post-commit entry loads ignore timing and process counters in the same parent failure', async t => {
+  const entry = 'packages/protocol/src/index.mjs';
+  const { repo, tree: base, write } = miniatureRevision(t, {
+    'apps/stack/scripts/perf/entry-graphs.mjs': `export const ENTRY_GRAPHS = [{ id: 'bundled-manifests', entry: '${entry}', args: ['--check'] }];`,
+    'apps/stack/scripts/perf/entry-load.mjs': `
+      import { readFileSync } from 'node:fs';
+      export { ENTRY_GRAPHS } from './entry-graphs.mjs';
+      export function loadEntryGraph(graph) {
+        const n = Number(readFileSync(graph.entry, 'utf8'));
+        return { graph: graph.id, status: 'failed', entry: graph.entry, elapsedMs: n,
+          firstFailingModule: 'apps/cli/scripts/build-owned/bundledPlugins/outputs.ts',
+          loadError: { message: 'bundled-plugins: phase=generation-and-publication deltaMs=' + n
+            + ' resourceUsage={"pid":' + process.pid + ',"userCpuMicros":' + n + '}' } };
+      }
+    `,
+    'apps/stack/scripts/build/source_revision.mjs': 'export function deriveRevisionGeneratedInputs() {}',
+    'packages/cli-common/registerSourceRuntime.mjs': '',
+    [entry]: '10',
+  });
+  write(entry, '20');
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  git('add', '--', entry);
+  git('commit', '-qm', 'candidate');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'p03-stable-entry-failure-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const result = await commitTreeEntryLoads({ repo, base, tree: git('rev-parse', 'HEAD'), graphIds: ['bundled-manifests'], phase: 'deferred', root });
+  assert.deepEqual(result.findings, []);
+  assert.equal(result.preexisting.length, 1);
+});
