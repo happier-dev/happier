@@ -20,6 +20,8 @@
  * inventing one.
  */
 
+import { GITHUB_COMMENT_COUNT_FACT_ID_V1 } from '../../triage/mapping/facts.js';
+
 /** The fact vocabulary `triage/mapping/facts.ts` emits, in this surface's words. */
 export const GITHUB_DETAIL_FIELD_LABELS_V1: Readonly<Record<string, string | undefined>> =
   Object.freeze({
@@ -27,7 +29,7 @@ export const GITHUB_DETAIL_FIELD_LABELS_V1: Readonly<Record<string, string | und
     'github/repository': 'Repository',
     'github/author': 'Author',
     'github/updated': 'Updated',
-    'github/comments': 'Comments',
+    [GITHUB_COMMENT_COUNT_FACT_ID_V1]: 'Comments',
     'github/changed-files': 'Files',
     'github/labels': 'Labels',
     'github/review-decision': 'Review',

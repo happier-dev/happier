@@ -19,6 +19,8 @@ import type {
  * inputs rather than collapsing both into a missing field.
  */
 
+export const GITHUB_COMMENT_COUNT_FACT_ID_V1 = 'github/comments';
+
 export const GITHUB_REVIEW_DECISIONS_V1 = Object.freeze(['approved', 'changes-requested', 'review-required'] as const);
 export type GithubReviewDecisionV1 = (typeof GITHUB_REVIEW_DECISIONS_V1)[number];
 
@@ -176,7 +178,7 @@ export function buildGithubRowFacts(input: GithubRowFactsInputV1): GithubRowFact
   });
   if (input.commentCount !== null) {
     push({
-      id: 'github/comments',
+      id: GITHUB_COMMENT_COUNT_FACT_ID_V1,
       importance: 'supplementary',
       value: Object.freeze({ kind: 'number', value: input.commentCount, format: 'compact' }),
     });

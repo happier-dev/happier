@@ -837,6 +837,8 @@ describe('the GitHub detail as Triage panels', () => {
               { id: 'github-timeline-event:1', kind: 'forcePushed', rawKind: 'head_ref_force_pushed', actor: 'Mara', atMs: at(30) },
               // GitHub's own record of the remark above: the same permalink, read twice.
               { id: 'github-timeline-event:11', kind: 'commented', rawKind: 'commented', actor: 'hubber', atMs: at(20), webUrl: commentUrl },
+              { id: 'github-timeline-event:10', kind: 'commented', rawKind: 'commented', actor: 'Unloaded author', atMs: at(25),
+                webUrl: 'https://github.com/octo-org/example-app/pull/1284#issuecomment-10' },
               { id: 'github-timeline-event:2', kind: 'labeled', rawKind: 'labeled', actor: 'Mara', summary: 'p1', atMs: at(10) },
             ],
             omittedRowCount: 0, projectionTruncated: false, continuation: 'timeline-page-2',
@@ -854,7 +856,8 @@ describe('the GitHub detail as Triage panels', () => {
     const order = ['Force-pushed the head branch', 'This normalizer is duplicated.', 'Added a label'].map((part) => before.indexOf(part));
     expect(order.every((position) => position >= 0)).toBe(true);
     expect([...order].sort((left, right) => left - right)).toEqual(order);
-    // The timeline's record of the remark is not a second remark.
+    // Only the comment read supplies comments, including when the timeline knows about an earlier one.
+    expect.soft(before).not.toContain('Unloaded author');
     expect(before.split('Commented').length - 1).toBe(1);
 
     await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Load more events' })); });

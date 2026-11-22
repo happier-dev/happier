@@ -37,6 +37,7 @@
  */
 
 import * as React from 'react';
+import { GITHUB_COMMENT_COUNT_FACT_ID_V1 } from '../triage/mapping/facts.js';
 import { formatUsageDurationCompact } from '@happier-dev/plugin-ui/components';
 import { presentActionFailure, type RenderContext } from '@happier-dev/plugin-sdk/ui';
 import {
@@ -2282,7 +2283,6 @@ function timelineHeadline(text: PluginTranslate, row: GithubProjectedTimelineRow
 /** Which Activity marker each timeline arm takes; an unmodelled arm is just an event. */
 const GITHUB_TIMELINE_ACTIVITY_KINDS: Readonly<Record<string, TriageActivityKindV1 | undefined>> =
   Object.freeze({
-    commented: 'comment',
     committed: 'change',
     forcePushed: 'change',
     baseChanged: 'change',
@@ -2318,11 +2318,10 @@ type GithubActivityStreamV1 = Readonly<{
   lead?: TriageActivityLeadV1 | undefined;
   events: readonly TriageActivityEventV1[];
   /**
-   * GitHub records a remark twice — as the comment or review itself and as a
-   * `commented`/`reviewed` timeline event with the same permalink. A stream
-   * that mirrors remarks drops its copy when the remark itself is on screen.
+   * GitHub also records reviews as timeline events. The timeline drops its
+   * copy when the review itself is on screen.
    */
-  mirrorsRemarks?: true;
+  mirrorsReviews?: true;
   continuations: readonly TriageActivityContinuationV1[];
   /** The conversation's comment box, after the last event. */
   composer?: React.ReactNode;
@@ -2344,7 +2343,8 @@ function useGithubTimelineStream(): GithubActivityStreamV1 {
       : null,
     failedReads: [{ failure: state.failure, refresh: controller.refresh }],
     header: <PageFailureBanner state={state} />,
-    events: state.rows.map((row) => {
+    // Only the conversation read supplies comment bodies.
+    events: state.rows.filter(row => row.kind !== 'commented').map((row) => {
       const headline = timelineHeadline(text, row);
       return {
         id: row.id,
@@ -2357,7 +2357,7 @@ function useGithubTimelineStream(): GithubActivityStreamV1 {
         hrefLabel: text('plugins.github.ui.openOnGithub', 'Open {item} on GitHub', { item: headline }),
       };
     }),
-    mirrorsRemarks: true,
+    mirrorsReviews: true,
     continuations: state.canLoadMore
       ? [{
         key: 'timeline',
@@ -2445,15 +2445,15 @@ function GithubActivityView({
   }
 
   const answered = streams.filter((stream) => !stream.settling && stream.unavailable === null);
-  const remarkHrefs = new Set(answered
-    .filter((stream) => stream.mirrorsRemarks === undefined)
+  const reviewHrefs = new Set(answered
+    .filter((stream) => stream.mirrorsReviews === undefined)
     .flatMap((stream) => stream.events)
-    .filter((event) => event.kind === 'comment' || event.kind === 'review')
+    .filter((event) => event.kind === 'review')
     .flatMap((event) => (event.href === undefined || event.href === null ? [] : [event.href])));
-  const events = answered.flatMap((stream) => (stream.mirrorsRemarks === undefined
+  const events = answered.flatMap((stream) => (stream.mirrorsReviews === undefined
     ? stream.events
-    : stream.events.filter((event) => !((event.kind === 'comment' || event.kind === 'review')
-      && event.href !== undefined && event.href !== null && remarkHrefs.has(event.href)))));
+    : stream.events.filter((event) => !(event.kind === 'review'
+      && event.href !== undefined && event.href !== null && reviewHrefs.has(event.href)))));
 
   const lead = answered.find((stream) => stream.lead !== undefined)?.lead;
 
@@ -3462,6 +3462,8 @@ function useGithubCommentsStream(
   const { state } = controller;
   const incomplete = incompleteDescription(text, state.incomplete, null);
   const commented = text(githubTimelineHeadlineKey('commented'), GITHUB_TIMELINE_HEADLINES_V1['commented'] ?? 'Commented');
+  const total = input.observation.snapshot.facts?.find(fact => fact.id === GITHUB_COMMENT_COUNT_FACT_ID_V1)?.value;
+  const remaining = total?.kind === 'number' && state.omittedRowCount === 0 ? total.value - state.rows.length : 0;
   return {
     settling: state.kind === 'idle' || state.kind === 'loading',
     unavailable: state.kind === 'unavailable'
@@ -3484,8 +3486,9 @@ function useGithubCommentsStream(
     continuations: state.canLoadMore
       ? [{
         key: 'comments',
-        title: 'Show 40 earlier comments',
-        titleKey: 'plugins.github.ui.showEarlierIssueComments',
+        title: remaining > 0
+          ? text('plugins.github.ui.showEarlierIssueCommentsCount', 'Show {count} earlier comments', { count: remaining })
+          : text('plugins.github.ui.showEarlierIssueComments', 'Show earlier comments'),
         pending: state.pending,
         onLoadMore: controller.loadMore,
         reads: 'earlier',

@@ -403,13 +403,17 @@ describe('the mounted GitHub Feedback plane', () => {
     await expect(detail.queryByRole('tab', { name: 'Comments' })).resolves.toBeUndefined();
   });
 
-  it('offers an issue Comments, and does not offer it Feedback', async () => {
+  it.each([
+    [[], 'Show earlier comments'],
+    [[{ id: 'github/comments', importance: 'supplementary', value: { kind: 'number', value: 4, format: 'compact' } }],
+      'Show 3 earlier comments'],
+  ] satisfies [JsonValue[], string][])('offers issue Comments with a truthful continuation (%j)', async (facts, title) => {
     answers.comments = {
       kind: 'comments',
-      rows: [],
+      rows: [{ id: 'IC_4', author: 'hubber', body: 'Latest comment.', createdAtMs: OBSERVED_AT_MS - 20_000 }],
       previousCursor: 'issue-comments-before',
     };
-    const detail = await mountFeedback(launchInput('issue'));
+    const detail = await mountFeedback(launchInput('issue', facts));
 
     await expect(detail.getByRole('tab', { name: 'Comments' }))
       .resolves.toMatchObject({ role: 'tab' });
@@ -421,7 +425,7 @@ describe('the mounted GitHub Feedback plane', () => {
     expect(dispatched).toEqual([
       `${GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readFeedback}:comments`,
     ]);
-    await expect(detail.getByRole('button', { name: 'Show 40 earlier comments' }))
+    await expect(detail.getByRole('button', { name: title }))
       .resolves.toMatchObject({ role: 'button' });
   });
 
