@@ -1307,6 +1307,11 @@ ordinary forms write declared object paths rather than inventing package arrays.
 
 ## Deployment execution custody (0.3 development source)
 
+For Cloudflare Workers, the same finite GET checks the enabled workers.dev
+address after Upload, Git Deploy, Promote or Rollback. A 2xx or 3xx response
+publishes that address. A 4xx or 5xx response records the address and status in
+the protected Receipt alongside the confirmed native deployment.
+
 An own-server App may enroll its existing daemon through the ordinary terminal
 request, approval and Machine-registration flow. The accepted Deployment's
 installed controller binds that request at `app-enrollment`; the receipt's

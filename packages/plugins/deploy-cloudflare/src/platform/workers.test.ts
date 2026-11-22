@@ -50,6 +50,9 @@ it.each([
   expect(result.state).toBe('succeeded');
   expect(result.urls).toEqual(addresses);
   expect(result.builtInUrls).toEqual(addresses);
+  if (status === 404) {
+    expect(result).toMatchObject({ publicAddressFailure: { url: 'https://app.my-account.workers.dev', httpStatus: 404 } });
+  } else expect(result).not.toHaveProperty('publicAddressFailure');
   const publicReads = h.request.mock.calls.filter(([request]) => request.url === 'https://app.my-account.workers.dev');
   expect(publicReads).toHaveLength(enabled ? 1 : 0);
 });

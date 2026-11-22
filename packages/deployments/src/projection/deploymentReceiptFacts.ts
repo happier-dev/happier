@@ -89,6 +89,7 @@ export type DeploymentReceiptFactsV1 = Readonly<{
     /** Provider-observed built-in routing addresses, separate from unique deployment/preview URLs. */
     builtInUrls: readonly string[] | null;
     urlsObservedAtMs: number | null;
+    publicAddressFailure: NonNullable<NonNullable<DeploymentReceiptDetailV1['content']['platform']>['observation']['publicAddressFailure']> | null;
     /** Historical receipt evidence, never a claim about current service health. */
     health: Readonly<{ source: 'receipt'; members: DeploymentReceiptDetailV1['content']['machineResults'] }>;
     downtime: 'stopThenStart' | null;
@@ -120,9 +121,10 @@ export function projectDeploymentReceiptSourceFactsV1(content: DeploymentReceipt
 
 /** Observed address facts without preparing unconsumed execution step/log trees. */
 export function projectDeploymentReceiptUrlFactsV1(content: DeploymentReceiptDetailV1['content']):
-    Pick<DeploymentReceiptFactsV1, 'urls' | 'builtInUrls' | 'urlsObservedAtMs'> {
+    Pick<DeploymentReceiptFactsV1, 'urls' | 'builtInUrls' | 'urlsObservedAtMs' | 'publicAddressFailure'> {
     return { urls: content.platform?.observation.urls ?? null, builtInUrls: content.platform?.observation.builtInUrls ?? null,
-        urlsObservedAtMs: content.platform?.observation.observedAtMs ?? null };
+        urlsObservedAtMs: content.platform?.observation.observedAtMs ?? null,
+        publicAddressFailure: content.platform?.observation.publicAddressFailure ?? null };
 }
 
 /** Historical evidence comes from the receipt; optional current retention facts share the opened history page. */

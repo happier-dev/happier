@@ -387,7 +387,7 @@ export const DeploymentReceiptDetail = React.memo(
       // A succeeded receipt says its address in the outcome row; any other live one says it here.
       address: outcomeUrl && deployment.state !== 'succeeded' ? formatDeploymentLiveAddress(outcomeUrl) : null,
       // Only an address that is coming is "not available yet"; a database on a Machine has none to wait for.
-      addressPending: outcomeUrl === null
+      addressPending: outcomeUrl === null && !facts.publicAddressFailure
         && deploymentAddressExpected({ ...value, facts }, nativeAddressDemand ? domains.result.items : [], serving),
       // A version running without a health check has its notice below say so; the facts don't repeat it.
       healthSaidByNotice: deployment.state === 'running_unverified' && notice !== null,
@@ -835,7 +835,8 @@ const SucceededOutcome = React.memo(function SucceededOutcome(props: Readonly<{
   const url = props.live?.url ?? null;
   const attention = props.live?.attention ?? null;
   const address = url ? formatDeploymentLiveAddress(url) : null;
-  const needsDomain = props.platform && props.serving && !props.live && props.facts.urls?.length === 0;
+  const publicAddressFailure = props.facts.publicAddressFailure;
+  const needsDomain = props.platform && props.serving && !props.live && !publicAddressFailure && props.facts.urls?.length === 0;
   const members = props.facts.health.members;
   const parts: string[] = [];
   if (members.length > 0 && members.every((member) => member.health === 'healthy')) parts.push(t('projects.deployments.receiptHealthPassed'));
@@ -851,13 +852,15 @@ const SucceededOutcome = React.memo(function SucceededOutcome(props: Readonly<{
           ? t('projects.deployments.liveAt', { address })
           // A platform release has no Machine to name: it simply deployed (the facts owner says where it ran).
           : props.facts.placement === 'platform'
-            ? t('projects.deployments.stateSucceeded')
+            ? publicAddressFailure ? t('projects.deployments.receipt.publicAddressFailed') : t('projects.deployments.stateSucceeded')
             : props.serving
               ? t('projects.deployments.servingOn', { machine: props.machine })
               : t('projects.deployments.ranOn', { machine: props.machine })}
         // A Domain that needs a look says so first, as the Domains tab does; Open then steps back.
         onPress={needsDomain ? props.onOpenDomains : undefined}
-        subtitle={needsDomain ? t('projects.deployments.receipt.platformDomainRequired')
+        subtitle={publicAddressFailure ? t('projects.deployments.receipt.publicAddressHttpError', {
+          address: formatDeploymentLiveAddress(publicAddressFailure.url), status: publicAddressFailure.httpStatus,
+        }) : needsDomain ? t('projects.deployments.receipt.platformDomainRequired')
           : attention ? <DomainStateLine state={attention} route={parts.join(' · ') || null} />
           : parts.length > 0 ? parts.join(' · ') : undefined}
         rightElement={url ? (

@@ -420,7 +420,11 @@ describe('Environment Build Logs', () => {
 });
 
 describe('Receipt → upload provenance', () => {
-  it.each(['provider', 'controller'] as const)('shows the recorded source and actual %s build evidence', async location => {
+  it.each([
+    { location: 'provider', active: false, httpStatus: undefined },
+    { location: 'controller', active: true, httpStatus: undefined },
+    { location: 'controller', active: true, httpStatus: 404 },
+  ] as const)('shows $location build evidence and the observed address result (HTTP $httpStatus)', async ({ location, active, httpStatus }) => {
     const base = createDeploymentReceiptDetailV1();
     const provenance = { sourceManifestFingerprint: 'approved-source-manifest', build: location === 'provider'
       ? { location } : { location, image: 'container@sha256:recorded-pin',
@@ -432,10 +436,13 @@ describe('Receipt → upload provenance', () => {
         target: { kind: 'account', account: { service: { pluginId: 'acme.platform', localId: 'account' }, accountId: 'profile' } } },
         providerIdentity: { providerAccountId: 'account', providerResourceId: 'project', providerEnvironment: 'production' },
         providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, observation: { v: 1, state: 'succeeded', observedAtMs: 1,
-          providerDeploymentId: 'native-deployment', urls: [], uploadProvenance: provenance } } } });
+          providerDeploymentId: 'native-deployment', uploadProvenance: provenance,
+          ...(httpStatus === undefined ? { urls: [] } : {
+            publicAddressFailure: { url: 'https://app.example.workers.dev', httpStatus },
+          }) } } } });
     const baseEnvironment = createDeploymentEnvironmentDetailV1();
     const detail = createDeploymentEnvironmentDetailV1({ targetLinks: baseEnvironment.targetLinks.map(row => ({ ...row,
-      targetLink: { ...row.targetLink, activeDeploymentId: location === 'controller' ? receipt.deployment.id : 'newer' } })) });
+      targetLink: { ...row.targetLink, activeDeploymentId: active ? receipt.deployment.id : 'newer' } })) });
     const navigate = vi.fn();
     const controller = createDeploymentReadControllerV1({ scope, transport: {
       listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
@@ -470,7 +477,13 @@ describe('Receipt → upload provenance', () => {
       }
       const outcome = screen.findAll(node => node.props.testID === 'project-deployments.receipt.outcome.succeeded.row'
         && node.props.title !== undefined)[0];
-      if (location === 'controller') {
+      if (httpStatus !== undefined) {
+        expect(outcome?.props.title).not.toBe(t('projects.deployments.stateSucceeded'));
+        expect(outcome?.props.subtitle).toContain('404');
+        expect(outcome?.props.subtitle).toContain('app.example.workers.dev');
+        expect(outcome?.props.rightElement).toBeUndefined();
+        expect(outcome?.props.onPress).toBeUndefined();
+      } else if (active) {
         expect(outcome?.props.subtitle).toBe(t('projects.deployments.receipt.platformDomainRequired'));
         await screen.pressByTestIdAsync('project-deployments.receipt.outcome.succeeded.row');
         expect(navigate).toHaveBeenCalledWith('domains');

@@ -325,6 +325,9 @@ export const DeploymentTargetRoleResultV1Schema = lazyZodSchema(() => z.strictOb
     urls: z.optional(z.array(publicUrl)), steps: z.optional(z.array(DeploymentStepV1Schema)),
     /** Provider-observed built-in routing addresses, distinct from immutable deployment/preview URLs. */
     builtInUrls: z.optional(z.array(publicUrl)),
+    /** An enabled public address returned an HTTP error after the provider confirmed activation. */
+    publicAddressFailure: z.optional(z.strictObject({ url: publicUrl,
+        httpStatus: z.number().check(z.int(), z.minimum(400), z.maximum(599)) })),
     /** Immutable upload evidence retained alongside later provider lifecycle observations. */
     uploadProvenance: z.optional(z.strictObject({
         sourceManifestFingerprint: id,

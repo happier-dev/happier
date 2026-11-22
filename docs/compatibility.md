@@ -10264,6 +10264,14 @@ schema. No predecessor data or published SDK epoch changes.
 
 ## SDK protocol evolution
 
+In unreleased 0.3, the closed deployment target Role Result V1 optionally
+includes a closed `publicAddressFailure` with an HTTP URL and status. The host
+retains this observation in the existing protected Receipt. Earlier receipts
+without it still read, and strict development readers require the matching
+plugin, Protocol, SDK and Receipt consumers on the direct cut. The field adds
+no server column, request, or wire epoch. The 0.2 frontier at `fdb84f8e41`
+has no deployment target Role Result.
+
 Unreleased 0.3 checkout teardown Trust reads keep the existing signed request
 shape. Home verifies the installation signature over the request body and the
 read purpose. The daemon fills the shared child proof's required digest field

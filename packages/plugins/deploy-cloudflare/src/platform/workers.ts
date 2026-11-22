@@ -120,7 +120,11 @@ export async function withWorkerAddress(result: DeploymentTargetRoleResultV1, in
     // A route can be enabled before the deployed Worker serves its public hostname.
     const response = await context.http.request({ url, method: 'GET', redirect: 'manual', responseBody: 'discard' },
       { signal: context.signal });
-    return response.status >= 200 && response.status < 400 ? { ...result, urls: [url], builtInUrls: [url] } : result;
+    if (response.status >= 200 && response.status < 400) return { ...result, urls: [url], builtInUrls: [url] };
+    if (response.status >= 400 && response.status < 600) {
+      return { ...result, publicAddressFailure: { url, httpStatus: response.status } };
+    }
+    return result;
   } catch (error) {
     if (context.signal.aborted || isPluginError(error)) return result;
     throw error;

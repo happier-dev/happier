@@ -36,6 +36,8 @@ type ReceiptCopy = Readonly<{
   imagesTitle: string;
   imagesDescription: string;
   platformDomainRequired: string;
+  publicAddressFailed: string;
+  publicAddressHttpError: (params: { address: string; status: number }) => string;
   removedPerson: string;
   detailsRemoved: string;
   prunedTitle: string;
@@ -53,6 +55,8 @@ type ReceiptCopy = Readonly<{
 export const deploymentReceiptTranslations = {
   "en": {
     platformDomainRequired: "Add a Domain in the Environment to reach this deployment.",
+    publicAddressFailed: "Deployed, but the public address did not answer",
+    publicAddressHttpError: ({ address, status }) => `${address} returned HTTP ${status}. Check the app’s entry point and routing.`,
     state: "State",
     actor: "Started by",
     operation: "Operation",
@@ -102,6 +106,8 @@ export const deploymentReceiptTranslations = {
   },
   "fr": {
     platformDomainRequired: "Ajoutez un domaine dans l’environnement pour accéder à ce déploiement.",
+    publicAddressFailed: "Déploiement effectué, mais l’adresse publique n’a pas répondu",
+    publicAddressHttpError: ({ address, status }) => `${address} a renvoyé HTTP ${status}. Vérifiez le point d’entrée et le routage de l’application.`,
     state: "État",
     actor: "Démarré par",
     operation: "Opération",
@@ -151,6 +157,8 @@ export const deploymentReceiptTranslations = {
   },
   "de": {
     platformDomainRequired: "Füge in der Umgebung eine Domain hinzu, um dieses Deployment zu erreichen.",
+    publicAddressFailed: "Bereitgestellt, aber die öffentliche Adresse hat nicht geantwortet",
+    publicAddressHttpError: ({ address, status }) => `${address} hat HTTP ${status} zurückgegeben. Prüfe den Einstiegspunkt und das Routing der App.`,
     state: "Status",
     actor: "Gestartet von",
     operation: "Vorgang",
@@ -200,6 +208,8 @@ export const deploymentReceiptTranslations = {
   },
   "es": {
     platformDomainRequired: "Añade un dominio en el entorno para acceder a este despliegue.",
+    publicAddressFailed: "Desplegado, pero la dirección pública no respondió",
+    publicAddressHttpError: ({ address, status }) => `${address} devolvió HTTP ${status}. Comprueba el punto de entrada y el enrutamiento de la aplicación.`,
     state: "Estado",
     actor: "Iniciado por",
     operation: "Operación",
@@ -249,6 +259,8 @@ export const deploymentReceiptTranslations = {
   },
   "it": {
     platformDomainRequired: "Aggiungi un dominio nell’ambiente per raggiungere questa distribuzione.",
+    publicAddressFailed: "Distribuzione completata, ma l’indirizzo pubblico non ha risposto",
+    publicAddressHttpError: ({ address, status }) => `${address} ha restituito HTTP ${status}. Controlla il punto di ingresso e il routing dell’app.`,
     state: "Stato",
     actor: "Avviato da",
     operation: "Operazione",
@@ -298,6 +310,8 @@ export const deploymentReceiptTranslations = {
   },
   "pt": {
     platformDomainRequired: "Adicione um domínio no ambiente para acessar esta implantação.",
+    publicAddressFailed: "Implantado, mas o endereço público não respondeu",
+    publicAddressHttpError: ({ address, status }) => `${address} retornou HTTP ${status}. Verifique o ponto de entrada e o roteamento do app.`,
     state: "Estado",
     actor: "Iniciado por",
     operation: "Operação",
@@ -347,6 +361,8 @@ export const deploymentReceiptTranslations = {
   },
   "ca": {
     platformDomainRequired: "Afegeix un domini a l’entorn per accedir a aquest desplegament.",
+    publicAddressFailed: "Desplegat, però l’adreça pública no ha respost",
+    publicAddressHttpError: ({ address, status }) => `${address} ha retornat HTTP ${status}. Comprova el punt d’entrada i l’encaminament de l’aplicació.`,
     state: "Estat",
     actor: "Iniciat per",
     operation: "Operació",
@@ -396,6 +412,8 @@ export const deploymentReceiptTranslations = {
   },
   "pl": {
     platformDomainRequired: "Dodaj domenę w środowisku, aby uzyskać dostęp do tego wdrożenia.",
+    publicAddressFailed: "Wdrożono, ale adres publiczny nie odpowiedział",
+    publicAddressHttpError: ({ address, status }) => `${address} zwrócił HTTP ${status}. Sprawdź punkt wejścia i routing aplikacji.`,
     state: "Stan",
     actor: "Uruchomione przez",
     operation: "Operacja",
@@ -445,6 +463,8 @@ export const deploymentReceiptTranslations = {
   },
   "ru": {
     platformDomainRequired: "Добавьте домен в окружении, чтобы открыть это развёртывание.",
+    publicAddressFailed: "Развёрнуто, но публичный адрес не ответил",
+    publicAddressHttpError: ({ address, status }) => `${address} вернул HTTP ${status}. Проверьте точку входа и маршрутизацию приложения.`,
     state: "Состояние",
     actor: "Кто запустил",
     operation: "Операция",
@@ -494,6 +514,8 @@ export const deploymentReceiptTranslations = {
   },
   "ja": {
     platformDomainRequired: "このデプロイにアクセスするには、環境にドメインを追加してください。",
+    publicAddressFailed: "デプロイ済みですが、公開アドレスが応答しませんでした",
+    publicAddressHttpError: ({ address, status }) => `${address} が HTTP ${status} を返しました。アプリのエントリーポイントとルーティングを確認してください。`,
     state: "状態",
     actor: "開始した人",
     operation: "操作",
@@ -543,6 +565,8 @@ export const deploymentReceiptTranslations = {
   },
   "zh-Hans": {
     platformDomainRequired: "请在环境中添加域名以访问此部署。",
+    publicAddressFailed: "已部署，但公开地址未响应",
+    publicAddressHttpError: ({ address, status }) => `${address} 返回了 HTTP ${status}。请检查应用入口和路由。`,
     state: "状态",
     actor: "发起人",
     operation: "操作",
