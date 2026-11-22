@@ -1,9 +1,12 @@
-import { renderHook as renderBaseHook, standardCleanup } from '@/dev/testkit';
+import { createDeferred, renderHook as renderBaseHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import * as React from 'react';
+import { AuthProvider } from '@/auth/context/AuthContext';
 import { t, type TranslationKey } from '@/text';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readSessionConnectedServiceBindings } from '@/sync/domains/connectedServices/readSessionConnectedServiceBindings';
 import { createRpcCallError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { SessionConnectedServiceAuthSwitchOption } from '@happier-dev/protocol/connect/sessionConnectedServiceAuthSwitch';
 import type { SessionConnectedServiceAuthSwitchErrorCode } from '@/sync/ops/connectedServices/sessionAuthSwitch';
 import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import type { RenderHookOptions } from '@/dev/testkit/hooks/renderHook';
@@ -42,6 +45,18 @@ const modalAlertMock = vi.hoisted(() => vi.fn());
 const modalConfirmMock = vi.hoisted(() => vi.fn());
 const routerPushMock = vi.hoisted(() => vi.fn());
 const modalShowMock = vi.hoisted(() => vi.fn((_config: Parameters<IModal['show']>[0]) => 'connect-sheet'));
+const authOptionsRpc = vi.hoisted(() => vi.fn());
+
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc')>();
+    return {
+        ...actual,
+        machineRpcWithServerScope: (params: Parameters<typeof actual.machineRpcWithServerScope>[0]) =>
+            params.method === RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_OPTIONS
+                ? authOptionsRpc(params)
+                : actual.machineRpcWithServerScope(params),
+    };
+});
 
 function expectConnectSheet(service: { pluginId: string; localId: string }, accountId?: string) {
     expect(modalShowMock).toHaveBeenLastCalledWith(expect.objectContaining({ props: expect.objectContaining({
@@ -510,6 +525,82 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         installConnectedAccountDescriptorProjection(
             createConnectedAccountDescriptorProjectionLoadingState('auth-switch-test-cleanup'),
         );
+    });
+
+    it.each(['ready', 'retry', 'empty', 'lagging profile'] as const)('renders the Muse route options with %s', async (scenario) => {
+        const service = { pluginId: 'happier.agent.muse', localId: 'muse-account' };
+        const serviceId = buildQualifiedPluginContributionKey(service);
+        const consumer = { pluginId: service.pluginId, localId: 'muse' };
+        const purpose = 'muse-native';
+        const failedBinding = { source: 'connected', selection: 'profile', profileId: 'rejected-key' } as const;
+        const healthyBinding = { source: 'connected', selection: 'profile', profileId: 'healthy-subscription' } as const;
+        const options = [failedBinding, healthyBinding].map(binding => ({
+            label: binding === failedBinding ? 'Muse API key' : 'Muse subscription',
+            routing: {
+                agentId: 'muse', selectedServiceId: serviceId, bindings: { v: 2, bindingsByServiceId: { [serviceId]: binding } },
+                previousTeamCredentialBindings: [{ v: 1, slot: { kind: 'connected_service_purpose', purpose: { consumer, purpose } }, resourceId: null }],
+                teamCredentialBindings: [{ v: 1, slot: { kind: 'connected_service_purpose', purpose: { consumer, purpose } }, resourceId: null }],
+            },
+        } satisfies SessionConnectedServiceAuthSwitchOption));
+        const profile = AccountProfileSchema.parse({ ...profileDefaults, id: 'account-a', connectedAccountsV4: scenario === 'ready' || scenario === 'retry' ? [{
+            ...v4Account({ ...service, accountId: healthyBinding.profileId, displayName: 'Muse subscription', kind: 'oauth' }),
+            configurationReady: false, accessMode: 'subscription',
+        }] : [] });
+        const reply = createDeferred<unknown>();
+        authOptionsRpc.mockReset().mockReturnValueOnce(reply.promise).mockResolvedValue({ ok: true, options });
+        const features = createRootLayoutFeaturesResponse();
+        const connection = await restoreServerAccountForTest({ serverUrl: 'https://muse-route-picker.test', accountId: 'account-a',
+            request: async (url, init) => {
+                const path = new URL(String(url)).pathname;
+                if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(features);
+                if (path === '/v1/account/profile') return Response.json(profile);
+                return createEmptyAccountBootstrapHttpResponse(path, init);
+            },
+        });
+        try {
+            storage.setState({ profileScope: { serverId: connection.home.id, accountId: 'account-a' }, profile });
+            const sessionId = 'muse-route-picker';
+            const hook = await renderBaseHook(() => useAuthSwitch({
+                sessionId, machineId: 'machine-1', serverId: connection.home.id, agentId: 'muse', agentIdentity: consumer,
+                connectedAccounts: [{ purpose, service }], connectedToNativeSwitchUnsupported: true,
+                sessionMetadata: { connectedServices: { v: 2, bindingsByServiceId: scenario === 'empty' ? {} : { [serviceId]: failedBinding } } },
+                settings: { connectedServicesDefaultProfileByServiceId: {} }, switchingDisabledReason: null,
+                applyBinding: setSessionConnectedServiceAuthBindingMock, readRoutingOptions: async () => [],
+            }));
+            try {
+                const renderContent = hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent;
+                expect(renderContent).toBeTypeOf('function');
+                const content = renderContent?.({ requestClose: vi.fn(), maxHeight: 320 });
+                if (!React.isValidElement(content)) throw new Error('Expected a route picker');
+                const picker = await renderScreen(<AuthProvider initialCredentials={connection.credentials}>{content}</AuthProvider>);
+                try {
+                    const empty = 'connectedServices.authModal.notConnectedTitle';
+                    if (scenario === 'retry') {
+                        expect(picker.getTextContent()).toContain('common.loading');
+                        expect(picker.getTextContent()).not.toContain(empty);
+                    }
+                    await vi.waitFor(() => expect(authOptionsRpc).toHaveBeenCalledWith(expect.objectContaining({ payload: { sessionId } })));
+                    await act(async () => reply.resolve(scenario === 'retry' ? { ok: false, errorCode: 'unavailable' }
+                        : { ok: true, options: scenario === 'empty' ? [] : options }));
+                    if (scenario === 'empty') {
+                        await vi.waitFor(() => expect(picker.getTextContent()).toContain(empty));
+                        return;
+                    }
+                    if (scenario === 'retry') {
+                        await vi.waitFor(() => expect(picker.getTextContent()).toContain('workflows.start.choicesFailed'));
+                        expect(picker.getTextContent()).not.toContain(empty);
+                        await picker.pressByTestIdAsync('session-auth-switch-options-action');
+                    }
+                    const rowId = `new-session.connected-services.selection-list:new-session-connected-services-root:option:connected-service:${encodeURIComponent(serviceId)}:profile:${healthyBinding.profileId}`;
+                    await vi.waitFor(() => expect(picker.findByTestId(rowId)).toBeTruthy());
+                    expect(picker.getTextContent()).not.toContain(empty);
+                    await picker.pressByTestIdAsync(rowId);
+                    expect(setSessionConnectedServiceAuthBindingMock).toHaveBeenCalledWith(expect.objectContaining({
+                        routing: options[1]?.routing,
+                    }));
+                } finally { await picker.unmount(); }
+            } finally { await hook.unmount(); }
+        } finally { await connection.dispose(); }
     });
 
     it('retains absent status badges when only fresh-session configuration changes', async () => {

@@ -6,7 +6,7 @@ import { readTeamCredentialDeliveryReadinessV1 } from '@happier-dev/protocol/tea
 import type { TeamCredentialResourceStatusByKey } from '@/sync/domains/teams/teamCredentialResourceStatus';
 import * as React from 'react';
 import { presentArmedSessionRouteSource, presentNativeRouteSourceLabel, presentSessionRouteChip, resolveSessionRoutePresentation, type SessionRoutePresentationInput } from '@/providers/session/resolveSessionRoutePresentation';
-import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
+import { useConnectedAccountIdentityPrivacy, type ConnectedAccountIdentityPresenter } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from '@/hooks/server/connectedServices/useConnectedMetadataCatalog';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useConnectedAccountCatalog } from '@/sync/store/settings/useConnectedAccountCatalog';
@@ -54,6 +54,8 @@ import { captureActiveServerAccountScopeLifetime, selectActiveServerAccountScope
 import { resolveQualifiedConnectedServiceRegistryDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
 import { resolveConnectedServicesAuthLabel, resolveConnectedServicesAuthWarningTranslationKey } from '@/components/settings/connectedServices/model/resolveConnectedServicesAuthLabel';
 import { ActionListSection } from '@/components/ui/lists/ActionListSection';
+import { SurfaceStateCard } from '@/components/ui/surfaces';
+import type { ConnectedServicesProfileOption } from '@happier-dev/agents';
 import { buildConnectedAccountPurposeTargetChoices } from '@/sync/domains/connectedServices/connectedAccountPurposeTargetChoices';
 import { getConnectedAccountAuthentication } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import type { Settings } from '@/sync/domains/settings/settings';
@@ -366,26 +368,55 @@ function findSwitchRouting(options: readonly SwitchRouting[], serviceId: string,
 }
 
 function SessionConnectedServicesSwitchSelection({
-    sessionId, machineId, serverId, applyRouting, ...props
+    sessionId, machineId, serverId, applyRouting, presentIdentity, ...props
 }: React.ComponentProps<typeof NewSessionConnectedServicesSelectionContent> & Readonly<{
     sessionId: string;
     machineId?: string | null;
     serverId?: string | null;
     applyRouting: (serviceId: string, binding: ConnectedServicesServiceBinding, routing: SwitchRouting) => void;
+    presentIdentity: ConnectedAccountIdentityPresenter;
 }>) {
     const request = { actionId: SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, field: SWITCH_OPTIONS_FIELD };
-    const { state } = useInputFieldOptions({ requests: [request], enabled: Boolean(machineId), machineId, sessionId, serverId });
-    const published = state(SWITCH_OPTIONS_FIELD).options;
-    const options = React.useMemo(() => published.flatMap(option => {
-        const routing = SessionConnectedServiceAuthSwitchRoutingSchema.safeParse(option.value);
-        return routing.success ? [routing.data] : [];
-    }), [published]);
+    const { state, retry } = useInputFieldOptions({ requests: [request], enabled: Boolean(machineId), machineId, sessionId, serverId });
+    const published = state(SWITCH_OPTIONS_FIELD);
+    const accountOptionsNotice = !machineId ? (
+        <SurfaceStateCard kind="error" size="line" lineDensity="menu" title={t('session.collaboration.readiness.cause.machineMissing')} />
+    ) : published.status === 'loading' ? (
+        <SurfaceStateCard kind="loading" size="line" lineDensity="menu" title={t('common.loading')} />
+    ) : published.status === 'failed' ? (
+        <SurfaceStateCard testID="session-auth-switch-options" kind="error" size="line" lineDensity="menu"
+            title={t('workflows.start.choicesFailed')} action={{ label: t('common.retry'), onPress: () => retry() }} />
+    ) : undefined;
+    const { options, profileOptionsByServiceId } = React.useMemo(() => {
+        const options: SwitchRouting[] = [];
+        const profiles: Record<string, ConnectedServicesProfileOption[]> = {};
+        const presentation = Object.fromEntries(Object.entries(props.profileOptionsByServiceId).map(([serviceId, rows]) =>
+            [serviceId, new Map(rows.map(row => [row.profileId, row]))]));
+        for (const option of published.options) {
+            const parsed = SessionConnectedServiceAuthSwitchRoutingSchema.safeParse(option.value);
+            if (!parsed.success) continue;
+            const routing = parsed.data;
+            options.push(routing);
+            const serviceId = routing.selectedServiceId;
+            if (!serviceId) continue;
+            const binding = routing.bindings.bindingsByServiceId[serviceId];
+            if (binding?.source !== 'connected' || binding.selection !== 'profile') continue;
+            const profileId = binding.profileId;
+            // The daemon admits Session routes. Account rows only supply presentation metadata.
+            const row = presentation[serviceId]?.get(profileId);
+            const label = row?.label ?? presentIdentity({
+                label: option.label, labelKind: option.label === profileId ? 'accountId' : undefined,
+            }).label;
+            (profiles[serviceId] ??= []).push({ profileId, label, providerEmail: row?.providerEmail, status: 'connected' });
+        }
+        return { options, profileOptionsByServiceId: profiles };
+    }, [published.options, props.profileOptionsByServiceId, presentIdentity]);
     const canChoose = (service: string, binding: ConnectedServicesServiceBinding) => Boolean(findSwitchRouting(options, service, binding));
     return (
         <NewSessionConnectedServicesSelectionContent
             {...props}
-            profileOptionsByServiceId={Object.fromEntries(Object.entries(props.profileOptionsByServiceId).map(([service, profiles]) =>
-                [service, profiles.filter(profile => canChoose(service, { source: 'connected', selection: 'profile', profileId: profile.profileId }))]))}
+            accountOptionsNotice={accountOptionsNotice}
+            profileOptionsByServiceId={profileOptionsByServiceId}
             groupOptionsByServiceId={Object.fromEntries(Object.entries(props.groupOptionsByServiceId).map(([service, groups]) =>
                 [service, groups.filter(group => canChoose(service, { source: 'connected', selection: 'group', groupId: group.groupId }))]))}
             teamCredentialResources={props.teamCredentialResources?.flatMap(resource => {
@@ -936,6 +967,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
             sessionId={params.sessionId}
             machineId={params.machineId}
             serverId={params.serverId}
+            presentIdentity={present}
             armedNote={armedNote}
             routeSources={params.routeSources}
             nativeAgentTargetKey={params.nativeAgentTargetKey ?? undefined}
@@ -984,10 +1016,13 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         params.teamCredentialDisplayNames,
         params.teamCredentialResourceStatusByKey,
         params.teamNameById,
+        params.machineId,
         params.serverId,
+        params.sessionId,
         params.routeSources,
         params.nativeAgentTargetKey,
         profileOptionsByServiceId,
+        present,
         resolveOptionAvailability,
         openConnectSheet,
         router,

@@ -79,6 +79,8 @@ export type NewSessionConnectedServicesSelectionContentProps = Readonly<{
     armedNote?: string | null;
     /** The "Runs through" popover also names the Agent's Gateways and Providers; other hosts omit it. */
     routeSources?: SessionRouteSources;
+    /** Replaces the account rows while their Session-specific options are unresolved. */
+    accountOptionsNotice?: React.ReactNode;
     /** Exact selected Agent, also available when Provider browsing is disabled. */
     nativeAgentTargetKey?: string;
     /** Applied route from the canonical presentation owner, separate from pending intent. */
@@ -124,6 +126,7 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
     const connectedServicesRegistry = useProjectedConnectedServicesRegistry();
     const sourceBrowse = React.useContext(SessionModelSourceBrowseHandoffContext)?.browse;
     const nativeAgentTargetKey = props.nativeAgentTargetKey ?? props.routeSources?.agentTargetKey;
+    const accountOptionsUnresolved = props.accountOptionsNotice != null;
     const appliedTeamRoute = React.useMemo(() => props.appliedRoute?.kind === 'team'
         ? { teamId: props.appliedRoute.teamId, resourceId: props.appliedRoute.resourceId, deliveryMode: props.appliedRoute.deliveryMode }
         : undefined, [props.appliedRoute]);
@@ -214,7 +217,7 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
 
     const listModel = React.useMemo(() => {
         return buildNewSessionConnectedServicesSelectionListModel({
-            supportedServiceIds: props.supportedServiceIds,
+            supportedServiceIds: accountOptionsUnresolved ? [] : props.supportedServiceIds,
             profileOptionsByServiceId,
             groupOptionsByServiceId,
             bindingsByServiceId: props.bindingsByServiceId,
@@ -227,7 +230,7 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
             directDelivery: props.directDelivery,
             onRecoverTeamCredentialResource: recoverTeamCredentialResource,
             defaultProfileIdByServiceId: props.defaultProfileIdByServiceId,
-            includeNativeAuthOption: props.includeNativeAuthOption,
+            includeNativeAuthOption: accountOptionsUnresolved ? false : props.includeNativeAuthOption,
             unavailableNativeSignInServiceIds: props.unavailableNativeSignInServiceIds,
             nativeRoute,
             appliedTeamRoute,
@@ -249,6 +252,7 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
             resolveOptionAvailability: props.resolveOptionAvailability,
         });
     }, [
+        accountOptionsUnresolved,
         props.bindingsByServiceId,
         props.bindingsKnown,
         nativeRoute,
@@ -314,6 +318,8 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
                 rootStep={rootStep}
                 selectedOptionId={listModel.selectedOptionId}
                 optionPresentation="menu"
+                contentState={routeSourceSections.length === 0 ? props.accountOptionsNotice : undefined}
+                bodyHeader={routeSourceSections.length > 0 ? props.accountOptionsNotice : undefined}
                 maxHeight={listMaxHeight}
                 heightBehavior={props.heightBehavior ?? resolvePopoverSelectionListHeightBehavior()}
                 keyboardHintsEnabled={false}
