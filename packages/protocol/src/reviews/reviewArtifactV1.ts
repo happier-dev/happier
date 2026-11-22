@@ -1,6 +1,7 @@
 import { z } from '../zodRuntimePolicy.js';
 import { REVIEW_ARTIFACT_KIND_V1 } from '../artifacts/artifactKindV1.js';
 import {
+  projectReviewReviewerOutcomeV1,
   projectReviewRoundOutcomeV1,
   ReviewQualityV1Schema,
   type ReviewQualityAggregationV1,
@@ -71,6 +72,16 @@ const ReviewRoundReviewerQualityV1Schema = lazyZodSchema(() => z.strictObject({
   reviewerId: z.string().check(z.minLength(1)),
   displayName: z.optional(z.string().check(z.minLength(1))), ...ReviewQualityV1Schema.shape,
 }));
+/** One admitted reviewer's settled result. Canonical once written; older rounds have none and read as aggregate only. */
+export const ReviewRoundReviewerOutcomeV1Schema = lazyZodSchema(() => z.strictObject({
+  reviewerId: z.string().check(z.minLength(1)),
+  displayName: z.optional(z.string().check(z.minLength(1))),
+  outcome: z.enum(['completed', 'partial', 'failed', 'cancelled']),
+  runId: z.optional(z.string().check(z.minLength(1))),
+  startedAt: z.optional(z.number().check(z.int(), z.nonnegative())),
+  finishedAt: z.optional(z.number().check(z.int(), z.nonnegative())),
+}));
+export type ReviewRoundReviewerOutcomeV1 = z.infer<typeof ReviewRoundReviewerOutcomeV1Schema>;
 export const ReviewArtifactBodyV1Schema = z.strictObject({ v: z.literal(1), rounds: z.array(z.strictObject({
   ordinal: z.number().check(z.int(), z.minimum(1)), comparisonId: z.optional(z.string()),
   comparisonCapture: z.optional(ReviewRoundComparisonCaptureV1Schema),
@@ -79,6 +90,7 @@ export const ReviewArtifactBodyV1Schema = z.strictObject({ v: z.literal(1), roun
   reviewerDisplayNames: z.optional(z.record(z.string(), z.string().check(z.minLength(1)))),
   reviewerQuality: z.optional(z.array(ReviewRoundReviewerQualityV1Schema)),
   medianQualityScore: z.optional(z.number().check(z.minimum(1), z.maximum(5))),
+  reviewerOutcomes: z.optional(z.array(ReviewRoundReviewerOutcomeV1Schema)),
   summary: z.optional(z.string()),
 })) });
 export type ReviewArtifactBodyV1 = z.infer<typeof ReviewArtifactBodyV1Schema>;
@@ -151,6 +163,19 @@ export function resolveReviewSourceSessionIdV1(capture: ReviewRoundComparisonCap
   if ((source?.kind === 'session' || source?.kind === 'turnCheckpoint') && source.sessionId) return source.sessionId;
   return capture?.input.sessionId;
 }
+function settleReviewerOutcome(reviewerId: string, displayName: string | undefined,
+  input: ReviewRoundSettlementV1): ReviewRoundReviewerOutcomeV1 {
+  const own = (input.reviewerOutcomes ?? []).filter(item => item.key === reviewerId);
+  const cancelled = own.length === 0 ? input.outcome === 'cancelled' : own.every(item => item.outcome === 'cancelled');
+  const runId = own.find(item => item.runId)?.runId;
+  const starts = own.flatMap(item => item.startedAt === undefined ? [] : [item.startedAt]);
+  const finishes = own.flatMap(item => item.finishedAt === undefined ? [] : [item.finishedAt]);
+  return { reviewerId, ...(displayName ? { displayName } : {}),
+    outcome: cancelled ? 'cancelled' : projectReviewReviewerOutcomeV1(own),
+    ...(runId ? { runId } : {}),
+    ...(starts.length ? { startedAt: Math.min(...starts) } : {}),
+    ...(finishes.length ? { finishedAt: Math.max(...finishes) } : {}) };
+}
 function refused(code: string): never { throw Object.assign(new Error(code), { code }); }
 
 /** Seals one start and one whole-round terminal projection over the existing Artifact CAS.
@@ -211,8 +236,11 @@ export function createReviewRecordPortV1(transport: ReviewArtifactTransportV1) {
         const displayName = round.reviewerDisplayNames?.[reviewerId];
         return quality ? [{ reviewerId, ...(displayName ? { displayName } : {}), ...quality }] : [];
       });
+      const reviewerOutcomes = round.reviewerIds.map(reviewerId =>
+        settleReviewerOutcome(reviewerId, round.reviewerDisplayNames?.[reviewerId], input));
       const nextRound = { ...round, state: outcome, finishedAt: input.finishedAt, runs: [...input.runs],
         ...(reviewerQuality.length ? { reviewerQuality } : {}),
+        ...(reviewerOutcomes.length ? { reviewerOutcomes } : {}),
         ...(outcome === 'completed' && reviewerQuality.length > 0 ? { medianQualityScore: medianReviewerScore(reviewerQuality) } : {}),
         ...(input.summary === undefined ? {} : { summary: input.summary }) };
       const next = { ...current, rounds: current.rounds.map(item => item === round ? nextRound : item) };

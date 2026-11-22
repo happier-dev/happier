@@ -2,7 +2,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 
-import type { ActionCompletionDeclaration, ExecutionRunCompletionDeclaration, ActionCompletionRun, ExecutionRunTerminalObservation } from '../actionCompletion.js';
+import type { ActionCompletionDeclaration, ExecutionRunCompletionDeclaration, ActionCompletionRun, ExecutionRunTerminalObservation, ExecutionRunTerminalObservationWithTiming } from '../actionCompletion.js';
 import { readExecutionRunStartRunCreation } from '../../execution/runs/responseSchemas.js';
 import { ScmDiffSummaryGenerateOutputSchema } from '../../scm/diffSummary.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
@@ -103,13 +103,18 @@ export function readReviewStartActionResultV1(value: unknown,
   }
 }
 
-type ObservedRun = Readonly<ActionCompletionRun & { outcome: ExecutionRunTerminalObservation }>;
+type ObservedRun = Readonly<ActionCompletionRun & { outcome: ExecutionRunTerminalObservationWithTiming }>;
 function perRunOutcome({ key, runId, outcome }: ObservedRun) {
   return {
-    key, runId, outcome: outcome.kind,
+    key, runId, outcome: outcome.kind, ...runTiming(outcome),
     ...(outcome.kind === 'failed' && outcome.runtimeIssueV1 ? { runtimeIssueV1: projectSessionRuntimeIssueMetadataV1(outcome.runtimeIssueV1) } : {}),
     ...(outcome.kind !== 'completed' && outcome.code ? { errorCode: outcome.code } : {}),
   };
+}
+
+function runTiming(outcome: ExecutionRunTerminalObservationWithTiming) {
+  return { ...(outcome.startedAt === undefined ? {} : { startedAt: outcome.startedAt }),
+    ...(outcome.finishedAt === undefined ? {} : { finishedAt: outcome.finishedAt }) };
 }
 
 function launchFailureOutcomes(output: unknown, intent: 'review' | 'plan') {
@@ -202,7 +207,7 @@ export const reviewStartExecutionRunCompletion: ExecutionRunCompletionDeclaratio
           ? { kind: 'completed', result: {}, ...evidence, reviewedFingerprint: evidence?.reviewedFingerprint ?? null }
           : provenance?.status === 'cancelled' ? { kind: 'cancelled' }
             : { kind: 'failed', code: provenance?.reviewOutcome === 'failed' ? 'review_failed' : 'review_output_unavailable' };
-        return { ...run, outcome };
+        return { ...run, outcome: { ...outcome, ...runTiming(run.outcome) } };
       });
     const completed = reviewRuns.flatMap(({ outcome }) => outcome.kind === 'completed' ? [outcome] : []);
     const fingerprints = completed.map((outcome) => outcome.reviewedFingerprint === undefined

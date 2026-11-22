@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createReviewRecordPortV1, projectReviewRoundQualityV1, ReviewRoundComparisonCaptureV1Schema, type ReviewArtifactTransportV1 } from './reviewArtifactV1.js';
+import { createReviewRecordPortV1, projectReviewRoundQualityV1, ReviewArtifactBodyV1Schema, ReviewRoundComparisonCaptureV1Schema, type ReviewArtifactTransportV1 } from './reviewArtifactV1.js';
 import { presentReviewRoundQualityV1 } from './reviewQualityPresentationV1.js';
 import { ReviewReviewerOutcomeV1Schema } from './reviewPublicationEvidence.js';
 
@@ -132,6 +132,35 @@ describe('durable Review rounds', () => {
     expect(presentReviewRoundQualityV1(projectReviewRoundQualityV1(rounds?.[0], 'lowest'))?.displayScore).toBe(2);
     expect(presentReviewRoundQualityV1(null)).toBeNull();
     expect(projectReviewRoundQualityV1(rounds?.[1], 'lowest')).toBeNull();
+  });
+
+  it('persists each admitted reviewer outcome and timing once at settlement; older rounds stay aggregate only', async () => {
+    const f = fixture();
+    const start = { reviewId: 'outcome-review', title: 'Review', subjectKind: 'repository' as const,
+      sourceKind: 'workflow' as const, reviewerIds: ['fast', 'slow', 'thin', 'absent'],
+      reviewerDisplayNames: { fast: 'Codex', slow: 'Claude' }, startedAt: 10 };
+    const binding = await f.records.start(start);
+    const outcomes = [
+      { key: 'fast', runId: 'run-fast', outcome: 'completed', reviewOutcome: 'complete', materialization: { kind: 'complete' }, startedAt: 11, finishedAt: 40 },
+      { key: 'slow', runId: 'run-slow', outcome: 'failed', errorCode: 'execution_run_failed', startedAt: 12, finishedAt: 90 },
+      { key: 'thin', outcome: 'completed', reviewOutcome: 'partial', materialization: { kind: 'complete' } },
+      { key: 'unadmitted', outcome: 'completed', reviewOutcome: 'complete', materialization: { kind: 'complete' } },
+    ].map(outcome => ReviewReviewerOutcomeV1Schema.parse(outcome));
+    await f.records.settle({ ...binding, outcome: 'completed', finishedAt: 100, runs: [], reviewerOutcomes: outcomes });
+    const round = (await f.records.read(binding.reviewId))?.rounds[0];
+    expect(round?.state).toBe('partial');
+    expect(round?.reviewerOutcomes).toEqual([
+      { reviewerId: 'fast', displayName: 'Codex', outcome: 'completed', runId: 'run-fast', startedAt: 11, finishedAt: 40 },
+      { reviewerId: 'slow', displayName: 'Claude', outcome: 'failed', runId: 'run-slow', startedAt: 12, finishedAt: 90 },
+      { reviewerId: 'thin', outcome: 'partial' },
+      { reviewerId: 'absent', outcome: 'failed' },
+    ]);
+    const cancelled = await f.records.start({ ...start, startedAt: 200, newRound: true });
+    await f.records.settle({ ...cancelled, outcome: 'cancelled', finishedAt: 210, runs: [] });
+    expect((await f.records.read(binding.reviewId))?.rounds[1]?.reviewerOutcomes?.map(row => row.outcome))
+      .toEqual(['cancelled', 'cancelled', 'cancelled', 'cancelled']);
+    const legacy = { v: 1, rounds: [{ ordinal: 1, state: 'partial', startedAt: 1, finishedAt: 2, reviewerIds: ['a', 'b'], runs: [] }] };
+    expect(ReviewArtifactBodyV1Schema.parse(legacy).rounds[0]?.reviewerOutcomes).toBeUndefined();
   });
 
   it('retains an addressable completed Review with zero findings and does not republish a terminal retry', async () => {

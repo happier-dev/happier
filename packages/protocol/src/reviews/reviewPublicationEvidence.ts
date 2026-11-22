@@ -36,6 +36,9 @@ export const ReviewReviewerOutcomeV1Schema = lazyZodSchema(() => z.strictObject(
   quality: z.optional(ReviewQualityV1Schema),
   runtimeIssueV1: z.optional(SessionRuntimeIssueV1Schema),
   errorCode: z.optional(z.string().check(z.minLength(1))), materialization: z.optional(ReviewPublicationMaterializationSchema),
+  /** This reviewer's own run or Session leaf timing, in epoch ms, when its host observed it. */
+  startedAt: z.optional(z.number().check(z.int(), z.nonnegative())),
+  finishedAt: z.optional(z.number().check(z.int(), z.nonnegative())),
 }));
 export type ReviewReviewerOutcomeV1 = z.infer<typeof ReviewReviewerOutcomeV1Schema>;
 
@@ -49,17 +52,19 @@ export function projectReviewRoundOutcomeV1(
     if (selected) selected.push(outcome);
     else byReviewer.set(outcome.key, [outcome]);
   }
-  const coverage = reviewerIds.map(key => {
-    const selected = byReviewer.get(key);
-    if (!selected) return 'failed';
-    const states = selected.map(outcome => {
-      if (outcome.outcome !== 'completed' || outcome.reviewOutcome === 'failed' || outcome.reviewOutcome === 'unavailable'
-        || !outcome.materialization || outcome.materialization.kind === 'failed') return 'failed';
-      return outcome.reviewOutcome === 'partial' || outcome.materialization.kind === 'partial' ? 'partial' : 'complete';
-    });
-    return states.every(state => state === 'complete') ? 'complete'
-      : states.some(state => state !== 'failed') ? 'partial' : 'failed';
-  });
-  return coverage.every(state => state === 'complete') ? 'completed'
+  const coverage = reviewerIds.map(key => projectReviewReviewerOutcomeV1(byReviewer.get(key) ?? []));
+  return coverage.every(state => state === 'completed') ? 'completed'
     : coverage.some(state => state !== 'failed') ? 'partial' : 'failed';
+}
+
+/** One admitted reviewer's coverage from its own receipts; no receipt is a failed reviewer. */
+export function projectReviewReviewerOutcomeV1(outcomes: readonly ReviewReviewerOutcomeV1[]): 'completed' | 'partial' | 'failed' {
+  if (outcomes.length === 0) return 'failed';
+  const states = outcomes.map(outcome => {
+    if (outcome.outcome !== 'completed' || outcome.reviewOutcome === 'failed' || outcome.reviewOutcome === 'unavailable'
+      || !outcome.materialization || outcome.materialization.kind === 'failed') return 'failed';
+    return outcome.reviewOutcome === 'partial' || outcome.materialization.kind === 'partial' ? 'partial' : 'completed';
+  });
+  return states.every(state => state === 'completed') ? 'completed'
+    : states.some(state => state !== 'failed') ? 'partial' : 'failed';
 }

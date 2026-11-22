@@ -40,13 +40,24 @@ export type ExecutionRunTerminalObservation =
   | Readonly<{ kind: 'failed'; code: string; runtimeIssueV1?: SessionRuntimeIssueV1; reviewedRuns?: readonly ScmDiffSummaryReviewRun[] }>
   | Readonly<{ kind: 'cancelled'; code?: string; reviewedRuns?: readonly ScmDiffSummaryReviewRun[] }>
   | Readonly<{ kind: 'outcome_uncertain'; code: string }>;
-
-/** Adapts a validated native terminal snapshot, not a polling Action or raw findings. */
-export function readActionCompletionRunObservationV1(native: Readonly<{
-  run: Pick<ExecutionRunGetResponse['run'], 'status' | 'error'>;
+/** A settled run carries its own start and finish from the run record, in epoch ms. */
+export type ExecutionRunTerminalObservationWithTiming = ExecutionRunTerminalObservation & Readonly<{ startedAt?: number; finishedAt?: number }>;
+type NativeRunSnapshot = Readonly<{
+  run: Pick<ExecutionRunGetResponse['run'], 'status' | 'error'> & Partial<Pick<ExecutionRunGetResponse['run'], 'startedAtMs' | 'finishedAtMs'>>;
   latestToolResult?: unknown;
   structuredMeta?: ExecutionRunGetResponse['structuredMeta'];
-}>, observation?: ExecutionRunOutputObservation): ExecutionRunTerminalObservation {
+}>;
+
+/** Adapts a validated native terminal snapshot, not a polling Action or raw findings. */
+export function readActionCompletionRunObservationV1(native: NativeRunSnapshot,
+  observation?: ExecutionRunOutputObservation): ExecutionRunTerminalObservationWithTiming {
+  const settled = readNativeRunTerminalObservation(native, observation);
+  if (settled.kind === 'outcome_uncertain') return settled;
+  return { ...settled, ...(native.run.startedAtMs === undefined ? {} : { startedAt: native.run.startedAtMs }),
+    ...(native.run.finishedAtMs === undefined ? {} : { finishedAt: native.run.finishedAtMs }) };
+}
+
+function readNativeRunTerminalObservation(native: NativeRunSnapshot, observation?: ExecutionRunOutputObservation): ExecutionRunTerminalObservation {
   const runtimeIssueV1 = native.run.error?.runtimeIssueV1;
   const runtimeEvidence = runtimeIssueV1 ? { runtimeIssueV1: projectSessionRuntimeIssueMetadataV1(runtimeIssueV1) } : {};
   if (observation) {
@@ -115,7 +126,7 @@ export type ExecutionRunCompletionDeclaration = Readonly<{
   }>;
   terminalOutputSchema: z.ZodMiniType;
   terminal: (output: unknown, runs: readonly Readonly<
-    ActionCompletionRun & { outcome: ExecutionRunTerminalObservation }
+    ActionCompletionRun & { outcome: ExecutionRunTerminalObservationWithTiming }
   >[], purpose?: 'input' | 'stored') => unknown;
 }>;
 
@@ -246,7 +257,7 @@ export async function resumeActionCompletionV1(params: Readonly<{
   state: unknown;
   context?: ActionCompletionContextV1;
   resolveDeclaration: (actionId: string) => ActionCompletionDeclaration | undefined;
-  observeRun?: (run: ActionCompletionRun) => Promise<ExecutionRunTerminalObservation>;
+  observeRun?: (run: ActionCompletionRun) => Promise<ExecutionRunTerminalObservationWithTiming>;
   observeOperation?: (operation: ActionCompletionOperation) => Promise<unknown>;
   observeWorkflow?: (workflow: ActionCompletionWorkflow) => Promise<unknown>;
 }>): Promise<ActionCompletionResult> {
@@ -331,7 +342,7 @@ export async function resumeActionCompletionV1(params: Readonly<{
   const observed = await Promise.allSettled(state.data.awaitedRuns.map(async (run) => ({
     ...run, outcome: await observeRun(run),
   })));
-  const runs: Array<ActionCompletionRun & { outcome: ExecutionRunTerminalObservation }> = [];
+  const runs: Array<ActionCompletionRun & { outcome: ExecutionRunTerminalObservationWithTiming }> = [];
   for (const result of observed) {
     if (result.status === 'rejected' || result.value.outcome.kind === 'outcome_uncertain') return uncertain;
     runs.push(result.value);

@@ -42,7 +42,8 @@ export async function writeReviewRoundState(tx: Tx, input: Readonly<{ reviewId: 
         if (current?.currentRoundOrdinal === metadata.currentRoundOrdinal) return false;
         if (metadata.currentRoundOrdinal !== (current?.currentRoundOrdinal ?? 0) + 1) notAdmitted();
         const data = { state: metadata.state, currentRoundOrdinal: metadata.currentRoundOrdinal,
-            startedAt: new Date(metadata.startedAt), finishedAt: null, ...await readSourceSessionPosition(tx, input) };
+            startedAt: new Date(metadata.startedAt), finishedAt: null, ...await readSourceSessionPosition(tx, { metadata, actorAccountId: input.actorAccountId,
+                authentication: input.authentication }) };
         if (current) {
             await tx.reviewMetadata.update({ where: { artifactId: reviewId }, data });
             // Re-admit the requested roster, preserving required/optional flags.

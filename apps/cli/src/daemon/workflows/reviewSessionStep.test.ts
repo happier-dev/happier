@@ -39,6 +39,7 @@ it.each(['complete', 'partial'] as const)('publishes a restored Session review a
   });
   expect(result).toEqual({ kind: 'completed', resultEncoding: 'typed', result: {
     reviewRound, reviewedFingerprint: null, commentIds: [],
-    perEngineOutcome: [{ key: 'step-1-reviewer-1', outcome: 'completed', reviewOutcome, materialization: { kind: 'complete' } }],
+    perEngineOutcome: [{ key: 'step-1-reviewer-1', outcome: 'completed', reviewOutcome, materialization: { kind: 'complete' },
+      finishedAt: expect.any(Number) }],
   } });
 });
