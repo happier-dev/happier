@@ -262,13 +262,14 @@ async function recordAsAgent(
       },
     );
     if (!('recording' in started))
-      throw new Error(`Start refused: ${JSON.stringify(started)}`);
+      return { started, stopped: null, bearers, messages, files: [] as string[], frames: encodedFrames, requesterToken };
     await new Promise<void>((ready) => setTimeout(ready, 50));
     const stopped = await recording.service.stopRecording({
       recordingId: started.recording.recordingId,
     });
     const files = (await readdir(root, { recursive: true })).map(String);
     return {
+      started,
       stopped,
       bearers,
       messages,
@@ -310,17 +311,17 @@ it.each(['owner', 'guest'] as const)(
   },
 );
 
-it('names a capture that stopped cleanly but could not be saved as a media persistence failure, not a capture failure', async () => {
+it('refuses at START, before any capture, a recording whose Session its requester cannot save into', async () => {
   const result = await recordAsAgent({
     account: 'guest',
     sessionReadable: false,
   });
-  expect(result.frames).toBeGreaterThan(0);
-  expect(result.stopped).toMatchObject({
-    status: 'failed',
-    reason: 'media_persistence_failed',
-    recording: { status: 'failed', outcomeReason: 'media_persistence_failed' },
+  expect(result.frames).toBe(0);
+  expect(result.started).toEqual({
+    status: 'unavailable',
+    reason: { code: 'recording_session_unavailable', message: expect.any(String) },
   });
+  expect(result.messages).toEqual([]);
   expect(
     result.bearers.every(
       (bearer) => bearer === `Bearer ${result.requesterToken}`,

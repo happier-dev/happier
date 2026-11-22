@@ -9223,6 +9223,7 @@ export async function startDaemonSessionControlRuntime(
     ...(params.machineRoles ? { roles: params.machineRoles } : {}),
     contexts: { devices: {
       params, runtimeActionRouteProviderTarget, resolveServerFeaturesSnapshot, computerRequesterHost,
+      sessionAccounts: { resolveSessionAccountContext, releaseSessionAccountContext },
       readSessionAccountId: sessionId => {
         const tracked = findTrackedSessionByHappySessionId(params.trackedSessionsByKey.values(), sessionId);
         return (tracked?.requesterWorkAttributionV1 ?? tracked?.spawnOptions?.requesterWorkAttributionV1

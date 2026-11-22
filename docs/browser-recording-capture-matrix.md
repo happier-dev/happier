@@ -86,12 +86,24 @@ hash; the normal transcript media renderer consumes it. Once admitted, draft-rec
 does not delete the attached bytes. A missing Session directory or failed custody admission
 fails recording finalization rather than reporting an attachment that was never admitted.
 
-The workspace read and the attachment use the Account custody that admitted the recording's
-start: installed requester ingress for a person, or the Session issuer's projected custody for
-an Agent's Action (`createRecordingSessionMediaHost`). A guest's Agent on another person's
-Machine therefore saves into the guest's own Session, never the Machine owner's. Only original
-own-Account ingress uses the daemon Account. A capture that stopped cleanly but could not be
-saved ends `failed` with `media_persistence_failed`; `capture_failed` means capture itself failed.
+Record START decides once who may save where (`createRecordingSessionMediaHost`, `admitSave`),
+before any capture. Installed requester ingress and the Session issuer's projected custody for an
+Agent's Action save with that custody. A person's own Machine RPC (Computer personal controls,
+the raw Browser recording RPC) carries only Machine admission: START then reuses the custody the
+daemon already holds for the named tracked Session, and admits the save only when that Session
+runs as the authenticated caller. No credential travels with the RPC. A caller naming anyone
+else's Session, including the Machine owner naming a guest's, is refused with
+`recording_session_not_owned`; a Session that cannot be read here as its owner is refused with
+`recording_session_unavailable`. START resolves the Session's workspace with the owner read, which
+also decides the Account mode, and the attachment is sealed by the transcript custody the way that
+Session's own content is. Only original own-Account ingress and the custodian's own Sessions use
+the daemon Account.
+
+A capture that stopped cleanly but could not be saved ends `failed` with
+`media_persistence_failed` and a `saveFailure` naming the file's fate:
+`workspace_write_failed` (not written; the encoded file is deleted) or
+`transcript_attach_failed` (kept in the Session's workspace on that Machine, not attached).
+`capture_failed` means capture itself failed.
 
 The shared SessionMedia format list, Composer staging and transcript readers accept
 file-backed MP4 (`video/mp4`) alongside WebM (`video/webm`) in 0.3 development source.

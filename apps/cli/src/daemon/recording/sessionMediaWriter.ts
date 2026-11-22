@@ -12,7 +12,8 @@ import {
 import type { SessionMediaIngestionSource } from '@/session/media/_types';
 import type { TransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 import { attachSessionMediaMeta } from '@/api/session/client/transcript/sessionMediaBridge';
-import type { RecordingOperationContext } from './sessionMediaHost';
+import type { RecordingOperationContext, RecordingSaveAdmission } from './sessionMediaHost';
+import { RecordingSaveError } from './service';
 
 import type {
   BrowserRecordingCapturedArtifact,
@@ -32,6 +33,8 @@ export type BrowserRecordingSessionMediaWriterOptions<R extends RecordingSession
   accessPolicy?: FilesystemAccessPolicy;
   sourceAccessPolicy?: FilesystemAccessPolicy;
   resolveSessionMediaTarget(recording: R): BrowserRecordingSessionMediaTarget;
+  /** The media host's Record START decision; the admitted context then carries the save's custody and workspace. */
+  admitSave?: (target: BrowserRecordingSessionMediaTarget, context?: RecordingOperationContext) => Promise<RecordingSaveAdmission>;
   resolveWorkingDirectory?: (target: BrowserRecordingSessionMediaTarget, context?: RecordingOperationContext) => string | Promise<string>;
   commitAttachment?: (input: Readonly<{ sessionId: string; localId: string; meta: Record<string, unknown> }>, context?: RecordingOperationContext) => Promise<void>;
   resolveInputControl?: (recording: R) => ReturnType<BrowserRecordingInputControlResolver>;
@@ -84,7 +87,10 @@ export function createBrowserRecordingSessionMediaWriter<R extends RecordingSess
     workspacePathByRecordingId.delete(recordingId);
   }
 
+  const admitSave = options.admitSave;
   return {
+    ...(admitSave ? { admitRecording: async ({ recording, context }: Readonly<{ recording: R; context?: RecordingOperationContext }>) =>
+      admitSave(options.resolveSessionMediaTarget(recording), context) } : {}),
     async attachToComposer({ recording, sessionId }) {
       const target = options.resolveSessionMediaTarget(recording);
       const storage = workspacePathByRecordingId.get(recording.recordingId);
@@ -111,8 +117,14 @@ export function createBrowserRecordingSessionMediaWriter<R extends RecordingSess
       const confidential = () => new Error('Browser recording is held for confidential input.');
       if (control?.isObservationHeld()) throw confidential();
       const persist = async (): Promise<BrowserEvidenceSessionMediaReferenceV1> => {
-        const target = options.resolveSessionMediaTarget(recording);
-        const workingDirectory = await (options.resolveWorkingDirectory?.(target, ...(context ? [context] as const : [])) ?? options.workingDirectory);
+        // Each save step names its failure by what happens to the recording file.
+        const notWritten = (cause: unknown) => new RecordingSaveError('workspace_write_failed', { cause });
+        let target: BrowserRecordingSessionMediaTarget;
+        let workingDirectory: string;
+        try {
+          target = options.resolveSessionMediaTarget(recording);
+          workingDirectory = await (options.resolveWorkingDirectory?.(target, ...(context ? [context] as const : [])) ?? options.workingDirectory);
+        } catch (error) { throw notWritten(error); }
         if (control?.isObservationHeld()) throw confidential();
         const persisted = await persistSessionMedia({
           workingDirectory,
@@ -132,8 +144,8 @@ export function createBrowserRecordingSessionMediaWriter<R extends RecordingSess
             suggestedName: artifact.source.fileNameHint ?? 'browser-recording.webm',
             createdAtMs: recording.stoppedAtMs ?? recording.startedAtMs,
           },
-        });
-        if (!persisted.success) throw new Error(`Browser recording media persistence failed: ${persisted.code}`);
+        }).catch(error => { throw notWritten(error); });
+        if (!persisted.success) throw notWritten(new Error(`Browser recording media persistence failed: ${persisted.code}`));
         const mediaRef = convertPersistedItemToMediaRef(persisted);
         workspacePathByRecordingId.set(recording.recordingId, { path: persisted.item.path, workingDirectory, attached: false });
         if (control?.isObservationHeld()) {
@@ -141,6 +153,7 @@ export function createBrowserRecordingSessionMediaWriter<R extends RecordingSess
           throw confidential();
         }
         if (options.commitAttachment) {
+          // The file stays in the Session workspace when the transcript card cannot be added.
           await options.commitAttachment({
             sessionId: target.sessionId,
             localId: target.messageLocalId,
@@ -148,7 +161,9 @@ export function createBrowserRecordingSessionMediaWriter<R extends RecordingSess
               ...persisted.item,
               ...(recording.outcomeReason ? { browserRecording: { outcomeReason: recording.outcomeReason } } : {}),
             }], []),
-          }, ...(context ? [context] as const : []));
+          }, ...(context ? [context] as const : [])).catch(error => {
+            throw new RecordingSaveError('transcript_attach_failed', { cause: error });
+          });
           workspacePathByRecordingId.set(recording.recordingId, { path: persisted.item.path, workingDirectory, attached: true });
         }
         return mediaRef;

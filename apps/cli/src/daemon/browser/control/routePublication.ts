@@ -60,9 +60,11 @@ export type DaemonBrowserStoragePurgeOwner = Readonly<{
 
 export function createBrowserRoutePublication({
   params, runtimeActionRouteProviderTarget, resolveServerFeaturesSnapshot,
-  setGuardBrowserResourceOwner, shutdownSignal, readSessionAccountId,
+  setGuardBrowserResourceOwner, shutdownSignal, readSessionAccountId, sessionAccounts,
 }: Readonly<{
   readSessionAccountId: (sessionId: string) => string | null;
+  /** Machine core's requester custody: a recording saves with the named Session's own Account custody. */
+  sessionAccounts?: Parameters<typeof createRecordingSessionMediaHost>[0]['sessionAccounts'];
   params: Readonly<{
 readMachineResourcesPolicy?: import('@/processes/toolIdleTimeouts').MachineResourcesPolicyReader;
 machineId: string;
@@ -642,7 +644,7 @@ setBrowserRecordingRoutesProvider?: (
             credentials: params.credentials, serverHttpBaseUrl: params.serverBaseUrl,
             machineId: params.machineId, currentMachineHost: params.currentMachineHost ?? '',
             currentMachineHomeDir: params.currentMachineHomeDir ?? '', signal: shutdownSignal,
-            mutationCustody: params.daemonSessionMutationCustody, title: 'Browser recording',
+            mutationCustody: params.daemonSessionMutationCustody, sessionAccounts, title: 'Browser recording',
           }),
           liveStreamCaptureRegistry: params.liveStreamCaptureRegistry,
           streamFrameEncoderFactory:

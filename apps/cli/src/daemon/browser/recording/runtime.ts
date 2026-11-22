@@ -25,7 +25,7 @@ import {
 } from './routes';
 import { createBrowserRecordingDaemonService } from './service';
 import type { BrowserRecordingSessionV1 } from '@happier-dev/protocol';
-import { type BrowserRecordingCaptureAdapter, type BrowserRecordingDaemonService, type BrowserRecordingMediaWriter, type BrowserRecordingInputControlResolver } from '../../recording/service';
+import { buildRecordingId, type BrowserRecordingCaptureAdapter, type BrowserRecordingDaemonService, type BrowserRecordingMediaWriter, type BrowserRecordingInputControlResolver } from '../../recording/service';
 import {
   createBrowserRecordingSessionMediaWriter,
   type BrowserRecordingSessionMediaTarget,
@@ -54,6 +54,7 @@ export type BrowserRecordingDaemonRuntimeOptions = Readonly<{
   mediaWriter?: BrowserRecordingMediaWriter;
   pathAllowanceRegistry?: TransferPathAllowanceRegistry;
   resolveSessionMediaTarget?: BrowserRecordingSessionMediaWriterOptions['resolveSessionMediaTarget'];
+  admitSave?: BrowserRecordingSessionMediaWriterOptions['admitSave'];
   resolveWorkingDirectory?: BrowserRecordingSessionMediaWriterOptions['resolveWorkingDirectory'];
   commitAttachment?: BrowserRecordingSessionMediaWriterOptions['commitAttachment'];
   resolveInputControl?: BrowserRecordingInputControlResolver;
@@ -108,6 +109,7 @@ function createRuntimeMediaWriter(
     workingDirectory: options.workingDirectory,
     pathAllowanceRegistry: options.pathAllowanceRegistry ?? createTransferPathAllowanceRegistry(),
     resolveSessionMediaTarget,
+    admitSave: options.admitSave,
     resolveWorkingDirectory: options.resolveWorkingDirectory,
     commitAttachment: options.commitAttachment,
     resolveInputControl: options.resolveInputControl,
@@ -187,14 +189,17 @@ export function createBrowserRecordingDaemonRuntime(
   });
   const routes: BrowserRecordingRoutes = {
     async startRecording(rawStartInput, context) {
-      const startInput = DaemonBrowserRecordingStartInputV1Schema.parse(rawStartInput);
+      const parsed = DaemonBrowserRecordingStartInputV1Schema.parse(rawStartInput);
+      if (!commandMediaTargetsByRecordingId) return await baseRoutes.startRecording(parsed, context);
+      // START admits the save, so the command's media target is known before the service starts.
+      const startInput = { ...parsed, recordingId: parsed.recordingId ?? buildRecordingId({}) };
+      const owned = !commandMediaTargetsByRecordingId.has(startInput.recordingId);
+      if (owned) commandMediaTargetsByRecordingId.set(startInput.recordingId, startInput.mediaTarget ?? {
+        sessionId: context?.defaultSessionId ?? startInput.browserSessionId,
+        messageLocalId: startInput.recordingId,
+      });
       const result = await baseRoutes.startRecording(startInput, context);
-      if (result.status === 'started') {
-        commandMediaTargetsByRecordingId?.set(result.recording.recordingId, startInput.mediaTarget ?? {
-          sessionId: context?.defaultSessionId ?? startInput.browserSessionId,
-          messageLocalId: result.recording.recordingId,
-        });
-      }
+      if (owned && result.status !== 'started') commandMediaTargetsByRecordingId.delete(startInput.recordingId);
       return result;
     },
 

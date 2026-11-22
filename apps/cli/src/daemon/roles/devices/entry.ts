@@ -52,6 +52,8 @@ export type DevicesRoleContext = Readonly<{
   readSessionAccountId: BrowserRoutePublicationInput['readSessionAccountId'];
   /** Requester custody is machine core's; computer use consumes it. */
   computerRequesterHost: ComputerRequesterHost;
+  /** Machine core's tracked-Session custody; recordings save with the named Session's own Account custody. */
+  sessionAccounts: NonNullable<BrowserRoutePublicationInput['sessionAccounts']>;
   /** Daemon work signal: aborts on daemon shutdown. */
   shutdownSignal: AbortSignal;
 }>;
@@ -166,7 +168,8 @@ export async function activateDevicesRole(ctx: DevicesRoleContext): Promise<Devi
             machineId: params.machineId, currentMachineHost: params.currentMachineHost ?? '',
             currentMachineHomeDir: params.currentMachineHomeDir ?? '',
             signal: ctx.shutdownSignal,
-            mutationCustody: params.daemonSessionMutationCustody, title: 'Computer recording',
+            mutationCustody: params.daemonSessionMutationCustody, sessionAccounts: ctx.sessionAccounts,
+            title: 'Computer recording',
           }),
         },
         requesterHost: ctx.computerRequesterHost,
@@ -186,6 +189,7 @@ export async function activateDevicesRole(ctx: DevicesRoleContext): Promise<Devi
     runtimeActionRouteProviderTarget,
     resolveServerFeaturesSnapshot: ctx.resolveServerFeaturesSnapshot,
     readSessionAccountId: ctx.readSessionAccountId,
+    sessionAccounts: ctx.sessionAccounts,
     shutdownSignal: ctx.shutdownSignal,
     setGuardBrowserResourceOwner: (owner) => { guardBrowserResourceOwner = owner; },
   });

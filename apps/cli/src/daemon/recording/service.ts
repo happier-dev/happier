@@ -4,7 +4,8 @@ import type { BrowserRecordingCaptureSourceV1, BrowserDiagnosticFidelityV1, Brow
 import type { SessionMediaIngestionSource } from '@/session/media/_types';
 import { readActionPrincipalAccountId } from '@/session/actions/actionPrincipalAccount';
 import type { SurfaceInputControl } from '../surfaces/inputControl';
-import type { RecordingOperationContext } from './sessionMediaHost';
+import type { RecordingSaveFailureV1 } from '@happier-dev/protocol/recording/results';
+import type { RecordingOperationContext, RecordingSaveAdmission } from './sessionMediaHost';
 import { readRequesterAccountActionContext } from '../sessionEncryption/requesterAccountActionContext';
 
 const RECORDING_ID_PREFIX = 'browser_recording';
@@ -49,6 +50,8 @@ export type BrowserRecordingCaptureAdapter<R extends RecordingSession = BrowserR
 }>;
 
 export type BrowserRecordingMediaWriter<R extends RecordingSession = BrowserRecordingSessionV1> = Readonly<{
+  /** Decides at Record START, before capture, whether and with whose custody this recording can be saved. */
+  admitRecording?: (input: Readonly<{ recording: R; context?: RecordingOperationContext }>) => Promise<RecordingSaveAdmission>;
   attachToComposer?: (input: Readonly<{ recording: R; sessionId?: string }>) => Promise<
     Readonly<{ ok: true; attachmentId: string }> | Readonly<{ ok: false; reason: string }>>;
   getRecordingStorage?: (recordingId: string) => Readonly<{ path: string; attached: boolean }> | null;
@@ -94,6 +97,14 @@ export type BrowserRecordingDaemonService<R extends RecordingSession = BrowserRe
   subscribeStorageChanges(listener: () => void): () => void;
   nextExpiryAtMs(): number | null;
 }>;
+/** A save step that failed after capture stopped, named by the recording file's fate. */
+export class RecordingSaveError extends Error {
+  constructor(readonly saveFailure: RecordingSaveFailureV1, options?: ErrorOptions) {
+    super(saveFailure, options);
+    this.name = 'RecordingSaveError';
+  }
+}
+
 export class BrowserRecordingStorageError extends Error {
   constructor(readonly code: 'browser_recording_missing' | 'browser_recording_not_active' | 'browser_recording_media_discard_failed') {
     super(code);
@@ -197,7 +208,7 @@ export type BrowserRecordingRuntimeStartResult<R extends RecordingSession = Brow
 
 export type BrowserRecordingRuntimeStopResult<R extends RecordingSession = BrowserRecordingSessionV1> =
   | Readonly<{ status: 'finalized'; recording: R }>
-  | Readonly<{ status: 'failed'; recording: R; reason: BrowserRecordingOutcomeReasonV1 }>
+  | Readonly<{ status: 'failed'; recording: R; reason: BrowserRecordingOutcomeReasonV1; saveFailure?: RecordingSaveFailureV1 }>
   | Readonly<{ status: 'unavailable'; reason: BrowserRecordingDaemonUnavailableReason }>;
 
 export type BrowserRecordingRuntimeTerminalResult<R extends RecordingSession = BrowserRecordingSessionV1> =
@@ -213,7 +224,7 @@ function createUnavailable(
   return { code, message };
 }
 
-function buildRecordingId(input: Pick<RecordingStartInput, 'recordingId'>): string {
+export function buildRecordingId(input: Pick<RecordingStartInput, 'recordingId'>): string {
   return input.recordingId ?? `${RECORDING_ID_PREFIX}_${randomUUID()}`;
 }
 
@@ -405,14 +416,15 @@ export function createRecordingDaemonService<R extends RecordingSession, S exten
       });
       await putRecording(finalized, false);
       return { status: 'finalized', recording: finalized };
-    } catch {
+    } catch (error) {
       if (control?.isObservationHeld()) {
         const outcome = await terminalOutcome(recording, 'policy_revoked', now());
         if (outcome.status === 'unavailable') return outcome;
         return { status: 'failed', recording: outcome.recording, reason: 'policy_revoked' };
       }
-      // A stopped capture that could not be saved is not a capture failure.
+      // A stopped capture that could not be saved is not a capture failure; the writer names the failed step.
       const reason = artifact ? 'media_persistence_failed' as const : 'capture_failed' as const;
+      const saveFailure = artifact && error instanceof RecordingSaveError ? error.saveFailure : undefined;
       const failed = parseRecordingSession({
         ...recording,
         status: 'failed',
@@ -422,7 +434,7 @@ export function createRecordingDaemonService<R extends RecordingSession, S exten
         mediaRef: undefined,
       });
       await putRecording(failed, false);
-      return { status: 'failed', recording: failed, reason };
+      return { status: 'failed', recording: failed, reason, ...(saveFailure ? { saveFailure } : {}) };
     } finally {
       if (artifact?.cleanup) await artifact.cleanup();
     }
@@ -452,19 +464,6 @@ export function createRecordingDaemonService<R extends RecordingSession, S exten
       if (result.status === 'unavailable') throw new BrowserRecordingStorageError('browser_recording_media_discard_failed');
     },
     async startRecording(startInput, context) {
-      const control = input.resolveInputControl?.(startInput);
-      if (control?.isObservationHeld()) return confidentialityUnavailable();
-      const activeRecordingId = activeRecordingIdByView.get(input.model.targetKey(startInput));
-      if (activeRecordingId) {
-        return {
-          status: 'unavailable',
-          reason: createUnavailable(
-            'browser_recording_already_active',
-            'Only one browser recording can be active for a view.',
-          ),
-        };
-      }
-
       const unavailable = input.model.startUnavailable(startInput);
       if (unavailable) {
         return { status: 'unavailable', reason: unavailable };
@@ -483,15 +482,6 @@ export function createRecordingDaemonService<R extends RecordingSession, S exten
 
       const startedAtMs = startInput.startedAtMs ?? now();
       const recordingId = buildRecordingId(startInput);
-      if (sessionsById.has(recordingId)) {
-        return {
-          status: 'unavailable',
-          reason: createUnavailable(
-            'browser_recording_id_conflict',
-            'A browser recording with this identity already exists.',
-          ),
-        };
-      }
       const recording = parseRecordingSession({
         v: 1,
         recordingId,
@@ -508,6 +498,35 @@ export function createRecordingDaemonService<R extends RecordingSession, S exten
         redactionLevel: 'metadataOnly',
         policyState: startInput.policyState ?? 'allowed',
       });
+      // Who may save where is decided once, here, before any capture: a save that cannot succeed
+      // is refused now rather than losing a finished recording at Stop.
+      const admission = await input.mediaWriter.admitRecording?.({ recording, context });
+      if (admission && !admission.ok) return { status: 'unavailable', reason: admission.reason };
+      const refuse = async (result: Extract<BrowserRecordingRuntimeStartResult<R>, { status: 'unavailable' }>) => {
+        await admission?.release();
+        return result;
+      };
+      // From here to registration nothing awaits, so these facts stay true until the recording is active.
+      const control = input.resolveInputControl?.(startInput);
+      if (control?.isObservationHeld()) return refuse(confidentialityUnavailable());
+      if (activeRecordingIdByView.get(input.model.targetKey(startInput))) {
+        return refuse({
+          status: 'unavailable',
+          reason: createUnavailable(
+            'browser_recording_already_active',
+            'Only one browser recording can be active for a view.',
+          ),
+        });
+      }
+      if (sessionsById.has(recordingId)) {
+        return refuse({
+          status: 'unavailable',
+          reason: createUnavailable(
+            'browser_recording_id_conflict',
+            'A browser recording with this identity already exists.',
+          ),
+        });
+      }
 
       // Register before capture startup can await; the input owner drains the actual operation
       // before stopping its capture, so no encoder can appear after confidential delivery.
@@ -523,8 +542,10 @@ export function createRecordingDaemonService<R extends RecordingSession, S exten
           }
         }
       });
-      const releaseCustody = readRequesterAccountActionContext(context?.externalActionExecutionAuthorization)?.retain();
-      activeAdapterByRecordingId.set(recordingId, { adapter, control, unregisterConfidentialityDrain, context, releaseCustody });
+      const releaseRequester = readRequesterAccountActionContext(context?.externalActionExecutionAuthorization)?.retain();
+      const releaseCustody = async () => { await releaseRequester?.(); await admission?.release(); };
+      activeAdapterByRecordingId.set(recordingId, { adapter, control, unregisterConfidentialityDrain,
+        context: admission?.context ?? context, releaseCustody });
       await putRecording(recording, true);
       const start = async (): Promise<BrowserRecordingRuntimeStartResult<R>> => {
         let adapterStart: BrowserRecordingCaptureAdapterStartResult;

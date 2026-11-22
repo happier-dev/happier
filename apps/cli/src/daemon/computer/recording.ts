@@ -19,6 +19,7 @@ import type { RecordingOperationContext } from '../recording/sessionMediaHost';
 export type ComputerRecordingOptions = Readonly<{
   workingDirectory?: string;
   encoderFactory?: BrowserRecordingStreamFrameEncoderFactory;
+  admitSave?: BrowserRecordingSessionMediaWriterOptions<ComputerRecordingSessionV1>['admitSave'];
   resolveWorkingDirectory?: BrowserRecordingSessionMediaWriterOptions<ComputerRecordingSessionV1>['resolveWorkingDirectory'];
   commitAttachment?: BrowserRecordingSessionMediaWriterOptions<ComputerRecordingSessionV1>['commitAttachment'];
 }>;
@@ -37,6 +38,7 @@ export function createComputerRecording(input: Readonly<{
   const writer = createBrowserRecordingSessionMediaWriter<ComputerRecordingSessionV1>({
     workingDirectory, pathAllowanceRegistry: createTransferPathAllowanceRegistry(),
     resolveSessionMediaTarget: recording => recording.mediaTarget,
+    admitSave: input.options?.admitSave,
     resolveWorkingDirectory: input.options?.resolveWorkingDirectory,
     commitAttachment: input.options?.commitAttachment,
     resolveInputControl: controlFor,

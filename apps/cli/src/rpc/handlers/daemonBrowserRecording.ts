@@ -36,7 +36,9 @@ export function registerDaemonBrowserRecordingHandlers(
                 ?? (context?.authorization?.kind === 'session.browser' ? context.authorization.actorAccountId : undefined);
             return DaemonBrowserRecordingStartResponseV1Schema.parse({
                 protocolVersion: 1,
-                result: await browserRecording.startRecording(request.input, { runtimeAccountId }),
+                // Machine admission names the caller; the save admission binds it to the Session's own custody.
+                result: await browserRecording.startRecording(request.input, { runtimeAccountId,
+                    ...(context?.machineAdmission ? { machineAdmission: context.machineAdmission } : {}) }),
             });
         },
     );

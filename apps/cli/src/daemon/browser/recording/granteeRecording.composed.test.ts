@@ -23,6 +23,12 @@ import type { BrowserSidecarCdpEventSubscriber } from '../sidecar/controlAdapter
 import type { BrowserDaemonControlRoutes } from '../control/routes';
 import type { BrowserRecordingDaemonRuntime } from './runtime';
 import { createFfmpegBrowserRecordingStreamFrameEncoderFactory } from '../../recording/ffmpegStreamEncoder';
+import { createRequesterSessionAccountContextCustody } from '@/daemon/sessionEncryption/requesterSessionAccountContextCustody';
+import type { RequesterSessionRuntimeContext } from '@/daemon/sessionEncryption/requesterSessionCredentials';
+import type { TrackedSession } from '@/daemon/types';
+import type { RpcHandlerContext } from '@/api/rpc/types';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { registerDaemonBrowserRecordingHandlers } from '@/rpc/handlers/daemonBrowserRecording';
 
 const environment = vi.hoisted(() => ({ home: '' }));
 vi.mock('@/configuration', async importOriginal => {
@@ -36,10 +42,12 @@ vi.mock('@/configuration', async importOriginal => {
 });
 
 it.each([
-    { account: 'owner', surface: 'ui', explicitTarget: true },
-    { account: 'grantee', surface: 'ui', explicitTarget: true },
-    { account: 'owner', surface: 'agent', explicitTarget: false },
-] as const)('finalizes $account Browser frames from $surface into that Account’s own Session', async ({ account, surface, explicitTarget }) => {
+    { account: 'owner', surface: 'ui', explicitTarget: true, ingress: 'action' },
+    { account: 'grantee', surface: 'ui', explicitTarget: true, ingress: 'action' },
+    { account: 'owner', surface: 'agent', explicitTarget: false, ingress: 'action' },
+    // The raw Machine RPC carries Machine admission only: the save reuses the tracked Session's custody.
+    { account: 'grantee', surface: 'ui', explicitTarget: true, ingress: 'machineRpc' },
+] as const)('finalizes $account Browser frames from $surface ($ingress) into that Account’s own Session', async ({ account, surface, explicitTarget, ingress }) => {
     const root = await mkdtemp(join(tmpdir(), 'recording-grantee-'));
     environment.home = root;
     const sessionId = `${account}-recording-session`;
@@ -123,6 +131,23 @@ it.each([
     const features = FeaturesResponseSchema.parse({ features: { browser: { enabled: true,
         viewTargets: { enabled: true }, internal: { enabled: true }, sidecar: { enabled: true },
         recording: { enabled: true, attachments: { enabled: true } } } } });
+    // Machine core's custody for the grantee's tracked Session, admitted at its spawn.
+    const attribution = { serverId: 'home-profile', accountId: account, machineId: 'machine', installationId: 'installation' };
+    let retainedSessionCustody = 0;
+    const sessionAccounts = createRequesterSessionAccountContextCustody({
+        trackedSessions: new Map(account === 'grantee' ? [['grantee', { happySessionId: sessionId,
+            requesterWorkAttributionV1: attribution } as unknown as TrackedSession]] : []),
+        serverId: 'home-profile', machineId: 'machine', externalActionAccountId: 'owner', isRetired: () => false,
+        // test-policy-boundary: the retained Session-birth store opens sealed on-disk custody.
+        resolveRequesterSessionRuntimeContext: async id => {
+            if (account !== 'grantee' || id !== sessionId) return null;
+            retainedSessionCustody++;
+            return { bootstrap: { attribution, serverHttpBaseUrl: serverBaseUrl, accountEncryptionMode: 'plain',
+                credentials: { token, encryption: null }, getBoundSessionId: () => sessionId,
+                isCurrent: async () => true } } as unknown as RequesterSessionRuntimeContext;
+        },
+        releaseRequesterSessionRuntimeContext: async () => { retainedSessionCustody--; },
+    });
     const publication = createBrowserRoutePublication({ params: {
         machineId: 'machine', credentials: { token: 'owner-fixture', encryption: null }, serverBaseUrl,
         currentMachineHost: metadata.host, currentMachineHomeDir: metadata.homeDir,
@@ -133,11 +158,15 @@ it.each([
         daemonSessionMutationCustody: ownerCustody,
         onBrowserControlRoutesReady: value => { control = value; },
         onBrowserRecordingRuntimeReady: value => { recording = value; },
-    }, readSessionAccountId, runtimeActionRouteProviderTarget: {}, setGuardBrowserResourceOwner: () => {},
+    }, readSessionAccountId, sessionAccounts, runtimeActionRouteProviderTarget: {}, setGuardBrowserResourceOwner: () => {},
         shutdownSignal: new AbortController().signal, resolveServerFeaturesSnapshot: () => ({ status: 'ready', features }) });
     let retained = 0;
+    const rpcHandlers = new Map<string, (raw: unknown, context?: RpcHandlerContext) => Promise<unknown>>();
+    const machineRpcContext = { callerAuthority: 'present_user', machineAdmission: { actorAccountId: account,
+        custodianAccountId: 'owner', role: 'use', machineId: 'machine', installationId: 'installation', encryptionMode: 'plain' },
+    } as unknown as RpcHandlerContext;
     // Admitted host-private ingress fixture, never caller-authored Action input or mocked domain logic.
-    const authorization = { requesterAccountProjection: { [requesterActionContext]: {
+    const authorization = { binding: { accountId: account }, requesterAccountProjection: { [requesterActionContext]: {
         credentials: { token, encryption: null }, serverHttpBaseUrl: serverBaseUrl,
         savedSecretOperationContext: { machineAdmission: { actorAccountId: account, custodianAccountId: 'owner', role: 'use' } },
         retain: () => { retained++; return async () => { retained--; }; },
@@ -151,6 +180,15 @@ it.each([
     const invoke = (id: ActionId, input: unknown) => runWithServerHttpBaseUrl(serverBaseUrl, () => executor.execute(id, input, {
         authority: surface === 'agent' ? 'account_automation' : 'present_user', surface, defaultSessionId: sessionId, bypassApprovals: true,
     }));
+    registerDaemonBrowserRecordingHandlers({ registerHandler: (method, handler) => {
+        rpcHandlers.set(method, handler as (raw: unknown, context?: RpcHandlerContext) => Promise<unknown>);
+    } }, { get browserRecording() { return recording?.routes ?? null; }, resolveBrowserControl: () => control });
+    const viaMachineRpc = async (method: string, payload: Record<string, unknown>) => ({ ok: true as const,
+        result: ((await runWithServerHttpBaseUrl(serverBaseUrl, () => rpcHandlers.get(method)!({ protocolVersion: 1,
+            machineId: 'machine', ...payload }, machineRpcContext))) as { result: unknown }).result });
+    const startRecording = (input: Record<string, unknown>) => ingress === 'machineRpc'
+        ? viaMachineRpc(RPC_METHODS.DAEMON_BROWSER_RECORDING_START, { input })
+        : invoke('browser.recording.start', input);
     try {
         await publication.refreshBrowserRouteOwners();
         const opened = await invoke('browser.view.open', { kind: 'openView', commandId: 'open', browserSessionId: sessionId,
@@ -165,12 +203,14 @@ it.each([
             profileId, targetKind: 'externalUrl', adapterKind: 'chromiumSidecar', renderEngineKind: 'streamedSurface',
             captureKind: 'cdpScreencast', fidelity: 'cdp', navigationGeneration: 0, mimeType: 'video/webm', retentionClass: 'preSend',
             recordingId: 'recording', ...(explicitTarget ? { mediaTarget: { sessionId, messageLocalId: 'recording-message' } } : {}) };
-        const started = await invoke('browser.recording.start', startRequest);
-        expect(started).toMatchObject({ ok: true, result: { status: 'started' } });
+        const started = await startRecording(startRequest);
+        expect(started, JSON.stringify(started)).toMatchObject({ ok: true, result: { status: 'started' } });
         await new Promise<void>(ready => setImmediate(ready));
         expect(frameCount).toBeGreaterThan(0);
         const retainedWhileRecording = retained;
-        const stopped = await invoke('browser.recording.stop', { recordingId: 'recording', navigationGenerationEnd: 0 });
+        const stopped = ingress === 'machineRpc'
+            ? await viaMachineRpc(RPC_METHODS.DAEMON_BROWSER_RECORDING_STOP, { recordingId: 'recording', navigationGenerationEnd: 0 })
+            : await invoke('browser.recording.stop', { recordingId: 'recording', navigationGenerationEnd: 0 });
         expect(stopped.ok, stopped.ok ? undefined : stopped.errorCode).toBe(true);
         expect(stopped).toMatchObject({ ok: true, result: { status: 'finalized', recording: {
             frameCount: expect.any(Number), byteSize: 5, mediaRef: { mediaKind: 'video' } } } });
@@ -180,15 +220,25 @@ it.each([
         expect(messages[0]?.body.content).toMatchObject({ t: 'plain', v: { meta: {
             happier: { payload: { media: [{ mediaKind: 'video', sizeBytes: 5 }] } },
         } } });
-        if (account === 'grantee') {
+        if (account === 'grantee' && ingress === 'action') {
             expect(retainedWhileRecording).toBe(1);
             expect(retained).toBe(0);
+        }
+        if (ingress === 'machineRpc') {
+            expect(retainedSessionCustody).toBe(0);
+            // The raw route cannot aim the save at another person's Session, the Machine owner's included.
+            expect(await startRecording({ ...startRequest, recordingId: 'aimed',
+                mediaTarget: { sessionId: 'owner-recording-session', messageLocalId: 'aimed' } }))
+                .toEqual({ ok: true, result: { status: 'unavailable',
+                    reason: { code: 'recording_session_not_owned', message: expect.any(String) } } });
+            expect(messages).toHaveLength(1);
+            expect(retainedSessionCustody).toBe(0);
         }
         const files = await import('node:fs/promises').then(fs => fs.readdir(root, { recursive: true }));
         const video = files.find(file => String(file).endsWith('.webm'));
         expect(video).toBeDefined();
         expect((await readFile(resolve(root, String(video)))).length).toBe(5);
-        if (account === 'grantee') {
+        if (account === 'grantee' && ingress === 'action') {
             expect(await invoke('browser.recording.start', { ...startRequest, recordingId: 'retired' }))
                 .toMatchObject({ ok: true, result: { status: 'started' } });
             expect(retained).toBe(1);
