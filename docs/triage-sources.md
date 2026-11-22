@@ -1159,14 +1159,19 @@ Agents retain their existing task-kind and linked-Session meanings.
 
 Sources whose own domain record owns task-to-Session relationships may bind the
 optional `linkSession` and `readSessionLinks` roles. Both use the exact admitted
-configured instance and source-local entry reference. Reversible Session links
+configured instance. Writes also name one source-local entry and one Session.
+Reads select an exact source-local entry or a nonempty set of exact Session IDs.
+Duplicate IDs and their order have no effect on membership. The host forwards
+only admitted Sessions and returns uniform refusals for the rest. Reversible Session links
 default to Direct in the source Action declaration; an explicit Ask preference
 still applies. GitHub delegates links to Channels, whose plain PR attach and
 unlink operands use the same Direct default across UI, CLI, agent and MCP.
 Branch-hint Link and Create PR's automatic link call that same Channels Action.
 Origin, Session admission and authorization checks remain in force; this default
-only removes the confirmation prompt. The read role returns complete current-Account,
-current-Home relationships or an explicit source failure. An omitted role leaves
+only removes the confirmation prompt. The read role returns current-Account,
+current-Home relationships. A Session set returns one complete, partial, or
+failed slice for each Session. A complete empty slice establishes absence and
+a missing slice leaves coverage incomplete. An omitted role leaves
 external-entry links with Triage's existing relationship owner. These roles add
 no second link store or credential authority. Their closed executable inputs and
 results live in
@@ -1182,8 +1187,10 @@ attachments have no Session identity and do not create Session links.
 In 0.3 development source, GitHub's `readSessionLinks` consumes the same
 Account/native placement owner as scan and get. Account credentials read
 Channels relationships through its portable `session-pull-request-relations-v1`
-Action, using the same retained-row selector as the daemon binding Action;
-native `gh` reads and link mutations retain their daemon placement. Opening an
+Action. The origin-bound daemon read uses the same Channels relation reader.
+Both issue one Channels read per configured source placement and page the exact
+Session membership prefixes through the existing Collection index. Link mutations
+retain their single-Session binding Action and daemon placement. Opening an
 entry therefore needs no online Machine for Account-custodied sources. A failed
 relationship read remains a typed read failure, with its code and Request ID
 available in detail, rather than reporting that the source connection was removed.

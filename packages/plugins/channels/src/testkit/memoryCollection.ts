@@ -265,6 +265,7 @@ export class MemoryCollection<TValue extends Record<string, unknown> = Record<st
     assertDeclaredCollectionIndex(input.index);
     const prefix = input.prefix?.[0];
     const bindingPrefix = input.prefix?.[1];
+    const relationPrefixes = input.prefixes ?? [input.prefix ?? []];
     const compareRows = (left: StoredRow, right: StoredRow): number => {
       const comparison = input.index === CHANNEL_STATE_INDEX_ID.byConnectionBindingV2
         ? compareConnectionBindingRows(left, right)
@@ -309,8 +310,8 @@ export class MemoryCollection<TValue extends Record<string, unknown> = Record<st
             && row.value['record-kind'] === input.prefix?.[1];
         }
         if (input.index === CHANNEL_STATE_INDEX_ID.byPullRequestSessionBindingV1) {
-          return row.value['record-kind'] === prefix && row.value['pr-binding'] === input.prefix?.[1]
-            && (input.prefix?.[2] === undefined || row.value['session-id'] === input.prefix[2]);
+          return relationPrefixes.some(([kind, prBinding, sessionId]) => row.value['record-kind'] === kind
+            && row.value['pr-binding'] === prBinding && (sessionId === undefined || row.value['session-id'] === sessionId));
         }
         if (input.index === CHANNEL_STATE_INDEX_ID.bySessionKindBindingUpdateV1) {
           return (row.value['session-id'] ?? null) === prefix

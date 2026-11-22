@@ -202,12 +202,15 @@ export {
     TriageSourceLinkSessionResultV1Schema,
     TriageSourceReadSessionLinksInputV1Schema,
     TriageSourceReadSessionLinksResultV1Schema,
+    readTriageSessionSetEnvelopeV1,
+    resolveTriageSourceSessionLinkSlicesV1,
 } from './sessionLinks.js';
 export type {
     TriageSourceLinkSessionInputV1,
     TriageSourceLinkSessionResultV1,
     TriageSourceReadSessionLinksInputV1,
     TriageSourceReadSessionLinksResultV1,
+    TriageSourceSessionLinksSliceV1,
 } from './sessionLinks.js';
 export type {
     TriageConfiguredSourceConnectedAccountInstanceV1,

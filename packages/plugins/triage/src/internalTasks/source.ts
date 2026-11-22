@@ -10,7 +10,7 @@ import {
   type TriageSourceEntryLocalRefV1, type TriageTaskFieldsV1,
   type TriageTaskCreateInputV1, type TriageTaskEditInputV1, type TriageTaskTransitionInputV1,
   type TriageTaskWriteResultV1, type TriageSourceLinkSessionInputV1, type TriageSourceLinkSessionResultV1,
-  type TriageSourceReadSessionLinksInputV1, type TriageSourceReadSessionLinksResultV1,
+  type TriageSourceReadSessionLinksInputV1, type TriageSourceReadSessionLinksResultV1, type TriageSourceSessionLinksSliceV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import { INTERNAL_TASK_SOURCE_V1, INTERNAL_TASK_SOURCE_LABEL_V1, internalTaskLocalRefV1, internalTaskOwnerAccountIdV1, isInternalTaskReferenceV1 } from './identity.js';
@@ -342,21 +342,42 @@ export async function linkInternalTaskSession(input: TriageSourceLinkSessionInpu
 
 export async function readInternalTaskSessionLinks(input: TriageSourceReadSessionLinksInputV1, context: TaskReadContext,
   admittedList?: TaskList | null): Promise<TriageSourceReadSessionLinksResultV1> {
-  if (!isInternalTaskConfiguredInstanceV1(input.instance) || (input.localRef !== undefined && !admitsRef(input.localRef))) return { kind: 'failed', failure: INVALID_ADDRESS };
-  let list: Pick<TaskList, 'scope' | 'todos' | 'unavailableTasks'> | null;
-  if (input.localRef === undefined) list = admittedList === undefined ? await readTasks(context) : admittedList;
-  else {
-    const read = await readTask(input.localRef, context);
-    if (read?.status === 'refused') return { kind: 'failed', failure: { class: 'permission', code: read.reason } };
-    list = read === null ? null : { scope: read.scope, todos: [read.todo] };
+  if ('sessionIds' in input) {
+    const admitted = isInternalTaskConfiguredInstanceV1(input.instance);
+    const list = admitted
+      ? admittedList === undefined ? await readTasks(context) : admittedList
+      : null;
+    const sessionIds = new Set(input.sessionIds);
+    const projected = list === null ? null : projectInternalTaskSessionLinks({ sessionIds }, list);
+    const bySession = new Map<string, TaskSessionLink[]>();
+    if (projected !== null) {
+      for (const link of projected.links) {
+        const links = bySession.get(link.sessionId) ?? [];
+        links.push(link);
+        bySession.set(link.sessionId, links);
+      }
+    }
+    return { kind: 'sessionSet', slices: [...sessionIds].map(sessionId => {
+      const links = bySession.get(sessionId) ?? [];
+      const result: TriageSourceSessionLinksSliceV1 = projected === null
+        ? { kind: 'failed', failure: admitted ? UNAVAILABLE : INVALID_ADDRESS }
+        : projected.kind === 'partial' ? { ...projected, links } : { kind: 'complete', links };
+      return { sessionId, result };
+    }) };
   }
-  if (!list) return { kind: 'failed', failure: UNAVAILABLE };
-  return projectInternalTaskSessionLinks(input, list);
+
+  if (!isInternalTaskConfiguredInstanceV1(input.instance) || !admitsRef(input.localRef)) return { kind: 'failed', failure: INVALID_ADDRESS };
+  const read = await readTask(input.localRef, context);
+  if (read === null) return { kind: 'failed', failure: UNAVAILABLE };
+  if (read.status === 'refused') return { kind: 'failed', failure: { class: 'permission', code: read.reason } };
+  return projectInternalTaskSessionLinks(input, { scope: read.scope, todos: [read.todo] });
 }
 
-export function projectInternalTaskSessionLinks(input: Pick<TriageSourceReadSessionLinksInputV1, 'localRef' | 'sessionId'>,
-  list: Pick<TaskList, 'scope' | 'todos' | 'unavailableTasks'>): TriageSourceReadSessionLinksResultV1 {
-  const links: Extract<TriageSourceReadSessionLinksResultV1, { kind: 'complete' }>['links'][number][] = [];
+type TaskSessionLink = Extract<TriageSourceSessionLinksSliceV1, { kind: 'complete' }>['links'][number];
+
+export function projectInternalTaskSessionLinks(input: { localRef?: TriageSourceEntryLocalRefV1; sessionIds?: ReadonlySet<string> },
+  list: Pick<TaskList, 'scope' | 'todos' | 'unavailableTasks'>): Exclude<TriageSourceSessionLinksSliceV1, { kind: 'failed' }> {
+  const links: TaskSessionLink[] = [];
   for (const task of list.todos) {
     const ownerAccountId = ownerOf(task, list);
     if (input.localRef !== undefined && (input.localRef.entryId !== task.id
@@ -368,7 +389,7 @@ export function projectInternalTaskSessionLinks(input: Pick<TriageSourceReadSess
       if (link.session !== undefined && link.session.serverId !== list.scope.serverId) continue;
       if (link.session === undefined && ownerAccountId !== list.scope.accountId) continue;
       const sessionId = link.session?.sessionId ?? key;
-      if ((input.sessionId !== undefined && input.sessionId !== sessionId) || seen.has(sessionId)) continue;
+      if ((input.sessionIds !== undefined && !input.sessionIds.has(sessionId)) || seen.has(sessionId)) continue;
       seen.add(sessionId);
       links.push({ localRef: internalTaskLocalRefV1(task.id, ownerAccountId === list.scope.accountId ? undefined : ownerAccountId), sessionId, linkedAtMs: link.linkedAt,
         displayPath: projectTriageDisplayTextV1(task.title).value || task.id });

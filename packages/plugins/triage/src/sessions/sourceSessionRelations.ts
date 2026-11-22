@@ -5,6 +5,8 @@ import type { PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
 import {
     TriageSourceLinkSessionResultV1Schema,
     TriageSourceReadSessionLinksResultV1Schema,
+    resolveTriageSourceSessionLinkSlicesV1,
+    type TriageSourceSessionLinksSliceV1,
     isTriageSourceConnectedAccountInstanceV1,
     type TriageEntryRefV1,
     type TriageEntryLocatorV1,
@@ -21,11 +23,11 @@ import { createTriageConfigureSourceOfferV1 } from '../corpus/configuration/sour
 import { entryReferenceComponents, renderSourceQualifiedId, sameTriageEntryReference } from '../corpus/identity/components.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../targetedContributions.js';
 import { linkEntryToSession, unlinkEntryFromSession, type TriageEntrySessionLinkDisplayV1 } from './entrySessionLinks.js';
-import { readTriageSessionLinksPageV1, readTriageSessionLinksForEntriesV1, readTriageSessionLinksForSessionsV1 } from './readEntrySessionLinks.js';
+import { readTriageSessionLinksPageV1, readTriageSessionLinksForEntriesV1, readTriageSessionLinksForSessionsV1, recoverTriageSessionLinksForSessionsV1 } from './readEntrySessionLinks.js';
 import { INTERNAL_TASK_SOURCE_RECORD_V1, isInternalTaskConfiguredInstanceV1 } from '../internalTasks/configuration.js';
 import { isInternalTaskReferenceV1 } from '../internalTasks/identity.js';
 import { INTERNAL_TASK_DESCRIPTOR_V1 } from '../internalTasks/contribution.js';
-import { readInternalTaskList, readInternalTaskSessionLinks, type TaskList } from '../internalTasks/source.js';
+import { projectInternalTaskSessionLinks, readInternalTaskList, readInternalTaskSessionLinks, type TaskList } from '../internalTasks/source.js';
 
 export type TriageSourceSessionLinkV1 = Readonly<{
     entryRef: TriageEntryRefV1; sessionId: string; linkedAtMs: number; displayPath: string;
@@ -253,11 +255,10 @@ export function createTriageSourceSessionRelations(
             paged?: boolean; cursor?: string;
             /** Detail preparation requires an authoritative page and preserves the original transport refusal. */
             readFailure?: 'throw' }>, reads?: Readonly<{
-                corpus?: () => Promise<readonly CorpusSessionLinkRowV1[] | undefined>;
-                tasks?: () => Promise<TaskList | null>;
+                corpus?: () => Promise<Readonly<{ links: readonly CorpusSessionLinkRowV1[]; incomplete?: boolean }>>;
             }>): Promise<TriageReadSourceSessionLinksResultV1> {
             const { sources, configured } = await readView(input);
-            const sessionIds = input.sessionIds === undefined ? undefined : new Set(input.sessionIds);
+            const sessionIds = input.sessionIds === undefined ? input.sessionId === undefined ? undefined : new Set([input.sessionId]) : new Set(input.sessionIds);
             const links: TriageSourceSessionLinkV1[] = [];
             const lanes: TriageSourceSessionLinksLaneV1[] = [];
             const corpusLanes: TriageSourceSessionLinksLaneV1[] = [];
@@ -306,46 +307,61 @@ export function createTriageSourceSessionRelations(
                 }
                 try {
                     const entry = input.entryRef;
-                    const sourceInput = {
-                        v: 1, instance: row.configured,
-                        ...(entry === undefined ? {} : { localRef: { kindId: entry.kindId, collisionScope: entry.collisionScope, entryId: entry.entryId } }),
-                        ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
-                    } as const;
-                    const parsed = TriageSourceReadSessionLinksResultV1Schema.safeParse(nativeAccountRead
-                        ? await readInternalTaskSessionLinks(sourceInput, context, await (reads?.tasks ?? readTaskList)?.())
-                        : await context.services.actions.executeAdmittedTargetedOperation(operation!, sourceInput, options));
-                    if (!parsed.success) {
-                        lanes.push({ ...roleLane, health: { kind: 'failed', failure: { class: 'unsupportedContract', code: 'sessionLinksInvalidResult' } } });
-                        continue;
+                    const instance = row.configured;
+                    const sourceInput = entry !== undefined
+                        ? { v: 1, instance, localRef: { kindId: entry.kindId, collisionScope: entry.collisionScope, entryId: entry.entryId } } as const
+                        : { v: 1, instance, sessionIds: [...(sessionIds ?? [])] } as const;
+                    let raw: unknown;
+                    if (nativeAccountRead) {
+                        const readTasks = readTaskList;
+                        const list = readTasks === undefined && entry === undefined && sessionIds === undefined
+                            ? await readInternalTaskList(context) : await readTasks?.();
+                        if (entry === undefined && sessionIds === undefined) {
+                            raw = list == null ? { kind: 'failed', failure: { class: 'transient', code: 'sessionLinksReadFailed' } }
+                                : projectInternalTaskSessionLinks({}, list);
+                        } else {
+                            raw = await readInternalTaskSessionLinks(sourceInput, context, list);
+                        }
+                    } else {
+                        raw = await context.services.actions.executeAdmittedTargetedOperation(operation!, sourceInput, options);
                     }
-                    const result = parsed.data;
-                    if (result.kind === 'failed') { lanes.push({ ...roleLane, health: result }); continue; }
-                    if (result.links.some((link) => {
-                        const entryRef = { source: row.configured.instance.source, ...link.localRef };
-                        return !roleKinds.includes(entryRef.kindId)
-                            || (entry !== undefined && !sameTriageEntryReference(entry, entryRef))
-                            || (input.sessionId !== undefined && input.sessionId !== link.sessionId);
-                    }) || result.kind === 'partial' && result.unavailableRefs.some(localRef => !roleKinds.includes(localRef.kindId)
-                        || entry !== undefined && !sameTriageEntryReference(entry, { source: lane.source, ...localRef }))) {
-                        lanes.push({ ...roleLane, health: { kind: 'failed', failure: { class: 'unsupportedContract', code: 'sessionLinksInvalidResult' } } });
-                        continue;
-                    }
-                    const nativeLinks = result.links.filter(link => sessionIds === undefined || sessionIds.has(link.sessionId)).map(link => ({
-                        entryRef: { source: row.configured.instance.source, ...link.localRef },
-                        sessionId: link.sessionId, sourceInstanceId: lane.sourceInstanceId,
-                        sourceInstanceRevision: instanceRevisions.get(lane.sourceInstanceId),
-                        sourceInstanceRowId: row.instanceTag,
-                        linkedAtMs: link.linkedAtMs, displayPath: link.displayPath,
-                        ...(link.locator === undefined ? {} : { locator: link.locator }),
-                    }));
+                    context.signal.throwIfAborted();
+                    const invalid: TriageSourceSessionLinksSliceV1 = { kind: 'failed',
+                        failure: { class: 'unsupportedContract', code: 'sessionLinksInvalidResult' } };
+                    const slices = entry === undefined && sessionIds !== undefined
+                        ? resolveTriageSourceSessionLinkSlicesV1([...sessionIds], raw).slices.map(slice => slice.result)
+                        : (() => {
+                            const parsed = TriageSourceReadSessionLinksResultV1Schema.safeParse(raw);
+                            return [parsed.success && parsed.data.kind !== 'sessionSet' ? parsed.data : invalid];
+                        })();
                     const unavailableRefs = new Map<string, TriageEntryRefV1>();
-                    for (const ref of [
-                        ...(result.kind === 'partial' ? result.unavailableRefs.map(localRef => ({ source: lane.source, ...localRef })) : []),
-                    ]) unavailableRefs.set(JSON.stringify(entryReferenceComponents(ref)), ref);
-                    lanes.push({ ...roleLane, health: unavailableRefs.size > 0 ? { kind: 'partial', unavailableRefs: [...unavailableRefs.values()] }
-                            : { kind: 'complete' } });
-                    for (const link of nativeLinks) addLink(link);
+                    let failure: Extract<TriageSourceSessionLinksSliceV1, { kind: 'failed' }> | undefined;
+                    const allowed = (localRef: TriageEntryRefV1) => roleKinds.includes(localRef.kindId)
+                        && (entry === undefined || sameTriageEntryReference(entry, localRef));
+                    for (const result of slices) {
+                        if (result.kind === 'failed') { failure ??= result; continue; }
+                        const refs = result.kind === 'partial' ? result.unavailableRefs.map(ref => ({ source: lane.source, ...ref })) : [];
+                        if (refs.some(ref => !allowed(ref)) || result.links.some(link => !allowed({ source: lane.source, ...link.localRef }))) {
+                            failure ??= invalid;
+                            continue;
+                        }
+                        for (const ref of refs) unavailableRefs.set(JSON.stringify(entryReferenceComponents(ref)), ref);
+                        for (const link of result.links) {
+                            if (sessionIds !== undefined && !sessionIds.has(link.sessionId)) continue;
+                            addLink({
+                                entryRef: { source: lane.source, ...link.localRef },
+                                sessionId: link.sessionId, sourceInstanceId: lane.sourceInstanceId,
+                                sourceInstanceRevision: instanceRevisions.get(lane.sourceInstanceId),
+                                sourceInstanceRowId: row.instanceTag,
+                                linkedAtMs: link.linkedAtMs, displayPath: link.displayPath,
+                                ...(link.locator === undefined ? {} : { locator: link.locator }),
+                            });
+                        }
+                    }
+                    lanes.push({ ...roleLane, health: failure ?? (unavailableRefs.size > 0
+                        ? { kind: 'partial', unavailableRefs: [...unavailableRefs.values()] } : { kind: 'complete' }) });
                 } catch (error) {
+                    context.signal.throwIfAborted();
                     if (input.readFailure === 'throw') throw isPluginError(error) ? error
                         : new PluginError({ code: 'sessionLinksReadFailed', retryable: true });
                     const requestId = readPluginErrorRequestIdV1(error);
@@ -366,12 +382,13 @@ export function createTriageSourceSessionRelations(
                     const relation = input.entryRef !== undefined ? { entryRef: input.entryRef }
                         : input.sessionId !== undefined ? { sessionId: input.sessionId } : undefined;
                     const selectedLinks = await reads?.corpus?.();
+                    unknownCorpusCoverage ||= selectedLinks?.incomplete === true;
                     let cursor = input.cursor;
                     const seen = new Set<string>();
                     do {
                         const page = selectedLinks === undefined
                             ? await readTriageSessionLinksPageV1(collections.sessionLinks, { relation, cursor }, options)
-                            : { links: selectedLinks, nextCursor: undefined };
+                            : { links: selectedLinks.links, nextCursor: undefined };
                         for (const link of page.links) {
                             if (input.entryRef !== undefined && !sameTriageEntryReference(input.entryRef, link.entryRef)) continue;
                             if (input.sessionId !== undefined && link.sessionId !== input.sessionId) continue;
@@ -410,6 +427,7 @@ export function createTriageSourceSessionRelations(
                             health: { kind: 'failed', failure: { class: 'transient', code: 'sessionLinksIncomplete' } } };
                     }
                 } catch (error) {
+                    context.signal.throwIfAborted();
                     if (input.readFailure === 'throw') throw isPluginError(error) ? error
                         : new PluginError({ code: 'sessionLinksReadFailed', retryable: true });
                     unknownCorpusCoverage = true;
@@ -464,44 +482,11 @@ export function createTriageSourceSessionRelations(
         },
     };
     return { ...relations,
-        readSessions(sessionIds: readonly string[]) {
-            return relations.read({ sessionIds }, { corpus: () => readTriageSessionLinksForSessionsV1(collections.sessionLinks, sessionIds, options) });
-        },
-        /** Preserve exact contributor selectors while sharing the Account-owned reads for this Session set. */
-        async readExactSessions(sessionIds: readonly string[]) {
-            let taskList: Promise<TaskList | null> | undefined;
-            let corpusBySession: Promise<ReadonlyMap<string, readonly CorpusSessionLinkRowV1[]> | undefined> | undefined;
-            const readCorpus = () => corpusBySession ??= readTriageSessionLinksForSessionsV1(collections.sessionLinks, sessionIds, options)
-                .then(links => {
-                    const bySession = new Map<string, CorpusSessionLinkRowV1[]>();
-                    for (const link of links) {
-                        const rows = bySession.get(link.sessionId);
-                        if (rows === undefined) bySession.set(link.sessionId, [link]);
-                        else rows.push(link);
-                    }
-                    return bySession;
-                }, () => {
-                    context.signal.throwIfAborted();
-                    // A set failure cannot erase healthy individual Sessions.
-                    // Let the same reader settle each exact query on its own.
-                    return undefined;
-                });
-            const results: TriageReadSourceSessionLinksResultV1[] = [];
-            for (const sessionId of sessionIds) {
-                context.signal.throwIfAborted();
-                const result = await relations.read({ sessionId }, sessionIds.length < 2 ? undefined : {
-                    corpus: async () => {
-                        const selected = await readCorpus();
-                        return selected === undefined ? undefined : selected.get(sessionId) ?? [];
-                    },
-                    tasks: () => taskList ??= readTaskList === undefined ? readInternalTaskList(context) : readTaskList(),
-                }).catch((): TriageReadSourceSessionLinksResultV1 => {
-                    context.signal.throwIfAborted();
-                    return { kind: 'failed', links: [] };
-                });
-                results.push(result);
-            }
-            return results;
+        readSessions(sessionIds: readonly string[], recoverCorpusRead = false) {
+            return relations.read({ sessionIds }, { corpus: recoverCorpusRead
+                ? () => recoverTriageSessionLinksForSessionsV1(collections.sessionLinks, sessionIds, options)
+                : async () => ({ links: await readTriageSessionLinksForSessionsV1(collections.sessionLinks, sessionIds, options) }),
+            });
         },
         async readEntries(entries: readonly Readonly<{ entryRef: TriageEntryRefV1; sourceInstanceId?: string }>[]) {
             const { sources } = await readView();
@@ -551,7 +536,7 @@ export function createTriageSourceSessionRelations(
                     return { ...selection, result };
                 }
                 let result: TriageReadSourceSessionLinksResultV1;
-                try { result = await relations.read(selection, { corpus: async () => (await readCorpus()).get(entryKey(selection.entryRef)) ?? [] }); }
+                try { result = await relations.read(selection, { corpus: async () => ({ links: (await readCorpus()).get(entryKey(selection.entryRef)) ?? [] }) }); }
                 catch { result = { kind: 'failed', links: [] }; }
                 return { ...selection, result };
             }));

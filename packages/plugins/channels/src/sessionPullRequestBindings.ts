@@ -6,7 +6,9 @@ import { isChannelStateJsonRecord, readConversationBindingUpdateRow,
   type ChannelStateRow } from './accountLocalBindingPolicy.js';
 
 /** One selector serves the relation read and its content-free membership observation. */
-export function sessionPullRequestBindingSelection(input: Readonly<{ sessionId?: string; connectionId?: string }>) {
+export function sessionPullRequestBindingSelection(input: Readonly<{ sessionId?: string; sessionIds?: ReadonlySet<string>; connectionId?: string }>) {
+  if (input.sessionIds !== undefined) return { index: CHANNEL_STATE_INDEX_ID.byPullRequestSessionBindingV1,
+    prefixes: [...input.sessionIds].map(id => [CHANNEL_STATE_RECORD_KIND.binding, true, id]), order: 'asc' as const };
   return input.sessionId !== undefined ? { index: CHANNEL_STATE_INDEX_ID.byPullRequestSessionBindingV1,
     prefix: [CHANNEL_STATE_RECORD_KIND.binding, true, input.sessionId], order: 'asc' as const }
     : input.connectionId !== undefined ? { index: CHANNEL_STATE_INDEX_ID.byConnectionBindingV2,
@@ -19,6 +21,7 @@ export function sessionPullRequestBindingSelection(input: Readonly<{ sessionId?:
 export async function readSessionPullRequestBindingRows(input: Readonly<{
   collection: Pick<PluginAccountCollectionForDefinition<typeof CHANNEL_STATE_COLLECTION>, 'query'>;
   sessionId?: string;
+  sessionIds?: ReadonlySet<string>;
   connectionId?: string;
   signal?: AbortSignal;
 }>): Promise<Array<Readonly<{ row: ChannelStateRow; binding: ConversationBindingV1 }>>> {
@@ -47,6 +50,7 @@ export async function readSessionPullRequestBindingRows(input: Readonly<{
       : binding.target.kind === 'automation' ? binding.target.scopedTrigger?.pullRequest : undefined;
     return sessionId !== undefined && pullRequest !== undefined && binding.deletionState === 'none'
       && (input.sessionId === undefined || input.sessionId === sessionId)
+      && (input.sessionIds === undefined || input.sessionIds.has(sessionId))
       && (input.connectionId === undefined || input.connectionId === binding.connectionId) ? [{ row, binding }] : [];
   });
 }

@@ -94,6 +94,38 @@ async function readTriageSessionLinksForPrefixesV1(
   return links;
 }
 
+/** Retain proven rows when the incumbent exact Fix PR corpus recovery finds an unreadable Session. */
+export async function recoverTriageSessionLinksForSessionsV1(
+  collection: TriageSessionLinksReaderV1,
+  sessionIds: readonly string[],
+  options?: PluginCancellationOptions,
+): Promise<Readonly<{ links: readonly CorpusSessionLinkRowV1[]; incomplete?: boolean }>> {
+  const ids = [...new Set(sessionIds)];
+  if (ids.length > 1) {
+    try { return { links: await readTriageSessionLinksForSessionsV1(collection, ids, options) }; }
+    catch { options?.signal?.throwIfAborted(); }
+  }
+  const links: CorpusSessionLinkRowV1[] = [];
+  let incomplete = false;
+  for (const sessionId of ids) {
+    const seen = new Set<string>();
+    let cursor: string | undefined;
+    try {
+      do {
+        const page = await readTriageSessionLinksPageV1(collection, { relation: { sessionId }, cursor }, options);
+        links.push(...page.links);
+        cursor = page.nextCursor;
+        if (cursor !== undefined && seen.has(cursor)) throw new Error('triage:sessionLinks:cursorDidNotAdvance');
+        if (cursor !== undefined) seen.add(cursor);
+      } while (cursor !== undefined);
+    } catch {
+      options?.signal?.throwIfAborted();
+      incomplete = true;
+    }
+  }
+  return { links, incomplete };
+}
+
 /** A Board's Session set uses the same Collection index in one set query. */
 export async function readTriageSessionLinksForSessionsV1(
   collection: TriageSessionLinksReaderV1,

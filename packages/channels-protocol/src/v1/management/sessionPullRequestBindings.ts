@@ -24,6 +24,8 @@ export {
 };
 
 export const SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1 = 'session-pull-request-binding-v1';
+export const SESSION_PULL_REQUEST_RELATIONS_ACTION_ID_V1 = 'session-pull-request-relations-v1';
+export const SESSION_PULL_REQUEST_NATIVE_RELATIONS_ACTION_ID_V1 = 'session-pull-request-relations-native-v1';
 export const ConversationPullRequestV1JsonSchema = /* @__PURE__ */ (() => ConversationPullRequestV1Schema.jsonSchema)();
 
 /** Shared URL ingress for the GitHub provider and the Session link owner. */
@@ -68,6 +70,21 @@ const sessionPullRequestAttachFieldsV1 = {
       triggerKind: defineProtocolUnion([defineProtocolLiteral('prComment'), defineProtocolLiteral('ciFailed')]),
   }, { policy: 'closed' }).optional(),
 };
+const sessionPullRequestRelationFieldsV1 = {
+  kind: defineProtocolLiteral('readRelations'),
+  credentialRef: ConversationQualifiedConnectedAccountRefV1ProtocolSchema.nullable(),
+};
+const exactPullRequestV1 = defineProtocolObject({
+  repositoryId: defineProtocolString({ pattern: '^[1-9][0-9]*$' }),
+  number: ConversationPullRequestV1Fields.number,
+}, { policy: 'closed' });
+export const SessionPullRequestRelationsInputV1Schema = defineProtocolUnion([
+  defineProtocolObject({ ...sessionPullRequestRelationFieldsV1, pullRequest: exactPullRequestV1 }, { policy: 'closed' }),
+  defineProtocolObject({ ...sessionPullRequestRelationFieldsV1,
+    sessionIds: defineProtocolArray(SessionIdSchema, { minItems: 1 }),
+  }, { policy: 'closed' }),
+]);
+export type SessionPullRequestRelationsInputV1 = ReturnType<typeof SessionPullRequestRelationsInputV1Schema.parse>;
 export const SessionPullRequestBindingInputV1Schema = defineProtocolUnion([
   defineProtocolObject({
     ...sessionPullRequestAttachFieldsV1, pullRequest: ConversationPullRequestV1Schema,
@@ -84,8 +101,7 @@ export const SessionPullRequestBindingInputV1Schema = defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('list'), sessionId: SessionTargetV1Schema }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('readRelations'),
     credentialRef: ConversationQualifiedConnectedAccountRefV1ProtocolSchema.nullable(), sessionId: SessionTargetV1Schema.optional(),
-    pullRequest: defineProtocolObject({ repositoryId: defineProtocolString({ pattern: '^[1-9][0-9]*$' }),
-      number: ConversationPullRequestV1Fields.number }, { policy: 'closed' }).optional(),
+    pullRequest: exactPullRequestV1.optional(),
   }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('unlink'), sessionId: SessionTargetV1Schema,
     bindingId: ConversationBindingIdV1ProtocolSchema,
@@ -166,7 +182,9 @@ export const SessionPullRequestBindingResultV1Schema = defineProtocolUnion([
     revision: ConversationCollectionRowRevisionV1ProtocolSchema,
     pullRequest: ConversationPullRequestV1Schema, repositoryId: defineProtocolString({ pattern: '^[1-9][0-9]*$' }),
     linkedAtMs: defineProtocolNumber({ integer: true, minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
-  }, { policy: 'closed' })) }, { policy: 'closed' }),
+  }, { policy: 'closed' })), failures: defineProtocolArray(defineProtocolObject({
+    sessionId: SessionIdSchema, code: defineProtocolString({ minLength: 1 }),
+  }, { policy: 'closed' })).optional() }, { policy: 'closed' }),
 ]);
 export type SessionPullRequestBindingResultV1 = ReturnType<typeof SessionPullRequestBindingResultV1Schema.parse>;
 export const SessionPullRequestBindingResultV1JsonSchema = /* @__PURE__ */ (() => SessionPullRequestBindingResultV1Schema.jsonSchema)();

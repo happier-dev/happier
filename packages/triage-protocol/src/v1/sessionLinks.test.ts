@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { createTriageSourceV1Fixture } from '../testing/v1/index.js';
 import {
+    resolveTriageSourceSessionLinkSlicesV1,
     TriageSourceLinkSessionInputV1Schema,
     TriageSourceLinkSessionResultV1Schema,
     TriageSourceReadSessionLinksInputV1Schema,
@@ -28,9 +29,12 @@ describe('source-owned Session relationships', () => {
         expect(TriageSourceLinkSessionResultV1Schema.safeParse({ status: 'linked', retry: true }).success).toBe(false);
     });
 
-    it('reads complete source-owned links with optional entry and Session filters and explicit failures', () => {
-        for (const filters of [{}, { localRef }, { sessionId: 'session-1' }, { localRef, sessionId: 'session-1' }]) {
+    it('accepts entry reads and nonempty exact Session sets and retires the singleton operand', () => {
+        for (const filters of [{ localRef }, { sessionIds: ['session-1', 'session-2'] }, { sessionIds: ['session-2', 'session-1'] }]) {
             expect(TriageSourceReadSessionLinksInputV1Schema.safeParse({ v: 1, instance, ...filters }).success).toBe(true);
+        }
+        for (const filters of [{}, { sessionId: 'session-1' }, { sessionIds: [] }]) {
+            expect(TriageSourceReadSessionLinksInputV1Schema.safeParse({ v: 1, instance, ...filters }).success).toBe(false);
         }
         const link = { localRef, sessionId: 'session-1', linkedAtMs: 1234, displayPath: 'Task 17' };
         const result = { kind: 'complete', links: Array.from({ length: 65 }, () => link) };
@@ -42,6 +46,27 @@ describe('source-owned Session relationships', () => {
             kind: 'failed', failure: { class: 'permission', code: 'account-data-unavailable' },
         }).success).toBe(true);
         expect(TriageSourceReadSessionLinksResultV1Schema.safeParse({ kind: 'failed' }).success).toBe(false);
+    });
+
+    it('keeps independently complete, empty, partial and failed slices', () => {
+        const link = { localRef, sessionId: 'linked', linkedAtMs: 1234, displayPath: 'Task 17' };
+        const result = { kind: 'sessionSet', slices: [
+            { sessionId: 'linked', result: { kind: 'complete', links: [link] } },
+            { sessionId: 'empty', result: { kind: 'complete', links: [] } },
+            { sessionId: 'partial', result: { kind: 'partial', links: [], unavailableRefs: [localRef] } },
+            { sessionId: 'refused', result: { kind: 'failed', failure: { class: 'permission', code: 'session_target_unavailable' } } },
+        ] };
+        expect(TriageSourceReadSessionLinksResultV1Schema.parse(result)).toEqual(result);
+        const normalized = resolveTriageSourceSessionLinkSlicesV1(
+            ['empty', 'partial', 'linked', 'refused', 'missing', 'empty'],
+            { kind: 'sessionReadSet', result: { ...result, slices: [...result.slices.slice(0, -1),
+                { sessionId: 'outside', result: { kind: 'complete', links: [] } }] },
+            failures: [{ sessionId: 'refused', result: { ok: false, errorCode: 'session_target_unavailable', error: 'session_target_unavailable' } }] },
+        );
+        expect(normalized.slices).toEqual([
+            result.slices[1], result.slices[2], result.slices[0], result.slices[3],
+            { sessionId: 'missing', result: { kind: 'failed', failure: { class: 'transient', code: 'sessionLinksIncomplete' } } },
+        ]);
     });
 
     it('preserves readable links beside exact unavailable task references without declaring complete coverage', () => {

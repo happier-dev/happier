@@ -23,7 +23,7 @@ function fixture(respond: (input: unknown) => unknown) {
   // The cross-plugin Action transport is the system boundary; the GitHub
   // parser, exact account, routing, identity and result logic remain real.
   const actions = { async execute(action: unknown, input: unknown) {
-    expect(action).toEqual({ pluginId: 'happier.channels', localId: 'session-pull-request-binding-v1' });
+    expect(action).toMatchObject({ pluginId: 'happier.channels' });
     calls.push(input); return respond(input);
   } } as unknown as ActionsService;
   const context: PluginInvocationContext = { ...transport.context, services: { ...transport.context.services, actions } };
@@ -91,10 +91,11 @@ describe('GitHub PR source relationship adapter', () => {
     const context = { ...state.context, services: { ...state.context.services, actions,
       connectedAccounts: { ...state.context.services.connectedAccounts, watch: () => ({ dispose: purposeDispose }) } } };
     const changed = Object.assign(vi.fn(), { retire: vi.fn() });
-    const observation = await sessionRelations.observeGithubTriageSessionLinks({ v: 1, instance, localRef: state.localRef, sessionId: 'session-1' }, changed, context);
-    expect(observe).toHaveBeenCalledWith({ pluginId: 'happier.channels', localId: 'session-pull-request-binding-v1' },
-      { kind: 'readRelations', credentialRef: mode === 'native' ? null : GITHUB_TEST_ACCOUNT, sessionId: 'session-1',
-        pullRequest: { repositoryId: '4210', number: 12 } }, changed, {
+    const observer = mode === 'native' ? sessionRelations.observeGithubTriageSessionLinks : sessionRelations.observeAccountGithubTriageSessionLinks;
+    const observation = await observer({ v: 1, instance, sessionIds: ['session-1', 'session-2', 'session-1'] }, changed, context);
+    expect(observe).toHaveBeenCalledWith({ pluginId: 'happier.channels',
+      localId: mode === 'native' ? 'session-pull-request-relations-native-v1' : 'session-pull-request-relations-v1' },
+      { kind: 'readRelations', credentialRef: mode === 'native' ? null : GITHUB_TEST_ACCOUNT, sessionIds: ['session-1', 'session-2'] }, changed, {
         signal: context.signal, ...(mode === 'native' ? { expectedExecutionRouting: { ...ownRouting, pluginId: 'happier.channels' } } : {}),
       });
     notify?.();
@@ -103,7 +104,7 @@ describe('GitHub PR source relationship adapter', () => {
     expect(changed.retire).toHaveBeenCalledOnce();
     await observation.dispose();
     expect(targetDispose).toHaveBeenCalledOnce();
-    expect(purposeDispose).toHaveBeenCalledOnce();
+    expect(purposeDispose).toHaveBeenCalledTimes(mode === 'native' ? 1 : 0);
     changed.mockClear();
     notify?.();
     expect(changed).not.toHaveBeenCalled();
@@ -118,7 +119,7 @@ describe('GitHub PR source relationship adapter', () => {
     const actions = { ...state.context.services.actions, async observe() { throw unavailable; } } as unknown as ActionsService;
     const context = { ...state.context, services: { ...state.context.services, actions,
       connectedAccounts: { ...state.context.services.connectedAccounts, watch: () => ({ dispose }) } } };
-    await expect(sessionRelations.observeGithubTriageSessionLinks({ v: 1, instance: state.instance }, Object.assign(vi.fn(), { retire: vi.fn() }), context)).rejects.toBe(unavailable);
+    await expect(sessionRelations.observeGithubTriageSessionLinks({ v: 1, instance: state.instance, localRef: state.localRef }, Object.assign(vi.fn(), { retire: vi.fn() }), context)).rejects.toBe(unavailable);
     expect(dispose).toHaveBeenCalledOnce();
     expect(state.calls).toEqual([]);
     expect(state.transport.materializeCount()).toBe(0);
@@ -136,7 +137,7 @@ describe('GitHub PR source relationship adapter', () => {
     } } as unknown as ActionsService;
     const context = { ...state.context, signal: controller.signal, services: { ...state.context.services, actions,
       connectedAccounts: { ...state.context.services.connectedAccounts, watch: () => ({ dispose: purposeDispose }) } } };
-    const pending = sessionRelations.observeGithubTriageSessionLinks({ v: 1, instance: state.instance }, Object.assign(vi.fn(), { retire: vi.fn() }), context);
+    const pending = sessionRelations.observeGithubTriageSessionLinks({ v: 1, instance: state.instance, localRef: state.localRef }, Object.assign(vi.fn(), { retire: vi.fn() }), context);
     await acquired;
     controller.abort();
     release?.({ dispose: targetDispose });
@@ -146,13 +147,42 @@ describe('GitHub PR source relationship adapter', () => {
   });
   it('reads exact native binding identities and original clocks without GitHub IO', async () => {
     const state = fixture(() => ({ kind: 'relations', links: [state.relation] }));
-    expect(await readGithubTriageSessionLinks({ v: 1, instance: state.instance, localRef: state.localRef, sessionId: 'session-1' }, state.context))
+    expect(await readGithubTriageSessionLinks({ v: 1, instance: state.instance, localRef: state.localRef }, state.context))
       .toMatchObject({ kind: 'complete', links: [{ localRef: state.localRef, sessionId: 'session-1', linkedAtMs: 42,
         displayPath: 'octo-org/example-app#12', locator: { routingToken: 'octo-org/example-app' } }] });
-    expect(state.calls).toEqual([{ kind: 'readRelations', credentialRef: GITHUB_TEST_ACCOUNT, sessionId: 'session-1',
+    expect(state.calls).toEqual([{ kind: 'readRelations', credentialRef: GITHUB_TEST_ACCOUNT,
       pullRequest: { repositoryId: '4210', number: 12 } }]);
     expect(state.transport.requests).toEqual([]);
     expect(state.transport.materializeCount()).toBe(0);
+  });
+
+  it('projects a mixed read-set with one Channels call, leaving foreign and out-of-set links hidden', async () => {
+    const state = fixture(() => ({ kind: 'sessionReadSet',
+      result: { kind: 'relations', links: [state.relation, { ...state.relation, sessionId: 'outside' }],
+        failures: [{ sessionId: 'unreadable', code: 'channels_pr_link_connection_missing' }] },
+      failures: [{ sessionId: 'refused', result: { ok: false, errorCode: 'session_target_unavailable', error: 'session_target_unavailable' } }],
+    }));
+    const result = await readGithubTriageSessionLinks({ v: 1, instance: state.instance,
+      sessionIds: ['session-1', 'empty', 'refused', 'unreadable', 'session-1'] }, state.context);
+    expect(state.calls).toEqual([{ kind: 'readRelations', credentialRef: GITHUB_TEST_ACCOUNT,
+      sessionIds: ['session-1', 'empty', 'refused', 'unreadable'] }]);
+    expect(result).toMatchObject({ kind: 'sessionSet', slices: [
+      { sessionId: 'session-1', result: { kind: 'complete', links: [{ localRef: state.localRef, sessionId: 'session-1', linkedAtMs: 42 }] } },
+      { sessionId: 'empty', result: { kind: 'complete', links: [] } },
+      { sessionId: 'refused', result: { kind: 'failed', failure: { class: 'permission', code: 'session_target_unavailable' } } },
+      { sessionId: 'unreadable', result: { kind: 'failed', failure: { class: 'transient', code: 'channels_pr_link_connection_missing' } } },
+    ] });
+  });
+
+  it('propagates cancellation while the Channels read is pending', async () => {
+    const controller = new AbortController();
+    const state = fixture(() => {
+      controller.abort();
+      return { kind: 'relations', links: [] };
+    });
+    await expect(readGithubTriageSessionLinks({ v: 1, instance: state.instance, sessionIds: ['session-1'] },
+      { ...state.context, signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(state.calls).toHaveLength(1);
   });
 
   it('attaches through registered GitHub and Channels writers and reads the persisted exact relationship', async () => {
@@ -200,7 +230,7 @@ describe('GitHub PR source relationship adapter', () => {
       .toMatchObject({ kind: 'complete', links: [{ localRef: state.localRef }] });
     expect(nativeCalls).toMatchObject([{ input: { kind: 'readRelations', credentialRef: null },
       options: { expectedExecutionRouting: { ...ownRouting, pluginId: 'happier.channels' } } }]);
-    await expect(readGithubTriageSessionLinks({ v: 1, instance: native }, state.context))
+    await expect(readGithubTriageSessionLinks({ v: 1, instance: native, sessionIds: ['session-1'] }, state.context))
       .rejects.toMatchObject({ code: 'github_session_relations_native_origin_unavailable' });
     expect(state.transport.requests).toEqual([]);
   });

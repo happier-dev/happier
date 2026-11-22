@@ -1,10 +1,9 @@
-import { TriageSourceCredentialInputsV1 } from '@happier-dev/triage-protocol/v1';
 import { GITHUB_FILE_VIEWED_ACTION_IDS_V1, GithubFileViewedReadInputV1Schema, ScmFileViewedReadResultV1Schema } from './fileViewedContracts.js';
 import { GITHUB_CONNECTED_ACCOUNT_PURPOSE } from '../observations/githubProviderContracts.js';
 import { GITHUB_TRIAGE_ACTION_IDS_V1, GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1 } from './contribution.js';
 import { GithubCapabilitiesInputV1Schema, GithubCapabilitiesResultV1Schema, GithubChangedFilesInputV1Schema, GithubChangedFilesResultV1Schema, GithubChecksInputV1Schema, GithubChecksResultV1Schema, GithubFeedbackInputV1Schema, GithubFeedbackResultV1Schema, GithubOverviewInputV1Schema, GithubOverviewResultV1Schema, GithubTimelineInputV1Schema, GithubTimelineResultV1Schema } from './detail/contracts.js';
 import { GITHUB_SECURITY_ALERT_ACTION_IDS_V1, GithubSecurityAlertReadInputV1Schema, GithubSecurityAlertReadResultV1Schema, GithubCodeScanningLocationsInputV1Schema, GithubCodeScanningLocationsResultV1Schema, GithubCodeScanningLocationInputV1Schema, GithubCodeScanningLocationResultV1Schema, GithubDependabotFixPullRequestInputV1Schema, GithubDependabotFixPullRequestResultV1Schema } from './securityAlerts/actionContracts.js';
-import { TriageSourcesContributionProtocolV1 } from '@happier-dev/triage-protocol/v1';
+import { resolveTriageSourceSessionLinkSlicesV1, TriageSourceCredentialInputsV1, TriageSourcesContributionProtocolV1 } from '@happier-dev/triage-protocol/v1';
 import { GITHUB_PLUGIN_ID } from '../observations/githubProviderContracts.js';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { ActionHandler, PluginAccountActionContext, PluginAccountActionHandler, PluginActionDeclaration, PluginActionReadObserver } from '@happier-dev/plugin-sdk/actions';
@@ -156,7 +155,7 @@ const definitions = {
       placementBindings: [],
       dangerLevel: sources.operations.readSessionLinks.declaration.dangerLevel,
       readOnly: true,
-      sessionTarget: { field: 'sessionId', cardinality: 'one' },
+      sessionTarget: { field: 'sessionIds.*', cardinality: 'many' },
       inputSchema: TriageSourceCredentialInputsV1.readSessionLinks.jsonSchema,
       resultSchema: sources.operations.readSessionLinks.declaration.resultSchema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
@@ -323,9 +322,13 @@ export const GITHUB_ACCOUNT_READ_ACTIONS = Object.fromEntries(
     const { run, observeRead, nativeRun: _nativeRun, nativeObserveRead: _nativeObserveRead, ...declaration } = definition;
     const accountRun: PluginAccountActionHandler = async (input, context) => {
       const native = await nativeReadRole(id, definition, input, context);
-      return native
-        ? context.services.actions.execute(native, input, { signal: context.signal })
-        : run(input, context);
+      if (!native) return run(input, context);
+      const result = await context.services.actions.execute(native, input, { signal: context.signal });
+      if (id === GITHUB_TRIAGE_ACTION_IDS_V1.readSessionLinks) {
+        const parsed = TriageSourceCredentialInputsV1.readSessionLinks.parse(input);
+        if ('sessionIds' in parsed) return resolveTriageSourceSessionLinkSlicesV1(parsed.sessionIds, result);
+      }
+      return result;
     };
     const accountObserver: PluginActionReadObserver<JsonValue, PluginAccountActionContext> | undefined = observeRead === undefined ? undefined : async (input, invalidate, context) => {
       const native = await nativeReadRole(id, definition, input, context);

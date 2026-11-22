@@ -1730,10 +1730,14 @@ describe('cold mounted caller Actions through the executable dispatcher', () => 
     });
     it('settles the actual Triage PR54 link and Resource refresh through mounted Account and Machine dispatch', async () => {
         const { Session } = await import('node:inspector/promises');
+        await import('@/sync/syncEngine');
+        const { createSessionReadBatchFetchBoundary } = await import('@/dev/testkit/harness/sessionReadBatchHttpBoundary');
         const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/triage/src/manifest');
         const { activate } = await import('../../../../../../packages/plugins/triage/src/accountRuntime');
         const { PLUGIN_MANIFEST: githubManifest } = await import('../../../../../../packages/plugins/scm-github/src/manifest');
         const { GITHUB_TRIAGE_ACTION_IDS_V1 } = await import('../../../../../../packages/plugins/scm-github/src/triage/contribution');
+        const { githubNativeReadActionId } = await import('../../../../../../packages/plugins/scm-github/src/triage/readActions');
+        const sourceReadAction = githubNativeReadActionId(GITHUB_TRIAGE_ACTION_IDS_V1.readSessionLinks);
         const { GITHUB_CONNECTED_ACCOUNT_PURPOSE, GITHUB_CONNECTED_ACCOUNT_ID } = await import('../../../../../../packages/plugins/scm-github/src/observations/githubProviderContracts');
         const { encodeGithubTriageConfiguration } = await import('../../../../../../packages/plugins/scm-github/src/triage/configuration');
         const { CORPUS_SOURCE_INSTANCE_LIFECYCLE, CORPUS_IDENTITY_TAG_LENGTH } = await import('../../../../../../packages/plugins/triage/src/corpus/collections/ids');
@@ -1796,8 +1800,14 @@ describe('cold mounted caller Actions through the executable dispatcher', () => 
             artifactGraph, accountActivate: activate });
         const origin = clientActionExecutionOrigin(githubManifest.id);
         const executionOrigin = { ...origin, materializationRef: { ...origin.materializationRef, machineId: 'provider-machine' } };
-        const githubActions = Object.fromEntries(normalizedGithub.manifest.contributes.actions.filter(action =>
-            action.id === GITHUB_TRIAGE_ACTION_IDS_V1.linkSession || action.id === GITHUB_TRIAGE_ACTION_IDS_V1.readSessionLinks).map(action => {
+        // The daemon fixture exposes the native implementation as the source
+        // role, with the role's public surfaces instead of the relay leaf's.
+        const sourceReadSurfaces = normalizedGithub.manifest.contributes.actions
+            .find(action => action.id === GITHUB_TRIAGE_ACTION_IDS_V1.readSessionLinks)!.surfaces;
+        const githubDeclarations = normalizedGithub.manifest.contributes.actions.map(action =>
+            action.id === sourceReadAction ? { ...action, surfaces: sourceReadSurfaces } : action);
+        const githubActions = Object.fromEntries(githubDeclarations.filter(action =>
+            action.id === GITHUB_TRIAGE_ACTION_IDS_V1.linkSession || action.id === sourceReadAction).map(action => {
             const projected = PluginProjectedActionV2Schema.parse({ ...resolveDaemonTargetAction({ pluginId: githubManifest.id, localId: action.id }),
                 title: action.title, scopes: action.scopes, surfaces: action.surfaces, execution: action.execution,
                 dangerLevel: action.dangerLevel, confirmation: action.confirmation, readOnly: action.readOnly, sessionTarget: action.sessionTarget,
@@ -1844,7 +1854,7 @@ describe('cold mounted caller Actions through the executable dispatcher', () => 
         let failRepeatedMachineAdmission: (error: Error) => void = () => {};
         const repeatedMachineAdmission = new Promise<never>((_, reject) => { failRepeatedMachineAdmission = reject; });
         const machineRows = new Map<string, ReturnType<typeof createPlainMachineRowFixture>>();
-        network.setHttpResponder(async (url, init) => {
+        network.setHttpResponder(createSessionReadBatchFetchBoundary(async (url, init) => {
             const path = new URL(String(url)).pathname;
             count(`http:${path}`);
             if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(features);
@@ -1874,12 +1884,17 @@ describe('cold mounted caller Actions through the executable dispatcher', () => 
             }
             if (path === '/v1/plugins/data/get') return Response.json(PluginCollectionGetResultV1Schema.parse({ row: null, absenceEpoch: 0 }));
             return createEmptyAccountBootstrapHttpResponse(path, init);
-        });
+        }));
         let linked = false;
         let changed: (() => void) | undefined;
         const pendingWatchers = new Map<string, () => void>();
-        const githubContributions = normalizedGithub.manifest.contributes.targetedPluginContributions.filter(
-            contribution => contribution.target.pluginId === pluginId);
+        // This transport fixture contributes the real native reader directly.
+        // The portable GitHub Account relay is exercised by its placement suite.
+        const githubContributions = normalizedGithub.manifest.contributes.targetedPluginContributions
+            .filter(contribution => contribution.target.pluginId === pluginId)
+            .map(contribution => contribution.operations.readSessionLinks
+                ? { ...contribution, operations: { ...contribution.operations, readSessionLinks: sourceReadAction } }
+                : contribution);
         const targetedActionIds = new Set(githubContributions.flatMap(contribution => Object.values(contribution.operations)));
         const targetedRendererIds = new Set(githubContributions.flatMap(contribution => Object.values(contribution.surfaces ?? {})
             .flatMap(surface => [surface.renderer, ...(surface.fallbackRenderers ?? [])])));
@@ -1888,7 +1903,7 @@ describe('cold mounted caller Actions through the executable dispatcher', () => 
             status: 'sourceDeclarations', pluginId, sourceDeclarations: [{ occurrenceId: 'pr54-github-current',
                 sourceCustody: { kind: 'development', registeredRootId: 'pr54-github-root' },
                 manifest: { id: githubManifest.id, contributes: {
-                    actions: normalizedGithub.manifest.contributes.actions.filter(action => targetedActionIds.has(action.id)),
+                    actions: githubDeclarations.filter(action => targetedActionIds.has(action.id)),
                     pluginContributionPoints: [], targetedPluginContributions: githubContributions,
                     ui: { renderers: normalizedGithub.manifest.contributes.ui.renderers.filter(renderer => targetedRendererIds.has(renderer.id)) } } } },
                 { occurrenceId: 'pr54-triage-machine-current', sourceCustody: { kind: 'development', registeredRootId: 'pr54-triage-root' },
@@ -1924,12 +1939,17 @@ describe('cold mounted caller Actions through the executable dispatcher', () => 
                     return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({ ok: true,
                         result: TriageSourceLinkSessionResultV1Schema.parse({ status: 'linked' }) });
                 }
-                if (action.qualifiedActionId === `${githubManifest.id}/${GITHUB_TRIAGE_ACTION_IDS_V1.readSessionLinks}`) return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({
-                    ok: true, result: TriageSourceReadSessionLinksResultV1Schema.parse({ kind: 'complete', links: linked ? [{
-                        localRef: { kindId: input.entryRef.kindId, collisionScope: input.entryRef.collisionScope, entryId: input.entryRef.entryId },
-                        sessionId, linkedAtMs: 1, displayPath: input.display.locator.displayPath, locator: input.display.locator,
-                    }] : [] }),
-                });
+                if (action.qualifiedActionId === `${githubManifest.id}/${sourceReadAction}`) {
+                    expect(action.input).toMatchObject({ sessionIds: [sessionId] });
+                    return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({
+                        ok: true, result: TriageSourceReadSessionLinksResultV1Schema.parse({
+                            kind: 'sessionSet', slices: [{ sessionId, result: { kind: 'complete', links: linked ? [{
+                                localRef: { kindId: input.entryRef.kindId, collisionScope: input.entryRef.collisionScope, entryId: input.entryRef.entryId },
+                                sessionId, linkedAtMs: 1, displayPath: input.display.locator.displayPath, locator: input.display.locator,
+                            }] : [] } }],
+                        }),
+                    });
+                }
                 throw new Error(`Unexpected source Action ${action.qualifiedActionId}`);
             }
             throw new Error(`Unexpected physical RPC ${request.method}`);
@@ -1957,6 +1977,11 @@ describe('cold mounted caller Actions through the executable dispatcher', () => 
                     contentType: resource.contentType, execution: resource.execution },
             ])),
         }), 'web', undefined, { resourceDeclarations: 'complete' });
+        const accountProjection = readPluginAccountAvailability(accountLifetime.scope).readAccountUiProjection();
+        const resourceDeclarations = { ...machineProjection.resourcesById, ...accountProjection?.resourcesById };
+        expect(resourceDeclarations[`${pluginId}/session-links-v1`]).toMatchObject({
+            occurrenceId: selected.custodyId, execution: { target: 'account' },
+        });
         const controller = createBoundPluginSurfaceController({ facts: {
             pluginId, contributionId: 'scm-pull-request', surfaceId: 'surfacePlacement:happier.triage:scm-pull-request',
             placement: 'sessionPane', platform: 'web', channel: 'internal', sessionId,
@@ -1964,7 +1989,7 @@ describe('cold mounted caller Actions through the executable dispatcher', () => 
             occurrenceId: selected.custodyId,
             accountExecutionOrigin: { ...accountLifetime.scope, custodyId: selected.custodyId, sourceCustody: selected.sourceCustody },
             accountLifetime, interactionEnabled: true, daemonInteractionEnabled: true,
-            resourceCapability: { readable: false, dynamic: false }, pluginUiProjection: machineProjection,
+            resourceCapability: { readable: false, dynamic: false }, pluginUiProjection: machineProjection, resourceDeclarations,
         } });
         onTestFinished(() => controller.dispose());
         const resourceStore = controller.resourceStore;
@@ -1989,7 +2014,7 @@ describe('cold mounted caller Actions through the executable dispatcher', () => 
                 const hook = await renderHook(() => { renders++; return React.useSyncExternalStore(subscribe, entry.getSnapshot); });
                 unmount = hook.unmount;
                 await act(async () => {
-                    await vi.waitFor(() => expect(decode()).toMatchObject({ links: [] }));
+                    await vi.waitFor(() => expect(decode(), JSON.stringify(Object.fromEntries(counts))).toMatchObject({ links: [] }));
                     await vi.waitFor(() => expect(entry.getSnapshot().subscription).toBe('live'));
                 });
                 console.info('PR54 composed observation admission', JSON.stringify({
@@ -2004,7 +2029,7 @@ describe('cold mounted caller Actions through the executable dispatcher', () => 
                         accountLifetime, scopeIsCurrent: accountLifetime.isCurrent,
                     })).toEqual({ ok: true, result: { v: 1, status: 'linked' } });
                     console.info('PR54 composed phase: Resource.awaitAutomaticRefresh');
-                    await vi.waitFor(() => expect(decode()).toMatchObject({ links: [{ entryRef: input.entryRef, sessionId, sourceInstanceId }] }));
+                    await vi.waitFor(() => expect(decode(), JSON.stringify({ snapshot: decode(), counts: Object.fromEntries(counts) })).toMatchObject({ links: [{ entryRef: input.entryRef, sessionId, sourceInstanceId }] }));
                     await vi.waitFor(() => expect(entry.getSnapshot().pending).toBe('idle'));
                 });
                 const settled = Object.fromEntries(counts);
@@ -2012,7 +2037,7 @@ describe('cold mounted caller Actions through the executable dispatcher', () => 
                 await new Promise(resolve => setImmediate(resolve));
                 expect(Object.fromEntries(counts)).toEqual(settled);
                 expect(counts.get(`source:${githubManifest.id}/${GITHUB_TRIAGE_ACTION_IDS_V1.linkSession}`)).toBe(1);
-                expect(counts.get(`source:${githubManifest.id}/${GITHUB_TRIAGE_ACTION_IDS_V1.readSessionLinks}`)).toBe(2);
+                expect(counts.get(`source:${githubManifest.id}/${sourceReadAction}`)).toBe(2);
                 console.info('PR54 composed settled counts', JSON.stringify({ counts: settled,
                     fixtureBasis: 'constructed schema-valid HTTP/RPC responses; r3 request input preserved' }));
                 const stablePublications = snapshotPublications;

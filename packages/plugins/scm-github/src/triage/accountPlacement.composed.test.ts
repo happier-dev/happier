@@ -189,7 +189,7 @@ describe('GitHub Account placement through contributed Action dispatch with zero
         .rejects.toMatchObject({ code: 'plugin_action_machine_required' });
       await expect(relay.invokeAction('discover', { v: 1 }))
         .rejects.toMatchObject({ code: 'plugin_action_machine_required' });
-      await expect(relay.invokeAction('links', { v: 1, instance }))
+      await expect(relay.invokeAction('links', { v: 1, instance, sessionIds: ['session-1'] }))
         .rejects.toMatchObject({ code: 'plugin_action_machine_required' });
       expect(transport.requests).toEqual([]);
       expect(transport.materializeCount()).toBe(0);

@@ -119,8 +119,9 @@ export const INTERNAL_TASK_ACTIONS_V1 = {
     description: 'Link or unlink the specified Session on an exact Happier task without starting or sending to that Session.',
     inputSchema: protocol.operations.linkSession.declaration.input.schema, resultSchema: protocol.operations.linkSession.declaration.resultSchema, run: linkInternalTaskSession },
   [INTERNAL_TASK_READ_SESSION_LINKS_ACTION_ID_V1]: { ...read, title: 'Read Happier task work',
-    description: 'Read accessible Happier task-to-Session links, optionally filtered by task or Session, preserving unavailable task coverage.',
+    description: 'Read accessible Happier task-to-Session links, for a task or Session set, preserving unavailable task coverage.',
     readOnly: true,
+    sessionTarget: { field: 'sessionIds.*', cardinality: 'many' },
     inputSchema: protocol.operations.readSessionLinks.declaration.input.schema, resultSchema: protocol.operations.readSessionLinks.declaration.resultSchema, run: readInternalTaskSessionLinks },
 };
 

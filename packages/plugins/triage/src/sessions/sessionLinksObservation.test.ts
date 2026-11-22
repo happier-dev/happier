@@ -233,10 +233,14 @@ describe('the composed relation dependency observer', () => {
             },
         } as unknown as TriageDataActionContext;
         const invalidate = vi.fn();
-        const observer = await observeTriageSourceSessionLinks({ v: 1, sessionId: 'session-a' }, invalidate, context);
+        const observer = await observeTriageSourceSessionLinks([
+            { v: 1, sessionId: 'session-a' },
+            { v: 1, sessionId: 'session-b', sourceInstanceId: instance.instance.sourceInstanceId },
+            { v: 1, sessionId: 'session-a' },
+        ], invalidate, context);
         expect(corpusQueries).toEqual([{ index: 'by-session', prefix: ['session-a'], order: 'asc' }]);
         expect(observeRole).toHaveBeenCalledExactlyOnceWith(role,
-            { v: 1, instance, sessionId: 'session-a' }, expect.any(Function), { signal: expect.any(AbortSignal) });
+            { v: 1, instance, sessionIds: ['session-a', 'session-b'] }, expect.any(Function), { signal: expect.any(AbortSignal) });
         expect(execute).not.toHaveBeenCalled();
         invalidate.mockClear();
         corpusListeners[0]?.();

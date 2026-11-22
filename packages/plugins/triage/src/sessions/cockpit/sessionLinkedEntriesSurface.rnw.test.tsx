@@ -1158,7 +1158,9 @@ describe('the mounted Session cockpit', () => {
                 targetedContributions: { observeForSelf: () => ({ readCurrent: async () => ({ contributions: [
                     { ...snapshot.contributions[0], operations: { readSessionLinks: { role: 'readSessionLinks' }, linkSession: { role: 'linkSession' } } },
                 ] }), dispose: () => {} }) },
-                actions: { executeAdmittedTargetedOperation: async () => ({ kind: 'complete', links }) },
+                actions: { executeAdmittedTargetedOperation: async () => ({ kind: 'sessionSet',
+                    slices: [{ sessionId: SESSION_ID, result: { kind: 'complete', links } }],
+                }) },
             },
         } as unknown as PluginInvocationContext;
         const read = createTriageReadSourceSessionLinksActionHandler();

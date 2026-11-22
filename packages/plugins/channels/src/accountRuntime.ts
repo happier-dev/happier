@@ -4,13 +4,13 @@ import { readConversationDiscussionReplyDestinationForInvocation } from './discu
 import { SESSION_PULL_REQUEST_WATCH_ACTION_ID_V1 } from '@happier-dev/channels-protocol/v1';
 import { manageSessionPullRequestWatchForInvocation, observeSessionPullRequestWatchAction } from './sessionPullRequestWatch.js';
 import { SESSION_PULL_REQUEST_RELATIONS_ACTION_ID_V1, readSessionPullRequestRelationsForInvocation,
-    observeSessionPullRequestBindingAction } from './sessionPullRequestRelations.js';
+    observeSessionPullRequestRelationsAction } from './sessionPullRequestRelations.js';
 
 /** Retained relationships and Watch Actions use admitted Account state on every client. */
 export function activate(api: PluginAccountApi): void {
     api.actions.register(DISCUSSION_REPLY_DESTINATION_ACTION_ID_V1, readConversationDiscussionReplyDestinationForInvocation);
     api.actions.register(SESSION_PULL_REQUEST_RELATIONS_ACTION_ID_V1, readSessionPullRequestRelationsForInvocation,
-        { observeRead: observeSessionPullRequestBindingAction });
+        { observeRead: observeSessionPullRequestRelationsAction });
     api.actions.register(SESSION_PULL_REQUEST_WATCH_ACTION_ID_V1, manageSessionPullRequestWatchForInvocation,
         { observeRead: observeSessionPullRequestWatchAction });
 }

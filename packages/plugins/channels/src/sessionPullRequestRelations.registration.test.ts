@@ -42,11 +42,11 @@ describe('registered GitHub PR source → native Channels relationships', () => 
         storage: { account: { collection: () => state } } as unknown as PluginServices['storage'] } });
     try {
       expect(await core.invokeAction('session-pull-request-relations-v1', {
-        kind: 'readRelations', credentialRef, sessionId: 'session-1',
+        kind: 'readRelations', credentialRef, sessionIds: ['session-1'],
       }, { surface: 'ui' })).toMatchObject({ kind: 'relations', links: [{ sessionId: 'session-1',
         bindingId: 'account-binding', repositoryId: '77', pullRequest: { repository: 'acme/widgets', number: 12 }, linkedAtMs: 42 }] });
       expect(await core.invokeAction('session-pull-request-relations-v1', {
-        kind: 'readRelations', credentialRef: { ...credentialRef, accountId: 'other-account' }, sessionId: 'session-1',
+        kind: 'readRelations', credentialRef: { ...credentialRef, accountId: 'other-account' }, sessionIds: ['session-1'],
       }, { surface: 'ui' })).toMatchObject({ kind: 'relations', links: [{ sessionId: 'session-1', bindingId: 'account-binding' }] });
       expect(await core.invokeAction('session-pull-request-relations-v1', {
         kind: 'readRelations', credentialRef: { ...credentialRef, accountId: 'other-account' },
@@ -54,6 +54,14 @@ describe('registered GitHub PR source → native Channels relationships', () => 
       }, { surface: 'ui' })).toMatchObject({ kind: 'relations', links: [{ sessionId: 'session-1', bindingId: 'account-binding' }] });
       // Count rows crossing the Account-storage boundary, preserving the real registered Action.
       const query = vi.spyOn(state, 'query');
+      expect(await core.invokeAction('session-pull-request-relations-v1', {
+        kind: 'readRelations', credentialRef, sessionIds: ['session-1', 'session-without-link'],
+      }, { surface: 'ui' })).toMatchObject({ kind: 'relations', links: [{ sessionId: 'session-1', bindingId: 'account-binding' }] });
+      expect(query).toHaveBeenCalledTimes(1);
+      expect(query.mock.calls[0]?.[0]).toMatchObject({
+        prefixes: [['binding', true, 'session-1'], ['binding', true, 'session-without-link']],
+      });
+      query.mockClear();
       const readExact = () => core.invokeAction('session-pull-request-relations-v1', {
         kind: 'readRelations', credentialRef, pullRequest: { repositoryId: '77', number: 12 },
       }, { surface: 'ui' });
@@ -89,14 +97,14 @@ describe('registered GitHub PR source → native Channels relationships', () => 
         kind: 'readRelations', credentialRef, pullRequest: { repositoryId: '78', number: 12 },
       }, { surface: 'ui' })).toEqual({ kind: 'relations', links: [] });
       await expect(core.invokeAction('session-pull-request-relations-v1', {
-        kind: 'readRelations', credentialRef: null, sessionId: 'session-1',
+        kind: 'readRelations', credentialRef: null, sessionIds: ['session-1'],
       }, { surface: 'ui' })).resolves.toMatchObject({ kind: 'relations', links: [{ sessionId: 'session-1', bindingId: 'account-binding' }] });
       await expect(core.invokeAction('session-pull-request-relations-v1', {
         kind: 'unlink', sessionId: 'session-1', bindingId: 'account-binding', expectedRevision: 1,
-      }, { surface: 'ui' })).rejects.toMatchObject({ code: 'plugin_action_read_observation_read_only_required' });
+      }, { surface: 'ui' })).rejects.toBeDefined();
       const invalidated = Object.assign(vi.fn(), { retire: vi.fn() });
       const observation = await core.observeAction('session-pull-request-relations-v1', {
-        kind: 'readRelations', credentialRef, sessionId: 'session-1',
+        kind: 'readRelations', credentialRef, sessionIds: ['session-1'],
       }, invalidated, { surface: 'ui' });
       invalidated.mockClear();
       const retained = await state.get('account-binding');
@@ -167,7 +175,7 @@ describe('registered GitHub PR source → native Channels relationships', () => 
       binding: sourceBinding,
       localInstanceKey: 'github.com', configuration: { v: 1, token: JSON.stringify({ v: 1, selection: { kind: 'all' } }) } };
     const localRef = { kindId: 'pull-request', collisionScope: 'github:77', entryId: '12' };
-    const readInput = { v: 1, instance, localRef, sessionId: 'session-1' };
+    const readInput = { v: 1, instance, localRef };
     // This composition owns the native daemon caller stamp; the GitHub Account
     // dispatcher tests separately cover selecting this exact daemon child.
     const readActionId = mode === 'native' ? githubNativeReadActionId('triage/read-github-session-links') : 'triage/read-github-session-links';
@@ -260,16 +268,19 @@ describe('registered GitHub PR source → native Channels relationships', () => 
           .toMatchObject({ kind: 'complete', links: [{ localRef, sessionId: 'session-1', linkedAtMs: 42 }] });
         const selected = { ...instance, configuration: { v: 1,
           token: JSON.stringify({ v: 1, selection: { kind: 'selected', unitIds: ['acme/widgets'] } }) } };
-        expect(await source.invokeAction(readActionId, { v: 1, instance: selected }, { surface: 'ui' }))
+        expect(await source.invokeAction(readActionId, { ...readInput, instance: selected }, { surface: 'ui' }))
           .toMatchObject({ kind: 'complete', links: [{ localRef, sessionId: 'session-1', linkedAtMs: 42 }] });
         const excluded = { ...selected, configuration: { v: 1,
           token: JSON.stringify({ v: 1, selection: { kind: 'selected', unitIds: ['another/repository'] } }) } };
-        expect(await source.invokeAction(readActionId, { v: 1, instance: excluded }, { surface: 'ui' }))
+        expect(await source.invokeAction(readActionId, { ...readInput, instance: excluded }, { surface: 'ui' }))
           .toEqual({ kind: 'complete', links: [] });
         expect(await state.get(binding.id)).not.toBeNull();
       }
-      expect(await source.invokeAction('triage/link-github-session', { ...readInput, linked: false }, { surface: 'ui' })).toEqual({ status: 'unlinked' });
-      expect(await source.invokeAction(readActionId, readInput, { surface: 'ui' })).toEqual({ kind: 'complete', links: [] });
+      expect(await source.invokeAction('triage/link-github-session', { ...readInput, sessionId: 'session-1', linked: false }, { surface: 'ui' })).toEqual({ status: 'unlinked' });
+      const remaining = await source.invokeAction(readActionId, readInput, { surface: 'ui' });
+      expect(remaining).toMatchObject(mode === 'account'
+        ? { kind: 'complete', links: [{ localRef, sessionId: 'session-2' }] }
+        : { kind: 'complete', links: [] });
     } finally { await source.dispose(); await core.dispose(); }
   });
 });

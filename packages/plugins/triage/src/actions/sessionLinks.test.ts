@@ -44,6 +44,10 @@ import { TRIAGE_NATIVE_INVESTIGATION_KINDS_V1 } from '@happier-dev/triage-protoc
  * handler nothing registers is exactly the defect this proves is gone.
  */
 
+function sessionASlice(result: JsonValue): JsonValue {
+    return { kind: 'sessionSet', slices: [{ sessionId: 'session-a', result }] };
+}
+
 const NOW_BEFORE_MS = 1_760_000_900_000;
 
 function registeredLinkHandler(localId = TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1): ActionHandler<JsonValue, JsonValue> {
@@ -242,10 +246,10 @@ describe('the session-link writer Action', () => {
             actions: { executeAdmittedTargetedOperation: async (_operation: unknown, input: { instance: typeof first }) => {
                 const isSecond = input.instance.instance.sourceInstanceId === second.instance.sourceInstanceId;
                 if (isSecond && phase === 'failed') throw new Error('Provider unavailable');
-                return { kind: 'complete', links: isSecond && phase === 'removed' ? [] : [{
+                return sessionASlice({ kind: 'complete', links: isSecond && phase === 'removed' ? [] : [{
                     localRef: { kindId: 'pull-request', collisionScope: 'example/repository', entryId: isSecond ? '18' : '17' },
                     sessionId: 'session-a', linkedAtMs: 1, displayPath: isSecond ? 'Second PR' : 'First PR',
-                }] };
+                }] });
             } },
         } } as unknown as PluginInvocationContext;
         const handler = registeredLinkHandler(TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1);
@@ -288,9 +292,9 @@ describe('the session-link writer Action', () => {
                 ...testkitReadOnlySourceSnapshot().contributions[0],
                 operations: { readSessionLinks: { role: 'readSessionLinks' }, linkSession: { role: 'linkSession' } },
             }] }), dispose() {} }) },
-            actions: { executeAdmittedTargetedOperation: async () => phase === 'partial' || phase === 'partial-empty'
+            actions: { executeAdmittedTargetedOperation: async () => sessionASlice(phase === 'partial' || phase === 'partial-empty'
                 ? { kind: 'partial', links: phase === 'partial-empty' ? [] : [link('17', 'Fresh readable work')], unavailableRefs: [ref('18')] }
-                : { kind: 'complete', links: phase === 'empty' ? [] : [link('17'), link('18'), link('19')] } },
+                : { kind: 'complete', links: phase === 'empty' ? [] : [link('17'), link('18'), link('19')] }) },
         } } as unknown as PluginInvocationContext;
         const handler = registeredLinkHandler(TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1);
         const read = async (previous?: ReturnType<typeof TRIAGE_SESSION_LINKS_RESOURCE_PROJECTION_V1.decode>) => {
@@ -378,7 +382,7 @@ describe('the session-link writer Action', () => {
                 ...testkitReadOnlySourceSnapshot().contributions[0],
                 operations: { readSessionLinks: { role: 'readSessionLinks' }, linkSession: { role: 'linkSession' } },
             }] }), dispose() {} }) },
-            actions: { executeAdmittedTargetedOperation: async () => ({ kind: 'complete', links: [{
+            actions: { executeAdmittedTargetedOperation: async () => sessionASlice({ kind: 'complete', links: [{
                 localRef: { kindId: known.kindId, collisionScope: known.collisionScope, entryId: known.entryId },
                 sessionId: 'session-a', linkedAtMs: 1, displayPath: 'Native relationship',
             }] }) },
@@ -422,7 +426,7 @@ describe('the session-link writer Action', () => {
                 ...testkitReadOnlySourceSnapshot().contributions[0],
                 operations: { readSessionLinks: { role: 'readSessionLinks' }, linkSession: { role: 'linkSession' } },
             }] }), dispose: () => {} }) },
-            actions: { executeAdmittedTargetedOperation: async () => ({ kind: 'complete', links: [{
+            actions: { executeAdmittedTargetedOperation: async () => sessionASlice({ kind: 'complete', links: [{
                 localRef: { kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' },
                 sessionId: 'session-a', linkedAtMs: 1, displayPath: 'Same PR', locator: testkitLocator(),
             }] }) },
@@ -572,20 +576,21 @@ describe('the session-link writer Action', () => {
                         ...(roleState === 'missingWrite' || roleState === 'missingBoth' ? {} : { linkSession: { role: 'linkSession' } }),
                     },
                 }] }), dispose: () => {} }) },
-                actions: { executeAdmittedTargetedOperation: async (operation: { role: string }) => {
+                actions: { executeAdmittedTargetedOperation: async (operation: { role: string }, input: object) => {
+                    const read = (result: JsonValue) => 'sessionIds' in input ? sessionASlice(result) : result;
                     if (operation.role === 'linkSession') { roleWrites++; throw new Error('uncertain write'); }
                     roleReads++;
                     if (roleState === 'throw') throw new Error('unavailable');
                     if (roleState === 'typedThrow') throw new PluginError({ code: 'source_transport_unavailable', retryable: false,
                         details: { requestId: 'source-read-request-1', secret: 'must-not-cross-the-wire' } });
-                    if (roleState === 'denied') return { kind: 'failed', failure: { class: 'transient', code: 'denied' } };
-                    if (roleState === 'unavailable') return { kind: 'unavailable' };
-                    if (roleState === 'malformed') return { kind: 'complete', links: [{ invalid: true }] };
-                    return { kind: 'complete', links: roleState === 'empty' ? [] : [{
+                    if (roleState === 'denied') return read({ kind: 'failed', failure: { class: 'transient', code: 'denied' } });
+                    if (roleState === 'unavailable') return read({ kind: 'unavailable' });
+                    if (roleState === 'malformed') return read({ kind: 'complete', links: [{ invalid: true }] });
+                    return read({ kind: 'complete', links: roleState === 'empty' ? [] : [{
                         localRef: { kindId: roleState === 'foreignKind' ? 'issue' : 'pull-request', collisionScope: 'example/repository', entryId: '17' },
                         sessionId: roleState === 'foreignSession' ? 'another-session' : 'session-a', linkedAtMs: 10, displayPath: 'Authoritative PR',
                         locator: testkitLocator(),
-                    }] };
+                    }] });
                 } },
             } } as unknown as PluginInvocationContext;
             configurationReads = corpusReads = 0;
@@ -723,12 +728,12 @@ describe('the session-link writer Action', () => {
                 ] }), dispose: () => {} }) },
                 // The host's admitted-operation transport is the boundary; the
                 // registered aggregate and relationship read below stay real.
-                actions: { executeAdmittedTargetedOperation: async () => unavailableRead
+                actions: { executeAdmittedTargetedOperation: async () => sessionASlice(unavailableRead
                     ? { kind: 'failed', failure: { class: 'transient', code: 'accountDataUnavailable' } }
-                    : ({ kind: 'complete', links: [{
-                    localRef: { kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' },
-                    sessionId: 'session-a', linkedAtMs: 10, displayPath: 'Healthy linked work',
-                }] }) },
+                    : { kind: 'complete', links: [{
+                        localRef: { kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' },
+                        sessionId: 'session-a', linkedAtMs: 10, displayPath: 'Healthy linked work',
+                    }] }) },
             },
         } as unknown as PluginInvocationContext;
         const raw = await registeredLinkHandler(TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1)(
@@ -788,10 +793,13 @@ describe('the session-link writer Action', () => {
                     },
                     executeAdmittedTargetedOperation: async (operation: { role: string }, input: { linked: boolean }) => {
                         if (refusal !== undefined && operation.role === 'linkSession') throw refusal;
-                        if (operation.role === 'readSessionLinks') return { kind: 'complete', links: linked ? [{
-                            localRef: { kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' },
-                            sessionId: 'session-a', linkedAtMs: 10, displayPath: 'Personal task',
-                        }] : [] };
+                        if (operation.role === 'readSessionLinks') {
+                            const result = { kind: 'complete', links: linked ? [{
+                                localRef: { kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' },
+                                sessionId: 'session-a', linkedAtMs: 10, displayPath: 'Personal task',
+                            }] : [] };
+                            return 'sessionIds' in input ? sessionASlice(result) : result;
+                        }
                         if (writeFails) return { status: 'failed' };
                         linked = input.linked;
                         writes.push(input); return { status: linked ? 'linked' : 'unlinked' };

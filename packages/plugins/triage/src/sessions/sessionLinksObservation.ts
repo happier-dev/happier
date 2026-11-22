@@ -51,38 +51,54 @@ export async function observeTriageSourceSessionLinks(
         const attached: Disposable[] = [];
         try {
             const scopes = await Promise.all(selections.map(async selection => ({ selection, scopes: await owner.readScopes(selection) })));
-            for (const { selection, scopes: selectedScopes } of scopes) {
-                if (controller.signal.aborted || disposed) break;
-                if (await owner.hasCorpusReadDemand(selection)) {
-                    const relation = 'sessionId' in selection ? { sessionId: selection.sessionId } : { entryRef: selection.entryRef };
-                    const query = await triageSessionLinksSelectionV1(links, relation, { signal: discovery.signal });
-                    if (!controller.signal.aborted && !disposed) attached.push(links.watch(query, selectedChanged));
-                }
-                for (const scope of selectedScopes) {
-                    if (controller.signal.aborted || disposed) break;
-                    if (scope.kind !== 'ready' || scope.roleKinds.length === 0) continue;
-                    const operation = scope.source?.operations?.readSessionLinks;
-                    if (operation === undefined || scope.source?.operations?.linkSession === undefined) continue;
-                    const entry = 'entryRef' in selection ? selection.entryRef : undefined;
-                    try {
-                        const observation = await context.services.actions.observeAdmittedTargetedOperation(operation, {
-                            v: 1, instance: scope.row.configured,
-                            ...(entry === undefined ? {} : { localRef: { kindId: entry.kindId, collisionScope: entry.collisionScope, entryId: entry.entryId } }),
-                            ...('sessionId' in selection ? { sessionId: selection.sessionId } : {}),
-                        }, selectedChanged, { signal: controller.signal });
-                        attached.push(observation);
-                    } catch (error) {
-                        // Snapshot-only source roles retain their existing manual
-                        // refresh contract. This never substitutes a fake watcher
-                        // or disables exact corpus observation for healthy co-links.
-                        if (!isPluginError(error) || error.code !== 'plugin_action_read_observation_unavailable') {
-                            // A refused dependency is not an attached observer.
-                            // Keep independent healthy corpus dependencies live;
-                            // configuration/registry changes rebuild admission.
-                            invalidateAfterRebuild = true;
-                        }
+            type ReadyScope = Extract<(typeof scopes)[number]['scopes'][number], { kind: 'ready' }>;
+            const byInstance = new Map<string, { scope: ReadyScope; sessionIds: Set<string> }>();
+            const watchedSessions = new Set<string>();
+            async function observeRole(
+                scope: ReadyScope,
+                demand: { localRef: { kindId: string; collisionScope: string; entryId: string } } | { sessionIds: string[] },
+            ) {
+                if (controller.signal.aborted || disposed) return;
+                const operation = scope.source?.operations?.readSessionLinks;
+                if (operation === undefined || scope.source?.operations?.linkSession === undefined) return;
+                try {
+                    attached.push(await context.services.actions.observeAdmittedTargetedOperation(operation, {
+                        v: 1, instance: scope.row.configured, ...demand,
+                    }, selectedChanged, { signal: controller.signal }));
+                } catch (error) {
+                    // Snapshot-only roles retain manual refresh. A refused
+                    // source watch leaves independent corpus watches attached.
+                    if (!isPluginError(error) || error.code !== 'plugin_action_read_observation_unavailable') {
+                        invalidateAfterRebuild = true;
                     }
                 }
+            }
+            for (const { selection, scopes: selectedScopes } of scopes) {
+                if (controller.signal.aborted || disposed) break;
+                const sessionId = 'sessionId' in selection ? selection.sessionId : undefined;
+                if ((sessionId === undefined || !watchedSessions.has(sessionId)) && await owner.hasCorpusReadDemand(selection)) {
+                    const relation = 'sessionId' in selection ? { sessionId: selection.sessionId } : { entryRef: selection.entryRef };
+                    const query = await triageSessionLinksSelectionV1(links, relation, { signal: discovery.signal });
+                    if (!controller.signal.aborted && !disposed) {
+                        attached.push(links.watch(query, selectedChanged));
+                        if (sessionId !== undefined) watchedSessions.add(sessionId);
+                    }
+                }
+                for (const scope of selectedScopes) {
+                    if (scope.kind !== 'ready' || scope.roleKinds.length === 0) continue;
+                    if ('entryRef' in selection) {
+                        const { kindId, collisionScope, entryId } = selection.entryRef;
+                        await observeRole(scope, { localRef: { kindId, collisionScope, entryId } });
+                    } else {
+                        const key = scope.lane.sourceInstanceId;
+                        const current = byInstance.get(key);
+                        if (current !== undefined) current.sessionIds.add(selection.sessionId);
+                        else byInstance.set(key, { scope, sessionIds: new Set([selection.sessionId]) });
+                    }
+                }
+            }
+            for (const { scope, sessionIds } of byInstance.values()) {
+                await observeRole(scope, { sessionIds: [...sessionIds] });
             }
         } catch (error) {
             await disposeSubscriptions(attached);

@@ -13,9 +13,10 @@ const instance = INTERNAL_TASK_SOURCE_RECORD_V1.value.configured.instance;
 describe('internal task entry-set Session links', () => {
     it('reads a cold Session relation from Account tasks without a daemon source claim', async () => {
         let unavailable = false;
+        let accountReads = 0;
         const rows = new Map<string, unknown>([['todo.task-offline', {
             id: 'task-offline', title: 'Offline task', done: false, createdAt: 1, updatedAt: 2,
-            linkedSessions: { session: { title: 'Session', linkedAt: 3 } },
+            linkedSessions: { session: { title: 'Session', linkedAt: 3 }, outside: { title: 'Other Session', linkedAt: 5 } },
         }]]);
         const port: AccountJsonKvCollectionPort = {
             read: async key => ({ value: rows.get(key) ?? null, version: 1 }),
@@ -24,11 +25,13 @@ describe('internal task entry-set Session links', () => {
         };
         const context = { signal: new AbortController().signal, services: {
             targetedContributions: { observeForSelf: () => ({ readCurrent: async () => ({ contributions: [] }), dispose() {} }) },
-            actions: { execute: async (id: string, input: unknown) => unavailable
-                ? { status: 'failed', reason: 'task_storage_unavailable' }
-                : executeInternalTaskAction({
-                actionId: InternalTaskActionIdSchema.parse(id), input, scope, port, requireCurrent: () => {}, createId: () => 'unused',
-            }) },
+            actions: { execute: async (id: string, input: unknown) => {
+                expect(id).toBe('tasks.internal.list');
+                accountReads++;
+                return unavailable ? { status: 'failed', reason: 'task_storage_unavailable' }
+                    : executeInternalTaskAction({ actionId: InternalTaskActionIdSchema.parse(id), input, scope, port,
+                        requireCurrent: () => {}, createId: () => 'unused' });
+            } },
         } } as unknown as Parameters<typeof createTriageSourceSessionRelations>[0];
         const { collections } = createTestkitCorpusCollections();
         const read = () => createTriageSourceSessionRelations(context, collections).read({ sessionId: 'session' });
@@ -40,6 +43,11 @@ describe('internal task entry-set Session links', () => {
             health: expect.objectContaining({ kind: 'failed' }) }));
         unavailable = false;
         expect((await read()).links).toEqual(result.links);
+        accountReads = 0;
+        const batch = await createTriageSourceSessionRelations(context, collections).readSessions(['unlinked', 'session', 'session']);
+        expect(batch.links).toEqual(result.links);
+        expect(batch.kind).toBe('complete');
+        expect(accountReads).toBe(1);
     });
     it.each([1, 60])('reads %i task links with one Account task read and no daemon dispatch', async count => {
         const reads: string[] = [];

@@ -34,8 +34,10 @@ import {
   ConversationProviderConnectionsListResultV1Schema,
   ConversationProviderObservationIngestInputV1Schema,
   SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1,
+  SESSION_PULL_REQUEST_NATIVE_RELATIONS_ACTION_ID_V1,
   SessionPullRequestBindingInputV1Schema,
   SessionPullRequestBindingResultV1Schema,
+  SessionPullRequestRelationsInputV1Schema,
   SESSION_PULL_REQUEST_WATCH_ACTION_ID_V1,
   SessionPullRequestWatchInputV1Schema,
   SessionPullRequestWatchResultV1Schema,
@@ -125,7 +127,7 @@ import { CHANNELS_UI_TRANSLATION_BUNDLES, CHANNELS_UI_TRANSLATION_RESOURCES } fr
 import { manageSessionPullRequestWatchForInvocation, observeSessionPullRequestWatchAction,
   SESSION_PULL_REQUEST_WATCH_ACCOUNT_EXECUTION_V1 } from './sessionPullRequestWatch.js';
 import { SESSION_PULL_REQUEST_RELATIONS_ACTION_ID_V1, SESSION_PULL_REQUEST_RELATIONS_ACCOUNT_EXECUTION_V1,
-  readSessionPullRequestRelationsForInvocation } from './sessionPullRequestRelations.js';
+  observeSessionPullRequestRelationsAction, readSessionPullRequestRelationsForInvocation } from './sessionPullRequestRelations.js';
 import { SESSION_PULL_REQUEST_NOTIFICATION_CATEGORY_ID } from './sessionPullRequestNotifications.js';
 import { SESSION_PULL_REQUEST_WATCH_SETTINGS_DECLARATION } from './sessionPullRequestWatchPolicy.js';
 import { CHANNEL_FILE_ATTACHMENT } from './channelAttachment.js';
@@ -303,6 +305,19 @@ type ChannelsPluginActivationRuntime = Readonly<{
  * registration is written by hand.
  */
 /** Named schema references retain exact Action payloads in portable declarations. */
+const sessionPullRequestRelationsRead = {
+  title: 'Read session pull request relationships',
+  description: 'Reads retained pull request links for an entry or an admitted Session set.',
+  inputSchema: SessionPullRequestRelationsInputV1Schema,
+  resultSchema: SessionPullRequestBindingResultV1Schema,
+  dangerLevel: 'safe',
+  readOnly: true,
+  sessionTarget: { field: 'sessionIds.*', cardinality: 'many' },
+  hostAccess: ['account-storage'],
+  run: readSessionPullRequestRelationsForInvocation,
+  observeRead: observeSessionPullRequestRelationsAction,
+} as const;
+
 type ChannelsActionSchemas = {
   readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionList]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionList;
   readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingList]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.bindingList;
@@ -316,7 +331,8 @@ type ChannelsActionSchemas = {
   readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPairingCancel]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionPairingCancel;
   readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionCreate]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionCreate;
   readonly [DISCUSSION_REPLY_DESTINATION_ACTION_ID_V1]: { readonly title: string; readonly inputSchema: typeof DiscussionReplyDestinationInputV1Schema; readonly resultSchema: typeof DiscussionReplyDestinationResultV1Schema; };
-  readonly [SESSION_PULL_REQUEST_RELATIONS_ACTION_ID_V1]: { readonly title: string; readonly inputSchema: typeof SessionPullRequestBindingInputV1Schema; readonly resultSchema: typeof SessionPullRequestBindingResultV1Schema; };
+  readonly [SESSION_PULL_REQUEST_RELATIONS_ACTION_ID_V1]: typeof sessionPullRequestRelationsRead;
+  readonly [SESSION_PULL_REQUEST_NATIVE_RELATIONS_ACTION_ID_V1]: typeof sessionPullRequestRelationsRead;
   readonly [SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1]: { readonly title: string; readonly inputSchema: typeof SessionPullRequestBindingInputV1Schema; readonly resultSchema: typeof SessionPullRequestBindingResultV1Schema; };
   readonly [SESSION_PULL_REQUEST_WATCH_ACTION_ID_V1]: { readonly title: string; readonly inputSchema: typeof SessionPullRequestWatchInputV1Schema; readonly resultSchema: typeof SessionPullRequestWatchResultV1Schema; };
   readonly [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionTransfer]: typeof CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.connectionTransfer;
@@ -735,18 +751,14 @@ function createChannelsPlugin(): ChannelsPlugin {
         run: readConversationDiscussionReplyDestinationForInvocation,
       },
       [SESSION_PULL_REQUEST_RELATIONS_ACTION_ID_V1]: {
-        title: 'Read session pull request relationships',
-        description: 'Reads retained pull request links from Account state without requiring a Machine.',
-        inputSchema: SessionPullRequestBindingInputV1Schema,
-        resultSchema: SessionPullRequestBindingResultV1Schema,
+        ...sessionPullRequestRelationsRead,
         execution: SESSION_PULL_REQUEST_RELATIONS_ACCOUNT_EXECUTION_V1,
         surfaces: ['cli', 'ui', 'plugin', 'agent', 'mcp'],
-        dangerLevel: 'safe',
-        readOnly: { op: 'eq', path: 'kind', value: 'readRelations' },
-        sessionTarget: { field: 'sessionId', cardinality: 'one' },
-        hostAccess: ['account-storage'],
-        run: readSessionPullRequestRelationsForInvocation,
-        observeRead: observeSessionPullRequestBindingAction,
+      },
+      [SESSION_PULL_REQUEST_NATIVE_RELATIONS_ACTION_ID_V1]: {
+        ...sessionPullRequestRelationsRead,
+        execution: { target: 'daemon' },
+        surfaces: ['plugin'],
       },
       [SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1]: {
         title: 'Manage session pull request binding',

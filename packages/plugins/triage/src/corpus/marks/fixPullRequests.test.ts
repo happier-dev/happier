@@ -75,7 +75,7 @@ function createTestkitCorpusCollections(options: Parameters<typeof createBaseCor
         };
     });
     let configurationReads = 0;
-    const roleSelections: Array<string | undefined> = [];
+    const roleSelections: Array<readonly string[]> = [];
     const linkQueries: unknown[] = [];
     let taskReads = 0;
     let linkedSession: string | undefined = 'session-a';
@@ -107,12 +107,15 @@ function createTestkitCorpusCollections(options: Parameters<typeof createBaseCor
                 return getActionSpec(action).outputSchema.parse({ status: 'ok',
                     scope: { serverId: 'home', accountId: 'account-1' }, todos: [], undoneOrder: [], completedOrder: [] });
             },
-            executeAdmittedTargetedOperation: async (_operation: unknown, input: { sessionId?: string }) => {
-                roleSelections.push(input.sessionId);
+            executeAdmittedTargetedOperation: async (_operation: unknown, input: { sessionIds: readonly string[] }) => {
+                roleSelections.push(input.sessionIds);
                 if (role === 'failed') throw new Error('PR relation unavailable');
-                return { kind: 'complete', links: linkedSession !== undefined && input.sessionId === linkedSession
-                    ? [{ localRef: { kindId: 'pull-request', collisionScope: 'acme/web', entryId: 'canonical' },
-                        sessionId: linkedSession, linkedAtMs: 2_000, displayPath: 'Canonical PR' }] : [] };
+                return { kind: 'sessionSet', slices: input.sessionIds.map(sessionId => ({
+                    sessionId,
+                    result: { kind: 'complete', links: sessionId === linkedSession
+                        ? [{ localRef: { kindId: 'pull-request', collisionScope: 'acme/web', entryId: 'canonical' },
+                            sessionId, linkedAtMs: 2_000, displayPath: 'Canonical PR' }] : [] },
+                })) };
             },
         },
     } } as unknown as Parameters<typeof createTriageSourceSessionRelations>[0];
@@ -199,9 +202,8 @@ describe('fix pull request links', () => {
         expect(first.primary).toMatchObject({ entryRef: githubPr('canonical'), origins: ['session'], status: 'open' });
         const { taskReads, roleSelections, linkQueries: allQueries } = fixture.readCosts();
         const linkQueries = allQueries.slice(setupQueries);
-        // 14 Sessions and three sources: 28 → 15 nested reads, 15 → 2 Collection queries.
-        // Each GitHub read retains its exact Session selector.
-        expect([...roleSelections].sort()).toEqual([...sessionIds].sort());
+        expect(roleSelections).toHaveLength(1);
+        expect([...roleSelections[0]!].sort()).toEqual([...sessionIds].sort());
         expect({ taskReads, queries: linkQueries.length, uniqueQueries: new Set(linkQueries.map(query => JSON.stringify(query))).size })
             .toEqual({ taskReads: 1, queries: 2, uniqueQueries: 2 });
         fixture.setLinkedSession('unrelated-session');

@@ -53,7 +53,7 @@ export type TriageFixPullRequestSourcesV1 = Readonly<{
 }>;
 
 type FixReadCollections = Pick<CorpusCollectionsV1, 'userMarks'>;
-type FixSessionRelations = Pick<ReturnType<typeof createTriageSourceSessionRelations>, 'read' | 'readExactSessions'>;
+type FixSessionRelations = Pick<ReturnType<typeof createTriageSourceSessionRelations>, 'read' | 'readSessions'>;
 
 export async function readFixPullRequestSources(input: Readonly<{
     collections: FixReadCollections;
@@ -79,7 +79,11 @@ export async function readFixPullRequestSources(input: Readonly<{
 
     const coLinked = new Map<string, TriageCoLinkedEntryV1>();
     const sessionIds = [...new Set(sessions.links.map(link => link.sessionId))];
-    for (const siblings of await input.sourceRelations.readExactSessions(sessionIds)) {
+    if (sessionIds.length > 0) {
+        const siblings = await input.sourceRelations.readSessions(sessionIds, true).catch(() => {
+            throwIfAborted(input.signal);
+            return { kind: 'failed' as const, links: [] };
+        });
         if (siblings.kind !== 'complete') incomplete = true;
         for (const sibling of siblings.links) {
             if (sameTriageEntryReference(sibling.entryRef, entryRef)) continue;

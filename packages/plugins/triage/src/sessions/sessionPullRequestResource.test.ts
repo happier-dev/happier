@@ -468,10 +468,12 @@ describe('the composed Session PR Resource', () => {
                 },
                     executeAdmittedTargetedOperation: async (operation: unknown, input: unknown) => {
                     if (operation === relationOperation) {
-                        expect(input).toEqual({ v: 1, instance: configured, sessionId: 'session-a' });
-                        return TriageSourceReadSessionLinksResultV1Schema.parse({ kind: 'complete', links: localRefs.map((localRef, index) => ({
-                            localRef, sessionId: 'session-a', linkedAtMs: 1, displayPath: 'Native PR', locator: locator,
-                        })) });
+                        expect(input).toEqual({ v: 1, instance: configured, sessionIds: ['session-a'] });
+                        return TriageSourceReadSessionLinksResultV1Schema.parse({ kind: 'sessionSet', slices: [{
+                            sessionId: 'session-a', result: { kind: 'complete', links: localRefs.map(localRef => ({
+                                localRef, sessionId: 'session-a', linkedAtMs: 1, displayPath: 'Native PR', locator,
+                            })) },
+                        }] });
                     }
                     expect(operation).toBe(nativeOperation);
                     const request = TriageSourceCredentialInputsV1.readPullRequestStatus.parse(input);
@@ -739,10 +741,10 @@ describe('the composed Session PR Resource', () => {
                     writtenInstances.push(input.instance.instance.sourceInstanceId);
                     return { status: 'linked' };
                 }
-                return { kind: 'complete', links: [{
+                return { kind: 'sessionSet', slices: [{ sessionId: 'session-a', result: { kind: 'complete', links: [{
                     localRef: { kindId: entryRef.kindId, collisionScope: entryRef.collisionScope, entryId: entryRef.entryId },
                     sessionId: 'session-a', linkedAtMs: 1, displayPath: 'Same PR', locator,
-                }] };
+                }] } }] };
             } },
         } } as unknown as TriageDataActionContext; // Host contribution/Action transport fixture; domain decisions stay real.
         const readRelations = () => createTriageSourceSessionRelations(context, collections).read({ sessionId: 'session-a' });
@@ -815,9 +817,10 @@ describe('the composed Session PR Resource', () => {
                 return { accounts: [{ account: { ref: connected.binding.account, providerIdentity: { accountId: '1729528' } } }] };
             }, async executeAdmittedTargetedOperation() {
                 // The GitHub role returns the retained PR63 relationship without a sourceInstanceId.
-                return { kind: 'complete', links: [{ localRef: { kindId: pr63.kindId,
-                    collisionScope: pr63.collisionScope, entryId: pr63.entryId }, sessionId: 'session-a',
-                    linkedAtMs: 1, displayPath: 'example/repository#63', locator: { ...locator, webUrl: prUrl } }] };
+                return { kind: 'sessionSet', slices: [{ sessionId: 'session-a', result: { kind: 'complete',
+                    links: [{ localRef: { kindId: pr63.kindId, collisionScope: pr63.collisionScope, entryId: pr63.entryId },
+                        sessionId: 'session-a', linkedAtMs: 1, displayPath: 'example/repository#63', locator: { ...locator, webUrl: prUrl } }],
+                } }] };
             } },
         } } as unknown as TriageDataActionContext; // Only host inventory/Action transports are replaced.
         const readRelations = () => createTriageSourceSessionRelations(context, collections).read({ sessionId: 'session-a' });
