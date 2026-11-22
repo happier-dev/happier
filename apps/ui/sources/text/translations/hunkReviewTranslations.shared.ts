@@ -17,6 +17,8 @@ export type Labels = Readonly<{
   kept: string;
   keep: string;
   keepUnavailable: string;
+  markReviewedA11y: (params: RowA11y) => string;
+  unmarkReviewedA11y: (params: RowA11y) => string;
   discard: string;
   keepA11y: (params: RowA11y) => string;
   unkeepA11y: (params: RowA11y) => string;
@@ -101,6 +103,8 @@ export const hunkReviewTranslations = {
     kept: 'Kept',
     keep: 'Keep',
     keepUnavailable: 'Keep is unavailable. Reopen this review to try again.',
+    markReviewedA11y: ({ n, total, range }) => `Mark change ${n} of ${total} reviewed, ${range}`,
+    unmarkReviewedA11y: ({ n, total, range }) => `Change ${n} of ${total} reviewed, ${range}. Press to clear your mark`,
     discard: 'Discard',
     keepA11y: ({ n, total, range }) => `Keep change ${n} of ${total}, ${range}`,
     unkeepA11y: ({ n, total, range }) =>

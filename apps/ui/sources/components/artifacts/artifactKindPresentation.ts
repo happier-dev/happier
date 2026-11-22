@@ -3,7 +3,7 @@ import { t } from '@/text';
 
 import type { ArtifactBrowserKind, ArtifactBrowserKindFilter, ArtifactViewKind } from './artifactBrowserModel';
 
-/** Each kind's mark: the same glyph its own destination uses (Boards, Workflows, Prompts, Roles, Launch profiles). */
+/** Each kind's mark: the same glyph its own destination uses (Boards, Workflows, Prompts, Roles, Launch profiles, a Review's summary). */
 export const ARTIFACT_KIND_ICONS: Readonly<Record<ArtifactViewKind, IconName>> = {
     document: 'file-text',
     pdf: 'file-text',
@@ -17,6 +17,7 @@ export const ARTIFACT_KIND_ICONS: Readonly<Record<ArtifactViewKind, IconName>> =
     role: 'users',
     launchProfile: 'person',
     dashboard: 'squares-four',
+    review: 'list-checks',
 };
 
 /** A kind's name for one artifact ("Board"). */
@@ -34,6 +35,7 @@ export function artifactKindLabel(kind: ArtifactViewKind): string {
         case 'role': return t('artifacts.browser.kindOne.role');
         case 'launchProfile': return t('artifacts.browser.kindOne.launchProfile');
         case 'dashboard': return t('artifacts.browser.kindOne.dashboard');
+        case 'review': return t('detailsSurface.review.title');
     }
 }
 

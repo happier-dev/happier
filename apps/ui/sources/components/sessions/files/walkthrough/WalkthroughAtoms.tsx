@@ -14,6 +14,9 @@ import type { ScmDiffSummaryAnalysisCoverage } from '@happier-dev/protocol/scm';
 import type { WalkthroughReviewedSource } from './walkthroughReviewedProjection';
 import { useWalkthroughReviewedCount } from './useWalkthroughReviewed';
 
+/** The rail's (and a hosted stop's) number mark, so a title beside it can centre it on its line. */
+export const RAIL_STOP_NUMBER_PX = 18;
+
 /**
  * A stop's number, and its reviewed state. The signature moment of the Walkthrough (lab WT1 Motion): when
  * the person marks a stop, the ring fills and the check arrives in one base-duration settle on the
@@ -124,7 +127,7 @@ const styles = StyleSheet.create((theme) => ({
         flexShrink: 0,
     },
     boxStream: { width: 22, height: 22, borderRadius: 11 },
-    boxRail: { width: 18, height: 18, borderRadius: 9 },
+    boxRail: { width: RAIL_STOP_NUMBER_PX, height: RAIL_STOP_NUMBER_PX, borderRadius: RAIL_STOP_NUMBER_PX / 2 },
     ring: { borderWidth: 1.25, borderColor: theme.colors.border.strong },
     ringCurrent: { borderWidth: 1.5, borderColor: theme.colors.text.primary },
     number: {

@@ -5,6 +5,7 @@ import { deriveArtifactExcerptV1 } from '@happier-dev/protocol/artifacts/artifac
 import { artifactKindIsTextDocumentV1, getArtifactKindPolicyV1, getArtifactUseTargetV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 import { isArtifactHtmlHeaderV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { WIDGET_SURFACE_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/widgets';
+import { REVIEW_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import type { ArtifactWorkspaceSourceV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { WorkflowDefinitionArtifactBodyV1ReadSchema, WorkflowDefinitionArtifactHeaderV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { workflowDefinitionPreviewStepsV1 } from '@happier-dev/protocol/workflows';
@@ -80,11 +81,12 @@ export function classifyArtifactBrowserKind(artifact: ArtifactBrowserArtifact): 
 }
 
 /** What the Artifact view names an artifact: its browser kind, or a kind the browser never lists. */
-export type ArtifactViewKind = ArtifactBrowserKind | 'dashboard';
+export type ArtifactViewKind = ArtifactBrowserKind | 'dashboard' | 'review';
 
 /** Kinds that open only in the Artifact view, by header kind. */
 const VIEW_ONLY_KINDS: ReadonlyMap<unknown, Exclude<ArtifactViewKind, ArtifactBrowserKind>> = new Map([
     [WIDGET_SURFACE_ARTIFACT_KIND_V1, 'dashboard'],
+    [REVIEW_ARTIFACT_KIND_V1, 'review'],
 ]);
 
 export function classifyArtifactViewKind(artifact: ArtifactBrowserArtifact): ArtifactViewKind {

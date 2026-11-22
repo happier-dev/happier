@@ -1177,7 +1177,8 @@ describe('Artifact composed view reads', () => {
             await waitForHomeGovernance(() => expect(served.requests.filter(request => request.path === '/v1/reviews/history/list')).toMatchObject([
                 { accountId: 'owner', body: { reviewId, findingIdentity: comments[0]!.findingIdentity } },
             ]));
-            expect(screen.findByTestId('review-finding-seen-loading:seen-root-0')).not.toBeNull();
+            // Nothing to say yet draws no section: Seen before appears only once it has an earlier Review to name.
+            expect(screen.findByTestId('review-finding-seen:seen-root-0')).toBeNull();
             await act(async () => { held.resolve(Response.json({ error: 'history_temporarily_unavailable' }, { status: 503 })); });
             await waitForHomeGovernance(() => expect(screen.findByTestId('review-finding-seen-retry:seen-root-0')).not.toBeNull());
             retry = true;
@@ -1191,7 +1192,10 @@ describe('Artifact composed view reads', () => {
             // The external recycler retains the complete result; off-screen matches are not truncated.
             expect(screen.findByTestId('review-finding-seen-matches:seen-root-0')?.props.data).toHaveLength(earlierMatches.length);
             await screen.pressByTestIdAsync('review-finding-toggle:seen-root-1');
-            await waitForHomeGovernance(() => expect(screen.findByTestId('review-finding-seen-empty:seen-root-1')).not.toBeNull());
+            await waitForHomeGovernance(() => expect(served.requests.filter(request => request.path === '/v1/reviews/history/list')).toHaveLength(3));
+            await waitForHomeGovernance(() => expect(screen.findByTestId('review-finding-body:seen-root-1')).not.toBeNull());
+            // A finding never seen before draws no empty "Seen before" section.
+            expect(screen.findByTestId('review-finding-seen:seen-root-1')).toBeNull();
             expect(screen.findByTestId('review-finding-seen-link:seen-root-0:earlier-root')).toBeNull();
             expect(served.requests.filter(request => request.path === '/v1/reviews/history/list')).toMatchObject([
                 { body: { reviewId, findingIdentity: comments[0]!.findingIdentity } },

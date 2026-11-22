@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { presentDiffHunkKeep } from '@/components/ui/code/diff/hunks/diffHunkKeepLabels';
 import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -164,9 +165,9 @@ export function FileChangesBody(
           onPrevious={review.controller.previous}
           onNext={review.controller.next}
           onKeep={review.controller.keepCurrentAndAdvance}
-          // A kept current change reads "Kept" (pressing it lets go, as on the row).
-          keepLabel={review.controller.currentHunk && review.hunks.stateOf?.(review.controller.currentHunk) === 'kept'
-            ? t('hunkReview.kept') : undefined}
+          // A kept current change reads "Kept" (pressing it lets go, as on the row); a Review's change, "Mark reviewed".
+          keepLabel={presentDiffHunkKeep(review.hunks, Boolean(review.controller.currentHunk
+            && review.hunks.stateOf?.(review.controller.currentHunk) === 'kept')).title}
           onDiscard={review.controller.discardCurrent}
           discardDisabledReason={review.discardDisabledReason}
           complete={

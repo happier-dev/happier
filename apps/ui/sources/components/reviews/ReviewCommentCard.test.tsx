@@ -33,7 +33,7 @@ describe('ReviewCommentCard', () => {
         const comment = buildReviewCommentFixture({ reviewId: 'review-1', findingId: 'finding-1', state: 'dismissed', reviewTriageStatus: 'accept', finding: {
             id: 'finding-1', title: 'A native finding', summary: 'Original explanation', severity: 'high', category: 'correctness',
             whyItMatters: 'Its impact', evidence: 'Verified evidence',
-        }, body: 'Current explanation' });
+        }, body: 'Current explanation', bodyVersion: 2 });
         const screen = await renderScreen(<ReviewCommentCard comment={comment} labels={reviewCommentLabelsFixture} actions={{ onDecide: () => {} }} />);
         expect(screen.findHostByTestId('review-finding-body:comment-1')).not.toBeNull();
         expect(screen.getTextContent()).toContain('Current explanation');

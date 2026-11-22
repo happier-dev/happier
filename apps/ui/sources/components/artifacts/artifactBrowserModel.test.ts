@@ -6,9 +6,11 @@ import { getWidgetSizeFootprintV1 } from '@happier-dev/protocol/widgets/widgetPr
 import { readInboxItemFocus } from '@/components/inbox/inboxItemFocus';
 import { readBotTemplateRecipientRoute } from '@/components/sessions/bots/templates/botTemplateRecipientDestination';
 import { APPROVAL_PROFILE_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
+import { REVIEW_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 
 import {
     classifyArtifactBrowserKind,
+    classifyArtifactViewKind,
     countArtifactBrowserKinds,
     countArtifactBrowserSavedSince,
     projectArtifactBrowserRows,
@@ -36,6 +38,10 @@ describe('artifactBrowserModel', () => {
         ];
         expect(projectArtifactBrowserRows(rows, { query: '', kind: 'all', sort: 'size_desc' }).map(row => row.key))
             .toEqual(['large', 'small', 'empty', 'unknown']);
+    });
+    it('names a Review as a Review, not a document (the Share sheet and the header say its kind)', () => {
+        const review = artifact('review-1', { kind: REVIEW_ARTIFACT_KIND_V1, v: 1, reviewId: 'review-1', title: 'Code review' });
+        expect(classifyArtifactViewKind(review)).toBe('review');
     });
     it('opens a shared approval profile in its settings owner and keeps it out of generic documents', () => {
         const row = artifact('profile/id', { kind: APPROVAL_PROFILE_ARTIFACT_KIND_V1, name: 'Deploy', title: 'Deploy' }, { access: 'view' });

@@ -246,15 +246,17 @@ it('says what Hide viewed hid when it hid every file, instead of an empty list',
   }
 });
 
-it('draws no empty second line for a reviewers group with nobody to name', async () => {
+it('names each reviewer of the round by its place when the round recorded no names (U8 R3 B2)', async () => {
   const screen = await renderReview();
   const { Item } = await import('@/components/ui/lists/Item');
+  const { t } = await import('@/text');
   try {
     await vi.waitFor(() => expect(screen.findAllByType(Item)
       .some((item) => item.props.testID === 'review-detail:group:reviewers')).toBe(true));
-    const reviewers = screen.findAllByType(Item).find((item) => item.props.testID === 'review-detail:group:reviewers');
-    // Reviewer ids carry no labels yet, so the group has no participants and no bottom line.
-    expect(reviewers?.props.bottomElement).toBeUndefined();
+    // Reviewer ids carry no labels, so each reads "Reviewer N", never its positional id.
+    expect(screen.findByTestId('review-detail:group:reviewers')?.findAll(node => typeof node.type === 'string')
+      .flatMap(node => node.children).filter((child): child is string => typeof child === 'string').join(' '))
+      .toContain(t('reviewWalkthrough.detail.reviewerRun', { count: 1 }));
   } finally {
     await screen.unmount();
   }

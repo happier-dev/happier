@@ -293,7 +293,7 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
             reviewers: members.map(member => ({ label: member.reviewerLabel, backendId: member.backendId })),
             onOpenReview: open,
             // The walkthrough is one more way on from the Review, so it sits in the card's footer beside Open review.
-            footerAction: canAct ? <ReviewWalkMeThroughButton sessionId={sessionId} serverId={serverId} runId={runId}
+            footerAction: canAct ? <ReviewWalkMeThroughButton presentation="link" sessionId={sessionId} serverId={serverId} runId={runId}
                 reviewRunIds={memberRunIds} comparisonId={normalized.comparisonId} /> : null,
         };
         return (

@@ -1,5 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
+import type { ExecutionRunPublicState } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import {
   openReviewArtifactV1,
   describeReviewRoundQualityV1,
@@ -19,6 +21,7 @@ import { presentSharePrincipal, sharePrincipalKey } from '@/components/sharing/s
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { ReviewChangesHost } from '../ReviewChangesHost';
+import { formatReviewCommentAnchor, resolveReviewCommentBodyPromptDefault } from '../content';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 import { useReviewDetail } from '../useReviewDetail';
@@ -34,7 +37,10 @@ import { ReviewQuestions, ReviewFollowUpDock } from '../finding/ReviewQuestions'
 import { useReviewQuestionRuns, type ReviewRoundRunRead } from './useReviewQuestionRuns';
 import { ExecutionRunRow } from '@/components/sessions/runs/ExecutionRunRow';
 import { formatElapsedDuration } from '@/components/machines/durationWords';
-import { resolveExecutionRunBackendLabel } from '@/components/sessions/runs/resolveExecutionRunBackendLabel';
+import { resolveExecutionRunAgentMarkId, resolveExecutionRunBackendLabel } from '@/components/sessions/runs/resolveExecutionRunBackendLabel';
+import { AgentIcon } from '@/agents/registry/AgentIcon';
+import { ICON_SIZE } from '@/components/ui/icons/Icon';
+import { projectReviewRoundReviewers, type ReviewRoundReviewerOutcome, type ReviewRoundReviewerRead } from '../reviewRoundReviewers';
 import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 import { resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
@@ -104,11 +110,31 @@ const ROUND_STATE_KEYS = {
 
 type ReviewRecordRound = ReviewArtifactV1['rounds'][number];
 
-/** The opened record's rounds as the page draws them: who reviewed and how the round ended. */
-export function projectRound(round: ReviewRecordRound): ReviewDetailRound {
-  const state = t(ROUND_STATE_KEYS[round.state]);
+/** How each reviewer ended, beside its name in the round section (lab `detail-rounds`). */
+const REVIEWER_OUTCOME_KEYS = {
+  running: 'reviewWalkthrough.collection.stateRunning',
+  completed: 'reviewWalkthrough.collection.stateCompleted',
+  partial: 'reviewWalkthrough.collection.statePartial',
+  failed: 'reviewWalkthrough.collection.stateFailed',
+  cancelled: 'reviewWalkthrough.collection.stateCancelled',
+} as const satisfies Record<ReviewRoundReviewerOutcome, string>;
+
+/** A reviewer's Agent mark, when its run names an Agent that has one; otherwise its name stands alone. */
+function ReviewerRunMark(props: Readonly<{ run: ExecutionRunPublicState }>) {
+  const { theme } = useUnistyles();
+  const agentId = resolveExecutionRunAgentMarkId(props.run.backendTarget, theme);
+  return agentId ? <AgentIcon agentId={agentId} size={ICON_SIZE.sm} /> : null;
+}
+
+/**
+ * The opened record's rounds as the page draws them: who reviewed, each by name with how it ended (its findings once
+ * it finished), from the round's one per-reviewer reading (`projectReviewRoundReviewers`). How the round as a whole
+ * ended is said once, by the glance and the notice line, so the row does not repeat it.
+ */
+export function projectRound(round: ReviewRecordRound, reads?: ReadonlyMap<string, ReviewRoundReviewerRead>): ReviewDetailRound {
   // A round only people review has no agent or engine row; its people row says who was asked.
   if (round.reviewerIds.length === 0) return { ordinal: round.ordinal, state: round.state, groups: [] };
+  const reviewers = projectReviewRoundReviewers(round, reads);
   return {
     ordinal: round.ordinal,
     state: round.state,
@@ -118,15 +144,23 @@ export function projectRound(round: ReviewRecordRound): ReviewDetailRound {
         title: t('reviewWalkthrough.detail.reviewersCount', {
           count: round.reviewerIds.length,
         }),
-        detail: state,
-        detailTone: round.state === 'failed' ? 'failed' : null,
         status:
           round.state === 'running'
             ? 'running'
             : round.state === 'failed' || round.state === 'partial'
               ? 'failed'
               : 'done',
-        participants: [],
+        participants: reviewers.map(reviewer => ({
+          id: reviewer.reviewerId,
+          label: reviewer.name,
+          mark: reviewer.run ? <ReviewerRunMark run={reviewer.run} /> : null,
+          // Unknown is not "Running": a reviewer the round can't vouch for is named without a state.
+          state: reviewer.outcome === null ? null
+            : reviewer.outcome === 'completed' && reviewer.findingsCount !== null
+              ? t('reviewWalkthrough.detail.findingsCount', { count: reviewer.findingsCount })
+              : t(REVIEWER_OUTCOME_KEYS[reviewer.outcome]),
+          tone: reviewer.outcome === 'failed' || reviewer.outcome === 'partial' ? 'failed' : null,
+        })),
       },
     ],
   };
@@ -273,11 +307,6 @@ export function ReviewDetailHost(props: Readonly<{
   const round = record?.rounds.find((item) => item.ordinal === selectedRound) ?? record?.rounds.at(-1);
   const qualityAggregation = useSetting('reviewQualityAggregation');
   const roundQuality = React.useMemo(() => describeReviewRoundQualityV1(round, qualityAggregation), [round, qualityAggregation]);
-  const rounds = React.useMemo(() => record?.rounds.map(item => {
-    const projected = projectRound(item);
-    const people = human ? projectPeople({ human, round: item.ordinal, names, viewerAccountId: scope?.accountId ?? null }) : null;
-    return people ? { ...projected, groups: [...projected.groups, people] } : projected;
-  }) ?? [], [human, names, record, scope?.accountId]);
   const capture = round?.comparisonCapture ?? null;
   const tabs = React.useMemo((): readonly ReviewDetailTab[] => [
     { id: 'findings' },
@@ -311,12 +340,19 @@ export function ReviewDetailHost(props: Readonly<{
   const decide = React.useCallback((target: ReviewFindingDecisionTarget, decision: 'accept' | 'reject' | 'defer') =>
     comments.decide(target.comment.id, decision), [comments.decide]);
   const findingRound = React.useMemo(() => round && record ? { round: { reviewId: record.reviewId,
-    roundOrdinal: round.ordinal, reviewerIds: round.reviewerIds, state: round.state }, comments: comments.comments } : undefined,
+    roundOrdinal: round.ordinal, reviewerIds: round.reviewerIds, state: round.state,
+    ...(round.reviewerDisplayNames ? { reviewerDisplayNames: round.reviewerDisplayNames } : {}) }, comments: comments.comments } : undefined,
   [comments.comments, record, round]);
   // The round's reviewer runs: questions on Findings, who ran and how it ended on Runs and Activity, and which
   // reviewer didn't finish on the page's notice line.
   const questionRuns = useReviewQuestionRuns({ runs: round?.runs, accountLifetime: binding,
     enabled: presented && (activeTab !== 'changes' || round?.state === 'partial') });
+  const rounds = React.useMemo(() => record?.rounds.map(item => {
+    // Only the selected round's runs are read; other rounds name their reviewers from their own record.
+    const projected = projectRound(item, item.ordinal === round?.ordinal ? questionRuns.runs : undefined);
+    const people = human ? projectPeople({ human, round: item.ordinal, names, viewerAccountId: scope?.accountId ?? null }) : null;
+    return people ? { ...projected, groups: [...projected.groups, people] } : projected;
+  }) ?? [], [human, names, questionRuns.runs, record, round?.ordinal, scope?.accountId]);
   // Which reviewers of a partial round didn't finish, by the runs their Machines answered for: the notice names them.
   const unfinishedRuns = React.useMemo(() => round?.state !== 'partial' ? [] : round.runs.flatMap(run => {
     const read = run.kind === 'execution' ? questionRuns.runs.get(run.runId)?.run : undefined;
@@ -477,10 +513,13 @@ export function ReviewDetailHost(props: Readonly<{
     return (
       <View style={{ flex: 1 }}>
         <ItemList testID="review-detail:finding-page" pageColumn="wide">
-          <PageHeader title={row.finding.title} alwaysShowTitle testID="review-detail:finding-page:header"
+          <PageHeader title={row.finding.title} alwaysShowTitle navigationTitle={t('detailsSurface.review.title')}
+            testID="review-detail:finding-page:header"
             kicker={joinHappierFacts(reviewSeverityLabel(row.finding.severity),
               t('reviewWalkthrough.detail.findingPosition', { index: index + 1, total: findings.rows.length }))}
-            meta={[...(location ? [{ key: 'location', text: location, mono: true }] : []),
+            // A fixed finding says so on its own page, as its row does (it has no decision left to make).
+            meta={[...(row.fixed ? [{ key: 'fixed', icon: 'check-circle' as const, text: t('reviewWalkthrough.detail.fixed') }] : []),
+              ...(location ? [{ key: 'location', text: location, mono: true }] : []),
               ...(row.attribution ? [{ key: 'attribution', text: row.attribution.label }] : []),
               ...facts.map(fact => ({ key: `fact:${fact}`, text: fact }))]} />
           <ItemGroup header="none" surface="none">
@@ -585,13 +624,31 @@ export function ReviewDetailHost(props: Readonly<{
         onCancel={() => setPeopleOpen(false)} onSubmit={savePeople} /> : null}
       {activeTab === 'findings' ? <>
         {comments.status === 'idle' || comments.status === 'loading' ? <ItemGroup header="none"><ItemLoadStateRows state={LOADING_ROWS} rows={3} /></ItemGroup>
-          : findings.rows.length > 0 || findings.unavailableFindings.length === 0 ? <ReviewFindingsList rows={findingListRows}
+          : findings.rows.length > 0 ? <ReviewFindingsList rows={findingListRows}
               selection={canEdit ? { selectedRowIds: selectedFindingIds, onToggle: toggleSelection, disabled: bulkBusy,
                 active: selecting, onStart: startSelecting } : undefined}
-              renderRow={renderFindingRow} /> : null}
-        {findings.unavailableFindings.map(comment => <SurfaceStateCard key={comment.id}
-          testID={`review-detail:unavailable-finding:${comment.id}`} kind="warning" size="line"
-          title={t(comment.flags.redacted || comment.tombstone ? 'files.reviewComments.durable.redacted' : 'files.reviewComments.durable.contentUnavailable')} />)}
+              renderRow={renderFindingRow} />
+            // A settled round that found nothing says so in one line (the glance already says "Nothing to fix").
+            : findings.unavailableFindings.length === 0 && comments.status === 'loaded' && !comments.cursor && round?.state !== 'running'
+              ? <SurfaceStateCard testID="review-detail:findings-empty" kind="empty" size="line"
+                  title={t('reviewWalkthrough.detail.findingsEmpty')} /> : null}
+        {findings.unavailableFindings.map(comment => {
+          // A finding this page can't draw names its place and why, and offers what can still be done: read it again when
+          // its words couldn't be read, or see the code it points at when it was saved without its details.
+          const testID = `review-detail:unavailable-finding:${comment.id}`;
+          const redacted = Boolean(comment.flags.redacted || comment.tombstone);
+          const words = redacted ? undefined : resolveReviewCommentBodyPromptDefault(comment.body);
+          const location = formatReviewCommentAnchor(comment);
+          const title = redacted ? t('reviewWalkthrough.detail.findingRedacted')
+            : words === undefined ? t('reviewWalkthrough.detail.findingUnreadable')
+              : location ? t('reviewWalkthrough.detail.findingNoDetailsAt', { location }) : t('reviewWalkthrough.detail.findingNoDetails');
+          const action = redacted ? undefined
+            : words === undefined ? { label: t('common.retry'), testID: `${testID}:action`, onPress: () => void comments.refresh() }
+              : location && scope ? { label: t('reviewWalkthrough.detail.showInChanges'), testID: `${testID}:action`,
+                onPress: () => { void viewCommands.invoke('review.detail.tab', { tab: 'changes' }); } } : undefined;
+          return <SurfaceStateCard key={comment.id} testID={testID} kind="warning" size="line" title={title}
+            {...(words ? { reason: words } : {})} {...(action ? { action } : {})} />;
+        })}
         {comments.status === 'failed' ? <SurfaceStateCard kind="error" size="line" title={t('common.error')}
           action={{ label: t('common.retry'), onPress: () => void comments.refresh() }} /> : null}
         {comments.cursor ? <TextLinkButton testID="review-findings-load-more-comments" disabled={comments.loadingMore}

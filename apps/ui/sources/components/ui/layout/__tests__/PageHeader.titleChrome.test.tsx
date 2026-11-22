@@ -113,6 +113,13 @@ describe('PageHeader title and navigation chrome (R2)', () => {
         </NavigationTitleChromeProvider>);
         expect(setTitle).not.toHaveBeenCalledWith(null);
     });
+    it('names what Back returns to in the bar above a page that keeps its own title (a pushed finding: "Review")', async () => {
+        const setTitle = vi.fn();
+        await renderScreen(<NavigationTitleChromeProvider showsTitle publisher={{ setTitle, setBack: () => {} }}>
+            <PageHeader title="Effect re-subscribes every render" alwaysShowTitle navigationTitle="Review" />
+        </NavigationTitleChromeProvider>);
+        expect(setTitle).toHaveBeenLastCalledWith('Review');
+    });
     it('keeps a deep-linked entity Back when title chrome has no navigation Back', async () => {
         const screen = await renderScreen(<NavigationTitleChromeProvider showsTitle showsBack={false}>
             <NavigationBackChromeProvider control={BackArrow}><PageHeader testID="page-header" title="Release" alwaysShowTitle /></NavigationBackChromeProvider>

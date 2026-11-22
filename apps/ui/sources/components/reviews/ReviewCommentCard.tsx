@@ -25,7 +25,8 @@ import { t } from '@/text';
 
 import type { ReviewCommentLabels } from './labels';
 import { ReviewCommentSnapshotView } from './ReviewCommentSnapshotView';
-import { resolveReviewCommentBodyPromptDefault, resolveReviewCommentBodyText, splitReviewCommentBody } from './content';
+import { readReviewFindingRevisedBodyV1 } from '@happier-dev/protocol/reviews/comments/findingIdentity';
+import { formatReviewCommentAnchor, resolveReviewCommentBodyPromptDefault, resolveReviewCommentBodyText, splitReviewCommentBody } from './content';
 
 export type ReviewCommentCardProps = Readonly<{
     comment: ReviewCommentV1;
@@ -59,19 +60,6 @@ export type ReviewCommentCardActions = Readonly<{
 }>;
 
 /** Where the comment points, as the mono meta reads it: the path, with its line or range when it has one. */
-function anchorLocation(comment: ReviewCommentV1): string | null {
-    const anchor = comment.anchor;
-    if (anchor.kind === 'line') return `${anchor.filePath}:${anchor.line}`;
-    if (anchor.kind === 'range') {
-        return anchor.startLine === anchor.endLine
-            ? `${anchor.filePath}:${anchor.startLine}`
-            : `${anchor.filePath}:${anchor.startLine}–${anchor.endLine}`;
-    }
-    if ('filePath' in anchor) return anchor.filePath;
-    if ('folderPath' in anchor) return anchor.folderPath;
-    return null;
-}
-
 /** The engine or Agent that wrote the comment; a person's own comment carries no identity line. */
 function engineOf(comment: ReviewCommentV1): string | null {
     if (comment.engineId) return comment.engineId;
@@ -122,7 +110,7 @@ export function ReviewCommentCard(props: ReviewCommentCardProps) {
     const expanded = props.expanded ?? localExpanded;
     const setExpanded = props.onExpandedChange ?? setLocalExpanded;
     const [moreOpen, setMoreOpen] = React.useState(false);
-    const location = anchorLocation(props.comment);
+    const location = formatReviewCommentAnchor(props.comment);
     const engine = engineOf(props.comment);
     const disabled = isTerminalComment(props.comment);
     const finding = !disabled && props.comment.reviewId ? props.comment.finding : undefined;
@@ -189,7 +177,8 @@ export function ReviewCommentCard(props: ReviewCommentCardProps) {
             </View>
             {finding ? <Text selectable style={styles.title}>{finding.title}</Text>
                 : parts?.title ? <Text selectable style={styles.title}>{parts.title}</Text> : null}
-            {finding ? <ReviewFindingBody rowId={props.comment.id} finding={finding} currentBodyMarkdown={readable}
+            {finding ? <ReviewFindingBody rowId={props.comment.id} finding={finding}
+                currentBodyMarkdown={props.comment.flags.redacted ? undefined : readReviewFindingRevisedBodyV1(props.comment)}
                 reviewContext={props.serverId && props.comment.reviewId
                     ? { reviewId: props.comment.reviewId, commentId: props.comment.id, serverId: props.serverId } : undefined}
                 reviewers={engine ? [{ label: resolveAgentCatalogTitle(engine), backendId: engine }] : []} conversation={null} /> : parts ? (

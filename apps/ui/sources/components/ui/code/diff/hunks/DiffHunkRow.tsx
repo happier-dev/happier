@@ -20,6 +20,7 @@ import type {
 } from '../diffViewerTypes';
 import { DiffHunkRowRegistryContext } from './diffHunkReadingLine';
 import { HunkContextMenu } from './HunkContextMenu';
+import { presentDiffHunkKeep } from './diffHunkKeepLabels';
 import { useDiffHunkNumber } from './diffHunkNumbering';
 
 /** The row label begins where the code text begins: past the two number columns of a diff gutter. */
@@ -103,6 +104,7 @@ export const DiffHunkRow = React.memo(function DiffHunkRow(
   const keep = review.actions?.keep;
   const discard = review.actions?.discard;
   const kept = state === 'kept';
+  const keepWords = presentDiffHunkKeep(review, kept);
   const busy = state === 'discarding';
   const showActions = !phone && (keep || discard) && (current || revealed);
   const discardReason = discard ? reason('discard') : null;
@@ -168,7 +170,7 @@ export const DiffHunkRow = React.memo(function DiffHunkRow(
             color={theme.colors.state.success.foreground}
           />
           <Text variant="micro" style={{ color: theme.colors.text.tertiary }}>
-            {t('hunkReview.kept')}
+            {keepWords.title}
           </Text>
           <Text
             variant="micro"
@@ -249,7 +251,7 @@ export const DiffHunkRow = React.memo(function DiffHunkRow(
               testID={`diff-hunk-keep-${hunk.index}`}
               size="mini"
               display={kept ? 'inverted' : 'secondary'}
-              title={kept ? t('hunkReview.kept') : t('hunkReview.keep')}
+              title={keepWords.title}
               trailing={narrow ? undefined :
                 <ShortcutHint
                   commandId="review.change.keep"
@@ -257,11 +259,7 @@ export const DiffHunkRow = React.memo(function DiffHunkRow(
                 />
               }
               disabled={busy || keepReason !== null}
-              accessibilityLabel={
-                kept
-                  ? t('hunkReview.unkeepA11y', { n, total, range })
-                  : t('hunkReview.keepA11y', { n, total, range })
-              }
+              accessibilityLabel={keepWords.accessibilityLabel({ n, total, range })}
               accessibilityHint={keepReason ?? undefined}
               onPress={() => keep(hunk)}
             />

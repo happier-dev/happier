@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import * as comments from './index.js';
 import type { ReviewCommentFingerprintV1 } from './v1.js';
-import { projectReviewFindingRoundStatusV1, reviewCommentFindingScopeV1 } from './findingIdentity.js';
+import { projectReviewFindingRoundStatusV1, readReviewFindingRevisedBodyV1, reviewCommentFindingScopeV1 } from './findingIdentity.js';
 import { matchesReviewCommentListFilters } from './queries.js';
 
 type IdentityApi = {
@@ -9,6 +9,15 @@ type IdentityApi = {
 };
 
 describe('semantic finding identity', () => {
+  it('reads a finding comment\'s body as its explanation only once someone revised it', () => {
+    const finding = { id: 'f', title: 'Effect re-subscribes', summary: 'No dependency list', severity: 'high' as const, category: 'correctness' as const };
+    // The first body is the reviewer's finding written out; the finding's own fields already say it.
+    expect(readReviewFindingRevisedBodyV1({ finding, bodyVersion: 1, body: 'Effect re-subscribes\n\nNo dependency list' })).toBeUndefined();
+    expect(readReviewFindingRevisedBodyV1({ finding, bodyVersion: 2, body: 'Updated after your question' })).toBe('Updated after your question');
+    expect(readReviewFindingRevisedBodyV1({ finding, bodyVersion: 2, body: { t: 'plain', v: 'Plain revision' } })).toBe('Plain revision');
+    expect(readReviewFindingRevisedBodyV1({ finding, bodyVersion: 2, body: { t: 'encrypted', c: 'sealed' } })).toBeUndefined();
+    expect(readReviewFindingRevisedBodyV1({ bodyVersion: 2, body: 'A person\'s comment' })).toBeUndefined();
+  });
   it('separates observed round appearances from absence proven by complete executable coverage', () => {
     const round = { reviewId: 'review', roundOrdinal: 2, state: 'completed' as const, reviewerIds: ['reviewer'] };
     const finding = { reviewId: 'review', findingIdentity: 'a'.repeat(64),

@@ -89,3 +89,17 @@ export function splitReviewCommentBody(text: string): ReviewCommentBodyParts {
         rest: body.slice(1).join('\n\n'),
     };
 }
+
+/** Where a comment points, as one place ("src/a.ts:12", "src/a.ts:3–7", a file or a folder); `null` when nowhere. */
+export function formatReviewCommentAnchor(comment: Pick<ReviewCommentV1, 'anchor'>): string | null {
+    const anchor = comment.anchor;
+    if (anchor.kind === 'line') return `${anchor.filePath}:${anchor.line}`;
+    if (anchor.kind === 'range') {
+        return anchor.startLine === anchor.endLine
+            ? `${anchor.filePath}:${anchor.startLine}`
+            : `${anchor.filePath}:${anchor.startLine}–${anchor.endLine}`;
+    }
+    if ('filePath' in anchor) return anchor.filePath;
+    if ('folderPath' in anchor) return anchor.folderPath;
+    return null;
+}

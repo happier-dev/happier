@@ -21,7 +21,7 @@ import { t } from '@/text';
 import { WalkthroughReviewExplanation } from '@/components/sessions/reviews/walkthrough/ReviewWalkthroughParts';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 
-import { WalkthroughStopNumber } from './WalkthroughAtoms';
+import { RAIL_STOP_NUMBER_PX, WalkthroughStopNumber } from './WalkthroughAtoms';
 import { WalkthroughStopExchangeList } from './WalkthroughStopExchanges';
 import { ScmChangeRow } from '@/components/workspaces/scm/changes/ScmChangeRow';
 import { scmFileStatusFromChange } from '@/scm/scmStatusFiles';
@@ -202,6 +202,8 @@ export type WalkthroughStopSectionProps = Readonly<{
     reviewedSource?: WalkthroughReviewedSource;
     current?: boolean;
     phone?: boolean;
+    /** Inside a page that has its own title (a Review's Changes): the stop heads a section there, not the page. */
+    hosted?: boolean;
     /** The Mark reviewed key, as bound here, on the stop the keyboard acts on; drawn only where that key runs. */
     showKeys?: boolean;
     /** Marking needs the exact code and the person's account; absent hides the control. */
@@ -236,9 +238,11 @@ export const WalkthroughStopSection = React.memo(function WalkthroughStopSection
             style={[styles.stop, phone ? styles.stopPhone : null]}
         >
             <View style={styles.stopHeader}>
-                <View style={styles.numberSlot}><WalkthroughStopNumber number={stop.number} reviewed={stop.reviewed} current={props.current} /></View>
-                <Text accessibilityRole="header" style={styles.stopTitle}>{stop.title}</Text>
-                {importance ? <Text style={styles.importance}>{importance}</Text> : null}
+                <View style={props.hosted ? styles.numberSlotSection : styles.numberSlot}>
+                    <WalkthroughStopNumber number={stop.number} reviewed={stop.reviewed} current={props.current} size={props.hosted ? 'rail' : 'stream'} />
+                </View>
+                <Text accessibilityRole="header" style={props.hosted ? styles.stopTitleSection : styles.stopTitle}>{stop.title}</Text>
+                {importance ? <Text style={[styles.importance, props.hosted ? styles.importanceSection : null]}>{importance}</Text> : null}
             </View>
             {stop.provenance && (stop.provenance.titleEdited || stop.provenance.changedAtRevision !== undefined || stop.provenance.movedAtRevision !== undefined) ? (
                 <Text testID={`walkthrough-provenance-${stop.id}`} style={styles.importance}>
@@ -250,7 +254,7 @@ export const WalkthroughStopSection = React.memo(function WalkthroughStopSection
             <View style={[styles.indent, phone ? styles.indentPhone : null]}>
                 <MarkdownView
                     markdown={stop.explanationMarkdown}
-                    textStyle={[styles.prose, phone ? styles.prosePhone : null]}
+                    textStyle={props.hosted ? styles.proseSection : [styles.prose, phone ? styles.prosePhone : null]}
                     renderCacheKey={`walkthrough-stop:${stop.id}`}
                     inlineReferences={props.proseReferences}
                 />
@@ -364,12 +368,22 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.variant('title'),
         color: theme.colors.text.primary,
     },
+    // Hosted under a page title, a stop is a section: its title at section scale, its mark the rail's, centred on the line.
+    stopTitleSection: {
+        flex: 1,
+        ...Typography.variant('heading'),
+        color: theme.colors.text.primary,
+    },
+    numberSlotSection: { paddingTop: (Typography.variant('heading').lineHeight - RAIL_STOP_NUMBER_PX) / 2 },
     // Sits on the stop title's first line.
     importance: { ...Typography.variant('meta'), lineHeight: Typography.variant('title').lineHeight, color: theme.colors.text.tertiary },
+    importanceSection: { lineHeight: Typography.variant('heading').lineHeight },
     indent: { marginLeft: theme.space.s32, marginTop: theme.space.s6 },
     indentPhone: { marginLeft: 0 },
     prose: { fontSize: 15, lineHeight: 23, color: theme.colors.text.primary },
     prosePhone: { fontSize: 16, lineHeight: 24 },
+    // Under a section-scale title the prose reads at the page's reading size, a step below its heading.
+    proseSection: { ...Typography.variant('reading'), color: theme.colors.text.primary },
     card: {
         marginTop: theme.space.s10,
         marginBottom: theme.space.s2,

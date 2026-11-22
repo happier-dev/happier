@@ -184,6 +184,20 @@ describe('DiffHunkRow on the shared hunk contract', () => {
     expect(screen.findByTestId('diff-hunk-discard-0')).toBeFalsy();
   });
 
+  it('names Keep as marking the change reviewed where a change can only be marked (a Review\'s captured changes)', async () => {
+    const screen = await render({
+      currentIndex: 1,
+      keepVerb: 'markReviewed',
+      stateOf: (hunk) => (hunk.index === 0 ? 'kept' : 'open'),
+      actions: { keep: vi.fn() },
+    });
+    const text = screen.getTextContent();
+    expect(text).toContain('walkthrough.reviewed');
+    expect(text).not.toContain('hunkReview.kept');
+    const keepButton = screen.findByTestId('diff-hunk-keep-1')!;
+    expect(String(keepButton.props.accessibilityLabel)).toContain('hunkReview.markReviewedA11y');
+    expect(screen.getTextContent()).toContain('walkthrough.markReviewed');
+  });
   it('says why Discard is unavailable on any change whose buttons are showing, not only the current one', async () => {
     const screen = await render({
       currentIndex: 1,

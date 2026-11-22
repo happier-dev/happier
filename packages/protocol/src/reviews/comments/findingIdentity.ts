@@ -36,6 +36,18 @@ export function reviewCommentFindingScopeV1(comment: Pick<ReviewCommentV1,
     comment.findingIdentity, comment.sessionId ?? null];
 }
 
+/**
+ * A finding comment's own explanation once someone revised it (the reviewer answering a question, a person editing).
+ * Its first version is the reviewer's finding written out, which the finding's own fields already say, so a reader
+ * shows the finding then; an unreadable body says nothing either.
+ */
+export function readReviewFindingRevisedBodyV1(comment: Pick<ReviewCommentV1, 'body' | 'bodyVersion' | 'finding'>): string | undefined {
+  if (!comment.finding || comment.bodyVersion <= 1) return undefined;
+  const body = comment.body;
+  if (typeof body === 'string') return body;
+  return body.t === 'plain' && typeof body.v === 'string' ? body.v : undefined;
+}
+
 export const ReviewFindingIdentityV1Schema = lazyZodSchema(() => z.string().check(z.regex(/^[a-f0-9]{64}$/)));
 export type ReviewFindingIdentityV1 = z.infer<typeof ReviewFindingIdentityV1Schema>;
 

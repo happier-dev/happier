@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import { presentReviewRoundQualityV1 } from '@happier-dev/protocol/reviews/reviewQualityPresentationV1';
+import { readReviewFindingRevisedBodyV1 } from '@happier-dev/protocol/reviews/comments/findingIdentity';
 import { readReviewFindingDecisionV1, type ReviewCommentV1, type ReviewFinding } from '@happier-dev/plugin-sdk/reviews';
 import { useLivePluginResourceProjection, type PluginUiResourceProjection, type PluginUiResourceProjectionSnapshot } from '../hostApi/index.js';
 import { usePluginHostApi } from '../hostApi/context.js';
@@ -109,7 +110,7 @@ function HappierReviewSummaryHost({ reviewId }, ref) {
           decision={{ value: decision, label: decisionWord(decision) }} decisionEditable={false}
           expanded onToggleExpanded={() => setOpened(null)}>
           <HappierReviewFindingBody rowId={row.rowId} finding={row.finding}
-            currentBodyMarkdown={typeof row.comment.body === 'string' ? row.comment.body : ''}
+            currentBodyMarkdown={readReviewFindingRevisedBodyV1(row.comment)}
             labels={{ where: text('happier.plugin-ui.review.where', 'Where'),
               verification: text('happier.plugin-ui.review.verification', 'How it was verified'),
               conversation: text('happier.plugin-ui.review.conversation', 'Conversation') }}

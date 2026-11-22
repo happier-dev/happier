@@ -50,6 +50,11 @@ export type DiffViewerHunks = Readonly<{
     stateOf?: (hunk: DiffHunkInfo) => DiffHunkReviewState;
     actions?: Readonly<Partial<Record<DiffHunkAction, (hunk: DiffHunkInfo) => void>>>;
     disabledReason?: (hunk: DiffHunkInfo, action: DiffHunkAction) => string | null;
+    /**
+     * What `keep` means here: `keep` beside Discard (the change stays in the working tree), or `markReviewed` where a
+     * change can only be marked (a captured comparison, such as a Review's Changes): "Mark reviewed" · "Reviewed".
+     */
+    keepVerb?: 'keep' | 'markReviewed';
     /** Where this file's changes sit in the whole comparison ("Change 3", "change 2 of 7"); absent numbers from 1. */
     numbering?: DiffHunkNumbering;
     renderNote?: (hunk: DiffHunkInfo) => ReactNode;

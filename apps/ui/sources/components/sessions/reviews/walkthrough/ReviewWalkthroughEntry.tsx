@@ -5,6 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { buildSessionDetailsHref } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
@@ -27,6 +28,11 @@ export function ReviewWalkMeThroughButton(props: Readonly<{
     runId: string;
     reviewRunIds: readonly string[];
     comparisonId: string | null;
+    /**
+     * `button` (default) among a finished review's bordered actions; `link` on a text-link tier beside Open review
+     * (the summary card's footer), so the card's two ways on share one weight and one baseline.
+     */
+    presentation?: 'button' | 'link';
 }>) {
     const { theme } = useUnistyles();
     const source = useSessionTranscriptSource();
@@ -52,6 +58,10 @@ export function ReviewWalkMeThroughButton(props: Readonly<{
         }));
     }, [busy, comparisonId, cwd, navigate, reviewRunIds, runId, serverId, sessionId]);
     if (!cwd || !navigate) return null;
+    if (props.presentation === 'link') return (
+        <TextLinkButton testID="review-findings-walk-me-through" size="row" label={t('reviewWalkthrough.finished.walkMeThrough')}
+            disabled={busy} onPress={() => { void walk(); }} />
+    );
     return (
         <RoundButton
             testID="review-findings-walk-me-through"

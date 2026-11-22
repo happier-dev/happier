@@ -142,6 +142,11 @@ export type PageHeaderProps = Readonly<{
     /** Always show the title even when navigation chrome shows it (entity pages whose title is the entity). */
     alwaysShowTitle?: boolean;
     /**
+     * With `alwaysShowTitle`: what the navigation bar names above the page instead of its generic destination
+     * title, the thing Back returns to (a phone's pushed finding reads "‹ Review").
+     */
+    navigationTitle?: string;
+    /**
      * Keep Back in the phone navigation bar even on a deep link with no history, without drawing the
      * title in the body (a page whose entity cannot be shown, such as a Run that no longer exists).
      * Where chrome does not show the title, the header draws the title and Back itself as usual.
@@ -194,9 +199,10 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
         // Entity identity stays in the body. Leave its generic destination
         // title (for example "Workflow") with the navigation owner. A large title is the page's own
         // name: the bar above it left the name to the page, so it never goes into the bar.
-        setChromeTitle(props.alwaysShowTitle || largeTitle ? undefined : props.title);
+        // A page that keeps its title may name what its Back returns to instead.
+        setChromeTitle(props.alwaysShowTitle || largeTitle ? props.navigationTitle : props.title);
         return () => setChromeTitle(undefined);
-    }, [largeTitle, props.alwaysShowTitle, props.title, setChromeTitle]);
+    }, [largeTitle, props.alwaysShowTitle, props.navigationTitle, props.title, setChromeTitle]);
     const showTitle = props.alwaysShowTitle === true || largeTitle || !chromeShowsTitle;
     const BackControl = useNavigationBackControl();
     // An entity page under retained title chrome puts its Back in that bar even on a deep link with no

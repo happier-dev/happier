@@ -94,21 +94,23 @@ const FINDING_BODY_HOST: HappierWorkHost = { Text: (props) => (
     testID={props.testID} style={props.style as StyleProp<TextStyle>}>{props.children}</Text>
 ) };
 
+/**
+ * "Seen before": the earlier Reviews this finding appeared in. It is a section only when it has one to name (or its
+ * read failed, with Retry); a finding seen nowhere else, or still being looked up, draws no empty section.
+ */
 function ReviewFindingSeenBeforeHistory(props: ReviewFindingSeenBefore & Readonly<{ rowId: string }>) {
   const { history, rowId } = props;
   const { height } = useWindowDimensions();
   const retry = { testID: `review-finding-seen-retry:${rowId}`, label: t('common.retry'), onPress: props.onRetry };
   const failure = history.error ? resolveActionExecutionErrorMessage(history.error, t('common.error')) : null;
+  const matches = history.data?.matches.length ?? 0;
+  if (matches === 0 && !failure) return null;
   return <View testID={`review-finding-seen:${rowId}`} style={styles.section}>
     <Text accessibilityRole="header" variant="label" emphasis="semiBold" style={styles.label}>
       {t('reviewWalkthrough.detail.seenBefore')}
     </Text>
-    {!history.data && history.status !== 'error' ? <SurfaceStateCard testID={`review-finding-seen-loading:${rowId}`}
-      kind="loading" size="line" title={t('common.loading')} /> : null}
     {failure ? history.data ? <SurfaceFreshnessLine reason={failure} action={retry} />
       : <SurfaceStateCard kind="error" size="line" title={failure} action={retry} /> : null}
-    {history.data?.matches.length === 0 ? <SurfaceStateCard testID={`review-finding-seen-empty:${rowId}`}
-      kind="empty" size="line" title={t('reviewWalkthrough.detail.historyEmpty')} /> : null}
     {history.data && history.data.matches.length > 0 ? <VirtualizedList
       testID={`review-finding-seen-matches:${rowId}`} data={history.data.matches}
       style={{ height: Math.min(height, history.data.matches.length * PAGE_ROW_TOUCH_MIN_HEIGHT_PX) }}

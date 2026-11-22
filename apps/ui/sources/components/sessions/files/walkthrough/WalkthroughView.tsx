@@ -705,6 +705,7 @@ export const WalkthroughView = React.memo(function WalkthroughView(
         reviewedSource={reviewedSource}
         current={stop.id === currentStop?.id}
         phone={phone}
+        hosted={props.hosted}
         showKeys={!phone && stop.id === currentStop?.id}
         onToggleReviewed={props.onToggleReviewed}
         marksDisabledReason={marksDisabled}
@@ -826,9 +827,12 @@ export const WalkthroughView = React.memo(function WalkthroughView(
             total: reading.stops.length,
           })}
         </Text>
-        <Text style={styles.sectionTitle} numberOfLines={1}>
-          {currentStop.title}
-        </Text>
+        {/* Hosted, each stop heads its own section, so the bar says only where the reader is: the title is said once. */}
+        {props.hosted ? <View style={styles.sectionGrow} /> : (
+          <Text style={styles.sectionTitle} numberOfLines={1}>
+            {currentStop.title}
+          </Text>
+        )}
         {props.review?.stopAccessory?.(currentStop.id)}
         <Icon
           name="caret-down"
@@ -1111,6 +1115,7 @@ const styles = StyleSheet.create((theme) => ({
     ...Typography.variant('heading'),
     color: theme.colors.text.primary,
   },
+  sectionGrow: { flex: 1 },
   // A sibling under the reading, cleared of the floating tab bar and the safe area by its owner.
   phoneBar: {
     flexDirection: 'row',

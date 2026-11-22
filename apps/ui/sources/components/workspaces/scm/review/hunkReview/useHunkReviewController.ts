@@ -365,6 +365,8 @@ export function useHunkReviewController(params: HunkReviewControllerParams) {
                 currentIndex: open && currentIndex >= 0 ? currentIndex : null, numbering: numbering.forPath(path),
                 stateOf: hunk => stateOfKey(hunk.key),
                 disabledReason: (hunk, action) => disabledReason(action, hunk.key, path),
+                // A captured comparison's change can only be marked, never kept against a discard: it reads "Mark reviewed".
+                keepVerb: captured ? 'markReviewed' : 'keep',
                 actions: { keep: hunk => keep(hunk.key, path), copy: hunk => copy(hunk.key, path),
                     ...(offersDiscard(pathUnits[0]?.key ?? null, path) ? { discard: (hunk: DiffHunkInfo) => { void discard(hunk.key, path); } } : {}),
                     ...(params.onAsk ? { ask: (hunk: DiffHunkInfo) => ask(hunk.key, path) } : {}) },

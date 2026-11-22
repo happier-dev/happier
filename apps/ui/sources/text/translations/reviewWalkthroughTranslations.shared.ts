@@ -188,6 +188,12 @@ export type ReviewWalkthroughTranslations = {
         qualityShowLess: string;
         glanceAllDecided: string;
         glanceNoFindings: string;
+        findingsEmpty: string;
+        findingNoDetails: string;
+        findingNoDetailsAt: (params: Readonly<{ location: string }>) => string;
+        findingUnreadable: string;
+        findingRedacted: string;
+        showInChanges: string;
         findingsCount: (params: Count) => string;
         startedAt: (params: Readonly<{ time: string }>) => string;
         submitReview: string;
@@ -439,6 +445,12 @@ export const en: ReviewWalkthroughTranslations = {
         qualityShowLess: 'Show less',
         glanceAllDecided: 'Every finding is decided',
         glanceNoFindings: 'Nothing to fix',
+        findingsEmpty: 'No findings in this round',
+        findingNoDetails: 'A finding has no details',
+        findingNoDetailsAt: ({ location }) => `The finding at ${location} has no details`,
+        findingUnreadable: 'Couldn’t read a finding',
+        findingRedacted: 'A finding was redacted',
+        showInChanges: 'Show in Changes',
         findingsCount: ({ count }) => count === 1 ? '1 finding' : `${count} findings`,
         startedAt: ({ time }) => `Started ${time}`,
         submitReview: 'Submit review',

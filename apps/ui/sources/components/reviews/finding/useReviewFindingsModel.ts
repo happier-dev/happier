@@ -8,7 +8,7 @@ import type { ReviewQuestion } from '@happier-dev/protocol/reviews/ReviewQuestio
 import { isReviewFindingFixedV1, type ReviewTriageStatus } from '@happier-dev/protocol/reviews/reviewTriageStatus';
 import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { ReviewFindingsApplyResultV1Schema } from '@happier-dev/protocol/reviews/reviewApplyV1';
-import { projectReviewFindingRoundStatusV1,
+import { projectReviewFindingRoundStatusV1, readReviewFindingRevisedBodyV1,
     type ReviewFindingRoundContextV1 } from '@happier-dev/protocol/reviews/comments/findingIdentity';
 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
@@ -28,6 +28,7 @@ import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveAc
 import { openSessionAuthoringAction } from '@/sync/ops/actions/sessionAuthoringActions';
 import { beginClipboardWriteFromUi } from '@/utils/ui/clipboard';
 import { projectReviewFindingRoots } from './reviewFindingRoots';
+import { reviewRoundReviewerName } from '../reviewRoundReviewers';
 export { projectReviewFindingRoots } from './reviewFindingRoots';
 import type { ReviewFindingBulkDecisionResult } from '@/sync/domains/reviews/comments/reviewRunComments';
 
@@ -100,7 +101,8 @@ function waitingLabelOf(members: readonly ReviewFindingsMember[]): string {
 export function useReviewFindingsModel<const Member extends ReviewFindingsMember>(params: Readonly<{
     members: readonly Member[];
     /** The Review resource supplies sealed findings; it supplies no Session follow-up authority. */
-    record?: Readonly<{ round: ReviewFindingRoundContextV1; comments: readonly ReviewCommentV1[] }>;
+    record?: Readonly<{ round: ReviewFindingRoundContextV1 & Readonly<{ reviewerDisplayNames?: Readonly<Record<string, string>> }>;
+        comments: readonly ReviewCommentV1[] }>;
     reviewerCount: number;
     scope: ServerAccountScope | null;
     accountLifetime: ServerAccountScopeLifetime | null;
@@ -417,11 +419,11 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
         const appearances = row.comment.appearances?.filter(appearance => appearance.roundOrdinal === record.round.roundOrdinal) ?? [];
         const reviewers = appearances.map(appearance => {
             const member = memberByRunId.get(appearance.runId);
-            return { label: member?.reviewerLabel ?? appearance.reviewerId, backendId: member?.backendId ?? '' };
+            return { label: member?.reviewerLabel ?? reviewRoundReviewerName(record.round, appearance.reviewerId), backendId: member?.backendId ?? '' };
         });
         return {
             rowId: row.rowId, finding: row.finding,
-            currentBodyMarkdown: typeof row.comment.body === 'string' ? row.comment.body : undefined,
+            currentBodyMarkdown: readReviewFindingRevisedBodyV1(row.comment),
             taskOrigin: taskOriginOf([row.comment]),
             decision: readReviewFindingDecision(row.comment.reviewTriageStatus, row.comment.state, pending[row.rowId]),
             fixed: isReviewFindingFixedV1(row.comment.state, pending[row.rowId]),

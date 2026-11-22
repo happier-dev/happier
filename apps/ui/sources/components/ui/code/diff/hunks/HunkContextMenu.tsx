@@ -8,6 +8,7 @@ import {
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { hapticsLight, hapticsSelection } from '@/components/ui/theme/haptics';
 import { t } from '@/text';
+import { presentDiffHunkKeep } from './diffHunkKeepLabels';
 import type {
   DiffHunkAction,
   DiffHunkInfo,
@@ -45,7 +46,7 @@ export function HunkContextMenu(
       id: 'keep',
       testID: `hunk-menu-keep-${hunk.index}`,
       // The title says the state ("Kept", as on the row and the bar); a trailing mark would repeat the check.
-      title: kept ? t('hunkReview.kept') : t('hunkReview.keep'),
+      title: presentDiffHunkKeep(review, kept).title,
       icon: icon('check'),
       disabled: busy || keepReason !== null,
       ...(keepReason ? { subtitle: keepReason } : {}),
