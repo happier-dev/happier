@@ -7,8 +7,10 @@ import { Typography } from '@/constants/Typography';
 import { useLocalSetting } from '@/sync/store/hooks';
 
 import { EnrichedMarkdownTextAdapter } from '../enriched/EnrichedMarkdownTextAdapter';
+import { MarkdownSpansView } from '../MarkdownSpansView';
 import type { MarkdownTableAlignment } from '../parseMarkdown';
-import type { MarkdownRenderingProfile } from '../rendering/MarkdownRenderingProfile';
+import { parseMarkdownSpans } from '../parseMarkdownSpans';
+import { markdownProfileToLegacyVariant, type MarkdownRenderingProfile } from '../rendering/MarkdownRenderingProfile';
 import type { StreamingTextRevealPreset } from '../streaming/streamingTextRevealConfig';
 import { estimateMarkdownTableLayout, type MarkdownTableLayout } from './estimateMarkdownTableLayout';
 
@@ -155,8 +157,28 @@ function MarkdownTableCellContent(props: Readonly<{
     streamingRevealPreset?: StreamingTextRevealPreset;
     agentTexMath: boolean;
 }>) {
-    if (!containsPotentialEnrichedMath(props.markdown, props.agentTexMath)) {
+    const spans = React.useMemo(() => containsPotentialEnrichedMath(props.markdown, props.agentTexMath)
+        ? null
+        : parseMarkdownSpans(props.markdown, false), [props.markdown, props.agentTexMath]);
+
+    if (spans && (spans.length === 0 || (spans.length === 1 && spans[0].text === props.markdown
+        && spans[0].styles.length === 0 && spans[0].url === null))) {
         return <Text selectable={props.selectable} style={props.textStyle}>{props.markdown}</Text>;
+    }
+
+    if (spans) {
+        return (
+            <Text selectable={props.selectable} style={props.textStyle}>
+                <MarkdownSpansView
+                    spans={spans}
+                    variant={markdownProfileToLegacyVariant(props.profile)}
+                    onLinkPress={props.onLinkPress}
+                    inlineTextSelectable={false}
+                    streamingReveal={props.streamingReveal}
+                    streamingRevealPreset={props.streamingRevealPreset}
+                />
+            </Text>
+        );
     }
 
     return (

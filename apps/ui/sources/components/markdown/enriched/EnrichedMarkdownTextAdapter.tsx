@@ -3,7 +3,7 @@ import { Platform, type StyleProp, type TextStyle } from 'react-native';
 import { EnrichedMarkdownText, type EnrichedMarkdownTextProps } from 'react-native-enriched-markdown';
 
 import { resolveEnrichedMarkdownMd4cFlags } from './enrichedMarkdownConstants';
-import { normalizeMarkdownLinkUrl, openMarkdownLinkUrl, sanitizeEnrichedMarkdownLinkTargets } from './enrichedMarkdownLinkHandling';
+import { openMarkdownLinkUrl, sanitizeEnrichedMarkdownLinkTargets } from './enrichedMarkdownLinkHandling';
 import { useEnrichedMarkdownRuntimeStatus } from './preloadEnrichedMarkdownRuntime';
 import { resolveEnrichedMarkdownFlavor } from './resolveEnrichedMarkdownFlavor';
 import { useEnrichedMarkdownStyle } from './useEnrichedMarkdownStyle';
@@ -103,10 +103,7 @@ export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTe
     const md4cFlags = resolveEnrichedMarkdownMd4cFlags(props.agentTexMath);
 
     const handleLinkPress = React.useCallback((event: { url: string }) => {
-        const normalizedUrl = normalizeMarkdownLinkUrl(event.url);
-        if (!normalizedUrl) return;
-        if (props.onLinkPress?.(normalizedUrl) === true) return;
-        void openMarkdownLinkUrl(normalizedUrl);
+        void openMarkdownLinkUrl(event.url, props.onLinkPress);
     }, [props.onLinkPress]);
     const revealConfig = resolveStreamingTextRevealConfig({
         animated: props.streamingAnimated,

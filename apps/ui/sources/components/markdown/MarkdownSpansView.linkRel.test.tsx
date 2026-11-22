@@ -31,18 +31,15 @@ describe('MarkdownSpansView (link rel hardening)', () => {
     const { MarkdownSpansView } = await import('./MarkdownSpansView');
 
     const screen = await renderScreen(<MarkdownSpansView
-          linkStyle={{ color: 'red' }}
           spans={[{ text: 'example', styles: [], url: 'https://example.com' }] as any}
         />);
 
     const link = screen.findByType('Link' as any);
+    expect(link.props.href).toBe('https://example.com');
     expect(link.props.target).toBe('_blank');
     expect(link.props.rel).toBe('noopener noreferrer');
     // On web we intentionally avoid `asChild` so Expo Router can forward href attrs to an anchor-like element.
     expect(link.props.asChild).toBe(false);
-    const style = link.props.style;
-    expect(Array.isArray(style)).toBe(true);
-    expect(style[0]).toEqual({ color: 'red' });
   });
 
   it('renders link spans as selectable Text on native so long-press selection works', async () => {
@@ -63,10 +60,7 @@ describe('MarkdownSpansView (link rel hardening)', () => {
 });
 
 describe('MarkdownSpansView (streaming placeholder links)', () => {
-  // Special blocks (tables, option lists) render from the same repaired source as prose,
-  // so a link whose URL is still streaming reaches this renderer as the placeholder
-  // destination. Unlike the enriched path there is no link-target normalization here:
-  // the raw url is handed straight to the caller and to Expo Router.
+  // Special blocks share the streaming repair source with prose, including placeholder destinations.
   it('renders a still-streaming link label as inert text with no destination', async () => {
     mockPlatform('web');
     vi.resetModules();
@@ -75,7 +69,6 @@ describe('MarkdownSpansView (streaming placeholder links)', () => {
     const onLinkPress = vi.fn();
 
     const screen = await renderScreen(<MarkdownSpansView
-          linkStyle={{ color: 'red' }}
           onLinkPress={onLinkPress}
           spans={[{ text: 'zlink-006', styles: [], url: 'streamdown:incomplete-link' }] as any}
         />);

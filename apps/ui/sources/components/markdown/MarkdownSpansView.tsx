@@ -1,37 +1,36 @@
 import { MarkdownSpan } from './parseMarkdown';
 import { Link } from 'expo-router';
 import * as React from 'react';
-import { Platform } from 'react-native';
+import { Platform, type StyleProp, type TextStyle } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
+import { Typography } from '@/constants/Typography';
 import { Text } from '../ui/text/Text';
+import { openMarkdownLinkUrl } from './enriched/enrichedMarkdownLinkHandling';
 import { StreamingTextReveal } from './streaming/StreamingTextReveal';
 import { isStreamingIncompleteLinkHref } from './streaming/streamingMarkdownRepairConfig';
 import type { StreamingTextRevealPreset } from './streaming/streamingTextRevealConfig';
 
 export type MarkdownSpansViewProps = {
     spans: MarkdownSpan[];
-    baseStyle?: any;
-    linkStyle?: any;
+    baseStyle?: StyleProp<TextStyle>;
     onLinkPress?: (url: string) => boolean | void;
-    resolveSpanStyle?: (styleName: MarkdownSpan['styles'][number]) => any;
+    variant?: 'default' | 'thinking';
     inlineTextSelectable?: boolean;
     streamingReveal?: boolean;
     streamingRevealPreset?: StreamingTextRevealPreset;
 };
 
 export const MarkdownSpansView = React.memo((props: MarkdownSpansViewProps) => {
-    const resolveSpanStyle = props.resolveSpanStyle ?? (() => undefined);
+    const resolveSpanStyle = (name: MarkdownSpan['styles'][number]) =>
+        props.variant === 'thinking' && name === 'code' ? styles.thinkingInlineCode : styles[name];
     const inlineTextSelectable = props.inlineTextSelectable ?? true;
 
     return (
         <>
             {props.spans.map((span, index) => {
                 if (span.url) {
-                    const linkStyle = [props.linkStyle, span.styles.map(resolveSpanStyle)];
-                    // Special blocks render from the same repaired source as prose, so a link
-                    // whose URL is still streaming reaches here as the repair placeholder.
-                    // Unlike the enriched path there is no link-target normalization between
-                    // the span and the caller, so the placeholder is kept out of both the
-                    // press callback and Expo Router until the real destination arrives.
+                    const linkStyle = [styles.link, span.styles.map(resolveSpanStyle)];
+                    // Keep a streaming link label inert until its destination arrives.
                     if (isStreamingIncompleteLinkHref(span.url)) {
                         return (
                             <Text
@@ -48,7 +47,7 @@ export const MarkdownSpansView = React.memo((props: MarkdownSpansViewProps) => {
                             <Text
                                 key={index}
                                 accessibilityRole="link"
-                                onPress={() => props.onLinkPress?.(span.url!)}
+                                onPress={() => { void openMarkdownLinkUrl(span.url!, props.onLinkPress); }}
                                 selectable={inlineTextSelectable}
                                 style={linkStyle}
                             >
@@ -109,3 +108,24 @@ export const MarkdownSpansView = React.memo((props: MarkdownSpansViewProps) => {
         </>
     );
 });
+
+const styles = StyleSheet.create((theme) => ({
+    italic: Typography.default('italic'),
+    bold: Typography.default('semiBold'),
+    semibold: Typography.default('semiBold'),
+    code: {
+        ...Typography.mono(),
+        fontSize: 14,
+        lineHeight: 20,
+        backgroundColor: theme.colors.surface.selected,
+    },
+    thinkingInlineCode: {
+        ...Typography.mono(),
+        backgroundColor: 'transparent',
+    },
+    link: {
+        ...Typography.default(),
+        color: theme.colors.text.link,
+        fontWeight: '400',
+    },
+}));
