@@ -156,7 +156,7 @@ describe('ConnectedServiceOauthView mode selection', () => {
         expect(shared.deviceAuthSpy).not.toHaveBeenCalled();
     });
 
-    it('hands the embedded view a connectivity message instead of a machine code when the exchange cannot reach the server', async () => {
+    it('tells the embedded view the outcome is unknown when the exchange response is lost', async () => {
         shared.searchParams = { serviceId: 'claude-subscription', profileId: 'work', method: 'browser' };
         vi.clearAllMocks();
         shared.exchangeError = new TypeError('Failed to fetch');
@@ -169,7 +169,7 @@ describe('ConnectedServiceOauthView mode selection', () => {
 
         // The shared `@/text` test double renders translation keys.
         await expect(props?.config.tokenExchange('code', 'verifier', 'state'))
-            .rejects.toThrow('connectedServices.requestErrors.unreachable');
+            .rejects.toThrow('connectedServices.oauthPaste.errors.exchangeOutcomeUnknown');
         shared.exchangeError = null;
     });
 });
