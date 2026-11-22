@@ -306,7 +306,10 @@ describe('Machines advertised UI and eligible Voice execution', () => {
         const policyContext = { surface: 'voice' as const, authority: 'account_automation' as const };
         expect(isApprovalRequiredByActionsSettings(actionId, { v: 1, actions: {} }, policyContext))
           .toBe(actionId !== 'machines.provisioners.options');
-        expect(JSON.parse(await handlers[toolName]!(input, { serverId: homeId }))).toEqual({ ok: true, ...output });
+        expect(JSON.parse(await handlers[toolName]!(input, { serverId: homeId }))).toEqual({
+          ok: true, ...output,
+          ...(actionId === 'machines.provisioners.options' ? {} : { voiceApprovalGuidance: 'tap_required' }),
+        });
         const nativeRequests = home.requests.filter(request => request.path === `/v1/actions/${actionId}`);
         expect(nativeRequests).toEqual([expect.objectContaining({ home: 'compute', accountId: 'owner' })]);
         expect(home.requests.filter(request => request.path.startsWith('/v1/actions/')).map(request => request.path))

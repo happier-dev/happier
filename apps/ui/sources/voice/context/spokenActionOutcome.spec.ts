@@ -7,6 +7,14 @@ import { UiActionDispatchResultV1Schema } from '@happier-dev/protocol/actions/cl
 import { projectVoiceActionExecutionResult, serializeVoiceActionExecuteResult } from '@/voice/tools/voiceActionResult';
 
 describe('spoken Action owner outcomes', () => {
+  it('directs a pending settings change to the approval card when the owner requires a tap', () => {
+    const result = { kind: 'approval_request_created', actionId: 'settings.set', artifactId: 'request-1' };
+    const tool = { t: 'action_execute', args: { actionId: 'settings.set', input: {} } };
+    expect(resolveSpokenActionOutcome({ ...tool, result: { ok: true, result: { ...result, voiceApprovalGuidance: 'tap_required' } } }))
+      .toBe(t('voiceSurface.approvalTapRequired'));
+    expect(resolveSpokenActionOutcome({ ...tool, result: { ok: true, result: { ...result, voiceApprovalGuidance: 'spoken_decision' } } }))
+      .toBe(t('approvals.status.open'));
+  });
   it('presents a held approval as an executed Action in speech and tool follow-up', () => {
     const entry = { t: 'action_execute', args: { actionId: 'daemon.filesystem.copy', input: {} },
       result: { ok: false, errorCode: 'approval_result_held', error: 'approval_result_held' } };

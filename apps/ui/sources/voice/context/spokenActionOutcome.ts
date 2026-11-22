@@ -10,6 +10,7 @@ import type { SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/cre
 
 import { t } from '@/text';
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { readVoiceApprovalGuidance } from '@/sync/ops/actions/voiceActionApprovalAuthority';
 import { resolveSessionSpawnNewResultFailureMessage } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
 import { VOICE_ACTION_EXECUTE_TOOL_NAME } from '@/voice/tools/voiceActionExecution';
 import type { LocalVoiceAgentToolResultEntry } from '@/voice/tools/localVoiceEffectOutcomeCustody';
@@ -74,9 +75,10 @@ export function resolveSpokenActionOutcome(entry: LocalVoiceAgentToolResultEntry
   }
   // Direct tools flatten the envelope; action_execute retains it. Neither
   // transport metadata nor a previous presentation belongs to owner output.
-  const { ok: _ok, summary: _summary, ...body } = record(envelope.result) ?? envelope;
+  const { ok: _ok, summary: _summary, voiceApprovalGuidance, ...body } = record(envelope.result) ?? envelope;
   if (ActionApprovalRequestCreatedResultSchema.safeParse(body).success) {
-    return t('approvals.status.open');
+    return readVoiceApprovalGuidance(voiceApprovalGuidance) === 'tap_required'
+      ? t('voiceSurface.approvalTapRequired') : t('approvals.status.open');
   }
   if (owner === VOICE_BRIEF_REQUEST_ACTION_ID_V1) {
     // Home may still be mounting Inbox. Its admitted delivery owns the answer;

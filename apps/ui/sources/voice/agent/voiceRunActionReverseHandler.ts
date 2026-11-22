@@ -2,6 +2,7 @@ import { VoiceRunActionDispatchRequestV1Schema, UiActionDispatchResultV1Schema,
   voiceRunActionClientRpcMethod } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { projectKnownAccountAuthorityRetirementReceipt } from '@happier-dev/protocol/actions/accountAuthorityRetirement';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { storage } from '@/sync/domains/state/storage';
@@ -67,8 +68,8 @@ export function createVoiceRunActionReverseHandler(handle: VoiceAgentHandle, con
         const execution: unknown = JSON.parse(await tools.action_execute!({ actionId: request.actionId, input: request.input }, {
           signal, serverId, turnOrigin, effectId: request.voiceRun.actionRequestId,
         }));
-        const result = UiActionDispatchResultV1Schema.safeParse({ v: 1,
-          execution: projectVoiceActionExecutionResult(request.actionId, execution) });
+        const { voiceApprovalGuidance, ...canonicalExecution } = readRecord(projectVoiceActionExecutionResult(request.actionId, execution));
+        const result = UiActionDispatchResultV1Schema.safeParse({ v: 1, execution: canonicalExecution });
         if (!result.success) return failure('invalid_action_output');
         const settled = await resumeActionExecutionResult({ result: result.data.execution, actionId: request.actionId,
           scope: handle.accountLifetime.scope, signal,
@@ -102,7 +103,8 @@ export function createVoiceRunActionReverseHandler(handle: VoiceAgentHandle, con
         }
         const toolName = resolveVoiceActionExecution({ actionId: request.actionId, input: request.input })?.toolName ?? '';
         return UiActionDispatchResultV1Schema.parse({ v: 1, execution: redactVoiceActionExecutionResultForProvider(
-          toolName, settled, readVoicePrivacySettings(storage.getState().settings)) });
+          toolName, settled === result.data.execution ? { ...settled, voiceApprovalGuidance } : settled,
+          readVoicePrivacySettings(storage.getState().settings)) });
       });
     } catch (error) {
       return { v: 1 as const, execution: { ok: false as const, ...normalizeActionExecutorThrownError(error) } };

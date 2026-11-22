@@ -3,6 +3,7 @@ import { projectSpokenSpawnModelChoices } from '@happier-dev/protocol/actions/ac
 import { ActionInputOptionSchema } from '@happier-dev/protocol/actions/actionInputHints';
 import { redactVoicePathLikeData, redactVoicePathLikeString } from '@/voice/shared/redactVoicePathLikeData';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { readVoiceApprovalGuidance } from '@/sync/ops/actions/voiceActionApprovalAuthority';
 import { SETTINGS_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/settingsDeclarationActionIdsV1';
 import { SESSION_AWARENESS_OPERATIONAL_PRIMARY_PRECEDENCE_V1, SessionAwarenessProjectionV1Schema, type SessionOperationalReasonV1 } from '@happier-dev/protocol/sessions/awareness/projectionV1';
 import { SessionActivityCompatibilityResultV1Schema } from '@happier-dev/protocol/sessions/awareness/action';
@@ -452,6 +453,12 @@ export function redactVoiceToolResultForProvider(
   if (ACTION_RESULT_TOOL_NAMES.has(toolName)) {
     return projectActionResultForProvider(value);
   }
+  const resultRecord = readResultRecord(value);
+  if (resultRecord.voiceApprovalGuidance !== undefined) {
+    const { voiceApprovalGuidance, ...body } = resultRecord;
+    const guidance = readVoiceApprovalGuidance(voiceApprovalGuidance);
+    value = guidance && body.ok === true ? { ...body, voiceApprovalGuidance: guidance } : body;
+  }
   const optionsLookup = toolName === OPTIONS_TOOL_NAME || toolName === OPTIONS_ACTION_ID;
   if (optionsLookup || toolName === SPAWN_SESSION_TOOL_NAME || toolName === SESSION_SPAWN_NEW_ACTION_ID_V1) {
     const result = readResultRecord(value);
@@ -529,10 +536,12 @@ export function redactVoiceActionExecutionResultForProvider(
   }
   if (record?.ok === true) {
     const result = redactVoiceToolResultForProvider(toolName, record.result, prefs);
-    if (readResultRecord(result).errorCode === 'privacy_disabled') {
+    const body = readResultRecord(result);
+    if (body.errorCode === 'privacy_disabled') {
       return { ok: false, errorCode: 'privacy_disabled', error: 'privacy_disabled' };
     }
-    return { ok: true, result };
+    const voiceApprovalGuidance = readVoiceApprovalGuidance(record.voiceApprovalGuidance);
+    return { ok: true, result: voiceApprovalGuidance ? { ...body, voiceApprovalGuidance } : result };
   }
   return redactVoiceToolResultForProvider(toolName, value, prefs);
 }

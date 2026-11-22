@@ -50,7 +50,7 @@ await loadSyncSingletonForTests();
 const { createVoiceToolHandlers, resolveVoiceToolEffectClass } = await import('./handlers');
 const { resolveVoiceActionExecution, decodeVoiceToolInput } = await import('./voiceActionExecution');
 const { createArtifactActionsClient } = await import('@/components/artifacts/artifactActionsClient');
-const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+const { createDefaultActionExecutor, executeDefaultActionInCapturedAccount } = await import('@/sync/ops/actions/defaultActionExecutor');
 
 describe('Voice Action reference catalog', () => {
   beforeEach(async () => { await home.reset(); });
@@ -407,6 +407,11 @@ describe('Voice Action reference catalog', () => {
             await waitForHomeGovernance(() => expect(review).toMatchObject({ type: 'custom',
               props: { artifactId: asks[0]!.id, serverId }, chrome: { testID: 'approvals.in-place.modal' } }));
           }
+          if (source === 'mcp-off') {
+            expect(await dispatch('approval.request.get', { artifactId: asks[0]!.id }, 'read-pending-ask')).toMatchObject({
+              ok: true, result: { request: { status: 'open' }, voiceApprovalGuidance: 'tap_required' },
+            });
+          }
           if (source === 'mcp-dismissed') {
             if (review?.type === 'custom') review.onRequestClose?.();
             expect(await pending).toMatchObject({ ok: false, errorCode: 'cancelled' });
@@ -678,9 +683,9 @@ describe('Voice Action reference catalog', () => {
     expect(queue.ok).toBe(true);
     expect(JSON.stringify(queue)).toContain(ask.id);
     const request = JSON.parse(await handlers.approval_request_get!({ artifactId: ask.id }));
-    expect(JSON.stringify(request)).toContain('voiceConversations.minSpeechMs');
-    const { ok: queueOk, ...queueBody } = queue;
-    const { ok: requestOk, ...requestBody } = request;
+    const expectedGuidance = decisionPath === 'voice-disabled' ? 'tap_required' : 'spoken_decision';
+    const { ok: queueOk, voiceApprovalGuidance: queueGuidance, ...queueBody } = queue;
+    const { ok: requestOk, voiceApprovalGuidance: requestGuidance, ...requestBody } = request;
     expect(queueOk && requestOk).toBe(true);
     const queueSchema = getActionSpec('approval.request.list').outputSchema;
     const requestSchema = getActionSpec('approval.request.get').outputSchema;
@@ -691,12 +696,18 @@ describe('Voice Action reference catalog', () => {
     expect(requestSchema.parse(requestBody)).toMatchObject({
       artifactId: ask.id, request: { status: 'open', actionArgs: { anchor: declaration.anchor, value: 1100 } },
     });
+    expect(queueGuidance).toBe(expectedGuidance);
+    expect(requestGuidance).toBe(expectedGuidance);
     const results = [{ t: 'approval_request_list', args: { status: 'open' }, result: queue },
       { t: 'approval_request_get', args: { artifactId: ask.id }, result: request }];
     const privacy = { shareFilePaths: false, shareSessionSummary: false, sharePermissionRequests: true };
     const context = parseVoiceToolResultsFollowUp(buildToolResultsFollowUpPrompt(results, privacy));
     expect(JSON.stringify(context)).toContain(ask.id);
     expect(JSON.stringify(context)).toContain(requestBody.request.summary);
+    expect(context).toMatchObject({ toolResults: [
+      { result: { voiceApprovalGuidance: expectedGuidance } },
+      { result: { voiceApprovalGuidance: expectedGuidance } },
+    ] });
     // Permission sharing admits the request presentation, not its raw effect
     // operands or stored preview. The Voice policy forces tool-argument redaction.
     expect(JSON.stringify(context)).not.toContain('"actionArgs"');
@@ -718,9 +729,31 @@ describe('Voice Action reference catalog', () => {
         artifactId: ask.id, decision: 'approve',
       }, { surface: 'ui', serverId, authority: 'present_user', actionCaller: { kind: 'host' } });
     expect(decided).toMatchObject({ ok: true });
-    expect(JSON.parse(await pending)).toMatchObject({ ok: true, kind: 'approval_request_created', artifactId: ask.id, actionId: 'settings.set' });
+    expect(JSON.parse(await pending)).toMatchObject({ ok: true, kind: 'approval_request_created', artifactId: ask.id,
+      actionId: 'settings.set', voiceApprovalGuidance: expectedGuidance });
     expect(JSON.parse(await handlers.settings_get!(input))).toMatchObject({ ok: true, value: 1100 });
     expect(content.v.favoriteMachines).toEqual(['keep-neighbor']);
+    expect(version).toBe(2);
+    expect(JSON.parse(await handlers.approval_request_get!({ artifactId: ask.id }))).not.toHaveProperty('voiceApprovalGuidance');
+
+    // Step 9 read an Ask that the agent had already opened, rather than
+    // consuming a receipt for an Action the Voice tool called itself.
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const account = await captureLazyActionAccountContext(serverId);
+    const agentAsk = await executeDefaultActionInCapturedAccount(account, 'approval.request.create', {
+      actionId: 'settings.set',
+      actionArgs: { anchor: 'voiceConversations.silenceMs', value: 1100 },
+      createdBy: { surface: 'agent' },
+      summary: 'Change Pause before it answers',
+    }, { surface: 'agent', authority: 'account_automation', serverId, actionRequestId: 'global-voice-agent-setting-ask' })
+      .finally(() => account.dispose());
+    expect(agentAsk, JSON.stringify(agentAsk)).toMatchObject({ ok: true, result: { artifactId: expect.any(String) } });
+    expect(agentAsk).not.toHaveProperty('voiceApprovalGuidance');
+    if (!agentAsk.ok) throw new Error('Expected the agent Action to remain an Ask');
+    const { artifactId } = agentAsk.result as { artifactId: string };
+    expect(JSON.parse(await handlers.approval_request_get!({ artifactId }))).toMatchObject({
+      ok: true, voiceApprovalGuidance: expectedGuidance, request: { status: 'open' },
+    });
     expect(version).toBe(2);
   });
   it('pauses an exact Workflow through generic Voice execution and the canonical Account storage owner', async () => {

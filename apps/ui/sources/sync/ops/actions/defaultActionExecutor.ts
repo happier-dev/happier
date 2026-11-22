@@ -1,6 +1,6 @@
 import { resolveWorkspaceSyncExecutionMachineIdV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { createActionConfirmationPresenter } from './actionConfirmationPresenter';
-import { mayVoiceApproveBySpokenConsent } from './voiceActionApprovalAuthority';
+import { mayVoiceApproveBySpokenConsent, projectVoiceApprovalGuidance } from './voiceActionApprovalAuthority';
 import { supportsAccountPendingForSessionInput } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { createUiPluginCollectionSharingActionDeps } from './pluginCollectionSharingActionDeps';
 import { requireActionSuccess } from './actionResult';
@@ -908,7 +908,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   widgetAreaIsCurrent?: () => boolean;
   }>, accountContext?: LazyActionAccountContext & { settings: Awaited<ReturnType<LazyActionAccountContext['readSettings']>> }, followReadInputs?: SessionFollowReadInputs): UiProtocolActionExecutor & Readonly<{
     executeNativeManagedAction(actionId: ManagedMachineActionIdV1, input: unknown, context?: ActionExecutorContext, confirmInFlow?: boolean,
-      retainedMachine?: ManagedMachineActionOutputV1<'machines.managed.get'>): Promise<ActionExecuteResult>;
+      retainedMachine?: ManagedMachineActionOutputV1<'machines.managed.get'>, observeApproval?: boolean): Promise<ActionExecuteResult>;
     readWidgetMovementAdmission(ref: WidgetInstanceRefV1, surface: WidgetSurfaceRefV1, context: ActionExecutorContext): ReturnType<typeof readWidgetEntityMovementAdmission>;
     readWidgetInputDescriptor(request: Parameters<NonNullable<ReturnType<typeof createWidgetInputActionDepsV1>['readWidgetInputDescriptor']>>[0]): ReturnType<NonNullable<ReturnType<typeof createWidgetInputActionDepsV1>['readWidgetInputDescriptor']>>;
   }> {
@@ -5347,12 +5347,13 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     }
     const machineContext = await resolveMachineAdmissionContext(actionId, input, resolved);
     if (machineContext && 'ok' in machineContext) return machineContext;
-    return machineContext
+    const result = machineContext
       ? await executeMachineAction(actionId, input, machineContext, confirmInFlow)
       : await confirmOwnUiRefusal(actionId, input, resolved,
         await executor.execute(actionId, input, confirmInFlow ? bindPresentUserActionConfirmation(actionId, input, resolved) : resolved),
         deps.presentUserActionConfirmation, (confirmedInput, reviewDigest) =>
           executor.execute(actionId, confirmedInput, bindPresentUserActionConfirmation(actionId, confirmedInput, confirmationRequest(actionId, resolved), reviewDigest)));
+    return projectVoiceApprovalGuidance(resolved, actionId, result);
   };
   return {
     previewSessionTargets: async (target, context) => {
@@ -5365,7 +5366,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     // and approval owner. Do not create a second local Ask before its relay; a
     // receiving Machine that refuses for want of a presenter carries its review to this executor's confirmation.
     executeNativeManagedAction: async (actionId: ManagedMachineActionIdV1, input: unknown, context?: ActionExecutorContext, confirmInFlow = false,
-      retainedMachine?: ManagedMachineActionOutputV1<'machines.managed.get'>) => {
+      retainedMachine?: ManagedMachineActionOutputV1<'machines.managed.get'>, observeApproval = false) => {
       if (!accountContext) return { ok: false as const, errorCode: 'not_authenticated', error: 'not_authenticated' };
       const resolvedContext = resolveContext(context, input, actionId);
       const preferenceFailure = resolveActionOriginationPreferenceFailureV1(actionId, resolvedContext);
@@ -5379,9 +5380,14 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           ...(reviewDigest ? { reviewDigest } : {}), retainedMachine,
           resolvePresetPool: poolInput => executor.execute('machines.pools.resolve', poolInput, nativeContext),
           ...(context?.signal ? { signal: context.signal } : {}) });
-      return await confirmOwnUiRefusal(actionId, input, resolvedContext, await native(input, resolvedContext, confirmInFlow),
+      const execute = async () => confirmOwnUiRefusal(actionId, input, resolvedContext, await native(input, resolvedContext, confirmInFlow),
         deps.presentUserActionConfirmation, (confirmedInput, reviewDigest) =>
           native(confirmedInput, confirmationRequest(actionId, resolvedContext), true, reviewDigest));
+      const result = observeApproval && context?.actionRequestId && context.serverId
+        ? await executeManagedNativeActionWithApprovalObservation({ actionId, requestId: context.actionRequestId,
+          serverId: context.serverId, accountId: account.accountId, execute })
+        : await execute();
+      return projectVoiceApprovalGuidance(resolvedContext, actionId, result);
     },
     readWidgetInputDescriptor: async request => {
       const port = readWidgetActionSurfacePortV1(widgetInputDeps, request.ref.surface);
@@ -5395,6 +5401,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     prepare: async (actionId, input, context, options) => {
       input = normalizeTerminalHomeInput(actionId, input);
       const resolved = resolveContext(context, input, actionId);
+      const project = (result: ActionExecuteResult) => projectVoiceApprovalGuidance(resolved, actionId, result);
       if (opts?.admittedClientActionId !== actionId && !isSessionSpawnNewActionIdV1(actionId)) {
         const unavailable = await readNewWorkFeatureAdmission(actionId, input, resolved, accountContext?.serverId ?? resolved.serverId ?? undefined,
           () => accountContext ? accountContext.readSettings() : storage.getState().settings);
@@ -5406,17 +5413,20 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       if (machineContext && 'ok' in machineContext) return { kind: 'settled', result: machineContext };
       if (machineContext) {
         const review = options?.reviewOnly && !isSessionSpawnNewActionIdV1(actionId) ? await executor.prepare(actionId, input, machineContext, options) : null;
-        if (review?.kind === 'settled') return review;
+        if (review?.kind === 'settled') return { ...review, result: project(review.result) };
         return { kind: 'ready',
           ...(review?.operation ? { operation: review.operation } : {}),
-          invocation: { run: () => executeMachineAction(actionId, input, machineContext) } };
+          invocation: { run: async () => project(await executeMachineAction(actionId, input, machineContext)) } };
       }
       // A prepared run reaches the same receiving owner as execute, so its refusal gets the same confirmation.
       const prepared = await executor.prepare(actionId, input, resolved, options);
-      return prepared.kind === 'ready' ? { ...prepared, invocation: { ...prepared.invocation,
-        run: async () => await confirmOwnUiRefusal(actionId, input, resolved, await prepared.invocation.run(),
+      if (prepared.kind === 'settled') return { ...prepared, result: project(prepared.result) };
+      return { ...prepared, invocation: { ...prepared.invocation, run: async () => {
+        const result = await confirmOwnUiRefusal(actionId, input, resolved, await prepared.invocation.run(),
           deps.presentUserActionConfirmation, (confirmedInput, reviewDigest) =>
-            executor.execute(actionId, confirmedInput, bindPresentUserActionConfirmation(actionId, confirmedInput, confirmationRequest(actionId, resolved), reviewDigest))) } } : prepared;
+            executor.execute(actionId, confirmedInput, bindPresentUserActionConfirmation(actionId, confirmedInput, confirmationRequest(actionId, resolved), reviewDigest)));
+        return project(result);
+      } } };
     },
     executeAdmittedClientAction: (actionId, input, context) => executor.executeAdmittedClientAction(actionId, input, context),
     execute: executeAction,
@@ -6016,9 +6026,7 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
         account.assertCurrent();
         throwIfAborted(signal);
         if (!native) return await (confirmInFlow ? executor.executeConfirmed : executor.execute)(actionId, input, capturedContext);
-        return await executeManagedNativeActionWithApprovalObservation({ actionId: native.actionId,
-          requestId: actionRequestId!, serverId, accountId: account.accountId,
-          execute: () => executor.executeNativeManagedAction(native.actionId, input, capturedContext, confirmInFlow, native.retainedMachine) });
+        return await executor.executeNativeManagedAction(native.actionId, input, capturedContext, confirmInFlow, native.retainedMachine, true);
       }, actionId);
       return await execute(actionContext.signal);
     } catch (error) {

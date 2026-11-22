@@ -13,6 +13,17 @@ import {
 const SHARE_ALL = { shareFilePaths: true, shareSessionSummary: true, sharePermissionRequests: true } as const;
 
 describe('redactVoiceToolResultValue', () => {
+  it('delivers only closed approval guidance in the provider Action result', () => {
+    const result = { request: { status: 'open', summary: 'Setting change', actionArgs: { private: 'raw input' } } };
+    const redact = (voiceApprovalGuidance: unknown, sharePermissionRequests = true) =>
+      redactVoiceActionExecutionResultForProvider('approval_request_get', { ok: true, result, voiceApprovalGuidance },
+        { ...SHARE_ALL, sharePermissionRequests });
+    const expected = { request: { status: 'open', summary: 'Setting change' } };
+    expect(redact('tap_required')).toEqual({ ok: true, result: { ...expected, voiceApprovalGuidance: 'tap_required' } });
+    expect(redact({ value: 'private preference payload' })).toEqual({ ok: true, result: expected });
+    expect(redact('tap_required', false)).toMatchObject({ ok: false, errorCode: 'privacy_disabled' });
+  });
+
   it.each([true, false])('retains the canonical Action envelope around bounded mounted settlement (ok=%s)', ok => {
     const toolName = getActionSpec('action.invoke').bindings!.voiceClientToolName!;
     const result = ok ? { ok: true, result: { privatePayload: 'PRIVATE_RESULT' } }

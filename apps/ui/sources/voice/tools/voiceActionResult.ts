@@ -8,6 +8,7 @@ import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/execut
 import type { SessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import type { PrimaryTurnStatusV1, SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { readSessionSpawnNewFailure, resolveSessionSpawnNewResultFailureMessage } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
+import type { VoiceApprovalGuidance } from '@/sync/ops/actions/voiceActionApprovalAuthority';
 import type { VoiceSpawnAlternative } from './actionImpl/sessionSpawnAlternative';
 
 export type VoiceSpawnObservedSession = Readonly<{
@@ -83,7 +84,7 @@ export function projectVoiceActionExecutionResult(actionId: ActionId, value: unk
 
 export function serializeVoiceActionExecuteResult(
   actionId: ActionId,
-  result: ActionExecuteResult,
+  result: ActionExecuteResult & Readonly<{ voiceApprovalGuidance?: VoiceApprovalGuidance }>,
   options?: Readonly<{
     failurePayload?: Record<string, unknown>;
     executedPayload?: Record<string, unknown>;
@@ -150,6 +151,9 @@ export function serializeVoiceActionExecuteResult(
     return options.canonicalResult ? JSON.stringify({ ...result, result: observed }) : jsonOk(observed);
   }
   if (options?.canonicalResult) return JSON.stringify(result);
+  if (result.voiceApprovalGuidance !== undefined) {
+    return jsonOk({ ...domainResult, voiceApprovalGuidance: result.voiceApprovalGuidance });
+  }
   if (ActionApprovalRequestCreatedResultSchema.safeParse(result.result).success) {
     return jsonOkFromUnknown(result.result);
   }

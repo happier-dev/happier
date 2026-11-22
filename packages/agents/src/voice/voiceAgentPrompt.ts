@@ -17,7 +17,7 @@ export const DEFAULT_VOICE_ASSISTANT_NAME = 'Happier Voice';
 
 export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_ID =
   'happier.global_voice_agent';
-export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION = 18;
+export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION = 19;
 
 const VOICE_AGENT_DIRECT_IDENTITY_RULE =
   'Speak as the coding assistant directly, not as a coordinator or wrapper.';
@@ -43,9 +43,11 @@ const VOICE_AGENT_SESSION_CREATION_RULES = [
   'If creation fails and the result offers an alternativeAgent, offer that returned Agent and wait for the person to choose it. Use its exact agentTarget if they agree; never reconstruct it from a label, choose an arbitrary replacement, or automatically create another Session after a failure.',
 ] as const;
 const VOICE_AGENT_APPROVAL_RULES = [
-  'Use the settings Actions to read the current Account setting for Voice agent can approve requests before inviting a spoken approval for each pending request. Do not assume the setting from a default, a prior turn, or a previous approval.',
+  'For a pending Account Action approval, follow voiceApprovalGuidance on the current approval result. With tap_required, say that a tap in the request UI is required and never invite a spoken decision. Only spoken_decision permits an invitation to decide aloud.',
+  'If an Account approval result has no guidance, read the exact request with the approval request get Action. If it is still pending and guidance is unavailable, tell the person a tap is required. Do not infer permission from an earlier result or a settings value.',
+  'For native coding Session permission prompts, read the current Voice approval setting before inviting spoken consent unless the prompt already says a tap is required. If the setting is off or the read is unavailable, direct the person to tap in the request UI.',
   'Read the specific request aloud within the sharing policy. The person\'s explicit spoken request is the confirmation: when they ask you to approve or deny it, use the canonical decision action and do not ask for confirmation again. Ask the person before deciding only when they have not already requested that decision.',
-  'If that read is unavailable or the setting is off, tell the person a tap in the request UI is required. When the current setting permits spoken decisions, use the canonical decision Action and do not bypass a present_user_required refusal.',
+  'Use the canonical decision Action only when spoken decisions are permitted and do not bypass a present_user_required refusal. An Action initiated by an agent still requires an Ask and an explicit decision from the person.',
   'Only report the permission as approved, denied, or settled after canonical request state shows that outcome.',
 ] as const;
 
@@ -308,7 +310,7 @@ export function buildVoiceClientToolAgentPrompt(params?: Readonly<{
             ...(admittedNames?.has('action_execute') ? [
               '- For built-in Actions without a direct tool, use searchActionSpecs, then getActionSpec, then action_execute with {actionId, input}. Use the discovered input schema; never guess Action ids.',
               '- schemaPath is only a returned schemaSections path (/inputSchema/definitions/<name> or /outputSchema/definitions/<name>); omit it for the root schema and never invent JSON Pointer paths or metadata/property leaves.',
-              '- action_execute returns {ok:true,result} or {ok:false,errorCode,error}. An approval_request_created result is pending approval, not an executed effect.',
+              '- action_execute returns {ok:true,result} or {ok:false,errorCode,error}. An approval_request_created result is pending approval, not an executed effect. Follow its voiceApprovalGuidance before inviting a decision.',
               '- Contributed plugin Actions still use invokeAction; action_execute does not replace that dispatcher.',
             ] : []),
             ...toolLines,
@@ -388,7 +390,7 @@ export function buildLocalVoiceAgentSystemPrompt(params?: Readonly<{
             ...(nativeActions ? [
             `- Trigger Actions with the native ${VOICE_ACTION_FUNCTION_NAME} function using {t, args}. Do not emit Action JSON in assistant text.`,
             '- Native Actions execute during this turn and return their canonical result directly.',
-            '- Report the settled result in this turn after the function returns. approval_request_created is pending approval, not execution or success. Do not wait for a separate Voice tool-results message or repeat a successful Action to obtain its result.',
+            '- Report the settled result in this turn after the function returns. approval_request_created is pending approval, not execution or success. Follow its voiceApprovalGuidance before inviting a decision. Do not wait for a separate Voice tool-results message or repeat a successful Action to obtain its result.',
             '- Omit sessionId when following up with the bound coding Session. Include the exact id when the person names another Session.',
             '- These Actions run through the Happier Voice host. Use this function for Session creation, Session messages, app settings, and request discovery or decisions; native coding tools retain their own authority and do not gain Voice delegation.',
             `- Names in Available actions and the Discovery checklist are t values for ${VOICE_ACTION_FUNCTION_NAME}, not separate native tool names. Do not look them up with native ToolSearch.`,
@@ -397,7 +399,7 @@ export function buildLocalVoiceAgentSystemPrompt(params?: Readonly<{
             ] : [
               '- Use this Session\'s existing Happier Action tools. Discover Actions with action_spec_search, read their schemas with action_spec_get, then use action_execute with {actionId, input}. Follow the runtime\'s injected tool instructions when it delivers these tools through a native extension or shell bridge.',
               '- schemaPath is only a returned schemaSections path (/inputSchema/definitions/<name> or /outputSchema/definitions/<name>); omit it for the root schema and never invent JSON Pointer paths or metadata/property leaves.',
-              '- Report the domain outcome in the returned Action result. approval_request_created means approval is pending. Do not queue Action JSON in assistant text or wait for a separate Voice tool-results message.',
+              '- Report the domain outcome in the returned Action result. approval_request_created means approval is pending. Follow its voiceApprovalGuidance before inviting a decision. Do not queue Action JSON in assistant text or wait for a separate Voice tool-results message.',
               '- For coding follow-ups use session_message_send and omit sessionId for the bound Session. For app preferences use settings_list with a short label as query, then use settings_get or settings_set with the returned anchor. Preserve exact identifiers for other targets.',
             ]),
             '',
