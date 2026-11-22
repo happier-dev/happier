@@ -104,6 +104,9 @@ describe('DeploymentReviewApprovalFacts', () => {
     expect(text).toContain(target === 'own-server' ? 'ccccccc' : 'aaaaaaa');
     expect(text).not.toContain('ddddddd');
     expect(text).not.toContain('Compose revision');
+    // What the destination serves now belongs to the Destination, not to the version promoted (R12-D4).
+    if (target === 'own-server') expect(text.indexOf('projects.deployments.review.replacesNothing'))
+      .toBeLessThan(text.indexOf('projects.deployments.review.version'));
     expect(describeDeploymentReviewDecision(approval, 'deployments.promote', null)?.title)
       .toBe(target === 'own-server' ? 'Promote ccccccc to Production website' : 'Promote aaaaaaa to Production website');
     if (target === 'platform') expect(text).not.toContain('projects.deployments.review.promotionImages');

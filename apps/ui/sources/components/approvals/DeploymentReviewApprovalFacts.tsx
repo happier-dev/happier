@@ -249,16 +249,19 @@ function describeReviewFields(
   const multiple = machines.length > 1;
   const soleMachine = soleMachineName(machines, names);
   const buildPlatforms = [...new Set(machines.flatMap(machine => machine.review.buildSupport?.requestedPlatforms ?? []))];
+  const replacesNote = replaces === undefined ? undefined
+    // Deploying the version that already serves is a redeploy; it does not "replace" itself.
+    : replaces && revision && sameRevision(replaces.revision, revision) ? t('projects.deployments.review.replacesSame')
+      : replaces ? t('projects.deployments.review.replacesNote', { revision: revisionText(replaces.revision) })
+        : t('projects.deployments.review.replacesNothing');
   const rows = [
-    ...field('destination', t('projects.deployments.promotion.destination'), promotion ? environment?.name : null),
     ...field('environment', t('projects.deployments.review.environment'), !promotion && !revision ? environment?.name : null),
+    // A promotion replaces what the destination serves: that note belongs to the Destination, not to the version (R12-D4).
+    ...field('destination', t('projects.deployments.promotion.destination'), promotion ? environment?.name : null,
+      { note: promotion ? replacesNote : undefined }),
     // What it replaces finishes the version's line (lab d3: "Replaces #38 · b81e0d4"); alone it keeps its own row.
     ...(reviewedVersion ? field('version', t('projects.deployments.review.version'), revisionText(reviewedVersion), {
-      note: replaces === undefined ? undefined
-        // Deploying the version that already serves is a redeploy; it does not "replace" itself.
-        : replaces && revision && sameRevision(replaces.revision, revision) ? t('projects.deployments.review.replacesSame')
-          : replaces ? t('projects.deployments.review.replacesNote', { revision: revisionText(replaces.revision) })
-            : t('projects.deployments.review.replacesNothing'),
+      note: promotion ? undefined : replacesNote,
     }) : field('replaces', t('projects.deployments.review.replaces'), replaces === undefined ? null
       : replaces ? revisionText(replaces.revision) : t('projects.deployments.review.replacesNothing'))),
     ...(revision?.kind === 'folder' ? describeDeploymentFolderReviewFiles(revision)
