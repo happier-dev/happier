@@ -6,7 +6,7 @@ import { DETAILS_TAB_STRIP_METRICS as M } from '@/components/appShell/panes/deta
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon } from '@/components/ui/icons/Icon';
-import { DocumentTabStrip, type DocumentTabPresentation } from '@/components/ui/navigation/DocumentTabStrip';
+import { DOCUMENT_TAB_BAR_METRICS, DocumentTabStrip, type DocumentTabPresentation } from '@/components/ui/navigation/DocumentTabStrip';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
@@ -110,7 +110,7 @@ export const SessionTerminalStrip = React.memo(function SessionTerminalStrip(pro
                     {active?.detail ? <Text style={styles.currentDetail} numberOfLines={1}>{active.detail}</Text> : null}
                 </View>
             ) : (
-                <View style={styles.tabs}>
+                <View style={styles.tabs(DOCUMENT_TAB_BAR_METRICS.tabMinWidthPx)}>
                     <DocumentTabStrip
                         variant="bar"
                         barTabHeightPx={S.tabHeightPx}
@@ -253,12 +253,14 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderBottomWidth: StyleSheet.hairlineWidth,
         borderBottomColor: theme.colors.border.default,
     },
-    tabs: {
-        flex: 1,
+    tabs: (tabMinWidthPx: number) => ({
+        flexGrow: 1,
+        flexShrink: 1,
+        flexBasis: tabMinWidthPx,
         minWidth: 0,
         flexDirection: 'row',
         marginRight: 8,
-    },
+    }),
     current: {
         flexShrink: 1,
         minWidth: 0,
@@ -289,7 +291,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.text.tertiary,
         ...Typography.default(),
         marginRight: 6,
+        // The place label can ellipsize without starving the scrollable tab viewport.
+        flexBasis: 0,
+        flexGrow: 1,
         flexShrink: 1,
+        minWidth: 0,
         fontVariant: ['tabular-nums'],
     },
     splitButton: {
