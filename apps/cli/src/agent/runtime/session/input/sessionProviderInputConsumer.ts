@@ -191,7 +191,7 @@ export function createSessionProviderInputConsumer<Mode, Message>(
   let unsubscribeSubagentLiveWork: (() => void) | null = null;
   let settledAt: number | undefined;
   let observedUnsettled = false;
-  let priorLiveWorkNotification: string | null = null;
+  let priorLiveWorkSignature: string | null = null;
   const notifyLiveWorkChanged = (): void => {
     if (liveWorkListeners.size === 0) {
       // Retire an unobserved custody edge without querying Activity on the input path.
@@ -200,8 +200,8 @@ export function createSessionProviderInputConsumer<Mode, Message>(
       return;
     }
     const signature = readLiveWorkNotificationSignature();
-    if (signature === priorLiveWorkNotification) return;
-    priorLiveWorkNotification = signature;
+    if (signature === priorLiveWorkSignature) return;
+    priorLiveWorkSignature = signature;
     for (const listener of liveWorkListeners) listener();
   };
   const admissionKey = (scope: ProviderInputActionRequiredDisposition) =>
@@ -278,11 +278,11 @@ export function createSessionProviderInputConsumer<Mode, Message>(
     }
     return { session, input, nativeRuntimeActivity, agents, attention, agentsActiveCount, ...(settledAt !== undefined ? { settledAt } : {}) };
   };
-  const readLiveWorkNotificationSignature = (): string => {
+  const readLiveWorkNotificationSignature = (observedActivity?: SessionInputLiveWork): string => {
     const pending = opts.session.getPendingQueueState?.();
     // `settledAt` is re-stamped with the clock by any read that could not prove a settled fact
     // (an observer's own re-read), so it is not a change. The host's committed settlement time is.
-    const { settledAt: _restamped, ...facts } = readLiveWorkFacts(hasAcceptedInputCustody() || (pending?.known && pending.pendingCount > 0)
+    const { settledAt: _restamped, ...facts } = observedActivity ?? readLiveWorkFacts(hasAcceptedInputCustody() || (pending?.known && pending.pendingCount > 0)
       ? 'active' : pending?.known ? 'settled' : 'unknown');
     return JSON.stringify({ ...facts,
       settlementObservedAt: opts.session.readRuntimeActivitySnapshotTail?.().settlement?.committedProjection.observedAt });
@@ -516,14 +516,20 @@ export function createSessionProviderInputConsumer<Mode, Message>(
       }
       const input = hasAcceptedInputCustody() || pendingActive
         ? 'active' : pendingKnown ? 'settled' : 'unknown';
-      return readLiveWorkFacts(input);
+      const activity = readLiveWorkFacts(input);
+      if (contextOnlyPreparation !== null && liveWorkListeners.size > 0) {
+        // An observer can read an unannounced preparation as busy. Remember that
+        // observation so even an empty result publishes the settlement it needs.
+        priorLiveWorkSignature = readLiveWorkNotificationSignature(activity);
+      }
+      return activity;
     },
     subscribeLiveWork(listener) {
       liveWorkListeners.add(listener);
       if (liveWorkObservation === null) {
         const controller = new AbortController();
         liveWorkObservation = controller;
-        priorLiveWorkNotification = readLiveWorkNotificationSignature();
+        priorLiveWorkSignature = readLiveWorkNotificationSignature();
         unsubscribeQueueLiveWork = opts.messageQueue.subscribeChanges(batch => {
           // Transfer custody synchronously with queue removal, before any asynchronous fresh read.
           if (batch) releasedInputBatch = batch;
@@ -552,7 +558,7 @@ export function createSessionProviderInputConsumer<Mode, Message>(
           unsubscribeQueueLiveWork = null;
           unsubscribeSubagentLiveWork?.();
           unsubscribeSubagentLiveWork = null;
-          priorLiveWorkNotification = null;
+          priorLiveWorkSignature = null;
         }
       };
     },

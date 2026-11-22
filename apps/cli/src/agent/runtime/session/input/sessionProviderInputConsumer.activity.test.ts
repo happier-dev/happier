@@ -189,6 +189,59 @@ describe('Session input live-work observation', () => {
 
 describe('Session input live-work notification stability', () => {
   afterEach(() => { vi.useRealTimers(); });
+  it.each([false, true])('publishes settlement when an observer saw an empty context preparation as active after the settled report (later invalidation: %s)', async (afterLaterInvalidation) => {
+    const controller = new AbortController();
+    const preparing = createDeferred<void>();
+    const context = createDeferred<null>();
+    let contextTakes = 0;
+    let observedContextGeneration = readSessionFollowWakeInvalidationGeneration();
+    const pending = { known: true, pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 1 } as const;
+    const consumer = createSessionProviderInputConsumer({
+      messageQueue: new MessageQueue2<string>(() => 'mode'),
+      session: {
+        waitForMetadataUpdate: signal => new Promise<boolean>(resolve => {
+          signal?.addEventListener('abort', () => resolve(false), { once: true });
+        }),
+        getMetadataSnapshot: () => ({}), getAgentStateSnapshot: () => ({}),
+        readSubagentLiveWork: () => ({ state: 'settled', activeCount: 0 }),
+        readRuntimeActivitySnapshotTail: idleTail,
+        getPendingQueueState: () => pending,
+        readPendingQueueStateForLiveWork: async () => pending,
+        materializeNextPendingMessageSafely: async () => ({ type: 'no_pending' as const }),
+      },
+      takeContextOnlyInput: async () => {
+        observedContextGeneration = readSessionFollowWakeInvalidationGeneration();
+        contextTakes += 1;
+        if (afterLaterInvalidation && contextTakes === 1) return null;
+        preparing.resolve();
+        return await context.promise;
+      },
+      waitForContextOnlyInputChange: signal => waitForSessionFollowWakeInvalidation(observedContextGeneration, signal),
+    });
+    const reports: Array<ReturnType<typeof consumer.readLiveWork>> = [];
+    const unsubscribe = consumer.subscribeLiveWork(() => { reports.push(consumer.readLiveWork()); });
+    // The daemon has the runner's settled push before a content-free follow edge rereads it.
+    await expect(consumer.readLiveWork()).resolves.toMatchObject({ input: 'settled' });
+    const waiting = consumer.waitForNextInput({ abortSignal: controller.signal });
+    try {
+      if (afterLaterInvalidation) {
+        await vi.waitFor(() => expect(contextTakes).toBe(1));
+        publishSessionFollowWakeInvalidation();
+      }
+      await preparing.promise;
+      await expect(consumer.readLiveWork()).resolves.toMatchObject({ input: 'active' });
+      context.resolve(null);
+      await new Promise<void>(resolve => setImmediate(resolve));
+      // Settlement must arrive by push, before another direct read can repair the observer.
+      expect((await Promise.all(reports)).map(report => report.input)).toEqual(['settled']);
+      await expect(consumer.readLiveWork()).resolves.toMatchObject({ input: 'settled' });
+    } finally {
+      context.resolve(null);
+      controller.abort();
+      await waiting;
+      unsubscribe();
+    }
+  });
   it('keeps settled input parked across metadata wakes until its context source changes', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(100);
