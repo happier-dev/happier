@@ -500,19 +500,26 @@ function retainUsageAllowance(batch: UsageQueryBatchResult, previous: RetainedUs
         const sources = new Map(slice.sources.map(source => [source.source, source]));
         for (const read of slice.quota ?? []) {
             const { current } = read;
-            if (!current || !wasConnectedServiceQuotaObserved(current)) continue;
+            if (!current) continue;
             const key = createCanonicalJsonSigningInput(read.source);
             const existing = heads.get(key);
             if (existing?.read.current && ['incoming_older', 'incoming_future'].includes(compareConnectedServiceQuotaObservationRecency({
                 existingObservedAtMs: existing.read.current.observedAtMs, incomingObservedAtMs: current.observedAtMs, nowMs,
             }))) continue;
             const source = `quota:${key}`;
-            const status = sources.get(source)?.status === 'available' ? 'available' : 'stale';
-            if (existing?.state.status === 'available' && status === 'stale' && existing.read.current === current) continue;
+            const sourceState = sources.get(source);
+            // A settled unobserved record has already answered the first read.
+            // Keep that answer when another history mode takes over its head.
+            const observed = wasConnectedServiceQuotaObserved(current);
+            if (!observed && (!sourceState || sourceState.status === 'pending' || sourceState.status === 'not_loaded')) continue;
+            const state: UsageQuerySourceState = !observed && sourceState ? sourceState : {
+                source, status: sourceState?.status === 'available' ? 'available' : 'stale', asOfMs: current.fetchedAtMs,
+            };
+            if (existing?.state.status === 'available' && state.status === 'stale' && existing.read.current === current) continue;
             const prior = (existing ?? previous?.heads.get(key))?.read;
             const head = prior?.current === current && prior.targets === read.targets && prior.waitingWork === read.waitingWork ? prior
                 : projectProviderAccountUsageQuotaReadV1({ input: { source: read.source }, current, nowMs, targets: read.targets, waitingWork: read.waitingWork });
-            heads.set(key, { read: head, state: { source, status, asOfMs: current.fetchedAtMs } });
+            heads.set(key, { read: head, state });
         }
     }
     return slices.size ? { slices, heads } : previous;

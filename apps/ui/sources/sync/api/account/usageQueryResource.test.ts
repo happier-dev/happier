@@ -6738,6 +6738,7 @@ describe('usage query captured Resource adapter', () => {
 
   it.each([
     ['year', 'ready'], ['all', 'ready'], ['year', 'exact failure'], ['year', 'shared failure'], ['year', 'current-only sibling'],
+    ['year', 'unobserved sibling on exact upgrade'], ['all', 'unobserved sibling on exact upgrade'],
   ] as const)(
     'keeps %s daily quota demand independent of a shorter exact-curve query (%s)', async (relative, scenario) => {
     const { buildProviderAccountUsageDaySummaryV1 } = await import('@happier-dev/protocol/connect/providerAccountUsageDaySummary');
@@ -6755,6 +6756,12 @@ describe('usage query captured Resource adapter', () => {
         windowDurationMs: day, unit: 'count', status: 'ok', details: {} }] });
     const snapshots = [sample(now - 10 * day, 20), sample(now - 3 * day, 30), sample(now - 3_600_000, 35), sample(now, 40)];
     const current = snapshots.at(-1)!;
+    const unreadRef = { ...ref, accountId: 'daily-quota-unobserved' };
+    const unreadSource = { bindingKind: 'account' as const, ref: unreadRef };
+    const unreadRecordKey = { ...recordKey, accountSubjectId: unreadRef.accountId };
+    const unread = ProviderAccountUsageSnapshotV1Schema.parse({ ...current, recordKey: unreadRecordKey,
+      recordId: buildProviderAccountUsageRecordId(unreadRecordKey), accountSubject: { kind: 'providerSubject', id: unreadRef.accountId },
+      state: 'error_last_known_good', observedAtMs: 0, fetchedAtMs: 0, meters: [] });
     const entries = snapshots.map((snapshot, index) => ({ id: `daily-resource-${index}`, observedAtMs: snapshot.fetchedAtMs,
       record: { content: { t: 'plain' as const, v: snapshot },
         metadata: { fetchedAt: snapshot.fetchedAtMs, staleAfterMs: day, status: 'ok' }, sources: [source] } }));
@@ -6773,14 +6780,28 @@ describe('usage query captured Resource adapter', () => {
       if (request.path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({ features: {
         connectedServices: { enabled: true, quotas: { enabled: true } },
       } }));
-      if (request.path.endsWith('/sources/resolve')) return Response.json({ source, recordId: current.recordId,
-        providerAccountId: ref.accountId, fetchedAt: now, staleAfterMs: day });
-      if (request.path.endsWith('/record')) return Response.json({ content: { t: 'plain', v: current },
-        metadata: { fetchedAt: now, staleAfterMs: day, status: 'ok' }, sources: [source] });
-      if (request.path.endsWith('/day-summaries')) return Response.json({ summaries: days, missingDays: [] });
+      if (request.path.endsWith('/sources/resolve')) {
+        const requested = JSON.parse(request.url.searchParams.get('source')!);
+        const unavailable = requested.ref.accountId === unreadRef.accountId;
+        return Response.json({ source: unavailable ? unreadSource : source, recordId: unavailable ? unread.recordId : current.recordId,
+          providerAccountId: requested.ref.accountId, fetchedAt: unavailable ? 0 : now, staleAfterMs: day });
+      }
+      if (request.path.endsWith('/record')) {
+        const unavailable = request.url.searchParams.get('recordId') === unread.recordId;
+        return Response.json({ content: { t: 'plain', v: unavailable ? unread : current },
+          metadata: { fetchedAt: unavailable ? 0 : now, staleAfterMs: day, status: unavailable ? 'unavailable' : 'ok' },
+          sources: [unavailable ? unreadSource : source] });
+      }
+      if (request.path.endsWith('/day-summaries')) {
+        const query = parseQualifiedConnectedAccountV4StructuredQueryValue(ProviderAccountUsageDaySummaryReadV1Schema,
+          request.url.searchParams.get('query'));
+        return Response.json({ summaries: query.recordId === unread.recordId ? [] : days, missingDays: [] });
+      }
       if (request.path.endsWith('/history')) {
         const query = parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedProviderAccountUsageHistoryRequestV4Schema,
           request.url.searchParams.get('query'));
+        if (query.recordId === unread.recordId) return 'projection' in query ? Response.json({ projection: null, complete: false })
+          : new Response(JSON.stringify({ entries: [], nextCursor: null }) + '\n', { headers: { 'Content-Type': 'application/x-ndjson' } });
         if ('projection' in query) {
           exactRanges.push(query.projection.range);
           return exactProjectionResponse ?? Response.json({ projection: null, complete: false });
@@ -6799,14 +6820,56 @@ describe('usage query captured Resource adapter', () => {
         reset: { source, recordId: current.recordId, meterId: 'daily', witness: { id: entries[0]!.id, observedAtMs: entries[0]!.observedAtMs } },
       }] : [] });
       return undefined;
-    }, { connectedAccountsV4: [{ ref, status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
-      credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [] }] });
+    }, { connectedAccountsV4: (scenario === 'unobserved sibling on exact upgrade' ? [ref, unreadRef] : [ref]).map(ref =>
+      ({ ref, status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
+        credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [] })) });
     const daily = normalizeUsageQuery({ period: { relative }, includeAccounting: false, includeQuota: true,
       includeQuotaHistory: true, includeQuotaExactHistory: false, includeComparison: false,
       includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false });
     const exact = normalizeUsageQuery({ ...daily, period: { relative: '7days' }, includeQuotaExactHistory: true });
     type Batch = Awaited<ReturnType<typeof readUiUsageQueryBatch>>;
     const quotaFor = (batch: Batch, query: typeof daily) => batch.results.find(slice => slice.key === getUsageQueryKey(query))?.quota?.[0];
+
+    if (scenario === 'unobserved sibling on exact upgrade') {
+      const exactResponse = createDeferred<Response>();
+      const store = getUsageQueryResourceStore(captured);
+      const entryFor = (query: typeof daily) => store.getEntry({ hostRead: 'usage.query',
+        input: projectNativeJsonValueForTransport({ queries: [query] }) });
+      const readSlice = (entry: ReturnType<typeof entryFor>) => {
+        const resource = entry.getSnapshot().value;
+        return resource ? decodeUsageQueryResource(resource).results[0] : undefined;
+      };
+      const unreadState = (slice: Batch['results'][number] | undefined) =>
+        slice?.sources.find(state => state.source === `quota:${createCanonicalJsonSigningInput(unreadSource)}`);
+      const before = entryFor(daily);
+      const details = entryFor(normalizeUsageQuery({ ...daily, includeQuotaExactHistory: true }));
+      const releaseBefore = before.subscribe(() => {}, true);
+      const readStates: (string | undefined)[] = [];
+      let releaseDetails: (() => void) | undefined;
+      try {
+        await expect.poll(() => unreadState(readSlice(before))?.status).toBe('partial');
+        expect(readSlice(before)?.quota?.find(row => row.source.ref.accountId === unreadRef.accountId)?.current?.state).toBe('error_last_known_good');
+        exactProjectionResponse = exactResponse.promise;
+        releaseDetails = details.subscribe(() => {
+          const slice = readSlice(details);
+          if (slice?.quota?.some(row => row.source.ref.accountId === ref.accountId && row.current)) {
+            readStates.push(unreadState(slice)?.status);
+          }
+        }, true);
+        await expect.poll(() => exactRanges.length).toBe(1);
+        await expect.poll(() => readStates.length).toBeGreaterThan(0);
+        expect.soft(readStates, 'settled unread account stays settled while exact history is requested').not.toContain('pending');
+        expect.soft(readStates, 'a partial exact result retains the admitted sibling state').not.toContain(undefined);
+        exactResponse.resolve(Response.json({ projection: null, complete: false }));
+        await expect.poll(() => readSlice(details)?.quota?.find(row => row.source.ref.accountId === ref.accountId)
+          ?.unusedCapacity?.windows.map(window => window.value.status)).toContain('available');
+      } finally {
+        exactResponse.resolve(Response.json({ projection: null, complete: false }));
+        releaseDetails?.();
+        releaseBefore();
+      }
+      return;
+    }
 
     if (scenario !== 'ready') {
       const sibling = scenario === 'current-only sibling' ? normalizeUsageQuery({ ...daily, includeQuotaHistory: false }) : daily;
