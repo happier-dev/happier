@@ -2272,7 +2272,7 @@ describe('usage query captured Resource adapter', () => {
       pullRequest: { provider: { id: 'forge', kind: 'github', displayName: 'Forge', baseUrl: 'https://github.com',
         nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } }, number: 1, title: 'Merged',
         url: 'https://github.com/owner/repo/pull/1', baseBranch: 'main', headBranch: 'feature', state: 'merged' } };
-    scmTransport.mockImplementation(async request => workBatch(request, { status: 'partial', evidence: [witness, witness], branchEvidence: [] }));
+    scmTransport.mockImplementation(async request => workBatch(request, { status: 'partial', evidence: [witness, witness], branchEvidence: [], pullRequestsRead: true }));
     // Private Coach checks consume accounting rows (b67931869cc); this compact Work summary excludes Coach.
     const summary = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, projects: ['historical-project'], includeWorkEvidence: true, workProjection: 'summary',
       includeSessionEvidence: true, includeCoach: false, includeTranscriptEvidence, includeQuotaHistory: false, includeActivity: true,
@@ -2292,7 +2292,7 @@ describe('usage query captured Resource adapter', () => {
     const ordinary = result.results.find(slice => slice.key === getUsageQueryKey(summary))!;
     const publicSlice = result.results.find(slice => slice.key === getUsageQueryKey(profile))!;
     expect.soft(JSON.stringify(deliveries), 'Private transcript demand needs admitted turns, not raw accounting rows').not.toContain('contributionPages');
-    expect(ordinary.workSummary).toEqual({ mergedPrCount: 1 });
+    expect(ordinary.workSummary).toEqual({ mergedPrCount: 1, pullRequestsRead: true });
     expect(ordinary.howYouWork?.intervals?.agentTimeMs).toBe(300);
     expect(publicSlice.publicProfileEvidence?.facts).toMatchObject({ agentTimeMs: 300, peakParallel: 1, mergedPrs: 1,
       sessionDurations: [{ agentId: 'codex', durationMs: 300 }] });
@@ -2306,7 +2306,7 @@ describe('usage query captured Resource adapter', () => {
     expect(UsageQueryBatchResultSchema.safeParse(result).success).toBe(true);
     scmTransport.mockRejectedValue(new RetryableServerResponseError(503, 'Unavailable'));
     const retained = await readUiUsageQueryBatch(captured, { queries: [summary, profile] }, undefined, result);
-    expect(retained.results.find(slice => slice.key === getUsageQueryKey(summary))?.workSummary).toEqual({ mergedPrCount: 1 });
+    expect(retained.results.find(slice => slice.key === getUsageQueryKey(summary))?.workSummary).toEqual({ mergedPrCount: 1, pullRequestsRead: true });
     const retainedProfile = retained.results.find(slice => slice.key === getUsageQueryKey(profile))!;
     expect(retainedProfile.publicProfileEvidence?.facts).toMatchObject({ agentTimeMs: 300, mergedPrs: 1 });
     expect(retainedProfile.sources).toContainEqual(expect.objectContaining({ source: 'work', status: 'stale' }));
@@ -3428,7 +3428,7 @@ describe('usage query captured Resource adapter', () => {
         url: 'https://github.com/owner/repo/pull/1', baseBranch: 'main', headBranch: 'feature', state: 'merged' } };
     scmTransport.mockImplementation(async request => ScmWorkEvidenceReadResponseSchema.parse({
       sessions: request.payload.sessions.map(({ sessionId }: { sessionId: string }) => ({
-        sessionId, status: 'partial', evidence: [{ ...witness, sessionId }], branchEvidence: [],
+        sessionId, status: 'partial', evidence: [{ ...witness, sessionId }], branchEvidence: [], pullRequestsRead: true,
       })),
     }));
     const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeQuota: false, includeQuotaHistory: false,
@@ -3456,7 +3456,7 @@ describe('usage query captured Resource adapter', () => {
       await publishMachineInventoryForTest(scope, [machine, createHydratedPlainMachineFixture({ id: unrelated.id, accountId: 'account-a',
         machine: { active: true, activeAt: Date.now(), presenceProtocolVersion: 1 } })]);
       clearMachineRequestReachabilityForMachine(scope, unrelated.id);
-      expect((await read()).workSummary?.mergedPrCount ?? 0).toBe(0);
+      expect((await read()).workSummary?.mergedPrCount).toBeUndefined();
       expect(scmTransport, 'unconsumed Machine recovery does not acquire Work').not.toHaveBeenCalled();
       daemonReachable = true;
       await publishMachineInventoryForTest(scope, [createHydratedPlainMachineFixture({ id: machine.id, accountId: 'account-a',
@@ -3607,7 +3607,7 @@ describe('usage query captured Resource adapter', () => {
         error: 'Machine unavailable', errorCode: 'target_unavailable',
       });
       return ScmWorkEvidenceReadResponseSchema.parse({ sessions: request.payload.sessions.map(({ sessionId }: { sessionId: string }) => ({
-        sessionId, status: 'partial', evidence: [{ ...witness, sessionId }], branchEvidence: [],
+        sessionId, status: 'partial', evidence: [{ ...witness, sessionId }], branchEvidence: [], pullRequestsRead: true,
       })) });
     });
     const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeQuota: false, includeQuotaHistory: false,
@@ -3618,7 +3618,7 @@ describe('usage query captured Resource adapter', () => {
     try {
       await entry.refresh();
       await expect.poll(() => entry.getSnapshot().subscription === 'live' && entry.getSnapshot().pending === 'idle').toBe(true);
-      expect(work()?.mergedPrCount ?? 0).toBe(0);
+      expect(work()?.mergedPrCount).toBeUndefined();
       expect.soft(scmTransport, 'an answered offline Machine receives zero automatic Work RPCs').not.toHaveBeenCalled();
       expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.sources).toContainEqual(expect.objectContaining({
         source: 'work', status: 'unknown', errorCode: 'machine_offline', unreadSessions: { machine_unavailable: 2 },

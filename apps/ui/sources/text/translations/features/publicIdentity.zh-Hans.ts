@@ -42,7 +42,7 @@ export const publicIdentity: PublicIdentityTranslations = {
       sections: { about: '关于你', numbers: '数字', patterns: '规律', detail: '更多细节', links: '链接与估算' },
       fields: {
         name: '名称', avatar: '照片', bio: '简介', links: '链接', since: '加入时间',
-        tokens: '令牌', activeDays: '活跃天数', agentTime: '智能体时长', mergedPrs: '已合并的拉取请求',
+        tokens: '令牌', activeDays: '活跃天数', agentTime: '智能体时长', mergedPrs: '已关联的已合并拉取请求',
         currentStreak: '当前连续天数', bestStreak: '此时间范围内的最长连续天数', peakParallel: '并行峰值', highlights: '亮点',
         calendar: '活跃程度', punch: '一周中的时段', agentMix: '智能体构成', sourceSplit: '智能体运行位置',
         agentActiveDays: '每个智能体的天数', weeklyAgentMix: '每周智能体构成', weeklyPeakParallel: '每周峰值',

@@ -21,7 +21,7 @@ export const PUBLIC_PROFILE_PAGE_COPY_EN = {
 };
 export const PUBLIC_PROFILE_FIELD_COPY_EN = {
   name: 'Name', avatar: 'Photo', bio: 'Bio', links: 'Links', since: 'Member since',
-  tokens: 'Tokens', activeDays: 'Active days', agentTime: 'Agent hours', mergedPrs: 'Merged pull requests',
+  tokens: 'Tokens', activeDays: 'Active days', agentTime: 'Agent hours', mergedPrs: 'Linked merged pull requests',
   currentStreak: 'Current streak', bestStreak: 'Best streak in this period', peakParallel: 'Peak parallel', highlights: 'Highlights',
   calendar: 'Activity levels', punch: 'Hours of the week', agentMix: 'Agent mix', sourceSplit: 'Where agents ran',
   agentActiveDays: 'Days per agent', weeklyAgentMix: 'Weekly agent mix', weeklyPeakParallel: 'Weekly peaks',

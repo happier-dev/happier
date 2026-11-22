@@ -63,7 +63,7 @@ function UsageOutcomesEmpty(props: UsageBodyProps & Readonly<{
   const { presentation } = props;
   useUsageWorkSessionNavigation(presentation.sessions, props.query, props.serverId, presentation.machineIds);
   useWidgetFrameBodyCaption(presentation.kind === 'unavailable' || presentation.kind === 'reading' ? usagePeriodPhrase(props.query)
-    : t('usage.board.work.outcomesCaption', { count: 0 }));
+    : t('usage.board.page.noneLinkedByEvidence'));
   if (presentation.kind === 'reading')
     return <UsageBodyReading testID={`${props.testID}.loading`} waitingOn={{ slice: props.slice, sources: ['work'] }} />;
   if (presentation.kind === 'unavailable')
@@ -92,8 +92,7 @@ function UsageOutcomesEmpty(props: UsageBodyProps & Readonly<{
     );
   return (
     <View style={styles.body} testID={`${props.testID}.outcomes`}>
-      {/* A measured zero, already counted in the caption ("0 pull requests"): one quiet line, never the card's
-          empty state at full width (USAGE-ACCEPT #5), the same line the funnel shows beside admitted facts. */}
+      {/* The measured-empty caption and the existing quiet line stay in the same slots. */}
       <UsageBodyInsufficient
         testID={`${props.testID}.noPrs`}
         replacesContent={false}
@@ -121,7 +120,9 @@ function UsageOutcomesFacts(props: UsageBodyProps) {
   const disclosures = useUsageWorkDisclosures(summary.outcomes.map(row => ({
     id: row.key, title: usageWorkPullRequestTitle(row.outcome.pullRequest),
   })));
-  useWidgetFrameBodyCaption(t('usage.board.work.outcomesCaption', { count: summary.outcomes.length }));
+  const linkedCount = summary.outcomes.length;
+  useWidgetFrameBodyCaption(props.slice.workSummary?.pullRequestsRead !== true ? usagePeriodPhrase(props.query)
+    : linkedCount === 0 ? t('usage.board.page.noneLinkedByEvidence') : t('usage.board.work.outcomesCaption', { count: linkedCount }));
   const { funnel } = summary;
   const accent = usageSeriesColor(appTheme, 0);
   const byKey = new Map(summary.outcomes.map((row) => [row.key, row]));

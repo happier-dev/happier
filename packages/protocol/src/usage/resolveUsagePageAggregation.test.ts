@@ -1662,6 +1662,26 @@ describe('resolveUsagePageAggregation', () => {
     } }] }).success).toBe(false);
   });
 
+  it('delivers merged outcomes for an all-time Session with a witnessed end and no lower bound', () => {
+    const nowMs = Date.parse('2026-10-23T07:00:00Z');
+    const query = normalizeUsageQuery({ session: ['session'], period: { relative: 'all' },
+      includeCoach: false, includeWorkEvidence: true });
+    const period = resolveUsageQueryPeriod(query, nowMs);
+    const value = UsageAnalyticsQueryResponseSchema.parse({
+      ...accounting, contributions: [],
+      coverage: { status: 'partial', reasons: ['incomplete_history'], missingDimensions: [], ranked: [], sources: [],
+        range: { ...period, complete: false } },
+    });
+    const result = resolveUsagePageAggregation({ queries: [query], nowMs,
+      accounting: [{ query, period, value, status: 'available' }],
+      work: [{ query, status: 'available', evidence: [], pullRequestReadSessions: [] }],
+    }, bundledUsageModelPriceCatalog);
+    expect(result.results[0]?.mergedOutcomes).toMatchObject({
+      period: { startMs: 0, endMs: nowMs }, linkedMergedCount: 0,
+    });
+    expect(UsageQueryBatchResultSchema.safeParse(result).success).toBe(true);
+  });
+
   it('does not promote an unread Work allocation into known-zero merged outcomes during rolling rereads', () => {
     const query = normalizeUsageQuery({ population: 'public_eligible_personal', period: { relative: '90days' },
       includeSessionEvidence: false, includeWorkEvidence: true });

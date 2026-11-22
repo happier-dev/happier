@@ -40,6 +40,7 @@ import { UsageSessionValueWidget } from './UsageSessionValueWidget';
 import { UsageHumanLoopWidget } from './UsageHumanLoopWidget';
 import { UsageParallelWidget } from './UsageParallelWidget';
 import { UsageOutcomesWidget } from './UsageOutcomesWidget';
+import { UsageEfficiencyWidget } from './UsageEfficiencyWidget';
 import { UsageCoachWidget } from './UsageCoachWidget';
 import { storage } from '@/sync/domains/state/storage';
 import { formatUsageObservedAt } from '@/sync/domains/usage/usageCalendarPresentation';
@@ -1243,24 +1244,39 @@ describe('Work and Coach widget bodies', () => {
     expect(screen.getTextContent()).toContain('2493');
   });
 
-  it('keeps a known open PR without counting unread merges or claiming no links in the ledger', async () => {
-    const open = evidence('s1', 't1', 2493);
-    const openWork = allocateUsageOutcomes({ contributions, evidence: [
-      { ...open, pullRequest: { ...open.pullRequest, state: 'open' } },
+  it.each(['open', 'merged'] as const)('keeps a known %s PR without counting unread merges or claiming no links in the ledger', async state => {
+    const witness = evidence('s1', 't1', 2493);
+    const witnessedWork = allocateUsageOutcomes({ contributions, evidence: [
+      { ...witness, pullRequest: { ...witness.pullRequest, state } },
     ] });
-    const unread = { ...slice, workSummary: undefined, work: openWork, sources: [
+    const unread = { ...slice, workSummary: projectUsageWorkSummary(witnessedWork.outcomes, false, witnessedWork), work: witnessedWork, sources: [
       { source: 'work', status: 'partial', errorCode: 'work_evidence_failed', unreadSessions: { failed: 1 } },
     ] } satisfies UsageQueryResultSlice;
     const outcomes = await renderScreen(<UsageOutcomesWidget {...props} slice={unread} id="usage_outcomes" testID="outcomes" />);
     expect(outcomes.getTextContent()).toContain('2493');
     expect(outcomes.findByType(OutcomeFunnel).props.steps.find(step => step.id === 'merged')?.value).toBeNull();
-    await outcomes.update(<UsageOutcomesWidget {...props} slice={{ ...unread,
-      workSummary: projectUsageWorkSummary(openWork.outcomes, true, openWork) }} id="usage_outcomes" testID="outcomes" />);
-    expect(outcomes.findByType(OutcomeFunnel).props.steps.find(step => step.id === 'merged')?.value).toBe(0);
+    const measured = { ...unread, workSummary: projectUsageWorkSummary(witnessedWork.outcomes, true, witnessedWork) };
+    await outcomes.update(<UsageOutcomesWidget {...props} slice={measured} id="usage_outcomes" testID="outcomes" />);
+    expect(outcomes.findByType(OutcomeFunnel).props.steps.find(step => step.id === 'merged')?.value).toBe(state === 'merged' ? 1 : 0);
+    const efficiency = await renderScreen(<UsageEfficiencyWidget {...props} slice={unread} id="usage_efficiency" testID="efficiency" />);
+    const perMerge = () => efficiency.findAllByType(HappierDataMetric).find(metric => metric.props.testID === 'efficiency.perMergedPr')?.props;
+    expect(perMerge()).toMatchObject({ value: '—', caption: t('usage.board.page.notMeasuredYet') });
+    await efficiency.update(<UsageEfficiencyWidget {...props} slice={measured} id="usage_efficiency" testID="efficiency" />);
+    expect(perMerge()?.caption).toBe(t(state === 'merged' ? 'usage.board.page.linkedByEvidence' : 'usage.board.page.noneLinkedByEvidence'));
     const failed = { ...unread, work: allocateUsageOutcomes({ contributions, evidence: [] }) };
     const ledger = await renderScreen(<UsageProjectLedgerWidget {...props} slice={failed} id="usage_project_ledger" testID="ledger" />);
     expect(ledger.getTextContent()).not.toContain(t('usage.board.work.noneLinked'));
     expect(ledger.findByTestId('ledger.conservation')?.props.accessibilityLabel).toContain(t('usage.board.work.workUnavailableTitle'));
+  });
+
+  it('keeps ambiguous witnesses without known PR rows unavailable after an incomplete read', async () => {
+    const ambiguous = allocateUsageOutcomes({ contributions, evidence: [evidence('s1', 't1', 1), evidence('s1', 't1', 2)] });
+    const partial = { ...slice, work: ambiguous, workSummary: projectUsageWorkSummary(ambiguous.outcomes, false, ambiguous),
+      sources: [{ source: 'work', status: 'partial', unreadSessions: { failed: 1 } }] } satisfies UsageQueryResultSlice;
+    const screen = await renderScreen(<UsageOutcomesWidget {...props} slice={partial} id="usage_outcomes" testID="outcomes" />);
+    expect(screen.findByTestId('outcomes.workUnavailable')).toBeTruthy();
+    expect(screen.findByTestId('outcomes.noPrs')).toBeFalsy();
+    expect(screen.findAllByType(OutcomeFunnel)).toHaveLength(0);
   });
 
   it('keeps unread PR evidence unknown in both styles without reading money or losing Session commands', async () => {
@@ -1290,7 +1306,7 @@ describe('Work and Coach widget bodies', () => {
     expect(screen.findByTestId('outcomes.funnel')).toBeFalsy();
     expect(screen.findByTestId('outcomes.noPrs')).toBeFalsy();
     expect(screen.findByTestId('outcomes.workUnavailable')).toBeTruthy();
-    expect(caption).not.toHaveBeenLastCalledWith(t('usage.board.work.outcomesCaption', { count: 0 }));
+    expect(caption).not.toHaveBeenLastCalledWith(t('usage.board.page.noneLinkedByEvidence'));
     await act(async () => { await screen.findByType(SurfaceFreshnessLine).props.action.onPress(); });
     expect(refresh).toHaveBeenCalledOnce();
     const commands = reader.current!.readCurrentUiContext()!.commands.filter(row => row.title.startsWith(`${t('common.open')}: `));
@@ -1314,14 +1330,18 @@ describe('Work and Coach widget bodies', () => {
     expect(shipped.findByTestId('shipped.unavailable')).toBeTruthy();
     expect(shipped.findByTestId('shipped.empty')).toBeFalsy();
     const mergedOutcomes = summarizeUsageMergedOutcomes({
-      work: bare, period: { startMs: 0, endMs: 1000 }, timeZoneOffsetMinutes: query.timeZoneOffsetMinutes,
+      work: bare, period: { startMs: 0, endMs: 1000 }, timeZoneOffsetMinutes: query.timeZoneOffsetMinutes, pullRequestsRead: true,
     });
-    await shipped.update(<UsageOutcomesWidget {...props} slice={{ ...workRead, mergedOutcomes }}
+    const workSummary = projectUsageWorkSummary(bare.outcomes, true, bare);
+    await shipped.update(<UsageOutcomesWidget {...props} slice={{ ...workRead, mergedOutcomes, workSummary }}
       presentation={{ style: 'shipped' }} id="usage_outcomes" testID="shipped" />);
     expect(shipped.findByTestId('shipped.empty')).toBeTruthy();
-    const measured = await renderScreen(<UsageOutcomesWidget {...props} slice={{ ...workRead, mergedOutcomes,
-      workSummary: projectUsageWorkSummary(bare.outcomes, true, bare) }}
-      id="usage_outcomes" testID="measured" />);
+    expect(shipped.getTextContent()).toMatch(/merged PRs linked in this period/);
+    const measured = await renderScreen(<WidgetFrameBodyCaptionContext.Provider value={caption}>
+      <UsageOutcomesWidget {...props} slice={{ ...workRead, mergedOutcomes, workSummary }}
+        id="usage_outcomes" testID="measured" />
+    </WidgetFrameBodyCaptionContext.Provider>);
+    expect(caption).toHaveBeenLastCalledWith(t('usage.board.page.noneLinkedByEvidence'));
     expect(measured.findByTestId('measured.noPrs')).toBeTruthy();
     expect(measured.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'measured.noPrs')?.props.size).toBe('line');
     expect(moneyReads, 'neither unavailable nor measured-empty Outcomes reads money').toBe(0);

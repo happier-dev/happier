@@ -107,10 +107,9 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
   const unpriced = view.pageCost.selection != null && view.pageCost.amountUsd === null;
   const hasRatios =
     efficiency.cacheHitRatePct !== null || efficiency.costPerMtokUsd !== null;
-  // Work evidence is not part of this widget's own read: the figure names a merged PR only when the slice carries it.
-  const merged = props.slice.work?.outcomes.filter((outcome) => outcome.pullRequest.state === 'merged') ?? null;
-  const perMergedPrUsd = merged && merged.length > 0 && view.pageCost.amountUsd !== null
-    ? view.pageCost.amountUsd / merged.length : null;
+  const merged = props.slice.workSummary?.mergedPrCount ?? null;
+  const perMergedPrUsd = merged !== null && merged > 0 && view.pageCost.amountUsd !== null
+    ? view.pageCost.amountUsd / merged : null;
   const segments = usageCompositionSegments(composition, (index) =>
     usageSeriesColor(theme, index),
   );
@@ -185,9 +184,9 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
             value={perMergedPrUsd ?? unknownFigure}
             valueFormatter={(value) => formatUsageCost(value, efficiency.currency)}
             caption={
-              !merged
+              merged === null
                 ? t('usage.board.page.notMeasuredYet')
-                : merged.length === 0
+                : merged === 0
                   ? t('usage.board.page.noneLinkedByEvidence')
                   : t('usage.board.page.linkedByEvidence')
             }

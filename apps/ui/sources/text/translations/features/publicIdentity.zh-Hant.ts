@@ -42,7 +42,7 @@ export const publicIdentity: PublicIdentityTranslations = {
       sections: { about: '關於你', numbers: '數字', patterns: '規律', detail: '更多細節', links: '連結與估算' },
       fields: {
         name: '名稱', avatar: '照片', bio: '簡介', links: '連結', since: '加入時間',
-        tokens: 'Token', activeDays: '活躍天數', agentTime: '代理時間', mergedPrs: '已合併的 Pull Request',
+        tokens: 'Token', activeDays: '活躍天數', agentTime: '代理時間', mergedPrs: '已連結的已合併拉取請求',
         currentStreak: '目前連續天數', bestStreak: '此期間的最長連續天數', peakParallel: '並行峰值', highlights: '亮點',
         calendar: '活躍程度', punch: '一週中的時段', agentMix: '代理組成', sourceSplit: '代理執行位置',
         agentActiveDays: '每個代理的天數', weeklyAgentMix: '每週代理組成', weeklyPeakParallel: '每週峰值',

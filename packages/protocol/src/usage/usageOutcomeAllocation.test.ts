@@ -44,7 +44,7 @@ describe('evidence-derived Work allocation', () => {
         state: 'closed' as const, closedAtMs: period.startMs } },
     ];
     const work = allocateUsageOutcomes({ contributions, evidence: [...witnesses, witnesses[0]] });
-    const summary = summarizeUsageMergedOutcomes({ work, period, timeZoneOffsetMinutes });
+    const summary = summarizeUsageMergedOutcomes({ work, period, timeZoneOffsetMinutes, pullRequestsRead: true });
     expect(summary).toMatchObject({ period, timeZoneOffsetMinutes, attributionBasis: 'contribution_count',
       linkedMergedCount: 5, mergedInPeriodCount: 2, outsidePeriodMergedCount: 2, undatedMergedCount: 1,
       mergeWeeks: [
@@ -63,7 +63,7 @@ describe('evidence-derived Work allocation', () => {
       agentContributions: [{ agentId: null, contributionCount: 1 }], leadingAgentIds: [null],
     });
     expect(summarizeUsageMergedOutcomes({ work: allocateUsageOutcomes({ contributions: [...contributions].reverse(),
-      evidence: [...witnesses].reverse() }), period, timeZoneOffsetMinutes })).toEqual(summary);
+      evidence: [...witnesses].reverse() }), period, timeZoneOffsetMinutes, pullRequestsRead: true })).toEqual(summary);
   });
 
   it('retains Unknown and tied leading Agents while refusing ambiguous or shared-writer attribution', () => {
@@ -82,7 +82,7 @@ describe('evidence-derived Work allocation', () => {
       evidence('s4', 't4', 2), evidence('s4', 't4', 3),
       { ...evidence('s5', 't5', 4), attributionScope: 'shared_worktree' },
     ] });
-    const summary = summarizeUsageMergedOutcomes({ work, period, timeZoneOffsetMinutes: 0 });
+    const summary = summarizeUsageMergedOutcomes({ work, period, timeZoneOffsetMinutes: 0, pullRequestsRead: true });
     expect(summary).toMatchObject({ linkedMergedCount: 1, mergedInPeriodCount: 1, outsidePeriodMergedCount: 0,
       undatedMergedCount: 0, mergeWeeks: [{ bucketStartMs: 0, bucketEndMs: 1_000, count: 1 }],
       outcomes: [{ key: '["repo",1]', mergedAtMs: 0, attribution: 'mixed',
@@ -95,7 +95,7 @@ describe('evidence-derived Work allocation', () => {
       { ...summary.outcomes[0].agentContributions[0], currentSessionAgent: 'guessed' },
     ] }] }).success).toBe(false);
     expect(summarizeUsageMergedOutcomes({ work: allocateUsageOutcomes({ contributions: [], evidence: [] }), period,
-      timeZoneOffsetMinutes: 0 })).toEqual({ period, timeZoneOffsetMinutes: 0, attributionBasis: 'contribution_count',
+      timeZoneOffsetMinutes: 0, pullRequestsRead: true })).toEqual({ period, timeZoneOffsetMinutes: 0, attributionBasis: 'contribution_count',
       linkedMergedCount: 0, mergedInPeriodCount: 0, outsidePeriodMergedCount: 0, undatedMergedCount: 0,
       mergeWeeks: [], outcomes: [] });
   });

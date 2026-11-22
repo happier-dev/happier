@@ -914,7 +914,7 @@ describe('one selected money basis across Usage bodies', () => {
     expect(metrics.map(metric => metric.props.testID)).toEqual(['efficiency.cacheHit', 'efficiency.perMtok', 'efficiency.perMergedPr', 'efficiency.noKeptChange']);
     // No merged PR is linked in this slice, and nothing measures work that kept no change.
     expect(metrics.slice(2).map(metric => [metric.props.value, metric.props.caption]))
-      .toEqual([['—', t('usage.board.page.noneLinkedByEvidence')],
+      .toEqual([['—', t('usage.board.page.notMeasuredYet')],
         ['—', t('usage.board.page.notMeasuredYet')]]);
   });
   it('uses the common reported basis rather than mixing one invoice with another reported charge', async () => {

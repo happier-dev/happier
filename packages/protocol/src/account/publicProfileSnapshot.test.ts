@@ -41,7 +41,8 @@ function result(evidence?: readonly UsageWorkEvidence[], complete = false, agent
       updatedAt: row.observedAtMs + (index + 1) * 100 })) } };
   const detail = projectUsageQueryWorkEvidence({ query, sessions: [session], contributions: accounting.contributions });
   return resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', asOfMs: endMs, value: accounting }],
-    howYouWork: [{ query, asOfMs: endMs, detail }], ...(evidence ? { work: [{ query, evidence, status: 'available' as const, asOfMs: endMs }] } : {}) }, bundledUsageModelPriceCatalog).results[0]!;
+    howYouWork: [{ query, asOfMs: endMs, detail }], ...(evidence ? { work: [{ query, evidence, status: 'available' as const, asOfMs: endMs,
+      pullRequestReadSessions: [session.id] }] } : {}) }, bundledUsageModelPriceCatalog).results[0]!;
 }
 
 describe('public-profile snapshot computation from canonical Usage', () => {
@@ -289,7 +290,7 @@ describe('public-profile snapshot computation from canonical Usage', () => {
         const slice = resolveUsagePageAggregation({ queries: [query], accounting: snapshots, work }, bundledUsageModelPriceCatalog).results[0]!;
         const built = buildPublicProfileSnapshot({ queryResult: slice, policy, nowMs: endMs });
         if (built.kind !== 'ready') throw new Error('Expected measured accounting with independently read Work');
-        expect(built.snapshot.facts.mergedPrs).toBe(1);
+        expect(built.snapshot.facts.mergedPrs).toBe(empty ? 1 : undefined);
         const happier = built.snapshot.lenses?.find(lens => lens.execution === 'happier')?.facts;
         expect(happier?.mergedPrs).toBe(empty ? 0 : undefined);
         if (!empty) expect(happier?.tokens).toBe(10);

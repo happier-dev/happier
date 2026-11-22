@@ -286,11 +286,11 @@ export function UsageRiverStyleBody(props: UsageChartStyleBodyProps) {
 export function UsageShippedStyleBody(props: UsageChartStyleBodyProps) {
   const host = useUsageChartHost(props.serverId);
   useStyleCaption(t('usage.board.charts.inputShipped'));
-  const model = React.useMemo(() => projectUsageShippedModel(props.slice), [props.slice]);
+  const evidence = readUsageWorkOutcomesEvidence(props.slice, 'mergedOutcomes');
+  const model = React.useMemo(() => evidence === 'observed' ? projectUsageShippedModel(props.slice) : null, [evidence, props.slice]);
   const agents = React.useMemo(() => [...new Set(model?.mode === 'weeks' ? model.weeks.flatMap((week) => week.spines.filter((spine) => spine !== 'mixed')) : [])].map(host.agent),
     [model, host.agent]);
   if (!model || model.total === 0) {
-    const evidence = readUsageWorkOutcomesEvidence(props.slice, 'mergedOutcomes');
     if (evidence === 'reading') return <UsageBodyReading testID={`${props.testID}.loading`} waitingOn={{ slice: props.slice, sources: ['work'] }} />;
     if (evidence === 'unavailable')
       return <UsageBodyInsufficient testID={`${props.testID}.unavailable`} title={t('usage.board.charts.shippedUnavailableTitle')} />;

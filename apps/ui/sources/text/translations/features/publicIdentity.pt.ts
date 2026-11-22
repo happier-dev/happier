@@ -42,7 +42,7 @@ export const publicIdentity: PublicIdentityTranslations = {
       sections: { about: 'Sobre você', numbers: 'Números', patterns: 'Padrões', detail: 'Detalhes mais finos', links: 'Links e estimativas' },
       fields: {
         name: 'Nome', avatar: 'Foto', bio: 'Bio', links: 'Links', since: 'Membro desde',
-        tokens: 'Tokens', activeDays: 'Dias ativos', agentTime: 'Horas de agente', mergedPrs: 'Pull requests integrados',
+        tokens: 'Tokens', activeDays: 'Dias ativos', agentTime: 'Horas de agente', mergedPrs: 'Pull requests integrados vinculados',
         currentStreak: 'Sequência atual', bestStreak: 'Melhor sequência neste período', peakParallel: 'Pico em paralelo', highlights: 'Destaques',
         calendar: 'Níveis de atividade', punch: 'Horas da semana', agentMix: 'Mix de agentes', sourceSplit: 'Onde os agentes rodaram',
         agentActiveDays: 'Dias por agente', weeklyAgentMix: 'Mix semanal de agentes', weeklyPeakParallel: 'Picos semanais',

@@ -4028,11 +4028,12 @@ outcome and branch tables; each allocation carries only the corresponding
 identity and evidence. Its bounded `workSummary` also retains distinct Session,
 contribution and allocated-contribution counts.
 
-The Work owner publishes a measured merged-PR zero only when the requested
-Work population has PR coverage. A partial read can still publish witnessed
-merges. The Work funnel consumes the separate count of Sessions with merged
-outcomes, and Shipped can leave its in-period count absent while Work retains
-links merged outside the period. Public-profile execution lenses use their own
+The Work owner publishes counts of merged PRs linked by the read, and of
+Sessions with those links, when each Session in the requested Work population
+has PR coverage. That witness covers the checkout's current head. A branch
+merged after the checkout moves away can be missed. An incomplete read keeps
+witnessed links, including undated and outside-period merges, with the
+population counts absent. Public-profile execution lenses use their own
 admitted Work population and can answer independently.
 
 Work reads keep any readable Session evidence and report missing coverage as

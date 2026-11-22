@@ -63,7 +63,7 @@ export const UsageMergedOutcomeSummarySchema = lazyZodSchema(() => z.strictObjec
   attributionBasis: z.literal('contribution_count'),
   /** Merged outcomes linked to admitted work, regardless of when the merge occurred. */
   linkedMergedCount: z.number().check(z.int(), z.nonnegative()),
-  /** Witnessed in-period merges. An absent count means the chart population was unread and no chartable merge was witnessed. */
+  /** Exact in-period count when the admitted Work population has PR coverage. */
   mergedInPeriodCount: z.optional(z.number().check(z.int(), z.nonnegative())),
   outsidePeriodMergedCount: z.number().check(z.int(), z.nonnegative()),
   undatedMergedCount: z.number().check(z.int(), z.nonnegative()),
@@ -94,16 +94,14 @@ export const UsageWorkSummarySchema = lazyZodSchema(() => z.strictObject({
 }));
 export type UsageWorkSummary = z.infer<typeof UsageWorkSummarySchema>;
 
-/** Project a known lower bound, or an exact zero when the admitted PR reads answered. */
+/** Project exact merged counts only when the admitted PR reads answered. */
 export function projectUsageWorkSummary(outcomes: readonly Pick<UsageWorkOutcome, 'pullRequest'>[],
   pullRequestsRead: boolean, work?: Pick<UsageWorkProjection, 'allocations'>): UsageWorkSummary | undefined {
-  const mergedPrCount = outcomes.filter(outcome => outcome.pullRequest.state === 'merged').length;
-  const countKnown = pullRequestsRead || mergedPrCount > 0;
-  const summary: UsageWorkSummary = {
-    ...(countKnown ? { mergedPrCount } : {}),
-    ...(pullRequestsRead ? { pullRequestsRead: true } : {}),
-  };
-  if (!work) return countKnown ? summary : undefined;
+  const summary: UsageWorkSummary = pullRequestsRead ? {
+    pullRequestsRead: true,
+    mergedPrCount: outcomes.filter(outcome => outcome.pullRequest.state === 'merged').length,
+  } : {};
+  if (!work) return pullRequestsRead ? summary : undefined;
   const sessions = new Set<string>();
   const mergedSessions = new Set<string>();
   let allocatedContributionCount = 0;
@@ -112,16 +110,16 @@ export function projectUsageWorkSummary(outcomes: readonly Pick<UsageWorkOutcome
     if (sessionId !== null) sessions.add(sessionId);
     if (row.outcome === null) continue;
     allocatedContributionCount++;
-    if (sessionId !== null && row.outcome.pullRequest.state === 'merged') mergedSessions.add(sessionId);
+    if (pullRequestsRead && sessionId !== null && row.outcome.pullRequest.state === 'merged') mergedSessions.add(sessionId);
   }
-  return { ...summary, ...(countKnown ? { mergedSessionCount: mergedSessions.size } : {}),
+  return { ...summary, ...(pullRequestsRead ? { mergedSessionCount: mergedSessions.size } : {}),
     sessionCount: sessions.size, contributionCount: work.allocations.length, allocatedContributionCount };
 }
 
 /** Consumes the canonical allocation; usage timestamps never stand in for merge dates. */
 export function summarizeUsageMergedOutcomes(input: Readonly<{
   work: UsageWorkProjection; period: Readonly<{ startMs: number; endMs: number }>; timeZoneOffsetMinutes: number;
-  pullRequestsRead?: boolean;
+  pullRequestsRead: boolean;
 }>): UsageMergedOutcomeSummary {
   const countsByOutcome = new Map<string, Map<string | null, number>>();
   for (const allocation of input.work.allocations) {
@@ -161,9 +159,7 @@ export function summarizeUsageMergedOutcomes(input: Readonly<{
       attribution: agentContributions.length > 1 ? 'mixed' : agentContributions[0]?.agentId == null ? 'unknown' : 'single',
       agentContributions, leadingAgentIds: agentContributions.filter(row => row.contributionCount === leadingCount).map(row => row.agentId) });
   }
-  if (input.pullRequestsRead !== false || mergedInPeriodCount > 0 || summary.undatedMergedCount > 0) {
-    summary.mergedInPeriodCount = mergedInPeriodCount;
-  }
+  if (input.pullRequestsRead) summary.mergedInPeriodCount = mergedInPeriodCount;
   summary.mergeWeeks = [...weeks.values()].sort((left, right) => left.bucketStartMs - right.bucketStartMs);
   return summary;
 }

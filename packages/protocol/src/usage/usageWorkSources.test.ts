@@ -55,7 +55,7 @@ describe('Usage Work repository admission', () => {
     });
     const batch = resolveUsagePageAggregation({ queries: [query], accounting, work }, bundledUsageModelPriceCatalog);
     const result = UsageQueryResultSliceSchema.parse(batch.results[0]);
-    expect(result.workSummary?.mergedPrCount).toBe(1);
+    expect(result.workSummary?.mergedPrCount).toBeUndefined();
     expect(result.work?.allocations.map(row => [row.contribution.sessionId, row.reason, row.contribution.cost.reportedUsd])).toEqual([
       ['linked', 'allocated', 1], ['unlinked', 'missing_evidence', 2], ['unavailable', 'missing_evidence', 3],
       ['unresolved', 'missing_evidence', 4], ['offline', 'missing_evidence', 5],

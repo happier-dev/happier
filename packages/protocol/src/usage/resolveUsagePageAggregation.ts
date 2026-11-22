@@ -189,11 +189,17 @@ export const UsageQueryResultSliceSchema = lazyZodSchema(() => z.strictObject({
   const witnessedPeriod = 'relative' in slice.shownQuery.period
     ? slice.coach?.period ?? accountingPeriod
     : slice.shownQuery.period;
-  if (slice.mergedOutcomes && (!slice.work || witnessedPeriod?.startMs === undefined || witnessedPeriod.endMs === undefined
+  const pullRequestsRead = slice.workSummary?.pullRequestsRead === true;
+  if (!pullRequestsRead && (slice.workSummary?.mergedPrCount !== undefined || slice.workSummary?.mergedSessionCount !== undefined)) {
+    context.addIssue({ code: 'custom', path: ['workSummary'], message: 'Exact merged counts require admitted PR coverage' });
+  }
+  // All-time accounting has a witnessed end and no lower bound. The Work
+  // projection represents that open start as zero, without bounding the query.
+  if (slice.mergedOutcomes && (!slice.work || witnessedPeriod?.endMs === undefined
     || !slice.sources.some(source => source.source === 'work' && ['available', 'partial', 'stale', 'pending'].includes(source.status))
     || !sameStrictJsonValue(slice.mergedOutcomes, summarizeUsageMergedOutcomes({ work: slice.work,
-      period: { startMs: witnessedPeriod.startMs, endMs: witnessedPeriod.endMs }, timeZoneOffsetMinutes: slice.shownQuery.timeZoneOffsetMinutes,
-      pullRequestsRead: slice.mergedOutcomes.mergedInPeriodCount !== undefined })))) {
+      period: { startMs: witnessedPeriod.startMs ?? 0, endMs: witnessedPeriod.endMs }, timeZoneOffsetMinutes: slice.shownQuery.timeZoneOffsetMinutes,
+      pullRequestsRead })))) {
     context.addIssue({ code: 'custom', path: ['mergedOutcomes'], message: 'Merged outcomes must preserve the admitted Work, period and calendar' });
   }
   if (week?.status === 'available' && (!slice.accounting?.activity
@@ -1042,7 +1048,7 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
       const summary = work && (readableWork || retainWork) ? projectUsageWorkSummary(work.outcomes, pullRequestsRead, work)
         : admittedTurns ? projectUsageWorkSummary(resolveUsageWorkOutcomeAdmissions({ turns: admittedTurns, evidence: workEvidence ?? [] }).outcomes,
           pullRequestsRead)
-        : sameRetainedWork && (pullRequestsRead || (prior?.workSummary?.mergedPrCount ?? 0) > 0) ? prior?.workSummary : undefined;
+        : sameRetainedWork && pullRequestsRead ? prior?.workSummary : undefined;
       const profileLenses = query.population === 'public_eligible_personal' && query.includeWorkEvidence && accountingValue && !retainWork
         && (workEvidence !== undefined || readSessions !== undefined)
         ? projectUsagePublicWorkLenses(accountingValue, workEvidence ?? [], readSessions) : [];
@@ -1051,10 +1057,13 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
     const { work: workProjection, summary: workSummary, profileLenses } = workFacts.value;
     const pullRequestsRead = workSummary?.pullRequestsRead === true;
     const mergedFacts = projectAdmittedUsageInputs(admitted?.mergedOutcomes, {
-      work: workProjection, startMs, endMs, pullRequestsRead, observed: workSummary?.mergedPrCount !== undefined,
-    }, () => workProjection && workSummary?.mergedPrCount !== undefined && endMs !== undefined && endMs >= startMs
-      ? summarizeUsageMergedOutcomes({ work: workProjection, period: { startMs, endMs },
-        timeZoneOffsetMinutes: query.timeZoneOffsetMinutes, pullRequestsRead }) : undefined);
+      work: workProjection, startMs, endMs, pullRequestsRead,
+    }, () => {
+      if (!workProjection || endMs === undefined || endMs < startMs) return undefined;
+      const evidence = summarizeUsageMergedOutcomes({ work: workProjection, period: { startMs, endMs },
+        timeZoneOffsetMinutes: query.timeZoneOffsetMinutes, pullRequestsRead });
+      return pullRequestsRead || evidence.linkedMergedCount > 0 ? evidence : undefined;
+    });
     const retainedProfile = prior?.publicProfileEvidence && (retainedDetail || retainWork && canRetainDetail)
       ? retainPublicProfileEvidence(prior.publicProfileEvidence, Boolean(retainedDetail), retainWork && canRetainDetail) : undefined;
     const publicProfileEvidence = profileLenses.length ? {

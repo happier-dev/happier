@@ -132,8 +132,7 @@ export function readUsageWorkOutcomesEvidence(
 ): 'observed' | 'reading' | 'unavailable' {
   const status = slice.sources.find(source => source.source === 'work')?.status;
   // The query projection decides whether an empty result was observed.
-  if (projection === 'mergedOutcomes' ? slice.mergedOutcomes?.mergedInPeriodCount !== undefined
-    : slice.work !== undefined && slice.workSummary?.pullRequestsRead === true) return 'observed';
+  if (slice[projection] !== undefined && slice.workSummary?.pullRequestsRead === true) return 'observed';
   return status === 'pending' || status === 'not_loaded' ? 'reading' : 'unavailable';
 }
 
@@ -156,7 +155,7 @@ export function readUsageWorkOutcomesPresentation(slice: UsageQueryResultSlice):
       witnessed ||= row.evidence.length > 0;
     }
     allocatedOutcome ||= row.reason === 'allocated' && !!row.outcome;
-    if (sessions.size > 0 && (allocatedOutcome || witnessed)) return { kind: 'ready' };
+    if (sessions.size > 0 && (allocatedOutcome || (evidence === 'observed' && witnessed))) return { kind: 'ready' };
   }
   return { kind: evidence !== 'observed' ? evidence : sessions.size === 0 ? 'empty' : 'noPrs',
     // Empty presentations have no monetary ordering; retain first-observed Session identity order.

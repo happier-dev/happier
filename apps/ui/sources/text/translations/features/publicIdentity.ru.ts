@@ -42,7 +42,7 @@ export const publicIdentity: PublicIdentityTranslations = {
       sections: { about: 'О вас', numbers: 'Числа', patterns: 'Закономерности', detail: 'Подробности', links: 'Ссылки и оценки' },
       fields: {
         name: 'Имя', avatar: 'Фото', bio: 'О себе', links: 'Ссылки', since: 'С нами с',
-        tokens: 'Токены', activeDays: 'Активные дни', agentTime: 'Часы агентов', mergedPrs: 'Слитые pull request’ы',
+        tokens: 'Токены', activeDays: 'Активные дни', agentTime: 'Часы агентов', mergedPrs: 'Связанные слитые pull request’ы',
         currentStreak: 'Текущая серия', bestStreak: 'Лучшая серия за этот период', peakParallel: 'Пик параллельных агентов', highlights: 'Главное',
         calendar: 'Уровни активности', punch: 'Часы недели', agentMix: 'Состав агентов', sourceSplit: 'Где работали агенты',
         agentActiveDays: 'Дни по агентам', weeklyAgentMix: 'Недельный состав агентов', weeklyPeakParallel: 'Недельные пики',

@@ -13737,9 +13737,18 @@ settingsSession: {
     },
 
     usage: {
-        board: { charts: { ...usageChartInputTranslations['zh-Hant'], ...usageChartPlanetFamilyTranslations['zh-Hant'] }, recap: {
+        board: { charts: {
+            ...usageChartInputTranslations['zh-Hant'],
+            ...usageChartPlanetFamilyTranslations['zh-Hant'],
+            shippedA11y: ({ count }: { count: string | number }) => `已交付：依合併週統計，共有 ${count} 個與代理程式工作連結的已合併 PR`,
+            shippedCount: ({ count }: { count: string | number }) => `與代理程式工作連結的 ${count} 個已合併 PR`,
+            shippedEmptyTitle: "這段期間未連結到已合併的 PR",
+            noMergeDate: "沒有合併日期",
+        }, work: {
+            funnelMerged: "連結到已合併的 PR",
+        }, recap: {
             deliveryUnconfirmed: "系統分享面板已開啟，但無法確認是否完成。重試前請檢查所選應用程式。",
-            statMergedPrs: "已合併 PR",
+            statMergedPrs: "已連結的已合併 PR",
         }, sources: {
             foundCaption: "加入來源後才會統計原生用量",
             coveragePurpose: "所選歷史記錄報告的內容",
@@ -13749,6 +13758,7 @@ settingsSession: {
             emptyScopedTitle: '此範圍內沒有原生來源',
             emptyScopedReason: '選擇已連線的機器並包含原生用量，即可查看其來源清單。期間和指標不會篩選清單。',
         }, page: {
+            noneLinkedByEvidence: "尚未連結",
             oldestSourceUpdate: ({ time }: { time: string }) => `最早的來源更新：${time}`,
             sourceClaudeResponses: "Claude 回覆",
             sourceClaudeSessionSummaries: "Claude 工作階段摘要",

@@ -308,6 +308,53 @@ describe('personal usage Action execution', () => {
         expect.objectContaining({ requestedQuery: other }),
       ]) } });
   });
+  it.each([
+    { scenario: 'undated link', merge: {}, measured: false },
+    { scenario: 'outside-period link', merge: { mergedAtMs: 99 }, measured: false },
+    { scenario: 'in-period link', merge: { mergedAtMs: 150 }, measured: false },
+    { scenario: 'read-empty', merge: null, measured: true },
+  ])('uses the admitted Work read for exact merged counts: $scenario', async ({ merge, measured }) => {
+    const workQuery = normalizeUsageQuery({ ...query, period: { startMs: 100, endMs: 200 }, includeWorkEvidence: true });
+    const contributions = ['read', 'sibling'].map(sessionId => ({
+      id: sessionId, sessionId, turnId: 'turn', observedAtMs: 150, agentId: 'codex', modelId: null,
+      machineId: null, projectKey: null, workspaceId: null, source: 'runtime' as const,
+      tokens: accounting.totals.tokens, cost: accounting.totals.cost,
+    }));
+    const evidence: UsageWorkEvidence[] = merge === null ? [] : [{
+      sessionId: 'read', turnId: 'turn', repositoryKey: 'repo', checkpointRef: 'checkpoint',
+      checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40),
+      attributionScope: 'no_happier_checkpoint_overlap_observed', pullRequest: {
+        provider: { id: 'forge', kind: 'github', displayName: 'Forge', baseUrl: 'https://github.com',
+          nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } },
+        number: 1, title: 'Work', url: 'https://github.com/owner/repo/pull/1', baseBranch: 'main', headBranch: 'feature',
+        state: 'merged', ...merge,
+      },
+    }];
+    const batch = resolveUsagePageAggregation({ queries: [workQuery],
+      accounting: [{ query: workQuery, status: 'available', value: { ...accounting, contributions } }],
+      work: [{ query: workQuery, status: measured ? 'available' : 'partial', evidence,
+        pullRequestReadSessions: measured ? ['read', 'sibling'] : ['read'],
+        ...(measured ? {} : { unreadSessions: { failed: 1 } }) }],
+    }, bundledUsageModelPriceCatalog);
+    const slice = batch.results[0]!;
+    const executor = createActionExecutor({ usageActions: { query: async () => batch } } as ActionExecutorDeps);
+    const result = await executor.execute('usage.query', { queries: [workQuery] }, { surface: 'cli' });
+    expect(result).toMatchObject({ ok: true, result: batch });
+    expect(slice.workSummary?.pullRequestsRead).toBe(measured ? true : undefined);
+    expect(slice.work?.outcomes).toHaveLength(measured ? 0 : 1);
+    expect(slice.mergedOutcomes?.outcomes).toHaveLength(measured ? 0 : 1);
+    expect.soft(slice.mergedOutcomes?.mergedInPeriodCount).toBe(measured ? 0 : undefined);
+    expect.soft(slice.workSummary?.mergedPrCount).toBe(measured ? 0 : undefined);
+    expect.soft(slice.workSummary?.mergedSessionCount).toBe(measured ? 0 : undefined);
+    if (!measured) {
+      const forged = createActionExecutor({ usageActions: { query: async () => ({ ...batch, results: [
+        { ...slice, mergedOutcomes: { ...slice.mergedOutcomes!, mergedInPeriodCount: merge?.mergedAtMs === 150 ? 1 : 0 } },
+      ] }) } } as ActionExecutorDeps);
+      expect(await forged.execute('usage.query', { queries: [workQuery] }, { surface: 'cli' }))
+        .toMatchObject({ ok: false, errorCode: 'usage_query_result_invalid' });
+    }
+  });
+
   it('treats reversed batches as the same canonical set of independently resolved slices', async () => {
     const deps: Partial<ActionExecutorDeps> = { usageActions: {
       query: async request => resolveUsagePageAggregation({ queries: request.queries }, bundledUsageModelPriceCatalog),

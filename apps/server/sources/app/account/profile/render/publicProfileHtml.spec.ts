@@ -38,7 +38,7 @@ describe('cold public-profile document', () => {
         });
         const html = renderPublicProfileHtml({ kind: 'published', view: totals });
         expect(html.includes('Agent time'), 'shared Agent time remains visible').toBe(true);
-        expect(html.includes('Merged pull requests'), 'shared Merged PRs remains visible').toBe(true);
+        expect(html.includes('Linked merged pull requests'), 'shared Merged PRs remains visible').toBe(true);
         expect(html.includes('Peak parallel'), 'shared Peak parallel remains visible').toBe(true);
     });
 

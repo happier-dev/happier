@@ -42,7 +42,7 @@ export const publicIdentity: PublicIdentityTranslations = {
       sections: { about: 'あなたについて', numbers: '数値', patterns: 'パターン', detail: '詳細', links: 'リンクと推定値' },
       fields: {
         name: '名前', avatar: '写真', bio: '自己紹介', links: 'リンク', since: '登録日',
-        tokens: 'トークン', activeDays: 'アクティブな日数', agentTime: 'エージェント時間', mergedPrs: 'マージされたプルリクエスト',
+        tokens: 'トークン', activeDays: 'アクティブな日数', agentTime: 'エージェント時間', mergedPrs: '紐づいたマージ済みプルリクエスト',
         currentStreak: '現在の連続日数', bestStreak: 'この期間の最長連続日数', peakParallel: '並列ピーク', highlights: 'ハイライト',
         calendar: 'アクティビティレベル', punch: '週の時間帯', agentMix: 'エージェントの内訳', sourceSplit: 'エージェントの実行場所',
         agentActiveDays: 'エージェントごとの日数', weeklyAgentMix: '週ごとのエージェント内訳', weeklyPeakParallel: '週ごとのピーク',
