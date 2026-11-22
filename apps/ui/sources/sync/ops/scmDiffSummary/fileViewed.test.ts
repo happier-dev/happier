@@ -26,6 +26,7 @@ describe('opened source file Viewed state', () => {
         expect(source.getSnapshot()).toMatchObject({ status: 'ready', headOid: 'head' });
         expect(source.getFile('a.ts').state).toBe('viewed');
         expect(source.getFile('b.ts').state).toBe('dismissed');
+        expect(source.getChangedSinceViewedCount?.()).toBe(1);
         const untouched = source.getFile('b.ts');
         expect(await source.setViewed('a.ts', false)).toBe(true);
         expect(source.getFile('a.ts').state).toBe('unviewed');
@@ -33,6 +34,8 @@ describe('opened source file Viewed state', () => {
         expect(writes).toEqual([{ pr: '17', path: 'a.ts', viewed: false }, { pr: '17', path: 'a.ts', viewed: true }]);
         expect(readCount).toBe(1);
         expect(source.getFile('b.ts')).toBe(untouched);
+        expect(await source.setViewed('b.ts', true)).toBe(true);
+        expect(source.getChangedSinceViewedCount?.()).toBe(0);
         source.retire();
     });
 

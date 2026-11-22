@@ -10,7 +10,6 @@ import { useMountedActionExecution } from '@/components/approvals/useMountedActi
 import { useHydrateSession } from '@/hooks/session/useHydrateSessionForRoute';
 import { WorkspaceScmReviewBody, type ScmReviewComparisonChrome, type ScmReviewViewContext } from '@/components/projects/scm/WorkspaceScmReviewBody';
 import { CapturedComparisonFilesView } from '@/components/sessions/files/comparison/CapturedComparisonFilesView';
-import { ScmComparisonHeaderToggle } from '@/components/sessions/files/comparison/ScmComparisonBar';
 import { resolveFilesComparisonLabel } from '@/components/sessions/files/comparison/filesComparison';
 import { useCapturedScmComparison } from '@/components/sessions/files/comparison/useCapturedScmComparison';
 import type { useScmDiffSummaryBinding } from '@/components/sessions/files/comparison/useScmDiffSummaryBinding';
@@ -47,9 +46,6 @@ import { ReviewFindingAnchorContext } from './ReviewFindingAnchor';
 
 type ReviewChangesView = 'files' | 'walkthrough';
 
-/** Hide viewed on a Review's Files: the Host's one state, changed only through its current-context command. */
-export type ReviewViewedFilter = Readonly<{ hidden: boolean; onHiddenChange: (hidden: boolean) => void }>;
-
 export type ReviewChangesHostProps = Readonly<{
     reviewId: string;
     roundOrdinal: number;
@@ -58,8 +54,6 @@ export type ReviewChangesHostProps = Readonly<{
     /** Hydrated comments already filtered by the detail's selected round and reviewers. */
     comments: readonly ReviewCommentV1[];
     view: ReviewChangesView;
-    /** Offered when the round's source keeps Viewed marks (a pull request). */
-    viewedFilter?: ReviewViewedFilter;
     onSelectView: (view: ReviewChangesView) => void;
     onOpenComment: (commentId: string) => void;
     /** The opened Review's finding rows, sharing its decisions and row identities. */
@@ -201,13 +195,6 @@ function BoundReviewChanges(props: ReviewChangesHostProps & Readonly<{
     const scopeLabel = resolveFilesComparisonLabel(comparison, null);
     const unavailable = reachability.unreachable ? describeCheckoutUnreachable(reachability) : index.error;
     const excerpts = <ReviewEvidenceExcerpts comments={props.comments} onOpenComment={props.onOpenComment} />;
-    const viewedFilter = props.view === 'files' ? props.viewedFilter : undefined;
-    const onViewedHiddenChange = viewedFilter?.onHiddenChange;
-    const showViewed = React.useMemo(() => onViewedHiddenChange ? () => onViewedHiddenChange(false) : undefined, [onViewedHiddenChange]);
-    // Keyed on the Host's memoized filter, so the shared header chrome rebuilds only when Hide viewed changes.
-    const hideViewedToggle = React.useMemo(() => viewedFilter ? <ScmComparisonHeaderToggle testID="review-changes:hide-viewed"
-        icon="eye-slash" label={t('hunkReview.hideViewed')} value={viewedFilter.hidden} onChange={viewedFilter.onHiddenChange} />
-        : null, [viewedFilter]);
     if (reachability.unreachable) return <ReviewChangesUnavailable reason={unavailable} comments={props.comments} onOpenComment={props.onOpenComment} />;
     const filesState = index.comparison ? null : unavailable ? <>
         <SurfaceStateCard size="line" kind="error" title={unavailable} action={{ label: t('common.retry'), onPress: index.retry }} />
@@ -216,10 +203,9 @@ function BoundReviewChanges(props: ReviewChangesHostProps & Readonly<{
     // The changes keep the page's column, on the edge its sections and tabs stand on.
     return <View style={excerptStyles.inset}><WorkspaceScmReviewBody hosted comparison={comparison} view={props.view} scopeLabel={scopeLabel}
         scopeOptions={NO_SCOPE_OPTIONS} onSelectComparison={ignore} onSelectView={selectView} rootPath={cwd}
-        activeReviewFile={activeReviewFile} onVisibleFileRowCountChange={setIndexPageSize} headerAccessory={hideViewedToggle}
+        activeReviewFile={activeReviewFile} onVisibleFileRowCountChange={setIndexPageSize}
         explain={false} onExplainChange={ignore} filesState={filesState}
         renderFiles={(chrome) => index.comparison ? <CapturedComparisonFilesView comparison={index.comparison}
-            hideViewed={viewedFilter?.hidden} onShowViewed={showViewed}
             comparisonChrome={props.renderFileNotes ? { ...chrome, renderFileNotes: props.renderFileNotes } : chrome}
             host={host} comparisonSessionId={sessionId} serverId={serverId}
             workspaceScope={workspaceScope} activeReviewFile={activeReviewFile} marks={marks}

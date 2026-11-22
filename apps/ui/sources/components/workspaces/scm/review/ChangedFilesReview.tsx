@@ -76,7 +76,7 @@ import { buildScmFileReviewUnits } from '@happier-dev/protocol/scm/comparisonOcc
 import { ChangedFilesReviewMoreMenu, useChangedFilesReviewDisplayMenu } from './ChangedFilesReviewMoreMenu';
 import type { ScmComparisonMenuSection } from '@/components/sessions/files/comparison/ScmComparisonPhoneHeader';
 import { useLentHeaderMenuSection } from '@/components/sessions/files/comparison/ScmComparisonMoreMenu';
-import { ScmFileViewedFact, ScmFileViewedMark } from '@/components/sessions/files/comparison/ScmFileViewedMark';
+import { ScmFileViewedFact, ScmFileViewedMark, ScmFilesViewedCount } from '@/components/sessions/files/comparison/ScmFileViewedMark';
 import { useScmFileViewed } from '@/components/sessions/files/comparison/useScmFileViewed';
 import type { ScmFileViewedSource } from '@/sync/domains/scm/fileViewed';
 import { useFindSurfaceRuntime } from '@/keyboard/KeyboardShortcutProvider';
@@ -158,7 +158,7 @@ export type ChangedFilesReviewCoverage = Readonly<{
 }>;
 
 /** Facts only Review's controller knows, offered to the caller's header. */
-export type ChangedFilesReviewHeaderFacts = Readonly<{ viewed: React.ReactNode | null }>;
+export type ChangedFilesReviewHeaderFacts = Readonly<{ viewed: React.ReactNode | null; viewedFilter?: React.ReactNode; changedSinceViewedCount: number }>;
 
 type ChangedFilesReviewProps = {
     /** Captured endpoints: diffs remain evidence-backed; admitted review controls are supplied separately. */
@@ -226,6 +226,9 @@ type ChangedFilesReviewProps = {
     /** A source's Viewed facts without Keep / Discard (a plugin's pull request); `hunkReview.fileViewed` otherwise. */
     fileViewed?: ScmFileViewedSource | null;
     hideViewed?: boolean;
+    localViewedPaths?: ReadonlySet<string>;
+    localChangedSinceViewedCount?: number;
+    viewedFilter?: React.ReactNode;
     /** Show the viewed files again: the hidden line's Show (the host's own Hide viewed path). */
     onShowViewed?: () => void;
     fileViewedTotal?: number;
@@ -584,6 +587,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         active: reviewEnabled && fileViewedActive, refreshToken: capturedComparison });
     const fileViewed = suppliedFileViewed === undefined ? ownedFileViewed : suppliedFileViewed;
     const filterViewed = props.hideViewed && fileViewedActive && fileViewed?.getViewedPathsRevision ? fileViewed : null;
+    const localViewedPaths = props.hideViewed && fileViewedActive ? props.localViewedPaths : undefined;
     const viewedRevision = React.useSyncExternalStore(
         React.useCallback(listener => filterViewed?.subscribeChanges(listener) ?? (() => {}), [filterViewed]),
         React.useCallback(() => filterViewed?.getViewedPathsRevision?.() ?? 0, [filterViewed]),
@@ -591,7 +595,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
     );
 
     const { entries: reviewFileEntries, hiddenViewedCount } = React.useMemo(() => {
-        const viewed = filterViewed?.getViewedPaths();
+        const viewed = filterViewed?.getViewedPaths() ?? localViewedPaths;
         let hidden = 0;
         const out: Array<{
             key: string;
@@ -625,7 +629,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
             }
         }
         return { entries: out, hiddenViewedCount: hidden };
-    }, [sections, filterViewed, viewedRevision]);
+    }, [sections, filterViewed, viewedRevision, localViewedPaths]);
     // Hide viewed says what it hid, with Show, so a list it emptied never reads as "no changes".
     const onShowViewed = props.onShowViewed;
     const hiddenViewedLine = React.useMemo(() => hiddenViewedCount > 0 ? <SurfaceStateCard testID="scm-review-viewed-hidden"
@@ -1254,10 +1258,25 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
     // The source's Viewed facts (GitHub): one count in the header, one mark per file header row.
     const setFileViewed = controller.setFileViewed;
     const viewedTotal = props.fileViewedTotal ?? coverage.fileCount;
+    const localViewedCount = props.localViewedPaths?.size;
+    const viewedFilter = props.viewedFilter;
+    const forgeChangeCount = React.useSyncExternalStore(
+        React.useCallback(listener => {
+            if (!fileViewed?.getChangedSinceViewedCount || !fileViewedActive) return () => {};
+            const releaseChanges = fileViewed.subscribeChanges(listener);
+            const releaseStatus = fileViewed.subscribeStatus(listener);
+            return () => { releaseChanges(); releaseStatus(); };
+        }, [fileViewed, fileViewedActive]),
+        React.useCallback(() => fileViewed?.getChangedSinceViewedCount?.() ?? 0, [fileViewed]),
+        () => 0,
+    );
+    const changedSinceViewedCount = props.localChangedSinceViewedCount ?? forgeChangeCount;
     const streamHeader = React.useMemo(
         () => (renderComparisonHeader ? renderComparisonHeader(coverage, { viewed: fileViewed
-            ? <ScmFileViewedFact source={fileViewed} total={viewedTotal} active={fileViewedActive} /> : null }) : null),
-        [coverage, renderComparisonHeader, fileViewed, viewedTotal, fileViewedActive],
+            ? <ScmFileViewedFact source={fileViewed} total={viewedTotal} active={fileViewedActive} />
+            : localViewedCount === undefined ? null : <ScmFilesViewedCount count={localViewedCount} total={viewedTotal} />,
+            viewedFilter, changedSinceViewedCount }) : null),
+        [coverage, renderComparisonHeader, fileViewed, viewedTotal, fileViewedActive, localViewedCount, viewedFilter, changedSinceViewedCount],
     );
     // The stream's index rows are the list's own leading rows (one scroll; only rows on screen mount).
     // While any of them is on screen the index is still in view; the jump menu takes over past it.

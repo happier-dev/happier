@@ -58,6 +58,19 @@ describe('scope personal marks owner', () => {
     expect(read.record).toMatchObject({ v: 1, scopeId: expect.any(String), reviewedChangeKeys: [expect.any(String)] });
     expect(read.record).not.toHaveProperty('comparisonId');
   });
+  it('counts files with new content only after the whole file was previously viewed', async () => {
+    const { projectScmViewedFiles } = await import('./reviewedMarks.js');
+    const first = capture('first', { duplicate: true });
+    const next = capture('next', { duplicate: true, text: 'rewritten' });
+    const partial = applyScmReviewedMarkIntent(first, null, ['first:0'], true);
+    expect(projectScmViewedFiles(next, partial).changedSinceViewedCount).toBe(0);
+    const viewed = applyScmReviewedMarkIntent(first, partial, ['first:1'], true);
+    expect(projectScmViewedFiles(next, viewed)).toEqual({ viewedPaths: new Set(), changedSinceViewedCount: 1 });
+    const shifted = capture('shifted', { duplicate: true, line: 25 });
+    expect(projectScmViewedFiles(shifted, viewed)).toEqual({ viewedPaths: new Set(['a.ts']), changedSinceViewedCount: 0 });
+    const unviewed = applyScmReviewedMarkIntent(first, viewed, ['first:0'], false);
+    expect(projectScmViewedFiles(next, unviewed).changedSinceViewedCount).toBe(0);
+  });
   it('invalidates edited text and distinguishes paths and session scopes', () => {
     for (const changed of [capture('edited', { text: 'rewritten' }), capture('path', { path: 'other.ts' })]) {
       expect(marked().reviewedChangeKeys).not.toEqual(buildScmChangeKeys(changed).get(`${changed.id}:0`));
@@ -157,7 +170,8 @@ describe('scope personal marks owner', () => {
     const port = createScmReviewedMarksRecordPort({ comparison, transport: { read: async () => ({ value: record, version: 2 }),
       compareAndSet: async (value, version) => { writes.push({ value, version }); return version === 2 ? { success: false, value: winner, version: 3 } : { success: true, version: 4 }; },
     } });
-    expect(await port.setReviewed(['first:0'], false)).toEqual({ success: true, record: { ...record, reviewedChangeKeys: ['unrelated-key'] }, version: 4 });
+    expect(await port.setReviewed(['first:0'], false)).toEqual({ success: true,
+      record: { v: 1, scopeId: record.scopeId, reviewedChangeKeys: ['unrelated-key'] }, version: 4 });
     expect(writes).toHaveLength(2);
   });
   it('surfaces a second racing conflict without replaying indefinitely', async () => {

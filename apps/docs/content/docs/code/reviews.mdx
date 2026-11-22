@@ -94,6 +94,11 @@ and coverage as well as the finding count: zero findings means a clean review
 only when analysis completed. Failed or incomplete analysis can still supply
 useful findings. An unsupported or missing result is not a clean result.
 
+On a pull request Review, **Changes** counts the files you marked Viewed on the
+forge, such as "3 of 9 viewed". **Hide viewed** removes those files from the
+list and says how many it hid, with **Show** to bring them back. A file that
+changed after you viewed it loses its mark and says so.
+
 A finding can retain a location, explanation, suggested fix and plugin evidence.
 Its relation to the selected changes comes from captured code evidence.
 Insufficient or conflicting evidence stays unknown. A **Seen before** link or

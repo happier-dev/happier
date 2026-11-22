@@ -20,6 +20,8 @@ export type ScmFileViewedSource = Readonly<{
     getViewedPaths(): ReadonlySet<string>;
     /** Snapshot token for the opt-in Viewed filter. Acknowledgements that leave membership intact keep this token. */
     getViewedPathsRevision?(): number;
+    /** Current-head files whose forge Viewed mark was dismissed by changed content. */
+    getChangedSinceViewedCount?(): number;
     setViewed(path: string, viewed: boolean): Promise<boolean>;
     refresh(): Promise<void>;
 }>;

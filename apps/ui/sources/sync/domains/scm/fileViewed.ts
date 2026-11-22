@@ -17,6 +17,7 @@ export function createScmFileViewedState() {
     const statusListeners = new Set<() => void>();
     let snapshot = IDLE_SCM_FILE_VIEWED;
     let viewedPathsRevision = 0;
+    let changedSinceViewedCount = 0;
     const getFile = (path: string) => files.get(path) ?? UNKNOWN_SCM_FILE_VIEWED;
     const setStatus = (status: ScmFileViewedSnapshot['status'], headOid = snapshot.headOid, errorCode: string | null = null) => {
         if (snapshot.status === status && snapshot.headOid === headOid && snapshot.errorCode === errorCode) return;
@@ -31,6 +32,9 @@ export function createScmFileViewedState() {
             if (next.state === 'viewed') viewedPaths.add(path); else viewedPaths.delete(path);
             viewedPathsRevision += 1;
         }
+        if ((previous.state === 'dismissed') !== (next.state === 'dismissed')) {
+            changedSinceViewedCount += next.state === 'dismissed' ? 1 : -1;
+        }
         if (previous.state !== next.state) for (const listener of changeListeners) listener(path);
         for (const listener of fileListeners.get(path) ?? []) listener();
     };
@@ -39,6 +43,7 @@ export function createScmFileViewedState() {
         getSnapshot: () => snapshot,
         getViewedPaths: (): ReadonlySet<string> => viewedPaths,
         getViewedPathsRevision: () => viewedPathsRevision,
+        getChangedSinceViewedCount: () => snapshot.status === 'ready' ? changedSinceViewedCount : 0,
         subscribeFile: (path: string, listener: () => void) => {
             let listeners = fileListeners.get(path);
             if (!listeners) fileListeners.set(path, listeners = new Set());
@@ -62,6 +67,7 @@ export function createScmFileViewedState() {
         retire: () => {
             if (viewedPaths.size > 0) viewedPathsRevision += 1;
             files.clear(); viewedPaths.clear(); fileListeners.clear(); changeListeners.clear(); statusListeners.clear();
+            changedSinceViewedCount = 0;
             snapshot = IDLE_SCM_FILE_VIEWED;
         },
     };

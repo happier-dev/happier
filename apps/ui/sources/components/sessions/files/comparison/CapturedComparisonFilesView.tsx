@@ -5,6 +5,7 @@ import type { ScmComparison } from '@happier-dev/protocol/scm/comparison';
 
 import { ChangedFilesReview } from '@/components/workspaces/scm/review/ChangedFilesReview';
 import { ScmComparisonHeader } from './ScmComparisonHeader';
+import { ScmComparisonHeaderToggle } from './ScmComparisonBar';
 import { buildCapturedComparisonFiles } from './capturedComparisonFiles';
 import { resolveFilesComparisonLabel } from './filesComparison';
 import { scmReviewComparisonOfCaptured } from '@/sync/domains/scm/diffSummary/selection';
@@ -15,7 +16,10 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
-import type { ScmReviewedMarks } from './useScmReviewedMarks';
+import { useScmReviewedMarks, type ScmReviewedMarks } from './useScmReviewedMarks';
+import { projectScmViewedFiles } from '@happier-dev/protocol/scm/reviewedMarks';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 import { useReviewListHunkReview } from '@/components/workspaces/scm/review/hunkReview/useReviewListHunkReview';
 import type { ScmDiffSummaryHost } from '@/sync/ops/scmDiffSummary/results';
 import { useCapturedComparisonEvidence } from './useCapturedComparisonEvidence';
@@ -23,6 +27,8 @@ import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
 
 type ReviewProps = React.ComponentProps<typeof ChangedFilesReview>;
+type ViewedControls = Pick<ReviewProps, 'localViewedPaths' | 'localChangedSinceViewedCount' | 'viewedFilter' | 'hideViewed' | 'onShowViewed'>;
+const HIDE_VIEWED_COMMAND = 'review.detail.hide_viewed';
 const NO_ATTRIBUTED_FILES: ReviewProps['sessionAttributedFiles'] = [];
 const NO_FILES: ReviewProps['repositoryOnlyFiles'] = [];
 const NO_DRAFTS: NonNullable<ReviewProps['reviewCommentDrafts']> = [];
@@ -35,8 +41,6 @@ export function CapturedComparisonFilesView(props: Readonly<{
     sessionId?: string;
     reviewScopeKey?: string;
     comparisonChrome?: ReviewProps['comparisonChrome'];
-    hideViewed?: boolean;
-    onShowViewed?: () => void;
     maxFiles: number;
     maxChangedLines: number;
     initialCollapsedPaths?: readonly string[] | null;
@@ -95,7 +99,7 @@ export function CapturedComparisonFilesView(props: Readonly<{
         const scopeLabel = source ? resolveFilesComparisonLabel(source, null) : t('scmComparison.view.files');
         const renderHeader: NonNullable<ReviewProps['comparisonChrome']>['renderHeader'] = props.comparisonChrome?.renderHeader
             ?? ((coverage, facts) => <ScmComparisonHeader viewLabel={t('scmComparison.view.files')} scopeLabel={scopeLabel} coverage={coverage}
-                reviewed={facts?.viewed ?? null} />);
+                reviewed={facts?.viewed ?? null} accessory={facts?.viewedFilter ?? null} />);
         return { renderBarLeading: () => null,
             indexPlacement: 'stream', ...props.comparisonChrome, rootPath: props.comparison.repository.rootPath, renderFileNotes,
             renderHeader };
@@ -110,7 +114,8 @@ export function CapturedComparisonFilesView(props: Readonly<{
     const emptyState = unavailableEmpty ? <SurfaceStateCard testID="captured-comparison-unavailable" kind="error"
         title={comparison.inventory.reasons.join(' · ') || t('hunkReview.noticeUnavailable')}
         action={props.onRefresh ? { label: t('common.retry'), onPress: props.onRefresh } : undefined} /> : undefined;
-    const renderReview = (hunkReview?: ReviewProps['hunkReview']) => <ChangedFilesReview activeReviewFile={props.activeReviewFile} theme={theme} sessionId={props.sessionId} hideViewed={props.hideViewed} onShowViewed={props.onShowViewed} fileViewedTotal={props.page?.totalFiles}
+    const renderReview = (hunkReview?: ReviewProps['hunkReview'], viewed?: ViewedControls) => <ChangedFilesReview activeReviewFile={props.activeReviewFile} theme={theme} sessionId={props.sessionId} fileViewedTotal={props.page?.totalFiles}
+            {...viewed}
             reviewScopeKey={JSON.stringify([props.reviewScopeKey ?? props.sessionId, evidenceKey])}
             snapshot={projected.snapshot} changedFilesViewMode="repository"
             emptyState={emptyState}
@@ -132,9 +137,10 @@ export function CapturedComparisonFilesView(props: Readonly<{
         {props.comparison.freshness === 'stale' || props.comparison.freshness === 'unknown' ? <SurfaceFreshnessLine testID="captured-comparison-freshness" tone="warning"
             reason={t(props.comparison.freshness === 'stale' ? 'scmComparison.capturedStale' : 'scmComparison.capturedFreshnessUnknown')} /> : null}
         {resolvingEvidence ? <SurfaceStateCard kind="loading" title={t('common.loading')} />
-            : props.workspaceScope ? <CapturedReviewControls scope={props.workspaceScope} comparison={comparison}
+            : props.workspaceScope ? <CapturedReviewControls key={JSON.stringify([evidenceKey, comparison.endpoints.after])} scope={props.workspaceScope} comparison={comparison}
             active={props.active !== false}
-            sessionId={props.sessionId} marks={props.marks} discard={props.discardEnabled === true}
+            sessionId={props.sessionId} host={props.host} comparisonSessionId={props.comparisonSessionId}
+            marks={props.marks} discard={props.discardEnabled === true}
             refresh={props.onRefresh ?? doNotOpenWorkingFile}>{renderReview}</CapturedReviewControls> : renderReview()}
         {props.page?.nextCursor != null ? <View testID="captured-comparison-pagination">
             <Text>{props.comparison.inventory.files.length} / {props.page.totalFiles}</Text>
@@ -146,9 +152,50 @@ export function CapturedComparisonFilesView(props: Readonly<{
 
 function CapturedReviewControls(props: Readonly<{
     scope: WorkspaceScopeBase; comparison: ScmComparison; sessionId?: string; marks?: ScmReviewedMarks;
+    host?: ScmDiffSummaryHost; comparisonSessionId?: string;
     active?: boolean;
-    discard: boolean; refresh: () => void; children: (review: NonNullable<ReviewProps['hunkReview']>) => React.ReactNode;
+    discard: boolean; refresh: () => void;
+    children: (review: NonNullable<ReviewProps['hunkReview']>, viewed?: ViewedControls) => React.ReactNode;
 }>) {
-    const review = useReviewListHunkReview(props);
-    return props.children(review);
+    const local = props.comparison.source.kind !== 'pullRequest';
+    const ownedMarks = useScmReviewedMarks({
+        comparison: local && !props.marks && props.active !== false ? props.comparison : null,
+        serverId: props.scope.serverId ?? null,
+        host: props.host ?? (props.sessionId ? { sessionId: props.sessionId } : { machineId: props.scope.machineId }),
+        comparisonSessionId: props.comparisonSessionId,
+        observation: 'keyed',
+    });
+    const marks = props.marks ?? (local ? ownedMarks : undefined);
+    const review = useReviewListHunkReview({ ...props, marks });
+    const source = local && props.active !== false ? marks?.recordSource : undefined;
+    const getRecord = React.useCallback(() => source ? source.getSnapshot() : local ? marks?.record ?? null : null,
+        [source, local, marks]);
+    const record = React.useSyncExternalStore(source?.subscribe ?? doNotSubscribe, getRecord, getRecord);
+    const localViewed = React.useMemo(() => local ? projectScmViewedFiles(props.comparison, record) : undefined,
+        [local, props.comparison, record]);
+    const [hideViewed, setHideViewed] = React.useState(false);
+    const viewedActions = props.comparison.source.kind === 'pullRequest' ? props.comparison.source.locator.fileViewedActions : undefined;
+    const available = props.active !== false && (local || (props.comparison.freshness !== 'stale' && viewedActions !== undefined));
+    const commands = useCurrentUiContextLocalCommands(available ? [{
+        key: HIDE_VIEWED_COMMAND,
+        title: t('hunkReview.hideViewed'),
+        description: 'Hide or show the viewed files in this captured comparison with {value: boolean}.',
+        invoke(input) {
+            if (!isJsonObject(input) || typeof input.value !== 'boolean') return false;
+            setHideViewed(input.value);
+        },
+    }] : [], { unbound: 'local' });
+    const onChange = React.useCallback((value: boolean) => {
+        void commands.invoke(HIDE_VIEWED_COMMAND, { value });
+    }, [commands]);
+    const onShow = React.useCallback(() => onChange(false), [onChange]);
+    const filter = React.useMemo(() => available ? <ScmComparisonHeaderToggle testID={local ? "scm-comparison:hide-viewed" : "review-changes:hide-viewed"}
+        icon="eye-slash" label={t('hunkReview.hideViewed')} value={hideViewed} onChange={onChange} /> : null,
+    [available, hideViewed, local, onChange]);
+    return props.children(review, available ? {
+        localViewedPaths: localViewed?.viewedPaths, localChangedSinceViewedCount: localViewed?.changedSinceViewedCount,
+        viewedFilter: filter, hideViewed, onShowViewed: onShow,
+    } : undefined);
 }
+
+const doNotSubscribe = () => () => {};

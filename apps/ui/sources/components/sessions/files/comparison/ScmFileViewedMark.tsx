@@ -162,15 +162,19 @@ export function ScmFileViewedFact(
     );
   }
   if (status.headOid === null) return null;
+  return <ScmFilesViewedCount count={count} total={props.total} />;
+}
+
+export function ScmFilesViewedCount({ count, total }: Readonly<{ count: number; total: number }>) {
   return (
     <ScmComparisonFact
       testID="scm-file-viewed-fact"
       icon="eye"
-      tone={props.total > 0 && count >= props.total ? 'success' : 'neutral'}
+      tone={total > 0 && count >= total ? 'success' : 'neutral'}
     >
       <ScmComparisonFactSentence
-        sentence={t('hunkReview.viewedCount', { count, total: props.total })}
-        counts={[count, props.total]}
+        sentence={t('hunkReview.viewedCount', { count, total })}
+        counts={[count, total]}
       />
     </ScmComparisonFact>
   );

@@ -73,6 +73,7 @@ export function createScmFileViewedOperations(params: Readonly<{
     return {
         getFile: state.getFile, subscribeFile: state.subscribeFile, getSnapshot: state.getSnapshot,
         subscribeStatus: state.subscribeStatus, subscribeChanges: state.subscribeChanges, getViewedPaths: state.getViewedPaths,
+        getViewedPathsRevision: state.getViewedPathsRevision, getChangedSinceViewedCount: state.getChangedSinceViewedCount,
         refresh, setViewed,
         retire: () => { lifetime.abort(); state.retire(); },
     };

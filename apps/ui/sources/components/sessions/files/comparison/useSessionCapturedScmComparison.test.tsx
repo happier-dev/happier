@@ -453,7 +453,9 @@ describe('Files reads the canonical captured comparison through authenticated RP
                 marks={{ record, pending: false, unavailableReason: null, setReviewed: () => {}, clear: () => {},
                     setReviewedKeys: (selected, reviewed) => { void port.setReviewedKeys(selected, reviewed).then(result => {
                         if (result.success) setRecord(result.record);
-                    }); } }} maxFiles={10} maxChangedLines={100} />;
+                    }); } }} comparisonChrome={{ indexPlacement: 'stream', renderBarLeading: () => null,
+                    renderHeader: (_coverage, facts) => <>{facts?.viewed}{facts?.viewedFilter}</> }}
+                maxFiles={10} maxChangedLines={100} />;
         }
         const screen = await renderScreen(<KeyboardShortcutProvider handlers={{}}><Review /></KeyboardShortcutProvider>);
         const rows = () => screen.findAllByType(DiffViewer);
@@ -473,6 +475,12 @@ describe('Files reads the canonical captured comparison through authenticated RP
         await vi.waitFor(() => expect(value).toMatchObject({ reviewedChangeKeys: [keys[1]] }));
         const info = (await import('@/components/ui/code/diff/hunks/buildDiffHunkTable')).buildDiffHunkTable({ mode: 'unified', filePath: 'b.ts', unifiedDiff: diff }).hunks[0]!;
         expect(rows()[1]!.props.hunks.stateOf(info)).toBe('kept');
+        const { ScmComparisonFactSentence } = await import('./ScmComparisonHeader');
+        expect(screen.findByType(ScmComparisonFactSentence).props.counts).toEqual([1, 2]);
+        await screen.pressByTestIdAsync('scm-comparison:hide-viewed');
+        await vi.waitFor(() => expect(screen.findByType(DiffFilesListView).props.files.map((file: { key: string }) => file.key)).toEqual(['a.ts']));
+        await screen.pressByTestIdAsync('scm-review-viewed-show');
+        await vi.waitFor(() => expect(screen.findByType(DiffFilesListView).props.files.map((file: { key: string }) => file.key)).toEqual(['a.ts', 'b.ts']));
     });
     const messages = { moved_on: 'moved', update_required: 'update', unsupported: 'unsupported', unavailable: 'unavailable', unknown: 'unknown',
         discarded: 'discarded', restored: 'restored', kept_edited: 'edited', undone: 'undone', undo_conflict: 'conflict', undo: 'undo',

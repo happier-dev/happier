@@ -14,7 +14,8 @@ export function reconcileScmReviewedMarksState(current: ScmReviewedMarksState, n
   const equalRecord = current.record === next.record || (current.record !== null && next.record !== null
     && current.record.scopeId === next.record.scopeId
     && current.record.reviewedChangeKeys.length === next.record.reviewedChangeKeys.length
-    && current.record.reviewedChangeKeys.every((key, index) => key === next.record?.reviewedChangeKeys[index]));
+    && current.record.reviewedChangeKeys.every((key, index) => key === next.record?.reviewedChangeKeys[index])
+    && JSON.stringify(current.record.viewedFiles) === JSON.stringify(next.record.viewedFiles));
   if (equalRecord && current.status === next.status && current.version === next.version && current.errorCode === next.errorCode) return current;
   return equalRecord ? { ...next, record: current.record } : next;
 }

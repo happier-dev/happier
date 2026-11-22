@@ -18,7 +18,7 @@ import { useSharePrincipalNames } from '@/components/sharing/sharePrincipalNames
 import { presentSharePrincipal, sharePrincipalKey } from '@/components/sharing/sharePrincipalPresentation';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
-import { ReviewChangesHost, type ReviewViewedFilter } from '../ReviewChangesHost';
+import { ReviewChangesHost } from '../ReviewChangesHost';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 import { useReviewDetail } from '../useReviewDetail';
@@ -251,7 +251,6 @@ export function ReviewDetailHost(props: Readonly<{
   const [tab, setTab] = React.useState<ReviewDetailTabId>('findings');
   const [openFinding, setOpenFinding] = React.useState<string | null>(props.focusThreadId ?? null);
   const [changesView, setChangesView] = React.useState<'files' | 'walkthrough'>('files');
-  const [hideViewed, setHideViewed] = React.useState(false);
   const [submitOpen, setSubmitOpen] = React.useState(false);
   const [peopleOpen, setPeopleOpen] = React.useState(false);
   const selectionKey = JSON.stringify([scope?.serverId, scope?.accountId, artifact.id, selectedRound]);
@@ -273,21 +272,6 @@ export function ReviewDetailHost(props: Readonly<{
     return people ? { ...projected, groups: [...projected.groups, people] } : projected;
   }) ?? [], [human, names, record, scope?.accountId]);
   const capture = round?.comparisonCapture ?? null;
-  const canFilterViewed = capture?.input.source?.kind === 'pullRequest'
-    && capture.input.source.locator.fileViewedActions !== undefined;
-  // Hide viewed is one command on this page's current context: the switch and an agent change it the same way.
-  const viewedCommands = useCurrentUiContextLocalCommands(canFilterViewed ? [{
-    key: 'review.detail.hide_viewed',
-    title: t('hunkReview.hideViewed'),
-    description: 'review.detail.hide_viewed — Hide or show the viewed files in this Review\'s Changes with {value: boolean}.',
-    invoke: input => {
-      if (!isJsonObject(input) || typeof input.value !== 'boolean') return false;
-      setHideViewed(input.value);
-    },
-  }] : [], { unbound: 'local' });
-  const viewedFilter = React.useMemo((): ReviewViewedFilter | undefined => canFilterViewed ? { hidden: hideViewed,
-    onHiddenChange: value => { void viewedCommands.invoke('review.detail.hide_viewed', { value }); } } : undefined,
-  [canFilterViewed, hideViewed, viewedCommands]);
   const tabs = React.useMemo((): readonly ReviewDetailTab[] => [
     { id: 'findings' },
     { id: 'changes' },
@@ -620,8 +604,7 @@ export function ReviewDetailHost(props: Readonly<{
       </> : null}
       {activeTab === 'changes' && scope ? (
         <ReviewChangesHost reviewId={record.reviewId} roundOrdinal={selectedRound} scope={scope} capture={capture}
-          comments={roundComments} view={changesView} onSelectView={setChangesView} onOpenComment={openComment}
-          viewedFilter={viewedFilter} />
+          comments={roundComments} view={changesView} onSelectView={setChangesView} onOpenComment={openComment} />
       ) : null}
       {activeTab === 'runs' && round ? <ReviewRoundRuns round={round} scope={scope} reads={questionRuns.runs} /> : null}
       {activeTab === 'activity' ? (
