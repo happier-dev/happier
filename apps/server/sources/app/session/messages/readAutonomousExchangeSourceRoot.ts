@@ -5,11 +5,22 @@ import type { AutonomousExchangeRootV1 } from '@happier-dev/protocol/sessions/me
 import { deriveDiscussionFollowInputLocalIdV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
 import { DiscussionMessageAddressingV1Schema } from '@happier-dev/protocol/discussions/references';
 
+export const AUTONOMOUS_EXCHANGE_SOURCE_INPUT_SELECT = {
+    localId: true,
+    acceptedTurnId: true,
+    targetExecutionRunId: true,
+    inputAdmissionReceipt: true,
+    turnStartWitnessId: true,
+    autonomousExchangeRootSessionId: true,
+    autonomousExchangeRootLocalId: true,
+} as const;
+
 type SourceInput = Readonly<{
     localId: string | null;
     acceptedTurnId: string | null;
     targetExecutionRunId: string | null;
     inputAdmissionReceipt: unknown;
+    turnStartWitnessId: string | null;
     autonomousExchangeRootSessionId: string | null;
     autonomousExchangeRootLocalId: string | null;
 }>;
@@ -99,11 +110,20 @@ export async function readAutonomousExchangeSourceRoot(input: Readonly<{
 }>): Promise<Readonly<{ status: 'found'; root: AutonomousExchangeRoot }>
     | Readonly<{ status: 'unavailable' | 'invalid' }>> {
     let root: AutonomousExchangeRoot | null = null;
-    if (input.sourceInputs.length === 0) return { status: 'unavailable' };
+    // An accepted original can share the provider's Turn as represented context.
+    // When present, the start witness identifies which input supplied that Turn's root.
+    const witnessedTurns = new Set<string>();
+    for (const sourceInput of input.sourceInputs) {
+        if (sourceInput.acceptedTurnId && sourceInput.turnStartWitnessId === sourceInput.acceptedTurnId) {
+            witnessedTurns.add(sourceInput.acceptedTurnId);
+        }
+    }
     for (const sourceInput of input.sourceInputs) {
         if (sourceInput.targetExecutionRunId !== null) return { status: 'unavailable' };
         if (!sourceInput.acceptedTurnId || input.expectedTurnId
             && sourceInput.acceptedTurnId !== input.expectedTurnId) return { status: 'invalid' };
+        if (witnessedTurns.has(sourceInput.acceptedTurnId)
+            && sourceInput.turnStartWitnessId !== sourceInput.acceptedTurnId) continue;
         const inheritedSessionId = sourceInput.autonomousExchangeRootSessionId;
         const inheritedLocalId = sourceInput.autonomousExchangeRootLocalId;
         if ((inheritedSessionId === null) !== (inheritedLocalId === null)) return { status: 'invalid' };

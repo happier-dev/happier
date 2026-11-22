@@ -55,7 +55,7 @@ import { backgroundDeliveryAuthentication } from '@/app/session/access/sessionAc
 import type { Fastify } from '@/app/api/types';
 import { readCurrentExecutionRunFollowSource, type ExecutionRunFollowFrontierWitness } from '@/app/session/follow/executionRunFollowSource';
 import { readAutonomousExchangeSourceRoot, readCommittedPersonFollowRootInTx, readReceiverAutonomousExchangeRootInTx,
-    isAutonomousExchangeRootReceiptForAccount } from '@/app/session/messages/readAutonomousExchangeSourceRoot';
+    isAutonomousExchangeRootReceiptForAccount, AUTONOMOUS_EXCHANGE_SOURCE_INPUT_SELECT } from '@/app/session/messages/readAutonomousExchangeSourceRoot';
 import { AutonomousExchangeStateV1Schema, createAutonomousExchangeStateV1,
     readAutonomousExchangeAdmissionV1 } from '@happier-dev/protocol/sessions/messages/autonomousExchangeV1';
 import { supportsMachineOperationProtocolCapabilityV1, supportsMachineSessionInputAdmissionProtocolVersion } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
@@ -2132,26 +2132,12 @@ async function validateInputSettlementDomainFactsInTx(params: Readonly<{
                 ? await params.tx.sessionMessage.findMany({
                     where: { sessionId: sourceSession.sourceSessionId,
                         localId: sourceSession.sourceInputId },
-                    select: {
-                        localId: true,
-                        acceptedTurnId: true,
-                        targetExecutionRunId: true,
-                        inputAdmissionReceipt: true,
-                        autonomousExchangeRootSessionId: true,
-                        autonomousExchangeRootLocalId: true,
-                    },
+                    select: AUTONOMOUS_EXCHANGE_SOURCE_INPUT_SELECT,
                 })
                 : await params.tx.sessionMessage.findMany({
                     where: { sessionId: sourceSession.sourceSessionId,
                         acceptedTurnId: sourceSession.sourceTurnId },
-                    select: {
-                        localId: true,
-                        acceptedTurnId: true,
-                        targetExecutionRunId: true,
-                        inputAdmissionReceipt: true,
-                        autonomousExchangeRootSessionId: true,
-                        autonomousExchangeRootLocalId: true,
-                    },
+                    select: AUTONOMOUS_EXCHANGE_SOURCE_INPUT_SELECT,
                 });
             const resolved = await readAutonomousExchangeSourceRoot({
                 tx: params.tx,
@@ -2160,9 +2146,14 @@ async function validateInputSettlementDomainFactsInTx(params: Readonly<{
                 expectedTurnId: sourceSession.sourceTurnId,
                 sourceInputs,
             });
-            if (resolved.status !== 'found') return resolved.status === 'invalid'
-                ? { ok: false, rejectionCode: 'session_input_invalid' }
-                : { ok: false, holdReason: 'session_input_target_unavailable' };
+            if (resolved.status !== 'found') {
+                if (resolved.status === 'invalid') return { ok: false, rejectionCode: 'session_input_invalid' };
+                log({ module: 'pending-input', event: 'pending.input_settlement_held',
+                    phase: 'session.input.follow_source_turn_root', code: 'session_input_target_unavailable',
+                    sessionId: params.targetSessionId, localId: params.localId,
+                    sourceSessionId: sourceSession.sourceSessionId, sourceTurnId: sourceSession.sourceTurnId });
+                return { ok: false, holdReason: 'session_input_target_unavailable' };
+            }
             exchangeRoot = resolved.root;
         }
     }
@@ -2178,9 +2169,7 @@ async function validateInputSettlementDomainFactsInTx(params: Readonly<{
         }), params.tx.sessionMessage.findUnique({
             where: { sessionId_localId: { sessionId: returnedAnswer.requestSessionId,
                 localId: returnedAnswer.requestLocalId } },
-            select: { replyProgress: true, localId: true, acceptedTurnId: true, targetExecutionRunId: true, inputAdmissionReceipt: true,
-                autonomousExchangeRootSessionId: true,
-                autonomousExchangeRootLocalId: true },
+            select: { replyProgress: true, ...AUTONOMOUS_EXCHANGE_SOURCE_INPUT_SELECT },
         })]);
         const original = originalPending ?? originalMessage;
         const progress = original?.replyProgress == null ? null

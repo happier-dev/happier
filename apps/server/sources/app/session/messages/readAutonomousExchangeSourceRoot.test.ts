@@ -17,7 +17,7 @@ describe('autonomous exchange source root', () => {
         const tx = { discussionMessage: { findUnique } } as unknown as Tx;
         const result = await readAutonomousExchangeSourceRoot({ tx,
             sourceSessionId: 'source', actorAccountId: 'actor', expectedTurnId: 'accepted-turn',
-            sourceInputs: [{ localId: 'cli-original', acceptedTurnId: 'accepted-turn', targetExecutionRunId: null,
+            sourceInputs: [{ localId: 'cli-original', acceptedTurnId: 'accepted-turn', targetExecutionRunId: null, turnStartWitnessId: null,
                 inputAdmissionReceipt: { v: 1, issuer: 'authenticatedMachine',
                     ...(follow ? { followRelations: [{ relation: 'follower' }] } : {}),
                     ...(bound ? { admittedTarget: { homeId: 'home', accountId, sessionId,
@@ -46,7 +46,7 @@ describe('autonomous exchange source root', () => {
                 ...(direct ? {} : { watcherSessionIds: ['source'] }) } });
         const tx = { discussionMessage: { findUnique } } as unknown as Tx;
         const result = await readAutonomousExchangeSourceRoot({ tx, sourceSessionId: 'source', actorAccountId: 'actor', expectedTurnId: 'turn',
-            sourceInputs: [{ localId, acceptedTurnId: 'turn', targetExecutionRunId: null,
+            sourceInputs: [{ localId, acceptedTurnId: 'turn', targetExecutionRunId: null, turnStartWitnessId: null,
                 inputAdmissionReceipt: { v: 1, issuer: 'authenticatedMachine', discussionAddressing: addressing,
                     admittedTarget: { homeId: 'home', accountId, sessionId: 'source', machineId: 'machine', installationId: 'installation' } },
                 autonomousExchangeRootSessionId: null, autonomousExchangeRootLocalId: null }] });
@@ -61,7 +61,7 @@ describe('autonomous exchange source root', () => {
         const addressing = { discussionId: 'discussion', messageId: 'agent-question', throughSeq: 3,
             participantSessionId: 'source' };
         expect(await readAutonomousExchangeSourceRoot({ tx, sourceSessionId: 'source', actorAccountId: 'actor', expectedTurnId: 'turn',
-            sourceInputs: [{ localId: deriveDiscussionFollowInputLocalIdV1(addressing), acceptedTurnId: 'turn', targetExecutionRunId: null,
+            sourceInputs: [{ localId: deriveDiscussionFollowInputLocalIdV1(addressing), acceptedTurnId: 'turn', targetExecutionRunId: null, turnStartWitnessId: null,
                 inputAdmissionReceipt: { v: 1, issuer: 'authenticatedMachine', discussionAddressing: addressing },
                 autonomousExchangeRootSessionId: 'original-session', autonomousExchangeRootLocalId: 'original-input' }] }))
             .toEqual({ status: 'found', root: { sessionId: 'original-session', localId: 'original-input' } });
@@ -73,7 +73,7 @@ describe('autonomous exchange source root', () => {
         expect(await readAutonomousExchangeSourceRoot({ tx,
             sourceSessionId: 'source', actorAccountId: 'actor', expectedTurnId: 'shared-turn-id',
             sourceInputs: [{ localId: 'run-input', acceptedTurnId: 'shared-turn-id',
-                targetExecutionRunId: 'run-id', inputAdmissionReceipt: { v: 1,
+                targetExecutionRunId: 'run-id', turnStartWitnessId: 'shared-turn-id', inputAdmissionReceipt: { v: 1,
                     issuer: 'authenticatedAccount', actorAccountId: 'actor', sessionRelationship: 'owner' },
                 autonomousExchangeRootSessionId: null, autonomousExchangeRootLocalId: null }],
         })).toEqual({ status: 'unavailable' });

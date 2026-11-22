@@ -73,7 +73,7 @@ import { openSessionFollowListCursor, sealSessionFollowListCursor } from './sess
 import { readCurrentCommittedSessionInputMachineTargetInTx, readStoredSessionInputAdmissionReceipt } from '@/app/session/messages/sessionInputAdmission';
 import { readAdmittedSessionFollowInputInTx, readSessionFollowOriginalOccurrenceFrontiersInTx, resolveSessionFollowInputSelectedDelivery, sessionFollowInputFrontiers, settleSessionFollowInputReasonsInTx, type SessionFollowInputRelation } from './sessionFollowRuleProgress';
 import { readAutonomousExchangeSourceRoot, readReceiverAutonomousExchangeRootInTx,
-    isAutonomousExchangeRootReceiptForAccount, type AutonomousExchangeRoot } from '@/app/session/messages/readAutonomousExchangeSourceRoot';
+    isAutonomousExchangeRootReceiptForAccount, AUTONOMOUS_EXCHANGE_SOURCE_INPUT_SELECT, type AutonomousExchangeRoot } from '@/app/session/messages/readAutonomousExchangeSourceRoot';
 import { observeDiscussionFollowSourcesInTx } from './discussionFollowSource';
 import { observeAccountDiscussionFollowOccurrenceInTx, type DiscussionFollowOccurrenceUnavailableCode } from './discussionFollowSource';
 import { SessionFollowRunOccurrenceRoutesRequestV1Schema, type SessionFollowSourceOccurrenceRoutesRequestV1,
@@ -1290,19 +1290,16 @@ async function readFollowWakeAdmissionInTx(tx: Tx, input: Readonly<{
             commonRoot = localRoot;
             continue;
         }
-        const selected = { localId: true, acceptedTurnId: true, targetExecutionRunId: true,
-            inputAdmissionReceipt: true,
-            autonomousExchangeRootSessionId: true, autonomousExchangeRootLocalId: true } as const;
         const changedInputs = observation.consumed.transcriptSeq > observation.expected.transcriptSeq
             ? await tx.sessionMessage.findMany({ where: { sessionId: observation.sourceSessionId,
                 seq: { gt: observation.expected.transcriptSeq, lte: observation.consumed.transcriptSeq },
-                acceptedTurnId: { not: null } }, select: selected, orderBy: { seq: 'asc' } })
+                acceptedTurnId: { not: null } }, select: AUTONOMOUS_EXCHANGE_SOURCE_INPUT_SELECT, orderBy: { seq: 'asc' } })
             : [];
         // Agent-state and ready-event changes may not append an accepted input;
         // the current source Turn then supplies its already-bound original row.
         const sourceInputs = changedInputs.length > 0 ? changedInputs : source.latestTurnId
             ? await tx.sessionMessage.findMany({ where: { sessionId: observation.sourceSessionId,
-                acceptedTurnId: source.latestTurnId }, select: selected, orderBy: { seq: 'asc' } })
+                acceptedTurnId: source.latestTurnId }, select: AUTONOMOUS_EXCHANGE_SOURCE_INPUT_SELECT, orderBy: { seq: 'asc' } })
             : [];
         const resolved = await readAutonomousExchangeSourceRoot({ tx, sourceSessionId: observation.sourceSessionId,
             actorAccountId: input.destinationAccountId, sourceInputs });
