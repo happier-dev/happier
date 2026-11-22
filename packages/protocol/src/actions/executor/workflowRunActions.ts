@@ -1103,12 +1103,12 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     const { agentStartWorkDepth: _parentStartDepth, agentStartWorkspaceWrites: _parentWorkspaceWrites,
       reviewReviewerLaunchInputs: _parentReviewLaunchInputs, workflowStartProject: _workflowStartProject,
       workflowStartSessionScope, ...caller } = args.context;
-    const admittedTarget = combined?.orchestrationTarget ?? workflowProjectTarget(args.context);
+    const requestedTarget = combined?.orchestrationTarget ?? workflowProjectTarget(args.context);
     args = { ...args, context: caller };
     if (combined) {
       const reviewedHost = combined.parent.input.machineId;
-      if (reviewedHost !== admittedTarget?.machineId) throw workflowError('target_unavailable');
-      assertRunResourceRestriction(args.context, { machineId: admittedTarget.machineId, project: admittedTarget }, deps.normalizeAbsolutePath);
+      if (reviewedHost !== requestedTarget?.machineId) throw workflowError('target_unavailable');
+      assertRunResourceRestriction(args.context, { machineId: requestedTarget.machineId, project: requestedTarget }, deps.normalizeAbsolutePath);
     }
     const input = args.input;
     // The controller opens private preset content after the signed authored Run.
@@ -1150,6 +1150,10 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         || (input.executionTarget !== undefined && !sameStrictJsonValue(input.executionTarget, replaySource.accepted.executionTarget))
         || (input.metadata !== undefined && !sameStrictJsonValue(input.metadata, replaySource.accepted.metadata))) throw workflowError('invalid_input');
     }
+    const admittedTarget = requestedTarget ?? (replaySource ? {
+      ...replaySource.accepted.workspaceTarget.project,
+      sessionPlacement: replaySource.accepted.workspaceTarget.sessionPlacement,
+    } : undefined);
     const replayDiscussion = replaySource?.accepted.origin?.discussion;
     const requestedDiscussion = input.origin ?? (replayDiscussion ? { kind: 'discussion' as const,
       discussion: replayDiscussion.discussion, addressingMessageId: replayDiscussion.messageId } : undefined);

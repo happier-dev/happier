@@ -3538,7 +3538,7 @@ describe('shared Account workflow run owner', () => {
       previousRoundContext: { costConsent: consent === true },
     } } });
   });
-  it('carries the reviewers a person retries into Another round', async () => {
+  it('reuses accepted placement for a Machine-only reviewer retry and carries the selected reviewers', async () => {
     if (!acceptedSnapshotResult.ok) throw new Error('snapshot_fixture_failed');
     const rounds = { ...definition, inputs: [
       { name: 'reviewInput', valueType: 'json' as const, required: false },
@@ -3574,13 +3574,17 @@ describe('shared Account workflow run owner', () => {
       runId: '22222222-2222-4222-8222-222222222222', source: { kind: 'inline', definition: rounds,
         replay: { runId, intent: 'another_round', reviewerIds: ['step-1-reviewer-2'] } },
     }), context: { surface: 'ui' as const, authority: 'present_user' as const, callerPermissionMode: 'default', serverId: 'home',
-      externalActionTarget: { kind: 'machine' as const, machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo' } } } };
+      externalActionTarget: { kind: 'machine' as const, machineId: 'machine-a' } } };
+    await expect(owner.execute({ ...request, context: { ...request.context,
+      externalActionTarget: { kind: 'machine', machineId: 'other-machine' },
+    } })).rejects.toMatchObject({ code: 'target_unavailable', details: { reason: 'target_binding_mismatch' } });
+    expect(writes).toBe(0);
     await expect(owner.execute(request)).resolves.toMatchObject({ admission: 'created' });
     expect(writes).toBe(1);
     const opened = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
       binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId: request.input.runId },
       envelope: parseWorkflowStoredContentEnvelopeV1(admitted) });
-    expect(opened).toMatchObject({ kind: 'available', content: { inputs: { reviewInput,
+    expect(opened).toMatchObject({ kind: 'available', content: { workspaceTarget: accepted.workspaceTarget, inputs: { reviewInput,
       previousRoundContext: { costConsent: false, reviewerIds: ['step-1-reviewer-2'] },
     } } });
   });
