@@ -715,9 +715,8 @@ function observedCount(fields: readonly SentryDetailFieldV1[], id: string): numb
 }
 
 /**
- * The spread from what Sentry stated: the live issue read when it answered, otherwise the
- * observation the detail opened with (the same facts, read earlier). A fact neither stated
- * is absent, never zero.
+ * The observation owns the issue totals, including the Occurrences tab count. The
+ * separate live summary supplies the release and the explicitly windowed trend.
  */
 function useSentrySpread(
   summary: SentryReadStateV1<SentryIssueSummaryV1>,
@@ -726,14 +725,9 @@ function useSentrySpread(
 ): Readonly<{ tiles: readonly TriageDetailSpreadTileV1[]; trend: TriageDetailTrendV1 | null }> {
   const text = usePluginTranslation();
   const live = summary.kind === 'ready' ? summary.value : null;
-  const liveEvents = live?.eventCount === undefined ? null : Number(live.eventCount);
-  const events = liveEvents !== null && Number.isSafeInteger(liveEvents)
-    ? formatNumber(locale, liveEvents, 'compact')
-    : live?.eventCount ?? (() => {
-      const observed = observedCount(fields, 'events');
-      return observed === null ? null : formatNumber(locale, observed, 'compact');
-    })();
-  const userCount = live?.userCount ?? observedCount(fields, 'users');
+  const eventCount = observedCount(fields, 'events');
+  const events = eventCount === null ? null : formatNumber(locale, eventCount, 'compact');
+  const userCount = observedCount(fields, 'users');
   const firstRelease = live?.firstRelease?.version ?? null;
   const tiles: TriageDetailSpreadTileV1[] = [
     ...(events === null ? [] : [{ id: 'events', label: text('plugins.sentry.ui.metadata.events', 'Events'), value: events }]),

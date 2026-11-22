@@ -532,7 +532,7 @@ describe('the mounted Sentry issue detail body', () => {
     await expect(page.queryByText('Reading this occurrence')).resolves.toBeUndefined();
     expect(harness.countOf(SENTRY_ACTION_IDS.readEvent)).toBe(1);
   });
-  it('states the spread once, from the issue read, and drops the observation chrome', async () => {
+  it('keeps the observed Spread count when the issue summary reports a different count', async () => {
     const harness = createHarness({
       readSummary: async () => ({
         ...(ISSUE_BODY as Readonly<Record<string, JsonValue>>),
@@ -554,7 +554,7 @@ describe('the mounted Sentry issue detail body', () => {
           ...DETAIL_INPUT.observation.snapshot,
           facts: [
             { id: 'level', importance: 'primary', value: { kind: 'text', value: 'fatal' } },
-            { id: 'events', importance: 'secondary', value: { kind: 'number', value: 4021, format: 'compact', approximate: true } },
+            { id: 'events', importance: 'secondary', value: { kind: 'number', value: 18300, format: 'compact', approximate: true } },
             { id: 'users', importance: 'secondary', value: { kind: 'number', value: 112, format: 'compact', approximate: true } },
             { id: 'last-release', importance: 'supplementary', value: { kind: 'detailOnly' } },
           ],
@@ -571,7 +571,8 @@ describe('the mounted Sentry issue detail body', () => {
     // Users and events are read once and shown once: the tile, not a Facts row or a "Sentry now" row too.
     const bodyText = document.body.textContent ?? '';
     expect(bodyText.match(/112/gu) ?? []).toHaveLength(1);
-    expect(bodyText.match(/4k|4021|4,021/giu) ?? []).toHaveLength(1);
+    expect(bodyText.match(/18\.3k|18300|18,300/giu) ?? []).toHaveLength(1);
+    expect(bodyText).not.toMatch(/4k|4021|4,021/iu);
     // Facts the spread does not own stay: the level leads in the story, the rest wait behind one Facts line.
     await expect(page.getByText('fatal')).resolves.toBeDefined();
     await expect(page.queryByText('Sentry now')).resolves.toBeUndefined();
