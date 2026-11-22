@@ -1,11 +1,13 @@
 import { join } from 'node:path';
 import { AsyncResource } from 'node:async_hooks';
 import axios from 'axios';
+import { Agent, MockAgent } from 'undici';
 import { describe, expect, it, vi } from 'vitest';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { QualifiedProviderAccountUsageWriteV4Schema, projectProviderAccountUsageSnapshotToQualifiedConnectedAccountQuotaSnapshotV4,
   type QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol';
+import { fetchAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentness';
 import type { RequesterConnectedAccountObservation } from '@/api/client/accountEncryptionCurrentnessObservation';
 import { createBuiltInQualifiedRefreshHarness } from '../connectedServices/refresh/ConnectedServiceRefreshCoordinator.qualifiedRefresh.testkit';
 import { createProviderAccountUsageStore } from '../connectedServices/accountUsage/store';
@@ -22,7 +24,7 @@ import type { TrackedSession } from '../types';
 import type { SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('qualified Connected Account deadline composition', () => {
-  it.each(['both', 'health-only', 'quota-only', 'demanded-quota'] as const)('prepares one initial pair for coincident health and quota despite nonoverlapping startup preparation (%s)', async mode => {
+  it.each(['both', 'health-only', 'quota-only', 'demanded-quota', 'wake-admission'] as const)('prepares one initial pair for coincident health and quota despite nonoverlapping startup preparation (%s)', async mode => {
     const fixture = await createBuiltInQualifiedRefreshHarness();
     fixture.credentials.token = `e30.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`;
     const settingsSecretsReadKeys = deriveSettingsSecretsReadKeysForCredentials(fixture.credentials);
@@ -39,20 +41,28 @@ describe('qualified Connected Account deadline composition', () => {
       status: 'connected', kind: 'oauth', expiresAt: null, authenticationModeId: 'oauth',
       revisionSemantics: 'revisioned', credentialRevision: fixture.firstRevision,
       configurationReady: true, configurationRevision: null, scopes: [], providerIdentity: { accountId: 'work' } }];
+    const quotaAdmissions: number[] = [];
+    const refreshRequestReads: number[] = [];
+    let failQuotaAdmission = false;
     let listings = 0;
     const previousSettings = getActiveAccountSettingsSnapshot();
     let clock = Date.now();
-    vi.useFakeTimers({ toFake: mode === 'demanded-quota' ? ['Date', 'setTimeout', 'clearTimeout'] : ['Date'] });
+    const useFakeLoopClock = mode === 'demanded-quota' || mode === 'wake-admission';
+    vi.useFakeTimers({ toFake: useFakeLoopClock ? ['Date', 'setTimeout', 'clearTimeout'] : ['Date'] });
     const fakeSetTimeout = globalThis.setTimeout;
     // Node timers capture their creator's async context. Sinon invokes a queued
     // callback in the clock advancer's context, which would hide this incident.
-    const timerContext = mode === 'demanded-quota' ? vi.spyOn(globalThis, 'setTimeout').mockImplementation(
+    const timerContext = useFakeLoopClock ? vi.spyOn(globalThis, 'setTimeout').mockImplementation(
       (callback, delay, ...args) => fakeSetTimeout(AsyncResource.bind(callback), delay, ...args),
     ) : undefined;
     vi.setSystemTime(clock);
     const reads = vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
       // Native startup reobserves the Account through the real warm/catalog owners.
-      const path = new URL(url).pathname;
+      const { pathname: path, hostname } = new URL(url);
+      if (hostname === 'quota-admission-home.test') {
+        quotaAdmissions.push(Date.now());
+        if (failQuotaAdmission) throw new DOMException('Home admission aborted', 'AbortError');
+      }
       if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
         mode: 'plain', version: 1, settingsVersion: 1, signingKeyFingerprint: null,
         contentKeyFingerprint: null, updatedAt: 1,
@@ -63,14 +73,17 @@ describe('qualified Connected Account deadline composition', () => {
       if (url.includes('/v4/connect/qualified/credential?')) return { status: 200, data: await fixture.readCredential() };
       if (url.includes('/v4/connect/qualified/quotas?')) {
         const latest = quotaWrites.at(-1);
-        if (manualRefreshRequestedAt !== undefined && latest?.snapshot) return { status: 200, data: {
-          ref: fixture.account, sourceResolution: { source: latest.source, recordId: latest.recordId,
-            providerAccountId: 'work', fetchedAt: latest.snapshot.fetchedAtMs, staleAfterMs: latest.snapshot.staleAfterMs },
-          content: { t: 'plain', v: projectProviderAccountUsageSnapshotToQualifiedConnectedAccountQuotaSnapshotV4({
-            snapshot: latest.snapshot, ref: fixture.account }) },
-          metadata: { fetchedAt: latest.snapshot.fetchedAtMs, staleAfterMs: latest.snapshot.staleAfterMs,
-            status: 'ok', refreshRequestedAt: manualRefreshRequestedAt },
-        } };
+        if (manualRefreshRequestedAt !== undefined && latest?.snapshot) {
+          refreshRequestReads.push(Date.now());
+          return { status: 200, data: {
+            ref: fixture.account, sourceResolution: { source: latest.source, recordId: latest.recordId,
+              providerAccountId: 'work', fetchedAt: latest.snapshot.fetchedAtMs, staleAfterMs: latest.snapshot.staleAfterMs },
+            content: { t: 'plain', v: projectProviderAccountUsageSnapshotToQualifiedConnectedAccountQuotaSnapshotV4({
+              snapshot: latest.snapshot, ref: fixture.account }) },
+            metadata: { fetchedAt: latest.snapshot.fetchedAtMs, staleAfterMs: latest.snapshot.staleAfterMs,
+              status: 'ok', refreshRequestedAt: manualRefreshRequestedAt },
+          } };
+        }
         return { status: 404, data: { error: 'not_found' } };
       }
       throw new Error(`Unexpected deadline HTTP read: ${new URL(url).pathname}`);
@@ -85,10 +98,21 @@ describe('qualified Connected Account deadline composition', () => {
       else throw new Error(`Unexpected deadline HTTP write: ${new URL(url).pathname}`);
       return { status: 200, data: { success: true } };
     });
+    const vendorQuotaBody = () => ({ rate_limit: { primary_window: { used_percent: 25,
+      reset_at: Math.trunc(Date.now() / 1000) + 3600, limit_window_seconds: 18_000 } } });
     const requests = vi.spyOn(globalThis, 'fetch').mockImplementation(async url => String(url).includes('/v1/features')
       ? Response.json(FeaturesResponseSchema.parse({ features: { connectedServices: { enabled: true, quotas: { enabled: true } } }, capabilities: {} }))
-      : Response.json({ rate_limit: { primary_window: { used_percent: 25, reset_at: Math.trunc(Date.now() / 1000) + 3600,
-        limit_window_seconds: 18_000 } } }));
+      : Response.json(vendorQuotaBody()));
+    // Node's plug-in HTTP path carries a private dispatcher. Use the same
+    // fake provider response at that network boundary, with live network disabled.
+    const providerAgent = mode === 'wake-admission' ? new Agent() : undefined;
+    if (providerAgent) providerAgent.dispatch = providerAgent.dispatch.bind(providerAgent);
+    const providerNetwork = providerAgent ? new MockAgent({ agent: providerAgent }) : undefined;
+    providerNetwork?.disableNetConnect();
+    providerNetwork?.get('https://chatgpt.com').intercept({ method: 'GET', path: '/backend-api/wham/usage' })
+      .reply(200, vendorQuotaBody, { headers: { 'content-type': 'application/json' } }).persist();
+    const dispatch = providerNetwork && vi.spyOn(Agent.prototype, 'dispatch')
+      .mockImplementation(providerNetwork.dispatch.bind(providerNetwork));
     const phases = vi.spyOn(logger, 'infoFile');
     const registry = new ConnectedServiceRuntimeRegistry();
     const trackedSessions = new Map<SessionTrackingKey, TrackedSession>();
@@ -117,6 +141,13 @@ describe('qualified Connected Account deadline composition', () => {
               HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: mode === 'quota-only' ? 'false' : 'true',
               ...(mode === 'health-only' ? { HAPPIER_BUILD_FEATURES_DENY: 'connectedServices.quotas' } : {}),
             },
+            ...(mode === 'wake-admission' ? {
+              isAccountRuntimeCurrent: async (signal?: AbortSignal) => {
+                await fetchAccountEncryptionCurrentness({ token: fixture.credentials.token,
+                  serverBaseUrl: 'https://quota-admission-home.test', signal });
+                return true;
+              },
+            } : {}),
             trackedSessionsByKey: trackedSessions, connectedServiceQuotaFetcherDescriptors: [],
             connectedServiceRuntimeRegistry: registry,
             connectedServiceAuthGroupPreTurnSwitchCoordinator: control!.runtime.connectedServiceAuthGroupPreTurnSwitchCoordinator,
@@ -133,7 +164,7 @@ describe('qualified Connected Account deadline composition', () => {
             },
           });
           expect(runtime.connectedServiceQuotasLoopHandle === null, startupFailures.join('; ')).toBe(mode === 'health-only');
-          const initialTick = mode === 'demanded-quota' ? new Promise<void>(resolve => {
+          const initialTick = useFakeLoopClock ? new Promise<void>(resolve => {
             const release = runtime!.connectedServiceQuotasLoopHandle!.subscribeAfterTick(() => { release(); resolve(); });
           }) : undefined;
           await vi.waitFor(() => {
@@ -167,6 +198,57 @@ describe('qualified Connected Account deadline composition', () => {
           demandedFetches: requests.mock.calls.length - initialProviderReads,
           demandedProviderReads: requests.mock.calls.slice(initialProviderReads)
             .filter(([url]) => !String(url).includes('/v1/features')).length });
+      }
+      if (mode === 'wake-admission') {
+        const loop = runtime!.connectedServiceQuotasLoopHandle!;
+        const notifyInventory = (event: RequesterConnectedAccountObservation) => {
+          for (const listener of invalidations) listener(event);
+        };
+        const register = (pid: number) => registry.registerTarget({ pid, agentId: null,
+          materializationKey: `quota-wake-${pid}`, connectedServicesBindingsRaw: { v: 1, bindingsByServiceId: {} } });
+        const failWithBurst = async (pid: number) => {
+          failQuotaAdmission = true;
+          const beganAt = Date.now();
+          const count = quotaAdmissions.length;
+          register(pid);
+          for (let i = 1; i <= 20; i++) register(pid + i);
+          await vi.advanceTimersByTimeAsync(100);
+          for (let i = 21; i <= 40; i++) register(pid + i);
+          notifyInventory({ services: [fixture.account.service] });
+          await vi.advanceTimersByTimeAsync(900);
+          expect(quotaAdmissions.slice(count)).toEqual([beganAt]);
+          failQuotaAdmission = false;
+          return beganAt;
+        };
+        const firstAttemptIndex = quotaAdmissions.length;
+        const firstFailure = await failWithBurst(100);
+        await vi.advanceTimersByTimeAsync(58_999);
+        expect(quotaAdmissions.at(-1)).toBe(firstFailure);
+        const deadlineSettled = new Promise<void>(resolve => {
+          const release = loop.subscribeAfterTick(() => { release(); resolve(); });
+        });
+        await vi.advanceTimersByTimeAsync(1);
+        await deadlineSettled;
+        await vi.advanceTimersByTimeAsync(0);
+        expect(quotaAdmissions.slice(firstAttemptIndex)).toEqual([firstFailure, firstFailure + 60_000]);
+
+        // A second currentness fault recreates the same waiting slot. Home has
+        // already accepted an explicit Refresh and offers its durable row.
+        const latest = quotaWrites.at(-1);
+        if (!latest?.snapshot) throw new Error('Expected an accepted quota observation');
+        const writesBeforeRefresh = quotaWrites.length;
+        const secondAttemptIndex = quotaAdmissions.length;
+        const secondFailure = await failWithBurst(200);
+        manualRefreshRequestedAt = Date.now();
+        notifyInventory({ quotaRefreshOnly: true, quotaRefreshRecordIds: [latest.recordId] });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(quotaAdmissions.slice(secondAttemptIndex), 'record Refresh admits promptly alongside queued ordinary wakes')
+          .toEqual([secondFailure, secondFailure + 1_000]);
+        await vi.waitFor(() => expect(quotaWrites).toHaveLength(writesBeforeRefresh + 1));
+        expect(refreshRequestReads).toHaveLength(1);
+        expect(refreshRequestReads[0]).toBeLessThan(secondFailure + 60_000);
+        expect(quotaWrites.at(-1)?.recordId).toBe(latest.recordId);
+        expect(quotaWrites.at(-1)?.snapshot?.observedAtMs).toBeGreaterThanOrEqual(manualRefreshRequestedAt);
       }
       if (mode === 'both') {
         const idleReads = reads.mock.calls.length;
@@ -262,10 +344,12 @@ describe('qualified Connected Account deadline composition', () => {
       setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}),
         settingsVersion: getActiveAccountSettingsSnapshot()!.settingsVersion + 1,
         loadedAtMs: clock, settingsSecretsReadKeys, scopeKey: resolveAccountSettingsScopeKey(fixture.credentials) });
-      if (mode === 'demanded-quota') await vi.advanceTimersByTimeAsync(20);
+      if (useFakeLoopClock) await vi.advanceTimersByTimeAsync(20);
       else await new Promise(resolve => setTimeout(resolve, 20));
       expect(reads).toHaveBeenCalledTimes(stoppedReads);
       phases.mockRestore(); requests.mockRestore(); writes.mockRestore(); health.mockRestore(); reads.mockRestore();
+      dispatch?.mockRestore();
+      await providerNetwork?.close();
       timerContext?.mockRestore();
       vi.useRealTimers();
       if (previousSettings) setActiveAccountSettingsSnapshot(previousSettings); else clearActiveAccountSettingsSnapshot();

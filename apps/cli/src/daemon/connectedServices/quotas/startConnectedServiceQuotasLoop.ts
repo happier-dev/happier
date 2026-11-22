@@ -1,3 +1,4 @@
+import type { RequesterConnectedAccountObservation } from '@/api/client/accountEncryptionCurrentnessObservation';
 import { startSingleFlightIntervalLoop, type SingleFlightLoopSchedule } from '@/daemon/lifecycle/singleFlightIntervalLoop';
 
 export type ConnectedServiceQuotasLoopHandle = Readonly<{
@@ -12,7 +13,7 @@ export function startConnectedServiceQuotasLoop(params: Readonly<{
   enabled: boolean;
   tickMs: number;
   coordinator: Readonly<{ tickOnce: (signal?: AbortSignal) => Promise<void | SingleFlightLoopSchedule> }>;
-  subscribeWake?: (listener: () => void) => () => void;
+  subscribeWake?: (listener: (event?: RequesterConnectedAccountObservation) => void) => () => void;
   runImmediately?: boolean;
   onTickError: (error: unknown) => void;
   setTimeoutFn?: (fn: () => void, ms: number) => unknown;
@@ -36,7 +37,10 @@ export function startConnectedServiceQuotasLoop(params: Readonly<{
     setTimeoutFn: params.setTimeoutFn,
     clearTimeoutFn: params.clearTimeoutFn,
   });
-  const unsubscribeWake = params.subscribeWake?.(loop.trigger);
+  // A durable request identifies a person's Refresh even on a mixed change page.
+  const unsubscribeWake = params.subscribeWake?.(event => {
+    loop.trigger(event?.quotaRefreshRecordIds?.length ? { bypassFailureDeadline: true } : undefined);
+  });
   if (params.runImmediately) loop.trigger();
 
   return {

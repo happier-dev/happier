@@ -1,6 +1,8 @@
+type SingleFlightTrigger = Readonly<{ bypassFailureDeadline?: true }>;
+
 export type SingleFlightIntervalLoopHandle = Readonly<{
   stop: () => Promise<void>;
-  trigger: () => void;
+  trigger: (options?: SingleFlightTrigger) => void;
   pause: () => void;
   resume: () => void;
 }>;
@@ -21,7 +23,7 @@ export function startSingleFlightIntervalLoop(args: Readonly<{
   let stopped = false;
   let inFlight = false;
   let paused = false;
-  let pendingForcedRerun = false;
+  let pendingForcedRerun: SingleFlightTrigger | undefined;
   let failureCount = 0;
   let nextAutomaticRunAtMs: number | null = Date.now() + Math.max(1, Math.floor(args.intervalMs));
   let timer: unknown = null;
@@ -52,23 +54,21 @@ export function startSingleFlightIntervalLoop(args: Readonly<{
     if (args.unref) (timer as { unref?: () => void } | null)?.unref?.();
   };
 
-  const runOnce = (options: Readonly<{ force?: boolean }> = {}) => {
+  const runOnce = (trigger?: SingleFlightTrigger) => {
     if (stopped) return;
-    if (paused) { if (options.force) pendingForcedRerun = true; return; }
-    if (inFlight) {
-      // An explicit trigger while a run is in flight coalesces into exactly
-      // one forced rerun once that run settles; stop/pause prevents it.
-      if (options.force) pendingForcedRerun = true;
+    if (paused || inFlight) {
+      // Keep one rerun. An ordinary trigger cannot erase a queued explicit bypass.
+      if (trigger && !pendingForcedRerun?.bypassFailureDeadline) pendingForcedRerun = trigger;
       return;
     }
-    if (options.force && args.respectFailureDeadlineForTriggers && failureCount > 0
+    if (trigger && !trigger.bypassFailureDeadline && args.respectFailureDeadlineForTriggers && failureCount > 0
       && nextAutomaticRunAtMs !== null && Date.now() < nextAutomaticRunAtMs) {
-      pendingForcedRerun = true;
+      pendingForcedRerun = trigger;
       if (timer === null) armTimer();
       return;
     }
     clearTimer();
-    pendingForcedRerun = false;
+    pendingForcedRerun = undefined;
     inFlight = true;
     let result: ReturnType<typeof args.task>;
     try { result = args.task(abortController.signal); }
@@ -95,7 +95,7 @@ export function startSingleFlightIntervalLoop(args: Readonly<{
         inFlight = false;
         activeRun = null;
         if (pendingForcedRerun && !paused) {
-          runOnce({ force: true });
+          runOnce(pendingForcedRerun);
         } else armTimer();
       });
   };
@@ -111,16 +111,14 @@ export function startSingleFlightIntervalLoop(args: Readonly<{
       }
       await activeRun;
     },
-    trigger: () => {
-      runOnce({ force: true });
-    },
+    trigger: (options = {}) => runOnce(options),
     pause: () => {
       paused = true;
       clearTimer();
     },
     resume: () => {
       paused = false;
-      if (pendingForcedRerun) runOnce({ force: true });
+      if (pendingForcedRerun) runOnce(pendingForcedRerun);
       else armTimer();
     },
   };

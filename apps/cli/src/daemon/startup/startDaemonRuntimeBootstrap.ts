@@ -469,11 +469,11 @@ export async function startDaemonConnectedServiceRuntime(
       true,
     );
   const connectedServiceRuntimeRegistry = params.connectedServiceRuntimeRegistry ?? new ConnectedServiceRuntimeRegistry();
-  const subscribeCoordinatorWake = (listener: () => void, settingsKeys: readonly string[],
+  const subscribeCoordinatorWake = (listener: (event?: RequesterConnectedAccountObservation) => void, settingsKeys: readonly string[],
     invalidateInventory?: (event?: RequesterConnectedAccountObservation) => void): (() => void) => {
-    const onInventoryChanged = (event?: RequesterConnectedAccountObservation) => { invalidateInventory?.(event); listener(); };
+    const onInventoryChanged = (event?: RequesterConnectedAccountObservation) => { invalidateInventory?.(event); listener(event); };
     const cleanups = [
-      connectedServiceRuntimeRegistry.subscribeTargetRegistrations(listener),
+      connectedServiceRuntimeRegistry.subscribeTargetRegistrations(() => listener()),
       params.subscribeConnectedAccountInvalidations?.(onInventoryChanged),
       params.subscribeAccountSettingsSnapshot?.(onInventoryChanged, { settings: settingsKeys })
         ?? (!params.accountSettingsSnapshot ? subscribeActiveAccountSettingsKeys({ settings: settingsKeys }, () => onInventoryChanged()) : undefined),
@@ -669,7 +669,7 @@ export async function startDaemonConnectedServiceRuntime(
     startRefreshLoop = (skipQualified) => { connectedServiceRefreshLoopHandle = startConnectedServiceRefreshLoop({
       enabled: true,
       tickMs: refreshTickMs,
-      subscribeWake: listener => subscribeCoordinatorWake(listener, ['connectedServicesProviderStateSharingSettingsV1']),
+      subscribeWake: listener => subscribeCoordinatorWake(() => listener(), ['connectedServicesProviderStateSharingSettingsV1']),
       coordinator: createConnectedServiceRefreshLoopCoordinator({ coordinator: connectedServiceRefreshCoordinator!,
         skipQualified, runAccountOperation: params.runAccountOperation }),
       runImmediately: true,
