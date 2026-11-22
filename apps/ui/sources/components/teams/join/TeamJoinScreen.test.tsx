@@ -46,7 +46,7 @@ import {
     setServerProfileIdentityForUrl as setIdentity,
 } from '@/sync/domains/server/serverProfiles';
 import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
-import { TeamInvitationPreviewResultV1Schema, createTeamInvitationTargetBindingV1 } from '@happier-dev/protocol/teams';
+import { TeamInvitationAcceptResultV1Schema, TeamInvitationPreviewResultV1Schema, createTeamInvitationTargetBindingV1 } from '@happier-dev/protocol/teams';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit';
 import { t } from '@/text';
 import { resolveCompactAppDestinations, hrefForDestinationRef } from '@/components/appShell/destinations/compactAppDestinationCatalog';
@@ -73,7 +73,7 @@ const homeBoundary = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homeBoundary);
 const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
 await import('@/sync/syncEngine');
-const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
+const { disconnectActiveServerConnection, switchConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
 const { AuthProvider } = await import('@/auth/context/AuthContext');
 const { TeamJoinScreen } = await import('./TeamJoinScreen');
 const { default: TeamJoinRoute } = await import('@/app/(app)/join/[token]');
@@ -433,10 +433,12 @@ describe('TeamJoinScreen', () => {
             && node.props.accessibilityLiveRegion === 'polite')).not.toHaveLength(0);
     });
 
-    it('switches Account before acceptance without consuming the invitation or changing Homes', async () => {
+    it('returns from Account switching and accepts once through workspace setup', async () => {
         const home = await addCapableHome('Acme', 'https://acme-home.example');
         await setServerProfileIdentityForUrl('https://acme-home.example', 'srv_acme_home');
         await setActiveServerId(home, { scope: 'device' });
+        homeBoundary.answer(home, '/v1/account/profile', { body: AccountProfileSchema.parse({ id: 'account', firstName: 'Ada' }) });
+        const credentials = await switchConnectionToActiveServer();
         let authEntryReads = 0;
         const joinFetch = async (input: string | Readonly<{ url: string }>) => {
             const path = typeof input === 'string' ? input : input.url;
@@ -469,12 +471,17 @@ describe('TeamJoinScreen', () => {
                     autoRedirect: null,
                 })), { status: 200 });
             }
+            if (new URL(path).pathname === '/v1/team-invitations/accept') {
+                return Response.json(TeamInvitationAcceptResultV1Schema.parse({ outcome: 'joined', teamId: 'team-1' }));
+            }
             throw new Error(`Unexpected Team join request: ${path}`);
         };
         runtimeFetchMock.mockImplementation(joinFetch);
 
-        const rendered = await renderScreen(
-            <TeamJoinScreen token={TOKEN} homeTarget="srv_acme_home" />,
+        const rendered = await renderScreenBase(
+            <AuthProvider initialCredentials={credentials}>
+                <TeamJoinScreen token={TOKEN} homeTarget="srv_acme_home" />
+            </AuthProvider>,
         );
 
         await waitForTestId(rendered, 'team-auth-entry-use-another-account');
@@ -492,6 +499,15 @@ describe('TeamJoinScreen', () => {
         expect(await waitForTestId(rendered, 'team-auth-entry-join')).toBeTruthy();
         expect(getActiveServerId()).toBe('srv_acme_home');
         expect(runtimeFetchMock.mock.calls.some((call) => String(call[0]).includes('/accept'))).toBe(false);
+
+        await rendered.pressByTestIdAsync('team-auth-entry-join');
+        await waitForTestId(rendered, 'team-auth-entry-admission-complete-action');
+        await rendered.pressByTestIdAsync('team-auth-entry-admission-complete-action');
+        await waitForHomeGovernance(() => expect(routerReplaceSpy).toHaveBeenCalledExactlyOnceWith(
+            teamSetupPath({ serverId: 'srv_acme_home', teamId: 'team-1' }),
+        ));
+        expect(runtimeFetchMock.mock.calls.filter(([url]) => new URL(String(url)).pathname === '/v1/team-invitations/accept'))
+            .toHaveLength(1);
     });
 
     it('opens an already-admitted Team directly without consuming the invitation', async () => {

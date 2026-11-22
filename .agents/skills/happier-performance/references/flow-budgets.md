@@ -233,6 +233,7 @@ not a measured reference-runtime total or an equivalent authorization topology.
 | Shape id | Contract | Registered check | Canonical owner |
 | --- | --- | --- | --- |
 | `sharedSetup.bodyDemand` | Source list, Source detail and Artifact header read select zero setup bodies. Opening the selected attachment reads its body once. | `apps/server/sources/app/projects/sources/projectSource.sqlite.integration.spec.ts`. Observes Prisma requests against real SQLite. | Project Source and Artifact readers |
+| `teamSetup.joinAdmission` | Accept → Joined → Set up workspace sends one invitation acceptance across the whole journey. | `apps/ui/sources/components/teams/join/TeamJoinScreen.test.tsx`. Counts outgoing acceptance requests at the Home HTTP boundary. | Team invitation admission |
 | `sessionDefaults.selectedSource` | A new scoped CLI root reads its selected Source once across preparation and admission. Captured recovery reads no current defaults. Launch acquires only selected credentials. | `apps/cli/src/session/creation/resolveSessionSpawnManagedDefaults.test.ts` and `apps/cli/src/daemon/connectedServices/materialize/materializeQualifiedConnectedAccountLaunchUses.test.ts`. Counts Home HTTP and credential materialization at their boundaries. | Session defaults loader and Connected Account materializer |
 
 ### Database Workbench discovery and capture publication
