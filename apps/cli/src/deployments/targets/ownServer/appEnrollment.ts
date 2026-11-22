@@ -34,8 +34,8 @@ export async function enrollOwnServerAppServices(input: EnrollmentInput, host: R
     if (target.homeServerIdentityId !== host.serverId || !target.descriptor) {
         throw new PluginError({ code: 'home_identity_mismatch', message: 'App enrollment requires the installed Home descriptor' });
     }
-    const accountCredentials = readRequesterAccountActionContext(host.context.externalActionExecutionAuthorization)?.credentials
-        ?? (host.context.externalActionExecutionAuthorization ? undefined : host.credentials);
+    const requester = readRequesterAccountActionContext(host.context.externalActionExecutionAuthorization);
+    const accountCredentials = requester?.credentials ?? (host.context.externalActionExecutionAuthorization ? undefined : host.credentials);
     const guestCli = await readManagedGuestCliIdentity({ homeUrl: host.serverHttpBaseUrl, signal: input.signal });
     for (const declaration of input.render.appEnrollments) {
         const channel = declaration.releaseChannel;
@@ -101,8 +101,12 @@ export async function enrollOwnServerAppServices(input: EnrollmentInput, host: R
                 if (result.kind !== 'observed') throw new PluginError({ code: 'native_service_control_unconfirmed', message: 'App daemon restart was not confirmed' });
             },
         }, { native });
+        // Role assignment runs inside the admitted deploy: it rides the requester's disclosure to this
+        // same hosting Machine, never to another Machine or custodian.
         const actions = createCliActionExecutorFromCredentials({ credentials: accountCredentials,
             readCredentials: async () => accountCredentials, externalActionClient: true,
+            ...(requester && host.context.externalActionExecutionAuthorization
+                ? { requesterCustody: host.context.externalActionExecutionAuthorization } : {}),
             machineId: host.machineId, serverId: host.serverId, serverIdentityId: host.serverId, serverApiUrl: host.serverHttpBaseUrl });
         const context = { surface: host.context.surface ?? 'cli', authority: host.context.authority,
             serverId: host.serverId, signal: input.signal };

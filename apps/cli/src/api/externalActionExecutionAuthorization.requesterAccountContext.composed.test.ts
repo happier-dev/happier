@@ -1263,6 +1263,48 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
       } finally { await requester?.dispose(); await channel.close(); }
     });
   });
+  it.each(['plain', 'e2ee'] as const)('lets a nested executor call inside admitted work ride its requester disclosure to the same Machine (%s)', async mode => {
+    // F14: the collector deploy's App enrollment assigns Machine roles through a fresh CLI executor
+    // on the hosting Machine. It must ride the admitted deploy's disclosure, not ask again.
+    await withConfiguredDaemonTestHome({ prefix: 'executor-child-custody-' }, async () => {
+      const events: string[] = [];
+      const target = await home(mode, events, { originalOwnAction: 'agents.models.list' });
+      const channel = await createRequesterCurrentnessSocketHarness();
+      const credentials: StoredCredentials = { token: token(), credentialProvenance: 'stored_session',
+        encryption: mode === 'plain' ? null : { type: 'legacy', secret: new Uint8Array(32).fill(23) } };
+      const invocation = { caller: { kind: 'host' as const }, surface: 'cli' as const, authority: 'present_user' as const };
+      const source = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'already-admitted-deploy', binding: {
+        accountId: 'bob', custodianAccountId: 'alice', authentication: { kind: 'account', tokenEpoch: 7 },
+        accountEncryptionMode: mode, serverIdentityId: homeIdentityId, machineId: 'alice-machine', installationId: 'alice-installation',
+        actionId: 'agents.models.list', requestId: 'parent-request', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({
+          v: 1, requestId: 'parent-request', target: { kind: 'machine', machineId: 'alice-machine' }, input: ownMachineInput }),
+        target: { kind: 'machine', machineId: 'alice-machine' },
+      } });
+      let requester: Awaited<ReturnType<typeof admitRequesterAccountActionContext>> = null;
+      try {
+        requester = await runWithServerHttpBaseUrl(target.url, () => admitRequesterAccountActionContext({
+          authorization: source, credentials, invocation, serverId: configuration.activeServerId, serverIdentityId: homeIdentityId,
+          serverHttpBaseUrl: target.url, isCurrent: async () => true,
+        }));
+        if (!requester) throw new Error('Expected admitted requester custody');
+        const executor = (requesterCustody?: typeof requester.authorization) => createCliActionExecutorFromCredentials({ credentials,
+          readCredentials: async () => credentials, externalActionClient: true, machineId: 'alice-machine',
+          serverId: 'home', serverApiUrl: target.url, serverIdentityId: homeIdentityId,
+          actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) },
+          ...(requesterCustody ? { requesterCustody } : {}) });
+        // Without the admitted custody this is a fresh disclosure nobody is present to confirm.
+        expect(await executor().execute('agents.models.list', ownMachineInput,
+          { surface: 'cli', authority: 'present_user', actionRequestId: 'request-0' }))
+          .toMatchObject({ ok: false, errorCode: 'requester_credential_disclosure_required' });
+        expect(events).not.toContain('dispatch');
+        const execution = await executor(requester.authorization).execute('agents.models.list', ownMachineInput,
+          { surface: 'cli', authority: 'present_user', actionRequestId: 'request-1' });
+        expect(execution, JSON.stringify(execution)).toMatchObject({ ok: true, result: ownMachineResult });
+        expect(events).toContain('dispatch');
+      } finally { await requester?.dispose(); await channel.close(); }
+    });
+  });
+
   it.each(['stop', 'delete'] as const)('sends a foreign Manage %s through the installation codec without sharing Account material', async intent => {
     const actionId = intent === 'delete' ? 'machines.managed.delete' : 'machines.managed.power.set';
     const events: string[] = [];
