@@ -183,6 +183,45 @@ export function useOptionalDetailsTabOpener(scopeId: string): AppPaneScopeApi['o
     return openInScope ? openDetailsTab : null;
 }
 
+function usePaneSelection(scopeId: string) {
+    const subscription = React.useContext(AppPaneContext);
+    const openPaneWindow = useOpenPaneDestinationWindow();
+    return React.useCallback((slot: 'right' | 'bottom', destination: SelectedPaneDestinationV1, commit: () => void): void => {
+        const current = subscription?.getSnapshot().getReadState().scopes[scopeId]?.[slot];
+        if (current?.presentation) {
+            fireAndForget(openPaneWindow(scopeId, selectedPaneDestinationTabKey(slot), commit), { tag: 'Pane.selectPlacedDestination' });
+        } else if (areSelectedPaneDestinationsEqual(current?.selectedDestination ?? null, destination)) {
+            commit();
+        } else {
+            void runGuardedTabNavigation([detailsTabNavigationKey(scopeId, selectedPaneDestinationTabKey(slot))], commit);
+        }
+    }, [openPaneWindow, scopeId, subscription]);
+}
+
+function useRightPaneOpener(scopeId: string, selectPane: ReturnType<typeof usePaneSelection>): AppPaneScopeApi['openRight'] | null {
+    const subscription = React.useContext(AppPaneContext);
+    const presentPane = usePanePresentation();
+    const openRight = React.useCallback<AppPaneScopeApi['openRight']>((options) => {
+        const context = subscription?.getSnapshot();
+        if (!context) return;
+        const destination = options?.tabId ? createBuiltinPaneDestination(options.tabId)
+            : context.getReadState().scopes[scopeId]?.right.selectedDestination ?? null;
+        const commit = () => {
+            context.dispatch({ type: 'openRight', scopeId, tabId: options?.tabId });
+            if (options?.present !== false) presentPane?.({ scopeId, pane: 'right', destination });
+        };
+        if (options?.tabId && destination) selectPane('right', destination, commit);
+        else commit();
+    }, [presentPane, scopeId, selectPane, subscription]);
+    return subscription ? openRight : null;
+}
+
+/** Cold Session drivers use the same Right admission and presentation as the pane API. */
+export function useOptionalRightPaneOpener(scopeId: string): AppPaneScopeApi['openRight'] | null {
+    const selectPane = usePaneSelection(scopeId);
+    return useRightPaneOpener(scopeId, selectPane);
+}
+
 function dispatchDetailsTabOpen(
     dispatch: (action: AppPaneAction) => void,
     presentPane: ReturnType<typeof usePanePresentation>,
@@ -273,27 +312,8 @@ export function useAppPaneScope<T>(scopeId: string, selector?: (scope: PaneScope
         };
     }, [recordNativeFocusTarget]);
 
-    const openPaneWindow = useOpenPaneDestinationWindow();
-    const selectPane = React.useCallback((slot: 'right' | 'bottom', destination: SelectedPaneDestinationV1, commit: () => void): void => {
-        const current = getReadState().scopes[scopeId]?.[slot];
-        if (current?.presentation) {
-            fireAndForget(openPaneWindow(scopeId, selectedPaneDestinationTabKey(slot), commit), { tag: 'Pane.selectPlacedDestination' });
-        } else if (areSelectedPaneDestinationsEqual(current?.selectedDestination ?? null, destination)) {
-            commit();
-        } else {
-            void runGuardedTabNavigation([detailsTabNavigationKey(scopeId, selectedPaneDestinationTabKey(slot))], commit);
-        }
-    }, [getReadState, openPaneWindow, scopeId]);
-    const openRight = React.useCallback((options?: Readonly<{ tabId?: string; present?: boolean }>) => {
-        const destination = options?.tabId ? createBuiltinPaneDestination(options.tabId)
-            : getReadState().scopes[scopeId]?.right.selectedDestination ?? null;
-        const commit = () => {
-            dispatch({ type: 'openRight', scopeId, tabId: options?.tabId });
-            if (options?.present !== false) presentPane?.({ scopeId, pane: 'right', destination });
-        };
-        if (options?.tabId && destination) selectPane('right', destination, commit);
-        else commit();
-    }, [dispatch, getReadState, presentPane, scopeId, selectPane]);
+    const selectPane = usePaneSelection(scopeId);
+    const openRight = useRightPaneOpener(scopeId, selectPane)!;
 
     const closeRight = React.useCallback(() => {
         void runGuardedTabNavigation([detailsTabNavigationKey(scopeId, selectedPaneDestinationTabKey('right'))], () => dispatch({ type: 'closeRight', scopeId }));

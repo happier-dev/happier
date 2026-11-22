@@ -5,6 +5,7 @@ import type {
     BrowserRuntimeWorkspaceOpeningAdapter,
 } from './runtimeActionExecutor';
 import { areServerAccountScopesEqual, serverAccountScopedResourceKey, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
 type BrowserRuntimeControlRegistrationToken = Readonly<{
     id: symbol;
@@ -32,12 +33,15 @@ const workspaceOpeners = new Map<string, BrowserRuntimeWorkspaceOpeningAdapter[]
 export function registerBrowserRuntimeWorkspaceOpeningAdapter(owner: BrowserRuntimeWorkspaceOpeningAdapter): () => void {
     const lifetime = owner.accountLifetime;
     if (!lifetime?.isCurrent()) return () => {};
-    const key = serverAccountScopedResourceKey(lifetime.scope, owner.scopeId);
-    workspaceOpeners.set(key, [...(workspaceOpeners.get(key) ?? []), owner]);
+    const keys = [...new Set([owner.scopeId, ...(owner.sessionAddress ? [owner.sessionAddress.sessionId] : [])])]
+        .map(scopeId => serverAccountScopedResourceKey(lifetime.scope, scopeId));
+    for (const key of keys) workspaceOpeners.set(key, [...(workspaceOpeners.get(key) ?? []), owner]);
     const dispose = () => {
-        const remaining = (workspaceOpeners.get(key) ?? []).filter(candidate => candidate !== owner);
-        if (remaining.length) workspaceOpeners.set(key, remaining);
-        else workspaceOpeners.delete(key);
+        for (const key of keys) {
+            const remaining = (workspaceOpeners.get(key) ?? []).filter(candidate => candidate !== owner);
+            if (remaining.length) workspaceOpeners.set(key, remaining);
+            else workspaceOpeners.delete(key);
+        }
     };
     const retirement = lifetime.onRetire(dispose);
     return () => { retirement.dispose(); dispose(); };
@@ -75,10 +79,21 @@ export function readClaimedBrowserRuntimeWorkspaceOpenRegion(
 export function readRegisteredBrowserRuntimeWorkspaceOpeningAdapter(
     scope: ServerAccountScope,
     scopeId: string,
+    context?: ActionExecutorContext,
 ): BrowserRuntimeWorkspaceOpeningAdapter | null {
     const owners = workspaceOpeners.get(serverAccountScopedResourceKey(scope, scopeId)) ?? [];
     for (let index = owners.length - 1; index >= 0; index--) {
-        if (owners[index].accountLifetime?.isCurrent()) return owners[index];
+        if (owners[index].scopeId === scopeId && owners[index].accountLifetime?.isCurrent()) return owners[index];
+    }
+    // Only the asker's own Session id is an additional address form. The validated
+    // replay origin retains the Agent caller after approval executes as the person.
+    const origin = context?.approvedActionReplay?.origin;
+    if (origin?.surface !== 'agent' || origin.accountId !== scope.accountId
+        || origin.caller?.kind !== 'session' || origin.caller.sessionId !== scopeId) return null;
+    for (let index = owners.length - 1; index >= 0; index--) {
+        const owner = owners[index];
+        if (owner.accountLifetime?.isCurrent() && owner.sessionAddress?.sessionId === scopeId
+            && owner.sessionAddress.isAvailable()) return owner;
     }
     return null;
 }

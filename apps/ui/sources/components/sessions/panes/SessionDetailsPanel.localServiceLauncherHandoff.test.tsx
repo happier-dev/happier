@@ -190,6 +190,122 @@ beforeEach(() => {
 });
 
 describe('SessionDetailsPanel local service launcher handoff', () => {
+    it.each(['exact', 'reported-session-id', 'pane-already-open', 'phone390', 'foreign-session', 'unknown-scope', 'offscreen', 'stopped', 'reject'] as const)(
+        'approves a cold Agent Browser open through the app (%s)', async addressing => {
+        if (addressing === 'phone390') Object.assign(viewport, { width: 390, height: 844 });
+        reopenService = true;
+        inventoryRead.resolve();
+        const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
+        const { createAgentApprovalRequest } = await import('@/dev/testkit/harness/approvalInbox');
+        const { captureActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const { approvalArtifactBodyMatchesHeaderV1 } = await import('@happier-dev/protocol/approvals/approvalArtifactHeaderV1');
+        const { useApprovalDecisionHandler } = await import('@/components/tools/shell/approvals/useApprovalDecisionHandler');
+        const { renderHook } = await import('@/dev/testkit/hooks/renderHook');
+        const { readRegisteredBrowserRuntimeWorkspaceOpeningAdapter } = await import('@/sync/domains/browser/actions/runtimeControlRegistry');
+        const { AppPaneScopeHost } = await import('@/components/appShell/panes/AppPaneScopeHost');
+        const { SessionRightSidebarProvider } = await import('./SessionRightPanel');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const { SessionCockpitChromeRegistryProvider } = await import('@/components/workspaceCockpit/session/SessionCockpitChromeRegistry');
+        const { SessionCockpitPanePresentationBoundary, SessionCockpitSceneNavigationBoundary } = await import('@/components/workspaceCockpit/session/SessionCockpitTabNavigator');
+        const { createSessionBrowserPaneScopeId, createSessionPaneScopeId } = await import('./sessionPaneScopeId');
+        type MobileSurface = import('@/components/workspaceCockpit/session/sessionCockpitState').SessionMobileSurface;
+        let pane!: ReturnType<typeof useAppPaneScope>;
+        let browserPane!: ReturnType<typeof useAppPaneScope>;
+        let scopeId = '';
+        function MountedSession() {
+            scopeId = useRegisterSessionPaneDriver('session-a', runtime.serverId);
+            pane = useAppPaneScope(scopeId);
+            return <AppPaneScopeHost scopeId={scopeId} main={<>{'Session chat'}</>}
+                wrapScopeContent={content => <SessionRightSidebarProvider sessionId="session-a" scopeId={scopeId}>{content}</SessionRightSidebarProvider>} />;
+        }
+        function OtherSession() {
+            useRegisterSessionPaneDriver('session-b', runtime.serverId);
+            return null;
+        }
+        function PhoneSession() {
+            scopeId = createSessionPaneScopeId('session-a', runtime.serverId);
+            pane = useAppPaneScope(scopeId);
+            browserPane = useAppPaneScope(createSessionBrowserPaneScopeId(scopeId));
+            const [surface, navigate] = React.useState<MobileSurface>('chat');
+            const catalog = resolveSessionCockpitMobileCatalog({ terminalTabAvailable: false, browserFeatureEnabled: true });
+            // Navigation is the platform boundary; the real presenter selects its Browser scene.
+            const sceneNavigate = vi.fn();
+            sceneNavigate.mockImplementation(navigate);
+            return <SessionCockpitSceneNavigationBoundary cockpit navigation={{ navigate: sceneNavigate, canGoBack: () => false, goBack: () => navigate('chat') }} commitSurface={() => {}}>
+                <SessionCockpitPanePresentationBoundary cockpit scopeId={scopeId} sessionId="session-a" serverId={runtime.serverId}
+                catalog={catalog} navigate={navigate} commitSurface={() => {}}>
+                <SessionCockpitSurfaceScreen catalog={catalog} sessionId="session-a" scopeId={scopeId}
+                    surface={surface} experience="cockpit" routeServerId={runtime.serverId} />
+            </SessionCockpitPanePresentationBoundary></SessionCockpitSceneNavigationBoundary>;
+        }
+        const machine = createHydratedPlainMachineFixture({ id: 'machine-a', accountId: 'account-a',
+            machine: { active: true, activeAt: Date.now() } });
+        publishMachineActivity(machine, machine, []);
+        storage.getState().applyMachines([machine], false, { sourceServerId: runtime.serverId, sourceAccountId: 'account-a' });
+        storage.getState().applySessions(['session-a', 'session-b'].map(id => createSessionFixture({ id, serverId: runtime.serverId,
+            active: true, metadata: { path: '/repo', host: 'test', machineId: 'machine-a' } })));
+        const sessionMetadata = storage.getState().sessions['session-a']?.metadata;
+        const screen = await renderScreen(<runtime.Wrapper><SessionCockpitChromeRegistryProvider>
+            <PluginSurfaceFocusEligibilityProvider active={addressing !== 'offscreen'}>
+                {addressing === 'phone390' ? <PhoneSession /> : <MountedSession />}
+            </PluginSurfaceFocusEligibilityProvider>
+            <OtherSession />
+        </SessionCockpitChromeRegistryProvider></runtime.Wrapper>);
+        const context = await captureActionAccountContext(runtime.serverId);
+        try {
+            await expect.poll(() => readRegisteredBrowserRuntimeWorkspaceOpeningAdapter(runtime.accountScope!, scopeId)).not.toBeNull();
+            expect(pane.scopeState?.right.isOpen ?? false).toBe(false);
+            if (addressing === 'pane-already-open') await act(async () => pane.openRight({ tabId: 'browser' }));
+            const requestedScope = addressing === 'exact' ? scopeId : addressing === 'foreign-session' ? 'session-b'
+                : addressing === 'unknown-scope' ? 'unknown-workspace' : 'session-a';
+            expect(readRegisteredBrowserRuntimeWorkspaceOpeningAdapter(runtime.accountScope!, requestedScope) !== null).toBe(addressing === 'exact');
+            const artifactId = await createAgentApprovalRequest({ serverId: runtime.serverId,
+                actionId: 'browser.workspace.open', actionRequestId: 'cold-agent-open',
+                defaultSessionId: 'session-a', defaultSessionMachineId: 'machine-a',
+                actionCaller: { kind: 'session', sessionId: 'session-a', starterDepth: 0, turnDepth: 0 },
+                actionInput: { scopeId: requestedScope, commandId: 'cold-agent-open', engineOverride: 'embedded',
+                    target: { kind: 'externalUrl', targetId: 'public-page', url: 'http://localhost:5173/' } } });
+            const artifact = await context.fetchArtifact(artifactId);
+            if (!artifact || typeof artifact.body !== 'string') throw new Error('Expected pending approval');
+            const parsed = approvalArtifactBodyMatchesHeaderV1(artifact.header ?? {}, artifact.body);
+            if (parsed?.family !== 'built_in') throw new Error('Expected built-in approval');
+            if (addressing === 'stopped') {
+                const session = storage.getState().sessions['session-a'];
+                if (!session) throw new Error('Expected asking Session');
+                await act(async () => storage.getState().applySessions([{ ...session, active: false }]));
+            }
+            const hook = await renderHook(() => useApprovalDecisionHandler(artifact, parsed.request, 'session-a', runtime.serverId));
+            try {
+                const refused = ['foreign-session', 'unknown-scope', 'offscreen', 'stopped'].includes(addressing);
+                await act(async () => refused
+                    ? await expect(hook.getCurrent()('approve')).rejects.toMatchObject({ code: 'runtime_action_disabled' })
+                    : await expect(hook.getCurrent()(addressing === 'reject' ? 'reject' : 'approve')).resolves.toBe(true));
+                const opened = !refused && addressing !== 'reject';
+                const targetPane = addressing === 'phone390' ? browserPane : pane;
+                expect(targetPane.scopeState?.details.tabs ?? []).toHaveLength(opened ? 1 : 0);
+                if (opened && addressing !== 'exact') {
+                    if (addressing !== 'phone390') {
+                        expect(pane.scopeState?.right.isOpen).toBe(true);
+                        expect(pane.scopeState?.right.activeTabId).toBe('browser');
+                    }
+                    expect(screen.findAllByTestId(addressing === 'phone390' ? 'session-browser-screen' : 'session-rightpanel-browser').length).toBeGreaterThan(0);
+                    const opens = serviceMethods.filter(method => method === RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_OPEN_OR_CREATE).length;
+                    await act(async () => { await expect(hook.getCurrent()('approve')).resolves.toBe(true); });
+                    expect(serviceMethods.filter(method => method === RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_OPEN_OR_CREATE)).toHaveLength(opens);
+                    expect(targetPane.scopeState?.details.tabs).toHaveLength(1);
+                } else if (!opened) {
+                    expect(pane.scopeState?.right.isOpen ?? false).toBe(false);
+                    expect(serviceMethods.filter(method => method === RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_OPEN_OR_CREATE)).toHaveLength(0);
+                }
+                if (!opened) expect(storage.getState().sessions['session-a']?.metadata).toEqual(sessionMetadata);
+                const settled = await context.fetchArtifact(artifactId);
+                const settledBody = settled && typeof settled.body === 'string'
+                    ? approvalArtifactBodyMatchesHeaderV1(settled.header ?? {}, settled.body) : null;
+                expect(settledBody).toMatchObject({ family: 'built_in', request: { actionArgs: { scopeId: requestedScope } } });
+            } finally { await hook.unmount(); }
+        } finally { context.dispose(); await screen.unmount(); }
+    });
+
     it.each(['route', 'pane'] as const)('retains the offline Session Machine binding in the %s runtime owner', async owner => {
         const { useSessionPluginRuntime } = await import('../plugins/useSessionPluginRuntime');
         const { useOptionalPaneDriverReader } = await import('@/components/appShell/panes/AppPaneProvider');

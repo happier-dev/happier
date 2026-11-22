@@ -20,6 +20,7 @@ import { resolveSessionNavigationCustomizerProps } from '@/components/sessions/p
 import { useMountedScopeActionCommand } from '@/components/approvals/useMountedScopeActionCommand';
 import { storage, useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { BrowserMobileSurfaceScreen } from '@/components/browser/surfaces/BrowserMobileSurfaceScreen';
+import { createSessionBrowserPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
 import { useDetailsTabCount } from '@/components/appShell/panes/hooks/useDetailsTabCount';
@@ -206,7 +207,7 @@ const SessionCockpitSurfaceScreenContent = React.memo((props: SessionCockpitSurf
     // The mobile browser is a separate full-screen surface with its own pane scope; open a service
     // into that browser workspace, then switch the cockpit to it (only after a mappable target).
     const openServiceInBrowser = useServicesOpenInBrowser({
-        scopeId: `${props.scopeId}:browser`,
+        scopeId: createSessionBrowserPaneScopeId(props.scopeId),
         scope: 'sessionMobile',
         accountLifetime: pluginProjection.accountLifetime,
         machineId: pluginProjection.machineId,
@@ -896,7 +897,7 @@ const SessionCockpitSurfaceScreenContent = React.memo((props: SessionCockpitSurf
                 <React.Suspense fallback={<PaneLoadingFallback />}>
                     <BrowserMobileSurfaceScreen
                         sessionId={props.sessionId}
-                        scopeId={`${props.scopeId}:browser`}
+                        scopeId={createSessionBrowserPaneScopeId(props.scopeId)}
                         pluginProjection={pluginProjection}
                         onCloseLastPage={returnToChat}
                     />

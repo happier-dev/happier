@@ -93,11 +93,13 @@ export type BrowserRuntimeDiagnosticsAdapter = Readonly<{ execute: RuntimeAction
 export type BrowserRuntimeWorkspaceOpeningAdapter = Readonly<{
     scopeId: string;
     accountLifetime: ServerAccountScopeLifetime | null;
+    /** The shown, running Session whose Agent can address this workspace by Session id. */
+    sessionAddress?: Readonly<{ sessionId: string; isAvailable: () => boolean }>;
     readAddressFacts?: () => BrowserAddressFacts;
     open: (
         input: PublicActionInputById['browser.workspace.open'],
         context: ActionExecutorContext,
-        presentation?: Readonly<{ openerRegion?: BrowserWorkspaceOpenerRegion;
+        presentation?: Readonly<{ openerRegion?: BrowserWorkspaceOpenerRegion; sessionAddressed?: boolean;
             executeControl: RuntimeActionExecute; managedBrowserAvailable: boolean }>,
     ) => Promise<unknown>;
 }>;
@@ -275,8 +277,8 @@ async function executeBrowserControlAction(
         const serverId = resolveServerProfileScopeIdForIdentifier(args.context.serverId);
         const scope = serverId && args.context.runtimeAccountId
             ? { serverId, accountId: args.context.runtimeAccountId } : null;
-        const owner = scope ? readRegisteredBrowserRuntimeWorkspaceOpeningAdapter(scope, request.scopeId) : null;
-        if (!owner || owner.scopeId !== request.scopeId) return browserRuntimeActionDisabledResult('browser_view_unavailable');
+        const owner = scope ? readRegisteredBrowserRuntimeWorkspaceOpeningAdapter(scope, request.scopeId, args.context) : null;
+        if (!owner) return browserRuntimeActionDisabledResult('browser_view_unavailable');
         const lifetime = owner.accountLifetime;
         if (!lifetime?.isCurrent() || args.context.signal?.aborted
             || serverId !== lifetime.scope.serverId
@@ -289,6 +291,7 @@ async function executeBrowserControlAction(
             execute: input.fallback ?? createUnavailableRuntimeActionExecutor() });
         if (resolved.status === 'failed') return resolved.result;
         return await owner.open({ ...request, target: resolved.target }, args.context, {
+            sessionAddressed: owner.scopeId !== request.scopeId,
             ...(openerRegion ? { openerRegion } : {}),
             executeControl: controlArgs => executeBrowserControlAction(controlArgs, { ...input,
                 resolveControl: input.resolveControl ?? (view => readRegisteredBrowserRuntimeControlAdapter(

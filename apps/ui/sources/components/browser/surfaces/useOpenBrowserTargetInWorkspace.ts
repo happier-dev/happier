@@ -28,6 +28,9 @@ export function useOpenBrowserTargetInWorkspace(
             // Presentation can rebind while a preview is being registered. Its
             // current callback belongs to the same Account/workspace lifetime.
             openDetailsTab: (...args) => facts.current.openDetailsTab(...args),
+            openSessionBrowserTab: (...args) => facts.current.openSessionBrowserTab?.(...args),
+            ...(deps.sessionAddress ? { sessionAddress: { sessionId: deps.sessionAddress.sessionId,
+                isAvailable: () => facts.current.sessionAddress?.isAvailable() === true } } : {}),
             get signal() { return lifetime.controller.signal; },
             readOpenFacts: () => ({ ...facts.current, ...facts.current.readOpenFacts?.() }),
             readOpenerRegion: () => (openerRegion.current === 'main' || openerRegion.current === 'side' ? openerRegion.current : null),

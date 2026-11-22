@@ -156,6 +156,35 @@ function readTabBrowserSessionId(tab: DetailsTab): string | undefined {
 }
 
 describe('openBrowserTargetInWorkspace', () => {
+    it.each(['own', 'other-account', 'foreign-session', 'unknown', 'person', 'host-default', 'retired', 'wrong-home'] as const)(
+        'resolves only an approved Agent\'s own Session address (%s)', async scenario => {
+        const details: DetailsTab[] = [];
+        const browser: DetailsTab[] = [];
+        const fixture = createBrowserWorkspaceOpeningFixture({ scope: 'sessionDetails', platform: 'web',
+            sessionAddress: { sessionId: 'session-a', isAvailable: () => true },
+            openDetailsTab: tab => { details.push(tab); },
+            openSessionBrowserTab: tab => { browser.push(tab); },
+        });
+        try {
+            if (scenario === 'retired') fixture.retire();
+            const input = { scopeId: scenario === 'foreign-session' ? 'session-b' : scenario === 'unknown' ? 'unknown-workspace' : 'session-a',
+                commandId: 'approved-session-address', target: localServicePreviewTarget };
+            const result = await createBrowserRuntimeActionExecutor({})({ actionId: 'browser.workspace.open', input,
+                context: { ...fixture.context, surface: 'ui', authority: 'present_user',
+                    serverId: scenario === 'wrong-home' ? 'other-home' : fixture.context.serverId,
+                    ...(scenario !== 'person' ? { approvedActionReplay: { origin: {
+                        surface: 'agent', accountId: scenario === 'other-account' ? 'other-account' : fixture.context.runtimeAccountId,
+                        caller: scenario === 'host-default' ? { kind: 'host' } : { kind: 'session', sessionId: 'session-a', starterDepth: 0, turnDepth: 0 },
+                        sessionId: 'session-a',
+                    } } } : {}),
+                } });
+            expect(result).toMatchObject(scenario === 'own' ? { status: 'dispatched', outcome: 'workspaceTab' }
+                : { ok: false, errorCode: 'runtime_action_disabled', error: 'runtime_action_disabled:browser:browser_view_unavailable' });
+            expect(browser).toHaveLength(scenario === 'own' ? 1 : 0);
+            expect(details).toHaveLength(0);
+        } finally { fixture.dispose(); }
+    });
+
     it('opens an already bound daemon stream without fabricating a local profile policy', () => {
         const options = resolveBrowserTargetOpenOptions({ browserSessionId: 'daemon-session', platform: 'web',
             target: { kind: 'streamedBrowser', targetId: 'source', streamId: 'source',

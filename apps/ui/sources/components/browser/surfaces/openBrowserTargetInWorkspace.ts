@@ -95,6 +95,9 @@ export type CreateOpenBrowserTargetInWorkspaceDeps = ResolveBrowserViewTargetOpe
     isCurrent?: () => boolean;
     actionExecute?: (actionId: ActionId, input: unknown, context?: ActionExecutorContext) => Promise<ActionExecuteResult>;
     openDetailsTab: OpenDetailsTab;
+    /** Session-addressed Agent opens present the existing Browser destination. */
+    openSessionBrowserTab?: OpenDetailsTab;
+    sessionAddress?: BrowserRuntimeWorkspaceOpeningAdapter['sessionAddress'];
     /** The pane column this caller sits in, read at open time; lent to the scope's opener. */
     readOpenerRegion?: () => BrowserWorkspaceOpenerRegion | null;
 }>;
@@ -363,6 +366,7 @@ export function createOpenBrowserTargetInWorkspace(
     const runtimeAdapter: BrowserRuntimeWorkspaceOpeningAdapter = {
         scopeId: deps.scopeId,
         accountLifetime: deps.accountLifetime,
+        sessionAddress: deps.sessionAddress,
         readAddressFacts: () => deps.readOpenFacts?.() ?? deps,
         open: async (request, context, presentation) => {
             const current = () => deps.accountLifetime?.isCurrent() === true
@@ -394,6 +398,8 @@ export function createOpenBrowserTargetInWorkspace(
             if (!selection.ok) return { ok: false, errorCode: 'runtime_action_disabled',
                 error: 'runtime_action_disabled:browser:browser_adapter_unavailable' };
             if (!current()) return unavailable();
+            const openTab = presentation?.sessionAddressed && deps.openSessionBrowserTab
+                ? deps.openSessionBrowserTab : deps.openDetailsTab;
             if (selection.outcome === 'openExternalTab') {
                 if (!await openBrowserExternalTabSelection(selection)) return { ok: false,
                     errorCode: 'runtime_action_disabled', error: 'runtime_action_disabled:browser:browser_adapter_unavailable' };
@@ -420,7 +426,7 @@ export function createOpenBrowserTargetInWorkspace(
                 if (!streamTarget) return unavailable();
                 const streamTab = createBrowserViewDetailsTab({ target: streamTarget, engineOverride: request.engineOverride });
                 // The pane still owns the same logical page; daemon discovery owns its content identity.
-                deps.openDetailsTab({ ...streamTab, key: resolved.tab.key }, { intent: 'default',
+                openTab({ ...streamTab, key: resolved.tab.key }, { intent: 'default',
                     ...(presentation.openerRegion ? { origin: presentation.openerRegion } : {}) });
                 rememberOpenedBrowserTarget(deps.accountLifetime!.scope, target);
             } else {
@@ -461,7 +467,7 @@ export function createOpenBrowserTargetInWorkspace(
                         if (!current()) return unavailable();
                     }
                 }
-                deps.openDetailsTab(resolved.tab, { intent: 'default',
+                openTab(resolved.tab, { intent: 'default',
                     ...(presentation?.openerRegion ? { origin: presentation.openerRegion } : {}) });
                 rememberOpenedBrowserTarget(deps.accountLifetime!.scope, target);
             }

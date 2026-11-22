@@ -6,6 +6,11 @@ import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/
 const QUALIFIED_SESSION_SCOPE_PREFIX = 'session:address:';
 const LEGACY_SESSION_SCOPE_PREFIX = 'session:';
 
+/** The phone Browser scene retains its tabs separately from the Session's File scene. */
+export function createSessionBrowserPaneScopeId(sessionPaneScopeId: string): string {
+    return `${sessionPaneScopeId}:browser`;
+}
+
 export function createSessionPaneScopeId(
     sessionIdRaw: string,
     serverIdRaw?: string | null,

@@ -213,6 +213,15 @@ reported if the OS refuses. The Action is client-placed, dangerous and Ask-first
 Agents; no mounted Browser view is fabricated to dispatch it. This is unreleased development
 source, not composed-live or native-platform certification.
 
+In unreleased 0.3 source, an approved Agent request may address its own Session by passing that
+Session's raw id as `browser.workspace.open.scopeId`. The runtime registry resolves this address
+only when it equals the Ask's caller Session, the deciding Account is the requesting Account, and
+that running Session is currently presented in the approver's Home. It presents the Session's
+existing Browser destination (the Browser screen on a phone) and opens the target there. Stored
+approval operands stay unchanged. Another Session id, an unknown scope, a stopped or off-screen
+Session, or an approval by another Account retains the existing refusal. Exact pane addresses and
+their Home/Account lifetime checks retain their existing behavior.
+
 The unreleased 0.3 workspace and view-open/retarget inputs accept an optional typed
 `engineOverride` (`embedded` or `managed`). The existing adapter selector decides
 availability; an explicit managed refusal remains a refusal. Workspace resources carry

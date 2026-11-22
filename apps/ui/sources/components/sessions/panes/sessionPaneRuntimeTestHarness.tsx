@@ -206,7 +206,7 @@ export function installSessionPaneRuntimeTestHarness(params: Readonly<{
                 const memoryResponse = await authoringMemory.handle(url, init);
                 if (memoryResponse) return memoryResponse;
                 if (path === '/v1/account/project-rows/list') return json(createPlainProjectAccountRowListFixture());
-                const artifactResponse = artifacts.handle(String(url), init);
+                const artifactResponse = artifacts.handle(path, init);
                 if (artifactResponse) return artifactResponse;
                 if ((init?.method ?? 'GET') === 'GET' && path === '/v2/account/settings') return json(AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: {} }, version: 0 }));
                 if ((init?.method ?? 'GET') === 'GET' && path === '/v1/machines') return json(machines.map(machine =>

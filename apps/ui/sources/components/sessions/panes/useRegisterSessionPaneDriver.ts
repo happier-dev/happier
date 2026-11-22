@@ -10,7 +10,7 @@ import { createSessionPaneSurfaceScope } from '@/components/sessions/plugins/use
 import { SessionRightPanel, SessionActionRail } from './SessionRightPanel';
 import { SessionBottomPanel } from './bottom/SessionBottomPanel';
 import { SessionDetailsPanel } from './SessionDetailsPanelHost';
-import { createSessionPaneScopeId } from './sessionPaneScopeId';
+import { createSessionBrowserPaneScopeId, createSessionPaneScopeId } from './sessionPaneScopeId';
 import type { SessionPluginRuntimeState } from '@/components/sessions/plugins/useSessionPluginRuntime';
 import { useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useReadSessionCockpitChromeRegistration } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
@@ -18,7 +18,7 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { resolveSessionTerminalDockLocation } from '@/components/sessions/terminal/useSessionTerminalAvailability';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { usePanePresentation } from '@/components/appShell/panes/panePresentation';
-import { useOptionalDetailsTabOpener } from '@/components/appShell/panes/hooks/useAppPaneScope';
+import { useOptionalDetailsRegionTabOpener, useOptionalDetailsTabOpener, useOptionalRightPaneOpener } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { createSessionFileDetailsTab } from './url/sessionPaneUrlState';
 import { readCurrentAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { selectPluginSurfacePlacementsByDestination } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
@@ -32,6 +32,9 @@ import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountS
 import { useOpenBrowserTargetInWorkspace } from '@/components/browser/surfaces/useOpenBrowserTargetInWorkspace';
 import { resolveBrowserSurfacePlatform } from '@/components/browser/surfaces/useBrowserSurfaceHostProps';
 import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
+import { useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { selectSessionViewShellSessionForRouteState } from '@/components/sessions/shell/sessionViewStableSession';
+import { storage } from '@/sync/domains/state/storage';
 
 type SessionPaneScopedProps = Readonly<{ sessionId: string; scopeId: string }>;
 
@@ -108,6 +111,9 @@ export function useRegisterSessionPaneDriver(
         [instanceKey, options?.scopeId, serverId, sessionId],
     );
     const openDetailsTab = useOptionalDetailsTabOpener(scopeId);
+    const openDetailsInScope = useOptionalDetailsRegionTabOpener();
+    const openRight = useOptionalRightPaneOpener(scopeId);
+    const presentation = useLayoutPresentationSignal();
     const openResource = React.useCallback<NonNullable<PaneDriver['openResource']>>((resource, openOptions) => {
         if (resource.kind !== 'file' || !openDetailsTab) return false;
         const { kind: _kind, ...file } = resource;
@@ -137,6 +143,16 @@ export function useRegisterSessionPaneDriver(
     useOpenBrowserTargetInWorkspace({
         scopeId, scope: 'sessionDetails', accountLifetime: pluginRuntime.accountLifetime,
         platform: browserPlatform, openDetailsTab: openDetailsTab ?? (() => {}),
+        sessionAddress: { sessionId, isAvailable: () => presentation.get()
+            && selectSessionViewShellSessionForRouteState(storage.getState(), sessionId, serverId)?.active === true },
+        openSessionBrowserTab: (tab, openOptions) => {
+            const chrome = readCockpitChrome();
+            const phoneScene = chrome?.sessionId === sessionId
+                && areServerProfileIdentifiersEquivalent(chrome.serverId, serverId);
+            const browserScopeId = phoneScene ? createSessionBrowserPaneScopeId(scopeId) : scopeId;
+            openRight?.({ tabId: 'browser' });
+            openDetailsInScope?.(browserScopeId, tab, { ...openOptions, present: false });
+        },
         readOpenFacts: () => {
             // Read detailed workspace facts only for an admitted open, never while Details is closed.
             const workspace = serverId ? resolveWorkspaceTargetForSession({ sessionId, serverId }) : null;

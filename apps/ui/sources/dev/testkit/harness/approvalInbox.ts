@@ -68,6 +68,7 @@ export async function createAgentApprovalRequest(input: Readonly<{
     externalActionTarget?: NonNullable<Parameters<Execute>[2]>['externalActionTarget'];
     defaultSessionId?: string;
     defaultSessionMachineId?: string;
+    actionCaller?: NonNullable<Parameters<Execute>[2]>['actionCaller'];
 }>): Promise<string> {
     const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
     const executor = createDefaultActionExecutor({ resolveServerIdForSessionId: () => null });
@@ -86,6 +87,7 @@ export async function createAgentApprovalRequest(input: Readonly<{
             ...(input.externalActionTarget ? { externalActionTarget: input.externalActionTarget } : {}),
             ...(input.defaultSessionId ? { defaultSessionId: input.defaultSessionId } : {}),
             ...(input.defaultSessionMachineId ? { defaultSessionMachineId: input.defaultSessionMachineId } : {}),
+            ...(input.actionCaller ? { actionCaller: input.actionCaller } : {}),
         });
     });
     const created = result as { ok?: unknown; result?: { artifactId?: unknown } } | undefined;
