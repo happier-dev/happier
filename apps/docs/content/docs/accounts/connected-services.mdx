@@ -65,6 +65,10 @@ is left and when it resets. From there you can:
 - inspect an account's usage, the agents and pools that use it, and how it signed in
 - remove individual accounts (an account a pool uses is removed from the pool first)
 
+In 0.3 development, the daemon can permanently remove a deleted pool’s Agent
+home and the native session files stored there. Cleanup waits for active
+sessions and runs using that home to finish.
+
 In 0.3 development, service cards still expand sign-in in place. **Add account**
 opens the same flow in the account detail, retaining its machine choice and
 recovery steps rather than starting a different authentication flow.

@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -9,26 +9,6 @@ import { resolveConnectedServiceGroupHomeDir } from './resolveConnectedServiceHo
 import { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
 
 describe('ConnectedServiceGroupHomeCleanupScheduler', () => {
-  it('quarantines a deleted home after more than one hundred occupied quarantine names', async () => {
-    const root = await createTempDir('happier-group-home-many-quarantines-');
-    try {
-      const identity = { serviceId: 'openai-codex' as const, groupId: 'main', agentId: 'codex' as const };
-      const home = resolveConnectedServiceGroupHomeDir({ activeServerDir: root, ...identity });
-      const quarantine = join(home, '..', '.quarantine');
-      await mkdir(home, { recursive: true });
-      await writeFile(join(home, 'session.jsonl'), 'retained-history');
-      await Promise.all(Array.from({ length: 105 }, async (_, index) => {
-        const occupied = join(quarantine, `123-codex${index === 0 ? '' : `-${index}`}`);
-        await mkdir(occupied, { recursive: true });
-        await writeFile(join(occupied, 'history'), 'previous-history');
-      }));
-      const scheduler = new ConnectedServiceGroupHomeCleanupScheduler({ activeServerDir: root,
-        hasLiveTarget: () => false, nowMs: () => 123 });
-      await expect(scheduler.scheduleDeletedGroupCleanup(identity)).resolves.toMatchObject({ cleaned: true });
-      expect(await readFile(join(quarantine, '123-codex-105', 'session.jsonl'), 'utf8')).toBe('retained-history');
-    } finally { await removeTempDir(root); }
-  });
-
   it('keeps a live execution Run pool home until its canonical runtime registration releases', async () => {
     const root = await createTempDir('happier-group-home-live-run-');
     try {
@@ -101,7 +81,7 @@ describe('ConnectedServiceGroupHomeCleanupScheduler', () => {
     }
   });
 
-  it('quarantines deleted durable group homes instead of recursively deleting them immediately', async () => {
+  it('reclaims a deleted group home without creating a quarantine', async () => {
     const root = await createTempDir('happier-connected-service-group-home-cleanup-quarantine-');
     try {
       const home = resolveConnectedServiceGroupHomeDir({
@@ -111,6 +91,7 @@ describe('ConnectedServiceGroupHomeCleanupScheduler', () => {
         agentId: 'codex',
       });
       await mkdir(home, { recursive: true });
+      await writeFile(join(home, 'native-history.jsonl'), 'native history');
       const scheduler = new ConnectedServiceGroupHomeCleanupScheduler({
         activeServerDir: root,
         hasLiveTarget: () => false,
@@ -124,8 +105,7 @@ describe('ConnectedServiceGroupHomeCleanupScheduler', () => {
 
       await expect(stat(home)).rejects.toMatchObject({ code: 'ENOENT' });
       const quarantineRoot = join(root, 'daemon', 'connected-services', 'homes', 'openai-codex', '__groups', 'main', '.quarantine');
-      const entries = await readdir(quarantineRoot);
-      expect(entries.some((entry) => /^\d+-codex(?:-\d+)?$/.test(entry))).toBe(true);
+      await expect(stat(quarantineRoot)).rejects.toMatchObject({ code: 'ENOENT' });
     } finally {
       await removeTempDir(root);
     }

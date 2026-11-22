@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -12,11 +12,11 @@ import { createConnectedServiceGroupHomeCleanupScheduler } from './createConnect
 import { resolveConnectedServiceGroupHomeDir, resolveConnectedServiceHomeDir } from './resolveConnectedServiceHomeDir';
 import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
-// Only filesystem rename is faulted; tracked binding parsing, factory wiring,
-// group-home selection and eventual quarantine use their real owners.
+// Only filesystem removal is faulted; tracked binding parsing, factory wiring,
+// and group-home selection use their real owners.
 vi.mock('node:fs/promises', async importOriginal => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
-  return { ...actual, rename: vi.fn(actual.rename) };
+  return { ...actual, rm: vi.fn(actual.rm) };
 });
 
 let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
@@ -93,7 +93,7 @@ describe('createConnectedServiceGroupHomeCleanupScheduler', () => {
     } finally { await removeTempDir(root); }
   });
 
-  it('retains a live bound group home and recovers quarantine after four busy exit cleanups', async () => {
+  it('retains a live bound group home and reclaims it after four busy exit cleanups', async () => {
     const root = await createTempDir('happier-connected-service-group-home-live-target-');
     try {
       const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([
@@ -144,7 +144,7 @@ describe('createConnectedServiceGroupHomeCleanupScheduler', () => {
 
       trackedSessionsByKey.clear();
       for (let pass = 0; pass < 4; pass += 1) {
-        vi.mocked(rename).mockRejectedValueOnce(Object.assign(new Error('busy'), { code: 'EBUSY' }));
+        vi.mocked(rm).mockRejectedValueOnce(Object.assign(new Error('busy'), { code: 'EBUSY' }));
         await expect(scheduler.cleanupPendingDeletedGroupHomes()).rejects.toMatchObject({ code: 'EBUSY' });
         await expect(stat(home)).resolves.toBeTruthy();
       }

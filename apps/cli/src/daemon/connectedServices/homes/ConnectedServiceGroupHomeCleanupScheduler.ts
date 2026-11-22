@@ -1,5 +1,4 @@
-import { mkdir, rename } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { rm } from 'node:fs/promises';
 
 import { ConnectedServiceIdSchema, readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { ConnectedAccountServiceKey, ConnectedServiceId, QualifiedConnectedAccountRef } from '@happier-dev/protocol';
@@ -71,15 +70,9 @@ function authorityFromLegacyGroupExists(exists: boolean): ConnectedServiceGroupD
   return exists ? { status: 'exists' } : { status: 'unknown' };
 }
 
-function hasNodeErrorCode(error: unknown, code: string): boolean {
-  return Boolean(error && typeof error === 'object' && 'code' in error && error.code === code);
-}
-
 export class ConnectedServiceGroupHomeCleanupScheduler {
   private readonly pendingDeletedTargetsByKey = new Map<string, DeletedHomeCleanupTarget>();
   private readonly removePath: RemoveGroupHomePath;
-  private readonly renamePath: typeof rename;
-  private readonly nowMs: () => number;
 
   constructor(private readonly deps: Readonly<{
     activeServerDir: string;
@@ -90,36 +83,13 @@ export class ConnectedServiceGroupHomeCleanupScheduler {
     groupExists?: GroupExists;
     resolveGroupDeletionAuthority?: ResolveGroupDeletionAuthority;
     removePath?: RemoveGroupHomePath;
-    renamePath?: typeof rename;
-    nowMs?: () => number;
   }>) {
-    this.renamePath = deps.renamePath ?? rename;
-    this.nowMs = deps.nowMs ?? (() => Date.now());
-    this.removePath = deps.removePath ?? (async (path) => {
-      await this.quarantineGroupHome(path);
-    });
-  }
-
-  private async quarantineGroupHome(path: string): Promise<void> {
-    const quarantineRoot = join(dirname(path), '.quarantine');
-    const entryBase = `${this.nowMs()}-${basename(path)}`;
-    await mkdir(quarantineRoot, { recursive: true });
-    for (let attempt = 0; ; attempt += 1) {
-      const quarantinePath = join(quarantineRoot, attempt === 0 ? entryBase : `${entryBase}-${attempt}`);
-      try {
-        await this.renamePath(path, quarantinePath);
-        return;
-      } catch (error) {
-        if (hasNodeErrorCode(error, 'ENOENT')) return;
-        if (hasNodeErrorCode(error, 'EEXIST') || hasNodeErrorCode(error, 'ENOTEMPTY')) continue;
-        throw error;
-      }
-    }
+    this.removePath = deps.removePath ?? rm;
   }
 
   private async removeHome(key: string, target: DeletedHomeCleanupTarget): Promise<boolean> {
     try {
-      // Revoked selected credentials are removed, never retained in the group-history quarantine.
+      // Account cleanup removes declared credentials while preserving native history.
       if ('account' in target) {
         if (this.hasLiveAccountTarget(target.account)) return false;
         let pending = false;

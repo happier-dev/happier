@@ -3725,6 +3725,11 @@ launches, even when the Agent declares a native home. A temporary credential
 directory is not a relocated Session store. Missing catalog facts continue to
 fail the existing reachability check.
 
+In 0.3 development, daemon startup reconciles pool-owned Agent homes against
+confirmed Connected Account pool deletion. A live Session or Execution Run
+defers removal until it releases the home. Cleanup then deletes the home in
+place. Legacy quarantine entries remain discoverable for credential revocation.
+
 In development 0.3, Claude reports `codex_continuation_unreachable` in the
 existing `connected_service_resume_unreachable` detail's `reason` when a
 completed lookup of the selected native home finds no matching conversation.
