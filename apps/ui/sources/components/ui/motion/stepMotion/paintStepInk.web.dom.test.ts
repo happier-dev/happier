@@ -15,7 +15,9 @@ it('samples nested QR ink without resolving CSS for the SVG modules', () => {
     };
     vi.stubGlobal('CanvasRenderingContext2D', class {});
     vi.stubGlobal('Path2D', class {});
-    const context = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(
+    const canvasPrototype: { getContext(contextId: '2d'): CanvasRenderingContext2D | null } =
+        HTMLCanvasElement.prototype;
+    const context = vi.spyOn(canvasPrototype, 'getContext').mockReturnValue(
         canvas as unknown as CanvasRenderingContext2D,
     );
     const style = vi.spyOn(window, 'getComputedStyle');
