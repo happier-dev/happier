@@ -672,6 +672,30 @@ describe('ModalCardFrame', () => {
         expect(bodyScrollView.type).toBe('ScrollView');
     });
 
+    // PAGE-ACCEPT-176 R12-D1: the Add check / Edit check sheets (a plugin setup form with its actions in the card's
+    // footer) did not move under a wheel, trackpad or touch: the body was a bounded viewport the form could not scroll.
+    it('scrolls a plugin setup form under the pinned footer at every width', async () => {
+        const { ModalCardFrame } = await import('./ModalCardFrame');
+        const { resolvePluginEphemeralInputSurfaceChrome } = await import(
+            '@/components/automations/editor/presentPluginEventAutomationSetupSurface');
+        for (const phone of [false, true]) {
+            const chrome = resolvePluginEphemeralInputSurfaceChrome({
+                title: 'Add check', presentation: 'setup', phone, footer: React.createElement('FooterActions'),
+            });
+            const screen = await renderScreen(React.createElement(ModalCardFrame, {
+                title: chrome.title, scrollHost: chrome.scrollHost, bodyScroll: chrome.bodyScroll,
+                dimensions: chrome.dimensions, footer: chrome.footer, presentation: phone ? 'sheet' : 'card',
+                children: React.createElement('SetupForm'),
+            }));
+            const body = screen.findByTestId('modal-card-body-scroll');
+            expect(body?.props.scrollEnabled).toBe(true);
+            expect(body?.findAllByType('SetupForm')).toHaveLength(1);
+            expect(body?.findAllByType('FooterActions')).toHaveLength(0);
+            expect(screen.findByTestId('modal-card-footer')?.findAllByType('FooterActions')).toHaveLength(1);
+            await screen.unmount();
+        }
+    });
+
     it('keeps card footers divider-free and gives their buttons the dialog action tier (label words, as alerts)', async () => {
         const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
         const { ModalCardFrame } = await import('./ModalCardFrame');

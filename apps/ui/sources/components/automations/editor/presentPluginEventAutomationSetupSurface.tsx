@@ -98,6 +98,9 @@ export function resolvePluginEphemeralInputSurfaceChrome(input: Readonly<{
             ...(input.presentation === 'setup' && input.description ? { subtitle: input.description } : {}),
         }),
         header: input.presentation === 'picker' && !input.phone ? 'none' as const : 'band' as const,
+        // A setup form is content, not a scroller: the card's body scrolls it under the footer that holds its actions
+        // (PAGE-ACCEPT-176 R12-D1). A picker's rows own their scrolling, so its body stays a bounded viewport.
+        ...(input.presentation === 'setup' ? { bodyScroll: 'auto' as const } : {}),
         footer: input.footer,
     };
 }
