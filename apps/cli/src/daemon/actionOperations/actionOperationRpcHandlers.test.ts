@@ -644,8 +644,10 @@ describe('action operation observation RPC handlers', () => {
       resolveAccountId: async () => scope.accountId });
     const observer = new AbortController();
     const waiting = handlers.get({ operationId: 'operation-1', waitForTerminal: true }, { signal: observer.signal });
-    observer.abort();
-    await expect(waiting).rejects.toBeDefined();
+    // Let the authorized read enter its wait before the caller disconnects.
+    await handlers.get({ operationId: 'operation-1' });
+    observer.abort(new Error('RPC request cancelled by caller'));
+    await expect(waiting).rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE });
     expect(store.get(scope, 'operation-1')?.state).toBe('accepted');
     const joined = handlers.get({ operationId: 'operation-1', waitForTerminal: true });
     release();

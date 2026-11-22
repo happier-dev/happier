@@ -175,6 +175,13 @@ export function createActionOperationRpcHandlers(deps: Readonly<{
         ? await waitForTerminal(scope, request.operationId, context?.signal,
           { ...(request.includeSetupReview ? { includeSetupReview: true } : {}),
             ...('includeManagedPrompt' in request && request.includeManagedPrompt ? { includeManagedPrompt: true } : {}) })
+          .catch(error => {
+            if (context?.signal?.aborted && error === context.signal.reason) {
+              if (error instanceof RpcError) throw error;
+              throw new RpcError('Operation observation disconnected', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE);
+            }
+            throw error;
+          })
         : deps.store.get(scope, request.operationId);
       if (request.waitForTerminal || deploymentTokenOrigin) assertReadActive(context);
       if (deploymentTokenOrigin && operation

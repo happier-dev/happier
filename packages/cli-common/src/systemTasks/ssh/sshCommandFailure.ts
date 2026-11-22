@@ -1,4 +1,4 @@
-import { formatSshCommandFailure, readGuestCliFailureOutput, readGuestServiceErrorCode, type SshCommandFailureCode, type SshCommandFailurePhase, type SshCommandFailureReason } from '@happier-dev/protocol/ssh/commandFailure';
+import { formatSshCommandFailure, GuestServiceFailureFactsV1Schema, readGuestCliFailureOutput, type SshCommandFailureCode, type SshCommandFailurePhase, type SshCommandFailureReason } from '@happier-dev/protocol/ssh/commandFailure';
 import type { RemoteFirstPartyCommandResult } from '../kinds/remoteFirstPartyPayloadInstaller.js';
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 import { OpenSshExecutionError } from '../../ssh/openSshRunner.js';
@@ -6,11 +6,14 @@ import { OpenSshExecutionError } from '../../ssh/openSshRunner.js';
 export function sshCommandError(code: SshCommandFailureCode, result?: RemoteFirstPartyCommandResult,
   phase?: SshCommandFailurePhase, reason?: SshCommandFailureReason): SystemTaskExecutionError {
   const guest = code === 'ssh_command_failed' && result && result.status !== 0 && phase?.startsWith('daemon.service.')
-    ? readGuestCliFailureOutput(result.stdout, result.stderr) : null;
+    ? GuestServiceFailureFactsV1Schema.safeParse(readGuestCliFailureOutput(result.stdout, result.stderr)) : undefined;
+  const step = phase === 'daemon.service.install' ? 'install' : phase === 'daemon.service.restart' ? 'restart' : undefined;
   return new SystemTaskExecutionError(code, formatSshCommandFailure(code, result ? {
     phase, reason, exitStatus: result.status, stdoutPresent: Boolean(result.stdout.trim()), stderrPresent: Boolean(result.stderr.trim()),
-    ...(readGuestServiceErrorCode(guest?.guestCliCode) ? guest : {}),
-  } : phase ? { phase } : undefined));
+    ...(guest?.success ? guest.data : {}),
+  } : phase || code === 'ssh_command_failed' ? { phase } : undefined), result && step && guest?.success ? {
+    details: { kind: 'managedService', step, exitStatus: result.status, cause: guest.data },
+  } : undefined);
 }
 
 /** Classify native evidence, retaining process facts but never native content. */

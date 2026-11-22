@@ -62,7 +62,7 @@ async function transferOpenSshFile(params: Parameters<typeof transferOpenSshFile
     await transferOpenSshFileBoundary(params);
   } catch (error) {
     params.signal?.throwIfAborted();
-    throw sshCommandFailure(error instanceof Error ? error.message : '');
+    throw sshCommandFailure(error instanceof Error ? error : '');
   }
 }
 
@@ -325,7 +325,7 @@ async function runSshCommandResult(params: Readonly<{
   } catch (error) {
     params.signal?.throwIfAborted();
     if (error instanceof systemTasks.SystemTaskExecutionError) throw error;
-    throw sshCommandFailure(error instanceof Error ? error.message : '', undefined, params.phase);
+    throw sshCommandFailure(error instanceof Error ? error : '', undefined, params.phase);
   }
 }
 
