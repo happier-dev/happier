@@ -19,6 +19,20 @@ function parseFollowUpJson(prompt: string): { toolResults: LocalVoiceAgentToolRe
 }
 
 describe('runVoiceAgentTurnWithTools follow-up prompt privacy', () => {
+  it('includes the failure instruction when another Action result is held', () => {
+    const action = { t: 'action_execute', args: { actionId: 'daemon.filesystem.copy', input: {} } };
+    const prompt = buildToolResultsFollowUpPrompt([
+      { ...action, result: { ok: false, errorCode: 'approval_result_held', error: 'approval_result_held' } },
+      { ...action, result: { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' } },
+    ], { shareFilePaths: false, shareSessionSummary: false, sharePermissionRequests: false });
+
+    expect(parseFollowUpJson(prompt).toolResults.map(entry => entry.result)).toMatchObject([
+      { ok: false, errorCode: 'approval_result_held' },
+      { ok: false, errorCode: 'invalid_action_output' },
+    ]);
+    expect(prompt).toContain('At least one action failed.');
+  });
+
   it('derives the Local summary from the privacy-projected result rather than a stripped target label', () => {
     const prompt = buildToolResultsFollowUpPrompt([{ t: 'spawnSession', args: {},
       result: { ok: true, target: { label: 'Private Session title' } } }], {

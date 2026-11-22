@@ -10,7 +10,12 @@ describe('spoken Action owner outcomes', () => {
   it('presents a held approval as an executed Action in speech and tool follow-up', () => {
     const entry = { t: 'action_execute', args: { actionId: 'daemon.filesystem.copy', input: {} },
       result: { ok: false, errorCode: 'approval_result_held', error: 'approval_result_held' } };
-    expect(resolveSpokenActionOutcome(entry)).toBeTypeOf('string');
+    const failedEntry = { ...entry,
+      result: { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' } };
+    expect([entry, failedEntry].map(result => resolveSpokenActionOutcome(result))).toEqual([
+      t('voiceSurface.approvalResultHeld'),
+      null,
+    ]);
     const prompt = buildToolResultsFollowUpPrompt([entry], {
       shareFilePaths: false, shareSessionSummary: false, sharePermissionRequests: false,
     });
