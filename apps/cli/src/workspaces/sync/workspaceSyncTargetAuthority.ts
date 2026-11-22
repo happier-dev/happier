@@ -2639,6 +2639,7 @@ export function createWorkspaceSyncTargetAuthority(
         const actionContext = buildActionExecutorContextForRpc(context);
         const operation = requireProjectCheckoutRemovalOperation({
           ...actionContext, actionRequestId: actionContext.actionRequestId ?? undefined,
+          resumeActionRequest: actionContext.resumeActionRequest === true ? true : undefined,
         });
         const runtime = await resolveProjectRuntime(context);
         if (!runtime) throw authorityError('project_setup_operation_unavailable', 'Requester Project cleanup is unavailable');
