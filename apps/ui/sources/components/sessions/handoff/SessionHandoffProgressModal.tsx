@@ -31,6 +31,7 @@ import { resolveWorkspaceSyncErrorTranslationKey } from '@/sync/domains/sessionH
 import { SESSION_HANDOFF_SANDBOX_PRESET_REQUIRED, type ExecuteSessionHandoffActionResult } from '@/sync/domains/sessionHandoff/executeSessionHandoffAction';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import { describeManagedCreationProgress } from '@/components/settings/machines/managed/managedCreationProgressPresentation';
+import { keepMachineNameTogether } from '@/utils/sessions/machineDisplayNames';
 import type { ManagedMachineCreationProgress } from '@/components/settings/machines/managed/managedMachineCreation';
 
 export type SessionHandoffMachineCreationProgress = Readonly<{
@@ -682,9 +683,11 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
         || operation?.state === 'failed'
         || operation?.state === 'cancelled'
         || outcomeLabel);
-    const routeLine = !route ? null : route.newMachine
-        ? t('sessionHandoff.routeToNewMachine', { session: route.session, source: route.source, machine: route.machine })
-        : t('sessionHandoff.route', { session: route.session, source: route.source, machine: route.machine });
+    // The line wraps between the names, never inside a machine's name.
+    const routeNames = route ? { session: route.session, source: keepMachineNameTogether(route.source), machine: keepMachineNameTogether(route.machine) } : null;
+    const routeLine = !route || !routeNames ? null : route.newMachine
+        ? t('sessionHandoff.routeToNewMachine', routeNames)
+        : t('sessionHandoff.route', routeNames);
     const operationStopTarget = React.useMemo(() => (
         operation && serverId ? { serverId, snapshot: operation } : undefined
     ), [operation, serverId]);

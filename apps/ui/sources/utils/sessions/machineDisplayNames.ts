@@ -123,6 +123,14 @@ export function keepHyphenatedNameTogether(name: string): string {
     return name.replace(/-(?=[^\s-])/g, '-\u2060');
 }
 
+/**
+ * A machine name kept whole on a line that names two of them ("<session> · <source> → new <machine>"):
+ * no break after its hyphens or at its own spaces ("Boat · Node 22"), so the line wraps only between names.
+ */
+export function keepMachineNameTogether(name: string): string {
+    return keepHyphenatedNameTogether(name).replace(/ /g, '\u00a0');
+}
+
 /** What an unnamed machine is called on screen. */
 export function unnamedMachineName(): string {
     return t('machine.unnamedMachine');
