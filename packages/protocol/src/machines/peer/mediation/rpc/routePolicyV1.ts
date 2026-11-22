@@ -975,6 +975,10 @@ export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
     RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE, RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICT_RESOLVE,
   ], 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation remains server-routed.', 'use', undefined, undefined, true),
   // These separate target transports retain their existing private custody.
+  // `custodian_only` governs a direct call by this method. Admitted finite
+  // preparation instead reaches PREPARE_BETWEEN at Use: Home admits it through
+  // operationRpcMethod (server externalActionExecutionAuthorization), and the
+  // seal site refuses a controller another person holds.
   ...serverRequiredRows([
     RPC_METHODS.DAEMON_WORKSPACE_SYNC_PREPARE_BETWEEN,
     RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE,

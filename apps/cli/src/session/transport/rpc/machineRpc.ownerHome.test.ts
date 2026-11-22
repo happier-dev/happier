@@ -28,7 +28,7 @@ import { MachineSetupApplyInputV1Schema } from '@happier-dev/protocol/machines/m
 const homes: Array<Readonly<{ close(): Promise<void> }>> = [];
 afterEach(async () => { await Promise.all(homes.splice(0).map(home => home.close())); });
 
-async function createHome(ownerToken: string | null, installationPublicKey?: string, secret?: Uint8Array) {
+async function createHome(ownerToken: string | null, installationPublicKey?: string, secret?: Uint8Array, peerCustodian?: string) {
   const accountMode = secret ? 'e2ee' : 'plain';
   const codec = secret ? createMachineContentCodec({ encryptionKey: secret, encryptionVariant: 'legacy' }) : null;
   const content: SocketRpcContent = codec?.mode === 'e2ee' ? { mode: 'e2ee', cipher: {
@@ -54,6 +54,10 @@ async function createHome(ownerToken: string | null, installationPublicKey?: str
         ...(installationPublicKey ? { installationId: 'installation', installationPublicKey } : {}),
         access: { custodian: { accountId: 'session-account', displayName: '' }, role: 'manage', resourceMode: accountMode, accessState: 'ready' },
         ...(secret ? { dataEncryptionKey: null } : { storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER }) } }));
+    } else if (request.url === '/v1/machines/peer' && peerCustodian && installationPublicKey) {
+      response.end(JSON.stringify({ machine: { id: 'peer', installationId: 'peer-installation', installationPublicKey,
+        access: { custodian: { accountId: peerCustodian, displayName: '' }, role: 'manage', resourceMode: accountMode, accessState: 'ready' },
+        storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } }));
     } else { response.writeHead(404).end('{}'); }
   });
   const socketServer = new Server<ClientToServerEvents, ServerToClientEvents>(http, { path: '/v1/updates' });
@@ -122,6 +126,48 @@ describe('Machine RPC replacement Home custody', () => {
     expect(focused.socketTokens).toEqual([]);
     expect(owner.calls).toEqual(['current:status', `current:${RPC_METHODS.MACHINE_SETUP_PLAN}`]);
     expect(owner.socketTokens).toEqual([credentials.token, credentials.token]);
+  });
+  // A Setup Plan child carries the requester's sealed sign-in to its target.
+  // Another person's Machine never confirmed that disclosure, so it is refused
+  // before sealing or sending; the requester's own other Machine is unchanged.
+  it.each([['own', 'session-account'], ['foreign', 'bob']] as const)('seals a Setup Plan child only to a Machine the requester or confirmed custodian holds (%s peer)', async (_case, peerCustodian) => {
+    const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'session-account' })).toString('base64url')}.signature`, encryption: null } as const;
+    const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(23));
+    const owner = await createHome(credentials.token, Buffer.from(keys.publicKey).toString('base64'), undefined, peerCustodian);
+    const target = { kind: 'machine' as const, machineId: 'current' };
+    const setup = (machineId: string) => ({ homeId: 'srv_setup_home', machineId, desiredRevision: 1, recipePlans: [], exclusions: [],
+      sources: [{ kind: 'direct' as const, setup: {} }] });
+    const input = MachineSetupApplyInputV1Schema.parse({ homeId: 'srv_setup_home', machineId: 'current',
+      targets: [setup('current'), setup('peer')] });
+    const envelope = { v: 1 as const, requestId: 'setup-apply-peer', target, input };
+    const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-setup-root', binding: {
+      accountId: 'session-account', custodianAccountId: 'session-account', authentication: { kind: 'account', tokenEpoch: 0 },
+      accountEncryptionMode: 'plain', serverIdentityId: input.homeId, machineId: 'current', installationId: 'installation',
+      actionId: 'machines.setup.apply', requestId: envelope.requestId, target,
+      deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1('machines.setup.apply', input),
+      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+    } });
+    const authorization = await projectRequesterAccountActionAuthorization({ authorization: root, serverIdentityId: input.homeId,
+      bootstrap: { credentials, serverHttpBaseUrl: owner.url, isCurrent: async () => true,
+        attribution: { accountId: 'session-account', serverId: input.homeId, machineId: 'current', installationId: 'installation' } } });
+    if (!authorization) throw new Error('Expected admitted Setup requester custody');
+    const transport = createCliMachineActionTransport({ credentials: { token: 'foreign-daemon', encryption: null },
+      serverId: input.homeId, serverIdentityId: input.homeId, serverHttpBaseUrl: owner.url,
+      externalActionMachineInstallationId: 'installation', externalActionMachineRequestPrivateKey: keys.secretKey });
+    const reviewed = input.targets[1]!;
+    const result = runWithServerHttpBaseUrl(owner.url, () => transport.callMachineAction({ machineId: 'peer',
+      method: RPC_METHODS.MACHINE_SETUP_PLAN, exactMachine: true, effectActionId: 'machines.setup.plan',
+      request: { homeId: input.homeId, machineId: 'peer', sources: reviewed.sources, exclusions: reviewed.exclusions, mode: 'effects' },
+      context: { surface: 'ui', authority: 'present_user', runtimeAccountId: 'session-account', serverId: input.homeId,
+        externalActionExecutionAuthorization: authorization, externalActionTarget: target, originalActionEnvelope: envelope } }));
+    if (peerCustodian === 'session-account') {
+      await expect(result).resolves.toEqual({ status: 'running' });
+      expect(owner.calls).toEqual([`peer:${RPC_METHODS.MACHINE_SETUP_PLAN}`]);
+    } else {
+      await expect(result).rejects.toMatchObject({ errorCode: 'requester_credential_disclosure_required' });
+      expect(owner.calls).toEqual([]);
+      expect(owner.socketTokens).toEqual([]);
+    }
   });
   it.each([
     { foreignRuntime: false, accountMode: 'plain' as const },

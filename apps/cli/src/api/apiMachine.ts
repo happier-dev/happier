@@ -136,6 +136,7 @@ import { randomBytes } from 'node:crypto';
 import { USAGE_SOURCES_INVALIDATION_EVENT_V1, type UsageSourcesInvalidationV1 } from '@happier-dev/protocol/usage/usageSources';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { readRequesterAccountActionContext, type RequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { assertRequesterCredentialRecipient } from '@/daemon/sessionEncryption/requesterCredentialRecipient';
 import { prepareAcquiredFileDownload } from '@/machines/transfer/prepareWorkspaceFileExport';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { resolveSessionRpcContent } from '@/session/transport/rpc/sessionRpc';
@@ -5003,6 +5004,15 @@ export class ApiMachineClient {
                 || input.physicalEndpointInstallationId && destination.installationId !== input.physicalEndpointInstallationId
                 || this.socket !== socket || !socket.connected || configuration.activeServerId !== this.machineRuntimeServerId
                 || readInstallationIdentityIfExistsSync()?.installationId !== installation.installationId) throw unavailable();
+            if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_PREPARE_BETWEEN) {
+                // The controller receives the requester's sign-in (Home's
+                // admission names its custodian).
+                const controller = verified.receivingMachineAdmission;
+                if (!controller || controller.machineId !== destination.machineId
+                    || controller.installationId !== destination.installationId) throw unavailable();
+                assertRequesterCredentialRecipient(signedAuthorization.binding, controller.custodianAccountId,
+                    'Another person owns the Sync controller for this workspace.');
+            }
             const forwardedAuthorization = input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_PREPARE_BETWEEN
                 ? await signedAuthorization.requesterAccountProjection?.sealRequesterAccountContext?.({ authorization: signedAuthorization,
                     purpose: { kind: 'workspace_sync_prepare', controller: { machineId: destination.machineId,

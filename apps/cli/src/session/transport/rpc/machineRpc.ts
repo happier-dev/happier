@@ -71,6 +71,7 @@ import {
 } from '@happier-dev/sync-client';
 import { readRpcObservation, withUserScopedRpcSocket, type RpcObservationOptions } from './withUserScopedRpcSocket';
 import { readRequesterAccountActionContext, readRequesterAccountActionTransportContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
+import { assertRequesterCredentialRecipient } from '@/daemon/sessionEncryption/requesterCredentialRecipient';
 import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { createWorkspaceSyncSourceOperationContinuation } from '@/api/rpc/workspaceSyncOperationContinuation';
@@ -609,6 +610,13 @@ export async function callExactMachineRpc(params: Readonly<{
         };
         if (!await review(reviewInput)) {
           throw new MachineRpcTargetNotCurrentError(machineId, 'child_not_derived', derivationReason);
+        }
+        // Both requester seals below (Account context and private bootstrap)
+        // carry the full sign-in to this target. A stop child reaches only the
+        // Machine already holding that Session's requester AccessKey.
+        if (!stopChild) {
+          assertRequesterCredentialRecipient(moveAuthorization.binding, machineTarget.access?.custodian.accountId,
+            'Another person holds the target Machine for this step.');
         }
       }
       const machineCodec = machineTarget.codec;

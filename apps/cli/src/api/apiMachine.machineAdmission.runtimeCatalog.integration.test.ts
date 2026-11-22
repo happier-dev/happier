@@ -303,7 +303,12 @@ describe('ApiMachineClient machine admission transport', () => {
       }
     });
 
-  it('signs preparation SOURCE with its admitted relationship when the operation differs from the original Action request', async () => {
+  // The controller receives the requester's sealed credentials. Home's admission
+  // names its custodian; another person's controller is refused before sealing.
+  it.each([
+    ['the requester owns the controller', 'project-owner'],
+    ['another person owns the controller', 'hub-owner'],
+  ] as const)('signs preparation SOURCE with its admitted relationship when the operation differs from the original Action request: %s', async (_case, controllerCustodian) => {
     const [family, signing, projection, content] = await Promise.all([
       import('@happier-dev/protocol/actions/projectActionFamily'),
       import('@happier-dev/protocol/actions/externalActionExecutionAuthorization'),
@@ -339,7 +344,9 @@ describe('ApiMachineClient machine admission transport', () => {
               workspaceSyncSourceReceiver: raw.workspaceSyncSourceReceiver,
               callerInputAuthorization: raw.callerInputAuthorization } }) })).toBe(true);
         return { status: 200, data: { v: 1, ok: true, destinationInstallation: { machineId: fixture.sourceRef.machineId,
-          installationId: fixture.controller.installationId, installationPublicKey: Buffer.from(sourceKey.publicKey).toString('base64url') } } };
+          installationId: fixture.controller.installationId, installationPublicKey: Buffer.from(sourceKey.publicKey).toString('base64url') },
+          receivingMachineAdmission: { actorAccountId: 'project-owner', custodianAccountId: controllerCustodian,
+            machineId: fixture.sourceRef.machineId, installationId: fixture.controller.installationId, role: 'use', encryptionMode: 'plain' } } };
       },
       handleAdditionalSocketAck: async raw => {
         if (!raw || typeof raw !== 'object' || !('method' in raw)
@@ -391,14 +398,20 @@ describe('ApiMachineClient machine admission transport', () => {
     const socket = socketIo();
     Reflect.set(socket, 'connected', true);
     Reflect.set(client, 'socket', socket);
-    await expect(client.callWorkspaceSyncProjectSource({ machineId: fixture.sourceRef.machineId,
+    const prepared = client.callWorkspaceSyncProjectSource({ machineId: fixture.sourceRef.machineId,
       operationId: 'separate-preparation-operation', method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_PREPARE_BETWEEN,
       sourceWorkspace: fixture.childRef, request: { sourceWorkspaceRefId: fixture.childRef.id, targetWorkspaceRefId: fixture.targetChildRef.id },
       credentials, context: { callerInputAuthorization: authorization, originalActionEnvelope: envelope,
         callerAuthority: 'present_user', machineAdmission: { actorAccountId: 'project-owner', custodianAccountId: 'project-owner',
           machineId: fixture.targetChildRef.machineId, installationId: fixture.targetChildInstallationId, role: 'manage', encryptionMode: 'plain' },
-        verifyMachineAdmissionCurrent: async () => true } })).resolves.toEqual({ ok: true, traversed: [] });
-    expect(received).toBe(true);
+        verifyMachineAdmissionCurrent: async () => true, signal: new AbortController().signal } });
+    if (controllerCustodian === 'project-owner') {
+      await expect(prepared).resolves.toEqual({ ok: true, traversed: [] });
+      expect(received).toBe(true);
+    } else {
+      await expect(prepared).rejects.toMatchObject({ errorCode: 'requester_credential_disclosure_required' });
+      expect(received).toBe(false);
+    }
   });
 
   it.each(['bind target', 'ordinary target', 'git worktree target', 'git worktree ordinary target', 'source admission refused'] as const)(
