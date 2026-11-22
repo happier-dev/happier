@@ -382,11 +382,15 @@ export function createTriageStartPullRequestReviewActionHandler(): ActionHandler
             const { sourceResult: _sourceResult, ...refusal } = verified;
             return refusal;
         }
-        const fanout = await context.services.actions.execute('review.start', projectNativeJsonValueForTransport({
+        const reviewStartInput = {
             ...admission.data,
             scmPullRequestReviewScope: verified.scope,
             ...(verified.comparisonId === undefined ? {} : { comparisonId: verified.comparisonId }),
-        }), context.signal === undefined ? undefined : { signal: context.signal });
+        };
+        // Projection omits optional undefined members without changing the validated native Action shape.
+        const fanout = await context.services.actions.execute('review.start',
+            projectNativeJsonValueForTransport(reviewStartInput) as typeof reviewStartInput,
+            context.signal === undefined ? undefined : { signal: context.signal });
         const parsed = readReviewStartActionResultV1(fanout, admission.data);
         let relationFailure: TriageNewSessionFailureV1 | undefined;
         if (parsed.kind !== 'outcome_unknown' && parsed.reviewRound !== undefined) {
