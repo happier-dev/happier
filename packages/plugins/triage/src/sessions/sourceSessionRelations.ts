@@ -1,4 +1,5 @@
-import { indexTriageAdmittedSourcesV1, readAccountDataSourceRecordsV1 } from '../corpus/configuration/accountDataSources.js';
+import { readAccountDataSourceRecordsV1 } from '../corpus/configuration/accountDataSources.js';
+import { readTriageAdmittedSourceIndexV1 } from '../actions/accountDataSources.js';
 import type { TriageDataActionContext } from '../actions/dataContext.js';
 import { isPluginError, PluginError, readPluginErrorRequestIdV1 } from '@happier-dev/plugin-sdk';
 import type { PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
@@ -21,7 +22,6 @@ import { readActiveConfiguredSourceRows } from '../corpus/configuration/readConf
 import { configuredSourceInstanceIsOwnedBy } from '../corpus/configuration/administerConfiguredSourceInstance.js';
 import { createTriageConfigureSourceOfferV1 } from '../corpus/configuration/sourceSetupOffer.js';
 import { entryReferenceComponents, renderSourceQualifiedId, sameTriageEntryReference } from '../corpus/identity/components.js';
-import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../targetedContributions.js';
 import { linkEntryToSession, unlinkEntryFromSession, type TriageEntrySessionLinkDisplayV1 } from './entrySessionLinks.js';
 import { readTriageSessionLinksPageV1, readTriageSessionLinksForEntriesV1, readTriageSessionLinksForSessionsV1, recoverTriageSessionLinksForSessionsV1 } from './readEntrySessionLinks.js';
 import { INTERNAL_TASK_SOURCE_RECORD_V1, isInternalTaskConfiguredInstanceV1 } from '../internalTasks/configuration.js';
@@ -97,15 +97,7 @@ export function createTriageSourceSessionRelations(
     readTaskList?: () => Promise<TaskList | null>,
 ) {
     const options = { signal: context.signal };
-    async function current() {
-        const observation = context.services.targetedContributions.observeForSelf(
-            TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1, { onInvalidated: () => {} },
-        );
-        try {
-            const snapshot = await observation.readCurrent(options);
-            return indexTriageAdmittedSourcesV1(snapshot.contributions);
-        } finally { observation.dispose(); }
-    }
+    const current = () => readTriageAdmittedSourceIndexV1(context);
     // One invocation may link several attachments. Resolve its source/configured
     // view once; the host still validates each original operation handle at use.
     let sourcesView: ReturnType<typeof current> | undefined = selected?.sources === undefined

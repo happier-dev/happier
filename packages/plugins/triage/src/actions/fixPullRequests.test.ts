@@ -100,10 +100,12 @@ describe('fix-PR public Action read', () => {
                         display, locator: fixture.detailInput.observation.locator }] };
             } },
         } } as unknown as PluginInvocationContext;
+        const sourceReads = vi.spyOn(context.services.targetedContributions, 'observeForSelf');
         const result = TriageReadFixPullRequestsResultV1Schema.parse(await createTriageReadFixPullRequestsActionHandler()({
             v: 1, entryRef: finding, sourceContext,
         }, context));
         const present = mode === 'present' || mode === 'storedConfiguration';
+        expect(sourceReads).toHaveBeenCalledTimes(1);
         expect(result.incomplete).toBe(!present);
         expect(configuredQueries).not.toHaveBeenCalled();
         expect(configuredGets).toHaveBeenCalledTimes(1);

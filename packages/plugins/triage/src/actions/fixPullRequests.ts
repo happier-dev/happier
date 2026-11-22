@@ -1,4 +1,4 @@
-import { readTriageAccountDataSourceOptionsV1 } from './accountDataSources.js';
+import { readTriageAdmittedSourceIndexV1 } from './accountDataSources.js';
 import { admitSourceFacts } from '@happier-dev/triage-protocol/v1';
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
 
@@ -13,7 +13,7 @@ import { renderSourceQualifiedId } from '../corpus/identity/components.js';
 import { setFixPullRequest } from '../corpus/marks/setPinned.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../targetedContributions.js';
-import { indexTriageAdmittedSourcesV1 } from '../corpus/configuration/accountDataSources.js';
+import { indexTriageAdmittedSourcesV1, readAccountDataSourceRecordsV1 } from '../corpus/configuration/accountDataSources.js';
 import { type TriageAdmittedSourceV1 } from './listEntries.js';
 import { reobserveTriageEntry } from './reobserveEntry.js';
 import { createTriageSourceSessionRelations } from '../sessions/sourceSessionRelations.js';
@@ -159,11 +159,14 @@ export function createTriageReadFixPullRequestsActionHandler(): TriageDataAction
     return async (input, context: TriageDataActionContext) => {
         throwIfAborted(context.signal);
         const collections = bindCorpusCollections(requireTriageAccountStorage(context));
-        const selected = input.sourceContext === undefined ? undefined : {
-            entryRef: input.entryRef,
-            record: await readActiveConfiguredSourceRow(collections.sourceInstances, input.sourceContext.instance, await readTriageAccountDataSourceOptionsV1(context))
-                .catch(() => { throwIfAborted(context.signal); return null; }),
-        };
+        let selected: Parameters<typeof createTriageSourceSessionRelations>[2];
+        if (input.sourceContext !== undefined) {
+            const sources = await readTriageAdmittedSourceIndexV1(context);
+            const record = await readActiveConfiguredSourceRow(collections.sourceInstances, input.sourceContext.instance, {
+                signal: context.signal, accountDataSources: readAccountDataSourceRecordsV1(sources),
+            }).catch(() => { throwIfAborted(context.signal); return null; });
+            selected = { entryRef: input.entryRef, record, sources };
+        }
         const sourceRelations = createTriageSourceSessionRelations(context, collections, selected);
         const sourceView = await sourceRelations.readSources({ entryRef: input.entryRef }).catch(() => {
             throwIfAborted(context.signal);
