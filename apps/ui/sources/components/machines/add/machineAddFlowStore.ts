@@ -48,6 +48,7 @@ function createDraft(): MachineAddFlowDraft {
 const NOT_SEEING_AFTER_MS = 5 * 60_000;
 let draft = createDraft();
 const listeners = new Set<() => void>();
+const notSeeingListeners = new Set<() => void>();
 let watchTimer: ReturnType<typeof setTimeout> | null = null;
 
 export function readMachineAddFlowDraft(): MachineAddFlowDraft { return draft; }
@@ -56,24 +57,38 @@ function publish() {
     for (const listener of listeners) listener();
 }
 
+function millisecondsUntilNotSeeing() {
+    return draft.startedAtMs === null ? null : NOT_SEEING_AFTER_MS - (Date.now() - draft.startedAtMs);
+}
+
+function readNotSeeing() {
+    const remaining = millisecondsUntilNotSeeing();
+    return remaining !== null && remaining <= 0;
+}
+
+function publishNotSeeing() {
+    for (const listener of notSeeingListeners) listener();
+}
+
+function scheduleNotSeeing() {
+    if (watchTimer !== null) clearTimeout(watchTimer);
+    watchTimer = null;
+    if (notSeeingListeners.size === 0) return;
+    const remaining = millisecondsUntilNotSeeing();
+    if (remaining === null || remaining <= 0) return;
+    watchTimer = setTimeout(() => {
+        watchTimer = null;
+        publishNotSeeing();
+    }, remaining);
+}
+
 export function updateMachineAddFlowDraft(next: MachineAddFlowDraft | ((current: MachineAddFlowDraft) => MachineAddFlowDraft)): void {
     const previous = draft;
     draft = typeof next === 'function' ? next(previous) : next;
     if (draft === previous) return;
     if (draft.startedAtMs !== previous.startedAtMs) {
-        if (watchTimer !== null) clearTimeout(watchTimer);
-        watchTimer = null;
-        const startedAtMs = draft.startedAtMs;
-        if (startedAtMs !== null) {
-            const remaining = NOT_SEEING_AFTER_MS - (Date.now() - startedAtMs);
-            if (remaining > 0) watchTimer = setTimeout(() => {
-                watchTimer = null;
-                if (draft.startedAtMs !== startedAtMs) return;
-                // No clock/status mirror: invalidate the projection once at the approved boundary.
-                draft = { ...draft };
-                publish();
-            }, remaining);
-        }
+        scheduleNotSeeing();
+        publishNotSeeing();
     }
     publish();
 }
@@ -106,13 +121,23 @@ function subscribe(listener: () => void): () => void {
     return () => { listeners.delete(listener); };
 }
 
+function subscribeNotSeeing(listener: () => void): () => void {
+    notSeeingListeners.add(listener);
+    if (notSeeingListeners.size === 1) scheduleNotSeeing();
+    return () => {
+        notSeeingListeners.delete(listener);
+        if (notSeeingListeners.size === 0) scheduleNotSeeing();
+    };
+}
+
 export function useMachineAddFlowDraft() {
     const draft = React.useSyncExternalStore(subscribe, readMachineAddFlowDraft, readMachineAddFlowDraft);
+    const notSeeing = React.useSyncExternalStore(subscribeNotSeeing, readNotSeeing, readNotSeeing);
     return {
         draft,
         update: updateMachineAddFlowDraft,
         discard: discardMachineAddFlowDraft,
-        notSeeing: draft.startedAtMs !== null && Date.now() - draft.startedAtMs >= NOT_SEEING_AFTER_MS,
+        notSeeing,
     };
 }
 

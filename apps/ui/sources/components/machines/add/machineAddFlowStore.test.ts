@@ -47,4 +47,23 @@ describe('machine add retained draft', () => {
         await resumed.unmount();
         await second.unmount();
     });
+    it('clears the view deadline when only the rail still observes the retained draft', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+        const rail = await renderHook(() => useMachineAddFlowDraftSelector(draft => draft));
+        const presenter = await renderHook(() => useMachineAddFlowDraft());
+        const timersBeforeWatch = vi.getTimerCount();
+
+        await act(async () => presenter.getCurrent().update(draft => ({ ...draft, path: 'anotherComputer', startedAtMs: Date.now() })));
+        expect(vi.getTimerCount()).toBe(timersBeforeWatch + 1);
+        const retained = rail.getCurrent();
+        await presenter.unmount();
+        expect(vi.getTimerCount()).toBe(timersBeforeWatch);
+
+        await act(async () => { vi.advanceTimersByTime(5 * 60_000); });
+        expect(rail.getCurrent()).toBe(retained);
+        const reopened = await renderHook(() => useMachineAddFlowDraft());
+        expect(reopened.getCurrent().notSeeing).toBe(true);
+        await reopened.unmount();
+        await rail.unmount();
+    });
 });
