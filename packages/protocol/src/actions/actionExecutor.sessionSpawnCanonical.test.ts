@@ -21,6 +21,7 @@ import { createBlockingApprovalCoordinator } from './blockingApprovalCoordinator
 import { invokeHostReviewedChildV1, readHostAdmittedReviewedChildV1, readHostAdmittedReviewedRootV1,
   readHostReviewedChildRootV1 } from './executor/deploymentRoleChild.js';
 import { projectNativeJsonValueForTransport } from '../json/strictJsonValue.js';
+import { buildManagedSessionDefaultsContext } from '../teams/managedDefaults.js';
 
 const canonicalInput = {
   creationKey: 'plugin-operation-7',
@@ -85,6 +86,33 @@ function createExternalSpawnApprovalContext(requestId: string) {
 }
 
 describe('session.spawn_new canonical execution', () => {
+  it.each([
+    { managed: 'read-only', ceiling: 'default' },
+    { managed: 'default', ceiling: 'read-only' },
+  ] as const)('uses an omitted Workflow Session permission default within the admitted ceiling ($managed, $ceiling)', async ({ managed, ceiling }) => {
+    const sessionSpawnNew = vi.fn<ActionExecutorDeps['sessionSpawnNew']>(async () => ({
+      type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted',
+    }));
+    const executor = createActionExecutor({ sessionSpawnNew });
+    const result = await executor.execute('session.spawn_new', {
+      ...canonicalInput, projectContext: { sourceRef: { serverId: 'server-1', sourceId: 'selected-project' } },
+    }, {
+      surface: 'agent', authority: 'account_automation', serverId: 'server-1', runtimeAccountId: 'account-1',
+      actionCaller: { kind: 'workflowRun', runId: 'workflow-run', authorization: {
+        principal: { kind: 'host' }, admittedPermissionCeiling: ceiling,
+      } },
+      agentStartContext: { ...agentStartContext, caller: { kind: 'originless', runId: 'workflow-run', runDepth: 0 },
+        baseline: { machineId: 'machine-1', directory: canonicalInput.directory.path } },
+      sessionAgentSpawnPolicyV1: DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
+      actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'session.spawn_new': ['agent'] } }),
+      sessionCreationDefaults: {
+        context: buildManagedSessionDefaultsContext({}), authoredChoices: {}, defaultPermissionMode: managed,
+      },
+    });
+    expect(result).toMatchObject({ ok: true });
+    expect(sessionSpawnNew.mock.calls[0]?.[0]).toMatchObject({ permissionMode: 'read-only' });
+  });
+
   it.each([
     { name: 'selected Project', selection: {
       projectContext: { projectRef: { serverId: 'server-1', projectKey: 'other-project' } },

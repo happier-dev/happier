@@ -128,6 +128,7 @@ export const ExternalActionRequesterInvocationV1Schema = lazyZodSchema(() => z.e
   /** Creation-owner selection bound to this request by the existing private admission box. */
   sessionCreationDefaults: z.optional(z.strictObject({
     context: ManagedSessionDefaultsContextV1Schema,
+    defaultPermissionMode: SessionSpawnNewInputV2Schema.shape.permissionMode,
     unavailableDefaults: z.optional(z.array(ActionExecuteFailureSchema)),
     managedPresetAcquisition: z.optional(ManagedAcquireInputV1Schema),
     managedPresetControllerAccess: z.optional(ManagedControllerAccessV1Schema),

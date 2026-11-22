@@ -237,7 +237,7 @@ it('inherits signed Account Home defaults without a Project selection or request
     .toMatchObject({ value: 'home-profile', source: 'home' });
 });
 
-it('resolves a Project choice from the native Session issuer’s own Account custody', async () => {
+it('carries the native Session issuer’s inherited Project permission into signed spawn defaults', async () => {
   const channel = await createRequesterCurrentnessSocketHarness();
   try {
     const serverHttpBaseUrl = 'https://session-defaults.test';
@@ -268,7 +268,8 @@ it('resolves a Project choice from the native Session issuer’s own Account cus
       expect(body).toEqual({ key });
       expect(config?.headers?.Authorization).toBe(`Bearer ${requesterToken}`);
       return { status: 200, data: { status: 'present', row: { key, revision: 0,
-        content: { t: 'plain', v: { key, value: { approvalProfileId: 'personal-profile' } } } } } };
+        content: { t: 'plain', v: { key, value: { approvalProfileId: 'personal-profile',
+          permissionModeByAgentTargetKey: { 'agent:happier.agent.codex/codex': 'read-only' } } } } } } };
     });
     vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: { homeDefaults: { approvalProfileId: 'home-profile' } } });
     const authorization = await projectRequesterAccountActionAuthorization({ authorization: root, serverIdentityId: 'home',
@@ -290,6 +291,8 @@ it('resolves a Project choice from the native Session issuer’s own Account cus
     { surface: 'mcp', authority: 'account_automation', externalActionExecutionAuthorization: authorization, externalActionTarget: target });
     expect(resolveManagedSessionDefaults({ ...prepared.defaults.context, agentTargetKey: '' }).approvalProfileId)
       .toMatchObject({ value: 'personal-profile', source: 'personal-project' });
+    expect(ExternalActionRequesterInvocationV1Schema.shape.sessionCreationDefaults.parse(prepared.defaults))
+      .toMatchObject({ defaultPermissionMode: 'read-only' });
     expect(readRow).toHaveBeenCalledTimes(1);
   } finally {
     await channel.close();

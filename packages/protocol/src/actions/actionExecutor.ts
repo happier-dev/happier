@@ -6799,7 +6799,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const profileAdmission = await resolveProfileSkillSeedsAtAdmissionV1(admittedSpawnInput, deps, ctx);
           if (!profileAdmission.ok) return profileAdmission;
           const spawnInput = profileAdmission.input;
-          const permissionResolution = assertAgentPermission(ctx, spawnInput.permissionMode);
+          const permissionResolution = assertAgentPermission(ctx, spawnInput.permissionMode, undefined,
+            ctx.sessionCreationDefaults?.defaultPermissionMode);
           if (!permissionResolution.ok) {
             return permissionResolution.error;
           }

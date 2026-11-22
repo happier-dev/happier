@@ -133,7 +133,7 @@ describe('requester bootstrap installation confidentiality', () => {
       serverIdentityId: 'home', machineId: target.machineId, installationId: 'installation', accountEncryptionMode,
       actionId: 'session.spawn_new', requestId: 'create-session', requestEnvelopeDigest: 'a'.repeat(43), target,
     } });
-    const sessionCreationDefaults = { context: {
+    const sessionCreationDefaults = { defaultPermissionMode: 'read-only' as const, context: {
       memberDefaults: { approvalProfileId: 'member-profile' },
       projectDefaults: { approvalProfileId: 'project-profile' },
       primaryTeamId: 'linked-team',

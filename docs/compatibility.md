@@ -1856,10 +1856,10 @@ continuations. The matching Protocol and daemon readers reload together under
 the unpublished 0.3 direct cut.
 
 Session creation also carries the creation owner's optional `sessionCreationDefaults`
-inside this existing private invocation. The captured selected-scope context and
-original authored target and placement choices, plus any already-bound preset
-acquisition and its controller access projection, travel under the exact requester admission and
-installation seal; the receiving executor consumes them without selecting defaults
+inside this existing private invocation. The captured selected-scope context,
+resolved permission default, original authored target and placement choices, and
+any already-bound preset acquisition and its controller access projection travel under
+the exact requester admission and installation seal. The receiving executor consumes them without selecting defaults
 again. They are absent from public Action inputs and Session metadata. Matching
 Protocol and CLI/daemon development readers reload together; older strict readers
 can reject this optional private member. The inspected `../0.2` frontier at

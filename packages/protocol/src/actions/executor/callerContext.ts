@@ -220,6 +220,7 @@ export function assertAgentPermission(
   ctx: ActionExecutorContext,
   requestedMode: unknown,
   supportedModes?: readonly string[],
+  defaultMode?: string,
 ): AgentPermissionResolution {
   const effective = resolveAgentEffectivePermission(ctx, supportedModes);
   if (!effective.ok) return effective;
@@ -227,6 +228,9 @@ export function assertAgentPermission(
     return { ok: true, permissionDecision: null };
   }
   const hasRequestedMode = typeof requestedMode === 'string' && requestedMode.trim().length > 0;
+  const preferred = !hasRequestedMode && defaultMode
+    ? assertNonEscalatingPermissionMode({ requestedMode: defaultMode, callerMode: effective.effectiveCallerMode, supportedModes })
+    : null;
   return {
     ok: true,
     permissionDecision: hasRequestedMode
@@ -235,7 +239,7 @@ export function assertAgentPermission(
           callerMode: effective.effectiveCallerMode,
           supportedModes,
         })
-      : resolveNearestPermissionModeAtOrBelow({
+      : preferred?.ok ? preferred : resolveNearestPermissionModeAtOrBelow({
           requestedMode: undefined,
           callerMode: effective.effectiveCallerMode,
           supportedModes,

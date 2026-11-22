@@ -146,9 +146,10 @@ export function createPrepareSessionSpawnInput(params: CliActionDepsParams, home
         purposeCatalog: memberSnapshot.connectedPurposeCatalog,
       }) } : {}),
     });
-    const selectedModel = resolveManagedSessionDefaults({ ...completeContext,
+    const selectedDefaults = resolveManagedSessionDefaults({ ...completeContext,
       agentTargetKey: buildBackendTargetKeyV2(agentTarget),
-    }).model.value;
+    });
+    const selectedModel = selectedDefaults.model.value;
     const { modelSelectionInput, connectedServicesAuthIntent, ...authoredInput } = input;
     const modelSelectionRef = modelSelectionInput ? resolveSessionModelSelectionInputRefV1({
       agentTargetKey: buildBackendTargetKeyV2(agentTarget),
@@ -182,6 +183,7 @@ export function createPrepareSessionSpawnInput(params: CliActionDepsParams, home
       ...(connectedServices ? { connectedServices } : {}),
     });
     const defaults = { context: completeContext,
+      ...(selectedDefaults.permissionMode.value ? { defaultPermissionMode: selectedDefaults.permissionMode.value } : {}),
       ...(memberSnapshot ? { [sessionCreationAccountSettingsContext]: memberSnapshot } : {}),
       ...(captured.unavailableDefaults ? { unavailableDefaults: captured.unavailableDefaults } : {}),
       ...(managedPresetAcquisition ? { managedPresetAcquisition } : {}),
