@@ -89,7 +89,8 @@ export type SessionListDragTopologyDropZone = Readonly<{
  * the structural half of `SessionListDragSnapshot`.
  */
 export type SessionListDragTopology = Readonly<{
-    rows: ReadonlyArray<SessionListDragTopologyRow>;
+    /** Structural rows by tree row id, in visible order. */
+    rowsById: ReadonlyMap<string, SessionListDragTopologyRow>;
     dropZones: ReadonlyArray<SessionListDragTopologyDropZone>;
     rowMetadataById: ReadonlyMap<string, SessionListTreeRowMetadata>;
     containerMetadataById: ReadonlyMap<string, SessionListTreeContainerMetadata>;

@@ -528,6 +528,162 @@ describe('useSessionListRowInteractions', () => {
         }
     });
 
+    it('re-measures stationary later rows when an earlier row resizes mid-drag, keeping the lifted source slot', async () => {
+        const serverId = ACTIVE_SCOPE.serverId;
+        const sessionTemplate = twoSessionListItems[2]!;
+        if (sessionTemplate.type !== 'session') throw new Error('Expected a Session fixture');
+        const hook = await renderInteractions({ listItems: [...twoSessionListItems, { ...sessionTemplate, sessionId: 's3' }] });
+        const sessionKey = sessionAddressKey({ serverId, sessionId: 's1' });
+        const layout = { s1: 100, s2: { y: 160, height: 40 }, s3: 220 };
+        const source = vi.fn((callback: (x: number, y: number, width: number, height: number) => void) => callback(0, layout.s1, 300, 40));
+        try {
+            await act(async () => {
+                hook.getCurrent().handleTreeViewportMeasure({ measureInWindow: callback => callback(0, 0, 300, 600) });
+                hook.getCurrent().registerTreeRowBounds(treeRowId.session(serverId, 's1'), { measureInWindow: source });
+                hook.getCurrent().registerTreeRowBounds(treeRowId.session(serverId, 's2'),
+                    { measureInWindow: callback => callback(0, layout.s2.y, 300, layout.s2.height) });
+                hook.getCurrent().registerTreeRowBounds(treeRowId.session(serverId, 's3'),
+                    { measureInWindow: callback => callback(0, layout.s3, 300, 40) });
+                hook.getCurrent().handleDragStart(sessionKey);
+            });
+            const sourceMeasurements = source.mock.calls.length;
+            // s2 grows; only s2 reports a layout. Stationary s3 moves down without one, and the
+            // lifted source's transform must not replace its drag-start slot.
+            layout.s2 = { y: 160, height: 100 };
+            layout.s3 = 280;
+            layout.s1 = 400;
+            await act(async () => {
+                const s2 = treeRowId.session(serverId, 's2');
+                hook.getCurrent().registerTreeRowBounds(s2, { measureInWindow: callback => callback(0, layout.s2.y, 300, layout.s2.height) });
+            });
+            let resolved: UseSessionInlineDragResolvedDrop | undefined;
+            act(() => { resolved = hook.getCurrent().resolveDropResult({ sessionKey, groupKey: 'project-a', pointer: { x: 10, y: 283 } }); });
+            expect(resolved!.geometry).toMatchObject({ kind: 'line', targetId: treeRowId.session(serverId, 's3') });
+            expect(source).toHaveBeenCalledTimes(sourceMeasurements);
+        } finally {
+            act(() => hook.getCurrent().handleDragCancel());
+            await hook.unmount();
+        }
+    });
+
+    it('keeps at most one trailing re-measure behind an in-flight native measurement pass', async () => {
+        const serverId = ACTIVE_SCOPE.serverId;
+        const hook = await renderInteractions({ listItems: twoSessionListItems });
+        const sessionKey = sessionAddressKey({ serverId, sessionId: 's1' });
+        // Native measurement is asynchronous; hold s2's callbacks until released.
+        const held: Array<() => void> = [];
+        let s2Y = 160;
+        const s2 = vi.fn((callback: (x: number, y: number, width: number, height: number) => void) => {
+            const measuredY = s2Y;
+            held.push(() => callback(0, measuredY, 300, 40));
+        });
+        const release = () => act(async () => { held.splice(0).forEach(run => run()); });
+        try {
+            await act(async () => {
+                hook.getCurrent().handleTreeViewportMeasure({ measureInWindow: callback => callback(0, 0, 300, 600) });
+                hook.getCurrent().registerTreeRowBounds(treeRowId.session(serverId, 's1'), { measureInWindow: callback => callback(0, 100, 300, 40) });
+                hook.getCurrent().registerTreeRowBounds(treeRowId.session(serverId, 's2'), { measureInWindow: s2 });
+                hook.getCurrent().handleDragStart(sessionKey);
+            });
+            await release();
+            await release();
+            await act(async () => { hook.getCurrent().handleTreeContentSizeChange(300, 500); });
+            const inFlight = s2.mock.calls.length;
+            // Recycled-cell churn while that pass is still measuring.
+            s2Y = 300;
+            for (let index = 1; index <= 4; index += 1) {
+                await act(async () => { hook.getCurrent().handleTreeContentSizeChange(300, 500 + index); });
+            }
+            expect(s2).toHaveBeenCalledTimes(inFlight);
+            await release();
+            // One trailing pass picks up every notification that arrived meanwhile.
+            expect(s2).toHaveBeenCalledTimes(inFlight + 1);
+            await release();
+            expect(s2).toHaveBeenCalledTimes(inFlight + 1);
+        } finally {
+            act(() => hook.getCurrent().handleDragCancel());
+            await hook.unmount();
+        }
+    });
+
+    it.each(['pointer', 'keyboard'] as const)('serializes pickup and follow-up measurements for a %s carry', async mode => {
+        const serverId = ACTIVE_SCOPE.serverId;
+        const sessionKey = sessionAddressKey({ serverId, sessionId: 's2' });
+        const targetId = treeRowId.session(serverId, 's1');
+        const hook = await renderInteractions({ listItems: twoSessionListItems });
+        const held: Array<() => void> = [];
+        let targetY = 100;
+        try {
+            await act(async () => {
+                const current = hook.getCurrent();
+                current.handleTreeViewportMeasure({ measureInWindow: callback => callback(0, 0, 300, 600) });
+                current.registerTreeRowBounds(treeRowId.session(serverId, 's2'), { measureInWindow: callback => callback(0, 400, 300, 40) });
+                current.registerTreeRowBounds(targetId, { measureInWindow: callback => {
+                    const y = targetY;
+                    held.push(() => callback(0, y, 300, 40));
+                } });
+            });
+            await act(async () => {
+                const current = hook.getCurrent();
+                if (mode === 'pointer') current.handleDragStart(sessionKey);
+                else current.stagedMove.handleRowKey({ sessionKey, label: 'Second', key: ' ' });
+            });
+            targetY = 240;
+            await act(async () => { hook.getCurrent().handleTreeContentSizeChange(300, 650); });
+            expect(held).toHaveLength(1);
+            await act(async () => { held.shift()!(); });
+            expect(held).toHaveLength(1);
+            await act(async () => { held.shift()!(); });
+            if (mode === 'pointer') {
+                let resolved: UseSessionInlineDragResolvedDrop | undefined;
+                act(() => { resolved = hook.getCurrent().resolveDropResult({ sessionKey, groupKey: 'project-a', pointer: { x: 10, y: 241 } }); });
+                expect(resolved?.geometry).toMatchObject({ kind: 'line', targetId });
+            } else {
+                await act(async () => { hook.getCurrent().stagedMove.handleRowKey({ sessionKey, label: 'Second', key: 'ArrowUp' }); });
+                expect(hook.getCurrent().dropOverlayShared.overlayTop.value).toBe(239);
+            }
+        } finally {
+            await hook.unmount();
+        }
+    });
+
+    it('refreshes a staged carry while an ended pointer carry still has pending measurements and a row recycles', async () => {
+        const serverId = ACTIVE_SCOPE.serverId;
+        const sessionKey = sessionAddressKey({ serverId, sessionId: 's2' });
+        const targetId = treeRowId.session(serverId, 's1');
+        const hook = await renderInteractions({ listItems: twoSessionListItems });
+        const held: Array<() => void> = [];
+        const key = (value: string) => hook.getCurrent().stagedMove.handleRowKey({ sessionKey, label: 'Second', key: value });
+        try {
+            await act(async () => {
+                const current = hook.getCurrent();
+                current.handleTreeViewportMeasure({ measureInWindow: callback => callback(0, 0, 300, 600) });
+                current.registerTreeRowBounds(treeRowId.session(serverId, 's2'), { measureInWindow: callback => callback(0, 400, 300, 40) });
+                current.registerTreeRowBounds(targetId, { measureInWindow: callback => held.push(() => callback(0, 100, 300, 40)) });
+            });
+            await act(async () => { hook.getCurrent().handleDragStart(sessionKey); });
+            await act(async () => { hook.getCurrent().handleTreeContentSizeChange(300, 650); });
+            await act(async () => { hook.getCurrent().handleTreeContentSizeChange(300, 700); });
+            await act(async () => {
+                hook.getCurrent().handleDragCancel();
+                key(' ');
+                key('ArrowUp');
+            });
+            await act(async () => {
+                const current = hook.getCurrent();
+                current.handleTreeScroll({ nativeEvent: { contentOffset: { y: 40 } } });
+                current.registerTreeRowBounds(targetId, { measureInWindow: callback => callback(0, 240, 300, 40) });
+                // Release the staged carry's pickup read from the recycled ref first.
+                held.pop()!();
+            });
+            expect(hook.getCurrent().dropOverlayShared.overlayTop.value).toBe(239);
+            await act(async () => { held.splice(0).forEach(release => release()); });
+            expect(hook.getCurrent().dropOverlayShared.overlayTop.value).toBe(239);
+        } finally {
+            await hook.unmount();
+        }
+    });
+
     it.each(['workspace-root', 'folder'] as const)('outlines the admitted lead row for pointer Put under in a %s, including after scrolling', async containerKind => {
         await loadSyncSingletonForTests();
         const account = await restoreServerAccountForTest({ serverUrl: 'https://pointer-put-under.test', accountId: ACTIVE_SCOPE.accountId,

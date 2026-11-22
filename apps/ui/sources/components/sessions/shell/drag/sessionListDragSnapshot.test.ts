@@ -76,7 +76,7 @@ describe('buildSessionListDragSnapshot', () => {
             foldersFeatureEnabled: true });
         expect(snapshot.source.sourceRowId).toBe(sourceRowId);
         expect(snapshot.source.treeSource.metadata).toMatchObject({ serverId: 'server-a', sessionId: 'mirrored', item: shelf });
-        expect(snapshot.topology.rows.filter(row => row.kind === 'leaf')).toHaveLength(2);
+        expect([...snapshot.topology.rowsById.values()].filter(row => row.kind === 'leaf')).toHaveLength(2);
     });
 
     it('resolves a URL-shaped Home without parsing the list key', () => {
@@ -112,8 +112,8 @@ describe('buildSessionListDragSnapshot', () => {
         });
 
         // Topology rows carry structural identity only — no `bounds` field at all.
-        expect(snapshot.topology.rows.length).toBeGreaterThan(0);
-        for (const row of snapshot.topology.rows) {
+        expect(snapshot.topology.rowsById.size).toBeGreaterThan(0);
+        for (const row of snapshot.topology.rowsById.values()) {
             expect(row).not.toHaveProperty('bounds');
             expect(typeof row.rowId).toBe('string');
             expect(typeof row.depth).toBe('number');

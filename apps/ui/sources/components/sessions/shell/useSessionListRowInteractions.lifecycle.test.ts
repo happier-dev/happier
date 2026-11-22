@@ -171,7 +171,7 @@ describe('Session list canonical carry retirement', () => {
             act(() => { hook.getCurrent().handleDragStart(sessionKey); });
             const snapshot = hook.getCurrent().activeDragSnapshot;
             expect(snapshot?.source.sourceRowId).toBe(sourceRowId);
-            expect(snapshot?.topology.rows.filter(row => row.kind === 'leaf').map(row => row.rowId))
+            expect([...(snapshot?.topology.rowsById.values() ?? [])].filter(row => row.kind === 'leaf').map(row => row.rowId))
                 .toEqual([treeRowId.session(scope.serverId, 'neighbor'), sourceRowId]);
             act(() => { hook.getCurrent().handleDragCancel(); });
             expect(hook.getCurrent().activeDragSnapshot).toBeNull();
@@ -181,7 +181,7 @@ describe('Session list canonical carry retirement', () => {
 
             await hook.rerender({ ...initial, listItems: [items[0]!, source, neighbor] });
             act(() => { hook.getCurrent().handleDragStart(sessionKey); });
-            expect(hook.getCurrent().activeDragSnapshot?.topology.rows.filter(row => row.kind === 'leaf').map(row => row.rowId))
+            expect([...(hook.getCurrent().activeDragSnapshot?.topology.rowsById.values() ?? [])].filter(row => row.kind === 'leaf').map(row => row.rowId))
                 .toEqual([sourceRowId, treeRowId.session(scope.serverId, 'neighbor')]);
             act(() => { hook.getCurrent().handleDragCancel(); });
         } finally {
@@ -209,9 +209,27 @@ describe('Session list canonical carry retirement', () => {
         expect(hook.getCurrent().activeDragSnapshot).toBeNull();
         await hook.rerender(initial);
         act(() => { hook.getCurrent().handleDragStart(sessionKey); });
-        act(() => hook.getCurrent().unregisterTreeRowBounds(sourceRowId));
+        await act(async () => { hook.getCurrent().unregisterTreeRowBounds(sourceRowId); });
         expect(hook.getCurrent().entityDragDrop.runtime.getSnapshot().phase).toBe('idle');
         await hook.unmount();
+    });
+
+    it('keeps the carry when the source row swaps its host view within one commit', async () => {
+        const hook = await renderInteractions();
+        try {
+            act(() => { hook.getCurrent().handleDragStart(sessionKey); });
+            // React detaches the previous host ref and attaches the next one in the same commit
+            // (a ref callback identity change, or Animated.View <-> View).
+            await act(async () => {
+                hook.getCurrent().unregisterTreeRowBounds(sourceRowId);
+                hook.getCurrent().registerTreeRowBounds(sourceRowId, { measureInWindow: callback => callback(0, 40, 300, 40) });
+            });
+            expect(hook.getCurrent().entityDragDrop.runtime.getSnapshot().phase).toBe('carrying');
+            expect(hook.getCurrent().activeDragSnapshot).not.toBeNull();
+        } finally {
+            act(() => hook.getCurrent().handleDragCancel());
+            await hook.unmount();
+        }
     });
 
     it('retires pointer and staged carries on explicit view or scope changes, while arrivals keep the carry', async () => {

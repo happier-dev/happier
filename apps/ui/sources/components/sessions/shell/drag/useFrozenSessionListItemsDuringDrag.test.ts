@@ -23,7 +23,7 @@ function snapshotWith(frozen: SessionListIndexItem[]): SessionListDragSnapshot {
         signature: 'sig',
         frozenItems: [],
         frozenViewItems: frozen,
-        topology: { rows: [], dropZones: [], rowMetadataById: new Map(), containerMetadataById: new Map() },
+        topology: { rowsById: new Map(), dropZones: [], rowMetadataById: new Map(), containerMetadataById: new Map() },
         source: {
             sourceRowId: 'session:server-a:a',
             sessionDragKey: 'server-a:a',

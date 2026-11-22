@@ -167,7 +167,7 @@ function buildTopologyDropZones(
 
 function buildTopology(tree: SessionListTreeModel): SessionListDragTopology {
     return {
-        rows: buildTopologyRows(tree.rowMetadataById),
+        rowsById: new Map(buildTopologyRows(tree.rowMetadataById).map((row) => [row.rowId, row])),
         dropZones: buildTopologyDropZones(tree.containerMetadataById, tree.rowMetadataById),
         rowMetadataById: tree.rowMetadataById,
         containerMetadataById: tree.containerMetadataById,

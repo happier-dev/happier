@@ -102,6 +102,13 @@ export type UseSessionListRowInteractionsInput = Readonly<{
     scrollToIndex?: (index: number) => void;
 }>;
 
+type DragGeometryRefresh = {
+    snapshot: SessionListDragSnapshot;
+    running: boolean;
+    pending: boolean;
+    includeSource: boolean;
+};
+
 export function useSessionListRowInteractions(input: UseSessionListRowInteractionsInput) {
     const setAttentionGestureHeld = useSessionListAttentionActivity();
     const reducedMotion = useReducedMotionPreference();
@@ -111,6 +118,7 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
     const nativeListScrollInteractionActiveRef = React.useRef(false);
 
     const activeDragSnapshotRef = React.useRef<SessionListDragSnapshot | null>(null);
+    const geometryRefreshRef = React.useRef<DragGeometryRefresh | null>(null);
     const keyboardScrollTargetRef = React.useRef<string | null>(null);
     // Mounted geometry changes (virtualized rows arriving, scroll, resize) re-select the place under a carry.
     const entityDragRuntime = useEntityDragDropRuntime();
@@ -210,6 +218,7 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
 
     const clearDragState = React.useCallback(() => {
         activeDragSnapshotRef.current = null;
+        geometryRefreshRef.current = null;
         keyboardScrollTargetRef.current = null;
         setActiveDragSnapshot(null);
         setDraggingSessionKey(null);
@@ -219,29 +228,76 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
         overlayKind.value = TREE_DROP_OVERLAY_KIND_NONE;
     }, [autoscrollActive, autoscrollPointerY, overlayKind, overlayVisible]);
 
-    const registerRowContentGeometry = React.useCallback((rowId: string, ref: TreeDropMeasurableRef | null) => {
+    const registerRowContentGeometry = React.useCallback(async (rowId: string, ref: TreeDropMeasurableRef | null) => {
         if (!ref) return;
         const snapshot = activeDragSnapshotRef.current;
         if (!snapshot) return;
         // This presentation cell owns measured space, but never entity topology or an Action.
         const topologyRow = rowId === SESSION_LIST_SUPPORTING_SECTIONS_NODE.id
             ? { rowId, parentRowId: null, containerId: rowId, depth: 0, kind: 'leaf' as const }
-            : snapshot.topology.rows.find((row) => row.rowId === rowId);
+            : snapshot.topology.rowsById.get(rowId);
         if (!topologyRow) return;
-        void measureTreeContentBounds(ref, readViewportMetrics).then((contentBounds) => {
-            if (!contentBounds) return;
-            if (activeDragSnapshotRef.current !== snapshot) return;
-            const row: TreeContentRow = {
-                id: topologyRow.rowId,
-                parentId: topologyRow.parentRowId,
-                containerId: topologyRow.containerId,
-                depth: topologyRow.depth,
-                kind: topologyRow.kind,
-                bounds: contentBounds,
-            };
-            dropGeometryRegistry.registerRow(row);
-        });
+        const contentBounds = await measureTreeContentBounds(ref, readViewportMetrics);
+        if (!contentBounds) return;
+        if (activeDragSnapshotRef.current !== snapshot) return;
+        // A recycled cell may have handed this row id to another view meanwhile.
+        if (measuredRowRefsRef.current.get(rowId) !== ref) return;
+        const row: TreeContentRow = {
+            id: topologyRow.rowId,
+            parentId: topologyRow.parentRowId,
+            containerId: topologyRow.containerId,
+            depth: topologyRow.depth,
+            kind: topologyRow.kind,
+            bounds: contentBounds,
+        };
+        dropGeometryRegistry.registerRow(row);
     }, [dropGeometryRegistry, readViewportMetrics]);
+
+    // Re-measure every registered row. A resized row moves its same-sized
+    // siblings without giving those siblings an onLayout; the registry's
+    // geometry-change hook then re-resolves the carry under the pointer.
+    const remeasureAllRegisteredRows = React.useCallback(async (snapshot: SessionListDragSnapshot, includeSource: boolean) => {
+        // The lifted source follows the pointer; its drag-start bounds keep its
+        // slot in the frozen list instead of its transform covering targets.
+        const rows = [...measuredRowRefsRef.current]
+            .filter(([rowId]) => includeSource || rowId !== snapshot.source.sourceRowId);
+        await Promise.all(rows.map(([rowId, ref]) => registerRowContentGeometry(rowId, ref)));
+    }, [registerRowContentGeometry]);
+
+    // One re-measure pass runs at a time per drag. Notifications that arrive
+    // while it measures (native measurement is async; autoscroll recycles cells
+    // every few frames) collapse into a single trailing pass.
+    const runGeometryRefresh = React.useCallback(async (state: DragGeometryRefresh) => {
+        if (geometryRefreshRef.current !== state) return;
+        state.pending = false;
+        state.running = true;
+        const includeSource = state.includeSource;
+        state.includeSource = false;
+        try {
+            await remeasureAllRegisteredRows(state.snapshot, includeSource);
+        } finally {
+            state.running = false;
+        }
+        if (state.pending && geometryRefreshRef.current === state) {
+            queueMicrotask(() => void runGeometryRefresh(state));
+        }
+    }, [remeasureAllRegisteredRows]);
+    const scheduleGeometryRefresh = React.useCallback(() => {
+        const state = geometryRefreshRef.current;
+        if (!state || state.pending) return;
+        state.pending = true;
+        // A pass for this drag is measuring; it schedules the trailing pass.
+        if (state.running) return;
+        // Coalesce the layout/ref notifications of one React commit.
+        queueMicrotask(() => void runGeometryRefresh(state));
+    }, [runGeometryRefresh]);
+
+    const activateDragSnapshot = React.useCallback((snapshot: SessionListDragSnapshot) => {
+        activeDragSnapshotRef.current = snapshot;
+        geometryRefreshRef.current = { snapshot, running: false, pending: false, includeSource: true };
+        setActiveDragSnapshot(snapshot);
+        scheduleGeometryRefresh();
+    }, [scheduleGeometryRefresh]);
 
     const registerTreeRowBounds = React.useCallback<RegisterSessionListTreeRowBounds>((rowId, ref) => {
         if (ref) {
@@ -249,18 +305,29 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
         } else {
             measuredRowRefsRef.current.delete(rowId);
         }
-        registerRowContentGeometry(rowId, ref);
-    }, [registerRowContentGeometry]);
+        scheduleGeometryRefresh();
+    }, [scheduleGeometryRefresh]);
 
     const unregisterTreeRowBounds = React.useCallback<UnregisterSessionListTreeRowBounds>((rowId) => {
         measuredRowRefsRef.current.delete(rowId);
         const current = entityDragRuntime.getSnapshot();
         const scope = current.item?.scope;
         if (scope && current.sourceId === `session-list-source:${scope.serverId}:${scope.accountId}:${rowId}`) {
-            entityDragRuntime.cancel('source-row-retired');
+            // A host-ref swap detaches and re-attaches the same row in one
+            // commit and keeps its drag-start slot; only a source row that
+            // stays unregistered has retired.
+            queueMicrotask(() => {
+                if (measuredRowRefsRef.current.has(rowId)) return;
+                dropGeometryRegistry.unregisterRow(rowId);
+                if (entityDragRuntime.getSnapshot().sourceId === current.sourceId) {
+                    entityDragRuntime.cancel('source-row-retired');
+                }
+            });
+            return;
         }
         dropGeometryRegistry.unregisterRow(rowId);
-    }, [dropGeometryRegistry, entityDragRuntime]);
+        scheduleGeometryRefresh();
+    }, [dropGeometryRegistry, entityDragRuntime, scheduleGeometryRefresh]);
 
     const measureTreeRowViewportOffset = React.useCallback(async (
         rowId: string,
@@ -275,12 +342,6 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
         if (!rowBounds || !viewportBounds) return null;
         return rowBounds.y - viewportBounds.y;
     }, []);
-
-    const remeasureAllRegisteredRows = React.useCallback(() => {
-        for (const [rowId, ref] of measuredRowRefsRef.current) {
-            registerRowContentGeometry(rowId, ref);
-        }
-    }, [registerRowContentGeometry]);
 
     const handleTreeScroll = React.useCallback((event: { nativeEvent?: {
         contentOffset?: { y?: number };
@@ -303,7 +364,8 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
     const handleTreeContentSizeChange = React.useCallback((_width: number, height: number) => {
         if (!Number.isFinite(height)) return;
         autoscrollContentHeight.value = Math.max(0, height);
-    }, [autoscrollContentHeight]);
+        scheduleGeometryRefresh();
+    }, [autoscrollContentHeight, scheduleGeometryRefresh]);
 
     const handleTreeListLayout = React.useCallback((event: { nativeEvent?: { layout?: { height?: number } } }) => {
         const height = Number(event.nativeEvent?.layout?.height ?? 0);
@@ -311,7 +373,8 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
             viewportHeightRef.current = Math.max(0, height);
             autoscrollViewportHeight.value = Math.max(0, height);
         }
-    }, [autoscrollViewportHeight]);
+        scheduleGeometryRefresh();
+    }, [autoscrollViewportHeight, scheduleGeometryRefresh]);
 
     const handleTreeViewportMeasure = React.useCallback((ref: TreeDropMeasurableRef | null) => {
         attachTreeDrop(ref);
@@ -445,9 +508,7 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
         beginCarry: (snapshot, mode) => {
             const carry = entityDragDrop.beginCarry(snapshot, mode);
             if (!carry) { clearDragState(); return null; }
-            activeDragSnapshotRef.current = snapshot;
-            setActiveDragSnapshot(snapshot);
-            remeasureAllRegisteredRows();
+            activateDragSnapshot(snapshot);
             return carry;
         },
         runtime: entityDragRuntime,
@@ -489,13 +550,11 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
         carryRef.current?.cancel();
         carryRef.current = entityDragDrop.beginCarry(snapshot, 'pointer');
         if (!carryRef.current) { clearDragState(); return; }
-        activeDragSnapshotRef.current = snapshot;
-        setActiveDragSnapshot(snapshot);
+        activateDragSnapshot(snapshot);
         setNativeContextMenuSessionKey(null);
         setDraggingSessionKey(sessionKey);
-        remeasureAllRegisteredRows();
         return carryRef.current;
-    }, [autoscrollActive, autoscrollPointerY, clearDragState, entityDragDrop, input.folderActionsEnabled, remeasureAllRegisteredRows]);
+    }, [autoscrollActive, autoscrollPointerY, clearDragState, entityDragDrop, input.folderActionsEnabled, activateDragSnapshot]);
 
     const handleDragUpdate = React.useCallback((_event: UseSessionInlineDragDropResultEvent) => {}, []);
     const handleDragCancel = React.useCallback((event?: UseSessionInlineDragCancelEvent) => {

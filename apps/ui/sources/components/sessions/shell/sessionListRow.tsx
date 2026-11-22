@@ -24,6 +24,7 @@ import type {
     RegisterSessionListTreeRowBounds,
     UnregisterSessionListTreeRowBounds,
 } from './SessionListHeaderFrame';
+import { useSessionListTreeRowRegistration } from './useSessionListTreeRowRegistration';
 import { useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
 
 export type SessionListRowProps = Readonly<
@@ -78,7 +79,9 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
         ...itemProps
     } = props;
 
-    const wrapperRef = React.useRef<View>(null);
+    const { wrapperRef, setWrapperRef, handleLayout: registerRowLayout } = useSessionListTreeRowRegistration(
+        treeRowId, onRegisterTreeRowBounds, onUnregisterTreeRowBounds,
+    );
 
     const getCellWrapper = React.useCallback((): HTMLElement | null => {
         if (Platform.OS !== 'web') return null;
@@ -174,12 +177,6 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
         ? 'none' as const
         : 'auto' as const;
 
-    React.useEffect(() => {
-        return () => {
-            onUnregisterTreeRowBounds(treeRowId);
-        };
-    }, [onUnregisterTreeRowBounds, treeRowId]);
-
     const reorderGesture = inlineDragEnabled ? gesture : undefined;
 
     const sessionItem = (
@@ -196,7 +193,7 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
     );
 
     const handleWrapperRef = React.useCallback((node: View | null) => {
-        wrapperRef.current = node;
+        setWrapperRef(node);
         dragSourceRef(node);
         const measurementRef = measurementTarget?.ref;
         if (typeof measurementRef === 'function') {
@@ -204,12 +201,12 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
         } else if (measurementRef) {
             measurementRef.current = node;
         }
-    }, [dragSourceRef, measurementTarget?.ref]);
+    }, [dragSourceRef, measurementTarget?.ref, setWrapperRef]);
 
     const handleRowLayout = React.useCallback((event: Parameters<NonNullable<ViewProps['onLayout']>>[0]) => {
-        onRegisterTreeRowBounds(treeRowId, wrapperRef.current);
+        registerRowLayout();
         measurementTarget?.onLayout(event);
-    }, [measurementTarget, onRegisterTreeRowBounds, treeRowId]);
+    }, [measurementTarget, registerRowLayout]);
 
     const rowNode = inlineDragEnabled ? (
         <Animated.View

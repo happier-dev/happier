@@ -479,7 +479,7 @@ describe('resolveSessionListDragPointer — folder topology', () => {
             sessionDragKey: sectionId,
             foldersFeatureEnabled: true,
         });
-        const registry = liveRegistry(snapshot.topology.rows.map((row, index) => ({
+        const registry = liveRegistry([...snapshot.topology.rowsById.values()].map((row, index) => ({
             id: row.rowId, parentId: row.parentRowId, containerId: row.containerId, depth: row.depth, kind: row.kind,
             bounds: { x: 0, y: row.rowId === sectionId ? 160 : index * FOLDER_ROW_HEIGHT, width: 320, height: FOLDER_ROW_HEIGHT },
         })));
