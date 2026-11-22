@@ -138,6 +138,7 @@ export function splitMarkdownRenderSegments(params: Readonly<{
     streamingRepair?: 'sync' | 'prepared';
     splitEnrichedSourceRanges?: boolean;
     imagesEnabled?: boolean;
+    previousSegments?: readonly MarkdownRenderSegment[];
 }>): MarkdownRenderSegment[] {
     if (params.streamingMode === 'static' && params.splitEnrichedSourceRanges !== true && !params.imagesEnabled) {
         const cached = readStaticSegmentCache(params.markdown);
@@ -197,9 +198,15 @@ export function splitMarkdownRenderSegments(params: Readonly<{
                 sourceRange: source.sourceRange,
                 markdown: source.source,
                 container: source.container,
+                referenceDefinitions: source.referenceDefinitions,
             });
             continue;
         }
+        // A complete top-level fence depends only on its own source.
+        const previous = params.previousSegments?.[segments.length];
+        const settledFence = source.blockType === 'FencedCode' && !source.incompleteKind
+            && previous?.type === 'special-block' && previous.markdown === source.source
+            ? previous : undefined;
         segments.push({
             type: 'special-block',
             key: nextSegmentKey(),
@@ -208,7 +215,9 @@ export function splitMarkdownRenderSegments(params: Readonly<{
             sourceHash: source.sourceHash,
             sourceRange: source.sourceRange,
             markdown: source.source,
-            blocks: params.imagesEnabled && source.imageBlock ? [source.imageBlock] : parseMarkdownBlockSource(source),
+            blocks: settledFence?.blocks ?? (params.imagesEnabled && source.imageBlock
+                ? [source.imageBlock]
+                : parseMarkdownBlockSource(source)),
         });
     }
 

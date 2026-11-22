@@ -1,8 +1,30 @@
 import { describe, expect, it } from 'vitest';
 
+import { reuseUnchangedMarkdownRenderSegments } from './reuseUnchangedMarkdownRenderSegments';
 import { splitMarkdownRenderSegments } from './splitMarkdownRenderSegments';
 
 describe('splitMarkdownRenderSegments', () => {
+    it('reuses settled segments and refreshes a quote when its reference definition arrives', () => {
+        const quote = ['> [Manual][manual]', '>', '> ~~~ts', '> const quoted = 1;', '> ~~~'].join('\n');
+        const prefix = ['~~~ts', 'const value = 1;', '~~~', '', quote, '', 'Draft'].join('\n');
+        const split = (markdown: string) => splitMarkdownRenderSegments({ markdown, streamingMode: 'streaming' });
+        const first = split(prefix);
+        const next = reuseUnchangedMarkdownRenderSegments(first, split(prefix + ' tail'));
+        expect(next[0]?.type).toBe('special-block');
+        expect(next[0]).toBe(first[0]);
+        expect(next[1]?.type).toBe('container-block');
+        expect(next[1]).toBe(first[1]);
+
+        const definition = '[manual]: https://example.com/manual';
+        const edited = prefix.replace('value = 1', 'value = 2') + ' tail\n\n' + definition;
+        const updated = reuseUnchangedMarkdownRenderSegments(next, split(edited));
+        expect(updated[0]).toMatchObject({ type: 'special-block', blocks: [{ type: 'code-block', content: 'const value = 2;' }] });
+        expect(updated[1]).toMatchObject({
+            type: 'container-block',
+            container: { type: 'quote', children: [{ type: 'prose', markdown: definition + '\n\n[Manual][manual]' }, { type: 'code' }] },
+        });
+    });
+
     it.each(['static', 'streaming'] as const)('renders dedicated continuation option lines in %s mode without converting inline examples', (streamingMode) => {
         const segments = splitMarkdownRenderSegments({
             markdown: 'Choose next:\n<option>Continue</option>\n<option>Review first</option>\n</options>',
@@ -128,6 +150,30 @@ describe('splitMarkdownRenderSegments', () => {
 
         expect(firstSpecial?.key).toBeTruthy();
         expect(nextSpecials[0]?.key).not.toBe(firstSpecial?.key);
+    });
+
+    it('keeps parsed closed fences while the streaming tail grows and refreshes edited fences', () => {
+        const fence = ['~~~ts', 'const value = 1;', '~~~'].join('\n');
+        const first = splitMarkdownRenderSegments({ markdown: fence + '\n\nDraft', streamingMode: 'streaming' });
+        const next = splitMarkdownRenderSegments({
+            markdown: fence + '\n\nDraft tail',
+            streamingMode: 'streaming',
+            previousSegments: first,
+        });
+        const edited = splitMarkdownRenderSegments({
+            markdown: fence.replace('= 1', '= 2') + '\n\nDraft tail',
+            streamingMode: 'streaming',
+            previousSegments: next,
+        });
+        const [firstFence] = first;
+        const [nextFence] = next;
+        const [editedFence] = edited;
+        if (firstFence?.type !== 'special-block' || nextFence?.type !== 'special-block' || editedFence?.type !== 'special-block') {
+            throw new Error('Expected the leading segment to be a fenced block');
+        }
+        expect(nextFence.blocks).toBe(firstFence.blocks);
+        expect(next[1]).toMatchObject({ type: 'enriched-markdown', markdown: 'Draft tail' });
+        expect(editedFence.blocks).toMatchObject([{ type: 'code-block', content: 'const value = 2;' }]);
     });
 
     it('keeps code fence segment keys stable as streamed fence content grows and closes', () => {

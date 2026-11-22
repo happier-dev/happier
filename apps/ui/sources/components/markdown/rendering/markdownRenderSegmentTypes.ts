@@ -27,6 +27,7 @@ export type SpecialMarkdownRenderSegment = MarkdownRenderSegmentBase & Readonly<
 export type ContainerMarkdownRenderSegment = MarkdownRenderSegmentBase & Readonly<{
     type: 'container-block';
     container: MarkdownContainerBlock;
+    referenceDefinitions: string;
 }>;
 
 export type MarkdownRenderSegment = EnrichedMarkdownRenderSegment | SpecialMarkdownRenderSegment | ContainerMarkdownRenderSegment;

@@ -22,6 +22,8 @@ import {
     readMarkdownRenderSegmentsCache,
     writeMarkdownRenderSegmentsCache,
 } from './markdownRenderSegmentsCache';
+import type { MarkdownRenderSegment } from './markdownRenderSegmentTypes';
+import { reuseUnchangedMarkdownRenderSegments } from './reuseUnchangedMarkdownRenderSegments';
 import { splitMarkdownRenderSegments } from './splitMarkdownRenderSegments';
 import { StaticMarkdownRenderPlaceholder } from './StaticMarkdownRenderPlaceholder';
 import { useDelayedStaticMarkdownRenderPlaceholder } from './useDelayedStaticMarkdownRenderPlaceholder';
@@ -91,6 +93,8 @@ export const MarkdownViewRenderer = React.memo((props: MarkdownViewRendererProps
     // A run-granularity observer measures the existing segments; only block targets split prose runs.
     const splitEnrichedSourceRanges = blockTargetsActive
         || (props.sourceRangeLayoutObserver !== undefined && props.sourceRangeLayoutObserver.granularity !== 'run');
+    // Last split for the same split options; reused per unchanged segment while a message grows.
+    const previousSplitRef = React.useRef<Readonly<{ options: string; segments: MarkdownRenderSegment[] }> | null>(null);
     const segments = React.useMemo(() => {
         const cacheKey = buildMarkdownRenderSegmentsCacheKey({
             renderCacheKey: props.renderCacheKey,
@@ -98,18 +102,19 @@ export const MarkdownViewRenderer = React.memo((props: MarkdownViewRendererProps
             streamingMode: props.streamingMode,
             imagesEnabled,
         });
-        if (cacheKey) {
-            const cached = readMarkdownRenderSegmentsCache(cacheKey, preparedMarkdown);
-            if (cached) return cached;
-        }
-        const next = splitMarkdownRenderSegments({
+        const splitOptions = `${props.streamingMode}:${splitEnrichedSourceRanges}:${imagesEnabled}`;
+        const previous = previousSplitRef.current?.options === splitOptions ? previousSplitRef.current.segments : null;
+        const cached = cacheKey ? readMarkdownRenderSegmentsCache(cacheKey, preparedMarkdown) : null;
+        const next = reuseUnchangedMarkdownRenderSegments(previous, cached ?? splitMarkdownRenderSegments({
             markdown: preparedMarkdown,
             streamingMode: props.streamingMode,
             streamingRepair: 'prepared',
+            previousSegments: previous ?? undefined,
             splitEnrichedSourceRanges,
             imagesEnabled,
-        });
-        if (cacheKey) writeMarkdownRenderSegmentsCache(cacheKey, preparedMarkdown, next);
+        }));
+        previousSplitRef.current = { options: splitOptions, segments: next };
+        if (cacheKey && !cached) writeMarkdownRenderSegmentsCache(cacheKey, preparedMarkdown, next);
         return next;
     }, [preparedMarkdown, props.renderCacheKey, props.streamingMode, sourceRangeInteractionsActive, splitEnrichedSourceRanges, imagesEnabled]);
     // Consent and streaming re-project this same reader's gallery, not its admitted local bytes.
