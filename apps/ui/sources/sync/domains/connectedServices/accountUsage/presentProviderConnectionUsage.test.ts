@@ -7,7 +7,7 @@ import { ProviderUsageSourceV1Schema } from '@happier-dev/protocol/providers/con
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { DaemonProviderUsageRefreshResponseV1Schema } from '@happier-dev/protocol/rpc';
 
-import { presentProviderConnectionUsage, selectProviderConnectionUsageSummaryMeter } from './presentProviderConnectionUsage';
+import { presentConnectedServiceQuotaReportedAmount, presentProviderConnectionUsage, selectProviderConnectionUsageSummaryMeter } from './presentProviderConnectionUsage';
 import type { ProviderConnectionUsageRefreshView } from './providerConnectionUsageRefreshResource';
 
 const keySource = ProviderUsageSourceV1Schema.parse({
@@ -111,6 +111,14 @@ function view(
 }
 
 describe('Provider connection usage presentation', () => {
+  it('reports zero spend without claiming a zero-over-zero allowance', () => {
+    const [noAllowance, capped] = snapshot([
+      { ...usd, meterId: 'on-demand', label: 'On-demand spend', unit: 'unknown', used: 0, limit: 0, remaining: 0 },
+      { ...usd, meterId: 'monthly', label: 'Monthly included', used: 10, limit: 10, remaining: 0 },
+    ]).meters;
+    expect(presentConnectedServiceQuotaReportedAmount(noAllowance!)?.amount).toEqual({ kind: 'used', used: 0 });
+    expect(presentConnectedServiceQuotaReportedAmount(capped!)?.amount).toEqual({ kind: 'remainingOfLimit', limit: 10, remaining: 0 });
+  });
   it('summarizes the most constrained window in either catalog order', () => {
     const weekly = { ...usd, meterId: 'weekly', label: 'Weekly', used: 10, remaining: 10, limit: 20 };
     const fiveHour = { ...usd, meterId: 'five-hour', label: 'Five hours', used: 80, remaining: 20, limit: 100 };

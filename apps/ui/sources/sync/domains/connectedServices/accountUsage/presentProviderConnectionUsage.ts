@@ -4,7 +4,7 @@ import { resolveQuotaMeterTone } from '@happier-dev/protocol/connect/accountHeal
 import type { ProviderUsageSourceV1 } from '@happier-dev/protocol/providers/contributions';
 import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 
-import { deriveQuotaMeterValues, selectLeastRemainingQuotaMeter } from '../deriveQuotaUtilizationPct';
+import { deriveQuotaMeterValues, deriveQuotaUtilizationPct, selectLeastRemainingQuotaMeter } from '../deriveQuotaUtilizationPct';
 import type { ProviderConnectionUsageRefreshView } from './providerConnectionUsageRefreshResource';
 
 /**
@@ -109,6 +109,9 @@ function presentAmount(
   const remaining =
     finite(meter.remaining) ??
     (limit !== null && used !== null ? limit - used : null);
+  // A zero-over-zero reading without a utilization observation only establishes zero spend.
+  if (limit === 0 && used === 0 && remaining === 0 && deriveQuotaUtilizationPct(meter) === null)
+    return { kind: 'used', used };
   if (limit !== null && remaining !== null)
     return { kind: 'remainingOfLimit', remaining, limit };
   // A reported negative balance stays negative: it is what the provider will bill against.
