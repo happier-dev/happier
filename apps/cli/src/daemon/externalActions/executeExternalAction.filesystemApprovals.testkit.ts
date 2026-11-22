@@ -89,7 +89,7 @@ import { executeExternalAction } from './executeExternalAction';
 import { createDaemonApprovalExecutionAuthorizationPreparer } from './approvalExecutionAuthorization';
 import { createDaemonSessionAccountActionExecutor } from '@/daemon/agentRuntime/createDaemonSessionAccountActionExecutor';
 import { createDaemonSessionAccountActionAuthorizationPreparer } from '@/daemon/startup/createDaemonSessionAccountActionAuthorizationPreparer';
-import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials, createDaemonExternalActionTargetResolver } from './daemonExternalActionTargetResolver';
+import { createDaemonExternalActionTargetResolver } from './daemonExternalActionTargetResolver';
 import { createProjectWorkerAdmission } from '@/workspaces/execution/projectWorkerAdmission';
 import { createProjectWorkerAction } from '@/workspaces/execution/projectWorkerAction';
 import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
@@ -182,9 +182,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
   }>, worker = false, sameMachineWorker = false,
   cliPolicy?: Readonly<{ authentication: 'account' | 'terminal'; askWithUiWaiver?: boolean; hostOnlyAsk?: 'waived' | 'unavailable';
     requireMoveChild?: true; approvalDecisionActorAccountId?: string; machineCustodianAccountId?: string; machineRole?: 'manage' | 'use';
-    deploymentRuntimeMachine?: true; waiveDeploymentChild?: true; additionalActionIds?: readonly ActionId[];
-    /** The Machine's Agent isolation policy, as the production daemon passes it to Workspace Sync. */
-    agentIsolation?: 'disabled' | 'separated' }>) {
+    deploymentRuntimeMachine?: true; waiveDeploymentChild?: true; additionalActionIds?: readonly ActionId[] }>) {
   const serviceAction = actionId.startsWith('localServices.') || actionId.startsWith('machines.services.')
     || actionId === 'projects.service.relocate';
   const ingressRefusals = vi.spyOn(logger, 'warnLocalFile');
@@ -901,9 +899,6 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
             method: packet.method, params: packet.params, requestId: packet.requestId,
             callerAuthority: resolveExternalActionRootInvocationAuthority(execution.authorization), machineAdmission: receiverAdmission,
             callerInputAuthorization: execution.authorization,
-            // As Home: a verified Session root's origin travels with the relayed call.
-            ...(execution.authorization.binding.sessionActionOrigin
-              ? { sessionActionOrigin: execution.authorization.binding.sessionActionOrigin } : {}),
             ...(packet.originalActionEnvelope ? { originalActionEnvelope: ExternalActionRequestEnvelopeSchema.parse(packet.originalActionEnvelope) } : {}),
             ...(execution.authorization.binding.actionId === 'projects.service.relocate' ? { workspaceSyncSourceExecution: WorkspaceSyncSourceExecutionV1Schema.parse({ method: packet.method,
               params: packet.params, requestId: packet.requestId, externalActionExecution: execution,
@@ -1176,11 +1171,6 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
       };
       const productionInput = { happyHomeDir: join(directory, machineId), activeServerDir: join(directory, machineId, 'servers', 'srv_n2'),
         activeServerId: 'srv_n2', homeTarget, localMachineId: machineId, releaseChannel: 'publicdev' as const, credentials,
-        // The production daemon hands Workspace Sync its Machine's Agent isolation policy.
-        ...(cliPolicy?.agentIsolation ? { agentIsolation: { read: () => cliPolicy.agentIsolation === 'separated'
-          ? { enabled: true, memberProvisioning: 'linuxUsersV1' as const,
-            status: { kind: 'effective' as const, platform: 'linux' as const, agentUser: 'happier-agent' }, workspaceRoots: [] }
-          : { enabled: false, status: { kind: 'disabled' as const }, workspaceRoots: [] } } } : {}),
         openMachineCarrierTunnel: async (request: Parameters<NonNullable<Parameters<typeof createProductionDaemonWorkspaceSyncRuntime>[0]['openMachineCarrierTunnel']>>[0]) => {
           const receiver = request.targetMachineId === target.machineId ? workerWorkspaceSync : sourceWorkspaceSync;
           if (!receiver) throw new Error('Missing native carrier receiver');
@@ -1664,15 +1654,6 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
           const sourceWork = new AbortController();
           const prepareSourceRequesterAccountContext: NonNullable<Parameters<typeof executeExternalAction>[0]['prepareRequesterAccountContext']> =
             request => prepareRequesterAccountActionContext({ ...request,
-              // As the production daemon's installed Session owner: the asking Agent
-              // Session's own Account custody, for a root that names that Session.
-              ...(options.originalCli === 'session_agent' && 'authentication' in request.authorization.binding
-                && request.authorization.binding.sessionActionOrigin?.caller.kind === 'session'
-                && request.authorization.binding.sessionActionOrigin.caller.sessionId === 'move-agent-session' ? {
-                requesterSessionBootstrap: { credentials, serverHttpBaseUrl: params.serverHttpBaseUrl,
-                  attribution: { serverId: 'srv_n2', accountId: 'account', machineId: ref.machineId,
-                    installationId: moveInstallation.installationId },
-                  getBoundSessionId: () => 'move-agent-session', isCurrent: async () => true, release: async () => {} } } : {}),
               purpose: request.purpose ?? { kind: 'external_action' }, machineId: ref.machineId, installationId: moveInstallation.installationId,
               installationPrivateKey: moveKey, serverId: 'srv_n2', serverIdentityId: homeId,
               serverHttpBaseUrl: params.serverHttpBaseUrl, ownCredentials: credentials, isCurrent: async () => true,
@@ -1682,14 +1663,6 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
             // This is the receiving SOURCE daemon, matching the production composer.
             actionsSettingsProvider: settings, pluginActionExecutionOwner: 'current_process',
             externalActionMachineInstallationId: moveInstallation.installationId, externalActionMachineRequestPrivateKey: moveKey,
-            // As the production daemon: replay checks an asking Session against its live Session registry,
-            // built per replay inside the receiving installation like the default checker.
-            ...(options.originalCli === 'session_agent' ? { isApprovalExecutionOriginCurrent: async args => {
-              const checker = createDaemonApprovalExecutionOriginCurrentnessFromCredentials({ credentials,
-                machineId: moveTarget.machineId, serverId: 'srv_n2', serverApiUrl: params.serverHttpBaseUrl,
-                isSessionCallerCurrent: async ({ caller }) => caller.kind === 'session' && caller.sessionId === 'move-agent-session' });
-              return checker ? await checker(args) : false;
-            } } : {}),
             machineActionDirectTargetTransport: { machineId: ref.machineId,
               invoke: (method, input, options) => sourceRpc.invokeLocal(method, input, options) },
             runActionOperation: operations.runActionOperation,
@@ -1821,7 +1794,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
                 }
                 const replayCode = approved.execution?.ok === false ? approved.execution.errorCode : undefined;
                 expect(decided, JSON.stringify({ errorCode: decided.ok ? replayCode : decided.errorCode,
-                  execution: approved.execution, refusals: refusalDiagnostics() })).toMatchObject({ ok: true, result: { status: 'executed' } });
+                  refusals: refusalDiagnostics() })).toMatchObject({ ok: true, result: { status: 'executed' } });
                 expect(approved.execution, replayCode).toMatchObject({ ok: true });
                 const execution = approved.execution;
                 if (execution?.ok !== true) throw new Error('Missing successful SOURCE Move approval execution');

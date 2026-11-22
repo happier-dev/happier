@@ -85,7 +85,7 @@ import type { MachineWorkspaceSyncRpcService } from '@/api/machine/rpcHandlers.w
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { StoredCredentials } from '@/persistence';
 import { preparePrivateProjectOpenCheckout, recoverPrivateProjectSyncCheckout, retainPrivateSyncCapture, type PrivateProjectCheckoutOpenRuntime } from '@/workspaces/activation/privateProjectOpenCheckout';
-import { selectHostRequesterExecutionIdentity, resolveHostRequesterAgentExecutionIdentity, canExecuteRequesterWorkspaceOnDaemonForHost,
+import { selectHostRequesterExecutionIdentity, resolveHostRequesterAgentExecutionIdentity,
   resolveHostRequesterAgentPlacementForHost, type HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { resolveMachineRpcWorkingDirectory } from '@/api/machine/resolveMachineRpcWorkingDirectory';
 import { buildActionExecutorContextForRpc, projectWorkspaceSyncPhysicalContextFromActionContext, type RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
@@ -713,15 +713,6 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     const identity = selectRequesterIdentity(context);
     return identity.kind !== 'unknown' && identity.requester.accountId === installedAccountId
       && isHostRequesterUnrestrictedOwner(identity);
-  };
-  // The installed Account's own Agent work may run its approved Workspace effect on
-  // this daemon under the same placement rule the TARGET admission applies
-  // (canExecuteRequesterWorkspaceOnDaemonForHost): never where the Machine separates Agents.
-  const canRunInstalledWorkspaceEffect = (context?: RpcHandlerContext) => {
-    if (canUseInstalledRelationshipOwner(context)) return true;
-    const identity = context ? selectRequesterIdentity(context) : undefined;
-    return identity !== undefined && identity.kind !== 'unknown' && identity.requester.accountId === installedAccountId
-      && canExecuteRequesterWorkspaceOnDaemonForHost(identity, input.agentIsolation ? () => input.agentIsolation?.read() : undefined);
   };
   const assertInstalledRelationshipOwner = (context?: RpcHandlerContext) => {
     if (!canUseInstalledRelationshipOwner(context)) {
@@ -1428,8 +1419,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       throw compositionError('workspace_sync_controller_mismatch', 'Linked workspace route belongs to another controller');
     }
     if (isProjectPreparation(context) && route.relationships.some(relationship =>
-      !runtime!.handoffAdapter.resolvePrivateExecution?.({ relationshipId: relationship.relationshipId }))
-      && !canRunInstalledWorkspaceEffect(context)) {
+      !runtime!.handoffAdapter.resolvePrivateExecution?.({ relationshipId: relationship.relationshipId }))) {
       assertInstalledRelationshipOwner(context);
     }
     return await prepareWorkspaceSyncBetween({
@@ -2835,18 +2825,16 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
   // A transport-only root (requester transport custody without requester
   // Account rows; an Agent's Action from a Session is the usual one) cannot
   // read requester rows at this SOURCE. When the asker is this daemon's own
-  // Account, its installed rows are the asker's rows: the destination
-  // inspection resolves the named source there, and the requester Sync view
-  // reads that Account's own statuses. Any other asker keeps the requester
-  // read and its refusal.
-  const readSessionAskerSourceSnapshot = async (sourceWorkspaceRefId: string | undefined, context: RpcHandlerContext) => {
+  // Account, its installed rows are the asker's rows, so the destination
+  // inspection resolves the named source there. Any other asker keeps the
+  // requester read and its refusal.
+  const readSessionAskerSourceSnapshot = async (sourceWorkspaceRefId: string, context: RpcHandlerContext) => {
     const authorization = context.callerInputAuthorization;
     if (!authorization || readRequesterAccountActionContext(authorization)
       || !readRequesterAccountActionTransportContext(authorization)
       || authorization.binding.accountId !== installedAccountId) return null;
     const current = factories.getProjectSnapshot();
-    return current && (sourceWorkspaceRefId === undefined
-      || resolveWorkspaceRefById(current.workspaceRefs, sourceWorkspaceRefId, semanticServerId))
+    return current && resolveWorkspaceRefById(current.workspaceRefs, sourceWorkspaceRefId, semanticServerId)
       ? current : await refreshInstalledProjectRows(context.signal);
   };
   const readRequesterProjectSnapshot = async (context?: RpcHandlerContext) => {
@@ -3177,11 +3165,9 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       const retained = runtime.handoffAdapter.listPrivateExecutions?.() ?? [];
       const owned = retained.filter(value => requesterOwnsPrivateExecution(value.execution, context));
       // Read the requester projection once at ingress. No controller method may
-      // fall back to the installed Account when this requester has no capture;
-      // the installed Account's own Session root reads its own rows (B1 branch).
+      // fall back to the installed Account when this requester has no capture.
       const snapshot = owned[0] ? await refreshPrivateRows(owned[0].execution, context?.signal)
-        : (context ? await readSessionAskerSourceSnapshot(undefined, context) : null)
-          ?? await readRequesterProjectSnapshot(context);
+        : await readRequesterProjectSnapshot(context);
       const installedIds = new Set(accountId === readAccountIdFromToken(input.credentials.token) ? []
         : factories.getProjectSnapshot()?.relationships.map(value => value.relationshipId) ?? []);
       const definitions = snapshot?.relationships.filter(relationship => !installedIds.has(relationship.relationshipId)

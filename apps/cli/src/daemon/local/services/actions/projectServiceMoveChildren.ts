@@ -11,7 +11,6 @@ import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import type { StoredCredentials } from '@/persistence';
 import { readRequesterAccountActionContext, readRequesterAccountActionTransportContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
-import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { readWorkspaceSyncWorkerTargetSnapshot, resolveWorkspaceSyncWorkerTarget } from '@/workspaces/sync/workspaceSyncPreparation';
 
 /** One producer for the operands reviewed at SOURCE and later executed by Move. */
@@ -89,14 +88,9 @@ export async function prepareProjectServiceMoveChildren(input: Readonly<{
     const { request, context } = input;
     const root = context.externalActionExecutionAuthorization;
     const requester = readRequesterAccountActionContext(root);
-    // An installed Session's root carries transport custody only. When its Account
-    // is this executor's own Account, that Account's rows are the asker's rows:
-    // prepare from them with this executor's credentials, without a requester read.
-    // The person's approval replays the retained plan through the full ingress.
-    const ownAccountRoot = Boolean(root && !requester && input.credentials
-        && readRequesterAccountActionTransportContext(root)
-        && root.binding.accountId === readAccountIdFromToken(input.credentials.token));
-    if (root && !requester && !ownAccountRoot) {
+    // A Session's root carries transport custody only; an Agent-asked Move is
+    // refused here, before any Ask, with that typed reason.
+    if (root && !requester) {
         return fail('project_requester_authority_unavailable',
             readRequesterAccountActionTransportContext(root) ? 'transport_only_root' : undefined);
     }
@@ -112,7 +106,7 @@ export async function prepareProjectServiceMoveChildren(input: Readonly<{
         serverHttpBaseUrl: input.serverBaseUrl, sourceWorkspaceRefId: request.workspace.refId,
         targetMachineId: request.selectedTarget.machineId, credentials,
         readRelationshipStatuses: input.readRelationshipStatuses,
-        ...(root && !ownAccountRoot ? { authorization: root } : {}),
+        ...(root ? { authorization: root } : {}),
         ...(context.signal ? { signal: context.signal } : {}) });
     const basis = resolveWorkspaceSyncWorkerTarget({ serverId: request.workspace.serverId,
         sourceWorkspaceRefId: request.workspace.refId, targetMachineId: request.selectedTarget.machineId,

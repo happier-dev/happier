@@ -1327,9 +1327,8 @@ it.skipIf(process.platform !== 'linux')('reports a Home refusal before a Session
     .toEqual([['[Workspace Sync] Target preflight refused', { requestId, failureCause: expect.objectContaining(failureCause) }]]);
 });
 
-// A Session root carries transport custody only. Only the installed Account's
-// own root reads its own rows and Sync statuses; changing a relationship still
-// needs the private capture, and every other root keeps the typed refusal.
+// A Session root carries transport custody only: a Move preparation refuses it
+// with a typed reason, and changing a relationship needs the private capture.
 function withTransportOnlyRequester(authorization: ExternalActionExecutionAuthorizationV1,
   value: Readonly<Record<string, unknown>>, binding: Partial<ExternalActionExecutionAuthorizationV1['binding']> = {}) {
   const projectionDescriptors = Object.getOwnPropertyDescriptors(authorization.requesterAccountProjection!);
@@ -1372,7 +1371,7 @@ it.skipIf(process.platform !== 'linux')('refuses a Move preparation for another 
   expect(reads).toEqual([]);
 });
 
-it.skipIf(process.platform !== 'linux')('lets an installed Agent Session root read its own Sync view but not pause or flush a relationship', async () => {
+it.skipIf(process.platform !== 'linux')('refuses pause and flush from an installed Agent Session root without a private capture', async () => {
   executionBoundary.member = false;
   // The asking root's Account 'member-a' is the installed Account here.
   const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', socketIo, sourceCustodianAccountId: 'member-a' });
