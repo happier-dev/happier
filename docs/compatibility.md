@@ -13072,6 +13072,15 @@ readers need matching source for this optional field; no released Open contract
 or reverse-development adapter is introduced. Lost Account acknowledgements and
 uncertain worktree effects retain their existing unknown settlement.
 
+The unreleased 0.3 Home relay stamps the admitted own-Machine Project Open's
+original Action request ID alongside the fresh target cancellation ID. The
+daemon uses the original ID for the Account- and Machine-scoped operation.
+The stamp arrives only on the authenticated relay packet after admission. It
+grants no authority and provides no cancellation key. An older relay omits the
+field and the daemon uses its previous operation key. An older daemon ignores
+the stamp. Exact request observation needs the paired Home and daemon. The
+0.2 socket reader at `1f2ab7581d` has no Project Open method.
+
 In 0.3 development, `/v1/features` capability diagnostics use `additive-open/drop`
 recursively: readers validate known fields and strip unknown properties so an
 older or newer server's diagnostic additions cannot invalidate the Home response.

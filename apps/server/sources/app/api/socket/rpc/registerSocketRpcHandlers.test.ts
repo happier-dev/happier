@@ -546,6 +546,31 @@ describe("registerSocketRpcHandlers", () => {
             expect(JSON.stringify(events)).not.toContain('never-log');
         } finally { log.mockRestore(); }
     });
+    it('keeps the owned Project Open request identity separate from target cancellation', async () => {
+        machineFindFirstMock.mockResolvedValue({ revokedAt: null, replacedByMachineId: null,
+            installationId: 'installation-1', kind: 'persistent' });
+        const method = `machine-1:${RPC_METHODS.PROJECTS_OPEN}`;
+        const { io, addToRoom, createRoomAwareSocket } = createRoomAwareIo();
+        const effect = vi.fn(async (_event: string, _packet: unknown) => ({ kind: 'opened' }));
+        const daemon = createRoomAwareSocket({ id: 'project-open-daemon', data: { clientType: 'machine-scoped',
+            machineId: 'machine-1', verifiedMachineInstallationId: 'installation-1' },
+            timeout: () => ({ emitWithAck: effect }) });
+        addToRoom(daemon.id, daemon);
+        registerSocketRpcHandlers({ userId: 'user-1', socket: daemon as unknown as Socket, io });
+        await triggerSocketHandler(daemon, SOCKET_RPC_EVENTS.REGISTER, { method });
+        const caller = createRoomAwareSocket({ id: 'project-open-caller', data: { clientType: 'user-scoped' } });
+        registerSocketRpcHandlers({ userId: 'user-1', socket: caller as unknown as Socket, io });
+        const ack = vi.fn();
+        await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, {
+            method, params: {}, requestId: 'team-selected-open', projectOpenRequestId: 'caller-injected-id',
+        }, ack);
+        expect(ack).toHaveBeenCalledWith({ ok: true, result: { kind: 'opened' } });
+        expect(effect).toHaveBeenCalledExactlyOnceWith(SOCKET_RPC_EVENTS.REQUEST, expect.objectContaining({
+            requestId: expect.stringMatching(/^rpc_/u),
+            projectOpenRequestId: 'team-selected-open',
+        }));
+    });
+
     it.each(['opaque', 'malformed'] as const)('keeps %s diagnostic metadata out of authority and content logs', async kind => {
         const log = vi.spyOn(logging, 'log').mockImplementation(() => {});
         try {

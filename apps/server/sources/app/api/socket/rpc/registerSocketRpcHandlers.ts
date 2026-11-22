@@ -2344,6 +2344,9 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 method,
                 ...(diagnosticOnly && targetTraceId ? { traceId: targetTraceId } : {}),
                 callParams,
+                ...(callerRequestId && machineAdmission && machineAdmission.actorAccountId === machineAdmission.custodianAccountId
+                    && admittedMethod === `${machineAdmission.machineId}:${RPC_METHODS.PROJECTS_OPEN}`
+                    ? { projectOpenRequestId: callerRequestId } : {}),
                 ...((data as { continuation?: unknown })?.continuation === true && callerRequestId
                     ? { continuationReturn: { socketId: params.socket.id, requestId: callerRequestId } } : {}),
                 ...(sessionAuthorization?.routeToSessionOwnerDaemon && !requesterApprovalMachine ? {

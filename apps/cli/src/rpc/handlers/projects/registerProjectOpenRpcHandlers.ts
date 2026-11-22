@@ -87,7 +87,7 @@ export function registerProjectOpenRpcHandlers(registrar: RpcHandlerRegistrar, i
         return openProject(parsed.data, runtime, admitted);
       }
       const observed = await input.observeExecution({ actionId: 'projects.open', input: parsed.data,
-        actionRequestId: admitted.localActionContext?.actionRequestId ?? admitted.transportRequestId,
+        actionRequestId: admitted.localActionContext?.actionRequestId ?? admitted.projectOpenRequestId ?? admitted.transportRequestId,
         rpcContext: admitted,
         execute: async operation => ({ ok: true, result: await openProject(parsed.data, runtime, {
           ...admitted, signal: AbortSignal.any([admitted.signal, operation.signal]),

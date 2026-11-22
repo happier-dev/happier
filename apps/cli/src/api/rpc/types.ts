@@ -115,6 +115,8 @@ export type RpcHandlerContext = Readonly<{
     workspaceSyncSourceExecution?: import('@happier-dev/protocol/socketRpc').WorkspaceSyncSourceExecutionV1;
     /** Validated transport correlation; authenticated relays replace caller values before dispatch. */
     transportRequestId?: string;
+    /** Home-stamped request identity for an admitted Project Open operation. */
+    projectOpenRequestId?: string;
     /**
      * Server-derived transport context. It is absent for local invocation so
      * an in-process caller cannot synthesize authenticated account authority.

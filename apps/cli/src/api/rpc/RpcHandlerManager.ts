@@ -1309,6 +1309,10 @@ export class RpcHandlerManager {
                     handler => { onRequest = handler; }, () => controller.abort(new Error('RPC operation Stop requested')));
                 localActionContext = { ...localActionContext, ...remoteOperation };
             }
+            const projectOpenRequestId = source === 'authenticated_home_socket'
+                && targetMethod === RPC_METHODS.PROJECTS_OPEN && machineAdmission?.success
+                && request.projectOpenRequestId !== undefined
+                ? SocketRpcRequestIdSchema.safeParse(request.projectOpenRequestId) : null;
             const handlerContext: RpcHandlerContext = Object.freeze({
                 ...(localActionContext ? { localActionContext } : {}),
                 ...(retainedCheckoutTeardown ? { retainedCheckoutTeardown } : {}),
@@ -1345,6 +1349,7 @@ export class RpcHandlerManager {
                     } : {}),
                 } : parsedConstraints?.success ? { callerInputConstraints: parsedConstraints.data } : {}),
                 ...(requestId ? { transportRequestId: requestId } : {}),
+                ...(projectOpenRequestId?.success ? { projectOpenRequestId: projectOpenRequestId.data } : {}),
                 ...(request.authorization ? { authorization: request.authorization } : {}),
                 ...(requesterApprovalDecision ? { requesterApprovalDecision } : {}),
                 // Finite managed-installation requests have no Machine receipt.

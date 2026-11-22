@@ -462,13 +462,15 @@ describe('Project Open RPC', () => {
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
-  it.each(['opened', 'refused', 'outcomeUnknown', 'receipt metadata without requester custody'] as const)('retains the original Open settlement in Action Operations (%s)', async scenario => {
+  it.each(['opened', 'refused', 'outcomeUnknown', 'receipt metadata without requester custody', 'owned relay'] as const)('retains the original Open settlement in Action Operations (%s)', async scenario => {
     const receiptOnly = scenario === 'receipt metadata without requester custody';
-    const settlement = receiptOnly ? 'refused' : scenario;
+    const relayed = scenario === 'owned relay';
+    const settlement = receiptOnly ? 'refused' : relayed ? 'opened' : scenario;
     const root = await mkdtemp(join(tmpdir(), 'happier-open-operation-'));
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`;
     const context: RpcHandlerContext = { signal: new AbortController().signal, callerAuthority: 'present_user',
-      transportRequestId: 'original-open-request',
+      transportRequestId: relayed ? 'rpc-fresh-cancellation' : 'original-open-request',
+      ...(relayed ? { projectOpenRequestId: 'original-open-request' } : {}),
       machineAdmission: { actorAccountId: 'account', custodianAccountId: 'account', machineId: 'machine',
         installationId: 'installation', role: 'manage', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true };
     const operations = createHostActionOperationRuntime({ serverId: 'srv_test_home', machineId: 'machine',
@@ -481,7 +483,7 @@ describe('Project Open RPC', () => {
     vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
       if (url.endsWith('/list')) {
         expect(await operations.handlers.getV2({ operationId: 'original-open-operation' }, context))
-          .toMatchObject({ kind: 'found', operation: { requestId: 'original-open-request', state: 'running',
+          .toMatchObject({ kind: 'found', operation: { ...(relayed ? {} : { requestId: 'original-open-request' }), state: 'running',
             cancellation: 'unsupported' } });
         expect(await operations.handlers.cancel({ operationId: 'original-open-operation' }, context)).toEqual({ kind: 'unsupported' });
         return { status: 200, data: { status: 'listed', coverage: 'complete', rows } };
@@ -501,6 +503,15 @@ describe('Project Open RPC', () => {
       const handler = handlers.get(RPC_METHODS.PROJECTS_OPEN)!;
       const input = { serverId: 'srv_test_home', machineId: 'machine', source: { kind: 'folder' as const,
         path: scenario === 'refused' ? join(root, 'missing') : root }, materialization: { kind: 'attach' as const } };
+      if (relayed) {
+        const result = await handler(input, context);
+        expect(result, JSON.stringify(result)).toMatchObject({ kind: 'opened' });
+        expect((await operations.handlers.listV2({}, context)).items)
+          .toMatchObject([{ requestId: 'original-open-request', state: 'succeeded' }]);
+        expect(await operations.handlers.getV2({ operationId: 'original-open-operation' }, context))
+          .toMatchObject({ kind: 'found', operation: { result } });
+        return;
+      }
       const pending = receiptOnly ? operations.observeExecution({ actionId: 'projects.open', input,
         actionRequestId: context.transportRequestId, rpcContext: context,
         execute: async owned => {

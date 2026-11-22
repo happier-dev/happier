@@ -218,6 +218,8 @@ async function executeRpcForwardCall(params: Readonly<{
     callerSocketId?: string;
     /** Admitted App-to-App Actions may explicitly address their own registered App. */
     allowCallerTarget?: boolean;
+    /** Caller Action identity admitted by Home, separate from the fresh target cancellation ID. */
+    projectOpenRequestId?: SocketRpcRequestPayload['projectOpenRequestId'];
     continuationReturn?: SocketRpcRequestPayload['continuationReturn'];
     /** Home-minted observation only, independent of cancellation/signed request identity. */
     traceId?: string;
@@ -473,6 +475,7 @@ async function executeRpcForwardCall(params: Readonly<{
             ...(params.originalActionEnvelope ? { originalActionEnvelope: params.originalActionEnvelope } : {}),
             timeoutMs,
             ...(targetRequestId ? { requestId: targetRequestId } : {}),
+            ...(params.projectOpenRequestId ? { projectOpenRequestId: params.projectOpenRequestId } : {}),
             ...(params.continuationReturn ? { continuation: true as const, continuationReturn: params.continuationReturn } : {}),
             ...(params.cancellation?.ackSignal ? { waitForResultOnCancel: true } : {}),
             ...(params.traceId ? { traceId: params.traceId } : {}),

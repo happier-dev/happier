@@ -378,6 +378,8 @@ export type SocketRpcRequestPayload = Readonly<{
    * in-flight relay; the authenticated relay replaces it before target dispatch.
    */
   requestId?: string;
+  /** Home stamp for admitted own-Machine Project Open observation, independent of cancellation. */
+  projectOpenRequestId?: string;
   /** Opt-in finite bidirectional exchange during this call; never operation authority. */
   continuation?: true;
   /** Authenticated relay stamp; inbound caller fields are never forwarded here. */
