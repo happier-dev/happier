@@ -27,6 +27,7 @@ function record(value: unknown): Readonly<Record<string, unknown>> | null {
 
 type PluginSurfaceMachineDemandInput = Readonly<{
     pluginId: string;
+    contextualTarget?: PluginExecutionOriginContextualTarget | null;
     surface: Readonly<{
         renderer: Readonly<Record<string, unknown>>;
         runtime?: unknown;
@@ -41,10 +42,11 @@ type PluginSurfaceMachineDemandInput = Readonly<{
  * Why a surface reads a Machine. `data`: it reads data there (a daemon Resource, a Machine-only read
  * method, or Resources its widget declares). `actions`: it can run its plugin's daemon Actions.
  * `contributionPoints`: only its plugin's mounted contribution points (sources other plugins contribute)
- * are read from the selected Machine. `none` otherwise. Declared capabilities, not execution availability
- * or a selector policy; any reason but `none` makes the surface Machine-bound.
+ * are read from the selected Machine. `renderer`: a qualified page needs its
+ * addressed daemon-owned renderer even before its Actions have been read.
+ * Any reason but `none` makes the surface Machine-bound.
  */
-export type PluginSurfaceMachineDemand = 'none' | 'data' | 'actions' | 'contributionPoints';
+export type PluginSurfaceMachineDemand = 'none' | 'data' | 'actions' | 'contributionPoints' | 'renderer';
 
 export function isPluginSurfaceMachineBound(params: PluginSurfaceMachineDemandInput): boolean {
     return readPluginSurfaceMachineDemand(params) !== 'none';
@@ -59,9 +61,11 @@ export function readPluginSurfaceMachineDemand(params: PluginSurfaceMachineDeman
     const artifactId = family ? resolvePluginUiProjectionContributionId({ family, pluginId: params.pluginId,
         contributionId: renderer.contributionId, entriesById: artifacts ?? {} }) : null;
     const artifact = artifactId ? artifacts?.[artifactId] : null;
+    const rendererDemand = params.contextualTarget?.installationId !== undefined
+        && artifact?.artifactSelectionOwner === 'daemonProjection' ? 'renderer' : 'none';
     const methods = readRequiredPluginSurfaceHostMethods(renderer.requiredHostMethods
         ?? record(renderer.model)?.requiredHostMethods ?? artifact?.requiredHostMethods);
-    if (methods === null) return 'none';
+    if (methods === null) return rendererDemand;
     // The same Resource methods also serve Account-owned borrowed host reads.
     // A declared daemon Resource capability implies demand for a target. For an
     // Account renderer, suppliers carry that declaration; only Administration's
@@ -88,7 +92,7 @@ export function readPluginSurfaceMachineDemand(params: PluginSurfaceMachineDeman
     // its renderer can also present Account data without required host methods.
     const readsContributionPoints = installed?.declaredExecution?.contributionPoints === true
         || installed?.declaresContributionPoints === true;
-    if (!runsDaemonActions && !readsContributionPoints) return 'none';
+    if (!runsDaemonActions && !readsContributionPoints) return rendererDemand;
     // Already Machine-bound: Resources the widget declares say its own data is read there too, before any
     // supplier has granted the mounted transport that capability (no Machine yet).
     if (Array.isArray(params.surface.resources) && params.surface.resources.length > 0) return 'data';

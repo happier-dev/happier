@@ -86,6 +86,7 @@ function PluginPageRouteActions(props: Readonly<{
         pluginId: props.pluginId,
         surface: props.page.placement,
         projection: props.projection,
+        contextualTarget: props.contextualExecutionTarget,
     });
     const fixedMachine = props.contextualExecutionTarget?.installationId !== undefined;
     const execution = usePluginSurfaceExecutionOrigin({
@@ -425,6 +426,7 @@ export function PluginPageContent(props: Readonly<{
         contextualTarget={props.contextualExecutionTarget ?? undefined}
         demandProjection={props.subPath !== null && (page ? !page.disabledReason && isPluginSurfaceMachineBound({
             pluginId: props.pluginId, surface: page.placement, projection: projection.pluginUiProjection,
+            contextualTarget: props.contextualExecutionTarget,
         }) : projection.phase === 'establishing' || projection.hasEstablishingMembers)}
         actions={routeActions}>{body}</PluginPagePresentation>;
 

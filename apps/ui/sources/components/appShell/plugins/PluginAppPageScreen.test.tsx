@@ -908,7 +908,10 @@ afterEach(async () => {
 });
 
 describe('plugin app page host route (EU-5b)', () => {
-    it('loads a qualified local page renderer from the Machine that provides its Actions', async () => {
+    it.each([
+        { name: 'loads a qualified local page renderer from the Machine that provides its Actions', coldActions: false },
+        { name: 'acquires a qualified local page before the shell has read its Actions', coldActions: true },
+    ])('$name', async ({ coldActions }) => {
         const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
         const fallback = { ...storage.getState().machines['machine-1']!, activeAt: Date.now() };
         const addressed = createMachineFixture({ id: 'machine-a', installationId: 'installation-a', activeAt: Date.now() });
@@ -918,7 +921,7 @@ describe('plugin app page host route (EU-5b)', () => {
         } } });
         const addressedDigest = `sha256:${'c'.repeat(64)}` as const;
         const projectionFor = (machineId: string) => daemonProjection({
-            machineId, connectionResource: true, withoutContributionPoints: true,
+            machineId, connectionResource: !coldActions, withoutContributionPoints: true,
             generation: machineId === addressed.id ? 9 : 10,
             localArtifactDigest: machineId === addressed.id ? addressedDigest : PAGE_ARTIFACT_DIGEST,
         });
@@ -937,12 +940,17 @@ describe('plugin app page host route (EU-5b)', () => {
         const location = parsePluginAppPageRoutePath(route);
         if (!location) throw new Error('Expected an App page route');
         const render = await createPageRenderer({ ...location, machineId: null, serverId: null });
-        await renderScreen(render(composeAppProjection(projectionFor(fallback.id), 'server-1', projectionFor(addressed.id))));
+        const shellProjectionFor = (machineId: string) => coldActions
+            ? { ...projectionFor(machineId), actionsById: {} }
+            : projectionFor(machineId);
+        await renderScreen(render(composeAppProjection(shellProjectionFor(fallback.id), 'server-1', shellProjectionFor(addressed.id))));
 
         await vi.waitFor(() => expect(readRenderContext().surface.machineExecutionReady).toBe(true));
-        await expect(readRenderContext().hostApi.readResource('connection', { input: { operation: 'describe' } }))
-            .resolves.toMatchObject({ contentType: 'application/json' });
-        expect(resourceMachines).toEqual([addressed.id]);
+        if (!coldActions) {
+            await expect(readRenderContext().hostApi.readResource('connection', { input: { operation: 'describe' } }))
+                .resolves.toMatchObject({ contentType: 'application/json' });
+            expect(resourceMachines).toEqual([addressed.id]);
+        }
         const renderer = reactNativeSurfaceProps.at(-1) as { loadedRuntimeIdentity?: { artifactDigest: string } };
         expect(renderer.loadedRuntimeIdentity?.artifactDigest).toBe(addressedDigest);
     });

@@ -2068,7 +2068,8 @@ function PluginSurfaceHostMount(props: Readonly<(
             : accountExecutionOrigin === null));
     const machineDemand = React.useMemo(() => accountUnionMount && descriptor != null ? readPluginSurfaceMachineDemand({
         pluginId: mountedPluginId, surface: descriptor, projection: props.pluginUiProjection,
-    }) : 'none', [accountUnionMount, descriptor, mountedPluginId, props.pluginUiProjection]);
+        contextualTarget: props.contextualExecutionTarget,
+    }) : 'none', [accountUnionMount, descriptor, mountedPluginId, props.contextualExecutionTarget, props.pluginUiProjection]);
     const needsMachineExecution = machineDemand !== 'none';
     // Inside a widget frame the body's own inset is the edge: the pane band's inset would push the chip past it.
     const insideWidgetFrame = useWidgetPresentation() !== undefined;
