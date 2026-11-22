@@ -14,16 +14,13 @@ import { refreshMachineAgents } from '../useMachineAgents';
 import type { MachineAgentSignInSession } from '../machineAgentTypes';
 import { startAgentSignInRpc, checkAgentSignInRpc, cancelAgentSignInRpc } from './api';
 
-// A progress cadence, not a deadline. Stop with no observers, on success or exit.
-const SIGN_IN_POLL_INTERVAL_MS = 2_000;
 const IDLE: MachineAgentSignInSession = Object.freeze({ phase: 'idle', terminalKey: null, authUrl: null, startedAtMs: null, failure: null });
 type BoundTarget = Readonly<{ serverId: string; machineId: string; agentId: string; lifetime: ServerAccountScopeLifetime }>;
 type Entry = {
   state: MachineAgentSignInSession; accountLabel: string | null;
   authentication: Omit<AgentSignInStatusResponse, 'checkedAt'> | null;
   authenticationListeners: Set<() => void>;
-  targets: Set<BoundTarget>; listeners: Set<() => void>;
-  timer: ReturnType<typeof setTimeout> | null;
+  listeners: Set<() => void>;
   opening: Promise<MachinesAgentsSignInStartOutput | undefined> | null; checking: Promise<AgentSignInStatusResponse | null> | null;
   openAbort: AbortController | null; probeAbort: AbortController | null;
   terminalExited: boolean;
@@ -33,14 +30,11 @@ const entries = new Map<string, Entry>();
 function getEntry(key: string): Entry {
   let entry = entries.get(key);
   if (!entry) {
-    entry = { state: IDLE, accountLabel: null, authentication: null, authenticationListeners: new Set(), targets: new Set(), listeners: new Set(), timer: null,
+    entry = { state: IDLE, accountLabel: null, authentication: null, authenticationListeners: new Set(), listeners: new Set(),
       opening: null, checking: null, openAbort: null, probeAbort: null, terminalExited: false, terminalId: null };
     entries.set(key, entry);
   }
   return entry;
-}
-function currentTarget(entry: Entry): BoundTarget | null {
-  return [...entry.targets].find((target) => target.lifetime.isCurrent()) ?? null;
 }
 function publish(entry: Entry, patch: Partial<MachineAgentSignInSession>, accountLabel = entry.accountLabel) {
   if (entry.accountLabel === accountLabel && Object.entries(patch).every(([key, value]) =>
@@ -49,21 +43,8 @@ function publish(entry: Entry, patch: Partial<MachineAgentSignInSession>, accoun
   entry.state = { ...entry.state, ...patch };
   for (const listener of entry.listeners) listener();
 }
-function stopPolling(entry: Entry) {
-  if (entry.timer) clearTimeout(entry.timer);
-  entry.timer = null; entry.probeAbort?.abort();
-}
-function schedulePoll(entry: Entry) {
-  if (entry.timer || entry.state.phase !== 'waiting' || !currentTarget(entry)) return;
-  entry.timer = setTimeout(() => {
-    entry.timer = null;
-    fireAndForget(checkAgain(entry).finally(() => schedulePoll(entry)), { tag: 'AgentSignIn.poll' });
-  }, SIGN_IN_POLL_INTERVAL_MS);
-}
-function checkAgain(entry: Entry, requestedTarget?: BoundTarget, signal?: AbortSignal): Promise<AgentSignInStatusResponse | null> {
+function checkAgain(entry: Entry, target: BoundTarget, signal?: AbortSignal): Promise<AgentSignInStatusResponse | null> {
   if (entry.checking) return entry.checking;
-  const target = requestedTarget ?? currentTarget(entry);
-  if (!target) return Promise.resolve(null);
   const abort = new AbortController(); entry.probeAbort = abort;
   const retire = target.lifetime.onRetire(() => abort.abort());
   const abortFromSignal = () => abort.abort();
@@ -82,7 +63,7 @@ function checkAgain(entry: Entry, requestedTarget?: BoundTarget, signal?: AbortS
       const accountLabel = result.accountLabel ?? null;
       if (result.status === 'signedIn') {
         const wasSignedIn = entry.state.phase === 'signedIn';
-        publish(entry, { phase: 'signedIn', failure: null }, accountLabel); stopPolling(entry);
+        publish(entry, { phase: 'signedIn', failure: null }, accountLabel);
         if (!wasSignedIn) fireAndForget(refreshMachineAgents({ serverId: target.serverId,
           machineId: target.machineId, accountLifetime: target.lifetime, force: true }), { tag: 'AgentSignIn.refreshInventory' });
       } else if (entry.state.terminalKey && !entry.terminalExited) {
@@ -91,7 +72,7 @@ function checkAgain(entry: Entry, requestedTarget?: BoundTarget, signal?: AbortS
       return result;
     } catch (error) {
       if (!abort.signal.aborted && target.lifetime.isCurrent()) {
-        publish(entry, { phase: 'failed', failure: error instanceof Error ? error.message : 'sign_in_status_unavailable' }); stopPolling(entry);
+        publish(entry, { phase: 'failed', failure: error instanceof Error ? error.message : 'sign_in_status_unavailable' });
       }
       return null;
     } finally {
@@ -102,13 +83,13 @@ function checkAgain(entry: Entry, requestedTarget?: BoundTarget, signal?: AbortS
   })();
   entry.checking = checking; return checking;
 }
-async function start(entry: Entry, requestedTarget?: BoundTarget, signal?: AbortSignal) {
+async function start(entry: Entry, target: BoundTarget, signal?: AbortSignal) {
   if (entry.opening) return await entry.opening;
   if (entry.state.phase === 'waiting' && entry.terminalId && entry.state.terminalKey) return { terminalKey: entry.state.terminalKey, terminalId: entry.terminalId };
-  const target = requestedTarget ?? currentTarget(entry); if (!target?.lifetime.isCurrent()) return;
+  if (!target.lifetime.isCurrent()) return;
   const abort = new AbortController(); entry.openAbort = abort;
   // A presenter unmount is non-owning; only an Action's request lifetime aborts its acquisition.
-  const retire = requestedTarget?.lifetime.onRetire(() => abort.abort());
+  const retire = target.lifetime.onRetire(() => abort.abort());
   const abortFromSignal = () => abort.abort();
   signal?.addEventListener('abort', abortFromSignal, { once: true });
   if (signal?.aborted) abort.abort();
@@ -127,7 +108,7 @@ async function start(entry: Entry, requestedTarget?: BoundTarget, signal?: Abort
       }
       if (!target.lifetime.isCurrent()) return;
       if ('terminalKey' in result) {
-        publish(entry, { phase: 'waiting', terminalKey: result.terminalKey }); schedulePoll(entry);
+        publish(entry, { phase: 'waiting', terminalKey: result.terminalKey });
       } else publish(entry, { phase: 'failed', failure: 'errorCode' in result ? result.errorCode : 'agent_login_unsupported' });
       return result;
     } catch (error) {
@@ -139,13 +120,12 @@ async function start(entry: Entry, requestedTarget?: BoundTarget, signal?: Abort
   })();
   entry.opening = opening; return await opening;
 }
-async function cancel(entry: Entry, requestedTarget?: BoundTarget, acquiredTerminalId?: string, signal?: AbortSignal) {
-  const target = requestedTarget ?? currentTarget(entry);
-  if (!target?.lifetime.isCurrent()) return { ok: false as const, errorCode: 'sign_in_unavailable', error: 'Sign-in Account is unavailable.' };
+async function cancel(entry: Entry, target: BoundTarget, acquiredTerminalId?: string, signal?: AbortSignal) {
+  if (!target.lifetime.isCurrent()) return { ok: false as const, errorCode: 'sign_in_unavailable', error: 'Sign-in Account is unavailable.' };
   if (acquiredTerminalId && entry.terminalId && acquiredTerminalId !== entry.terminalId) {
     return { ok: false as const, errorCode: 'sign_in_terminal_changed', error: 'The acquired sign-in terminal is no longer current.' };
   }
-  entry.openAbort?.abort(); stopPolling(entry);
+  entry.openAbort?.abort(); entry.probeAbort?.abort();
   const key = entry.state.terminalKey;
   publish(entry, IDLE, null); entry.terminalExited = false;
   try {
@@ -191,23 +171,16 @@ export async function executeAgentSignInLifecycle(
     return { ok: false, errorCode: 'sign_in_unavailable', error: 'Sign-in Account is unavailable.' };
   }
   const entry = getEntry(serverAccountScopedResourceKey(target.lifetime.scope, 'agent-sign-in', target.machineId, target.agentId));
-  entry.targets.add(target);
-  try {
-    if (operation === 'status') {
-      const result = await checkAgain(entry, target, target.signal);
-      if (!result) throw new Error(entry.state.failure ?? 'sign_in_status_unavailable');
-      schedulePoll(entry);
-      return result;
-    }
-    if (operation !== 'start') {
-      const closed = await cancel(entry, target, terminalId, target.signal);
-      if (!closed.ok || operation === 'cancel') return closed;
-    }
-    return await start(entry, target, target.signal) ?? { ok: false, errorCode: 'sign_in_unavailable', error: 'Sign-in did not start.' };
-  } finally {
-    entry.targets.delete(target);
-    if (!currentTarget(entry)) stopPolling(entry);
+  if (operation === 'status') {
+    const result = await checkAgain(entry, target, target.signal);
+    if (!result) throw new Error(entry.state.failure ?? 'sign_in_status_unavailable');
+    return result;
   }
+  if (operation !== 'start') {
+    const closed = await cancel(entry, target, terminalId, target.signal);
+    if (!closed.ok || operation === 'cancel') return closed;
+  }
+  return await start(entry, target, target.signal) ?? { ok: false, errorCode: 'sign_in_unavailable', error: 'Sign-in did not start.' };
 }
 
 export function useAgentSignIn(target: Readonly<{ serverId?: string | null; machineId: string | null; agentId: string }>) {
@@ -221,12 +194,10 @@ export function useAgentSignIn(target: Readonly<{ serverId?: string | null; mach
   const entry = React.useMemo(() => key ? getEntry(key) : null, [key]);
   const subscribe = React.useCallback((listener: () => void) => {
     if (!entry || !boundTarget) return () => {};
-    entry.listeners.add(listener); entry.targets.add(boundTarget);
-    const retirement = boundTarget.lifetime.onRetire(() => { if (!currentTarget(entry)) stopPolling(entry); listener(); });
-    schedulePoll(entry);
+    entry.listeners.add(listener);
+    const retirement = boundTarget.lifetime.onRetire(listener);
     return () => {
-      retirement.dispose(); entry.listeners.delete(listener); entry.targets.delete(boundTarget);
-      if (!currentTarget(entry)) stopPolling(entry);
+      retirement.dispose(); entry.listeners.delete(listener);
     };
   }, [boundTarget, entry]);
   const read = React.useCallback(() => entry && boundTarget?.lifetime.isCurrent() ? entry.state : IDLE, [boundTarget, entry]);
@@ -254,7 +225,6 @@ export function useAgentSignIn(target: Readonly<{ serverId?: string | null; mach
       ...((actionOperation === 'cancel' || actionOperation === 'restart') ? { terminalId } : {}),
     });
     if (!result.ok && actionOperation === 'start' && boundTarget.lifetime.isCurrent() && !entry.terminalId) {
-      stopPolling(entry);
       publish(entry, { phase: 'failed', failure: result.errorCode });
     }
     return result;
@@ -268,16 +238,17 @@ export function useAgentSignIn(target: Readonly<{ serverId?: string | null; mach
       if (entry && boundTarget?.lifetime.isCurrent() && event?.kind === 'auth' && entry.state.terminalKey) publish(entry, { authUrl: event.url });
     },
     reportTerminalExit: async (terminalId: string) => {
-      if (!entry || !boundTarget?.lifetime.isCurrent() || !entry.state.terminalKey || entry.terminalId !== terminalId) return;
-      entry.terminalExited = true; stopPolling(entry); await entry.checking;
-      if (!entry.state.terminalKey || !boundTarget.lifetime.isCurrent() || entry.terminalId !== terminalId) return;
-      const result = await checkAgain(entry);
+      if (!entry || !boundTarget?.lifetime.isCurrent() || !entry.state.terminalKey || entry.terminalId !== terminalId || entry.terminalExited) return;
+      entry.terminalExited = true;
+      await entry.checking;
+      if (!entry.state.terminalKey || !boundTarget.lifetime.isCurrent() || entry.terminalId !== terminalId || entry.state.phase === 'signedIn') return;
+      const result = await checkAgain(entry, boundTarget);
       if (boundTarget.lifetime.isCurrent() && entry.state.terminalKey && entry.terminalId === terminalId && result?.status !== 'signedIn') {
         publish(entry, { phase: 'failed', failure: entry.state.failure ?? 'agent_login_not_confirmed' });
       }
     },
     reportTerminalFailure: (failure: string) => {
-      if (entry && boundTarget?.lifetime.isCurrent() && entry.state.terminalKey) { stopPolling(entry); publish(entry, { phase: 'failed', failure }); }
+      if (entry && boundTarget?.lifetime.isCurrent() && entry.state.terminalKey) { entry.probeAbort?.abort(); publish(entry, { phase: 'failed', failure }); }
     },
   }), [boundTarget, entry, executeIntent]);
   return { ...state, state, terminalId: state.terminalKey ? entry?.terminalId ?? null : null,
@@ -333,30 +304,25 @@ export function useMachineCliSignIns(target: Readonly<{
       });
     return [...agents, ...tools].map(row => ({ ...row,
       entry: getEntry(serverAccountScopedResourceKey(binding.scope, 'agent-sign-in', target.machineId!, row.id)),
-      boundTarget: { serverId, machineId: target.machineId!, agentId: row.id, lifetime: binding },
     }));
   }, [binding, projection.inputs, serverId, target.machineId]);
   const held = React.useRef<CliSignInsSnapshot>(EMPTY_CLI_SIGN_INS_SNAPSHOT);
   const subscribe = React.useCallback((listener: () => void) => {
     if (!target.presented || !binding) return () => {};
     for (const row of rows) {
-      row.entry.targets.add(row.boundTarget);
       row.entry.listeners.add(listener); row.entry.authenticationListeners.add(listener);
-      schedulePoll(row.entry);
     }
     const retirement = binding.onRetire(listener);
     return () => {
       retirement.dispose();
       for (const row of rows) {
-        row.entry.targets.delete(row.boundTarget);
         row.entry.listeners.delete(listener); row.entry.authenticationListeners.delete(listener);
-        if (!currentTarget(row.entry)) stopPolling(row.entry);
       }
     };
   }, [binding, rows, target.presented]);
   const read = React.useCallback(() => {
     if (!binding?.isCurrent()) return EMPTY_CLI_SIGN_INS_SNAPSHOT;
-    const items = rows.map(({ entry, boundTarget: _boundTarget, ...row }) => ({ ...row,
+    const items = rows.map(({ entry, ...row }) => ({ ...row,
       authentication: entry.authentication, signIn: entry.state,
     })).filter(row => row.authentication?.installed === true
       && (row.authentication.nativeLogin !== 'unsupported' || row.authentication.connectedServices.length > 0));

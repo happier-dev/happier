@@ -303,6 +303,8 @@ it('names an attached encrypted preset from the owner’s opened catalog on a bo
   await waitForHomeGovernance(() => expect(harness.requests.map(request => request.path)).toContain('/v1/actions/machines.setup.plan'));
   await waitForHomeGovernance(() => expect(screen.tree.findAll(node => node.props?.testID === testID
     && typeof node.props.title === 'string')[0]?.props.title).toBe(name));
+  expect(screen.tree.findAll(node => node.props?.testID === testID
+    && typeof node.props.subtitle === 'string')[0]?.props.subtitle).toBe('Revision 3');
 });
 
 it('reads bodyless setup notices and preserves the attached copy until candidate Review', async () => {

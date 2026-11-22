@@ -710,6 +710,7 @@ export const managedMachinesEn = {
                 preset: "Preset",
                 bundledPreset: "Happier preset",
                 presetUnreadable: "A preset you can’t open",
+                attachedRevision: ({ revision }: { revision: number }) => `Revision ${revision}`,
                 presetFacts: ({ revision, count }: { revision: number; count: number }) => `Revision ${revision} · ${count === 1 ? '1 recipe' : `${count} recipes`}`,
                 noPreset: "No presets yet",
                 noPresetHelp: "A preset sets up several machines the same way. Make one in Machines › Presets.",

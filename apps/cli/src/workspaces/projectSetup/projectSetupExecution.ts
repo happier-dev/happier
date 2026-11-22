@@ -489,7 +489,12 @@ async function executePreparedProjectSetup(input: ProjectSetupExecutionInput): P
         const command = plan.commands[step]!;
         let launch: HostAuthorizedPluginExecLaunch;
         try {
-            await assertPreparedProjectInputsCurrent(plan, command);
+            if (command.kind !== 'literal') {
+                await assertPreparedProjectInputsCurrent(plan, command);
+            } else if (plan.toolchain.kind !== 'host' || input.produceProcessEnvironment) {
+                // Environment producers can consume shared inputs. The shell script is consumed only at launch.
+                await assertPreparedProjectInputsCurrent(plan);
+            }
             launch = await authorizePreparedProjectCommand(admittedInput, plan, command, signal);
         }
         catch (error) {

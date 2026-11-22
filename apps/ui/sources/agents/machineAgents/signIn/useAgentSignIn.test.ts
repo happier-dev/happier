@@ -151,7 +151,7 @@ describe('shared Agent sign-in', () => {
       expect(presenter.getCurrent()).toMatchObject({ signInScope: null });
     } finally { await presenter.unmount(); }
   });
-  it('publishes no notifications for thirty equal waiting polls and publishes a real sign-in change', async () => {
+  it('does no work while waiting and observes sign-in once on terminal settlement', async () => {
     vi.useFakeTimers();
     let signedIn = false;
     let accountLabel: string | null = null;
@@ -192,15 +192,16 @@ describe('shared Agent sign-in', () => {
       expect(notifications).toBeGreaterThan(0);
       notifications = 0;
       await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
-      expect(statusReads).toBe(30);
+      expect(statusReads).toBe(0);
       expect(notifications).toBe(0);
       expect(presenter.getCurrent().state).toBe(waiting);
-      expect(timers.readFires().interval).toBe(0);
+      expect(timers.readFires()).toMatchObject({ interval: 0, timeout: 0 });
     } finally {
       timers.stop();
     }
     accountLabel = 'Work account';
-    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+    await act(async () => { await presenter.getCurrent().checkAgain(); });
+    expect(statusReads).toBe(1);
     expect(notifications).toBe(1);
     expect(presenter.getCurrent().accountLabel).toBe('Work account');
     await act(async () => { presenter.getCurrent().reportTerminalUrl({ kind: 'auth', url: 'https://provider.example/first' }); });
@@ -212,7 +213,13 @@ describe('shared Agent sign-in', () => {
     expect(notifications).toBe(3);
     expect(presenter.getCurrent().authUrl).toBe('https://provider.example/second');
     signedIn = true;
-    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+    await act(async () => {
+      await Promise.all([
+        presenter.getCurrent().reportTerminalExit('equal-polls-login'),
+        presenter.getCurrent().reportTerminalExit('equal-polls-login'),
+      ]);
+    });
+    expect(statusReads).toBe(2);
     expect(notifications).toBe(4);
     expect(presenter.getCurrent().state.phase).toBe('signedIn');
     await act(async () => { presenter.getCurrent().reportTerminalFailure('terminal_stream_unavailable'); });
@@ -262,7 +269,6 @@ describe('shared Agent sign-in', () => {
     await act(async () => {
       first.getCurrent().reportTerminalUrl({ kind: 'generic', url: 'https://example.invalid/not-auth' });
       first.getCurrent().reportTerminalUrl({ kind: 'auth', url: 'https://example.invalid/auth' });
-      await vi.advanceTimersByTimeAsync(2000);
     });
     expect(second.getCurrent().authUrl).toBe('https://example.invalid/auth');
     const startedAt = first.getCurrent().startedAtMs;
@@ -271,7 +277,7 @@ describe('shared Agent sign-in', () => {
     expect(remounted.getCurrent().startedAtMs).toBe(startedAt);
     expect(remounted.getCurrent().state.phase).toBe('waiting');
     boundary.signedIn = true;
-    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    await act(async () => { await remounted.getCurrent().reportTerminalExit('fixture-terminal'); });
     expect(remounted.getCurrent().phase).toBe('signedIn');
     expect(remounted.getCurrent().terminalId).toBe('fixture-terminal');
     expect(boundary.rpc.mock.calls.map(([request]) => request.method)).not.toContain('daemon.terminal.streamRead');

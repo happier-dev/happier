@@ -305,13 +305,15 @@ function MachineSetupRoot(
                   const opened = source.opened;
                   const openedSource = opened?.source;
                   // The setup owner decides whether an attached preset's setup changed or went away; the row only says so.
-                  const update = openedSource?.kind === 'accountPreset'
-                    ? setup.presetUpdates.find((entry) => entry.presetId === openedSource.presetId) ?? null
+                  const reference = source.reference;
+                  const update = reference.kind === 'accountPreset' || reference.kind === 'accountPresetOpaque'
+                    ? setup.presetUpdates.find((entry) => entry.presetId === reference.presetId) ?? null
                     : null;
                   return (
                     <AttachedPresetRow
                       key={sourceKey}
                       sourceKey={sourceKey}
+                      reference={reference}
                       source={openedSource && openedSource.kind !== 'direct' ? openedSource : null}
                       name={nameOf(source)}
                       update={update}
@@ -825,6 +827,7 @@ const presetOriginKey = (preset: MachineSetupPresetChoice) =>
 function AttachedPresetRow(
   props: Readonly<{
     sourceKey: string;
+    reference: AttachedSetupSource['reference'];
     source: AttachedSource | null;
     name: string;
     update: MachineSetupPresetUpdateV1 | null;
@@ -836,11 +839,13 @@ function AttachedPresetRow(
 ) {
   const { theme } = useUnistyles();
   const [menuOpen, setMenuOpen] = React.useState(false);
-  const { source, update } = props;
+  const { source, reference, update } = props;
   const changed = update?.kind === 'changed' ? update : null;
   const facts =
     source === null
-      ? t('common.unavailable')
+      ? reference.kind === 'accountPresetOpaque'
+        ? t('machinePresets.setup.tab.attachedRevision', { revision: reference.presetRevision })
+        : t('common.unavailable')
       : source.kind === 'accountPreset'
       ? t('machinePresets.setup.tab.presetFacts', {
           revision: source.presetRevision,

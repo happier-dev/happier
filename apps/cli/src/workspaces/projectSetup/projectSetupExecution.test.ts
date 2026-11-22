@@ -329,6 +329,30 @@ describe('finite Project setup execution', () => {
         expect(manifestReads()).toBe(admissionManifestReads);
     });
 
+    it('reads each next literal command input once immediately before launch', async () => {
+        const f = await fixture(['echo first', 'node setup.js', 'node setup.js']);
+        const inputPath = join(f.root, 'setup.js');
+        await writeFile(inputPath, 'console.log("reviewed")');
+        const review = await reviewProjectSetupEffect(f.preparation);
+        if (review.kind !== 'reviewed') throw new Error(review.code);
+        f.trust(review.plan.reviewedEffectDigest);
+        const source = currentWorkspaceSource();
+        let inputReads = 0;
+        const run = runWithWorkspaceSource({ ...source, readFile: path => {
+            if (path === inputPath) inputReads++;
+            return source.readFile(path);
+        } }, () => f.start());
+        await expect.poll(() => f.spawned.length).toBe(1);
+        const admissionReads = inputReads;
+        for (const step of [1, 2]) {
+            f.spawned[step - 1]!.pty.exit(0);
+            await expect.poll(() => f.spawned.length).toBe(step + 1);
+            expect(inputReads - admissionReads).toBe(step);
+        }
+        f.spawned[2]!.pty.exit(0);
+        expect(await run.completion).toMatchObject({ ok: true });
+    });
+
     it('retries only the confirmed suffix after a command fails', async () => {
         const f = await fixture(['echo first', 'echo second']);
         const run = f.start();
