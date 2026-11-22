@@ -1565,6 +1565,16 @@ describe('the entry action controls on the mounted detail header', () => {
             notice: 'Waiting in Checkout fix until it can take your message.',
         },
         {
+            name: 'input held by a person',
+            result: {
+                status: 'held', localId: 'native-receipt', code: 'session_input_target_unavailable',
+                failureCause: { phase: 'session.message.send', errorClass: 'UnknownThrownValue',
+                    errorCode: 'held_by_person', httpStatus: null },
+            },
+            notice: 'Waiting in Checkout fix until it can take your message.',
+            details: /held_by_person/u,
+        },
+        {
             name: 'refused resume',
             result: {
                 status: 'failed', code: 'resume_failed', localId: 'native-receipt',

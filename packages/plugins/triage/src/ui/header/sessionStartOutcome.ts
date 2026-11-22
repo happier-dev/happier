@@ -278,9 +278,12 @@ export function describeTriageEntrySessionPhaseV1(
               return describeFailedHandoffSend(send, context);
             case 'cancelled':
               return notice('warning', 'plugins.triage.surface.session.handoffRefused', 'The selected Session could not accept this action’s input.');
-            case 'held':
+            case 'held': {
+              const reason = send.failureCause?.errorCode;
               return sessionNotice('muted', 'plugins.triage.surface.session.heldIn',
-                'Waiting in {session} until it can take your message.', context);
+                'Waiting in {session} until it can take your message.', context,
+                typeof reason === 'string' ? { codes: [reason] } : undefined);
+            }
             default:
               return sessionNotice('muted', 'plugins.triage.surface.session.sentTo', 'Sent to {session}.', context);
           }
