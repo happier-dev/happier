@@ -5,6 +5,9 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 import { createDeferred, createMachineFixture, createPlainProjectAccountRowListFixture, renderHook, standardCleanup, teamSummaryFixture, teamPolicyFixture, teamCapabilitiesFixture } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { createAccountSettingsHttpBoundary } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createArtifactStoreBoundary, createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { APPROVAL_PROFILE_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
+import { ProjectSessionDefaultsRowV1Schema } from '@happier-dev/protocol/projects/loadManagedSessionDefaultsContextV1';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
@@ -44,7 +47,18 @@ describe('shared Team defaults through New Session', () => {
     it('inherits Codex defaults on the New Session route from a saved Project origin', async () => {
         const home = await network.addHome('https://project-team-defaults.test', 'member');
         const scope = { serverId: home.id, accountId: 'member' };
-        const settings = { ...settingsDefaults, useEnhancedSessionWizard: false };
+        const sourceProfile = { id: 'project-profile', name: 'Project profile' };
+        const machineProfile = { id: 'machine-profile', name: 'Machine profile' };
+        const settings = { ...settingsDefaults, useEnhancedSessionWizard: false,
+            actionsSettingsV1: { ...settingsDefaults.actionsSettingsV1, machineApprovalProfiles: { 'machine-1': machineProfile.id } } };
+        const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => scope.accountId, encryptionMode: 'plain' });
+        for (const profile of [sourceProfile, machineProfile]) {
+            const { id, ...content } = profile;
+            const header = { kind: APPROVAL_PROFILE_ARTIFACT_KIND_V1, name: profile.name, title: profile.name };
+            artifacts.replaceStoredRow(createPlainArtifactHttpFixture({ id, isDecrypted: true, title: profile.name,
+                header, rawHeader: header, body: JSON.stringify({ kind: APPROVAL_PROFILE_ARTIFACT_KIND_V1, profile: content }),
+                headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 }, scope.accountId));
+        }
         const accountSettings = createAccountSettingsHttpBoundary({ serverUrl: home.serverUrl,
             initialAccounts: [{ accountId: scope.accountId, snapshot: { content: { t: 'plain', v: settings }, version: 1 } }] });
         const agentTargetKey = 'agent:happier.agent.codex/codex';
@@ -67,13 +81,16 @@ describe('shared Team defaults through New Session', () => {
             const response = accountSettings.handle(input, init);
             if (response) return response;
             const path = new URL(String(input)).pathname;
+            const artifactResponse = artifacts.handle(String(input), init);
+            if (artifactResponse) return artifactResponse;
             if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({ features: { teams: { enabled: true } } }));
             if (path === '/v1/teams/list') return Response.json({ items: [team], nextCursor: null });
             if (path === '/v1/teams/get') return Response.json(team);
             if (path === `/v1/projects/sources/${source.id}`) {
                 sourceRequested = true;
                 await sourceArrival.promise;
-                return Response.json({ ok: true, source, canManage: false });
+                return Response.json({ ok: true, source, canManage: false,
+                    sessionDefaults: ProjectSessionDefaultsRowV1Schema.parse({ revision: 1, defaults: { approvalProfileId: sourceProfile.id } }) });
             }
             if (path === '/v1/account/project-rows/list') return Response.json(projectRows);
             if (path === '/v1/account/project-rows/read') return Response.json({ status: 'absent' });
@@ -117,6 +134,11 @@ describe('shared Team defaults through New Session', () => {
             await act(async () => sourceArrival.resolve());
             await vi.waitFor(() => expect({ permissionMode: simple().permissionMode, modelMode: simple().modelMode })
                 .toEqual({ permissionMode: 'read-only', modelMode: modelId }));
+            await vi.waitFor(() => expect(model.getCurrent().managedDefaults?.approvalProfileId)
+                .toMatchObject({ value: sourceProfile.id, source: 'project', teamOrGroupDerived: true }));
+            await vi.waitFor(() => expect(simple().agentInputExtraActionChips?.find(chip => chip.controlId === 'approvalProfile')
+                ?.collapsedOptionsPopover?.label).toBe(sourceProfile.name));
+            expect(readNewSessionDraftFromRepository({ scope, draftId: opened.draftId })).not.toHaveProperty('approvalProfileId');
         } finally {
             sourceArrival.resolve();
             await model.unmount();

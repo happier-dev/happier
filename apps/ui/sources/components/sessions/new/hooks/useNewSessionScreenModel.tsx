@@ -957,6 +957,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const changeApprovalProfile = React.useCallback((value: string | null | undefined) => {
         setApprovalProfileEdit({ key: approvalProfileDraftKey, value });
     }, [approvalProfileDraftKey]);
+    const explicitApprovalProfileChoice = React.useMemo(() => approvalProfileId === undefined
+        ? undefined : { approvalProfileId }, [approvalProfileId]);
     const hydratedTempBackendTarget = React.useMemo(
         () => resolveCompatibilityBackendTarget(hydratedTempAuthoringDraft?.agentTarget),
         [hydratedTempAuthoringDraft?.agentTarget],
@@ -1219,6 +1221,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         access: accessDraftState.access,
         projectContext,
         memberDefaults: memberSessionDefaults,
+        explicitChoices: explicitApprovalProfileChoice,
         agentTargetKey: resolveBackendTargetKeyV2(routeBackendTarget ?? hydratedTempBackendTarget
             ?? hydratedPersistedBackendTarget ?? { kind: 'backend', backendId: DEFAULT_AGENT_ID }),
     });
@@ -1452,7 +1455,9 @@ export function useNewSessionScreenModel(input?: Readonly<{
             inventoryDemanded: agentInventoryDemanded },
     });
     const selectedBackendTargetKey = React.useMemo(() => resolveBackendTargetKeyV2(backendTarget), [backendTarget]);
-    const approvalProfiles = useApprovalProfiles(approvalProfileId, targetServerId, { demand: false, machineId: selectedMachineId });
+    const approvalProfiles = useApprovalProfiles(managedSessionDefaults.read.status === 'ready'
+        ? managedSessionDefaults.read.defaults.approvalProfileId.value : approvalProfileId,
+    targetServerId, { demand: false, machineId: selectedMachineId });
     const approvalProfileMachineDefault = React.useMemo(() => resolveApprovalProfileMachineDefault(approvalProfiles, selectedMachineId),
         [approvalProfiles.displayProfiles, approvalProfiles.machineApprovalProfiles, selectedMachineId]); // eslint-disable-line react-hooks/exhaustive-deps
     const creationDefaultsContext = React.useMemo(() => buildManagedSessionDefaultsContext({
@@ -1462,8 +1467,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const approvalProfileDecision = React.useMemo(() => resolveManagedSessionDefaults({
         ...creationDefaultsContext,
         agentTargetKey: selectedBackendTargetKey,
-        ...(approvalProfileId === undefined ? {} : { explicitChoices: { approvalProfileId } }),
-    }).approvalProfileId, [creationDefaultsContext, selectedBackendTargetKey, approvalProfileId]);
+        explicitChoices: explicitApprovalProfileChoice,
+    }).approvalProfileId, [creationDefaultsContext, selectedBackendTargetKey, explicitApprovalProfileChoice]);
     const teamCredentialCatalog = useHomeTeamCredentialModelCatalog({
         serverId: targetServerId,
         machineId: selectedMachineId,
@@ -4541,11 +4546,15 @@ export function useNewSessionScreenModel(input?: Readonly<{
     }) : null, [draftServerId, instructionsCreation, isBotDraft, sessionNameStore.getPrompt, instructionsChipBridge]);
     // The approval profile is one chip of the row (UI refinements 21:36Z), offering the field's own choices.
     // "Machine default" names the profile the chosen Machine gives my Sessions there (OWNER Q4).
-    const approvalProfileChip = React.useMemo(() => createApprovalProfileComposerChip({
-        value: approvalProfileId, profiles: approvalProfiles.displayProfiles, machineDefault: approvalProfileMachineDefault,
-        ready: approvalProfiles.ready, displayReady: approvalProfiles.ready || approvalProfiles.selectedDescriptor !== undefined,
-        requestCatalog: approvalProfiles.requestCatalog, onChange: changeApprovalProfile,
-    }), [approvalProfileId, approvalProfiles.displayProfiles, approvalProfileMachineDefault, approvalProfiles.ready,
+    const approvalProfileChip = React.useMemo(() => {
+        const followsMachine = approvalProfileDecision.source === 'machine';
+        return createApprovalProfileComposerChip({
+            value: followsMachine ? undefined : approvalProfileDecision.value, profiles: approvalProfiles.displayProfiles,
+            machineDefault: followsMachine ? approvalProfileMachineDefault : null,
+            ready: approvalProfiles.ready, displayReady: approvalProfiles.ready || approvalProfiles.selectedDescriptor !== undefined,
+            requestCatalog: approvalProfiles.requestCatalog, onChange: changeApprovalProfile,
+        });
+    }, [approvalProfileDecision, approvalProfiles.displayProfiles, approvalProfileMachineDefault, approvalProfiles.ready,
         approvalProfiles.selectedDescriptor, approvalProfiles.requestCatalog, changeApprovalProfile]);
     const composerExtraActionChips = React.useMemo(
         () => [...agentInputExtraActionChips, ...(instructionsChip ? [instructionsChip] : []), approvalProfileChip],
