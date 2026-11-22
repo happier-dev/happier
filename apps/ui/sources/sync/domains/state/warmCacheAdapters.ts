@@ -4,7 +4,7 @@ import {
 } from '@/sync/domains/session/readState/sessionViewer';
 import {
     areResponsibleAccountSummariesEqual,
-    readSessionListGuardState,
+    projectSessionListGuardState,
     type SessionListRenderableSession,
 } from '@/sync/domains/session/listing/sessionListRenderable';
 import {
@@ -15,7 +15,7 @@ import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadat
 import { readSessionBotV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import { parseSessionRuntimeActivityProjectionFields } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
-import { normalizeSessionAccessProjection } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
+import { projectAdmittedSessionAccess } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { SessionOwnerDisplayV1Schema } from '@happier-dev/protocol/sessions';
@@ -206,11 +206,9 @@ function countOwnEntries(record: Readonly<Record<string, unknown>> | null | unde
 
 export function buildSessionListRenderableFromCacheEntry(entry: SessionListCacheEntryV1): SessionListRenderableSession {
     const metadataUsable = isSessionListCacheEntryMetadataUsable(entry) || entry.displayProof !== undefined;
-    const access = entry.effectiveAccess === null
-        ? null
-        : entry.effectiveAccess === undefined
-            ? undefined
-            : normalizeSessionAccessProjection({ effectiveAccess: entry.effectiveAccess });
+    const access = entry.effectiveAccess == null
+        ? entry.effectiveAccess
+        : projectAdmittedSessionAccess(entry.effectiveAccess);
     const viewer = normalizeSessionViewerCompatibility({
         viewer: entry.viewer,
         access,
@@ -221,7 +219,7 @@ export function buildSessionListRenderableFromCacheEntry(entry: SessionListCache
         agentActivityHeadline: entry.agentActivityHeadline,
         workDisplay: entry.workDisplay,
         workflowHeadline: entry.workflowHeadline,
-        guardState: entry.guardState ? readSessionListGuardState({ v: 1, ...entry.guardState }) : null,
+        guardState: projectSessionListGuardState(entry.guardState),
         forkV1: entry.forkV1,
         projectKey: entry.projectKey,
         ownerAccountId: entry.ownerAccountId,

@@ -49,6 +49,11 @@ export type SessionCapabilityV1 = keyof SessionAccessCapabilitiesV1;
 
 export type SessionAccessProjectionRoleV1 = 'owner' | 'recipient' | 'unavailable';
 
+/** Role of an already-validated current access level. */
+export function sessionAccessProjectionRoleFromLevelV1(level: EffectiveSessionAccessLevelV1): 'owner' | 'recipient' {
+  return level === 'owner' ? 'owner' : 'recipient';
+}
+
 /**
  * Canonical role classification for current Session projections and the
  * released owner/direct compatibility marker. This is representation
@@ -62,7 +67,7 @@ export function readSessionAccessProjectionRoleV1(input: Readonly<{
   if (input.effectiveAccess !== undefined) {
     const parsed = SessionEffectiveAccessV1Schema.safeParse(input.effectiveAccess);
     if (!parsed.success) return 'unavailable';
-    return parsed.data.level === 'owner' ? 'owner' : 'recipient';
+    return sessionAccessProjectionRoleFromLevelV1(parsed.data.level);
   }
   if (input.share === null) return 'owner';
   if (input.share !== undefined) return 'recipient';

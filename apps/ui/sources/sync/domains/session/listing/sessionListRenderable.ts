@@ -24,7 +24,11 @@ import { readSessionWorkStateV1FromMetadata } from '@happier-dev/protocol/sessio
 import { projectSessionWorkDisplayV1, type SessionWorkDisplayV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStatePrimary';
 import { parseSessionAgentActivityHeadlineV1, type SessionAgentActivityHeadlineV1 } from '@happier-dev/protocol/sessions/work/agentActivity/agentActivityHeadlineV1';
 import { SessionWorkflowActivityHeadlineV1Schema, type SessionWorkflowActivityHeadlineV1 } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowActivityHeadlineV1';
-import { SessionGuardStateV1StoredSchema } from '@happier-dev/protocol/machines/guard/sessionGuardStateV1';
+import {
+    SessionGuardStateV1StoredSchema,
+    type SessionGuardNoticeStateV1,
+    type SessionGuardStateV1,
+} from '@happier-dev/protocol/machines/guard/sessionGuardStateV1';
 import type { ExternalAgentObservationSnapshotV1 } from '@happier-dev/protocol/sessions/external/externalAgentObservationV1';
 import type { PendingActivationAuthorizationV1, PendingActivationFailureDetailsV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import type { PrimaryTurnStatusV1, SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
@@ -146,12 +150,17 @@ export type SessionListGuardState =
 export function readSessionListGuardState(raw: unknown): SessionListGuardState | null {
     if (raw === undefined || raw === null) return null;
     const parsed = SessionGuardStateV1StoredSchema.safeParse(raw);
-    if (!parsed.success) return null;
-    if (parsed.data.kind === 'stopping') return { kind: 'stopping', stopAt: parsed.data.stopAt, rule: parsed.data.rule };
-    if (parsed.data.kind === 'stopped') {
-        return { kind: 'stopped', at: parsed.data.at, rule: parsed.data.rule,
-            ...(parsed.data.idleMs === undefined ? {} : { idleMs: parsed.data.idleMs }),
-            ...(parsed.data.freedBytes === undefined ? {} : { freedBytes: parsed.data.freedBytes }) };
+    return parsed.success ? projectSessionListGuardState(parsed.data) : null;
+}
+
+export function projectSessionListGuardState(
+    state: SessionGuardStateV1 | SessionGuardNoticeStateV1 | null | undefined,
+): SessionListGuardState | null {
+    if (state?.kind === 'stopping') return { kind: 'stopping', stopAt: state.stopAt, rule: state.rule };
+    if (state?.kind === 'stopped') {
+        return { kind: 'stopped', at: state.at, rule: state.rule,
+            ...(state.idleMs === undefined ? {} : { idleMs: state.idleMs }),
+            ...(state.freedBytes === undefined ? {} : { freedBytes: state.freedBytes }) };
     }
     return null;
 }

@@ -1,4 +1,4 @@
-import { SessionEffectiveAccessV1Schema, projectLegacySessionAccessCapabilitiesV1, readSessionAccessProjectionRoleV1, type SessionAccessCapabilitiesV1, type SessionEffectiveAccessV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import { SessionEffectiveAccessV1Schema, projectLegacySessionAccessCapabilitiesV1, readSessionAccessProjectionRoleV1, sessionAccessProjectionRoleFromLevelV1, type SessionAccessCapabilitiesV1, type SessionEffectiveAccessV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { SessionShareSchema } from '@happier-dev/protocol/sessions/control/contract';
 
 export type NormalizedSessionAccessProjection = Readonly<{
@@ -9,6 +9,18 @@ export type NormalizedSessionAccessProjection = Readonly<{
     audienceContext?: SessionEffectiveAccessV1['audienceContext'];
     primaryTeamId?: SessionEffectiveAccessV1['primaryTeamId'];
 }>;
+
+// The access has already passed the strict schema at its input boundary.
+export function projectAdmittedSessionAccess(access: SessionEffectiveAccessV1): NormalizedSessionAccessProjection {
+    return {
+        role: sessionAccessProjectionRoleFromLevelV1(access.level),
+        level: access.level,
+        capabilities: access.capabilities,
+        sources: access.sources,
+        ...(access.audienceContext !== undefined ? { audienceContext: access.audienceContext } : {}),
+        ...(access.primaryTeamId !== undefined ? { primaryTeamId: access.primaryTeamId } : {}),
+    };
+}
 
 const LEGACY_ACCESS_LEVELS = ['view', 'edit', 'admin'] as const;
 
@@ -46,20 +58,12 @@ export function normalizeSessionAccessProjection(
     row: SessionAccessInput,
     options: SessionAccessReadOptions = {},
 ): NormalizedSessionAccessProjection | null {
-    const role = readSessionAccessProjectionRoleV1(row);
-    if (role === 'unavailable') return null;
     if (row.effectiveAccess !== undefined) {
         const parsed = SessionEffectiveAccessV1Schema.safeParse(row.effectiveAccess);
-        if (!parsed.success) return null;
-        return {
-            role,
-            level: parsed.data.level,
-            capabilities: parsed.data.capabilities,
-            sources: parsed.data.sources,
-            ...(parsed.data.audienceContext !== undefined ? { audienceContext: parsed.data.audienceContext } : {}),
-            ...(parsed.data.primaryTeamId !== undefined ? { primaryTeamId: parsed.data.primaryTeamId } : {}),
-        };
+        return parsed.success ? projectAdmittedSessionAccess(parsed.data) : null;
     }
+    const role = readSessionAccessProjectionRoleV1(row);
+    if (role === 'unavailable') return null;
     if (options.allowLegacy !== true) return null;
     // Released layout zero omitted share for owners; layout one requires explicit null.
     if (role === 'owner') {

@@ -17,6 +17,8 @@ import {
 import { SessionListCacheEntryV1Schema, type SessionListCacheEntryV1 } from './warmCachePersistence';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import { SessionRuntimeActivityProjectionSchema } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
+import { SessionEffectiveAccessV1Schema } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import { SessionGuardStateV1StoredSchema } from '@happier-dev/protocol/machines/guard/sessionGuardStateV1';
 import { createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
 function makeWindowRenderable(id: string, meaningfulActivityAt: number): SessionListRenderableSession {
@@ -214,7 +216,15 @@ describe('warmCacheAdapters', () => {
             ),
         );
 
-        expect(buildSessionListRenderableFromCacheEntry(cached).access).toEqual(access);
+        const effectiveAccessParse = vi.spyOn(SessionEffectiveAccessV1Schema, 'safeParse');
+        const restoredAccess = buildSessionListRenderableFromCacheEntry(cached).access;
+        const repeatedParses = effectiveAccessParse.mock.calls.length;
+        effectiveAccessParse.mockRestore();
+        expect(restoredAccess).toEqual(access);
+        expect(repeatedParses).toBe(0);
+        expect(SessionListCacheEntryV1Schema.safeParse({
+            ...cached, effectiveAccess: { ...cached.effectiveAccess, level: 'unknown' },
+        }).success).toBe(false);
 
         const unavailableCached = SessionListCacheEntryV1Schema.parse(
             buildSessionListCacheEntryFromRenderable(
@@ -228,6 +238,7 @@ describe('warmCacheAdapters', () => {
             accessLevel: undefined,
         });
         const legacyCached = buildSessionListCacheEntryFromRenderable(legacyRenderable);
+        expect(buildSessionListRenderableFromCacheEntry(SessionListCacheEntryV1Schema.parse(legacyCached)).access).toBeUndefined();
         const currentUnavailable = buildSessionListCacheEntryFromRenderable({
             ...legacyRenderable,
             access: null,
@@ -961,6 +972,19 @@ describe('warmCacheAdapters', () => {
             pendingRequestObservedAt: 1_000,
             rollbackEligibleTurnStarts: [3, 9],
         }));
+    });
+
+    it('restores an admitted guard notice without re-parsing it as shared Session metadata', () => {
+        const guardState = { kind: 'stopped', at: 250, rule: 'idle_sessions', idleMs: 200 } as const;
+        const entry = SessionListCacheEntryV1Schema.parse(
+            buildSessionListCacheEntryFromRenderable(createSessionListRenderableSessionFixture({ guardState })),
+        );
+        const sharedGuardParse = vi.spyOn(SessionGuardStateV1StoredSchema, 'safeParse');
+        const restored = buildSessionListRenderableFromCacheEntry(entry);
+        const repeatedParses = sharedGuardParse.mock.calls.length;
+        sharedGuardParse.mockRestore();
+        expect(restored.guardState).toEqual(guardState);
+        expect(repeatedParses).toBe(0);
     });
 
     it('does not hydrate placeholder session metadata from an empty warm-cache identity', () => {
