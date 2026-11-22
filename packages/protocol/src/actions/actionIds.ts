@@ -282,7 +282,7 @@ export const WORKFLOW_ACTION_IDS_V1 = [
 export type WorkflowActionIdV1 = typeof WORKFLOW_ACTION_IDS_V1[number];
 /** Effect classifications shared by Workflow specs and catalog consumers. */
 export const WORKFLOW_DANGER_ACTION_IDS: ReadonlySet<WorkflowActionIdV1> = new Set([
-  'workflow.run.delete', 'workflow.definition.delete',
+  'workflow.run.delete', 'workflow.definition.delete', WORKFLOW_RUN_INVOCATIONS_RETRY_ACTION_ID_V1,
   'workflow.trigger.add', 'workflow.trigger.update', 'workflow.trigger.remove',
   'workflow.trigger.run_now',
 ]);

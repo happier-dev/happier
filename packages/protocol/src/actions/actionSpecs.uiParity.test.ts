@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { getSerializedActionSpecForSurface } from './actionCatalog.js';
-import type { ActionId } from './actionIds.js';
+import { isAgentInitiatedApprovalRequiredByDefault } from './actionApprovalPolicy.js';
+import { WORKFLOW_RUN_INVOCATIONS_RETRY_ACTION_ID_V1, type ActionId } from './actionIds.js';
 
 const operands = [
   ['workflow.validate', ['definition', 'inputs', 'target']],
@@ -91,6 +92,14 @@ const operands = [
 ] as const satisfies readonly (readonly [ActionId, readonly string[]])[];
 
 describe('UI operation operands in public Action discovery', () => {
+  it('advertises invocation retry as consequential on each public automation surface', () => {
+    expect(isAgentInitiatedApprovalRequiredByDefault(WORKFLOW_RUN_INVOCATIONS_RETRY_ACTION_ID_V1)).toBe(true);
+    for (const surface of ['agent', 'mcp', 'cli'] as const) {
+      const spec = getSerializedActionSpecForSurface({ id: WORKFLOW_RUN_INVOCATIONS_RETRY_ACTION_ID_V1, surface });
+      expect(spec, surface).toMatchObject({ safety: 'danger', sideEffectClass: 'danger' });
+    }
+  });
+
   it.each(operands)('elicits the declared operands for %s on Agent, MCP and CLI', (id, paths) => {
     for (const surface of ['agent', 'mcp', 'cli'] as const) {
       const definition = getSerializedActionSpecForSurface({ id, surface });
