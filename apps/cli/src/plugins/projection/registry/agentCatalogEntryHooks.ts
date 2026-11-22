@@ -1080,7 +1080,10 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
         return [base, `tool:${toolId}`].filter((part): part is string => Boolean(part)).join('|');
     };
     const createContext = async (
-        probeParams: Omit<PreflightSessionControlsProbeParams, 'timeoutMs'> & { timeoutMs?: number },
+        probeParams: Omit<PreflightSessionControlsProbeParams, 'timeoutMs' | 'probeKind'> & {
+            timeoutMs?: number;
+            probeKind?: PreflightSessionControlsProbeParams['probeKind'] | 'resume_reachability';
+        },
     ): Promise<AgentPreflightSessionControlsProbeContextV1 & Readonly<{ acquireNativeInput(): Promise<AgentPreflightSessionControlsProbeInputV1> }>> => {
         const signal = createPreflightProbeSignal(probeParams.signal, params.retirementSignal);
         const assertCurrent = (): void => {
@@ -1217,9 +1220,12 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
                         await handle.process.closeStdin();
                         await handle.wait();
                     }).catch((error: unknown) => {
-                        if (probeParams.probeKind !== 'models') throw error;
-                        // Keep the catalog read and native process settlement independently observable.
                         const failure = isPluginError(error) ? error.data : undefined;
+                        if (probeParams.probeKind !== 'models'
+                            && !(probeParams.probeKind === 'resume_reachability' && failure?.code === 'plugin_exec_termination_incomplete')) {
+                            throw error;
+                        }
+                        // Exec owns process settlement. Preserve the inspection's own result or rejection.
                         logger.warnLocalFile('[agent-preflight] JSON-RPC cleanup failed', {
                             agentId: params.agentId,
                             phase: 'process_cleanup',
@@ -1353,7 +1359,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
     const withNativeInspection: NonNullable<PreflightSessionControlsProbeAdapter['withNativeInspection']> = async (probeParams, inspect) => {
         const cleanupScope = createPreflightCatalogCleanupScope();
         try {
-            const context = await createContext({ ...probeParams, cleanupScope });
+            const context = await createContext({ ...probeParams, probeKind: 'resume_reachability', cleanupScope });
             return await inspect(Object.freeze({
                 cwd: probeParams.cwd,
                 withDeclaredJsonRpcClient: context.withDeclaredJsonRpcClient,

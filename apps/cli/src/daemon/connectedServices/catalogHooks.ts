@@ -1,4 +1,7 @@
 import type { ConnectedAccountServiceKey, ConnectedServiceId } from '@happier-dev/protocol';
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
+import { readJsonRpcApplicationRejection } from '@happier-dev/plugin-sdk/exec/protocol-clients';
+import { logger } from '@/utils/logger';
 import { resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey, resolveQualifiedConnectedAccountServiceForIngressServiceId } from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { resolveConnectedServiceNativeHomeTargetRoot } from './materialize/resolveConnectedServiceNativeHomeTarget';
@@ -282,7 +285,13 @@ export async function verifyResumeReachableThroughCatalog(
         env: input.nativeInspection.environment, signal: input.nativeInspection.signal,
         ...(input.runtimeDescriptorV1 ? { runtimeDescriptorV1: input.runtimeDescriptorV1 } : {}),
       }, verify);
-    } catch {
+    } catch (error) {
+      const rejection = readJsonRpcApplicationRejection(error);
+      logger.warnLocalFile('[agent-preflight] Native resume inspection failed', {
+        agentId: catalogId,
+        code: isPluginError(error) ? error.code : rejection?.messageClass ?? 'action_failed',
+        ...(rejection ? { method: rejection.method, providerErrorCode: rejection.providerErrorCode } : {}),
+      });
       return { ok: false, reason: 'resume_reachability_check_failed' };
     }
   });

@@ -3429,6 +3429,9 @@ within the supervisor's existing grace period. The process owner reports
 incomplete termination, including observed survivors. A completed model catalog
 remains available to the picker and execution admission, with a separate local
 cleanup diagnostic. Failed model reads follow the existing refresh failure path.
+Native Resume preserves the inspection's result when termination of the probe's
+own process is unconfirmed. The local log records cleanup separately and retains
+typed inspection errors without the native response content.
 
 Current development source retains content-free failure diagnostics at the
 existing owners. External Session follow identity admission returns a private

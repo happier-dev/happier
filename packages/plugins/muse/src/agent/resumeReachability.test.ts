@@ -1,10 +1,12 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { verifySpawnResumeReachability } from '@/daemon/connectedServices/verifySpawnResumeReachability';
+import * as processTree from '@/processes/terminate/terminateProcessTree';
 import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
 import { MUSE_MSP_PLAYBACK_SCRIPT, readMuseMspProcessAudit, waitForMuseMspProcessAudit } from './testkit/mspProcess.js';
 import { readMuseRecord } from './events.js';
@@ -19,7 +21,15 @@ describe('Muse native resume proof through the admitted catalog', () => {
   });
   afterAll(async () => { await runtime?.dispose(); await pluginReloadController.shutdown(); });
 
-  it.each(['found', 'mismatched', 'not-found', 'cancelled'] as const)('checks %s native reachability with one read and no conversation mutation', async outcome => {
+  it.each([
+    { outcome: 'found', incompleteCleanup: false },
+    { outcome: 'found', incompleteCleanup: true },
+    { outcome: 'mismatched', incompleteCleanup: false },
+    { outcome: 'not-found', incompleteCleanup: false },
+    { outcome: 'not-found', incompleteCleanup: true },
+    { outcome: 'read-rejected', incompleteCleanup: true },
+    { outcome: 'cancelled', incompleteCleanup: false },
+  ] as const)('checks $outcome reachability with incomplete cleanup $incompleteCleanup', async ({ outcome, incompleteCleanup }) => {
     const directory = await mkdtemp(join(tmpdir(), 'muse-native-resume-proof-'));
     const auditPath = join(directory, 'native-audit.json');
     const script = join(directory, 'native-playback.cjs');
@@ -30,9 +40,10 @@ describe('Muse native resume proof through the admitted catalog', () => {
     const result = readMuseRecord(reply.result);
     // Negative identity/refusal and held-read variants are schema-derived OS
     // vectors. Native success fields and identities come from the real capture.
-    const response = outcome === 'not-found'
-      ? { jsonrpc: '2.0', id: reply.id, error: { code: -32010, message: 'Fixture session not found',
-        data: { kind: 'sessionNotFound', fixtureSchemaDerived: true } } }
+    const response = outcome === 'not-found' || outcome === 'read-rejected'
+      ? { jsonrpc: '2.0', id: reply.id, error: outcome === 'not-found'
+        ? { code: -32010, message: 'Fixture session not found', data: { kind: 'sessionNotFound' } }
+        : { code: -32603, message: 'Fixture read failure' } }
       : { ...reply, result: { ...result, session: { ...readMuseRecord(result.session),
         ...(outcome === 'mismatched' ? { sessionId: '00000000-0000-7000-8000-000000000099' } : {}) } } };
     const recording = JSON.stringify({ ...captured,
@@ -52,6 +63,10 @@ describe('Muse native resume proof through the admitted catalog', () => {
     const environment = { XDG_DATA_HOME: selectedHome, HOME: directory,
       PATH: `${directory}${delimiter}${process.env.PATH ?? ''}` };
     const controller = new AbortController();
+    // The real playback child exits on stdin close. Only the OS tree's
+    // settlement observation is failed, after the JSON-RPC response.
+    const terminate = incompleteCleanup ? vi.spyOn(processTree, 'terminateProcessTree')
+      .mockRejectedValueOnce(new PluginError({ code: 'plugin_exec_termination_incomplete' })) : undefined;
     try {
       const pending = verifySpawnResumeReachability({ agentId: 'muse', vendorResumeId: nativeSessionId,
         cwd: directory, signal: controller.signal,
@@ -64,6 +79,7 @@ describe('Muse native resume proof through the admitted catalog', () => {
         controller.abort(new Error('Containing resume preparation cancelled'));
       }
       const proof = await pending;
+      if (terminate) expect(terminate).toHaveBeenCalled();
       if (outcome === 'found') expect(proof).toEqual({ ok: true, proof: 'native_session' });
       else expect(proof).toEqual({
         ok: false,
@@ -75,6 +91,7 @@ describe('Muse native resume proof through the admitted catalog', () => {
       expect(audit.methods).toEqual(['initialize', 'initialized', 'session/read']);
       expect(audit.sessionReads).toEqual([{ sessionId: nativeSessionId, excludeItems: true }]);
     } finally {
+      terminate?.mockRestore();
       controller.abort();
       await rm(directory, { recursive: true, force: true });
     }
