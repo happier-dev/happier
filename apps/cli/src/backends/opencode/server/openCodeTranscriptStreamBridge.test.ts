@@ -50,6 +50,37 @@ describe('createOpenCodeTranscriptStreamBridge', () => {
     });
   });
 
+  it('keeps unresolved reasoning at its original boundary and honors late suppression', async () => {
+    const { session, durableCalls } = createSessionStub();
+    const bridge = createOpenCodeTranscriptStreamBridge({ provider: 'opencode', session });
+    const first = { streamKey: 'before', remoteSessionId: 'ses_root', messageId: 'before', sidechainId: null };
+    const delayed = { ...first, streamKey: 'delayed', messageId: 'delayed' };
+    const hidden = { ...first, streamKey: 'summary', messageId: 'summary' };
+    const next = { ...first, streamKey: 'after', messageId: 'after' };
+
+    bridge.enableDurableCommitsForStream(first);
+    bridge.appendThinkingDelta({ ...first, deltaText: 'Confirmed before tool' });
+    bridge.appendThinkingDelta({ ...delayed, deltaText: 'Delayed before tool' });
+    bridge.appendThinkingDelta({ ...hidden, deltaText: 'Internal summary' });
+    await bridge.flushStreamsMatching({ reason: 'tool-call-boundary', matches: (args) => args.sidechainId === null });
+
+    expect(durableCalls.at(-1)?.body).toEqual({ type: 'thinking', text: 'Confirmed before tool' });
+    bridge.discardStream(hidden);
+    bridge.enableDurableCommitsForStream(delayed);
+    bridge.enableDurableCommitsForStream(next);
+    bridge.appendThinkingDelta({ ...next, deltaText: 'After tool' });
+    bridge.appendAssistantDelta({ ...next, deltaText: 'Reply' });
+    await bridge.flushAll({ reason: 'turn-end' });
+
+    const transcript = Array.from(new Map(durableCalls.map((row) => [row.localId, row.body])).values());
+    expect(transcript).toEqual([
+      { type: 'thinking', text: 'Confirmed before tool' },
+      { type: 'thinking', text: 'Delayed before tool' },
+      { type: 'thinking', text: 'After tool' },
+      { type: 'message', message: 'Reply' },
+    ]);
+  });
+
   it('joins consecutive reasoning messages and preserves corrections, projection admission and boundaries', async () => {
     const { session, durableCalls } = createSessionStub();
     const bridge = createOpenCodeTranscriptStreamBridge({ provider: 'opencode', session });

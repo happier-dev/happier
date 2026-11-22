@@ -65,6 +65,7 @@ export function createOpenCodeTranscriptStreamBridge(params: {
     args: StreamArgs;
     parts: Map<string, string>;
     publishedText: string;
+    tailStreamKey?: string;
   };
   const admittedStreams = new Set<string>();
   const runs = new Set<ThinkingRun>();
@@ -98,11 +99,12 @@ export function createOpenCodeTranscriptStreamBridge(params: {
       runs.add(run);
       activeRuns.set(scope, run);
     }
-    const previousText = run.parts.get(args.streamKey) ?? '';
-    run.parts.set(args.streamKey, append ? previousText + text : text);
+    const previousText = run.parts.get(args.streamKey);
+    if (previousText === undefined) run.tailStreamKey = args.streamKey;
+    run.parts.set(args.streamKey, append ? (previousText ?? '') + text : text);
     // The normal delta path appends only the new bytes; rebuild the run only
     // for snapshot corrections, delayed role admission, or interleaved messages.
-    if (append && isAdmitted(args, args.streamKey) && Array.from(run.parts.keys()).at(-1) === args.streamKey) {
+    if (append && isAdmitted(args, args.streamKey) && run.tailStreamKey === args.streamKey) {
       const deltaText = !previousText && run.publishedText ? `\n\n${text}` : text;
       bridge.enableDurableCommitsForStream(run.args);
       bridge.appendThinkingDelta({ ...run.args, deltaText });
@@ -110,14 +112,6 @@ export function createOpenCodeTranscriptStreamBridge(params: {
       return;
     }
     publishRun(run);
-  };
-
-  const forgetRunsMatching = (matches: (args: StreamArgs) => boolean) => {
-    for (const run of runs) {
-      if (!matches(run.args)) continue;
-      runs.delete(run);
-      if (activeRuns.get(scopeKey(run.args)) === run) activeRuns.delete(scopeKey(run.args));
-    }
   };
 
   return {
@@ -147,15 +141,32 @@ export function createOpenCodeTranscriptStreamBridge(params: {
       admittedStreams.delete(args.streamKey);
       bridge.discardStream(args);
       for (const run of runs) {
-        if (run.parts.delete(args.streamKey)) publishRun(run);
+        if (!run.parts.delete(args.streamKey)) continue;
+        if (run.tailStreamKey === args.streamKey) run.tailStreamKey = Array.from(run.parts.keys()).at(-1);
+        publishRun(run);
       }
     },
     flushStreamsMatching(args: { reason: FlushReason; interruptedReason?: string; matches: (args: StreamArgs) => boolean }) {
-      forgetRunsMatching(args.matches);
+      for (const run of runs) {
+        if (!args.matches(run.args)) continue;
+        const scope = scopeKey(run.args);
+        if (activeRuns.get(scope) === run) activeRuns.delete(scope);
+        if (args.reason === 'tool-call-boundary') {
+          // The writer can finish the admitted prefix now. Keep the unresolved
+          // contributions in this closed run so role confirmation can publish
+          // them without replaying text already sent or joining the next run.
+          for (const key of run.parts.keys()) {
+            if (isAdmitted(run.args, key)) run.parts.delete(key);
+          }
+          run.publishedText = '';
+        }
+        if (args.reason !== 'tool-call-boundary' || run.parts.size === 0) runs.delete(run);
+      }
       return bridge.flushStreamsMatching(args);
     },
     flushAll(args: { reason: FlushReason; interruptedReason?: string }) {
-      forgetRunsMatching(() => true);
+      runs.clear();
+      activeRuns.clear();
       admittedStreams.clear();
       return bridge.flushAll(args);
     },
