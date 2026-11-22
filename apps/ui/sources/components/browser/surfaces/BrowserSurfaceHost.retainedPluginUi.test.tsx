@@ -221,16 +221,47 @@ async function mountRetainedBrowserForPlugin(scopeId?: string, selectedSlot = fa
         dispose: () => { adapter.dispose(); host.dispose?.(); } };
 }
 
-function PhoneWorkspace(props: Readonly<{ shown: boolean; pane: { current?: AppPaneScopeApi } }>) {
+function PhoneWorkspace(props: Readonly<{ shown: boolean; pane: { current?: AppPaneScopeApi }; presentation?: 'phone' | 'workspace' | 'viewer' }>) {
     props.pane.current = useAppPaneScope('session:phone-close');
     return props.shown ? <BrowserScopedWorkspace scopeId="session:phone-close"
         scope={{ kind: 'session', sessionId: 'session-1', serverId: connection!.serverId }}
         localServicePreviewServerId={connection!.serverId}
         openScope="sessionMobile" platform="web"
-        collapseSingleTab keepAliveAboveRouter presentationSlotId="phone-slot" /> : null;
+        collapseSingleTab={props.presentation !== 'workspace'}
+        presentation={props.presentation === 'viewer' ? 'viewer' : 'workspace'}
+        keepAliveAboveRouter presentationSlotId="phone-slot" /> : null;
 }
 
 describe('retained Browser through the external plugin-UI Action API', () => {
+    it.each(['phone', 'workspace', 'viewer'] as const)('shows the empty Browser launchpad on first open and after closing the last tab (%s)', async (presentation) => {
+        const pane: { current?: AppPaneScopeApi } = {};
+        const store = createRetainedPresentationSlotsStore();
+        const render = (shown: boolean) => <AppPaneProvider><RetainedPresentationSlotsProvider store={store}>
+            <PhoneWorkspace shown={shown} pane={pane} presentation={presentation} />
+        </RetainedPresentationSlotsProvider></AppPaneProvider>;
+        const screen = await renderScreen(render(true));
+        await flushHookEffects();
+        expect(screen.findByType(BrowserShell)).not.toBeNull();
+        expect(store.getPortalSnapshot()).toHaveLength(1);
+        await screen.update(render(false));
+        await screen.update(render(true));
+        await flushHookEffects();
+        expect(screen.findByType(BrowserShell)).not.toBeNull();
+        const tab = createBrowserViewDetailsTab({ browserSessionId: 'phone-browser', viewId: 'phone-view',
+            target: { kind: 'localServicePreview', targetId: 'phone-preview', sessionId: 'session-1',
+                machineId: 'machine-1', display: { title: 'Preview' } } });
+        await act(async () => pane.current!.openDetailsTab(tab, { intent: 'pinned' }));
+        await flushHookEffects();
+        // Opening a real page retires the empty-group body instead of leaking it beside the page.
+        expect(store.getPortalSnapshot()).toHaveLength(1);
+        await act(async () => screen.findByType(BrowserShell).props.onCloseTab());
+        await flushHookEffects();
+        expect(pane.current!.scopeState?.details.tabs).toHaveLength(0);
+        expect(screen.findByType(BrowserShell)).not.toBeNull();
+        expect(store.getPortalSnapshot()).toHaveLength(1);
+        await screen.unmount();
+    });
+
     it('keeps the registered phone preview and access while hidden, and releases demand on Close', async () => {
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime || !connection) throw new Error('Expected Account');
@@ -345,7 +376,8 @@ describe('retained Browser through the external plugin-UI Action API', () => {
         await act(async () => shell.props.onCloseTab());
         await flushHookEffects();
         expect(screen.findAllByType('iframe')).toHaveLength(0);
-        expect(store.getPortalSnapshot()).toEqual([]);
+        expect(store.getPortalSnapshot()).toHaveLength(1);
+        expect(Object.keys(screen.findByType(BrowserShell).props.state.viewsById)).toHaveLength(0);
     });
 
     it('retires the collapsed phone workspace page on Close after preserving route recomposition', async () => {
@@ -376,8 +408,8 @@ describe('retained Browser through the external plugin-UI Action API', () => {
         await act(async () => { shell.props.onCloseTab(); });
         await flushHookEffects();
         expect(pane.current!.scopeState?.details.tabs).toHaveLength(0);
-        expect(store.getPortalSnapshot()).toEqual([]);
-        expect(screen.root.findAllByType(BrowserShell)).toHaveLength(0);
+        expect(store.getPortalSnapshot()).toHaveLength(1);
+        expect(screen.findByType(BrowserShell)).not.toBe(shell);
     });
 
     it('opens and closes launchpad error diagnostics after the Details workspace hands its Browser to the retained portal', async () => {

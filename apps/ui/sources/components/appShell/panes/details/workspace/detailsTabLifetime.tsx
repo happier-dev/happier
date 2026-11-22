@@ -7,7 +7,7 @@ import { useRetainedPresentationEntryRetirement } from '@/components/ui/presenta
 type DetailsTabBinding = Readonly<{
     pane: AppPaneContextSubscription;
     scopeId: string;
-    tabKey: string;
+    tabKey: string | null;
 }>;
 
 const DetailsTabLifetimeContext = React.createContext<DetailsTabBinding | null>(null);
@@ -20,7 +20,7 @@ export function detailsTabNavigationKey(scopeId: string, tabKey: string): string
 /** The mounted tab supplies the exact pane identity to its existing departure guard. */
 export function useDetailsTabNavigationKey(fallbackTabKey: string): string {
     const binding = React.useContext(DetailsTabLifetimeContext);
-    return binding ? detailsTabNavigationKey(binding.scopeId, binding.tabKey) : fallbackTabKey;
+    return binding?.tabKey ? detailsTabNavigationKey(binding.scopeId, binding.tabKey) : fallbackTabKey;
 }
 
 /** The tab's canonical membership survives a temporary presentation/route unmount. */
@@ -38,7 +38,7 @@ export function DetailsTabLifetimeScope(props: React.PropsWithChildren<Readonly<
  * Controlled destinations retain their incumbent selected-slot membership. */
 export function DetailsSurfaceTabLifetimeScope(props: React.PropsWithChildren<Readonly<{
     scopeId: string;
-    tabKey: string;
+    tabKey: string | null;
 }>>): React.ReactElement {
     const incumbent = React.useContext(DetailsTabLifetimeContext);
     const pane = React.useContext(AppPaneContext);
@@ -56,6 +56,9 @@ function RetainedDetailsTab(props: React.PropsWithChildren<Readonly<{
         if (!binding) return true;
         const scopes = binding.pane.getSnapshot().state.scopes;
         const scope = Object.hasOwn(scopes, binding.scopeId) ? scopes[binding.scopeId] : undefined;
+        // An empty-group presentation has no stored tab. Its lifetime ends when the
+        // first real tab replaces it, rather than immediately on its initial absence.
+        if (binding.tabKey === null) return !scope || Object.keys(scope.details.tabsByKey).length === 0;
         return scope !== undefined && (isSelectedPaneDestinationTabKey(binding.tabKey)
             ? findSelectedPaneSlot(scope, binding.tabKey) !== null
             : Object.hasOwn(scope.details.tabsByKey, binding.tabKey));

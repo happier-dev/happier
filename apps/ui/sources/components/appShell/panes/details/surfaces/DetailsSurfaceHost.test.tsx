@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import type { DetailsTabState } from '../workspace/detailsWorkspaceTypes';
+import { DetailsSurfaceHost } from './DetailsSurfaceHost';
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -31,8 +32,6 @@ const tab: DetailsTabState = {
 
 describe('DetailsSurfaceHost', () => {
     it('resolves available surfaces through deterministic renderer ordering and scope checks', async () => {
-        const { DetailsSurfaceHost } = await import('./DetailsSurfaceHost');
-
         const renderCalls: string[] = [];
         const screen = await renderScreen(
             <DetailsSurfaceHost paneScopeId="session:session-1"
@@ -88,8 +87,6 @@ describe('DetailsSurfaceHost', () => {
     });
 
     it('renders typed fallback states instead of blank panes for unavailable resources', async () => {
-        const { DetailsSurfaceHost } = await import('./DetailsSurfaceHost');
-
         const screen = await renderScreen(
             <DetailsSurfaceHost paneScopeId="session:session-1"
                 tab={tab}
@@ -113,7 +110,6 @@ describe('DetailsSurfaceHost', () => {
     });
 
     it('explains a policy-disabled details destination without exposing its code as primary copy', async () => {
-        const { DetailsSurfaceHost } = await import('./DetailsSurfaceHost');
         const screen = await renderScreen(
             <DetailsSurfaceHost paneScopeId="session:session-1"
                 tab={tab}
@@ -135,7 +131,6 @@ describe('DetailsSurfaceHost', () => {
     });
 
     it('contains renderer crashes in the host fallback boundary', async () => {
-        const { DetailsSurfaceHost } = await import('./DetailsSurfaceHost');
         const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
         let broken = true;
@@ -179,7 +174,6 @@ describe('DetailsSurfaceHost', () => {
     it('does not re-render its content when the parent re-renders with unchanged inputs', async () => {
         // The Details panel re-renders on every pane, store and presentation commit and rebuilds this element each
         // time; the tab's page (a file with its header and body) must only render when the tab or its renderers change.
-        const { DetailsSurfaceHost } = await import('./DetailsSurfaceHost');
         let renders = 0;
         const scope = { kind: 'session', sessionId: 'session-1' } as const;
         const renderers = [{

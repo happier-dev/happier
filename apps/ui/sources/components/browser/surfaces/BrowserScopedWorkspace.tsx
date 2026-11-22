@@ -179,8 +179,8 @@ export function BrowserScopedWorkspace(props: Readonly<{
         pane.unpinDetailsTab,
     ]);
 
-    const renderTabContent = React.useCallback((tab: DetailsTabState) => (
-        <DetailsSurfaceHost paneScopeId={props.scopeId}
+    const renderTabContent = React.useCallback((tab: DetailsTabState, emptyState = false) => (
+        <DetailsSurfaceHost paneScopeId={props.scopeId} emptyState={emptyState}
             tab={tab}
             scope={props.scope}
             region="details"
@@ -193,7 +193,7 @@ export function BrowserScopedWorkspace(props: Readonly<{
         ...createBrowserLaunchpadDetailsTab(),
         isPreview: false,
         isPinned: true,
-    } as DetailsTabState), [renderTabContent]);
+    } as DetailsTabState, true), [renderTabContent]);
 
     // The canonical icon-only button, not a bare `Pressable` with `hitSlop`. Q2 finding A3-C9:
     // react-native-web 0.21 never reads `hitSlop` on `Pressable`/`View` and the desktop app IS the
@@ -240,7 +240,7 @@ export function BrowserScopedWorkspace(props: Readonly<{
                 ...createBrowserLaunchpadDetailsTab(),
                 isPreview: false,
                 isPinned: true,
-            })}
+            }, selectedTab === null)}
         </>;
     }
 

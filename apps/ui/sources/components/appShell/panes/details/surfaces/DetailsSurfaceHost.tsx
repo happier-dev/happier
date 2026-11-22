@@ -57,6 +57,8 @@ function DetailsSurfaceRendererContent(props: Readonly<{
  */
 export const DetailsSurfaceHost = React.memo(function DetailsSurfaceHost(props: Readonly<{
     paneScopeId: string;
+    /** Synthetic empty-group content is owned by the empty group, not a stored tab. */
+    emptyState?: boolean;
     tab: DetailsTabState;
     scope: DetailsSurfaceScopeV1;
     region: DetailsSurfaceRegionV1;
@@ -92,7 +94,7 @@ export const DetailsSurfaceHost = React.memo(function DetailsSurfaceHost(props: 
     }
 
     return (
-        <DetailsSurfaceTabLifetimeScope scopeId={props.paneScopeId} tabKey={props.tab.key}>
+        <DetailsSurfaceTabLifetimeScope scopeId={props.paneScopeId} tabKey={props.emptyState ? null : props.tab.key}>
             <DetailsSurfaceRenderBoundary key={`${descriptor.surfaceId}:${renderer.id}`}>
                 <DetailsSurfaceRendererContent renderer={renderer} input={renderInput} />
             </DetailsSurfaceRenderBoundary>
