@@ -158,7 +158,7 @@ export function useUsageWorkSessionNavigation(
       router.push(
         buildScopedSessionRouteHref({ sessionId, serverId, suffix: '/usage', query: buildUsageRouteParams({
           metric,
-          costMode: query.costBasis === 'estimated' ? 'estimated' : query.costBasis === 'reported' ? 'reported' : 'auto',
+          costMode: query.costBasis,
         }) }) as Parameters<
           typeof router.push
         >[0],
