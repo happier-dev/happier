@@ -11,9 +11,9 @@ import { isExternalActionAuthorizationBoundToEnvelope } from '../externalActionE
 import { openExternalActionResponseV2, sealExternalActionRequestV2 } from '../externalActionEncryption.js';
 import { isExecutorKeyPinReadV1, sealManagedControllerActionCodecV1, type InstallationKeyPinV1 } from '../../sessions/creation/sessionRequesterBootstrapV1.js';
 import { parseActionExecuteFailure } from '../actionExecutionResult.js';
-import { ACTION_OPERATION_CANCEL_ACTION_ID_V1, ACTION_OPERATION_GET_ACTION_ID_V1 } from './actionIdsV1.js';
+import { ACTION_OPERATION_CANCEL_ACTION_ID_V1, ACTION_OPERATION_GET_ACTION_ID_V1, ACTION_OPERATION_LIST_ACTION_ID_V1 } from './actionIdsV1.js';
 import { ActionOperationAddressV1Schema } from './addressV1.js';
-import { ActionOperationGetActionInputV1Schema } from '../specs/actionOperations.js';
+import { ActionOperationGetActionInputV1Schema, ActionOperationListActionInputV1Schema } from '../specs/actionOperations.js';
 
 export function readRequesterOperationAddressV1(actionId: string, input: unknown) {
   if (actionId !== ACTION_OPERATION_GET_ACTION_ID_V1) return null;
@@ -22,6 +22,10 @@ export function readRequesterOperationAddressV1(actionId: string, input: unknown
 }
 
 export function readRequesterOperationRequestV1(actionId: string, input: unknown) {
+  if (actionId === ACTION_OPERATION_LIST_ACTION_ID_V1) {
+    const parsed = ActionOperationListActionInputV1Schema.safeParse(input);
+    return parsed.success && !parsed.data.managed ? { actionId, input: parsed.data } as const : null;
+  }
   if (actionId === ACTION_OPERATION_CANCEL_ACTION_ID_V1) {
     const parsed = ActionOperationAddressV1Schema.safeParse(input);
     return parsed.success ? { actionId, input: parsed.data } as const : null;
@@ -55,7 +59,7 @@ export function readRequesterActionOperationV1(params: RequesterOperationTranspo
   return executeRequesterActionOperationV1({ ...params, actionId: ACTION_OPERATION_GET_ACTION_ID_V1 });
 }
 
-/** Reuse the installed carrier and its one-use codec for exact requester operations. */
+/** Reuse the installed carrier and its one-use codec for requester-scoped operations on one Machine. */
 export async function executeRequesterActionOperationV1(params: RequesterOperationTransport & RequesterOperationRequestV1): Promise<ActionExecuteResult | null> {
   const { actionId } = params;
   const target = { kind: 'machine' as const, machineId: params.input.machineId };

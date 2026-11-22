@@ -1499,7 +1499,7 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
     || value.managedAdmission || value.environmentId
     || value.sessionActionOrigin || value.sessionActionSource || value.workflowActionOrigin || value.managedContinuation
     || value.handoffAdmission)) {
-    context.addIssue({ code: 'custom', path: ['requesterOperationRead'], message: 'Requester custody binds only an exact Account operation Get or Cancel' });
+    context.addIssue({ code: 'custom', path: ['requesterOperationRead'], message: 'Requester custody binds only Account operation Get, List, or Cancel on one Machine' });
   }
   const publication = value.deploymentCandidatePublication;
   if (publication?.reviewed && (!isDeploymentMembershipActionIdV1(value.actionId)

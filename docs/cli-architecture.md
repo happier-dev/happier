@@ -1688,16 +1688,18 @@ No background requester controller or custodian-credential fallback is implied.
 
 ### Reading and stopping an admitted operation (unreleased 0.3)
 
-The requester can call `action.operations.get` or `action.operations.cancel`
-with the retained Home, Machine and operation id. Home routes the signed request from either an Account bearer
-or a paired-terminal credential to the current installation. Terminal credentials
-retain their automation authority. The daemon's operation owner looks up the
-snapshot under the requester's Account and signals cancellation to a supported
-active operation. Another Account receives `not_found`
-for the same address.
+The requester can call `action.operations.list` with the retained Home and
+Machine to discover their operations and terminal outcomes, including those
+admitted through a Team grant. Get and Cancel also take the operation id.
+Home routes the signed request from either an Account bearer or a paired-terminal
+credential to the current installation. Terminal credentials retain their
+automation authority. The daemon's operation owner lists and looks up operations
+under the requester's Account and signals cancellation to a supported active
+operation. List omits another Account's operations. Get and Cancel return
+`not_found` for those addresses.
 The requester operation uses a per-invocation sealed codec. It needs no grant on
-the executor Machine or access to its content keys. This transport is scoped
-to one exact Get or Cancel and requires the current 0.3 Home and daemon.
+the executor Machine or access to its content keys. The carrier is scoped to
+the addressed Machine and requires the current 0.3 Home and daemon.
 On the receiver, the exact local call uses the verified requester proof
 retained on the current authorization. The installation may also sign the
 exact Machine lookup under the signed operation purpose. The lookup applies the

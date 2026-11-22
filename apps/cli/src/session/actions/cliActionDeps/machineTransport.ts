@@ -3,7 +3,7 @@ import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/a
 import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
 import type { CliActionDepsParams } from './types';
 import { ACTION_ID_FAMILIES_V1, isWorkspaceSyncRelationshipWriteActionId, isLocalServiceStopActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
-import { ACTION_OPERATION_CANCEL_ACTION_ID_V1, ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
+import { ACTION_OPERATION_CANCEL_ACTION_ID_V1, ACTION_OPERATION_GET_ACTION_ID_V1, ACTION_OPERATION_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
 import { isProjectWorkspaceSyncOpenActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { HandoffTargetReplacementPreflightV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -292,10 +292,11 @@ export function createCliMachineActionTransport(
       && managedBinding.workspaceSyncAdmission?.source.machineId === input.machineId
       && managedBinding.workspaceSyncAdmission.source.installationId === params.externalActionMachineInstallationId);
     const originalRequester = input.context?.verifiedExternalActionRequester;
-    // The exact requester operation spends its verified Account scope inside the installed
+    // The requester operation spends its verified Account scope inside the installed
     // operation store. Its carrier has no authority on the general RPC route.
     const admittedRequesterOperation = managedBinding?.requesterOperationRead
       && (input.effectActionId === ACTION_OPERATION_GET_ACTION_ID_V1 && input.method === ACTION_OPERATION_RPC_METHODS_V2.get
+        || input.effectActionId === ACTION_OPERATION_LIST_ACTION_ID_V1 && input.method === ACTION_OPERATION_RPC_METHODS_V2.list
         || input.effectActionId === ACTION_OPERATION_CANCEL_ACTION_ID_V1 && input.method === ACTION_OPERATION_RPC_METHODS_V1.cancel)
       && readRetainedVerifiedExternalActionRequester(executionAuthorization) !== undefined;
     const reviewedChild = readHostAdmittedReviewedChildV1(input.context) ?? undefined;

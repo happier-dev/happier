@@ -54,8 +54,8 @@ import { DeploymentEnvironmentListInputV1Schema, DeploymentEnvironmentListResult
 import { parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { executeRequesterActionOperationV1, readRequesterOperationAddressV1, type RequesterOperationRequestV1 } from '@happier-dev/protocol/actions/operations/requesterReadV1';
-import { ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
+import { executeRequesterActionOperationV1, readRequesterOperationRequestV1, type RequesterOperationRequestV1 } from '@happier-dev/protocol/actions/operations/requesterReadV1';
+import { ACTION_OPERATION_CANCEL_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
 import { randomBytes } from 'node:crypto';
 
 import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER, ExternalActionActionIdV1Schema, ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationVerifyResponseV1Schema, ExternalActionRequestEnvelopeSchema, externalActionTargetsEqualV1, projectExternalActionWorkflowPreparationTargetV1, bindExternalActionExecutionAuthorizationHttpPathV1, bindExternalActionExecutionAuthorizationVerifyHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -1088,13 +1088,14 @@ async function prepareOriginalAccountAction(
   const requesterOperation = !workflow && !spawnChild && !input.requesterCustody && !input.executeOnRequester
     && !input.managedContinuation && (!input.invocation || input.invocation.caller.kind === 'host')
     && (provenance?.provenance.kind === 'account' || provenance?.provenance.kind === 'terminal')
-    ? readRequesterOperationAddressV1(input.actionId, input.input) : null;
-  if (requesterOperation && input.serverIdentityId && input.target.kind === 'machine' && !input.target.project) {
-    if (requesterOperation.serverId !== input.serverIdentityId) return fail('server_target_mismatch');
-    if (requesterOperation.machineId !== input.target.machineId) return fail('target_unavailable', 'dispatch.target_kind');
-    // The installed operation owner authorizes the exact operation under the requester Account.
+    ? readRequesterOperationRequestV1(input.actionId, input.input) : null;
+  if (requesterOperation && requesterOperation.actionId !== ACTION_OPERATION_CANCEL_ACTION_ID_V1
+    && input.serverIdentityId && input.target.kind === 'machine' && !input.target.project) {
+    if (requesterOperation.input.serverId !== input.serverIdentityId) return fail('server_target_mismatch');
+    if (requesterOperation.input.machineId !== input.target.machineId) return fail('target_unavailable', 'dispatch.target_kind');
+    // The installed operation owner scopes the read to the requester Account.
     const result = await executeOriginalAccountRequesterOperation({
-      operation: { actionId: ACTION_OPERATION_GET_ACTION_ID_V1, input: requesterOperation }, requestId: input.requestId,
+      operation: requesterOperation, requestId: input.requestId,
       credentials: input.credentials, serverIdentityId: input.serverIdentityId, serverHttpBaseUrl: homeUrl,
       authority: input.authority, isCurrent, ...(input.signal ? { signal: input.signal } : {}) });
     if (result) return result;

@@ -1,6 +1,6 @@
 import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
-import { ACTION_OPERATION_CANCEL_ACTION_ID_V1, ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
+import { ACTION_OPERATION_CANCEL_ACTION_ID_V1, ACTION_OPERATION_GET_ACTION_ID_V1, ACTION_OPERATION_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
 import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/methodsV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRequesterActionOperationV1 } from '@happier-dev/protocol/actions/operations/requesterReadV1';
@@ -380,8 +380,15 @@ describe('composed CLI managed Action origination', () => {
         const owner = await fixture(true);
         const requester = await fixture(true);
         const { machineId, installationId } = owner.controller;
-        const grant = await db.machineGrant.create({ data: { principalKind: 'account', machineId,
-            accountId: requester.account.id, accessLevel: 'admin', createdByAccountId: owner.account.id } });
+        const team = await db.team.create({ data: { name: 'Operation readers' } });
+        const peer = await fixture(true);
+        await db.teamMembership.createMany({ data: [requester, peer].map(member => ({
+            teamId: team.id, accountId: member.account.id, role: 'member',
+        })) });
+        const grant = await db.machineGrant.create({ data: { principalKind: 'team', machineId,
+            teamId: team.id, accessLevel: 'admin', createdByAccountId: owner.account.id } });
+        expect(await resolveMachineAccess({ actorAccountId: requester.account.id, machineId }))
+            .toMatchObject({ owned: false, role: 'manage' });
         const admission = await resolveMachineAdmission({ machineId, actorAccountId: requester.account.id, requireOnline: true });
         expect(admission.kind).toBe('admitted');
         if (admission.kind !== 'admitted') throw new Error('Missing Machine admission');
@@ -426,6 +433,7 @@ describe('composed CLI managed Action origination', () => {
             externalActionMachineRequestPrivateKey: owner.keys.secretKey, externalActionMachineInstallationId: installationId,
             machineActionDirectTargetTransport: { machineId, invoke: async (method, request, options) => {
                 if (method === ACTION_OPERATION_RPC_METHODS_V2.get) return operations.handlers.getV2(request, options?.rpcContext);
+                if (method === ACTION_OPERATION_RPC_METHODS_V2.list) return operations.handlers.listV2(request, options?.rpcContext);
                 expect(method).toBe(ACTION_OPERATION_RPC_METHODS_V1.cancel);
                 return operations.handlers.cancel(request, options?.rpcContext);
             } },
@@ -470,8 +478,56 @@ describe('composed CLI managed Action origination', () => {
             await Promise.race([started.promise, observed]);
             if (!operationId) throw new Error('Missing accepted operation');
             const address = { serverId: homeId, machineId, operationId };
+            const reachabilityRequestId = crypto.randomUUID();
+            let reachabilityOperationId: string | undefined;
+            await operations.observeExecution({
+                actionId: 'machines.reachability.inspect', input: { serverId: homeId, machineId },
+                rpcContext: { machineAdmission }, actionRequestId: reachabilityRequestId, response: 'terminal',
+                // C79's native admin policy boundary returned mode_none on #197.
+                execute: async () => ({ ok: false, errorCode: 'mode_none', error: 'mode_none' }),
+                onOperation: operation => { reachabilityOperationId = operation.operationId; },
+            });
+            expect(reachabilityOperationId).toBeDefined();
+            const invokeRead = async (reader: typeof requester, actionId: string, input: object) => {
+                const token = await auth.createToken(reader.account.id, undefined, { kind: 'terminal', authority: 'account_automation' });
+                const cliCredentials = { token, credentialProvenance: 'stored_session' as const, encryption: null };
+                const stdout = captureStdout();
+                const previousExitCode = process.exitCode;
+                try {
+                    await handleActionsCommand(['invoke', actionId, '--machine-id', machineId,
+                        '--input-json', JSON.stringify(input), '--json'], {
+                        readCredentialsFn: async () => cliCredentials,
+                        getServerProfileFn: async () => { throw new Error('No saved profile in this isolated fixture'); },
+                        createExecutorFn: options => createCliActionExecutorFromCredentials({ ...options,
+                            serverId: homeId, serverIdentityId: homeId, serverApiUrl: serverHttpBaseUrl }),
+                    });
+                    return JSON.parse(stdout.text()) as unknown;
+                } finally {
+                    stdout.restore();
+                    process.exitCode = previousExitCode;
+                }
+            };
+            const reachabilityAddress = { serverId: homeId, machineId, operationId: reachabilityOperationId };
+            const ownGet = await invokeRead(requester, ACTION_OPERATION_GET_ACTION_ID_V1, reachabilityAddress);
+            expect(ownGet, JSON.stringify(ownGet)).toMatchObject({ ok: true, data: { kind: 'found', operation: {
+                operationId: reachabilityOperationId, state: 'failed', error: { errorCode: 'mode_none' },
+            } } });
+            const listAddress = { serverId: homeId, machineId };
+            const reachabilitySummary = expect.objectContaining({
+                operationId: reachabilityOperationId,
+                state: 'failed',
+                error: expect.objectContaining({ errorCode: 'mode_none' }),
+            });
+            const ownList = await invokeRead(requester, ACTION_OPERATION_LIST_ACTION_ID_V1, listAddress);
+            expect.soft(ownList, JSON.stringify(ownList)).toMatchObject({ ok: true, data: { items: expect.arrayContaining([reachabilitySummary]) } });
+            const peerList = await invokeRead(peer, ACTION_OPERATION_LIST_ACTION_ID_V1, listAddress);
+            expect.soft(peerList, JSON.stringify(peerList)).toMatchObject({ ok: true, data: { items: [] } });
+            expect(await invokeRead(peer, ACTION_OPERATION_GET_ACTION_ID_V1, reachabilityAddress))
+                .toMatchObject({ ok: true, data: { kind: 'not_found' } });
             await db.machineGrant.delete({ where: { id: grant.id } });
             expect(await resolveMachineAccess({ actorAccountId: requester.account.id, machineId })).toBeNull();
+            const retainedList = await invokeRead(requester, ACTION_OPERATION_LIST_ACTION_ID_V1, listAddress);
+            expect(retainedList, JSON.stringify(retainedList)).toMatchObject({ ok: true, data: { items: expect.arrayContaining([reachabilitySummary]) } });
             const pairedCli = async (accountId: string) => {
                 const token = await auth.createToken(accountId, undefined, { kind: 'terminal', authority: 'account_automation' });
                 return createCliActionExecutorFromCredentials({ credentials: { token, credentialProvenance: 'stored_session', encryption: null },
