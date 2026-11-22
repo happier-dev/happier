@@ -254,6 +254,22 @@ describe('failure line anatomy', () => {
     });
 });
 
+describe('known-cause failure rows whose Agent line carries only the code', () => {
+    it('reads as the cause the presenter words, never the raw code', () => {
+        // The host writes "<Agent> turn failed: <code>" when the Agent gave no words; the row must say the cause.
+        const text = 'Codex turn failed: codex_continuation_unreachable';
+        const normalized = normalizeRawMessage('continuation', 'continuation', 100, {
+            role: 'agent', content: { type: 'acp', agentId: 'codex', data: { type: 'message', message: text } },
+            meta: { source: 'runtime', runtimeIssueV1: { v: 1, scope: 'primary_session', status: 'failed',
+                code: 'codex_continuation_unreachable', source: 'agent_session_error', occurredAt: 100, agentId: 'codex' } },
+        });
+        const message = agent({ meta: normalized?.meta, text });
+        const shown = resolveTranscriptMessageDisplayText(message).text;
+        expect(shown).not.toContain('codex_continuation_unreachable');
+        expect(shown).toBe(formatSessionFailureLine([presentSessionRuntimeIssue(readRuntimeIssueMessageMeta(message.meta)).summary]));
+    });
+});
+
 describe('unexplained runtime failure rows', () => {
     it('reads as the plain cause, not the Agent line with its raw diagnostic', () => {
         const raw = 'Claude Agent SDK process exited before emitting a result (exitCode=1): Error: Invalid MCP configuration: MCP config file not found: /tmp/happier-1000/happier-claude-mcp-config-28V9LT/payload.json';

@@ -8,8 +8,8 @@ import { Text } from '@/components/ui/text/Text';
 export type ModalChoice = Readonly<{
     text: string;
     testID?: string;
-    /** `cancel` reads quieter (regular weight); `destructive` takes the danger ink. */
-    role?: 'default' | 'cancel' | 'destructive';
+    /** `cancel` reads quieter (regular weight); `quiet` is a disclosure (regular weight, secondary ink); `destructive` takes the danger ink. */
+    role?: 'default' | 'cancel' | 'destructive' | 'quiet';
     onPress: () => void;
     /** A choice that must read input before the dialog's own dismissal can race it (a prompt's confirm). */
     onPressIn?: () => void;
@@ -45,8 +45,9 @@ export function ModalChoiceRow(props: Readonly<{ choices: readonly ModalChoice[]
                     >
                         <Text
                             variant="label"
-                            emphasis={choice.role === 'cancel' ? 'regular' : 'semiBold'}
-                            style={[styles.text, choice.role === 'destructive' ? styles.destructiveText : null]}
+                            emphasis={choice.role === 'cancel' || choice.role === 'quiet' ? 'regular' : 'semiBold'}
+                            style={[styles.text, choice.role === 'destructive' ? styles.destructiveText
+                                : choice.role === 'quiet' ? styles.quietText : null]}
                         >
                             {choice.text}
                         </Text>
@@ -91,6 +92,9 @@ const styles = StyleSheet.create((theme) => ({
         textAlign: 'center',
         flexShrink: 1,
         paddingHorizontal: theme.space.s2,
+    },
+    quietText: {
+        color: theme.colors.text.secondary,
     },
     destructiveText: {
         color: theme.colors.state.danger.textForeground,

@@ -66,6 +66,12 @@ function unexplainedRuntimeIssueSummary(issue: SessionRuntimeIssueV1): string | 
     return presented.unexplained ? presented.summary : null;
 }
 
+/** The host's failure line ends in the bare code when the Agent gave no words (`runtimeFailureTranscript`). */
+function rowSaysOnlyTheCode(issue: SessionRuntimeIssueV1, text: string): boolean {
+    const line = text.trim();
+    return line === issue.code || line.endsWith(`: ${issue.code}`);
+}
+
 /** Body preprocessing is shared with copy selection, which has its own eligibility contract. */
 export function prepareTranscriptMessageBody(
     message: UserTextMessage | AgentTextMessage,
@@ -106,8 +112,11 @@ export function prepareTranscriptMessageBody(
         : runtimeIssue && Object.hasOwn(SESSION_PREPARATION_FAILURE_PREVIEWS, runtimeIssue.code)
             ? formatSessionFailureLine([resolveSessionStartFailureNotice({ issue: runtimeIssue, sessionActive: false })?.message])
         // A failure no known cause explains reads as the plain line; the Agent's own text (SDK output, paths)
-        // waits in Details. Rows with a known cause keep the words written for them.
-        : runtimeIssue ? unexplainedRuntimeIssueSummary(runtimeIssue) : null;
+        // waits in Details. Rows with a known cause keep the words written for them, unless the Agent gave none and
+        // the row would only repeat its code ("Codex turn failed: codex_continuation_unreachable").
+        : runtimeIssue ? (rowSaysOnlyTheCode(runtimeIssue, message.text)
+            ? formatSessionFailureLine([presentSessionRuntimeIssue(runtimeIssue).summary])
+            : unexplainedRuntimeIssueSummary(runtimeIssue)) : null;
     let text: string | null;
     if (teamDenial) text = formatSessionFailureLine([teamDenial.title, teamDenial.body]);
     else if (agentAuth) text = formatSessionFailureLine([agentAuth.title, agentAuth.message]);

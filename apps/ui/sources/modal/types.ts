@@ -14,6 +14,8 @@ export interface AlertButton {
     text: string;
     onPress?: () => void;
     style?: 'default' | 'cancel' | 'destructive';
+    /** A disclosure beside the decision (Technical details): drawn quieter than the choices that act. Web dialog only. */
+    quiet?: boolean;
 }
 
 export type ModalCommandBridgeProps = Readonly<{

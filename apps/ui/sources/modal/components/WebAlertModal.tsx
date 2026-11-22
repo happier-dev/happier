@@ -166,7 +166,8 @@ export function WebAlertModal({ config, onClose, onConfirm, showBackdrop = true,
                 <ModalChoiceRow choices={buttons.map((button, index) => ({
                     text: button.text,
                     testID: resolveButtonTestId(index),
-                    role: button.style === 'cancel' || button.style === 'destructive' ? button.style : 'default',
+                    role: button.style === 'cancel' || button.style === 'destructive' ? button.style
+                        : 'quiet' in button && button.quiet ? 'quiet' : 'default',
                     onPress: () => { void invoke(`button:${index}`); },
                 }))} />
             </ModalCardFrame>
