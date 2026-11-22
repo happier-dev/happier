@@ -29,6 +29,27 @@ function batchResponse(body: unknown, status = 200, request?: unknown) {
 }
 
 describe('CLI Usage Session evidence demand', () => {
+    it.each(['request', 'detail'])('carries a failing Session evidence %s into Work instead of reporting unknown Work', async failed => {
+        const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, includeSessionEvidence: false,
+            includeWorkEvidence: true });
+        const value = UsageAnalyticsQueryResponseSchema.parse({ v: 1,
+            sessionMembership: { turns: [{ sessionId: 'work-session', turnId: 'turn', executions: ['happier'] }] },
+            totals: { eventCount: 1, tokens: { input: 1, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1 },
+                cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } } });
+        const post = vi.spyOn(axios, 'post').mockImplementation(async (_url, request) => failed === 'request'
+            ? batchResponse({ error: 'unavailable' }, 503)
+            : batchResponse({ results: [{ sessionId: 'work-session', detail: {
+                status: 503, body: { error: 'database_transaction_timeout' },
+            } }] }, 200, request));
+        const result = await readCliUsageDetail({ queries: [query], accounting: [{ query, value, status: 'available' }],
+            credentials: { token: 'token', encryption: null }, serverId: 'home', serverHttpBaseUrl: 'http://usage-batch.test',
+            accountEncryptionMode: 'plain', allowPrivateRead: true, nowMs: 200, assertCurrent: async () => {},
+            resolveHeaders: () => ({ Authorization: 'Bearer token' }) });
+        expect(post).toHaveBeenCalledTimes(1);
+        expect(result.work).toMatchObject([{ status: 'error', errorCode: 'server_error', unreadSessions: { failed: 1 } }]);
+        expect(result.work[0]?.evidence).toBeUndefined();
+    });
+
     it('keeps failed empty discovery records out of the accounting population consumed by Actions', async () => {
         const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, includeTranscriptEvidence: false,
             includeWorkEvidence: false, includeCoach: true, includeQuota: false });

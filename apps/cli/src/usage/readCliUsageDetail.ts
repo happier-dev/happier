@@ -168,12 +168,18 @@ export async function readCliUsageDetail(input: Readonly<{
         const includeMessages = transcriptSessionIds.has(sessionId);
         try {
             await input.assertCurrent();
-            const requiredParts = [part?.detail, ...(includeTurns ? [part?.turns] : []),
-                ...(includeMessages ? [part?.messages] : [])];
+            const sessionParts = [part.detail, ...(includeTurns ? [part.turns] : [])];
+            const requiredParts = includeMessages ? [...sessionParts, part.messages] : sessionParts;
             const requirement = requiredParts.flatMap(read => read?.status !== 200 && read?.body
                 && 'kind' in read.body && read.body.kind === 'update_required' ? [read.body] : [])[0];
             if (requirement) {
                 readFailures.set(sessionId, { errorCode: 'update_required', updateRequired: requirement });
+                continue;
+            }
+            const failed = sessionParts.find(read => read && read.status !== 200 && read.status !== 404);
+            if (failed) {
+                const { kind } = classifyServerEndpointError(createHttpStatusError(failed.status, 'Usage Session evidence unavailable'));
+                readFailures.set(sessionId, { errorCode: kind });
                 continue;
             }
             const rawSession = part?.detail?.status === 200 ? part.detail.body.session : null;
@@ -253,7 +259,11 @@ export async function readCliUsageDetail(input: Readonly<{
     const work = await collectUsageWorkSources({ queries: workQueries, accounting: input.accounting, assertCurrent: input.assertCurrent,
         resolveSession: async sessionId => {
             const session = sessions.get(sessionId);
-            if (!session) return null;
+            if (!session) {
+                const failure = requestFailure ?? readFailures.get(sessionId);
+                if (!failure) return null;
+                return { errorCode: failure.errorCode === 'auth_failed' ? RPC_ERROR_CODES.FORBIDDEN : failure.errorCode };
+            }
             if (!session.canReadWork) return { errorCode: RPC_ERROR_CODES.FORBIDDEN };
             if (!session.machineId || !session.cwd) return { errorCode: RPC_ERROR_CODES.SESSION_MACHINE_CONTROL_UNAVAILABLE };
             return { machineId: session.machineId, cwd: session.cwd };
@@ -272,9 +282,11 @@ export async function readCliUsageDetail(input: Readonly<{
             const ids = membership.get(getUsageQueryKey(source.query))?.turns?.map(row => row.sessionId) ?? accounting.get(getUsageQueryKey(source.query))
                 ?.flatMap(row => row.sessionId !== null && row.turnId !== null ? [row.sessionId] : []) ?? [];
             const failure = requestFailure ?? selectReadFailure(ids);
-            if (!failure?.updateRequired) return source;
-            return source.status === 'partial' ? { ...source, updateRequired: failure.updateRequired }
-                : { ...source, ...failure, status: 'unsupported' };
+            if (failure?.updateRequired) {
+                return source.status === 'partial' ? { ...source, updateRequired: failure.updateRequired }
+                    : { ...source, ...failure, status: 'unsupported' };
+            }
+            return failure && source.status === 'error' ? { ...source, ...failure } : source;
         }), sessions: [...sessions.values()].map(row => row.remedySession),
         howYouWork: evidenceQueries.map(query => {
             const ids = idsByQuery.get(getUsageQueryKey(query)) ?? [];
