@@ -869,6 +869,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         let currentFallbackModel: string | undefined = undefined; // Track current fallback model
         let currentCustomSystemPrompt: string | undefined = undefined; // Track current custom system prompt
         let currentAppendSystemPrompt: string | undefined = resolveInitialClaudeSystemPromptText({
+            runtimeModeKind: sessionRuntimeModeKind,
             existingSessionId,
             defaultSystemPromptText,
         }); // Track current append system prompt
@@ -1554,6 +1555,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
     const seedInitialAppendSystemPrompt = (defaultSystemPromptText?: string | null): void => {
         if (currentAppendSystemPromptSeeded) return;
         currentAppendSystemPrompt = resolveInitialClaudeSystemPromptText({
+            runtimeModeKind: sessionRuntimeModeKind,
             existingSessionId,
             defaultSystemPromptText,
         });
