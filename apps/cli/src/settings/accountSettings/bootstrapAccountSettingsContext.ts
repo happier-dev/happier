@@ -1021,8 +1021,7 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
       }
     }
     const activeAfterWrite = getActiveAccountSettingsSnapshot();
-    if (activeAfterWrite?.scopeKey === scopeKey
-      && isDeepStrictEqual(activeAfterWrite.settingsSecretsReadKeys, settingsSecretsReadKeys)) {
+    if (activeAfterWrite?.scopeKey === scopeKey) {
       const context = contextFromActiveSnapshot(activeAfterWrite);
       if (activeAfterWrite === publication.snapshot && activeAfterWrite.settingsVersion === settingsVersion
         && activeSnapshotPublicationIsCurrent(publication) && params.shouldCommit?.() !== false) {

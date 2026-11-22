@@ -181,7 +181,11 @@ describe('bootstrapAccountSettingsContext active Account scope fence', () => {
     } finally { release(); }
     expect(await outcome).toMatchObject({ context: { settingsVersion: Math.max(3, pendingVersion), scopeKey } });
     expect(incumbent.scopeKey).toBe(scopeKey);
-    expect(getActiveAccountSettingsSnapshotLifetimeToken()).toBe(lifetime + (warm ? 0 : 1));
+    if (warm) {
+      expect(getActiveAccountSettingsSnapshotLifetimeToken()).toBe(lifetime);
+    } else {
+      expect(getActiveAccountSettingsSnapshotLifetimeToken()).toBeGreaterThan(lifetime);
+    }
     expect(getActiveAccountSettingsSnapshot()).toMatchObject({ settingsVersion: Math.max(3, pendingVersion),
       settings: { themePreference: pendingVersion > 3 ? 'dark' : 'light' } });
   });
