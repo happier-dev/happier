@@ -215,8 +215,14 @@ export function UsageWorkAutopsy(
   const outcomes = autopsy?.outcomes ?? [];
   // The answer to "why is this Session expensive": where it went, largest first; the timeline above keeps the order.
   const ranked = [...turns].sort((left, right) => compareUsageMeasurementsDescending(left.amount, right.amount));
-  const largest = ranked[0]?.amount != null && ranked[0].amount > 0 && ranked[0].turnId !== null ? ranked[0] : null;
+  // With one recorded turn the largest turn is the Session itself, so it is not said a second time.
+  const largest = ordinals.size > 1 && ranked[0]?.amount != null && ranked[0].amount > 0 && ranked[0].turnId !== null ? ranked[0] : null;
   const largestShare = largest && amount ? Math.round((largest.amount! / amount) * 100) : null;
+  // "Added up from the reported parts" is said once, by the Session's figure, never again on its turns.
+  const fromPartsSaid = !(metric === 'cost' && cost) && Boolean(accounting?.hero.totalTokensFromParts);
+  // The no-turn row is a row title: it opens with a capital like "Turn 1".
+  const missingTurn = t('usage.board.work.reason_missing_turn');
+  const missingTurnTitle = `${missingTurn.charAt(0).toLocaleUpperCase()}${missingTurn.slice(1)}`;
   // A long Session leads with its largest turns; the rest fold behind the Usage show-all footer (R135 item 3).
   const shownTurns = leadingUsageRows(ranked, turnsExpanded);
   // Phases keep their witnessed order and the Session's whole extent; a long Session leads with its first ones (sweep 1110 item 16).
@@ -271,7 +277,7 @@ export function UsageWorkAutopsy(
                 value={largest.amount!}
                 valueFormatter={value => format(value, largest.moneyBasis)}
                 caption={[turnLabel(largest.turnId), largestShare === null ? null : `${largestShare}%`,
-                  largest.tokensFromParts ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · ')}
+                  largest.tokensFromParts && !fromPartsSaid ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · ')}
               />
             ) : null}
           </View>
@@ -358,7 +364,7 @@ export function UsageWorkAutopsy(
             showProportionShares={false}
             valueFormatter={format}
             rowIds={shownTurns.rows.map((turn) => turn.contributionId)}
-            rowDatums={shownTurns.rows.map(turn => datum(turn.turnId === null ? t('usage.board.work.reason_missing_turn') : turnLabel(turn.turnId), turn.amount, turn.moneyBasis))}
+            rowDatums={shownTurns.rows.map(turn => datum(turn.turnId === null ? missingTurnTitle : turnLabel(turn.turnId), turn.amount, turn.moneyBasis))}
             columns={[
               { label: t('usage.board.work.turn') },
               { label: metricLabel, proportion: true },
@@ -369,9 +375,9 @@ export function UsageWorkAutopsy(
               { label: t('usage.board.work.checkpoint') },
             ]}
             rows={shownTurns.rows.map((turn) => [
-              turn.turnId === null ? t('usage.board.work.reason_missing_turn') : turnLabel(turn.turnId),
+              turn.turnId === null ? missingTurnTitle : turnLabel(turn.turnId),
               cell(turn.amount, turn.moneyBasis),
-              [outcomeLine(turn), turn.tokensFromParts ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · '),
+              [outcomeLine(turn), turn.tokensFromParts && !fromPartsSaid ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · '),
               evidenceLine(turn),
               usageWorkRetainedChangeLine(turn.retainedChanges),
               sharedIdentity === null ? identityLine(turn) : '',

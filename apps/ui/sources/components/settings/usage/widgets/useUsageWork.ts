@@ -65,7 +65,8 @@ export function useUsageWork(
   }, [work, query.metric, query.costBasis, namesKey, namedProjectKeys, anchorOf]);
   const format = React.useCallback(
     (value: number | null, moneyBasis: UsageWorkMoneyBasis | null = summary?.moneyBasis ?? null) =>
-      value === null ? t('usage.board.recap.money_unpriced') : query.metric === 'cost'
+      // An unknown amount is unpriced money, or a token count not measured: never "no API price" for tokens.
+      value === null ? t(query.metric === 'cost' ? 'usage.board.recap.money_unpriced' : 'usage.board.page.notMeasuredYet') : query.metric === 'cost'
         ? moneyBasis ? `${formatUsageCost(value, moneyBasis.currency)} ${usageCostKindPhrase(moneyBasis.kind)}`
           : t('usage.board.recap.money_unpriced')
         : formatTokenCount(value),

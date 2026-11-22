@@ -1,3 +1,6 @@
+import { USAGE_ANALYTICS_COST_MODES } from '@happier-dev/protocol/usage/usageVocabularyV1';
+import { projectUsagePageCost } from '@happier-dev/protocol/usage/usageCostFacts';
+import { formatUsageCost } from '@/utils/format/usageNumbers';
 import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import * as React from 'react';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
@@ -228,6 +231,53 @@ describe('Work and Coach widget bodies', () => {
     await hook.unmount();
     expect(reader.resolveCurrentUiCommand(command!.id)).toBeNull();
   });
+  it.each(USAGE_ANALYTICS_COST_MODES)('keeps the %s cost and amount from each Work Session link', async (costBasis) => {
+    const workQuery = normalizeUsageQuery({ ...query, costBasis });
+    // The Session occurred entirely inside the Work period. Each explicit basis has a different amount.
+    const row = contribution('a', 's1', 't1');
+    const measured = { ...row, cost: { ...row.cost, apiEquivalentUsd: 7 } };
+    const linked = allocateUsageOutcomes({ contributions: [measured], evidence: [evidence('s1', 't1', 2493)] });
+    const accounting = {
+      ...slice.accounting!,
+      totals: { eventCount: 1, tokens: measured.tokens, cost: measured.cost },
+      contributions: [measured],
+      breakdowns: { project: [{ key: 'p1', label: 'Workspace', eventCount: 1,
+        tokens: measured.tokens, cost: measured.cost }] },
+    };
+    const costSlice = { ...slice, work: linked, workSummary: projectUsageWorkSummary(linked.outcomes, true, linked),
+      accounting, requestedQuery: workQuery, shownQuery: workQuery };
+    const screen = await renderScreen(<>
+      <UsageProjectLedgerWidget {...props} query={workQuery} slice={costSlice} id="usage_project_ledger" testID="ledger" />
+      <UsageSessionValueWidget {...props} query={workQuery} slice={costSlice} id="usage_session_value" testID="value" />
+      <UsageOutcomesWidget {...props} query={workQuery} slice={costSlice} id="usage_outcomes" testID="outcomes" />
+    </>);
+    const outcome = `outcomes.pr.${linked.outcomes[0]!.key}`;
+    await screen.pressByTestIdAsync('ledger.project.p1.toggle');
+    await screen.pressByTestIdAsync(`${outcome}.toggle`);
+
+    for (const [button, renderedRow] of [
+      ['ledger.project.p1.session.open.s1', 'ledger.project.p1.session-row-0'],
+      ['value.open.s1', 'value.merged-row-0'],
+      [`${outcome}.session.open.s1`, `${outcome}.session-row-0`],
+    ] as const) {
+      const spokenRow = screen.findByTestId(renderedRow)?.props.accessibilityLabel;
+      expect(spokenRow).toEqual(expect.any(String));
+      await screen.pressByTestIdAsync(button);
+      const href = new URL(String(vi.mocked(router.push).mock.calls.at(-1)?.[0]), 'https://usage-work-controls.test');
+      expect(href.pathname).toBe('/session/s1/usage');
+      for (const scopeKey of ['period', 'scope', 'queryOverrides']) expect(href.searchParams.has(scopeKey)).toBe(false);
+      const opened = resolveUsageWidgetPageInitialQuery({
+        initialFilters: resolveUsagePageInitialFilters(Object.fromEntries(href.searchParams)),
+        sessionId: 's1', nowMs: 1000, timeZoneOffsetMinutes: 0,
+      });
+      expect.soft(opened.costBasis, button).toBe(costBasis);
+      expect(usagePeriodPhrase(opened)).toBe(t('usage.board.page.thisSession'));
+      const amount = projectUsagePageCost(accounting, opened.costBasis);
+      expect(amount.amountUsd).toBeGreaterThan(0);
+      expect.soft(spokenRow, button).toContain(formatUsageCost(amount.amountUsd, amount.selection!.currency));
+    }
+  });
+
   it('conceals hidden Work Session labels and restores them after sharing without changing the drill target', async () => {
     const previous = storage.getState();
     const serverId = actionHome!.homes.work!.id;
@@ -287,6 +337,14 @@ describe('Work and Coach widget bodies', () => {
     expect(screen.findAllByType(ChartDatum).find(node => node.props.testID === 'ledger.projects-datum-1')?.props.datum.value).toContain('EUR 1.23456');
     await screen.pressByTestIdAsync('ledger.project.project-0.toggle');
     expect(screen.findByTestId('ledger.project.project-0.detail')).toBeTruthy();
+  });
+  it('says an unread token amount is not measured, never that it has no API price (acceptance 1122 Session page)', async () => {
+    const tokensQuery = normalizeUsageQuery({ ...query, metric: 'tokens' });
+    const hook = await renderHook(() => useUsageWork(slice, tokensQuery, 'home'));
+    try {
+      expect(hook.getCurrent().format(null)).toBe(t('usage.board.page.notMeasuredYet'));
+      expect(hook.getCurrent().cell(null, null)).toBe(t('usage.board.page.notMeasuredYet'));
+    } finally { await hook.unmount(); }
   });
   it('keeps an identity mark strip on one line and folds what does not fit into "+n" (acceptance 1122 #46)', async () => {
     const agentIds = Array.from({ length: 18 }, (_, index) => `agent-${index}`);
@@ -921,7 +979,8 @@ describe('Work and Coach widget bodies', () => {
     expect(text).toContain('bbbbbbb');
     // Turns are named by their witnessed order and waits by what they waited for, never by a raw id.
     expect(text).toContain('Turn 1');
-    expect(text).toContain('no turn recorded');
+    // The row for usage with no turn opens like every other row title (acceptance 1122 Session page).
+    expect(text).toContain(`${t('usage.board.work.reason_missing_turn').charAt(0).toLocaleUpperCase()}${t('usage.board.work.reason_missing_turn').slice(1)}`);
     expect(text.toLowerCase()).toContain('waiting for your approval');
     expect(text).not.toContain('["s1","t1"]');
     expect(text).not.toContain('b'.repeat(40));
@@ -932,6 +991,8 @@ describe('Work and Coach widget bodies', () => {
     const turnsFact = screen.findAllByType(HappierDataMetric).find(node => node.props.label === t('usage.board.work.turns'));
     expect(turnsFact?.props.value).toBe(1);
     expect(turnsFact?.props.caption).toBe(t('usage.board.work.turnsUnrecordedPart'));
+    // With one recorded turn the largest turn is the Session itself: it is not said twice.
+    expect(screen.findAllByType(HappierDataMetric).find(node => node.props.label === t('usage.board.work.largestTurn'))).toBeUndefined();
     // Both priced moments share one instant: there is no line to draw, so the section is one quiet line, not an empty plot.
     expect(screen.findByTestId('value.autopsy.costTimeline')).toBeNull();
     expect(screen.findByTestId('value.autopsy.costTimeline.single')).toBeTruthy();
