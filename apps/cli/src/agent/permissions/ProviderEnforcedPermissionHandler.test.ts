@@ -191,6 +191,25 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
     });
   });
 
+  it('denies agent title calls in start-only mode once the session is titled, but allows the first naming', async () => {
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(session as any, {
+      logPrefix: '[Test]',
+      getAccountSettings: () => ({
+        codingPromptBehaviorV1: { v: 1, sessionTitleUpdates: 'initial', responseOptions: 'agent' },
+      } as any),
+    });
+
+    await expect(handler.handleToolCall('title-first', 'mcp__happier__change_title', { title: 'First' })).resolves.toEqual({
+      decision: 'approved',
+    });
+
+    session.metadata = { summary: { text: 'First', updatedAt: 1 } };
+    await expect(handler.handleToolCall('title-again', 'mcp__happier__change_title', { title: 'Second' })).resolves.toEqual({
+      decision: 'denied',
+    });
+  });
+
   it('denies session title tool calls when a profile override disables title updates over an enabled global', async () => {
     const session = new FakeSession();
     session.metadata = { profileId: 'profile-no-titles' };
