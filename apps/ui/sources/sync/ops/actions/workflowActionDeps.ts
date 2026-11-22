@@ -33,6 +33,7 @@ import {
 } from '@happier-dev/channels-protocol/v1';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { isWorkflowHostAdmittedChildActionIdV1 } from '@happier-dev/protocol/actions/clientDispatchV1';
+import { ExternalActionTargetV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { WORKFLOW_RUN_INVOCATIONS_RETRY_ACTION_ID_V1, WORKFLOW_RUN_RESUME_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 
@@ -507,6 +508,19 @@ export function createUiWorkflowAction(params: Readonly<{
             // consume the same UI policy before relaying. Scoped credentials keep host admission.
             if (ordinaryAccountCredential && !accountOperation && !await isWorkflowFeatureEnabled()) return unavailable;
             let relayArgs = args;
+            if (startingRun && args.context.workflowStartProject) {
+                const project = args.context.workflowStartProject;
+                const target = args.context.externalActionTarget;
+                if (!target || (target.kind === 'machine' && !target.project)) {
+                    // Private host context does not cross Account transport. Bind the resolved
+                    // workspace to the existing signed target without replacing its restrictions.
+                    const projected = ExternalActionTargetV1Schema.safeParse({
+                        ...(target ?? { kind: 'machine', machineId: project.machineId }), project,
+                    });
+                    if (!projected.success) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+                    relayArgs = { ...args, context: { ...args.context, externalActionTarget: projected.data } };
+                }
+            }
             if (ordinaryAccountCredential && args.context.externalActionTarget === undefined && recoveryRunId !== undefined) {
                 // Recovery belongs to the retained Run's Machine. A reachable Account
                 // relay is not a resource target and can fail the Run's target binding.

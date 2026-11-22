@@ -111,6 +111,10 @@ import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEnc
 import type { AutomationV3RunDetail } from '@happier-dev/protocol/automations/automationApiV3';
 import { WorkflowDefinitionListResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createInMemoryReviewRecordPortV1 } from '../../../../../../packages/protocol/src/reviews/reviewArtifactV1.testkit';
+import { createScmCapabilities } from '@happier-dev/protocol/scm';
+import { ExternalActionTargetV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
@@ -2248,6 +2252,80 @@ describe('UI Workflow Action front door', () => {
             await expect(h.execute('workflow.run.cancel', { runId, expectedRevision: 1 }, h.context)).resolves.toMatchObject({ ok: true, result: { intent: 'cancel_requested' } });
             expect(h.transport).not.toHaveBeenCalled();
             expect(h.operations.map((operation) => operation.operation)).toContain('get');
+        } finally { h.account.dispose(); }
+    });
+
+    it.each(['missing', 'existing', 'unaddressed'] as const)('carries the resolved Workflow project through a %s Machine target', async targetKind => {
+        const h = await createHarness();
+        try {
+            const project = { machineId: 'machine-a', directory: '/repo', workspaceRefId: 'workspace-a',
+                sessionPlacement: { kind: 'in_place' as const, workspace: { v: 2 as const, kind: 'managed' as const,
+                    serverId: h.account.serverId, workspaceId: 'workspace-a', managedId: 'sandbox-a',
+                    controller: { machineId: 'machine-a', installationId: 'installation-a' }, rootPath: '/repo' } } };
+            const target = { kind: 'machine' as const, machineId: 'machine-a',
+                ...(targetKind === 'existing' ? { project } : {}) };
+            const hint = targetKind === 'existing' ? { ...project, directory: '/different-hint' } : project;
+            h.transport.mockImplementation(async request => {
+                const admitted = ExternalActionTargetV1Schema.parse(request.target);
+                return admitted.kind === 'machine' && admitted.project?.directory === project.directory
+                    ? { run: createWorkflowRunSummaryFixture({ id: runId, machineId: 'machine-a' }), admission: 'created' }
+                    : { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable', details: { reason: 'workspace_unavailable' } };
+            });
+            await expect(h.execute('workflow.run.start', { runId, source: { kind: 'inline', definition } }, {
+                ...h.context, workflowStartProject: hint, ...(targetKind === 'unaddressed' ? {} : { externalActionTarget: target }),
+            })).resolves.toMatchObject({ ok: true, result: { admission: 'created' } });
+            expect(h.transport).toHaveBeenCalledWith(expect.objectContaining({ target: { kind: 'machine', machineId: 'machine-a', project } }));
+        } finally { h.account.dispose(); }
+    });
+
+    it('carries the Session Review resolved workspace into its real Workflow Account transport', async () => {
+        const h = await createHarness();
+        try {
+            const records = createInMemoryReviewRecordPortV1();
+            const executor = createActionExecutor({
+                reviewRecords: () => records,
+                workflowAction: h.createUiWorkflowAction({ account: h.account, transport: h.transport }),
+                // SCM is a Machine RPC boundary; Review composition and transport projection stay real.
+                scmActionExecute: async request => {
+                    expect(request.actionId).toBe('scm.status.snapshot');
+                    return { success: true, snapshot: {
+                        projectKey: 'review-project', fetchedAt: 1, detail: 'facts',
+                        repo: { isRepo: true, rootPath: '/session-repo', backendId: 'git', mode: '.git' }, capabilities: createScmCapabilities(),
+                        branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false }, hasConflicts: false, entries: [],
+                        totals: { includedFiles: 0, pendingFiles: 0, untrackedFiles: 0, includedAdded: 0, includedRemoved: 0,
+                            pendingAdded: 0, pendingRemoved: 0 },
+                    } };
+                },
+            });
+            h.transport.mockImplementation(async request => {
+                const admitted = ExternalActionTargetV1Schema.parse(request.target);
+                return admitted.kind === 'machine' && admitted.project?.directory === '/session-repo'
+                    ? { run: createWorkflowRunSummaryFixture({ id: WorkflowRunStartRequestV1Schema.parse(request.payload).runId,
+                        machineId: 'machine-a' }), admission: 'created' }
+                    : { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable', details: { reason: 'workspace_unavailable' } };
+            });
+            const reviewer = { kind: 'engine' as const, engineId: 'claude' };
+            const result = await executor.execute('review.start', { sessionId: 'session-a', scope: 'repository',
+                instructions: 'Inspect the Session repository.', reviewers: [reviewer],
+                steps: [{ kind: 'review', reviewers: [reviewer], instructions: 'Inspect the Session repository.' }],
+            }, { ...h.context, defaultSessionId: 'session-a', defaultSessionMachineId: 'machine-a',
+                externalActionTarget: { kind: 'machine', machineId: 'machine-a' } });
+            expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { admission: 'created', reviewRound: { roundOrdinal: 1 } } });
+            expect(h.transport).toHaveBeenCalledWith(expect.objectContaining({ actionId: 'workflow.run.start',
+                target: { kind: 'machine', machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/session-repo' } },
+                invocation: expect.objectContaining({ defaultSessionId: 'session-a' }),
+            }));
+        } finally { h.account.dispose(); }
+    });
+
+    it('refuses a resolved Workflow project on a different addressed Machine before transport', async () => {
+        const h = await createHarness();
+        try {
+            await expect(h.execute('workflow.run.start', { runId, source: { kind: 'inline', definition } }, {
+                ...h.context, externalActionTarget: { kind: 'machine', machineId: 'machine-a' },
+                workflowStartProject: { machineId: 'different-machine', directory: '/repo' },
+            })).resolves.toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+            expect(h.transport).not.toHaveBeenCalled();
         } finally { h.account.dispose(); }
     });
 
