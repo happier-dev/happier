@@ -209,9 +209,11 @@ export function createHolderWorkspaceSource(input: Readonly<{
   const watch = (target: string, recursive: boolean, onEvent: (event: Readonly<{ path: string; kind: 'directory' | 'file' | 'unknown'; event: string }>) => void,
     onReady?: () => void, onUnavailable?: (error: Error) => void): (() => void) => {
     const release = input.hold?.();
+    let client: SessionHolderChild;
     let stream: SessionHolderStreamProcess;
     try {
-      stream = holder().spawnStream({ op: 'watch', path: relative(target), recursive });
+      client = holder();
+      stream = client.spawnStream({ op: 'watch', path: relative(target), recursive });
     } catch (error) {
       release?.();
       throw error;
@@ -227,10 +229,20 @@ export function createHolderWorkspaceSource(input: Readonly<{
         onEvent({ ...parsed, path: path.posix.join(root, parsed.path) });
       }
     });
+    const disconnected = () => {
+      if (client.holderConnectionFailed) onUnavailable?.(errno('holder_disconnected', 'Workspace observation ended with its holder channel'));
+    };
     stream.once('spawn', () => onReady?.());
-    stream.once('error', (error: Error) => onUnavailable?.(error));
+    stream.once('error', (error: Error) => {
+      stream.off('close', disconnected);
+      onUnavailable?.(error);
+    });
+    stream.once('close', disconnected);
     if (release) stream.once('close', release);
-    return () => { stream.kill('SIGTERM'); };
+    return () => {
+      stream.off('close', disconnected);
+      stream.kill('SIGTERM');
+    };
   };
   const source: WorkspaceSource = {
     nativeHelperPath: input.helperPath,

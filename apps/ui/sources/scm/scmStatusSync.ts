@@ -8,6 +8,7 @@ import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { InvalidateSync } from '@/utils/sessions/sync';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 import { isRpcMethodNotFoundResult, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { resolveManagedMachinePendingPowerIntentV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { scmFallbackError } from '@/sync/ops/scm/scmRpcFailure';
 
 import { scmRepositoryService, snapshotToScmStatus } from './scmRepositoryService';
@@ -82,7 +83,7 @@ export class ScmStatusSync {
         const projectKey = workspace ? tryBuildWorkspaceCacheKey(workspace)
             : 'sessionId' in demand ? this.getProjectKeyForSession(demand.sessionId, demand.serverId) : null;
         if (!projectKey) return null;
-        return { key: projectKey, read: async (trigger?: PresentedAutoRefreshReadSource) => {
+        const read = async (trigger?: PresentedAutoRefreshReadSource) => {
             const workspaceRecovered = trigger === 'reconnected' || trigger === 'watch_ready' && workspace?.workspace != null;
             const source = workspaceRecovered ? 'workspace_recovery' : trigger ? 'filesystem' : undefined;
             if (workspaceRecovered || !this.projectAutoRefreshSuspended.has(projectKey)) {
@@ -94,7 +95,8 @@ export class ScmStatusSync {
             }
             return 'scope' in demand ? storage.getState().getWorkspaceScmSnapshot(demand.scope)
                 : storage.getState().getSessionProjectScmSnapshot(demand.sessionId, demand.serverId);
-        }, ...(workspace && managedWorkspace ? {
+        };
+        return { key: projectKey, read, ...(workspace && managedWorkspace ? {
             subscribeRecovery: (recover: () => void) => {
                 const active = captureActiveServerAccountScopeLifetime();
                 const account = active && selectActiveServerAccountScopeForServer(active.scope, workspace.serverId)
@@ -128,7 +130,11 @@ export class ScmStatusSync {
                 });
                 return () => watch.dispose();
             },
-            onUnavailable: (reason: ScmWorkspaceWatchUnavailable) => this.publishWorkspaceWatchFailure(workspace, projectKey, reason),
+            onUnavailable: (reason: ScmWorkspaceWatchUnavailable) => {
+                this.publishWorkspaceWatchFailure(workspace, projectKey, reason);
+                // A lost carrier ends the parked read. Re-admit the presented source once to learn its state.
+                if (managedWorkspace && reason.code === 'holder_disconnected') void read('reconnected').catch(() => undefined);
+            },
         } : {}) };
     });
 
@@ -156,25 +162,28 @@ export class ScmStatusSync {
         const workspace = scope.workspace;
         if (!workspace || !account || getServerProfileById(account.scope.serverId)?.serverIdentityId !== workspace.serverId) return () => {};
         let inventory: ReturnType<typeof retainManagedMachineInventory> | undefined;
-        let running = false;
+        let previous: ManagedMachineInventoryEntry['machines'][number] | undefined;
         const observe = (entry: ManagedMachineInventoryEntry) => {
             const row = entry.machines[0];
             if (!account.isCurrent() || entry.status !== 'ready' || row?.controller?.machineId !== workspace.controller.machineId
                 || row.controller.installationId !== workspace.controller.installationId) return;
-            const next = row.observation?.power === 'running';
-            const resumed = next && !running;
-            running = next;
-            if (resumed && projectManager.getWorkspaceScmSnapshotError(scope)?.nextAction?.kind === 'start_workspace') recover();
+            const resumed = row.observation?.power === 'running' && previous?.observation?.power !== 'running';
+            const wake = previous && resolveManagedMachinePendingPowerIntentV1(previous);
+            previous = row;
+            const error = projectManager.getWorkspaceScmSnapshotError(scope);
+            if (resumed && error && (error.nextAction?.kind === 'start_workspace' || wake === 'start' || wake === 'resume')) recover();
         };
         const reconcilePowerDemand = () => {
-            if (projectManager.getWorkspaceScmSnapshotError(scope)?.nextAction?.kind !== 'start_workspace') {
+            const error = projectManager.getWorkspaceScmSnapshotError(scope);
+            if (!error) {
                 inventory?.dispose();
                 inventory = undefined;
-                running = false;
+                previous = undefined;
                 return;
             }
             if (inventory || !account.isCurrent()) return;
-            // Borrow the same exact Home record as the Start control. Action acceptance can precede provider readiness.
+            // An open during a submitted wake may receive backend-unavailable before the guest can serve a read.
+            if (error.nextAction?.kind !== 'start_workspace' && error.errorCode !== SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE) return;
             inventory = retainManagedMachineInventory(account, observe, { managedId: workspace.managedId });
             observe(inventory.getSnapshot());
         };
@@ -371,7 +380,12 @@ export class ScmStatusSync {
                 return;
             }
             const previousSnapshot = this.projectLastSnapshot.get(activeKey) ?? state.getWorkspaceScmSnapshot(scope);
-            const settledError = this.readWorkspaceWatchFailure(scope, activeKey);
+            const watchError = this.readWorkspaceWatchFailure(scope, activeKey);
+            const replaceWatch = recovering && scope.workspace && (watchError?.errorCode === 'project_account_rows_changed'
+                || watchError?.errorCode === 'project_account_rows_unavailable' || watchError?.errorCode === 'admission_unavailable'
+                || watchError?.errorCode === 'holder_disconnected');
+            // The admitted replacement read is current even while its replacement watch is attaching.
+            const settledError = replaceWatch ? null : watchError;
             const recovered = recovering && settledError === null;
             const publication = recovering || source === 'filesystem' ? { contentChanged: true, recovered } : undefined;
             const unchangedHeldList = isUnchangedCountsOfHeldList(previousSnapshot, snapshot);
@@ -434,12 +448,7 @@ export class ScmStatusSync {
             } else if (signatureChanged && !recovering) {
                 await clearSearchCacheForProject([...refs.values()], canonicalScope);
             }
-            if (recovering && scope.workspace && (settledError?.errorCode === 'project_account_rows_changed'
-                || settledError?.errorCode === 'project_account_rows_unavailable' || settledError?.errorCode === 'admission_unavailable')) {
-                // This read has now admitted the same Project rows that the early watch could not use.
-                // The replacement uses the ordinary watch-ready path, with no fallback recovery on refusal.
-                this.autoRefresh.reconcile(activeKey, { reattachUnavailable: true });
-            }
+            if (replaceWatch) this.autoRefresh.reconcile(activeKey, { reattachUnavailable: true });
         } catch (error) {
             const failure = scmFallbackError(error, { method: RPC_METHODS.SCM_STATUS_SNAPSHOT, request: {} });
             this.publishWorkspaceFailure(scope, activeKey, { code: failure.errorCode, message: failure.error }, failure.actionErrorCode);

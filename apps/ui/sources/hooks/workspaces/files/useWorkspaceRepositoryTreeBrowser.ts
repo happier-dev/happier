@@ -23,6 +23,7 @@ import { retainShallow } from '@/sync/domains/state/structuralSharing';
 import { useWorkspaceEntryHistory } from './useWorkspaceEntryHistory';
 import { useWorkspaceFileWriteSettlements } from '@/sync/domains/session/changes/hooks/useWorkspaceFileWriteSettlements';
 import { useWorkspaceLiveFileWrites } from '@/sync/domains/session/changes/hooks/useWorkspaceLiveFileWrites';
+import { useWorkspaceScmRecoveryInFlight } from '@/sync/store/scmHooks';
 
 const NO_PRESERVED_PATHS: readonly string[] = [];
 
@@ -84,6 +85,7 @@ export function useWorkspaceRepositoryTreeBrowser(input: Readonly<{
     const treeKey = JSON.stringify([workspaceCacheKey, rootDirectoryPath]);
     const lastRootRead = React.useRef({ treeKey, revision: directoryRevision });
     const [recoveryRead, setRecoveryRead] = React.useState<{ treeKey: string } | null>(null);
+    const sourceRecovering = useWorkspaceScmRecoveryInFlight(input.enabled && scope.workspace ? scope : null);
 
     const effectiveReloadToken = React.useMemo(() => (
         `${input.reloadToken ?? ''}:${directoryRevision}`
@@ -159,5 +161,5 @@ export function useWorkspaceRepositoryTreeBrowser(input: Readonly<{
     const history = useWorkspaceEntryHistory({ scope, folder: input.rootDirectoryPath ?? '', paths: demandedPaths,
         headOid: input.headOid, repoRootPath: input.repoRootPath, enabled: input.enabled && input.historyEnabled === true, reloadToken: input.reloadToken });
     return { ...tree, nodes, gitIgnoreAvailable, history, liveFileWrites,
-        recoveryInFlight: input.enabled && recoveryRead?.treeKey === treeKey };
+        recoveryInFlight: sourceRecovering || (input.enabled && recoveryRead?.treeKey === treeKey) };
 }

@@ -345,7 +345,7 @@ describe('shared workspace filesystem Action admission', () => {
         expect(methods).toHaveLength(releasedCallCount);
     });
 
-    it.each(['controller reconnect', 'Start'] as const)('recovers presented Files and Git together after %s', async journey => {
+    it.each(['controller reconnect', 'Start', 'vendor Stop in Changes', 'Code re-entry while Starting'] as const)('settles presented remote workspace reads after %s', async journey => {
         const { apiSocket } = await import('@/sync/api/session/apiSocket');
         const { recordMachineRequestFailed } = await import('@/sync/domains/machines/reachability/machineReachability');
         const { useWorkspaceRepositoryTreeBrowser } = await import('@/hooks/workspaces/files/useWorkspaceRepositoryTreeBrowser');
@@ -360,6 +360,8 @@ describe('shared workspace filesystem Action admission', () => {
         const { rootPath, machineId } = target;
         const homeId = 'srv_filesystem_action';
         const startsStopped = journey === 'Start';
+        const changesOnly = journey === 'vendor Stop in Changes';
+        const entersDuringStart = journey === 'Code re-entry while Starting';
         const workspace = { v: 2, kind: 'managed', serverId: homeId, workspaceId: 'restarted-project', managedId: 'native-guest',
             controller: { machineId, installationId: 'test-installation' }, rootPath } as const;
         const scope = { ...target, workspace };
@@ -381,9 +383,10 @@ describe('shared workspace filesystem Action admission', () => {
         });
 
         type Phase = 'before' | 'offline' | 'authenticating' | 'ready' | 'stopped' | 'starting';
-        let phase: Phase = startsStopped ? 'stopped' : 'before';
+        let phase: Phase = startsStopped ? 'stopped' : entersDuringStart ? 'starting' : 'before';
         let recoveryCanList = false;
-        let startAccepted = false;
+        const replacementWatch = Promise.withResolvers<void>();
+        let startAccepted = entersDuringStart;
         const starts: Phase[] = [];
         const provider = { pluginId: 'happier.machine.coder', localId: 'coder' };
         const stopped = ManagedMachinePublicFullV1Schema.parse({
@@ -395,12 +398,16 @@ describe('shared workspace filesystem Action admission', () => {
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
             observation: { availability: 'present', observedAt: 1, power: 'stopped' },
         });
-        if (startsStopped) {
+        if (startsStopped || entersDuringStart || changesOnly) {
             homes.answer(serverId, '/v1/machines/managed/actions/get', { select: () => ({ body: {
                 ...stopped, ...(startAccepted ? { desired: 'start', intentRevision: 4 } : {}),
+                ...(startAccepted && phase === 'starting' ? { submittedNativeEffect: { intent: 'start', requestId: 'pending-start',
+                    intentRevision: 4, controller: workspace.controller } } : {}),
                 observation: { ...stopped.observation, observedAt: startAccepted ? 2 : 1,
-                    power: phase === 'ready' ? 'running' : 'stopped' },
+                    power: phase === 'before' || phase === 'ready' ? 'running' : 'stopped' },
             } }) });
+        }
+        if (startsStopped) {
             await answerExternalActionAccountForHome(homes, serverId, {
                 ...workspace.controller, actionId: 'machines.managed.power.set', tokenEpoch: 0, requesterInvocation: 'optional',
                 execute: async input => {
@@ -411,7 +418,8 @@ describe('shared workspace filesystem Action admission', () => {
                 },
             });
         }
-        const stoppedCode = () => phase === 'stopped' || phase === 'starting' ? 'managed_power_required' : 'admission_unavailable';
+        const stoppedCode = () => phase === 'starting' && entersDuringStart ? 'coder_agent_unavailable'
+            : phase === 'stopped' || phase === 'starting' ? 'managed_power_required' : 'admission_unavailable';
         const powerChanged = () => publishHomeAccountChange(serverId, [stopped.id], {
             feedPageConsumed: true, changeKinds: ['account'], managedMachineChangedIds: [stopped.id],
         });
@@ -427,12 +435,16 @@ describe('shared workspace filesystem Action admission', () => {
                 if (!isReady) return unavailable;
                 if (!observation.observationOnly && observation.sinceRevision === undefined) {
                     starts.push(phase);
-                    if (phase === 'ready' && !startsStopped && !recoveryCanList) return { status: 'unavailable',
-                        reason: { code: 'project_account_rows_changed', message: 'Project Account rows changed during admission' } };
+                    if (phase === 'ready' && journey === 'controller reconnect') {
+                        if (!recoveryCanList) return { status: 'unavailable',
+                            reason: { code: 'project_account_rows_changed', message: 'Project Account rows changed during admission' } };
+                        await replacementWatch.promise;
+                    }
                     return { status: 'ready', revision: phase === 'before' ? 1 : 2 };
                 }
                 return await new Promise(resolve => {
-                    if (observation.observationOnly) stopWatch = () => resolve(unavailable);
+                    if (observation.observationOnly) stopWatch = () => resolve(changesOnly ? { status: 'unavailable',
+                        reason: { code: 'holder_disconnected', message: 'Guest observation ended' } } : unavailable);
                     request.signal?.addEventListener('abort', () => resolve({ status: 'cancelled' }), { once: true });
                 });
             }
@@ -468,16 +480,38 @@ describe('shared workspace filesystem Action admission', () => {
             },
         });
         const view = await renderHook(({ online }) => {
-            const git = useWorkspaceScmSnapshotController(scope);
-            const tree = useWorkspaceRepositoryTreeBrowser({ scope, enabled: online });
+            const git = useWorkspaceScmSnapshotController(scope, changesOnly ? { entriesPageSize: 32 } : undefined);
+            const tree = useWorkspaceRepositoryTreeBrowser({ scope, enabled: online && !changesOnly });
             const history = useWorkspaceEntryHistory({ scope, folder: '', paths: ['sentinel.txt'],
-                enabled: online && git.snapshot != null, headOid: git.snapshot?.branch.headOid,
+                enabled: online && !changesOnly && git.snapshot != null, headOid: git.snapshot?.branch.headOid,
                 repoRootPath: git.snapshot?.repo.rootPath });
-            const start = useManagedWorkspaceStart(startsStopped ? scope : target);
+            const start = useManagedWorkspaceStart(startsStopped || entersDuringStart ? scope : target);
             return { git, tree, history, start, gitRecovering: useWorkspaceScmRecoveryInFlight(scope) };
         }, { initialProps: { online: true } });
         try {
-            if (startsStopped) {
+            if (changesOnly) {
+                await vi.waitFor(() => {
+                    expect(view.getCurrent().git.snapshot?.branch.headOid).toBe(headOid);
+                    expect(view.getCurrent().git.error).toBeNull();
+                    expect(starts).toEqual(['before']);
+                });
+                phase = 'stopped';
+                await act(async () => { stopWatch(); });
+                await vi.waitFor(() => expect(view.getCurrent().git.error).toMatchObject({
+                    errorCode: 'managed_power_required', nextAction: { kind: 'start_workspace' },
+                }));
+                return;
+            }
+            if (entersDuringStart) {
+                await vi.waitFor(() => {
+                    const { git, tree, start } = view.getCurrent();
+                    expect(git.error).toMatchObject({ errorCode: 'BACKEND_UNAVAILABLE' });
+                    expect(tree.rootErrorCode).toBe('coder_agent_unavailable');
+                    expect(start?.pending).toBe(true);
+                });
+                phase = 'ready';
+                await act(async () => { powerChanged(); });
+            } else if (startsStopped) {
                 await vi.waitFor(() => {
                     const { git, tree, start } = view.getCurrent();
                     expect(git.error?.nextAction?.kind).toBe('start_workspace');
@@ -520,6 +554,10 @@ describe('shared workspace filesystem Action admission', () => {
             }
 
             await vi.waitFor(() => expect(view.getCurrent().gitRecovering).toBe(true));
+            if (journey === 'controller reconnect') {
+                expect.soft(view.getCurrent().tree).toMatchObject({ recoveryInFlight: true,
+                    nodes: [expect.objectContaining({ name: 'before.txt' })] });
+            }
             recoveryCanList = true;
             releaseReads();
             await vi.waitFor(() => {
@@ -529,9 +567,9 @@ describe('shared workspace filesystem Action admission', () => {
                     recovery: [false, false], gitError: null, filesError: null, names: ['ready.txt'],
                     history: { status: 'ready', stale: false, headOid },
                 });
-                expect(starts).toEqual(startsStopped ? ['ready'] : ['before', 'ready', 'ready']);
+                expect(starts).toEqual(startsStopped || entersDuringStart ? ['ready'] : ['before', 'ready', 'ready']);
             });
-        } finally { releaseReads(); await view.unmount(); }
+        } finally { replacementWatch.resolve(); releaseReads(); await view.unmount(); }
     });
 
     it('preserves a workspace list refusal through search without trying a second filesystem route', async () => {

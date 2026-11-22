@@ -13,7 +13,7 @@ import { OpenProjectInputV1Schema } from '@happier-dev/protocol/projects/openPro
 import { deriveSessionCreationTagV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 
 import { resolveProcessCustodySupportExecutable } from '@/subprocess/supervision/processCustody';
-import { attachSessionHolderWorkspaceClient, openSessionHolderWorkspaceClient, spawnSessionHolderChild, type SessionHolderChild, type SessionHolderTarget } from '@/subprocess/supervision/sessionHolder';
+import { attachSessionHolderWorkspaceClient, openSessionHolderWorkspaceChannel, openSessionHolderWorkspaceClient, spawnSessionHolderChild, type SessionHolderChild, type SessionHolderTarget } from '@/subprocess/supervision/sessionHolder';
 
 import { createHolderWorkspaceSource } from './holderWorkspaceSource';
 import { runWithWorkspaceSource, type WorkspaceSourcePlacement } from './workspaceSource';
@@ -342,6 +342,26 @@ describe.skipIf(process.platform !== 'linux' || !holderExecutable || !helperExec
         await expect(source.lstat(join(root, 'dir'))).rejects.toMatchObject({ code: 'ENOENT' });
         await expect(source.writeFile(join(root, 'escape/x'), Buffer.from('x'))).rejects.toBeTruthy();
     }, 60_000);
+
+    it('settles the workspace observation when its provider channel drops after readiness', async () => {
+        const channel = target.openChannel([holderExecutable!, 'workspace', '--root', root]);
+        const workspaceHolder = openSessionHolderWorkspaceChannel(channel);
+        const source = createHolderWorkspaceSource({ id: 'target:dropped', rootPath: root,
+            holder: workspaceHolder, helperPath: helperExecutable! });
+        const attached = Promise.withResolvers<void>();
+        let failure: Error | undefined;
+        const dispose = source.watchTree([{ directory: root, onStructuralChange() {} }],
+            { onReady: attached.resolve, onUnavailable: error => { failure = error; } });
+        try {
+            await attached.promise;
+            channel.destroy();
+            await expect.poll(() => workspaceHolder.holderConnectionFailed).toBe(true);
+            await expect.poll(() => failure).toMatchObject({ code: 'holder_disconnected' });
+        } finally {
+            dispose();
+            channel.destroy();
+        }
+    });
 
     it('keeps the workspace client away from the Agent: its process and state ops are refused', async () => {
         for (const op of ['signal', 'status', 'meta'] as const) {
