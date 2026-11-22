@@ -11,9 +11,9 @@ import { ManagedMachineFullV1Schema, isManagedOpaquePresetMachineV1,
 import { ManagedMachinePresetContentV1Schema, ManagedMachinePresetStoredContentV1Schema, openManagedMachinePresetContentV1,
     openManagedMachinePresetRecipientProjectionV1, readManagedMachinePresetContentOverrideForModeV1,
     resolveManagedMachinePresetResizeOverrideV1,
+    rewrapManagedMachinePresetRecipientsV1,
     replaceManagedMachinePresetPreparationV1,
     type ManagedMachinePresetPreparedWriteV1,
-    rewrapManagedMachinePresetRecipientsV1,
     type ManagedMachinePresetContentV1, type ManagedMachinePresetNativeControlResultV1,
     type ManagedMachinePresetStoredContentCarrierV1, type ManagedMachinePresetStoredContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { ManagedConfigurationFactsV1Schema, type ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
@@ -229,6 +229,22 @@ export function createManagedPresetHydrator(input: Readonly<{
         });
     }
 
+    /**
+     * Open server-selected single-recipient projections of one persisted mode under one
+     * Account verification. An item this Account cannot open is null.
+     */
+    async function openRecipientProjections(params: Readonly<{
+        mode: 'plain' | 'e2ee';
+        items: readonly Readonly<{ presetId: string; projection: unknown }>[];
+        signal?: AbortSignal;
+    }>): Promise<(ManagedMachinePresetContentV1 | null)[]> {
+        return await withVerifiedAccount(params.mode, params.signal, account => params.items.map(item => params.mode === 'plain'
+            ? openManagedMachinePresetRecipientProjectionV1({ presetId: item.presetId, mode: params.mode,
+                projection: item.projection })
+            : account.accountKey === undefined ? null : openManagedMachinePresetRecipientProjectionV1({ presetId: item.presetId,
+                mode: params.mode, projection: item.projection, accountId: account.accountId, accountKey: account.accountKey })));
+    }
+
     /** Open exactly the server-selected single-recipient setup/get projection. */
     async function openRecipientProjection(params: Readonly<{
         presetId: string;
@@ -236,11 +252,8 @@ export function createManagedPresetHydrator(input: Readonly<{
         projection: unknown;
         signal?: AbortSignal;
     }>): Promise<ManagedMachinePresetContentV1> {
-        const opened = await withVerifiedAccount(params.mode, params.signal, account => params.mode === 'plain'
-            ? openManagedMachinePresetRecipientProjectionV1({ presetId: params.presetId, mode: params.mode,
-                projection: params.projection })
-            : account.accountKey === undefined ? null : openManagedMachinePresetRecipientProjectionV1({ presetId: params.presetId,
-                mode: params.mode, projection: params.projection, accountId: account.accountId, accountKey: account.accountKey }));
+        const [opened] = await openRecipientProjections({ mode: params.mode,
+            items: [{ presetId: params.presetId, projection: params.projection }], ...(params.signal ? { signal: params.signal } : {}) });
         if (!opened) throw new ManagedMachineControllerError('credential_unavailable');
         return opened;
     }
@@ -591,7 +604,7 @@ export function createManagedPresetHydrator(input: Readonly<{
         return projectManagedEnrollmentCorrelationV1(structural(machine), correlation);
     }
 
-    return { open, openSnapshot, withPresetDefinition, openRecipientProjection, openRead, withE2eeAccountKey, readRecipientCensus, normalize, prepareAdmissionAcquire, prepareResize, preparePresetContentReport, prepareBoundSetupReport, prepareControllerReport, prepareResizeReport,
+    return { open, openSnapshot, withPresetDefinition, openRecipientProjection, openRecipientProjections, openRead, withE2eeAccountKey, readRecipientCensus, normalize, prepareAdmissionAcquire, prepareResize, preparePresetContentReport, prepareBoundSetupReport, prepareControllerReport, prepareResizeReport,
         replacePreparation, rememberReviewedFacts, readReviewedFacts, readSetupDefinition, readPresetDefinition, isOpaque, structural, projectEnrollmentCorrelation };
 }
 

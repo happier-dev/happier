@@ -33,6 +33,10 @@ import {
 } from '@happier-dev/protocol';
 import { NO_TEAM_CAPABILITIES_V1 } from '@happier-dev/protocol/teams';
 import { createManagedMachinePresetPreparationBindingV1 } from '@happier-dev/cli-common/machines/managed';
+import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import { SavedSecretResourceEnvelopeCensusRecipientV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import { sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
 import { createSessionOwnerMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { encrypt, getRandomBytes } from './encryption';
@@ -364,6 +368,88 @@ describe('Account API token HTTP adapter', () => {
       .toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
     expect(bodies).toEqual([{ homeId: 'srv_preset' }, { homeId: 'srv_preset', id: 'preset-a', expectedRevision: 2, patch },
       create, { homeId: 'srv_preset', id: 'preset-a', expectedRevision: 1 }, { homeId: 'srv_preset', id: 'preset-a', expectedRevision: 1 }]);
+  });
+
+  it('opens the requester\'s own E2EE preset for Action readers through the host custody and keeps other Accounts\' presets sealed', async () => {
+    const ownerKey = new Uint8Array(32).fill(41);
+    const ownerPublicKey = tweetnacl.box.keyPair.fromSecretKey(ownerKey).publicKey;
+    const otherPublicKey = tweetnacl.box.keyPair.fromSecretKey(new Uint8Array(32).fill(42)).publicKey;
+    const recipient = (accountId: string, publicKey: Uint8Array) => SavedSecretResourceEnvelopeCensusRecipientV1Schema.parse({
+      account: { kind: 'account', accountId, firstName: accountId, lastName: null, username: accountId, avatarUrl: null },
+      readiness: { status: 'available', contentPublicKey: encodeBase64(publicKey, 'base64'),
+        contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(publicKey) },
+      envelopeStatus: 'missing',
+    });
+    const content = { v: 1 as const, name: 'Private GPU box',
+      launch: { provider: { pluginId: 'happier.machine.lima', localId: 'lima' }, schemaVersion: 1, name: 'gpu', choices: { cores: 8 } },
+      setup: { secretRefs: { v: 1 as const, bindings: { GH_TOKEN: { ref: 'personal-gh-token' } } } } };
+    const sealedPreset = (id: string, ownerAccountId: string, census: ReturnType<typeof recipient>[]) => {
+      const sealed = sealManagedMachinePresetContentV1({ presetId: id, mode: 'e2ee', content, recipientCensus: census,
+        randomBytes: length => new Uint8Array(length).fill(43) });
+      return { id, homeId: 'srv_preset', revision: 1, owner: { kind: 'account', accountId: ownerAccountId },
+        contentEncryptionMode: 'e2ee', content: sealed.content, recipients: sealed.recipients,
+        controller: { machineId: 'host-a', installationId: 'installation-a' } };
+    };
+    const own = sealedPreset('own-preset', 'owner', [recipient('owner', ownerPublicKey)]);
+    // Another Account's preset shared to the requester: its envelope opens with the requester's key, yet it stays sealed.
+    const foreign = sealedPreset('foreign-preset', 'other', [recipient('other', otherPublicKey), recipient('owner', ownerPublicKey)]);
+    app.get('/v1/account/encryption/currentness', async () => AccountEncryptionCurrentnessResponseSchema.parse({
+      mode: 'e2ee', version: 1, settingsVersion: 1, signingKeyFingerprint: null, updatedAt: 1,
+      contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(ownerPublicKey) }));
+    app.post('/v1/machines/presets/get', async request => ({ kind: 'found',
+      preset: (request.body as { id: string }).id === own.id ? own : foreign }));
+    app.post('/v1/machines/presets/list', async () => ({ kind: 'listed', presets: [own, foreign] }));
+    const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+    const deps = createAccountServerActionDeps({ token, serverId: 'route-preset', serverIdentityId: 'srv_preset',
+      serverHttpBaseUrl: 'http://account.test',
+      credentials: { token, encryption: { type: 'dataKey', machineKey: ownerKey, publicKey: ownerPublicKey } } });
+    const executor = createActionExecutor(deps as Parameters<typeof createActionExecutor>[0]);
+    const context = { surface: 'mcp', serverId: 'route-preset', authority: 'present_user', bypassApprovals: true } as const;
+
+    const ownRead = await executor.execute('machines.presets.get', { homeId: 'srv_preset', id: own.id }, context);
+    expect(ownRead).toMatchObject({ ok: true, result: { kind: 'found', preset: { id: own.id, content: own.content },
+      opened: { kind: 'opened', presetId: own.id, content: { name: 'Private GPU box', launch: content.launch,
+        setup: { secretRefs: { v: 1, bindings: { GH_TOKEN: { ref: 'personal-gh-token' } } } } } } } });
+    expect(await executor.execute('machines.presets.get', { homeId: 'srv_preset', id: foreign.id }, context))
+      .toMatchObject({ ok: true, result: { kind: 'found', opened: { kind: 'unavailable', presetId: foreign.id, code: 'permission_denied' } } });
+    const listed = await executor.execute('machines.presets.list', { homeId: 'srv_preset' }, context);
+    expect(listed).toMatchObject({ ok: true, result: { kind: 'listed', opened: [
+      { kind: 'opened', presetId: own.id, content: { name: 'Private GPU box' } },
+      { kind: 'unavailable', presetId: foreign.id, code: 'permission_denied' },
+    ] } });
+    expect(JSON.stringify(listed).match(/"kind":"opened"/g)).toHaveLength(1);
+  });
+
+  it('keeps an own E2EE preset sealed with a typed failure when the host key is not the Account\'s current key', async () => {
+    const hostKey = new Uint8Array(32).fill(51);
+    const hostPublicKey = tweetnacl.box.keyPair.fromSecretKey(hostKey).publicKey;
+    const sealed = sealManagedMachinePresetContentV1({ presetId: 'own-preset', mode: 'e2ee',
+      content: { v: 1, name: 'Private', launch: { provider: { pluginId: 'happier.machine.lima', localId: 'lima' }, schemaVersion: 1,
+        name: 'gpu', choices: {} } },
+      recipientCensus: [SavedSecretResourceEnvelopeCensusRecipientV1Schema.parse({
+        account: { kind: 'account', accountId: 'owner', firstName: 'o', lastName: null, username: 'o', avatarUrl: null },
+        readiness: { status: 'available', contentPublicKey: encodeBase64(hostPublicKey, 'base64'),
+          contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(hostPublicKey) }, envelopeStatus: 'missing' })],
+      randomBytes: length => new Uint8Array(length).fill(52) });
+    const preset = { id: 'own-preset', homeId: 'srv_preset', revision: 1, owner: { kind: 'account', accountId: 'owner' },
+      contentEncryptionMode: 'e2ee', content: sealed.content, recipients: sealed.recipients,
+      controller: { machineId: 'host-a', installationId: 'installation-a' } };
+    // The Account rotated its key: the persisted Account mode stays E2EE, but the fingerprint no longer matches.
+    app.get('/v1/account/encryption/currentness', async () => AccountEncryptionCurrentnessResponseSchema.parse({
+      mode: 'e2ee', version: 2, settingsVersion: 1, signingKeyFingerprint: null, updatedAt: 2,
+      contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(
+        tweetnacl.box.keyPair.fromSecretKey(new Uint8Array(32).fill(53)).publicKey) }));
+    app.post('/v1/machines/presets/get', async () => ({ kind: 'found', preset }));
+    const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+    const executor = createActionExecutor(createAccountServerActionDeps({ token, serverId: 'route-preset',
+      serverIdentityId: 'srv_preset', serverHttpBaseUrl: 'http://account.test',
+      credentials: { token, encryption: { type: 'dataKey', machineKey: hostKey, publicKey: hostPublicKey } },
+    }) as Parameters<typeof createActionExecutor>[0]);
+    const result = await executor.execute('machines.presets.get', { homeId: 'srv_preset', id: 'own-preset' },
+      { surface: 'mcp', serverId: 'route-preset', authority: 'present_user', bypassApprovals: true });
+    expect(result).toMatchObject({ ok: true, result: { kind: 'found', preset: { content: sealed.content },
+      opened: { kind: 'unavailable', presetId: 'own-preset', code: 'credential_unavailable' } } });
+    expect(JSON.stringify(result)).not.toContain('"name":"Private"');
   });
 
   it('qualifies presets through the existing authenticated feature snapshot when CLI has no pre-resolved Home identity', async () => {

@@ -247,7 +247,9 @@ export const MACHINE_PRESET_ACTION_SPECS: ActionSpecArrayConcat<readonly [
     const read = id === 'machines.presets.list' || id === 'machines.presets.get';
     const title = `${verb[0]!.toUpperCase()}${verb.slice(1)} Machine preset`;
     return {
-      id, executionPlacement: 'account', approval: { result: 'required' }, approvalPolicy: { uiConfirmation: 'direct' }, title, description: `${title} on the exact authenticated Home. Preset changes affect future machines only.`,
+      id, executionPlacement: 'account', approval: { result: 'required' }, approvalPolicy: { uiConfirmation: 'direct' }, title, description: `${title} on the exact authenticated Home. ${read
+        ? 'For your own end-to-end encrypted preset, the host adds its opened content in the opened field; Saved Secret bindings stay references.'
+        : 'Preset changes affect future machines only.'}`,
       safety: read ? 'safe' : 'danger', sideEffectClass: read ? 'read' : 'danger', placements: [],
       bindings: { mcpToolName: `machines_presets_${verb}`, voiceClientToolName: `machines_presets_${verb}` },
       surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },

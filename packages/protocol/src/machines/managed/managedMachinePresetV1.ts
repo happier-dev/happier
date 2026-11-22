@@ -20,6 +20,7 @@ import {
   ManagedMachinePresetStoredContentCarrierV1Schema,
   createManagedMachinePresetStoredContentV1Schema,
   ManagedMachinePresetRecipientsV1Schema,
+  ManagedMachinePresetContentV1Schema,
 } from './managedMachinePresetContentV1.js';
 export { MachineSetupV1Schema, MachineSetupV1ReadSchema, MachineSetupScriptV1Schema, mergeMachineSetupsV1, type MachineSetupV1, type MachineSetupScriptV1 } from './machineSetupV1.js';
 
@@ -285,8 +286,18 @@ export const PresetMutationResultV1Schema = lazyZodSchema(() => z.discriminatedU
   z.strictObject({ kind: z.literal('conflict'), currentRevision: revision() }),
   ManagedMachinePresetRefusedV1Schema,
 ]));
+/**
+ * The keyholding host's opening of one E2EE preset for the requester who owns it.
+ * The server never returns this: it sees only the sealed carrier in `preset`.
+ */
+export const ManagedMachinePresetOpenedContentV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('opened'), presetId: id(), content: ManagedMachinePresetContentV1Schema }),
+  z.strictObject({ kind: z.literal('unavailable'), presetId: id(), code: ManagedRefusalCodeV1Schema }),
+]));
+export type ManagedMachinePresetOpenedContentV1 = z.infer<typeof ManagedMachinePresetOpenedContentV1Schema>;
 export const ManagedMachinePresetGetResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('found'), preset: ManagedMachinePresetV1Schema }),
+  z.strictObject({ kind: z.literal('found'), preset: ManagedMachinePresetV1Schema,
+    opened: z.optional(ManagedMachinePresetOpenedContentV1Schema) }),
   ManagedMachinePresetRefusedV1Schema,
 ]));
 /** Public counters for attached-copy notices; no private content or recipients. */
@@ -296,7 +307,8 @@ export const ManagedMachinePresetRevisionV1Schema = lazyZodSchema(() => z.strict
 }));
 export type ManagedMachinePresetRevisionV1 = z.infer<typeof ManagedMachinePresetRevisionV1Schema>;
 export const ManagedMachinePresetListResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('listed'), presets: z.array(ManagedMachinePresetV1Schema), cursor: z.optional(id()) }),
+  z.strictObject({ kind: z.literal('listed'), presets: z.array(ManagedMachinePresetV1Schema), cursor: z.optional(id()),
+    opened: z.optional(z.array(ManagedMachinePresetOpenedContentV1Schema)) }),
   z.strictObject({ kind: z.literal('revisions'), presets: z.array(ManagedMachinePresetRevisionV1Schema), cursor: z.optional(id()) }),
   ManagedMachinePresetRefusedV1Schema,
 ]));

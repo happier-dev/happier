@@ -10,6 +10,7 @@ import { normalizeActionExecutorThrownError } from '../resultProjection.js';
 import { ManagedRefusalCodeV1Schema } from '../../../machines/managed/providerFactsV1.js';
 import { MACHINE_PRESET_PREPARE_ACTION_ID_V1, MachinePresetHttpActionIdV1Schema, type MachinePresetActionInputSchemasV1, type MachinePresetActionInputV1 } from '../../../machines/managed/machinePresetActionsV1.js';
 import type { ActionExecuteResult, ActionExecutorContext } from '../types.js';
+import { ManagedMachinePresetGetResultV1Schema, ManagedMachinePresetListResultV1Schema } from '../../../machines/managed/managedMachinePresetV1.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import type { ActionExecutorDeps } from '../types.js';
 import type { z } from '../../../zodRuntimePolicy.js';
@@ -168,7 +169,29 @@ export async function dispatchMachineManaged(inv: Pick<CoreInvocation, 'actionId
           context: ctx,
           ...(ctx.signal ? { signal: ctx.signal } : {}),
         });
-        return readActionFailureEnvelope(result) ?? { ok: true, result };
+        return readActionFailureEnvelope(result)
+          ?? { ok: true, result: await openMachinePresetRead(machinePresetActionId, result, deps, ctx) };
       }
   return null;
+}
+
+/** Attach the host's opening of the requester's own E2EE presets; the sealed carrier stays as the server returned it. */
+async function openMachinePresetRead(actionId: string, result: unknown, deps: ActionExecutorDeps,
+  ctx: ActionExecutorContext): Promise<unknown> {
+  if (!deps.machinePresetOpen) return result;
+  const open = (presets: Parameters<NonNullable<ActionExecutorDeps['machinePresetOpen']>>[0]['presets']) =>
+    deps.machinePresetOpen!({ presets, context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) });
+  if (actionId === 'machines.presets.get') {
+    const read = ManagedMachinePresetGetResultV1Schema.safeParse(result);
+    if (!read.success || read.data.kind !== 'found' || read.data.preset.contentEncryptionMode !== 'e2ee') return result;
+    const [opened] = await open([read.data.preset]);
+    return opened ? { ...read.data, opened } : read.data;
+  }
+  if (actionId === 'machines.presets.list') {
+    const read = ManagedMachinePresetListResultV1Schema.safeParse(result);
+    if (!read.success || read.data.kind !== 'listed') return result;
+    const sealed = read.data.presets.filter(preset => preset.contentEncryptionMode === 'e2ee');
+    return sealed.length === 0 ? read.data : { ...read.data, opened: await open(sealed) };
+  }
+  return result;
 }

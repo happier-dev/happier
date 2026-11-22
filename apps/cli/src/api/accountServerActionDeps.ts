@@ -44,6 +44,7 @@ import { MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 } from '@happier-dev/protocol/machi
 import { ManagedErrorV1Schema, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, ManagedMetadataControlAdmissionOutputV1Schema, managedMachineActionEndpointPathV1, projectManagedMetadataControlResultV1, resolveManagedAcquireReviewV1, unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { executeCliManagedAccountPower } from '@/machines/managed/accountPower';
 import { executeCliManagedAccountDelete } from '@/machines/managed/accountDelete';
+import { openCliMachinePresetsForRequester } from '@/machines/managed/presetRequesterOpening';
 import { executeCliMachinePresetArchive } from '@/machines/managed/accountPresetArchive';
 import { executeCliManagedAccountResize } from '@/machines/managed/accountResize';
 import { executeCliManagedAccountInspect } from '@/machines/managed/accountInspect';
@@ -981,7 +982,7 @@ export function createAccountServerActionDeps(input: Readonly<{
               credentials: input.credentials?.token === input.token ? input.credentials : { token: input.token, encryption: null },
               serverUrl: serverHttpBaseUrl, signal, post });
           } catch (error) {
-            if (error instanceof ManagedMachineControllerError) return { ok: false, ...normalizeActionExecutorThrownError(error, actionId) };
+            if (error instanceof ManagedMachineControllerError) return error.toActionFailure(actionId);
             throw error;
           }
         }
@@ -992,7 +993,7 @@ export function createAccountServerActionDeps(input: Readonly<{
             ManagedMetadataControlAdmissionOutputV1Schema);
           return projectManagedMetadataControlResultV1(admitted);
         } catch (error) {
-          if (error instanceof ManagedMachineControllerError) return { ok: false, ...normalizeActionExecutorThrownError(error, actionId) };
+          if (error instanceof ManagedMachineControllerError) return error.toActionFailure(actionId);
           throw error;
         }
       }
@@ -1008,7 +1009,7 @@ export function createAccountServerActionDeps(input: Readonly<{
             ? await executeCliManagedAccountDelete({ ...execution, body: ManagedMachineActionInputSchemasV1[MANAGED_DELETE_ACTION_ID_V1].parse(body) })
             : await executeCliManagedAccountPower({ ...execution, body: ManagedMachineActionInputSchemasV1['machines.managed.power.set'].parse(body) });
         } catch (error) {
-          if (error instanceof ManagedMachineControllerError) return { ok: false, ...normalizeActionExecutorThrownError(error, actionId) };
+          if (error instanceof ManagedMachineControllerError) return error.toActionFailure(actionId);
           throw error;
         }
       }
@@ -1074,6 +1075,9 @@ export function createAccountServerActionDeps(input: Readonly<{
           ...(authorization ? { authorization } : { token: input.token }) });
       },
     }),
+    machinePresetOpen: async ({ presets, context: actionContext, signal }) => await openCliMachinePresetsForRequester({
+      presets, context: actionContext, token: input.token, credentials: input.credentials, serverUrl: serverHttpBaseUrl,
+      ...(signal ? { signal } : {}) }),
     machinePresetAction: async ({ actionId, input: actionInput, context: actionContext, signal }) => {
       const body = MachinePresetActionInputSchemasV1[actionId].parse(actionInput);
       const unavailable = await qualifiedHomeActionFailure({ actionId, homeId: body.homeId, context: actionContext, signal });

@@ -3672,6 +3672,16 @@ export type ActionExecutorDeps = Readonly<{
     signal?: AbortSignal;
   }>) => Promise<unknown>;
 
+  /**
+   * The keyholding host opens the requester's own E2EE presets from a get/list read through its preset custody.
+   * Absent on hosts without the requester's Account key; readers then see only the sealed carrier.
+   */
+  machinePresetOpen?: (args: Readonly<{
+    presets: readonly import('../../machines/managed/managedMachinePresetV1.js').ManagedMachinePresetV1[];
+    context: ActionExecutorContext;
+    signal?: AbortSignal;
+  }>) => Promise<readonly import('../../machines/managed/managedMachinePresetV1.js').ManagedMachinePresetOpenedContentV1[]>;
+
   /** The installed Machine owns finite preset preparation and its reviewed provider children. */
   machinePresetPrepare?: (args: Readonly<{
     input: import('../../machines/managed/machinePresetActionsV1.js').ManagedMachinePresetPrepareInputV1;

@@ -1967,6 +1967,19 @@ If the modes differ, Save refuses `account_mode_mismatch` before sealing. For an
 E2EE Account, the host seals the draft before Save review with a fresh key for a
 new or formerly Plain row, or the incumbent-authenticating replacement for an
 E2EE row. The Save request then carries only the sealed carrier.
+An agent reads its person's own E2EE presets the same way the UI does. On a
+`machines.presets.get` or `list` read, the keyholding CLI host adds an `opened`
+entry for each E2EE preset. It opens the person's envelope through the preset
+custody (`createManagedPresetHydrator().openRecipientProjections`), which checks
+the persisted Account mode and key currentness and then calls the protocol opener
+the UI custody also calls (`openManagedMachinePresetRecipientProjectionV1`).
+Only presets owned by the host's own Account open, and only on a request under
+that Account's bearer. Team- or other-Account-owned presets and external executions
+return `unavailable` / `permission_denied`, even when the Account holds an
+envelope. Missing or stale key material returns `unavailable` /
+`credential_unavailable` and leaves only the sealed carrier. The server still
+returns only the sealed carrier, and Saved Secret bindings in the opened content
+stay references.
 The existing JSON storage carries this content, its explicit author-mode binding
 and Account recipient envelopes. Readers use that stored binding, including
 opaque setup references, rather than inferring mode from a content tag or the
