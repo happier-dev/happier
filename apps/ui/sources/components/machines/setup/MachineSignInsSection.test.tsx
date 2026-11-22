@@ -1,8 +1,14 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createMachineFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 import type { MachineCliSignInRow } from '@/agents/machineAgents/signIn/useAgentSignIn';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installOwnMachineApprovalReplayBoundary } from '@/dev/testkit/harness/approvalInbox';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
+import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createServerScopedMachineRpcBoundaryMock } from '@/dev/testkit/mocks/serverScopedRpc';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -11,7 +17,18 @@ vi.mock('@/text', async () => {
   return createTextModuleMock({ translate: (key) => key });
 });
 
-const { MachineSignInsList } = await import('./MachineSignInsSection');
+const boundary = vi.hoisted(() => ({ rpc: vi.fn(), confirm: vi.fn() }));
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => createServerScopedMachineRpcBoundaryMock(boundary.rpc));
+vi.mock('@/modal', async () => {
+  const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+  return createModalModuleMock({ spies: { confirm: boundary.confirm } }).module;
+});
+const home = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(home);
+const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
+await loadSyncSingletonForTests();
+const { MachineSignInsList, MachineSignInsSection } = await import('./MachineSignInsSection');
+const { AgentSignInTerminalHostProvider } = await import('@/components/machines/agents/signInTerminalHost');
 
 afterEach(() => standardCleanup());
 
@@ -43,6 +60,73 @@ function row(
 }
 
 describe('Machine sign-ins (E U4)', () => {
+  it('starts one native GitHub terminal only after the shared-user warning is accepted', async () => {
+    await home.reset();
+    boundary.rpc.mockReset();
+    boundary.confirm.mockReset();
+    boundary.confirm.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const serverId = await home.addHome({ name: 'Sign-in', serverUrl: 'https://fixture.invalid', accountId: 'fixture-account' });
+    const { PLUGIN_MANIFEST: github } = await import('../../../../../../packages/plugins/scm-github/src/manifest');
+    const definition = github.contributes!.systemTools!.find(tool => tool.id === 'gh')!;
+    const toolId = `${github.id}/${definition.id}`;
+    const machineId = 'github-sign-in';
+    const machine = createMachineFixture({ id: machineId, activeAt: Date.now() });
+    const fixture = createPlainMachineRowFixture({ id: machineId, accountId: 'fixture-account', machine });
+    home.answer(serverId, '/v1/machines', { body: [fixture] });
+    home.answer(serverId, `GET /v1/machines/${machineId}`, { body: { machine: fixture } });
+    await publishMachineInventoryForTest({ serverId, accountId: 'fixture-account' }, [machine]);
+    await installOwnMachineApprovalReplayBoundary({ harness: home, serverId, accountId: 'fixture-account', machineId });
+    boundary.rpc.mockImplementation(async ({ method }: { method: string }) => {
+      if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return {
+        protocolVersion: 1, projection: { v: 2, generation: 1,
+          installedPackagesById: { [github.id]: {
+            id: github.id, displayName: github.displayName, version: github.version, enabled: true,
+            source: { kind: 'path', locator: '/fixture/github' }, occurrenceId: github.id,
+          } },
+          familiesById: { systemTools: { family: 'systemTools', entriesById: {
+            [toolId]: { id: toolId, pluginId: github.id, pluginVersion: github.version, definition },
+          } } },
+        },
+      };
+      if (method === 'daemon.agents.signIn.status') return {
+        installed: true, status: 'signedOut', checkedAt: Date.now(), nativeLogin: 'login_terminal',
+        signInScope: 'machineOwner', connectedServices: [],
+      };
+      if (method === 'daemon.agents.signIn.prepare') return {
+        method: 'native', launch: { kind: 'agent_login', agentId: toolId },
+      };
+      if (method === 'daemon.terminal.ensure') return { ok: true, terminalId: 'github-login', reused: false };
+      throw new Error(`Unexpected fixture RPC ${method}`);
+    });
+    const starts = () => boundary.rpc.mock.calls.map(([request]) => request)
+      .filter(request => request.method === 'daemon.agents.signIn.prepare');
+    const terminalHost = { open: vi.fn() };
+    const screen = await renderScreen(
+      <AgentSignInTerminalHostProvider host={terminalHost}>
+        <MachineSignInsSection serverId={serverId} machineId={machineId} machineName="Devbox" presented editable />
+      </AgentSignInTerminalHostProvider>,
+    );
+    try {
+      const startButton = `machine-setup-sign-in-start:${toolId}`;
+      await waitForHomeGovernance(() => expect(screen.findByTestId(startButton)).not.toBeNull());
+      expect(starts()).toHaveLength(0);
+      await screen.pressByTestIdAsync(startButton);
+      expect(boundary.confirm).toHaveBeenCalledOnce();
+      expect(starts()).toHaveLength(0);
+      expect(terminalHost.open).not.toHaveBeenCalled();
+      await screen.pressByTestIdAsync(startButton);
+      expect(terminalHost.open).toHaveBeenCalledOnce();
+      expect(terminalHost.open).toHaveBeenCalledWith(expect.objectContaining({ serverId, machineId, agentId: toolId }));
+      await waitForHomeGovernance(() => expect(starts()).toEqual([
+        expect.objectContaining({ payload: { agentId: toolId, method: 'native' } }),
+      ]));
+      await waitForHomeGovernance(() => expect(boundary.rpc.mock.calls.map(([request]) => request.method))
+        .toContain('daemon.terminal.ensure'));
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it('offers the connected account beside this machine’s own sign-in, each through its owner', async () => {
     const onSignIn = vi.fn();
     const onUseConnected = vi.fn();

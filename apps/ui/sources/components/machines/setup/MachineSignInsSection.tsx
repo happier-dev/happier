@@ -122,7 +122,7 @@ export const MachineSignInsSection = React.memo(function MachineSignInsSection(
     connectedServiceKey?: string;
   }>,
 ) {
-  const signIns = useMachineCliSignIns({
+  const { items: rows, start } = useMachineCliSignIns({
     serverId: props.serverId,
     machineId: props.machineId,
     presented: props.presented,
@@ -130,13 +130,14 @@ export const MachineSignInsSection = React.memo(function MachineSignInsSection(
   });
   const terminalHost = useAgentSignInTerminalHost();
   const execution = useMountedActionExecution(props.serverId);
+  const { isCurrent } = execution;
   const router = useRouter();
   const hostUser = useMachineField(props.machineId, 'metadata', 'username', { serverId: props.serverId }) ?? null;
   const open = React.useCallback(
     async (row: MachineCliSignInRow) => {
       // A sign-in into an OS user other people's Sessions run as is theirs to use too: say so before it starts.
       const confirmed = await confirmMachineSignInScope({ row, machine: props.machineName, hostUser });
-      if (!confirmed) return;
+      if (!confirmed || !isCurrent()) return;
       const target = {
         serverId: props.serverId,
         machineId: props.machineId,
@@ -144,10 +145,11 @@ export const MachineSignInsSection = React.memo(function MachineSignInsSection(
         agentId: row.id,
         agentTitle: row.title,
       };
+      fireAndForget(start(row.id, { method: 'native' }), { tag: 'MachineSignIns.startNative' });
       if (terminalHost) terminalHost.open(target);
       else showAgentSignInTerminalSheet(target);
     },
-    [hostUser, props.machineId, props.machineName, props.serverId, terminalHost],
+    [hostUser, isCurrent, props.machineId, props.machineName, props.serverId, start, terminalHost],
   );
   const accounts = getStorage()((state) => state.profile.connectedAccountsV4);
   const defaultAccounts = useSetting('connectedServicesDefaultProfileByServiceId');
@@ -176,7 +178,6 @@ export const MachineSignInsSection = React.memo(function MachineSignInsSection(
     }), { tag: 'MachineSignIns.useConnected' });
   }, [accounts, defaultAccounts, execution, props.machineId, props.serverId, router]);
   // The owner lists only CLIs installed on this Machine (512b12e307d); each row says what the Machine reported.
-  const rows = signIns.items;
   if (rows.length === 0) return null;
   return <MachineSignInsList serverId={props.serverId} machineId={props.machineId} machineName={props.machineName}
     rows={rows} editable={props.editable} onSignIn={(row) => { void open(row); }} onUseConnected={useConnected} />;
