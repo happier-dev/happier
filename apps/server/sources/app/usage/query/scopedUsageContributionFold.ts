@@ -1,5 +1,5 @@
-import type { UsageAccountingCoverageReason } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
-import { projectDeclaredUsageMeasuredTokens } from '@happier-dev/protocol/usage/usageAggregation';
+import type { UsageAccountingCoverageReason, UsageAnalyticsTokens } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { projectDeclaredUsageMeasuredTokens, resolveUsageMeasuredTokens } from '@happier-dev/protocol/usage/usageAggregation';
 import { addUsageCost, addUsageTokens, createEmptyUsageCost, createEmptyUsageTokens, subtractUsageCost, subtractUsageTokens, usageHasAnyValue } from '../usageMetrics';
 import type { ResolvedScopedUsageContributions, ScopedUsageContribution, ScopedUsageEventRow } from './resolveScopedUsageContributions';
 import { isScopedUsageTurnDelta, readScopedUsageAccountingEvidence } from './scopedUsageEventRow';
@@ -10,10 +10,10 @@ function scopedUsageInferenceId(row: ScopedUsageEventRow): string | undefined {
     return evidence?.accounting?.inferenceId;
 }
 
-function contribution(row: ScopedUsageEventRow, tokens = row.tokens, cost = row.cost,
+function contribution(row: ScopedUsageEventRow, tokens: UsageAnalyticsTokens = row.tokens, cost = row.cost,
     contributingEventIds: readonly string[] = [row.id]): ScopedUsageContribution {
     const { accounting } = readScopedUsageAccountingEvidence(row);
-    return { ...row, tokens: projectDeclaredUsageMeasuredTokens(tokens, accounting), cost, contributingEventIds };
+    return { ...row, tokens: tokens.measured ? tokens : projectDeclaredUsageMeasuredTokens(tokens, accounting), cost, contributingEventIds };
 }
 
 /** A missing category is no new counter reading, so retain its last measured baseline. */
@@ -70,7 +70,7 @@ export function foldScopedUsageContributions(rows: readonly ScopedUsageEventRow[
     const latestFinal = selected.filter(row => row.scope === 'session_final').at(-1);
     const base: ScopedUsageContribution[] = [];
     let previousSnapshot: ScopedUsageEventRow | undefined;
-    let previousTokenSnapshot: ScopedUsageEventRow | undefined;
+    let previousTokenSnapshot: (ScopedUsageEventRow & { tokens: UsageAnalyticsTokens }) | undefined;
     let pendingTokenDeltas = createEmptyUsageTokens();
     let pendingCostDeltas = createEmptyUsageCost();
     let pending: ScopedUsageEventRow[] = [];
@@ -127,7 +127,7 @@ export function foldScopedUsageContributions(rows: readonly ScopedUsageEventRow[
         }
         if (reset) reportedCoverageStartIndex = intervalStartIndex;
         if (reset && !witnessedReset) snapshotReasons.add('counter_discontinuity');
-        const baselineTokens = previousTokenSnapshot && !reset ? previousTokenSnapshot.tokens : createEmptyUsageTokens();
+        const baselineTokens: UsageAnalyticsTokens = previousTokenSnapshot && !reset ? previousTokenSnapshot.tokens : createEmptyUsageTokens();
         const baselineCost = previousSnapshot && !reset ? previousSnapshot.cost : createEmptyUsageCost(row.cost.currency);
         const missingBaseline = hasTokenSnapshot && !previousTokenSnapshot
             && row.tokens.total !== null
@@ -136,12 +136,29 @@ export function foldScopedUsageContributions(rows: readonly ScopedUsageEventRow[
         const increaseTokens = subtractUsageTokens(row.tokens, baselineTokens);
         if (hasTokenSnapshot && increaseTokens.total !== null && pendingTokenDeltas.total !== null
             && increaseTokens.total < pendingTokenDeltas.total) snapshotReasons.add('ambiguous_overlap');
-        const tokens = hasTokenSnapshot ? subtractUsageTokens(increaseTokens, pendingTokenDeltas) : row.tokens;
+        let nextTokenSnapshot: (ScopedUsageEventRow & { tokens: UsageAnalyticsTokens }) | undefined =
+            hasTokenSnapshot ? retainSnapshotMeasurements(row, reset ? undefined : previousTokenSnapshot) : undefined;
+        let tokens: UsageAnalyticsTokens = hasTokenSnapshot ? subtractUsageTokens(increaseTokens, pendingTokenDeltas) : row.tokens;
+        const accounting = row.accountingEvidence?.accounting;
+        if (nextTokenSnapshot && (accounting?.inputIncludesCache === true || accounting?.outputIncludesReasoning === true)) {
+            // A sparse checkpoint can expose new detail about tokens already present in its whole.
+            // Measure retained levels first and preserve the raw delta as separate evidence.
+            const level = projectDeclaredUsageMeasuredTokens({ ...nextTokenSnapshot.tokens, total: row.tokens.total }, accounting);
+            if (level.measured || baselineTokens.measured) {
+                const coveredTurnTokens = subtractUsageTokens(increaseTokens, tokens);
+                const covered = resolveUsageMeasuredTokens(projectDeclaredUsageMeasuredTokens(coveredTurnTokens, accounting));
+                const previousLevel = resolveUsageMeasuredTokens(baselineTokens).total ?? 0;
+                const currentLevel = resolveUsageMeasuredTokens(level).total ?? 0;
+                tokens = { ...tokens, measured: { total: Math.max(0, currentLevel - previousLevel - (covered.total ?? 0)), fromParts: true } };
+            }
+            if (level.measured) nextTokenSnapshot = { ...nextTokenSnapshot, tokens: { ...nextTokenSnapshot.tokens, measured: level.measured } };
+        }
         const cost = subtractUsageCost(subtractUsageCost(row.cost, baselineCost), pendingCostDeltas);
         const hasReportedTotal = (row.cost.reportedUsd !== null && row.cost.reportedUsd > 0) || row.cost.costSource === 'provider_reported'
             || row.cost.costSource === 'provider_reported_api_equivalent';
         const coveredIds: string[] = [];
-        const hasResidual = usageHasAnyValue(tokens, { ...cost, reportedUsd: 0, invoiceUsd: 0 });
+        const hasMeasuredIncrease = (tokens.measured?.total ?? 0) > 0;
+        const hasResidual = hasMeasuredIncrease || usageHasAnyValue(tokens, { ...cost, reportedUsd: 0, invoiceUsd: 0 });
         const totalId = hasResidual ? `${row.id}:reported` : row.id;
         ranks.set(totalId, rank(row.id));
         if (hasReportedTotal) {
@@ -173,7 +190,7 @@ export function foldScopedUsageContributions(rows: readonly ScopedUsageEventRow[
                 { ...cost, estimatedUsd: 0, reportedTotalContributionIds: coveredIds }, hasResidual ? [] : [row.id]);
             const item = { ...total, coverageReasons };
             base.push(item);
-        } else if (usageHasAnyValue(tokens, cost)
+        } else if (hasMeasuredIncrease || usageHasAnyValue(tokens, cost)
             || tokens.input !== null && previousTokenSnapshot?.tokens.input == null
             || tokens.output !== null && previousTokenSnapshot?.tokens.output == null
             || tokens.reasoning !== null && previousTokenSnapshot?.tokens.reasoning == null
@@ -189,7 +206,7 @@ export function foldScopedUsageContributions(rows: readonly ScopedUsageEventRow[
         }
         if (hasReportedTotal) reportedCoverageStartIndex = base.length;
         if (hasTokenSnapshot || witnessedReset) {
-            previousTokenSnapshot = hasTokenSnapshot ? retainSnapshotMeasurements(row, reset ? undefined : previousTokenSnapshot) : undefined;
+            previousTokenSnapshot = nextTokenSnapshot;
             // Only a measured counter settles its pending deltas. Sparse
             // snapshots leave the other category baselines unchanged.
             pendingTokenDeltas = reset ? createEmptyUsageTokens() : {
