@@ -3871,7 +3871,7 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
             && isAccountActionHttpOperation('discussion.list', proof);
     }
     if (isReviewRecordWriteActionIdV1(root) && verified.effectActionId === root) {
-        // The keyholding host signs the Review record selected by the admitted
+        // The keyholding host signs Review storage requests under the admitted
         // root; Artifact routes retain requester access, mode and revision CAS.
         if (isReadOnlyArtifactHttpPurpose(proof) || isArtifactRecipientKeyPreparationHttpPurpose(proof)) return true;
         const body = proof.body !== null && typeof proof.body === 'object' && !Array.isArray(proof.body)
