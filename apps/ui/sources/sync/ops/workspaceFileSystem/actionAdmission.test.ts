@@ -345,7 +345,7 @@ describe('shared workspace filesystem Action admission', () => {
         expect(methods).toHaveLength(releasedCallCount);
     });
 
-    it.each(['controller reconnect', 'Start', 'vendor Stop in Changes', 'Code re-entry while Starting'] as const)('settles presented remote workspace reads after %s', async journey => {
+    it.each(['controller reconnect', 'slow replacement watch', 'Start', 'vendor Stop in Changes', 'Code re-entry while Starting'] as const)('settles presented remote workspace reads after %s', async journey => {
         const { apiSocket } = await import('@/sync/api/session/apiSocket');
         const { recordMachineRequestFailed } = await import('@/sync/domains/machines/reachability/machineReachability');
         const { useWorkspaceRepositoryTreeBrowser } = await import('@/hooks/workspaces/files/useWorkspaceRepositoryTreeBrowser');
@@ -361,6 +361,7 @@ describe('shared workspace filesystem Action admission', () => {
         const homeId = 'srv_filesystem_action';
         const startsStopped = journey === 'Start';
         const changesOnly = journey === 'vendor Stop in Changes';
+        const slowReplacementWatch = journey === 'slow replacement watch';
         const entersDuringStart = journey === 'Code re-entry while Starting';
         const workspace = { v: 2, kind: 'managed', serverId: homeId, workspaceId: 'restarted-project', managedId: 'native-guest',
             controller: { machineId, installationId: 'test-installation' }, rootPath } as const;
@@ -426,6 +427,7 @@ describe('shared workspace filesystem Action admission', () => {
         let stopWatch: () => void = () => {};
         let releaseReads!: () => void;
         const holdRecoveryReads = new Promise<void>(resolve => { releaseReads = resolve; });
+        let stopReadCount = 0;
         filesystem.response = async (request: FilesystemBoundaryRequest) => {
             const isReady = phase === 'before' || phase === 'ready';
             if (request.method === RPC_METHODS.SCM_WORKSPACE_WATCH) {
@@ -440,6 +442,7 @@ describe('shared workspace filesystem Action admission', () => {
                             reason: { code: 'project_account_rows_changed', message: 'Project Account rows changed during admission' } };
                         await replacementWatch.promise;
                     }
+                    if (phase === 'ready' && slowReplacementWatch) await replacementWatch.promise;
                     return { status: 'ready', revision: phase === 'before' ? 1 : 2 };
                 }
                 return await new Promise(resolve => {
@@ -454,6 +457,10 @@ describe('shared workspace filesystem Action admission', () => {
                     commit: { oid: headOid, subject: 'guest commit', authorName: 'Guest', committedAt: 1 } }] };
             }
             if (request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT) {
+                if (phase === 'stopped' && changesOnly) {
+                    stopReadCount++;
+                    await holdRecoveryReads;
+                }
                 if (phase === 'ready') await holdRecoveryReads;
                 if (!isReady) return { success: false, errorCode: 'BACKEND_UNAVAILABLE', actionErrorCode: stoppedCode() };
                 return { success: true, snapshot: { projectKey: rootPath, fetchedAt: Date.now(),
@@ -497,9 +504,13 @@ describe('shared workspace filesystem Action admission', () => {
                 });
                 phase = 'stopped';
                 await act(async () => { stopWatch(); });
+                await vi.waitFor(() => expect(stopReadCount).toBe(1));
+                expect.soft(view.getCurrent().git.error).toBeNull();
+                releaseReads();
                 await vi.waitFor(() => expect(view.getCurrent().git.error).toMatchObject({
                     errorCode: 'managed_power_required', nextAction: { kind: 'start_workspace' },
                 }));
+                expect(stopReadCount).toBe(1);
                 return;
             }
             if (entersDuringStart) {
@@ -554,7 +565,10 @@ describe('shared workspace filesystem Action admission', () => {
             }
 
             await vi.waitFor(() => expect(view.getCurrent().gitRecovering).toBe(true));
-            if (journey === 'controller reconnect') {
+            if (slowReplacementWatch) {
+                expect(view.getCurrent().git.error).toBeNull();
+                replacementWatch.resolve();
+            } else if (journey === 'controller reconnect') {
                 expect.soft(view.getCurrent().tree).toMatchObject({ recoveryInFlight: true,
                     nodes: [expect.objectContaining({ name: 'before.txt' })] });
             }
@@ -567,7 +581,8 @@ describe('shared workspace filesystem Action admission', () => {
                     recovery: [false, false], gitError: null, filesError: null, names: ['ready.txt'],
                     history: { status: 'ready', stale: false, headOid },
                 });
-                expect(starts).toEqual(startsStopped || entersDuringStart ? ['ready'] : ['before', 'ready', 'ready']);
+                expect(starts).toEqual(startsStopped || entersDuringStart ? ['ready']
+                    : slowReplacementWatch ? ['before', 'ready'] : ['before', 'ready', 'ready']);
             });
         } finally { replacementWatch.resolve(); releaseReads(); await view.unmount(); }
     });

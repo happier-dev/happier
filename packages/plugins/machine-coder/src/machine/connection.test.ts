@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected-accounts';
+import { createPluginHttpFixture } from '@happier-dev/plugin-sdk/testing';
 import { prepareCoderConnection } from './connection.js';
 import { ACCOUNT_PURPOSE, ACCOUNT_SERVICE } from './schemas.js';
 import { createCoderClient } from './nativeClient.js';
@@ -9,7 +10,7 @@ import { createCoderClient } from './nativeClient.js';
 const token = 'coder-private-test-token';
 const closes: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of closes.splice(0)) await close(); });
-async function fixture(status = 200, abortAfterReply = false) {
+async function fixture(status = 200, abortAfterReply = false, openWebSocket?: PluginInvocationContext['services']['http']['openWebSocket']) {
   const abort = new AbortController();
   const credentialsSeen: Array<string | undefined> = [];
   const server = createServer((req, res) => { credentialsSeen.push(req.headers['coder-session-token'] as string | undefined);
@@ -28,15 +29,15 @@ async function fixture(status = 200, abortAfterReply = false) {
       expect(request.kind).toBe('environment'); materializations++;
       return { kind: 'environment', env: { CODER_URL: endpoint, CODER_SESSION_TOKEN: token } }; },
   };
-  const http: PluginInvocationContext['services']['http'] = { request: async (request, options) => {
+  const http = createPluginHttpFixture({ openWebSocket, request: async (request, options) => {
     const response = await fetch(request.url, { method: request.method, headers: request.headers, body: request.body,
       signal: options?.signal, redirect: request.redirect });
     const body = new Uint8Array(await response.arrayBuffer());
     if (abortAfterReply) abort.abort(new Error('role-ended'));
     return { status: response.status, finalUrl: response.url, headers: Object.fromEntries(response.headers), body };
-  } };
+  } });
   const prepared = await prepareCoderConnection(accounts, http, abort.signal);
-  return { prepared, credentialsSeen, counts: () => ({ selections, materializations }) };
+  return { prepared, credentialsSeen, signal: abort.signal, counts: () => ({ selections, materializations }) };
 }
 describe('Coder connected account invocation custody', () => {
   it('preserves a completed connection HTTP reply and cancels the next dispatch', async () => {
@@ -55,6 +56,22 @@ describe('Coder connected account invocation custody', () => {
     expect(h.counts()).toEqual({ selections: 1, materializations: 1 });
     expect(h.credentialsSeen.every(value => value === token)).toBe(true);
     expect(JSON.stringify(await client.check())).not.toContain(token);
+  });
+
+  it('uses the captured deployment and invocation lifetime for the workspace watch handshake', async () => {
+    const refused = new Error('fixture closes before upgrade');
+    const opened = Promise.withResolvers<Parameters<PluginInvocationContext['services']['http']['openWebSocket']>>();
+    const h = await fixture(200, false, async (...args) => {
+      opened.resolve(args);
+      throw refused;
+    });
+    const path = '/api/v2/workspaces/workspace/watch-ws';
+    await expect(h.prepared.openWorkspaceWatch(path)).rejects.toBe(refused);
+    const [handshake, options] = await opened.promise;
+    expect(handshake).toEqual({ url: h.prepared.endpoint.replace(/^http:/, 'ws:') + path, allowInsecureWs: true,
+      headers: [{ name: 'Coder-Session-Token', value: token, sensitive: true }] });
+    expect(options?.signal).toBe(h.signal);
+    expect(h.counts()).toEqual({ selections: 1, materializations: 1 });
   });
   it('projects a rejected token as typed reconnect without reflected server text', async () => {
     const h = await fixture(401); const client = createCoderClient({ request: h.prepared.request,

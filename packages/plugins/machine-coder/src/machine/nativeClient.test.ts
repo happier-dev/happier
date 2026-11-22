@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PluginError } from '@happier-dev/plugin-sdk';
+import type { PluginWebSocketConnection, PluginWebSocketMessage } from '@happier-dev/plugin-sdk/http';
 import { createCoderClient, coderWorkspaceName } from './nativeClient.js';
 import { CoderLaunchSchema, RECONCILIATION, type CoderResource } from './schemas.js';
 
@@ -82,6 +83,36 @@ describe('Coder finite lifecycle through its REST boundary', () => {
     h.setCurrent(workspace('starting'));
     await expect(h.client.guest(resource)).rejects.toMatchObject({ code: 'coder_agent_unavailable' });
     expect(h.requests.every(request => request.method === 'GET')).toBe(true);
+  });
+
+  it('delivers the typed vendor Stop after a channel admission meets the in-progress build', async () => {
+    const h = await fixture();
+    const stopping = workspace('stopping', 'stop', 'external-stop');
+    h.setCurrent(stopping);
+    const opened = Promise.withResolvers<string>();
+    const disconnected = Promise.withResolvers<Awaited<PluginWebSocketConnection['closed']>>();
+    const settled = Promise.withResolvers<PluginWebSocketMessage>();
+    const data = (value: ReturnType<typeof workspace>): PluginWebSocketMessage =>
+      ({ kind: 'text', text: JSON.stringify({ type: 'data', data: value }) });
+    const frames: PluginWebSocketMessage[] = [{ kind: 'text', text: '{"type":"ping","data":null}' }, data(stopping)];
+    const close = () => disconnected.resolve({ kind: 'local', wasClean: true });
+    const socket: PluginWebSocketConnection = { url: 'ws://fixture', protocol: '', closed: disconnected.promise,
+      async send() { throw new Error('Workspace watch is read-only'); },
+      async receive() { return frames.shift() ?? settled.promise; },
+      close, dispose: close,
+    };
+    const admitted = h.client.guest(resource, async (path: string) => {
+      opened.resolve(path);
+      return socket;
+    }).catch(error => error);
+    expect(await Promise.race([opened.promise, admitted])).toBe('/api/v2/workspaces/workspace/watch-ws');
+    settled.resolve(data(workspace('stopped', 'stop', 'external-stop')));
+    await expect(admitted).resolves.toMatchObject({ code: 'managed_power_required' });
+    await disconnected.promise;
+    expect(h.requests.map(({ method, path }) => [method, path])).toEqual([
+      ['GET', '/api/v2/users/me'], ['GET', '/api/v2/workspaces/workspace'],
+    ]);
+    expect(h.observations()).toBe(0);
   });
 
   it('keeps a gateway failure during acquisition preflight typed after a successful acquisition', async () => {

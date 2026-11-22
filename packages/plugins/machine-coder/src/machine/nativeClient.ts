@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { PluginError } from '@happier-dev/plugin-sdk';
+import type { PluginWebSocketConnection } from '@happier-dev/plugin-sdk/http';
 import { defineProtocolArray, defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
 import { projectMachineProvisionerActionFailure as projectExternalActionFailure, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { coderCredentialUnavailable } from './connection.js';
@@ -60,6 +61,7 @@ function powerOf(native: Workspace) {
   return status === 'starting' ? 'unknown' : status;
 }
 const inProgress = (status: string) => status === 'pending' || status === 'starting' || status === 'stopping' || status === 'deleting' || status === 'canceling';
+const pendingStop = (build: Workspace['latest_build']) => build.transition === 'stop' && inProgress(build.status);
 
 export function createCoderClient(input: { request: (path: string, init?: RequestInit) => Promise<Response>; signal: AbortSignal; observedAt: number; waitForObservation: () => Promise<void> }) {
   let userPromise: Promise<ReturnType<typeof userSchema.parse>> | undefined;
@@ -95,13 +97,37 @@ export function createCoderClient(input: { request: (path: string, init?: Reques
   function matches(native: Workspace, expected: Pick<CoderResource, 'ownerId' | 'organizationId' | 'templateId'>) {
     return native.owner_id === expected.ownerId && native.organization_id === expected.organizationId && native.template_id === expected.templateId;
   }
+  function qualifyWorkspace(value: unknown, resource: Pick<CoderResource, 'workspaceId' | 'ownerId' | 'organizationId' | 'templateId'>) {
+    const native = parseWorkspace(value);
+    if (native.id !== resource.workspaceId || !matches(native, resource)) fail('coder_resource_mismatch');
+    return native;
+  }
   async function read(resource: Pick<CoderResource, 'workspaceId' | 'ownerId' | 'organizationId' | 'templateId'>) {
     await principal(resource.ownerId);
     const value = await request('/workspaces/' + encodeURIComponent(resource.workspaceId) + '?include_deleted=true', 'GET', undefined, true);
     if (value === null) return null;
-    const native = parseWorkspace(value);
-    if (native.id !== resource.workspaceId || !matches(native, resource)) fail('coder_resource_mismatch');
+    const native = qualifyWorkspace(value, resource);
     return native.latest_build.status === 'deleted' ? null : native;
+  }
+  async function observePendingStop(resource: CoderResource, openWatch: (path: string) => Promise<PluginWebSocketConnection>) {
+    // Coder v2.39 sends the current workspace after subscribing, then pushes workspace updates.
+    const watch = await openWatch('/api/v2/workspaces/' + encodeURIComponent(resource.workspaceId) + '/watch-ws');
+    try {
+      for (;;) {
+        const frame = await watch.receive({ signal: input.signal });
+        if (frame.kind === 'closed') return fail('provider_unavailable');
+        if (frame.kind !== 'text') return fail('coder_invalid_response');
+        let event: unknown;
+        try { event = JSON.parse(frame.text); } catch { return fail('coder_invalid_response'); }
+        if (!event || typeof event !== 'object' || !('type' in event) || typeof event.type !== 'string') return fail('coder_invalid_response');
+        if (event.type === 'error') return fail('provider_unavailable');
+        if (event.type !== 'data') continue;
+        const native = qualifyWorkspace('data' in event ? event.data : undefined, resource);
+        if (native.dormant_at || !pendingStop(native.latest_build)) return native;
+      }
+    } finally {
+      await watch.dispose();
+    }
   }
   async function bindExistingWorkspace(launch: CoderLaunch, workspaceId: string, managedId: string): Promise<Acquisition> {
     const owner = await user();
@@ -267,9 +293,11 @@ export function createCoderClient(input: { request: (path: string, init?: Reques
         }
       } catch (error) { input.signal.throwIfAborted(); return projectCoderFailure(error, () => ({ kind: issued ? 'unknown' : 'refused', code: coderFailureCode(error) })); }
     },
-    async guest(resource: CoderResource) {
-      const native = await read(resource);
+    async guest(resource: CoderResource, openWatch?: (path: string) => Promise<PluginWebSocketConnection>) {
+      let native = await read(resource);
       if (!native) throw new PluginError({ code: 'managed_not_found' });
+      if (openWatch && !native.dormant_at && pendingStop(native.latest_build)) native = await observePendingStop(resource, openWatch);
+      if (native.latest_build.status === 'deleted') throw new PluginError({ code: 'managed_not_found' });
       if (native.dormant_at) throw new PluginError({ code: 'coder_dormant' });
       const power = powerOf(native);
       if (power === 'stopped') throw new PluginError({ code: 'managed_power_required' });

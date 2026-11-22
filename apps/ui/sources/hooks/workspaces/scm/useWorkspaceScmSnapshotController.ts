@@ -3,7 +3,7 @@ import * as React from 'react';
 import { scmStatusSync } from '@/scm/scmStatusSync';
 import { useSetting, useWorkspaceScmSnapshot, useWorkspaceScmSnapshotError, useWorkspaceScmSummarySnapshot } from '@/sync/domains/state/storage';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-import { useWorkspaceScmSlotLacksList } from '@/sync/store/scmHooks';
+import { useWorkspaceScmRecoveryInFlight, useWorkspaceScmSlotLacksList } from '@/sync/store/scmHooks';
 import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import type { ProjectScmSnapshotError } from '@/sync/runtime/orchestration/projectManager';
 import { t } from '@/text';
@@ -49,6 +49,7 @@ export function useWorkspaceScmSnapshotController(scope: WorkspaceScopeBase | nu
     const intervalMs = useSetting('scmSessionAutoRefreshIntervalMs');
     const snapshot = summaryOnly ? summarySnapshot : listSnapshot;
     const snapshotError = useWorkspaceScmSnapshotError(normalizedScope);
+    const recovering = useWorkspaceScmRecoveryInFlight(presented && normalizedScope?.workspace ? normalizedScope : null);
     const presence = useMachinePresenceSummary(normalizedScope?.serverId, normalizedScope?.machineId);
     const unreachable = presence.reachability === 'unreachable';
 
@@ -56,13 +57,13 @@ export function useWorkspaceScmSnapshotController(scope: WorkspaceScopeBase | nu
     const [loadingMore, setLoadingMore] = React.useState(false);
     const error = React.useMemo<WorkspaceScmSnapshotControllerError | null>(() => {
         if (unreachable) return { message: t('errors.daemonUnavailableBody'), errorCode: 'machine_offline' };
-        if (!snapshotError) return null;
+        if (!snapshotError || recovering) return null;
         return {
             message: snapshotError.message,
             errorCode: snapshotError.errorCode ?? null,
             ...(snapshotError.nextAction ? { nextAction: snapshotError.nextAction } : {}),
         };
-    }, [unreachable, snapshotError]);
+    }, [unreachable, snapshotError, recovering]);
 
     const refresh = React.useCallback(async () => {
         if (!normalizedScope || unreachable || waitingForLayout) return;
@@ -119,7 +120,7 @@ export function useWorkspaceScmSnapshotController(scope: WorkspaceScopeBase | nu
 
     return {
         snapshot,
-        loading: loading && !unreachable,
+        loading: (loading || recovering) && !unreachable,
         error,
         refresh,
         loadMore,

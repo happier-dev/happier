@@ -20,6 +20,7 @@ type Target<Snapshot, Unavailable> = Readonly<{
     key: string;
     read(source?: PresentedAutoRefreshReadSource): Promise<Snapshot>;
     subscribeRecovery?(recover: () => void): () => void;
+    onRecoveryWatchPending?(pending: boolean): void;
     watch?(callbacks: PresentedAutoRefreshWatchCallbacks<Unavailable>): () => void;
     onUnavailable?(reason: Unavailable): void;
 }>;
@@ -160,8 +161,10 @@ export class PresentedAutoRefresh<Demand extends PresentedAutoRefreshDemand, Sna
         readySource: 'watch_ready' | 'reconnected' = 'watch_ready'): boolean {
         if (!this.isActive() || poll.consumers.size === 0 || poll.watchState.status !== 'idle' || !target.watch) return false;
         poll.watchState = { status: 'pending' };
+        const recovering = readySource === 'reconnected';
+        if (recovering) target.onRecoveryWatchPending?.(true);
         this.clearTimer(poll);
-        poll.stopWatch = target.watch({
+        const stopWatch = target.watch({
             onChange: () => this.revalidate(target, 'filesystem'),
             // A read after native enrollment closes the initial snapshot-to-attachment window.
             onReady: () => {
@@ -170,7 +173,7 @@ export class PresentedAutoRefresh<Demand extends PresentedAutoRefreshDemand, Sna
                 this.revalidate(target, readySource);
             },
             onUnavailable: reason => {
-                const reconnectFailedBeforeReady = readySource === 'reconnected' && poll.watchState.status === 'pending';
+                const reconnectFailedBeforeReady = recovering && poll.watchState.status === 'pending';
                 poll.watchState = { status: 'unavailable', reason };
                 target.onUnavailable?.(reason);
                 if (reconnectFailedBeforeReady) this.revalidate(target, 'reconnected');
@@ -178,6 +181,11 @@ export class PresentedAutoRefresh<Demand extends PresentedAutoRefreshDemand, Sna
                 if (this.policy(poll)?.intervalMs) this.schedule(poll, poll.delayMs);
             },
         });
+        poll.stopWatch = () => {
+            stopWatch();
+            // Once the watch answers, the recovery read owns settlement.
+            if (recovering && poll.watchState.status === 'pending') target.onRecoveryWatchPending?.(false);
+        };
         return true;
     }
 

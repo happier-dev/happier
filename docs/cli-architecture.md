@@ -1851,7 +1851,8 @@ both sources through their existing admission paths. The first ready reply from 
 managed watch also refreshes Files. A retained Project can therefore recover a
 listing refused during controller startup even when Git is already current. A
 Project without a usable Git watch still revalidates on the reconnect signal.
-Closed surfaces release demand.
+Git keeps the last successful snapshot while the replacement watch attaches and
+the recovery read settles. Closed surfaces release demand.
 
 Path policy stays in `filesystemPathAuthorization.ts`: it uses this Machine's link
 facts only for the local source; a target confines each operation to its root
@@ -1871,6 +1872,9 @@ Machine.
 A managed Project's provider refusal keeps its typed code through target preparation
 and the workspace holder channel. Files and Git can use `managed_power_required`
 from the provider to offer the existing Start action for the admitted workspace.
+If the Coder channel closes during an external Stop, the replacement stream
+admission can receive the settled power state through Coder's workspace watch.
+That observation ends when the Stop settles or the admission is cancelled.
 
 Streaming producers (checkpoint materialization from `git cat-file`) write through the port's `openWrite` stream; workspace-export readers (manifest scan, file hashing, transfer resolution) read the exported workspace through the source, while export import/promotion into a sync or handoff destination stays this Machine's directory owner. Copy installs through `installWorkspaceTree` (stage beside the
 destination, swap, restore on failure); folder ZIP download, prepared entry

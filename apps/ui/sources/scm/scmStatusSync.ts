@@ -97,6 +97,7 @@ export class ScmStatusSync {
                 : storage.getState().getSessionProjectScmSnapshot(demand.sessionId, demand.serverId);
         };
         return { key: projectKey, read, ...(workspace && managedWorkspace ? {
+            onRecoveryWatchPending: (pending: boolean) => projectManager.setWorkspaceScmRecoveryInFlight(workspace, pending),
             subscribeRecovery: (recover: () => void) => {
                 const active = captureActiveServerAccountScopeLifetime();
                 const account = active && selectActiveServerAccountScopeForServer(active.scope, workspace.serverId)
@@ -131,9 +132,12 @@ export class ScmStatusSync {
                 return () => watch.dispose();
             },
             onUnavailable: (reason: ScmWorkspaceWatchUnavailable) => {
-                this.publishWorkspaceWatchFailure(workspace, projectKey, reason);
                 // A lost carrier ends the parked read. Re-admit the presented source once to learn its state.
-                if (managedWorkspace && reason.code === 'holder_disconnected') void read('reconnected').catch(() => undefined);
+                if (managedWorkspace && reason.code === 'holder_disconnected') {
+                    void read('reconnected').catch(() => undefined);
+                    return;
+                }
+                this.publishWorkspaceWatchFailure(workspace, projectKey, reason);
             },
         } : {}) };
     });

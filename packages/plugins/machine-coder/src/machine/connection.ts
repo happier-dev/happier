@@ -5,6 +5,7 @@ import { completeCoderFirstAdmin } from './firstAdmin.js';
 
 type HttpService = PluginInvocationContext['services']['http'];
 const environmentKeys = ['CODER_URL', 'CODER_SESSION_TOKEN'] as const;
+const coderTokenHeader = 'Coder-Session-Token';
 export function coderCredentialUnavailable() {
   return new PluginError({ code: 'credential_unavailable', remediation: { kind: 'selectAccount', service: ACCOUNT_SERVICE } });
 }
@@ -25,7 +26,7 @@ function requestWithConnection(selected: ReturnType<typeof connection>, http: Ht
     signal.throwIfAborted();
     const url = selected.endpoint + path;
     const headers = Object.fromEntries(new Headers(init.headers));
-    headers['Coder-Session-Token'] = selected.token;
+    headers[coderTokenHeader] = selected.token;
     const method = init.method ?? 'GET';
     if (method !== 'GET' && method !== 'POST') throw new PluginError({ code: 'invalid_request' });
     const response = await http.request({ url, method, headers, redirect: 'error',
@@ -85,6 +86,7 @@ export async function prepareCoderConnection(accounts: Pick<ConnectedAccountsSer
   endpoint: string;
   token: string;
   request(path: string, init?: RequestInit): Promise<Response>;
+  openWorkspaceWatch(path: string): ReturnType<HttpService['openWebSocket']>;
 }> {
   signal.throwIfAborted();
   const binding = await accounts.getBinding(ACCOUNT_PURPOSE, { signal });
@@ -93,5 +95,15 @@ export async function prepareCoderConnection(accounts: Pick<ConnectedAccountsSer
   signal.throwIfAborted();
   if (material.kind !== 'environment') throw coderCredentialUnavailable();
   const selected = connection({ endpoint: material.env.CODER_URL }, material.env.CODER_SESSION_TOKEN);
-  return { ...selected, request: requestWithConnection(selected, http, signal) };
+  return {
+    ...selected,
+    request: requestWithConnection(selected, http, signal),
+    openWorkspaceWatch(path) {
+      const url = new URL(selected.endpoint + path);
+      const insecure = url.protocol === 'http:';
+      url.protocol = insecure ? 'ws:' : 'wss:';
+      return http.openWebSocket({ url: url.href, allowInsecureWs: insecure,
+        headers: [{ name: coderTokenHeader, value: selected.token, sensitive: true }] }, { signal });
+    },
+  };
 }
