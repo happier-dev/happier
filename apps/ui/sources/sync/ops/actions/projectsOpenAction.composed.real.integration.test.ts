@@ -6,12 +6,14 @@ import { io, type Socket } from 'socket.io-client';
 import { callSocketRpc } from '@happier-dev/sync-client';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
-import { ExternalActionDaemonDispatchRequestSchema, EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { bindExternalActionExecutionAuthorizationHttpPathV1, ExternalActionDaemonDispatchRequestSchema,
+    EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { OpenProjectInputV1Schema, OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { ProjectAccountRowListResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { TEAM_SETUP_RUN_ACTION_ID_V1, TEAM_SETUP_RUN_CHILD_ACTION_IDS_V1 } from '@happier-dev/protocol/teams/actionIdsV1';
 import type { Fastify as AppFastify } from '../../../../../server/sources/app/api/types';
 import { createLightSqliteHarness, type LightSqliteHarness } from '../../../../../server/sources/testkit/lightSqliteHarness';
 import { setEligibleMachineAccessGrantInTx } from '../../../../../server/sources/testkit/machineAccessGrant.testkit';
@@ -106,6 +108,7 @@ describe('recipient Project Open through the real UI, Home, installed daemon and
     let app: AppFastify;
     let endpoint: string;
     let rawProjectAdmissionRequests = 0;
+    let projectAuthorizations = 0;
     beforeAll(async () => {
         database = await createLightSqliteHarness({ tempDirPrefix: 'happier-recipient-project-', initAuth: true, initEncrypt: true,
             env: { HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional', AUTH_REQUIRED_LOGIN_PROVIDERS: '' } });
@@ -117,6 +120,10 @@ describe('recipient Project Open through the real UI, Home, installed daemon and
         changesRoutes(app); sessionRoutes(app); registerPluginAvailabilityRoutes(app);
         startSocket(app); registerExternalActionRoutes(app);
         app.addHook('preHandler', async request => {
+            if (request.method === 'POST'
+                && request.url === bindExternalActionExecutionAuthorizationHttpPathV1(TEAM_SETUP_RUN_CHILD_ACTION_IDS_V1.repository)) {
+                projectAuthorizations += 1;
+            }
             const method = request.body && typeof request.body === 'object' ? Reflect.get(request.body, 'method') : undefined;
             if (request.url.endsWith('/admission/verify') && typeof method === 'string'
                 && method.endsWith(`:${RPC_METHODS.PROJECTS_OPEN}`)) rawProjectAdmissionRequests += 1;
@@ -325,6 +332,19 @@ describe('recipient Project Open through the real UI, Home, installed daemon and
         expect(opened.workspace).toMatchObject({ serverId: homeId, machineId: machine.id, rootPath: root });
         expect((await readRows(requesterToken)).rows.some(row => row.key.kind === 'workspace-ref' && row.key.id === opened.workspace.workspaceId)).toBe(true);
         expect((await readRows(ownerToken)).rows).toEqual(ownerRows);
+        phase = 'reviewed Team batch spends one existing Use admission';
+        const batch = { serverId: homeId, homeId, machineId: machine.id, repositories: [{ id: 'shared', input }] };
+        const actionContext = { serverId: profile.id, expectedAccountId: requester.id, surface: 'ui' as const };
+        const grantsBeforeBatch = projectAuthorizations;
+        const batchResult = await createDefaultActionExecutor().executeConfirmed(TEAM_SETUP_RUN_ACTION_ID_V1, batch, actionContext);
+        expect(batchResult, JSON.stringify(batchResult)).toMatchObject({ ok: true, result: { completed: true, machine: null,
+            repositories: [{ id: 'shared', result: { ok: true, result: { workspace: opened.workspace } } }],
+        } });
+        expect(projectAuthorizations - grantsBeforeBatch).toBe(1);
+        expect(rawProjectAdmissionRequests).toBe(0);
+        expect(carriedRequests).toHaveLength(4);
+        expect(carriedRequests.at(-1)).toMatchObject({ actionId: TEAM_SETUP_RUN_CHILD_ACTION_IDS_V1.repository,
+            principal: { accountId: requester.id } });
         for (const token of [requesterToken, outsiderToken]) {
             phase = token === requesterToken ? 'guest raw RPC refusal' : 'outsider raw RPC refusal';
             const rawSocket = io(endpoint, { path: '/v1/updates', transports: ['websocket'], reconnection: false, autoConnect: false,
@@ -355,6 +375,10 @@ describe('recipient Project Open through the real UI, Home, installed daemon and
             serverId: profile.id, expectedAccountId: requester.id, surface: 'ui', authority: 'present_user', actionRequestId: crypto.randomUUID(),
         });
         expect(revoked).toMatchObject({ ok: false });
+        const revokedBatch = await createDefaultActionExecutor().executeConfirmed(TEAM_SETUP_RUN_ACTION_ID_V1, batch, actionContext);
+        expect(revokedBatch).toMatchObject({ ok: true, result: { completed: false, machine: null,
+            repositories: [{ id: 'shared', result: { ok: false } }],
+        } });
         expect(receipts).toHaveLength(receiptsBeforeRevocation);
         expect((await readRows(outsiderToken)).rows).toEqual([]);
         expect((await readRows(ownerToken)).rows).toEqual(ownerRows);
