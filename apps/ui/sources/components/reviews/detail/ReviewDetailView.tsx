@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierReviewGlanceLine, type HappierReviewGlance } from '@happier-dev/plugin-ui/presentation';
+import { HappierReviewGlanceLine, happierPageTextMetrics, type HappierReviewGlance } from '@happier-dev/plugin-ui/presentation';
 import { useWorkTheme, WORK_HOST } from '@/components/work/map/WorkMapView';
 
 import type { ReviewRoundQualityUnavailableReasonV1, ReviewRoundQualityV1, ReviewRoundReviewerQualityV1, ReviewRoundStateV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
@@ -87,7 +87,8 @@ export type ReviewDetailViewProps = Readonly<{
   /** The one primary for this view (Submit review when it is asked of you, else New round once settled). */
   primaryAction?: PageHeaderPrimaryAction | null;
   menu: readonly PageHeaderMenuAction[];
-  glance: ReviewDetailGlance | null;
+  /** `'pending'` while the Review owner's read is on its way: the sentence's line is held, so nothing below it moves. */
+  glance: ReviewDetailGlance | 'pending' | null;
   /** The round's reviewer score as the Host aggregated it (lowest or median, the person's setting); `null` when none was recorded. */
   quality?: ReviewRoundQualityV1 | null;
   qualityUnavailableReason?: ReviewRoundQualityUnavailableReasonV1 | null;
@@ -163,7 +164,7 @@ export function ReviewDetailView(
           // The glance stands on the sections' sheet edge; the notice line brings that edge itself, so both glyphs align.
           <View style={styles.lead}>
             {props.glance || showsQuality ? <View style={styles.leadInset}>
-              {props.glance ? <ReviewGlanceLine glance={props.glance} /> : null}
+              {props.glance === 'pending' ? <ReviewGlancePending /> : props.glance ? <ReviewGlanceLine glance={props.glance} /> : null}
               {showsQuality ? <ReviewQualityLines quality={props.quality ?? null} reviewers={qualityReviewers} /> : null}
             </View> : null}
             {props.notice ?? null}
@@ -218,6 +219,11 @@ export function ReviewGlanceLine(
   const workTheme = useWorkTheme();
   return <HappierReviewGlanceLine glance={props.glance} testID="review-detail:glance" factsTestID="review-detail:facts"
     theme={workTheme} host={WORK_HOST} />;
+}
+
+/** The glance's sentence line still arriving: the loading bar at the sentence's own line height (its section-title role). */
+function ReviewGlancePending() {
+  return <SkeletonTitle testID="review-detail:glance:pending" lineHeight={happierPageTextMetrics('sectionTitle').lineHeight} />;
 }
 
 /**
@@ -376,7 +382,7 @@ export function ReviewDetailState(
         <PageHeaderPlaceholder testID="review-detail:loading:header" />
         <PageContentColumn style={styles.column}>
           <View style={styles.lead}>
-            <View style={styles.leadInset}><SkeletonTitle lineHeight={ITEM_SUBTITLE_TEXT_METRICS.comfortable.lineHeight} /></View>
+            <View style={styles.leadInset}><ReviewGlancePending /></View>
           </View>
           <ReviewDetailTabsLine tabs={LOADING_TAB_IDS.map(id => ({ id, label: t(TAB_LABEL_KEYS[id]), testID: `review-detail:tab:${id}` }))}
             activeTab="findings" onSelectTab={ignoreTab} />

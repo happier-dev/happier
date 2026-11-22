@@ -474,9 +474,10 @@ export function ReviewDetailHost(props: Readonly<{
   if (props.bodyState === 'loading' && !record) return <ReviewDetailState kind="loading" />;
   if (props.bodyState === 'failed' && !record) return <ReviewDetailState kind="failed" onRetry={props.onRetry} />;
   if (!record) return <ReviewDetailState kind="missing" reason={t('reviewWalkthrough.detail.unreadable')} />;
-  // Until the Review owner's first read lands, the page keeps its loading shape: what waits on the reader, the glance and
-  // the people aren't known yet, so it offers nothing (never New round) and nothing moves when they arrive.
-  if (scope && !detail.data && (detail.status === 'idle' || detail.status === 'loading')) return <ReviewDetailState kind="loading" />;
+  // Until the Review owner's first read lands, the page stands on its record: title, rounds, reviewers and scores are the
+  // record's, so the tab line is already where it stays; the glance holds its line pending, and what waits on the reader
+  // isn't known, so it offers nothing (never New round). The People row is the owner's and arrives with it.
+  const personPending = Boolean(scope) && !detail.data && (detail.status === 'idle' || detail.status === 'loading');
 
   const canSubmit =Boolean(human?.needsYou.canSubmitVerdict && human.roundOrdinal === selectedRound && submitVerdict);
   const canEditPeople = canEdit && human?.roundOrdinal === selectedRound && setReviewers !== undefined;
@@ -492,7 +493,7 @@ export function ReviewDetailHost(props: Readonly<{
   // and no grey placeholder held for one either (U8 R5 B6). The Runs tab doesn't read findings; it decides from what it has.
   const findingsKnown = !scope || activeTab === 'runs' || comments.status === 'loaded' || comments.status === 'failed';
   const primaryAction = canSubmit ? { title: t('reviewWalkthrough.detail.submitReview'), onPress: () => setSubmitOpen(true) }
-    : !findingsKnown ? null
+    : personPending || !findingsKnown ? null
     : implementAction ?? (awaitingDecision ? null : newRoundAction);
   // A finding's standing words: its round status and captured scope, then (a Hunt's) its standing across runs.
   const findingFacts = (row: (typeof findings.rows)[number]) => {
@@ -626,7 +627,7 @@ export function ReviewDetailHost(props: Readonly<{
         ...menu,
         ...(operations.canManage ? [{ id: 'delete', testID: 'review-detail:delete', title: t('artifacts.delete'), destructive: true,
           loading: operations.deleting, onSelect: operations.remove }] : [])]}
-      glance={projectReviewGlance(round, review, { countsOnChips: true, fixedCount, needsYou: human?.roundOrdinal === round?.ordinal ? human?.needsYou : undefined })}
+      glance={personPending ? 'pending' : projectReviewGlance(round, review, { countsOnChips: true, fixedCount, needsYou: human?.roundOrdinal === round?.ordinal ? human?.needsYou : undefined })}
       quality={roundQuality.quality}
       qualityUnavailableReason={roundQuality.unavailableReason}
       qualityReviewers={qualityReviewers}

@@ -196,6 +196,54 @@ it('offers no primary from a Review still loading: never New round, and no place
   } finally { await screen.unmount(); }
 });
 
+it('lays the page out from the Review record while its owner read loads, so the sections above the tabs never change (G2)', async () => {
+  const reviewId = 'steady-tabs-review';
+  const human: ReviewHumanStateV1 = { reviewId, roundOrdinal: 1, requests: [], verdicts: [],
+    needsYou: { reviewId, roundOrdinal: 1, reason: 'review_needs_you', needsYou: false, requestedVerdict: false,
+      pendingDecisions: false, canSubmitVerdict: false } };
+  let openDetail!: () => void;
+  const detailOpened = new Promise<void>(resolve => { openDetail = resolve; });
+  fixture = await createSessionFilesViewFixture({ serverUrl: 'https://steady-tabs-review.test', request: async url => {
+    const path = new URL(String(url)).pathname;
+    if (path === '/v1/reviews/get') {
+      await detailOpened;
+      return Response.json({ review: { reviewId, projectSourceId: null, workflowId: null, subjectKind: 'repository', sourceKind: 'direct',
+        state: 'completed', currentRoundOrdinal: 1, startedAt: 1, finishedAt: 2, createdAt: 1, updatedAt: 2, counts: { total: 0, needsDecision: 0 } }, human });
+    }
+    if (path === '/v1/reviews/comments') return Response.json({ items: [], cursor: null });
+    return Response.json({}, { status: 404 });
+  } });
+  // One round, two scored reviewers: the round section and the score line come from the Review record itself.
+  const artifact: DecryptedArtifact = { id: reviewId, sourceServerId: fixture.scope.serverId, title: 'Steady tabs', isDecrypted: true,
+    header: { kind: 'review.v1', v: 1, reviewId, title: 'Steady tabs' },
+    body: JSON.stringify({ v: 1, rounds: [{ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2,
+      reviewerIds: ['steady-reviewer-1', 'steady-reviewer-2'], runs: [], reviewerQuality: [
+        { reviewerId: 'steady-reviewer-1', displayName: 'Codex', score: 4, rationale: 'Clean.' },
+        { reviewerId: 'steady-reviewer-2', score: 2, rationale: 'Untested.' }] }] }),
+    ownerAccountId: 'alice', access: 'owner', storageMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+  fixture.artifacts.replaceStoredRow(createPlainArtifactHttpFixture(artifact, 'alice'));
+  const { ReviewDetailHost } = await import('./ReviewDetailHost');
+  const { ReviewDetailView } = await import('./ReviewDetailView');
+  const { t } = await import('@/text');
+  const screen = await fixture.render(<ReviewDetailHost artifact={artifact} bodyState="ready" onRetry={() => {}} />);
+  // What stands above the tab line, in order: its offset is these sections' heights, so the same sections mean no jump.
+  const aboveTabs = () => [
+    screen.findHostByTestId('review-detail:header') ? 'header' : null,
+    screen.findHostByTestId('review-detail:glance') || screen.findHostByTestId('review-detail:glance:pending') ? 'glance' : null,
+    screen.findHostByTestId('review-detail:quality') ? 'quality' : null,
+    screen.findHostByTestId('review-detail:round') ? `round:${screen.findAllByType(ReviewDetailView)[0]?.props.rounds[0]?.groups.length}` : null,
+  ].filter(Boolean);
+  try {
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)); });
+    const loading = aboveTabs();
+    expect(screen.findAllByType(ReviewDetailView)[0]?.props.primaryAction?.title ?? null).not.toBe(t('reviewWalkthrough.detail.newRound'));
+    await act(async () => { openDetail(); });
+    await vi.waitFor(() => expect(screen.findHostByTestId('review-detail:glance')).not.toBeNull());
+    expect(loading).toEqual(aboveTabs());
+    expect(aboveTabs()).toEqual(['header', 'glance', 'quality', 'round:1']);
+  } finally { await screen.unmount(); }
+});
+
 it('says the Review is shared, with whom through the Artifact audience owner, and offers Share and Delete in its "…"', async () => {
   const reviewId = 'shared-review-page';
   fixture = await createSessionFilesViewFixture({ serverUrl: 'https://shared-review-page.test', request: async url => {
