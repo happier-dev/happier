@@ -132,7 +132,7 @@ function picker(overrides: Partial<PickerProps>) {
 }
 
 const ROW = 'model-picker-runs-through';
-const texts = (screen: Awaited<ReturnType<typeof renderScreen>>) =>
+const texts = (screen: Pick<Awaited<ReturnType<typeof renderScreen>>, 'findAll'>) =>
   screen
     .findAll((node) => typeof node.children?.[0] === 'string')
     .map((node) => node.children.join(''));
@@ -278,22 +278,45 @@ describe('SessionModelPicker Runs through', () => {
     }
   });
 
-  it('drops the chosen tile\'s "via" source: Runs through already says it', async () => {
-    const gatewaySonnet = { agentTargetKey: AGENT, providerConnectionId: gateway, modelId: 'claude-sonnet-5-5' };
-    const screen = await renderScreen(
-      picker({
-        selected: gatewaySonnet,
-        providerGroups: [group(gateway, 'OpenRouter', 'Work', [{ modelId: 'claude-sonnet-5-5', name: 'Sonnet 5.5' }])],
-        favoriteEntries: [{ ref: gatewaySonnet, reasoningEffort: 'high' }],
-        favoriteKeys: new Set([sessionModelSelectionKey(gatewaySonnet)]),
-        onToggleFavorite: () => {},
-      }),
-    );
+  it('names the alternate source on the closed favourite and removes it when the tile opens', async () => {
+    const modelId = 'claude-sonnet-5-5';
+    const gatewaySonnet = { agentTargetKey: AGENT, providerConnectionId: gateway, modelId };
+    const favoriteKey = sessionModelSelectionKey(gatewaySonnet);
+    const tile = `model-picker-overlay-option:${favoriteKey}`;
+    const fixture = {
+      providerGroups: [group(gateway, 'OpenRouter', 'Work', [{ modelId, name: 'Sonnet 5.5' }])],
+      hiddenSources: [{
+        connectionId: hidden,
+        providerName: 'Vercel AI Gateway',
+        connectionName: 'Team',
+        connectionRole: 'named',
+        connectionDisplayNameMode: 'custom',
+        modelCount: 1,
+        upstreamModels: [{ upstreamRef: SONNET, endpointHealth: 'available' }],
+      }],
+      sourceBrowse: { machineId: null, serverId: null },
+      favoriteEntries: [{ ref: gatewaySonnet, reasoningEffort: 'high' }],
+      favoriteKeys: new Set([favoriteKey]),
+      onToggleFavorite: () => {},
+    } satisfies Partial<PickerProps>;
+    const screen = await renderScreen(picker({ ...fixture, selected: native(modelId) }));
     try {
-      const overlay = screen.root.findAll((node) => node.type === OptionPickerOverlay)[0]!;
-      const chosen = overlay.props.sections.find((section: { id: string }) => section.id === 'favorites').options[0];
-      expect(chosen.labelSuffix).toBe('High');
-      expect(String(chosen.description ?? '')).not.toMatch(/via/);
+      expect(screen.findByTestId(`model-picker-overlay-option-selected-indicator:${favoriteKey}`)).toBeNull();
+      expect(texts(screen.findHostByTestId(tile)!).join(' ')).toContain('via OpenRouter · Work');
+      const menu = screen.findAll((node) => node.type === DropdownMenu
+        && String(node.props.items?.[0]?.testID ?? '').startsWith(`${ROW}:menu`))[0]!;
+      expect(menu.props.items.map((item: { title: string }) => item.title).sort()).toEqual([
+        'Claude subscription · Work pool', 'OpenRouter · Work', 'Vercel AI Gateway · Team',
+      ]);
+
+      await screen.update(picker({ ...fixture, selected: gatewaySonnet }));
+
+      expect(screen.findByTestId(`model-picker-overlay-option-selected-indicator:${favoriteKey}`)).not.toBeNull();
+      const openTileText = texts(screen.findHostByTestId(tile)!).join(' ');
+      expect(openTileText).toContain('Sonnet 5.5');
+      expect(openTileText).toContain('High');
+      expect(openTileText).not.toMatch(/\bvia\b/i);
+      expect(texts(screen.findByTestId(`${ROW}:value`)!).join(' ')).toContain('OpenRouter · Work');
     } finally {
       await screen.unmount();
     }
