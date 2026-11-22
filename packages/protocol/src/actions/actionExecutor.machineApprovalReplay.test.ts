@@ -12,7 +12,88 @@ import { decideApprovalRequestTransition } from '../approvals/approvalRequestTra
 import { buildApprovalExecutionOriginV1, createActionExecutor } from './actionExecutor.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from './executor/types.js';
 
+import { createActionAutomationPortV1 } from './executor/actionAutomationAdmission.js';
+
 describe('Machine approval replay composition', () => {
+  // Each recorded way back that needs approval opens its own Ask; Undo's approval grants it nothing.
+  it.each([
+    ['machines.terminal.open', false], ['machines.terminal.open', true],
+    ['machines.processes.startAgain', false], ['machines.processes.startAgain', true],
+  ] as const)('replays approved signed CLI Guard Undo whose %s way back has policy Ask=%s', async (childActionId, childAsks) => {
+    const actionId = 'machines.guard.activity.undo';
+    const input = { serverId: 'home', machineId: 'controller', entryId: 'closed-terminal' };
+    const target = { kind: 'machine', machineId: input.machineId } as const;
+    const envelope = { v: 1 as const, requestId: 'guard-undo', target, input };
+    const keys = tweetnacl.sign.keyPair();
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture-home-admission', binding: {
+      serverIdentityId: 'srv_home', accountId: 'owner', custodianAccountId: 'owner',
+      authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
+      machineId: input.machineId, installationId: 'installation', actionId, requestId: envelope.requestId,
+      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target,
+    } });
+    const signedActions: string[] = [];
+    const sign: NonNullable<ActionExecutorContext['signExternalActionApprovalInput']> = request => {
+      signedActions.push(request.actionId);
+      return signExternalActionApprovalInputV1({ ...request, authorizationToken: authorization.token, privateKey: keys.secretKey });
+    };
+    const context: ActionExecutorContext = { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+      runtimeAccountId: 'owner', serverId: 'home', serverIdentityId: 'srv_home', actionRequestId: envelope.requestId,
+      externalActionExecutionAuthorization: authorization, externalActionTarget: target, originalActionEnvelope: envelope,
+      signExternalActionApprovalInput: sign,
+    };
+    let stored = ApprovalRequestV2Schema.parse({ v: 2, status: 'approved', createdAtMs: 1, updatedAtMs: 2,
+      createdBy: { surface: 'cli' }, requestedSurface: 'cli', summary: 'Undo closed terminal',
+      actionId, actionArgs: input, decision: { kind: 'approve', decidedAtMs: 2 },
+      executionOriginV1: buildApprovalExecutionOriginV1({ actionId, input, context, targetSessionId: null }),
+    });
+    const settings = ActionsSettingsV1Schema.parse({ v: 1, ...(childAsks
+      ? { actions: { [childActionId]: { approvalRequiredSurfaces: ['cli'] } } }
+      : { approvalWaivedSurfaces: { [childActionId]: ['cli'] } }) });
+    const childRequests: string[] = [];
+    let terminalEffects = 0;
+    const executor = createActionExecutor({
+      actionAutomations: createActionAutomationPortV1({ accountId: 'owner',
+        seed: async () => ({ v: 1, rows: [] }), settle: async () => {} }),
+      // Artifact storage, the Home authorization check and Machine effect ports are boundaries.
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { ok: true }; },
+      approvalsCreate: async ({ request }) => {
+        childRequests.push(ApprovalRequestV2Schema.parse(request).actionId);
+        return { artifactId: 'terminal-open-approval' };
+      },
+      isApprovalExecutionOriginCurrent: async ({ origin, request }) => verifyExternalActionApprovalInputV1({
+        authorizationToken: authorization.token, actionId: request.actionId, input: request.actionArgs,
+        target, publicKey: keys.publicKey, signature: origin.externalActionInputSignature ?? '',
+      }),
+      prepareApprovalExecutionAuthorization: async () => ({ authorization, actionsSettings: settings,
+        signExternalActionApprovalInput: sign }),
+      machineGuardAction: async ({ executeCanonicalAction }) => {
+        const childResult = await executeCanonicalAction!(childActionId, childActionId === 'machines.terminal.open'
+          ? { serverId: input.serverId, machineId: input.machineId, terminalKey: 'closed-terminal' }
+          : { serverId: input.serverId, machineId: input.machineId, ref: 'left-behind-process' });
+        return childResult.ok ? childResult.result : childResult;
+      },
+      machineTerminalAction: async () => {
+        terminalEffects++;
+        return { ok: true, terminalId: 'reopened', reused: false };
+      },
+      machineProcessesAction: async () => {
+        terminalEffects++;
+        return { status: 'started' };
+      },
+    });
+    const replay = await executor.replayApprovedApprovalRequest({ artifactId: 'guard-undo-approval',
+      callerAuthority: 'present_user', currentAccount: {
+        accountId: 'owner', serverId: 'home', serverIdentityId: 'srv_home', actionsSettings: settings,
+      } });
+    const outcome = replay.ok
+      ? { status: stored.status, code: stored.execution?.errorCode, childRequests, terminalEffects }
+      : { code: replay.errorCode, childRequests, terminalEffects };
+    expect(signedActions).toEqual(childAsks ? [actionId, childActionId] : [actionId]);
+    expect(outcome).toMatchObject({ status: 'executed', code: undefined,
+      childRequests: childAsks ? [childActionId] : [], terminalEffects: childAsks ? 0 : 1 });
+  });
+
   it.each([false, true])('restores the signed Session requester policy for native children (required=%s)', async required => {
     const keys = tweetnacl.sign.keyPair();
     const input = SessionSpawnNewInputV2Schema.parse({ creationKey: 'signed-spawn', executionTarget: { serverId: 'home', machineId: 'controller' },

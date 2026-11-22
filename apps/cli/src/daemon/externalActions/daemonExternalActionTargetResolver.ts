@@ -183,7 +183,8 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
           && origin.sessionInputSource.sourceTurnId === sessionOrigin.sourceTurnId
           && origin.callerPermissionMode === sessionOrigin.callerPermissionMode
           && sameStrictJsonValue(origin.causalPermissionAuthority ?? null, sessionOrigin.causalPermissionAuthority ?? null);
-        // The strict origin owner binds Account, Session and PAT provenance.
+        // The strict origin owner binds Account, Session, PAT provenance and the
+        // root request ID (Workflow leaves and host children carry their own).
         // Rechecking its contract preserves a narrowed Account authority rather
         // than introducing a second human-only interpretation during replay.
         const principalMatches = ApprovalExecutionOriginV1Schema.safeParse(origin).success;
@@ -201,7 +202,6 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
           || origin.accountId !== externalAuthorization.binding.accountId
           || origin.machineId !== input.machineId
           || origin.machineId !== externalAuthorization.binding.machineId
-          || (!retainedWorkflow && origin.requestId !== externalAuthorization.binding.requestId)
           || !verifyExternalActionApprovalInputV1({
             authorizationToken: externalAuthorization.token,
             actionId: origin.actionId,

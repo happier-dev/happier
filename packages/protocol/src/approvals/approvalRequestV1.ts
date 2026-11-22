@@ -366,6 +366,15 @@ export const ApprovalExecutionOriginV1Schema = lazyZodSchema(() => z.strictObjec
     const retainedWorkflowRoot = value.caller.kind === 'workflowRun'
       && binding.actionId === WORKFLOW_RUN_START_ACTION_ID_V1
       && sameStrictJsonValue(value.caller.authorization.externalActionExecutionAuthorization, authorization);
+    // A host child of the admitted root (Guard Undo's way back) opens its own
+    // Ask under its own derived ID. The installation signature over the child
+    // Action, operands and target binds it; it never carries the root envelope.
+    // Only a host-invoked Account root qualifies; PAT, Session and Workflow
+    // roots keep their own caller-bound identities.
+    const hostChildOfRoot = value.caller.kind === 'host' && 'authentication' in binding
+      && !binding.sessionActionOrigin && !binding.workflowActionOrigin
+      && binding.actionId !== WORKFLOW_RUN_START_ACTION_ID_V1
+      && value.actionId !== binding.actionId && value.originalActionEnvelope === undefined;
     const admittedTarget = value.target !== undefined
       && isExternalActionResolvedTargetAllowedV1({
         authorizedTarget: binding.target,
@@ -406,7 +415,7 @@ export const ApprovalExecutionOriginV1Schema = lazyZodSchema(() => z.strictObjec
         && value.principalId === binding.principalId && value.credentialId === binding.credentialId;
     if (!principalMatches || value.serverIdentityId !== binding.serverIdentityId
       || value.accountId !== binding.accountId
-      || (!retainedWorkflowRoot && value.requestId !== binding.requestId)
+      || (!retainedWorkflowRoot && !hostChildOfRoot && value.requestId !== binding.requestId)
       || value.machineId !== binding.machineId || !admittedTarget) {
       ctx.addIssue({ code: "custom", path: ['externalActionExecutionAuthorization'],
         message: 'Execution authorization must match the exact originating invocation' });

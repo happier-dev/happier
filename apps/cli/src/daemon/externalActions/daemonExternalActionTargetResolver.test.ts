@@ -315,6 +315,52 @@ describe('createDaemonExternalActionTargetResolver', () => {
     await expect(isCurrent({ origin: executionOrigin })).resolves.toBe(false);
   });
 
+  it('keeps a signed host child Ask current under its own request ID and the retained root', async () => {
+    const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(23));
+    const target = { kind: 'machine' as const, machineId: 'controller' };
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-undo-proof', binding: {
+      serverIdentityId: 'srv_home', accountId: 'account-1', custodianAccountId: 'account-1',
+      machineId: 'controller', installationId: 'controller-installation', actionId: 'machines.guard.activity.undo',
+      authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
+      requestId: 'guard-undo', requestEnvelopeDigest: 'c'.repeat(43), target,
+    } });
+    const childInput = { serverId: 'srv_home', machineId: 'controller', terminalKey: 'closed-terminal' };
+    const childOrigin = (actionId: 'machines.terminal.open' | 'machines.guard.activity.undo', actionRequestId: string) =>
+      buildApprovalExecutionOriginV1({ actionId, input: childInput, targetSessionId: null, context: {
+        surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home-profile',
+        serverIdentityId: 'srv_home', runtimeAccountId: 'account-1', actionRequestId,
+        externalActionTarget: target, externalActionExecutionAuthorization: authorization,
+        signExternalActionApprovalInput: ({ actionId: signedActionId, input, target: signedTarget }) => signExternalActionApprovalInputV1({
+          authorizationToken: authorization.token, actionId: signedActionId, input, target: signedTarget, privateKey: keys.secretKey }),
+      } });
+    const origin = childOrigin('machines.terminal.open', 'guard-undo-child');
+    expect(origin).not.toBeNull();
+    if (!origin) throw new Error('Signed host child approval origin was unavailable');
+    let homeCurrent = true;
+    // Only Home HTTP is substituted; schema, signature and root binding stay real.
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      expect(url).toBe('https://home.example/v1/actions/machines.guard.activity.undo/execution-authorization/verify');
+      const admitted = homeCurrent && sameStrictJsonValue(body.binding, authorization.binding);
+      return { status: admitted ? 200 : 403, data: admitted ? { ok: true } : {} };
+    });
+    const isCurrent = createDaemonApprovalExecutionOriginCurrentness({
+      accountId: 'account-1', machineId: 'controller', serverId: 'home-profile',
+      resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: 'srv_home', machineId: 'controller' }),
+      resolveTarget: createDaemonExternalActionTargetResolver({ credentials: TOKEN_ONLY_CREDENTIALS }),
+      isAccountCurrent: async () => true,
+      listAccountApiTokens: async () => ({ tokens: [] }), externalActionMachinePublicKey: keys.publicKey,
+      verifyExternalExecutionAuthorization: args => verifyExternalActionExecutionAuthorizationCurrent({ ...args,
+        privateKey: keys.secretKey, installationId: 'controller-installation', serverHttpBaseUrl: 'https://home.example' }),
+    });
+    await expect(isCurrent({ origin, actionInput: childInput })).resolves.toBe(true);
+    // The child signature binds its exact operands; another terminal is not approved.
+    await expect(isCurrent({ origin, actionInput: { ...childInput, terminalKey: 'other' } })).resolves.toBe(false);
+    // The root Action itself still needs its exact admitted request ID.
+    expect(childOrigin('machines.guard.activity.undo', 'guard-undo-child')).toBeNull();
+    homeCurrent = false;
+    await expect(isCurrent({ origin, actionInput: childInput })).resolves.toBe(false);
+  });
+
   it.each([false, true])('rechecks a managed guest Session approval through Home source custody without inventing a guest-local source runner (cause=%s)', async hasCause => {
     const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(19));
     const caller = { kind: 'session' as const, sessionId: 'source-session', starterDepth: 1, turnDepth: 2 };
