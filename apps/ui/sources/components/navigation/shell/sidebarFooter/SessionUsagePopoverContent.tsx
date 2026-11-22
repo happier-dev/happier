@@ -146,6 +146,7 @@ export function SessionUsagePopoverContent(props: Readonly<{
     metadata: unknown;
     agentId: string | null;
     viewModel: ConnectedServiceQuotaGaugeViewModel | null;
+    quotaReadFailure?: Readonly<{ onRetry?: (() => void) | null }>;
     /** The session's own usage-reset action, for a session that signs in on its own. */
     onUseReset?: () => void;
     resetPending?: boolean;
@@ -176,6 +177,7 @@ export function SessionUsagePopoverContent(props: Readonly<{
             privacy={data.privacy}
             refresh={data.refresh}
             session={session}
+            quotaReadFailure={props.quotaReadFailure}
             onOpenConnectedServices={handlers.openConnectedServices}
             onOpenUsage={handlers.openUsage}
             onSignInAgain={handlers.signInAgain}

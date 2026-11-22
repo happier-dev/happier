@@ -19,6 +19,7 @@ import {
 import { ConnectedAccountPrivacyToggle } from '@/components/settings/connectedServices/usage/ConnectedAccountPrivacyToggle';
 import { UsageMeterRow, UsageMeterStack } from '@/components/settings/connectedServices/usage/UsageMeterRow';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -242,6 +243,7 @@ export function SidebarUsagePopoverView(props: Readonly<{
     facts?: SidebarUsageAccountFacts;
     privacy: UsagePopoverPrivacy;
     session?: UsagePopoverSession | null;
+    quotaReadFailure?: Readonly<{ onRetry?: (() => void) | null }>;
     refresh?: UsagePopoverRefresh;
     /** The header's gear: Credentials, where every account here is managed. */
     onOpenConnectedServices: () => void;
@@ -272,7 +274,7 @@ export function SidebarUsagePopoverView(props: Readonly<{
         ? facts.accountsNeedingSignIn.find((account) => account.key === session.accountKey) ?? null
         : null;
     const scoped = session != null && !widened
-        && (session.accountKey !== null || session.ownSignIn !== null);
+        && (session.accountKey !== null || session.ownSignIn !== null || props.quotaReadFailure !== undefined);
     const total = accounts.length + facts.accountsNeedingSignIn.length;
     const nothing = total === 0 && !scoped;
     const refresh = props.refresh;
@@ -320,7 +322,19 @@ export function SidebarUsagePopoverView(props: Readonly<{
     );
 
     let body: React.ReactNode;
-    if (nothing) {
+    if (props.quotaReadFailure && scoped) {
+        body = (
+            <View style={styles.empty}>
+                <Text style={styles.emptyText}>{t('usage.board.page.readFailedTitle')}</Text>
+                {props.quotaReadFailure.onRetry ? (
+                    <View style={styles.emptyAction}>
+                        <TextLinkButton testID="session-instrument-quota-retry" label={t('common.retry')}
+                            size="meta" onPress={props.quotaReadFailure.onRetry} />
+                    </View>
+                ) : null}
+            </View>
+        );
+    } else if (nothing) {
         // An invitation with its one way in: the gear's destination, said as the action (acceptance 11-13 #15).
         body = (
             <View style={styles.empty}>

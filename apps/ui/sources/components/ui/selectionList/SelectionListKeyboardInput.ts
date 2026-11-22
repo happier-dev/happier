@@ -40,6 +40,7 @@ export type SelectionListKeyPressEvent = {
 
 export type SelectionListKeyPressHandlerArgs = Readonly<{
     keyboard: Pick<SelectionListKeyboardNavApi, 'handleKey'>;
+    tabKeyBehavior?: 'traverse';
     isComposing: boolean;
     focusedOptionId: string | null;
     onActivate: (optionId: string) => void;
@@ -71,6 +72,7 @@ export function createSelectionListKeyPressHandler(
 ): (event: SelectionListKeyPressEvent) => void {
     const {
         keyboard,
+        tabKeyBehavior,
         isComposing,
         focusedOptionId,
         onActivate,
@@ -81,7 +83,7 @@ export function createSelectionListKeyPressHandler(
     return (event: SelectionListKeyPressEvent) => {
         // RN web TextInput passes `nativeEvent.key`. Native passes a similar shape.
         const nativeKey = event?.nativeEvent?.key ?? event?.key;
-        if (typeof nativeKey !== 'string') return;
+        if (typeof nativeKey !== 'string' || (tabKeyBehavior === 'traverse' && nativeKey === 'Tab')) return;
         // Trust the event's composing flag for THIS keystroke. Web sets
         // `event.isComposing` on the synthetic KeyboardEvent; rn-web forwards
         // the same on `nativeEvent.isComposing`. State (and the captured

@@ -53,9 +53,11 @@ vi.mock('./ContextGaugeInstrument', () => ({
         }),
 }));
 vi.mock('./QuotaRingInstrument', () => ({
-    QuotaRingInstrument: (props: { showProviderGlyph: boolean }) =>
-        React.createElement('QuotaRingInstrument', { testID: 'quota', 'data-glyph': props.showProviderGlyph }),
-    QuotaRingUnavailable: () => React.createElement('QuotaRingUnavailable', { testID: 'quota-unavailable' }),
+    QuotaRingInstrument: (props: React.ComponentProps<typeof import('./QuotaRingInstrument').QuotaRingInstrument>) =>
+        React.createElement('QuotaRingInstrument', {
+            testID: props.viewModel === null ? 'quota-unavailable' : 'quota',
+            'data-glyph': props.showProviderGlyph,
+        }),
 }));
 vi.mock('./GitDeltaInstrument', () => ({
     GitDeltaInstrument: (props: { compact: boolean }) =>

@@ -10,16 +10,11 @@ import { installPopoverCommonModuleMocks } from '@/components/ui/popover/popover
 
 installPopoverCommonModuleMocks({ reactNative: async () => await vi.importActual('react-native-web') });
 
-// This suite covers the trigger (rest to preview, press to pin). The popover's body is the one Usage
-// popover, which reads the account's usage stores and has its own suite (`SidebarUsagePopoverContent.test`).
-vi.mock('@/components/navigation/shell/sidebarFooter/SessionUsagePopoverContent', () => ({
-    SessionUsagePopoverContent: () => null,
-}));
-
-const { QuotaRingInstrument, QuotaRingUnavailable } = await import('./QuotaRingInstrument');
+const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+const { QuotaRingInstrument } = await import('./QuotaRingInstrument');
 const { t } = await import('@/text');
 const { motionTokens } = await import('@/components/ui/motion');
-type ViewModel = import('@/sync/domains/connectedServices/connectedServiceQuotaGauge').ConnectedServiceQuotaGaugeViewModel;
+type ViewModel = NonNullable<React.ComponentProps<typeof QuotaRingInstrument>['viewModel']>;
 
 const VIEW_MODEL = {
     serviceId: null,
@@ -48,7 +43,9 @@ let root: ReturnType<typeof createRoot>;
 
 async function renderRing(props: Partial<React.ComponentProps<typeof QuotaRingInstrument>> = {}) {
     await act(async () => {
-        root.render(<QuotaRingInstrument viewModel={VIEW_MODEL} showProviderGlyph={false} {...props} />);
+        root.render(<InjectedAuthProvider credentials={null}>
+            <QuotaRingInstrument viewModel={VIEW_MODEL} showProviderGlyph={false} {...props} />
+        </InjectedAuthProvider>);
     });
     return container.querySelector<HTMLElement>('[data-testid="session-instrument-quota-ring"]')!;
 }
@@ -119,16 +116,25 @@ describe('QuotaRingInstrument', () => {
         expect(text('session-instrument-quota-meter-label:seven_day')).toBe('Weekly');
     });
 
-    it('draws a failed first read as the strip\'s unknown ring (track and dot) that says it could not read, and retries on press', async () => {
+    it.each([false, true])('opens the same quota popover after a failed first read (Retry available: %s)', async (canRetry) => {
         const onRetry = vi.fn();
-        await act(async () => { root.render(<QuotaRingUnavailable onRetry={onRetry} />); });
-        const ring = container.querySelector<HTMLElement>('[data-testid="session-instrument-quota-ring"]')!;
-        // The Companion's words, never an empty ring a person can mistake for the context gauge at session start.
-        expect(container.querySelector('[data-testid="session-instrument-quota-ring-value"]')?.textContent).toBe(t('usage.board.page.readFailedTitle'));
-        expect(container.querySelector('[data-testid="session-instrument-quota-ring-arc"]')).not.toBeNull();
+        const ring = await renderRing({ viewModel: null, onRetry: canRetry ? onRetry : null });
+        expect(ring.getAttribute('role')).toBe('button');
+        expect(ring.tabIndex).toBe(0);
         expect(ring.getAttribute('aria-label')).toContain(t('usage.board.page.readFailedTitle'));
+        ring.focus();
+        expect(document.activeElement).toBe(ring);
+        // A native button supplies Enter and Space activation. jsdom does not synthesize its click.
+        expect(ring.tagName).toBe('BUTTON');
         await act(async () => { ring.click(); });
-        expect(onRetry).toHaveBeenCalledTimes(1);
+        expect(popover()?.textContent ?? '').toContain(t('usage.board.page.readFailedTitle'));
+        expect(onRetry).not.toHaveBeenCalled();
+        const retry = popover()?.querySelector<HTMLElement>('[data-testid="session-instrument-quota-retry"]');
+        expect(Boolean(retry)).toBe(canRetry);
+        if (retry) {
+            await act(async () => { retry.click(); });
+            expect(onRetry).toHaveBeenCalledTimes(1);
+        }
     });
 
     it('previews after the pointer rests on the ring, not while it passes over it', async () => {

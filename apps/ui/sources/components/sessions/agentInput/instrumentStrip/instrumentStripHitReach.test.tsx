@@ -36,9 +36,7 @@ import {
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-type QuotaViewModel = React.ComponentProps<
-  typeof QuotaRingInstrument
->['viewModel'];
+type QuotaViewModel = NonNullable<React.ComponentProps<typeof QuotaRingInstrument>['viewModel']>;
 
 const QUOTA = {
   serviceId: null,

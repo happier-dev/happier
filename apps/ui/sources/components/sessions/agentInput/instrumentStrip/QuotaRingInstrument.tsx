@@ -25,7 +25,8 @@ import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
  */
 
 export type QuotaRingInstrumentProps = Readonly<{
-    viewModel: ConnectedServiceQuotaGaugeViewModel;
+    viewModel: ConnectedServiceQuotaGaugeViewModel | null;
+    onRetry?: (() => void) | null;
     /** The session's metadata and agent: the popover reads which account the session signs in with. */
     metadata?: Metadata | null;
     agentId?: string | null;
@@ -54,7 +55,7 @@ export const QuotaRingInstrument = React.memo(function QuotaRingInstrument(props
 
     const { viewModel } = props;
     // Each globally selected window reports the percentage left.
-    const rings = viewModel.usageRings.length > 0
+    const rings = !viewModel ? [] : viewModel.usageRings.length > 0
         ? viewModel.usageRings
         : [{
             meterId: viewModel.effectiveMeter.meterId,
@@ -65,13 +66,13 @@ export const QuotaRingInstrument = React.memo(function QuotaRingInstrument(props
             tone: viewModel.tone,
         }];
     // One ring reads as before; extra rings are named so each one can be told apart.
-    const ringAccessibilityValues = rings.length === 1
+    const ringAccessibilityValues = rings.length === 1 && viewModel
         ? [viewModel.badgeLabel]
         : rings.map((ring) => `${ring.label} ${ring.valueLabel}`);
     const accessibilityLabel = t('agentInput.providerUsage.accessibilityLabel', {
-        value: ringAccessibilityValues.join(', '),
+        value: viewModel ? ringAccessibilityValues.join(', ') : t('usage.board.page.readFailedTitle'),
     });
-    const providerCaption = viewModel.scopePrefix ?? viewModel.providerDisplayName;
+    const providerCaption = viewModel?.scopePrefix ?? viewModel?.providerDisplayName;
     // Each ring says what is left beside it ("9% left"), at every width: a bare number inside the ring
     // next to the context gauge reads as another percentage used. A compact strip drops only the caption.
 
@@ -86,40 +87,42 @@ export const QuotaRingInstrument = React.memo(function QuotaRingInstrument(props
                     hitReach={hitReach}
                     style={({ pressed }) => (pressed ? styles.triggerPressed : null)}
                 >
-                    <View style={styles.rings}>
-                        {rings.map((ring, index) => {
-                            const testIDSuffix = index === 0 ? '' : `:${ring.meterId}`;
-                            return (
-                                <View key={ring.meterId} style={styles.ring}>
-                                    {props.showLabels === true || rings.length > 1 ? (
+                    {viewModel ? (
+                        <View style={styles.rings}>
+                            {rings.map((ring, index) => {
+                                const testIDSuffix = index === 0 ? '' : `:${ring.meterId}`;
+                                return (
+                                    <View key={ring.meterId} style={styles.ring}>
+                                        {props.showLabels === true || rings.length > 1 ? (
+                                            <Text
+                                                testID={`session-instrument-quota-meter-label${testIDSuffix}`}
+                                                style={instrumentStripStyles.instrumentLabelText}
+                                                numberOfLines={1}
+                                            >
+                                                {ring.label}
+                                            </Text>
+                                        ) : null}
+                                        <TokenUsageRing
+                                            used={ring.usedPct}
+                                            limit={100}
+                                            label={rings.length === 1 ? accessibilityLabel : ringAccessibilityValues[index]!}
+                                            tone={mapQuotaToneToTokenTone(ring.tone)}
+                                            size={16}
+                                            strokeWidth={2}
+                                            ringTestID={`session-instrument-quota-ring-arc${testIDSuffix}`}
+                                        />
                                         <Text
-                                            testID={`session-instrument-quota-meter-label${testIDSuffix}`}
-                                            style={instrumentStripStyles.instrumentLabelText}
+                                            testID={`session-instrument-quota-ring-value${testIDSuffix}`}
+                                            style={instrumentStripStyles.instrumentValueText}
                                             numberOfLines={1}
                                         >
-                                            {ring.label}
+                                            {ring.valueLabel}
                                         </Text>
-                                    ) : null}
-                                    <TokenUsageRing
-                                        used={ring.usedPct}
-                                        limit={100}
-                                        label={rings.length === 1 ? accessibilityLabel : ringAccessibilityValues[index]!}
-                                        tone={mapQuotaToneToTokenTone(ring.tone)}
-                                        size={16}
-                                        strokeWidth={2}
-                                        ringTestID={`session-instrument-quota-ring-arc${testIDSuffix}`}
-                                    />
-                                    <Text
-                                        testID={`session-instrument-quota-ring-value${testIDSuffix}`}
-                                        style={instrumentStripStyles.instrumentValueText}
-                                        numberOfLines={1}
-                                    >
-                                        {ring.valueLabel}
-                                    </Text>
-                                </View>
-                            );
-                        })}
-                    </View>
+                                    </View>
+                                );
+                            })}
+                        </View>
+                    ) : <UnknownQuotaRing />}
                 </HappierPressable>
                 {props.showProviderGlyph && providerCaption ? (
                     <Text style={styles.providerCaption} numberOfLines={1}>
@@ -143,6 +146,7 @@ export const QuotaRingInstrument = React.memo(function QuotaRingInstrument(props
                         metadata={props.metadata ?? null}
                         agentId={props.agentId ?? null}
                         viewModel={viewModel}
+                        quotaReadFailure={viewModel ? undefined : { onRetry: props.onRetry }}
                         onUseReset={props.onRecoveryCreditPress}
                         resetPending={props.recoveryCreditPending}
                     />
@@ -152,19 +156,12 @@ export const QuotaRingInstrument = React.memo(function QuotaRingInstrument(props
     );
 });
 
-/**
- * The ring when the Session's first quota read failed (the one owner, `useSessionProviderUsage().quotaReadFailed`,
- * decides it; the Session Companion says the same words): the strip's unknown ring, the context gauge's stale form
- * (track and a dot, no fill), so it is never an empty ring a person can mistake for the context gauge at session
- * start. The words are quiet ink (nothing needs the person here); a press is the owner's next read, where it has one.
- */
-export function QuotaRingUnavailable(props: Readonly<{ onRetry?: (() => void) | null }>) {
+/** The failed first read keeps its quiet track and dot inside the shared quota control. */
+function UnknownQuotaRing() {
     const { theme } = useUnistyles();
-    const hitReach = useInstrumentStripHitReach();
     const fillPct = useSharedValue(0);
     const strokeColor = useSharedValue(theme.colors.text.tertiary);
-    const label = t('agentInput.providerUsage.accessibilityLabel', { value: t('usage.board.page.readFailedTitle') });
-    const body = (
+    return (
         <View style={quotaStyles.ring}>
             <GaugeRing fillPct={fillPct} strokeColor={strokeColor} size={16} trackColor={theme.colors.border.default}
                 stale staleDotColor={theme.colors.text.tertiary} testID="session-instrument-quota-ring-arc" />
@@ -172,19 +169,6 @@ export function QuotaRingUnavailable(props: Readonly<{ onRetry?: (() => void) | 
                 numberOfLines={1}>
                 {t('usage.board.page.readFailedTitle')}
             </Text>
-        </View>
-    );
-    return (
-        <View style={quotaStyles.trigger}>
-            {props.onRetry ? (
-                <HappierPressable testID="session-instrument-quota-ring" accessibilityRole="button"
-                    accessibilityLabel={`${label}, ${t('common.retry')}`} onPress={props.onRetry} hitReach={hitReach}
-                    style={({ pressed }) => (pressed ? quotaStyles.triggerPressed : null)}>
-                    {body}
-                </HappierPressable>
-            ) : (
-                <View testID="session-instrument-quota-ring" accessible accessibilityLabel={label}>{body}</View>
-            )}
         </View>
     );
 }

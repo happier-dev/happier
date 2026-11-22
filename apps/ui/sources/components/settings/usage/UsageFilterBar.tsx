@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
@@ -286,6 +286,7 @@ export function UsageFilterBar<M extends string = 'tokens' | 'cost'>(
 }
 
 const SECTION_KEY = '\u0001';
+const ROOT_SCOPE_STEP_ID = 'usage-scope';
 
 type UsageScopeSection = Readonly<{
   id: string;
@@ -338,16 +339,16 @@ function UsageScopeSections(props: Readonly<{
         testID: `${props.testID}:${section.id}:${option.id}`,
       })),
     }));
-    if (!props.scopes) return { id: 'usage-scope', sections: listed(props.sections ?? []) };
+    if (!props.scopes) return { id: ROOT_SCOPE_STEP_ID, sections: listed(props.sections ?? []) };
     // The search row carries the back chip of a pushed list (the shared header shows only with an input) and finds a
     // machine or project among many.
     const search = t('common.search');
-    return { id: 'usage-scope', inputPlaceholder: search, sections: [{ kind: 'static' as const, id: 'scopes', options: props.scopes.map(scope => ({
+    return { id: ROOT_SCOPE_STEP_ID, inputPlaceholder: search, sections: [{ kind: 'static' as const, id: 'scopes', options: props.scopes.map(scope => ({
       id: `scopes${SECTION_KEY}${scope.id}`,
       label: scope.title,
       subtitle: scope.value,
       testID: `${props.testID}:open:${scope.id}`,
-      openStep: { id: `usage-scope:${scope.id}`, title: scope.title, backLabel: t('usage.board.page.filtersLabel'), inputPlaceholder: search,
+      openStep: { id: `${ROOT_SCOPE_STEP_ID}:${scope.id}`, title: scope.title, backLabel: t('usage.board.page.filtersLabel'), inputPlaceholder: search,
         sections: listed(scope.sections) },
     })) }] };
   }, [props.sections, props.scopes, props.testID]);
@@ -355,12 +356,30 @@ function UsageScopeSections(props: Readonly<{
     [props.sections, props.scopes]);
   const selectedIds = React.useMemo(() => new Set(allSections
     .flatMap(section => [...section.selectedIds].map(id => `${section.id}${SECTION_KEY}${id}`))), [allSections]);
+  // Follow the list's navigation. A Back remounts the root options after clearing
+  // the child's search, so restore the opener after that commit.
+  const [activeStepId, setActiveStepId] = React.useState(ROOT_SCOPE_STEP_ID);
+  const previousStepId = React.useRef(ROOT_SCOPE_STEP_ID);
+  const handleActiveStepChange = React.useCallback((activeStep: SelectionListStep) => {
+    setActiveStepId(activeStep.id);
+  }, []);
+  React.useEffect(() => {
+    const previous = previousStepId.current;
+    previousStepId.current = activeStepId;
+    if (activeStepId !== ROOT_SCOPE_STEP_ID || previous === ROOT_SCOPE_STEP_ID) return;
+    const opener = props.scopes?.find(scope => previous === `${ROOT_SCOPE_STEP_ID}:${scope.id}`);
+    if (opener) document.getElementById(`${props.testID}:open:${opener.id}`)?.focus({ preventScroll: true });
+  }, [activeStepId, props.scopes, props.testID]);
+  const phoneSheetOnWeb = Platform.OS === 'web' && props.scopes !== undefined;
   return (
     <SelectionList
       testID={`${props.testID}.list`}
       currentUiContextCommandScope={`${props.testID}.filters`}
       currentUiContextForegroundOverlay
       rootStep={step}
+      onActiveStepChange={phoneSheetOnWeb ? handleActiveStepChange : undefined}
+      autoFocusInputOnWeb={phoneSheetOnWeb}
+      tabKeyBehavior={phoneSheetOnWeb ? 'traverse' : undefined}
       selection={{ kind: 'multiple', selectedIds }}
       onSelect={(id, _option, callerContext, invocation) => {
         const [section, option] = id.split(SECTION_KEY);

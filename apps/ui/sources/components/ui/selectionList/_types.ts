@@ -442,6 +442,8 @@ export type SelectionListProps = Readonly<{
      * Ignored on native so opening a popover/modal never summons the software keyboard.
      */
     autoFocusInputOnWeb?: boolean;
+    /** Let the containing web surface own Tab traversal instead of activating rows or going Back. */
+    tabKeyBehavior?: 'traverse';
     /**
      * Focus the search/value input on iOS/Android, summoning the software keyboard.
      *

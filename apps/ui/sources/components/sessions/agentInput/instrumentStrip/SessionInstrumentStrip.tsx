@@ -24,7 +24,7 @@ import { getContextWarning } from '../contextWarning';
 import { resolveContextWarningWindowTokens } from '../resolveContextWarningWindowTokens';
 import { ContextGaugeInstrument } from './ContextGaugeInstrument';
 import { GitDeltaInstrument } from './GitDeltaInstrument';
-import { QuotaRingInstrument, QuotaRingUnavailable } from './QuotaRingInstrument';
+import { QuotaRingInstrument } from './QuotaRingInstrument';
 import { GuardCountdown } from '@/components/machines/guard/GuardCountdown';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 
@@ -288,19 +288,19 @@ export const SessionInstrumentStrip = React.memo(function SessionInstrumentStrip
                 ),
             });
         }
-        if (showQuota && props.quota && 'readFailed' in props.quota) {
-            instruments.push({ yields: false, node: <QuotaRingUnavailable key="quota" onRetry={props.quota.onRetry} /> });
-        } else if (showQuota && props.quota) {
+        if (showQuota && props.quota) {
+            const quota = props.quota;
+            const ringProps = 'readFailed' in quota
+                ? { viewModel: null, onRetry: quota.onRetry }
+                : quota;
             instruments.push({
                 yields: false,
                 node: (
                     <QuotaRingInstrument
                         key="quota"
-                        viewModel={props.quota.viewModel}
+                        {...ringProps}
                         metadata={props.metadata}
                         agentId={props.agentId}
-                        onRecoveryCreditPress={props.quota.onRecoveryCreditPress}
-                        recoveryCreditPending={props.quota.recoveryCreditPending}
                         showProviderGlyph={!compact}
                         showLabels={showUsageLabels}
                     />
