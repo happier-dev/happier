@@ -58,9 +58,9 @@ export function materializeSavedSecretReferenceBinding(params: Readonly<{
     && parseSavedSecretRefV1(params.binding.ref).kind === 'shared_resource') {
     throw new LaunchSecretReferenceOverlayError('reference_stale', params.requirementName);
   }
-  if (params.exactReference && params.binding.revision !== undefined
-    && !params.materializer.matchesSharedResourceRevision(params.binding.ref, params.binding.revision)) {
-    throw new LaunchSecretReferenceOverlayError('reference_stale', params.requirementName);
+  if (params.exactReference && params.binding.revision !== undefined) {
+    const refusal = params.materializer.readSharedResourceRevisionRefusal(params.binding.ref, params.binding.revision);
+    if (refusal) throw new LaunchSecretReferenceOverlayError(refusal, params.requirementName);
   }
   const resolved = params.materializer.resolve(params.binding.ref);
   if (resolved.status === 'ready' && resolved.value.length > 0) return resolved.value;

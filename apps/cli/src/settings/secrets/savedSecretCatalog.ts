@@ -162,6 +162,7 @@ export type SavedSecretMaterializerV1 = Readonly<{
   resolveContent: (ref: string) => SavedSecretContentResolutionV1;
   recheck: (ref: string, fingerprint: string) => SavedSecretResolutionV1;
   matchesSharedResourceRevision: (ref: string, revision: number) => boolean;
+  readSharedResourceRevisionRefusal: (ref: string, revision: number) => 'reference_forbidden' | 'reference_stale' | null;
 }>;
 
 function digest(value: unknown): string {
@@ -384,6 +385,12 @@ export function createSavedSecretMaterializerV1(input: Readonly<{
     return { ...metadata, value: content.value };
   };
 
+  const matchesSharedResourceRevision = (ref: string, revision: number): boolean => {
+    if (input.isCurrent?.() === false || collidingPersonalRefs.has(ref)) return false;
+    const parsed = parseSavedSecretCatalogReferenceV1(ref);
+    return parsed?.kind === 'shared_resource' && resources.get(parsed.id)?.revision === revision;
+  };
+
   return {
     inspect,
     resolve,
@@ -399,12 +406,11 @@ export function createSavedSecretMaterializerV1(input: Readonly<{
         : parsed?.kind === 'shared_resource' ? resources.get(parsed.id)?.displayName ?? null : null;
       return { status: 'ready', source: resolved.source, displayName };
     },
-    matchesSharedResourceRevision: (ref, revision) => {
-      if (input.isCurrent?.() === false) return false;
-      if (collidingPersonalRefs.has(ref)) return false;
-      const parsed = parseSavedSecretCatalogReferenceV1(ref);
-      return parsed?.kind === 'shared_resource'
-        && resources.get(parsed.id)?.revision === revision;
+    matchesSharedResourceRevision,
+    readSharedResourceRevisionRefusal: (ref, revision) => {
+      if (matchesSharedResourceRevision(ref, revision)) return null;
+      // The current Home catalog can omit a withdrawn resource entirely.
+      return inspect(ref).status === 'forbidden' ? 'reference_forbidden' : 'reference_stale';
     },
     recheck: (ref, fingerprint) => {
       const resolved = resolve(ref);

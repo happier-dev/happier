@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { connectUiActionClient, createUiTeamSharedSecretReference } from '@happier-tests/ui-action-client';
 import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
 import { TeamInvitationCreateResultV1Schema } from '@happier-dev/protocol/teams/invitation';
+import { TeamMembersPageV1Schema } from '@happier-dev/protocol/teams/membership';
 import { SavedSecretResourceContentV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceContentSchemaV1';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
@@ -57,7 +58,8 @@ describe('Team setup member-local vault references', () => {
       }
       const sentinel = `synthetic-${name}-vault-value`;
       // The external 1Password CLI is the boundary. Each daemon has a distinct native identity.
-      await writeFile(join(bin, 'op'), `#!${process.execPath}\nif (process.argv[2] === 'whoami') { process.stdout.write(${JSON.stringify(name)}); process.exit(0); }\nif (process.argv[2] !== 'read' || process.argv[3] !== 'op://Development/API/token') process.exit(1);\nprocess.stdout.write(${JSON.stringify(sentinel)});\n`, { mode: 0o700 });
+      const opSource = `#!${process.execPath}\nif (process.argv[2] === 'whoami') { process.stdout.write(${JSON.stringify(name)}); process.exit(0); }\nif (process.argv[2] !== 'read' || process.argv[3] !== 'op://Development/API/token') process.exit(1);\nprocess.stdout.write(${JSON.stringify(sentinel)});\n`;
+      await writeFile(join(bin, 'op'), opSource, { mode: 0o700 });
       const agent = await createIsolatedFakeClaudeControlShim({ testDir: directory, invocationId: name,
         captureEnvironmentKeys: ['TEAM_VAULT_SENTINEL'], logFullStdin: false });
       const enrolled = await fixture!.enrollDaemon(account, { env: {
@@ -66,7 +68,7 @@ describe('Team setup member-local vault references', () => {
       await fixture!.assertKnownGoodSessionControl(account, enrolled);
       const machineId = enrolled.target.machineId;
       await waitFor(() => ui.isAccountReady() && ui.isMachineActive(machineId), { timeoutMs: 60_000 });
-      return { account, ui, machineId, workspace, agent, sentinel, opPath: join(bin, 'op') };
+      return { account, ui, machineId, workspace, agent, sentinel, opPath: join(bin, 'op'), opSource };
     };
     const first = await member('member-a');
     const ui = first.ui;
@@ -115,7 +117,8 @@ describe('Team setup member-local vault references', () => {
       expect(profile).toMatchObject({ ok: true, result: { status: 'updated' } });
       return profileId;
     };
-    const launchWithOwnVault = async (requester: Awaited<ReturnType<typeof member>>, profileId: string, unavailable = false) => {
+    const launchWithOwnVault = async (requester: Awaited<ReturnType<typeof member>>, profileId: string,
+      refusal?: 'reference_unavailable' | 'reference_forbidden') => {
       const requesterContext = { ...context, serverId: requester.ui.serverId };
       const launchStartedAt = Date.now();
       const launched = await requester.ui.executeConfirmed('session.spawn_new', {
@@ -126,10 +129,11 @@ describe('Team setup member-local vault references', () => {
           bindings: { TEAM_VAULT_SENTINEL: { ref: shared.resourceRef, revision: shared.revision } } },
       }, requesterContext);
       const spawn = SessionSpawnNewActionResultV1Schema.safeParse(launched.ok ? launched.result : launched.details).data;
-      if (unavailable) {
+      if (refusal) {
         expect(launched).toMatchObject({ ok: false, errorCode: 'spawn_failed' });
         expect(spawn).toMatchObject({ type: 'error', code: 'spawn_failed',
-          providerError: { code: 'provider_secret_unavailable', savedSecretReason: 'reference_unavailable' } });
+          providerError: { code: refusal === 'reference_unavailable' ? 'provider_secret_unavailable' : 'provider_secret_missing',
+            savedSecretReason: refusal } });
         return;
       }
       if (!launched.ok || spawn?.type !== 'success') {
@@ -155,6 +159,23 @@ describe('Team setup member-local vault references', () => {
     await launchWithOwnVault(second, secondProfile);
     // A's available vault must never rescue B's failed native acquisition.
     await writeFile(second.opPath, `#!${process.execPath}\nprocess.exit(1);\n`, { mode: 0o700 });
-    await launchWithOwnVault(second, secondProfile, true);
+    await launchWithOwnVault(second, secondProfile, 'reference_unavailable');
+    await writeFile(second.opPath, second.opSource, { mode: 0o700 });
+    await close(second.ui);
+
+    first.ui = await connect(first.account);
+    const ownerContext = { ...context, serverId: first.ui.serverId };
+    const roster = await first.ui.execute('teams.members.list', { v: 1, teamId: team.id, filter: 'all' }, ownerContext);
+    if (!roster.ok) throw new Error(`Team roster read failed (${roster.errorCode})`);
+    const secondAccountId = readAccountIdFromToken(second.account.credentials.token);
+    const membership = TeamMembersPageV1Schema.parse(roster.result).items.find(row => row.accountId === secondAccountId);
+    if (!membership) throw new Error('Member B is missing from the Team roster');
+    expect(await first.ui.executeConfirmed('teams.members.remove', {
+      v: 1, teamId: team.id, membershipId: membership.id,
+    }, ownerContext)).toMatchObject({ ok: true });
+    await close(first.ui);
+
+    second.ui = await connect(second.account);
+    await launchWithOwnVault(second, secondProfile, 'reference_forbidden');
   }, 0);
 });

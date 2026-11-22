@@ -476,7 +476,7 @@ describe('SavedSecret material-demand legacy import', () => {
     if (historyUseWithdrawalObserved) {
       await expect(savedSecretOperations.readSavedSecretCatalogForOperation({ expectedScopeKey: scopeKey,
         operationContext: context, references: [{ ref: resourceRef, revision: 7 }], refreshCatalog: true }))
-        .rejects.toMatchObject({ reason: 'reference_stale', reference: resourceRef });
+        .rejects.toMatchObject({ reason: 'reference_forbidden', reference: resourceRef });
     }
     expect(axios.post).not.toHaveBeenCalled();
   });

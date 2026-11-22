@@ -613,7 +613,9 @@ an unavailable result, with no fallback to the sharer's or Machine custodian's
 vault identity. Team brokering is unsupported. Linking one's own resource is the
 grant, while another person's resource retains the existing consent flow. Native
 vault acquisition on a shared Machine requires Manage access before native code
-runs. The descriptor follows the Account-mode and Home-managed edit rules below;
+runs. If the Home catalog withdraws a recipient's access, the next launch
+refuses the reference as `reference_forbidden`, even when the binding pins a
+revision. The descriptor follows the Account-mode and Home-managed edit rules below;
 Plain Accounts remain keyless.
 
 Imported software passkeys use one `SavedSecretResource` per key, through the

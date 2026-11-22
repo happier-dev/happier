@@ -993,7 +993,7 @@ describe('Saved Secret catalog hydration', () => {
       expectedScopeKey: resolveAccountSettingsScopeKeyForToken(token),
       secretReferenceOverlay: overlay,
     })).rejects.toMatchObject({
-      reason: 'reference_stale',
+      reason: 'reference_forbidden',
       reference: ref,
     });
 

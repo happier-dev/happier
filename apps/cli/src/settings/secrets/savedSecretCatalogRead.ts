@@ -271,8 +271,9 @@ function assertSharedOperationReferencesReady(snapshot: ActiveAccountSettingsSna
     )) {
       throw new SavedSecretOperationAdmissionError({ reason: 'reference_collision_migration_required', reference: reference.ref });
     }
-    if (reference.revision !== undefined && !materializer.matchesSharedResourceRevision(reference.ref, reference.revision)) {
-      throw new SavedSecretOperationAdmissionError({ reason: 'reference_stale', reference: reference.ref });
+    if (reference.revision !== undefined) {
+      const refusal = materializer.readSharedResourceRevisionRefusal(reference.ref, reference.revision);
+      if (refusal) throw new SavedSecretOperationAdmissionError({ reason: refusal, reference: reference.ref });
     }
     const resolved = materializer.resolveContent(reference.ref);
     if (resolved.status !== 'ready' && reference.required !== false) {
