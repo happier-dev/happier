@@ -258,7 +258,12 @@ export function useSessionViewerHasPresence(source: SessionViewerSource): boolea
     (listener: () => void) => store?.subscribe(listener) ?? (() => {}),
     [store],
   );
-  const read = React.useCallback(() => (store?.get(source) ?? null) !== null, [source, store]);
+  // Nobody acting draws no capsule, so it takes no footer band: an idle presence reserving one moved the frame's
+  // card 12 px when its state changed under it.
+  const read = React.useCallback(() => {
+    const published = store?.get(source) ?? null;
+    return published !== null && published.presence.kind !== 'idle';
+  }, [source, store]);
   return React.useSyncExternalStore(subscribe, read, read);
 }
 

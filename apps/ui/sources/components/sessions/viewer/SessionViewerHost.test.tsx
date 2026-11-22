@@ -500,6 +500,15 @@ describe('SessionViewerHost', () => {
     } finally { await result.unmount(); }
   });
 
+  it('reserves no footer while nobody acts, so the frame does not jump when its state card changes (DESIGN-ACCEPT-142 17)', async () => {
+    // "Opening Computer…" became "No window is shared" and the card rose 12 px: an idle presence draws no capsule,
+    // yet its footer band was reserved under the picture.
+    const { result, frame } = await mountOpen({ kind: 'idle' } as BrowserCopresence, { width: 1200, height: 800 });
+    try {
+      expect(frame().props.footer).toBeUndefined();
+    } finally { await result.unmount(); }
+  });
+
   it('gives the controls the glyph-only switch while the frame is narrower than their labelled row, and the labels back when it is wide again', async () => {
     const { result, frame } = await mountOpen(AGENT_PRESENCE, { width: 1200, height: 800 });
     const switchLabels = () => result.tree.root.findAll(
