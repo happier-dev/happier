@@ -13311,6 +13311,7 @@ const fr: ReviewWalkthroughTranslations = {
         workflowRun: 'Exécution du workflow',
         reviewerRun: ({ count }) => `Relecteur ${count}`,
         fixed: 'Corrigé',
+        fixedIn: ({ sha }) => `Corrigé dans ${sha}`,
         fixedCount: ({ count }) => `${count} corrigé${count === 1 ? '' : 's'}`,
         reviewersDidntFinish: ({ names }) => `${names} n’a pas terminé`,
         eventDecided: ({ decision, title }) => `a choisi ${decision} pour « ${title} »`,

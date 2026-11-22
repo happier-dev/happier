@@ -13244,6 +13244,7 @@ const ja: ReviewWalkthroughTranslations = {
         workflowRun: 'ワークフローの実行',
         reviewerRun: ({ count }) => `レビュアー${count}`,
         fixed: '修正済み',
+        fixedIn: ({ sha }) => `${sha} で修正`,
         fixedCount: ({ count }) => `${count}件修正済み`,
         reviewersDidntFinish: ({ names }) => `${names}は完了しませんでした`,
         eventDecided: ({ decision, title }) => `「${title}」に${decision}を選択`,

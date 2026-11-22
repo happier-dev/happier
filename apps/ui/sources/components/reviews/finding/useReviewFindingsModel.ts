@@ -5,7 +5,7 @@ import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol
 import { ReviewFollowUpFailureCodeSchema } from '@happier-dev/protocol/execution/runs/index';
 import type { ReviewFindingsV2 } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
 import type { ReviewQuestion } from '@happier-dev/protocol/reviews/ReviewQuestion';
-import { isReviewFindingFixedV1, type ReviewTriageStatus } from '@happier-dev/protocol/reviews/reviewTriageStatus';
+import { isReviewFindingFixedV1, readReviewFindingFixCommitV1, type ReviewTriageStatus } from '@happier-dev/protocol/reviews/reviewTriageStatus';
 import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { ReviewFindingsApplyResultV1Schema } from '@happier-dev/protocol/reviews/reviewApplyV1';
 import { projectReviewFindingRoundStatusV1, readReviewFindingRevisedBodyV1,
@@ -427,6 +427,8 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
             taskOrigin: taskOriginOf([row.comment]),
             decision: readReviewFindingDecision(row.comment.reviewTriageStatus, row.comment.state, pending[row.rowId]),
             fixed: isReviewFindingFixedV1(row.comment.state, pending[row.rowId]),
+            // The commit its fix recorded when it resolved the finding ("Fixed in a5c09e2").
+            fixCommit: readReviewFindingFixCommitV1(row.comment, pending[row.rowId]),
             // A fixed finding has nothing left to decide: no decision control (and so no Implement fix).
             decisionEditable: canAct && !isReviewFindingFixedV1(row.comment.state, pending[row.rowId]),
             decidable: true, reviewers,
@@ -450,6 +452,7 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
             taskOrigin: taskOriginOf(row.sources.flatMap(source => source.comment ? [source.comment] : [])),
             decision: rowDecision(row, pending),
             fixed: rowFixed(row, pending),
+            fixCommit: null,
             decisionEditable: canAct && !rowFixed(row, pending),
             decidable: row.sources.some(source => source.comment !== null),
             reviewers: rowMembers.map(member => ({ label: member.reviewerLabel, backendId: member.backendId })),

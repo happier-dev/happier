@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isReviewFindingFixedV1, readReviewFindingDecisionV1, reviewTriageNeedsDecisionV1 } from './reviewTriageStatus.js';
+import { isReviewFindingFixedV1, readReviewFindingDecisionV1, readReviewFindingFixCommitV1, reviewTriageNeedsDecisionV1 } from './reviewTriageStatus.js';
 
 describe('Review decision demand', () => {
   it('keeps undecided, deferred and clarification findings actionable without reopening decided findings', () => {
@@ -38,5 +38,21 @@ describe('fixed Review findings', () => {
     expect(isReviewFindingFixedV1('open')).toBe(false);
     expect(isReviewFindingFixedV1('dismissed')).toBe(false);
     expect(isReviewFindingFixedV1('resolved', 'accept')).toBe(false);
+  });
+
+  it('names the commit that fixed a resolved finding from its resolving transition, else its attached evidence', () => {
+    const sha = 'a5c09e2b7f0d4c1e9a8b6c5d4e3f2a1b0c9d8e7f';
+    const later = 'b'.repeat(40);
+    const by = { kind: 'user' as const, userId: 'alice' };
+    const resolved = (evidence: { kind: 'commit'; sha: string }[] | undefined) => ({ transitionId: 't2', fromState: 'open' as const,
+      toState: 'resolved' as const, transitionedAt: 2, transitionedBy: by, ...(evidence ? { evidence } : {}) });
+    const opened = { transitionId: 't1', toState: 'open' as const, transitionedAt: 1, transitionedBy: by };
+    expect(readReviewFindingFixCommitV1({ state: 'resolved', transitions: [opened, resolved([{ kind: 'commit', sha }])] })).toBe(sha);
+    expect(readReviewFindingFixCommitV1({ state: 'resolved', transitions: [opened, resolved(undefined)],
+      evidence: [{ kind: 'commit', sha: later }] })).toBe(later);
+    // Not fixed (yet, or any more): no commit to name, whatever evidence it carries.
+    expect(readReviewFindingFixCommitV1({ state: 'open', transitions: [opened, resolved([{ kind: 'commit', sha }])] })).toBeNull();
+    expect(readReviewFindingFixCommitV1({ state: 'resolved', transitions: [opened, resolved([{ kind: 'commit', sha }])] }, 'defer')).toBeNull();
+    expect(readReviewFindingFixCommitV1({ state: 'resolved', transitions: [opened, resolved(undefined)] })).toBeNull();
   });
 });

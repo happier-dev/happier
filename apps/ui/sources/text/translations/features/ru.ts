@@ -13320,6 +13320,7 @@ const ru: ReviewWalkthroughTranslations = {
         workflowRun: 'Запуск процесса',
         reviewerRun: ({ count }) => `Рецензент ${count}`,
         fixed: 'Исправлено',
+        fixedIn: ({ sha }) => `Исправлено в ${sha}`,
         fixedCount: ({ count }) => `Исправлено: ${count}`,
         reviewersDidntFinish: ({ names }) => `${names}: не завершено`,
         eventDecided: ({ decision, title }) => `выбрал(а) «${decision}» для «${title}»`,

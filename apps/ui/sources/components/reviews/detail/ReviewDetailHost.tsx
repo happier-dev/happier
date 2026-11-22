@@ -22,6 +22,7 @@ import { Avatar } from '@/components/ui/avatar/Avatar';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { ReviewChangesHost } from '../ReviewChangesHost';
 import { formatReviewCommentAnchor, resolveReviewCommentBodyPromptDefault } from '../content';
+import { formatCodeCommitShortOid } from '@/components/projects/files/code/codeEntryHistoryPresentation';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 import { useReviewDetail } from '../useReviewDetail';
@@ -153,6 +154,11 @@ export function projectRound(round: ReviewRecordRound, reads?: ReadonlyMap<strin
       },
     ],
   };
+}
+
+/** What a fixed finding says on its row and its page: the commit that fixed it once recorded (lab `detail-fixed`). */
+function reviewFindingFixedWords(fixCommit: string | null): string {
+  return fixCommit ? t('reviewWalkthrough.detail.fixedIn', { sha: formatCodeCommitShortOid(fixCommit) }) : t('reviewWalkthrough.detail.fixed');
 }
 
 const VERDICT_KEYS = {
@@ -477,7 +483,7 @@ export function ReviewDetailHost(props: Readonly<{
         href: match => artifactViewRoute(match.reviewId, { thread: match.commentId }) } : undefined}
       attribution={row.attribution} reviewers={row.reviewers} original={row.original} density="page" divided={divided}
       decision={row.decision} decisionEditable={row.decisionEditable} decisionDisabled={!row.decidable} decisionNote={null}
-      resolution={row.fixed ? t('reviewWalkthrough.detail.fixed') : null}
+      resolution={row.fixed ? reviewFindingFixedWords(row.fixCommit) : null}
       onDecide={findings.onDecide} followUp={row.followUp} threadEntries={row.threadEntries} pendingQuestion={findings.pendingQuestionByRowId[row.rowId] ?? null}
       expanded={openFinding === row.rowId} onToggleExpanded={toggleFinding} askContext={row.askContext}
       onAsk={findings.onAsk} onCreateTask={canEdit ? findings.onCreateTask : undefined} taskScope={scope}
@@ -499,7 +505,7 @@ export function ReviewDetailHost(props: Readonly<{
             kicker={joinHappierFacts(reviewSeverityLabel(row.finding.severity),
               t('reviewWalkthrough.detail.findingPosition', { index: index + 1, total: findings.rows.length }))}
             // A fixed finding says so on its own page, as its row does (it has no decision left to make).
-            meta={[...(row.fixed ? [{ key: 'fixed', icon: 'check-circle' as const, text: t('reviewWalkthrough.detail.fixed') }] : []),
+            meta={[...(row.fixed ? [{ key: 'fixed', icon: 'check-circle' as const, text: reviewFindingFixedWords(row.fixCommit) }] : []),
               ...(location ? [{ key: 'location', text: location, mono: true }] : []),
               ...(row.attribution ? [{ key: 'attribution', text: row.attribution.label }] : []),
               ...facts.map(fact => ({ key: `fact:${fact}`, text: fact }))]} />

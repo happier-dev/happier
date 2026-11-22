@@ -156,3 +156,29 @@ it('names a finding it cannot show by its place and says why, with its own words
     await screen.unmount();
   }
 });
+
+it('says which commit fixed a resolved finding on its row (lab detail-fixed: "Fixed in a5c09e2")', async () => {
+  const fixed = buildReviewCommentFixture({
+    id: 'fixed-root',
+    threadId: 'fixed-root',
+    reviewId: 'fixed-in-review',
+    accountId: 'alice',
+    state: 'resolved',
+    reviewTriageStatus: 'accept',
+    roundOrdinal: 1,
+    findingIdentity: 'e'.repeat(64),
+    finding: { id: 'fixed-finding', title: 'Unsaved draft is lost when the modal closes', summary: 'The draft is cleared on close',
+      severity: 'blocker', category: 'correctness' },
+    transitions: [{ transitionId: 'resolve', fromState: 'open', toState: 'resolved', transitionedAt: 2,
+      transitionedBy: { kind: 'user', userId: 'alice' }, serverRevision: 2,
+      evidence: [{ kind: 'commit', sha: 'a5c09e2b7f0d4c1e9a8b6c5d4e3f2a1b0c9d8e7f' }] }],
+  });
+  const screen = await renderReview({ reviewId: 'fixed-in-review', state: 'completed', comments: [fixed] });
+  const { t } = await import('@/text');
+  try {
+    await vi.waitFor(() => expect(screen.findHostByTestId('review-finding-decision:fixed-root')).not.toBeNull());
+    expect(screen.getTextContent()).toContain(t('reviewWalkthrough.detail.fixedIn', { sha: 'a5c09e2' }));
+  } finally {
+    await screen.unmount();
+  }
+});

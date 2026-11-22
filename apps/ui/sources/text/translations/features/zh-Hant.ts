@@ -13184,6 +13184,7 @@ const zhHant: ReviewWalkthroughTranslations = {
         workflowRun: '工作流程執行',
         reviewerRun: ({ count }) => `審查者 ${count}`,
         fixed: '已修正',
+        fixedIn: ({ sha }) => `已在 ${sha} 中修正`,
         fixedCount: ({ count }) => `已修正 ${count} 個`,
         reviewersDidntFinish: ({ names }) => `${names} 未完成`,
         eventDecided: ({ decision, title }) => `為「${title}」選擇了${decision}`,

@@ -221,6 +221,7 @@ export type ReviewWalkthroughTranslations = {
         workflowRun: string;
         reviewerRun: (params: Count) => string;
         fixed: string;
+        fixedIn: (params: Readonly<{ sha: string }>) => string;
         fixedCount: (params: Count) => string;
         reviewersDidntFinish: (params: Readonly<{ names: string }>) => string;
         eventDecided: (params: Readonly<{ decision: string; title: string }>) => string;
@@ -485,6 +486,7 @@ export const en: ReviewWalkthroughTranslations = {
         workflowRun: 'Workflow run',
         reviewerRun: ({ count }) => `Reviewer ${count}`,
         fixed: 'Fixed',
+        fixedIn: ({ sha }) => `Fixed in ${sha}`,
         fixedCount: ({ count }) => `${count} fixed`,
         reviewersDidntFinish: ({ names }) => `${names} didn’t finish`,
         eventDecided: ({ decision, title }) => `chose ${decision} for “${title}”`,

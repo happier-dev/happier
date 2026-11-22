@@ -13292,6 +13292,7 @@ const ca: ReviewWalkthroughTranslations = {
         workflowRun: 'Execució del flux',
         reviewerRun: ({ count }) => `Revisor ${count}`,
         fixed: 'Corregit',
+        fixedIn: ({ sha }) => `Corregit a ${sha}`,
         fixedCount: ({ count }) => `${count} corregides`,
         reviewersDidntFinish: ({ names }) => `${names} no ha acabat`,
         eventDecided: ({ decision, title }) => `ha triat ${decision} per a «${title}»`,

@@ -166,6 +166,10 @@ it('heads a pushed fixed finding as Fixed under "Review" in the bar, names its r
     roundOrdinal: 1,
     findingIdentity: 'c'.repeat(64),
     appearances: [{ roundOrdinal: 1, runId: 'run-1', reviewerId: 'step-1-reviewer-1' }],
+    // The fix Session resolved it with the commit that fixed it.
+    transitions: [{ transitionId: 'fixed-resolve', fromState: 'open', toState: 'resolved', transitionedAt: 2,
+      transitionedBy: { kind: 'user', userId: 'alice' }, serverRevision: 2,
+      evidence: [{ kind: 'commit', sha: 'a5c09e2b7f0d4c1e9a8b6c5d4e3f2a1b0c9d8e7f' }] }],
     // The first body is the reviewer's finding written out (title, summary, fix); its fields already say it.
     body: [title, 'No dependency list', suggestion].join('\n\n'),
     bodyVersion: 1,
@@ -216,7 +220,7 @@ it('heads a pushed fixed finding as Fixed under "Review" in the bar, names its r
     // The bar above names where Back goes, not the generic Artifacts destination.
     expect(header.props.navigationTitle).toBe(t('detailsSurface.review.title'));
     // A fixed finding says so on its own page, as its row does; nothing is left to decide.
-    expect(header.props.meta.map((fact: { text: string }) => fact.text)).toContain(t('reviewWalkthrough.detail.fixed'));
+    expect(header.props.meta.map((fact: { text: string }) => fact.text)).toContain(t('reviewWalkthrough.detail.fixedIn', { sha: 'a5c09e2' }));
     expect(screen.findHostByTestId('review-detail:decision-bar')).toBeNull();
     const text = screen.getTextContent();
     // The reviewer reads by its name or "Reviewer 1", never its positional id.
