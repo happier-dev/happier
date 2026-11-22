@@ -40,12 +40,16 @@ function terminalPresentation(state: Exclude<TeamInvitationPreviewV1['state'], '
 }
 
 /** A terminal reason the bounded preview explicitly lets this bearer see. */
-export function describeTeamInvitationPreviewRefusal(state: TeamInvitationPreviewState) {
-    if (state.kind === 'feature_unavailable' || (state.kind === 'unavailable' && state.reason === 'teams_disabled')) {
+export function describeTeamInvitationPreviewRefusal(state: TeamInvitationPreviewState):
+    | ReturnType<typeof presentTeamsDisabledOnHome>
+    | (ReturnType<typeof resolveTeamJoinPresentation> & { kind: 'warning' })
+    | null {
+    const reason = state.kind === 'unavailable' ? state.reason : undefined;
+    if (state.kind === 'feature_unavailable' || reason === 'teams_disabled') {
         return presentTeamsDisabledOnHome();
     }
-    if (state.kind === 'unavailable' && state.reason) {
-        return { ...resolveTeamJoinPresentation({ outcome: state.reason }), kind: 'warning' as const };
+    if (reason) {
+        return { ...resolveTeamJoinPresentation({ outcome: reason }), kind: 'warning' };
     }
     return null;
 }

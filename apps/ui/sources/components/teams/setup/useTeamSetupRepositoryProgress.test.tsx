@@ -60,8 +60,10 @@ function selectedBatch(): TeamSetupBatch {
         ] }, dispatched: new Set(['source']), running: true, settlement: null };
 }
 function preparedResultFixture() {
-    return OpenProjectResultV1Schema.parse({ kind: 'opened', setup: 'prepared', directory: '/repo',
+    const result = OpenProjectResultV1Schema.parse({ kind: 'opened', setup: 'prepared', directory: '/repo',
         workspace: { serverId: query.serverId, machineId: query.machineId, workspaceId: 'repo', rootPath: '/repo' } });
+    if (result.kind !== 'opened') throw new Error('Expected the opened Project fixture');
+    return result;
 }
 let preparedResult = preparedResultFixture();
 function setupOperation(overrides: Partial<ActionOperationSnapshotV1> = {}): ActionOperationSnapshotV1 {

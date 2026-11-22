@@ -229,9 +229,8 @@ function TeamSetupPlanPage(
       surface: 'ui' as const,
       serverId: context.scope.serverId,
       expectedAccountId: context.scope.accountId,
-      signal: props.lifetime.signal,
     }),
-    [context.scope.accountId, context.scope.serverId, props.lifetime.signal],
+    [context.scope.accountId, context.scope.serverId],
   );
   const plan = useTeamSetupPlan(execute, actionContext);
 

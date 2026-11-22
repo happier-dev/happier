@@ -462,6 +462,7 @@ async function render(
           const material = openManagedControllerActionCodecV1({ authorization: executionAuthorization,
             machineId, installationId: 'test-installation', serverIdentityId: workspace.serverId,
             installationPrivateKey: installationKeys.secretKey });
+          if (!envelope.target) throw new Error('Expected a targeted requester operation read');
           const binding = { actionId, requestId: envelope.requestId, target: envelope.target,
             accountId: 'account-1', serverIdentityId: workspace.serverId, authentication: { kind: 'account' as const, tokenEpoch: 0 } };
           const opened = material && openExternalActionRequestV2({ envelope, binding, material,

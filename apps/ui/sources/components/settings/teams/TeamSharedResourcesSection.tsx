@@ -27,7 +27,7 @@ const LOADING_ROWS = 8;
 function kindDestination(
   row: TeamSharedResourceSummaryRowV1,
   context: TeamSectionContext,
-): string | null {
+) {
   const { kind } = row;
   if (kind === 'sessions') return teamSessionsPath(context.address);
   if (kind === 'credentials') return teamCredentialsPath(context.address);
