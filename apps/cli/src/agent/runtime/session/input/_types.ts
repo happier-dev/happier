@@ -48,7 +48,7 @@ export type SessionProviderInputConsumerSession = Readonly<{
   /** Synchronous observed Pending state at the context-only dispatch ordering point. */
   hasPendingProviderInput?: () => boolean;
   /** `beforeClaim`: the claim reply carries settled custody's statuses, so no separate list read. */
-  reconcilePendingProviderInputCustodyBeforeMaterialization?: (opts?: Readonly<{ beforeClaim?: boolean }>) => Promise<boolean>;
+  reconcilePendingProviderInputCustodyBeforeMaterialization?: (opts?: Readonly<{ beforeClaim?: boolean; retainedFollowWakeLocalIds?: readonly string[] }>) => Promise<boolean>;
   reconcilePendingQueueState?: (opts: { force: boolean }) => unknown | Promise<unknown>;
   readPendingQueueStateForLiveWork?: () => Promise<PendingQueueState>;
   /** Incumbent synchronous projection, used only to detect change edges. */
@@ -87,6 +87,7 @@ export type ActiveTurnPendingPumpOptions = Omit<DrainPendingOptions, 'abortSigna
 export type WaitForNextProviderInputOptions = Readonly<{
   abortSignal: AbortSignal;
   beforeCollectQueuedBatch?: (() => void | Promise<void>) | null;
+  readQueuedFollowWakeLocalIds?: () => readonly string[];
   beforePendingMaterialize?: (() => boolean | Promise<boolean>) | null;
   onMetadataUpdate?: (() => void | Promise<void>) | null;
 }>;

@@ -5437,7 +5437,7 @@ export class ApiSessionClient extends EventEmitter {
      * because only that read can release it for this claim.
      */
     async reconcilePendingProviderInputCustodyBeforeMaterialization(
-        opts?: Readonly<{ beforeClaim?: boolean; pushedPendingVersion?: number }>,
+        opts?: Readonly<{ beforeClaim?: boolean; pushedPendingVersion?: number; retainedFollowWakeLocalIds?: readonly string[] }>,
     ): Promise<boolean> {
         if (this.closed) return false;
         // Rejoin witnessed acceptance before interpreting a Pending snapshot.
@@ -5447,7 +5447,7 @@ export class ApiSessionClient extends EventEmitter {
         if (this.closed) return false;
         const localIds = this.readPendingProviderInputCustodyLocalIds();
         if (localIds.length === 0) return true;
-        if (opts?.beforeClaim === true && !this.hasUnsettledPendingProviderInputCustody()) return true;
+        if (opts?.beforeClaim === true && !this.hasUnsettledPendingProviderInputCustody(opts.retainedFollowWakeLocalIds)) return true;
         // Every delivery-status writer bumps `pendingVersion` (P03 T5): a push at or below the version
         // the held statuses are current at carries no status change. Any newer version reads.
         const currentAt = this.pendingCustodyStatusesCurrentAt;
@@ -5473,7 +5473,7 @@ export class ApiSessionClient extends EventEmitter {
             });
         }
 
-        return !this.hasUnsettledPendingProviderInputCustody();
+        return !this.hasUnsettledPendingProviderInputCustody(opts?.retainedFollowWakeLocalIds);
     }
 
     /**
@@ -5544,8 +5544,10 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     /** Session-owned provider input still awaiting acceptance or settlement (local facts only). */
-    private hasUnsettledPendingProviderInputCustody(): boolean {
-        const retainedContextLocalIds = new Set(this.providerInputConsumer?.readRetainedContextLocalIds?.() ?? []);
+    private hasUnsettledPendingProviderInputCustody(retainedFollowWakeLocalIds?: readonly string[]): boolean {
+        const retainedContextLocalIds = new Set([
+            ...this.providerInputConsumer?.readRetainedContextLocalIds?.() ?? [], ...retainedFollowWakeLocalIds ?? [],
+        ]);
         return [...this.materializationRuntime.pendingQueueMaterializedLocalIds]
             .some((localId) => (
                 !this.executionRunPendingCustody.has(localId)

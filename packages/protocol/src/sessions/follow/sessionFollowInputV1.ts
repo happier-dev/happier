@@ -116,6 +116,12 @@ export const SessionFollowInputV1Schema = lazyZodSchema(() => z.union([
 ]));
 export type SessionFollowInputV1 = z.infer<typeof SessionFollowInputV1Schema>;
 
+/** A transcript update can join another wake from its source at the next intake. */
+export function readSessionFollowWakeCoalescingSourceV1(delivery: SessionFollowInputV1 | undefined): string | undefined {
+  return delivery?.delivery === 'wake' && 'event' in delivery && delivery.event.kind === 'update_posted'
+    && 'sourceMessage' in delivery.original ? delivery.original.sourceSessionId : undefined;
+}
+
 /**
  * Receipts and stored authorities retain message-backed terminal notices before AM-SB1
  * (producer schema b72a081d7a; retained rows observed 2026-10-23/24).

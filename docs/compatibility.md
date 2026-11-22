@@ -5780,7 +5780,9 @@ requests without retained context retain the existing revision 2–4 ingress.
 The server verifies the same-Session claimed rows, informational admission and
 current publisher before excluding them from rejoin/claim selection. It does not
 resolve those rows or infer native acceptance. The materialization proof adds no
-persisted format.
+persisted format. In 0.3 development, a retained wake for a Session transcript
+update constrains the next claim to a queued update wake from the same source.
+Both claims keep their exact receipts and existing settlement contracts.
 
 File review notes extend the existing unreleased 0.3 admission operand and
 receipt with optional `nextTurnNote: 'file_review_note.v1'`. Authenticated Pending

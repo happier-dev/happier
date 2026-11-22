@@ -658,7 +658,9 @@ export function createSessionClientInteractionApi(
         if (serverIdentityId === undefined) {
             return { didMaterialize: false, result: { type: 'retryable_transport' } };
         }
-        const retainedContextLocalIds = target ? [] : [...deps.readRetainedContextLocalIds?.() ?? []];
+        const retainedContextLocalIds = target ? [] : [...new Set([
+            ...deps.readRetainedContextLocalIds?.() ?? [], ...opts.retainedFollowWakeLocalIds ?? [],
+        ])];
         if (retainedContextLocalIds.length > 0
             && (contractResult.pendingInputProtocolVersion ?? 0) < PENDING_INPUT_PROTOCOL_VERSION_V5) {
             return { didMaterialize: false, result: { type: 'unsupported', code: 'session_input_target_update_required' } };
@@ -1407,6 +1409,7 @@ export function createSessionClientInteractionApi(
             const materializeOpts = {
                 deliveryTiming: opts.deliveryTiming,
                 expectedRuntimeActivityRevision: opts.expectedRuntimeActivityRevision,
+                retainedFollowWakeLocalIds: opts.retainedFollowWakeLocalIds,
                 onDiagnosticPhase: opts.onDiagnosticPhase,
             };
             if (!deps.shouldAttemptPendingMaterialization()) {

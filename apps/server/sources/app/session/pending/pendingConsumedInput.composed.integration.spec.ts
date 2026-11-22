@@ -44,11 +44,11 @@ import { writeAcpTestAgentScript } from '../../../../../cli/src/agent/acp/testki
 import { waitForCondition } from '../../../../../cli/src/testkit/async/waitFor';
 import { MessageQueue2 } from '../../../../../cli/src/agent/runtime/modeMessageQueue';
 import { createSessionProviderInputConsumer } from '../../../../../cli/src/agent/runtime/session/input/sessionProviderInputConsumer';
-import { createSessionProviderInputConsumerSessionAdapter } from '../../../../../cli/src/agent/runtime/waitForNextPermissionModeMessage';
+import { createSessionProviderInputConsumerSessionAdapter, waitForNextPermissionModeMessage } from '../../../../../cli/src/agent/runtime/waitForNextPermissionModeMessage';
 import { createWorkflowOriginContextInputPort } from '../../../../../cli/src/agent/runtime/session/contextOnly/workflowOriginInput';
 import { publishSessionFollowWakeInvalidation } from '../../../../../cli/src/agent/runtime/session/follow/sessionFollowWakeSignal';
 import { registerPermissionModeMessageQueueBinding } from '../../../../../cli/src/agent/runtime/permissions/bindModeQueue';
-import { combinePermissionModeQueuedPrompts, isNextTurnContextQueuedPrompt, appendNextTurnContextToQueuedPrompt,
+import { combinePermissionModeQueuedPrompts, isNextTurnContextQueuedPrompt, appendNextTurnContextToQueuedPrompt, readFollowWakeQueuePrefix,
     type PermissionModeQueuedPrompt, type PermissionModeQueuedPromptMode } from '../../../../../cli/src/agent/runtime/permissions/queuedPrompt';
 import { buildTrustedHostSessionInputAdmissionV1, SessionInputRequestV1Schema, withSessionInputRequestV1,
     SESSION_MESSAGE_PROVENANCE_META_KEY } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
@@ -60,6 +60,7 @@ import { createSessionFollowSourceHydrator } from '../../../../../cli/src/agent/
 import { createResourceDataKey } from '../../../../../cli/src/api/encryption/resourceDataKey';
 import { writeSessionDataKeyEnvelopeInTx } from '@/app/session/encryption/sessionDataKeyEnvelopePersistence';
 import { inTx } from '@/storage/inTx';
+import { applySessionTurnMutation } from '@/app/session/sessionWriteService';
 import { hasCanonicalFollowProviderInputAcceptanceInTx } from '@/app/session/follow/providerInputAcceptance';
 import { waitForSessionInputResult } from '../../../../../cli/src/session/services/sendSessionMessage';
 import { blockPendingQueueV2Delivery } from '../../../../../cli/src/api/session/pendingQueueV2Transport';
@@ -67,6 +68,7 @@ import { sendFileReviewNoteToSession } from '../../../../../cli/src/session/serv
 import { runWithServerHttpBaseUrl } from '../../../../../cli/src/api/client/serverHttpBaseUrl';
 import { prepareSessionInputForProviderDispatch } from '../../../../../cli/src/agent/runtime/turns/prepareSessionInputForProviderDispatch';
 
+import { createPermissionModeQueueState } from '../../../../../cli/src/agent/runtime/createPermissionModeQueueState';
 import { runPermissionModePromptLoop } from '../../../../../cli/src/agent/runtime/runPermissionModePromptLoop';
 import { MessageBuffer } from '../../../../../cli/src/ui/ink/messageBuffer';
 import { HappierStructuredInputV1Schema } from '@happier-dev/protocol/runtime/input/structuredInputV1';
@@ -289,8 +291,8 @@ describe('consumed ACP input → host turn → Pending', () => {
             .toMatchObject({ deliveryState: 'blocked', deliveryBlockedReason: 'team_access_removed' });
     });
 
-    it.each(['retained', 'reconnect', 'successor', 'ordinary-head', 'person-hold', 'omitted', 'file-review'] as const)(
-        'carries a retained quiet original with the next natural Pending input (%s)', async scenario => {
+    it.each(['retained', 'reconnect', 'successor', 'ordinary-head', 'person-hold', 'omitted', 'file-review', 'busy-wake'] as const)(
+        'carries retained originals into the next Pending input (%s)', async scenario => {
         harness.resetEnv({ HAPPIER_FEATURE_SESSIONS__ENABLED: 'true', HAPPIER_FEATURE_SESSIONS_FOLLOWING__ENABLED: 'true' });
         await getOrCreateServerIdentityId();
         const authentication = createPresentUserSessionAccessAuthentication();
@@ -341,7 +343,7 @@ describe('consumed ACP input → host turn → Pending', () => {
         expect(await client.claimCurrentSessionPublisherAuthorityForStartup()).toMatchObject({ status: 'claimed' });
         const sourceResource = await createResourceDataKey({ credentials, mode: 'e2ee' });
         if (sourceResource.mode !== 'e2ee') throw new Error('Expected fixture E2EE source');
-        const source = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), seq: 1,
+        const source = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), seq: scenario === 'busy-wake' ? 2 : 1,
             metadata: encodeBase64(encrypt(sourceResource.dataKey, 'dataKey', metadata)) } });
         expect(await inTx(tx => writeSessionDataKeyEnvelopeInTx(tx, { sessionId: source.id,
             recipientAccountId: owner.id, encryptedDataKey: decodeBase64(sourceResource.dataEncryptionKey),
@@ -353,11 +355,23 @@ describe('consumed ACP input → host turn → Pending', () => {
             })) } } });
         const edge = await db.sessionFollowEdge.create({ data: { destinationSessionId: session.id, sourceSessionId: source.id,
             sourceKey: sourceKeyForSessionFollowSourceV1({ kind: 'session', sessionId: source.id }),
-            relation: 'manager', managerSourceSessionId: source.id, policyJson: JSON.stringify({ preset: 'important' }) } });
-        const delivery = SessionFollowInputV1Schema.parse({ v: 1, delivery: 'next_turn', event: { kind: 'update_posted' },
+            relation: 'manager', managerSourceSessionId: source.id,
+            policyJson: JSON.stringify({ preset: scenario === 'busy-wake' ? 'everything' : 'important' }) } });
+        const delivery = SessionFollowInputV1Schema.parse({ v: 1, delivery: scenario === 'busy-wake' ? 'wake' : 'next_turn', event: { kind: 'update_posted' },
             original: { sourceSessionId: source.id, sourceMessage } });
         const host = buildTrustedHostSessionInputAdmissionV1('agent');
-        const request = SessionInputRequestV1Schema.parse({ ...host.request, followDeliveryV1: delivery });
+        async function enqueueFollow(original: typeof delivery): Promise<string> {
+            const localId = deriveSessionFollowInputLocalIdV1({ destinationSessionId: session.id, original: original.original });
+            const request = SessionInputRequestV1Schema.parse({ ...host.request, followDeliveryV1: original });
+            expect(await enqueuePendingMessageByAuthenticatedMachine({ accountId: owner.id, sourceMachineId: machine.id,
+                targetMachineId: machine.id, sessionId: session.id, localId, requestedAction: { v: 1, kind: 'enqueue' },
+                followDeliveryV1: original, followRelations: [{ relation: 'manager', attachedAt: edge.attachedAt.getTime() }],
+                content: { t: 'encrypted', c: encodeBase64(encrypt(sessionKey, encryptionVariant, {
+                    role: 'user', content: { type: 'text', text: '' },
+                    meta: withSessionInputRequestV1({ [SESSION_MESSAGE_PROVENANCE_META_KEY]: host.provenance }, request),
+                })) } })).toMatchObject({ status: 'accepted', localId });
+            return localId;
+        }
         let quietId: string;
         if (scenario === 'file-review') {
             await runWithServerHttpBaseUrl(origin, () => sendFileReviewNoteToSession({ credentials, sessionId: session.id,
@@ -367,20 +381,60 @@ describe('consumed ACP input → host turn → Pending', () => {
             quietId = rows[0]!.localId;
             expect(rows[0]!.inputAdmissionReceipt).toMatchObject({ nextTurnNote: 'file_review_note.v1' });
         } else {
-        quietId = deriveSessionFollowInputLocalIdV1({ destinationSessionId: session.id, original: delivery.original });
-        expect(await enqueuePendingMessageByAuthenticatedMachine({ accountId: owner.id, sourceMachineId: machine.id,
-            targetMachineId: machine.id, sessionId: session.id, localId: quietId,
-            requestedAction: { v: 1, kind: 'enqueue' }, followDeliveryV1: delivery,
-            followRelations: [{ relation: 'manager', attachedAt: edge.attachedAt.getTime() }],
-            content: { t: 'encrypted', c: encodeBase64(encrypt(sessionKey, encryptionVariant, {
-                role: 'user', content: { type: 'text', text: '' },
-                meta: withSessionInputRequestV1({ [SESSION_MESSAGE_PROVENANCE_META_KEY]: host.provenance }, request),
-            })) } })).toMatchObject({ status: 'accepted', localId: quietId });
+            quietId = await enqueueFollow(delivery);
         }
-        const queue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(() => 'mode', {
-            batcher: combinePermissionModeQueuedPrompts, isContextOnly: isNextTurnContextQueuedPrompt,
-            withContext: appendNextTurnContextToQueuedPrompt,
-        });
+        const queue = scenario === 'busy-wake'
+            ? createPermissionModeQueueState({ session: client, agentTargetKey: 'codex', initialPermissionMode: 'default' }).messageQueue
+            : new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(() => 'mode', {
+                batcher: combinePermissionModeQueuedPrompts, isContextOnly: isNextTurnContextQueuedPrompt,
+                withContext: appendNextTurnContextToQueuedPrompt,
+            });
+        if (scenario === 'busy-wake') {
+            const secondSourceMessage = { localId: 'source-original-2', seq: 2 };
+            await db.sessionMessage.create({ data: { sessionId: source.id, ...secondSourceMessage, messageRole: 'agent',
+                content: { t: 'encrypted', c: encodeBase64(encrypt(sourceResource.dataKey, 'dataKey', {
+                    role: 'agent', content: { type: 'codex', data: { type: 'message', message: 'Second worker original' } },
+                })) } } });
+            const companionId = await enqueueFollow(SessionFollowInputV1Schema.parse({ ...delivery,
+                original: { sourceSessionId: source.id, sourceMessage: secondSourceMessage } }));
+            const ordinaryId = `after-${randomUUID()}`;
+            expect(await enqueuePendingMessage({ actorUserId: owner.id, sessionId: session.id, authentication, localId: ordinaryId,
+                ciphertext: encodeBase64(encrypt(sessionKey, encryptionVariant, { role: 'user', content: { type: 'text', text: 'Later input' } })),
+                requestedAction: { v: 1, kind: 'enqueue' } })).toMatchObject({ ok: true });
+            await client.reconcilePendingQueueState({ force: true });
+            const signal = new AbortController().signal;
+            const batch = await waitForNextPermissionModeMessage({ messageQueue: queue, session: client, abortSignal: signal,
+                readQueuedFollowWakeLocalIds: () => readFollowWakeQueuePrefix(queue.readDispatchableMessages())
+                    .map(follow => follow.localInputId) });
+            expect(batch?.message.localId).toBe(quietId);
+            if (!batch) throw new Error('Expected a primary Follow wake');
+            expect(await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: {
+                sessionId: session.id, localId: companionId } } })).toMatchObject({ deliveryState: 'delivering' });
+            const companions = readFollowWakeQueuePrefix(queue.readDispatchableMessages(), batch.message);
+            expect(companions.map(follow => follow.localInputId)).toEqual([companionId]);
+            expect(await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: {
+                sessionId: session.id, localId: ordinaryId } } })).toMatchObject({ status: 'queued', deliveryState: null });
+            const acceptance = createSessionProviderInputOutcomeBinding({ getTarget: () => client });
+            let companionSettlement: Promise<void> | undefined;
+            acceptance.registerProviderAcceptedEffect(quietId, null, companions.map(follow => ({
+                localId: follow.localInputId, userMessageSeq: follow.userMessageSeq, settleAfterPrimary: true,
+            })));
+            acceptance.registerProviderAcceptedEffect(companionId, settlement => { companionSettlement = settlement; });
+            const turnId = `turn-${quietId}`;
+            expect(await applySessionTurnMutation({ actorUserId: owner.id, authentication, mutation: { v: 1, action: 'begin',
+                sessionId: session.id, turnId, startingInputId: quietId, mutationId: randomUUID(), observedAt: Date.now() } }))
+                .toMatchObject({ ok: true, didApply: true });
+            client.markPendingProviderInputDispatched([quietId, companionId]);
+            acceptance.observeProviderInputOutcome({ type: 'input-accepted', localId: quietId,
+                userMessageSeq: batch.message.userMessageSeq ?? null, acceptedAtMs: Date.now(), delivery: { kind: 'newTurn', turnId } });
+            expect(companionSettlement).toBeDefined();
+            await companionSettlement;
+            expect(await db.sessionPendingMessage.count({ where: { sessionId: session.id, localId: { in: [quietId, companionId] } } })).toBe(0);
+            expect(await db.sessionMessage.findMany({ where: { sessionId: session.id, acceptedTurnId: turnId,
+                localId: { in: [quietId, companionId] } }, select: { localId: true, turnStartWitnessId: true }, orderBy: { seq: 'asc' } }))
+                .toEqual([{ localId: quietId, turnStartWitnessId: turnId }, { localId: companionId, turnStartWitnessId: null }]);
+            return;
+        }
         registerPermissionModeMessageQueueBinding({ session: client, queue,
             getCurrentPermissionMode: () => 'default', setCurrentPermissionMode: () => {} });
         expect(await client.materializeNextPendingMessageSafely({ reconcileWhenEmpty: 'force' }))

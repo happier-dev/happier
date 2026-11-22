@@ -46,6 +46,7 @@ import type {
 import {
   normalizePermissionModeQueuedPromptLocalIds,
   isNextTurnContextQueuedPrompt,
+  readFollowWakeQueuePrefix,
 } from '@/agent/runtime/permissions/queuedPrompt';
 import { fitHappierReplaySeedWithinTotalBudget, isRuntimeConfigUpdateOutcomeApplied } from '@happier-dev/agents';
 
@@ -965,8 +966,10 @@ export async function runPermissionModePromptLoop(opts: {
     const waitForNextQueuedPermissionModeMessage = async (): Promise<
       MessageBatch<QueuedPermissionModeMessage['mode'], PermissionModeQueuedPrompt> | null
     > => {
-      return await waitForNextPermissionModeMessage({
+      const next = await waitForNextPermissionModeMessage({
         messageQueue: opts.messageQueue,
+        readQueuedFollowWakeLocalIds: () => readFollowWakeQueuePrefix(opts.messageQueue.readDispatchableMessages())
+          .map(follow => follow.localInputId),
         abortSignal: opts.getAbortSignal(),
         session: opts.session,
         beforeCollectQueuedBatch: async () => {
@@ -996,6 +999,11 @@ export async function runPermissionModePromptLoop(opts: {
         pendingQueueDeliveryTiming: opts.pendingQueueDeliveryTiming,
         inputConsumer,
       });
+      if (!next) return null;
+      const companions = readFollowWakeQueuePrefix(opts.messageQueue.readDispatchableMessages(), next.message);
+      return companions.length === 0 ? next : { ...next, message: {
+        ...next.message, followDeliveries: [...next.message.followDeliveries ?? [], ...companions],
+      } };
     };
 
     while (!opts.shouldExit()) {
@@ -1765,7 +1773,8 @@ export async function runPermissionModePromptLoop(opts: {
         const representedPendingInputs = [
           ...(providerNativeCommand ? [] : message.message.fileReviewNoteContext ?? []).flatMap(note => note.localId
             ? [{ localId: note.localId, userMessageSeq: note.userMessageSeq }] : []),
-          ...representedFollowDeliveries.map(follow => ({ localId: follow.localInputId, userMessageSeq: follow.userMessageSeq })),
+          ...representedFollowDeliveries.map(follow => ({ localId: follow.localInputId, userMessageSeq: follow.userMessageSeq,
+            ...(follow.delivery.delivery === 'wake' ? { settleAfterPrimary: true as const } : {}) })),
           ...(message.message.returnedAnswerContext ?? []).flatMap(answer => answer.localId
             ? [{ localId: answer.localId, userMessageSeq: answer.userMessageSeq }] : []),
         ].filter(input => input.localId !== localId);

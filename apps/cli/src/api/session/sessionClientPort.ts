@@ -64,6 +64,8 @@ export type MaterializeNextPendingOptions = {
   reconcileWhenEmpty?: 'force' | 'throttled' | 'skip';
   deliveryTiming?: PendingMaterializationDeliveryTiming;
   expectedRuntimeActivityRevision?: number;
+  /** Locally held Follow wakes whose source Home uses to constrain the next claim. */
+  retainedFollowWakeLocalIds?: readonly string[];
   onDiagnosticPhase?: (phase: PendingMaterializationDiagnosticPhase) => void;
 };
 

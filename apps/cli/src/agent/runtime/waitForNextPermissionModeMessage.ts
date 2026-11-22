@@ -14,6 +14,7 @@ export async function waitForNextPermissionModeMessage<Mode, Message>(opts: {
   abortSignal: AbortSignal;
   session: ApiSessionClient;
   beforeCollectQueuedBatch?: (() => void | Promise<void>) | null;
+  readQueuedFollowWakeLocalIds?: () => readonly string[];
   beforePendingMaterialize?: (() => boolean | Promise<boolean>) | null;
   onMetadataUpdate?: (() => void | Promise<void>) | null;
   pendingQueueDeliveryTiming?: SessionPendingQueueDeliveryTiming;
@@ -29,6 +30,7 @@ export async function waitForNextPermissionModeMessage<Mode, Message>(opts: {
   return await inputConsumer.waitForNextInput({
     abortSignal: opts.abortSignal,
     beforeCollectQueuedBatch: opts.beforeCollectQueuedBatch,
+    readQueuedFollowWakeLocalIds: opts.readQueuedFollowWakeLocalIds,
     beforePendingMaterialize: opts.beforePendingMaterialize,
     onMetadataUpdate: opts.onMetadataUpdate,
   });
@@ -69,7 +71,7 @@ export function createSessionProviderInputConsumerSessionAdapter(
     },
     ...(session.reconcilePendingProviderInputCustodyBeforeMaterialization
       ? {
-          reconcilePendingProviderInputCustodyBeforeMaterialization: (opts?: Readonly<{ beforeClaim?: boolean }>) =>
+          reconcilePendingProviderInputCustodyBeforeMaterialization: (opts) =>
             session.reconcilePendingProviderInputCustodyBeforeMaterialization(opts),
         }
       : {}),

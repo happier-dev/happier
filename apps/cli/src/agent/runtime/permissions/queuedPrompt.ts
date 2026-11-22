@@ -1,4 +1,5 @@
 import type { PermissionMode } from '@/api/types';
+import { readSessionFollowWakeCoalescingSourceV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
 import type {
   SessionModelRef,
   CallerInputConstraintsV1,
@@ -186,6 +187,28 @@ export function combinePermissionModeQueuedPrompts(
     ...(prompts.some(prompt => prompt.followDeliveries?.length)
       ? { followDeliveries: prompts.flatMap(prompt => prompt.followDeliveries ?? []) } : {}),
   };
+}
+
+/** Preserve queue order and leave every companion in custody until native representation. */
+export function readFollowWakeQueuePrefix(
+  queued: Iterable<PermissionModeQueuedPrompt>,
+  primary?: PermissionModeQueuedPrompt,
+): readonly SessionFollowQueuedDelivery[] {
+  const original = (prompt: PermissionModeQueuedPrompt) =>
+    prompt.followDeliveries?.find(follow => follow.localInputId === prompt.localId);
+  const iterator = queued[Symbol.iterator]();
+  const first = primary ?? iterator.next().value;
+  if (!first) return [];
+  const firstFollow = original(first);
+  const source = readSessionFollowWakeCoalescingSourceV1(firstFollow?.delivery);
+  if (source === undefined || firstFollow === undefined) return [];
+  const prefix = primary ? [] : [firstFollow];
+  for (let next = iterator.next(); !next.done; next = iterator.next()) {
+    const follow = original(next.value);
+    if (follow === undefined || readSessionFollowWakeCoalescingSourceV1(follow.delivery) !== source) break;
+    prefix.push(follow);
+  }
+  return prefix;
 }
 
 export function isNextTurnContextQueuedPrompt(prompt: PermissionModeQueuedPrompt): boolean {

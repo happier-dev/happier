@@ -3,6 +3,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { readAuthenticationStatus } from '@/api/client/httpStatusError';
 import { logger } from '@/ui/logger';
+import { countMaterializablePendingRows } from '@/api/session/pendingQueueState';
 import { isSessionPendingQueueHoldBlockingPendingDrain } from '@happier-dev/protocol/sessions/metadata/sessionPendingQueueHoldV1';
 import { readSessionExplicitStopV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import type { SessionPendingQueueDeliveryTiming } from '@happier-dev/protocol';
@@ -50,6 +51,7 @@ export type SessionProviderInputConsumerOptions<Mode, Message> = Readonly<{
   messageQueue: MessageQueue2<Mode, Message>;
   session: SessionProviderInputConsumerSession;
   beforeCollectQueuedBatch?: (() => void | Promise<void>) | null;
+  readQueuedFollowWakeLocalIds?: () => readonly string[];
   beforePendingMaterialize?: (() => boolean | Promise<boolean>) | null;
   onMetadataUpdate?: ((abortSignal: AbortSignal) => void | Promise<void>) | null;
   reconcileWhenEmpty?: PendingMaterializationReconcileWhenEmpty;
@@ -1017,6 +1019,18 @@ async function collectQueuedBatch<Mode, Message>(
   opts: WaitForNextInputOptions<Mode, Message>,
 ): Promise<MessageBatch<Mode, Message> | null> {
   await opts.beforeCollectQueuedBatch?.();
+  if (opts.readQueuedFollowWakeLocalIds) {
+    const pending = opts.session.getPendingQueueState?.();
+    const queuedAtIntake = pending ? countMaterializablePendingRows(pending) : 0;
+    let previousWakeCount = 0;
+    // Home counts waiting rows here. Wakes already in the local queue have left that count.
+    for (let remaining = queuedAtIntake; remaining > 0 && !opts.abortSignal.aborted; remaining--) {
+      const ids = opts.readQueuedFollowWakeLocalIds();
+      if (ids.length <= previousWakeCount) break;
+      previousWakeCount = ids.length;
+      await materializePendingMessage(opts, ids);
+    }
+  }
   if (opts.messageQueue.size() <= 0) {
     return null;
   }
@@ -1046,23 +1060,28 @@ function logInputConsumerMaterializationDecision(opts: Readonly<{
 
 async function materializePendingMessage<Mode, Message>(
   opts: WaitForNextInputOptions<Mode, Message>,
+  retainedFollowWakeLocalIds?: readonly string[],
 ): Promise<number | null> {
   return await opts.runPendingMaterializationExclusive(async () => {
-    if (opts.abortSignal.aborted || !opts.isAdmitted() || opts.hasLocalInputCustody()) return null;
+    const hasPredecessor = () => {
+      if (retainedFollowWakeLocalIds === undefined) return opts.hasLocalInputCustody();
+      const currentIds = opts.readQueuedFollowWakeLocalIds?.();
+      return retainedFollowWakeLocalIds.some((localId, index) => currentIds?.[index] !== localId);
+    };
+    if (opts.abortSignal.aborted || !opts.isAdmitted() || hasPredecessor()) return null;
     if (isSessionPendingDrainBlocked(opts.session)) return null;
     if ((await (opts.beforePendingMaterialize?.() ?? true)) !== true) return null;
-    if (!opts.isAdmitted() || opts.hasLocalInputCustody()) return null;
-    if ((await reconcilePendingProviderInputCustodyBeforeMaterialization(opts.session)) !== true) return null;
-    if (opts.abortSignal.aborted || !opts.isAdmitted() || opts.hasLocalInputCustody()) return null;
+    if (!opts.isAdmitted() || hasPredecessor()) return null;
+    if ((await reconcilePendingProviderInputCustodyBeforeMaterialization(opts.session, retainedFollowWakeLocalIds)) !== true) return null;
+    if (opts.abortSignal.aborted || !opts.isAdmitted() || hasPredecessor()) return null;
 
     let result: MaterializeNextPendingResult;
     const reconcileWhenEmpty = opts.reconcileWhenEmpty ?? 'throttled';
     const deliveryTiming = opts.resolvePendingQueueDeliveryTiming?.() ?? opts.pendingQueueDeliveryTiming;
     try {
-      result = await materializeWithRuntimeActivityTail(opts.session, buildMaterializeOptions(
-          reconcileWhenEmpty,
-          deliveryTiming,
-        ), opts.abortSignal);
+      result = await materializeWithRuntimeActivityTail(opts.session, {
+        ...buildMaterializeOptions(reconcileWhenEmpty, deliveryTiming), retainedFollowWakeLocalIds,
+      }, opts.abortSignal);
     } catch (error) {
       if (error instanceof PendingQueueMaterializationAuthError) throw error;
       if (readAuthenticationStatus(error) !== null) {
@@ -1156,8 +1175,9 @@ async function drainPendingMessages(
 /** The claim path: both callers claim next, so custody statuses ride on the claim reply. */
 async function reconcilePendingProviderInputCustodyBeforeMaterialization(
   session: SessionProviderInputConsumerSession,
+  retainedFollowWakeLocalIds?: readonly string[],
 ): Promise<boolean> {
-  return await (session.reconcilePendingProviderInputCustodyBeforeMaterialization?.({ beforeClaim: true }) ?? true);
+  return await (session.reconcilePendingProviderInputCustodyBeforeMaterialization?.({ beforeClaim: true, retainedFollowWakeLocalIds }) ?? true);
 }
 
 function isSessionPendingDrainBlocked(session: SessionProviderInputConsumerSession): boolean {

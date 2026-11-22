@@ -83,6 +83,12 @@ export class MessageQueue2<Mode, Message = string> {
     this.onMessageHandler = handler;
   }
 
+  *readDispatchableMessages(): IterableIterator<Message> {
+    for (const item of this.queue) {
+      if (!item.contextOnly) yield item.message;
+    }
+  }
+
   getContextOnlyMessages(): readonly Message[] {
     return this.queue.filter(item => item.contextOnly).map(item => item.message);
   }

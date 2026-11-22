@@ -484,15 +484,13 @@ describe('session → Follow WorkerUpdate acceptance', () => {
                 }
             };
             const prepare = async (intent: 'natural' | 'wake', maxFollowContextUtf8Bytes?: number, collectRetainedContext = false,
-                recovery: 'configured' | 'receiver' | 'admitted' = 'configured') => {
+                recovery: 'configured' | 'receiver' | 'admitted' = 'configured', retainWake = false) => {
                 if (recovery === 'receiver') await dispatchReceiverPending();
                 else if (recovery === 'configured') await dispatchPending();
                 for (;;) {
                     const retained = collectRetainedContext ? await db.sessionPendingMessage.findMany({
-                        // Wake input remains the primary claim; only quiet
-                        // originals may authorize retained-context traversal.
                         where: { sessionId: destination.id, localId: { in: deliveries
-                            .filter(row => row.delivery.delivery === 'next_turn').map(row => row.localInputId) } },
+                            .filter(row => retainWake || row.delivery.delivery === 'next_turn').map(row => row.localInputId) } },
                         select: { localId: true },
                     }) : [];
                     const materialized = await materializeNextPendingMessage({ actorUserId: account.id, sessionId: destination.id,
@@ -1562,6 +1560,32 @@ describe('session → Follow WorkerUpdate acceptance', () => {
         expect(f.acceptedPrompts.map(prompt => [prompt.includes('Held reverseA'), prompt.includes('Held reverseB')]))
             .toEqual([[true, false], [false, true]]);
         expect((await f.observe()).observations).toEqual([]);
+    });
+
+    it('represents two worker reports queued behind a busy receiver in one Follow intake', async () => {
+        const f = await fixture();
+        await f.detachManager();
+        await f.follow({ preset: 'everything' });
+        const original = await f.originals();
+        const firstSeq = await f.appendReport('First busy report');
+        const secondSeq = await f.appendReport('Second busy report');
+        await original.dispatchPending();
+        const actor = { actorUserId: f.account.id, sessionId: f.destination.id };
+        const receiver = await db.session.findUniqueOrThrow({ where: { id: f.destination.id } });
+        expect(await materializeNextPendingMessage({ ...actor,
+            publisherAuthority: { accountId: f.account.id, sessionId: f.destination.id,
+                machineId: original.machine.id, committedFence: receiver.lastActiveAt },
+            deliveryState: 'provider', deliveryTiming: 'after_foreground_ready', foregroundState: 'active_unsteerable',
+        })).toMatchObject({ ok: true, didMaterialize: false, deferredReason: 'waiting_for_foreground_turn' });
+        expect(await db.sessionPendingMessage.count({ where: { sessionId: f.destination.id, status: 'queued' } })).toBe(2);
+
+        const prepared = await original.prepare('wake', undefined, true, 'admitted', true);
+        expect(prepared?.workerUpdates).toMatchObject([
+            { transcriptPointer: { seq: firstSeq } }, { transcriptPointer: { seq: secondSeq } },
+        ]);
+        await original.accept(prepared!);
+        expect(f.acceptedPrompts).toHaveLength(1);
+        expect(await db.sessionMessage.count({ where: { sessionId: f.destination.id, acceptedTurnId: 'receiver-turn' } })).toBe(2);
     });
 
     it('releases a stopped receiver original once from Resume publisher registration without a metadata cue', async () => {

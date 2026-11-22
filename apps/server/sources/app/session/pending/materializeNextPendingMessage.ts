@@ -37,7 +37,7 @@ import { reconcilePendingActivationAuthorizationForRemovedRequestInTx } from "@/
 import { readStoredSessionInputAdmissionReceipt, isSessionInputTargetCurrentForPublisherInTx } from '@/app/session/messages/sessionInputAdmission';
 import { deriveDiscussionFollowInputLocalIdV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
 import { RetainedPendingContextV1Schema, type RetainedPendingContextV1 } from '@happier-dev/protocol/sessions/pending/retainedPendingContextV1';
-import { isRetainedPendingContextForPublisherInTx } from './retainedPendingContext';
+import { isRetainedPendingContextForPublisherInTx, readPendingFollowWakeCoalescingSource } from './retainedPendingContext';
 
 type RecipientCursor = SessionRecipientCursor;
 class PublisherAuthorityLostError extends Error {}
@@ -462,6 +462,7 @@ async function materializePendingTargetInTx(
         return { ok: false, error: 'invalid-params' };
     }
     const retainedContextLocalIds = retainedContext?.success ? retainedContext.data.localIds : [];
+    let retainedFollowWakeSource: string | undefined;
     if (retainedContextLocalIds.length) {
         const retainedRows = await tx.sessionPendingMessage.findMany({
             where: { sessionId, targetExecutionRunId: null, localId: { in: retainedContextLocalIds } },
@@ -470,9 +471,16 @@ async function materializePendingTargetInTx(
         });
         if (retainedRows.length !== retainedContextLocalIds.length) return { ok: false, error: 'invalid-params' };
         for (const row of retainedRows) {
-            // Local custody alone cannot skip arbitrary FIFO work. Home independently
-            // confirms this is an admitted informational input, already claimed.
-            if (!await isRetainedPendingContextForPublisherInTx(tx, row, params.publisherAuthority)) {
+            const source = readPendingFollowWakeCoalescingSource(row.inputAdmissionReceipt);
+            if (source !== undefined) {
+                if (retainedFollowWakeSource !== undefined && retainedFollowWakeSource !== source) {
+                    return { ok: false, error: 'invalid-params' };
+                }
+                retainedFollowWakeSource = source;
+            }
+            // Local custody can retain quiet context or the already-claimed
+            // wake whose source constrains this next boundary claim.
+            if (!await isRetainedPendingContextForPublisherInTx(tx, row, params.publisherAuthority, source)) {
                 return { ok: false, error: 'invalid-params' };
             }
         }
@@ -508,7 +516,7 @@ async function materializePendingTargetInTx(
         const result = await (async () => {
             const sessionBefore = sessionRow;
 
-            const rejoin = await resolvePendingProviderRejoinInTx({
+            const rejoin = retainedFollowWakeSource === undefined ? await resolvePendingProviderRejoinInTx({
                 tx,
                 session: sessionRow,
                 authority: params.publisherAuthority,
@@ -519,7 +527,7 @@ async function materializePendingTargetInTx(
                 targetExecutionRunId: params.targetExecutionRunId,
                 expectedSidechainId: params.expectedSidechainId,
                 retainedContextLocalIds,
-            });
+            }) : null;
             if (rejoin) return rejoin;
 
             const pendingCandidates = await tx.sessionPendingMessage.findMany({
@@ -527,6 +535,12 @@ async function materializePendingTargetInTx(
                 orderBy: [{ position: "asc" }, { createdAt: "asc" }, { localId: "asc" }],
                 select: { localId: true, messageRole: true, content: true, requestedAction: true, providerAction: true, inputAdmissionReceipt: true, status: true, deliveryState: true, deliveryBlockedReason: true, position: true, createdAt: true, updatedAt: true },
             });
+            if (retainedFollowWakeSource !== undefined && pendingCandidates.some(row =>
+                row.deliveryState === 'delivering' && !retainedContextLocalIds.includes(row.localId))) {
+                return { ok: true, didMaterialize: false, pendingCount: sessionBefore.pendingCount,
+                    pendingBlockedCount: sessionBefore.pendingBlockedCount, pendingVersion: sessionBefore.pendingVersion,
+                    deferredReason: 'waiting_for_predecessor', deliveryState: noopDeliveryState } as const;
+            }
             const invocationSelection = selectPendingProviderInvocation({
                 // C7-held Discussion originals already have protected Pending
                 // custody. They stay visible there without blocking independent
@@ -615,6 +629,12 @@ async function materializePendingTargetInTx(
                 ? invocationSelection.providerAction
                 : "send";
             const requestedAction = normalizePendingRequestedActionV1(nextPending.requestedAction, 'stored');
+            if (retainedFollowWakeSource !== undefined && (requestedAction.kind !== 'enqueue' || providerAction !== 'send'
+                || readPendingFollowWakeCoalescingSource(nextPending.inputAdmissionReceipt) !== retainedFollowWakeSource)) {
+                return { ok: true, didMaterialize: false, pendingCount: sessionBefore.pendingCount,
+                    pendingBlockedCount: sessionBefore.pendingBlockedCount, pendingVersion: sessionBefore.pendingVersion,
+                    deferredReason: 'waiting_for_predecessor', deliveryState: noopDeliveryState } as const;
+            }
             const isActivityBlindAction = requestedAction.kind === "send_now"
                 || requestedAction.kind === "steer_now"
                 || (

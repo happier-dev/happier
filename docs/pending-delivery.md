@@ -748,6 +748,12 @@ precede the primary's settlement; an omitted original is not thereby accepted.
 Exact claim, publisher and target checks still precede settlement. The operation-scoped retained-context
 proof is described in [compatibility](compatibility.md#retained-quiet-input-03-development).
 
+In 0.3 development, consecutive Follow update wakes from the same Session can
+share the next native intake. Home keeps each claim in Pending custody. The
+host attaches the queued companions to the same Follow context budget, settles
+the primary wake before its represented companions, and leaves omitted updates
+queued for a later intake. The exact primary supplies the Turn-start witness.
+
 For ACP in 0.3 development source, provider effect correlated to the exact
 dispatched prompt witnesses consumption even before `session/prompt` responds.
 The public ACP producer emits `input-accepted` through the existing host

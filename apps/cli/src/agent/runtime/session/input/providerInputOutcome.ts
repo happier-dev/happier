@@ -354,7 +354,7 @@ export function normalizeHostProviderInputOutcome(
 export function createSessionProviderInputOutcomeNormalizer(params: Readonly<{
     getTarget(): SessionProviderInputOutcomeTarget;
     /** Exact retained inputs actually represented by this host-prepared dispatch. */
-    readRepresentedPendingInputs?(localId: string): readonly SessionProviderInputOutcomeIdentity[];
+    readRepresentedPendingInputs?(localId: string): readonly RepresentedProviderInput[];
     observeAcceptedEffect?(localId: string, pendingSettlement?: Promise<void>): void;
     discardAcceptedEffect?(localId: string): void;
 }>): (outcome: HostProviderInputOutcomeEvidence) => void {
@@ -438,20 +438,30 @@ export function createSessionProviderInputOutcomeNormalizer(params: Readonly<{
                 - (right.userMessageSeq ?? Number.MAX_SAFE_INTEGER));
         const seen = new Set([outcome.localId]);
         let precedingSettlement: Promise<void> | undefined;
-        for (const input of represented) {
-            if (seen.has(input.localId)) continue;
+        const settleRepresented = (input: RepresentedProviderInput) => {
+            if (seen.has(input.localId)) return;
             seen.add(input.localId);
             precedingSettlement = observeNormalized({ ...outcome, ...input,
                 userMessageSeqs: input.userMessageSeqs }, target, precedingSettlement) ?? precedingSettlement;
+        };
+        for (const input of represented) {
+            if (!input.settleAfterPrimary) settleRepresented(input);
         }
-        observeNormalized(outcome, target, precedingSettlement);
+        // Another Follow wake is FIFO work, even when the same native input
+        // represented it. Its primary must retire before the companion settles.
+        precedingSettlement = observeNormalized(outcome, target, precedingSettlement) ?? precedingSettlement;
+        for (const input of represented) {
+            if (input.settleAfterPrimary) settleRepresented(input);
+        }
     };
 }
+
+type RepresentedProviderInput = SessionProviderInputOutcomeIdentity & Readonly<{ settleAfterPrimary?: true }>;
 
 export type RegisterProviderAcceptedEffect = (
     localId: string,
     onAccepted: ((pendingSettlement?: Promise<void>) => void) | null,
-    representedInputs?: readonly SessionProviderInputOutcomeIdentity[],
+    representedInputs?: readonly RepresentedProviderInput[],
 ) => void;
 
 /** The Session host's single exact-input effect registry and outcome binding. */
@@ -465,7 +475,7 @@ export function createSessionProviderInputOutcomeBinding(params: Omit<
 }> {
     const acceptedEffects = new Map<string, {
         effects: Array<(pendingSettlement?: Promise<void>) => void>;
-        representedInputs: readonly SessionProviderInputOutcomeIdentity[];
+        representedInputs: readonly RepresentedProviderInput[];
     }>();
     const registerProviderAcceptedEffect: RegisterProviderAcceptedEffect = (localId, onAccepted, representedInputs) => {
         if (!onAccepted && !representedInputs?.length) {
