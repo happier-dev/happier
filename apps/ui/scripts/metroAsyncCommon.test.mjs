@@ -180,3 +180,19 @@ test('genuinely synchronous shared modules remain eager and ordinary lazy mappin
   const runtime = makeRuntime(scripts);
   assert.equal((await runtime.context.entry.openA()).value, 42);
 });
+
+test('production SPA HTML preloads the common script without eagerly executing it', async () => {
+  const { serializeHtmlWithAssets } = require('@expo/cli/build/src/start/server/metro/serializeHtml');
+  const resources = await serialize(makeFixture({ worker: true }));
+  const common = resources.find(asset => asset.filename.includes('__common-'));
+  const worker = resources.find(asset => asset.metadata.modulePaths.includes('/serializer-fixture/worker.js'));
+  assert.ok(common && worker);
+  const params = { resources, template: '<html><head></head><body></body></html>', baseUrl: '/app' };
+  const html = serializeHtmlWithAssets({ ...params, isExporting: true });
+  const commonUrl = `/app/${common.filename}`;
+  assert.match(html.slice(0, html.indexOf('</head>')), /<link rel="preload" [^>]+as="script"/);
+  assert.ok(html.includes(`href="${commonUrl}"`));
+  assert.ok(!html.includes(`<script src="${commonUrl}"`));
+  assert.ok(!html.includes(`href="/app/${worker.filename}"`));
+  assert.ok(!serializeHtmlWithAssets({ ...params, isExporting: false, devBundleUrl: '/index.bundle' }).includes(commonUrl));
+});

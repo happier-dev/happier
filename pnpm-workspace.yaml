@@ -141,6 +141,7 @@ patchedDependencies:
   monaco-editor@0.57.0: patches/monaco-editor@0.57.0.patch
   "@elevenlabs/client@1.18.0": patches/@elevenlabs__client@1.18.0.patch
   "@prisma/client@7.10.1": patches/@prisma__client@7.10.1.patch
+  "@expo/cli@55.0.21": patches/@expo__cli@55.0.21.patch
   "@expo/metro-config@55.0.13": patches/@expo__metro-config@55.0.13.patch
   "@legendapp/list@3.3.3": patches/@legendapp__list@3.3.3.patch
   "@pierre/diffs@1.5.2": patches/@pierre__diffs@1.5.2.patch

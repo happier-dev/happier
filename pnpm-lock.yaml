@@ -212,6 +212,7 @@ packageExtensionsChecksum: sha256-wwxf7D5xXkio8Hr2OXGBAZHJO1dVcKL8REvvVPFiUeQ=
 
 patchedDependencies:
   '@elevenlabs/client@1.18.0': 5be51d7d24380180cbd1717d8a1edf9ca671646bdbcec45b0141bb8428e9bfd6
+  '@expo/cli@55.0.21': bc570f8361407950bd3cbf8b017374acfbf4678db9a499960d0f2105030f4ad4
   '@expo/metro-config@55.0.13': 566da52a21fe087956af477f81f90ff58fb78c6c5d3ad007fd2f6e2f540f10ca
   '@legendapp/list@3.3.3': 2a1b7a3cccd6e46e8e44289bbfd9361b41928c7ff94c643bed3cf4cdb7669391
   '@pierre/diffs@1.5.2': 80a5a670f2167aa6c7c8e8545ea2e1709f12b7d02eac31f62b1829ac1847b4e2
@@ -19815,7 +19816,7 @@ snapshots:
 
   '@expo-google-fonts/material-symbols@0.4.28': {}
 
-  '@expo/cli@55.0.21(@expo/metro-runtime@55.0.9)(expo-constants@55.0.11)(expo-font@55.0.6)(expo-router@55.0.10)(expo@55.0.11)(react-dom@19.2.0(react@19.2.0))(react-native@0.83.5(patch_hash=76a8225378db994e1c3ee2343e0aeb9e6b99602e363059773fcaa3ae5a86b651)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0)(supports-color@8.1.1)(typescript@5.9.3)':
+  '@expo/cli@55.0.21(patch_hash=bc570f8361407950bd3cbf8b017374acfbf4678db9a499960d0f2105030f4ad4)(@expo/metro-runtime@55.0.9)(expo-constants@55.0.11)(expo-font@55.0.6)(expo-router@55.0.10)(expo@55.0.11)(react-dom@19.2.0(react@19.2.0))(react-native@0.83.5(patch_hash=76a8225378db994e1c3ee2343e0aeb9e6b99602e363059773fcaa3ae5a86b651)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0)(supports-color@8.1.1)(typescript@5.9.3)':
     dependencies:
       '@expo/code-signing-certificates': 0.0.6
       '@expo/config': 55.0.12(supports-color@8.1.1)(typescript@5.9.3)
@@ -26576,7 +26577,7 @@ snapshots:
   expo@55.0.11(patch_hash=392621e3425821487f9ec346e94efa0a1d86c5378ac1ee7034aebb5a1f4ceb84)(@babel/core@7.29.0(supports-color@8.1.1))(@expo/dom-webview@55.0.5)(@expo/metro-runtime@55.0.9)(expo-router@55.0.10)(expo-widgets@55.0.15)(react-dom@19.2.0(react@19.2.0))(react-native-webview@13.16.0(react-native@0.83.5(patch_hash=76a8225378db994e1c3ee2343e0aeb9e6b99602e363059773fcaa3ae5a86b651)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0))(react-native@0.83.5(patch_hash=76a8225378db994e1c3ee2343e0aeb9e6b99602e363059773fcaa3ae5a86b651)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0)(supports-color@8.1.1)(typescript@5.9.3):
     dependencies:
       '@babel/runtime': 7.29.2
-      '@expo/cli': 55.0.21(@expo/metro-runtime@55.0.9)(expo-constants@55.0.11)(expo-font@55.0.6)(expo-router@55.0.10)(expo@55.0.11)(react-dom@19.2.0(react@19.2.0))(react-native@0.83.5(patch_hash=76a8225378db994e1c3ee2343e0aeb9e6b99602e363059773fcaa3ae5a86b651)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0)(supports-color@8.1.1)(typescript@5.9.3)
+      '@expo/cli': 55.0.21(patch_hash=bc570f8361407950bd3cbf8b017374acfbf4678db9a499960d0f2105030f4ad4)(@expo/metro-runtime@55.0.9)(expo-constants@55.0.11)(expo-font@55.0.6)(expo-router@55.0.10)(expo@55.0.11)(react-dom@19.2.0(react@19.2.0))(react-native@0.83.5(patch_hash=76a8225378db994e1c3ee2343e0aeb9e6b99602e363059773fcaa3ae5a86b651)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0)(supports-color@8.1.1)(typescript@5.9.3)
       '@expo/config': 55.0.12(supports-color@8.1.1)(typescript@5.9.3)
       '@expo/config-plugins': 55.0.7(supports-color@8.1.1)
       '@expo/devtools': 55.0.2(react-native@0.83.5(patch_hash=76a8225378db994e1c3ee2343e0aeb9e6b99602e363059773fcaa3ae5a86b651)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0)

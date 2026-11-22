@@ -1,0 +1,20 @@
+diff --git a/build/src/start/server/metro/serializeHtml.js b/build/src/start/server/metro/serializeHtml.js
+--- a/build/src/start/server/metro/serializeHtml.js
++++ b/build/src/start/server/metro/serializeHtml.js
+@@ -92,11 +92,15 @@
+         }
+         return `<script src="${combineUrlPath(baseUrl, filename)}" defer></script>`;
+     }).join('');
++    // Start fetching the shared SPA chunk while the entry bundle is loading.
++    // The async loader still controls evaluation order.
++    const common = isExporting && !route && orderedJsAssets.find(({ filename, metadata })=>metadata.isAsync && /(?:^|\/)__common-[a-f0-9]+\.js$/.test(filename));
++    const scriptPreload = common ? `<link rel="preload" href="${combineUrlPath(baseUrl, common.filename)}" as="script">` : '';
+     if (hydrate) {
+         const hydrateScript = `<script type="module">globalThis.__EXPO_ROUTER_HYDRATE__=true;</script>`;
+         template = template.replace('</head>', `${hydrateScript}</head>`);
+     }
+-    return template.replace('</head>', `${styleString}</head>`).replace('</body>', `${scripts}\n</body>`);
++    return template.replace('</head>', `${styleString}${scriptPreload}</head>`).replace('</body>', `${scripts}\n</body>`);
+ }
+ function sortMatchedAssetsByEntryPoints(matchedAssets, entryPoints) {
+     const getEntryPointIndex = (modulePaths)=>modulePaths ? entryPoints.findIndex((ep)=>modulePaths.includes(ep)) : -1;
