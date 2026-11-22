@@ -1580,7 +1580,7 @@ describe('Machine grant withdrawal through requester runtime custody', () => {
         }
     });
 
-    it('preserves already admitted requester, owner and entitled recipient runners after withdrawal', async () => {
+    it('preserves the owner and entitled recipient runners and ends the withdrawn requester runner at its turn boundary', async () => {
         const accounts = await Promise.all(Array.from({ length: 3 }, () => db.account.create({ data: { encryptionMode: 'plain' } })));
         const [owner, requester, survivor] = accounts;
         let machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner!.id,
@@ -1676,8 +1676,18 @@ describe('Machine grant withdrawal through requester runtime custody', () => {
             eventRouter.setIo(io, { forwardRpc: request => forwardRpcCall({ io, ...request }) });
             expect(await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: owner!.id,
                 machineId: machine.id, principal: { kind: 'account', accountId: requester!.id } }))).toMatchObject({ kind: 'removed' });
-            expect(await settled).toEqual({ kind: 'settled' });
-            for (const index of [0, 1, 2]) {
+            // The withdrawn requester's turn is running: its Session ends only at its boundary
+            // (owner ruling 2026-11-20), which its own settled live-work push reports.
+            const requesterSession = [...tracked.values()].find(session => session.pid === children[1]!.pid)!;
+            await new Promise(resolve => setTimeout(resolve, 50));
+            expect(children[1]!.exitCode).toBeNull();
+            host.runtime.sessionLiveWorkProducer.notifySessionChanged(requesterSession.happySessionId!, { runnerPid: requesterSession.pid,
+                revision: 1, activity: { session: 'settled', input: 'settled', agents: 'settled', attention: 'settled', settledAt: 1 } });
+            // The forward answers once the Stop at the boundary ran. Its kind is not asserted: this plain
+            // child is no runner, and proving its exit needs the Machine socket this fixture leaves unconnected.
+            await settled;
+            await expect.poll(() => children[1]!.exitCode !== null || children[1]!.signalCode !== null).toBe(true);
+            for (const index of [0, 2]) {
                 expect(children[index]!.exitCode).toBeNull();
                 expect(children[index]!.signalCode).toBeNull();
                 expect([...tracked.values()].some(session => session.pid === children[index]!.pid!)).toBe(true);

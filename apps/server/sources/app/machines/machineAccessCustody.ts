@@ -31,7 +31,7 @@ async function readCurrentCustodyInTx(tx: Tx, input: MachineCustody): Promise<Cu
 
 /** Census and cleanup share the same exact current installation transport custody. */
 async function forwardMachineAccessCustody(input: MachineCustody, callParams: MachineAccessLossCustodyRequestV1,
-    readCurrent: () => Promise<CurrentCustodyAdmission | IncompleteCustody | null>,
+    readCurrent: () => Promise<CurrentCustodyAdmission | IncompleteCustody | null>, lifetime: Readonly<{ timeoutMs?: null }> = {},
 ): Promise<IncompleteCustody | Readonly<{ kind: 'forwarded'; result: unknown }> | null> {
     const current = await readCurrent();
     if (!current) return null;
@@ -46,7 +46,7 @@ async function forwardMachineAccessCustody(input: MachineCustody, callParams: Ma
         targetUserId: input.expectedCustodianAccountId, method: `${input.machineId}:${RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS}`,
         callParams, authorization: MACHINE_ACCESS_LOSS_SERVER_ORIGIN,
         // The daemon binds member retirement to this request; live and each reconnect re-dispatch mint their own.
-        identifyRequest: true,
+        identifyRequest: true, ...lifetime,
         machineAdmission, targetGuard: {
             filterTargets: async targets => {
                 const matched = targets.filter(matches);
@@ -88,7 +88,9 @@ export async function dispatchMachineAccessLossCustody(input: CustodyLoss): Prom
         if (!current) return { kind: 'settled' };
         response = await forwardMachineAccessCustody(input, { v: 1, subjectAccountId: input.subjectAccountId,
             ...(current.remainingRole === 'use' ? { remainingRole: 'use' } : {}),
-        }, async () => current.custody);
+        // Cleanup lasts as long as the person's admitted turn (it ends at its boundary), not the
+        // Home's ordinary request deadline; a disconnect still ends the forward and reconnect re-dispatches.
+        }, async () => current.custody, { timeoutMs: null });
     } catch {
         response = { kind: 'incomplete', reason: 'custody_unavailable' };
     }
@@ -115,7 +117,6 @@ export async function recoverMachineAccessLossCustody(input: MachineCustody): Pr
     if (!census?.success || census.data.coverage !== 'complete') {
         log({ module: 'machine-access', level: 'warn', machineId: input.machineId }, 'Reconnect requester work census remains incomplete');
     }
-    for (const subjectAccountId of subjects) {
-        await dispatchMachineAccessLossCustody({ ...input, subjectAccountId });
-    }
+    // Each person's cleanup lasts as long as their own turn; one long turn never delays another person.
+    await Promise.all([...subjects].map(subjectAccountId => dispatchMachineAccessLossCustody({ ...input, subjectAccountId })));
 }
