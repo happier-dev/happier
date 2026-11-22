@@ -38,7 +38,7 @@ import { resolveRuntimeActionExecutionFamily } from "@happier-dev/protocol/actio
 import { callExactMachineRpc } from "@/session/transport/rpc/machineRpc";
 import { isRpcError } from '@happier-dev/protocol/rpcErrors';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
-import { parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createClientActionReverseDispatcher } from "@/session/actions/clientActionReverseDispatch";
 import { createHostExternalSessionActionAdapter } from '@/session/actions/externalSessions/hostExternalSessionActionTransport';
 import type { ApiMachineClient } from "@/api/apiMachine";
@@ -120,21 +120,25 @@ export function createRequesterAccountOperationContext(input: Readonly<{
   machineId: string; custodianAccountId: string | null;
   installationIdentity: ReturnType<typeof readInstallationIdentityIfExistsSync>;
 }>) {
-  return (apiMachine: ApiMachineClient, requester: RequesterAccountActionContext,
-    role: 'use' | 'manage', signal?: AbortSignal): ActionOperationRpcContext => {
+  return (apiMachine: ApiMachineClient, requester: Pick<RequesterAccountActionContext, 'authorization' | 'isCurrent'>,
+    signal?: AbortSignal): ActionOperationRpcContext => {
     if (!input.installationIdentity || !input.custodianAccountId) {
       throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
     }
     // Resource mode belongs to the installed controller, not the requester.
     const ownCustodian = isOriginalOwnAccountActionCustody(requester.authorization.binding)
       && requester.authorization.binding.custodianAccountId === input.custodianAccountId;
+    const role = requester.authorization.binding.admittedMachineRole ?? (ownCustodian ? 'manage' : undefined);
+    if (!role) throw createActionExecuteFailureError({
+      ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable', effectAttempted: false,
+    });
     return {
       machineAdmission: {
         actorAccountId: requester.authorization.binding.accountId,
         custodianAccountId: input.custodianAccountId,
         machineId: input.machineId,
         installationId: input.installationIdentity.installationId,
-        role: requester.authorization.binding.admittedMachineRole ?? (ownCustodian ? 'manage' : role),
+        role,
         encryptionMode: apiMachine.getMachineEncryptionMode(),
       },
       verifyMachineAdmissionCurrent: requester.isCurrent,
@@ -197,7 +201,7 @@ resolveServerFeaturesSnapshot?: () =>
       | undefined;
 }>;
   requiresPortableSessionSpawnServerIdentity: (actionId: string, input: unknown) => boolean;
-  requesterAccountOperationContext: (apiMachine: ApiMachineClient, requester: RequesterAccountActionContext, role: 'use' | 'manage', signal?: AbortSignal) => ActionOperationRpcContext;
+  requesterAccountOperationContext: ReturnType<typeof createRequesterAccountOperationContext>;
   acquireDaemonPluginRuntimeRegistryLease: () => ReturnType<typeof acquireAuthoritativePluginRuntimeRegistryLease>;
   shutdownCancellationDomains: ReturnType<typeof createDaemonShutdownCancellationDomains>;
   isSessionCallerCurrent: NonNullable<
@@ -525,7 +529,7 @@ resolveServerFeaturesSnapshot?: () =>
         context = executionContext;
       }
       const filesystemActionExecute = apiMachineForSessions?.createFilesystemActionExecutor(params.serverId);
-      const resolveRequesterIngress = (context?: RpcActionExecutorContext, role: 'use' | 'manage' = 'use'): RpcHandlerContext | undefined => {
+      const resolveRequesterIngress = (context?: RpcActionExecutorContext): RpcHandlerContext | undefined => {
         // Replay restores the original private requester ports after constructing
         // this executor. Resolve them at the effect, not from approval.request.decide.
         const authorization = context?.externalActionExecutionAuthorization ?? requesterAccountContext?.authorization;
@@ -552,7 +556,9 @@ resolveServerFeaturesSnapshot?: () =>
           const binding = authorization?.binding;
           const http = authorization?.requesterHttpProjection;
           const installation = externalActionInstallationIdentity;
-          if (!authorization || !binding || role !== 'use' || !apiMachineForSessions || !installation || !http
+          // Home's operation-reader carrier grants only the scoped read, without a Machine grant.
+          const role = binding?.admittedMachineRole ?? (binding?.requesterOperationRead ? 'use' : undefined);
+          if (!authorization || !binding || !role || !apiMachineForSessions || !installation || !http
             || !isManagedControllerCodecRootV1(binding) || binding.actionId !== actionId
             || binding.accountId === binding.custodianAccountId
             || binding.custodianAccountId !== readPreviewAccountIdFromToken(credentials.token)
@@ -567,7 +573,7 @@ resolveServerFeaturesSnapshot?: () =>
           return { signal: context?.signal ?? new AbortController().signal,
             machineAdmission: { actorAccountId: binding.accountId, custodianAccountId: binding.custodianAccountId,
               machineId: params.machineId, installationId: installation.installationId,
-              role: binding.admittedMachineRole ?? 'use',
+              role,
               encryptionMode: apiMachineForSessions.getMachineEncryptionMode() },
             callerInputAuthorization: authorization,
             verifyMachineAdmissionCurrent: async () => !context?.signal?.aborted
@@ -579,7 +585,7 @@ resolveServerFeaturesSnapshot?: () =>
         // The deciding client's context must not select the process credential scope.
         const sessionActionOrigin = authorization?.binding.sessionActionOrigin ?? context?.sessionActionOrigin;
         return requester && apiMachineForSessions ? {
-          ...requesterAccountOperationContext(apiMachineForSessions, requester, role, context?.signal),
+          ...requesterAccountOperationContext(apiMachineForSessions, requester, context?.signal),
           ...(context?.machineAdmission ? { machineAdmission: context.machineAdmission,
             verifyMachineAdmissionCurrent: context.verifyMachineAdmissionCurrent } : {}),
           signal: context?.signal ?? new AbortController().signal,
@@ -1207,8 +1213,7 @@ resolveServerFeaturesSnapshot?: () =>
           if (deployment) return deployment;
           if (!reachabilityHost || request.actionId !== 'machines.reachability.inspect'
             && request.actionId !== 'machines.reachability.configure') return null;
-          const ingress = resolveRequesterIngress(request.context,
-            request.actionId === 'machines.reachability.configure' ? 'manage' : 'use');
+          const ingress = resolveRequesterIngress(request.context);
           if (!ingress) return {
             ok: false as const, errorCode: 'admission_unavailable', error: 'admission_unavailable',
           };
@@ -1216,8 +1221,7 @@ resolveServerFeaturesSnapshot?: () =>
         },
         ...(reachabilityHost ? {
           machineReachabilityAction: async request => {
-            const ingress = resolveRequesterIngress(request.context,
-              request.actionId === 'machines.reachability.configure' ? 'manage' : 'use');
+            const ingress = resolveRequesterIngress(request.context);
             if (!ingress || request.input.machineId !== params.machineId) return {
               ok: false as const, errorCode: 'admission_unavailable', error: 'admission_unavailable',
             };
@@ -1230,7 +1234,7 @@ resolveServerFeaturesSnapshot?: () =>
           receivingMachineSetupPlan: { machineId: params.machineId, plan: async request => {
             const origin = await params.resolveCurrentMachineExecutionOriginContext?.(request.signal ?? request.context.signal);
             if (!origin || origin.machineId !== params.machineId) return { ok: false as const, errorCode: 'target_unavailable', error: 'target_unavailable' };
-            const ingress = resolveRequesterIngress(request.context, 'manage');
+            const ingress = resolveRequesterIngress(request.context);
             const { createMachineSetupPlanAction } = await import('@/machines/setup/machineSetupAction');
             return createMachineSetupPlanAction({ apiMachine: apiMachineForSessions, machineId: params.machineId,
               ...(externalActionInstallationIdentity ? { installation: externalActionInstallationIdentity } : {}),
@@ -1513,7 +1517,7 @@ resolveServerFeaturesSnapshot?: () =>
                   const origin = await params.resolveCurrentMachineExecutionOriginContext?.(request.signal ?? request.context.signal);
                   if (!origin || !externalActionInstallationIdentity || origin.machineId !== params.machineId)
                     return { ok: false as const, errorCode: 'target_unavailable', error: 'target_unavailable' };
-                  const ingress = resolveRequesterIngress(request.context, 'manage');
+                  const ingress = resolveRequesterIngress(request.context);
                   const { createMachineSetupUpdatesAction } = await import('@/machines/setup/machineSetupUpdatesAction');
                   return createMachineSetupUpdatesAction({ apiMachine: apiMachineForSessions, machineId: params.machineId,
                     homeId: origin.serverIdentityId, installation: externalActionInstallationIdentity, ownerRemainder })({ ...request,
@@ -1526,7 +1530,7 @@ resolveServerFeaturesSnapshot?: () =>
                   const origin = await params.resolveCurrentMachineExecutionOriginContext?.(request.signal ?? request.context.signal);
                   if (!origin || !externalActionInstallationIdentity || origin.machineId !== params.machineId)
                     return { ok: false as const, errorCode: 'target_unavailable', error: 'target_unavailable' };
-                  const ingress = resolveRequesterIngress(request.context, 'manage');
+                  const ingress = resolveRequesterIngress(request.context);
                   const { createMachineSetupRemoveAction } = await import('@/machines/setup/machineSetupAction');
                   return createMachineSetupRemoveAction({ apiMachine: apiMachineForSessions, machineId: params.machineId,
                     homeId: origin.serverIdentityId, installation: externalActionInstallationIdentity, ownerRemainder })({ ...request,
@@ -1542,7 +1546,7 @@ resolveServerFeaturesSnapshot?: () =>
                   const origin = await params.resolveCurrentMachineExecutionOriginContext?.(request.signal ?? request.context.signal);
                   if (!origin || !externalActionInstallationIdentity || origin.machineId !== params.machineId)
                     return { ok: false as const, errorCode: 'target_unavailable', error: 'target_unavailable' };
-                  const ingress = resolveRequesterIngress(request.context, 'manage');
+                  const ingress = resolveRequesterIngress(request.context);
                   const { createMachineSetupAction } = await import('@/machines/setup/machineSetupAction');
                   return createMachineSetupAction({ apiMachine: apiMachineForSessions, machineId: params.machineId,
                     homeId: origin.serverIdentityId, installation: externalActionInstallationIdentity, ownerRemainder })({ ...request, input: target,
@@ -1612,6 +1616,10 @@ resolveServerFeaturesSnapshot?: () =>
             ? await runWithServerHttpBaseUrl(requesterAccountContext.serverHttpBaseUrl,
               execute)
             : await execute();
+        } catch (error) {
+          const failure = parseActionExecuteFailure(error);
+          if (failure?.errorCode === 'admission_unavailable' && failure.effectAttempted === false) return failure;
+          throw error;
         } finally {
           await composerAttachmentLease?.release();
           await timeApprovalPhase('approval.daemon.requester_release', () => release?.());

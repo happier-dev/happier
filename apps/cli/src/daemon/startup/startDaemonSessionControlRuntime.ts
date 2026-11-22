@@ -11628,7 +11628,7 @@ export async function startDaemonSessionControlRuntime(
     const requester = readRequesterAccountActionContext(request.rpcContext?.externalActionExecutionAuthorization);
     return client.observePluginActionExecution(requester ? { ...request, rpcContext: {
       ...request.rpcContext,
-      ...requesterAccountOperationContext(client, requester, 'use', request.rpcContext?.signal),
+      ...requesterAccountOperationContext(client, requester, request.rpcContext?.signal),
     } } : request);
   };
   const relayDiscussionAgentPublication = async (
@@ -11824,7 +11824,7 @@ export async function startDaemonSessionControlRuntime(
                       const apiMachine = params.getApiMachineForSessions();
                       if (!apiMachine) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
                       return await apiMachine.observeActionExecution({ ...request,
-                        rpcContext: requesterAccountOperationContext(apiMachine, admitted, 'manage', signal),
+                        rpcContext: requesterAccountOperationContext(apiMachine, admitted, signal),
                       });
                     },
                     executeManagedPolicyAction: (machine, context, runApproved, purpose, actionOrigin) => {
