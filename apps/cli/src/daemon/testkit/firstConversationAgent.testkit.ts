@@ -6,6 +6,8 @@ export function createFirstConversationAgentFixture(promptMarker: string, option
   /** The authored external Agent receives the SDK input-id array and composed
    * host prompt as its last arguments. Internal turn logic stays real. */
   nativeReply?: Readonly<{ executableNames: readonly string[]; args: readonly string[] }>;
+  /** The deterministic Agent runs only with the default permission intent. */
+  fixedDefaultPermission?: true;
   workspaceRead?: Readonly<{ relativePath: string; text: string }>;
   /** Native startup is exercised before the parent admits any first input. */
   nativeStartupExec?: true;
@@ -27,6 +29,7 @@ export function createFirstConversationAgentFixture(promptMarker: string, option
         agents: [{ id: 'agent', title: 'Conversation fixture', runtime: { kind: 'custom' }, primary: 'sessions',
           capabilities: { ...(options.nativeSession?.externalSessionsExport ? { surfaces: ['externalSessions'] } : {}),
             tools: { delivery: 'native_mcp' }, sessions: { open: options.nativeSession || options.nativeAcp?.resumable ? ['create', 'resume'] : ['create'], delivery: ['newTurn'], cancel: true,
+            ...(options.fixedDefaultPermission ? { configuration: true } : {}),
             executionRunContext: { versions: [1] } } } }],
       } }),
     files: {
@@ -100,6 +103,10 @@ export function createFirstConversationAgentFixture(promptMarker: string, option
         let listener; let sequence = 0;
         const emit = body => listener({ sessionId: request.sessionId, sequence: ++sequence, emittedAtMs: Date.now(), ...body });
         return {
+          ${options.fixedDefaultPermission ? `async updateConfiguration({ permissionIntent }) {
+            if (permissionIntent.value === 'default') return { status: 'applied', changed: [] };
+            return { status: 'unsupported', diagnostic: { code: 'fixture_permission_intent_unsupported', severity: 'error' } };
+          },` : ''}
           async send(input) {
             emit({ kind: 'input-accepted', inputIds: input.inputIds, delivery: input.delivery });
             emit({ kind: 'turn-start', turnId: input.delivery.turnId, startedBy: 'host' });
