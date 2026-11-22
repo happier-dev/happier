@@ -723,6 +723,17 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
       ...(review ? { review: { ...review, ...(persisted.progress.review?.resultSource ? { resultSource: persisted.progress.review.resultSource } : {}) } } : {}),
       ...(stepProgress ? { stepProgress } : {}) });
     if (loopProgress) progress = WorkflowProgressEnvelopeV1Schema.parse({ ...progress, loopProgress });
+    // A native answer is applied before its durable completion write, so the
+    // turn can settle this row first. The server refuses later content writes
+    // to a settled row, so a request still listed here would stay offered forever.
+    const settles = (lifecycle: WorkflowCoordinatorInvocation['lifecycle']) => !WORKFLOW_UNSETTLED_INVOCATION_LIFECYCLES_V1
+      .some(unsettled => unsettled === lifecycle);
+    const settledInteraction = progress.interaction;
+    if (settles(fact.lifecycle) && !settles(current.lifecycle) && settledInteraction && typeof settledInteraction === 'object'
+      && !Array.isArray(settledInteraction) && 'requests' in settledInteraction) {
+      const { requests: _outstanding, ...interaction } = settledInteraction;
+      progress = WorkflowProgressEnvelopeV1Schema.parse({ ...progress, interaction });
+    }
     // Compare before sealing: E2EE ciphertext changes even for an equal fact.
     // An unchanged row is not a write (each write is a server CAS and Run
     // publication). Admitting still reaches the final parent/control predicate

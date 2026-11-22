@@ -3518,6 +3518,63 @@ describe('production workflow coordinator', () => {
     }));
   });
 
+  it('retires a still-outstanding request when its invocation settles', async () => {
+    // The native answer is applied before its durable completion write, so the
+    // turn can settle the row first. The server refuses any later content write
+    // to a settled row, so a request left there would stay answerable forever.
+    const rootId = 'root-settled-interaction';
+    const rootIndex = {
+      id: rootId, runId, sequence: '0', parentRecordId: null, memberOrdinal: '0', attempt: '0',
+      contentRevision: '0', lifecycle: 'running' as const, createdAt: now, updatedAt: now,
+    };
+    const binding = {
+      v: 1 as const, purpose: 'invocation_progress' as const, accountId, runId,
+      recordId: rootId, sequence: '0', parentRecordId: null, memberOrdinal: '0', attempt: '0',
+    };
+    let persistedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({
+      mode: 'plain', binding, progress: {
+        kind: 'happier.workflow-progress.v1', invocationPath: { blockId: '$root', scope: [] },
+        blockKind: 'root', attempt: '0', logicalInvocationRecordId: rootId,
+      },
+    }));
+    const execute = vi.fn(async (operation: Readonly<Record<string, unknown>>) => {
+      if (operation.operation === 'invocations.get') {
+        return { invocation: { index: rootIndex, contentEnvelope: persistedEnvelope }, parentRevision: 0 };
+      }
+      if (operation.operation === 'invocations.fact') {
+        persistedEnvelope = operation.contentEnvelope as string;
+        return { ...rootIndex, lifecycle: operation.lifecycle, parentRevision: 1 };
+      }
+      throw new Error(`unexpected:${String(operation.operation)}`);
+    });
+    const store = await DurableWorkflowCoordinatorStore.load({
+      accountId, runId, parentAttempt: 0, storage: { execute },
+      encryption: { witness: { mode: 'plain', version: 1, contentKeyFingerprint: null }, runCrypto: { mode: 'plain' } },
+      rootRecordId: rootId,
+      checkpoint: { kind: 'happier.workflow-checkpoint.v1', rootRecordId: rootId, nextSequence: '1', frontier: { nextBlockOrdinal: 0, paused: false } },
+      revision: 0,
+    });
+    const rootKey = workflowInvocationKey({ runId, blockId: '$root', scope: [], attempt: 0 });
+    const requestStore = new AgentStateRequestStore({
+      target: store.createInteractionPersistenceTarget(rootKey),
+      logPrefix: '[WORKFLOW TEST]',
+    });
+    await requestStore.publishRequestAndWait({
+      requestId: 'permission-1', toolName: 'Bash', toolInput: { command: 'echo settled' }, createdAt: 1,
+    });
+
+    await store.commitFact({ key: rootKey, lifecycle: 'completed', result: 'settled' });
+
+    const opened = openWorkflowProgressStoredEnvelopeV1({
+      mode: 'plain', binding, envelope: parseWorkflowStoredContentEnvelopeV1(persistedEnvelope),
+    });
+    expect(opened).toMatchObject({ kind: 'available', content: { result: 'settled' } });
+    const interaction = opened.kind === 'available' ? opened.content.interaction : undefined;
+    const requests = interaction && typeof interaction === 'object' && !Array.isArray(interaction)
+      ? (interaction as Readonly<Record<string, unknown>>).requests : undefined;
+    expect(requests ?? {}).toEqual({});
+  });
+
   it.each([false, true])('acknowledges a competing terminal fact only when its reply custody matches (matching=%s)', async matching => {
     const rootId = 'root-reply-conflict';
     const encryption: WorkflowRunEncryptionV1 = { witness: { mode: 'plain', version: 1, contentKeyFingerprint: null }, runCrypto: { mode: 'plain' } };
