@@ -37,6 +37,30 @@ function request(
 }
 
 describe('createPluginSurfaceHostApi', () => {
+    it('correlates a mounted Action refusal with the request that received it', async () => {
+        const hostApi = createPluginSurfaceHostApi({
+            surfaceContext,
+            handlers: { executeAction: () => createPluginSurfaceHostApiError(
+                'stale_surface', ['plugin_action_generation_retired'],
+            ) },
+        });
+        const invocation = request('executeAction');
+        const logger = vi.spyOn(console, 'log').mockImplementation(() => {});
+        try {
+            await expect(settlePluginSurfaceHostApiRequest(invocation,
+                () => hostApi.handleRequest(invocation))).resolves.toMatchObject({
+                kind: 'error',
+                payload: { code: 'stale_surface', requestId: invocation.requestId },
+            });
+            expect(logger.mock.calls.filter(([line]) => line.startsWith('[Plugin Action] refusal '))).toEqual([[
+                expect.stringContaining(JSON.stringify({ requestId: invocation.requestId, code: 'stale_surface', stage: 'host_settlement' })),
+            ]]);
+        } finally {
+            logger.mockRestore();
+            hostApi.dispose?.();
+        }
+    });
+
     it('holds a pending installed-plugin call until connection settlement, without polling or repeating its effect', async () => {
         let connecting = true;
         let available = false;

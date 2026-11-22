@@ -4,6 +4,7 @@ import type { SessionSnapshotRefreshReason } from '@/api/session/sessionSnapshot
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import type { ActionSessionAddressV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
+import { projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import { readAccountEncryptionCurrentnessForRead } from '@/api/client/accountEncryptionCurrentnessObservation';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
@@ -72,6 +73,7 @@ export async function resolveSessionTransportContext(params: Readonly<{
     reason: SessionSnapshotRefreshReason;
     credentials: StoredCredentials;
     idOrPrefix: string;
+    actionRequestId?: string;
     /** The daemon already owns this exact effect target; never search for a substitute. */
     exact?: true;
     /** Host-only exact routing fact retained from Action admission, never authored input. */
@@ -126,7 +128,7 @@ export async function resolveSessionTransportContext(params: Readonly<{
         // The reader retains the transport cause. Translate it once at this
         // shared adapter so CLI, signed Actions and direct Session operations
         // expose the established control codes before generic normalization.
-        const { kind } = classifyServerEndpointError(error);
+        const { kind, statusCode } = classifyServerEndpointError(error);
         if (kind === 'auth_failed') {
             throw Object.assign(new Error('Account encryption currentness authentication failed', { cause: error }), {
                 code: 'not_authenticated',
@@ -134,9 +136,22 @@ export async function resolveSessionTransportContext(params: Readonly<{
         }
         if (kind === 'network' || kind === 'timeout' || kind === 'server_error'
             || kind === 'dependency_unavailable' || kind === 'rate_limited') {
-            throw Object.assign(new Error('Account encryption currentness Home is unavailable', { cause: error }), {
-                code: 'server_unreachable',
-            });
+            const code = 'server_unreachable';
+            const message = 'Account encryption currentness Home is unavailable';
+            const refusal = Object.assign(new Error(message, { cause: error }), { code });
+            if (!params.actionRequestId) throw refusal;
+            const phase = 'session_transport.account_currentness';
+            const failure = {
+                ok: false,
+                errorCode: code,
+                error: message,
+                requestId: params.actionRequestId,
+                failureCause: projectActionFailureCauseV1(error, phase),
+            } satisfies ActionExecuteFailure;
+            logger.warnLocalFile('[SessionTransport] Action refused', JSON.stringify({
+                requestId: failure.requestId, code, stage: phase, kind, httpStatus: statusCode,
+            }));
+            throw Object.assign(refusal, failure);
         }
         // Invalid successful responses and domain refusals retain their own
         // evidence; they do not establish Home unreachability or missing keys.

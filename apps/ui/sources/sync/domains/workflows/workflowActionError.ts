@@ -20,14 +20,16 @@ export class WorkflowActionError extends Error {
     readonly code: string | null;
     readonly rawCode: string | null;
     readonly failure: WorkflowActionFailureV1 | null;
+    readonly requestId: string | undefined;
     /** The owner's opaque failure details, for callers that read a code's documented details (an options dependency). */
     readonly rawDetails: unknown;
 
-    constructor(params: Readonly<{ message: string; rawCode: string | null; failure?: WorkflowActionFailureV1; rawDetails?: unknown }>) {
+    constructor(params: Readonly<{ message: string; rawCode: string | null; failure?: WorkflowActionFailureV1; rawDetails?: unknown; requestId?: string }>) {
         super(params.message);
         this.name = 'WorkflowActionError';
         this.rawCode = params.rawCode;
         this.failure = params.failure ?? null;
+        this.requestId = params.requestId;
         this.rawDetails = params.rawDetails;
         this.code = params.rawCode;
     }

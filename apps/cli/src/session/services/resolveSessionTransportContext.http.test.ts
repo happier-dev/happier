@@ -9,6 +9,7 @@ import { resolveSessionTransportContext } from './resolveSessionTransportContext
 import { createDaemonSessionMutationCustody } from '@/daemon/connectedServices/usageLimitRecovery/createDaemonUsageLimitRecoveryMutationCustody';
 import { acquireRequesterAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentnessObservation';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import { normalizeCliActionThrownError, projectCliActionFailure } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 
 const sessionId = 'c123456789012345678901234';
 
@@ -121,6 +122,7 @@ describe('fresh Session transport HTTP resolution', () => {
     const pending = runWithServerHttpBaseUrl(`http://127.0.0.1:${address.port}`, () => resolveSessionTransportContext({
       reason,
       credentials: { token: 'transport-fixture', encryption: null }, idOrPrefix: sessionId,
+      actionRequestId: 'session-action-currentness-fixture',
       serverFeaturesSnapshot: { status: 'unsupported', reason: 'endpoint_missing' },
     }));
     void pending.then(() => { settled = true; }, () => { settled = true; });
@@ -137,7 +139,14 @@ describe('fresh Session transport HTTP resolution', () => {
           accountEncryptionCurrentness: { version: 1 } });
       } else {
         witnessResponse!.writeHead(503).end(JSON.stringify({ error: 'unavailable' }));
-        await expect(pending).rejects.toMatchObject({ code: 'server_unreachable' });
+        await expect(pending).rejects.toMatchObject({
+          code: 'server_unreachable', requestId: 'session-action-currentness-fixture',
+        });
+        const output = await pending.catch(error => projectCliActionFailure(normalizeCliActionThrownError(error).failure));
+        expect(output).toMatchObject({
+          code: 'server_unreachable', requestId: 'session-action-currentness-fixture',
+          failureCause: { phase: 'session_transport.account_currentness', httpStatus: 503 },
+        });
       }
     } finally {
       witnessResponse?.destroy();

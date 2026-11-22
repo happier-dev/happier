@@ -181,6 +181,7 @@ export function ActionInputFields(props: Readonly<{
                         {...(waitingReading === undefined ? {} : { valueLabel: waitingReading })}
                         optionsNotice={optionState?.status === 'failed' && waitingReading === undefined ? <SurfaceStateCard kind="error" size="line" title={t('workflows.start.choicesFailed')}
                             diagnosticCode={optionState.errorCode}
+                            diagnosticDetail={optionState.requestId}
                             action={props.resolveFieldOptions.retry ? { label: t('common.retry'), onPress: props.resolveFieldOptions.retry } : undefined} /> : null}
                         optionsEmptyAction={optionState?.emptyAction && inputTypePluginId && !props.busy
                             ? <OptionsEmptyAction action={optionState.emptyAction} pluginId={inputTypePluginId}

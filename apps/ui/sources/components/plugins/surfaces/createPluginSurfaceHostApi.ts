@@ -22,6 +22,7 @@ import type { PluginUiActionProjection } from '@/sync/domains/plugins/ui/project
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 import { createPluginConnectionSettlement } from './connectionSettlement';
 import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
+import { log } from '@/log';
 
 /**
  * The CALLER's cancellation for one in-flight request (§3.4).
@@ -249,15 +250,25 @@ export async function settlePluginSurfaceHostApiRequest(
         surface: request.surface,
         method: request.method,
     };
+    const settleError = (error: PluginUiHostApiErrorPayloadV1) => {
+        if (request.method === 'executeAction' || request.method === 'admitAction') {
+            const requestId = error.requestId ?? request.requestId;
+            const stage = error.failureCause?.phase ?? error.phase ?? 'host_settlement';
+            log.log(`[Plugin Action] refusal ${JSON.stringify({ requestId, code: error.code, stage })}`);
+            return PluginUiHostApiResponseEnvelopeV1Schema.parse({
+                ...base, kind: 'error', payload: { ...error, requestId },
+            });
+        }
+        return PluginUiHostApiResponseEnvelopeV1Schema.parse({ ...base, kind: 'error', payload: error });
+    };
     try {
         const payload = await invoke();
         const error = readPluginSurfaceHostApiErrorPayload(payload);
-        return PluginUiHostApiResponseEnvelopeV1Schema.parse(error
-            ? { ...base, kind: 'error' as const, payload: error }
-            : { ...base, kind: 'result' as const, payload });
+        return error ? settleError(error)
+            : PluginUiHostApiResponseEnvelopeV1Schema.parse({ ...base, kind: 'result', payload });
     } catch (error) {
         if (isPluginError(error)) {
-            return PluginUiHostApiResponseEnvelopeV1Schema.parse({ ...base, kind: 'error', payload: {
+            return settleError({
                 ...readPluginActionFailureAuthorPayload(error.data),
                 code: error.code, message: error.message, retryable: error.retryable,
                 requestId: readPluginErrorRequestIdV1(error) ?? request.requestId,
@@ -265,20 +276,16 @@ export async function settlePluginSurfaceHostApiRequest(
                     && typeof error.details.effectAttempted === 'boolean' ? { effectAttempted: error.details.effectAttempted } : {}),
                 ...readPluginSurfaceHostApiFailureMetadata(error.details),
                 diagnostics: error.diagnostics?.map(diagnostic => diagnostic.code) ?? [],
-            } });
+            });
         }
         const aborted = error !== null && typeof error === 'object'
             && 'name' in error && error.name === 'AbortError';
-        return PluginUiHostApiResponseEnvelopeV1Schema.parse({
-            ...base,
-            kind: 'error',
-            payload: aborted ? {
-                code: 'unavailable',
-                diagnostics: ['plugin_ui_invocation_aborted'],
-            } : {
-                code: 'internal_error',
-                diagnostics: ['host_api_handler_failed'],
-            },
+        return settleError(aborted ? {
+            code: 'unavailable',
+            diagnostics: ['plugin_ui_invocation_aborted'],
+        } : {
+            code: 'internal_error',
+            diagnostics: ['host_api_handler_failed'],
         });
     }
 }

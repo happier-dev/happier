@@ -1,6 +1,7 @@
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
-import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_OPTIONS_RESOLVE_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { WorkflowActionFailureV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { log } from '@/log';
 import { randomUUID } from '@/platform/randomUUID';
 
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -81,6 +82,11 @@ export async function callWorkflowAction<TResult>(params: Readonly<{
     const { executeChildAction, ...context } = params.context ?? {};
     const execute = params.execute ?? executeChildAction ?? resolveExecute();
     const surface = params.context && 'surface' in params.context ? params.context.surface : 'ui';
+    const resolvesOptions = params.actionId === ACTION_OPTIONS_RESOLVE_ACTION_ID_V1;
+    // A child Action owns its request identity. An options read retains that
+    // identity across executors whose failure envelope does not include it.
+    const actionRequestId = params.context && 'surface' in params.context ? randomUUID()
+        : resolvesOptions ? context.actionRequestId ?? randomUUID() : context.actionRequestId;
     const result = await execute(params.actionId, params.input, {
         ...context,
         ...(activeLifetime ? {
@@ -89,9 +95,7 @@ export async function callWorkflowAction<TResult>(params: Readonly<{
         } : {}),
         // Admitted callers retain their attribution; native callers default to UI.
         surface,
-        // A child has its own approval invocation, never its parent's request
-        // identity or consent. Native UI callers retain the front door's id owner.
-        ...(params.context && 'surface' in params.context ? { actionRequestId: randomUUID() } : {}),
+        ...(actionRequestId === undefined ? {} : { actionRequestId }),
         ...(params.signal === undefined ? {} : { signal: params.signal }),
         ...(params.operationProgress === undefined ? {} : { operationProgress: params.operationProgress }),
     });
@@ -101,9 +105,15 @@ export async function callWorkflowAction<TResult>(params: Readonly<{
     if (!executeChildAction && surface === 'ui') void presentActionAutomationSkipNotice(result, activeLifetime);
     if (!result.ok) {
         const failure = WorkflowActionFailureV1Schema.safeParse(result);
+        const requestId = result.requestId ?? actionRequestId;
+        if (resolvesOptions && requestId !== undefined) {
+            const stage = result.failureCause?.phase ?? 'input_options';
+            log.log(`[Plugin Action] refusal ${JSON.stringify({ requestId, code: result.errorCode, stage })}`);
+        }
         throw new WorkflowActionError({
             message: result.error || params.fallbackMessage || 'Workflow request failed',
             rawCode: result.errorCode || null,
+            ...(requestId === undefined ? {} : { requestId }),
             ...(failure.success ? { failure: failure.data } : {}),
             ...(result.details === undefined ? {} : { rawDetails: result.details }),
         });

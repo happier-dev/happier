@@ -394,7 +394,8 @@ describe('qualified input field options scope', () => {
                 input: { actionId: platformActionId, fieldPath: platformField.path, draftInput }, parseResult: value => value,
                 context: { serverId, serverIdentityId, runtimeAccountId: 'viewer',
                     externalActionTarget: { kind: 'machine', machineId: 'controller-a' } } }))
-                .rejects.toMatchObject({ code: 'plugin_resource_context_unavailable', rawCode: 'plugin_resource_context_unavailable', failure: null });
+                .rejects.toMatchObject({ code: 'plugin_resource_context_unavailable', rawCode: 'plugin_resource_context_unavailable',
+                    failure: null, requestId: expect.any(String) });
         } finally { await screen.unmount(); }
     });
     it('demands a queried page only while visible, exposes its continuation, and aborts a pending page on close', async () => {

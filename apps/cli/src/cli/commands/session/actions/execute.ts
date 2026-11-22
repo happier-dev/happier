@@ -157,6 +157,7 @@ export async function cmdSessionActionsExecute(
         reason: 'session-action',
         credentials,
         idOrPrefix,
+        actionRequestId: effectiveActionRequestId,
         serverFeaturesSnapshot,
       }),
     );
