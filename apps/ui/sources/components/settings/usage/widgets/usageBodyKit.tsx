@@ -69,11 +69,6 @@ export type UsageBodyProps = Readonly<{
 
 export type UsageWidgetPresentationInputs = Readonly<{ style?: string; colourBy?: string; day?: string }>;
 
-/** Names come from the existing privacy-aware account projection, without another read. */
-export function usageUnreadAccountsLabel(names: readonly string[]): string {
-  return `${t('usage.board.plans.capacityNotRead', { count: names.length })} · ${names.join(', ')}`;
-}
-
 export function useUsagePluginTheme(): PluginUiThemeV1 {
   const { theme } = useUnistyles();
   return usePluginUiTheme(theme);

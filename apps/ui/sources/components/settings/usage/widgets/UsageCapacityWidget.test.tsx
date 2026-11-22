@@ -529,7 +529,10 @@ it.each([['loaded_data', true], ['loaded_empty', false], ['not_loaded', false]] 
     expect(screen.getTextContent()).not.toContain(t('usage.board.plans.cellNoAllowance'));
     expect(screen.findByTestId('capacity.unread')).not.toBeNull();
     expect(screen.getTextContent()).toContain(t('usage.board.plans.capacityNotRead', { count: 1 }));
-    expect(screen.findByTestId('capacity.unread')?.props.children).toContain('Mail plan');
+    // The count at rest; the names one press away, so a long list never runs inside the hero (acceptance 11-22 #45).
+    expect(screen.getTextContent()).not.toContain('Mail plan');
+    expect(screen.findByTestId('capacity.unread-header')?.props.accessibilityLabel)
+      .toContain(t('usage.board.plans.capacityNotRead', { count: 1 }));
     expect(screen.getTextContent()).not.toContain('1970');
   }
 });

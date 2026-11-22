@@ -2,7 +2,6 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
-  HAPPIER_PAGE_METRICS,
   HAPPIER_PRESS_FEEDBACK_V1,
   HappierPressable,
 } from '@happier-dev/plugin-ui/presentation';
@@ -947,8 +946,9 @@ const styles = StyleSheet.create((theme) => ({
   pools: { gap: 18 },
   queues: { flexDirection: 'row', flexWrap: 'wrap', columnGap: theme.space.s24, rowGap: 18 },
   pool: { gap: theme.space.s6 },
-  // A pool's order in the row of reading columns (only there: in a column, a basis would be a height).
-  queuePool: { flexGrow: 1, flexBasis: QUEUE_MIN_WIDTH_PX, minWidth: 0, maxWidth: HAPPIER_PAGE_METRICS.columnMaxWidthPx.reading },
+  // A pool's order in the row of columns (only there: in a column, a basis would be a height). The pools share the
+  // widget's width, so one pool's list runs as wide as the Limits above it (acceptance 11-22 #43).
+  queuePool: { flexGrow: 1, flexBasis: QUEUE_MIN_WIDTH_PX, minWidth: 0 },
   bareQueue: { gap: theme.space.s4 },
   bareRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', columnGap: theme.space.s8 },
   quiet: {

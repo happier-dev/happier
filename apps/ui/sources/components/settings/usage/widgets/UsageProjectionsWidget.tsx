@@ -8,6 +8,7 @@ import {
   describeHappierSeriesBucket,
   formatHappierDataExactShare,
   formatHappierDataValue,
+  HAPPIER_PAGE_METRICS,
   HAPPIER_PRESS_FEEDBACK_V1,
   HappierDataMetric,
   HappierPressable,
@@ -54,6 +55,7 @@ import {
 } from './plans/useUsagePlans';
 import {
   formatPlanPercent,
+  formatPlanResetPhrase,
   planPaceReasonText,
   planWindowStatement,
   UsagePlanDisclosure,
@@ -248,6 +250,8 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
     );
   }
   const stacked = width !== null && width < STACKED_BELOW_PX;
+  // A window's row stacks where the shared meter has no room for its projection beside the bar (a half column).
+  const rowsStacked = width !== null && width < HAPPIER_PAGE_METRICS.rowStackBelowWidthPx;
   // The viewer's own advice target, as echoed by the same allowance read (lab `p2budget`).
   const target = readUsagePersonalPaceTarget(props.slice.quota?.[0]?.targets ?? []);
   const above = target === null ? [] : selectUsageWindowsAboveTarget(
@@ -324,7 +328,7 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
                 window={row.window}
                 observedAtMs={row.account.observedAtMs}
                 nowMs={nowMs}
-                stacked={stacked}
+                stacked={rowsStacked}
                 statement={row.statement}
                 resetOnly={!!quietReason && row.statement.kind === 'unavailable' && row.statement.text === quietReason}
                 testID={`${props.testID}.window.${row.account.accountId}.${row.window.meterId}`}
@@ -483,7 +487,7 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
               window={row.window}
               observedAtMs={row.account.observedAtMs}
               nowMs={nowMs}
-              stacked={stacked}
+              stacked={rowsStacked}
               statement={planWindowStatement(row.window, nowMs)}
               testID={`${props.testID}.window.${row.account.accountId}.${row.window.meterId}`}
             />
@@ -495,7 +499,7 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
         title={t('usage.board.plans.unreportedWindows', { count: unreported.length })}>
         <UsageMeterStack testID={`${props.testID}.unreported.windows`}>
           {unreported.map(row => <ProjectionRow key={row.window.key} name={row.name}
-            window={row.window} observedAtMs={row.account.observedAtMs} nowMs={nowMs} stacked={stacked}
+            window={row.window} observedAtMs={row.account.observedAtMs} nowMs={nowMs} stacked={rowsStacked}
             statement={planWindowStatement(row.window, nowMs)}
             testID={`${props.testID}.window.${row.account.accountId}.${row.window.meterId}`} />)}
         </UsageMeterStack>
@@ -730,8 +734,13 @@ function ProjectionRow(
   }>,
 ) {
   const { window, statement } = props;
+  const text = usePlanText();
   const expired = window.paceUnavailable === 'stale';
   const statusText = !props.resetOnly && statement.kind === 'unavailable' ? statement.text : null;
+  // One kind of fact per row (acceptance 11-22 #40): the column says where this pace lands and nothing else; when the
+  // window resets, and why it has no projection, are its caption.
+  const projected = !expired && (statement.kind === 'at_reset' || statement.kind === 'depletes');
+  const caption = [formatPlanResetPhrase(window.resetAtMs, props.nowMs), statusText].filter(Boolean).join(' · ');
   const visual = (
     <UsageMeterRow
       testID={props.testID}
@@ -747,9 +756,7 @@ function ProjectionRow(
       estimated={window.estimated}
       size={props.stacked ? 'default' : 'wide'}
       layout={props.stacked ? 'stacked' : 'inline'}
-      // A used-up window's "0% left" already says it is spent; its reset column counts down to its return, which
-      // fits the row's countdown column where "used up · back Sat 03:02 AM" was cut at the row end (R8 #7).
-      {...(props.resetOnly || expired || statement.kind === 'used_up' || statement.kind === 'reset_only' ? {} : { resetText: statement.text })}
+      resetText={projected ? statement.text : ''}
       {...(window.pace
         ? {
             pace: {
@@ -772,11 +779,11 @@ function ProjectionRow(
         t('usage.board.plans.cellLeft', { percent: exact }), window.pace ? `${t('usage.board.plans.projectionUsedAtReset')} · ${formatHappierDataExactShare(window.pace.projectedUsedFraction, getPreferredLanguage())}` : null,
         window.resetAtMs === null ? null : formatMoment(window.resetAtMs, props.nowMs), statusText].filter(Boolean).join(' · ')}>{visual}</View>
     </ChartDatum>;
-  return expired ? <View>
+  return <View style={styles.windowRow}>
     {row}
-    <SurfaceFreshnessLine testID={`${props.testID}.freshness`} presentation="inline"
-      asOf={props.observedAtMs} reason={props.resetOnly ? '' : statement.text} />
-  </View> : row;
+    {expired ? <SurfaceFreshnessLine testID={`${props.testID}.freshness`} presentation="inline" asOf={props.observedAtMs} reason={caption} />
+      : caption ? <Text testID={`${props.testID}.caption`} style={[styles.quiet, text.detail]} numberOfLines={1}>{caption}</Text> : null}
+  </View>;
 }
 
 const styles = StyleSheet.create((theme) => ({
@@ -796,6 +803,7 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 1,
   },
   headline: { gap: theme.space.s4 },
+  windowRow: { gap: theme.space.s2 },
   quiet: {
     ...Typography.default(),
     color: theme.colors.text.tertiary,

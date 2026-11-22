@@ -39,6 +39,7 @@ import {
   usePlanText,
 } from './plans/UsagePlanParts';
 import { formatMoment } from '@/utils/datetime/formatMoment';
+import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 
 function eventText(event: UsagePlanEvent): string {
   switch (event.kind) {
@@ -286,21 +287,28 @@ function ResetTimeline(
   }>,
 ) {
   const theme = useUsagePluginTheme();
+  const text = usePlanText();
   const presentation = useWidgetPresentation();
   const DAY_MS = 86_400_000;
   const last = Math.max(props.nowMs, ...props.events.map(event => event.atMs));
   // A lane's last marker sits whole inside the plot rather than half past its edge.
   const end = props.lanes ? last + (last - props.nowMs) * 0.03 : last;
-  // Each coming midnight is a tick, so the lanes read as days; the timeline drops ticks that would crowd.
-  const firstMidnight = new Date(props.nowMs); firstMidnight.setHours(24, 0, 0, 0);
+  // The lanes read as days (lab p2sheet-D): the plot opens at today's midnight with now drawn across it, and each
+  // coming midnight is a tick named by its day; the timeline drops ticks that would crowd.
+  const today = new Date(props.nowMs); today.setHours(0, 0, 0, 0);
+  const start = props.lanes ? today.getTime() : props.nowMs;
   const ticks: number[] = [];
-  for (let at = firstMidnight.getTime(); at < last; at += DAY_MS) ticks.push(at);
+  for (let at = start + DAY_MS; at < last; at += DAY_MS) ticks.push(at);
+  const dayLabel = (value: number) => value === start ? t('usage.today')
+    : value === end ? null : formatWithCachedDateTimeFormatter(new Date(value), getPreferredLanguage(), { weekday: 'short', day: 'numeric' });
   const byKey = new Map(props.accounts.map(account => [account.key, account]));
   const eventsByKey = new Map(props.events.map(event => [event.key, event]));
-  return <IntervalTimeline theme={theme} label={t('usage.board.plans.resetsCaption')} testID={props.testID}
-    domain={{ start: props.nowMs, end }}
+  const kinds = [...new Set(props.events.map(event => event.kind))];
+  return <View style={styles.timeline}><IntervalTimeline theme={theme} label={t('usage.board.plans.resetsCaption')} testID={props.testID}
+    domain={{ start, end }}
     size={presentation?.size === 'small' ? 'tile' : 'full'}
-    {...(props.lanes ? { layout: 'lanes' as const, ticks, laneLabel: t('usage.widgets.usage_capacity') } : { geometry: presentation?.geometry })}
+    {...(props.lanes ? { layout: 'lanes' as const, ticks, laneLabel: t('usage.widgets.usage_capacity'), formatTick: dayLabel,
+      now: { at: props.nowMs, label: t('usage.board.plans.burnNow') } } : { geometry: presentation?.geometry })}
     startLabel={t('common.start')}
     valuesLabel={`${t('usage.widgets.usage_resets')}: ${t('usage.board.charts.showValues')}`}
     valuesCollapseLabel={t('usage.board.charts.hideValues')}
@@ -317,10 +325,27 @@ function ResetTimeline(
         ...(name?.identity ? { laneTitle: name.primaryLabel ?? name.title, laneDetail: name.identity } : {}),
         datum: datum ?? { keyboard: false, label: name?.title ?? '', value: formatMoment(event.atMs, props.nowMs) },
         annotation: datum?.value,
+        // Each mark says which window it is ("Weekly", "5-hour") or what happens (lab p2sheet-D).
+        ...(props.lanes ? { markLabel: event.kind === 'reset' && event.label ? event.label : eventText(event) } : {}),
         start: event.atMs, end: event.atMs };
     })}
-    renderMarker={interval => <ResetMarker kind={eventsByKey.get(interval.id)!.kind} />} />;
+    renderMarker={interval => <ResetMarker kind={eventsByKey.get(interval.id)!.kind} />} />
+    {props.lanes ? <View style={styles.legend} testID={`${props.testID}.legend`}>
+      {kinds.map(kind => <View key={kind} style={styles.legendKey}>
+        <ResetMarker kind={kind} />
+        <Text style={[styles.listEvent, text.detail]}>{t(LEGEND_KEYS[kind])}</Text>
+      </View>)}
+    </View> : null}
+  </View>;
 }
+
+/** What each marker means, said once beneath the lanes. */
+const LEGEND_KEYS = {
+  reset: 'usage.board.plans.legendWindowReset',
+  renews: 'usage.board.plans.eventRenews',
+  ends: 'usage.board.plans.eventEnds',
+  credit_expires: 'usage.board.plans.eventCredit',
+} as const satisfies Record<UsagePlanEvent['kind'], string>;
 
 /** The planner as a list (lab `p2reset` R4): when, whose, which window, and what it has left now. */
 function ResetList(
@@ -442,6 +467,9 @@ function WaitingRow(
 
 const styles = StyleSheet.create((theme) => ({
   body: { gap: theme.space.s16 },
+  timeline: { gap: theme.space.s8 },
+  legend: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space.s16, rowGap: theme.space.s4 },
+  legendKey: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s6 },
   dot: { width: 8, height: 8, borderRadius: 4 },
   ring: { backgroundColor: theme.colors.surface.base, borderWidth: 1.5 },
   diamond: {

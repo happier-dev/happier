@@ -964,6 +964,36 @@ it('keeps the old value and reset after a retained comparison expires', async ()
   expect(text).toContain('99%');
 });
 
+it('gives each projection row one kind of fact: the projection in its column, the countdown and any cause in its caption (acceptance 11-22 #40)', async () => {
+  const now = Date.now();
+  const base = quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 30,
+    resetAtMs: now + DAY, windowDurationMs: 7 * DAY }, { meterId: 'daily', label: 'Daily', usedPct: 10,
+    resetAtMs: now + 3 * HOUR, windowDurationMs: DAY }]);
+  const read = ConnectedServiceQuotaGetResultV1Schema.parse({ ...base, pace: base.pace.map(row => row.meterId === 'daily'
+    ? { ...row, value: { status: 'unavailable', reason: 'entitlement_changed' } } : row) });
+  const { WidgetPresentationProvider } = await import('@happier-dev/plugin-ui');
+  const { UsageMeterRow } = await import('@/components/settings/connectedServices/usage/UsageMeterRow');
+  const { UsageProjectionsWidget } = await import('../UsageProjectionsWidget');
+  // A half column of a 1440 sheet: narrower than the shared meter's wide reset column.
+  const screen = await renderScreen(wrap(<WidgetPresentationProvider value={{ size: 'medium',
+    footprint: { columns: 2, columnSpan: 1, rowSpan: 2, width: 'half', height: 'regular' }, geometry: { width: 470, height: 260 } }}>
+    <UsageProjectionsWidget {...bodyProps([read])} id="usage_projections" testID="proj" />
+  </WidgetPresentationProvider>));
+  const meter = (id: string) => screen.findAllByType(UsageMeterRow).find(node => node.props.testID === `proj.window.work.${id}`)!;
+  const projected = read.pace.find(row => row.meterId === 'weekly')!.value;
+  if (projected.status !== 'available') throw new Error('Expected available pace');
+  expect(meter('weekly').props.resetText).toBe(t('usage.board.plans.projectionAtReset', { percent: `${Math.round(Math.max(0, 1 - projected.projectedResetUtilizationFraction) * 100)}%` }));
+  // The column never holds a countdown or a cause.
+  expect(meter('daily').props.resetText).toBe('');
+  const caption = (id: string) => screen.findByTestId(`proj.window.work.${id}.caption`)!.findAll(node => typeof node.type === 'string')
+    .flatMap(node => node.children.filter(child => typeof child === 'string')).join(' ');
+  expect(caption('daily')).toContain(t('usage.board.plans.pacePlanChanged'));
+  expect(caption('daily')).toContain(t('connectedServicesCollection.meterResetsIn', { time: '' }).trim());
+  expect(caption('weekly')).toContain(t('connectedServicesCollection.meterResetsIn', { time: '' }).trim());
+  // Too narrow for the projection beside the bar: the row stacks, so its words are never cut.
+  expect(meter('weekly').props.layout).toBe('stacked');
+});
+
 it('does not materialize curve points for the meter-list presentation', async () => {
   const now = Date.now();
   const read = quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 80,
@@ -1708,6 +1738,18 @@ it('keeps one unordered pool on one quiet line, and titles the unordered pools "
   expect(text(both).split(other).length - 1).toBe(1);
   expect(text(both).split(`${used} ·`).length - 1).toBe(1);
   expect(text(both).split(used).length - 1).toBe(1);
+  // A phone's full Plans view keeps the order's row anatomy (place, account, reason, figure) rather than folding the
+  // rest into one cut sentence (acceptance 11-22 #43).
+  const four = bodyProps(['a', 'b', 'c', 'd'].map((id) => quotaRead(id, now, [weekly])), [{ query, value: [{ ...ordered,
+    memberAccountIds: ['a', 'b', 'c', 'd'] }] }]);
+  const phone = await renderScreen(wrap(<WidgetPresentationProvider value={{ size: 'large',
+    footprint: { columns: 1, columnSpan: 1, rowSpan: 1, width: 'full', height: 'regular' }, geometry: { width: 358, height: 900 } }}>
+    <UsageCapacityWidget {...four} id="usage_capacity" testID="cap" />
+  </WidgetPresentationProvider>));
+  expect(phone.findHostByTestId('cap.accounts')).not.toBeNull();
+  expect(phone.findHostByTestId('cap.steps')).toBeNull();
+  expect(phone.findHostByTestId('cap.usedFirst.ordered.a')).not.toBeNull();
+  expect(phone.findHostByTestId('cap.usedFirst.ordered.b')).not.toBeNull();
 });
 
 /** One earlier week of the same record and meter in accepted history: two readings, one and three days in. */

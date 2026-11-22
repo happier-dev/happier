@@ -252,6 +252,35 @@ describe('neutral intervals and outcomes', () => {
     } finally { mount.unmount(); }
   });
 
+  it('labels lanes points beside their marks, keeps two close labelled points apart, and draws now across the lanes', () => {
+    const mount = mountThroughReactNativeWeb(<IntervalTimeline theme={SURFACE_CONTEXT_THEME_FIXTURE} testID="resets"
+      label="Resets" layout="lanes" domain={{ start: 0, end: 100 }} geometry={{ width: 800, height: 400 }}
+      now={{ at: 10, label: 'now' }} ticks={[50]} formatTick={value => value === 0 ? 'Today' : value === 50 ? 'Wed' : null}
+      renderMarker={interval => <span data-testid={`marker-${interval.id}`} />}
+      intervals={[
+        { id: 'weekly', label: 'Weekly resets', kind: 'point', lane: 'we-are', start: 20, end: 20, markLabel: 'Weekly' },
+        { id: 'rolling', label: 'Rolling window resets', kind: 'point', lane: 'we-are', start: 21, end: 21, markLabel: 'Rolling window' },
+        { id: 'late', label: 'Weekly resets', kind: 'point', lane: 'Leeroy', start: 99, end: 99, markLabel: 'Weekly' },
+      ]} />);
+    try {
+      // Two close marks with words take two tracks of their lane rather than drawing over each other.
+      expect(query(mount.container, 'resets-lane-0-track-1')).not.toBeNull();
+      expect(query(mount.container, 'resets-mark-label-weekly')?.textContent).toBe('Weekly');
+      // A word that would pass the plot's end is drawn before its mark.
+      const late = query(mount.container, 'resets-mark-label-late')!;
+      expect(late.style.right).not.toBe('');
+      expect(late.style.left).toBe('');
+      const now = query(mount.container, 'resets-now')!;
+      expect(now.textContent).toBe('now');
+      expect(Number.parseFloat((now.firstElementChild as HTMLElement).style.left)).toBeCloseTo(10);
+      // The axis takes its own wording; an end the consumer leaves unnamed stays blank.
+      const axis = query(mount.container, 'resets-axis')!.textContent;
+      expect(axis).toContain('Today');
+      expect(axis).toContain('Wed');
+      expect(axis).not.toContain('100');
+    } finally { mount.unmount(); }
+  });
+
   it('picks the run nearest the finger along a track and steps through runs for assistive technology', () => {
     const track = [
       { id: 'a', label: 'A', start: 1, end: 3 },

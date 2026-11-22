@@ -1,5 +1,5 @@
 import { Fragment, useState, type ReactNode } from 'react';
-import { View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
 import { useHappierNativeMinimumInteractiveTargetSize } from '../../environment/interactiveTarget.js';
 import type { HappierUiTheme } from '../../environment/types.js';
@@ -56,6 +56,11 @@ export type IntervalTimelineInterval = Readonly<{
   laneDetail?: string;
   /** `layout="lanes"`: intervals sharing a track id (one run's busy spans and waits) stay on one line. */
   track?: string;
+  /**
+   * `layout="lanes"`: a short word drawn beside a point's mark ("Weekly"). The mark keeps room for it, so a neighbouring
+   * mark takes the next track instead of covering it; near the plot's end it is drawn before the mark.
+   */
+  markLabel?: string;
 }>;
 
 export type IntervalTimelineProps = Readonly<{
@@ -78,6 +83,13 @@ export type IntervalTimelineProps = Readonly<{
   laneLabel?: string;
   /** Extra axis positions between the domain's ends, in domain units (whole hours of a day). */
   ticks?: readonly number[];
+  /**
+   * The axis's own wording for its ends and ticks when it differs from the exact wording (day names along a week);
+   * null leaves that position unlabelled. Rows and readouts keep `formatValue`.
+   */
+  formatTick?: (value: number) => string | null;
+  /** `layout="lanes"`: the present moment, drawn as a line across every lane with its label above them ("now"). */
+  now?: Readonly<{ at: number; label: string }>;
   geometry?: Readonly<{ width: number; height: number }>;
   /**
    * The domain's own exact wording (a clock time for minutes of a day). It replaces the generic
@@ -214,8 +226,9 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
     interval.kind === 'point' ? null : `${endLabel}: ${format(interval.end, interval.endLabel)}`, interval.value, interval.annotation, props.basis].filter(Boolean).join(', ');
   const selected = props.intervals.find((interval) => interval.id === selectedId);
   const width = props.geometry?.width ?? measuredWidth;
-  const axisStart = format(props.domain.start);
-  const axisEnd = format(props.domain.end);
+  const axisLabel = (value: number) => props.formatTick ? props.formatTick(value) : format(value);
+  const axisStart = axisLabel(props.domain.start) ?? '';
+  const axisEnd = axisLabel(props.domain.end) ?? '';
   const captionWidth = (text.caption.fontSize ?? props.theme.typography.caption.fontSize) * HAPPIER_DATA_METRICS.averageCharacterEm;
   const axisFits = width === null || Number.isFinite(width) && width >= (axisStart.length + axisEnd.length) * captionWidth + HAPPIER_DATA_METRICS.columnGapPx;
   // Consumer ticks between the ends, dropped where their label would crowd an end or the previous tick.
@@ -232,7 +245,8 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
     for (const value of [...props.ticks].sort((a, b) => a - b)) {
       if (!Number.isFinite(value) || value <= props.domain.start || value >= props.domain.end) continue;
       const fraction = (value - props.domain.start) / span;
-      const label = format(value);
+      const label = axisLabel(value);
+      if (label === null) continue;
       const labelWidth = room(label);
       if (axisWidth !== null) {
         const center = fraction * axisWidth;
@@ -253,14 +267,29 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
   // A track is the dense bar on every pointer. On native the whole track is a single target selecting the
   // run under the finger (press and drag), so packed runs never share overlapping targets; its hit area
   // reaches half the gap to the next track, never a taller track (DESIGN.md → touch targets are hit areas).
-  const trackHeight = HAPPIER_DATA_METRICS.laneBarHeightPx;
-  const trackGap = HAPPIER_DATA_METRICS.laneTrackGapPx;
-  const lanes = lanesLayout && validDomain
-    ? packIntervalLanes(props.intervals, (interval) => laneMarkOf(marksOf(interval)), HAPPIER_DATA_METRICS.barStubPx / (plotWidth ?? 800)) : [];
   const captionLine = text.caption.lineHeight ?? props.theme.typography.caption.lineHeight;
+  // A track holding words beside its marks is a caption line tall, so neighbouring tracks' words never touch.
+  const labelled = lanesLayout && props.intervals.some((interval) => interval.kind === 'point' && interval.markLabel);
+  const trackHeight = labelled ? Math.max(HAPPIER_DATA_METRICS.laneBarHeightPx, captionLine) : HAPPIER_DATA_METRICS.laneBarHeightPx;
+  const trackGap = HAPPIER_DATA_METRICS.laneTrackGapPx;
+  // A labelled point holds its mark and its word: after the mark, or before it where the word would pass the plot's end.
+  const markLabelPlacement = (interval: IntervalTimelineInterval, mark: { from: number; to: number }) => {
+    if (interval.kind !== 'point' || !interval.markLabel) return null;
+    const room = (trackHeight / 2 + HAPPIER_DATA_METRICS.axisGapPx + interval.markLabel.length * captionWidth) / (plotWidth ?? 800);
+    return mark.from + room <= 1 ? { side: 'after' as const, from: mark.from, to: mark.from + room }
+      : { side: 'before' as const, from: mark.from - room, to: mark.from };
+  };
+  const laneExtentOf = (interval: IntervalTimelineInterval) => {
+    const mark = laneMarkOf(marksOf(interval));
+    return mark === null ? null : markLabelPlacement(interval, mark) ?? mark;
+  };
+  const lanes = lanesLayout && validDomain
+    ? packIntervalLanes(props.intervals, laneExtentOf, HAPPIER_DATA_METRICS.barStubPx / (plotWidth ?? 800)) : [];
+  const nowFraction = lanesLayout && props.now ? resolveHappierDataDomainFraction(props.now.at, props.domain.start, props.domain.end) : null;
   const trackStep = trackHeight + trackGap;
   const requiredHeight = (lanesLayout
     ? lanes.reduce((sum, lane) => sum + lane.tracks.length * trackStep + (sideLabels ? 0 : captionLine) + HAPPIER_DATA_METRICS.blockGapPx, 0)
+      + (nowFraction !== null ? captionLine : 0)
     : props.intervals.length * rowHeight) + captionLine + HAPPIER_DATA_METRICS.axisGapPx;
   const heightFits = props.geometry === undefined || Number.isFinite(props.geometry.height) && props.geometry.height >= requiredHeight;
   const showPlot = (props.size ?? 'full') === 'full' && validDomain && axisFits && heightFits && props.intervals.length > 0;
@@ -274,6 +303,17 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
     style={{ gap: HAPPIER_DATA_METRICS.blockGapPx }}>
     {props.basis ? <HappierText style={text.caption}>{props.basis}</HappierText> : null}
     {showPlot ? <View testID={props.testID ? `${props.testID}-plot` : undefined} style={lanesLayout ? { gap: HAPPIER_DATA_METRICS.blockGapPx } : undefined}>
+      {/* Now: its word on a line of its own above the lanes, its line down through every lane to the axis. */}
+      {nowFraction !== null ? <View aria-hidden importantForAccessibility="no-hide-descendants"
+        testID={props.testID ? `${props.testID}-now` : undefined}
+        style={{ position: 'absolute', pointerEvents: 'none', top: 0, bottom: captionLine + HAPPIER_DATA_METRICS.blockGapPx,
+          left: sideLabels ? HAPPIER_DATA_METRICS.laneLabelWidthPx + HAPPIER_DATA_METRICS.blockGapPx : 0, right: 0 }}>
+        <View style={{ position: 'absolute', left: `${nowFraction * 100}%`, top: captionLine, bottom: 0,
+          width: StyleSheet.hairlineWidth, backgroundColor: props.theme.colors.mutedText }} />
+        <HappierText numberOfLines={1} style={{ ...text.caption, position: 'absolute', top: 0, left: `${nowFraction * 100}%`,
+          marginLeft: -HAPPIER_DATA_METRICS.axisGapPx }}>{props.now!.label}</HappierText>
+      </View> : null}
+      {nowFraction !== null ? <View style={{ height: Math.max(0, captionLine - HAPPIER_DATA_METRICS.blockGapPx) }} /> : null}
       {lanesLayout ? lanes.map((lane, laneIndex) => <View key={`${laneIndex}:${lane.label}`}
         testID={props.testID ? `${props.testID}-lane-${laneIndex}` : undefined}
         style={sideLabels ? { flexDirection: 'row', alignItems: 'flex-start', gap: HAPPIER_DATA_METRICS.blockGapPx } : { gap: HAPPIER_DATA_METRICS.axisGapPx }}>
@@ -326,17 +366,28 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
               const barHeight = HAPPIER_DATA_METRICS.laneBarHeightPx;
               // A point with domain marker ink (a reset, an ending) draws that marker centred on its moment, as the rows layout does.
               const marker = interval.kind === 'point' && props.renderMarker ? props.renderMarker(interval) : null;
+              const placed = markLabelPlacement(interval, mark);
+              const dimmed = selectedId !== null && selectedId !== interval.id;
               return <Fragment key={interval.id}>
                 {marker !== null ? <View testID={props.testID ? `${props.testID}-interval-${interval.id}` : undefined} aria-hidden
                   importantForAccessibility="no-hide-descendants" style={{ position: 'absolute', left: `${mark.from * 100}%`, top: 0,
                     width: trackHeight, height: trackHeight, marginLeft: -trackHeight / 2, alignItems: 'center', justifyContent: 'center',
-                    opacity: selectedId !== null && selectedId !== interval.id ? 0.55 : 1 }}>{marker}</View>
+                    opacity: dimmed ? 0.55 : 1 }}>{marker}</View>
                 : <View testID={props.testID ? `${props.testID}-interval-${interval.id}` : undefined} aria-hidden importantForAccessibility="no-hide-descendants"
                   style={{ ...place, top: (trackHeight - barHeight) / 2, height: barHeight,
                     borderRadius: span > 0 ? HAPPIER_DATA_METRICS.barRadiusPx : 0, overflow: 'hidden', justifyContent: 'center',
                     backgroundColor: color, opacity: selectedId !== null && selectedId !== interval.id ? 0.55 : 1 }}>
                   {interval.pattern === 'hatched' ? <HappierDataHatch theme={props.theme} /> : null}
                 </View>}
+                {placed ? <HappierText testID={props.testID ? `${props.testID}-mark-label-${interval.id}` : undefined} aria-hidden
+                  importantForAccessibility="no-hide-descendants" numberOfLines={1}
+                  style={{ ...text.caption, color: props.theme.colors.mutedText, position: 'absolute', top: (trackHeight - captionLine) / 2,
+                    opacity: dimmed ? 0.55 : 1,
+                    ...(placed.side === 'after'
+                      ? { left: `${mark.from * 100}%`, marginLeft: trackHeight / 2 + HAPPIER_DATA_METRICS.axisGapPx }
+                      : { right: `${(1 - mark.from) * 100}%`, marginRight: trackHeight / 2 + HAPPIER_DATA_METRICS.axisGapPx }) }}>
+                  {interval.markLabel}
+                </HappierText> : null}
                 {/* Pointer: the target covers the whole track over the ink, one per run. */}
                 {touchTrack ? null : <View style={{ ...place, top: 0, height: trackHeight }}>
                   <ChartDatum testID={props.testID ? `${props.testID}-datum-${interval.id}` : undefined}

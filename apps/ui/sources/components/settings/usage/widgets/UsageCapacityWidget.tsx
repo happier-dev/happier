@@ -24,7 +24,6 @@ import {
 } from './UsageResetCelebration';
 import {
   useUsagePluginTheme,
-  usageUnreadAccountsLabel,
   type UsageBodyProps,
 } from './usageBodyKit';
 import type { UsagePlanAccount, UsagePlanPool, UsagePlanWindow } from './plans/usagePlansModel';
@@ -463,10 +462,12 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
       {othersLine !== null ? (
         <Text style={[styles.subline, text.detail]} testID={`${props.testID}.others`}>{othersLine}</Text>
       ) : null}
+      {/* The count at rest, the names one press away: a long list of unread accounts ran two lines inside the hero
+          (acceptance 11-22 #45). */}
       {unreadNames.length > 0 && !compact ? (
-        <Text style={[styles.subline, text.detail]} testID={`${props.testID}.unread`}>
-          {usageUnreadAccountsLabel(unreadNames)}
-        </Text>
+        <UsagePlanDisclosure title={t('usage.board.plans.capacityNotRead', { count: unreadNames.length })} testID={`${props.testID}.unread`}>
+          <Text style={[styles.subline, text.detail]}>{unreadNames.join(', ')}</Text>
+        </UsagePlanDisclosure>
       ) : null}
       {projection.accounts.some(account => account.windows.length > 0) ? (
         <UsagePlanDisclosure title={t('usage.board.charts.showValues')}
@@ -476,9 +477,9 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
         </UsagePlanDisclosure>
       ) : null}
       {/* Beside other widgets the meters are said once; the switching order lives with the full view (Plans). */}
-      {/* A narrow full view (a phone, lab p2sheet-P) says the order as Now → Next → Then, as a tile does: the account rows
-          above already list every member, so a second full list would repeat them. */}
-      {selections === null || (pooled && (!tile || next !== null)) ? null : tile || listed ? (
+      {/* A tile says the order as Now → Next → Then; a full view keeps the order's rows at every width, a phone included,
+          so the skipped accounts never fold into one cut sentence (acceptance 11-22 #43). */}
+      {selections === null || (pooled && (!tile || next !== null)) ? null : tile ? (
         <UsagePoolSteps
           serverId={props.serverId}
           query={props.query}
