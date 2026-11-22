@@ -256,6 +256,10 @@ export function DeploymentCreationReviewFacts(props: Readonly<{
 
 /** Render the host's copy facts with the same labels used by the deployment pages. */
 function deploymentCopyReviewLabel(value: string): string {
+  const exportedService = /^serviceExport:(.+)$/u.exec(value)?.[1];
+  if (exportedService !== undefined) return exportedService;
+  const rollbackCount = /^retainPreviousDeployments:copy:(\d+)$/u.exec(value)?.[1];
+  if (rollbackCount !== undefined) return `${t('projects.deployments.keptForRollback')} · ${rollbackCount}`;
   switch (value) {
     case 'definition:stored': return t('newApp.deploy.plan.runsCompose');
     case 'definition:repository': return t('projects.sources.repositoryTitle');

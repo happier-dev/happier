@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { ed25519, x25519 } from '@noble/curves/ed25519';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { DeploymentEnvironmentCreateIntentInputV1Schema, DeploymentEnvironmentCreateInputV1Schema,
-    DeploymentEnvironmentGetResultV1Schema, signAccountContentKeyBindingV1, computeContentPublicKeyFingerprint,
+    DeploymentEnvironmentGetResultV1Schema, signAccountContentKeyBindingV1, computeContentPublicKeyFingerprint, environmentSecretBindingIdentityV1,
     type ActionExecutorContext } from '@happier-dev/protocol';
 import { ArtifactAccessGrantSetInputV1Schema, ArtifactAccessGrantMutationResponseV1Schema,
     ArtifactAccessRecipientCensusResponseV1Schema, ArtifactRecipientKeyEnvelopeCommitInputV1Schema,
@@ -260,7 +260,9 @@ describe('authored Environment creation through protected preparation and the ex
             profiles: ['web'], services: ['app'], primaryService: 'app' };
         source.content.retainPreviousDeployments = 7;
         source.content.ownServer = { rollout: 'startFirst', autoRestorePreviousRelease: false,
-            migration: { service: 'app', argv: ['migrate'] } };
+            migration: { service: 'app', argv: ['migrate'] },
+            serviceExports: [{ key: 'db-read', service: 'app', containerPort: 5432, scheme: 'postgres', exposure: 'loopback',
+                transport: { kind: 'iroh' } }] };
         source.content.backup = {
             configRevision: 1, destinationRef: { pluginId: 'example.storage', localId: 'storage' },
             occurrenceId: 'source-storage', config: { bucket: 'source-recovery' },
@@ -374,6 +376,9 @@ describe('authored Environment creation through protected preparation and the ex
         for (const privateText of ['review-redacted-value', 'private-copy-secret', 'private-reference', 'remapped-value', document])
             expect(review).not.toContain(privateText);
         expect(captured.review).toMatchObject({ sourceEnvironmentId: source.environment.id, sourceRevision: 7 });
+        expect(captured.review?.included).toEqual(expect.arrayContaining(['definition:stored',
+            'serviceExport:app', 'retainPreviousDeployments:copy:7',
+            `binding:${environmentSecretBindingIdentityV1(variable('PUBLIC_VALUE'))}:include`]));
         expect(artifacts.size).toBe(0);
         const prepared = await createPrepareEnvironmentCreateForHost(host)({ input: { ...captured.input,
             controllerMachineId: 'new-controller' }, context: requesterContext, projectOwner: { kind: 'account', accountId: 'owner' }, copy: captured });
@@ -442,16 +447,18 @@ describe('authored Environment creation through protected preparation and the ex
             .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
         const credentialRef = { service: { pluginId: 'example.data', localId: 'account' }, accountId: 'fresh-account' };
         const provision = { action: { pluginId: 'example.data', localId: 'provision' }, input: {
-            v: 1, serverId: 'home', providerAccountId: 'organization', credentialRef,
+            v: 1, serverId: 'home', environmentId: source.environment.id, expectedRevision: source.environment.revision,
+            providerAccountId: 'organization', credentialRef,
             credentialPrincipal: { kind: 'account', accountId: 'owner',
-                purpose: { consumer: { pluginId: 'example.data', localId: 'provision' }, purpose: 'manage' },
-                target: { kind: 'account', account: credentialRef } }, providerEnvironment: { kind: 'native', selection: { kind: 'production' } },
+                purpose: { consumer: { pluginId: 'example.data', localId: 'provision' }, purpose: 'deploy-manage' },
+                target: { kind: 'account', account: credentialRef } }, providerEnvironment: { kind: 'native', selection: { branchId: 'parent-ref' } },
             name: 'private-project-name', password: { ref: 'secret:fresh-password', resourceRevision: 2 },
             regionSelection: { type: 'specific', code: 'eu-west-1' },
         } };
         const closed = { type: 'object', properties: {}, additionalProperties: false };
         const dataTarget = DeploymentTargetV1Schema.parse({ v: 1, id: 'database', source: dataLink.source,
             role: 'data', targetKind: 'database', title: 'Database', icon: 'server-outline', targetSchema: closed, linkSchema: closed,
+            nativeSelectorSchema: closed,
             dataV1: { projects: { provision: { kind: 'plugin', actionId: 'example.data/actions/provision' } } } });
         const provisionHost = { ...host, async readDataProvisionDeclaration() { return {
             target: dataTarget, action: provision.action, inputSchema: supabaseDataActionSchema('projects-provision'),

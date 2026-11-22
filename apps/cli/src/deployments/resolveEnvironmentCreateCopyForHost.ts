@@ -136,9 +136,13 @@ export async function resolveEnvironmentCreateCopyForHost(
                 ...(definition.primaryService === undefined ? {} : { primaryService: definition.primaryService }) };
         const retention = input.retainPreviousDeployments ?? (copyFrom.choices.retainPreviousDeployments === 'copy'
             ? source.content.retainPreviousDeployments : undefined);
-        if (copyFrom.choices.retainPreviousDeployments === 'copy' && input.retainPreviousDeployments === undefined)
-            review.included.push('retainPreviousDeployments:copy');
-        if (source.content.ownServer !== undefined) review.included.push('ownServer');
+        if (copyFrom.choices.retainPreviousDeployments === 'copy' && input.retainPreviousDeployments === undefined && retention !== undefined)
+            review.included.push(`retainPreviousDeployments:copy:${retention}`);
+        if (source.content.ownServer !== undefined) {
+            review.included.push('ownServer');
+            const exportedServices = new Set(source.content.ownServer.serviceExports?.map(entry => entry.service));
+            for (const service of exportedServices) review.included.push(`serviceExport:${service}`);
+        }
         context.signal?.throwIfAborted();
         return { input: { ...input, definition: authoredDefinition,
             ...(retention === undefined ? {} : { retainPreviousDeployments: retention }) },
