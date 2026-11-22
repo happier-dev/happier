@@ -665,7 +665,7 @@ const BROWSER_APPROVAL_TECHNICAL_INPUT_PATHS = {
   'browser.view.openDevtools': ['commandId', 'browserSessionId', 'viewId'],
   'browser.view.open': [...BROWSER_TARGETED_COMMAND_TECHNICAL_INPUT_PATHS, 'platform', 'focus', 'openerViewId', 'currentUrlExpiresAt'],
   'browser.target.set': BROWSER_TARGETED_COMMAND_TECHNICAL_INPUT_PATHS,
-  'browser.workspace.open': ['commandId', 'target.targetId'],
+  'browser.workspace.open': ['scopeId', 'commandId', 'target.targetId'],
   'browser.view.close': BROWSER_VIEW_COMMAND_TECHNICAL_INPUT_PATHS,
   'browser.view.focus': BROWSER_VIEW_COMMAND_TECHNICAL_INPUT_PATHS,
   'browser.view.setViewport': BROWSER_VIEW_COMMAND_TECHNICAL_INPUT_PATHS,

@@ -26,3 +26,7 @@ it('falls back to the title when a Browser open has no readable address', () => 
   expect(buildApprovalPreviewSummary(spec, { scopeId: 'scope', commandId: 'c', target: { kind: 'externalUrl', url: 'not a url' } }))
     .toBe(`${spec.title}.`);
 });
+
+it('keeps workspace routing ids in technical approval facts', () => {
+  expect(getActionSpec('browser.workspace.open').approvalPresentation?.technicalInputPaths).toContain('scopeId');
+});
