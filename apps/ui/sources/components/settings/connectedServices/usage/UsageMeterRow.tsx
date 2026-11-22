@@ -94,7 +94,7 @@ export const UsageMeterRow = React.memo(function UsageMeterRow(props: UsageMeter
     const baseAccessibilityLabel = props.loading
         ? props.label
         : !amountMode && remaining !== null && countdown
-        ? `${props.label}, ${ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER.remainingWithReset({ percent: `${remaining}%`, reset: countdown })}`
+        ? [props.label, ACCOUNT_BLOCK_GAUGE_LABEL_FORMATTER.remainingWithReset({ percent: `${remaining}%`, reset: countdown }), props.resetText].filter(Boolean).join(', ')
         : `${props.label}, ${value}${resetAt ? `, ${resetAt}` : ''}`;
     const accessibilityLabel = paceLabel ? `${baseAccessibilityLabel}; ${paceLabel}` : baseAccessibilityLabel;
     const wideAccessibilityLabel = !props.loading && (amountMode || remaining === null || !countdown)

@@ -295,13 +295,14 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
   if (list) {
     // The list is where each live window lands. A used-up window has no projection left to make: its meter and its
     // return are Limits' and Resets', so here it is one count (acceptance 11-18 #7).
-    const live = rows.filter(row => row.window.remainingFraction! > 0);
+    const live = rows.map(row => ({ ...row, statement: planWindowStatement(row.window, nowMs) }))
+      .filter(row => row.statement.kind !== 'used_up');
     const spent = rows.length - live.length;
     const lead = leadingUsageRows(live, expanded);
     // One cause, said once: when every listed window lacks a projection for the same reason ("reading is
     // old"), the rows show their reset instead and the reason is one quiet line under the list.
     // A paced window behind Show all still disproves a whole-list missing-pace statement.
-    const reasons = live.map((row) => (row.window.pace ? null : planWindowStatement(row.window, nowMs).text));
+    const reasons = live.map(({ statement }) => statement.kind === 'unavailable' ? statement.text : null);
     const sharedReason = reasons.length > 1 && reasons[0] && reasons.every((reason) => reason === reasons[0]) ? reasons[0] : null;
     // When only some windows lack a projection and two or more share the cause, that cause is said once too:
     // under one line for the widget, never beneath every row.
@@ -321,7 +322,8 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
                 window={row.window}
                 nowMs={nowMs}
                 stacked={stacked}
-                {...(quietReason && !row.window.pace && planWindowStatement(row.window, nowMs).text === quietReason ? { resetOnly: true } : {})}
+                statement={row.statement}
+                resetOnly={!!quietReason && row.statement.kind === 'unavailable' && row.statement.text === quietReason}
                 testID={`${props.testID}.window.${row.account.accountId}.${row.window.meterId}`}
               />
             ))}
@@ -478,6 +480,7 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
               window={row.window}
               nowMs={nowMs}
               stacked={stacked}
+              statement={planWindowStatement(row.window, nowMs)}
               testID={`${props.testID}.window.${row.account.accountId}.${row.window.meterId}`}
             />
           ))}
@@ -489,6 +492,7 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
         <UsageMeterStack testID={`${props.testID}.unreported.windows`}>
           {unreported.map(row => <ProjectionRow key={row.window.key} name={row.name}
             window={row.window} nowMs={nowMs} stacked={stacked}
+            statement={planWindowStatement(row.window, nowMs)}
             testID={`${props.testID}.window.${row.account.accountId}.${row.window.meterId}`} />)}
         </UsageMeterStack>
       </UsagePlanDisclosure> : null}
@@ -709,13 +713,14 @@ function ProjectionRow(
     window: UsagePlanWindow;
     nowMs: number;
     stacked: boolean;
+    statement: ReturnType<typeof planWindowStatement>;
     /** The list says the missing projection once; this row then shows its reset countdown. */
     resetOnly?: boolean;
     testID: string;
   }>,
 ) {
-  const { window } = props;
-  const statement = planWindowStatement(window, props.nowMs);
+  const { window, statement } = props;
+  const statusText = !props.resetOnly && statement.kind === 'unavailable' ? statement.text : null;
   const visual = (
     <UsageMeterRow
       testID={props.testID}
@@ -733,7 +738,7 @@ function ProjectionRow(
       layout={props.stacked ? 'stacked' : 'inline'}
       // A used-up window's "0% left" already says it is spent; its reset column counts down to its return, which
       // fits the row's countdown column where "used up · back Sat 03:02 AM" was cut at the row end (R8 #7).
-      {...(props.resetOnly || statement.kind === 'used_up' ? {} : { resetText: statement.text })}
+      {...(props.resetOnly || statement.kind === 'used_up' || statement.kind === 'reset_only' ? {} : { resetText: statement.text })}
       {...(window.pace
         ? {
             pace: {
@@ -751,10 +756,10 @@ function ProjectionRow(
       value: t('usage.board.plans.cellLeft', { percent: exact }),
       subtitle: [window.pace ? t('usage.board.plans.estimatedFrom', { count: window.pace.sampleCount }) : null,
         window.pace ? `${t('usage.board.plans.projectionUsedAtReset')} · ${formatHappierDataExactShare(window.pace.projectedUsedFraction, getPreferredLanguage())}` : null,
-        window.resetAtMs === null ? null : formatMoment(window.resetAtMs, props.nowMs)].filter(Boolean).join(' · ') }}>
+        window.resetAtMs === null ? null : formatMoment(window.resetAtMs, props.nowMs), statusText].filter(Boolean).join(' · ') }}>
       <View accessible accessibilityLabel={[`${props.name.title} · ${window.label}`, t('usage.board.charts.showValues'),
         t('usage.board.plans.cellLeft', { percent: exact }), window.pace ? `${t('usage.board.plans.projectionUsedAtReset')} · ${formatHappierDataExactShare(window.pace.projectedUsedFraction, getPreferredLanguage())}` : null,
-        window.resetAtMs === null ? null : formatMoment(window.resetAtMs, props.nowMs)].filter(Boolean).join(' · ')}>{visual}</View>
+        window.resetAtMs === null ? null : formatMoment(window.resetAtMs, props.nowMs), statusText].filter(Boolean).join(' · ')}>{visual}</View>
     </ChartDatum>;
 }
 

@@ -235,12 +235,13 @@ export function planPaceReasonText(reason: string): string {
   return key ? t(key) : t('usage.board.plans.endedUnusedInsufficient');
 }
 
-/** Observed exhaustion takes priority over a forecast, for every window presentation. */
+/** Use the available reading for a forecast or exhaustion, and report a reset independently. */
 export function planWindowStatement(
   window: UsagePlanWindow,
   nowMs: number,
-): Readonly<{ kind: 'used_up' | 'depletes' | 'at_reset' | 'unavailable'; text: string; tone: 'quiet' | 'warning' }> {
-  if (window.remainingFraction !== null && window.remainingFraction <= 0) {
+): Readonly<{ kind: 'used_up' | 'depletes' | 'at_reset' | 'reset_only' | 'unavailable'; text: string; tone: 'quiet' | 'warning' }> {
+  const unavailable = window.paceUnavailable ?? 'not_derived';
+  if (unavailable !== 'stale' && window.remainingFraction !== null && window.remainingFraction <= 0) {
     return {
       kind: 'used_up',
       text: [t('usage.board.plans.cellUsedUp'), window.resetAtMs === null ? null
@@ -266,9 +267,16 @@ export function planWindowStatement(
       tone: 'quiet',
     };
   }
+  if (unavailable === 'unknown_window' && window.resetAtMs !== null) {
+    return {
+      kind: 'reset_only',
+      text: formatPlanResetPhrase(window.resetAtMs, nowMs) ?? formatMoment(window.resetAtMs, nowMs),
+      tone: 'quiet',
+    };
+  }
   return {
     kind: 'unavailable',
-    text: t(PACE_REASON_KEYS[window.paceUnavailable ?? 'not_derived']),
+    text: t(PACE_REASON_KEYS[unavailable]),
     tone: 'quiet',
   };
 }

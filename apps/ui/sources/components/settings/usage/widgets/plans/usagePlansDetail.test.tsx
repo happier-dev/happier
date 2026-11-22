@@ -779,6 +779,38 @@ it('does not declare all projections missing when a settled paced window is behi
   expect(text).not.toContain(t('usage.board.plans.paceSharedReason', { reason: '' }));
 });
 
+it('keeps the reported reset when pace has no window and labels a truly expired reading', async () => {
+  const now = Date.now();
+  const resetAtMs = now + DAY;
+  const read = (accountId: string, usedPct: number, observedAtMs: number, keepDuration: boolean) => {
+    const fixture = quotaRead(accountId, observedAtMs, [
+      { meterId: 'weekly', label: 'Weekly', usedPct, resetAtMs, windowDurationMs: 7 * DAY },
+    ]);
+    const snapshot = fixture.current!;
+    const current = keepDuration ? snapshot : {
+      ...snapshot, meters: snapshot.meters.map(({ windowDurationMs, ...meter }) => meter),
+    };
+    return projectProviderAccountUsageQuotaReadV1({ input: { source: fixture.source }, current, nowMs: now });
+  };
+  const expired = read('expired', 100, now - 2 * HOUR, true);
+  const resetOnly = read('reset', 30, now, false);
+  expect(expired.pace[0]?.value).toMatchObject({ status: 'unavailable', reason: 'stale' });
+  expect(resetOnly.pace[0]?.value).toMatchObject({ status: 'unavailable', reason: 'unknown_window' });
+
+  const { UsageProjectionsWidget } = await import('../UsageProjectionsWidget');
+  const screen = await renderScreen(wrap(<WidgetPresentationProvider value={{ size: 'medium',
+    footprint: { columns: 2, columnSpan: 1, rowSpan: 2, width: 'half', height: 'regular' }, geometry: { width: 520, height: 260 } }}>
+    <UsageProjectionsWidget {...bodyProps([expired, resetOnly])} id="usage_projections" testID="proj" />
+  </WidgetPresentationProvider>));
+  const expiredText = t('usage.board.plans.paceStale');
+  expect.soft(screen.getTextContent()).toContain(expiredText);
+  expect.soft(screen.findHostByTestId('proj.window.expired.weekly')?.props.accessibilityLabel).toContain(expiredText);
+  expect.soft(screen.findByTestId('proj.usedUp')).toBeFalsy();
+  expect.soft(screen.getTextContent()).toContain(t('connectedServicesCollection.meterResetsIn', { time: '' }).trim());
+  expect.soft(screen.getTextContent()).not.toContain(t('usage.board.plans.paceUnknownWindow'));
+  expect(screen.findAllByType(BurnUpChart)).toHaveLength(0);
+});
+
 it('does not materialize curve points for the meter-list presentation', async () => {
   const now = Date.now();
   const read = quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 80,
