@@ -162,6 +162,13 @@ describe('GitHub preview-status registered Action', () => {
     } finally { await testkit.dispose(); }
   });
 
+  it('refuses to publish a preview status when the Receipt has no content', async () => {
+    const stub = previewStatusTransport({ headerOnlyReceipt: true });
+    expect(await invoke(previewStatusInput(), stub))
+      .toMatchObject({ kind: 'failed', failure: { code: 'deployment_content_unavailable' } });
+    expect(stub.requests.filter(request => request.method === 'POST')).toHaveLength(0);
+  });
+
   it('publishes removal only in the admitted template runtime context and exact head', async () => {
     const stub = previewStatusTransport();
     expect(await invoke(previewStatusInput(), stub)).toMatchObject({ kind: 'applied', publication: {

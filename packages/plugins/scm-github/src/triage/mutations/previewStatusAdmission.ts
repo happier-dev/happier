@@ -106,6 +106,8 @@ export async function readGithubPreviewDeployment(request: Pick<Request, 'server
   if (!link || link.role !== 'runtime' || !removed && (link.deletedAtMs !== undefined || link.detachedAtMs !== undefined)) return changed();
   if (link.source.kind !== 'host' || link.source.id !== 'own-server' || link.targetKind !== 'ownServer')
     return { kind: 'refused', reason: 'provider_native_preview' };
+  const { contentArtifactId } = deployment;
+  if (contentArtifactId === null) return { ...fail('deployment_content_unavailable', context.requestId), ...controller };
   let template: Environment | Refusal;
   let sourceResult;
   let childBody;
@@ -115,7 +117,7 @@ export async function readGithubPreviewDeployment(request: Pick<Request, 'server
       readEnvironment(environment.previewTemplateEnvironmentId, request, context),
       context.services.actions.execute('projects.sources.read', { serverId: request.serverId, sourceId: environment.projectSourceId }, { signal: context.signal }),
       readArtifact(environment, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, context),
-      readArtifact(receipt.deployment, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, context),
+      readArtifact({ ...deployment, contentArtifactId }, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, context),
     ]);
   } catch (error) { context.signal.throwIfAborted(); return fail('deployment_content_unavailable', context.requestId, error); }
   if (!isEnvironment(template)) return template;

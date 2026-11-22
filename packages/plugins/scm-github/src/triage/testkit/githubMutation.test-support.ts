@@ -72,7 +72,7 @@ export function previewStatusTransport(options: Readonly<{
   multiplePreviews?: boolean; unavailableFirstPreview?: boolean; previewQueryError?: 'deployment_access_denied'; previewReadDenied?: boolean;
   publicationReadDenied?: boolean; publicationReadFailure?: 'transport' | 'malformed';
   controllerState?: 'available' | 'paused' | 'unknown';
-  noReceipt?: boolean;
+  noReceipt?: boolean; headerOnlyReceipt?: boolean;
 }> = {}) {
   const childId = options.childId ?? 'preview-child';
   const repository = { kind: 'github', deployment: 'https://github.com', repository: REPOSITORY_KEY };
@@ -146,8 +146,9 @@ export function previewStatusTransport(options: Readonly<{
           environmentId: request.environmentId === 'preview-second' ? 'preview-second' : options.foreignReceipt ? 'foreign-child' : childId,
           targetLinkId: request.environmentId === 'preview-second' ? 'preview-second-runtime' : 'preview-runtime', revision: 1,
           operation: options.operation ?? 'teardown', state: options.receiptState ?? 'succeeded', requestKey: 'preview-request',
-          requestedByAccountId: 'preview-owner', actionOperationId: 'preview-operation', requestedAtMs: 1,
-          startedAtMs: 1, settledAtMs: 1, ...reference(request.environmentId === 'preview-second' ? 'preview-second-deployment' : 'preview-teardown') }], nextCursor: null };
+          requestedByAccountId: options.headerOnlyReceipt ? null : 'preview-owner', actionOperationId: 'preview-operation', requestedAtMs: 1,
+          startedAtMs: 1, settledAtMs: 1, ...reference(request.environmentId === 'preview-second' ? 'preview-second-deployment' : 'preview-teardown'),
+          ...(options.headerOnlyReceipt ? { contentArtifactId: null } : {}) }], nextCursor: null };
       if (actionId === 'deployments.domains.list' && request.environmentId === 'preview-second') return { ok: true,
         environmentId: 'preview-second', revision: 1, nextCursor: null,
         domains: [{ v: 1, id: 'preview-second-domain', environmentId: 'preview-second', targetLinkId: 'preview-second-runtime',
