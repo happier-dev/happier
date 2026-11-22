@@ -2,12 +2,78 @@ import { describe, expect, it } from 'vitest';
 import { normalizeActionsSettingsV1 } from './actionSettings.js';
 import { isApprovalRequiredByActionsSettings, resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import { getActionSpec } from './actionSpecs.js';
+import { isActionEnabledByActionsSettings } from './actionSettings.js';
+import { resolveProfiledActionsSettingsV1, type BoundApprovalProfileV1 } from './approvalProfiles.js';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { setScopedActionApprovalPreference } from './actionSettings.js';
 import { WorkflowApprovedOperationV1Schema } from './approvedOperationV1.js';
 import { createDeploymentApprovalScopeResolverV1 } from '../deployments/deploymentApprovalScopeV1.js';
 
 describe('admitted scoped Actions approval', () => {
+  const inheritedScopeCases = [
+    { actionId: 'machines.services.logs.read', scope: { kind: 'machine', machineId: 'work' } },
+    { actionId: 'deployments.deploy', scope: { kind: 'environment', environmentId: 'work' } },
+  ] as const;
+
+  it.each(inheritedScopeCases)('keeps the inherited Ask above Allowed for $scope.kind', ({ actionId, scope }) => {
+    const settings = setScopedActionApprovalPreference({ actionId, scope, surface: 'cli', mode: 'waived',
+      settings: normalizeActionsSettingsV1({ v: 1 }) });
+    const ownAsk = { ...settings, actions: normalizeActionsSettingsV1({
+      v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['cli'] } },
+    }).actions };
+    const profile: BoundApprovalProfileV1 = {
+      profile: { id: 'team-profile', name: 'Team profile',
+        actions: { [actionId]: { approvalRequiredSurfaces: ['cli'] } } },
+      resolution: { status: 'available', requestedId: 'team-profile' },
+    };
+    const context = { surface: 'cli' as const, authority: 'account_automation' as const };
+    const args = { actionId, spec: getActionSpec(actionId), approvalScope: scope };
+    expect(resolveActionApprovalRouting({ ...args, settings: ownAsk, context }).required).toBe(false);
+    expect(resolveActionApprovalRouting({ ...args, settings, context }).required).toBe(false);
+    expect(resolveActionApprovalRouting({ ...args, settings,
+      context: { ...context, approvalProfile: profile } }).required).toBe(false);
+    expect(resolveActionApprovalRouting({ ...args, settings, context: {
+      ...context, approvalProfile: profile, approvalProfileTeamOrGroupDerived: true,
+    } }).required).toBe(true);
+  });
+
+  it('keeps inherited Ask for a preview Environment through the database no-approval overlay', () => {
+    const actionId = 'deployments.deploy';
+    const template = { kind: 'environment', environmentId: 'template' } as const;
+    const settings = setScopedActionApprovalPreference({ actionId, scope: template, surface: 'agent', mode: 'waived',
+      settings: normalizeActionsSettingsV1({ v: 1 }) });
+    const approvalScope = { ...template, environmentId: 'preview', inheritedEnvironmentId: template.environmentId };
+    const approvalProfile: BoundApprovalProfileV1 = {
+      profile: { id: 'team-profile', name: 'Team profile',
+        actions: { [actionId]: { approvalRequiredSurfaces: ['agent'] } } },
+      resolution: { status: 'available', requestedId: 'team-profile' },
+    };
+    const context = { surface: 'agent' as const, approvalProfile, authority: 'account_automation' as const };
+    const args = { actionId, spec: getActionSpec(actionId), settings, approvalScope,
+      targetApproval: { databaseAgentLevel: 'readWriteNoApproval' as const } };
+    expect(resolveActionApprovalRouting({ ...args, context }).required).toBe(false);
+    expect(resolveActionApprovalRouting({ ...args,
+      context: { ...context, approvalProfileTeamOrGroupDerived: true } }).required).toBe(true);
+  });
+
+  it('keeps Account and inherited Off at the same enablement owner', () => {
+    const { actionId, scope } = inheritedScopeCases[0];
+    const settings = setScopedActionApprovalPreference({ actionId, scope, surface: 'cli', mode: 'waived',
+      settings: normalizeActionsSettingsV1({ v: 1, actions: { [actionId]: { enabled: false } } }) });
+    const profile: BoundApprovalProfileV1 = {
+      profile: { id: 'team-profile', name: 'Team profile', actions: {
+        [actionId]: { approvalRequiredSurfaces: ['cli'], disabledSurfaces: ['agent'] },
+      } },
+      resolution: { status: 'available', requestedId: 'team-profile' },
+    };
+    const projected = (base: typeof settings) => resolveProfiledActionsSettingsV1(base, profile.profile?.id,
+      { boundProfile: profile, approvalProfileTeamOrGroupDerived: true }).settings;
+    expect(isActionEnabledByActionsSettings(actionId, projected(settings), { surface: 'cli' })).toBe(false);
+    const enabled = { ...settings, actions: {} };
+    expect(isActionEnabledByActionsSettings(actionId, projected(enabled), { surface: 'agent' })).toBe(false);
+    expect(isActionEnabledByActionsSettings(actionId, projected(enabled), { surface: 'cli' })).toBe(true);
+  });
+
   // P44-C27: inherited Allow is live; only stricter child policy can override it.
   it('routes a real preview deploy through live parent policy and preserves stricter child Ask', async () => {
     const scope = { kind: 'environment', environmentId: 'pr-one' } as const;

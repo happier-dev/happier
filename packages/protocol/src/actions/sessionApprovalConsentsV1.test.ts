@@ -159,9 +159,7 @@ describe('Session rungs on the approval-preference ladder', () => {
       }),
     ).toBe(false);
   });
-  // Expected failure until COORD-APPROVAL-FLOOR-1120 patch A lands ("an inherited Ask beats a
-  // member's own exact-scope Allowed", ORCH-TOP 17:26Z ruling 2); then this becomes it().
-  it.fails('keeps an inherited Team Ask above the Session Machine row (expected failure until COORD-APPROVAL-FLOOR-1120 patch A)', () => {
+  it('keeps an inherited Team Ask above the Session Machine row', () => {
     expect(
       route(
         {

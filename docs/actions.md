@@ -1402,10 +1402,15 @@ In unreleased 0.3 source, `actions.policy.get`, `set` and `reset` also accept an
 exact Machine or Environment `scope`. Protocol's `actionSettings.ts` retains
 these deliberate choices in `actionsSettingsV1.scopedApprovalPreferences`, keyed
 by Action id and scope. An exact scoped Ask-first or Allowed choice overrides
-that Action's global confirmation preference; Default removes only the selected
-audience's scoped choice. Scope comes from host admission at effect dispatch,
-and affects confirmation independently of enablement, authority and currentness.
-A separately stricter admitted requirement still wins.
+the person's own global confirmation preference. If the effective inherited
+Team, Group, or shared Project approval profile asks on that surface, it still
+asks even when the person has saved Allowed on the Machine or Environment.
+The saved Allowed applies again when the inherited Ask no longer applies.
+The Team profile is a default that the member's Machine applies, and the member
+can choose another approval profile.
+Default removes only the selected audience's scoped choice. Scope comes from
+host admission at effect dispatch. Enablement, authority, currentness, and
+independently required reviews still apply.
 
 The semantic Account Settings merge/CAS owner preserves scoped rows omitted by
 an older writer; current writers clear them explicitly with an empty array.

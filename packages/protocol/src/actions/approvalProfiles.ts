@@ -117,8 +117,19 @@ export function applyApprovalProfileOverlayV1(settings: ActionsSettingsV1, profi
     if (waived?.length) waivers[id] = waived;
     else delete waivers[id];
   }
+  // Only the inherited profile's own Ask can suppress a scoped Allowed. Keep the
+  // saved rows intact so Allowed takes effect again when that Ask no longer applies.
+  const scopedApprovalPreferences = mode === 'tighten-only'
+    ? settings.scopedApprovalPreferences?.map(scoped => {
+      const required = profile.actions?.[scoped.actionId]?.approvalRequiredSurfaces;
+      if (!required?.length || !scoped.approvalWaivedSurfaces.length) return scoped;
+      const approvalWaivedSurfaces = scoped.approvalWaivedSurfaces.filter(surface => !required.includes(surface));
+      return approvalWaivedSurfaces.length === scoped.approvalWaivedSurfaces.length
+        ? scoped : { ...scoped, approvalWaivedSurfaces };
+    }) : undefined;
   const { approvalWaivedSurfaces: _accountWaivers, ...rest } = settings;
-  return { ...rest, actions, ...(Object.keys(waivers).length > 0 ? { approvalWaivedSurfaces: waivers } : {}) };
+  return { ...rest, actions, ...(Object.keys(waivers).length > 0 ? { approvalWaivedSurfaces: waivers } : {}),
+    ...(scopedApprovalPreferences ? { scopedApprovalPreferences } : {}) };
 }
 
 /** A target policy already admitted by its owning domain, not a second target-access decision. */
