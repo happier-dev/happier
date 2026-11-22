@@ -89,6 +89,7 @@ import { createProjectWorkerAdmission } from '@/workspaces/execution/projectWork
 import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, ActionAutomationIndexV1Schema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import type { ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 
 /** Real Sync receiver/native/controller composition; callers install OS boundaries only. */
@@ -450,6 +451,9 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
       return { ok: true, result };
     },
     readAdditionalHttpResponse: async (url, config) => {
+      // A real Home answer for an Account with no Action automations.
+      if (new URL(url).pathname === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) return { status: 200,
+        data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
       if (options.originalActionHomeHttp && new URL(url).pathname === '/v1/machines') return { status: 200,
         data: [machineBootstrap(false), machineBootstrap(true)] };
       const artifactPath = new URL(url).pathname;
