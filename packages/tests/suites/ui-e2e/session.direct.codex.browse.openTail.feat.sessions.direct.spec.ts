@@ -208,11 +208,7 @@ test.describe('ui e2e: direct Codex sessions browse/open/tail', () => {
     await expect(transcript.getByText('older direct codex ui message')).toHaveCount(1, { timeout: 60_000 });
     await expect(transcript.getByText('latest direct codex ui reply')).toHaveCount(1, { timeout: 60_000 });
     await expect(page.getByTestId('session-chatFooter-directControl')).toBeVisible();
-    await expect(page.getByTestId('agent-input-provider-usage-value')).toHaveText('0');
-    await page.getByTestId('agent-input-provider-usage-badge').click();
-    await expect(page.getByTestId('agent-input-provider-usage-meter')).toBeVisible();
-    await page.getByTestId('agent-input-provider-usage-badge').click();
-    await page.screenshot({ path: join(testDir, 'direct-codex-usage-before-takeover.png') });
+    await expect(page.getByTestId('agent-input-provider-usage-badge')).toHaveCount(0);
 
     await appendFile(
       rolloutFile,

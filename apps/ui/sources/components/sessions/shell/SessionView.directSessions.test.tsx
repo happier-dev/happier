@@ -2669,7 +2669,7 @@ describe('SessionView (direct sessions)', () => {
     }));
   });
 
-  it('shows known native usage before a direct session publishes its own account refs', async () => {
+  it('does not fetch or show another login’s usage before a direct session publishes its own refs', async () => {
     featureEnabledState['connectedServices.quotas'] = true;
     const snapshot = buildProviderAccountUsageSnapshot({ used: 100, accountLabel: 'Last-used Codex account' });
     providerAccountUsageSnapshotsState.current = { [snapshot.recordId]: snapshot };
@@ -2684,9 +2684,8 @@ describe('SessionView (direct sessions)', () => {
     }) });
     try {
       const screen = await renderSessionViewAndSettle();
-      expect(findAgentInput(screen).props.providerUsageGauge).toEqual(expect.objectContaining({
-        serviceId: 'openai-codex', activeAccountDisplayLabel: 'Last-used Codex account', ringValueLabel: '0',
-      }));
+      expect(providerAccountUsageSnapshotsState.requestedRecordIds).toEqual([]);
+      expect(findAgentInput(screen).props.providerUsageGauge ?? null).toBeNull();
       expect(machineDirectSessionTakeoverSpy).not.toHaveBeenCalled();
     } finally { await act(async () => storage.setState(previousState)); }
   });
