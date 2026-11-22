@@ -9,6 +9,7 @@ import { createQualifiedConnectedAccountGroupDigest, createQualifiedConnectedAcc
 import { createServiceAccountTokenIdentityFields } from "@/app/api/routes/connect/qualifiedConnectedAccounts/identity";
 import { NO_TEAM_CAPABILITIES_V1 } from "@happier-dev/protocol";
 import { TEAM_CREDENTIAL_MANUAL_CONNECTED_ACCOUNT_DIRECT_CONTRACT_V1 } from "@happier-dev/protocol/teams";
+import { readPublicFile } from "@/storage/blob/files";
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
@@ -472,13 +473,20 @@ describe("Team routes (SQLite integration)", () => {
                 }).jpeg().toBuffer()).toString("base64"),
             },
         });
-        expect(logo.statusCode).toBe(200);
+        expect(logo.statusCode, logo.body).toBe(200);
         expect(logo.json().logo.width).toBe(480);
-        expect(logo.json().logo.url).toContain(`public/teams/${team.id}/logo/`);
+        const prefix = `public/teams/${team.id}/logo/`;
+        const logoFile = logo.json().logo.url.split(prefix)[1];
+        expect(logoFile).toBeTruthy();
+        const storedLogo = await readPublicFile(prefix + logoFile);
+        const persistedLogo = await db.team.findUniqueOrThrow({ where: { id: team.id }, select: { logoStoredSizeBytes: true } });
+        expect(persistedLogo.logoStoredSizeBytes).toBe(BigInt(storedLogo.byteLength));
 
         const removed = await post("/v1/teams/logo/remove", owner.id, { v: 1, teamId: team.id });
-        expect(removed.statusCode).toBe(200);
+        expect(removed.statusCode, removed.body).toBe(200);
         expect(removed.json().logo).toBeNull();
+        expect(await db.team.findUniqueOrThrow({ where: { id: team.id }, select: { logoStoredSizeBytes: true } }))
+            .toEqual({ logoStoredSizeBytes: null });
 
         const archived = await post("/v1/teams/archive", owner.id, { v: 1, teamId: team.id });
         expect(archived.statusCode).toBe(200);

@@ -43,12 +43,13 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('T
             createdByAccountId: owner.id, accessLevel: 'view' } });
         await withAuthenticatedTestApp(artifactsRoutes, async app => {
             const read = (actorId: string) => app.inject({ method: 'GET',
-                url: `/v1/artifacts?sharedWithTeamId=${team.id}&teamResourceKind=otherArtifacts&limit=1`,
+                url: `/v1/artifacts?sharedWithTeamId=${team.id}&teamResourceKind=otherArtifacts&limit=1&includeStoredSize=true`,
                 headers: { 'x-test-user-id': actorId,
                     'x-happier-account-stored-content-protocol': String(CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION) } });
             const response = await read(member.id);
             expect(response.statusCode, response.body).toBe(200);
             expect(response.json()).toMatchObject({ items: [{ id: retained.id,
+                storedSizeBytes: retained.header.byteLength + retained.body.byteLength,
                 availability: { kind: 'locked', reason: 'encryption_material_unavailable' } }] });
             const row = response.json<{ items: Array<Record<string, unknown>> }>().items[0]!;
             for (const field of ['header', 'dataEncryptionKey', 'body', 'provenance', 'provenanceDataEncryptionKey']) {

@@ -22,9 +22,8 @@ import { deriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/arti
 import { signDiscussionAttachmentAgentUploadV1, DiscussionAttachmentUploadRequestV1Schema, type DiscussionAttachmentUploadRequestV1 } from '@happier-dev/protocol/discussions/attachmentsUpload';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
-import { readStorageInventoryInTx } from '@/app/artifacts/artifactStorageService';
 import { artifactsRoutes } from '@/app/api/routes/artifacts/artifactsRoutes';
-import { inReadSnapshot } from '@/storage/inTx';
+import { registerAccountEncryptionMigrateRoutes } from '@/app/api/routes/account/registerAccountEncryptionMigrateRoutes';
 import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { publicShareRoutes } from '@/app/api/routes/share/publicShareRoutes';
 import { auth } from '@/app/auth/auth';
@@ -76,6 +75,7 @@ export function discussionAttachmentContracts(): void {
         const { app, restoreEnvironment } = createAttachmentApp(() => actorAccountId);
         const publicApp = createAuthenticatedTestApp({ authentication: 'real' });
         artifactsRoutes(app);
+        registerAccountEncryptionMigrateRoutes(app);
         artifactsRoutes(publicApp);
         publicShareRoutes(publicApp);
         registerDiscussionRoutes(publicApp);
@@ -124,8 +124,15 @@ export function discussionAttachmentContracts(): void {
             actorAccountId = owner.id;
             await expectItem(inventoryPath, true);
             await expectItem(scopedPath, true);
-            const inventory = () => inReadSnapshot(tx => readStorageInventoryInTx(tx, owner.id));
-            expect((await inventory()).byKind.discussionAttachments).toBe(Number(before.storedSizeBytes));
+            const expectTotal = async (url: string, storedSizeBytes: number) => {
+                const response = await app.inject({ url });
+                expect(response.statusCode, response.body).toBe(200);
+                expect(response.json()).toMatchObject({
+                    kinds: { discussionAttachments: { storedSizeBytes } } });
+                if (url === scopedPath) expect(response.json().totalBytes).toBe(storedSizeBytes);
+            };
+            await expectTotal(inventoryPath, expectedItem.storedSizeBytes);
+            await expectTotal(scopedPath, expectedItem.storedSizeBytes);
             actorAccountId = participant.id;
             await expectItem(scopedPath, false);
             expect((await app.inject({ url: inventoryPath })).json().page.items).toEqual([]);
@@ -159,7 +166,14 @@ export function discussionAttachmentContracts(): void {
             expect(await db.discussionMessage.findUniqueOrThrow({ where: { id: messageId }, select: { content: true } }))
                 .toEqual({ content: metadata.input.content });
             await expect(privateFiles.readPrivateFile(before.storageKey)).rejects.toThrow();
-            expect(await inventory()).toMatchObject({ totalBytes: 0, byKind: { discussionAttachments: 0 } });
+            actorAccountId = owner.id;
+            await expectTotal(inventoryPath, 0);
+            await expectTotal(scopedPath, 0);
+            const conversion = await app.inject({ url: '/v1/account/encryption/migrate/discussions/inventory' });
+            expect(conversion.statusCode, conversion.body).toBe(200);
+            expect(conversion.json().items).toMatchObject([{ discussionId, messages: expect.arrayContaining([
+                expect.objectContaining({ id: messageId, attachments: [], removedAttachmentBlobIds: [blobId] }),
+            ]) }]);
         } finally {
             await publicApp.close();
             await app.close();

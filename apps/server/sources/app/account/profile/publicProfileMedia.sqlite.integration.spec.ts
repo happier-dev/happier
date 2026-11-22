@@ -3,7 +3,7 @@ import { transform } from 'esbuild';
 import * as privacyKit from 'privacy-kit';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_PUBLIC_PROFILE_POLICY_V1 } from '@happier-dev/protocol/account/publicProfile';
-import { DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1, PublicProfilePublishBodyV1Schema } from '@happier-dev/protocol/account/publicProfilePublication';
+import { DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1, PublicProfileMutationResultV1Schema, PublicProfilePublishBodyV1Schema } from '@happier-dev/protocol/account/publicProfilePublication';
 import { PublicProfilePreparedAtmosphereV1Schema, type PublicProfilePictureDescriptorV1 } from '@happier-dev/protocol/account/publicProfileAtmosphere';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { db } from '@/storage/db';
@@ -20,7 +20,7 @@ import { refreshPublicProfile } from './publicProfileRefresh';
 import { pausePublicProfile } from './publicProfilePause';
 import { unpublishPublicProfile } from './publicProfileUnpublish';
 import { readAdmittedPublicProfileDelivery, readPublicProfileDelivery } from './publicProfileRead';
-import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
+import { createAuthenticatedTestApp, withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerAccountPublicProfileRoutes } from '@/app/api/routes/account/registerAccountPublicProfileRoutes';
 import { registerPublicProfileReadRoutes } from '@/app/api/routes/account/registerPublicProfileReadRoutes';
 import { HAPPIER_PUBLIC_PROFILE_HERO_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
@@ -243,13 +243,22 @@ describe('public-profile media admission', () => {
         const owner = await db.account.create({ data: { encryptionMode, username: 'delivery_owner',
             ...(encryptionMode === 'e2ee' ? createSignedAccountContentBinding() : {}) } });
         const fixture = await pictureFixture(17);
-        const result = await publishPublicProfile(owner.id, publishBody(fixture.appearance), env, deps);
+        harness.resetEnv(env);
+        const app = createAuthenticatedTestApp();
+        registerAccountPublicProfileRoutes(app);
+        const response = await app.inject({ method: 'POST', url: '/v1/account/public-profile/publish',
+            headers: { 'x-test-user-id': owner.id }, payload: publishBody(fixture.appearance) })
+            .finally(async () => { await app.close(); harness.restoreEnv(); });
+        expect(response.statusCode, response.body).toBe(200);
+        const result = PublicProfileMutationResultV1Schema.parse(response.json());
         expect(result.kind).toBe('updated');
         if (result.kind !== 'updated' || result.record?.appearance?.atmosphere.source !== 'picture') throw new Error('Expected applied picture');
         const pictureId = result.record.appearance.atmosphere.picture.ref.id;
         const physical = await readPublicProfilePicture({ accountId: owner.id, pictureId });
         expect(physical.ok).toBe(true);
         if (!physical.ok) throw new Error('Expected readable committed pixels');
+        expect(await db.uploadedFile.findUniqueOrThrow({ where: { id: pictureId }, select: { storedSizeBytes: true } }))
+            .toEqual({ storedSizeBytes: BigInt(physical.bytes.byteLength) });
         expect((await sharp(physical.bytes).raw().toBuffer()).equals(await sharp(fixture.pixels).raw().toBuffer())).toBe(true);
         expect(JSON.stringify(result)).not.toContain('base64');
         const facts = publishBody();

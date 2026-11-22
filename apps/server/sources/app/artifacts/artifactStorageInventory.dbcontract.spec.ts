@@ -107,6 +107,17 @@ describe('Account storage and admitted Artifact page', () => {
             const pluginArtifacts = plugin.header.byteLength + plugin.body.byteLength;
             const breakdown = { artifacts, pluginArtifacts, discussionAttachments: 41, accountPets: 29, pluginCollections: 23 };
             const totalBytes = Object.values(breakdown).reduce((total, bytes) => total + bytes, 0);
+            const biggest = await app.inject({
+                url: `${inventoryPath}&paged=true&kinds=artifacts,artifactOldVersions,discussionAttachments&sort=size_desc`,
+                headers,
+            });
+            expect(biggest.statusCode, biggest.body).toBe(200);
+            expect(biggest.json().page.items.map(({ kind, storedSizeBytes }: { kind: string; storedSizeBytes: number }) =>
+                ({ kind, storedSizeBytes }))).toEqual([
+                { kind: 'artifacts', storedSizeBytes: artifacts - historyBytes },
+                { kind: 'discussionAttachments', storedSizeBytes: 41 },
+                { kind: 'artifactOldVersions', storedSizeBytes: historyBytes },
+            ].sort((left, right) => right.storedSizeBytes - left.storedSizeBytes));
             const inventoryResults: unknown[] = [];
             const stop = observePrismaRequests(db, { after: ({ action }, result) => {
                 if (action === 'queryRaw' && Array.isArray(result) && result.some(row => row && Object.hasOwn(row, 'kind'))) {
@@ -119,6 +130,9 @@ describe('Account storage and admitted Artifact page', () => {
                 unmeasuredKinds: [] });
             expect(inventoryResults).toEqual([expect.arrayContaining(Object.keys(breakdown).map(kind => expect.objectContaining({ kind })))]);
             vi.stubEnv('HAPPIER_ARTIFACT_ACCOUNT_LIMIT_BYTES', '1000');
+            const quota = await app.inject({ url: '/v1/artifacts/storage/usage', headers });
+            expect(quota.statusCode, quota.body).toBe(200);
+            expect(quota.json()).toMatchObject({ usedBytes: artifacts, limitBytes: 1000 });
             await db.uploadedFile.create({ data: { accountId: owner.id, path: 'own-profile',
                 reuseKey: publicProfilePictureAppliedReuseKey } });
             const logo = { path: 'public/teams/test/logo.png', width: 10, height: 10, thumbhash: 'test' };
@@ -206,6 +220,11 @@ describe('Account storage and admitted Artifact page', () => {
                 bodyVersion: 1, createdAt: revision.createdAt.getTime(), sizeBytes: historyBytes,
             }]);
             expect.soft(storageReads).toEqual([]);
+            const fullHistory = await app.inject({ url: `/v1/artifacts/${own.id}/revisions`, headers });
+            expect(fullHistory.statusCode, fullHistory.body).toBe(200);
+            expect(fullHistory.json().revisions).toMatchObject([{
+                bodyVersion: 1, body: expect.any(String), sizeBytes: revision.body.byteLength,
+            }]);
             expect((await app.inject({ url: `/v1/artifacts/${hidden.id}/revisions?projection=headers`, headers })).statusCode).toBe(404);
             const forbidden = await app.inject({ method: 'DELETE', url: `/v1/artifacts/${shared.id}/revisions`, headers });
             expect.soft(forbidden.statusCode).toBe(404);

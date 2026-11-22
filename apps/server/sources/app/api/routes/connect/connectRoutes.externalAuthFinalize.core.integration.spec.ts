@@ -1,6 +1,7 @@
 import { signAccountContentKeyBindingV1 } from "@happier-dev/protocol";
 import Fastify from "fastify";
 import { createHash } from "node:crypto";
+import sharp from "sharp";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 // The GitHub endpoints and avatar host are faked through the global fetch stub below.
@@ -9,6 +10,8 @@ import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-
 import * as privacyKit from "privacy-kit";
 import tweetnacl from "tweetnacl";
 
+import { artifactsRoutes } from "@/app/api/routes/artifacts/artifactsRoutes";
+import { readPublicFile } from "@/storage/blob/files";
 import { db } from "@/storage/db";
 import { connectAuthExternalRoutes } from "./connectRoutes.authExternal";
 import { enableAuthentication } from "../../utils/enableAuthentication";
@@ -269,21 +272,19 @@ describe("connectRoutes (external auth finalize) (integration)", () => {
             },
         });
 
-        vi.stubGlobal("fetch", (async (url: any) => {
-            if (url === githubProfile.avatar_url) {
-                return {
-                    arrayBuffer: async () =>
-                        ONE_BY_ONE_PNG.buffer.slice(
-                            ONE_BY_ONE_PNG.byteOffset,
-                            ONE_BY_ONE_PNG.byteOffset + ONE_BY_ONE_PNG.byteLength,
-                        ),
-                } as any;
+        const avatarPng = await sharp({
+            create: { width: 8, height: 6, channels: 3, background: "#336699" },
+        }).png().toBuffer();
+        vi.stubGlobal("fetch", async (url: string | URL | Request) => {
+            if (String(url) === githubProfile.avatar_url) {
+                return new Response(Uint8Array.from(avatarPng), { headers: { "content-type": "image/png" } });
             }
             throw new Error(`Unexpected fetch: ${String(url)}`);
-        }) as any);
+        });
 
         const app = createTestApp();
         connectAuthExternalRoutes(app);
+        artifactsRoutes(app);
         await app.ready();
 
         const res = await app.inject({
@@ -317,6 +318,22 @@ describe("connectRoutes (external auth finalize) (integration)", () => {
         });
         expect(identity?.providerUserId).toBe(String(githubProfile.id));
         expect(identity?.providerLogin).toBe("octocat");
+
+        const avatar = await db.uploadedFile.findFirstOrThrow({
+            where: { accountId: account!.id },
+            select: { id: true, path: true },
+        });
+        const pixels = await readPublicFile(avatar.path);
+        expect(pixels.byteLength).toBeGreaterThan(0);
+        const inventory = await app.inject({
+            url: "/v1/artifacts/storage/usage?inventory=true&paged=true&kinds=avatars",
+            headers: { authorization: `Bearer ${json.token}` },
+        });
+        expect(inventory.statusCode, inventory.body).toBe(200);
+        expect(inventory.json()).toMatchObject({
+            kinds: { avatars: { storedSizeBytes: pixels.byteLength } },
+            page: { items: [{ id: avatar.id, kind: "avatars", storedSizeBytes: pixels.byteLength }] },
+        });
 
         await app.close();
     });
