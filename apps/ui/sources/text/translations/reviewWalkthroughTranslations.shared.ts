@@ -107,6 +107,10 @@ export type ReviewWalkthroughTranslations = {
         subjectStagedLine: string;
         subjectAll: string;
         subjectAllLine: string;
+        subjectBranch: string;
+        subjectBranchLine: string;
+        compareWith: string;
+        chooseBranch: string;
     };
     collection: {
         needsYourDecision: string;
@@ -357,6 +361,10 @@ export const en: ReviewWalkthroughTranslations = {
         subjectStagedLine: 'Included in the next commit',
         subjectAll: 'All changes',
         subjectAllLine: 'Staged and pending',
+        subjectBranch: 'A branch',
+        subjectBranchLine: 'Its commits, compared with another branch',
+        compareWith: 'Compare with',
+        chooseBranch: 'Choose a branch',
     },
     collection: {
         needsYourDecision: 'Needs your decision',

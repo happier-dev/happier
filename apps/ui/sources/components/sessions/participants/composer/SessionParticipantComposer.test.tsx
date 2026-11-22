@@ -745,6 +745,37 @@ describe('SessionParticipantComposer', () => {
         expect(submitPreparedMessage.mock.calls[0]![0].draft.text).toBe('Look at the settings modal first');
     });
 
+    // U8 R2 E1: a sheet whose step Focus is the only focus input keeps this composer as the submission owner but
+    // draws no second input; the host's primary submits the text it names through the same registered submit.
+    it('submits through its registered owner without drawing an input when the host draws the only one', async () => {
+        const submitPreparedMessage = vi.fn(async (_submission: ParticipantComposerPreparedSubmission) => undefined);
+        const { SessionParticipantComposer } = await import('./SessionParticipantComposer');
+        const { requestRegisteredComposerSubmit } = await import('@/components/sessions/presentation/sessionComposerPresentationTargets');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        let ref: Parameters<NonNullable<React.ComponentProps<typeof SessionParticipantComposer>['onComposerRefAvailable']>>[0] = null;
+        agentInputSpy.mockClear();
+        await renderScreen(<PluginSurfaceFocusEligibilityProvider active={false} presentationActive>
+            <SessionParticipantComposer sessionId="s1" canSendMessages recipient={null} inputHidden
+                onComposerRefAvailable={(next) => { ref = next; }} submitPreparedMessage={submitPreparedMessage} />
+        </PluginSurfaceFocusEligibilityProvider>);
+        expect(agentInputSpy).not.toHaveBeenCalled();
+        if (!ref) throw new Error('Expected participant composer identity');
+
+        const scope = { serverId: 'server-1', accountId: 'account-1' };
+        activeScopeState.value = scope;
+        let submitted: Awaited<ReturnType<typeof requestRegisteredComposerSubmit>> = null;
+        await act(async () => {
+            submitted = await requestRegisteredComposerSubmit({ ref: ref!, scope,
+                options: { inputTextOverride: 'Review these changes' } });
+            await flushHookEffects({ cycles: 4, turns: 2 });
+        });
+        activeScopeState.value = null;
+
+        expect(submitted).toMatchObject({ ok: true });
+        expect(submitPreparedMessage).toHaveBeenCalledTimes(1);
+        expect(submitPreparedMessage.mock.calls[0]![0].draft.text).toBe('Review these changes');
+    });
+
     it('rehydrates process-local file drafts instead of carrying them across an Account switch', async () => {
         const { SessionParticipantComposer } = await import('./SessionParticipantComposer');
         const accountOneScope = {

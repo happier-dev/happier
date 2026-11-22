@@ -1,7 +1,7 @@
 import * as React from 'react';
-import { ScrollView, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HAPPIER_MENU_ROW_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_MENU_ROW_METRICS, HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import type { ExecutableParticipantSelectionV1 } from '@happier-dev/protocol/discussions/executableParticipants';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
 import { useExecutableParticipantSections, executableParticipantOptionId } from '@/components/discussions/useExecutableParticipantSections';
@@ -13,7 +13,9 @@ import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
-import { AgentInputSelectionPopover } from '@/components/sessions/agentInput/selection/AgentInputSelectionPopover';
+import { AgentInputContentPopover } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
+import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
+import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
 import { CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -375,8 +377,15 @@ export function ContextualStartComposerBody({ model, whoLabel, whoHint, question
                 <CollectionListGroupLabel title={whoLabel ?? t('agentStart.chips.engineTitle')} presentation="menu"
                     actions={whoHint || hasChosen || whoAccessory || addAgent ? <View style={styles.groupActions}>
                         {whoHint ? <Text style={styles.groupNote} numberOfLines={1}>{whoHint}</Text> : null}
-                        {whoAccessory ? <View ref={accessoryAnchorRef} collapsable={false}><TextLinkButton testID="contextual-start-who-accessory" tone="strong" size="meta"
-                            label={whoAccessory.label} disabled={busy} onPress={() => setAccessoryOpen(value => !value)} /></View> : null}
+                        {/* The role is a value picked from a menu: the bordered field select (U8 R2 E2). */}
+                        {whoAccessory ? <View ref={accessoryAnchorRef} collapsable={false}><HappierPressable
+                            testID="contextual-start-who-accessory" accessibilityRole="button"
+                            accessibilityLabel={whoAccessory.label} expanded={accessoryOpen} hasPopup="menu"
+                            disabled={busy} onPress={() => setAccessoryOpen(value => !value)} style={styles.fieldTrigger}>
+                            {renderDropdownItemTriggerRightElement({ detail: whoAccessory.label, open: accessoryOpen,
+                                detailColor: theme.colors.text.secondary, chevronColor: theme.colors.text.secondary,
+                                field: resolveFieldBoxColors(theme, 'idle'), fieldSpan: 'intrinsic' })}
+                        </HappierPressable></View> : null}
                         {hasChosen ? <TextLinkButton testID={`contextual-start-${choosingWho ? 'done' : 'change'}-who`}
                             tone="strong" size="meta" label={t(choosingWho ? 'common.done' : 'common.change')}
                             disabled={busy} onPress={() => setWhoEditing(value => !value)} /> : null}
@@ -400,12 +409,11 @@ export function ContextualStartComposerBody({ model, whoLabel, whoHint, question
             {/* Add and Change open the recipe here, under the list; it never covers the form. */}
             {editor}
             {detailId ? details?.get(detailId)?.() : null}
-            {whoAccessory ? <AgentInputSelectionPopover open={accessoryOpen} anchorRef={accessoryAnchorRef}
-                onRequestClose={closeAccessory} accessibilityLabel={whoAccessory.label}>
-                {({ maxHeight }) => <ScrollView style={{ maxHeight }} keyboardShouldPersistTaps="handled">
-                    {whoAccessory.render(closeAccessory)}
-                </ScrollView>}
-            </AgentInputSelectionPopover> : null}
+            {/* Its menu stands on the shared anchored popover's own surface, hanging from the field. */}
+            {whoAccessory ? <AgentInputContentPopover open={accessoryOpen} anchorRef={accessoryAnchorRef} anchor="field"
+                testID="contextual-start-who-accessory.popover" onRequestClose={closeAccessory}
+                header={{ title: whoAccessory.label, placement: 'label' }} keyboardShouldPersistTaps="handled"
+                content={() => whoAccessory.render(closeAccessory)} /> : null}
             {whoContent}
         </View>
         {changing ? null : question ?? (source.question ? <FieldItem label={<View style={styles.hang}>
@@ -438,4 +446,5 @@ const styles = StyleSheet.create((theme) => ({
     // group labels hang their own inset into the gutter and a chosen row's tint reaches past it.
     hang: { marginHorizontal: -HAPPIER_MENU_ROW_METRICS.paddingHorizontalPx },
     groupNote: { ...Typography.variant('meta'), color: theme.colors.text.tertiary, flexShrink: 1 },
+    fieldTrigger: { justifyContent: 'center' },
 }));

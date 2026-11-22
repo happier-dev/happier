@@ -12980,6 +12980,10 @@ const ca: ReviewWalkthroughTranslations = {
         subjectStagedLine: 'Inclosos al proper commit',
         subjectAll: 'Tots els canvis',
         subjectAllLine: 'Preparats i pendents',
+        subjectBranch: 'Una branca',
+        subjectBranchLine: 'Els seus commits, comparats amb una altra branca',
+        compareWith: 'Compara amb',
+        chooseBranch: 'Tria una branca',
     },
     collection: {
         needsYourDecision: "Necessiten la teva decisió",

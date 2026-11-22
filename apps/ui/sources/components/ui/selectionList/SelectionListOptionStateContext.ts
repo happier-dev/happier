@@ -14,7 +14,7 @@ export const SelectionListOptionStateContext =
   React.createContext<SelectionListOptionState | null>(null);
 
 /**
- * Whether the keyboard has moved onto a row. Until it has, a card grid paints no highlight: the row the list
- * merely starts on would read as a second selection beside the card that is selected.
+ * Whether the keyboard (or a moving pointer) has moved onto a row. Until it has, no row paints the cursor: the row
+ * the list merely starts on would read as a second selection beside the chosen one.
  */
 export const SelectionListExplicitRowFocusContext = React.createContext(false);

@@ -69,3 +69,25 @@ it('asks what to review first and records the chosen change area in the draft', 
     expect(input.changeType).toBe('all');
     await screen.unmount();
 });
+// U8 R2 SB2: a branch is one of the things to review, compared with a base the person picks from the branch list.
+it('reviews a branch against the base chosen beside it, and a change area drops that base', async () => {
+    let input: Record<string, unknown> = { changeType: 'uncommitted', reviewers: [{ kind: 'engine', engineId: 'claude' }] };
+    const onChange: React.Dispatch<React.SetStateAction<Record<string, unknown>>> = update => {
+        input = typeof update === 'function' ? update(input) : update;
+    };
+    let chooseBase: ((branch: string) => void) | null = null;
+    const props = () => ({ input, onChange, source: { enabled: true, sections: [], selectedIds: new Set<string>(), where: null },
+        subject: { options: ['committed', 'uncommitted', 'all'] as const, branch: { head: 'fix/reconnect-backoff', defaultBase: 'main',
+            renderBase: (base: string | null, change: (branch: string) => void) => { chooseBase = change; return null; } } },
+        choices: [], transcriptAvailable: false, walkthrough: false, disabled: false });
+    const screen = await renderScreen(<ReviewStartBody {...props()} />);
+    await screen.pressByTestIdAsync('review-start-subject:branch');
+    expect(input).toMatchObject({ changeType: 'committed', base: { kind: 'branch', baseBranch: 'main' } });
+    await screen.update(<ReviewStartBody {...props()} />);
+    expect(chooseBase).not.toBeNull();
+    chooseBase!('release/0.3');
+    expect(input.base).toEqual({ kind: 'branch', baseBranch: 'release/0.3' });
+    await screen.pressByTestIdAsync('review-start-subject:uncommitted');
+    expect(input).toMatchObject({ changeType: 'uncommitted', base: { kind: 'none' } });
+    await screen.unmount();
+});

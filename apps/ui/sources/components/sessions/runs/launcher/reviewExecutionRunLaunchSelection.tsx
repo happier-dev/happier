@@ -11,6 +11,7 @@ import { t } from '@/text';
 
 import type { ReviewInputSelection, ReviewInputSelectionProjection } from './useReviewExecutionRunLaunchOptions';
 import { SessionInteractiveExecutionRunDraftView } from './SessionInteractiveExecutionRunDraftView';
+import { readReviewLauncherSteps } from './reviewLauncherSelection';
 
 type LaunchSelection = ReviewInputSelection;
 export type ReviewInputSelectionRequest = Readonly<{
@@ -33,6 +34,8 @@ export function ReviewExecutionRunLaunchSelectionModal(props: CustomModalInjecte
     const [footer, setFooter] = React.useState<React.ReactNode>(null);
     const cancel = React.useCallback(() => onResolve(null), [onResolve]);
     const sheet = React.useMemo(() => ({ onFooterChange: setFooter, onCancel: cancel }), [cancel]);
+    // The sheet's one focus input is step Focus: drafted instructions seed the first step's Focus there.
+    const initialActionInput = React.useMemo(() => seedReviewLauncherFocus(props.draft), [props.draft]);
     useModalCardChrome(setChrome, React.useMemo(() => ({
         ...createAnchoredSheetChrome({ title: t('commandPalette.commands.startReviewRunTitle'),
             subtitle: t('reviewWalkthrough.start.sheetDescription'), anchor: props.anchor }),
@@ -40,8 +43,7 @@ export function ReviewExecutionRunLaunchSelectionModal(props: CustomModalInjecte
     }), [footer, props.anchor]));
     return <View testID="review-execution-run-launch-selection" style={{ maxHeight: '100%', flexShrink: 1 }}>
         <SessionInteractiveExecutionRunDraftView sessionId={props.sessionId} serverId={props.serverId}
-            intent="review" initialActionInput={props.draft}
-            initialText={typeof props.draft.instructions === 'string' ? props.draft.instructions : undefined}
+            intent="review" initialActionInput={initialActionInput}
             reviewSelectionProjection={props.projection} selectionIsCurrent={props.isCurrent} onLaunchSelection={onResolve}
             onStartAccepted={cancel} onRunStarted={cancel} sheet={sheet} />
     </View>;
@@ -74,4 +76,11 @@ export function presentReviewExecutionRunLaunchSelection(request: ReviewInputSel
     if (!modalId) close();
     else if (hideAfterShow) Modal.hide(modalId);
     return { result, close };
+}
+
+function seedReviewLauncherFocus(draft: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
+    const instructions = typeof draft.instructions === 'string' ? draft.instructions.trim() : '';
+    if (!instructions || Array.isArray(draft.steps)) return draft;
+    const [first, ...rest] = readReviewLauncherSteps({ ...draft });
+    return { ...draft, steps: [{ ...first!, instructions }, ...rest] };
 }

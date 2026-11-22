@@ -409,7 +409,9 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
   const isCard = optionPresentation === 'card';
   const menuTitleOneLine = React.useContext(SelectionListMenuTitleOneLineContext);
   const explicitRowFocus = React.useContext(SelectionListExplicitRowFocusContext);
-  const paintsFocus = props.isFocused && (!isCard || explicitRowFocus);
+  // The keyboard cursor paints only once the keyboard (or a moving pointer) has put it on a row: the row the list
+  // merely starts on would read as a second selection, grey under a resting pointer (U8 R2 E5).
+  const paintsFocus = props.isFocused && explicitRowFocus;
   // The pointer moves the list's one highlight to this row (a card has no focus fill to duplicate).
   const handlePointerHighlight = () => {
     if (!isCard) focusOptionFromPointer?.(props.option.id);
@@ -653,7 +655,7 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
       </View>
     );
   }
-  const selectedOrFocused = fillsSelected || props.isFocused;
+  const selectedOrFocused = fillsSelected || paintsFocus;
   // A disabled custom body with nothing of its own to open or select is a static note (a trust
   // disclosure at the head of a sheet), not an unavailable choice: it reads at full strength and
   // takes no hover. A disabled choice still dims.

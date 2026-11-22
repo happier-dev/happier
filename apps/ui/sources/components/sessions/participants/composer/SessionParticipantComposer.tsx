@@ -204,6 +204,11 @@ type SessionParticipantComposerProps = Readonly<{
     placeholder?: string;
     /** Who answers, named and not chosen (a walkthrough's model); exclusive with `engine`. */
     fixedEngine?: Readonly<{ label: string; agentId: string | undefined }> | null;
+    /**
+     * The host draws the only input (a Review start sheet's step Focus): this composer stays mounted as the draft and
+     * submission owner its host's primary reaches through `requestRegisteredComposerSubmit`, and draws nothing.
+     */
+    inputHidden?: boolean;
 }>;
 
 export const SessionParticipantComposer = React.memo((props: SessionParticipantComposerProps) => props.sessionId === null
@@ -964,6 +969,7 @@ function SessionParticipantComposerContent(props: SessionParticipantComposerProp
         })
     ), [attachmentsUploadsEnabled, composerAttachmentRowItems, transferDraftManager.agentInputAttachments]);
 
+    if (props.inputHidden) return null;
     return (
         <PluginContextualResourceStoreProvider>
             {participantComposerPresentation.beforeComposer}

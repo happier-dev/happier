@@ -673,6 +673,11 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
     const focusOptionFromPointer = React.useCallback((optionId: string | null) => {
         pointerHoveredOptionIdRef.current = optionId;
         if (optionId !== null && pointerMovedRef.current) applyPointerFocus(optionId);
+        // A cursor the pointer put there leaves with the pointer, like a hover; the keyboard resumes from its row.
+        if (optionId === null) {
+            const { focus } = pointerFocusInputsRef.current;
+            if (focus.hasExplicitRowFocus && focus.focusedOptionId === pointerFocusedOptionIdRef.current) focus.clearExplicitRowFocus();
+        }
     }, [applyPointerFocus]);
     const handlePointerMove = React.useCallback(() => {
         pointerMovedRef.current = true;

@@ -12999,6 +12999,10 @@ const fr: ReviewWalkthroughTranslations = {
         subjectStagedLine: 'Incluses dans le prochain commit',
         subjectAll: 'Toutes les modifications',
         subjectAllLine: 'Indexées et en attente',
+        subjectBranch: 'Une branche',
+        subjectBranchLine: 'Ses commits, comparés à une autre branche',
+        compareWith: 'Comparer avec',
+        chooseBranch: 'Choisir une branche',
     },
     collection: {
         needsYourDecision: "À vous de décider",

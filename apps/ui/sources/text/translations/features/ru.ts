@@ -13008,6 +13008,10 @@ const ru: ReviewWalkthroughTranslations = {
         subjectStagedLine: 'Войдут в следующий коммит',
         subjectAll: 'Все изменения',
         subjectAllLine: 'Подготовленные и незафиксированные',
+        subjectBranch: 'Ветка',
+        subjectBranchLine: 'Её коммиты в сравнении с другой веткой',
+        compareWith: 'Сравнить с',
+        chooseBranch: 'Выберите ветку',
     },
     collection: {
         needsYourDecision: "Требуют вашего решения",

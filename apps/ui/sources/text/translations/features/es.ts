@@ -12879,6 +12879,10 @@ const es: ReviewWalkthroughTranslations = {
         subjectStagedLine: 'Incluidos en el próximo commit',
         subjectAll: 'Todos los cambios',
         subjectAllLine: 'Preparados y pendientes',
+        subjectBranch: 'Una rama',
+        subjectBranchLine: 'Sus commits, comparados con otra rama',
+        compareWith: 'Comparar con',
+        chooseBranch: 'Elegir una rama',
     },
     collection: {
         needsYourDecision: "Necesitan tu decisión",

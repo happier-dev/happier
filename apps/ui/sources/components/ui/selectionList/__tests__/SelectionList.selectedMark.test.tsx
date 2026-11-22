@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
@@ -104,13 +105,17 @@ describe('SelectionList current-choice mark', () => {
         expect(screen.findByTestId('sl:root:option-selected-mark:macbook')).toBeTruthy();
         expect(screen.findByTestId('sl:root:option-selected-mark:nas')).toBeTruthy();
         expect(screen.findByTestId('sl:root:option-selected-mark:devbox')).toBeFalsy();
-        // The check marks the choices; the fill stays the list's one highlight (the focused row), never every choice.
-        const filledRows = screen.tree.root.findAll((node) => (
+        // The check marks the choices; the fill is the keyboard cursor alone, never every choice. At rest no row is
+        // filled: the cursor the list starts on shows only once the keyboard moves it (U8 R2 E5).
+        const filledRows = () => new Set(screen.tree.root.findAll((node) => (
             typeof node.type !== 'string' && typeof node.props?.title === 'string'
             && ((node.props?.selected === true && node.props?.selectedFill !== false) || node.props?.focused === true)
-        )).map((node) => node.props.title as string);
+        )).map((node) => node.props.title as string));
         // A row's composite owners repeat its props; the set is the rows.
-        expect(new Set(filledRows)).toEqual(new Set(['MacBook Pro']));
+        expect(filledRows()).toEqual(new Set());
+        const header = screen.tree.root.findAll((node) => node.props?.testID === 'sl:header' && typeof node.props?.onKeyPress === 'function')[0]!;
+        await act(async () => { (header.props.onKeyPress as (event: unknown) => void)({ key: 'ArrowDown', preventDefault: () => {}, stopPropagation: () => {}, nativeEvent: { key: 'ArrowDown' } }); });
+        expect(filledRows()).toEqual(new Set(['devbox']));
     });
 
     it('fills the one current choice of a single-choice list', async () => {

@@ -12932,6 +12932,10 @@ const ja: ReviewWalkthroughTranslations = {
         subjectStagedLine: '次のコミットに含まれます',
         subjectAll: 'すべての変更',
         subjectAllLine: 'ステージ済みと保留中',
+        subjectBranch: 'ブランチ',
+        subjectBranchLine: '別のブランチと比較したコミット',
+        compareWith: '比較対象',
+        chooseBranch: 'ブランチを選択',
     },
     collection: {
         needsYourDecision: "あなたの判断が必要",

@@ -232,8 +232,8 @@ function createReviewActionSpecs(): readonly [
         },
         {
           path: 'base.kind',
-          title: 'Base selection',
-          description: 'How to define the review base for engines that need it.',
+          title: 'Compare with',
+          description: 'What the changes are compared with.',
           widget: 'select',
           required: true,
           visibleWhen: REVIEW_SCOPE_IS_CHANGES,
@@ -246,7 +246,7 @@ function createReviewActionSpecs(): readonly [
         {
           path: 'base.baseBranch',
           title: 'Base branch',
-          description: 'Branch name to diff against (when base.kind=branch).',
+          description: 'The branch the changes are compared with.',
           widget: 'text',
           visibleWhen: { op: 'eq', path: 'base.kind', value: 'branch' },
           requiredWhen: { op: 'eq', path: 'base.kind', value: 'branch' },
@@ -254,7 +254,7 @@ function createReviewActionSpecs(): readonly [
         {
           path: 'base.baseCommit',
           title: 'Base commit',
-          description: 'Commit SHA to diff against (when base.kind=commit).',
+          description: 'The commit the changes are compared with.',
           widget: 'text',
           visibleWhen: { op: 'eq', path: 'base.kind', value: 'commit' },
           requiredWhen: { op: 'eq', path: 'base.kind', value: 'commit' },

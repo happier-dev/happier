@@ -13008,6 +13008,10 @@ const pl: ReviewWalkthroughTranslations = {
         subjectStagedLine: 'Wejdą do następnego commita',
         subjectAll: 'Wszystkie zmiany',
         subjectAllLine: 'W poczekalni i oczekujące',
+        subjectBranch: 'Gałąź',
+        subjectBranchLine: 'Jej commity w porównaniu z inną gałęzią',
+        compareWith: 'Porównaj z',
+        chooseBranch: 'Wybierz gałąź',
     },
     collection: {
         needsYourDecision: "Wymagają Twojej decyzji",

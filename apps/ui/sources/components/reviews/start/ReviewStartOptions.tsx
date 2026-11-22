@@ -28,6 +28,8 @@ export type ReviewStartOptionsProps = Readonly<{
   costs: readonly ReviewStartCostConsent[];
   disabled?: boolean;
   onSaveAsWorkflow?: () => void;
+  /** The start's remaining launch settings (launch profiles, report back), asked once here in a sheet. */
+  more?: React.ReactNode;
 }>;
 
 /**
@@ -150,6 +152,7 @@ export function ReviewStartOptions(props: ReviewStartOptionsProps) {
             rightElement={props.credentials}
           />
         ) : null}
+        {props.more}
         {props.onSaveAsWorkflow ? <Item
           testID="review-start-save-as-workflow"
           title={t('workflows.run.saveAsWorkflow')}

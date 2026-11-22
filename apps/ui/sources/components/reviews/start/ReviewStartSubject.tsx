@@ -35,11 +35,16 @@ const SUBJECT_COPY = {
   Readonly<{ icon: string; title: string; line: string }>
 >;
 
+/** A change area, or a branch's own commits (lab `start-branch`). */
+export type ReviewStartSubjectValue = ReviewChangeType | 'branch';
+
 export type ReviewStartSubjectProps = Readonly<{
   /** The change areas the start offers, in the order its action spec lists them. */
   options: readonly ReviewChangeType[];
-  value: ReviewChangeType;
-  onChange: (value: ReviewChangeType) => void;
+  /** A branch review, when the start has a checkout: offered after the change areas, its head named once known. */
+  branch?: Readonly<{ head: string | null }> | null;
+  value: ReviewStartSubjectValue;
+  onChange: (value: ReviewStartSubjectValue) => void;
   /** The chosen area's own facts (branch, changed files), said on its row. */
   detail?: string | null;
   /** The base the chosen area is compared with, when the action asks for one. */
@@ -53,6 +58,8 @@ export type ReviewStartSubjectProps = Readonly<{
  */
 export function ReviewStartSubject(props: ReviewStartSubjectProps) {
   const { onChange, disabled } = props;
+  const offersBranch = props.branch != null;
+  const branchHead = props.branch?.head ?? null;
   const rootStep = React.useMemo<SelectionListStep>(
     () => ({
       id: 'review-start-subject',
@@ -60,7 +67,7 @@ export function ReviewStartSubject(props: ReviewStartSubjectProps) {
         {
           kind: 'static',
           id: 'subjects',
-          options: props.options.map((value) => ({
+          options: [...props.options.map((value) => ({
             id: value,
             testID: `review-start-subject:${value}`,
             label: t(SUBJECT_COPY[value].title),
@@ -72,10 +79,20 @@ export function ReviewStartSubject(props: ReviewStartSubjectProps) {
             ...(disabled ? { disabled: true } : {}),
             onSelect: () => onChange(value),
           })),
+          ...(offersBranch ? [{
+            id: 'branch',
+            testID: 'review-start-subject:branch',
+            label: t('reviewWalkthrough.start.subjectBranch'),
+            subtitle: props.value === 'branch' && branchHead ? branchHead : t('reviewWalkthrough.start.subjectBranchLine'),
+            icon: <Icon name="git-branch" size={ICON_SIZE.sm} />,
+            ...(disabled ? { disabled: true } : {}),
+            onSelect: () => onChange('branch'),
+          }] : []),
+          ],
         },
       ],
     }),
-    [disabled, onChange, props.detail, props.options, props.value],
+    [branchHead, disabled, offersBranch, onChange, props.detail, props.options, props.value],
   );
   return (
     <View testID="review-start-subject" style={styles.root}>
@@ -93,7 +110,7 @@ export function ReviewStartSubject(props: ReviewStartSubjectProps) {
           disableTransitions
         />
       </View>
-      {/* The base fields stand on the sheet's one edge with the steps and options below. */}
+      {/* The chosen branch's base stands on the sheet's one edge with the steps and options below. */}
       <HappierBodyEdgeContext.Provider value>{props.children}</HappierBodyEdgeContext.Provider>
     </View>
   );

@@ -117,6 +117,9 @@ import { useComparisonReviewDraft, type ComparisonReviewDraftInput } from './use
 import { useReviewEngineInventory } from './useReviewEngineInventory';
 import { ComparisonReviewScope, ComparisonWalkthroughChoice } from './ComparisonReviewFields';
 import { ReviewStartBody } from './ReviewStartBody';
+import { Switch } from '@/components/ui/forms/Switch';
+import { Item } from '@/components/ui/lists/Item';
+import { ReviewStartBranchBase, useReviewStartBranchFacts } from '@/components/reviews/start/ReviewStartBranchBase';
 import { reviewReviewerIdForSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ReviewEngineOptionsPluginContent } from '@/components/reviews/plugins/ReviewPluginContent';
@@ -1303,7 +1306,13 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         return { details, whoAccessory };
     };
 
-    // What to review, as rows first in the sheet: the action's change areas, and the base they compare with.
+    // What to review, as rows first in the sheet: the action's change areas, and the checkout's branch against the
+    // base chosen beside it (lab `start-branch`), from the SCM summary and branch reads the start already uses.
+    const branchFacts = useReviewStartBranchFacts({ sessionId: sheetHosted ? props.sessionId : null, serverId, workspace: sheetHosted ? workspace : undefined });
+    const renderBranchBase = React.useCallback((base: string | null, onChange: (branch: string) => void) => (
+        <ReviewStartBranchBase sessionId={props.sessionId} serverId={serverId} workspace={workspace}
+            head={branchFacts.head} value={base} onChange={onChange} disabled={!editable} />
+    ), [branchFacts.head, editable, props.sessionId, serverId, workspace]);
     const reviewSubject = React.useMemo(() => {
         if (!sheetHosted || !reviewScopeField) return null;
         const subjects = (reviewScopeField.options ?? []).flatMap(option => {
@@ -1311,12 +1320,24 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
             return parsed.success ? [parsed.data] : [];
         });
         return { options: subjects as readonly ReviewChangeType[],
-            base: renderOptions(['fields'], path => path !== 'changeType' && isReviewScopeFieldPath(path)) };
-    }, [renderOptions, reviewScopeField, sheetHosted]);
+            branch: props.sessionId !== null || workspace ? { head: branchFacts.head, defaultBase: branchFacts.defaultBase, renderBase: renderBranchBase } : null };
+    }, [branchFacts.defaultBase, branchFacts.head, props.sessionId, renderBranchBase, reviewScopeField, sheetHosted, workspace]);
+    // The sheet draws no composer input: step Focus is its one focus input. The composer stays the submission owner,
+    // and a step without its own Focus gets the start's default instructions (U8 R2 E1).
     const startFromFooter = useEventCallback(() => {
         if (!accountLifetime?.isCurrent() || !mountedComposerRef) return;
-        void requestRegisteredComposerSubmit({ ref: mountedComposerRef, scope: accountLifetime.scope });
+        void requestRegisteredComposerSubmit({ ref: mountedComposerRef, scope: accountLifetime.scope,
+            ...(sheetHosted ? { options: { inputTextOverride: t('reviewWalkthrough.dialog.defaultInstructions') } } : {}) });
     });
+    // The composer's chips live in the sheet's own Advanced: one Advanced, no second set. The sheet already asks
+    // every Review field the person chooses (what, who, Focus, Then, walkthrough, narrator, keys), so only launch
+    // profiles and report back join it; the action's raw field list stays out of the sheet (U8 R2 SB1).
+    const sheetMore = sheetHosted ? <>
+        {renderOptions(['profiles'])}
+        {props.sessionId !== null ? <Item title={t('agentStart.reportToSession')} mode="info" showChevron={false}
+            rightElement={<Switch testID="review-start-report-switch" value={reportToSession} disabled={!editable}
+                onValueChange={next => onPatch({ notifyParentOnCompletion: next })} accessibilityLabel={t('agentStart.reportToSession')} />} /> : null}
+    </> : null;
     const sheetFooterChange = props.sheet?.onFooterChange;
     const sheetCancel = props.sheet?.onCancel;
     // A global start chooses its Machine and folder first, above what it reviews (the changes live there); a start
@@ -1338,7 +1359,8 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
     });
     React.useEffect(() => () => sheetFooterChange?.(null), [sheetFooterChange]);
 
-    const startQuestion = <View style={styles.composerHang}><SessionParticipantComposer
+    const startQuestion = <View style={sheetHosted ? undefined : styles.composerHang}><SessionParticipantComposer
+                inputHidden={sheetHosted}
                 // The draft identity rotates as a live prop. Keying on it would remount the
                 // composer and discard the text, references and staged attachments the
                 // person authored but has not sent anywhere.
@@ -1423,7 +1445,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                 transcriptAvailable={props.sessionId !== null} walkthrough={comparisonReview.fields.walkthrough}
                 disabled={!editable} details={agentDetails}
                 credentials={reviewOptions.controls} onSaveAsWorkflow={sheetHosted ? undefined : saveReviewAsWorkflow}
-                subject={reviewSubject}
+                subject={reviewSubject} more={sheetMore}
                 narrator={props.comparisonReview ? <ComparisonWalkthroughChoice {...comparisonReview.fields} /> : null}>
                 {startQuestion}
             </ReviewStartBody> : <ContextualStartComposerBody model={contextualComposer}

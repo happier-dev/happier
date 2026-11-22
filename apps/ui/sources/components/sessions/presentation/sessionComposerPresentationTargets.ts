@@ -1969,8 +1969,10 @@ export function requestRegisteredComposerFocus(ref: ComposerRefV1 | symbol): boo
 export function requestRegisteredComposerSubmit(request: Readonly<{
     ref: ComposerRefV1;
     scope: ServerAccountScope;
+    /** The send's own options (a host that draws the input itself names the text it sends). */
+    options?: Parameters<NonNullable<ComposerPresentationTarget['submitDraft']>>[0];
 }>): ReturnType<NonNullable<ComposerPresentationTarget['submitDraft']>> | null {
-    return readScopedMountedComposerTarget(request.ref, request.scope)?.submitDraft?.() ?? null;
+    return readScopedMountedComposerTarget(request.ref, request.scope)?.submitDraft?.(request.options) ?? null;
 }
 
 /** Dismisses the keyboard through the exact incumbent input's own native command. */

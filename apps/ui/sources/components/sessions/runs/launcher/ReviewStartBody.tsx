@@ -35,9 +35,28 @@ type Props = Readonly<{
     narrator?: React.ReactNode;
     credentials?: React.ReactNode;
     onSaveAsWorkflow?: () => void;
-    /** What to review, first in the sheet: the change areas the action offers and the chosen one's facts. */
-    subject?: Readonly<{ options: readonly ReviewChangeType[]; detail?: string | null; base?: React.ReactNode }> | null;
+    /**
+     * What to review, first in the sheet: the change areas the action offers and the chosen one's facts, and a branch
+     * when the checkout is on one (its commits, compared with the base chosen beside it).
+     */
+    subject?: Readonly<{ options: readonly ReviewChangeType[]; detail?: string | null; branch?: ReviewStartBranchSubject | null }> | null;
+    /** Launch settings the sheet asks once, inside Advanced. */
+    more?: React.ReactNode;
 }>;
+
+export type ReviewStartBranchSubject = Readonly<{
+    head: string | null;
+    defaultBase: string | null;
+    renderBase: (base: string | null, onChange: (branch: string) => void) => React.ReactNode;
+}>;
+
+/** A branch review is the protocol's committed changes against an explicit base branch. */
+function readReviewBaseBranch(input: Record<string, unknown>): string | null {
+    const base = input.base;
+    if (!base || typeof base !== 'object' || (base as { kind?: unknown }).kind !== 'branch') return null;
+    const branch = (base as { baseBranch?: unknown }).baseBranch;
+    return typeof branch === 'string' ? branch : '';
+}
 
 /** Bind the visual owner's steps to the retained Run draft and its existing Who source. */
 export function ReviewStartBody(props: Props) {
@@ -59,12 +78,20 @@ export function ReviewStartBody(props: Props) {
             }))) }];
     }));
     const changeType = ReviewChangeTypeSchema.safeParse(props.input.changeType);
+    const branch = props.subject?.branch ?? null;
+    const baseBranch = readReviewBaseBranch(props.input);
+    const subjectValue = branch && baseBranch !== null ? 'branch' as const
+        : changeType.success ? changeType.data : props.subject?.options[0];
     return <View>
-        {props.subject && props.subject.options.length > 0 ? <ReviewStartSubject options={props.subject.options}
-            value={changeType.success ? changeType.data : props.subject.options[0]!} detail={props.subject.detail}
+        {props.subject && props.subject.options.length > 0 && subjectValue ? <ReviewStartSubject options={props.subject.options}
+            branch={branch ? { head: branch.head } : null}
+            value={subjectValue} detail={props.subject.detail}
             disabled={props.disabled}
-            onChange={value => props.onChange(previous => ({ ...previous, changeType: value }))}>
-            {props.subject.base}
+            onChange={value => props.onChange(previous => value === 'branch'
+                ? { ...previous, changeType: 'committed', base: { kind: 'branch', baseBranch: readReviewBaseBranch(previous) || branch?.defaultBase || '' } }
+                : { ...previous, changeType: value, base: { kind: 'none' } })}>
+            {branch && baseBranch !== null ? branch.renderBase(baseBranch || null,
+                next => props.onChange(previous => ({ ...previous, base: { kind: 'branch', baseBranch: next } }))) : null}
         </ReviewStartSubject> : null}
         <ReviewStartSteps steps={steps} onStepsChange={update} disabled={props.disabled}
             transcriptAvailable={props.transcriptAvailable}
@@ -82,7 +109,7 @@ export function ReviewStartBody(props: Props) {
             walkthrough={props.walkthrough}
             onWalkthroughChange={walkthrough => props.onChange(previous => ({ ...previous, outputs: walkthrough ? ['walkthrough'] : [] }))}
             narrator={props.narrator} credentials={props.credentials} costs={costs} disabled={props.disabled}
-            onSaveAsWorkflow={props.onSaveAsWorkflow} />
+            onSaveAsWorkflow={props.onSaveAsWorkflow} more={props.more} />
     </View>;
 }
 

@@ -12872,6 +12872,10 @@ const zhHans: ReviewWalkthroughTranslations = {
         subjectStagedLine: '将包含在下一次提交中',
         subjectAll: '全部更改',
         subjectAllLine: '已暂存和待处理',
+        subjectBranch: '一个分支',
+        subjectBranchLine: '它的提交，与另一个分支比较',
+        compareWith: '比较对象',
+        chooseBranch: '选择分支',
     },
     collection: {
         needsYourDecision: "需要你做出决定",
