@@ -230,8 +230,10 @@ function SelectedOccurrenceSummary({
     if (readKind === 'idle') demand();
   }, [demand, readKind]);
 
+  // A step's own read is one quiet line in its place (the Checks step's "Reading the checks from GitHub"), not a
+  // centred loading page inside the story: the step stays short, so it offers no "Read more" of nothing.
   if (read.kind === 'idle' || read.kind === 'loading') {
-    return <LoadingState title="Reading one occurrence of this issue" titleKey="plugins.sentry.ui.readingOccurrence" />;
+    return <Status tone="muted" pulsing label={text('plugins.sentry.ui.readingOccurrence', 'Reading one occurrence of this issue')} />;
   }
   if (read.kind === 'error') {
     return (
@@ -322,19 +324,19 @@ function SelectedEventRefreshNotice({
 }: Readonly<{ read: SentrySelectedEventReadV1 }>): React.ReactElement | null {
   const text = usePluginTranslation();
   if (read.kind !== 'success' || read.refresh === null) return null;
+  // Rereading keeps the occurrence on screen with the same quiet line a first read uses; only a failure speaks.
+  if (read.refresh.kind === 'loading') {
+    return <Status tone="muted" pulsing label={text('plugins.sentry.ui.readingOccurrence', 'Reading one occurrence of this issue')} />;
+  }
   return (
     <><Banner
-      tone={read.refresh.kind === 'loading' ? 'neutral' : 'warning'}
-      title={read.refresh.kind === 'loading'
-        ? text('plugins.sentry.ui.readingOccurrence', 'Reading one occurrence of this issue')
-        : text('plugins.sentry.ui.lastObservation', 'Showing the last observation')}
-      description={read.refresh.kind === 'loading'
-        ? text('plugins.sentry.ui.lastObservation', 'Showing the last observation')
-        : failureDescription(
-            read.refresh.failure,
-            text('plugins.sentry.ui.readFailed', 'Sentry could not complete this read.'), text,
-          )}
-    /><TriageSourceReadFailureDetails failures={[read.refresh.kind === 'error' ? read.refresh.failure : null]} /></>
+      tone="warning"
+      title={text('plugins.sentry.ui.lastObservation', 'Showing the last observation')}
+      description={failureDescription(
+        read.refresh.failure,
+        text('plugins.sentry.ui.readFailed', 'Sentry could not complete this read.'), text,
+      )}
+    /><TriageSourceReadFailureDetails failures={[read.refresh.failure]} /></>
   );
 }
 
