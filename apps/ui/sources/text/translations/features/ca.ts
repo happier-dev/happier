@@ -13240,6 +13240,8 @@ const ca: ReviewWalkthroughTranslations = {
         reviewHabitReviewers: 'Qui revisa',
         reviewHabitReviewersDetail: 'Les troballes arriben a Revisions',
         reviewAfterEachTurn: 'Revisa després de cada torn',
+        reviewSuggestionUnreviewed: ({ count }: Count) => count === 1 ? '1 fitxer canviat no s\'ha revisat.' : `${count} fitxers canviats no s\'han revisat.`,
+        reviewSuggestionReviewThem: ({ count }: Count) => count === 1 ? 'Revisa\'l' : 'Revisa\'ls',
         round: ({ round }) => `Ronda ${round}`,
         rounds: 'Rondes',
         failedTitle: 'Aquesta revisió no s’ha obert',

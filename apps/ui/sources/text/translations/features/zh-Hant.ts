@@ -13132,6 +13132,8 @@ const zhHant: ReviewWalkthroughTranslations = {
         reviewHabitReviewers: '由誰審查',
         reviewHabitReviewersDetail: '發現會出現在審查中',
         reviewAfterEachTurn: '每輪後審查',
+        reviewSuggestionUnreviewed: ({ count }: Count) => `${count} 個變更的檔案尚未審查。`,
+        reviewSuggestionReviewThem: (_: Count) => '審查它們',
         round: ({ round }) => `第 ${round} 輪`,
         rounds: '輪次',
         failedTitle: '無法開啟此審查',

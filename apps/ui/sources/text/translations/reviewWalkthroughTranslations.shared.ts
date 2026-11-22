@@ -169,6 +169,8 @@ export type ReviewWalkthroughTranslations = {
         reviewHabitReviewers: string;
         reviewHabitReviewersDetail: string;
         reviewAfterEachTurn: string;
+        reviewSuggestionUnreviewed: (params: Count) => string;
+        reviewSuggestionReviewThem: (params: Count) => string;
         round: (params: Readonly<{ round: number }>) => string;
         rounds: string;
         failedTitle: string;
@@ -434,6 +436,8 @@ export const en: ReviewWalkthroughTranslations = {
         reviewHabitReviewers: 'Who reviews',
         reviewHabitReviewersDetail: 'Findings land in Reviews',
         reviewAfterEachTurn: 'Review after each turn',
+        reviewSuggestionUnreviewed: ({ count }: Count) => count === 1 ? '1 changed file hasn\'t been reviewed.' : `${count} changed files haven\'t been reviewed.`,
+        reviewSuggestionReviewThem: ({ count }: Count) => count === 1 ? 'Review it' : 'Review them',
         round: ({ round }) => `Round ${round}`,
         rounds: 'Rounds',
         failedTitle: 'This review didn’t open',

@@ -13139,6 +13139,8 @@ const es: ReviewWalkthroughTranslations = {
         reviewHabitReviewers: 'Quién revisa',
         reviewHabitReviewersDetail: 'Los hallazgos llegan a Revisiones',
         reviewAfterEachTurn: 'Revisar después de cada turno',
+        reviewSuggestionUnreviewed: ({ count }: Count) => count === 1 ? '1 archivo cambiado no se ha revisado.' : `${count} archivos cambiados no se han revisado.`,
+        reviewSuggestionReviewThem: ({ count }: Count) => count === 1 ? 'Revisarlo' : 'Revisarlos',
         round: ({ round }) => `Ronda ${round}`,
         rounds: 'Rondas',
         failedTitle: 'Esta revisión no se abrió',

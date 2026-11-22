@@ -13192,6 +13192,8 @@ const ja: ReviewWalkthroughTranslations = {
         reviewHabitReviewers: 'レビュー担当',
         reviewHabitReviewersDetail: '結果はレビューに届きます',
         reviewAfterEachTurn: 'ターンごとにレビュー',
+        reviewSuggestionUnreviewed: ({ count }: Count) => `変更された ${count} 個のファイルがまだレビューされていません。`,
+        reviewSuggestionReviewThem: (_: Count) => 'レビューする',
         round: ({ round }) => `ラウンド${round}`,
         rounds: 'ラウンド',
         failedTitle: 'このレビューを開けませんでした',

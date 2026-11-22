@@ -13259,6 +13259,8 @@ const fr: ReviewWalkthroughTranslations = {
         reviewHabitReviewers: 'Qui relit',
         reviewHabitReviewersDetail: 'Les constats arrivent dans Revues',
         reviewAfterEachTurn: 'Relire après chaque tour',
+        reviewSuggestionUnreviewed: ({ count }: Count) => count === 1 ? '1 fichier modifié n\'a pas été relu.' : `${count} fichiers modifiés n\'ont pas été relus.`,
+        reviewSuggestionReviewThem: ({ count }: Count) => count === 1 ? 'Le relire' : 'Les relire',
         round: ({ round }) => `Tour ${round}`,
         rounds: 'Tours',
         failedTitle: 'Cette revue ne s’est pas ouverte',

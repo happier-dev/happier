@@ -13244,6 +13244,8 @@ const de: ReviewWalkthroughTranslations = {
         reviewHabitReviewers: 'Wer prüft',
         reviewHabitReviewersDetail: 'Ergebnisse landen in Reviews',
         reviewAfterEachTurn: 'Nach jeder Runde prüfen',
+        reviewSuggestionUnreviewed: ({ count }: Count) => count === 1 ? '1 geänderte Datei wurde nicht geprüft.' : `${count} geänderte Dateien wurden nicht geprüft.`,
+        reviewSuggestionReviewThem: ({ count }: Count) => count === 1 ? 'Prüfen' : 'Prüfen',
         round: ({ round }) => `Runde ${round}`,
         rounds: 'Runden',
         failedTitle: 'Diese Überprüfung ließ sich nicht öffnen',

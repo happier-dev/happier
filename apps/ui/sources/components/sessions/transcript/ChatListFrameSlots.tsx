@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { SessionReviewSuggestion } from '@/components/reviews/habit/SessionReviewSuggestion';
 import { Animated, View } from 'react-native';
 import { ComposerKeyboardScrollInset } from '@/components/sessions/keyboardAvoidance/ComposerKeyboardScrollInset';
 import { TRANSCRIPT_TOP_GUTTER_PX } from '@/components/sessions/transcript/_constants';
@@ -57,6 +58,8 @@ export const ChatListFooterWithKeyboardInset = React.memo((props: {
             <ProjectSetupSessionReviews sessionId={props.sessionId} serverId={props.serverId} />
             {/* A Session started from Project setup ends with its way back (lab `s-setup` DONE). */}
             <ProjectSetupSessionReturn sessionId={props.sessionId} serverId={props.serverId} />
+            {/* An idle Session with changes no Review covered says so once, with Review them (lab `session-finished`). */}
+            <SessionReviewSuggestion sessionId={props.sessionId} serverId={props.serverId} />
             <ComposerKeyboardScrollInset
                 testID="transcript-composer-keyboard-inset"
                 onHeightChange={props.onComposerInsetHeightChange}

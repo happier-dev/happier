@@ -13132,6 +13132,8 @@ const zhHans: ReviewWalkthroughTranslations = {
         reviewHabitReviewers: '由谁审查',
         reviewHabitReviewersDetail: '发现会出现在审查中',
         reviewAfterEachTurn: '每轮后审查',
+        reviewSuggestionUnreviewed: ({ count }: Count) => `${count} 个更改的文件尚未审查。`,
+        reviewSuggestionReviewThem: (_: Count) => '审查它们',
         round: ({ round }) => `第 ${round} 轮`,
         rounds: '轮次',
         failedTitle: '无法打开此审查',

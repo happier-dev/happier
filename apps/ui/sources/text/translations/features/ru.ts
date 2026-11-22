@@ -13268,6 +13268,8 @@ const ru: ReviewWalkthroughTranslations = {
         reviewHabitReviewers: 'Кто проверяет',
         reviewHabitReviewersDetail: 'Замечания попадают в Обзоры',
         reviewAfterEachTurn: 'Проверять после каждого хода',
+        reviewSuggestionUnreviewed: ({ count }: Count) => count === 1 ? '1 изменённый файл не проверен.' : `Изменённые файлы не проверены: ${count}.`,
+        reviewSuggestionReviewThem: (_: Count) => 'Проверить',
         round: ({ round }) => `Раунд ${round}`,
         rounds: 'Раунды',
         failedTitle: 'Не удалось открыть этот обзор',
