@@ -3,12 +3,14 @@ import { isDeepStrictEqual } from 'node:util';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { Prisma } from '@prisma/client';
 import { UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryRequestSchema, UsageEventIngestRequestSchema,
-    getUsageAnalyticsQueryRequestKey, type UsageAnalyticsQueryRequest } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+    UsageAnalyticsQueryBatchResponseSchema, getUsageAnalyticsQueryRequestKey,
+    type UsageAnalyticsQueryRequest, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { collectUsageAnalyticsBatchDelivery, projectUsageAnalyticsBatchDelivery } from '@happier-dev/protocol/usage/usageAnalyticsBatchDelivery';
 import { projectUsagePageCost } from '@happier-dev/protocol/usage/usageCost';
 import { resolveUsageMeasuredTokens } from '@happier-dev/protocol/usage/usageAggregation';
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
-import { readUsageActivityProjectionOperand, type UsageActivityProjectionOperand } from '@happier-dev/protocol/usage/usageActivityProjectionFacts';
+import { readUsageActivityProjectionOperand, type UsageActivityProjectionDayFacts,
+    type UsageActivityProjectionOperand } from '@happier-dev/protocol/usage/usageActivityProjectionFacts';
 
 import { db, initDbPostgres, shutdownDbClient } from '@/storage/db';
 import { inReadSnapshot } from '@/storage/inTx';
@@ -19,6 +21,7 @@ import { USAGE_MODEL_PRICE_CACHE_KEY } from '../usageModelPriceCatalog';
 import { createUsageEventRetentionRule } from '@/app/retention/rules/usageEventRetentionRule';
 import { readRetentionPolicyFromEnv } from '@/app/retention/config/readRetentionPolicyFromEnv';
 import { captureUsageAnalyticsBatchInTx, projectUsageAnalyticsBatch } from './readUsageAnalyticsBatch';
+import { usageAccountingProjectionKey } from './usageAccountingProjectionKey';
 import { readUsageActivitySummaryChunks, readUsageActivitySummaryHead } from './usageActivitySummaryStore';
 import { UsageQueryTiming } from './usageQueryTiming';
 import type { ScopedUsageReplayFact } from './resolveScopedUsageContributions';
@@ -240,6 +243,61 @@ describe('compact Usage activity summary read cache', () => {
         const warm = await read(account.id, query);
         expectSameWire(warm.serialized, control.serialized);
         expect(warm.capture.activitySummary?.stats.eventsRead).toBe(0);
+    });
+
+    it.each([false, true])('rebuilds interim v14 activity facts (later day changed: %s)', async laterDayChanged => {
+        const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: randomUUID(),
+            encryptionMode: 'plain', metadata: '{}' } });
+        const earlierDay = startMs + day;
+        const laterDay = startMs + 3 * day;
+        await writeRuntime(account.id, session.id, earlierDay, 3);
+        await writeRuntime(account.id, session.id, laterDay, 5);
+        const query = compactQuery();
+        await read(account.id, query);
+
+        const raw = await inReadSnapshot(tx => readUsageActivitySummaryHead(tx, account.id));
+        if (raw === null) throw new Error('Expected a stored activity head');
+        const head: { version: number; response: UsageAnalyticsQueryResponse;
+            days: Array<[number, { facts: UsageActivityProjectionDayFacts }]> } = JSON.parse(raw);
+        const interimVersion = 14;
+        const key = (version: number, kind: string, item: number | string) =>
+            usageAccountingProjectionKey([`usage-activity-summary-v${version}`, account.id, kind, item]);
+        const headKind = `actSummary${head.version}`;
+        const chunkKind = `actChunk${head.version}`;
+        const chunkItems = new Map([...await readSummaryChunks(account.id)].map(([item]) => [key(head.version, chunkKind, item), item]));
+        const priced = head.response.summary?.pricing?.totals?.groups[0];
+        const earlierPriced = head.days.find(([time]) => time === earlierDay)?.[1].facts.pricing.groups[0];
+        if (!priced || !earlierPriced) throw new Error('Expected both retained and delivered pricing groups');
+        Object.assign(head.response, { agentCostBasis: [{ agentId: 'codex', kinds: ['reported'] }] });
+        Object.assign(priced, { agentIds: ['codex'] });
+        Object.assign(earlierPriced, { agentIds: ['codex'] });
+
+        // Retain the old head, chunks and witnesses under the same keys the interim writer used.
+        const rows = await db.usageAccountingProjection.findMany({ where: { accountId: account.id } });
+        await db.usageAccountingProjection.deleteMany({ where: { accountId: account.id } });
+        await db.usageAccountingProjection.createMany({ data: rows.map(row => {
+            const kind = row.kind.replace(/\d+$/, String(interimVersion));
+            const item = row.kind === chunkKind ? chunkItems.get(row.recordKey) : Number(row.observedAtMs);
+            if (item === undefined) throw new Error('Expected a key for every retained chunk');
+            return { ...row, kind, recordKey: key(interimVersion, kind, item), payload: row.kind === headKind
+                ? JSON.stringify({ ...head, version: interimVersion }) : row.payload };
+        }) });
+        if (laterDayChanged) await db.usageEvent.updateMany({ where: { accountId: account.id, observedAt: new Date(laterDay) },
+            data: { inputTokens: 7, totalTokens: 7 } });
+
+        const rebuilt = await readWithChunkReads(account.id, query);
+        UsageAnalyticsQueryBatchResponseSchema.parse(JSON.parse(rebuilt.serialized));
+        expect(total(rebuilt)).toBe(laterDayChanged ? 10 : 8);
+        expectSameWire(rebuilt.serialized, (await read(account.id, query, false)).serialized);
+        expect(rebuilt.capture.activitySummary?.expectedHead).toBeNull();
+        expect(rebuilt.capture.activitySummary?.stats).toMatchObject({ replayedEvents: 2, projectedRows: 2, published: true });
+        expect(rebuilt.chunkReads.rows).toBe(0);
+
+        const warm = await readWithChunkReads(account.id, query);
+        expectSameWire(warm.serialized, rebuilt.serialized);
+        expect(warm.capture.activitySummary?.stats).toMatchObject({ eventsRead: 0, replayedSubjects: 0, replayedEvents: 0, projectedRows: 0 });
+        expect(warm.chunkReads.rows).toBe(0);
     });
 
     it('rebuilds a version 9 legacy Session chunk and only reloads the changed released history', async () => {
