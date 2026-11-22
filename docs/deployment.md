@@ -43,11 +43,12 @@ unknown and releases the in-progress slot.
 
 ## After Deploy Workflow completion (0.3 development)
 
-Home publishes transitions to success, failure, cancellation or unknown for an
-admitted Deploy on its committed Receipt wake. An After Deploy Workflow sees the
-outcome and database time of the transition. An unknown outcome releases the
-effect slot and remains unsettled in the Receipt. Re-delivery of the same
-occurrence rejoins its original Run.
+An After Deploy Workflow sees a committed outcome and the database time of its
+Receipt transition. Home publishes success, failure, settled cancellation, or an
+unknown outcome recorded by recovery. A pending Cancel keeps the Workflow
+waiting while the child is active. A recovered unknown outcome leaves the
+Receipt open to reconciliation. A later known outcome is a distinct occurrence.
+Re-delivery of an occurrence rejoins its original Run.
 
 ## Browser exception setup (0.3 development)
 
@@ -1834,9 +1835,10 @@ retains mutation admission. It stops future deploy stages; a Machine Service's
 desired-stop control is a different operation and is not a deploy-cancel alias.
 In development, the cancel request records `outcome_unknown` while a finite
 child is active. The captured own-server controller settles `cancelled` after
-that child returns a known outcome and before any later stage starts. An uncertain child
-outcome remains `outcome_unknown`; cancellation does not assert container removal
-or change the last uniform deployment.
+that child returns a known outcome and before any later stage starts. This
+settlement is when After Deploy can run. An uncertain child leaves the
+cancellation pending as `outcome_unknown` and preserves the last uniform
+deployment. Cancellation does not assert container removal.
 
 In development, preparation or admission for a different native request
 reconciles an unfinished receipt on its captured controller installation for the

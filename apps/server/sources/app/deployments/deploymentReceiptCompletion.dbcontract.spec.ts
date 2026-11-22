@@ -25,7 +25,7 @@ import { inTx } from '@/storage/inTx';
 import { readTransactionDatabaseTime } from '@/storage/transactionDatabaseTime';
 import { createDatabaseIntegrationHarness } from '@/testkit/databaseIntegrationHarness';
 import { readDeploymentEnvironmentInTx, readDeploymentReceiptInTx } from './deploymentReadService';
-import { createDeploymentInTx, projectDeploymentReceiptHeader, transitionDeploymentInTx } from './deploymentService';
+import { createDeploymentInTx, projectDeploymentReceiptHeader, requestCancelDeploymentInTx, transitionDeploymentInTx } from './deploymentService';
 
 describe('After Deploy Receipt recovery (real database)', () => {
     let harness: Awaited<ReturnType<typeof createDatabaseIntegrationHarness>>;
@@ -34,7 +34,7 @@ describe('After Deploy Receipt recovery (real database)', () => {
     }, 120_000);
     afterAll(async () => { await harness?.close(); });
 
-    it('admits one After Deploy Run for each committed outcome and rejoins on replay', async () => {
+    it('waits for reviewed cancellation to settle and emits each genuine outcome once', async () => {
         const serverId = await getOrCreateServerIdentityId();
         const account = await db.account.create({ data: { encryptionMode: 'plain' } });
         const accountId = account.id;
@@ -75,7 +75,7 @@ describe('After Deploy Receipt recovery (real database)', () => {
             ...await artifact('deployment-receipt.v1') } }));
         const running = await createRunningReceipt();
         let transitionTime = 0;
-        const settle = (receipt: typeof running, expectedRevision: number, state: 'outcome_unknown' | 'failed') => {
+        const settle = (receipt: typeof running, expectedRevision: number, state: 'outcome_unknown' | 'failed' | 'cancelled') => {
             const body = { serverId, environmentId, deploymentId: receipt.id, actionOperationId: receipt.actionOperationId,
                 ...controller, expectedRevision, kind: 'settle', state } satisfies Omit<DeploymentTransitionInputV1, 'proof'>;
             return inTx(async tx => {
@@ -145,6 +145,42 @@ describe('After Deploy Receipt recovery (real database)', () => {
             for (const event of await projectDeploymentReceiptInvalidationsForHost(body, async () => serverId)) await receive(event);
         };
         try {
+            const cancelling = await createRunningReceipt();
+            expect(await inTx(tx => requestCancelDeploymentInTx(tx, accountId, {
+                serverId, environmentId, deploymentId: cancelling.id, expectedReceiptRevision: cancelling.revision,
+            }))).toMatchObject({ ok: true, deploymentRevision: 3, state: 'outcome_unknown' });
+            expect(await db.deployment.findUniqueOrThrow({ where: { id: cancelling.id } })).toMatchObject({
+                cancelRequestedAt: expect.any(Date), settledAt: null,
+            });
+            const pendingWake = takeReceiptWake();
+            await deliver(pendingWake);
+            expect.soft(await db.automationRun.count({ where: { automationId: workflow.id } })).toBe(0);
+
+            expect(await settle(cancelling, 3, 'cancelled')).toMatchObject({ ok: true, deploymentRevision: 4, state: 'cancelled' });
+            const cancelled = await db.deployment.findUniqueOrThrow({ where: { id: cancelling.id } });
+            const cancelledWake = takeReceiptWake();
+            await deliver(cancelledWake);
+            await deliver(pendingWake);
+            await deliver(cancelledWake);
+            expect.soft(admitted.splice(0)).toEqual([
+                { kind: 'admitted', outcome: 'cancelled', occurredAt: cancelled.settledAt?.getTime() },
+                { kind: 'rejoined', outcome: 'cancelled', occurredAt: cancelled.settledAt?.getTime() },
+            ]);
+            const runsBeforeControls = await db.automationRun.count({ where: { automationId: workflow.id } });
+            expect.soft(runsBeforeControls).toBe(1);
+
+            const exact = await createRunningReceipt();
+            expect(await settle(exact, 2, 'cancelled')).toMatchObject({ ok: true, deploymentRevision: 3, state: 'cancelled' });
+            const exactWake = takeReceiptWake();
+            const exactCancelled = await db.deployment.findUniqueOrThrow({ where: { id: exact.id } });
+            await deliver(exactWake);
+            await deliver(exactWake);
+            expect(admitted.splice(0)).toEqual([
+                { kind: 'admitted', outcome: 'cancelled', occurredAt: exactCancelled.settledAt?.getTime() },
+                { kind: 'rejoined', outcome: 'cancelled', occurredAt: exactCancelled.settledAt?.getTime() },
+            ]);
+            expect(await db.automationRun.count({ where: { automationId: workflow.id } })).toBe(runsBeforeControls + 1);
+
             expect(await settleInterruptedDeploymentReceiptForHost({ ...controller, accountId, environmentId,
                 context: {}, requestKey: randomUUID(), operation: 'deploy' }, {
                 readInProgress: async () => [running], readOperation: async () => null, readReceipt: async () => ({ content }),
@@ -157,7 +193,7 @@ describe('After Deploy Receipt recovery (real database)', () => {
             })).toBeNull();
             const unknownWake = takeReceiptWake();
             const unknown = await db.deployment.findUniqueOrThrow({ where: { id: running.id } });
-            expect(unknown).toMatchObject({ revision: 3, state: 'outcome_unknown', settledAt: null });
+            expect(unknown).toMatchObject({ revision: 3, state: 'outcome_unknown', settledAt: null, cancelRequestedAt: null });
             const rollbackInput = { serverId, environmentId, targetLinkId: link.id, expectedRevision: environment.revision,
                 expectedTargetLinkRevision: link.revision, deploymentId: unknown.id, requestKey: randomUUID(),
                 actionOperationId: randomUUID(), ...await artifact('deployment-receipt.v1') };
@@ -172,24 +208,25 @@ describe('After Deploy Receipt recovery (real database)', () => {
             expect(admitted).toEqual([{ kind: 'admitted', outcome: 'outcome_unknown', occurredAt: transitionTime }]);
             const occurredAt = admitted[0]!.occurredAt;
             expect(await settle(running, 3, 'failed')).toMatchObject({ ok: true, deploymentRevision: 4, state: 'failed' });
+            const failed = await db.deployment.findUniqueOrThrow({ where: { id: running.id } });
             const failedWake = takeReceiptWake();
             await deliver(failedWake);
-            const failed = await db.deployment.findUniqueOrThrow({ where: { id: running.id } });
-            expect(admitted[1]).toEqual({ kind: 'admitted', outcome: 'failed', occurredAt: failed.settledAt?.getTime() });
             await deliver(unknownWake);
             await deliver(failedWake);
-            expect(admitted.slice(2)).toEqual([
+            expect.soft(admitted.splice(1)).toEqual([
+                { kind: 'admitted', outcome: 'failed', occurredAt: failed.settledAt?.getTime() },
                 { kind: 'rejoined', outcome: 'outcome_unknown', occurredAt },
                 { kind: 'rejoined', outcome: 'failed', occurredAt: failed.settledAt?.getTime() },
             ]);
-            expect(await db.automationRun.count({ where: { automationId: workflow.id } })).toBe(2);
+            const runsBeforeDirectFailure = await db.automationRun.count({ where: { automationId: workflow.id } });
+            expect.soft(runsBeforeDirectFailure).toBe(runsBeforeControls + 3);
 
             const direct = await createRunningReceipt();
             expect(await settle(direct, 2, 'failed')).toMatchObject({ ok: true, deploymentRevision: 3, state: 'failed' });
             await deliver(takeReceiptWake());
             const settled = await db.deployment.findUniqueOrThrow({ where: { id: direct.id } });
-            expect(admitted[4]).toEqual({ kind: 'admitted', outcome: 'failed', occurredAt: settled.settledAt?.getTime() });
-            expect(await db.automationRun.count({ where: { automationId: workflow.id } })).toBe(3);
+            expect(admitted[1]).toEqual({ kind: 'admitted', outcome: 'failed', occurredAt: settled.settledAt?.getTime() });
+            expect(await db.automationRun.count({ where: { automationId: workflow.id } })).toBe(runsBeforeDirectFailure + 1);
         } finally {
             subscription?.dispose();
             wake.mockRestore();

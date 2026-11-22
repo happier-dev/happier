@@ -31,12 +31,24 @@ export const DeploymentReceiptCompletionV1Schema = lazyZodSchema(() => z.strictO
 }));
 export type DeploymentReceiptCompletionV1 = z.infer<typeof DeploymentReceiptCompletionV1Schema>;
 
-/** R25 observes each transition into a Deploy outcome independently of Receipt settlement. */
-export function projectDeploymentReceiptCompletionV1(previous: DeploymentStateV1, next: DeploymentStateV1,
-    revision: number, occurredAt: number): DeploymentReceiptCompletionV1 | null {
-    const outcome = AutomationActionOutcomeV1Schema.safeParse(next);
-    return outcome.success && previous !== next
-        ? { state: outcome.data, revision, occurredAt } : null;
+type DeploymentReceiptOutcomeSnapshotV1 = Readonly<{
+    state: DeploymentStateV1;
+    settledAt: Date | null;
+    cancelRequestedAt: Date | null;
+}>;
+
+function isDeploymentReceiptCompletionV1(receipt: DeploymentReceiptOutcomeSnapshotV1): boolean {
+    // Recovery can finish the Action with an unknown outcome while the Receipt
+    // remains open to reconciliation. A pending Cancel is still in flight.
+    return receipt.state === 'outcome_unknown' ? receipt.cancelRequestedAt === null : receipt.settledAt !== null;
+}
+
+/** R25 observes a committed terminal outcome, including a later reconciliation to a known outcome. */
+export function projectDeploymentReceiptCompletionV1(previous: DeploymentStateV1,
+    next: DeploymentReceiptOutcomeSnapshotV1, revision: number, occurredAt: number): DeploymentReceiptCompletionV1 | null {
+    if (previous === next.state || !isDeploymentReceiptCompletionV1(next)) return null;
+    const outcome = AutomationActionOutcomeV1Schema.safeParse(next.state);
+    return outcome.success ? { state: outcome.data, revision, occurredAt: next.settledAt?.getTime() ?? occurredAt } : null;
 }
 
 const prefix = 'deployment-receipt-completion:';

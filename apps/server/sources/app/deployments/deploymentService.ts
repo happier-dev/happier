@@ -98,8 +98,9 @@ export async function requestCancelDeploymentInTx(tx: Tx, actorAccountId: string
         return receiptResult(row, loaded.row.revision);
     }
     if (row.revision !== input.expectedReceiptRevision) return deploymentFailure('deployment_conflict');
-    if (isDeploymentSettledV1(DeploymentStateV1Schema.parse(row.state))) return receiptResult(row, loaded.row.revision);
-    if (!canTransitionDeploymentV1(DeploymentStateV1Schema.parse(row.state), 'outcome_unknown')) return deploymentFailure('deployment_conflict');
+    const previousState = DeploymentStateV1Schema.parse(row.state);
+    if (isDeploymentSettledV1(previousState)) return receiptResult(row, loaded.row.revision);
+    if (!canTransitionDeploymentV1(previousState, 'outcome_unknown')) return deploymentFailure('deployment_conflict');
     const now = await readTransactionDatabaseTime(tx);
     const changed = await tx.deployment.updateMany({ where: { id: row.id, revision: input.expectedReceiptRevision },
         data: { cancelRequestedAt: now, state: 'outcome_unknown', revision: { increment: 1 } } });
@@ -110,9 +111,11 @@ export async function requestCancelDeploymentInTx(tx: Tx, actorAccountId: string
     const accountIds = await resolveProjectSourceAudienceInTx(tx, [loaded.admission.source]);
     await publishDeploymentChangesInTx(tx, loaded.admission, loaded.row.id, loaded.row.revision, undefined, false, accountIds);
     await publishDeploymentChangesInTx(tx, loaded.admission, loaded.row.id, current.revision, current.id,
-        !isDeepStrictEqual(projectDeploymentReceiptActivityV1(DeploymentStateV1Schema.parse(row.state)),
+        !isDeepStrictEqual(projectDeploymentReceiptActivityV1(previousState),
             projectDeploymentReceiptActivityV1('outcome_unknown')), accountIds,
-        projectDeploymentReceiptCompletionV1(DeploymentStateV1Schema.parse(row.state), 'outcome_unknown', current.revision, now.getTime()));
+        projectDeploymentReceiptCompletionV1(previousState,
+            { state: 'outcome_unknown', settledAt: current.settledAt, cancelRequestedAt: current.cancelRequestedAt },
+            current.revision, now.getTime()));
     return receiptResult(current, loaded.row.revision);
 }
 
@@ -444,11 +447,12 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
         nextContent = updated.reference;
     }
     const now = await readTransactionDatabaseTime(tx);
+    const settledAt = isDeploymentSettledV1(input.state) ? now : null;
     const changed = await tx.deployment.updateMany({ where: { id: row.id, revision: input.expectedRevision }, data: {
         state: input.state, revision: { increment: 1 }, ...nextContent,
         ...(input.teardownProof ? { teardownProof: { ...input.teardownProof, ...(removeEnvironment ? { removeEnvironment: true } : {}) } } : {}),
         ...(input.state === 'running' && !row.startedAt ? { startedAt: now } : {}),
-        ...(isDeploymentSettledV1(input.state) ? { settledAt: now } : {}),
+        ...(settledAt ? { settledAt } : {}),
         ...(resumedTeardown ? { settledAt: null } : {}),
     } });
     if (changed.count !== 1) throw new Error('Locked deployment receipt changed during transition');
@@ -494,7 +498,9 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
     await publishDeploymentChangesInTx(tx, loaded, loaded.row.id, deploymentRevision, row.id,
         !isDeepStrictEqual(projectDeploymentReceiptActivityV1(previousState),
             projectDeploymentReceiptActivityV1(input.state)), accountIds,
-        projectDeploymentReceiptCompletionV1(previousState, input.state, deploymentRevision, now.getTime()));
+        projectDeploymentReceiptCompletionV1(previousState,
+            { state: input.state, settledAt, cancelRequestedAt: row.cancelRequestedAt },
+            deploymentRevision, now.getTime()));
     return receiptResult({ id: row.id, environmentId: row.environmentId, revision: deploymentRevision, state: input.state },
         environmentRevision, removeEnvironment && completeTeardown);
 }
