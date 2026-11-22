@@ -107,8 +107,13 @@ export function UsageWorkAutopsy(
   }))].join(', ');
   const width = presentation?.geometry?.width;
   const pricedTimeline = Boolean(autopsy?.costTimeline.some(point => point.amount !== null));
+  // The running cost draws a line only when it rises between two instants; a single priced moment (a one-turn
+  // Session, or later rows that add no price) is the section's one quiet line, never a flat or empty plot.
+  const pricedPoints = autopsy?.costTimeline.filter(point => point.amount !== null) ?? [];
+  const plottedTimeline = new Set(pricedPoints.map(point => point.observedAtMs)).size > 1
+    && new Set(pricedPoints.map(point => point.amount)).size > 1;
   const details = useUsageChartDetails(`${t(`usage.widgets.${props.id}`)}: ${t('usage.board.work.costOverTime')}`,
-    selected !== null && pricedTimeline && (width === undefined || width >= PLOT_MIN_WIDTH_PX));
+    selected !== null && plottedTimeline && (width === undefined || width >= PLOT_MIN_WIDTH_PX));
   const [turnsExpanded, setTurnsExpanded] = React.useState(false);
   const [phasesExpanded, setPhasesExpanded] = React.useState(false);
   if (!selected) return null;
@@ -252,8 +257,10 @@ export function UsageWorkAutopsy(
               size="stat"
               showLabel
               label={t('usage.board.work.turns')}
-              value={ordinals.size > 0 && turns.every(turn => turn.turnId !== null)
-                ? ordinals.size : t('usage.board.howYouWork.notRecorded')}
+              // The recorded turns the list names; usage with no turn is said once beside them, never as "Not recorded".
+              value={ordinals.size > 0 ? ordinals.size : t('usage.board.howYouWork.notRecorded')}
+              {...(ordinals.size > 0 && turns.some(turn => turn.turnId === null)
+                ? { caption: t('usage.board.work.turnsUnrecordedPart') } : {})}
             />
             {largest ? (
               <HappierDataMetric
@@ -319,7 +326,7 @@ export function UsageWorkAutopsy(
           <UsageWorkSectionTitle caption={autopsy.costTimelineBasis
             ? `${usageCostKindPhrase(autopsy.costTimelineBasis.kind)} · ${autopsy.costTimelineBasis.currency}`
             : t('usage.board.recap.money_unpriced')}>{t('usage.board.work.costOverTime')}</UsageWorkSectionTitle>
-          <StackedSeriesChart
+          {plottedTimeline ? <StackedSeriesChart
             {...details}
             theme={theme}
             testID={`${props.testID}.costTimeline`}
@@ -336,7 +343,8 @@ export function UsageWorkAutopsy(
                 x: point.observedAtMs,
                 label: formatUsageDuration(point.observedAtMs - autopsy.costTimeline[0]!.observedAtMs),
                 y: point.amount })) }]}
-          />
+          /> : <UsageBodyInsufficient testID={`${props.testID}.costTimeline.single`} replacesContent={false}
+            title={t('usage.board.work.costTimelineTooShort')} />}
         </View>
       ) : null}
       {turns.length > 0 ? (

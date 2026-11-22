@@ -276,6 +276,8 @@ it('dates the header by the read and shows the older source date in Details', as
   await waitForHomeGovernance(() => expect(line()?.props.asOf).toBe(readAt));
   const actions = line()!.props.actions as readonly { label: string; onPress: () => void }[];
   expect(line()!.props.reason).not.toContain(formatUsageObservedAt(sourceAt));
+  // A phone's notice beside its actions wraps or stacks, never ellipsizes mid-word ("No usage i…", acceptance 11-21 #17).
+  expect(line()!.props.presentation).toBe('line');
   const details = actions.find(action => action.label === t('common.details'));
   expect(details).toBeDefined();
   await act(async () => { details!.onPress(); });

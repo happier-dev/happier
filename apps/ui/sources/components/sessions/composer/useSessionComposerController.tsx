@@ -2157,6 +2157,8 @@ export function useSessionComposerController({
     ]);
     const {
         gauge: providerUsageGauge,
+        quotaReadFailed: providerUsageQuotaReadFailed,
+        retryQuotaRead: providerUsageRetryQuotaRead,
         gaugeQuotaSnapshot: providerUsageConnectedServiceQuotaSnapshot,
         gaugeQuotaProfileIdentity: providerUsageConnectedServiceQuotaProfileRef,
     } = sessionProviderUsage;
@@ -2685,8 +2687,9 @@ export function useSessionComposerController({
                 onRecoveryCreditPress: providerUsageRecoveryCreditAction,
                 recoveryCreditPending: providerUsageRecoveryCreditActionPending,
             }
-            : null
-    ), [providerUsageGauge, providerUsageRecoveryCreditAction, providerUsageRecoveryCreditActionPending, sessionDeliveryFailure, usageLimitRecoveryPresentation]);
+            // A failed first read is the usage owner's decision, the same one the Session Companion shows.
+            : providerUsageQuotaReadFailed ? { readFailed: true, onRetry: providerUsageRetryQuotaRead } : null
+    ), [providerUsageGauge, providerUsageQuotaReadFailed, providerUsageRetryQuotaRead, providerUsageRecoveryCreditAction, providerUsageRecoveryCreditActionPending, sessionDeliveryFailure, usageLimitRecoveryPresentation]);
     const reviewScope = useWorkspaceScopeForSession(sessionId, sessionRouteServerId);
     const reviewCommentDrafts = useWorkspaceReviewCommentsDrafts(reviewScope);
     const includedReviewCommentDrafts = React.useMemo(

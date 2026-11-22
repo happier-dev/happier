@@ -358,6 +358,16 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
       }
     },
     {
+      "sourceId": "codex-app-server-response-usage",
+      "title": {
+        "fallback": "usage · {agent}",
+        "key": "usage.board.page.sourceAccountingAgent",
+        "params": {
+          "agent": "Codex"
+        }
+      }
+    },
+    {
       "sourceId": "codex-native-accounting",
       "title": {
         "fallback": "usage · {agent}",
@@ -790,6 +800,16 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
   "accountingSourcePresentation": [
     {
       "sourceId": "pi-native-accounting",
+      "title": {
+        "fallback": "usage · {agent}",
+        "key": "usage.board.page.sourceAccountingAgent",
+        "params": {
+          "agent": "Pi"
+        }
+      }
+    },
+    {
+      "sourceId": "pi-session-stats",
       "title": {
         "fallback": "usage · {agent}",
         "key": "usage.board.page.sourceAccountingAgent",

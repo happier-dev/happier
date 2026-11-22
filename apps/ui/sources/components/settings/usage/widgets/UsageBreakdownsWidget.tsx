@@ -236,7 +236,7 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
                 }
               : {}),
           footer: <UsageShowAllRows label={`${t(`usage.widgets.${props.id}`)}: ${heading(block.dimension)}`}
-            total={block.rowCount} hidden={lead.hidden} complete={block.truncated === 0} expanded={block.showingAll}
+            total={block.rowCount} hidden={lead.hidden} expanded={block.showingAll}
             unlisted={block.truncated > 0 && lead.hidden === 0 ? t('usage.board.page.moreRows', { count: block.truncated }) : null}
             testID={`${props.testID}.${block.dimension}.more`}
             onToggle={() => setExpanded(current => current.includes(block.dimension)

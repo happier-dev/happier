@@ -48,6 +48,16 @@ export const PI_UI_DESCRIPTOR = Object.freeze({
             agent: 'Pi'
           }
         }
+      },
+      {
+        sourceId: 'pi-session-stats',
+        title: {
+          key: 'usage.board.page.sourceAccountingAgent',
+          fallback: 'usage · {agent}',
+          params: {
+            agent: 'Pi'
+          }
+        }
       }
     ],
     descriptorId: 'pi.uiBehavior.v1',

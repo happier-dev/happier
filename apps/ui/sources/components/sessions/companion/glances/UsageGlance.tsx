@@ -4,13 +4,14 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSessionProviderUsageGauge } from '@/components/sessions/usage/useSessionProviderUsage';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
-import { SurfaceAsOfLabel } from '@/components/ui/surfaces/SurfaceAsOfLabel';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import {
   WidgetFrame,
   type WidgetFrameStyle,
 } from '@/components/widgets/frame/WidgetFrame';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
+import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 
 import { readSessionAgentLabel, useSessionContextUsageFacts } from '../summary/useSessionSummaryModel';
 
@@ -23,8 +24,9 @@ const stylesheet = StyleSheet.create((theme) => ({
  * The Usage section (lab crows B): the provider quota the composer's instrument shows for this Session
  * (one gauge owner, `useSessionProviderUsageGauge`), and how full the context is (the Session usage owner).
  * The quota row is absent only when there is no quota to read (a plain Account, no connected service): a failed
- * first read says the quota is unavailable, and a failed refresh keeps the last good value with its as-of. A
- * Session with neither fact has no Usage section. Recovery is the owner's (the next matching update or reopening).
+ * first read says usage could not be read (the composer ring's words), and a failed refresh keeps the last good
+ * value with the failure and its as-of in the row's own caption. Retry is the owner's next read, where it has one.
+ * A Session with neither fact has no Usage section.
  */
 export function UsageGlance(
   props: Readonly<{
@@ -39,7 +41,7 @@ export function UsageGlance(
   }>,
 ) {
   const { theme } = useUnistyles();
-  const { gauge, quotaReadFailed, quotaRefreshFailedAsOf } = useSessionProviderUsageGauge({
+  const { gauge, quotaReadFailed, quotaRefreshFailedAsOf, retryQuotaRead } = useSessionProviderUsageGauge({
     session: props.session,
     serverId: props.serverId ?? props.session.serverId ?? '',
   });
@@ -49,6 +51,9 @@ export function UsageGlance(
   const glyph = (name: React.ComponentProps<typeof Icon>['name']) => (
     <Icon name={name} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />
   );
+  const retry = retryQuotaRead
+    ? <TextLinkButton label={t('common.retry')} size="meta" onPress={retryQuotaRead} testID={`${props.testID}.quota.retry`} />
+    : undefined;
   return (
     <WidgetFrame
       testID={props.testID}
@@ -58,10 +63,6 @@ export function UsageGlance(
       mark="speedometer"
       title={t('sessionCompanion.sections.usage')}
       menu={props.menu}
-      {...(quotaRefreshFailedAsOf !== null ? {
-        meta: <SurfaceAsOfLabel at={quotaRefreshFailedAsOf} testID={`${props.testID}.asOf`} />,
-        footer: { kind: 'refreshFailed' as const, reason: t('connectedServices.errors.quotaRefreshFailed') },
-      } : {})}
       body={{
         kind: 'content',
         children: (
@@ -74,6 +75,11 @@ export function UsageGlance(
                 icon={glyph('speedometer')}
                 title={gauge.providerDisplayName ?? readSessionAgentLabel(props.session) ?? gauge.badgeLabel}
                 titleQualifier={gauge.scopePrefix}
+                {...(quotaRefreshFailedAsOf !== null ? {
+                  subtitle: `${t('connectedServices.errors.quotaRefreshFailed')} · ${t('settingsOverview.asOf', { time: formatAsOfTime(quotaRefreshFailedAsOf) })}`,
+                  subtitleTestID: `${props.testID}.quota.reason`,
+                  subtitleAccessory: retry,
+                } : {})}
                 detail={
                   gauge.resetLabel && gauge.tone !== 'neutral'
                     ? `${gauge.valueLabel} · ${gauge.resetLabel}`
@@ -95,7 +101,9 @@ export function UsageGlance(
                 mode="info"
                 icon={glyph('speedometer')}
                 title={readSessionAgentLabel(props.session) ?? t('sessionCompanion.sections.usage')}
-                detail={t('common.unavailable')}
+                subtitle={t('usage.board.page.readFailedTitle')}
+                subtitleTestID={`${props.testID}.quota.reason`}
+                subtitleAccessory={retry}
               />
             ) : null}
             {contextPercent !== null ? (

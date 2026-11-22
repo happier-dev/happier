@@ -376,10 +376,20 @@ export function useSessionProviderUsage(input: SessionProviderUsageInput) {
         ? gaugeQuotaSnapshot?.fetchedAt ?? null : null
       : accountUsageSnapshot && accountUsageStateByRecordId[accountUsageSnapshot.recordId] === 'error_last_known_good'
         ? accountUsageSnapshot.fetchedAtMs : null;
+  // After a failed read, the next read is the owner's own refresh (the connected-service snapshot store); the
+  // account-usage records have no client refresh, so they offer none and recover on the next matching update.
+  const refreshQuotaSnapshots = quotaSnapshots.refresh;
+  const quotaReadFailedOrStale = quotaReadFailed || quotaRefreshFailedAsOf !== null;
+  const retryQuotaRead = React.useMemo(
+    () => quotaProfileRef && quotaProfileKey !== null && quotaReadFailedOrStale
+      ? () => { void refreshQuotaSnapshots([quotaProfileKey]); } : null,
+    [quotaProfileRef, quotaProfileKey, quotaReadFailedOrStale, refreshQuotaSnapshots],
+  );
   return {
     gauge,
     quotaReadFailed,
     quotaRefreshFailedAsOf,
+    retryQuotaRead,
     /** The released scalar profile identity, its snapshot-store key, and its override-aware snapshot. */
     quotaProfileIdentity,
     quotaProfileKey,
@@ -396,7 +406,7 @@ export function useSessionProviderUsage(input: SessionProviderUsageInput) {
 export type SessionProviderUsage = ReturnType<typeof useSessionProviderUsage>;
 
 /** The gauge with its read outcome: a failed first read is never the same as no quota. */
-export type SessionProviderUsageGaugeRead = Pick<SessionProviderUsage, 'gauge' | 'quotaReadFailed' | 'quotaRefreshFailedAsOf'>;
+export type SessionProviderUsageGaugeRead = Pick<SessionProviderUsage, 'gauge' | 'quotaReadFailed' | 'quotaRefreshFailedAsOf' | 'retryQuotaRead'>;
 
 /**
  * The Session's provider usage gauge for surfaces outside its composer (the
@@ -433,11 +443,11 @@ export function useSessionProviderUsageGauge(
     readSessionModelSelectionForComposer(ownerMetadata, session.composerOptionsInput)?.ref.modelId ??
     composerOptionsInput?.modelSelectionIntentV1?.selection?.modelId ??
     composerSubject.modelMode;
-  const { gauge, quotaReadFailed, quotaRefreshFailedAsOf } = useSessionProviderUsage({
+  const { gauge, quotaReadFailed, quotaRefreshFailedAsOf, retryQuotaRead } = useSessionProviderUsage({
     session,
     serverId,
     agentId: composerSubject.agentId,
     activeModelId,
   });
-  return { gauge, quotaReadFailed, quotaRefreshFailedAsOf };
+  return { gauge, quotaReadFailed, quotaRefreshFailedAsOf, retryQuotaRead };
 }

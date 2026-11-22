@@ -689,10 +689,16 @@ describe('Work and Coach widget bodies', () => {
     expect(screen.findHostByTestId('coach.finding.context_bloat.trend')).toBeTruthy();
     expect(screen.findAllByType(ChartDatum).find(node => node.props.testID === 'coach.finding.context_bloat.meta.detail')?.props.datum.value).toContain('3,001');
     expect(screen.findAllByType(ChartDatum).find(node => node.props.testID === 'coach.finding.context_bloat.estimate.detail')?.props.datum.value).toContain('USD 1.23456');
-    // The spark's caption says it is the latest sample, not the finding's headline figure.
-    expect(screen.getTextContent()).toContain(t('usage.board.coach.latestSample', { value: '' }).trim());
-    // ...and says when that sample was taken, so a latest 0 beside a larger headline reads as a later moment.
-    expect(screen.getTextContent()).toContain(formatUsageObservedAt(50));
+    // The spark's caption names its largest sample and when it was taken, never a trailing zero as "Latest"
+    // (acceptance 11-21 #12).
+    expect(screen.getTextContent()).toContain(t('usage.board.coach.peakSample', { value: '' }).trim());
+    expect(screen.getTextContent()).toContain(formatUsageObservedAt(30));
+    expect(screen.getTextContent()).not.toContain(t('usage.board.coach.peakSample', { value: `0 ${t('usage.board.coach.metric_context_window_tokens')}` }));
+    // A finding without an estimate leaves its impact column empty, never an unlabeled dash beside the menu.
+    const unpriced = await renderScreen(wide(evaluation));
+    expect(unpriced.findHostByTestId('coach.finding.context_bloat.trend')).toBeTruthy();
+    expect(unpriced.findHostByTestId('coach.finding.context_bloat.impact')).toBeTruthy();
+    expect(unpriced.findHostByTestId('coach.finding.context_bloat.impact')!.findAll(node => node.children.includes('—'))).toHaveLength(0);
     // Before the frame measures it, a full-width Coach already draws its wide row (trend in place): the row never
     // settles 10 px when the measurement lands (R141).
     const unmeasured = await renderScreen(<WidgetPresentationProvider value={{ size: 'large',
@@ -889,7 +895,14 @@ describe('Work and Coach widget bodies', () => {
     expect(text).not.toContain('b'.repeat(40));
     expect(screen.findByTestId('value.autopsy.summary')).toBeTruthy();
     expect(screen.findByTestId('value.autopsy.turns')).toBeTruthy();
-    expect(screen.findByTestId('value.autopsy.costTimeline')).toBeTruthy();
+    // One fact, one answer: the Turns figure counts the recorded turn the list shows, and says once that some usage
+    // has none, never "Not recorded" above a "Turn 1" row (acceptance 11-21 #15).
+    const turnsFact = screen.findAllByType(HappierDataMetric).find(node => node.props.label === t('usage.board.work.turns'));
+    expect(turnsFact?.props.value).toBe(1);
+    expect(turnsFact?.props.caption).toBe(t('usage.board.work.turnsUnrecordedPart'));
+    // Both priced moments share one instant: there is no line to draw, so the section is one quiet line, not an empty plot.
+    expect(screen.findByTestId('value.autopsy.costTimeline')).toBeNull();
+    expect(screen.findByTestId('value.autopsy.costTimeline.single')).toBeTruthy();
     expect(screen.findByTestId('value.autopsy.phases-select-checkpoint:' + 'a'.repeat(40))).toBeNull();
     expect(screen.findByTestId('value.autopsy.phases-select-commit:' + 'b'.repeat(40))).toBeNull();
     expect(text).toContain('Compaction');
@@ -1146,12 +1159,27 @@ describe('Work and Coach widget bodies', () => {
     expect(costFact(screen)?.props.value).toBe('—');
     expect(String(costFact(screen)?.props.caption ?? '')).not.toBe('');
     expect(screen.findByTestId('value.autopsy.costTimeline')).toBeNull();
+    expect(screen.findByTestId('value.autopsy.costTimeline.single')).toBeNull();
     // Contrast: the same Session with a reported price keeps its amount.
     const priced = { reportedUsd: 3, estimatedUsd: 0, currency: 'USD' };
     await screen.update(<UsageSessionValueWidget {...props} query={sessionQuery}
       slice={sessionSlice(priced, rows.map(row => ({ ...row, cost: { ...priced, costSource: 'provider_reported' as const } })))}
       id="usage_session_value" testID="value" />);
     expect(typeof costFact(screen)?.props.value).toBe('number');
+    // Priced moments at two instants draw the line.
+    await screen.update(<UsageSessionValueWidget {...props} query={sessionQuery}
+      slice={sessionSlice(priced, rows.map((row, index) => ({ ...row, observedAtMs: 1 + index * 60_000,
+        cost: { ...priced, costSource: 'provider_reported' as const } })))}
+      id="usage_session_value" testID="value" />);
+    expect(screen.findByTestId('value.autopsy.costTimeline')).toBeTruthy();
+    expect(screen.findByTestId('value.autopsy.costTimeline.single')).toBeNull();
+    // A later row that adds no price leaves the running cost flat: one quiet line, not a flat plot (live 11-22).
+    await screen.update(<UsageSessionValueWidget {...props} query={sessionQuery}
+      slice={sessionSlice(priced, rows.map((row, index) => ({ ...row, observedAtMs: 1 + index * 60_000,
+        cost: index === 0 ? { ...priced, costSource: 'provider_reported' as const } : unknownCost })))}
+      id="usage_session_value" testID="value" />);
+    expect(screen.findByTestId('value.autopsy.costTimeline')).toBeNull();
+    expect(screen.findByTestId('value.autopsy.costTimeline.single')).toBeTruthy();
   });
   it('does not substitute an earlier quota reset for unused capacity at a later subscription end', async () => {
     const now = Date.UTC(2026, 9, 10, 12);

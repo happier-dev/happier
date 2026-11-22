@@ -16,7 +16,8 @@ vi.mock('@/components/navigation/shell/sidebarFooter/SessionUsagePopoverContent'
     SessionUsagePopoverContent: () => null,
 }));
 
-const { QuotaRingInstrument } = await import('./QuotaRingInstrument');
+const { QuotaRingInstrument, QuotaRingUnavailable } = await import('./QuotaRingInstrument');
+const { t } = await import('@/text');
 const { motionTokens } = await import('@/components/ui/motion');
 type ViewModel = import('@/sync/domains/connectedServices/connectedServiceQuotaGauge').ConnectedServiceQuotaGaugeViewModel;
 
@@ -116,6 +117,18 @@ describe('QuotaRingInstrument', () => {
         await renderRing({ viewModel: pinnedViewModel, showLabels: true });
         expect(text('session-instrument-quota-meter-label')).toBe('5-hour');
         expect(text('session-instrument-quota-meter-label:seven_day')).toBe('Weekly');
+    });
+
+    it('draws a failed first read as the strip\'s unknown ring (track and dot) that says it could not read, and retries on press', async () => {
+        const onRetry = vi.fn();
+        await act(async () => { root.render(<QuotaRingUnavailable onRetry={onRetry} />); });
+        const ring = container.querySelector<HTMLElement>('[data-testid="session-instrument-quota-ring"]')!;
+        // The Companion's words, never an empty ring a person can mistake for the context gauge at session start.
+        expect(container.querySelector('[data-testid="session-instrument-quota-ring-value"]')?.textContent).toBe(t('usage.board.page.readFailedTitle'));
+        expect(container.querySelector('[data-testid="session-instrument-quota-ring-arc"]')).not.toBeNull();
+        expect(ring.getAttribute('aria-label')).toContain(t('usage.board.page.readFailedTitle'));
+        await act(async () => { ring.click(); });
+        expect(onRetry).toHaveBeenCalledTimes(1);
     });
 
     it('previews after the pointer rests on the ring, not while it passes over it', async () => {

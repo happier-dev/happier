@@ -45,6 +45,16 @@ export const CODEX_UI_DESCRIPTOR = Object.freeze({
         }
       },
       {
+        sourceId: 'codex-app-server-response-usage',
+        title: {
+          key: 'usage.board.page.sourceAccountingAgent',
+          fallback: 'usage · {agent}',
+          params: {
+            agent: 'Codex'
+          }
+        }
+      },
+      {
         sourceId: 'codex-native-accounting',
         title: {
           key: 'usage.board.page.sourceAccountingAgent',

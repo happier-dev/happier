@@ -70,11 +70,14 @@ const arrangements: Readonly<Record<UsageWidgetPresetId, readonly Arrangement[]>
         w('usage_constellation', 'full'), w('usage_outcomes', 'full', { style: 'shipped' })] }],
 };
 
-/** One Session's usage is its own question (why did it cost this): the autopsy, then what shaped it. */
+/**
+ * One Session's usage is its own question (why did it cost this): the autopsy, then what shaped it. Efficiency is not
+ * mounted: its per-merged-PR and kept-change ratios are per period, and one Session has none (acceptance 11-21 #15).
+ */
 export const USAGE_SESSION_WIDGET_PRESET_ID = 'session';
 export const USAGE_SESSION_WIDGET_AREA = 'session';
 const sessionArrangement: Arrangement = { width: 'full', widgets: [w('usage_session_value', 'large'),
-    w('usage_breakdowns', 'medium', { breakdown: ['model'] }), w('usage_efficiency', 'medium')] };
+    w('usage_breakdowns', 'full', { breakdown: ['model'] })] };
 
 function usageFragment(name: string, arrangement: Arrangement, overrideMetric?: UsageQuery['metric']): WidgetLayoutFragmentDraftV1 {
     const group: WidgetLayoutFragmentGroupV1 = {

@@ -53,8 +53,8 @@ const MIX_SEGMENT_TRIGGER_STYLE = { flex: 1 } as const;
 
 /** Below this width the mix is the dot waffle (lab `kitcharts`: "waffle on tile and phone"). */
 const WAFFLE_BELOW_PX = 360;
-/** From this width the four figures share one row (a full-width band); narrower, they pair up two a row. */
-const FOUR_ACROSS_FROM_PX = 720;
+/** From this width the figures share one row (a full-width band); narrower, they pair up two a row. */
+const ALL_ACROSS_FROM_PX = 720;
 
 /**
  * "Efficiency": cache hit rate and cost per million tokens beside the token mix they come from.
@@ -80,7 +80,7 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
     presentation?.footprint.width === 'compact' ||
     (presentation?.geometry?.width ?? Number.POSITIVE_INFINITY) <
       WAFFLE_BELOW_PX;
-  const cellStyle = !phone && (presentation?.geometry?.width ?? 0) >= FOUR_ACROSS_FROM_PX
+  const cellStyle = !phone && (presentation?.geometry?.width ?? 0) >= ALL_ACROSS_FROM_PX
     ? styles.cellInRow
     : styles.cell;
   if (!view) {
@@ -137,7 +137,8 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
     || !cacheCaption.includes(formatHappierDataValue(view.cacheSavings?.cacheSavingsUsd ?? efficiency.cachedReadTokens!, getPreferredLanguage())));
   return (
     <View style={styles.body} testID={`${props.testID}.efficiency`}>
-      {/* The lab's four figures keep their slots: an unknown is a quiet dash with its reason beneath. */}
+      {/* The figures keep their slots: an unknown is a quiet dash with its reason beneath. A figure with no producer
+          (work that kept no change) is not drawn until its fact exists (acceptance follow-up #22). */}
       <View style={styles.grid}>
         <View style={cellStyle}>
           {cacheHidden && exactCacheRate ? <ChartDatum testID={`${props.testID}.cacheHit.detail`}
@@ -190,17 +191,6 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
                   ? t('usage.board.page.noneLinkedByEvidence')
                   : t('usage.board.page.linkedByEvidence')
             }
-          />
-        </View>
-        <View style={cellStyle}>
-          <HappierDataMetric
-            testID={`${props.testID}.noKeptChange`}
-            theme={chartTheme}
-            size="stat"
-            showLabel
-            label={t('usage.board.page.noKeptChange')}
-            value={unknownFigure}
-            caption={t('usage.board.page.notMeasuredYet')}
           />
         </View>
       </View>

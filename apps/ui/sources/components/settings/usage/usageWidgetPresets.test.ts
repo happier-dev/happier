@@ -31,7 +31,8 @@ describe('Usage host fragment presets', () => {
         const presets = createUsageSessionWidgetPresets('Session').map(preset => WidgetAreaPresetV1Schema.parse(preset));
         expect(presets.map(preset => preset.id)).toEqual(['session']);
         const widgets = flattenWidgetLayoutWidgetsV1(presets[0]!.items).map(row => row.instance.definition);
-        expect(widgets).toEqual([{ kind: 'builtin', id: 'usage_session_value' }, { kind: 'builtin', id: 'usage_breakdowns' }, { kind: 'builtin', id: 'usage_efficiency' }]);
+        // Efficiency's ratios (per merged PR, kept change) are per period: one Session has none (acceptance 11-21 #15).
+        expect(widgets).toEqual([{ kind: 'builtin', id: 'usage_session_value' }, { kind: 'builtin', id: 'usage_breakdowns' }]);
     });
     it('initializes legacy Overview presentation without overwriting other host presets', () => {
         const presets = createUsageWidgetPresets(names, { initialMetric: 'cost' }).map(preset => WidgetAreaPresetV1Schema.parse(preset));

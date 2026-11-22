@@ -24,6 +24,7 @@ import {
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import type { Session } from '@/sync/domains/state/storageTypes';
 
+import { Item } from '@/components/ui/lists/Item';
 import { UsageGlance } from './UsageGlance';
 
 /** A Codex Session whose launch bound the connected `openai-codex/work` profile. */
@@ -116,6 +117,14 @@ describe('UsageGlance', () => {
     expect(quota).not.toBeNull();
     expect(screen.getTextContent()).not.toContain('%');
     expect(screen.findByTestId('usage.asOf')).toBeNull();
+    // It says the read failed (the composer ring's words too) in the row's caption and offers the owner's next
+    // read, never a bare trailing "Unavailable" that reads as "no quota here" (acceptance follow-up #18).
+    expect(screen.findByTestId('usage.quota.reason')).not.toBeNull();
+    expect(screen.findAllByType(Item).find(row => row.props.testID === 'usage.quota')?.props.detail).toBeUndefined();
+    const reads = boundary.plainRead.mock.calls.length + boundary.refreshRead.mock.calls.length;
+    await screen.pressByTestIdAsync('usage.quota.retry');
+    await flushHookEffects({ cycles: 12, turns: 12 });
+    expect(boundary.plainRead.mock.calls.length + boundary.refreshRead.mock.calls.length).toBeGreaterThan(reads);
     await screen.unmount();
   });
 
@@ -148,8 +157,10 @@ describe('UsageGlance', () => {
     await flushHookEffects({ cycles: 12, turns: 12 });
 
     expect(screen.getTextContent()).toContain('60%');
-    expect(screen.findByTestId('usage.asOf')).not.toBeNull();
-    expect(screen.findByTestId('usage.stale')).not.toBeNull();
+    // The refresh failure sits in the row's own caption beside its as-of, with Retry; no separate tile.
+    expect(screen.findByTestId('usage.quota.reason')).not.toBeNull();
+    expect(screen.findByTestId('usage.quota.retry')).not.toBeNull();
+    expect(screen.findByTestId('usage.stale')).toBeNull();
     await refresher.unmount();
     await screen.unmount();
   });

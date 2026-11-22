@@ -858,9 +858,9 @@ describe('one selected money basis across Usage bodies', () => {
     const screen = await renderControls(<UsageBreakdownsWidget query={query} slice={slice} model={model} serverId="home" id="usage_breakdowns" testID="qa-machines" />);
     expect(screen.findByType(RankedRows).props.rows).toHaveLength(6);
     // The folded list has one disclosure; the omitted-source count appears once its available rows are open.
-    expect(screen.findByType(UsageShowAllRows).props).toMatchObject({ total: 20, hidden: 14, complete: false,
-      unlisted: null });
-    expect(screen.getTextContent()).toContain(`${t('usage.showAvailable')} · 20`);
+    expect(screen.findByType(UsageShowAllRows).props).toMatchObject({ total: 20, hidden: 14, unlisted: null });
+    // One word for the one control: a partial list still says Show all; what is missing is said once it opens.
+    expect(screen.getTextContent()).toContain(`${t('usage.showAll')} · 20`);
     expect(screen.getTextContent()).not.toContain(t('usage.board.page.moreRows', { count: 3 }));
     await screen.pressByTestIdAsync('qa-machines.machine.more.toggle');
     expect(screen.findByType(RankedRows).props.rows).toHaveLength(20);
@@ -907,15 +907,14 @@ describe('one selected money basis across Usage bodies', () => {
     expect(screen.findAllByType(HappierDataMetric).find(metric => metric.props.testID === 'efficiency.perMtok')?.props.comparison)
       .toMatchObject({ value: previousTokens === 23 ? '▼ 8%' : '▲ 228×', meaning: previousTokens === 23 ? 'good' : 'bad' });
   });
-  it('keeps all four efficiency figures in their slots, an unknown one a quiet dash with its reason, never a bold word', async () => {
+  it('keeps its efficiency figures in their slots, an unknown one a quiet dash with its reason, never a bold word', async () => {
     const props = mountedCosts();
     const screen = await renderScreen(<UsageEfficiencyWidget {...props} id="usage_efficiency" testID="efficiency" />);
     const metrics = screen.findAllByType(HappierDataMetric).filter(metric => String(metric.props.testID).startsWith('efficiency.'));
-    expect(metrics.map(metric => metric.props.testID)).toEqual(['efficiency.cacheHit', 'efficiency.perMtok', 'efficiency.perMergedPr', 'efficiency.noKeptChange']);
-    // No merged PR is linked in this slice, and nothing measures work that kept no change.
+    // No figure that can never have a value: "No kept change" has no producer yet (acceptance follow-up #22).
+    expect(metrics.map(metric => metric.props.testID)).toEqual(['efficiency.cacheHit', 'efficiency.perMtok', 'efficiency.perMergedPr']);
     expect(metrics.slice(2).map(metric => [metric.props.value, metric.props.caption]))
-      .toEqual([['—', t('usage.board.page.notMeasuredYet')],
-        ['—', t('usage.board.page.notMeasuredYet')]]);
+      .toEqual([['—', t('usage.board.page.notMeasuredYet')]]);
   });
   it('uses the common reported basis rather than mixing one invoice with another reported charge', async () => {
     const props = mountedCosts();

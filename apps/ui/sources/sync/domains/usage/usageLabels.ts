@@ -61,9 +61,10 @@ export function usageSourceTitle(source: string, fallback?: string, presentation
     const declared = readDeclaredAccountingSource(source);
     if (declared) {
         if (providedTitle) return providedTitle;
+        // Coverage lists one row per Agent with how its usage is known; the capture's own name stays its detail.
+        if (presentation === 'coverage') return usageAgentTitle(declared.agentId);
         const { title, translatedTitle } = declared.declaration;
         if (typeof title === 'string') return title;
-        if (presentation === 'coverage' && title.key === 'usage.board.page.sourceAccountingAgent') return usageAgentTitle(declared.agentId);
         if (translatedTitle) return resolvePluginLocalizedStringV2Text(title, translatedTitle);
         const translation = getTranslationValue(title.key);
         return resolvePluginLocalizedStringV2Text(title, typeof translation === 'string' ? translation : undefined);

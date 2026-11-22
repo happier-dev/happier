@@ -24,7 +24,7 @@ import { getContextWarning } from '../contextWarning';
 import { resolveContextWarningWindowTokens } from '../resolveContextWarningWindowTokens';
 import { ContextGaugeInstrument } from './ContextGaugeInstrument';
 import { GitDeltaInstrument } from './GitDeltaInstrument';
-import { QuotaRingInstrument } from './QuotaRingInstrument';
+import { QuotaRingInstrument, QuotaRingUnavailable } from './QuotaRingInstrument';
 import { GuardCountdown } from '@/components/machines/guard/GuardCountdown';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 
@@ -92,6 +92,11 @@ export type SessionInstrumentStripQuota = Readonly<{
     viewModel: ConnectedServiceQuotaGaugeViewModel;
     onRecoveryCreditPress?: () => void;
     recoveryCreditPending?: boolean;
+}> | Readonly<{
+    /** The first quota read failed (the usage owner's `quotaReadFailed`): never drawn as "no quota". */
+    readFailed: true;
+    /** The owner's next read, where it has one. */
+    onRetry?: (() => void) | null;
 }>;
 
 export type SessionInstrumentStripProps = Readonly<{
@@ -283,7 +288,9 @@ export const SessionInstrumentStrip = React.memo(function SessionInstrumentStrip
                 ),
             });
         }
-        if (showQuota && props.quota) {
+        if (showQuota && props.quota && 'readFailed' in props.quota) {
+            instruments.push({ yields: false, node: <QuotaRingUnavailable key="quota" onRetry={props.quota.onRetry} /> });
+        } else if (showQuota && props.quota) {
             instruments.push({
                 yields: false,
                 node: (

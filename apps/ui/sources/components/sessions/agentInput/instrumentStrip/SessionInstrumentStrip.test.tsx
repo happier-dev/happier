@@ -55,6 +55,7 @@ vi.mock('./ContextGaugeInstrument', () => ({
 vi.mock('./QuotaRingInstrument', () => ({
     QuotaRingInstrument: (props: { showProviderGlyph: boolean }) =>
         React.createElement('QuotaRingInstrument', { testID: 'quota', 'data-glyph': props.showProviderGlyph }),
+    QuotaRingUnavailable: () => React.createElement('QuotaRingUnavailable', { testID: 'quota-unavailable' }),
 }));
 vi.mock('./GitDeltaInstrument', () => ({
     GitDeltaInstrument: (props: { compact: boolean }) =>
@@ -126,6 +127,15 @@ describe('SessionInstrumentStrip', () => {
         act(() => { tree = create(<SessionInstrumentStrip sessionId="s1" agentId={'claude' as never} />); });
         layout(tree!, 420);
         expect(tree!.root.findAll((n) => n.props?.testID === 'ctx')).toHaveLength(1);
+    });
+
+    it('tells a failed first quota read apart from no quota: the ring says it is unavailable', () => {
+        act(() => { tree = create(<SessionInstrumentStrip sessionId="s1" agentId={'claude' as never} quota={{ readFailed: true }} />); });
+        layout(tree!, 420);
+        expect(tree!.root.findAll((n) => n.props?.testID === 'quota-unavailable')).toHaveLength(1);
+        expect(tree!.root.findAll((n) => n.props?.testID === 'quota')).toHaveLength(0);
+        act(() => { tree!.update(<SessionInstrumentStrip sessionId="s1" agentId={'claude' as never} quota={null} />); });
+        expect(tree!.root.findAll((n) => n.props?.testID === 'quota-unavailable')).toHaveLength(0);
     });
 
     it('renders a host trailing action even when the strip has no other status content', () => {

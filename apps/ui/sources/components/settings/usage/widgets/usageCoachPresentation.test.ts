@@ -38,3 +38,23 @@ it('lets canonical snooze expiry and external restore govern mounted finding row
   const restored = { ...dismissed, state: { ...dismissed.state, dismissed: false } };
   expect(projectUsageCoachFindings([restored], mounted, 10001).visible.map(row => row.evidenceKey)).toEqual([evidenceKey]);
 });
+
+it('folds a dense Coach trend into a readable sparkline that keeps every peak and names the largest sample', async () => {
+  const { projectUsageCoachTrend } = await import('./usageCoachPresentation');
+  // A context-growth sawtooth: hundreds of requests, each run climbing then resetting (acceptance 11-21 #12).
+  const points = Array.from({ length: 600 }, (_, index) => ({ evidenceId: `r${index}`, observedAtMs: index * 1000,
+    value: (index % 40) * 1000 + (index === 333 ? 90_000 : 0) }));
+  const trend = projectUsageCoachTrend({ metric: 'context_window_tokens', unit: 'tokens', points }, 36)!;
+  expect(trend.points.length).toBeLessThanOrEqual(36);
+  expect(trend.points.length).toBeGreaterThan(1);
+  expect(trend.points.map(point => point.x)).toEqual([...trend.points.map(point => point.x)].sort((a, b) => a - b));
+  // The spike survives the fold, and it, not the last sample, is the one figure under the line.
+  expect(Math.max(...trend.points.map(point => point.y))).toBe(103_000);
+  expect(trend.peak).toEqual({ value: 103_000, observedAtMs: 333_000 });
+  // A last sample of zero is never the caption ("Latest: 0 s waited").
+  const waits = projectUsageCoachTrend({ metric: 'permission_wait', unit: 'milliseconds', points: [
+    { evidenceId: 'a', observedAtMs: 0, value: 4000 }, { evidenceId: 'b', observedAtMs: 10, value: 0 }] }, 36)!;
+  expect(waits.peak.value).toBe(4000);
+  // One sample is an observation, not a trend.
+  expect(projectUsageCoachTrend({ metric: 'permission_wait', unit: 'milliseconds', points: [points[0]!] }, 36)).toBeNull();
+});

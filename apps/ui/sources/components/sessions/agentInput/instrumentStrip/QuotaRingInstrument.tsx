@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useSharedValue } from 'react-native-reanimated';
+import { GaugeRing } from '@/components/instrument/gauge/GaugeRing';
 
 import { SessionUsagePopoverContent } from '@/components/navigation/shell/sidebarFooter/SessionUsagePopoverContent';
 import { RAIL_POPOVER_WIDE_WIDTH_PX } from '@/components/navigation/shell/sidebarFooter/sidebarFooterLayout';
@@ -149,6 +151,43 @@ export const QuotaRingInstrument = React.memo(function QuotaRingInstrument(props
         </>
     );
 });
+
+/**
+ * The ring when the Session's first quota read failed (the one owner, `useSessionProviderUsage().quotaReadFailed`,
+ * decides it; the Session Companion says the same words): the strip's unknown ring, the context gauge's stale form
+ * (track and a dot, no fill), so it is never an empty ring a person can mistake for the context gauge at session
+ * start. The words are quiet ink (nothing needs the person here); a press is the owner's next read, where it has one.
+ */
+export function QuotaRingUnavailable(props: Readonly<{ onRetry?: (() => void) | null }>) {
+    const { theme } = useUnistyles();
+    const hitReach = useInstrumentStripHitReach();
+    const fillPct = useSharedValue(0);
+    const strokeColor = useSharedValue(theme.colors.text.tertiary);
+    const label = t('agentInput.providerUsage.accessibilityLabel', { value: t('usage.board.page.readFailedTitle') });
+    const body = (
+        <View style={quotaStyles.ring}>
+            <GaugeRing fillPct={fillPct} strokeColor={strokeColor} size={16} trackColor={theme.colors.border.default}
+                stale staleDotColor={theme.colors.text.tertiary} testID="session-instrument-quota-ring-arc" />
+            <Text testID="session-instrument-quota-ring-value" style={[instrumentStripStyles.instrumentValueText, { color: theme.colors.text.tertiary }]}
+                numberOfLines={1}>
+                {t('usage.board.page.readFailedTitle')}
+            </Text>
+        </View>
+    );
+    return (
+        <View style={quotaStyles.trigger}>
+            {props.onRetry ? (
+                <HappierPressable testID="session-instrument-quota-ring" accessibilityRole="button"
+                    accessibilityLabel={`${label}, ${t('common.retry')}`} onPress={props.onRetry} hitReach={hitReach}
+                    style={({ pressed }) => (pressed ? quotaStyles.triggerPressed : null)}>
+                    {body}
+                </HappierPressable>
+            ) : (
+                <View testID="session-instrument-quota-ring" accessible accessibilityLabel={label}>{body}</View>
+            )}
+        </View>
+    );
+}
 
 const quotaStyles = StyleSheet.create((theme) => ({
     trigger: {

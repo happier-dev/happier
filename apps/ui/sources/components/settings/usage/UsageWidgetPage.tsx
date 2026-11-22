@@ -690,9 +690,9 @@ function UsagePageHeader(
       <SurfaceFreshnessOnSheetProvider>
         <View style={styles.headerLine}>
         <SurfaceFreshnessLine
-          // A phone's short form is a line, never an ellipsis: its date (and "older reading") and the short word share one
-          // line when they fit and stack when they do not, so nothing is cut before Details and Retry (#9).
-          presentation={shortened || expanded ? 'line' : 'inline'}
+          // A phone's notice is a line, never an ellipsis: its date (and "older reading") and the words share one
+          // line when they fit and stack when they do not, so nothing is cut before Details and Retry (#9, 11-21 #17).
+          presentation={phone || expanded ? 'line' : 'inline'}
           {...(expanded ? { glyph: 'clock' as const } : {})}
           testID={testID}
           asOf={props.facts.failure?.retainedQuotaAsOfMs ?? props.facts.observedAtMs}

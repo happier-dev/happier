@@ -58,7 +58,7 @@ import {
   type UsageCoachController,
   type UsageCoachSnapshot,
 } from './usageCoachController';
-import { projectUsageCoachFindings, readUsageCoachFailureMessage, readUsageCoachState } from './usageCoachPresentation';
+import { projectUsageCoachFindings, projectUsageCoachTrend, readUsageCoachFailureMessage, readUsageCoachState } from './usageCoachPresentation';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useUsageDisclosureCommand } from './usageMountedControls';
 
@@ -137,31 +137,33 @@ function measurementHidesPrecision(measurement: UsageCoachFinding['measurements'
   return !formatMeasurement(measurement).includes(formatHappierDataValue(value, getPreferredLanguage()));
 }
 
+/** One point per 5 px of the 180 px trend column: a dense series reads as its envelope, not a solid block. */
+const TREND_POINTS = 36;
+
 /**
- * The finding's own measured samples (lab d2coach-A mini chart): its first series as a quiet line with the
- * latest value under it. A single sample is one observation, not a trend, so it draws nothing here.
+ * The finding's own measured samples (lab d2coach-A mini chart): its first series as a quiet line with its
+ * largest sample under it (acceptance 11-21 #12). A single sample is one observation, not a trend, so it draws nothing.
  */
 function UsageCoachFindingTrend(props: Readonly<{ finding: UsageCoachFinding; testID: string }>) {
   const chartTheme = useUsagePluginTheme();
   const { theme } = useUnistyles();
   const metrics = usePageRowMetrics('standard');
   const sample = props.finding.evidenceSeries?.find(entry => entry.points.length > 1);
-  if (!sample) return null;
-  const last = sample.points[sample.points.length - 1]!;
-  // The headline measurement is the finding's own figure; this line is the series' latest sample, which may differ.
-  // Dated, so a latest reading of 0 beside a headline of 56.3k reads as a later moment, not a contradiction.
-  // The value and its moment take a line each: one ragged wrap through the date read as noise in this narrow column.
-  const latest = t('usage.board.coach.latestSample', { value: formatMeasurement({ ...sample, value: last.value }) });
-  const observedAt = formatUsageObservedAt(last.observedAtMs);
-  const caption = `${latest} · ${observedAt}`;
+  const trend = React.useMemo(() => sample ? projectUsageCoachTrend(sample, TREND_POINTS) : null, [sample]);
+  if (!sample || !trend) return null;
+  // The headline measurement is the finding's own figure; this line names the series' peak and when it was seen.
+  // The value and its moment take a line each, and the value wraps rather than truncate in this narrow column.
+  const peak = t('usage.board.coach.peakSample', { value: formatMeasurement({ ...sample, value: trend.peak.value }) });
+  const observedAt = formatUsageObservedAt(trend.peak.observedAtMs);
+  const caption = `${peak} · ${observedAt}`;
+  const line = { fontSize: metrics.subtitle.fontSize, lineHeight: metrics.subtitle.lineHeight };
   return (
     <View style={styles.trend} testID={props.testID}>
       <StackedSeriesChart theme={chartTheme} variant="line" size="inline" viewportHeight={24} label={caption}
-        series={[{ id: sample.metric, label: caption, color: theme.colors.text.secondary,
-          points: sample.points.map(point => ({ id: point.evidenceId, x: point.observedAtMs, y: point.value })) }]} />
+        series={[{ id: sample.metric, label: caption, color: theme.colors.text.secondary, points: trend.points }]} />
       <View accessible accessibilityLabel={caption}>
-        <Text style={[styles.quiet, { fontSize: metrics.subtitle.fontSize, lineHeight: metrics.subtitle.lineHeight }]} numberOfLines={1}>{latest}</Text>
-        <Text style={[styles.quiet, { fontSize: metrics.subtitle.fontSize, lineHeight: metrics.subtitle.lineHeight }]} numberOfLines={1}>{observedAt}</Text>
+        <Text style={[styles.quiet, line]} numberOfLines={2}>{peak}</Text>
+        <Text style={[styles.quiet, line]} numberOfLines={1}>{observedAt}</Text>
       </View>
     </View>
   );
@@ -799,11 +801,12 @@ const UsageCoachFindingRow = React.memo(function UsageCoachFindingRow(
       </View>
       {/* Wide rows read across: what was found · what was measured · what it costs · what to do (lab d2coach-A). */}
       {wide ? <UsageCoachFindingTrend finding={finding} testID={`${props.testID}.trend`} /> : null}
-      {wide ? <View style={styles.impact}>
+      {/* Without an estimate the column stays empty (it keeps the row's columns aligned): no unlabeled dash. */}
+      {wide ? <View style={styles.impact} testID={`${props.testID}.impact`}>
         {estimate && estimateValue ? <>
           {withEstimateDetail(<Text style={[styles.impactValue, text('title')]}>{estimateValue}</Text>)}
           <Text style={[styles.quiet, text('subtitle')]} numberOfLines={2}>{t(`usage.board.coach.method_${estimate.method}`)}</Text>
-        </> : <Text style={[styles.quiet, text('subtitle')]}>—</Text>}
+        </> : null}
       </View> : null}
       {wide ? <View style={styles.actionsSide}>{action}</View> : null}
       {controller ? (

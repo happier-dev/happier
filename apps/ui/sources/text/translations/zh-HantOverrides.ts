@@ -13950,7 +13950,6 @@ settingsSession: {
             other: "其他",
         },
         showAll: '顯示全部',
-        showAvailable: '顯示可用項',
         showLess: '收合',
         exportCsv: '下載 CSV',
         efficiency: {

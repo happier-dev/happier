@@ -1105,17 +1105,19 @@ const SETTLED_QUIET_LINE_PX = 18;
  * The one footer under a led list (Projections, Breakdowns, Session value, How you work): the shared plugin-ui
  * overflow footer with Usage's words, plus the page's local command. `unlisted` is what the list cannot show
  * ("+10 windows not reported"), said once beside the toggle. Draws nothing when there is nothing to fold or report.
+ * Its toggle is always "Show all · N": a partial list says what is missing through `unlisted`, never through a
+ * second word for the same control ("Show available" beside a chart's "Show all", acceptance 11-21 #17).
  */
 export function UsageShowAllRows(props: Readonly<{
-  label: string; total: number; hidden: number; complete?: boolean; expanded: boolean; onToggle: () => void;
+  label: string; total: number; hidden: number; expanded: boolean; onToggle: () => void;
   unlisted?: string | null; testID: string;
 }>) {
   const theme = useUsagePluginTheme();
   const toggle = useUsageDisclosureCommand(props.label, props.expanded, props.onToggle, props.hidden > 0 || props.expanded);
   return (
     <HappierListOverflowFooter theme={theme} label={props.label} total={props.total} hidden={props.hidden}
-      expanded={props.expanded} onToggle={toggle} complete={props.complete} unlisted={props.unlisted ?? null}
-      labels={{ showAll: t('usage.showAll'), showAvailable: t('usage.showAvailable'), showLess: t('usage.showLess') }}
+      expanded={props.expanded} onToggle={toggle} unlisted={props.unlisted ?? null}
+      labels={{ showAll: t('usage.showAll'), showLess: t('usage.showLess') }}
       testID={props.testID} />
   );
 }

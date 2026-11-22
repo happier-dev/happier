@@ -134,7 +134,8 @@ export function UsagePlanFitWidget(props: UsageBodyProps) {
   // The pace these rows are read against is set here: the one route from a plan's value to its target.
   const paceTargetLink = tile ? null : <Item testID={`${props.testID}.paceTarget`} title={t('usage.board.plans.paceTargetLink')}
     subtitle={t('usage.board.plans.paceTargetLinkSubtitle')}
-    icon={<Icon name="speedometer" size={ICON_SIZE.md} color={appTheme.colors.text.secondary} />}
+    // A plain line glyph like the rows around it: the speedometer glyph draws its own rounded frame (a tile).
+    icon={<Icon name="timer" size={ICON_SIZE.md} color={appTheme.colors.text.secondary} />}
     onPress={() => router.push(SETTINGS_ROUTES.sessionProviderLimits as Parameters<typeof router.push>[0])} />;
   // Plan fit answers "what does each plan cost"; while no plan has a price, a row per plan only repeats that it has
   // none (nine rows on a pooled Account, and again on Costs). The widget says so once and keeps every plan, with its
