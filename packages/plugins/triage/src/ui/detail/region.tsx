@@ -873,8 +873,8 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
   const sourceDescriptor = props.lastKnown === true ? null : readTriageSourceDescriptorV1(context, row.entryRef.source);
   // The header's change facts read the source's own live status offer, the value its write carries: never a second read.
   const pullRequestStatus = sourceStatus === null || sourceStatus.kind === 'unavailable' ? null : sourceStatus.value;
-  // No status offered yet: the source's read is under way (a failed read arrives as `unavailable`).
-  const statusReading = sourceStatus === null;
+  // A source need not offer live PR status. Only the detail's own pending read can hold these cells open.
+  const statusReading = sourceStatus === null && detail?.kind === 'reading';
   const detailFailed = readFailure !== undefined || detail?.kind === 'unreachable'
     || detail?.kind === 'refused' || detail?.kind === 'unavailable';
   const header = React.useMemo(() => projectTriageDetailHeaderV1({

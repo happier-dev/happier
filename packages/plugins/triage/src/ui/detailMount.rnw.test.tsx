@@ -3702,6 +3702,9 @@ describe('opening a row into the source detail', () => {
             collisionScope: 'example/repository', entryId: '532' }, sourceInstanceId: INSTANCE, includeTaskFields: true }]);
         expect(currentHarness?.readDetailInstanceIds).toEqual([INSTANCE]);
         await expect(shell.queryByText('These details are not loaded')).resolves.toBeUndefined();
+        await expect(shell.getByText('Checks')).resolves.toBeDefined();
+        await expect(shell.getByText('Reviewers')).resolves.toBeDefined();
+        expect(document.body.textContent).not.toContain('Reading…');
     });
 
     it.each([true, false])('uses list-owned source availability for a fresh off-window link (explicit: %s)', async (explicitOpen) => {
