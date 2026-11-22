@@ -89,6 +89,10 @@ import { projectExternalActionRequesterHttpAuthorization, resolveExternalActionS
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createDaemonDeploymentActionDeps } from '@/deployments/createDaemonDeploymentActionDeps';
 import { createOwnServerDeploymentRuntimeForHost } from '@/deployments/targets/ownServer/ownServerDeploymentHostRuntime';
+import { enableAppMachineTelemetryRole } from '@/deployments/targets/ownServer/appEnrollment';
+import { resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resetInMemoryAccountSettingsContextForTests } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { computeActionInputApprovalDigestV1, computeActionReviewDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { MachineRolesSetInputV1Schema } from '@happier-dev/protocol/actions/specs/machineRoles';
@@ -797,6 +801,8 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
   artifacts?: ReturnType<typeof fastify>;
   /** The key the target daemon publishes in its own E2EE content; defaults to the key Home delivers. */
   machineContentInstallationPublicKey?: Uint8Array;
+  /** Serve the full published Machine row (versioned metadata and daemon state) an own-Account reader opens. */
+  publishedMachineContent?: boolean;
 } = {}) {
   const seed = new Uint8Array(32).fill(19);
   const publicKey = ed25519.getPublicKey(seed);
@@ -824,10 +830,15 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
     }
     const resourceMode = options.custodianAccountId === 'bob' ? mode : 'plain';
     // An own E2EE Machine carries the daemon's published key in content the requester's legacy secret opens.
-    const content = resourceMode === 'e2ee' ? { storageMode: 'e2ee', metadata: createMachineContentCodec({ encryptionMode: 'e2ee',
-      encryptionKey: new Uint8Array(32).fill(23), encryptionVariant: 'legacy' }).encodeStored({ host: 'alice-host', platform: 'linux',
+    const machineContent = resourceMode === 'e2ee' ? createMachineContentCodec({ encryptionMode: 'e2ee',
+      encryptionKey: new Uint8Array(32).fill(23), encryptionVariant: 'legacy' }) : createMachineContentCodec({ encryptionMode: 'plain' });
+    const metadata = machineContent.encodeStored({ host: 'alice-host', platform: 'linux',
       happyCliVersion: '0.3.0', homeDir: '/home/alice', happyHomeDir: '/home/alice/.happier',
-      installationPublicKey: encodeBase64(options.machineContentInstallationPublicKey ?? publicKey, 'base64url') }) } : { storageMode: 'plain' };
+      installationPublicKey: encodeBase64(options.machineContentInstallationPublicKey ?? publicKey, 'base64url') });
+    const content = {
+      ...(resourceMode === 'e2ee' ? { storageMode: 'e2ee', metadata } : { storageMode: 'plain' }),
+      ...(options.publishedMachineContent ? { metadata, metadataVersion: 1, daemonState: machineContent.encodeStored({ status: 'running' }), daemonStateVersion: 1 } : {}),
+    };
     const machine = { id: 'alice-machine', kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null,
       installationId: 'alice-installation', installationPublicKey: encodeBase64(publicKey), ...content,
       access: { custodian: { accountId: options.custodianAccountId ?? 'alice', displayName: 'Alice' }, role: options.machineRole ?? 'use', resourceMode, accessState: 'ready' } };
@@ -965,7 +976,7 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
       const authorization: ExternalActionExecutionAuthorizationV1 = { v: 1, token: 'exact-home-root', binding: {
         accountId: 'bob', authentication: { kind: options.authenticationKind ?? 'account', tokenEpoch: 7 }, accountEncryptionMode: mode,
         serverIdentityId: homeIdentityId, custodianAccountId: options.custodianAccountId ?? 'alice', machineId: 'alice-machine',
-        installationId: 'alice-installation', actionId, requestId: 'request-1',
+        installationId: 'alice-installation', actionId, requestId: prepared.envelope.requestId,
         target: prepared.envelope.target!, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(prepared.envelope),
         ...(prepared.envelope.v === 2 ? { machineRuntimeDemand: prepared.envelope.machineRuntimeDemand } : {}),
         ...(workspaceSync ? { workspaceSyncAdmission: {
@@ -1060,11 +1071,11 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
       installationPrivateKey: new Uint8Array([...seed, ...publicKey]) });
     if (dispatched.data.envelope.v === 2) return respond(prepareExternalActionResponseV2({ request: dispatched.data.envelope,
       binding: { serverIdentityId: homeIdentityId, accountId: 'bob', authentication: { kind: options.authenticationKind ?? 'account', tokenEpoch: 7 },
-        actionId, requestId: 'request-1', target: { kind: 'machine', machineId: 'alice-machine' } },
+        actionId, requestId: dispatched.data.envelope.requestId, target: { kind: 'machine', machineId: 'alice-machine' } },
       material: codec ?? { type: 'dataKey', machineKey: deriveAccountMachineKeyFromRecoverySecret(new Uint8Array(32).fill(23)) },
       executedMachineId: 'alice-machine', randomBytes: length => new Uint8Array(length).fill(6),
       execution }).response);
-    return respond({ v: 1, actionId, requestId: 'request-1', execution });
+    return respond({ v: 1, actionId, requestId: dispatched.data.envelope.requestId, execution });
   });
   servers.push(server);
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -1263,45 +1274,41 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
       } finally { await requester?.dispose(); await channel.close(); }
     });
   });
-  it.each(['plain', 'e2ee'] as const)('lets a nested executor call inside admitted work ride its requester disclosure to the same Machine (%s)', async mode => {
-    // F14: the collector deploy's App enrollment assigns Machine roles through a fresh CLI executor
-    // on the hosting Machine. It must ride the admitted deploy's disclosure, not ask again.
-    await withConfiguredDaemonTestHome({ prefix: 'executor-child-custody-' }, async () => {
-      const events: string[] = [];
-      const target = await home(mode, events, { originalOwnAction: 'agents.models.list' });
-      const channel = await createRequesterCurrentnessSocketHarness();
-      const credentials: StoredCredentials = { token: token(), credentialProvenance: 'stored_session',
-        encryption: mode === 'plain' ? null : { type: 'legacy', secret: new Uint8Array(32).fill(23) } };
-      const invocation = { caller: { kind: 'host' as const }, surface: 'cli' as const, authority: 'present_user' as const };
-      const source = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'already-admitted-deploy', binding: {
-        accountId: 'bob', custodianAccountId: 'alice', authentication: { kind: 'account', tokenEpoch: 7 },
-        accountEncryptionMode: mode, serverIdentityId: homeIdentityId, machineId: 'alice-machine', installationId: 'alice-installation',
-        actionId: 'agents.models.list', requestId: 'parent-request', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({
-          v: 1, requestId: 'parent-request', target: { kind: 'machine', machineId: 'alice-machine' }, input: ownMachineInput }),
-        target: { kind: 'machine', machineId: 'alice-machine' },
-      } });
-      let requester: Awaited<ReturnType<typeof admitRequesterAccountActionContext>> = null;
+  it.each(['plain', 'e2ee'] as const)('assigns the App Machine telemetry role as the requester’s own Account work inside a foreign host daemon (%s)', async mode => {
+    // F14: Alice's hosting Machine runs Bob's collector deploy; the enrolled App Machine is Bob's own.
+    // Both role calls address that Machine with Bob's credentials; neither borrows nor returns to the host.
+    await withTempDir('happier-app-machine-role-', async taskDir => {
+      const originalConfiguration = { serversDir: configuration.serversDir };
+      Object.assign(configuration, { serversDir: join(taskDir, 'servers') });
       try {
-        requester = await runWithServerHttpBaseUrl(target.url, () => admitRequesterAccountActionContext({
-          authorization: source, credentials, invocation, serverId: configuration.activeServerId, serverIdentityId: homeIdentityId,
-          serverHttpBaseUrl: target.url, isCurrent: async () => true,
-        }));
-        if (!requester) throw new Error('Expected admitted requester custody');
-        const executor = (requesterCustody?: typeof requester.authorization) => createCliActionExecutorFromCredentials({ credentials,
-          readCredentials: async () => credentials, externalActionClient: true, machineId: 'alice-machine',
-          serverId: 'home', serverApiUrl: target.url, serverIdentityId: homeIdentityId,
-          actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) },
-          ...(requesterCustody ? { requesterCustody } : {}) });
-        // Without the admitted custody this is a fresh disclosure nobody is present to confirm.
-        expect(await executor().execute('agents.models.list', ownMachineInput,
-          { surface: 'cli', authority: 'present_user', actionRequestId: 'request-0' }))
-          .toMatchObject({ ok: false, errorCode: 'requester_credential_disclosure_required' });
-        expect(events).not.toContain('dispatch');
-        const execution = await executor(requester.authorization).execute('agents.models.list', ownMachineInput,
-          { surface: 'cli', authority: 'present_user', actionRequestId: 'request-1' });
-        expect(execution, JSON.stringify(execution)).toMatchObject({ ok: true, result: ownMachineResult });
-        expect(events).toContain('dispatch');
-      } finally { await requester?.dispose(); await channel.close(); }
+        const events: string[] = [];
+        const machineReads: Array<string | undefined> = [];
+        let path: string | undefined;
+        const credentials: StoredCredentials = { token: token(), credentialProvenance: 'stored_session',
+          encryption: mode === 'plain' ? null : { type: 'legacy', secret: new Uint8Array(32).fill(23) } };
+        const target = await home(mode, events, { custodianAccountId: 'bob', machineRole: 'manage',
+          originalOwnAction: 'machines.roles.set', localDaemon: true, publishedMachineContent: true,
+          onRequestPath: value => { path = value; },
+          onRequestAuthorization: authorization => { if (path === '/v1/machines/alice-machine') machineReads.push(authorization); },
+          ownExecution: { ok: true, result: { status: 'applied', policy: { active: [DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1] }, metadataVersion: 1 } } });
+        // The host daemon's own publication: Alice's Machine and Account, on this Home.
+        const hostDir = join(configuration.serversDir, homeIdentityId);
+        await mkdir(hostDir, { recursive: true });
+        await writeFile(join(hostDir, 'daemon.state.json'), JSON.stringify({ pid: process.pid, httpPort: Number(new URL(target.url).port),
+          startedAt: Date.now(), startedWithCliVersion: 'test', machineId: 'host-machine', accountId: 'alice', controlToken: 'host-control' }));
+        // Each mode signs in the same token afresh: its Account Settings scope starts empty.
+        resetActiveAccountSettingsSnapshotForTests(); resetInMemoryAccountSettingsContextForTests();
+        await enableAppMachineTelemetryRole({ credentials, serverId: homeIdentityId, serverHttpBaseUrl: target.url,
+          machineId: 'alice-machine', context: { surface: 'cli', authority: 'present_user' } });
+        expect(machineReads.length).toBeGreaterThan(0);
+        expect(machineReads.every(authorization => authorization === `Bearer ${credentials.token}`)).toBe(true);
+        // One admission, for the Machine-placed set; the Account-placed read needs none.
+        expect(events).toEqual(['home-authorized', 'dispatch']);
+        expect(ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived()).executionAuthorization?.binding)
+          .toMatchObject({ actionId: 'machines.roles.set', accountId: 'bob', custodianAccountId: 'bob',
+            target: { kind: 'machine', machineId: 'alice-machine' } });
+        expect(terminal.prompts).toEqual([]);
+      } finally { Object.assign(configuration, originalConfiguration); }
     });
   });
 

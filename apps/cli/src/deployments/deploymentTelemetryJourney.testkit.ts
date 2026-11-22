@@ -442,7 +442,7 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                     const acceptedReader = async (name: string, input: unknown, machineId?: string) => {
                         const result = await invokeSettled(name, input, machineId);
                         expect(result.ok, JSON.stringify(result.ok ? { name, state: 'accepted' }
-                            : { name, errorCode: result.errorCode, failureCause: result.failureCause })).toBe(true);
+                            : { name, errorCode: result.errorCode, failureCause: result.failureCause, details: result.details })).toBe(true);
                         if (!result.ok) throw new Error(`${name}: ${result.errorCode}`);
                         return result.result;
                     };

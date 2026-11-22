@@ -101,28 +101,36 @@ export async function enrollOwnServerAppServices(input: EnrollmentInput, host: R
                 if (result.kind !== 'observed') throw new PluginError({ code: 'native_service_control_unconfirmed', message: 'App daemon restart was not confirmed' });
             },
         }, { native });
-        // Role assignment runs inside the admitted deploy: it rides the requester's disclosure to this
-        // same hosting Machine, never to another Machine or custodian.
-        const actions = createCliActionExecutorFromCredentials({ credentials: accountCredentials,
-            readCredentials: async () => accountCredentials, externalActionClient: true,
-            ...(requester && host.context.externalActionExecutionAuthorization
-                ? { requesterCustody: host.context.externalActionExecutionAuthorization } : {}),
-            machineId: host.machineId, serverId: host.serverId, serverIdentityId: host.serverId, serverApiUrl: host.serverHttpBaseUrl });
-        const context = { surface: host.context.surface ?? 'cli', authority: host.context.authority,
-            serverId: host.serverId, signal: input.signal };
-        const current = await actions.execute('machines.roles.get', { serverId: host.serverId, machineId: enrolled.machineId }, context);
-        if (!current.ok) throw createActionExecuteFailureError(current);
-        const roles = MachineRolesGetResultV1Schema.parse(current.result);
-        if (roles.status !== 'ready') throw new PluginError({ code: 'machine_roles_unconfirmed', message: 'App Machine role policy is unavailable' });
-        if (!roles.policy.active.includes(DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1)) {
-            const execution = await actions.execute('machines.roles.set', { serverId: host.serverId,
-                machineId: enrolled.machineId, expectedPolicy: roles.policy, expectedMetadataVersion: roles.metadataVersion,
-                policy: { active: [...roles.policy.active, DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1] } }, context);
-            if (!execution.ok) throw createActionExecuteFailureError(execution);
-            const changed = MachineRolesMutationResultV1Schema.parse(execution.result);
-            if (!('policy' in changed) || !changed.policy.active.includes(DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1)) {
-                throw new PluginError({ code: 'machine_roles_unconfirmed', message: 'App Machine telemetry role was not confirmed' });
-            }
-        }
+        await enableAppMachineTelemetryRole({ credentials: accountCredentials, serverId: host.serverId,
+            serverHttpBaseUrl: host.serverHttpBaseUrl, machineId: enrolled.machineId, context: host.context, signal: input.signal });
+    }
+}
+
+/**
+ * Turns on the telemetry role of the enrolled App Machine. Admission proved that Machine is the requester's own
+ * (`enrollmentAccountId`), so both calls are the requester's ordinary Account work addressed to it: no carrier
+ * through the hosting Machine and no custodian disclosure.
+ */
+export async function enableAppMachineTelemetryRole(input: Readonly<{
+    credentials: StoredCredentials; serverId: string; serverHttpBaseUrl: string; machineId: string;
+    context: ActionExecutorContext; signal?: AbortSignal;
+}>): Promise<void> {
+    const actions = createCliActionExecutorFromCredentials({ credentials: input.credentials,
+        readCredentials: async () => input.credentials,
+        serverId: input.serverId, serverIdentityId: input.serverId, serverApiUrl: input.serverHttpBaseUrl });
+    const context = { surface: input.context.surface ?? 'cli', authority: input.context.authority,
+        serverId: input.serverId, signal: input.signal };
+    const current = await actions.execute('machines.roles.get', { serverId: input.serverId, machineId: input.machineId }, context);
+    if (!current.ok) throw createActionExecuteFailureError(current);
+    const roles = MachineRolesGetResultV1Schema.parse(current.result);
+    if (roles.status !== 'ready') throw new PluginError({ code: 'machine_roles_unconfirmed', message: 'App Machine role policy is unavailable' });
+    if (roles.policy.active.includes(DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1)) return;
+    const execution = await actions.execute('machines.roles.set', { serverId: input.serverId,
+        machineId: input.machineId, expectedPolicy: roles.policy, expectedMetadataVersion: roles.metadataVersion,
+        policy: { active: [...roles.policy.active, DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1] } }, context);
+    if (!execution.ok) throw createActionExecuteFailureError(execution);
+    const changed = MachineRolesMutationResultV1Schema.parse(execution.result);
+    if (!('policy' in changed) || !changed.policy.active.includes(DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1)) {
+        throw new PluginError({ code: 'machine_roles_unconfirmed', message: 'App Machine telemetry role was not confirmed' });
     }
 }

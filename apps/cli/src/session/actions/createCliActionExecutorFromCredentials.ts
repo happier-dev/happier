@@ -842,8 +842,6 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
   postWorkflowDiscussionMessage?: Parameters<typeof createCliActionDeps>[0]['postWorkflowDiscussionMessage'];
   workflowRequesterCustody?: Parameters<typeof createCliActionDeps>[0]['workflowRequesterCustody'];
   onRequesterSessionCredentialDisclosure?: Parameters<typeof dispatchRequesterSessionSpawnNewRpc>[0]['onRequesterSessionCredentialDisclosure'];
-  /** Admitted work's requester custody: a nested call rides its disclosure only to that exact installed target. */
-  requesterCustody?: Parameters<typeof dispatchOriginalAccountAction>[0]['requesterCustody'];
   scmFilesystemAccessPolicy?: FilesystemAccessPolicy;
   /** Receives the exact dispatch boundary for Home-owned HTTP Actions. */
   onAccountServerRequestIssued?: () => void;
@@ -2321,7 +2319,6 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
                   ...(originalContext.authority ? { authority: originalContext.authority } : {}),
                   ...(params.onRequesterSessionCredentialDisclosure
                     ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
-                  ...(params.requesterCustody ? { requesterCustody: params.requesterCustody } : {}),
                   ...(requestSignal ? { signal: requestSignal } : {}) });
                 const requester = params.onApprovalRequested && accountId && context.serverIdentityId
                   ? await executeOriginalAccountCliApprovalRequest({ actionId: parsedActionId.data, requestId,

@@ -3,10 +3,11 @@ import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/action
 import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { assertReviewedDeploymentSource } from './reviewedSource';
 import { resolveOwnServerDeploymentEnvironmentInstanceIdForHost } from './targets/ownServer/paths';
-import { privateServiceForwardAcquisitionError, projectDeploymentFailure, projectDeploymentReceiptFailure, rethrowDeploymentSourceAcquisitionFailure } from './deploymentFailure';
+import { privateServiceForwardAcquisitionError, projectDeploymentException, projectDeploymentFailure, projectDeploymentReceiptFailure, rethrowDeploymentSourceAcquisitionFailure } from './deploymentFailure';
 import { projectDeploymentReceiptInvestigationV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { CaddyDomainMaterializationError } from './targets/ownServer/caddyRouteMaterialization';
 import { observeOwnServerTeardownVolumes } from './targets/ownServer/teardownVolumes';
+import { createHappierJsonExecutorFromTextRunner } from '@happier-dev/cli-common/systemTasks';
 
 it('exposes the deepest typed native cause through exact receipt investigation', () => {
     const failureCause = { phase: 'filesystem.listener', errorClass: 'TypeError', errorCode: 'EADDRNOTAVAIL', httpStatus: null };
@@ -18,6 +19,19 @@ it('exposes the deepest typed native cause through exact receipt investigation',
     });
     expect(investigation.failure).toMatchObject({ code: 'filesystem_transfer_failed', phase: 'activate', failureCause });
     expect(JSON.stringify(investigation)).not.toContain('private native message');
+});
+
+it('names the failed guest CLI step and its output in the deploy cause, without its secrets', async () => {
+    // F14 E2EE: App enrollment's guest `happier … --json` exited non-zero and the deploy said only cli_command_failed.
+    const executor = createHappierJsonExecutorFromTextRunner(async () => ({ status: 3, stdout: '',
+        stderr: 'x Daemon exited: Authorization: Bearer secret-guest-token' }));
+    const failure = await executor.runHappierJson(['--server', 'home', 'daemon', 'status', '--json']).then(() => null, error => error);
+    const projected = projectDeploymentException(failure, { phase: 'deployment.failure' });
+    expect(projected).toMatchObject({ errorCode: 'cli_command_failed', details: { kind: 'managedNative', nativeCause: {
+        localCause: 'native_command_failed', command: 'run', exitCode: 3,
+        failureCause: { phase: 'guest_cli.daemon.status', errorCode: 'cli_command_failed' },
+        stderr: expect.stringContaining('Daemon exited') } } });
+    expect(JSON.stringify(projected)).not.toContain('secret-guest-token');
 });
 
 it('retains source review refusals in the Action result', () => {
