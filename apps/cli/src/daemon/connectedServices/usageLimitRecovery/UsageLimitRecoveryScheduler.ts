@@ -132,8 +132,6 @@ function usageLimitRecoverySelectedAuthMatchesIdentity(input: Readonly<{
 }
 
 const DEFAULT_USAGE_LIMIT_RECOVERY_MAX_ATTEMPTS = 3;
-// Spread automatic checks over two minutes so sessions sharing a reset do not all resume together.
-const USAGE_LIMIT_RECOVERY_TIMER_JITTER_MS = 2 * 60_000;
 const DEFAULT_USAGE_LIMIT_RECOVERY_TERMINAL_RECORD_RETENTION_MS = 7 * 24 * 60 * 60_000;
 
 /**
@@ -176,7 +174,6 @@ export class UsageLimitRecoveryScheduler {
     });
     this.scheduler = new DurableBackoffRecoveryScheduler<UsageLimitRecoveryIntent>({
       nowMs: deps.nowMs,
-      timerJitterMs: () => Math.floor(Math.random() * USAGE_LIMIT_RECOVERY_TIMER_JITTER_MS),
       store: deps.store,
       normalizeIntent: (value) => isUsageLimitRecoveryIntent(value) ? value : null,
       getStatus: (intent) => intent.status === 'armed'

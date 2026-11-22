@@ -8,6 +8,7 @@ import type { Credentials } from '@/persistence';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import type { sendSessionMessage } from '@/session/services/sendSessionMessage';
 import { buildUsageLimitIssueFingerprint, isSessionUsageLimitRecoveryForIssue } from '@happier-dev/protocol';
+import { readUsageLimitIssueFingerprintAgentId } from '@/session/usageLimitRecoveryControls/readUsageLimitIssueFingerprintAgentId';
 import { hasSameUsageLimitRecoveryIdentity } from '@/session/usageLimitRecoveryControls/mergeUsageLimitRecoveryIntent';
 import { readLatestUsageLimitFailureIssue } from '@/session/usageLimitRecoveryControls/readLatestUsageLimitFailureIssue';
 import { resolveUsageLimitRecoverySelectedAuthFromIssue } from '@/session/usageLimitRecoveryControls/usageLimitRecoverySelectedAuth';
@@ -88,8 +89,7 @@ export async function continueSessionAfterUsageLimitReset(input: Readonly<{
   if (!failedAuth || !matchesAuth(failedAuth, recovery.selectedAuth)) return { status: 'superseded' };
 
   // Backoff adapters persist their provider when the runtime issue omits it.
-  const fallbackProviderId = recovery.issueFingerprint.startsWith('usage-limit:')
-    ? recovery.issueFingerprint.split(':', 3)[1] : undefined;
+  const fallbackProviderId = readUsageLimitIssueFingerprintAgentId(recovery.issueFingerprint);
   const fingerprint = buildUsageLimitIssueFingerprint(issue, fallbackProviderId);
   const sameFailure = isSessionUsageLimitRecoveryForIssue(issue, recovery, fallbackProviderId);
   if (issue.usageLimit.resetAtMs !== null && issue.usageLimit.resetAtMs !== recovery.resetAtMs
