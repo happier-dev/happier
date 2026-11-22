@@ -114,6 +114,8 @@ type AdmittedSessionRunOptions = Readonly<{
   profile?: boolean;
   profileIntent?: 'memory_hints' | 'review';
   directOwner?: boolean;
+  /** Account settings returned by the real Home settings boundary. */
+  accountSettings?: Readonly<Record<string, unknown>>;
   reviewComments?: ConstructorParameters<typeof ExecutionRunHostBridge>[0]['reviewComments'];
   readRoleArtifact?: (artifactId: string) => import('@happier-dev/protocol/prompts/roles/roleArtifactV1').RoleArtifactV1 | null;
   runReportPolicy?: import('@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1').FollowPolicyV1;
@@ -420,7 +422,7 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
       ...(sessionId ? { sessionAccessProbe: { v: 1, sessionId, throughCursor: 0, status: 'available' } } : {}),
     });
   });
-  home.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: {} }, version: 1 }));
+  home.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: options?.accountSettings ?? {} }, version: 1 }));
   home.get('/v2/account/session-follow-preferences', async (_request, reply) => {
     await options?.beforeRunReportPreferencesRead?.();
     return options?.runReportPreferencesUnavailable
@@ -992,7 +994,8 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
             const started = await bridge.start({ sessionId: session.sessionId, intent: 'delegate',
               backendTarget: { kind: 'builtInAgent', agentId }, instructions: 'Inspect.', permissionMode: 'read_only',
               retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response', modelSelection: null,
-              connectedServices: null, promptCredentials: credentials, ...input });
+              connectedServices: null, promptCredentials: credentials,
+              accountSettings: accountSettings.rawSettings ?? undefined, ...input });
             runId = started.runId;
             return started;
           }

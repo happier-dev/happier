@@ -2408,6 +2408,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
             machineId: this.machineId, agentSandbox: agentSandboxContext,
           });
           if (defaults) params = { ...params,
+            childSelection: defaults.childSelection,
             approvalProfileId: defaults.approvalProfileId,
             approvalProfileTeamOrGroupDerived: params.approvalProfileId === undefined
               ? defaults.approvalProfileTeamOrGroupDerived : params.approvalProfileTeamOrGroupDerived === true,

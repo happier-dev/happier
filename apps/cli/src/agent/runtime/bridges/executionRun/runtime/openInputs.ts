@@ -117,13 +117,21 @@ export function executionRunChildSelectionNeedsAppliedParent(input: Pick<Executi
             || (input.connectedServicesDefaultServiceIds?.length ?? 0) > 0));
 }
 
+/** Validate the authored choice before managed defaults materialize explicit launch fields. */
+export function assertExecutionRunAgentDefaultChoice(input: Pick<ExecutionRunChildSelectionInput,
+    'childSelection' | 'modelId' | 'modelSelection' | 'teamCredentialModel' | 'connectedServices'
+    | 'connectedServicesDefaultServiceIds'>): void {
+    if (input.childSelection === 'agentDefault'
+        && (input.modelId !== undefined || input.modelSelection !== undefined || input.teamCredentialModel !== undefined
+            || input.connectedServices !== undefined || input.connectedServicesDefaultServiceIds !== undefined)) {
+        throw new Error('Account default choice conflicts with an explicit child selection');
+    }
+}
+
 export function resolveExecutionRunChildSelection(input: ExecutionRunChildSelectionInput): ResolvedExecutionRunChildSelection {
     try {
         if (input.childSelection === 'agentDefault') {
-            if (input.modelId !== undefined || input.modelSelection !== undefined || input.teamCredentialModel !== undefined
-                || input.connectedServices !== undefined || input.connectedServicesDefaultServiceIds !== undefined) {
-                throw new Error('Account default choice conflicts with an explicit child selection');
-            }
+            assertExecutionRunAgentDefaultChoice(input);
             return { ...resolveExecutionRunChildSelectionInput({ ...input, lifecycle: 'independent',
                 modelSelection: input.agentDefaultSelection ?? null }), selectionSource: 'explicit', modelSelectionSource: 'explicit' };
         }

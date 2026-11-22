@@ -13,6 +13,7 @@ import { createSpawnConnectedServicesTeamResourceCatalogResolver } from '@/sessi
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { ExecutionRunManagerStartParams } from './executionRunTypes';
 import { createExecutionRunCodedError } from './errors';
+import { assertExecutionRunAgentDefaultChoice } from './runtime/openInputs';
 
 /** A Run adapts its launch vocabulary; Session creation owns defaults and purpose selection. */
 export async function resolveDetachedRunManagedDefaults(params: ExecutionRunManagerStartParams, host: Readonly<{
@@ -30,6 +31,7 @@ export async function resolveDetachedRunManagedDefaults(params: ExecutionRunMana
     if (params.projectContext) throw createExecutionRunCodedError('project_requester_credentials_unavailable', 'Project defaults requester is unavailable');
     return null;
   }
+  assertExecutionRunAgentDefaultChoice(params);
   const agentTarget = parseBackendTargetKeyV2(buildBackendTargetKeyV2(readBackendTargetRefV2(params.backendTarget)));
   if (agentTarget.kind !== 'agent') throw createExecutionRunCodedError('target_unavailable', 'Agent target is unavailable');
   const accountSettingsContext = bootstrap?.accountSettingsContext ?? requester?.accountSettingsContext;
@@ -68,7 +70,7 @@ export async function resolveDetachedRunManagedDefaults(params: ExecutionRunMana
     const model = resolved.modelSelection
       ? projectSessionModelRefToExecutionModelSelection(resolved.modelSelection.ref)
       : {};
-    return { ...resolved, modelSelection: model.modelSelection,
+    return { ...resolved, childSelection: undefined, modelSelection: model.modelSelection,
       teamCredentialModel: model.teamCredentialModel ?? params.teamCredentialModel };
   });
 }
