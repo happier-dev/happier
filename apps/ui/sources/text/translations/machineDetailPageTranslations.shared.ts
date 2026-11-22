@@ -2503,8 +2503,6 @@ export const english = {
             approval: 'Waiting for approval.',
             unknown: ({ machine }: { machine: string }) => `Happier couldn’t confirm it. The state updates when ${machine} answers.`,
             failed: ({ service }: { service: string }) => `Couldn’t control ${service}.`,
-                recipe: ({ recipe, machine }: { recipe: string; machine: string }) => `Set up “${recipe}” on ${machine}, then read the logs again.`,
-                recipeUnnamed: ({ machine }: { machine: string }) => `Set up log access on ${machine}, then read the logs again.`,
             unavailable: 'This Machine couldn’t accept the service operation.',
             unavailableRemedy: 'Reconnect the Machine, then try the operation again.',
             unsupported: ({ machine, service }: { machine: string; service: string }) => `${machine} can’t do that for ${service}.`,
@@ -2521,6 +2519,8 @@ export const english = {
             needMachineOnline: ({ machine }: { machine: string }) => `Live logs need ${machine} online.`,
             remedy: {
                 redeployEnvironment: 'Redeploy the Environment to restore secret masking, then read the logs again.',
+                recipe: ({ recipe, machine }: { recipe: string; machine: string }) => `Set up “${recipe}” on ${machine}, then read the logs again.`,
+                recipeUnnamed: ({ machine }: { machine: string }) => `Set up log access on ${machine}, then read the logs again.`,
             },
             following: 'Following',
             follow: 'Follow',
