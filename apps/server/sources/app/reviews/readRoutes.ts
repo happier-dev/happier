@@ -64,10 +64,9 @@ export function registerReviewReadRoutes(app: Fastify) {
         if (request.validationError) return reply.code(400).send({ error: 'review_invalid_request' });
         try {
             return reply.send(await inReadSnapshot(async tx => {
-                const access = await resolveReviewAccessInTx(tx, { actorAccountId: request.userId, reviewId: request.body.reviewId });
+                const access = await resolveReviewAccessInTx(tx, { actorAccountId: request.userId, reviewId: request.body.reviewId, includeDetail: true });
                 if (!access) throw Object.assign(new Error('review_not_found'), { code: 'review_not_found' });
-                const review = await readAdmittedReviewDetailInTx(tx, access.reviewId);
-                if (!review) throw Object.assign(new Error('review_not_found'), { code: 'review_not_found' });
+                const review = await readAdmittedReviewDetailInTx(tx, access);
                 const human = await readAdmittedReviewHumanStateInTx(tx, { actorAccountId: request.userId, access,
                     facts: { currentRoundOrdinal: review.currentRoundOrdinal, pendingDecisionCount: review.counts.needsDecision } });
                 return { review, human };

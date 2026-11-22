@@ -10,6 +10,7 @@ import { getDbProviderFromEnv, prismaRuntime } from '@/storage/prisma';
 import { resourceGrantAccessSqlPredicate } from '@/app/teams/resourceGrantAccess';
 import { artifactOrdinarySqlPredicate } from '@/app/artifacts/artifactClassification';
 import { ReviewCommentOperationError } from './comments/errors';
+import type { ReviewDetailAdmission } from './reviewAccess';
 import { readAdmittedReviewNeedsYouInTx } from './reviewHumanService';
 import { REVIEW_TRIAGE_NEEDS_DECISION_STATUSES_V1, REVIEW_COMMENT_TERMINAL_DECISION_STATES_V1 } from '@happier-dev/protocol/reviews/reviewTriageStatus';
 import { ReviewListRequestV1Schema, ReviewListResponseV1Schema, ReviewListItemV1Schema, ReviewWorkflowHistoryResponseV1Schema,
@@ -102,14 +103,11 @@ export async function listReviewsInTx(tx: Tx, input: ReviewListRequestV1 & { act
         cursor: rows.length > parsed.limit && last ? Buffer.from(JSON.stringify({ filters: filters(parsed), id: last.reviewId, updatedAt: millis(last.updatedAt) })).toString('base64url') : null });
 }
 
-/** Only call with ids selected through Artifact admission in this read snapshot. */
-export async function readAdmittedReviewDetailInTx(tx: Tx, reviewId: string): Promise<ReviewListItemV1 | null> {
-    const row = await tx.artifact.findUnique({ where: { id: reviewId },
-        select: { createdAt: true, updatedAt: true, reviewMetadata: true } });
-    if (!row?.reviewMetadata) return null;
-    const { artifactId: _artifactId, ...metadata } = row.reviewMetadata;
+/** Project detail from this read snapshot's admitted Review. */
+export async function readAdmittedReviewDetailInTx(tx: Tx, { reviewId, detail }: ReviewDetailAdmission): Promise<ReviewListItemV1> {
+    const { artifactId: _artifactId, ...metadata } = detail.metadata;
     const counts = (await readAdmittedReviewCountsInTx(tx, [reviewId])).get(reviewId) ?? { total: 0, needsDecision: 0 };
-    return ReviewListItemV1Schema.parse({ ...metadata, reviewId, createdAt: millis(row.createdAt), updatedAt: millis(row.updatedAt),
+    return ReviewListItemV1Schema.parse({ ...metadata, reviewId, createdAt: millis(detail.createdAt), updatedAt: millis(detail.updatedAt),
         startedAt: millis(metadata.startedAt), finishedAt: metadata.finishedAt === null ? null : millis(metadata.finishedAt), counts });
 }
 

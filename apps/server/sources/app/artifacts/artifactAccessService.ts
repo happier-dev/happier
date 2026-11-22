@@ -104,6 +104,18 @@ export async function resolveArtifactAccessInTx(tx: Tx, input: Readonly<{
     return resolveResourceGrantAccessInTx(tx, artifactGrantStorageAdapter, { resourceId: input.artifactId, actorAccountId: input.actorAccountId });
 }
 
+/** Read details can project timestamps from the same Artifact row that admitted the caller. */
+export async function resolveArtifactAccessWithTimestampsInTx(tx: Tx, input: Readonly<{
+    actorAccountId: string; artifactId: string;
+}>): Promise<Readonly<{ access: ArtifactAccess; createdAt: Date; updatedAt: Date }> | null> {
+    const row = await tx.artifact.findUnique({ where: artifactAddress(input.artifactId),
+        select: { ...artifactAccessFactsSelect(input.actorAccountId), createdAt: true, updatedAt: true } });
+    if (!row) return null;
+    const [facts] = await withArtifactSourceReadersInTx(tx, [row], input.actorAccountId);
+    const access = resolveArtifactAccessFromFacts(facts!, input.actorAccountId);
+    return access ? { access, createdAt: row.createdAt, updatedAt: row.updatedAt } : null;
+}
+
 /** Structural consumers need the grant decision without requiring a recipient key envelope. */
 export async function resolveArtifactAccessBatchInTx(tx: Tx, input: Readonly<{
     actorAccountId: string; artifactIds: readonly string[];

@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { createDatabaseIntegrationHarness } from '@/testkit/databaseIntegrationHarness';
+import { resolveReviewAccessInTx } from './reviewAccess';
 import { listReviewsInTx, readReviewHistoryInTx, readAdmittedReviewDetailInTx } from './reviewListService';
 
 describe('Review metadata demand', () => {
@@ -140,11 +141,16 @@ describe('Review metadata demand', () => {
         const page = await inTx(tx => listReviewsInTx(tx, { actorAccountId: owner.id, workflowId, needsDecision: true, limit: 1 }));
         expect(page.items.map(row => row.reviewId)).toEqual([current]);
         expect(page.items[0]?.counts).toEqual({ total: 1, needsDecision: 1 });
-        expect(await inTx(tx => readAdmittedReviewDetailInTx(tx, current))).toMatchObject({
+        const detail = await inTx(async tx => {
+            const access = await resolveReviewAccessInTx(tx, { actorAccountId: owner.id, reviewId: current, includeDetail: true });
+            return access && readAdmittedReviewDetailInTx(tx, access);
+        });
+        expect(detail).toMatchObject({
             reviewId: current, state: 'completed', currentRoundOrdinal: 1, workflowId,
             counts: { total: 1, needsDecision: 1 },
         });
-        expect(await inTx(tx => readAdmittedReviewDetailInTx(tx, 'absent-admitted-review'))).toBeNull();
+        expect(await inTx(tx => resolveReviewAccessInTx(tx, { actorAccountId: owner.id,
+            reviewId: 'absent-admitted-review', includeDetail: true }))).toBeNull();
     });
 
     it('selects received Account, Team and Group Review candidates before paging', async () => {
@@ -173,8 +179,15 @@ describe('Review metadata demand', () => {
         } while (cursor);
         expect(new Set(seen)).toEqual(new Set(expected));
         expect(seen).toHaveLength(3);
+        const admitDetail = (reviewId: string) => inTx(tx => resolveReviewAccessInTx(tx, {
+            actorAccountId: reader.id, reviewId, includeDetail: true,
+        }));
+        for (const reviewId of expected) expect(await admitDetail(reviewId)).toMatchObject({ reviewId, level: 'view' });
         await db.teamMembership.update({ where: { id: member.id }, data: { status: 'suspended' } });
         const after = await inTx(tx => listReviewsInTx(tx, { actorAccountId: reader.id, projectSourceId: team.id, limit: 10 }));
         expect(after.items.map(row => row.reviewId)).toEqual([expected[0]]);
+        const [accountReview, ...memberReviews] = expected;
+        expect(await admitDetail(accountReview!)).toMatchObject({ level: 'view' });
+        for (const reviewId of memberReviews) expect(await admitDetail(reviewId)).toBeNull();
     });
 });
