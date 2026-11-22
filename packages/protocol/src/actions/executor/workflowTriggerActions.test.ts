@@ -1060,13 +1060,15 @@ describe('person-saved exact-input trigger consent', () => {
     expect((await f.actions.list({ workflow })).sets.find(set => set.automationId === receipt.set.automationId)?.context)
       .toHaveProperty('approvalProfileId', 'builtin:apply-safe');
   });
-  it.each(['profile:review', null] as const)('inherits an omitted trigger profile only when creating its saved context (%s)', async approvalProfileId => {
+  it.each(['profile:review', null, undefined] as const)('inherits an omitted trigger profile only when creating its saved context (%s)', async approvalProfileId => {
     const f = fixture();
     const input = WorkflowTriggerAddRequestV1Schema.parse({ workflow, project, trigger });
     const saved = await f.actions.add(input, { surface: 'cli', authority: 'present_user', approvalProfileId });
-    expect(saved.set.context).toHaveProperty('approvalProfileId', approvalProfileId);
+    if (approvalProfileId === undefined) expect(saved.set.context).not.toHaveProperty('approvalProfileId');
+    else expect(saved.set.context).toHaveProperty('approvalProfileId', approvalProfileId);
     const extended = await f.actions.add(input, { surface: 'cli', authority: 'present_user', approvalProfileId: 'profile:other' });
-    expect(extended.set.context).toHaveProperty('approvalProfileId', approvalProfileId);
+    if (approvalProfileId === undefined) expect(extended.set.context).not.toHaveProperty('approvalProfileId');
+    else expect(extended.set.context).toHaveProperty('approvalProfileId', approvalProfileId);
     expect(extended.set.triggers).toHaveLength(2);
   });
   it.each(['profile:other', null] as const)('applies an explicit profile when adding to an existing Workflow trigger set (%s)', async approvalProfileId => {

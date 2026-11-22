@@ -621,7 +621,8 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
   const triggerContext = (input: Partial<Omit<WorkflowTriggerContextV1, 'workspace' | 'inlineDefinition'>>, target: TriggerTargetV1,
     targetProject: WorkflowProjectTargetV1 | undefined, caller?: Caller) => {
     const { machineId: _machineId, ...workspace } = targetProject ?? {};
-    const approvalProfileId = resolveInheritedApprovalProfileIdV1(input.approvalProfileId, caller?.approvalProfileId);
+    const approvalProfileId = input.approvalProfileId === undefined && caller?.approvalProfileId === undefined
+      ? undefined : resolveInheritedApprovalProfileIdV1(input.approvalProfileId, caller?.approvalProfileId);
     return AutomationStoredWorkflowDefinitionV2Schema.parse({ ...(targetProject && { workspace }), executionTarget: input.executionTarget ?? { kind: 'session' },
       ...(input.inputs === undefined ? {} : { inputs: input.inputs }),
       ...(input.roleOverrides === undefined ? {} : { roleOverrides: input.roleOverrides }),
