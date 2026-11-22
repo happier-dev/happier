@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import type { WorkspaceSyncPersistentModeV1, WorkspaceSyncDestinationIntentV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { evaluateSessionHandoffWorkspaceTransferSourcePathSafety } from '@happier-dev/protocol/sessions/control/handoff/workspaceTransferSourcePathSafety';
-import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
+import { OpenProjectRefusalV1Schema, OpenProjectResultV1Schema, type OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { ProjectWorkerNoAcceptanceFailureDetailsV1Schema } from '@happier-dev/protocol/actions/projectActionFamily';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -26,7 +26,7 @@ import {
     type WorkspaceSyncRelationshipSummary,
 } from '@/sync/domains/sessionHandoff/workspaceSyncRelationshipModel';
 import { useWorkspaceSyncRelationshipSummaries } from '@/sync/domains/sessionHandoff/useWorkspaceSyncRelationshipSummaries';
-import { presentWorkspaceSyncFailure, readWorkspaceSyncErrorCode, type WorkspaceSyncFailurePresentation } from '@/sync/domains/sessionHandoff/workspaceSyncPresentation';
+import { presentWorkspaceSyncFailure, readWorkspaceSyncErrorCode, resolveWorkspaceSyncErrorTranslationKey, type WorkspaceSyncFailurePresentation } from '@/sync/domains/sessionHandoff/workspaceSyncPresentation';
 import {
     buildWorkspaceContentPolicy,
     parseSessionHandoffIgnoredIncludeGlobs,
@@ -83,10 +83,27 @@ const ignoreClose = () => {};
 /** A failure the form shows: the sentence, and the typed code when a Sync refusal carried one. */
 type AddMachineFailure = Readonly<{ message: string; technicalDetails?: WorkspaceSyncFailurePresentation['technicalDetails'] }>;
 
-/** A caught failure in words: the Sync presenter's sentence and code, else the thrown message. */
+/**
+ * A caught failure in words. A Project Open refusal (destination open) is said by the Project Open owner
+ * unless the Sync presenter has its own sentence for that code (the Can use own-folder guidance); any other
+ * failure is the Sync presenter's sentence and code, else the thrown message.
+ */
 function readAddMachineFailure(caught: unknown, placement?: Parameters<typeof presentWorkspaceSyncFailure>[1]): AddMachineFailure {
+    const refusal = OpenProjectRefusalV1Schema.safeParse(caught && typeof caught === 'object' ? Reflect.get(caught, 'details') : undefined);
+    if (refusal.success && !resolveWorkspaceSyncErrorTranslationKey(refusal.data.code)) return readProjectOpenRefusal(refusal.data);
     return presentWorkspaceSyncFailure(caught, placement)
         ?? { message: caught instanceof Error ? caught.message : t('errors.operationFailed') };
+}
+
+/**
+ * A refused source attach in the Project Open owner's words, whether the refusal came back as the Open
+ * result or as the failed Action it is projected into; its codes stay under Technical details.
+ */
+function readProjectOpenRefusal(refusal: Extract<OpenProjectResultV1, { kind: 'refused' }>): AddMachineFailure {
+    const presented = projectOpenRefusalPresentation(refusal.code, null, refusal.remediation, null, refusal.failureCause);
+    return { message: presented.title, technicalDetails: presented.details.map((value, index) => index === 0
+        ? { key: 'code', label: t('workflows.run.technical.failureCode'), value }
+        : { key: 'causeCode', label: t('approvals.failureTechnicalLabels.causeCode'), value }) };
 }
 
 function resolveStatusLine(input: Readonly<{
@@ -315,13 +332,17 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
                     serverId: props.source.serverId, machineId: props.source.machineId,
                     source: { kind: 'folder', path: hub.rootPath }, materialization: { kind: 'attach' },
                 }, { surface: 'ui', serverId: props.source.serverId, signal: controller.signal });
-                if (!opened.ok) {
-                    // A declined approval ran nothing: the person answered, nothing failed.
-                    if (isActionApprovalDeclinedErrorCode(opened.errorCode)) { setPhase('idle'); return; }
-                    throw workspaceSyncActionError(opened.errorCode, opened.error, opened);
+                // A declined approval ran nothing: the person answered, nothing failed.
+                if (!opened.ok && isActionApprovalDeclinedErrorCode(opened.errorCode)) { setPhase('idle'); return; }
+                // The Open refusal arrives as the result or inside the failed Action; one presenter says it.
+                const refused = OpenProjectRefusalV1Schema.safeParse(opened.ok ? opened.result : opened.details);
+                if (refused.success) {
+                    setError(readProjectOpenRefusal(refused.data));
+                    setPhase('idle');
+                    return;
                 }
+                if (!opened.ok) throw workspaceSyncActionError(opened.errorCode, opened.error, opened);
                 const accepted = OpenProjectResultV1Schema.parse(opened.result);
-                if (accepted.kind === 'refused') throw new Error(projectOpenRefusalPresentation(accepted.code, null).title);
                 if (accepted.kind === 'outcomeUnknown') setInspectRequired(true);
                 if (accepted.kind !== 'opened' || accepted.workspace.serverId !== props.source.serverId
                     || accepted.workspace.machineId !== props.source.machineId) throw new Error(t('common.saveError'));

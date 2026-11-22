@@ -794,6 +794,8 @@ describe('Project Add machine modal', () => {
         it.each([
             ['workspace_private_checkout_review_required', 'workspaceSync.error.ownFolderOnly'],
             ['target_not_empty', 'workspaceSync.error.destinationNeedsPreparation'],
+            // A Project Open refusal with no Sync sentence is said by the Project Open owner.
+            ['machine_unreachable', 'workspaceSync.start.blocked.targetMachineOffline'],
         ])('says the typed %s refusal in product words', async (code, key) => {
             await answerOpen({ kind: 'refused', code, effectAttempted: false });
             const modal = await openUseDestination();
