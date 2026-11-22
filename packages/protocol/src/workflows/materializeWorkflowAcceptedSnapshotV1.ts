@@ -1113,12 +1113,17 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
       if (input.admission.kind === 'agent') workDepth = admitted.stamped.workDepth;
     }
   }
-  // Action leaves also receive the supplied origin as defaultSessionId, even
-  // without an explicit origin reference in the authored definition.
-  const requiredOriginSessionId = purpose === 'run' ? input.context.origin?.originSessionId : undefined;
+  const originSessionId = purpose === 'run' ? input.context.origin?.originSessionId : undefined;
+  const caller = input.context.actionCaller;
+  const cause = input.admission.kind === 'trigger' && caller?.kind === 'automationRun' ? caller.cause : undefined;
+  // Trigger host preparation already authorized the lifecycle source. Only an
+  // explicit origin conversation makes that source a placement requirement.
+  const implicitOriginSessionId = cause?.kind === 'trigger' && cause.triggerKind === 'sessionLifecycle'
+    && cause.evidence.sourceSessionId === originSessionId ? undefined : originSessionId;
   for (const leaf of materializedLeaves) {
     for (const selected of listWorkflowAcceptedLeafSelectionsV1(leaf)) {
-      const sessionIds = readWorkflowLeafTargetSessionIdsV1(selected.selection, requiredOriginSessionId);
+      const sessionIds = readWorkflowLeafTargetSessionIdsV1(selected.selection,
+        selected.selection.conversation?.kind === 'origin_session' ? originSessionId : implicitOriginSessionId);
       if (leaf.kind === 'step' || leaf.kind === 'action' || sessionIds.length > 0) {
         const availability = await input.effects.resolveTargetAvailability(selected, { sessionIds });
         if (availability !== true) return unavailable(leaf.blockId, availability === false ? undefined : availability);

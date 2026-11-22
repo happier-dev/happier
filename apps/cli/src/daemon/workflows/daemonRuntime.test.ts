@@ -1827,7 +1827,7 @@ describe('production daemon Workflow policy-only context preparation', () => {
   it.each([
     ['cmws3jhdt02fnwvm2fnq0zbtn', '6f8526de-3eae-469c-b61f-bfcf09721e8b', 'Rgk3nXme_ZCd7HHHxZ1YYDYXhPwm-B9HynFD2jOBhGw', 1795368715308],
     ['cmws3jrst02ftwvm25g0036ba', 'f0cb944b-257c-46c3-a55d-7160443f986f', 'U-KBRDkJPbdLDHKpIwCYiDnZYmDTDnF0V-N9dU3dmRE', 1795368701431],
-  ])('reads the captured Any Archive origin before leaf placement for owned Session %s', async (sourceSessionId, sourceMachineId, occurrenceKey, occurredAt) => {
+  ])('admits a captured Any Archive on the trigger Machine for owned Session %s', async (sourceSessionId, sourceMachineId, occurrenceKey, occurredAt) => {
     const runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController, runtimeOptions: { pluginIds: [] } });
     onTestFinished(() => runtime.dispose());
     const accountId = 'archive-owner';
@@ -1885,19 +1885,13 @@ describe('production daemon Workflow policy-only context preparation', () => {
       } }),
     });
     const refusal = diagnostics.mock.calls.find(([message]) => message.includes('Trigger admission refused'))?.[1];
-    if (sourceMachineId !== machineId && outcome.state === 'failed') {
-      // Leaf placement owns whether the unbound Workflow can target the remote origin.
-      expect(outcome, JSON.stringify(refusal)).toMatchObject({
-        reason: 'target_unavailable', targetUnavailableReason: 'session_unavailable', blockId: 'review',
-      });
-      return;
-    }
     expect(outcome, JSON.stringify({ outcome, refusal })).toMatchObject({ state: 'waiting_for_review' });
     expect(openWorkflowAcceptedSnapshotStoredEnvelopeV1({
       mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId },
       envelope: parseWorkflowStoredContentEnvelopeV1(storage.acceptedEnvelope()!),
     })).toMatchObject({ kind: 'available', content: {
-      machineId, origin: { originSessionId: sourceSessionId }, workspaceTarget: { project: { machineId, directory } },
+      machineId, origin: { originSessionId: sourceSessionId }, targetSessionIds: [],
+      workspaceTarget: { project: { machineId, directory } },
     } });
   });
 

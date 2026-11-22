@@ -253,8 +253,17 @@ it('P01.F2 Session scopes and habit lifetime', async () => {
   });
   expect(await readRuns(0)).toEqual([]);
   expect(await actor.execute('session.archive', { sessionId: remote.sessionId })).toMatchObject({ ok: true });
-  await waitFor(async () => (await readRuns(3)).length === 1,
-    { context: 'Omitted subject matches a Session on the other Machine' });
+  await waitForWorkflowChildSession(async () => {
+    const runs = await readRuns(3);
+    expect(runs.length).toBeLessThanOrEqual(1);
+    const run = runs[0];
+    if (!run) return false;
+    expect(run.cause).toMatchObject({ kind: 'trigger', triggerId: saved[3]!.triggerId, triggerKind: 'sessionLifecycle',
+      evidence: { event: 'sessionArchived', sourceSessionId: remote.sessionId } });
+    expect(run.errorCode ?? null).toBeNull();
+    return await readWorkflowChildSession({ execute: actor.execute, serverBaseUrl: fixture!.server.baseUrl,
+      token: actor.credentials.token, runId: run.id, blockId: 'review' }) !== null;
+  }, 'Omitted subject starts a Workflow for a Session archived on the other owned Machine');
   expect(await readRuns(0)).toEqual([]);
   expect(await readRuns(1)).toEqual([]);
   expect(await readRuns(2), 'A Machine subject cannot match a different source Machine').toEqual([]);
