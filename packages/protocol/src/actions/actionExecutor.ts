@@ -2180,6 +2180,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       ...(args.ctx.verifyMachineAdmissionCurrent ? { verifyMachineAdmissionCurrent: args.ctx.verifyMachineAdmissionCurrent } : {}),
       ...(retainedPluginContext?.context.machineAdmission
         ? { machineAdmission: retainedPluginContext.context.machineAdmission } : {}),
+      ...(retainedPluginContext?.context.admittedHostWorkflowRequester
+        ? { admittedHostWorkflowRequester: retainedPluginContext.context.admittedHostWorkflowRequester } : {}),
       ...(retainedPluginContext?.context.authenticatedLocalRootCustody
         ? { authenticatedLocalRootCustody: retainedPluginContext.context.authenticatedLocalRootCustody } : {}),
       ...(retainedPluginContext?.context.verifyMachineAdmissionCurrent

@@ -292,6 +292,7 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
       machineAdmissionTransport: MachineAdmissionTransport;
       machineActionDirectTargetTransport: import('@/session/actions/createCliActionDeps').MachineActionDirectTargetTransport;
       runActionOperation?: import('@happier-dev/protocol').ActionExecutorDeps['runActionOperation'];
+      resolveActionRequesterContext?: ReturnType<typeof import('./workflowMachineTransport').createWorkflowRunMachineTransport>['resolveActionRequesterContext'];
       managedMachineAction?: import('@happier-dev/protocol').ActionExecutorDeps['managedMachineAction'];
       openManagedProjectWorkspace?: Parameters<typeof ensureAcceptedManagedWorkspaceTarget>[0]['openTarget'];
       sessionActionRpcTransport?: import('@/session/actions/createCliActionDeps').SessionActionRpcTransport;
@@ -394,7 +395,8 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
             allowLists: current.allowLists,
           }) };
       };
-      const resolveWorkflowActionContext = createWorkflowActionContextResolver(resolveMaterializer, requesterWorkAttributionV1);
+      const resolveWorkflowActionContext = createWorkflowActionContextResolver(resolveMaterializer, requesterWorkAttributionV1,
+        input.resolveActionRequesterContext);
       const resolveConversation = async ({ sessionId, machineId, signal, onUnavailable }: Readonly<{
         sessionId: string;
         machineId: string;

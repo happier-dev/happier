@@ -118,6 +118,7 @@ export async function readWorkflowActionPolicyContext(input: Readonly<{
 export function createWorkflowActionContextResolver(
   resolveMaterializer: ReturnType<typeof createCredentialedWorkflowMaterializationHostV1>,
   requesterWorkAttributionV1?: RequesterWorkAttributionV1,
+  resolveRequesterContext?: () => Promise<Pick<ActionExecutorContext, 'machineAdmission' | 'verifyMachineAdmissionCurrent'> | null>,
 ): (execution: Readonly<{
   runId: string;
   source?: WorkflowAcceptedSnapshotV1['source'];
@@ -136,7 +137,11 @@ export function createWorkflowActionContextResolver(
       directory: execution.workspace.directory, ...(execution.signal ? { signal: execution.signal } : {}) });
     const current = materialization.agentStartPolicySnapshot;
     const context = buildWorkflowActionContext(execution, requesterWorkAttributionV1);
-    return { ...context, defaultSessionId: execution.originSessionId ?? null,
+    const requester = await resolveRequesterContext?.();
+    return { ...context, ...requester,
+      ...(requester?.machineAdmission && execution.authorization.principal.kind === 'host'
+        ? { admittedHostWorkflowRequester: true as const } : {}),
+      defaultSessionId: execution.originSessionId ?? null,
       workspaceWrites: execution.role?.workspaceWrites ?? 'allow',
       externalActionTarget: context.externalActionTarget ?? { kind: 'machine' as const, machineId: execution.workspace.machineId,
         project: { machineId: execution.workspace.machineId, directory: execution.workspace.directory,

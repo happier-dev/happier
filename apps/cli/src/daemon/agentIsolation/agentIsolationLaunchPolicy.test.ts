@@ -388,6 +388,26 @@ describe('held Agent isolation launch admission', () => {
         });
         expect(currentReads).toBe(0);
     });
+    it('keeps admitted host Workflow custody as automation through SDK children without lending it to Session or foreign work', () => {
+        const machineAdmission = { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
+            installationId: 'installation', role: 'manage' as const, encryptionMode: 'plain' as const };
+        const actionContext = { authority: 'account_automation' as const, admittedHostWorkflowRequester: true as const,
+            machineAdmission, requesterWorkAttributionV1: { serverId: 'srv_home', accountId: 'owner',
+                machineId: 'machine', installationId: 'installation' }, verifyMachineAdmissionCurrent: async () => true };
+        const input = { hostHomeServerIdentityId: 'srv_home', hostCustodianAccountId: 'owner',
+            hostExecutionTarget: { machineId: 'machine', installationId: 'installation' }, actionContext };
+        expect(selectHostRequesterExecutionIdentity(input)).toMatchObject({ kind: 'isolated',
+            separationRequired: false, accountAutomation: true });
+        expect(isHostRequesterUnrestrictedOwner(selectHostRequesterExecutionIdentity(input))).toBe(true);
+        expect(isHostRequesterUnrestrictedOwner(selectHostRequesterExecutionIdentity({ ...input,
+            actionContext: { ...actionContext, admittedHostWorkflowRequester: undefined } }))).toBe(false);
+        expect(isHostRequesterUnrestrictedOwner(selectHostRequesterExecutionIdentity({ ...input,
+            actionContext: { ...actionContext, actionCaller: { kind: 'session', sessionId: 'owner-agent', starterDepth: 0, turnDepth: 0 } } }))).toBe(false);
+        expect(isHostRequesterUnrestrictedOwner(selectHostRequesterExecutionIdentity({ ...input,
+            actionContext: { ...actionContext, machineAdmission: { ...machineAdmission, actorAccountId: 'member', role: 'use' } } }))).toBe(false);
+        expect(selectHostRequesterExecutionIdentity({ ...input, actionContext: { ...actionContext,
+            machineAdmission: undefined } })).toMatchObject({ kind: 'unknown' });
+    });
     it('consumes authenticated local root custody without lending it to signed, foreign or Session work', () => {
         const authenticatedLocalRootCustody = { serverIdentityId: 'srv_home', accountId: 'owner',
             machineId: 'machine', installationId: 'installation' };

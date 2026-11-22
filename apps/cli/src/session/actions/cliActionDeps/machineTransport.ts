@@ -349,6 +349,8 @@ export function createCliMachineActionTransport(
           ? { originalActionEnvelope: input.context.originalActionEnvelope } : {}),
         ...(input.context?.authenticatedLocalRootCustody
           ? { authenticatedLocalRootCustody: input.context.authenticatedLocalRootCustody } : {}),
+        ...(input.context?.admittedHostWorkflowRequester
+          ? { admittedHostWorkflowRequester: input.context.admittedHostWorkflowRequester } : {}),
         ...(admittedProcessRead ? { processEnvironmentRead: input.processEnvironmentRead } : {}),
         ...(admittedLocalRequester && input.effectActionId === 'session.open'
           && input.context?.actionCaller?.kind === 'session' && input.request

@@ -83,6 +83,7 @@ type HostRequesterActionContext = Readonly<Pick<RpcHandlerContext,
         externalActionExecutionAuthorization?: RpcHandlerContext['callerInputAuthorization'];
         verifiedExternalActionRequester?: VerifiedExternalActionRequester;
         authenticatedLocalRootCustody?: AuthenticatedLocalRootCustody;
+        admittedHostWorkflowRequester?: true;
     }>;
 
 /** Restore only host-private proof, never replace an existing receipt or guard. */
@@ -147,7 +148,9 @@ function readHostRequesterInvocationSource(input: Pick<HostRequesterExecutionIde
             ?? localContexts.find(local => local?.authenticatedLocalRootCustody)?.authenticatedLocalRootCustody);
     // A claimed host Workflow reuses the Account bootstrap for credentials.
     // Ingress knows its source. A Session origin still owns its own placement.
-    const hostWorkflow = input.rpcContext?.admittedHostWorkflowRequester === true;
+    const hostWorkflow = input.rpcContext?.admittedHostWorkflowRequester === true
+        || input.actionContext?.admittedHostWorkflowRequester === true
+        || localContexts.some(local => local?.admittedHostWorkflowRequester === true);
     return {
         sessionOrigin,
         agentSource: !!sessionOrigin

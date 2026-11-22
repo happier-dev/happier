@@ -17,6 +17,7 @@ import { RpcError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 type CliActionExecutorParams = Parameters<typeof createCliActionExecutor>[0];
 
 type HostRequesterContext = Pick<RpcHandlerContext, 'authorization' | 'machineAdmission' | 'verifyMachineAdmissionCurrent'
+    | 'admittedHostWorkflowRequester'
     | 'requesterApprovalDecision'
     | 'requesterSessionBootstrap' | 'sessionActionOrigin' | 'callerInputAuthorization' | 'callerInputConstraints'
     | 'workspaceSyncSourceRouting' | 'workspaceSyncTargetRouting' | 'workspaceSyncSourceWriterTargetRouting' | 'workspaceSyncSeedRouting'
@@ -166,6 +167,8 @@ export function buildActionExecutorContextForRpc(
         ...(params.deadlineAtMs === undefined ? {} : { deadlineAtMs: params.deadlineAtMs }),
         ...(params.requestStartedAtMs === undefined ? {} : { requestStartedAtMs: params.requestStartedAtMs }),
         ...(params.machineAdmission ? { machineAdmission: params.machineAdmission } : {}),
+        ...(params.admittedHostWorkflowRequester || localActionContext?.admittedHostWorkflowRequester
+            ? { admittedHostWorkflowRequester: true as const } : {}),
         ...(params.verifyMachineAdmissionCurrent ? { verifyMachineAdmissionCurrent: params.verifyMachineAdmissionCurrent } : {}),
         ...(params.requesterSessionBootstrap ? { requesterSessionBootstrap: params.requesterSessionBootstrap } : {}),
         ...(params.sessionActionOrigin ? { sessionActionOrigin: params.sessionActionOrigin } : {}),

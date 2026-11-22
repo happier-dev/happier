@@ -292,6 +292,7 @@ export function createDaemonMachineBootstrapRuntime(
       machineAdmissionTransport: NonNullable<Parameters<typeof startAutomationWorker>[0]['machineAdmissionTransport']>;
       machineActionDirectTargetTransport: import('@/session/actions/createCliActionDeps').MachineActionDirectTargetTransport;
       runActionOperation?: import('@happier-dev/protocol').ActionExecutorDeps['runActionOperation'];
+      resolveActionRequesterContext?: ReturnType<typeof createWorkflowRunMachineTransport>['resolveActionRequesterContext'];
     }>) => ReturnType<typeof createProductionWorkflowRunCoordinator>;
     createWorkflowRecoveryForMachine?: (input: Readonly<{
       machineId: string;
@@ -710,6 +711,7 @@ export function createDaemonMachineBootstrapRuntime(
                 await automationApiMachine.enqueueSessionPendingByMachine(request, options),
               machineActionDirectTargetTransport: requesterTransport.transport,
               runActionOperation: requesterTransport.runActionOperation,
+              resolveActionRequesterContext: requesterTransport.resolveActionRequesterContext,
             });
             return await coordinate(claim);
           } finally { await requesterTransport.dispose(); }

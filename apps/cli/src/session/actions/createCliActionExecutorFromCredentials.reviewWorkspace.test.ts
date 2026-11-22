@@ -1,6 +1,6 @@
 import axios from 'axios';
 import Fastify from 'fastify';
-import { afterAll, afterEach, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, expect, it, onTestFinished, vi } from 'vitest';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { ActionApprovalRequestCreatedResultSchema, buildWorktreeRelativePath,
   readActionOperationTerminalResultV1 } from '@happier-dev/protocol';
@@ -45,16 +45,21 @@ import { readCurrentAccountPluginExecutionSelection } from '@/plugins/runtime/ac
 import { invokeAccountMachineSourceAction } from '@/plugins/runtime/invocation/actions/accountMachineActionTransport';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import { executeContributedAction } from '@/plugins/runtime/invocation/actions/executeContributedAction';
+import { createWorkflowActionContextResolver } from '@/daemon/workflows/workflowActionContext';
+import { createWorkflowRunMachineTransport } from '@/daemon/workflows/workflowMachineTransport';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { createCredentialedWorkflowMaterializationHostV1 } from './workflowMaterializationHost';
 
 afterEach(() => vi.restoreAllMocks());
 afterAll(() => pluginReloadController.shutdown());
 
 it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-approval-verify', 'account-agent-approval-verify',
-  'plugin-approval-verify', 'unobserved-plugin-approval-verify', 'local-unobserved-plugin-approval-verify', 'account-approval-reject', 'account-approval-cancel', 'approval-reject', 'approval-cancel', 'owner-verify', 'owner-local-verify', 'owner-prepare', 'owner-foreign-use', 'owner-foreign-manage',
+  'plugin-approval-verify', 'unobserved-plugin-approval-verify', 'local-unobserved-plugin-approval-verify', 'workflow-unobserved-plugin-approval-verify', 'workflow-unobserved-plugin-approval-prepare', 'account-approval-reject', 'account-approval-cancel', 'approval-reject', 'approval-cancel', 'owner-verify', 'owner-local-verify', 'owner-prepare', 'owner-foreign-use', 'owner-foreign-manage',
   'owner-unadmitted', 'owner-retarget', 'owner-home'] as const)('runs mounted source %s through its serving Machine SDK executor without minting an Account root', async shape => {
   const approvalShape = shape.includes('approval-');
   const accountChild = shape.startsWith('account-');
-  const unobservedPluginChild = shape === 'unobserved-plugin-approval-verify' || shape === 'local-unobserved-plugin-approval-verify';
+  const workflowChild = shape.startsWith('workflow-');
+  const unobservedPluginChild = workflowChild || shape === 'unobserved-plugin-approval-verify' || shape === 'local-unobserved-plugin-approval-verify';
   const localPluginChild = shape === 'plugin-approval-verify' || unobservedPluginChild;
   const accountOrigin = shape === 'account-agent-approval-verify' ? 'agent' as const : 'cli' as const;
   const verifyShape = shape.endsWith('verify');
@@ -75,7 +80,8 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-ap
     const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(31));
     const machine = { id: machineId, managedMachineRef: null, kind: 'persistent', active: true,
       installationId: 'review-installation', revokedAt: null, replacedByMachineId: null,
-      dataEncryptionKey: null, runnerContentKeyBinding: null,
+      metadata: null, metadataVersion: 1, daemonState: null, daemonStateVersion: 0, storageMode: 'plain',
+      dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, runnerContentKeyBinding: null,
       installationPublicKey: Buffer.from(keys.publicKey).toString('base64'),
       access: { custodian: { accountId, displayName: 'Reviewer' }, role: 'manage',
         resourceMode: 'plain', accessState: 'ready' } };
@@ -161,7 +167,7 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-ap
       } } : undefined });
     let sourceEntered = false;
     const source = definePlugin({ id: 'example.review-source', version: '1.0.0', entrypoints: { daemon: './daemon.mjs' },
-      actions: { prepare: { title: 'Prepare review workspace', surfaces: accountChild || localPluginChild ? ['ui', 'plugin'] : ['ui'],
+      actions: { prepare: { title: 'Prepare review workspace', surfaces: workflowChild ? ['ui', 'plugin', 'agent'] : accountChild || localPluginChild ? ['ui', 'plugin'] : ['ui'],
         dangerLevel: accountChild || localPluginChild ? 'safe' : 'writesLocal',
         ...(approvalShape ? { operation: ActionOperationDeclarationV1Schema.parse(GITHUB_MANIFEST.contributes.actions?.find(
           action => action.id === (verifyShape ? GITHUB_TRIAGE_ACTION_IDS_V1.verifyReviewWorkspace
@@ -314,18 +320,55 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-ap
         });
       }
       if (localPluginChild) {
-        const approvalContext = { surface: 'plugin' as const, authority: 'account_automation' as const,
+        let approvalContext: RpcActionExecutorContext = { surface: 'plugin' as const, authority: 'account_automation' as const,
           runtimeAccountId: accountId, serverId, serverIdentityId: 'srv_review_home',
           ...(shape === 'local-unobserved-plugin-approval-verify' ? {
             authenticatedLocalRootCustody: { serverIdentityId: 'srv_review_home', accountId,
               machineId, installationId: 'review-installation' },
           } : { machineAdmission: packet.machineAdmission,
             verifyMachineAdmissionCurrent: async () => { throw new Error('Finite children must not re-admit the parent'); } }) };
-        child = executeContributedAction({ runtimeRegistry: runtime.registry, actionId: request.qualifiedActionId,
-          input: providerInput, approvalContext, actionsSettings: { v: 1, actions: {} }, context: {
-            ...approvalContext, operationRequestId: request.requestId, operationRpcContext: approvalContext,
+        let execute = async (context: RpcActionExecutorContext) => executeContributedAction({ runtimeRegistry: runtime.registry, actionId: request.qualifiedActionId,
+          input: providerInput, approvalContext: context, actionsSettings: { v: 1, actions: {} }, context: {
+            ...context, operationRequestId: request.requestId, operationRpcContext: context,
+            ...(workflowChild ? { initiatingActionCaller: context.actionCaller } : {}),
             ...(unobservedPluginChild ? {} : { observePluginExecution: operations.observePluginExecution }),
-          } }).then(attempt => {
+          } });
+        if (workflowChild) {
+          const runId = '29831e71-ad14-4d07-ae6d-b3e87250ecb9';
+          const attribution = { serverId, accountId, machineId, installationId: 'review-installation' };
+          const transport = createWorkflowRunMachineTransport({ runId, credentials, requesterWorkAttributionV1: attribution,
+            isCurrent: async () => true, boundary: { serverId, serverHttpBaseUrl: 'https://review-home.test', happyHomeDir: homeDir,
+              getObservedServerIdentityId: () => 'srv_review_home' },
+            machineAdmissionBoundary: { machineId, daemonToken: credentials.token, isHomeCurrent: () => true,
+              readInstallation: () => ({ installationId: 'review-installation', privateKey: keys.secretKey }),
+              getObservedServerIdentityId: () => 'srv_review_home' },
+            transport: { machineId, invoke: async () => { throw new Error('Unexpected Workflow Machine RPC'); } },
+            runActionOperation: async operation => operation.execute(operation.context) });
+          onTestFinished(() => transport.dispose());
+          const savedSecretOperationContext = await transport.resolveSavedSecretOperationContext();
+          if (!savedSecretOperationContext) throw new Error('Expected admitted Workflow Account custody');
+          const unavailable = async (): Promise<never> => { throw new Error('Unexpected Workflow materialization transport'); };
+          const resolveContext = createWorkflowActionContextResolver(createCredentialedWorkflowMaterializationHostV1({
+            credentials, accountId, serverId, serverHttpBaseUrl: 'https://review-home.test', savedSecretOperationContext,
+            callMachineAction: unavailable, readWorkflowDefinition: unavailable,
+          }), attribution, transport.resolveActionRequesterContext);
+          approvalContext = { ...await resolveContext({ runId, authorization: { principal: { kind: 'host' },
+            admittedPermissionCeiling: 'default' }, workspace: { machineId, directory: root, checkoutRootPath: root }, workDepth: 0,
+            origin: { kind: 'direct', authenticatedStarterV1: { requestRef: 'native-workflow-start',
+              requester: { serverId: 'srv_review_home', accountId } } } }),
+            runtimeAccountId: accountId, serverId, serverIdentityId: 'srv_review_home' };
+          const invoke = execute;
+          execute = async context => {
+            const result = await transport.runActionOperation!({ actionId: 'action.invoke', input: {}, context,
+              execute: async admitted => {
+                const attempt = await invoke(admitted);
+                if (!attempt.matched) throw new Error('Expected Workflow SDK source child');
+                return attempt.result;
+              } });
+            return { matched: true as const, result };
+          };
+        }
+        child = execute(approvalContext).then(attempt => {
             childSettled = true;
             if (!attempt.matched) throw new Error('Expected local SDK source child');
             return attempt.result;
@@ -342,6 +385,7 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-ap
       releaseApprovalObservation();
       const targetPath = shape.endsWith('verify') ? root : join(root, buildWorktreeRelativePath('source'));
       if (approvalShape) {
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
         const receipt = ActionApprovalRequestCreatedResultSchema.parse(result.ok ? result.result : null);
         if (child) {
           // The persisted Ask is visible before consent, but the Account caller
@@ -363,7 +407,7 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-ap
         expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true });
         if (unobservedPluginChild) {
           result = await child!;
-          expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'verified' } });
+          expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: verifyShape ? 'verified' : 'prepared' } });
         } else {
           if (!held) throw new Error('Expected retained source operation');
           const terminal = await operations.handlers.getV2({ operationId: held.operationId, waitForTerminal: true });

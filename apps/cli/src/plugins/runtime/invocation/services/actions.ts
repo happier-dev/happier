@@ -785,6 +785,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
             ...(source?.serverIdentityId ? { serverIdentityId: source.serverIdentityId } : {}),
             ...(source?.authenticatedLocalRootCustody ? { authenticatedLocalRootCustody: source.authenticatedLocalRootCustody } : {}),
             ...(source?.machineAdmission ? { machineAdmission: source.machineAdmission } : {}),
+            ...(source?.admittedHostWorkflowRequester ? { admittedHostWorkflowRequester: source.admittedHostWorkflowRequester } : {}),
             ...(source?.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: source.requesterWorkAttributionV1 } : {}),
             ...(source?.verifyMachineAdmissionCurrent ? { verifyMachineAdmissionCurrent: source.verifyMachineAdmissionCurrent } : {}),
             ...(source?.callerInputAuthorization ? { callerInputAuthorization: source.callerInputAuthorization } : {}),

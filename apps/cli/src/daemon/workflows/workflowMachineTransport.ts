@@ -46,6 +46,8 @@ export function createWorkflowRunMachineTransport(input: Readonly<{
   transport: MachineActionDirectTargetTransport;
   runActionOperation?: ActionExecutorDeps['runActionOperation'];
   resolveSavedSecretOperationContext(): Promise<import('@/settings/secrets/savedSecretOperationContext').SavedSecretOperationContextV1 | null>;
+  resolveActionRequesterContext(): Promise<Pick<import('@happier-dev/protocol').ActionExecutorContext,
+    'machineAdmission' | 'verifyMachineAdmissionCurrent'> | null>;
   dispose(): Promise<void>;
 }> {
   let requester: Promise<(NonNullable<Awaited<ReturnType<typeof prepareRequesterSessionBootstrap>>> & Readonly<{
@@ -96,6 +98,11 @@ export function createWorkflowRunMachineTransport(input: Readonly<{
       const prepared = await prepare({ executionRunWorkflowRunId: input.runId,
         requesterWorkAttributionV1: input.requesterWorkAttributionV1 });
       return prepared?.admitted.savedSecretOperationContext ?? null;
+    },
+    resolveActionRequesterContext: async () => {
+      const prepared = await prepare({ executionRunWorkflowRunId: input.runId,
+        requesterWorkAttributionV1: input.requesterWorkAttributionV1 });
+      return prepared ? { machineAdmission: prepared.machineAdmission, verifyMachineAdmissionCurrent: input.isCurrent } : null;
     },
     transport: {
       machineId: input.transport.machineId,
