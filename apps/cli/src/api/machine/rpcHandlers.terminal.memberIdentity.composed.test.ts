@@ -411,6 +411,20 @@ child.on('close', code => { process.exitCode = code ?? 1; });
 }
 
 describe.skipIf(process.platform !== 'linux')('installed host-composed member terminal native identity', () => {
+  it.each([RPC_METHODS.DAEMON_TERMINAL_ENSURE, RPC_METHODS.DAEMON_TERMINAL_RESTART])('launches the custodian person native CLI login under linuxUsersV1 through %s', async method => {
+    const plugins = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+      runtimeOptions: { pluginIds: ['happier.scm.forge.github'] } });
+    onTestFinished(() => plugins.dispose());
+    const f = await fixture({ accountId: 'requester', acceptedWorkspace: false });
+    const opened = await f.invokeInstalledTerminal(method, { terminalKey: 'custodian-provider-login:gh',
+      launch: { kind: 'agent_login', agentId: 'happier.scm.forge.github/gh' } });
+    expect(opened).toMatchObject({ ok: true, terminalId: expect.any(String) });
+    expect(f.processes).toHaveLength(1);
+    expect(f.processes[0]?.params.file).toMatch(/(?:^|[/\\])gh(?:\.exe)?$/u);
+    expect(f.processes[0]?.params.args).toEqual(['auth', 'login', '--git-protocol', 'https', '--web']);
+    expect(f.processes[0]?.frames).toEqual([]);
+  });
+
   it('opens member Agent CLI sign-in with the CLI installed in the member home, not the daemon environment', async () => {
     const plugins = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
       runtimeOptions: { pluginIds: ['happier.agent.opencode'] } });

@@ -248,9 +248,10 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       ? undefined : params.deps?.agentIsolation;
 
   const resolveTerminalPlacement = (identity: HostRequesterExecutionIdentity, context?: RpcHandlerContext) => {
-    const requester = resolveHostRequesterAgentExecutionIdentity(identity);
-    return requester.kind === 'isolated'
-      ? resolveHostRequesterAgentPlacementForHost({ identity: requester,
+    // A person's admitted shell retains person placement; only Agent/member
+    // identities consume the Machine's Agent isolation policy.
+    return identity.kind === 'isolated'
+      ? resolveHostRequesterAgentPlacementForHost({ identity,
         snapshot: resolveTerminalAgentIsolation(identity, context)?.read(), platform: params.deps?.platform })
       : undefined;
   };
